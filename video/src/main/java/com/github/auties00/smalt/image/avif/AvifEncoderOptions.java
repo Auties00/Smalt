@@ -171,7 +171,8 @@ public final class AvifEncoderOptions {
 
     /**
      * Returns lossless coding: quality 100 for color and alpha, and RGB pictures stored as 4:4:4
-     * in the identity matrix (GBR) so every pixel is restored exactly.
+     * in the identity matrix (GBR), or in full range when the color's matrix is YCgCo-Re or YCgCo-Ro,
+     * so every pixel is restored exactly (for YCgCo-Re and YCgCo-Ro, at the automatic bit depth).
      *
      * @return the options
      */
@@ -233,8 +234,8 @@ public final class AvifEncoderOptions {
     /**
      * {@return the chroma format of the coded image, or empty for automatic; empty by default}
      *
-     * <p>Automatic is the picture's own format for a planar picture, 4:2:0 for a lossy RGB picture
-     * and 4:4:4 for a lossless one.
+     * <p>Automatic is the picture's own format for a planar picture (4:4:4 for a 4:4:0 one, a format
+     * AV1 cannot code), 4:2:0 for a lossy RGB picture and 4:4:4 for a lossless one.
      */
     public Optional<ChromaFormat> chromaFormat() {
         return Optional.ofNullable(chromaFormat);
@@ -245,7 +246,9 @@ public final class AvifEncoderOptions {
      * default}
      *
      * <p>Automatic is 8 for 8-bit pictures, 10 for deeper pictures of at most 10 bits and 12 for
-     * the others.
+     * the others. RGB pictures converted with the YCgCo-Re or YCgCo-Ro matrix, whose R'G'B' samples
+     * are two or one bits shallower than the coded ones, code 8-bit pictures at 10 bits and deeper ones
+     * at 12.
      */
     public OptionalInt bitDepth() {
         return bitDepth;
@@ -769,9 +772,12 @@ public final class AvifEncoderOptions {
          * @throws IllegalArgumentException if the quality or the alpha quality is not in [0, 100],
          * the speed is not in [0, 10], the bit depth is not 8, 10 or 12, a tile logarithm is not in
          * [0, 6], the grid image side is not an even number in [64, 16384], the thread count is
-         * negative, or the loop count is negative
+         * negative, the loop count is negative, or the chroma format is 4:4:0, which AV1 cannot code
          */
         public AvifEncoderOptions build() {
+            if (chromaFormat == ChromaFormat.YUV440) {
+                throw new IllegalArgumentException("AV1 cannot code 4:4:0 chroma");
+            }
             Checks.inRange("quality", quality, 0, 100);
             Checks.inRange("alpha quality", alphaQuality, 0, 100);
             Checks.inRange("speed", speed, 0, 10);

@@ -4,9 +4,16 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 
 import com.github.auties00.smalt.internal.heif.BoxCursor;
+import com.github.auties00.smalt.internal.heif.DataReferences;
 import com.github.auties00.smalt.internal.io.FourCc;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
+import com.github.auties00.smalt.internal.tags.QuickTimeCompressedMovie;
+import com.github.auties00.smalt.io.DataReferenceResolver;
+import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.internal.tags.Mp4TrackMetadata;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,6 +29,10 @@ import java.util.Map;
  * disagree about the sample count are reconciled by truncating to the samples every table
  * covers. Uncompressed audio stored one frame per sample is regrouped into packets of at most
  * {@value #PCM_FRAMES_PER_PACKET} frames within each chunk.
+ *
+ * <p>A QuickTime compressed movie ({@code cmov}: a {@code dcom} atom naming the compression, {@code zlib}, and a
+ * {@code cmvd} atom holding the uncompressed size and the compressed {@code moov}) is decompressed, within the
+ * byte limit, and parsed in place of the {@code moov} holding it; its offsets count in the file as it is.
  */
 final class MovieParser {
     /**
@@ -38,6 +49,11 @@ final class MovieParser {
      * The limits bounding sample counts, picture sizes and channel counts.
      */
     private final MediaLimits limits;
+
+    /**
+     * The files the data references of the tracks name, opened as their sample descriptions use them.
+     */
+    private final DataReferences external;
 
     /**
      * The parsed tracks, in file order.
@@ -80,12 +96,35 @@ final class MovieParser {
     MetadataReader movieMetadata;
 
     /**
-     * Constructs a parser.
+     * Reads the sample auxiliary information that the {@code saio} boxes of protected tracks locate, or
+     * {@code null} to reject such information.
+     */
+    CencSamples.AuxSource auxSource;
+
+    /**
+     * Whether the Common Encryption information of protected tracks is read; without it, which the demuxer chooses
+     * when it has no key, a protected track has no {@link Mp4Track#cenc}.
+     */
+    boolean readsProtection = true;
+
+    /**
+     * Constructs a parser that resolves no data reference.
      *
      * @param limits the limits bounding what the movie may declare
      */
     MovieParser(MediaLimits limits) {
+        this(limits, new DataReferences(DataReferenceResolver.none()));
+    }
+
+    /**
+     * Constructs a parser.
+     *
+     * @param limits the limits bounding what the movie may declare
+     * @param external the opener of the files the data references name, which the caller closes
+     */
+    MovieParser(MediaLimits limits, DataReferences external) {
         this.limits = limits;
+        this.external = external;
         this.tracks = new ArrayList<>();
         this.metadata = new LinkedHashMap<>();
     }
@@ -95,10 +134,21 @@ final class MovieParser {
      *
      * @param moov the box payload
      * @throws MediaException.Malformed if a required box is missing or corrupt
-     * @throws MediaException.Unsupported if a track is encrypted or the movie header is compressed
+     * @throws MediaException.Unsupported if a track is encrypted, the movie is compressed with another algorithm
+     * than zlib, or the samples of a track are in another file that no data reference resolver supplies
      * @throws MediaException.LimitExceeded if a declared size exceeds the limits
      */
     void parse(BoxCursor moov) {
+        parse(moov, false);
+    }
+
+    /**
+     * Parses the payload of a {@code moov} box, which may be the decompressed content of a {@code cmov}.
+     *
+     * @param moov the box payload
+     * @param decompressed whether the box is the content of a {@code cmov}, which may not hold another
+     */
+    private void parse(BoxCursor moov, boolean decompressed) {
         var metadataReader = new MetadataReader(metadata);
         BoxCursor mvex = null;
         var sawHeader = false;
@@ -127,11 +177,17 @@ final class MovieParser {
                         // metadata is descriptive; a damaged meta box leaves the movie playable
                     }
                 }
-                default -> {
-                    if (box.type() == FourCc.of("cmov")) {
-                        throw new MediaException.Unsupported("quicktime compressed movie",
-                                "the movie header is compressed (cmov)");
+                case BoxTypes.CMOV -> {
+                    if (decompressed) {
+                        throw new MediaException.Malformed("a compressed movie holds another compressed movie");
                     }
+                    if (sawHeader || !tracks.isEmpty() || mvex != null) {
+                        throw new MediaException.Malformed("moov holds a compressed movie after uncompressed boxes");
+                    }
+                    parse(BoxCursor.of(QuickTimeCompressedMovie.inflate(box, limits), BoxTypes.CMOV).nextBox(), true);
+                    return;
+                }
+                default -> {
                 }
             }
         }
@@ -193,7 +249,7 @@ final class MovieParser {
             } else if (box.type() == BoxTypes.TREX) {
                 body.fullBoxHeader();
                 var trackId = body.s32();
-                body.u32();
+                var description = body.u32();
                 var duration = body.u32();
                 var size = body.u32();
                 var flags = body.s32();
@@ -202,6 +258,7 @@ final class MovieParser {
                         track.defaultDuration = duration;
                         track.defaultSize = size;
                         track.defaultFlags = flags;
+                        track.defaultDescription = descriptionIndex(description, track.entries.length);
                         break;
                     }
                 }
@@ -232,7 +289,8 @@ final class MovieParser {
 
     /**
      * Keeps the track identifiers a {@code tref} box lists under {@code chap}, the QuickTime
-     * chapter tracks of a track.
+     * chapter tracks of a track, and under {@code scal}, the tracks whose samples the samples of a
+     * scalable or multiview H.264 track extend (ISO/IEC 14496-15).
      *
      * @param tref the box payload
      * @param track receives the identifiers
@@ -240,7 +298,8 @@ final class MovieParser {
     private static void parseChapterReferences(BoxCursor tref, Mp4Track track) {
         while (tref.hasBox()) {
             var reference = tref.nextBox();
-            if (reference.type() != FourCc.of("chap")) {
+            var chapters = reference.type() == FourCc.of("chap");
+            if (!chapters && reference.type() != FourCc.of("scal")) {
                 continue;
             }
             var body = reference;
@@ -248,7 +307,12 @@ final class MovieParser {
             while (body.remaining() >= 4 && ids.size() < 16) {
                 ids.add((int) body.u32());
             }
-            track.chapterTracks = ids.stream().mapToInt(Integer::intValue).toArray();
+            var array = ids.stream().mapToInt(Integer::intValue).toArray();
+            if (chapters) {
+                track.chapterTracks = array;
+            } else {
+                track.scalableTracks = array;
+            }
         }
     }
 
@@ -266,6 +330,7 @@ final class MovieParser {
             switch (box.type()) {
                 case BoxTypes.TKHD -> parseTrackHeader(box, track);
                 case BoxTypes.EDTS -> parseEdits(box, track);
+                case BoxTypes.UDTA -> parseTrackUserData(box, track);
                 case BoxTypes.MDIA -> mdia = box;
                 default -> {
                     if (box.type() == FourCc.of("tref")) {
@@ -324,58 +389,19 @@ final class MovieParser {
     }
 
     /**
-     * Reads which entries of a {@code dref} box refer to the file itself.
+     * Reads the entries of the {@code dref} box of a {@code dinf} box.
      *
      * @param dinf the payload of the {@code dinf} box
-     * @return whether each data reference, indexed from zero, is self-contained, or {@code null}
-     * when the box has no {@code dref}
+     * @return the entries, indexed from zero, or {@code null} when the box has no {@code dref}
      */
-    private static boolean[] readDataReferences(BoxCursor dinf) {
+    private static List<DataReferences.Entry> readDataReferences(BoxCursor dinf) {
         while (dinf.hasBox()) {
             var box = dinf.nextBox();
-            if (box.type() != BoxTypes.DREF) {
-                continue;
+            if (box.type() == BoxTypes.DREF) {
+                return DataReferences.parse(box);
             }
-            var dref = box;
-            dref.fullBoxHeader();
-            var count = (int) Math.min(dref.u32(), 256);
-            var selfContained = new boolean[count];
-            for (var index = 0; index < count && dref.hasBox(); index++) {
-                var entry = dref.nextBox();
-                selfContained[index] = entry.remaining() >= 4 && (entry.fullBoxHeader() & 1) != 0;
-            }
-            return selfContained;
         }
         return null;
-    }
-
-    /**
-     * Rejects a sample description whose data reference points to another file.
-     *
-     * @param stsd a cursor over the {@code stsd} payload, not moved
-     * @param selfContained whether each data reference is self-contained, or {@code null}
-     * @param track the track, for diagnostics
-     * @throws MediaException.Unsupported if the samples are stored in another file
-     */
-    private static void checkDataReference(BoxCursor stsd, boolean[] selfContained, Mp4Track track) {
-        if (selfContained == null) {
-            return;
-        }
-        var cursor = stsd.duplicate();
-        if (cursor.remaining() < 8 + 16) {
-            return;
-        }
-        cursor.skip(8);
-        var entry = cursor.nextBox();
-        if (entry.remaining() < 8) {
-            return;
-        }
-        entry.skip(6);
-        var index = entry.u16();
-        if (index >= 1 && index <= selfContained.length && !selfContained[index - 1]) {
-            throw new MediaException.Unsupported("mp4 external data reference",
-                    "the samples of track " + track.fileId + " are stored in another file");
-        }
     }
 
     /**
@@ -385,7 +411,9 @@ final class MovieParser {
      * @param track the track being built
      */
     private static void parseTrackHeader(BoxCursor tkhd, Mp4Track track) {
-        var version = tkhd.fullBoxHeader() >>> 24;
+        var header = tkhd.fullBoxHeader();
+        var version = header >>> 24;
+        track.enabled = (header & Mp4TrackMetadata.ENABLED) != 0;
         if (version == 1) {
             tkhd.skip(16);
             track.fileId = tkhd.s32();
@@ -403,6 +431,33 @@ final class MovieParser {
         track.matrix = matrix;
         track.headerWidth = (int) (tkhd.u32() >>> 16);
         track.headerHeight = (int) (tkhd.u32() >>> 16);
+    }
+
+    /**
+     * Parses the {@code udta} box of a track: its {@code name}, its {@code kind} boxes, and the tags of its
+     * {@code meta} box and text atoms. A damaged box is skipped, as the metadata is descriptive.
+     *
+     * @param udta the box payload
+     * @param track the track being built
+     */
+    private static void parseTrackUserData(BoxCursor udta, Mp4Track track) {
+        new MetadataReader(track.userTags).readUserData(udta.duplicate());
+        while (udta.hasBox()) {
+            try {
+                var box = udta.nextBox();
+                if (box.type() == BoxTypes.NAME) {
+                    var name = box.string(box.remaining()).strip();
+                    track.name = name.isEmpty() ? null : name;
+                } else if (box.type() == FourCc.of("kind")) {
+                    box.fullBoxHeader();
+                    var scheme = box.string();
+                    var value = box.string();
+                    track.kinds.addAll(Mp4TrackMetadata.dispositions(scheme, value));
+                }
+            } catch (MediaException.Malformed exception) {
+                return;
+            }
+        }
     }
 
     /**
@@ -509,13 +564,13 @@ final class MovieParser {
      *
      * @param stbl the box payload
      * @param track the track being built
-     * @param selfContained whether each data reference of the track is self-contained, or
-     * {@code null} when the track has no {@code dref}
-     * @throws MediaException.Unsupported if the samples are stored in another file
+     * @param references the data references of the track, or {@code null} when the track has no {@code dref}
+     * @throws MediaException.Unsupported if the samples are stored in another file that no resolver supplies
      */
-    private void parseSampleTable(BoxCursor stbl, Mp4Track track, boolean[] selfContained) {
+    private void parseSampleTable(BoxCursor stbl, Mp4Track track, List<DataReferences.Entry> references) {
         BoxCursor stsd = null, stts = null, ctts = null, stss = null, stps = null, sdtp = null;
         BoxCursor stsz = null, stz2 = null, stsc = null, stco = null, co64 = null, randomAccess = null;
+        BoxCursor saiz = null, saio = null, senc = null, piffSenc = null, seigGroups = null, seigSamples = null;
         while (stbl.hasBox()) {
             var box = stbl.nextBox();
             var body = box;
@@ -529,6 +584,21 @@ final class MovieParser {
                 case BoxTypes.SBGP -> {
                     if (randomAccess == null && isRandomAccessGroup(body)) {
                         randomAccess = body;
+                    } else if (seigSamples == null && isGroup(body, BoxTypes.SEIG)) {
+                        seigSamples = body;
+                    }
+                }
+                case BoxTypes.SGPD -> {
+                    if (seigGroups == null && isGroup(body, BoxTypes.SEIG)) {
+                        seigGroups = body;
+                    }
+                }
+                case BoxTypes.SAIZ -> saiz = saiz == null ? body : saiz;
+                case BoxTypes.SAIO -> saio = saio == null ? body : saio;
+                case BoxTypes.SENC -> senc = senc == null ? body : senc;
+                case BoxTypes.UUID -> {
+                    if (piffSenc == null && isPiffSampleEncryption(body)) {
+                        piffSenc = body;
                     }
                 }
                 case BoxTypes.STSZ -> stsz = body;
@@ -543,8 +613,14 @@ final class MovieParser {
         if (stsd == null) {
             throw new MediaException.Malformed("track " + track.fileId + " has no stsd");
         }
-        checkDataReference(stsd, selfContained, track);
-        track.entry = SampleEntry.parse(stsd, track.handler, limits);
+        var errors = new ArrayList<MediaException>();
+        var sources = new ArrayList<MediaSource>();
+        track.entries = SampleEntry.parseAll(stsd, track.handler, limits, references, external, errors, sources);
+        track.entryErrors = errors.toArray(new MediaException[0]);
+        if (sources.stream().anyMatch(java.util.Objects::nonNull)) {
+            track.dataSources = sources.toArray(new MediaSource[0]);
+        }
+        track.entry = track.entries[0];
 
         var sizes = new SizeReader(stsz, stz2);
         var sampleCount = sizes.count;
@@ -553,21 +629,110 @@ final class MovieParser {
         var timing = readRuns(stts, "stts");
         var composition = ctts == null ? null : readRuns(ctts, "ctts");
 
-        var pcmGrouping = track.entry.codec().isPcm() && sizes.constant > 0 && allDeltasOne(timing);
+        var protectedTrack = track.isProtected();
+        if (protectedTrack && readsProtection) {
+            track.cenc = new CencSamples(limits);
+        }
+        var pcmGrouping = (track.entry.codec().isPcm() && sizes.constant > 0
+                || frameSamples(track.entry) > 1 && sizes.constant == 1)
+                && allDeltasOne(timing) && !protectedTrack;
         if (pcmGrouping) {
             track.samples = expandPcm(track, sizes, chunkOffsets, stscEntries, sampleCount);
+            track.selectBaseEntry();
             return;
         }
         var capacity = (int) Math.min(Math.min(sampleCount, coverable(chunkOffsets, stscEntries)), Integer.MAX_VALUE);
         var table = new SampleTable(limits, capacity);
         track.samples = table;
-        var filled = placeSamples(table, sizes, chunkOffsets, stscEntries, sampleCount);
+        var filled = placeSamples(table, sizes, chunkOffsets, stscEntries, sampleCount, track.entries.length);
         applyTiming(table, timing, composition, filled);
         applySync(table, stss, stps, sdtp, filled);
         if (stss != null && randomAccess != null) {
             markRandomAccess(table, randomAccess, 0, filled);
         }
         table.count = filled;
+        if (track.cenc != null) {
+            var cenc = track.cenc;
+            if (seigGroups != null) {
+                cenc.movieGroups = Math.max(0, cenc.addGroups(seigGroups));
+            }
+            if (seigSamples != null) {
+                cenc.assignGroups(seigSamples, table, 0, filled, -1);
+            }
+            if (senc != null) {
+                cenc.readSampleEncryption(senc, false, track, 0, filled);
+            } else if (piffSenc != null) {
+                cenc.readSampleEncryption(piffSenc, true, track, 0, filled);
+            } else if (saiz != null && saio != null && filled > 0) {
+                if (auxSource == null) {
+                    throw new MediaException.Unsupported("mp4 encryption", "sample auxiliary information outside "
+                            + "the moov of a stream");
+                }
+                cenc.readAuxiliaryInfo(saiz, saio, track, chunkStarts(stscEntries, chunkOffsets.length, filled), 0,
+                        auxSource, track.protection().scheme());
+            }
+        }
+        track.selectBaseEntry();
+    }
+
+    /**
+     * Returns whether a sample group box ({@code sbgp} or {@code sgpd}) is of a grouping type.
+     *
+     * @param box the box payload, not moved
+     * @param groupingType the grouping type
+     * @return {@code true} when the box groups by {@code groupingType}
+     */
+    static boolean isGroup(BoxCursor box, int groupingType) {
+        var cursor = box.duplicate();
+        if (cursor.remaining() < 8) {
+            return false;
+        }
+        cursor.fullBoxHeader();
+        return cursor.s32() == groupingType;
+    }
+
+    /**
+     * Returns whether a {@code uuid} box is the sample encryption box of PIFF 1.1, and moves its cursor past the
+     * user type when it is.
+     *
+     * @param box the box payload, starting with the user type
+     * @return {@code true} for the PIFF sample encryption box
+     */
+    static boolean isPiffSampleEncryption(BoxCursor box) {
+        var cursor = box.duplicate();
+        if (cursor.remaining() < 24 || cursor.u64() != TrackProtection.PIFF_SENC_HIGH
+                || cursor.u64() != TrackProtection.PIFF_SENC_LOW) {
+            return false;
+        }
+        box.skip(16);
+        return true;
+    }
+
+    /**
+     * Returns the index of the first sample of each chunk, as {@link #placeSamples} places them, followed by the
+     * number of samples.
+     *
+     * @param stsc the sample-to-chunk entries
+     * @param chunks the number of chunks
+     * @param sampleCount the number of samples placed
+     * @return the indices, ascending
+     */
+    private static int[] chunkStarts(long[] stsc, int chunks, int sampleCount) {
+        var starts = new int[Math.min(chunks, sampleCount) + 1];
+        var used = 0;
+        var entries = stsc.length / 3;
+        var index = 0L;
+        for (var entry = 0; entry < entries && index < sampleCount; entry++) {
+            var first = stsc[entry * 3] - 1;
+            var last = Math.min(entry + 1 < entries ? stsc[(entry + 1) * 3] - 1 : chunks, chunks);
+            var perChunk = stsc[entry * 3 + 1];
+            for (var chunk = first; chunk < last && index < sampleCount && used < starts.length - 1; chunk++) {
+                starts[used++] = (int) index;
+                index = Math.min(sampleCount, index + perChunk);
+            }
+        }
+        starts[used++] = sampleCount;
+        return Arrays.copyOf(starts, used);
     }
 
     /**
@@ -804,9 +969,11 @@ final class MovieParser {
      * @param chunkOffsets the chunk offsets
      * @param stsc the sample-to-chunk entries
      * @param sampleCount the declared number of samples
+     * @param descriptions the number of sample descriptions of the track
      * @return the number of samples the chunks cover, at most {@code sampleCount}
      */
-    private static int placeSamples(SampleTable table, SizeReader sizes, long[] chunkOffsets, long[] stsc, long sampleCount) {
+    private static int placeSamples(SampleTable table, SizeReader sizes, long[] chunkOffsets, long[] stsc, long sampleCount,
+                                    int descriptions) {
         var entries = stsc.length / 3;
         var index = 0;
         for (var entry = 0; entry < entries && index < sampleCount; entry++) {
@@ -814,6 +981,7 @@ final class MovieParser {
             var last = entry + 1 < entries ? stsc[(entry + 1) * 3] - 1 : chunkOffsets.length;
             last = Math.min(last, chunkOffsets.length);
             var perChunk = stsc[entry * 3 + 1];
+            var description = descriptionIndex(stsc[entry * 3 + 2], descriptions);
             for (var chunk = first; chunk < last && index < sampleCount; chunk++) {
                 var offset = chunkOffsets[(int) chunk];
                 var inChunk = Math.min(perChunk, sampleCount - index);
@@ -821,12 +989,26 @@ final class MovieParser {
                     var size = sizes.next(index);
                     table.offsets[index] = offset;
                     table.sizes[index] = size;
+                    table.setDescription(index, description);
                     offset += size;
                     index++;
                 }
             }
         }
         return index;
+    }
+
+    /**
+     * Converts a one-based sample description index into an index of the parsed descriptions.
+     *
+     * @param value the {@code sample_description_index} of an {@code stsc} entry, a {@code tfhd}
+     * or a {@code trex}
+     * @param descriptions the number of parsed descriptions
+     * @return the zero-based index; the first description for a value out of range, such as the
+     * zero of files that leave the field unset
+     */
+    static int descriptionIndex(long value, int descriptions) {
+        return value >= 1 && value <= descriptions ? (int) value - 1 : 0;
     }
 
     /**
@@ -989,9 +1171,52 @@ final class MovieParser {
     }
 
     /**
+     * Returns the samples per frame of a compressed audio entry that the classic QuickTime layout stores one decoded
+     * sample per table sample (a constant sample size of one byte and a duration of one).
+     *
+     * @param entry the sample entry
+     * @return 64 for {@code ima4}, 160 for GSM 06.10, 6 for MACE, the samples of a block for IMA and Microsoft ADPCM
+     * with a known block size, and 0 for any other entry
+     */
+    static int frameSamples(SampleEntry entry) {
+        var channels = Math.max(1, entry.channels());
+        return switch (entry.codec()) {
+            case ADPCM_IMA_QT -> 64;
+            case GSM -> 160;
+            case MACE3, MACE6 -> 6;
+            case ADPCM_IMA_WAV -> entry.frameBytes() > 4 * channels
+                    ? (int) Math.min(Integer.MAX_VALUE, 1 + 8L * ((entry.frameBytes() - 4L * channels) / (4L * channels)))
+                    : 0;
+            case ADPCM_MS -> entry.frameBytes() > 7 * channels
+                    ? (int) Math.min(Integer.MAX_VALUE, 2 + 2L * (entry.frameBytes() - 7L * channels) / channels)
+                    : 0;
+            default -> 0;
+        };
+    }
+
+    /**
+     * Returns the bytes of one frame of a compressed audio entry of {@link #frameSamples(SampleEntry)}.
+     *
+     * @param entry the sample entry
+     * @return the bytes of a frame, all channels together
+     */
+    private static int frameBytes(SampleEntry entry) {
+        var channels = Math.max(1, entry.channels());
+        return switch (entry.codec()) {
+            case ADPCM_IMA_QT -> 34 * channels;
+            case GSM -> 33;
+            case MACE3 -> 2 * channels;
+            case MACE6 -> channels;
+            default -> entry.frameBytes();
+        };
+    }
+
+    /**
      * Builds the packet index of an uncompressed audio track stored one frame per sample,
      * grouping up to {@value #PCM_FRAMES_PER_PACKET} consecutive frames of a chunk into one
-     * packet.
+     * packet; or of a compressed track in the classic QuickTime layout, one decoded sample per table sample, whose
+     * chunks hold whole frames of {@link #frameSamples(SampleEntry)} samples, grouped likewise (one block per packet
+     * for the WAVE-layout ADPCM codecs).
      *
      * @param track the track being built
      * @param sizes the size reader, whose sizes are constant
@@ -1001,10 +1226,6 @@ final class MovieParser {
      * @return the packet index
      */
     private SampleTable expandPcm(Mp4Track track, SizeReader sizes, long[] chunkOffsets, long[] stsc, long sampleCount) {
-        var frameBytes = sizes.constant;
-        if (frameBytes == 1 && track.entry.frameBytes() > 1) {
-            frameBytes = track.entry.frameBytes();
-        }
         var entries = stsc.length / 3;
         var packets = 0L;
         var covered = 0L;
@@ -1032,16 +1253,33 @@ final class MovieParser {
             var first = stsc[entry * 3] - 1;
             var last = Math.min(entry + 1 < entries ? stsc[(entry + 1) * 3] - 1 : chunkOffsets.length, chunkOffsets.length);
             var perChunk = stsc[entry * 3 + 1];
+            var description = descriptionIndex(stsc[entry * 3 + 2], track.entries.length);
+            var described = track.entries[description] != null ? track.entries[description] : track.entry;
+            var frameBytes = sizes.constant;
+            if (frameBytes == 1 && described.frameBytes() > 1) {
+                frameBytes = described.frameBytes();
+            }
+            var unit = Math.max(1, frameSamples(described));
+            // a WAVE-layout ADPCM packet is one block; the other layouts take several frames per packet
+            var unitsPerPacket = described.codec() == Codec.ADPCM_IMA_WAV || described.codec() == Codec.ADPCM_MS
+                    ? 1 : PCM_FRAMES_PER_PACKET;
+            if (unit > 1) {
+                frameBytes = frameBytes(described);
+            }
             for (var chunk = first; chunk < last && frame < sampleCount; chunk++) {
                 var offset = chunkOffsets[(int) chunk];
                 var inChunk = Math.min(perChunk, sampleCount - frame);
                 while (inChunk > 0) {
-                    var frames = (int) Math.min(inChunk, PCM_FRAMES_PER_PACKET);
-                    var bytes = frames * frameBytes;
+                    var frames = (int) Math.min(inChunk, (long) unitsPerPacket * unit);
+                    if (unit > 1 && frames < inChunk) {
+                        frames -= frames % unit;
+                    }
+                    var bytes = (long) (frames + unit - 1) / unit * frameBytes;
                     if (bytes > Integer.MAX_VALUE) {
                         throw new MediaException.Malformed("PCM packet of " + bytes + " bytes is too large");
                     }
                     table.add(offset, (int) bytes, frame, frames, 0, true);
+                    table.setDescription(table.count - 1, description);
                     offset += bytes;
                     frame += frames;
                     inChunk -= frames;

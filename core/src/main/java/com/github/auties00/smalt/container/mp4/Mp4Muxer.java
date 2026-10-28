@@ -1,14 +1,23 @@
 package com.github.auties00.smalt.container.mp4;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.container.Chapter;
 import com.github.auties00.smalt.container.Muxer;
+import com.github.auties00.smalt.container.Timecode;
+import com.github.auties00.smalt.container.internal.ConfigChanges;
+import com.github.auties00.smalt.internal.caption.QuickTimeCaptions;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
+import com.github.auties00.smalt.internal.codec.Jp2Frames;
+import com.github.auties00.smalt.internal.tags.Mp4ChapterTrack;
+import com.github.auties00.smalt.internal.tags.Mp4TrackMetadata;
 import com.github.auties00.smalt.internal.tags.MuxerTags;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.metadata.MediaTags;
+import com.github.auties00.smalt.metadata.TrackTags;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
+import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.TrackKind;
 import com.github.auties00.smalt.track.VideoTrack;
@@ -21,8 +30,8 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Writes ISO base media files (MP4 and M4A) from the packets of H.264, HEVC, VP9, AV1, AAC, Opus,
- * MP3, ALAC and FLAC tracks.
+ * Writes ISO base media files (MP4 and M4A) and QuickTime movies from the packets of the codecs
+ * {@link #supports} lists for each {@linkplain Mp4MuxerOptions.Brand brand}.
  *
  * <p>Packets are grouped per track into chunks of at most
  * {@link Mp4MuxerOptions#interleaveMicros()} of media (or 8 MiB), and chunks are stored in the
@@ -38,7 +47,9 @@ import java.util.Objects;
  * its packet's duration); composition offsets are written only when presentation and decoding
  * timestamps differ, as a version 1 {@code ctts} when an offset is negative; the sync sample table
  * is omitted when every sample is a sync sample. Tracks whose packets carry presentation
- * timestamps only get decoding timestamps derived from them.
+ * timestamps only get decoding timestamps derived from them. A PCM track is stored one frame per
+ * sample in a timescale of its sampling rate: its frames follow each other without gaps from the
+ * first packet's timestamp, and the timestamps of the later packets are not used.
  *
  * <p>The edit list mirrors the timing conventions of {@link Mp4Demuxer}: a track whose first
  * presentation timestamp is positive starts with an empty edit of that length; a video track whose
@@ -46,10 +57,32 @@ import java.util.Objects;
  * presents timestamp zero first; an audio track's {@link AudioTrack#skipSamples()} (plus the Opus
  * pre-skip) becomes the media time, so players trim the encoder priming, unless the packets start
  * that far or further before zero (as Ogg Opus packets do), in which case the media time is that
- * lead instead, so the priming is not counted twice; and a track duration
- * shorter than the media trims the end. The track header matrix encodes
- * {@link VideoTrack#orientation()}, and a declared color description becomes an {@code nclx}
- * {@code colr} box.
+ * lead instead, so the priming is not counted twice; a track duration shorter than the media trims
+ * the end; and a subtitle track that ends before the movie gets an edit of its own length, so
+ * players do not stretch its last sample to the end of the movie. The track header matrix encodes
+ * {@link VideoTrack#orientation()}, a declared color description becomes an {@code nclx}
+ * {@code colr} box, followed by an {@code mdcv} box for its
+ * {@linkplain com.github.auties00.smalt.image.ColorInfo#masteringDisplay() mastering display} and a
+ * {@code clli} box for its
+ * {@linkplain com.github.auties00.smalt.image.ColorInfo#contentLightLevel() content light level}
+ * when it has them (chromaticities rounded to units of 0.00002, luminances to units of 0.0001
+ * candelas per square meter), a declared {@link VideoTrack#sampleAspectRatio() sample aspect ratio} a
+ * {@code pasp} box, and a declared {@link VideoTrack#interlacing() scan} a QuickTime {@code fiel} box. An H.264,
+ * HEVC or AV1 track with a {@link VideoTrack#dolbyVision() Dolby Vision configuration} gets its configuration box
+ * after the codec configuration box ({@code dvcC} up to profile 7, {@code dvvC} for profiles 8 to 10,
+ * {@code dvwC} above); one whose base layer is not
+ * {@linkplain com.github.auties00.smalt.track.DolbyVision#isBackwardCompatible() backward compatible} is stored
+ * in a Dolby Vision sample entry ({@code dva1}, {@code dvh1} or {@code dav1}) instead of the base codec's, so
+ * that players that do not understand Dolby Vision do not show its base layer.
+ *
+ * <p>A packet whose side data carries a
+ * {@link com.github.auties00.smalt.track.PacketSideData#newCodecConfig() new codec configuration}
+ * that differs from the one in use adds a sample description to its track (or returns to an
+ * earlier one with the same configuration), which that packet and the following ones reference
+ * through {@code stsc}; the chunk in progress ends there, since a chunk uses one description. The
+ * description of a video track takes its picture size from the new configuration's sequence
+ * parameter set when it has one, and that of an AAC track its sampling rate and channel count
+ * from the new {@code AudioSpecificConfig}.
  *
  * <p>Instances are not thread-safe. Output failures raise {@link MediaException.Io}; the output
  * sink is written from its position at construction and is never closed by the muxer. A
@@ -77,6 +110,11 @@ public final class Mp4Muxer implements Muxer {
      * The largest value a 32-bit box field holds.
      */
     private static final long U32_MAX = 0xFFFFFFFFL;
+
+    /**
+     * The key of the tag that becomes the timecode track.
+     */
+    static final String TIMECODE_TAG = "timecode";
 
     /**
      * The output sink, or {@code null} for a planning muxer.
@@ -123,6 +161,46 @@ public final class Mp4Muxer implements Muxer {
      * The {@code udta} box the tags were encoded to, empty without tags.
      */
     private byte[] userData = new byte[0];
+
+    /**
+     * The top-level {@code uuid} box of the XMP packet, written after {@code ftyp}, empty without one.
+     */
+    private byte[] xmpBox = new byte[0];
+
+    /**
+     * The tags of {@link #setTags(MediaTags)}, whose track tags go in the {@code trak} boxes.
+     */
+    private MediaTags tags = MediaTags.empty();
+
+    /**
+     * The chapters of the tags, which also become a QuickTime chapter track.
+     */
+    private List<Chapter> chapters = List.of();
+
+    /**
+     * The chapter track laid out by {@link #finish()}, or {@code null} when there is none.
+     */
+    private Mp4ChapterTrack chapterTrack;
+
+    /**
+     * The offset of the chapter samples from the start of the media data.
+     */
+    private long chapterDataOffset;
+
+    /**
+     * The {@code timecode} tag, or {@code null} when the tags hold none.
+     */
+    private String timecodeText;
+
+    /**
+     * The timecode track laid out by {@link #finish()}, or {@code null} when there is none.
+     */
+    private TimecodeTrack timecodeTrack;
+
+    /**
+     * The offset of the timecode sample from the start of the media data.
+     */
+    private long timecodeDataOffset;
 
     /**
      * Whether a packet was written.
@@ -295,10 +373,14 @@ public final class Mp4Muxer implements Muxer {
      * Returns whether an MP4 file of a brand can carry a codec, so that {@link #addTrack(Track)}
      * accepts a track of it given the configuration the codec needs.
      *
-     * <p>Every brand carries AAC, Opus, MP3, ALAC, FLAC, AMR-NB, AMR-WB, AC-3 and E-AC-3;
-     * {@link Mp4MuxerOptions.Brand#MP4} and {@link Mp4MuxerOptions.Brand#QUICKTIME} add H.264, HEVC,
-     * VP9, AV1, {@link Codec#MOV_TEXT} and {@link Codec#WEBVTT}; only
-     * {@link Mp4MuxerOptions.Brand#QUICKTIME} carries ProRes and DNxHD.
+     * <p>Every brand carries AAC, Opus, MP3, MP2, ALAC, FLAC, AMR-NB, AMR-WB, AC-3 and E-AC-3;
+     * {@link Mp4MuxerOptions.Brand#MP4}, {@link Mp4MuxerOptions.Brand#QUICKTIME} and
+     * {@link Mp4MuxerOptions.Brand#MJ2} add Motion JPEG 2000; {@link Mp4MuxerOptions.Brand#MP4} and
+     * {@link Mp4MuxerOptions.Brand#QUICKTIME} add H.264, HEVC, VP8, VP9, AV1, MPEG-4 Part 2, H.263, Motion-JPEG, the
+     * 16-, 24- and 32-bit integer and 32- and 64-bit float PCM formats, {@link Codec#MOV_TEXT}, {@link Codec#WEBVTT},
+     * {@link Codec#TTML}, {@link Codec#DVD_SUBTITLE}, {@link Codec#CEA_608} and {@link Codec#CEA_708}; only
+     * {@link Mp4MuxerOptions.Brand#QUICKTIME} carries ProRes, DNxHD, 8-bit PCM, A-law, mu-law, {@code ima4} IMA ADPCM,
+     * GSM 06.10 ({@code agsm}) and MACE ({@code MAC3}, {@code MAC6}), whose packets hold whole frames.
      *
      * @param brand the brand of the file
      * @param codec the codec of the track
@@ -307,9 +389,14 @@ public final class Mp4Muxer implements Muxer {
     public static boolean supports(Mp4MuxerOptions.Brand brand, Codec codec) {
         Objects.requireNonNull(brand, "brand");
         return switch (Objects.requireNonNull(codec, "codec")) {
-            case AAC, OPUS, MP3, ALAC, FLAC, AMR_NB, AMR_WB, AC3, EAC3 -> true;
-            case H264, HEVC, VP9, AV1, MOV_TEXT, WEBVTT -> brand != Mp4MuxerOptions.Brand.M4A;
-            case PRORES, DNXHD -> brand == Mp4MuxerOptions.Brand.QUICKTIME;
+            case AAC, OPUS, MP3, MP2, ALAC, FLAC, AMR_NB, AMR_WB, AC3, EAC3 -> true;
+            case JPEG2000 -> brand != Mp4MuxerOptions.Brand.M4A;
+            case H264, HEVC, VP8, VP9, AV1, MPEG4_PART2, H263, MJPEG, MOV_TEXT, WEBVTT, TTML, DVD_SUBTITLE, CEA_608,
+                 CEA_708, PCM_S16LE, PCM_S16BE,
+                 PCM_S24LE, PCM_S24BE, PCM_S32LE, PCM_S32BE, PCM_F32LE, PCM_F32BE, PCM_F64LE, PCM_F64BE ->
+                    brand == Mp4MuxerOptions.Brand.MP4 || brand == Mp4MuxerOptions.Brand.QUICKTIME;
+            case PRORES, DNXHD, PCM_U8, PCM_S8, PCM_ALAW, PCM_MULAW, ADPCM_IMA_QT, GSM, MACE3, MACE6 ->
+                    brand == Mp4MuxerOptions.Brand.QUICKTIME;
             default -> false;
         };
     }
@@ -317,23 +404,53 @@ public final class Mp4Muxer implements Muxer {
     /**
      * {@inheritDoc}
      *
-     * <p>Supported codecs are H.264 and HEVC (which need their {@code avcC}/{@code hvcC}
-     * configuration), VP9 and AV1 (whose {@code vpcC}/{@code av1C} record, when the track has
-     * none, is derived from the first key frame's headers), AAC (which needs its {@code AudioSpecificConfig}), Opus
-     * (which needs its {@code OpusHead}), MP3, ALAC (which needs its {@code ALACSpecificConfig}), FLAC (which
-     * needs its metadata blocks), AMR-NB and AMR-WB (as {@code samr} and {@code sawb} with a
-     * {@code damr} box listing the modes the samples use; each packet holds storage-format
-     * frames), and the text subtitle codecs {@link Codec#MOV_TEXT} (a {@code tx3g} track) and
-     * {@link Codec#WEBVTT} (a {@code wvtt} track), and, with the {@link Mp4MuxerOptions.Brand#QUICKTIME}
-     * brand only, ProRes and DNxHD (whose sample entry type is the track's four-character
-     * configuration, or derived from the first frame when the track has none). The packets of a
-     * subtitle track may overlap and
-     * leave gaps, as cues do: the muxer cuts them into the gapless samples MP4 stores, each holding
-     * the cues shown during it, starting the track at zero with an empty sample. The
-     * {@link Mp4MuxerOptions.Brand#M4A} brand accepts audio tracks only.
+     * <p>The codecs are those {@link #supports} lists for the brand. H.264 and HEVC need their
+     * {@code avcC}/{@code hvcC} configuration (the parameter sets of HEVC layers above the base
+     * layer an {@code hvcC} holds are written to an {@code lhvC} box); VP8, VP9 and AV1 (written as {@code vp08},
+     * {@code vp09} and {@code av01}) take their {@code vpcC}/{@code av1C} record from the track or,
+     * when it has none, derive it from the first key frame's headers; MPEG-4 Part 2 is an
+     * {@code mp4v} entry whose {@code esds} holds the track's decoder configuration or the headers
+     * that precede the first picture of the first frame; H.263 is {@code s263} with a {@code d263}
+     * box ({@code h263} in a QuickTime file); Motion-JPEG is {@code mp4v} with the JPEG object
+     * type in an ISO file and {@code jpeg} ({@code mjpa} for Motion-JPEG format A frames,
+     * {@code mjpb} for format B frames) in a QuickTime file. Motion JPEG 2000 is {@code mjp2} with a {@code jp2h}
+     * box, the track's configuration or, without one, the JP2 Header box of the first frame or one built from its
+     * main codestream header; a Motion JPEG 2000 file adds the {@code fiel}, {@code jsub} and {@code orfo} boxes and
+     * stores each frame as its Contiguous Codestream boxes, dropping the other boxes of a JP2 file. AAC needs its
+     * {@code AudioSpecificConfig}, Opus its {@code OpusHead}, ALAC its {@code ALACSpecificConfig}
+     * and FLAC its metadata blocks; MP3 and MP2 are {@code mp4a}
+     * entries with the MPEG-1 or MPEG-2 audio object type; AMR-NB and AMR-WB are {@code samr} and
+     * {@code sawb} with a {@code damr} box listing the modes the samples use, each packet holding
+     * storage-format frames. PCM tracks need their sampling rate and channel layout, and each packet
+     * a whole number of frames; an ISO file stores them as {@code ipcm} or {@code fpcm} with a
+     * {@code pcmC} box (ISO/IEC 23003-5) and a {@code chnl} box, a QuickTime file as a version 1
+     * sound description ({@code twos}, {@code sowt}, {@code raw }, {@code in24}, {@code in32},
+     * {@code fl32}, {@code fl64}, {@code alaw}, {@code ulaw}) or, for the encodings without one,
+     * more than two channels or rates above 65535 Hz, a version 2 description ({@code lpcm} for
+     * linear PCM), with a {@code chan} box. Every audio sample entry whose track layout carries every
+     * {@linkplain com.github.auties00.smalt.audio.ChannelLayout#ambisonics() ambisonic} component of its
+     * order with SN3D normalization, optionally with a front left and right pair, gets a spatial audio box
+     * ({@code SA3D}) mapping each channel to its component, the pair as head-locked stereo. ProRes and
+     * DNxHD (QuickTime only) take their sample entry type from the track's four-character configuration,
+     * or derive it from the first frame when the track has none. The text subtitle codecs are {@link Codec#MOV_TEXT} (a
+     * {@code tx3g} track) and {@link Codec#WEBVTT} (a {@code wvtt} track); their packets may
+     * overlap and leave gaps, as cues do: the muxer cuts them into the gapless samples MP4 stores,
+     * each holding the cues shown during it, starting the track at zero with an empty sample.
+     * {@link Codec#TTML} is an {@code stpp} track (with the {@code subt} handler) whose packets are
+     * stored as they are, one document per sample; they must not overlap, and a gap, the start of
+     * the track included, becomes a sample holding a TTML document that shows nothing.
+     * {@link Codec#DVD_SUBTITLE} is an {@code mp4s} track (with the {@code subp} handler) whose {@code esds} declares
+     * object type {@code 0xE0} and holds the 16 palette entries of the track's VobSub header as Y'CrCb, its track
+     * header the header's frame size. {@link Codec#CEA_608} and {@link Codec#CEA_708} are QuickTime closed caption
+     * tracks ({@code c608} and {@code c708}, with the {@code clcp} handler): each packet becomes a {@code cdat} and a
+     * {@code cdt2} atom holding its valid field 1 and field 2 byte pairs, or a {@code ccdp} atom holding a caption
+     * distribution packet with its constructs (at most 31) and the frame rate the packet's duration gives.
      *
      * @throws IllegalArgumentException if the id is already used, the codec is not supported, the
-     * configuration it needs is missing, or the brand cannot carry the track
+     * configuration it needs is missing, a TTML configuration is malformed or a DNxHD configuration
+     * holds anything but Avid sample description extensions after its sample entry type, a PCM
+     * track has no sampling rate or channel layout, an AMR track has more than one channel, or the brand cannot
+     * carry the track
      */
     @Override
     public void addTrack(Track track) {
@@ -347,40 +464,41 @@ public final class Mp4Muxer implements Muxer {
             }
         }
         var codec = track.codec();
-        switch (codec) {
-            case H264, HEVC, VP9, AV1 -> {
-                if (options.brand() == Mp4MuxerOptions.Brand.M4A) {
-                    throw new IllegalArgumentException("the M4A brand carries audio only");
-                }
+        if (!supports(options.brand(), codec)) {
+            if (options.brand() == Mp4MuxerOptions.Brand.MJ2 && supports(Mp4MuxerOptions.Brand.MP4, codec)) {
+                throw new IllegalArgumentException("the MJ2 brand carries Motion JPEG 2000 video and compressed audio"
+                        + " only, not " + codec.displayName());
             }
-            case PRORES, DNXHD -> {
-                if (options.brand() != Mp4MuxerOptions.Brand.QUICKTIME) {
-                    throw new IllegalArgumentException(codec.displayName() + " tracks need the QuickTime brand");
-                }
+            if (options.brand() == Mp4MuxerOptions.Brand.M4A && supports(Mp4MuxerOptions.Brand.MP4, codec)) {
+                throw new IllegalArgumentException(codec.kind() != TrackKind.AUDIO ? "the M4A brand carries audio only"
+                        : "the M4A brand does not carry " + codec.displayName() + "; the MP4 and QuickTime brands do");
             }
-            case AAC, OPUS, ALAC, FLAC, MP3, AMR_NB, AMR_WB, AC3, EAC3 -> {
+            if (supports(Mp4MuxerOptions.Brand.QUICKTIME, codec)) {
+                throw new IllegalArgumentException(codec.displayName() + " tracks need the QuickTime brand");
             }
-            case MOV_TEXT, WEBVTT -> {
-                if (options.brand() == Mp4MuxerOptions.Brand.M4A) {
-                    throw new IllegalArgumentException("the M4A brand carries audio only");
-                }
-                textTracks.add(new TextSamples(track.id(), codec, this::writeTextSample));
-            }
-            default -> throw new IllegalArgumentException("MP4 muxing of " + codec.displayName() + " is not supported");
+            throw new IllegalArgumentException("MP4 muxing of " + codec.displayName() + " is not supported");
         }
         MovieHeaderWriter.validateConfig(track);
-        tracks.add(new MuxTrack(track, tracks.size() + 1));
+        var state = new MuxTrack(track, tracks.size() + 1);
+        state.quickTime = options.brand() == Mp4MuxerOptions.Brand.QUICKTIME;
+        state.motionJpeg2000 = options.brand() == Mp4MuxerOptions.Brand.MJ2;
+        if (TextSamples.handles(codec)) {
+            textTracks.add(new TextSamples(track.id(), codec, this::writeTextSample));
+        }
+        tracks.add(state);
     }
 
     /**
      * {@inheritDoc}
      *
-     * <p>A FLAC configuration replaces the track's until {@link #finish()} writes the movie header,
-     * so the {@code dfLa} box carries the final {@code STREAMINFO}; a header planned up front, and
-     * every other codec, keep their configuration.
+     * <p>A FLAC or ALAC configuration replaces the track's until {@link #finish()} writes the movie
+     * header, so the {@code dfLa} box carries the final {@code STREAMINFO} and the {@code alac} box
+     * the final {@code ALACSpecificConfig}; a header planned up front, and every other codec, keep
+     * their configuration.
      *
-     * @throws IllegalArgumentException if the track was not declared, or a FLAC configuration does
-     * not start with {@code STREAMINFO}
+     * @throws IllegalArgumentException if the track was not declared, a FLAC configuration does not
+     * start with {@code STREAMINFO}, or an ALAC configuration holds no {@code ALACSpecificConfig} or
+     * describes another frame length, sample size, channel count or sampling rate than the track's
      * @throws IllegalStateException if the muxer is finished
      */
     @Override
@@ -398,10 +516,24 @@ public final class Mp4Muxer implements Muxer {
         if (target == null) {
             throw new IllegalArgumentException("undeclared track " + trackId);
         }
-        if (target.track.codec() != Codec.FLAC || plannedHeader != null || planning) {
+        var codec = target.track.codec();
+        if ((codec != Codec.FLAC && codec != Codec.ALAC) || plannedHeader != null || planning) {
             return;
         }
-        AudioConfigs.parseFlac(config);
+        if (codec == Codec.FLAC) {
+            AudioConfigs.parseFlac(config);
+        } else {
+            AudioConfigs.AlacConfig replacement;
+            try {
+                replacement = AudioConfigs.parseAlac(AudioConfigs.alacConfig(config));
+            } catch (MediaException.Malformed exception) {
+                throw new IllegalArgumentException("invalid ALACSpecificConfig: " + exception.getMessage(), exception);
+            }
+            if (!replacement.equals(AudioConfigs.parseAlac(AudioConfigs.alacConfig(target.config)))) {
+                throw new IllegalArgumentException("the final ALAC configuration of track " + trackId
+                        + " describes another stream than the initial one");
+            }
+        }
         target.config = config.clone();
     }
 
@@ -419,7 +551,33 @@ public final class Mp4Muxer implements Muxer {
      * {@inheritDoc}
      *
      * <p>The tags become a {@code udta} box at the end of {@code moov}: an iTunes {@code ilst}
-     * with cover art in {@code covr}, and a Nero {@code chpl} box for the chapters.
+     * with cover art in {@code covr}, the 3GPP location information boxes of the {@code loci} key (ISO 6709
+     * coordinates), and a Nero {@code chpl} box for the chapters. Reverse-DNS keys such as
+     * {@code com.apple.quicktime.make} go to a QuickTime keyed metadata {@code meta} box (handler {@code mdta})
+     * after it, as text. The {@linkplain MediaTags#xmp() XMP packet} goes in a top-level {@code uuid} box after
+     * {@code ftyp} (XMP Specification Part 3), or in an {@code XMP_} atom of {@code udta} in a
+     * {@link Mp4MuxerOptions.Brand#QUICKTIME QuickTime} movie. The iTunes
+     * integer atoms ({@code tmpo}, {@code rtng}, {@code stik}, {@code pgap}, {@code hdvd},
+     * {@code tvsn}, {@code tves}, {@code plID} and the other store identifiers) take decimal
+     * values. The chapters are also written as a QuickTime chapter track: a disabled text track,
+     * after the declared tracks, whose samples hold the titles, follow the media data and are
+     * referenced through {@code tref/chap} by every audio and video track. The tags of a declared
+     * track become a {@code udta} box at the end of its {@code trak}: its name in a {@code name}
+     * box, its dispositions in {@code kind} boxes of the DASH role scheme and its other entries in
+     * an iTunes {@code ilst}; the track is enabled in its {@code tkhd} when it is
+     * {@link com.github.auties00.smalt.track.TrackDisposition#DEFAULT} (the first video and the first
+     * audio track stay enabled when no track of their kind is), and a track without tags stays enabled.
+     *
+     * <p>A {@code timecode} tag, a {@link com.github.auties00.smalt.container.Timecode} in its text form such as
+     * {@code 01:00:00;00}, becomes a QuickTime timecode track instead of an iTunes item: a {@code tmcd} track after
+     * the declared tracks (and after the chapter track), whose one sample holds the frame number of the address,
+     * counted at the nominal rate of the first video track's frame rate rounded up, and which every video track
+     * references through {@code tref/tmcd}. Without a video track that declares a frame rate, only a drop-frame
+     * address is written, at 30000/1001 frames per second.
+     *
+     * @throws IllegalArgumentException if the {@code timecode} tag is not a time address
+     * @throws MediaException.Unsupported if the value of an iTunes integer atom is not an integer
+     * the atom holds, or a value of the {@code loci} key is not ISO 6709 coordinates
      */
     @Override
     public void setTags(MediaTags tags) {
@@ -427,7 +585,37 @@ public final class Mp4Muxer implements Muxer {
         if (started || finished) {
             throw new IllegalStateException("tags must be set before the first packet");
         }
-        this.userData = MuxerTags.mp4UserData(tags);
+        var timecode = tags.get(TIMECODE_TAG).orElse(null);
+        if (timecode != null) {
+            checkTimecode(timecode.strip());
+        }
+        var quickTime = options.brand() == Mp4MuxerOptions.Brand.QUICKTIME;
+        var userData = MuxerTags.mp4UserData(tags.toBuilder().remove(TIMECODE_TAG).build(), quickTime);
+        for (var track : tags.tracks()) {
+            // the track boxes are written with the movie box, but their values are checked now
+            Mp4TrackMetadata.userData(track);
+        }
+        this.userData = userData;
+        this.xmpBox = quickTime ? new byte[0] : MuxerTags.mp4Xmp(tags);
+        this.chapters = tags.chapters();
+        this.timecodeText = timecode == null ? null : timecode.strip();
+        this.tags = tags;
+    }
+
+    /**
+     * Checks that a {@code timecode} tag is a time address at some nominal rate, before the rate it is counted at
+     * is known.
+     *
+     * @param text the tag value
+     * @throws IllegalArgumentException if the value is no time address at the highest nominal rate, or for a
+     * drop-frame address at the highest multiple of 30
+     */
+    static void checkTimecode(String text) {
+        try {
+            Timecode.parse(text, 255);
+        } catch (IllegalArgumentException exception) {
+            Timecode.parse(text, 240);
+        }
     }
 
     /**
@@ -438,8 +626,14 @@ public final class Mp4Muxer implements Muxer {
      * track whose first packet has a presentation timestamp only is treated as presentation-timed
      * throughout.
      *
-     * @throws IllegalArgumentException if the track was not declared or its decoding timestamps
-     * decrease
+     * @throws IllegalArgumentException if the track was not declared, its decoding timestamps
+     * decrease, a new codec configuration is invalid, the packet of a PCM track does not hold a
+     * whole number of frames or takes the track past {@code 2^32 - 1} frames, the packet of a
+     * TTML track starts before zero or before the previous one ends, or the packet of a Motion JPEG 2000 track of
+     * a Motion JPEG 2000 file holds no JPEG 2000 codestream
+     * @throws MediaException.Unsupported if the packet changes the codec configuration of a text
+     * track or of a codec whose sample description holds none (MP3, MP2, AMR, AC-3, E-AC-3, PCM,
+     * H.263, Motion-JPEG)
      */
     @Override
     public void writePacket(Packet packet) {
@@ -453,6 +647,11 @@ public final class Mp4Muxer implements Muxer {
                     if (finished) {
                         throw new IllegalStateException("the muxer is finished");
                     }
+                    for (var track : tracks) {
+                        if (track.track.id() == packet.trackId()) {
+                            ConfigChanges.reject(packet, track.track.codecConfig().orElse(null), "MP4");
+                        }
+                    }
                     text.offer(packet);
                     return;
                 }
@@ -460,12 +659,141 @@ public final class Mp4Muxer implements Muxer {
         }
         var data = packet.data();
         for (var track : tracks) {
+            if (track.track.id() == packet.trackId()
+                    && (track.codec() == Codec.CEA_608 || track.codec() == Codec.CEA_708)) {
+                data = captionSample(track, packet);
+            }
             if (track.track.id() == packet.trackId() && track.codec() == Codec.PRORES && !hasProResPrefix(data)) {
                 data = withProResPrefix(data);
+            } else if (track.track.id() == packet.trackId() && track.codec() == Codec.JPEG2000) {
+                data = jpeg2000Sample(track, data);
             }
+        }
+        var newConfig = packet.sideData().newCodecConfig().orElse(null);
+        if (newConfig != null) {
+            changeCodecConfig(packet.trackId(), newConfig);
         }
         accept(packet.trackId(), data, 0, data.length, packet.pts(), packet.dts(), packet.duration(), packet.keyframe(),
                 spooling());
+    }
+
+    /**
+     * Converts a packet of a closed caption track to the sample QuickTime stores: {@code cdat} and {@code cdt2}
+     * atoms for CEA-608, a {@code ccdp} atom for CEA-708 with the frame rate the packet's duration gives (29.97 Hz
+     * when it has none).
+     *
+     * @param track the caption track
+     * @param packet a packet of the track, holding {@code cc_data} constructs
+     * @return the sample
+     */
+    static byte[] captionSample(MuxTrack track, Packet packet) {
+        if (track.codec() == Codec.CEA_608) {
+            return QuickTimeCaptions.toC608(packet.data());
+        }
+        var base = track.track.timeBase();
+        var rate = packet.duration() > 0 ? QuickTimeCaptions.frameRateCode(base.denominator(),
+                base.numerator() * packet.duration()) : 4;
+        return QuickTimeCaptions.toC708(packet.data(), rate, track.cdpSequence++ & 0xFFFF);
+    }
+
+    /**
+     * Records the JP2 Header box of a Motion JPEG 2000 track from its first frame and, in a Motion JPEG 2000 file,
+     * rewrites a frame as the Contiguous Codestream boxes the file stores.
+     *
+     * @param track the state of the Motion JPEG 2000 track
+     * @param data the frame
+     * @return the sample to store
+     * @throws IllegalArgumentException if the frame of a Motion JPEG 2000 file holds no codestream
+     */
+    private static byte[] jpeg2000Sample(MuxTrack track, byte[] data) {
+        if (track.jp2Header == null) {
+            track.jp2Header = SampleEntryWriter.jp2Header(track.track.codecConfig().orElse(null), data);
+        }
+        if (!track.motionJpeg2000) {
+            return data;
+        }
+        var sample = Jp2Frames.toSample(data);
+        if (sample == null) {
+            throw new IllegalArgumentException("a packet of Motion JPEG 2000 track " + track.track.id()
+                    + " holds no JPEG 2000 codestream");
+        }
+        return sample;
+    }
+
+    /**
+     * Makes the following samples of a track use the sample description of a codec configuration,
+     * adding the description when no earlier one of the track has that configuration.
+     *
+     * @param trackId the identifier of the track
+     * @param config the configuration, in the form {@link Track#codecConfig()} describes
+     * @throws IllegalArgumentException if the track was not declared or the configuration is
+     * invalid for its codec
+     * @throws IllegalStateException if the muxer is finished
+     * @throws MediaException.Unsupported if the track's codec has no configuration in its sample
+     * description that could change
+     */
+    void changeCodecConfig(int trackId, byte[] config) {
+        if (finished) {
+            throw new IllegalStateException("the muxer is finished");
+        }
+        MuxTrack target = null;
+        for (var existing : tracks) {
+            if (existing.track.id() == trackId) {
+                target = existing;
+            }
+        }
+        if (target == null) {
+            throw new IllegalArgumentException("undeclared track " + trackId);
+        }
+        var current = target.entry == 0 ? target.config : target.extraConfigs.get(target.entry - 1);
+        if (Arrays.equals(current, config)) {
+            return;
+        }
+        switch (target.codec()) {
+            case H264, HEVC, VP8, VP9, AV1, MPEG4_PART2, AAC, OPUS, ALAC, FLAC, PRORES, DNXHD -> {
+            }
+            default -> throw ConfigChanges.unsupported("MP4", trackId);
+        }
+        var index = -1;
+        if (Arrays.equals(target.config, config)) {
+            index = 0;
+        }
+        for (var extra = 0; extra < target.extraConfigs.size() && index < 0; extra++) {
+            if (Arrays.equals(target.extraConfigs.get(extra), config)) {
+                index = extra + 1;
+            }
+        }
+        if (index < 0) {
+            MovieHeaderWriter.validateConfig(SampleEntryWriter.describe(target.track, config));
+            target.extraConfigs.add(config.clone());
+            index = target.extraConfigs.size();
+        }
+        if (target.pendingSamples > 0) {
+            writeChunk(target);
+        }
+        target.entry = index;
+    }
+
+    /**
+     * Makes a track's edit list the given one instead of the one derived from its timestamps.
+     *
+     * @param trackId the identifier of the track
+     * @param edits three arrays: the duration of each edit and its media time (the presentation
+     * timestamp presented first, {@code -1} for an empty edit), both in the track's time base, and
+     * its integer media rate
+     * @throws IllegalArgumentException if the track was not declared or the arrays differ in length
+     */
+    void setEdits(int trackId, long[][] edits) {
+        if (edits.length != 3 || edits[0].length != edits[1].length || edits[0].length != edits[2].length) {
+            throw new IllegalArgumentException("inconsistent edit list");
+        }
+        for (var existing : tracks) {
+            if (existing.track.id() == trackId) {
+                existing.edits = new long[][]{edits[0].clone(), edits[1].clone(), edits[2].clone()};
+                return;
+            }
+        }
+        throw new IllegalArgumentException("undeclared track " + trackId);
     }
 
     /**
@@ -475,7 +803,7 @@ public final class Mp4Muxer implements Muxer {
      * @param frame the coded ProRes frame
      * @return {@code true} when the prefix is present
      */
-    private static boolean hasProResPrefix(byte[] frame) {
+    static boolean hasProResPrefix(byte[] frame) {
         return frame.length >= 8 && frame[4] == 'i' && frame[5] == 'c' && frame[6] == 'p' && frame[7] == 'f';
     }
 
@@ -485,7 +813,7 @@ public final class Mp4Muxer implements Muxer {
      * @param frame the frame without its prefix
      * @return a new array holding the prefixed frame
      */
-    private static byte[] withProResPrefix(byte[] frame) {
+    static byte[] withProResPrefix(byte[] frame) {
         var out = new byte[frame.length + 8];
         var size = out.length;
         out[0] = (byte) (size >>> 24);
@@ -696,6 +1024,8 @@ public final class Mp4Muxer implements Muxer {
     /**
      * {@inheritDoc}
      *
+     * @throws IllegalArgumentException if the {@code timecode} tag is not a valid address at the nominal rate of
+     * the first video track, or there is no video track with a frame rate and the address is not a drop-frame one
      * @throws IllegalStateException if the muxer is already finished, or a VP9 or AV1 track has no
      * configuration and no key frame it can be derived from
      */
@@ -703,6 +1033,16 @@ public final class Mp4Muxer implements Muxer {
     public void finish() {
         if (finished) {
             throw new IllegalStateException("the muxer is already finished");
+        }
+        if (timecodeText != null && !tracks.isEmpty()) {
+            Rational rate = null;
+            for (var track : tracks) {
+                if (track.track instanceof VideoTrack video && video.frameRate().isPresent()) {
+                    rate = video.frameRate().get();
+                    break;
+                }
+            }
+            timecodeTrack = TimecodeTrack.of(timecodeText, rate);
         }
         for (var text : textTracks) {
             text.finish();
@@ -724,9 +1064,24 @@ public final class Mp4Muxer implements Muxer {
             plans.add(new TrackPlan(track));
         }
         var movieTimescale = movieTimescale();
+        var movieDuration = 0L;
         for (var plan : plans) {
             plan.resolveEdits(movieTimescale);
+            movieDuration = Math.max(movieDuration, plan.trackDuration);
             durationMicros = Math.max(durationMicros, Mp4Track.rescale(plan.trackDuration, movieTimescale, 1_000_000));
+        }
+        for (var plan : plans) {
+            plan.boundSubtitles(movieDuration);
+        }
+        if (!chapters.isEmpty() && !tracks.isEmpty()) {
+            chapterTrack = Mp4ChapterTrack.of(chapters, durationMicros);
+            chapterDataOffset = dataSize;
+            writeData(chapterTrack.data(), chapterTrack.dataLength());
+        }
+        if (timecodeTrack != null) {
+            timecodeDataOffset = dataSize;
+            var sample = timecodeTrack.sample();
+            writeData(sample, sample.length);
         }
         if (planning) {
             plannedHeader = fastStartHeader(plans, movieTimescale);
@@ -854,13 +1209,24 @@ public final class Mp4Muxer implements Muxer {
     }
 
     /**
-     * Writes the {@code ftyp} box of the configured brand.
+     * Writes the {@code ftyp} box of the configured brand, after the JPEG 2000 signature box in a Motion JPEG 2000
+     * file, and the {@code uuid} box of the XMP packet.
      *
      * @param writer the box writer of the output
      */
     private void writeFileType(BoxWriter writer) {
+        if (options.brand() == Mp4MuxerOptions.Brand.MJ2) {
+            writer.begin(BoxTypes.JP_SIGNATURE);
+            writer.u32(0x0D0A870AL);
+            writer.end();
+        }
         writer.begin(BoxTypes.FTYP);
-        if (options.brand() == Mp4MuxerOptions.Brand.M4A) {
+        if (options.brand() == Mp4MuxerOptions.Brand.MJ2) {
+            writer.u32(BoxTypes.MJP2);
+            writer.u32(0);
+            writer.u32(BoxTypes.MJP2);
+            writer.u32(BoxTypes.MJ2S);
+        } else if (options.brand() == Mp4MuxerOptions.Brand.M4A) {
             writer.u32(BoxTypes.M4A);
             writer.u32(0x200);
             writer.u32(BoxTypes.M4A);
@@ -880,6 +1246,7 @@ public final class Mp4Muxer implements Muxer {
             writer.u32(BoxTypes.MP41);
         }
         writer.end();
+        writer.bytes(xmpBox);
     }
 
     /**
@@ -898,9 +1265,35 @@ public final class Mp4Muxer implements Muxer {
             duration = Math.max(duration, plan.trackDuration);
         }
         writer.begin(BoxTypes.MOOV);
-        MovieHeaderWriter.writeMovieHeader(writer, movieTimescale, duration, tracks.size() + 1);
+        var chapterId = tracks.size() + 1;
+        var timecodeId = chapterTrack != null ? chapterId + 1 : chapterId;
+        MovieHeaderWriter.writeMovieHeader(writer, movieTimescale, duration,
+                timecodeTrack != null ? timecodeId + 1 : timecodeId);
+        var media = false;
+        for (var track : tracks) {
+            media |= track.kind() == TrackKind.AUDIO || track.kind() == TrackKind.VIDEO;
+        }
+        var kinds = new ArrayList<TrackKind>();
+        var described = new ArrayList<TrackTags>();
         for (var plan : plans) {
-            writeTrack(writer, plan, dataStart, co64);
+            kinds.add(plan.track.kind());
+            described.add(tags.track(plan.track.track.id()).orElse(null));
+        }
+        var enabled = Mp4TrackMetadata.enabled(kinds, described);
+        for (var index = 0; index < plans.size(); index++) {
+            var plan = plans.get(index);
+            var kind = plan.track.kind();
+            var references = chapterTrack != null && (kind == TrackKind.AUDIO || kind == TrackKind.VIDEO
+                    || !media && plan.track == tracks.getFirst());
+            writeTrack(writer, plan, dataStart, co64, references ? chapterId : -1,
+                    timecodeTrack != null && kind == TrackKind.VIDEO ? timecodeId : -1, enabled[index],
+                    described.get(index));
+        }
+        if (chapterTrack != null) {
+            writer.bytes(chapterTrack.trak(chapterId, movieTimescale, dataStart + chapterDataOffset, co64));
+        }
+        if (timecodeTrack != null) {
+            timecodeTrack.writeTrak(writer, timecodeId, movieTimescale, duration, dataStart + timecodeDataOffset, co64);
         }
         writer.bytes(userData);
         writer.end();
@@ -914,29 +1307,47 @@ public final class Mp4Muxer implements Muxer {
      * @param plan the track layout
      * @param dataStart the file offset of the first media data byte
      * @param co64 whether chunk offsets are 64-bit
+     * @param chapterId the identifier of the chapter track the track references, or {@code -1}
+     * @param timecodeId the identifier of the timecode track the track references, or {@code -1}
+     * @param enabled whether the track is enabled
+     * @param described the tags of the track, or {@code null}
      */
-    private void writeTrack(BoxWriter writer, TrackPlan plan, long dataStart, boolean co64) {
+    private void writeTrack(BoxWriter writer, TrackPlan plan, long dataStart, boolean co64, int chapterId,
+                            int timecodeId, boolean enabled, TrackTags described) {
         writer.begin(BoxTypes.TRAK);
-        MovieHeaderWriter.writeTrackHeader(writer, plan.track, plan.trackDuration);
+        MovieHeaderWriter.writeTrackHeader(writer, plan.track, plan.trackDuration, enabled);
+        if (timecodeId > 0) {
+            writer.begin(BoxTypes.TREF);
+            if (chapterId > 0) {
+                writer.bytes(Mp4ChapterTrack.chapReference(chapterId));
+            }
+            TimecodeTrack.writeReference(writer, timecodeId);
+            writer.end();
+        } else if (chapterId > 0) {
+            writer.bytes(Mp4ChapterTrack.trackReference(chapterId));
+        }
         if (plan.hasEdits) {
             writer.begin(BoxTypes.EDTS);
-            var entries = plan.emptyEdit > 0 ? 2 : 1;
-            var wideEdits = plan.emptyEdit > U32_MAX || plan.segment > U32_MAX || plan.mediaTime > Integer.MAX_VALUE;
-            writer.beginFull(BoxTypes.ELST, wideEdits ? 1 : 0, 0);
-            writer.u32(entries);
-            if (plan.emptyEdit > 0) {
-                MovieHeaderWriter.writeLength(writer, plan.emptyEdit, wideEdits);
-                MovieHeaderWriter.writeLength(writer, -1, wideEdits);
-                writer.u32(0x00010000);
+            var wideEdits = false;
+            for (var index = 0; index < plan.editDurations.length; index++) {
+                wideEdits |= plan.editDurations[index] > U32_MAX || plan.editTimes[index] > Integer.MAX_VALUE
+                        || plan.editTimes[index] < -1;
             }
-            MovieHeaderWriter.writeLength(writer, plan.segment, wideEdits);
-            MovieHeaderWriter.writeLength(writer, plan.mediaTime, wideEdits);
-            writer.u32(0x00010000);
+            writer.beginFull(BoxTypes.ELST, wideEdits ? 1 : 0, 0);
+            writer.u32(plan.editDurations.length);
+            for (var index = 0; index < plan.editDurations.length; index++) {
+                MovieHeaderWriter.writeLength(writer, plan.editDurations[index], wideEdits);
+                MovieHeaderWriter.writeLength(writer, plan.editTimes[index], wideEdits);
+                writer.u32((plan.editRates[index] & 0xFFFF) << 16);
+            }
             writer.end();
             writer.end();
         }
         MovieHeaderWriter.writeMedia(writer, plan.track, plan.mediaDuration,
                 media -> writeSampleTable(media, plan, dataStart, co64));
+        if (described != null) {
+            writer.bytes(Mp4TrackMetadata.userData(described));
+        }
         writer.end();
     }
 
@@ -953,9 +1364,17 @@ public final class Mp4Muxer implements Muxer {
         var count = track.count;
         writer.begin(BoxTypes.STBL);
         writer.beginFull(BoxTypes.STSD, 0, 0);
-        writer.u32(1);
+        writer.u32(1 + track.extraConfigs.size());
         SampleEntryWriter.write(writer, plan);
+        for (var extra = 0; extra < track.extraConfigs.size(); extra++) {
+            SampleEntryWriter.write(writer, plan, extra + 1);
+        }
         writer.end();
+        if (track.pcmFrameBytes > 0) {
+            writePcmTables(writer, track, dataStart, co64);
+            writer.end();
+            return;
+        }
 
         writer.beginFull(BoxTypes.STTS, 0, 0);
         var runsPosition = writer.size();
@@ -1017,12 +1436,14 @@ public final class Mp4Muxer implements Muxer {
         writer.u32(0);
         runs = 0;
         var previous = -1;
+        var previousEntry = -1;
         for (var chunk = 0; chunk < track.chunkCount; chunk++) {
-            if (track.chunkSamples[chunk] != previous) {
+            if (track.chunkSamples[chunk] != previous || track.chunkEntries[chunk] != previousEntry) {
                 previous = track.chunkSamples[chunk];
+                previousEntry = track.chunkEntries[chunk];
                 writer.u32(chunk + 1);
                 writer.u32(previous);
-                writer.u32(1);
+                writer.u32(previousEntry + 1);
                 runs++;
             }
         }
@@ -1045,6 +1466,19 @@ public final class Mp4Muxer implements Muxer {
         }
         writer.end();
 
+        writeChunkOffsets(writer, track, dataStart, co64);
+        writer.end();
+    }
+
+    /**
+     * Writes the {@code stco} or {@code co64} box of a track.
+     *
+     * @param writer the box writer, inside the {@code stbl} box
+     * @param track the track whose chunks are listed
+     * @param dataStart the file offset of the first media data byte
+     * @param co64 whether chunk offsets are 64-bit
+     */
+    private static void writeChunkOffsets(BoxWriter writer, MuxTrack track, long dataStart, boolean co64) {
         writer.beginFull(co64 ? BoxTypes.CO64 : BoxTypes.STCO, 0, 0);
         writer.u32(track.chunkCount);
         for (var chunk = 0; chunk < track.chunkCount; chunk++) {
@@ -1056,7 +1490,57 @@ public final class Mp4Muxer implements Muxer {
             }
         }
         writer.end();
+    }
+
+    /**
+     * Writes the timing, chunk and size tables of a PCM track, which store one frame per sample:
+     * every sample lasts one tick of the sampling-rate timescale and has the frame size, and each
+     * chunk counts the frames of the packets it holds.
+     *
+     * @param writer the box writer, inside the {@code stbl} box after the {@code stsd}
+     * @param track the PCM track
+     * @param dataStart the file offset of the first media data byte
+     * @param co64 whether chunk offsets are 64-bit
+     */
+    private static void writePcmTables(BoxWriter writer, MuxTrack track, long dataStart, boolean co64) {
+        var frameBytes = track.pcmFrameBytes;
+        writer.beginFull(BoxTypes.STTS, 0, 0);
+        writer.u32(track.pcmFrames > 0 ? 1 : 0);
+        if (track.pcmFrames > 0) {
+            writer.u32(track.pcmFrames);
+            writer.u32(1);
+        }
         writer.end();
+
+        writer.beginFull(BoxTypes.STSC, 0, 0);
+        var runsPosition = writer.size();
+        writer.u32(0);
+        var runs = 0;
+        var previous = -1L;
+        var previousEntry = -1;
+        var packet = 0;
+        for (var chunk = 0; chunk < track.chunkCount; chunk++) {
+            var frames = 0L;
+            for (var index = 0; index < track.chunkSamples[chunk]; index++) {
+                frames += track.sizes[packet++] / frameBytes;
+            }
+            if (frames != previous || track.chunkEntries[chunk] != previousEntry) {
+                previous = frames;
+                previousEntry = track.chunkEntries[chunk];
+                writer.u32(chunk + 1);
+                writer.u32(frames);
+                writer.u32(previousEntry + 1);
+                runs++;
+            }
+        }
+        writer.patch32(runsPosition, runs);
+        writer.end();
+
+        writer.beginFull(BoxTypes.STSZ, 0, 0);
+        writer.u32(frameBytes);
+        writer.u32(track.pcmFrames);
+        writer.end();
+        writeChunkOffsets(writer, track, dataStart, co64);
     }
 
     /**
@@ -1112,19 +1596,19 @@ public final class Mp4Muxer implements Muxer {
         boolean hasEdits;
 
         /**
-         * The empty edit in movie timescale units, or {@code 0}.
+         * The duration of each edit, in movie timescale units.
          */
-        long emptyEdit;
+        long[] editDurations = new long[0];
 
         /**
-         * The media time of the non-empty edit, in media timescale units.
+         * The media time of each edit in media timescale units, {@code -1} for an empty edit.
          */
-        long mediaTime;
+        long[] editTimes = new long[0];
 
         /**
-         * The duration of the non-empty edit, in movie timescale units.
+         * The integer media rate of each edit.
          */
-        long segment;
+        int[] editRates = new int[0];
 
         /**
          * The track duration in movie timescale units.
@@ -1166,6 +1650,10 @@ public final class Mp4Muxer implements Muxer {
                 trackDuration = 0;
                 return;
             }
+            if (track.edits != null) {
+                useEdits(movieTimescale);
+                return;
+            }
             var firstDts = track.dts[0];
             var minPts = Long.MAX_VALUE;
             var naturalEnd = Long.MIN_VALUE;
@@ -1175,6 +1663,7 @@ public final class Mp4Muxer implements Muxer {
             }
             long start;
             long presentationEnd;
+            long mediaTime;
             if (track.kind() == TrackKind.AUDIO) {
                 var firstPts = track.pts[0];
                 start = Math.max(firstPts, 0);
@@ -1196,13 +1685,65 @@ public final class Mp4Muxer implements Muxer {
             }
             var segmentMedia = Math.max(presentationEnd - start, 0);
             hasEdits = start > 0 || mediaTime != 0 || segmentMedia != mediaDuration;
-            emptyEdit = Mp4Track.rescale(start, track.timescale, movieTimescale);
-            segment = Mp4Track.rescale(segmentMedia, track.timescale, movieTimescale);
+            var emptyEdit = Mp4Track.rescale(start, track.timescale, movieTimescale);
+            var segment = Mp4Track.rescale(segmentMedia, track.timescale, movieTimescale);
             trackDuration = hasEdits ? emptyEdit + segment : Mp4Track.rescale(mediaDuration, track.timescale, movieTimescale);
             if (hasEdits && segment == 0) {
                 hasEdits = false;
                 trackDuration = Mp4Track.rescale(mediaDuration, track.timescale, movieTimescale);
             }
+            if (hasEdits && emptyEdit > 0) {
+                editDurations = new long[]{emptyEdit, segment};
+                editTimes = new long[]{-1, mediaTime};
+                editRates = new int[]{1, 1};
+            } else if (hasEdits) {
+                editDurations = new long[]{segment};
+                editTimes = new long[]{mediaTime};
+                editRates = new int[]{1};
+            }
+        }
+
+        /**
+         * Gives a subtitle track without an edit list that ends before the movie an edit covering
+         * its media, so that readers do not extend its last sample to the end of the movie.
+         *
+         * @param movieDuration the movie duration, in movie timescale units
+         */
+        void boundSubtitles(long movieDuration) {
+            if (track.kind() != TrackKind.DATA || hasEdits || trackDuration <= 0 || trackDuration >= movieDuration) {
+                return;
+            }
+            hasEdits = true;
+            editDurations = new long[]{trackDuration};
+            editTimes = new long[]{0};
+            editRates = new int[]{1};
+        }
+
+        /**
+         * Converts the edit list the caller set to the movie and media timescales: an edit's media
+         * time is a presentation timestamp, which becomes a composition time measured from the
+         * track's first decoding timestamp.
+         *
+         * @param movieTimescale the movie timescale
+         */
+        private void useEdits(long movieTimescale) {
+            var count = track.edits[0].length;
+            editDurations = new long[count];
+            editTimes = new long[count];
+            editRates = new int[count];
+            var elapsed = 0L;
+            var written = 0L;
+            for (var index = 0; index < count; index++) {
+                elapsed += track.toMedia(track.edits[0][index]);
+                var end = Mp4Track.rescale(elapsed, track.timescale, movieTimescale);
+                editDurations[index] = Math.max(0, end - written);
+                written = end;
+                var time = track.edits[1][index];
+                editTimes[index] = time < 0 ? -1 : Math.max(0, track.toMedia(time) - track.dts[0]);
+                editRates[index] = (int) track.edits[2][index];
+            }
+            hasEdits = count > 0;
+            trackDuration = hasEdits ? written : Mp4Track.rescale(mediaDuration, track.timescale, movieTimescale);
         }
     }
 }
