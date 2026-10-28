@@ -212,6 +212,31 @@ public final class SbrElement {
     }
 
     /**
+     * {@return whether the last parsed payload held valid frame data}
+     */
+    boolean frameDataValid() {
+        return frameData;
+    }
+
+    /**
+     * {@return the number of bits the frame data of the last valid payload took}
+     */
+    long consumedBits() {
+        return consumed;
+    }
+
+    /**
+     * Returns the frame data the last payload carried for one channel, resolved to absolute values once the
+     * frame is decoded.
+     *
+     * @param channel the channel of the element
+     * @return the frame data
+     */
+    SbrFrameData frameData(int channel) {
+        return data[channel];
+    }
+
+    /**
      * Takes the header of the element from a configuration, as AAC-ELD carries the first header of
      * each element in its {@code ld_sbr_header}.
      *

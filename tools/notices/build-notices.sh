@@ -1578,7 +1578,8 @@ License:      Apache License, Version 2.0
 Derived Smalt packages:
   audio.aac.internal (CodewordReordering, ReversibleScalefactors,
   LowDelayWindows, SamplingTables)
-  audio.aac.internal.sbr (LowDelayQmfWindow, SbrFrameData)
+  audio.aac.internal.sbr (LowDelayQmfWindow, SbrFrameData, SbrTuning,
+  SbrEncoderElement: the spectral band replication encoder)
   audio.aac.internal.usac (Avq, LpdDecoder, LpdState, LpdTables: the USAC
   linear prediction domain decoder)
 
@@ -1595,7 +1596,15 @@ decoder/ixheaacd_env_extr.c. The USAC linear prediction domain decoder
 (ACELP, TCX, the LPC and FAC decoding and the RE8 lattice of the AVQ) is
 translated from decoder/ixheaacd_acelp_*.c, ixheaacd_lpc*.c, ixheaacd_tcx_*.c,
 ixheaacd_fwd_alias_cnx.c, ixheaacd_avq_dec.c and the tables of
-ixheaacd_rom.c and ixheaacd_avq_rom.c. The other Java code is a new
+ixheaacd_rom.c and ixheaacd_avq_rom.c. The tuning table of the spectral band
+replication encoder is taken from sbr_tuning_table_lc of
+encoder/ixheaace_sbr_rom.c, with the inverse filtering region tables of
+detector_params_aac; its tonality estimation, inverse filtering decision,
+noise floor estimation and frame splitting test follow
+encoder/ixheaace_sbr_ton_corr_hp.c, ixheaace_sbr_inv_filtering_estimation.c,
+ixheaace_sbr_noise_floor_est.c and ixheaace_sbr_tran_det.c, and the envelope
+estimation of bands with synthetic sinusoids and the coupled stereo values
+ixheaace_sbr_env_est.c. The other Java code is a new
 implementation; it is not a copy of the original files.
 
 Copyright:

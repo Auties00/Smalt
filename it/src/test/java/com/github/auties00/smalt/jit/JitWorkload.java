@@ -434,6 +434,7 @@ public final class JitWorkload {
             case "amrnb" -> AudioJitWorkloads.amr("amrnb", Codec.AMR_NB, seconds(options, 4));
             case "amrwb" -> AudioJitWorkloads.amr("amrwb", Codec.AMR_WB, seconds(options, 4));
             case "heaac" -> AudioJitWorkloads.heAac(seconds(options, 6));
+            case "heaacenc" -> AudioJitWorkloads.heAacEncode(seconds(options, 6));
             case "ac3" -> AudioJitWorkloads.ac3(seconds(options, 6));
             case "flacenc" -> AudioJitWorkloads.flacEncode(seconds(options, 6));
             case "alacenc" -> AudioJitWorkloads.alacEncode(seconds(options, 6));

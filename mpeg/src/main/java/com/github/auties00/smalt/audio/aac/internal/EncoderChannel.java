@@ -124,6 +124,17 @@ public final class EncoderChannel {
     private final ForwardMdct mdct;
 
     /**
+     * The audio object type coded: {@link AudioSpecificConfig#AOT_LC}, {@link AudioSpecificConfig#AOT_ER_LD} or
+     * {@link AudioSpecificConfig#AOT_ER_ELD}.
+     */
+    private final int objectType;
+
+    /**
+     * The AAC-ELD analysis filterbank, or {@code null} for the other object types.
+     */
+    private final LowDelayAnalysis lowDelayAnalysis;
+
+    /**
      * The attack detector.
      */
     private final TransientDetector detector;
@@ -387,6 +398,27 @@ public final class EncoderChannel {
      */
     public EncoderChannel(int sampleRate, int frameLength, int bandwidth, int channelBitrate, boolean tns,
                           AacKernel kernel) {
+        this(sampleRate, frameLength, bandwidth, channelBitrate, tns, AudioSpecificConfig.AOT_LC, kernel);
+    }
+
+    /**
+     * Creates a channel encoder of an object type.
+     *
+     * <p>AAC-LD and AAC-ELD code long windows only, AAC-LD with the sine window, AAC-ELD with the low delay
+     * filterbank.
+     *
+     * @param sampleRate the sampling rate in hertz
+     * @param frameLength the frame length: 1024 or 960, or 512 or 480 for AAC-LD and AAC-ELD
+     * @param bandwidth the audio bandwidth in hertz
+     * @param channelBitrate the bitrate per channel in bits per second
+     * @param tns whether temporal noise shaping may be used
+     * @param objectType {@link AudioSpecificConfig#AOT_LC}, {@link AudioSpecificConfig#AOT_ER_LD} or
+     * {@link AudioSpecificConfig#AOT_ER_ELD}
+     * @param kernel the DSP kernel
+     */
+    public EncoderChannel(int sampleRate, int frameLength, int bandwidth, int channelBitrate, boolean tns,
+                          int objectType, AacKernel kernel) {
+        this.objectType = objectType;
         this.kernel = kernel;
         this.length = frameLength;
         this.shortLength = frameLength / 8;
@@ -397,11 +429,15 @@ public final class EncoderChannel {
         this.quant = new int[frameLength];
         this.scratch = new int[frameLength];
         this.noiseSmr = TONAL_SMR - NOISE_RELIEF * Math.clamp((128000 - channelBitrate) / 64000f, 0, 1);
+        var longOnly = objectType != AudioSpecificConfig.AOT_LC;
         this.longLayout = new BandLayout(sampleRate, frameLength, false, bandwidth, channelBitrate);
-        this.shortLayout = new BandLayout(sampleRate, frameLength, true, bandwidth, channelBitrate);
+        this.shortLayout = longOnly ? longLayout : new BandLayout(sampleRate, frameLength, true, bandwidth,
+                channelBitrate);
         this.longTns = tns ? new TnsEncoder(longLayout, sampleRate, false, kernel) : null;
-        this.shortTns = tns ? new TnsEncoder(shortLayout, sampleRate, true, kernel) : null;
-        this.mdct = new ForwardMdct(frameLength, kernel);
+        this.shortTns = tns && !longOnly ? new TnsEncoder(shortLayout, sampleRate, true, kernel) : null;
+        this.mdct = objectType == AudioSpecificConfig.AOT_ER_ELD ? null : new ForwardMdct(frameLength, kernel);
+        this.lowDelayAnalysis = objectType == AudioSpecificConfig.AOT_ER_ELD
+                ? new LowDelayAnalysis(frameLength, kernel) : null;
         this.detector = new TransientDetector(channelBitrate, frameLength);
         this.layout = longLayout;
     }
@@ -420,7 +456,8 @@ public final class EncoderChannel {
         var longBands = longLayout.count();
         var shortBands = shortLayout.count();
         this.longLayout = new BandLayout(sampleRate, length, false, bandwidth, channelBitrate);
-        this.shortLayout = new BandLayout(sampleRate, length, true, bandwidth, channelBitrate);
+        this.shortLayout = objectType != AudioSpecificConfig.AOT_LC ? longLayout
+                : new BandLayout(sampleRate, length, true, bandwidth, channelBitrate);
         if (longLayout.count() != longBands) {
             previousLongValid = false;
         }
@@ -429,7 +466,9 @@ public final class EncoderChannel {
         }
         if (longTns != null) {
             this.longTns = new TnsEncoder(longLayout, sampleRate, false, kernel);
-            this.shortTns = new TnsEncoder(shortLayout, sampleRate, true, kernel);
+            if (shortTns != null) {
+                this.shortTns = new TnsEncoder(shortLayout, sampleRate, true, kernel);
+            }
         }
         this.layout = longLayout;
         detector.retune(channelBitrate);
@@ -447,6 +486,9 @@ public final class EncoderChannel {
     /**
      * Transforms and analyzes one frame.
      *
+     * <p>AAC-LD and AAC-ELD frames ignore the sequence and the attack and code a long window; the AAC-ELD
+     * filterbank reads only the frame's last {@code frameLength} samples, its new ones.
+     *
      * @param input the input samples
      * @param offset the index of the first of the frame's {@code 2 * frameLength} samples
      * @param sequence the window sequence
@@ -454,6 +496,20 @@ public final class EncoderChannel {
      * none
      */
     public void analyze(float[] input, int offset, int sequence, int attackIndex) {
+        if (objectType != AudioSpecificConfig.AOT_LC) {
+            this.sequence = ChannelStream.ONLY_LONG_SEQUENCE;
+            this.shape = Windows.SINE;
+            if (lowDelayAnalysis != null) {
+                lowDelayAnalysis.analyze(input, offset + length, spectrum);
+            } else {
+                mdct.transform(input, offset, ChannelStream.ONLY_LONG_SEQUENCE, Windows.SINE, Windows.SINE, spectrum);
+            }
+            previousShape = Windows.SINE;
+            tnsActive = false;
+            Arrays.fill(tnsOrders, 0);
+            analyzeLong();
+            return;
+        }
         this.sequence = sequence;
         this.shape = sequence == ChannelStream.EIGHT_SHORT_SEQUENCE || sequence == ChannelStream.LONG_START_SEQUENCE
                 ? Windows.SINE : Windows.KBD;
@@ -1160,7 +1216,7 @@ public final class EncoderChannel {
      * @return the bits
      */
     public int sideBits(boolean commonWindow) {
-        var bits = 8 + 3 + tnsBits();
+        var bits = 8 + (objectType == AudioSpecificConfig.AOT_ER_ELD ? 1 : 3) + tnsBits();
         if (!commonWindow) {
             bits += infoBits();
         }
@@ -1173,6 +1229,9 @@ public final class EncoderChannel {
      * @return the bits
      */
     public int infoBits() {
+        if (objectType == AudioSpecificConfig.AOT_ER_ELD) {
+            return 6;
+        }
         return sequence == ChannelStream.EIGHT_SHORT_SEQUENCE ? 1 + 2 + 1 + 4 + 7 : 1 + 2 + 1 + 6 + 1;
     }
 
@@ -1225,6 +1284,10 @@ public final class EncoderChannel {
      * @param writer the bit sink
      */
     public void writeInfo(MsbBitWriter writer) {
+        if (objectType == AudioSpecificConfig.AOT_ER_ELD) {
+            writer.write(maxBands, 6);
+            return;
+        }
         writer.write(0, 1);
         writer.write(sequence, 2);
         writer.write(shape, 1);
@@ -1276,12 +1339,26 @@ public final class EncoderChannel {
                 previous = scalefactors[index];
             }
         }
-        writer.write(0, 1);
-        writer.write(tnsActive ? 1 : 0, 1);
-        if (tnsActive) {
-            writeTns(writer);
+        if (objectType == AudioSpecificConfig.AOT_LC) {
+            writer.write(0, 1);
+            writer.write(tnsActive ? 1 : 0, 1);
+            if (tnsActive) {
+                writeTns(writer);
+            }
+            writer.write(0, 1);
+        } else {
+            // error resilient syntax: the TNS data follow the side information
+            if (objectType == AudioSpecificConfig.AOT_ER_LD) {
+                writer.write(0, 1);
+            }
+            writer.write(tnsActive ? 1 : 0, 1);
+            if (objectType == AudioSpecificConfig.AOT_ER_LD) {
+                writer.write(0, 1);
+            }
+            if (tnsActive) {
+                writeTns(writer);
+            }
         }
-        writer.write(0, 1);
         for (var group = 0; group < groupCount; group++) {
             for (var band = 0; band < maxBands; band++) {
                 var index = group * MAX_BANDS + band;

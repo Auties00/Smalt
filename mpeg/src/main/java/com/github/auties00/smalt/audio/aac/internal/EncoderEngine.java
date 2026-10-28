@@ -75,6 +75,11 @@ public final class EncoderEngine {
     private int bitrate;
 
     /**
+     * The part of {@link #bitrate} the channel elements are tuned for.
+     */
+    private int codingBitrate;
+
+    /**
      * The number of frames encoded when {@link #bitrate} took effect.
      */
     private long rateOrigin;
@@ -83,6 +88,18 @@ public final class EncoderEngine {
      * Whether the encoder codes at constant quality.
      */
     private final boolean vbr;
+
+    /**
+     * The audio object type coded: {@link AudioSpecificConfig#AOT_LC}, {@link AudioSpecificConfig#AOT_ER_LD} or
+     * {@link AudioSpecificConfig#AOT_ER_ELD}.
+     */
+    private final int objectType;
+
+    /**
+     * Whether the block uses the error resilient syntax of AAC-LD and AAC-ELD: no element identifiers, no fill
+     * or end elements, and zero padding in their place.
+     */
+    private final boolean errorResilient;
 
     /**
      * The channel encoders, in coded order.
@@ -211,6 +228,16 @@ public final class EncoderEngine {
     private final MsbBitWriter writer = new MsbBitWriter(8192);
 
     /**
+     * The extension payload written after each element in the next frame, or {@code null} for none.
+     */
+    private final byte[][] extensions;
+
+    /**
+     * The number of bits of each payload of {@link #extensions}.
+     */
+    private final int[] extensionBits;
+
+    /**
      * Creates an engine.
      *
      * @param sampleRate a standard AAC sampling rate
@@ -223,9 +250,52 @@ public final class EncoderEngine {
      */
     public EncoderEngine(int sampleRate, int frameLength, EncoderLayout layout, int bitrate, boolean vbr,
                          int bandwidth, AacKernel kernel) {
+        this(sampleRate, frameLength, layout, bitrate, bitrate, vbr, bandwidth, kernel);
+    }
+
+    /**
+     * Creates an engine whose channels are tuned for a share of the bitrate, the rest going to extension
+     * payloads such as spectral band replication data.
+     *
+     * @param sampleRate a standard AAC sampling rate
+     * @param frameLength the frame length, 1024 or 960
+     * @param layout the channel elements and the input channel of each coded channel
+     * @param bitrate the bitrate in bits per second, extension payloads included
+     * @param codingBitrate the part of {@code bitrate} the channel elements are tuned for
+     * @param vbr whether to code at constant quality instead of constant bitrate
+     * @param bandwidth the audio bandwidth in hertz
+     * @param kernel the DSP kernel
+     */
+    public EncoderEngine(int sampleRate, int frameLength, EncoderLayout layout, int bitrate, int codingBitrate,
+                         boolean vbr, int bandwidth, AacKernel kernel) {
+        this(sampleRate, frameLength, layout, bitrate, codingBitrate, vbr, bandwidth, AudioSpecificConfig.AOT_LC,
+                kernel);
+    }
+
+    /**
+     * Creates an engine of an object type.
+     *
+     * <p>AAC-LD and AAC-ELD frames code long windows only, need no look-ahead and write the error resilient
+     * syntax; their layout must use a channel configuration from 1 to 7, and they carry no extension payloads.
+     *
+     * @param sampleRate a standard AAC sampling rate
+     * @param frameLength the frame length: 1024 or 960, or 512 or 480 for AAC-LD and AAC-ELD
+     * @param layout the channel elements and the input channel of each coded channel
+     * @param bitrate the bitrate in bits per second, extension payloads included
+     * @param codingBitrate the part of {@code bitrate} the channel elements are tuned for
+     * @param vbr whether to code at constant quality instead of constant bitrate
+     * @param bandwidth the audio bandwidth in hertz
+     * @param objectType {@link AudioSpecificConfig#AOT_LC}, {@link AudioSpecificConfig#AOT_ER_LD} or
+     * {@link AudioSpecificConfig#AOT_ER_ELD}
+     * @param kernel the DSP kernel
+     */
+    public EncoderEngine(int sampleRate, int frameLength, EncoderLayout layout, int bitrate, int codingBitrate,
+                         boolean vbr, int bandwidth, int objectType, AacKernel kernel) {
+        this.objectType = objectType;
+        this.errorResilient = objectType != AudioSpecificConfig.AOT_LC;
         this.sampleRate = sampleRate;
         this.frameLength = frameLength;
-        this.lookahead = frameLength / 2;
+        this.lookahead = errorResilient ? 0 : frameLength / 2;
         this.bufferLength = 3 * frameLength;
         this.channels = layout.inputChannels().length;
         this.bitrate = bitrate;
@@ -235,11 +305,12 @@ public final class EncoderEngine {
         this.inputChannel = layout.inputChannels().clone();
         this.lfe = layout.lfe().clone();
         this.lfeChannels = layout.lfeChannels();
-        var perChannel = channelBitrate(bitrate);
+        this.codingBitrate = codingBitrate;
+        var perChannel = channelBitrate(codingBitrate);
         coded = new EncoderChannel[channels];
         for (var i = 0; i < channels; i++) {
             coded[i] = new EncoderChannel(sampleRate, frameLength, lfe[i] ? Math.min(bandwidth, 240) : bandwidth,
-                    lfe[i] ? Math.max(perChannel / 5, 1000) : perChannel, !lfe[i], kernel);
+                    lfe[i] ? Math.max(perChannel / 5, 1000) : perChannel, !lfe[i], objectType, kernel);
         }
         buffers = new float[channels][bufferLength];
         filled = frameLength;
@@ -258,7 +329,9 @@ public final class EncoderEngine {
         var meanPe = 10.0f * frameLength * Math.min(bandwidth, sampleRate / 2) / (sampleRate / 2.0f) * channels;
         peMin = 0.8f * meanPe;
         peMax = 1.2f * meanPe;
-        vbrParameter = vbrParameter(bitrate / channelWeight());
+        vbrParameter = vbrParameter(codingBitrate / channelWeight());
+        extensions = new byte[elementTypes.length][];
+        extensionBits = new int[elementTypes.length];
     }
 
     /**
@@ -330,22 +403,58 @@ public final class EncoderEngine {
     }
 
     /**
+     * Sets the extension payload written in a fill element right after one channel element of the next frame.
+     *
+     * <p>The payload is an {@code extension_payload} from its {@code extension_type} on; it is padded with zero
+     * bits to whole bytes and counts against the frame's bits. It applies to the next {@link #encodeFrame()} only.
+     *
+     * @param element the index of the channel element, in coded order
+     * @param payload the payload bits, most significant bit first
+     * @param bits the number of payload bits, at most 8 times 269
+     */
+    public void setExtension(int element, byte[] payload, int bits) {
+        extensions[element] = payload;
+        extensionBits[element] = bits;
+    }
+
+    /**
+     * Returns the number of channel elements.
+     *
+     * @return the element count
+     */
+    public int elements() {
+        return elementTypes.length;
+    }
+
+    /**
+     * Returns the type of a channel element.
+     *
+     * @param element the index of the element, in coded order
+     * @return the {@link ElementId} constant
+     */
+    public int elementType(int element) {
+        return elementTypes[element];
+    }
+
+    /**
      * Encodes the next frame.
      *
      * @return the raw data block
      */
     public byte[] encodeFrame() {
-        if (frames == 0) {
+        if (frames == 0 && !errorResilient) {
             for (var channel = 0; channel < channels; channel++) {
                 detect(channel, frameLength - lookahead);
             }
         }
-        for (var channel = 0; channel < channels; channel++) {
-            var detector = coded[channel].detector();
-            detector.analyze(buffers[channel], 2 * frameLength - lookahead);
-            nextAttacks[channel] = detector.attack();
-            nextIndexes[channel] = detector.attackIndex();
-            nextEnergies[channel] = detector.peakEnergy();
+        if (!errorResilient) {
+            for (var channel = 0; channel < channels; channel++) {
+                var detector = coded[channel].detector();
+                detector.analyze(buffers[channel], 2 * frameLength - lookahead);
+                nextAttacks[channel] = detector.attack();
+                nextIndexes[channel] = detector.attackIndex();
+                nextEnergies[channel] = detector.peakEnergy();
+            }
         }
         var channel = 0;
         for (var element = 0; element < elementTypes.length; element++) {
@@ -385,6 +494,8 @@ public final class EncoderEngine {
             coded[i].prepare();
         }
         var block = encodeBlock();
+        Arrays.fill(extensions, null);
+        Arrays.fill(extensionBits, 0);
         for (var i = 0; i < channels; i++) {
             System.arraycopy(buffers[i], frameLength, buffers[i], 0, filled - frameLength);
         }
@@ -530,15 +641,28 @@ public final class EncoderEngine {
      * @param bandwidth the audio bandwidth in hertz
      */
     public void retarget(int newBitrate, int bandwidth) {
+        retarget(newBitrate, newBitrate, bandwidth);
+    }
+
+    /**
+     * Changes the bitrate, the share of it the channel elements are tuned for and the bandwidth of the frames
+     * encoded from now on.
+     *
+     * @param newBitrate the bitrate in bits per second, extension payloads included
+     * @param newCodingBitrate the part of {@code newBitrate} the channel elements are tuned for
+     * @param bandwidth the audio bandwidth in hertz
+     */
+    public void retarget(int newBitrate, int newCodingBitrate, int bandwidth) {
         this.bitrate = newBitrate;
+        this.codingBitrate = newCodingBitrate;
         this.rateOrigin = frames;
         reservoirSize = Math.max(0, (CHANNEL_BITS * channels - meanFrameBits()) & ~7);
         reservoir = Math.min(reservoir, reservoirSize);
         var meanPe = 10.0f * frameLength * Math.min(bandwidth, sampleRate / 2) / (sampleRate / 2.0f) * channels;
         peMin = 0.8f * meanPe;
         peMax = 1.2f * meanPe;
-        vbrParameter = vbrParameter(newBitrate / channelWeight());
-        var perChannel = channelBitrate(newBitrate);
+        vbrParameter = vbrParameter(newCodingBitrate / channelWeight());
+        var perChannel = channelBitrate(newCodingBitrate);
         for (var i = 0; i < channels; i++) {
             coded[i].retune(sampleRate, lfe[i] ? Math.min(bandwidth, 240) : bandwidth,
                     lfe[i] ? Math.max(perChannel / 5, 1000) : perChannel);
@@ -584,7 +708,7 @@ public final class EncoderEngine {
         }
         writer.reset();
         writeElements();
-        var used = (int) writer.bitCount() + 3;
+        var used = (int) writer.bitCount() + (errorResilient ? 0 : 3);
         var target = used;
         if (!vbr) {
             var after = reservoir + mean - ((used + 7) & ~7);
@@ -592,8 +716,14 @@ public final class EncoderEngine {
                 target = used + (after - reservoirSize);
             }
         }
-        writeFill(target - used);
-        writer.write(ElementId.END, 3);
+        if (errorResilient) {
+            if (target > used) {
+                writePadding(target - used);
+            }
+        } else {
+            writeFill(target - used);
+            writer.write(ElementId.END, 3);
+        }
         writer.alignWithZeros();
         var block = writer.toByteArray();
         if (!vbr) {
@@ -693,7 +823,7 @@ public final class EncoderEngine {
      * @return the bits of every element and the end marker, before fill and alignment
      */
     private int evaluate(float parameter, float reach, boolean exhaustive) {
-        var bits = 3;
+        var bits = errorResilient ? 0 : 3;
         var channel = 0;
         for (var element = 0; element < elementTypes.length; element++) {
             if (elementTypes[element] == ElementId.CPE) {
@@ -705,7 +835,7 @@ public final class EncoderEngine {
                 var shared = Math.max(left.maxBands(), right.maxBands());
                 left.setMaxBands(shared);
                 right.setMaxBands(shared);
-                bits += 3 + 4 + 1 + left.infoBits() + 2;
+                bits += headerBits(true) + left.infoBits() + 2;
                 if (msModes[element] == 1) {
                     bits += left.groupCount() * shared;
                 }
@@ -715,11 +845,28 @@ public final class EncoderEngine {
             } else {
                 var single = coded[channel];
                 single.quantize(parameter, reach, single.requiredBands());
-                bits += 3 + 4 + single.sideBits(false) + single.cost(exhaustive);
+                bits += headerBits(false) + single.sideBits(false) + single.cost(exhaustive);
                 channel++;
             }
+            bits += extensionElementBits(element);
         }
         return bits;
+    }
+
+    /**
+     * Returns the bits ahead of an element's channel data: the element identifier and instance tag, and for a
+     * channel pair the {@code common_window} flag, as the object type's syntax has them.
+     *
+     * @param pair whether the element is a channel pair
+     * @return the bits
+     */
+    private int headerBits(boolean pair) {
+        var bits = switch (objectType) {
+            case AudioSpecificConfig.AOT_ER_ELD -> 0;
+            case AudioSpecificConfig.AOT_ER_LD -> 4;
+            default -> 3 + 4;
+        };
+        return bits + (pair && objectType != AudioSpecificConfig.AOT_ER_ELD ? 1 : 0);
     }
 
     /**
@@ -803,12 +950,18 @@ public final class EncoderEngine {
         var channel = 0;
         for (var element = 0; element < elementTypes.length; element++) {
             var type = elementTypes[element];
-            writer.write(type, 3);
-            writer.write(elementTags[element], 4);
+            if (!errorResilient) {
+                writer.write(type, 3);
+            }
+            if (objectType != AudioSpecificConfig.AOT_ER_ELD) {
+                writer.write(elementTags[element], 4);
+            }
             if (type == ElementId.CPE) {
                 var left = coded[channel];
                 var right = coded[channel + 1];
-                writer.write(1, 1);
+                if (objectType != AudioSpecificConfig.AOT_ER_ELD) {
+                    writer.write(1, 1);
+                }
                 left.writeInfo(writer);
                 writer.write(msModes[element], 2);
                 if (msModes[element] == 1) {
@@ -825,6 +978,67 @@ public final class EncoderEngine {
                 coded[channel].write(writer, false);
                 channel++;
             }
+            writeExtension(element);
+        }
+    }
+
+    /**
+     * Returns the bits of the fill element carrying an element's extension payload.
+     *
+     * @param element the element index
+     * @return the bits, 0 without a payload
+     */
+    private int extensionElementBits(int element) {
+        if (extensions[element] == null) {
+            return 0;
+        }
+        var count = (extensionBits[element] + 7) >> 3;
+        return 3 + 4 + (count >= 15 ? 8 : 0) + 8 * count;
+    }
+
+    /**
+     * Writes the fill element carrying an element's extension payload, if any.
+     *
+     * @param element the element index
+     */
+    private void writeExtension(int element) {
+        var payload = extensions[element];
+        if (payload == null) {
+            return;
+        }
+        var bits = extensionBits[element];
+        var count = (bits + 7) >> 3;
+        writer.write(ElementId.FIL, 3);
+        if (count >= 15) {
+            writer.write(15, 4);
+            writer.write(count - 14, 8);
+        } else {
+            writer.write(count, 4);
+        }
+        var whole = bits >> 3;
+        for (var i = 0; i < whole; i++) {
+            writer.write(payload[i] & 0xFF, 8);
+        }
+        var rest = bits & 7;
+        if (rest != 0) {
+            writer.write((payload[whole] & 0xFF) >> (8 - rest), rest);
+        }
+        if (8 * count > bits) {
+            writer.write(0, 8 * count - bits);
+        }
+    }
+
+    /**
+     * Writes zero bits after the channel elements of an error resilient block, which decoders skip.
+     *
+     * @param bits the number of bits
+     */
+    private void writePadding(int bits) {
+        var remaining = bits;
+        while (remaining > 0) {
+            var count = Math.min(remaining, 32);
+            writer.write(0, count);
+            remaining -= count;
         }
     }
 

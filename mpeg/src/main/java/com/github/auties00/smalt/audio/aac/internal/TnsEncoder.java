@@ -134,7 +134,11 @@ public final class TnsEncoder {
         this.maxOrder = shortWindow ? SHORT_ORDER : LONG_ORDER;
         this.resolution = shortWindow ? 3 : 4;
         var tableIndex = SamplingTables.tableIndexFor(sampleRate);
-        var limit = Math.min(SamplingTables.tnsMaxBands(tableIndex, shortWindow), layout.active());
+        var windowLength = layout.windowLength();
+        var maxBands = !shortWindow && (windowLength == 512 || windowLength == 480)
+                ? SamplingTables.tnsMaxBandsLowDelay(tableIndex, windowLength)
+                : SamplingTables.tnsMaxBands(tableIndex, shortWindow);
+        var limit = Math.min(maxBands, layout.active());
         var startFrequency = shortWindow ? 2750 : 1275;
         var startLine = (int) Math.round(startFrequency * 2.0 * layout.windowLength() / sampleRate);
         var band = 0;

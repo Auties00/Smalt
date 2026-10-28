@@ -2,6 +2,7 @@ package com.github.auties00.smalt.audio.aac;
 
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.aac.internal.EncoderLayout;
+import com.github.auties00.smalt.audio.aac.internal.sbr.SbrEncoder;
 import com.github.auties00.smalt.internal.check.Checks;
 import com.github.auties00.smalt.internal.header.AacRates;
 
@@ -48,6 +49,10 @@ public final class AacEncoderOptions {
 
     private final int frameLength;
 
+    private final AacProfile profile;
+
+    private final AacSignaling signaling;
+
     private final EncoderLayout coding;
 
     private AacEncoderOptions(Builder builder, EncoderLayout coding) {
@@ -57,6 +62,8 @@ public final class AacEncoderOptions {
         this.bitrateMode = builder.bitrateMode;
         this.bandwidth = builder.bandwidth;
         this.frameLength = builder.frameLength;
+        this.profile = builder.profile;
+        this.signaling = builder.signaling;
         this.coding = coding;
     }
 
@@ -102,10 +109,32 @@ public final class AacEncoderOptions {
     }
 
     /**
-     * {@return the sampling rate in hertz, a standard AAC rate from 7350 to 96000; 48000 by default}
+     * {@return the sampling rate in hertz of the input and of the decoded output; 48000 by default}
+     *
+     * <p>With {@link AacProfile#LC}, {@link AacProfile#LD} and {@link AacProfile#ELD} it is a standard AAC rate
+     * from 7350 to 96000. With {@link AacProfile#HE} and
+     * {@link AacProfile#HE_V2} the core runs at half this rate, which must be 8000, 11025, 12000, 16000, 22050,
+     * 24000, 32000, 44100 or 48000 Hz.
      */
     public int sampleRate() {
         return sampleRate;
+    }
+
+    /**
+     * {@return the audio object type produced; {@link AacProfile#LC} by default}
+     */
+    public AacProfile profile() {
+        return profile;
+    }
+
+    /**
+     * {@return how the {@code AudioSpecificConfig} of {@link AacProfile#HE} and {@link AacProfile#HE_V2} signals
+     * spectral band replication and parametric stereo; {@link AacSignaling#HIERARCHICAL} by default}
+     *
+     * <p>It applies to these two profiles only. ADTS headers always carry the implicit form.
+     */
+    public AacSignaling signaling() {
+        return signaling;
     }
 
     /**
@@ -115,7 +144,8 @@ public final class AacEncoderOptions {
      * ISO/IEC 14496-3 channel configuration (see {@link #channelConfiguration()}), or a set that a
      * program config element positions: at most one each of front center, back center and LFE, and
      * the pairs front left and right, front left and right of center (with front left and right),
-     * side left and right, and back left and right, each pair complete.
+     * side left and right, and back left and right, each pair complete. {@link AacProfile#HE_V2} takes stereo
+     * only.
      */
     public ChannelLayout layout() {
         return layout;
@@ -124,6 +154,9 @@ public final class AacEncoderOptions {
     /**
      * {@return the ISO/IEC 14496-3 channel configuration the layout is coded with, or 0 when a
      * program config element in the {@code AudioSpecificConfig} describes it}
+     *
+     * <p>With {@link AacProfile#HE_V2} it is 1, the mono core of the stereo output. {@link AacProfile#LD} and
+     * {@link AacProfile#ELD} code configurations 1 to 7 only.
      *
      * <table class="striped">
      * <caption>Channel configurations and their loudspeakers</caption>
@@ -147,7 +180,7 @@ public final class AacEncoderOptions {
      * </table>
      */
     public int channelConfiguration() {
-        return coding.channelConfiguration();
+        return profile == AacProfile.HE_V2 ? 1 : coding.channelConfiguration();
     }
 
     /**
@@ -160,11 +193,13 @@ public final class AacEncoderOptions {
     }
 
     /**
-     * {@return the number of samples per channel and frame, 1024 or 960; 1024 by default}
+     * {@return the number of core samples per channel and frame, 1024 or 960; 1024 by default}
      *
      * <p>960 sets the {@code frameLengthFlag} of the {@code AudioSpecificConfig}, the frame length
      * of DAB+ and DRM broadcasts. ADTS cannot signal it, so such a stream needs a container that
-     * stores the configuration.
+     * stores the configuration. With {@link AacProfile#HE} and {@link AacProfile#HE_V2} a frame
+     * covers twice as many input samples; with {@link AacProfile#LD} and {@link AacProfile#ELD} half as
+     * many, 512 or 480.
      */
     public int frameLength() {
         return frameLength;
@@ -176,7 +211,15 @@ public final class AacEncoderOptions {
      * 128000 by default}
      *
      * <p>With {@link AacBitrateMode#CBR} this is the exact long-term average; with
-     * {@link AacBitrateMode#VBR} the nominal long-term average.
+     * {@link AacBitrateMode#VBR} the nominal long-term average. With {@link AacProfile#LD} and
+     * {@link AacProfile#ELD} the upper limit counts the shorter frames, 12 times the sampling rate per channel
+     * with 512-sample frames. With {@link AacProfile#HE} and
+     * {@link AacProfile#HE_V2} it includes the spectral band replication and parametric stereo data, and
+     * each element's share (a channel pair counting as two channels, an LFE element as a fifth of one)
+     * must lie in the range the encoder tunes for its core rate: for a 22050 or 24000 Hz core, 8000 to
+     * about 132000 bits per second for a single channel element (and for HE-AAC v2) and 16000 to about
+     * 264000 for a channel pair; for a 32000 to 48000 Hz core, from 24000 and 32000; for an 8000 to
+     * 12000 Hz core, single channel elements from 8000 only.
      */
     public int bitrate() {
         return bitrate;
@@ -192,6 +235,8 @@ public final class AacEncoderOptions {
     /**
      * {@return the explicit audio bandwidth in hertz, from 1 to half the sampling rate, or empty to
      * derive it from the bitrate (see {@link #effectiveBandwidth()}); empty by default}
+     *
+     * <p>{@link AacProfile#HE} and {@link AacProfile#HE_V2} take no explicit bandwidth.
      */
     public OptionalInt bandwidth() {
         return bandwidth == 0 ? OptionalInt.empty() : OptionalInt.of(bandwidth);
@@ -200,15 +245,21 @@ public final class AacEncoderOptions {
     /**
      * Returns the bandwidth the encoder uses: the configured one, or the automatic choice.
      *
-     * <p>The automatic bandwidth grows with the bitrate per full-band channel from 3 kHz at
-     * 8 kbps through 13 kHz at 32 kbps and 18 kHz at 64 kbps to 24 kHz from 128 kbps, and never
-     * exceeds half the sampling rate.
+     * <p>The automatic bandwidth of {@link AacProfile#LC}, {@link AacProfile#LD} and {@link AacProfile#ELD}
+     * grows with the bitrate per full-band channel
+     * from 3 kHz at 8 kbps through 13 kHz at 32 kbps and 18 kHz at 64 kbps to 24 kHz from 128 kbps,
+     * and never exceeds half the sampling rate. With {@link AacProfile#HE} and {@link AacProfile#HE_V2}
+     * it is the highest frequency spectral band replication reconstructs, which also grows with the
+     * bitrate.
      *
      * @return the bandwidth in hertz
      */
     public int effectiveBandwidth() {
         if (bandwidth != 0) {
             return bandwidth;
+        }
+        if (profile == AacProfile.HE || profile == AacProfile.HE_V2) {
+            return SbrEncoder.bandwidth(sampleRate, coding, bitrate, profile == AacProfile.HE_V2);
         }
         var fullBand = Math.max(1, layout.channels() - coding.lfeChannels());
         var perChannel = bitrate / (double) fullBand;
@@ -235,12 +286,14 @@ public final class AacEncoderOptions {
                 && bitrate == that.bitrate
                 && bitrateMode == that.bitrateMode
                 && bandwidth == that.bandwidth
-                && frameLength == that.frameLength;
+                && frameLength == that.frameLength
+                && profile == that.profile
+                && signaling == that.signaling;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(sampleRate, layout, bitrate, bitrateMode, bandwidth, frameLength);
+        return Objects.hash(sampleRate, layout, bitrate, bitrateMode, bandwidth, frameLength, profile, signaling);
     }
 
     @Override
@@ -250,7 +303,9 @@ public final class AacEncoderOptions {
                 + ", bitrate=" + bitrate
                 + ", bitrateMode=" + bitrateMode
                 + ", bandwidth=" + (bandwidth == 0 ? "auto" : String.valueOf(bandwidth))
-                + ", frameLength=" + frameLength + "]";
+                + ", frameLength=" + frameLength
+                + ", profile=" + profile
+                + ", signaling=" + signaling + "]";
     }
 
     /**
@@ -274,6 +329,10 @@ public final class AacEncoderOptions {
 
         private int frameLength;
 
+        private AacProfile profile;
+
+        private AacSignaling signaling;
+
         private Builder() {
             this.sampleRate = 48_000;
             this.layout = ChannelLayout.STEREO;
@@ -281,6 +340,8 @@ public final class AacEncoderOptions {
             this.bitrateMode = AacBitrateMode.CBR;
             this.bandwidth = 0;
             this.frameLength = 1024;
+            this.profile = AacProfile.LC;
+            this.signaling = AacSignaling.HIERARCHICAL;
         }
 
         private Builder(AacEncoderOptions options) {
@@ -291,6 +352,8 @@ public final class AacEncoderOptions {
             this.bandwidth = options.bandwidth;
             this.explicitBandwidth = options.bandwidth != 0;
             this.frameLength = options.frameLength;
+            this.profile = options.profile;
+            this.signaling = options.signaling;
         }
 
         /**
@@ -365,13 +428,38 @@ public final class AacEncoderOptions {
         }
 
         /**
+         * Sets the audio object type; see {@link AacEncoderOptions#profile()}.
+         *
+         * @param profile the value
+         * @return this builder
+         */
+        public Builder profile(AacProfile profile) {
+            this.profile = Objects.requireNonNull(profile, "profile");
+            return this;
+        }
+
+        /**
+         * Sets the signaling of HE-AAC; see {@link AacEncoderOptions#signaling()}.
+         *
+         * @param signaling the value
+         * @return this builder
+         */
+        public Builder signaling(AacSignaling signaling) {
+            this.signaling = Objects.requireNonNull(signaling, "signaling");
+            return this;
+        }
+
+        /**
          * Returns the options holding the settings of this builder.
          *
          * @return the options
          * @throws IllegalArgumentException if the sampling rate, the layout or the frame length is not
-         * supported, or the bitrate or the bandwidth does not fit the format
+         * supported by the profile, or the bitrate or the bandwidth does not fit the format
          */
         public AacEncoderOptions build() {
+            if (profile == AacProfile.HE || profile == AacProfile.HE_V2) {
+                return buildHighEfficiency();
+            }
             if (AacRates.index(sampleRate) < 0) {
                 throw new IllegalArgumentException("sampling rate " + sampleRate + " is not an AAC rate");
             }
@@ -381,11 +469,50 @@ public final class AacEncoderOptions {
             var coding = EncoderLayout.of(layout, sampleRate).orElseThrow(() -> new IllegalArgumentException(
                     "channel layout " + layout.speakers() + " is neither an AAC channel configuration nor"
                             + " expressible by a program config element"));
+            if (profile != AacProfile.LC && (coding.channelConfiguration() < 1 || coding.channelConfiguration() > 7)) {
+                throw new IllegalArgumentException("AAC-LD and AAC-ELD code channel configurations 1 to 7, not "
+                        + layout.speakers());
+            }
             var channels = layout.channels();
-            var frameBits = 6144L * channels * sampleRate / frameLength;
+            var samples = profile == AacProfile.LC ? frameLength : frameLength / 2;
+            var frameBits = 6144L * channels * sampleRate / samples;
             Checks.inRange("bitrate", (long) bitrate, (long) MIN_CHANNEL_BITRATE * channels, frameBits);
             if (explicitBandwidth) {
                 Checks.inRange("bandwidth", bandwidth, 1, sampleRate / 2);
+            }
+            return new AacEncoderOptions(this, coding);
+        }
+
+        /**
+         * Checks and returns HE-AAC options.
+         *
+         * @return the options
+         * @throws IllegalArgumentException if the settings do not fit HE-AAC
+         */
+        private AacEncoderOptions buildHighEfficiency() {
+            var coreRate = sampleRate / 2;
+            if (sampleRate % 2 != 0 || AacRates.index(sampleRate) < 0 || AacRates.index(coreRate) < 0) {
+                throw new IllegalArgumentException("sampling rate " + sampleRate + " is not twice an AAC rate");
+            }
+            if (frameLength != 1024 && frameLength != 960) {
+                throw new IllegalArgumentException("frame length " + frameLength + " is not 1024 or 960");
+            }
+            if (explicitBandwidth) {
+                throw new IllegalArgumentException(
+                        "HE-AAC takes no explicit bandwidth: the spectral band replication tuning sets it");
+            }
+            var coding = EncoderLayout.of(layout, coreRate).orElseThrow(() -> new IllegalArgumentException(
+                    "channel layout " + layout.speakers() + " is neither an AAC channel configuration nor"
+                            + " expressible by a program config element"));
+            if (profile == AacProfile.HE_V2 && coding.channelConfiguration() != 2) {
+                throw new IllegalArgumentException("HE-AAC v2 codes stereo only, not " + layout.speakers());
+            }
+            var coreChannels = profile == AacProfile.HE_V2 ? 1 : layout.channels();
+            var frameBits = 6144L * coreChannels * coreRate / frameLength;
+            Checks.inRange("bitrate", (long) bitrate, 1, frameBits);
+            var reason = SbrEncoder.unsupported(sampleRate, coding, bitrate, profile == AacProfile.HE_V2);
+            if (reason.isPresent()) {
+                throw new IllegalArgumentException(reason.get());
             }
             return new AacEncoderOptions(this, coding);
         }

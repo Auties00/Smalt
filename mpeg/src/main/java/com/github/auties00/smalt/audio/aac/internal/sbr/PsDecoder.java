@@ -81,7 +81,7 @@ final class PsDecoder {
      * The parameter bin of each hybrid sub-subband of the 20-band configuration (ISO/IEC 14496-3
      * Table 8.48).
      */
-    private static final int[] HYBRID_BINS_20 = {1, 0, 0, 1, 2, 3, 4, 5, 6, 7};
+    static final int[] HYBRID_BINS_20 = {1, 0, 0, 1, 2, 3, 4, 5, 6, 7};
 
     /**
      * The parameter bin of each hybrid sub-subband of the 34-band configuration (Table 8.49).
@@ -116,7 +116,7 @@ final class PsDecoder {
      * The first QMF subband of each QMF-only parameter group of the 20-band configuration, and
      * the end of the last group.
      */
-    private static final int[] QMF_BORDERS_20 = {3, 4, 5, 6, 7, 8, 9, 11, 14, 18, 23, 35, 64};
+    static final int[] QMF_BORDERS_20 = {3, 4, 5, 6, 7, 8, 9, 11, 14, 18, 23, 35, 64};
 
     /**
      * The first QMF subband of each QMF-only parameter group of the 34-band configuration, and
@@ -154,7 +154,7 @@ final class PsDecoder {
     /**
      * The 13 taps of the prototype of the 2-band real hybrid filter (Table 8.37).
      */
-    private static final double[] PROTOTYPE_2 = {
+    static final double[] PROTOTYPE_2 = {
             0, 0.01899487526049, 0, -0.07293139167538, 0, 0.30596630545168, 0.5,
             0.30596630545168, 0, -0.07293139167538, 0, 0.01899487526049, 0
     };
@@ -210,7 +210,7 @@ final class PsDecoder {
     /**
      * The intensity differences of the coarse quantizer, in dB.
      */
-    private static final double[] IID_COARSE = {-25, -18, -14, -10, -7, -4, -2, 0, 2, 4, 7, 10, 14, 18, 25};
+    static final double[] IID_COARSE = {-25, -18, -14, -10, -7, -4, -2, 0, 2, 4, 7, 10, 14, 18, 25};
 
     /**
      * The intensity differences of the fine quantizer, in dB.
@@ -223,7 +223,7 @@ final class PsDecoder {
     /**
      * The coherences of the quantizer.
      */
-    private static final double[] ICC_VALUES = {1, 0.937, 0.84118, 0.60092, 0.36764, 0, -0.589, -1};
+    static final double[] ICC_VALUES = {1, 0.937, 0.84118, 0.60092, 0.36764, 0, -0.589, -1};
 
     /**
      * The channel scale of each coarse intensity difference, {@code sqrt(2 / (1 + 10^(iid / 10)))}.
@@ -239,12 +239,12 @@ final class PsDecoder {
      * The real parts of the hybrid filter taps of the 20-band configuration's QMF subband 0, by
      * filter output and tap.
      */
-    private static final double[][] TAPS_20_RE = new double[8][];
+    static final double[][] TAPS_20_RE = new double[8][];
 
     /**
      * The imaginary parts of the hybrid filter taps of the 20-band configuration's QMF subband 0.
      */
-    private static final double[][] TAPS_20_IM = new double[8][];
+    static final double[][] TAPS_20_IM = new double[8][];
 
     /**
      * The real parts of the hybrid filter taps of the 34-band configuration, by sub-subband and

@@ -9,6 +9,7 @@ import com.github.auties00.smalt.audio.aac.AacDecoder;
 import com.github.auties00.smalt.audio.aac.AacDecoderOptions;
 import com.github.auties00.smalt.audio.aac.AacEncoder;
 import com.github.auties00.smalt.audio.aac.AacEncoderOptions;
+import com.github.auties00.smalt.audio.aac.AacProfile;
 import com.github.auties00.smalt.audio.ac3.Ac3Decoder;
 import com.github.auties00.smalt.audio.ac3.Ac3Encoder;
 import com.github.auties00.smalt.audio.ac3.Ac3EncoderOptions;
@@ -110,6 +111,7 @@ final class MpegWorkloads {
                 realtime("ac3-encode-rt", () -> ac3Realtime(6)),
                 realtime("eac3-rt", () -> eac3("eac3-rt", Eac3EncoderOptions.forRealtime(), 6)),
                 realtime("aac-encode-retarget", () -> aacRetarget(6)),
+                realtime("aac-eld-encode", () -> aacLowDelayEncode("aac-eld-encode", AacProfile.ELD, 4)),
                 realtime("aac-decode-loss", () -> aacLossyDecode("aac-decode-loss", false, 4)),
                 realtime("heaac-decode-loss", () -> aacLossyDecode("heaac-decode-loss", true, 4)),
                 realtime("amr-nb-decode-loss", () -> amrLossyDecode(2)),
@@ -139,6 +141,9 @@ final class MpegWorkloads {
                 file("hevc-decode-t2", () -> hevcDecode(2, false)),
                 file("aac-encode", () -> aacEncode(6)),
                 file("aac-960-surround-encode", () -> aacShortFrameSurroundEncode(3)),
+                file("heaac-encode", () -> aacHighEfficiencyEncode("heaac-encode", AacProfile.HE, 6)),
+                file("heaacv2-encode", () -> aacHighEfficiencyEncode("heaacv2-encode", AacProfile.HE_V2, 6)),
+                file("aac-ld-encode", () -> aacLowDelayEncode("aac-ld-encode", AacProfile.LD, 4)),
                 file("aac-decode", () -> aacDecode("aac-decode", false, false, 6)),
                 file("heaac-decode", () -> aacDecode("heaac-decode", true, false, 6)),
                 file("heaacv2-decode", () -> aacDecode("heaacv2-decode", true, true, 6)),
@@ -546,10 +551,40 @@ final class MpegWorkloads {
     }
 
     /**
+     * Returns a workload that encodes 44.1 kHz stereo music as HE-AAC at 48 kbit/s or as HE-AAC v2 at 32 kbit/s, which
+     * runs the encoder's QMF banks, spectral band replication and, for HE-AAC v2, parametric stereo, one encoder
+     * across rounds.
+     *
+     * @param name the name of the workload
+     * @param profile {@link AacProfile#HE} or {@link AacProfile#HE_V2}
+     * @param seconds the music encoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacHighEfficiencyEncode(String name, AacProfile profile, double seconds) {
+        var encoder = new AacEncoder(AacEncoderOptions.builder().format(44100, ChannelLayout.STEREO)
+                .bitrate(profile == AacProfile.HE ? 48000 : 32000).profile(profile).build());
+        return AudioStreams.encode(name, SyntheticAudio.music(44100, seconds), ChannelLayout.STEREO, 44100, encoder);
+    }
+
+    /**
+     * Returns a workload that encodes 48 kHz stereo music as AAC-LD or AAC-ELD with 512-sample frames at 128 kbit/s,
+     * one encoder across rounds.
+     *
+     * @param name the name of the workload
+     * @param profile {@link AacProfile#LD} or {@link AacProfile#ELD}
+     * @param seconds the music encoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacLowDelayEncode(String name, AacProfile profile, double seconds) {
+        var encoder = new AacEncoder(AacEncoderOptions.builder().format(48000, ChannelLayout.STEREO).bitrate(128000)
+                .profile(profile).build());
+        return AudioStreams.encode(name, SyntheticAudio.music(48000, seconds), ChannelLayout.STEREO, 48000, encoder);
+    }
+
+    /**
      * Returns a workload that decodes AAC: Low Complexity music at 44.1 kHz, or, when
-     * {@code sbr} is set, a 22.05 kHz core announced as HE-AAC (and, with {@code ps}, as HE-AACv2
-     * with a mono core), which runs the decoder's spectral band replication and parametric stereo
-     * stages on the packets of the Low Complexity encoder.
+     * {@code sbr} is set, HE-AAC (and, with {@code ps}, HE-AAC v2) of the same music at 44.1 kHz, which runs the
+     * decoder's spectral band replication and parametric stereo stages.
      *
      * @param name    the name of the workload
      * @param sbr     whether the configuration announces spectral band replication
@@ -558,16 +593,15 @@ final class MpegWorkloads {
      * @return the workload
      */
     private static TrainingWorkload aacDecode(String name, boolean sbr, boolean ps, double seconds) {
-        var rate = sbr ? 22050 : 44100;
-        var layout = ps ? ChannelLayout.MONO : ChannelLayout.STEREO;
-        var encoder = new AacEncoder(AacEncoderOptions.of(rate, layout, sbr ? 48000 : 128000));
-        var music = SyntheticAudio.music(rate, seconds);
-        var planes = ps ? new float[][]{music[0]} : music;
-        var packets = AudioStreams.encodeAll(encoder, planes, layout, rate);
-        var config = !sbr ? encoder.codecConfig().orElseThrow()
-                : ps ? new byte[]{(byte) 0xEB, (byte) 0x8A, 0x08, 0x00} : new byte[]{0x2B, (byte) 0x92, 0x08, 0x00};
+        var rate = 44100;
+        var layout = ChannelLayout.STEREO;
+        var options = !sbr ? AacEncoderOptions.of(rate, layout, 128000) : AacEncoderOptions.builder()
+                .format(rate, layout).bitrate(ps ? 32000 : 48000).profile(ps ? AacProfile.HE_V2 : AacProfile.HE)
+                .build();
+        var encoder = new AacEncoder(options);
+        var packets = AudioStreams.encodeAll(encoder, SyntheticAudio.music(rate, seconds), layout, rate);
         var track = AudioTrack.builder().id(1).codec(Codec.AAC).timeBase(new Rational(1, rate)).sampleRate(rate)
-                .layout(layout).codecConfig(config).build();
+                .layout(layout).codecConfig(encoder.codecConfig().orElseThrow()).build();
         return AudioStreams.decode(name, packets, new AacDecoder(track));
     }
 

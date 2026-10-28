@@ -10,6 +10,7 @@ import com.github.auties00.smalt.audio.ac3.Ac3Decoder;
 import com.github.auties00.smalt.audio.ac3.Ac3Encoder;
 import com.github.auties00.smalt.audio.ac3.Ac3EncoderOptions;
 import com.github.auties00.smalt.audio.aac.AacEncoderOptions;
+import com.github.auties00.smalt.audio.aac.AacProfile;
 import com.github.auties00.smalt.audio.amr.AmrDecoder;
 import com.github.auties00.smalt.audio.alac.AlacEncoder;
 import com.github.auties00.smalt.audio.amr.AmrEncoder;
@@ -310,24 +311,46 @@ final class AudioJitWorkloads {
     }
 
     /**
-     * Decodes the Low Complexity packets of a 22.05 kHz core announced as HE-AAC, which runs the
-     * decoder's spectral band replication stages.
+     * Decodes HE-AAC packets of 44.1 kHz stereo music at 48 kb/s, which runs the decoder's spectral band
+     * replication stages on the envelopes, noise floors and sinusoids of real high bands.
      */
     static JitWorkload.Workload heAac(double seconds) {
-        var encoder = new AacEncoder(AacEncoderOptions.of(22050, ChannelLayout.STEREO, 48000));
-        var block = new AudioBuffer(ChannelLayout.STEREO, 22050, AudioReaderOptions.DEFAULT_BLOCK_FRAMES);
+        var encoder = new AacEncoder(AacEncoderOptions.builder().format(44100, ChannelLayout.STEREO).bitrate(48000)
+                .profile(AacProfile.HE).build());
+        var block = new AudioBuffer(ChannelLayout.STEREO, 44100, AudioReaderOptions.DEFAULT_BLOCK_FRAMES);
         var packets = new ArrayList<Packet>();
-        feed(music(22050, seconds), block, buffer -> encoder.encode(buffer, packets::add));
+        feed(music(44100, seconds), block, buffer -> encoder.encode(buffer, packets::add));
         encoder.flush(packets::add);
-        var decoder = new AacDecoder(AudioTrack.builder().id(0).codec(Codec.AAC).timeBase(Rational.timeBaseOf(22050))
-                .sampleRate(22050).layout(ChannelLayout.STEREO)
-                .codecConfig(new byte[]{0x2B, (byte) 0x92, 0x08, 0x00}).build());
+        var decoder = new AacDecoder(AudioTrack.builder().id(0).codec(Codec.AAC).timeBase(Rational.timeBaseOf(44100))
+                .sampleRate(44100).layout(ChannelLayout.STEREO)
+                .codecConfig(encoder.codecConfig().orElseThrow()).build());
         Consumer<AudioBuffer> decoded = buffer -> sink += Float.floatToRawIntBits(buffer.plane(0)[7]);
         return JitWorkload.named("heaac", () -> {
             for (var packet : packets) {
                 decoder.decode(packet, decoded);
             }
             return packets.size();
+        });
+    }
+
+    /**
+     * Encodes synthetic stereo music as 44.1 kHz HE-AAC v2 at 32 kb/s, through the QMF banks, the spectral band
+     * replication and the parametric stereo encoder, one encoder across rounds.
+     */
+    static JitWorkload.Workload heAacEncode(double seconds) {
+        var music = music(44100, seconds);
+        var encoder = new AacEncoder(AacEncoderOptions.builder().format(44100, ChannelLayout.STEREO).bitrate(32000)
+                .profile(AacProfile.HE_V2).build());
+        var block = new AudioBuffer(ChannelLayout.STEREO, 44100, AudioReaderOptions.DEFAULT_BLOCK_FRAMES);
+        int[] packets = {0};
+        Consumer<Packet> output = packet -> {
+            packets[0]++;
+            sink += packet.size();
+        };
+        return JitWorkload.named("heaacenc", () -> {
+            packets[0] = 0;
+            feed(music, block, buffer -> encoder.encode(buffer, output));
+            return packets[0];
         });
     }
 

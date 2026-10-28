@@ -387,6 +387,112 @@ public record AudioSpecificConfig(int objectType, int sampleRate, int tableIndex
     }
 
     /**
+     * Returns the configuration of an HE-AAC stream: an AAC Low Complexity core with spectral band replication
+     * and, for HE-AAC v2, parametric stereo.
+     *
+     * <p>The signaling is one of three forms: implicit (the core's configuration alone, the extensions found in
+     * the bitstream), explicit backward compatible (the core's configuration followed by the {@code 0x2B7} and,
+     * with parametric stereo, {@code 0x548} sync extensions) or explicit hierarchical (object type 5, or 29 with
+     * parametric stereo, the output rate and then the core's configuration).
+     *
+     * @param coreRate the core sampling frequency in hertz
+     * @param outputRate the output sampling frequency, twice {@code coreRate}
+     * @param channelConfiguration the channel configuration of the core, or 0 with a program config element
+     * @param frameLength the core samples per frame, 1024 or 960
+     * @param programConfig the program config element of channel configuration 0, or {@code null}
+     * @param ps whether the stream carries parametric stereo
+     * @param signaling 0 for implicit, 1 for explicit backward compatible, 2 for explicit hierarchical signaling
+     * @return the configuration bytes
+     * @throws IllegalArgumentException if a rate has no sampling frequency index, or the program config element is
+     * missing for configuration 0 or given for another one
+     */
+    public static byte[] highEfficiency(int coreRate, int outputRate, int channelConfiguration, int frameLength,
+                                        ProgramConfig programConfig, boolean ps, int signaling) {
+        var coreIndex = AacRates.index(coreRate);
+        var outputIndex = AacRates.index(outputRate);
+        if (coreIndex < 0 || outputIndex < 0) {
+            throw new IllegalArgumentException("no sampling frequency index for " + coreRate + " or " + outputRate
+                    + " Hz");
+        }
+        if ((channelConfiguration == 0) != (programConfig != null)) {
+            throw new IllegalArgumentException("a program config element goes with channel configuration 0 only");
+        }
+        var writer = new MsbBitWriter(64);
+        if (signaling == 2) {
+            writer.write(ps ? AOT_PS : AOT_SBR, 5);
+            writer.write(coreIndex, 4);
+            writer.write(channelConfiguration, 4);
+            writer.write(outputIndex, 4);
+        }
+        if (signaling != 2) {
+            writer.write(AOT_LC, 5);
+            writer.write(coreIndex, 4);
+            writer.write(channelConfiguration, 4);
+        } else {
+            writer.write(AOT_LC, 5);
+        }
+        writer.write(frameLength == 960 ? 1 : 0, 1);
+        writer.write(0, 1);
+        writer.write(0, 1);
+        if (programConfig != null) {
+            programConfig.write(writer);
+        }
+        if (signaling == 1) {
+            writer.write(SYNC_EXTENSION_SBR, 11);
+            writer.write(AOT_SBR, 5);
+            writer.write(1, 1);
+            writer.write(outputIndex, 4);
+            if (ps) {
+                writer.write(SYNC_EXTENSION_PS, 11);
+                writer.write(1, 1);
+            }
+        }
+        writer.alignWithZeros();
+        return writer.toByteArray();
+    }
+
+    /**
+     * Returns the configuration of an AAC-LD or AAC-ELD stream without error resilience tools, error protection or
+     * low delay spectral band replication.
+     *
+     * @param objectType {@link #AOT_ER_LD} or {@link #AOT_ER_ELD}
+     * @param sampleRate a standard sampling frequency in hertz
+     * @param channelConfiguration the channel configuration, from 1 to 7
+     * @param frameLength the samples per frame, 512 or 480
+     * @return the configuration bytes
+     * @throws IllegalArgumentException if the rate has no sampling frequency index
+     */
+    public static byte[] lowDelay(int objectType, int sampleRate, int channelConfiguration, int frameLength) {
+        var index = AacRates.index(sampleRate);
+        if (index < 0) {
+            throw new IllegalArgumentException("no sampling frequency index for " + sampleRate + " Hz");
+        }
+        var writer = new MsbBitWriter(16);
+        if (objectType >= 32) {
+            writer.write(31, 5);
+            writer.write(objectType - 32, 6);
+        } else {
+            writer.write(objectType, 5);
+        }
+        writer.write(index, 4);
+        writer.write(channelConfiguration, 4);
+        writer.write(frameLength == 480 ? 1 : 0, 1);
+        if (objectType == AOT_ER_ELD) {
+            writer.write(0, 3);
+            writer.write(0, 1);
+            writer.write(ELD_EXTENSION_TERMINATOR, 4);
+        } else {
+            writer.write(0, 1);
+            writer.write(1, 1);
+            writer.write(0, 3);
+            writer.write(0, 1);
+        }
+        writer.write(0, 2);
+        writer.alignWithZeros();
+        return writer.toByteArray();
+    }
+
+    /**
      * Returns whether an object type uses the error resilient syntax.
      *
      * @param objectType the core audio object type
