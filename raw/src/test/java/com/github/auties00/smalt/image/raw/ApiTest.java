@@ -132,7 +132,8 @@ class ApiTest {
             assertArrayEquals(matrix, options.colorMatrix().orElseThrow());
             options.colorMatrix().orElseThrow()[0] = 9;
             assertArrayEquals(matrix, options.colorMatrix().orElseThrow());
-            assertTrue(options.toBuilder().colorMatrix(null).build().colorMatrix().isEmpty());
+            assertTrue(options.toBuilder().fileColorMatrix().build().colorMatrix().isEmpty());
+            assertThrows(NullPointerException.class, () -> RawDecoderOptions.builder().colorMatrix(null));
         }
 
         @Test
@@ -208,7 +209,7 @@ class ApiTest {
 
         private static RawInfo info(String captureTime) {
             return new RawInfo(RawFormat.DNG, null, null, 4, 4, 4, 4, Orientation.NORMAL, 16, null, null, null,
-                    false, 0, 0, 0, 0, null, captureTime, null, List.of());
+                    false, 0, 0, 0, 0, null, captureTime, null, List.of(), CfaLayout.RECTANGULAR, List.of(""), false);
         }
     }
 

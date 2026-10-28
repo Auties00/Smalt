@@ -1,14 +1,27 @@
 package com.github.auties00.smalt.internal.subtitle;
 
+import java.util.List;
+
 /**
- * Reads and writes the events of Advanced SubStation Alpha tracks in the Matroska block form,
- * {@code ReadOrder, Layer, Style, Name, MarginL, MarginR, MarginV, Effect, Text}.
+ * Reads and writes the events of SubStation Alpha and Advanced SubStation Alpha subtitles: the
+ * Matroska block form {@code ReadOrder, Layer, Style, Name, MarginL, MarginR, MarginV, Effect, Text}
+ * that packets carry, the {@code Dialogue} lines of a script, and the event fields a cue carries as its
+ * settings, {@code Layer, Style, Name, MarginL, MarginR, MarginV, Effect}.
+ *
+ * <p>The layer of an SSA event, which has none, is 0 in the block form; its {@code Marked} field is not
+ * kept.
  */
 public final class AssEvents {
     /**
-     * The number of fields before the text of an event.
+     * The number of fields before the text of an event in the block form.
      */
     private static final int FIELDS_BEFORE_TEXT = 8;
+
+    /**
+     * The event fields of a cue that has none: layer 0, the {@code Default} style, no name, no margin
+     * override and no effect.
+     */
+    public static final String DEFAULT_FIELDS = "0,Default,,0,0,0,";
 
     /**
      * The script header of tracks created from other formats: a 384x288 script with one
@@ -37,6 +50,36 @@ public final class AssEvents {
     }
 
     /**
+     * Holds one event.
+     *
+     * @param readOrder the position of the event in its script, or {@code -1} when unknown
+     * @param layer the layer, a decimal number
+     * @param style the style name
+     * @param name the speaker
+     * @param marginL the left margin override, {@code 0} for none
+     * @param marginR the right margin override, {@code 0} for none
+     * @param marginV the vertical margin override, {@code 0} for none
+     * @param effect the transition effect, empty when none
+     * @param text the text with its override blocks
+     */
+    public record Event(long readOrder, String layer, String style, String name, String marginL, String marginR,
+                        String marginV, String effect, String text) {
+        /**
+         * {@return the event fields a cue carries as its settings}
+         */
+        public String fields() {
+            return layer + "," + style + "," + name + "," + marginL + "," + marginR + "," + marginV + "," + effect;
+        }
+
+        /**
+         * {@return the event in the Matroska block form}
+         */
+        public String block() {
+            return Math.max(0, readOrder) + "," + fields() + "," + text;
+        }
+    }
+
+    /**
      * Returns the text field of an event.
      *
      * @param event the event in the Matroska block form
@@ -55,6 +98,46 @@ public final class AssEvents {
     }
 
     /**
+     * Parses an event in the Matroska block form.
+     *
+     * @param block the event
+     * @return the event; one with fewer than nine fields is all text, in the default fields
+     */
+    public static Event parseBlock(String block) {
+        var parts = block.split(",", FIELDS_BEFORE_TEXT + 1);
+        if (parts.length <= FIELDS_BEFORE_TEXT) {
+            return withFields(-1, DEFAULT_FIELDS, block);
+        }
+        long readOrder;
+        try {
+            readOrder = Long.parseLong(parts[0].strip());
+        } catch (NumberFormatException exception) {
+            readOrder = -1;
+        }
+        return new Event(readOrder, layer(parts[1]), parts[2].strip(), parts[3], parts[4].strip(), parts[5].strip(),
+                parts[6].strip(), parts[7], parts[8]);
+    }
+
+    /**
+     * Builds an event from the fields a cue carries as its settings.
+     *
+     * @param readOrder the position of the event in its script
+     * @param fields the cue settings, {@code Layer,Style,Name,MarginL,MarginR,MarginV,Effect}; an empty or
+     * malformed value gives the {@link #DEFAULT_FIELDS}
+     * @param text the event text
+     * @return the event
+     */
+    public static Event withFields(long readOrder, String fields, String text) {
+        var parts = fields.split(",", 7);
+        if (parts.length < 7) {
+            parts = DEFAULT_FIELDS.split(",", 7);
+        }
+        return new Event(readOrder, layer(parts[0]), parts[1].strip().isEmpty() ? "Default" : parts[1].strip(),
+                parts[2].replace("\n", " "), margin(parts[3]), margin(parts[4]), margin(parts[5]),
+                parts[6].replace("\n", " "), text);
+    }
+
+    /**
      * Builds an event in the Matroska block form, in the {@code Default} style of layer zero.
      *
      * @param readOrder the position of the event in the script
@@ -62,6 +145,177 @@ public final class AssEvents {
      * @return the event
      */
     public static String event(long readOrder, String text) {
-        return readOrder + ",0,Default,,0,0,0,," + text.replace("\n", "\\N");
+        return readOrder + "," + DEFAULT_FIELDS + "," + text.replace("\n", "\\N");
+    }
+
+    /**
+     * Returns the event fields of a block, without the read order and the text.
+     *
+     * @param block the event in the Matroska block form
+     * @return the cue settings of the event
+     */
+    public static String fields(String block) {
+        return parseBlock(block).fields();
+    }
+
+    /**
+     * Parses the value of a {@code Dialogue} line.
+     *
+     * @param value the text after {@code Dialogue:}
+     * @param format the event fields of the script, lowercase, the text last
+     * @param readOrder the position of the event in the script
+     * @param times a two-element array receiving the start and end in microseconds
+     * @return the event, or {@code null} when the line has too few fields or an invalid time
+     */
+    public static Event parseDialogue(String value, List<String> format, long readOrder, long[] times) {
+        var parts = value.split(",", format.size());
+        if (parts.length < format.size()) {
+            return null;
+        }
+        var layer = "0";
+        var style = "Default";
+        var name = "";
+        var marginL = "0";
+        var marginR = "0";
+        var marginV = "0";
+        var effect = "";
+        var text = "";
+        var start = -1L;
+        var end = -1L;
+        for (var index = 0; index < format.size(); index++) {
+            var part = parts[index];
+            switch (format.get(index)) {
+                case "layer" -> layer = layer(part);
+                case "start" -> start = parseTime(part);
+                case "end" -> end = parseTime(part);
+                case "style" -> style = part.strip();
+                case "name", "actor" -> name = part;
+                case "marginl" -> marginL = margin(part);
+                case "marginr" -> marginR = margin(part);
+                case "marginv" -> marginV = margin(part);
+                case "effect" -> effect = part;
+                case "text" -> text = part;
+                default -> {
+                }
+            }
+        }
+        if (start < 0 || end < 0) {
+            return null;
+        }
+        times[0] = start;
+        times[1] = Math.max(start, end);
+        return new Event(readOrder, layer, style, name, marginL, marginR, marginV, effect, text);
+    }
+
+    /**
+     * Writes the value of a {@code Dialogue} line in a script's event format.
+     *
+     * @param event the ASS event
+     * @param startMicros the event start in microseconds
+     * @param endMicros the event end in microseconds
+     * @param format the event fields of the script, lowercase
+     * @return the text after {@code Dialogue: }
+     */
+    public static String dialogue(Event event, long startMicros, long endMicros, List<String> format) {
+        var builder = new StringBuilder(event.text().length() + 64);
+        for (var index = 0; index < format.size(); index++) {
+            if (index > 0) {
+                builder.append(',');
+            }
+            switch (format.get(index)) {
+                case "layer" -> builder.append(event.layer());
+                case "marked" -> builder.append("Marked=0");
+                case "start" -> builder.append(formatTime(startMicros));
+                case "end" -> builder.append(formatTime(endMicros));
+                case "style" -> builder.append(event.style());
+                case "name", "actor" -> builder.append(event.name().replace(',', ' '));
+                case "marginl" -> builder.append(event.marginL());
+                case "marginr" -> builder.append(event.marginR());
+                case "marginv" -> builder.append(event.marginV());
+                case "effect" -> builder.append(event.effect().replace(',', ';'));
+                case "text" -> builder.append(event.text().replace("\n", "\\N"));
+                default -> {
+                }
+            }
+        }
+        return builder.toString();
+    }
+
+    /**
+     * Parses an event time, {@code H:MM:SS.CC}, leniently: any number of digits in each field and in the
+     * fraction.
+     *
+     * @param value the time
+     * @return the time in microseconds, or {@code -1} when it is not a time
+     */
+    public static long parseTime(String value) {
+        var text = value.strip();
+        var end = new int[1];
+        var time = CueTimes.parse(text, 0, end);
+        return time >= 0 && end[0] == text.length() ? time : -1;
+    }
+
+    /**
+     * Formats an event time, {@code H:MM:SS.CC}, rounding to the nearest centisecond.
+     *
+     * @param micros the time in microseconds; negative values format as zero
+     * @return the time
+     */
+    public static String formatTime(long micros) {
+        var centis = Math.max(0, Math.floorDiv(micros + 5000, 10000));
+        var hours = centis / 360_000;
+        var minutes = centis / 6000 % 60;
+        var seconds = centis / 100 % 60;
+        var fraction = centis % 100;
+        return hours + ":" + two(minutes) + ":" + two(seconds) + "." + two(fraction);
+    }
+
+    /**
+     * Writes a value below 100 with two digits.
+     *
+     * @param value the number, from 0 to 99
+     * @return the digits
+     */
+    private static String two(long value) {
+        return value < 10 ? "0" + value : Long.toString(value);
+    }
+
+    /**
+     * Normalizes a layer field: a decimal number, {@code 0} for the {@code Marked} field of SSA events and
+     * for anything else.
+     *
+     * @param value the field
+     * @return the layer
+     */
+    private static String layer(String value) {
+        var text = value.strip();
+        if (text.isEmpty() || text.length() > 9) {
+            return "0";
+        }
+        for (var index = 0; index < text.length(); index++) {
+            if (!CueTimes.isDigit(text.charAt(index)) && !(index == 0 && text.charAt(0) == '-' && text.length() > 1)) {
+                return "0";
+            }
+        }
+        return text;
+    }
+
+    /**
+     * Checks a margin field: a non-negative decimal number, kept as written.
+     *
+     * @param value the field
+     * @return the margin, {@code 0} for an empty or malformed field
+     */
+    private static String margin(String value) {
+        var text = value.strip();
+        if (text.isEmpty() || text.length() > 9) {
+            return "0";
+        }
+        for (var index = 0; index < text.length(); index++) {
+            if (!CueTimes.isDigit(text.charAt(index))) {
+                return "0";
+            }
+        }
+        return text;
     }
 }

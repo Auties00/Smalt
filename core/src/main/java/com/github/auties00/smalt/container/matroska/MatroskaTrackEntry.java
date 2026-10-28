@@ -3,6 +3,12 @@ package com.github.auties00.smalt.container.matroska;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.container.DecryptionKeys;
+import com.github.auties00.smalt.container.internal.AdpcmBlocks;
+import com.github.auties00.smalt.container.internal.BitmapTrackConfigs;
+import com.github.auties00.smalt.container.internal.Languages;
+import com.github.auties00.smalt.container.internal.RawVideoTags;
+import com.github.auties00.smalt.container.internal.SphericalBoxes;
 import com.github.auties00.smalt.container.internal.WaveFormat;
 import com.github.auties00.smalt.image.ChromaSiting;
 import com.github.auties00.smalt.image.Chromaticity;
@@ -14,24 +20,36 @@ import com.github.auties00.smalt.image.MasteringDisplay;
 import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.TransferCharacteristics;
+import com.github.auties00.smalt.internal.cenc.CencCipher;
+import com.github.auties00.smalt.internal.cenc.CencScheme;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
+import com.github.auties00.smalt.internal.codec.CodecConfigs;
+import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
+import com.github.auties00.smalt.internal.codec.Jp2Frames;
+import com.github.auties00.smalt.internal.header.OpusHeader;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.tags.EbmlIds;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.DataTrack;
+import com.github.auties00.smalt.track.DolbyVision;
+import com.github.auties00.smalt.track.Interlacing;
 import com.github.auties00.smalt.track.Rational;
+import com.github.auties00.smalt.track.SphericalVideo;
+import com.github.auties00.smalt.track.StereoMode;
 import com.github.auties00.smalt.track.Track;
+import com.github.auties00.smalt.track.TrackDisposition;
 import com.github.auties00.smalt.track.VideoTrack;
 
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.EnumSet;
+import java.util.HexFormat;
 import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.MissingResourceException;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Holds one parsed {@code TrackEntry} and maps its {@code CodecID} to a {@link Track}, per the
@@ -48,6 +66,21 @@ import java.util.Optional;
  * {@code BITMAPINFOHEADER} and {@code WAVEFORMATEX} structures.
  */
 final class MatroskaTrackEntry {
+    /**
+     * The signal byte bit of an encrypted WebM frame.
+     */
+    private static final int SIGNAL_ENCRYPTED = 1;
+
+    /**
+     * The signal byte bit of a partitioned WebM frame.
+     */
+    private static final int SIGNAL_PARTITIONED = 2;
+
+    /**
+     * The size of the initialization vector of an encrypted WebM frame.
+     */
+    private static final int IV_SIZE = 8;
+
     /**
      * The nanosecond time base in which Matroska expresses {@code DefaultDuration},
      * {@code CodecDelay}, {@code DiscardPadding} and the {@code DURATION} tag.
@@ -120,15 +153,11 @@ final class MatroskaTrackEntry {
     boolean enabled = true;
 
     /**
-     * The ISO 639-2 bibliographic codes of the languages whose terminology code differs, keyed by
-     * the terminology code.
+     * The dispositions of the flag elements: {@code FlagDefault} (set unless declared otherwise),
+     * {@code FlagForced}, {@code FlagHearingImpaired}, {@code FlagVisualImpaired},
+     * {@code FlagTextDescriptions}, {@code FlagOriginal} and {@code FlagCommentary}.
      */
-    private static final Map<String, String> BIBLIOGRAPHIC = Map.ofEntries(Map.entry("sqi", "alb"),
-            Map.entry("hye", "arm"), Map.entry("eus", "baq"), Map.entry("mya", "bur"), Map.entry("zho", "chi"),
-            Map.entry("ces", "cze"), Map.entry("nld", "dut"), Map.entry("fra", "fre"), Map.entry("kat", "geo"),
-            Map.entry("deu", "ger"), Map.entry("ell", "gre"), Map.entry("isl", "ice"), Map.entry("mkd", "mac"),
-            Map.entry("mri", "mao"), Map.entry("msa", "may"), Map.entry("fas", "per"), Map.entry("ron", "rum"),
-            Map.entry("slk", "slo"), Map.entry("bod", "tib"), Map.entry("cym", "wel"));
+    final Set<TrackDisposition> disposition = EnumSet.of(TrackDisposition.DEFAULT);
 
     /**
      * The {@code PixelWidth}.
@@ -136,9 +165,45 @@ final class MatroskaTrackEntry {
     long pixelWidth;
 
     /**
+     * The {@code ColourSpace} FourCC of an uncompressed video track, or {@code null}.
+     */
+    byte[] colourSpace;
+
+    /**
      * The {@code PixelHeight}.
      */
     long pixelHeight;
+
+    /**
+     * The {@code PixelCropTop}, {@code PixelCropBottom}, {@code PixelCropLeft} and
+     * {@code PixelCropRight}, in that order.
+     */
+    final long[] pixelCrop = new long[4];
+
+    /**
+     * The {@code DisplayWidth}, or {@code 0} when absent.
+     */
+    long displayWidth;
+
+    /**
+     * The {@code DisplayHeight}, or {@code 0} when absent.
+     */
+    long displayHeight;
+
+    /**
+     * The {@code DisplayUnit}: 0 pixels, 1 centimeters, 2 inches, 3 display aspect ratio, 4 unknown.
+     */
+    long displayUnit;
+
+    /**
+     * The {@code FlagInterlaced}: 0 undetermined, 1 interlaced, 2 progressive.
+     */
+    long flagInterlaced;
+
+    /**
+     * The {@code FieldOrder}, 2 (undetermined) unless declared.
+     */
+    long fieldOrder = 2;
 
     /**
      * The color description of the {@code Color} element, or {@code null}.
@@ -146,9 +211,30 @@ final class MatroskaTrackEntry {
     ColorInfo color;
 
     /**
-     * The display orientation of the {@code Projection} roll.
+     * The display orientation of the {@code Projection} roll of a rectangular projection.
      */
     Orientation orientation = Orientation.NORMAL;
+
+    /**
+     * The spherical projection of a {@code Projection} of another type, or {@code null}.
+     */
+    SphericalVideo spherical;
+
+    /**
+     * The {@code StereoMode}, or {@code null} when absent or unknown.
+     */
+    StereoMode stereoMode;
+
+    /**
+     * The {@code AlphaMode}, 0 unless declared.
+     */
+    long alphaMode;
+
+    /**
+     * The Dolby Vision configuration of the first {@code BlockAdditionMapping} of a Dolby Vision type, or
+     * {@code null}.
+     */
+    DolbyVision dolbyVision;
 
     /**
      * The {@code SamplingFrequency} in hertz.
@@ -176,6 +262,16 @@ final class MatroskaTrackEntry {
     List<ContentEncoding> encodings = List.of();
 
     /**
+     * The keys that decrypt the frames of an encrypted track.
+     */
+    DecryptionKeys keys = DecryptionKeys.none();
+
+    /**
+     * The cipher of an encrypted track, created from {@link #keys} on its first frame.
+     */
+    private CencCipher cipher;
+
+    /**
      * The track duration from a {@code DURATION} tag, in nanoseconds, or {@code -1}.
      */
     long taggedDuration = -1;
@@ -186,11 +282,31 @@ final class MatroskaTrackEntry {
     Codec codec = Codec.DATA;
 
     /**
+     * The block size of an IMA or Microsoft ADPCM track, whose frames the demuxer splits into blocks, or 0; set by
+     * {@link #toTrack(Rational, double, MediaLimits)}.
+     */
+    int adpcmBlockBytes;
+
+    /**
      * The time base of the track's packets, set by {@link #toTrack(Rational, double, MediaLimits)}:
      * the sample period of an audio track (48 kHz for Opus), so that durations and
      * {@code DiscardPadding} trims are sample-exact, and the segment time base otherwise.
      */
     Rational timeBase;
+
+    /**
+     * Records the value of a flag element.
+     *
+     * @param value the disposition the flag names
+     * @param flag the element value, nonzero when set
+     */
+    private void flag(TrackDisposition value, long flag) {
+        if (flag != 0) {
+            disposition.add(value);
+        } else {
+            disposition.remove(value);
+        }
+    }
 
     /**
      * Parses a {@code TrackEntry} element.
@@ -218,16 +334,24 @@ final class MatroskaTrackEntry {
                 case EbmlIds.LANGUAGE_BCP47 -> track.languageBcp47 = body.string();
                 case EbmlIds.FLAG_ENABLED -> track.enabled = body.unsigned() != 0;
                 case EbmlIds.NAME -> track.name = body.string();
+                case EbmlIds.FLAG_DEFAULT -> track.flag(TrackDisposition.DEFAULT, body.unsigned());
+                case EbmlIds.FLAG_FORCED -> track.flag(TrackDisposition.FORCED, body.unsigned());
+                case EbmlIds.FLAG_HEARING_IMPAIRED -> track.flag(TrackDisposition.HEARING_IMPAIRED, body.unsigned());
+                case EbmlIds.FLAG_VISUAL_IMPAIRED -> track.flag(TrackDisposition.VISUAL_IMPAIRED, body.unsigned());
+                case EbmlIds.FLAG_TEXT_DESCRIPTIONS -> track.flag(TrackDisposition.DESCRIPTIONS, body.unsigned());
+                case EbmlIds.FLAG_ORIGINAL -> track.flag(TrackDisposition.ORIGINAL, body.unsigned());
+                case EbmlIds.FLAG_COMMENTARY -> track.flag(TrackDisposition.COMMENTARY, body.unsigned());
                 case EbmlIds.VIDEO -> track.parseVideo(body);
                 case EbmlIds.AUDIO -> track.parseAudio(body);
                 case EbmlIds.CONTENT_ENCODINGS -> track.parseEncodings(body);
+                case EbmlIds.BLOCK_ADDITION_MAPPING -> track.parseMapping(body);
                 default -> {
                 }
             }
         }
         if (track.codecPrivate != null) {
             for (var encoding : track.encodings) {
-                if (encoding.appliesToPrivate() && encoding.algorithm() == ContentEncoding.ZLIB) {
+                if (encoding.appliesToPrivate() && encoding.decompresses()) {
                     track.codecPrivate = encoding.decode(track.codecPrivate, 0, track.codecPrivate.length, limits);
                 }
             }
@@ -236,35 +360,153 @@ final class MatroskaTrackEntry {
     }
 
     /**
+     * Parses a {@code BlockAdditionMapping} element: one of type {@code dvcC}, {@code dvvC} or {@code dvwC} holds a
+     * Dolby Vision configuration record in its {@code BlockAddIDExtraData}; the other mappings describe block
+     * additions this demuxer reads by their {@code BlockAddID}.
+     *
+     * @param mapping the element data
+     */
+    private void parseMapping(EbmlCursor mapping) {
+        var type = 0L;
+        byte[] extra = null;
+        while (mapping.hasMore()) {
+            var element = mapping.next();
+            switch ((int) element.id()) {
+                case EbmlIds.BLOCK_ADD_ID_TYPE -> type = element.payload().unsigned();
+                case EbmlIds.BLOCK_ADD_ID_EXTRA_DATA -> extra = element.payload().bytes();
+                default -> {
+                }
+            }
+        }
+        if (dolbyVision == null && DolbyVisionConfigs.isConfigType(type) && extra != null) {
+            dolbyVision = DolbyVisionConfigs.parseRecord(extra);
+        }
+    }
+
+    /**
      * Parses a {@code Video} element.
      *
      * @param video the element data
      */
     private void parseVideo(EbmlCursor video) {
-        // TODO: read DisplayWidth and DisplayHeight (the display aspect ratio) once VideoTrack can carry it
         while (video.hasMore()) {
             var element = video.next();
             var body = element.payload();
             switch ((int) element.id()) {
                 case EbmlIds.PIXEL_WIDTH -> pixelWidth = body.unsigned();
                 case EbmlIds.PIXEL_HEIGHT -> pixelHeight = body.unsigned();
+                case EbmlIds.PIXEL_CROP_TOP -> pixelCrop[0] = body.unsigned();
+                case EbmlIds.PIXEL_CROP_BOTTOM -> pixelCrop[1] = body.unsigned();
+                case EbmlIds.PIXEL_CROP_LEFT -> pixelCrop[2] = body.unsigned();
+                case EbmlIds.PIXEL_CROP_RIGHT -> pixelCrop[3] = body.unsigned();
+                case EbmlIds.DISPLAY_WIDTH -> displayWidth = body.unsigned();
+                case EbmlIds.DISPLAY_HEIGHT -> displayHeight = body.unsigned();
+                case EbmlIds.DISPLAY_UNIT -> displayUnit = body.unsigned();
+                case EbmlIds.FLAG_INTERLACED -> flagInterlaced = body.unsigned();
+                case EbmlIds.FIELD_ORDER -> fieldOrder = body.unsigned();
+                case EbmlIds.COLOUR_SPACE -> colourSpace = body.bytes();
                 case EbmlIds.COLOR -> color = parseColor(body);
-                case EbmlIds.PROJECTION -> {
-                    while (body.hasMore()) {
-                        var child = body.next();
-                        if (child.id() == EbmlIds.PROJECTION_POSE_ROLL) {
-                            var roll = child.payload().floating();
-                            if (Double.isFinite(roll)) {
-                                // the roll is counter-clockwise, the orientation clockwise
-                                orientation = Orientation.ofRotation((int) Math.round(-roll), false);
-                            }
-                        }
-                    }
+                case EbmlIds.PROJECTION -> parseProjection(body);
+                case EbmlIds.STEREO_MODE -> {
+                    var mode = body.unsigned();
+                    stereoMode = mode >= 0 && mode <= 14 ? StereoMode.ofCode(mode) : null;
                 }
+                case EbmlIds.ALPHA_MODE -> alphaMode = body.unsigned();
                 default -> {
                 }
             }
         }
+    }
+
+    /**
+     * Parses a {@code Projection} element: the roll of a rectangular projection becomes the orientation, and the
+     * other projections, with their private data and pose, the spherical projection. A missing private data reads
+     * as zero bytes, except for a mesh projection; a projection whose private data or pose is invalid is ignored.
+     *
+     * @param projection the element data
+     */
+    private void parseProjection(EbmlCursor projection) {
+        var type = 0L;
+        byte[] payload = null;
+        var yaw = 0.0;
+        var pitch = 0.0;
+        var roll = 0.0;
+        while (projection.hasMore()) {
+            var child = projection.next();
+            var body = child.payload();
+            switch ((int) child.id()) {
+                case EbmlIds.PROJECTION_TYPE -> type = body.unsigned();
+                case EbmlIds.PROJECTION_PRIVATE -> payload = body.bytes();
+                case EbmlIds.PROJECTION_POSE_YAW -> yaw = body.floating();
+                case EbmlIds.PROJECTION_POSE_PITCH -> pitch = body.floating();
+                case EbmlIds.PROJECTION_POSE_ROLL -> roll = body.floating();
+                default -> {
+                }
+            }
+        }
+        if (type == 0) {
+            if (Double.isFinite(roll)) {
+                // the roll is counter-clockwise, the orientation clockwise
+                orientation = Orientation.ofRotation((int) Math.round(-roll), false);
+            }
+            return;
+        }
+        if (payload == null && type != SphericalBoxes.MESH) {
+            // Spherical Video V2 reads a missing ProjectionPrivate as 20 zero bytes: a full equirectangular
+            // projection, or a cubemap of the default layout without padding
+            payload = new byte[20];
+        }
+        var shape = payload == null ? null : SphericalBoxes.parse(type, payload, 0, payload.length);
+        spherical = SphericalBoxes.spherical(shape, yaw, pitch, roll, "");
+    }
+
+    /**
+     * Returns the sample aspect ratio the display size declares (RFC 9559 section 5.1.4.1.28.12 to
+     * 5.1.4.1.28.14): the display size divided by the pixel size after the {@code PixelCrop}
+     * elements, whatever the unit of a known {@code DisplayUnit}.
+     *
+     * @return the ratio in lowest terms, or {@code null} when neither display dimension is declared, the unit is
+     * unknown, a dimension is zero or the crop leaves no picture
+     */
+    Rational sampleAspect() {
+        if ((displayWidth == 0 && displayHeight == 0) || displayUnit > 3) {
+            return null;
+        }
+        var width = pixelWidth - pixelCrop[2] - pixelCrop[3];
+        var height = pixelHeight - pixelCrop[0] - pixelCrop[1];
+        if (pixelWidth <= 0 || pixelHeight <= 0 || width <= 0 || height <= 0 || width > pixelWidth
+                || height > pixelHeight) {
+            return null;
+        }
+        var shownWidth = displayWidth != 0 ? displayWidth : displayUnit == 0 ? width : 0;
+        var shownHeight = displayHeight != 0 ? displayHeight : displayUnit == 0 ? height : 0;
+        if (shownWidth <= 0 || shownHeight <= 0) {
+            return null;
+        }
+        var numerator = BigInteger.valueOf(shownWidth).multiply(BigInteger.valueOf(height));
+        var denominator = BigInteger.valueOf(shownHeight).multiply(BigInteger.valueOf(width));
+        var gcd = numerator.gcd(denominator);
+        numerator = numerator.divide(gcd);
+        denominator = denominator.divide(gcd);
+        if (numerator.bitLength() > 63 || denominator.bitLength() > 63) {
+            return null;
+        }
+        return new Rational(numerator.longValue(), denominator.longValue());
+    }
+
+    /**
+     * Returns the scan {@code FlagInterlaced} and {@code FieldOrder} declare.
+     *
+     * @return the scan, or {@code null} when {@code FlagInterlaced} is undetermined or unknown
+     */
+    Interlacing interlacing() {
+        if (flagInterlaced == 2) {
+            return Interlacing.PROGRESSIVE;
+        }
+        if (flagInterlaced != 1) {
+            return null;
+        }
+        return fieldOrder == 0 ? Interlacing.INTERLACED : Interlacing.ofCode(fieldOrder);
     }
 
     /**
@@ -441,11 +683,110 @@ final class MatroskaTrackEntry {
     byte[] decodeFrame(byte[] data, int offset, int length, MediaLimits limits) {
         var result = Arrays.copyOfRange(data, offset, offset + length);
         for (var encoding : encodings) {
-            if (encoding.appliesToFrames()) {
+            if (encoding.encrypts()) {
+                result = decrypt(result, encoding);
+            } else if (encoding.appliesToFrames()) {
                 result = encoding.decode(result, 0, result.length, limits);
             }
         }
         return result;
+    }
+
+    /**
+     * Returns whether a content encoding of the track encrypts its frames.
+     *
+     * @return {@code true} for a WebM encrypted track
+     */
+    boolean encrypted() {
+        for (var encoding : encodings) {
+            if (encoding.encrypts()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Decrypts one frame of the WebM encryption format: a signal byte whose bit 0 marks an encrypted frame and bit 1
+     * a partitioned one, then for an encrypted frame an 8-byte initialization vector and, when partitioned, a
+     * partition count and that many 32-bit big-endian partition offsets, then the frame. The partitions alternate
+     * clear and encrypted bytes, starting with clear ones, and the encrypted ones are one AES-CTR stream whose
+     * counter block is the initialization vector followed by a 64-bit block counter starting at zero.
+     *
+     * @param frame the stored frame
+     * @param encoding the encryption
+     * @return the clear frame
+     * @throws MediaException.Malformed if the frame is truncated or its partitions are out of order
+     * @throws MediaException.Unsupported if the keys do not know the frame's key
+     */
+    private byte[] decrypt(byte[] frame, ContentEncoding encoding) {
+        if (frame.length == 0) {
+            throw new MediaException.Malformed("an encrypted track holds an empty frame");
+        }
+        var signal = frame[0] & 0xFF;
+        if ((signal & ~(SIGNAL_ENCRYPTED | SIGNAL_PARTITIONED)) != 0) {
+            throw new MediaException.Malformed("encrypted frame signal byte 0x" + Integer.toHexString(signal));
+        }
+        if ((signal & SIGNAL_ENCRYPTED) == 0) {
+            return Arrays.copyOfRange(frame, 1, frame.length);
+        }
+        var position = 1 + IV_SIZE;
+        int[] subsamples = null;
+        var pairs = 0;
+        if ((signal & SIGNAL_PARTITIONED) != 0) {
+            if (frame.length < position + 1) {
+                throw new MediaException.Malformed("encrypted frame of " + frame.length + " bytes");
+            }
+            var count = frame[position] & 0xFF;
+            var header = position + 1 + 4 * count;
+            if (frame.length < header) {
+                throw new MediaException.Malformed("encrypted frame of " + frame.length + " bytes declares " + count
+                        + " partitions");
+            }
+            var size = frame.length - header;
+            pairs = count / 2 + 1;
+            subsamples = new int[pairs * 2];
+            var previous = 0L;
+            for (var partition = 0; partition <= count; partition++) {
+                var end = partition < count ? readU32(frame, position + 1 + 4 * partition) : size;
+                if (end < previous || end > size) {
+                    throw new MediaException.Malformed("encrypted frame partition offset " + end + " out of order");
+                }
+                subsamples[partition] = (int) (end - previous);
+                previous = end;
+            }
+            position = header;
+        } else if (frame.length < position) {
+            throw new MediaException.Malformed("encrypted frame of " + frame.length + " bytes");
+        }
+        var data = Arrays.copyOfRange(frame, position, frame.length);
+        cipher(encoding).decrypt(CencScheme.CENC, data, 0, data.length, frame, 1, IV_SIZE, subsamples, 0, pairs, 0, 0);
+        return data;
+    }
+
+    /**
+     * Returns the cipher of an encryption, asking the keys for it the first time.
+     *
+     * @param encoding the encryption
+     * @return the cipher
+     * @throws MediaException.Unsupported if the keys do not know the key
+     */
+    private CencCipher cipher(ContentEncoding encoding) {
+        if (cipher == null) {
+            var key = keys.find(encoding.keyId().clone()).orElseThrow(() -> new MediaException.Unsupported(
+                    "matroska encryption", "no decryption key for key ID " + HexFormat.of().formatHex(encoding.keyId())));
+            if (key.length != 16) {
+                throw new MediaException.Unsupported("matroska encryption", "the key of key ID "
+                        + HexFormat.of().formatHex(encoding.keyId()) + " is " + key.length + " bytes, not 16");
+            }
+            cipher = new CencCipher(key);
+        }
+        return cipher;
+    }
+
+    private static long readU32(byte[] data, int position) {
+        return ((data[position] & 0xFFL) << 24) | ((data[position + 1] & 0xFF) << 16)
+                | ((data[position + 2] & 0xFF) << 8) | (data[position + 3] & 0xFF);
     }
 
     /**
@@ -468,7 +809,7 @@ final class MatroskaTrackEntry {
      */
     Track toTrack(Rational segmentBase, double segmentDuration, MediaLimits limits) {
         var id = (int) number;
-        var code = languageBcp47 != null ? bibliographicCode(languageBcp47) : language;
+        var code = languageBcp47 != null ? Languages.bibliographicCode(languageBcp47) : language;
         var lang = code.isEmpty() || code.equals("und") ? Optional.<String>empty() : Optional.of(code);
         timeBase = segmentBase;
         if (type == TYPE_VIDEO || codecId.startsWith("V_")) {
@@ -480,19 +821,38 @@ final class MatroskaTrackEntry {
                 case "V_VP9" -> Codec.VP9;
                 case "V_AV1" -> Codec.AV1;
                 case "V_MPEG4/ISO/SP", "V_MPEG4/ISO/ASP", "V_MPEG4/ISO/AP" -> Codec.MPEG4_PART2;
+                case "V_MPEG1" -> Codec.MPEG1_VIDEO;
+                case "V_MPEG2" -> Codec.MPEG2_VIDEO;
                 case "V_MJPEG" -> Codec.MJPEG;
+                case "V_JPEG2000" -> Codec.JPEG2000;
                 case "V_PRORES" -> Codec.PRORES;
+                case "V_THEORA" -> Codec.THEORA;
                 case "V_MS/VFW/FOURCC" -> videoFromBitmapInfo();
                 case "V_QUICKTIME" -> videoFromImageDescription();
+                case "V_UNCOMPRESSED" -> colourSpace != null && RawVideoTags.fourCc(colourSpace, 0) != null
+                        ? Codec.RAW_VIDEO : Codec.UNKNOWN_VIDEO;
                 default -> Codec.UNKNOWN_VIDEO;
             };
+            if (codecId.equals("V_MS/VFW/FOURCC") && codec == Codec.UNKNOWN_VIDEO
+                    && RawVideoTags.bitmap(codecPrivate) != null) {
+                codec = Codec.RAW_VIDEO;
+            }
             if (codec == Codec.VP8 || codec == Codec.VP9) {
                 config = null;
             } else if (codecId.equals("V_QUICKTIME")) {
-                config = codec == Codec.PRORES || codec == Codec.DNXHD ? Arrays.copyOfRange(codecPrivate, 4, 8) : null;
+                config = codec == Codec.PRORES ? Arrays.copyOfRange(codecPrivate, 4, 8)
+                        : codec == Codec.DNXHD ? dnxhdConfig(codecPrivate) : null;
             } else if (codecId.equals("V_MS/VFW/FOURCC")) {
                 config = codec == Codec.DNXHD ? Arrays.copyOfRange(codecPrivate, 16, 20)
                         : codecPrivate != null && codecPrivate.length > 40 ? Arrays.copyOfRange(codecPrivate, 40, codecPrivate.length) : null;
+            }
+            if (codec == Codec.JPEG2000 && !Jp2Frames.isHeader(config)) {
+                config = null;
+            }
+            if (codec == Codec.RAW_VIDEO) {
+                var raw = codecId.equals("V_UNCOMPRESSED") ? RawVideoTags.fourCc(colourSpace, 0)
+                        : RawVideoTags.bitmap(codecPrivate);
+                config = raw.toCodecConfig();
             }
             var width = (int) Math.min(pixelWidth, Integer.MAX_VALUE);
             var height = (int) Math.min(pixelHeight, Integer.MAX_VALUE);
@@ -500,7 +860,7 @@ final class MatroskaTrackEntry {
                 LimitChecks.checkPicture(limits, width, height);
             }
             var frameRate = defaultDuration > 0 ? Optional.of(new Rational(1_000_000_000L, defaultDuration).reduce()) : Optional.<Rational>empty();
-            return VideoTrack.builder().id(id).codec(codec).timeBase(timeBase)
+            var builder = VideoTrack.builder().id(id).codec(codec).timeBase(timeBase)
                     .duration(duration(segmentBase, segmentDuration))
                     .codecConfig(config)
                     .language(lang.orElse(null))
@@ -508,8 +868,25 @@ final class MatroskaTrackEntry {
                     .height(height)
                     .frameRate(frameRate.orElse(null))
                     .color(color)
-                    .orientation(orientation)
-                    .build();
+                    .orientation(orientation);
+            var aspect = sampleAspect();
+            if (aspect != null) {
+                builder.sampleAspectRatio(aspect);
+            }
+            var scan = interlacing();
+            if (scan != null) {
+                builder.interlacing(scan);
+            }
+            if (spherical != null) {
+                builder.spherical(spherical);
+            }
+            if (stereoMode != null) {
+                builder.stereoMode(stereoMode);
+            }
+            if (dolbyVision != null && (codec == Codec.HEVC || codec == Codec.H264 || codec == Codec.AV1)) {
+                builder.dolbyVision(dolbyVision);
+            }
+            return builder.alpha(alphaMode == 1).build();
         }
         if (type == TYPE_AUDIO || codecId.startsWith("A_")) {
             var config = codecPrivate;
@@ -526,12 +903,24 @@ final class MatroskaTrackEntry {
                 case "A_PCM/FLOAT/IEEE" -> bits == 64 ? Codec.PCM_F64LE : bits == 32 ? Codec.PCM_F32LE : Codec.UNKNOWN_AUDIO;
                 case "A_AC3", "A_AC3/BSID9", "A_AC3/BSID10" -> Codec.AC3;
                 case "A_EAC3" -> Codec.EAC3;
+                case "A_DTS", "A_DTS/EXPRESS", "A_DTS/LOSSLESS" -> Codec.DTS;
+                case "A_TRUEHD" -> Codec.TRUEHD;
                 case "A_ALAC" -> Codec.ALAC;
                 case "A_AMR/NB" -> Codec.AMR_NB;
                 case "A_AMR/WB" -> Codec.AMR_WB;
                 case "A_MS/ACM" -> audioFromWaveFormat();
                 default -> codecId.startsWith("A_AAC/") ? Codec.AAC : Codec.UNKNOWN_AUDIO;
             };
+            var codeSize = 0;
+            if (AdpcmBlocks.supports(codec)) {
+                var wave = WaveFormat.parse(codecPrivate, codecPrivate.length, false);
+                codeSize = AdpcmBlocks.codeSize(codec, wave);
+                if (codeSize < 0) {
+                    codec = Codec.UNKNOWN_AUDIO;
+                } else if (AdpcmBlocks.hasBlocks(codec)) {
+                    adpcmBlockBytes = wave.blockAlign();
+                }
+            }
             if (codec == Codec.AAC && (config == null || config.length < 2 || codecId.startsWith("A_AAC/"))) {
                 config = synthesizeAudioSpecificConfig();
             } else if (codec == Codec.ALAC && config != null) {
@@ -541,6 +930,10 @@ final class MatroskaTrackEntry {
                 config = extra != null && extra.length > 0 ? extra : null;
                 if (codec == Codec.AAC && config == null) {
                     config = synthesizeAudioSpecificConfig();
+                }
+                if (codec == Codec.ADPCM_MS) {
+                    config = WaveFormat.msAdpcmConfig(WaveFormat.parse(codecPrivate, codecPrivate.length, false)
+                            .extra());
                 }
             }
             if (bits == 0) {
@@ -561,8 +954,8 @@ final class MatroskaTrackEntry {
                     .codecConfig(config)
                     .language(lang.orElse(null))
                     .sampleRate(sampleRate)
-                    .layout(ChannelLayout.defaultFor(channelCount))
-                    .bitsPerSample(codec.isPcm() ? bits : 0)
+                    .layout(audioLayout(codec, config, channelCount))
+                    .bitsPerSample(codec.isPcm() ? bits : AdpcmBlocks.supports(codec) ? codeSize : 0)
                     .skipSamples(Math.max(skip, 0))
                     .build();
         }
@@ -570,13 +963,48 @@ final class MatroskaTrackEntry {
             case "S_TEXT/UTF8", "S_TEXT/ASCII" -> Codec.SUBRIP;
             case "S_TEXT/ASS", "S_TEXT/SSA", "S_ASS", "S_SSA" -> Codec.ASS;
             case "S_TEXT/WEBVTT" -> Codec.WEBVTT;
+            case "S_HDMV/PGS" -> Codec.PGS;
+            case "S_DVBSUB" -> Codec.DVB_SUBTITLE;
+            case "S_VOBSUB" -> Codec.DVD_SUBTITLE;
             default -> codecId.startsWith("D_WEBVTT") ? Codec.WEBVTT : Codec.DATA;
         };
+        var config = switch (codec) {
+            case PGS -> null;
+            case DVB_SUBTITLE -> BitmapTrackConfigs.dvbFromMatroska(codecPrivate, lang.orElse(null));
+            default -> codecPrivate;
+        };
         return DataTrack.builder().id(id).codec(codec).timeBase(timeBase).duration(duration(segmentBase, segmentDuration))
-                .codecConfig(codecPrivate)
+                .codecConfig(config)
                 .language(lang.orElse(null))
                 .handler(codecId)
                 .build();
+    }
+
+    /**
+     * Returns the layout of an audio track: the ambisonic layout of an Opus identification header of mapping
+     * family 2 or 3, the Furse-Malham layout of an {@code A_MS/ACM} codec private of the Ambisonic B-format
+     * sub-format, otherwise the default layout of the channel count.
+     *
+     * @param codec the coding format of the track
+     * @param config the codec configuration, or {@code null}
+     * @param channels the channel count of the track entry
+     * @return the layout
+     */
+    private ChannelLayout audioLayout(Codec codec, byte[] config, int channels) {
+        if (codec == Codec.OPUS && config != null && config.length > OpusHeader.BASE_SIZE
+                && (config[9] & 0xFF) == channels) {
+            var ambisonic = OpusHeader.ambisonicLayout(channels, config[18] & 0xFF);
+            if (ambisonic != null) {
+                return ambisonic;
+            }
+        }
+        if (codecId.equals("A_MS/ACM") && codecPrivate != null && codecPrivate.length >= 16) {
+            var format = WaveFormat.parse(codecPrivate, codecPrivate.length, false);
+            if (format.subFormat() == WaveFormat.SubFormat.AMBISONIC && format.channels() == channels) {
+                return format.layout();
+            }
+        }
+        return ChannelLayout.defaultFor(channels);
     }
 
     /**
@@ -622,6 +1050,7 @@ final class MatroskaTrackEntry {
             case 16 -> littleEndian ? Codec.PCM_S16LE : Codec.PCM_S16BE;
             case 24 -> littleEndian ? Codec.PCM_S24LE : Codec.PCM_S24BE;
             case 32 -> littleEndian ? Codec.PCM_S32LE : Codec.PCM_S32BE;
+            case 64 -> littleEndian ? Codec.PCM_S64LE : Codec.PCM_S64BE;
             default -> Codec.UNKNOWN_AUDIO;
         };
     }
@@ -640,7 +1069,8 @@ final class MatroskaTrackEntry {
             case "H264", "X264", "AVC1", "DAVC" -> Codec.H264;
             case "HEVC", "H265", "HVC1" -> Codec.HEVC;
             case "XVID", "DIVX", "DX50", "FMP4", "MP4V" -> Codec.MPEG4_PART2;
-            case "MJPG" -> Codec.MJPEG;
+            case "MJPG", "AVRN", "LJPG", "JPGL", "AVDJ", "DMB1" -> Codec.MJPEG;
+            case "MJ2C", "MJP2", "LJ2C", "LJ2K", "IPJ2", "AVJ2" -> Codec.JPEG2000;
             case "H263", "S263" -> Codec.H263;
             case "VP80" -> Codec.VP8;
             case "VP90" -> Codec.VP9;
@@ -651,8 +1081,23 @@ final class MatroskaTrackEntry {
     }
 
     /**
+     * Returns the configuration of a DNxHD track from a QuickTime image description codec private:
+     * the sample entry type followed by the Avid extensions after the 86 fixed bytes.
+     *
+     * @param description the image description, at least 8 bytes
+     * @return the configuration
+     */
+    private static byte[] dnxhdConfig(byte[] description) {
+        var extensions = description.length > 86
+                ? CodecConfigs.avidExtensions(description, 86, description.length) : new byte[0];
+        var config = Arrays.copyOfRange(description, 4, 8 + extensions.length);
+        System.arraycopy(extensions, 0, config, 4, extensions.length);
+        return config;
+    }
+
+    /**
      * Maps the sample entry type of a QuickTime image description codec private
-     * ({@code V_QUICKTIME}): ProRes and DNxHD.
+     * ({@code V_QUICKTIME}): ProRes, DNxHD and Motion JPEG 2000.
      *
      * @return the codec
      */
@@ -663,6 +1108,7 @@ final class MatroskaTrackEntry {
         return switch (new String(codecPrivate, 4, 4, java.nio.charset.StandardCharsets.ISO_8859_1)) {
             case "apco", "apcs", "apcn", "apch", "ap4h", "ap4x" -> Codec.PRORES;
             case "AVdn", "AVdh" -> Codec.DNXHD;
+            case "mjp2" -> Codec.JPEG2000;
             default -> Codec.UNKNOWN_VIDEO;
         };
     }
@@ -677,7 +1123,7 @@ final class MatroskaTrackEntry {
             return Codec.UNKNOWN_AUDIO;
         }
         var format = WaveFormat.parse(codecPrivate, codecPrivate.length, false);
-        return WaveFormat.codec(format.tag(), format.bitsPerSample());
+        return format.codec();
     }
 
     /**
@@ -708,22 +1154,5 @@ final class MatroskaTrackEntry {
         } catch (IllegalArgumentException exception) {
             return null;
         }
-    }
-
-    /**
-     * Converts a BCP 47 language tag to the ISO 639-2 bibliographic code {@link Track#language()}
-     * reports.
-     *
-     * @param tag the tag, such as {@code fr-CA}
-     * @return the three-letter code, or {@code und} when the tag names no language with one
-     */
-    private static String bibliographicCode(String tag) {
-        String code;
-        try {
-            code = Locale.forLanguageTag(tag).getISO3Language();
-        } catch (MissingResourceException exception) {
-            return "und";
-        }
-        return code.isEmpty() ? "und" : BIBLIOGRAPHIC.getOrDefault(code, code);
     }
 }

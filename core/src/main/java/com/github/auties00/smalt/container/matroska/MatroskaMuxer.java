@@ -2,26 +2,51 @@ package com.github.auties00.smalt.container.matroska;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.Muxer;
+import com.github.auties00.smalt.container.internal.AdpcmBlocks;
+import com.github.auties00.smalt.container.internal.AdpcmFormat;
+import com.github.auties00.smalt.container.internal.BitmapTrackConfigs;
+import com.github.auties00.smalt.container.internal.ConfigChanges;
+import com.github.auties00.smalt.container.internal.SphericalBoxes;
+import com.github.auties00.smalt.container.internal.WaveFormat;
+import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorRange;
+import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
+import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
+import com.github.auties00.smalt.internal.codec.Jp2Frames;
+import com.github.auties00.smalt.internal.codec.NalConfigs;
+import com.github.auties00.smalt.internal.io.ByteWriter;
+import com.github.auties00.smalt.internal.nal.NalUnits;
+import com.github.auties00.smalt.internal.subtitle.AssScript;
+import com.github.auties00.smalt.internal.subtitle.TextFiles;
 import com.github.auties00.smalt.internal.subtitle.WebVttSamples;
 import com.github.auties00.smalt.internal.subtitle.WebVttText;
 import com.github.auties00.smalt.internal.tags.Ebml;
 import com.github.auties00.smalt.internal.tags.EbmlIds;
+import com.github.auties00.smalt.internal.tags.MatroskaTags;
 import com.github.auties00.smalt.internal.tags.MuxerTags;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.metadata.StandardTag;
+import com.github.auties00.smalt.metadata.TrackTags;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.track.DataTrack;
+import com.github.auties00.smalt.track.Interlacing;
 import com.github.auties00.smalt.track.Packet;
+import com.github.auties00.smalt.track.PacketFlag;
 import com.github.auties00.smalt.track.Rational;
+import com.github.auties00.smalt.track.SphericalVideo;
+import com.github.auties00.smalt.track.StereoMode;
 import com.github.auties00.smalt.track.Track;
+import com.github.auties00.smalt.track.TrackDisposition;
 import com.github.auties00.smalt.track.TrackKind;
 import com.github.auties00.smalt.track.VideoTrack;
 
+import java.math.BigInteger;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -33,7 +58,7 @@ import java.util.Set;
 
 /**
  * Writes Matroska and WebM files (RFC 9559, and the WebM profile of it) from the packets of video,
- * audio and text subtitle tracks.
+ * audio, text subtitle and data tracks.
  *
  * <p>Supported codecs, with their codec identifier and {@code CodecPrivate}:
  * <ul>
@@ -44,43 +69,127 @@ import java.util.Set;
  *       {@code OpusHead}, synthesized for at most two channels when absent) and Vorbis
  *       ({@code A_VORBIS}, the Xiph-laced headers);</li>
  *   <li>Matroska only: H.264 ({@code V_MPEG4/ISO/AVC}, {@code avcC}), HEVC
- *       ({@code V_MPEGH/ISO/HEVC}, {@code hvcC}), ProRes ({@code V_PRORES}, the four-character
- *       sample entry type of the track's configuration), DNxHD and DNxHR ({@code V_QUICKTIME}, a
+ *       ({@code V_MPEGH/ISO/HEVC}, {@code hvcC}), MPEG-4 Part 2 ({@code V_MPEG4/ISO/ASP}, the
+ *       decoder specific information of the track's configuration, when it has one), Motion-JPEG
+ *       ({@code V_MJPEG}, none), Motion JPEG 2000 ({@code V_JPEG2000}, none: a frame that relies on the track's JP2
+ *       Header box is made to carry it, a raw codestream or a single {@code jp2c} box written as a JP2 file and the
+ *       two {@code jp2c} boxes of an interlaced frame after a copy of the header box), H.263
+ *       ({@code V_MS/VFW/FOURCC}, a {@code BITMAPINFOHEADER} with the FourCC {@code H263}), ProRes
+ *       ({@code V_PRORES}, the four-character sample entry type of the track's configuration), Theora
+ *       ({@code V_THEORA}, the Xiph-laced headers), DNxHD and DNxHR ({@code V_QUICKTIME}, a
  *       QuickTime video sample description of the four-character sample entry type of the
  *       track's configuration, {@code AVdn} or {@code AVdh}), AAC ({@code A_AAC}, the
  *       {@code AudioSpecificConfig}), FLAC ({@code A_FLAC}, the {@code fLaC} marker and metadata
- *       blocks), MP3 and MP2 ({@code A_MPEG/L3}, {@code A_MPEG/L2}), AC-3 and E-AC-3, and PCM
- *       ({@code A_PCM/INT/LIT} for unsigned 8-bit and little-endian integers,
- *       {@code A_PCM/INT/BIG} for big-endian integers, {@code A_PCM/FLOAT/IEEE} for little-endian
- *       floats).</li>
+ *       blocks), ALAC ({@code A_ALAC}, the 24-byte {@code ALACSpecificConfig}), MP3 and MP2
+ *       ({@code A_MPEG/L3}, {@code A_MPEG/L2}), AC-3 and E-AC-3, AMR-NB and AMR-WB
+ *       ({@code A_MS/ACM}, a {@code WAVEFORMATEX} of format tag {@code 0x0038} or {@code 0x0058};
+ *       storage-format frames), G.711 A-law and mu-law ({@code A_MS/ACM}, a {@code WAVEFORMATEX}
+ *       of format tag 6 or 7), IMA ADPCM, Microsoft ADPCM, GSM 06.10 in Microsoft's packing, G.722 and G.726
+ *       ({@code A_MS/ACM}, the {@code WAVEFORMATEX} a WAVE file stores for them, of format tag {@code 0x0011},
+ *       {@code 0x0002}, {@code 0x0031}, {@code 0x028F} or {@code 0x0045}; one packet per block, the block size of
+ *       IMA and Microsoft ADPCM the size of the track's first packet, or 256 bytes per channel when the header is
+ *       written before it, which every later packet but the last must have), and PCM
+ *       ({@code A_PCM/INT/LIT} for 8-bit and little-endian integers up to 32 bits, {@code A_PCM/INT/BIG}
+ *       for big-endian integers up to 32 bits, {@code A_MS/ACM} with a {@code WAVEFORMATEXTENSIBLE} for
+ *       64-bit integers, of the Ambisonic B-format sub-format for the Furse-Malham layouts of
+ *       {@link com.github.auties00.smalt.audio.Ambisonics#ofFurseMalham(int)}, {@code A_PCM/FLOAT/IEEE} for
+ *       floats). Matroska stores 8-bit PCM as
+ *       unsigned, and float and 64-bit integer PCM as little-endian, so signed 8-bit samples are written
+ *       with their sign bit flipped and big-endian floats and 64-bit integers byte-swapped; such a track
+ *       reads back as {@link Codec#PCM_U8}, {@link Codec#PCM_F32LE}, {@link Codec#PCM_F64LE} or
+ *       {@link Codec#PCM_S64LE}.</li>
  *   <li>Text subtitles: WebVTT ({@code D_WEBVTT/SUBTITLES}, with the WebVTT header as
  *       {@code CodecPrivate} in Matroska when it holds more than the signature, none in WebM),
- *       and in Matroska only SubRip ({@code S_TEXT/UTF8}, none) and ASS ({@code S_TEXT/ASS}, the
- *       script header). Subtitle packets become {@code BlockGroup}s with a {@code BlockDuration};
+ *       and in Matroska only SubRip ({@code S_TEXT/UTF8}, none) and ASS ({@code S_TEXT/ASS}, or
+ *       {@code S_TEXT/SSA} for a v4.00 script, the script header). Subtitle packets become {@code BlockGroup}s
+ *       with a {@code BlockDuration};
  *       a WebVTT block holds the cue identifier line, the settings line and the payload. Subtitle
  *       tracks get no cue points.</li>
+ *   <li>Bitmap subtitles, in Matroska only: PGS ({@code S_HDMV/PGS}, none), DVB subtitles ({@code S_DVBSUB}, the
+ *       composition page, ancillary page and subtitling type of the first subtitling descriptor entry) and DVD
+ *       subpictures ({@code S_VOBSUB}, the VobSub index header), written like text subtitles.</li>
+ *   <li>Other data, in Matroska only: a {@link Codec#DATA} track whose
+ *       {@link com.github.auties00.smalt.track.DataTrack#handler() handler} is a Matroska codec
+ *       identifier (a capital letter other than {@code V} and {@code A}, an underscore and
+ *       printable ASCII, for example {@code S_HDMV/PGS}) is written with that identifier and its
+ *       configuration as {@code CodecPrivate}, as a subtitle track ({@code TrackType} 17) for an
+ *       {@code S_} identifier and a {@code D_WEBVTT/} one other than {@code D_WEBVTT/METADATA}, a
+ *       buttons track (18) for a {@code B_} one and a metadata track (33) otherwise. Its packets
+ *       are written as they are, like those of subtitle tracks.</li>
  * </ul>
  * Each track becomes a {@code TrackEntry} numbered from one in declaration order, with its
  * language ({@code und} when undeclared), the flags of {@link #addTrack(Track, Set)}, the
- * {@code DefaultDuration} of a video track with a frame rate, the {@code Color} element of a
- * video track with a color description, and the sampling frequency, channel count and (for PCM)
- * bit depth of an audio track. An audio track's {@link AudioTrack#skipSamples()} becomes its
- * {@code CodecDelay}; Opus stores its pre-skip there instead, with an 80 ms {@code SeekPreRoll}.
+ * {@code DefaultDuration} of a video track with a frame rate, the {@code Colour} element of a
+ * video track with a color description, the {@code FlagInterlaced} and {@code FieldOrder} of a
+ * video track with a declared {@link VideoTrack#interlacing() scan}, the {@code DisplayWidth} and
+ * {@code DisplayHeight} of a video track with a declared
+ * {@link VideoTrack#sampleAspectRatio() sample aspect ratio} (in pixels with the coded height when
+ * the stretched width is a whole number, otherwise as a display aspect ratio, {@code DisplayUnit}
+ * 3), the {@code StereoMode} of a video track with a declared {@link VideoTrack#stereoMode() stereo mode}
+ * (in WebM only the mono, side by side and top-bottom modes the WebM specification allows),
+ * the {@code Projection} of a video track with a {@link VideoTrack#spherical() spherical projection} (its
+ * type, the payload of its Spherical Video V2 box as {@code ProjectionPrivate} and its pose), and the
+ * sampling frequency, channel count and (for PCM) bit depth of an audio track. An audio
+ * track's {@link AudioTrack#skipSamples()} becomes its {@code CodecDelay}; Opus stores its pre-skip there
+ * instead, with an 80 ms {@code SeekPreRoll}.
+ * The {@code Colour} element holds the matrix, range, transfer characteristics and primaries, the
+ * {@linkplain ColorInfo#chromaSiting() chroma siting} as
+ * {@code ChromaSitingHorz} and {@code ChromaSitingVert} (a siting on the bottom luma row keeps only
+ * its horizontal position, which is all Matroska can express), and the static high-dynamic-range
+ * metadata: the content light level as {@code MaxCLL} and {@code MaxFALL} and the mastering
+ * display as {@code MasteringMetadata}, with exact floating-point values.
+ *
+ * <p>The {@linkplain com.github.auties00.smalt.track.PacketSideData#hdr10Plus() HDR10+ message}
+ * of a video packet is written as the {@code BlockAdditional} of {@code BlockAddID} 4 in the
+ * {@code BlockAdditions} of the packet's {@code BlockGroup}. The track entry of a video track whose
+ * transfer characteristics are PQ, or that has an HDR10+ message queued when the header is
+ * written, declares that {@code BlockAddID} with a {@code MaxBlockAdditionID} of 4 and a
+ * {@code BlockAdditionMapping} of {@code BlockAddIDType} 4 (ITU-T T.35 metadata). A message on
+ * any other video track (one that is not PQ and whose first message comes after the header, as in
+ * live output) is still written under {@code BlockAddID} 4, but its entry declares no mapping, so a
+ * reader that follows the mappings may skip it; WebM assigns {@code BlockAddID} 4 of VP9 to ITU-T
+ * T.35 metadata without a mapping.
+ *
+ * <p>In a Matroska file, the track entry of an H.264, HEVC or AV1 track with a
+ * {@link VideoTrack#dolbyVision() Dolby Vision configuration} gets a {@code BlockAdditionMapping} of
+ * {@code BlockAddIDType} {@code dvcC} (up to profile 7), {@code dvvC} (profiles 8 to 10) or {@code dvwC} (above)
+ * whose {@code BlockAddIDExtraData} is the configuration record; the reference processing units stay in the
+ * packets. WebM has no Dolby Vision mapping, so a WebM file stores the base layer only.
+ *
+ * <p>A video track that {@linkplain VideoTrack#hasAlpha() carries alpha} declares {@code AlphaMode} 1
+ * in its {@code Video} element and a {@code MaxBlockAdditionID} of at least 1, and the
+ * {@linkplain com.github.auties00.smalt.track.PacketSideData#alphaFrame() alpha frame} of each of its
+ * packets is written as the {@code BlockAdditional} of {@code BlockAddID} 1 in the
+ * {@code BlockAdditions} of the packet's {@code BlockGroup}, as transparent VP8 and VP9 video is
+ * stored in WebM. The alpha frame of a packet on any other track is not written.
  *
  * <p>Packets of every track are interleaved by decoding time: a packet is written once every
  * track has a later one queued. An audio or video track without a queued packet holds the others
  * back until its next packet arrives, so an encoder that holds frames back (a lookahead) still gets
  * its blocks written in decoding order; only {@linkplain MatroskaMuxerOptions#live() live} output
  * writes a packet more than a second older than the newest one without waiting for such a track. A
- * subtitle track, whose packets are sparse, holds the others back for at most a second. Over
+ * subtitle or data track, whose packets are sparse, holds the others back for at most a second. Over
  * 64 MiB of queued packets the oldest is written whatever the other tracks hold.
  * Blocks store presentation timestamps in segment ticks; an Opus block is stamped with its
  * presentation timestamp plus the pre-skip, as the {@code CodecDelay} semantics require, and an
- * Opus packet whose {@link Packet#duration()} is shorter than its coded duration gets a
- * {@code BlockGroup} with the difference as {@code DiscardPadding}. When the first packets
- * reaching the output have negative timestamps, every timestamp is shifted so the earliest is
- * zero. Every other packet becomes a {@code SimpleBlock}, flagged as a key frame when it is one
- * (audio packets always are), without lacing.
+ * Opus or AAC packet whose {@link Packet#duration()} is shorter than its coded duration gets a
+ * {@code BlockGroup} with the difference as {@code DiscardPadding}; an AAC track declares its
+ * frame duration as {@code DefaultDuration}, which a reader needs to apply the padding. When the
+ * first packets reaching the output have negative timestamps, every timestamp is shifted so the
+ * earliest is zero. A video packet with an HDR10+ message or an alpha frame also gets a {@code BlockGroup}, with a
+ * {@code ReferenceBlock} pointing at the track's previous block when it is not a key frame. Every
+ * other packet becomes a {@code SimpleBlock}, flagged as a key frame when it is one (audio packets
+ * always are), without lacing. A packet flagged {@link PacketFlag#DISCARD} gets the invisible flag,
+ * so a reader decodes it without presenting it.
+ *
+ * <p>A track stores one {@code CodecPrivate}, so a packet that changes the codec configuration is
+ * written in band where the codec allows it: from an H.264 or HEVC packet that changes the
+ * configuration record on, every key frame that carries no parameter set gets those of the new
+ * record, and the NAL unit lengths are rewritten to the size of the track's record; VP8, VP9 and
+ * AV1 frames describe themselves and are written as they are. A change on any other track is
+ * rejected. The final {@code STREAMINFO} of a FLAC track and the final {@code ALACSpecificConfig} of an
+ * ALAC track, which their encoders report once flushed, reach the file through
+ * {@link #updateCodecConfig(int, byte[])}.
  *
  * <p>Output modes, following {@link MatroskaMuxerOptions}:
  * <ul>
@@ -104,52 +213,13 @@ import java.util.Set;
  */
 public final class MatroskaMuxer implements Muxer {
     /**
-     * Enumerates the {@code TrackEntry} flags a track can carry.
-     *
-     * <p>Constants may be added in minor releases, so a {@code switch} over this type needs a
-     * {@code default} branch.
-     */
-    public enum TrackFlag {
-        /**
-         * {@code FlagDefault}: players select the track when the user expressed no preference.
-         */
-        DEFAULT,
-
-        /**
-         * {@code FlagForced}: players select the track whatever the user preference, for example
-         * subtitles of foreign dialogue.
-         */
-        FORCED,
-
-        /**
-         * {@code FlagHearingImpaired}: the track suits hearing-impaired users.
-         */
-        HEARING_IMPAIRED,
-
-        /**
-         * {@code FlagVisualImpaired}: the track suits visually impaired users.
-         */
-        VISUAL_IMPAIRED,
-
-        /**
-         * {@code FlagOriginal}: the track is in the content's original language.
-         */
-        ORIGINAL,
-
-        /**
-         * {@code FlagCommentary}: the track holds commentary.
-         */
-        COMMENTARY
-    }
-
-    /**
      * The shortest cluster ended before a video key frame, in microseconds.
      */
     private static final long MIN_KEYFRAME_CLUSTER_MICROS = 250_000;
 
     /**
      * The largest decoding-time gap between the oldest queued packet and the newest one before
-     * the oldest is written without waiting for an empty subtitle track, or, in live output, for
+     * the oldest is written without waiting for an empty subtitle or data track, or, in live output, for
      * any empty track, in microseconds.
      */
     private static final long MAX_INTERLEAVE_MICROS = 1_000_000;
@@ -186,6 +256,11 @@ public final class MatroskaMuxer implements Muxer {
     private static final int CUE_POINT = 0xBB;
 
     /**
+     * The block flag of a frame that is decoded but not presented.
+     */
+    private static final int INVISIBLE = 0x08;
+
+    /**
      * The {@code CueTime} element identifier.
      */
     private static final int CUE_TIME = 0xB3;
@@ -211,34 +286,50 @@ public final class MatroskaMuxer implements Muxer {
     private static final int CUE_RELATIVE_POSITION = 0xF0;
 
     /**
-     * The {@code FlagForced} element identifier.
-     */
-    private static final int FLAG_FORCED = 0x55AA;
-
-    /**
-     * The {@code FlagHearingImpaired} element identifier.
-     */
-    private static final int FLAG_HEARING_IMPAIRED = 0x55AB;
-
-    /**
-     * The {@code FlagVisualImpaired} element identifier.
-     */
-    private static final int FLAG_VISUAL_IMPAIRED = 0x55AC;
-
-    /**
-     * The {@code FlagOriginal} element identifier.
-     */
-    private static final int FLAG_ORIGINAL = 0x55AE;
-
-    /**
-     * The {@code FlagCommentary} element identifier.
-     */
-    private static final int FLAG_COMMENTARY = 0x55AF;
-
-    /**
      * The {@code TrackType} of subtitle tracks.
      */
     private static final int TRACK_TYPE_SUBTITLE = 17;
+
+    /**
+     * The {@code BlockAddID} of the HDR10+ ITU-T T.35 messages of a video track.
+     */
+    private static final int HDR10_PLUS_ADD_ID = 4;
+
+    /**
+     * The {@code BlockAddID} of the alpha frames of a video track whose {@code AlphaMode} is 1.
+     */
+    private static final int ALPHA_ADD_ID = 1;
+
+    /**
+     * The {@code BlockAddIDType} of ITU-T T.35 metadata.
+     */
+    private static final int ITU_T_T35_ADD_ID_TYPE = 4;
+
+    /**
+     * The {@code TrackType} of buttons tracks.
+     */
+    private static final int TRACK_TYPE_BUTTONS = 18;
+
+    /**
+     * The {@code TrackType} of metadata tracks.
+     */
+    private static final int TRACK_TYPE_METADATA = 33;
+
+    /**
+     * The bytes of the {@code Void} reserved after the {@code CodecPrivate} of a FLAC track on a
+     * seekable sink, so that a final configuration longer than the initial one still fits.
+     */
+    private static final int PRIVATE_RESERVE = 64;
+
+    /**
+     * The {@code WAVEFORMATEX} format tag of AMR-NB.
+     */
+    private static final int AMR_NB_TAG = 0x0038;
+
+    /**
+     * The {@code WAVEFORMATEX} format tag of AMR-WB.
+     */
+    private static final int AMR_WB_TAG = 0x0058;
 
     /**
      * The output sink.
@@ -280,6 +371,17 @@ public final class MatroskaMuxer implements Muxer {
      * The body of the cluster being assembled, when the output is not live.
      */
     private final EbmlOutput cluster;
+
+    /**
+     * The scratch buffer of a block's header, reused for every block.
+     */
+    private final EbmlOutput blockHeader;
+
+    /**
+     * The scratch buffer of the elements that follow the {@code Block} of a {@code BlockGroup},
+     * reused for every block.
+     */
+    private final EbmlOutput blockTrailer;
 
     /**
      * Whether a cluster is open.
@@ -353,9 +455,10 @@ public final class MatroskaMuxer implements Muxer {
     private long shiftTicks;
 
     /**
-     * The end of the latest block, in segment ticks.
+     * The end of the latest block, in segment ticks: fractional when the packets' own time bases are finer than a
+     * tick, so that the segment {@code Duration} ends on the exact last sample.
      */
-    private long endTicks;
+    private double endTicks;
 
     /**
      * The decoding time of the newest queued packet, in microseconds.
@@ -377,6 +480,11 @@ public final class MatroskaMuxer implements Muxer {
      * The segment title the tags set, overriding the options, or {@code null}.
      */
     private String title;
+
+    /**
+     * The tags of {@link #setTags(MediaTags)}.
+     */
+    private MediaTags tags = MediaTags.empty();
 
     /**
      * The positions of the {@code Chapters}, {@code Attachments} and {@code Tags} elements relative
@@ -422,6 +530,8 @@ public final class MatroskaMuxer implements Muxer {
         this.indexed = output.isSeekable() && !options.live();
         this.tracks = new ArrayList<>();
         this.cluster = new EbmlOutput(64 * 1024);
+        this.blockHeader = new EbmlOutput(32);
+        this.blockTrailer = new EbmlOutput(64);
     }
 
     /**
@@ -429,13 +539,14 @@ public final class MatroskaMuxer implements Muxer {
      *
      * @param docType the document type
      * @param codec the codec of the track to add
-     * @return {@code true} when {@link #addTrack(Track)} accepts tracks of the codec
+     * @return {@code true} when {@link #addTrack(Track)} accepts tracks of the codec; a
+     * {@link Codec#DATA} track also needs a handler that is a Matroska codec identifier
      */
     public static boolean supports(MatroskaDocType docType, Codec codec) {
         Objects.requireNonNull(docType, "docType");
         var id = codecId(Objects.requireNonNull(codec, "codec"));
         if (id == null) {
-            return false;
+            return docType == MatroskaDocType.MATROSKA && codec == Codec.DATA;
         }
         return docType != MatroskaDocType.WEBM
                 || codec == Codec.VP8 || codec == Codec.VP9 || codec == Codec.AV1 || codec == Codec.OPUS || codec == Codec.VORBIS
@@ -446,7 +557,8 @@ public final class MatroskaMuxer implements Muxer {
      * Returns the Matroska codec identifier of a codec.
      *
      * @param codec the codec to identify
-     * @return the identifier, or {@code null} when the muxer does not support the codec
+     * @return the identifier, or {@code null} when the muxer does not support the codec or, for
+     * {@link Codec#DATA}, the track's handler names it
      */
     private static String codecId(Codec codec) {
         return switch (codec) {
@@ -455,32 +567,45 @@ public final class MatroskaMuxer implements Muxer {
             case AV1 -> "V_AV1";
             case H264 -> "V_MPEG4/ISO/AVC";
             case HEVC -> "V_MPEGH/ISO/HEVC";
+            case MPEG4_PART2 -> "V_MPEG4/ISO/ASP";
+            case MJPEG -> "V_MJPEG";
+            case JPEG2000 -> "V_JPEG2000";
+            case H263 -> "V_MS/VFW/FOURCC";
             case PRORES -> "V_PRORES";
+            case THEORA -> "V_THEORA";
             case DNXHD -> "V_QUICKTIME";
             case OPUS -> "A_OPUS";
             case VORBIS -> "A_VORBIS";
             case AAC -> "A_AAC";
             case FLAC -> "A_FLAC";
+            case ALAC -> "A_ALAC";
             case MP3 -> "A_MPEG/L3";
             case MP2 -> "A_MPEG/L2";
             case AC3 -> "A_AC3";
             case EAC3 -> "A_EAC3";
-            case PCM_U8, PCM_S16LE, PCM_S24LE, PCM_S32LE -> "A_PCM/INT/LIT";
+            case AMR_NB, AMR_WB, PCM_ALAW, PCM_MULAW, PCM_S64LE, PCM_S64BE, ADPCM_IMA_WAV, ADPCM_MS, GSM_MS, ADPCM_G722,
+                 ADPCM_G726 -> "A_MS/ACM";
+            case PCM_U8, PCM_S8, PCM_S16LE, PCM_S24LE, PCM_S32LE -> "A_PCM/INT/LIT";
             case PCM_S16BE, PCM_S24BE, PCM_S32BE -> "A_PCM/INT/BIG";
-            case PCM_F32LE, PCM_F64LE -> "A_PCM/FLOAT/IEEE";
+            case PCM_F32LE, PCM_F64LE, PCM_F32BE, PCM_F64BE -> "A_PCM/FLOAT/IEEE";
             case SUBRIP -> "S_TEXT/UTF8";
             case ASS -> "S_TEXT/ASS";
             case WEBVTT -> "D_WEBVTT/SUBTITLES";
+            case PGS -> "S_HDMV/PGS";
+            case DVB_SUBTITLE -> "S_DVBSUB";
+            case DVD_SUBTITLE -> "S_VOBSUB";
             default -> null;
         };
     }
 
     /**
-     * Declares a track, flagged {@link TrackFlag#DEFAULT} when it is the first of its kind.
+     * Declares a track, flagged {@link TrackDisposition#DEFAULT} when it is the first of its kind.
      *
      * @param track the track description
-     * @throws IllegalArgumentException if the id is already used, the document type cannot carry the codec, or the
-     * track lacks what its codec needs (a configuration, a frame size, a sample rate or a layout)
+     * @throws IllegalArgumentException if the id is already used, the document type cannot carry the codec, the
+     * track lacks what its codec needs (a configuration, a frame size, a sample rate, a layout or, for a data track,
+     * a Matroska codec identifier as its handler), or a DNxHD configuration holds anything but Avid sample
+     * description extensions after its sample entry type
      * @throws IllegalStateException if a packet was already written or the muxer is finished
      */
     @Override
@@ -490,19 +615,26 @@ public final class MatroskaMuxer implements Muxer {
         for (var existing : tracks) {
             first &= existing.track.kind() != track.kind();
         }
-        addTrack(track, first ? EnumSet.of(TrackFlag.DEFAULT) : EnumSet.noneOf(TrackFlag.class));
+        addTrack(track, first ? EnumSet.of(TrackDisposition.DEFAULT) : EnumSet.noneOf(TrackDisposition.class));
     }
 
     /**
-     * Declares a track with explicit flags.
+     * Declares a track with explicit dispositions.
+     *
+     * <p>The dispositions become the flag elements of the {@code TrackEntry}: {@code FlagDefault},
+     * {@code FlagForced}, {@code FlagHearingImpaired}, {@code FlagVisualImpaired}, {@code FlagTextDescriptions}
+     * ({@link TrackDisposition#DESCRIPTIONS}), {@code FlagOriginal} and {@code FlagCommentary}; the other
+     * dispositions are not stored. The track tags of {@link #setTags(MediaTags)} replace them.
      *
      * @param track the track description
-     * @param flags the flags of its {@code TrackEntry}; a flag not in the set is written as cleared
-     * @throws IllegalArgumentException if the id is already used, the document type cannot carry the codec, or the
-     * track lacks what its codec needs (a configuration, a frame size, a sample rate or a layout)
+     * @param flags the dispositions of its {@code TrackEntry}; a flag not in the set is written as cleared
+     * @throws IllegalArgumentException if the id is already used, the document type cannot carry the codec, the
+     * track lacks what its codec needs (a configuration, a frame size, a sample rate, a layout or, for a data track,
+     * a Matroska codec identifier as its handler), or a DNxHD configuration holds anything but Avid sample
+     * description extensions after its sample entry type
      * @throws IllegalStateException if a packet was already written or the muxer is finished
      */
-    public void addTrack(Track track, Set<TrackFlag> flags) {
+    public void addTrack(Track track, Set<TrackDisposition> flags) {
         Objects.requireNonNull(track, "track");
         Objects.requireNonNull(flags, "flags");
         if (finished || accepting) {
@@ -517,7 +649,9 @@ public final class MatroskaMuxer implements Muxer {
         if (!supports(options.docType(), codec)) {
             throw new IllegalArgumentException(options.docType().name().toLowerCase() + " cannot carry " + codec.displayName());
         }
-        var state = new TrackState(track, tracks.size() + 1, EnumSet.copyOf(flags.isEmpty() ? EnumSet.noneOf(TrackFlag.class) : flags));
+        var copy = EnumSet.noneOf(TrackDisposition.class);
+        copy.addAll(flags);
+        var state = new TrackState(track, tracks.size() + 1, copy);
         state.configure();
         hasVideo |= state.video;
         tracks.add(state);
@@ -536,10 +670,27 @@ public final class MatroskaMuxer implements Muxer {
     /**
      * {@inheritDoc}
      *
+     * @return {@code true}
+     */
+    @Override
+    public boolean supportsAlpha() {
+        return true;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
      * <p>The title becomes the segment title of {@code Info}, replacing the configured one; the
-     * other tags become a {@code Tags} element, the chapters a {@code Chapters} element and the
-     * pictures {@code Attachments} (the first front cover named {@code cover.*}), all written
-     * after {@code Tracks} and indexed by the {@code SeekHead}.
+     * other tags become a {@code Tags} element, the chapter editions a {@code Chapters} element (nested
+     * chapters and localized titles included; an edition's names make a Matroska file declare
+     * {@code DocTypeVersion} 5, the version of their {@code EditionDisplay} elements) and the pictures
+     * (the first front cover named {@code cover.*}) and the other attachments {@code Attachments}, all written
+     * after {@code Tracks} and indexed by the {@code SeekHead}. The tags of a declared track
+     * become its {@code Name} (the title), its flag elements (the dispositions, replacing those
+     * of {@link #addTrack(Track, Set)}) and a {@code Tag} targeting its {@code TrackUID} (the other
+     * entries). A WebM file stores the default edition alone, without edition flags or names and keeping
+     * only the localized titles in ISO 639-2 languages, and no attachment that is not a picture, as the WebM
+     * specification allows none of them.
      */
     @Override
     public void setTags(MediaTags tags) {
@@ -548,15 +699,144 @@ public final class MatroskaMuxer implements Muxer {
             throw new IllegalStateException("tags must be set before the first packet");
         }
         this.title = tags.get(StandardTag.TITLE).orElse(null);
-        var encoded = MuxerTags.matroska(tags.toBuilder().remove(StandardTag.TITLE).build());
+        this.tags = tags;
+    }
+
+    /**
+     * Encodes the {@code Chapters}, {@code Attachments} and {@code Tags} elements of the tags,
+     * the {@code Tags} element holding the tags of the declared tracks too.
+     */
+    private void encodeMetadata() {
+        var trackTags = new ArrayList<byte[]>();
+        for (var state : tracks) {
+            var track = tags.track(state.track.id());
+            if (track.isEmpty()) {
+                continue;
+            }
+            var entries = track.get().tags().toBuilder().remove(StandardTag.TITLE).build().entries();
+            if (!entries.isEmpty()) {
+                trackTags.add(MuxerTags.matroskaTrackTag(uid(state.number), entries));
+            }
+        }
+        var encoded = MuxerTags.matroska(tags.toBuilder().remove(StandardTag.TITLE).build(), trackTags,
+                options.docType() == MatroskaDocType.WEBM);
         this.metadata = new byte[][]{encoded[1], encoded[2], encoded[0]};
     }
 
     /**
      * {@inheritDoc}
      *
-     * @throws IllegalArgumentException if the track was not declared or a timestamp cannot be represented in
-     * microseconds
+     * <p>A FLAC configuration, reduced to the blocks {@code CodecPrivate} keeps (without
+     * {@code SEEKTABLE} and {@code PADDING}), or the {@code ALACSpecificConfig} of an ALAC
+     * configuration, replaces the track's: before the header is written it is written instead of
+     * the initial one, and afterwards, on a seekable sink without
+     * {@linkplain MatroskaMuxerOptions#live() live} output, it is rewritten in place over the
+     * initial {@code CodecPrivate} (and, for FLAC, the {@code Void} reserved after it), when it
+     * fits there. On a streaming sink, in live output, or when it does not fit, the initial
+     * configuration stays. Every other codec keeps its configuration.
+     *
+     * @throws IllegalArgumentException if the track was not declared, a FLAC configuration does
+     * not start with {@code STREAMINFO} or describes another sample rate, channel count or sample
+     * size than the track's, or an ALAC configuration holds no {@code ALACSpecificConfig} or
+     * describes another frame length, sample size, channel count or sampling rate than the track's
+     * @throws IllegalStateException if the muxer is finished
+     */
+    @Override
+    public void updateCodecConfig(int trackId, byte[] config) {
+        Objects.requireNonNull(config, "config");
+        if (finished) {
+            throw new IllegalStateException("the muxer is finished");
+        }
+        var state = find(trackId);
+        if (state == null) {
+            throw new IllegalArgumentException("undeclared track " + trackId);
+        }
+        var codec = state.track.codec();
+        if (codec != Codec.FLAC && codec != Codec.ALAC) {
+            return;
+        }
+        byte[] replacement;
+        if (codec == Codec.FLAC) {
+            AudioConfigs.FlacConfig parsed;
+            try {
+                replacement = AudioConfigs.flacContainerConfig(config);
+                parsed = AudioConfigs.parseFlac(replacement);
+            } catch (MediaException.Malformed exception) {
+                throw new IllegalArgumentException("a FLAC configuration must start with STREAMINFO", exception);
+            }
+            if (!parsed.equals(AudioConfigs.parseFlac(state.codecPrivate))) {
+                throw new IllegalArgumentException("the final FLAC configuration of track " + trackId
+                        + " describes another stream than the initial one");
+            }
+        } else {
+            AudioConfigs.AlacConfig parsed;
+            try {
+                replacement = AudioConfigs.alacConfig(config);
+                parsed = AudioConfigs.parseAlac(replacement);
+            } catch (MediaException.Malformed exception) {
+                throw new IllegalArgumentException("invalid ALACSpecificConfig: " + exception.getMessage(), exception);
+            }
+            if (!parsed.equals(AudioConfigs.parseAlac(state.codecPrivate))) {
+                throw new IllegalArgumentException("the final ALAC configuration of track " + trackId
+                        + " describes another stream than the initial one");
+            }
+        }
+        if (!started) {
+            state.codecPrivate = replacement;
+            return;
+        }
+        if (state.privateOffset < 0) {
+            return;
+        }
+        var area = new EbmlOutput((int) state.privateArea);
+        if (!writePrivate(area, replacement, state.privateArea)) {
+            return;
+        }
+        var end = output.position();
+        output.position(state.privateOffset);
+        area.writeTo(output);
+        output.position(end);
+        state.codecPrivate = replacement;
+    }
+
+    /**
+     * Writes a {@code CodecPrivate} element followed by the {@code Void} that fills an area.
+     *
+     * <p>The element's size field grows past its shortest length when the remainder would be a
+     * single byte, which no {@code Void} element fits.
+     *
+     * @param out the destination
+     * @param data the codec private data
+     * @param area the bytes to fill
+     * @return {@code true} when the element fits the area, {@code false} when nothing was written
+     */
+    private static boolean writePrivate(EbmlOutput out, byte[] data, long area) {
+        var idLength = Ebml.idLength(EbmlIds.CODEC_PRIVATE);
+        for (var sizeLength = Ebml.sizeLength(data.length); sizeLength <= 8; sizeLength++) {
+            var rest = area - idLength - sizeLength - data.length;
+            if (rest < 0) {
+                return false;
+            }
+            if (rest != 1) {
+                out.id(EbmlIds.CODEC_PRIVATE);
+                out.writeSize(data.length, sizeLength);
+                out.raw(data, 0, data.length);
+                if (rest > 0) {
+                    out.voidElement((int) rest);
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @throws IllegalArgumentException if the track was not declared, a timestamp cannot be represented in
+     * microseconds, or a new H.264 or HEVC configuration cannot be parsed
+     * @throws MediaException.Unsupported if the packet changes the codec configuration of a track
+     * that is not H.264, HEVC, VP8, VP9 or AV1
      */
     @Override
     public void writePacket(Packet packet) {
@@ -568,18 +848,71 @@ public final class MatroskaMuxer implements Muxer {
         if (tracks.isEmpty() || state == null) {
             throw new IllegalArgumentException("packet for undeclared track " + packet.trackId());
         }
+        if (state.adpcm != null) {
+            state.adpcm.accept(packet.size());
+        }
+        packet = inBand(state, packet);
         accepting = true;
         var data = packet.data();
         if (state.track.codec() == Codec.PRORES && data.length >= 8 && data[4] == 'i' && data[5] == 'c' && data[6] == 'p'
                 && data[7] == 'f') {
             // Matroska blocks of V_PRORES omit the frame size and icpf identifier of the frame
             packet = packet.withData(java.util.Arrays.copyOfRange(data, 8, data.length));
+        } else if (state.track.codec() == Codec.JPEG2000) {
+            var framed = Jp2Frames.selfContained(data, state.track.codecConfig().orElse(null));
+            if (framed != data) {
+                packet = packet.withData(framed);
+            }
         }
         var micros = state.orderMicros(packet);
         state.queue.add(new Queued(packet, micros));
         queuedBytes += packet.size();
         newestMicros = Math.max(newestMicros, micros);
         drain(false);
+    }
+
+    /**
+     * Applies a packet's codec configuration change in band: records the parameter sets of a new
+     * H.264 or HEVC record and rewrites the key frames that follow to carry them, and every packet
+     * that follows when the NAL unit length size of the record differs from the track's.
+     *
+     * @param state the packet's track
+     * @param packet the packet about to be queued
+     * @return the packet to write
+     * @throws IllegalArgumentException if a new H.264 or HEVC record cannot be parsed or a packet
+     * is not made of length-prefixed NAL units
+     * @throws MediaException.Unsupported if the packet changes the configuration of a track whose
+     * codec cannot carry it in band
+     */
+    private Packet inBand(TrackState state, Packet packet) {
+        var codec = state.track.codec();
+        var newConfig = ConfigChanges.changed(packet, state.latestConfig);
+        if (newConfig != null) {
+            switch (codec) {
+                case H264, HEVC -> {
+                    var hevc = codec == Codec.HEVC;
+                    var parsed = hevc ? NalConfigs.parseHevc(newConfig) : NalConfigs.parseAvc(newConfig);
+                    var declared = hevc ? NalConfigs.parseHevc(state.codecPrivate) : NalConfigs.parseAvc(state.codecPrivate);
+                    if (parsed == null || declared == null) {
+                        throw new IllegalArgumentException("the new " + codec.displayName() + " configuration of track "
+                                + packet.trackId() + " cannot be parsed");
+                    }
+                    state.inBandSets = parsed.parameterSets();
+                    state.inBandLengthSize = parsed.lengthSize();
+                    state.trackLengthSize = declared.lengthSize();
+                }
+                case VP8, VP9, AV1 -> {
+                }
+                default -> throw ConfigChanges.unsupported("Matroska", packet.trackId());
+            }
+            state.latestConfig = newConfig;
+        }
+        if (state.inBandSets == null || (!packet.keyframe() && state.inBandLengthSize == state.trackLengthSize)) {
+            return packet;
+        }
+        var rewritten = NalUnits.relength(packet.data(), state.inBandLengthSize, state.trackLengthSize,
+                codec == Codec.HEVC, packet.keyframe() ? state.inBandSets : null);
+        return packet.withData(rewritten);
     }
 
     /**
@@ -631,14 +964,23 @@ public final class MatroskaMuxer implements Muxer {
         duration.writeSize(end - segmentStart, 8);
         output.position(segmentSizeOffset);
         duration.writeTo(output);
-        if (durationOffset >= 0) {
-            var bits = Double.doubleToLongBits((double) endTicks);
+        if (durationOffset >= 0 && endTicks > 0) {
+            var bits = Double.doubleToLongBits(endTicks);
             var value = new byte[8];
             for (var index = 0; index < 8; index++) {
                 value[index] = (byte) (bits >>> (56 - 8 * index));
             }
             output.position(durationOffset);
             output.write(ByteBuffer.wrap(value));
+        } else if (durationOffset >= 0) {
+            // a Duration must be positive: an output without a timed frame turns the 11-byte element (2-byte id,
+            // 1-byte size, 8-byte value) into a Void element of the same size (1-byte id, 2-byte size)
+            var placeholder = new byte[11];
+            placeholder[0] = (byte) 0xEC;
+            placeholder[1] = 0x40;
+            placeholder[2] = 0x08;
+            output.position(durationOffset - 3);
+            output.write(ByteBuffer.wrap(placeholder));
         }
         output.position(end);
     }
@@ -679,7 +1021,7 @@ public final class MatroskaMuxer implements Muxer {
             for (var state : tracks) {
                 var head = state.queue.peekFirst();
                 if (head == null) {
-                    if (state.subtitle) {
+                    if (state.sparse) {
                         sparse = true;
                     } else {
                         waiting = true;
@@ -716,6 +1058,11 @@ public final class MatroskaMuxer implements Muxer {
         started = true;
         var minimum = Long.MAX_VALUE;
         for (var state : tracks) {
+            state.hdr10PlusMapping = state.video && carriesHdr10Plus(state);
+            if (state.adpcm != null) {
+                state.adpcm.declare();
+                state.codecPrivate = state.adpcm.waveFormatBytes();
+            }
             var head = state.queue.peekFirst();
             if (head != null) {
                 state.resolveConfig(head.packet);
@@ -733,7 +1080,8 @@ public final class MatroskaMuxer implements Muxer {
         header.unsigned(EbmlIds.EBML_MAX_ID_LENGTH, 4);
         header.unsigned(EbmlIds.EBML_MAX_SIZE_LENGTH, 8);
         header.string(EbmlIds.DOC_TYPE, options.docType() == MatroskaDocType.WEBM ? "webm" : "matroska");
-        header.unsigned(EbmlIds.DOC_TYPE_VERSION, 4);
+        header.unsigned(EbmlIds.DOC_TYPE_VERSION, options.docType() == MatroskaDocType.WEBM ? 4
+                : MatroskaTags.docTypeVersion(tags.editions()));
         header.unsigned(EbmlIds.DOC_TYPE_READ_VERSION, 2);
         header.end();
         header.id(EbmlIds.SEGMENT);
@@ -741,6 +1089,7 @@ public final class MatroskaMuxer implements Muxer {
         segmentSizeOffset = base + header.size();
         header.writeSize(indexed ? 0 : EbmlOutput.UNKNOWN_SIZE & 0x00FFFFFFFFFFFFFFL, 8);
         segmentStart = base + header.size();
+        encodeMetadata();
         var info = buildInfo();
         var trackList = buildTracks();
         var seekHead = new EbmlOutput(128);
@@ -765,11 +1114,38 @@ public final class MatroskaMuxer implements Muxer {
         }
         header.raw(seekHead.buffer(), 0, seekHead.size());
         header.raw(info.output.buffer(), 0, info.output.size());
+        var tracksAt = base + header.size();
+        for (var state : tracks) {
+            if (state.privateMark >= 0) {
+                state.privateOffset = tracksAt + trackList.markPosition(state.privateMark);
+            }
+        }
         header.raw(trackList.buffer(), 0, trackList.size());
         for (var element : metadata) {
             header.raw(element, 0, element.length);
         }
         header.writeTo(output);
+    }
+
+    /**
+     * Returns whether a video track declares HDR10+ metadata in its track entry: when its transfer
+     * characteristics are {@linkplain TransferCharacteristics#PQ PQ}, the only transfer HDR10+
+     * applies to, or when a packet queued for it carries an HDR10+ message.
+     *
+     * @param state the video track
+     * @return whether the entry gets a {@code BlockAdditionMapping} for HDR10+
+     */
+    private static boolean carriesHdr10Plus(TrackState state) {
+        if (state.track instanceof VideoTrack video
+                && video.color().map(color -> color.transfer() == TransferCharacteristics.PQ).orElse(false)) {
+            return true;
+        }
+        for (var queued : state.queue) {
+            if (queued.packet.sideData().hdr10Plus().isPresent()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -869,27 +1245,30 @@ public final class MatroskaMuxer implements Muxer {
      */
     private void writeBlock(TrackState state, Packet packet) {
         var raw = state.rawTicks(packet);
+        var previousTicks = state.lastTicks;
         var ticks = raw == Long.MIN_VALUE ? state.lastTicks : Math.max(0, saturatingAdd(raw, shiftTicks));
         state.lastTicks = ticks;
         var key = !state.video || packet.keyframe();
         if (!clusterOpen || shouldSplit(state, ticks, key)) {
             openCluster(ticks);
         }
-        if (state.subtitle) {
+        if (state.sparse) {
             writeTextBlock(state, packet, ticks);
             return;
         }
         var relative = ticks - clusterTicks;
         var padding = state.discardPadding(packet);
+        var hdr10Plus = state.video ? packet.sideData().hdr10Plus().orElse(null) : null;
+        var alpha = state.alpha ? packet.sideData().alphaFrame().orElse(null) : null;
+        var trailer = groupTrailer(key, previousTicks - ticks, padding, hdr10Plus, alpha);
         var trackNumberLength = Ebml.sizeLength(state.number);
         var payload = trackNumberLength + 3L + packet.size();
-        var header = new EbmlOutput(32);
-        if (padding > 0) {
+        var header = blockHeader;
+        header.reset();
+        if (trailer != null) {
             var block = EbmlOutput.elementLength(EbmlIds.BLOCK, payload);
-            var discard = new EbmlOutput(16);
-            discard.signed(EbmlIds.DISCARD_PADDING, padding);
             header.id(EbmlIds.BLOCK_GROUP);
-            header.size(block + discard.size());
+            header.size(block + trailer.size());
             header.id(EbmlIds.BLOCK);
         } else {
             header.id(EbmlIds.SIMPLE_BLOCK);
@@ -898,40 +1277,84 @@ public final class MatroskaMuxer implements Muxer {
         header.size(state.number);
         header.rawByte((int) (relative >> 8));
         header.rawByte((int) relative);
-        header.rawByte(padding > 0 ? 0 : key ? 0x80 : 0);
+        var invisible = packet.flags().contains(PacketFlag.DISCARD) ? INVISIBLE : 0;
+        header.rawByte((trailer != null || !key ? 0 : 0x80) | invisible);
         var position = clusterPrefix + clusterBytes;
+        var data = state.blockData(packet);
         if (options.live()) {
             header.writeTo(output);
-            output.write(ByteBuffer.wrap(packet.data()));
+            output.write(ByteBuffer.wrap(data, 0, packet.size()));
         } else {
             cluster.raw(header.buffer(), 0, header.size());
-            cluster.raw(packet.data(), 0, packet.size());
+            cluster.raw(data, 0, packet.size());
         }
         clusterBytes += header.size() + packet.size();
-        if (padding > 0) {
-            var discard = new EbmlOutput(16);
-            discard.signed(EbmlIds.DISCARD_PADDING, padding);
+        if (trailer != null) {
             if (options.live()) {
-                discard.writeTo(output);
+                trailer.writeTo(output);
             } else {
-                cluster.raw(discard.buffer(), 0, discard.size());
+                cluster.raw(trailer.buffer(), 0, trailer.size());
             }
-            clusterBytes += discard.size();
+            clusterBytes += trailer.size();
         }
         if (key && (state.video || !hasVideo && !state.cuedInCluster)) {
             state.cuedInCluster = true;
             addCue(ticks, state.number, clusterPosition, position);
         }
-        var duration = state.durationTicks(packet);
-        endTicks = Math.max(endTicks, ticks + duration);
+        endTicks = Math.max(endTicks, state.endTicks(packet, ticks, shiftTicks));
     }
 
     /**
-     * Writes one subtitle packet as a {@code BlockGroup} with its {@code BlockDuration}; a WebVTT
+     * Serializes the elements that follow the {@code Block} of a {@code BlockGroup}: a
+     * {@code ReferenceBlock} for a frame that is not a key frame, the {@code DiscardPadding} and the
+     * {@code BlockAdditions} holding an alpha frame and an HDR10+ message.
+     *
+     * @param key whether the frame is a key frame
+     * @param reference the timestamp of the track's previous block relative to this one, in segment ticks
+     * @param padding the {@code DiscardPadding} in nanoseconds, or {@code 0} for none
+     * @param hdr10Plus the HDR10+ ITU-T T.35 message, or {@code null} for none
+     * @param alpha the coded alpha frame, or {@code null} for none
+     * @return the elements, in a scratch buffer that the next block reuses, or {@code null} when the
+     *         frame needs no {@code BlockGroup}
+     */
+    private EbmlOutput groupTrailer(boolean key, long reference, long padding, byte[] hdr10Plus, byte[] alpha) {
+        if (padding <= 0 && hdr10Plus == null && alpha == null) {
+            return null;
+        }
+        var trailer = blockTrailer;
+        trailer.reset();
+        if (!key) {
+            // a ReferenceBlock of zero would point at the block itself
+            trailer.signed(EbmlIds.REFERENCE_BLOCK, reference != 0 ? reference : -1);
+        }
+        if (padding > 0) {
+            trailer.signed(EbmlIds.DISCARD_PADDING, padding);
+        }
+        if (hdr10Plus != null || alpha != null) {
+            trailer.begin(EbmlIds.BLOCK_ADDITIONS);
+            if (alpha != null) {
+                trailer.begin(EbmlIds.BLOCK_MORE);
+                trailer.unsigned(EbmlIds.BLOCK_ADD_ID, ALPHA_ADD_ID);
+                trailer.binary(EbmlIds.BLOCK_ADDITIONAL, alpha);
+                trailer.end();
+            }
+            if (hdr10Plus != null) {
+                trailer.begin(EbmlIds.BLOCK_MORE);
+                trailer.unsigned(EbmlIds.BLOCK_ADD_ID, HDR10_PLUS_ADD_ID);
+                trailer.binary(EbmlIds.BLOCK_ADDITIONAL, hdr10Plus);
+                trailer.end();
+            }
+            trailer.end();
+        }
+        return trailer;
+    }
+
+    /**
+     * Writes one subtitle or data packet as a {@code BlockGroup} with its {@code BlockDuration}; a WebVTT
      * block holds the cue identifier line, the settings line and the payload.
      *
      * @param state the packet's track
-     * @param packet the subtitle packet to write
+     * @param packet the subtitle or data packet to write
      * @param ticks the block timestamp in segment ticks
      */
     private void writeTextBlock(TrackState state, Packet packet, long ticks) {
@@ -957,7 +1380,7 @@ public final class MatroskaMuxer implements Muxer {
             cluster.raw(group.buffer(), 0, group.size());
         }
         clusterBytes += group.size();
-        endTicks = Math.max(endTicks, ticks + duration);
+        endTicks = Math.max(endTicks, state.endTicks(packet, ticks, shiftTicks));
     }
 
     /**
@@ -1083,9 +1506,9 @@ public final class MatroskaMuxer implements Muxer {
         final int number;
 
         /**
-         * The flags of the track entry.
+         * The dispositions of the track entry.
          */
-        final Set<TrackFlag> flags;
+        final Set<TrackDisposition> flags;
 
         /**
          * Whether the track is video.
@@ -1093,9 +1516,54 @@ public final class MatroskaMuxer implements Muxer {
         final boolean video;
 
         /**
-         * Whether the track is a text subtitle track.
+         * Whether the track is video that carries alpha frames.
          */
-        final boolean subtitle;
+        final boolean alpha;
+
+        /**
+         * Whether the track is a text subtitle or data track, whose packets are sparse and written
+         * as {@code BlockGroup}s.
+         */
+        final boolean sparse;
+
+        /**
+         * The Matroska codec identifier.
+         */
+        String codecId;
+
+        /**
+         * The {@code TrackType}.
+         */
+        int trackType;
+
+        /**
+         * The handle of the {@code CodecPrivate} position in the {@code Tracks} output, or
+         * {@code -1} when no room is reserved for a final configuration.
+         */
+        int privateMark = -1;
+
+        /**
+         * The absolute offset of the {@code CodecPrivate} element, or {@code -1} when it cannot
+         * be rewritten.
+         */
+        long privateOffset = -1;
+
+        /**
+         * The bytes of the {@code CodecPrivate} element and the {@code Void} after it.
+         */
+        long privateArea;
+
+        /**
+         * How packet payloads are converted: {@code 0} not at all, {@code 1} by flipping the sign
+         * bit of 8-bit samples, {@code 4} or {@code 8} by reversing the bytes of each sample of
+         * that size.
+         */
+        int conversion;
+
+        /**
+         * The converted payload of the latest block, reused across blocks.
+         */
+        byte[] scratch = new byte[0];
 
         /**
          * The packets waiting for the interleaving.
@@ -1106,6 +1574,32 @@ public final class MatroskaMuxer implements Muxer {
          * The codec private data, or {@code null}.
          */
         byte[] codecPrivate;
+
+        /**
+         * The format of an ADPCM or telephony track, or {@code null}.
+         */
+        AdpcmFormat adpcm;
+
+        /**
+         * The codec configuration the track's packets last established, initially the track's.
+         */
+        byte[] latestConfig;
+
+        /**
+         * The parameter sets written in band before the key frames of an H.264 or HEVC track
+         * whose configuration changed, or {@code null} while it has not.
+         */
+        List<byte[]> inBandSets;
+
+        /**
+         * The NAL unit length size of the packets after an in-band configuration change.
+         */
+        int inBandLengthSize = 4;
+
+        /**
+         * The NAL unit length size of the track's {@code CodecPrivate}.
+         */
+        int trackLengthSize = 4;
 
         /**
          * The sampling frequency of an audio track.
@@ -1121,6 +1615,17 @@ public final class MatroskaMuxer implements Muxer {
          * The Opus pre-skip in track time-base units, or {@code 0}.
          */
         long preSkip;
+
+        /**
+         * The number of samples every packet of an AAC track decodes to, at {@link #aacOutputRate},
+         * or {@code 0} for another codec.
+         */
+        long aacFrameSamples;
+
+        /**
+         * The output sampling rate of an AAC track, or {@code 0} for another codec.
+         */
+        int aacOutputRate;
 
         /**
          * The codec delay in nanoseconds.
@@ -1143,18 +1648,87 @@ public final class MatroskaMuxer implements Muxer {
         boolean cuedInCluster;
 
         /**
+         * Whether the track entry maps {@link #HDR10_PLUS_ADD_ID} to ITU-T T.35 metadata.
+         */
+        boolean hdr10PlusMapping;
+
+        /**
          * Constructs the state of a track.
          *
          * @param track the declared track
          * @param number the track number
          * @param flags the entry flags
          */
-        TrackState(Track track, int number, Set<TrackFlag> flags) {
+        TrackState(Track track, int number, Set<TrackDisposition> flags) {
             this.track = track;
+            this.latestConfig = track.codecConfig().orElse(null);
             this.number = number;
             this.flags = flags;
             this.video = track.kind() == TrackKind.VIDEO;
-            this.subtitle = track.codec().isSubtitle();
+            this.alpha = track instanceof VideoTrack videoTrack && videoTrack.hasAlpha();
+            this.sparse = track.kind() == TrackKind.DATA;
+            this.codecId = track.codec() == Codec.ASS && track.codecConfig()
+                    .map(bytes -> AssScript.parse(TextFiles.decode(bytes)).isSsa()).orElse(false)
+                    ? "S_TEXT/SSA" : codecId(track.codec());
+            this.trackType = video ? 1 : sparse ? TRACK_TYPE_SUBTITLE : 2;
+            this.conversion = switch (track.codec()) {
+                case PCM_S8 -> 1;
+                case PCM_F32BE -> 4;
+                case PCM_F64BE, PCM_S64BE -> 8;
+                default -> 0;
+            };
+        }
+
+        /**
+         * Returns the payload of a packet as the block stores it.
+         *
+         * @param packet a packet of this track
+         * @return the packet's data, or the converted payload in {@link #scratch}; the first
+         * {@code packet.size()} bytes hold the payload
+         */
+        byte[] blockData(Packet packet) {
+            var data = packet.data();
+            if (conversion == 0) {
+                return data;
+            }
+            if (scratch.length < data.length) {
+                scratch = new byte[data.length];
+            }
+            if (conversion == 1) {
+                for (var index = 0; index < data.length; index++) {
+                    scratch[index] = (byte) (data[index] ^ 0x80);
+                }
+                return scratch;
+            }
+            var whole = data.length - data.length % conversion;
+            for (var sample = 0; sample < whole; sample += conversion) {
+                for (var index = 0; index < conversion; index++) {
+                    scratch[sample + index] = data[sample + conversion - 1 - index];
+                }
+            }
+            System.arraycopy(data, whole, scratch, whole, data.length - whole);
+            return scratch;
+        }
+
+        /**
+         * Validates the handler of a data track and derives its codec identifier and track type.
+         *
+         * @throws IllegalArgumentException if the handler is absent or not a Matroska codec identifier of a track
+         * that is neither video nor audio
+         */
+        private void configureData() {
+            var handler = track instanceof DataTrack data ? data.handler().orElse(null) : null;
+            if (handler == null || !isDataCodecId(handler)) {
+                throw new IllegalArgumentException("data track " + track.id() + " needs a Matroska codec identifier as"
+                        + " its handler, not " + handler);
+            }
+            codecId = handler;
+            trackType = switch (handler.charAt(0)) {
+                case 'S' -> TRACK_TYPE_SUBTITLE;
+                case 'B' -> TRACK_TYPE_BUTTONS;
+                default -> handler.startsWith("D_WEBVTT/") && !handler.equals("D_WEBVTT/METADATA")
+                        ? TRACK_TYPE_SUBTITLE : TRACK_TYPE_METADATA;
+            };
         }
 
         /**
@@ -1173,8 +1747,14 @@ public final class MatroskaMuxer implements Muxer {
                         codecPrivate = options.docType() == MatroskaDocType.WEBM
                                 || header.equals(WebVttText.DEFAULT_HEADER) ? null : header.getBytes(StandardCharsets.UTF_8);
                     }
-                    case SUBRIP -> codecPrivate = null;
-                    default -> throw new IllegalArgumentException("data tracks are not supported");
+                    case SUBRIP, PGS -> codecPrivate = null;
+                    case DVB_SUBTITLE -> codecPrivate = BitmapTrackConfigs.matroskaDvb(config);
+                    case DVD_SUBTITLE -> codecPrivate = BitmapTrackConfigs.vobSubHeader(config);
+                    case DATA -> {
+                        configureData();
+                        codecPrivate = config;
+                    }
+                    default -> throw new IllegalArgumentException("Matroska cannot carry " + codec.displayName());
                 }
                 return;
             }
@@ -1183,10 +1763,11 @@ public final class MatroskaMuxer implements Muxer {
                     throw new IllegalArgumentException("video track " + track.id() + " needs its frame size");
                 }
                 switch (codec) {
-                    case H264, HEVC, PRORES -> codecPrivate = require(config);
+                    case H264, HEVC, PRORES, THEORA -> codecPrivate = require(config);
                     case DNXHD -> codecPrivate = imageDescription(require(config), videoTrack);
-                    case AV1 -> codecPrivate = config;
+                    case AV1, MPEG4_PART2 -> codecPrivate = config;
                     case VP9 -> codecPrivate = config == null ? null : vp9Features(config);
+                    case H263 -> codecPrivate = bitmapInfo(videoTrack, config);
                     default -> {
                     }
                 }
@@ -1195,6 +1776,14 @@ public final class MatroskaMuxer implements Muxer {
             var audio = (AudioTrack) track;
             sampleRate = audio.sampleRate();
             channels = audio.layout().map(layout -> layout.channels()).orElse(0);
+            if (AdpcmBlocks.supports(codec)) {
+                if (sampleRate <= 0 || channels <= 0) {
+                    throw new IllegalArgumentException("audio track " + track.id()
+                            + " needs its sample rate and channel layout");
+                }
+                adpcm = new AdpcmFormat(audio, "Matroska");
+                codecPrivate = adpcm.waveFormatBytes();
+            }
             switch (codec) {
                 case OPUS -> {
                     codecPrivate = config != null ? config : opusHead(audio);
@@ -1220,8 +1809,6 @@ public final class MatroskaMuxer implements Muxer {
                     if (codecPrivate.length < 42 || codecPrivate[0] != 'f' || codecPrivate[1] != 'L') {
                         throw new IllegalArgumentException("a FLAC track needs its fLaC marker and STREAMINFO block");
                     }
-                    // TODO: implement updateCodecConfig, rewriting this CodecPrivate in place on a seekable
-                    // sink, so an encoder's final STREAMINFO (length, MD5) reaches the file
                     try {
                         codecPrivate = AudioConfigs.flacContainerConfig(codecPrivate);
                     } catch (MediaException.Malformed exception) {
@@ -1232,6 +1819,52 @@ public final class MatroskaMuxer implements Muxer {
                     }
                     if (channels == 0) {
                         channels = ((codecPrivate[20] >> 1) & 7) + 1;
+                    }
+                }
+                case ALAC -> {
+                    AudioConfigs.AlacConfig parsed;
+                    try {
+                        codecPrivate = AudioConfigs.alacConfig(require(config));
+                        parsed = AudioConfigs.parseAlac(codecPrivate);
+                    } catch (MediaException.Malformed exception) {
+                        throw new IllegalArgumentException("invalid ALACSpecificConfig: " + exception.getMessage(),
+                                exception);
+                    }
+                    if (sampleRate == 0) {
+                        sampleRate = parsed.sampleRate();
+                    }
+                    if (channels == 0) {
+                        channels = parsed.channels();
+                    }
+                }
+                case AMR_NB, AMR_WB -> {
+                    var rate = codec == Codec.AMR_NB ? 8_000 : 16_000;
+                    if (sampleRate != 0 && sampleRate != rate || channels > 1) {
+                        throw new IllegalArgumentException(codec.displayName() + " track " + track.id()
+                                + " must be mono at " + rate + " Hz");
+                    }
+                    sampleRate = rate;
+                    channels = 1;
+                    // the byte rates are those of the largest storage-format frames, 32 and 61 bytes per 20 ms
+                    codecPrivate = codec == Codec.AMR_NB ? waveFormat(AMR_NB_TAG, 1, rate, 1600, 0)
+                            : waveFormat(AMR_WB_TAG, 1, rate, 3050, 0);
+                }
+                case PCM_ALAW, PCM_MULAW -> {
+                    if (sampleRate > 0 && channels > 0) {
+                        codecPrivate = waveFormat(WaveFormat.tagOf(codec), channels, sampleRate,
+                                (long) sampleRate * channels, 8);
+                    }
+                }
+                case PCM_S64LE, PCM_S64BE -> {
+                    if (sampleRate > 0 && channels > 0) {
+                        var bFormat = audio.layout().filter(WaveFormat::isAmbisonicBFormat).isPresent();
+                        var wave = new WaveFormat(WaveFormat.PCM, channels, sampleRate, (long) sampleRate * channels * 8,
+                                channels * 8, 64, 64,
+                                bFormat ? 0 : audio.layout().map(WaveFormat::channelMask).orElse(0L),
+                                bFormat ? WaveFormat.SubFormat.AMBISONIC : WaveFormat.SubFormat.STANDARD, new byte[0]);
+                        var out = new ByteWriter(wave.size(true));
+                        wave.write(out, true);
+                        codecPrivate = out.toByteArray();
                     }
                 }
                 default -> {
@@ -1263,28 +1896,72 @@ public final class MatroskaMuxer implements Muxer {
         /**
          * Builds the {@code CodecPrivate} of a {@code V_QUICKTIME} track: a QuickTime video sample
          * description (Apple QuickTime File Format, "Video sample description"), from its size and
-         * sample entry type to its color table ID, 86 bytes without extensions.
+         * sample entry type to its color table ID, 86 bytes, followed by the Avid extensions the
+         * configuration carries after its sample entry type. The depth is 32 when the extensions
+         * declare Avid's alpha, 24 otherwise.
          *
-         * @param fourCc the sample entry type, four bytes
+         * @param config the configuration: the sample entry type, four bytes, and the extensions
          * @param video the track
          * @return the sample description
-         * @throws IllegalArgumentException if {@code fourCc} is not four bytes long
+         * @throws IllegalArgumentException if {@code config} is shorter than four bytes, or its bytes
+         * after the type are not Avid extensions
          */
-        private static byte[] imageDescription(byte[] fourCc, VideoTrack video) {
-            if (fourCc.length != 4) {
+        private static byte[] imageDescription(byte[] config, VideoTrack video) {
+            if (config.length < 4) {
                 throw new IllegalArgumentException("a " + video.codec().displayName() + " track needs its"
                         + " four-character sample entry type as configuration");
             }
+            var fourCc = Arrays.copyOf(config, 4);
+            var extensions = CodecConfigs.dnxhdExtensions(config);
             var name = video.codec() == Codec.DNXHD && fourCc[3] == 'h' ? "DNxHR" : "DNxHD";
-            var buffer = ByteBuffer.allocate(86);
-            buffer.putInt(86).put(fourCc).put(new byte[6]).putShort((short) 1);
+            var buffer = ByteBuffer.allocate(86 + extensions.length);
+            buffer.putInt(86 + extensions.length).put(fourCc).put(new byte[6]).putShort((short) 1);
             buffer.putShort((short) 0).putShort((short) 0).putInt(0).putInt(0x200).putInt(0x200);
             buffer.putShort((short) video.width()).putShort((short) video.height());
             buffer.putInt(0x00480000).putInt(0x00480000).putInt(0).putShort((short) 1);
             var compressor = new byte[32];
             compressor[0] = (byte) name.length();
             System.arraycopy(name.getBytes(StandardCharsets.US_ASCII), 0, compressor, 1, name.length());
-            buffer.put(compressor).putShort((short) 24).putShort((short) -1);
+            buffer.put(compressor).putShort((short) (CodecConfigs.dnxhdAvidAlpha(config) ? 32 : 24))
+                    .putShort((short) -1).put(extensions);
+            return buffer.array();
+        }
+
+        /**
+         * Builds the {@code CodecPrivate} of an {@code A_MS/ACM} track: an 18-byte
+         * {@code WAVEFORMATEX} without extra bytes.
+         *
+         * @param tag the format tag
+         * @param channels the channel count
+         * @param rate the sampling rate in hertz
+         * @param byteRate the average number of bytes per second
+         * @param bits the bits per sample, 0 for a compressed format
+         * @return the structure
+         */
+        private static byte[] waveFormat(int tag, int channels, int rate, long byteRate, int bits) {
+            var blockAlign = bits == 0 ? 1 : channels * bits / 8;
+            var wave = new WaveFormat(tag, channels, rate, byteRate, blockAlign, bits, bits, 0,
+                    WaveFormat.SubFormat.NONE, new byte[0]);
+            var out = new ByteWriter(wave.size(true));
+            wave.write(out, true);
+            return out.toByteArray();
+        }
+
+        /**
+         * Builds the {@code CodecPrivate} of a {@code V_MS/VFW/FOURCC} track: a 40-byte
+         * {@code BITMAPINFOHEADER} with the track's FourCC, followed by the track's configuration.
+         *
+         * @param video the track
+         * @param config the configuration, or {@code null}
+         * @return the structure
+         */
+        private static byte[] bitmapInfo(VideoTrack video, byte[] config) {
+            var extra = config == null ? new byte[0] : config;
+            var buffer = ByteBuffer.allocate(40 + extra.length).order(ByteOrder.LITTLE_ENDIAN);
+            buffer.putInt(40 + extra.length).putInt(video.width()).putInt(video.height());
+            buffer.putShort((short) 1).putShort((short) 24).put("H263".getBytes(StandardCharsets.US_ASCII));
+            buffer.putInt((int) Math.min(3L * video.width() * video.height(), 0xFFFFFFFFL));
+            buffer.putInt(0).putInt(0).putInt(0).putInt(0).put(extra);
             return buffer.array();
         }
 
@@ -1339,6 +2016,8 @@ public final class MatroskaMuxer implements Muxer {
             if (channels == 0) {
                 channels = parsed.channels();
             }
+            aacOutputRate = parsed.outputRate();
+            aacFrameSamples = (long) parsed.frameLength() * parsed.outputRate() / parsed.sampleRate();
         }
 
         /**
@@ -1410,28 +2089,62 @@ public final class MatroskaMuxer implements Muxer {
             out.begin(EbmlIds.TRACK_ENTRY);
             out.unsigned(EbmlIds.TRACK_NUMBER, number);
             out.unsigned(EbmlIds.TRACK_UID, uid(number));
-            out.unsigned(EbmlIds.TRACK_TYPE, video ? 1 : subtitle ? TRACK_TYPE_SUBTITLE : 2);
+            out.unsigned(EbmlIds.TRACK_TYPE, trackType);
             out.unsigned(EbmlIds.FLAG_LACING, 0);
-            out.unsigned(EbmlIds.FLAG_DEFAULT, flags.contains(TrackFlag.DEFAULT) ? 1 : 0);
-            if (flags.contains(TrackFlag.FORCED)) {
-                out.unsigned(FLAG_FORCED, 1);
+            var described = tags.track(track.id());
+            var disposition = described.isPresent() ? described.get().disposition() : flags;
+            out.unsigned(EbmlIds.FLAG_DEFAULT, disposition.contains(TrackDisposition.DEFAULT) ? 1 : 0);
+            if (disposition.contains(TrackDisposition.FORCED)) {
+                out.unsigned(EbmlIds.FLAG_FORCED, 1);
             }
-            if (flags.contains(TrackFlag.HEARING_IMPAIRED)) {
-                out.unsigned(FLAG_HEARING_IMPAIRED, 1);
+            if (disposition.contains(TrackDisposition.HEARING_IMPAIRED)) {
+                out.unsigned(EbmlIds.FLAG_HEARING_IMPAIRED, 1);
             }
-            if (flags.contains(TrackFlag.VISUAL_IMPAIRED)) {
-                out.unsigned(FLAG_VISUAL_IMPAIRED, 1);
+            if (disposition.contains(TrackDisposition.VISUAL_IMPAIRED)) {
+                out.unsigned(EbmlIds.FLAG_VISUAL_IMPAIRED, 1);
             }
-            if (flags.contains(TrackFlag.ORIGINAL)) {
-                out.unsigned(FLAG_ORIGINAL, 1);
+            if (disposition.contains(TrackDisposition.DESCRIPTIONS)) {
+                out.unsigned(EbmlIds.FLAG_TEXT_DESCRIPTIONS, 1);
             }
-            if (flags.contains(TrackFlag.COMMENTARY)) {
-                out.unsigned(FLAG_COMMENTARY, 1);
+            if (disposition.contains(TrackDisposition.ORIGINAL)) {
+                out.unsigned(EbmlIds.FLAG_ORIGINAL, 1);
+            }
+            if (disposition.contains(TrackDisposition.COMMENTARY)) {
+                out.unsigned(EbmlIds.FLAG_COMMENTARY, 1);
+            }
+            var name = described.flatMap(TrackTags::name).orElse(null);
+            if (name != null && !name.isEmpty()) {
+                out.string(EbmlIds.NAME, name);
             }
             out.string(EbmlIds.LANGUAGE, track.language().filter(MatroskaMuxer::isLanguage).orElse("und"));
-            out.string(EbmlIds.CODEC_ID, codecId(track.codec()));
-            if (codecPrivate != null) {
+            out.string(EbmlIds.CODEC_ID, codecId);
+            if (codecPrivate != null && indexed && (track.codec() == Codec.FLAC || track.codec() == Codec.ALAC)) {
+                // an ALAC configuration keeps its length, so it needs no room to grow
+                privateMark = out.mark();
+                privateArea = EbmlOutput.elementLength(EbmlIds.CODEC_PRIVATE, codecPrivate.length)
+                        + (track.codec() == Codec.FLAC ? PRIVATE_RESERVE : 0);
+                writePrivate(out, codecPrivate, privateArea);
+            } else if (codecPrivate != null) {
                 out.binary(EbmlIds.CODEC_PRIVATE, codecPrivate);
+            }
+            if (alpha && !hdr10PlusMapping) {
+                out.unsigned(EbmlIds.MAX_BLOCK_ADDITION_ID, ALPHA_ADD_ID);
+            }
+            if (hdr10PlusMapping) {
+                out.unsigned(EbmlIds.MAX_BLOCK_ADDITION_ID, HDR10_PLUS_ADD_ID);
+                out.begin(EbmlIds.BLOCK_ADDITION_MAPPING);
+                out.unsigned(EbmlIds.BLOCK_ADD_ID_VALUE, HDR10_PLUS_ADD_ID);
+                out.unsigned(EbmlIds.BLOCK_ADD_ID_TYPE, ITU_T_T35_ADD_ID_TYPE);
+                out.end();
+            }
+            if (track instanceof VideoTrack video && options.docType() != MatroskaDocType.WEBM
+                    && (track.codec() == Codec.H264 || track.codec() == Codec.HEVC || track.codec() == Codec.AV1)) {
+                video.dolbyVision().ifPresent(configuration -> {
+                    out.begin(EbmlIds.BLOCK_ADDITION_MAPPING);
+                    out.unsigned(EbmlIds.BLOCK_ADD_ID_TYPE, DolbyVisionConfigs.configType(configuration));
+                    out.binary(EbmlIds.BLOCK_ADD_ID_EXTRA_DATA, DolbyVisionConfigs.record(configuration));
+                    out.end();
+                });
             }
             if (codecDelayNanos > 0) {
                 out.unsigned(EbmlIds.CODEC_DELAY, codecDelayNanos);
@@ -1447,26 +2160,162 @@ public final class MatroskaMuxer implements Muxer {
                     }
                 });
                 out.begin(EbmlIds.VIDEO);
+                videoTrack.interlacing().ifPresent(scan -> {
+                    out.unsigned(EbmlIds.FLAG_INTERLACED, scan.isInterlaced() ? 1 : 2);
+                    if (scan.isInterlaced() && scan != Interlacing.INTERLACED) {
+                        out.unsigned(EbmlIds.FIELD_ORDER, scan.code());
+                    }
+                });
+                videoTrack.stereoMode().filter(mode -> options.docType() != MatroskaDocType.WEBM || webmStereo(mode))
+                        .ifPresent(mode -> out.unsigned(EbmlIds.STEREO_MODE, mode.code()));
+                if (alpha) {
+                    out.unsigned(EbmlIds.ALPHA_MODE, 1);
+                }
                 out.unsigned(EbmlIds.PIXEL_WIDTH, videoTrack.width());
                 out.unsigned(EbmlIds.PIXEL_HEIGHT, videoTrack.height());
-                videoTrack.color().ifPresent(color -> {
-                    out.begin(EbmlIds.COLOR);
-                    out.unsigned(EbmlIds.MATRIX_COEFFICIENTS, color.matrix().code());
-                    out.unsigned(EbmlIds.RANGE, color.range() == ColorRange.FULL ? 2 : 1);
-                    out.unsigned(EbmlIds.TRANSFER_CHARACTERISTICS, color.transfer().code());
-                    out.unsigned(EbmlIds.PRIMARIES, color.primaries().code());
-                    out.end();
-                });
+                videoTrack.sampleAspectRatio().ifPresent(aspect -> writeDisplaySize(out, videoTrack, aspect));
+                videoTrack.color().ifPresent(color -> writeColor(out, color));
+                videoTrack.spherical().ifPresent(spherical -> writeProjection(out, spherical));
                 out.end();
-            } else if (!subtitle) {
+            } else if (!sparse) {
+                if (aacFrameSamples > 0) {
+                    // the frame duration lets a reader apply the DiscardPadding of a shortened last frame
+                    out.unsigned(EbmlIds.DEFAULT_DURATION, Rational.timeBaseOf(aacOutputRate).rescale(aacFrameSamples,
+                            NANOSECONDS));
+                }
                 out.begin(EbmlIds.AUDIO);
                 out.floating(EbmlIds.SAMPLING_FREQUENCY, sampleRate);
                 out.unsigned(EbmlIds.CHANNELS, channels);
-                if (track.codec().isPcm()) {
+                if (track.codec().isPcm() && codecId.startsWith("A_PCM/")) {
                     out.unsigned(EbmlIds.BIT_DEPTH, track.codec().pcmBitsPerSample().orElseThrow());
                 }
                 out.end();
             }
+            out.end();
+        }
+
+        /**
+         * Returns whether a WebM file can store a stereo mode: mono, the two side by side and the two top-bottom
+         * packings.
+         *
+         * @param mode the stereo mode
+         * @return {@code true} when the WebM {@code StereoMode} element accepts it
+         */
+        private static boolean webmStereo(StereoMode mode) {
+            return switch (mode) {
+                case MONO, SIDE_BY_SIDE_LEFT_FIRST, SIDE_BY_SIDE_RIGHT_FIRST, TOP_BOTTOM_LEFT_FIRST,
+                     TOP_BOTTOM_RIGHT_FIRST -> true;
+                default -> false;
+            };
+        }
+
+        /**
+         * Writes the {@code Projection} element of a spherical projection: its type, the payload of its
+         * Spherical Video V2 box as {@code ProjectionPrivate}, and the angles of its pose that are not zero.
+         *
+         * @param out the destination, inside the {@code Video} element
+         * @param spherical the projection
+         */
+        private static void writeProjection(EbmlOutput out, SphericalVideo spherical) {
+            out.begin(EbmlIds.PROJECTION);
+            out.unsigned(EbmlIds.PROJECTION_TYPE, SphericalBoxes.type(spherical.projection()));
+            out.binary(EbmlIds.PROJECTION_PRIVATE, SphericalBoxes.payload(spherical.projection()));
+            if (spherical.yaw() != 0) {
+                out.floating(EbmlIds.PROJECTION_POSE_YAW, spherical.yaw());
+            }
+            if (spherical.pitch() != 0) {
+                out.floating(EbmlIds.PROJECTION_POSE_PITCH, spherical.pitch());
+            }
+            if (spherical.roll() != 0) {
+                out.floating(EbmlIds.PROJECTION_POSE_ROLL, spherical.roll());
+            }
+            out.end();
+        }
+
+        /**
+         * Writes the {@code DisplayWidth} and {@code DisplayHeight} of a sample aspect ratio: in
+         * pixels, with the coded height, when the stretched width is a whole number; otherwise as
+         * the display aspect ratio in lowest terms ({@code DisplayUnit} 3).
+         *
+         * @param out the destination, inside the {@code Video} element
+         * @param video the track
+         * @param aspect the sample aspect ratio
+         */
+        private static void writeDisplaySize(EbmlOutput out, VideoTrack video, Rational aspect) {
+            var stretched = BigInteger.valueOf(video.width()).multiply(BigInteger.valueOf(aspect.numerator()));
+            var height = BigInteger.valueOf(video.height());
+            var divisions = stretched.divideAndRemainder(BigInteger.valueOf(aspect.denominator()));
+            if (divisions[1].signum() == 0 && divisions[0].bitLength() <= 63 && divisions[0].signum() > 0) {
+                out.unsigned(EbmlIds.DISPLAY_WIDTH, divisions[0].longValue());
+                out.unsigned(EbmlIds.DISPLAY_HEIGHT, video.height());
+                return;
+            }
+            var tall = height.multiply(BigInteger.valueOf(aspect.denominator()));
+            var gcd = stretched.gcd(tall);
+            var width = stretched.divide(gcd);
+            var shown = tall.divide(gcd);
+            while (width.bitLength() > 63 || shown.bitLength() > 63) {
+                width = width.shiftRight(1).max(BigInteger.ONE);
+                shown = shown.shiftRight(1).max(BigInteger.ONE);
+            }
+            out.unsigned(EbmlIds.DISPLAY_WIDTH, width.longValue());
+            out.unsigned(EbmlIds.DISPLAY_HEIGHT, shown.longValue());
+            out.unsigned(EbmlIds.DISPLAY_UNIT, 3);
+        }
+
+        /**
+         * Writes the {@code Colour} element of a color description: the matrix, the chroma siting,
+         * the range, the transfer characteristics and the primaries, then the {@code MaxCLL} and
+         * {@code MaxFALL} of its content light level and the {@code MasteringMetadata} of its
+         * mastering display when present.
+         *
+         * <p>A siting on the bottom luma row, which {@code ChromaSitingVert} cannot express, keeps
+         * only its horizontal position.
+         *
+         * @param out the destination
+         * @param color the color description
+         */
+        private static void writeColor(EbmlOutput out, ColorInfo color) {
+            out.begin(EbmlIds.COLOR);
+            out.unsigned(EbmlIds.MATRIX_COEFFICIENTS, color.matrix().code());
+            var siting = color.chromaSiting();
+            var horizontal = switch (siting) {
+                case LEFT, TOP_LEFT, BOTTOM_LEFT -> 1;
+                case CENTER, TOP, BOTTOM -> 2;
+                case UNSPECIFIED -> 0;
+            };
+            var vertical = switch (siting) {
+                case TOP_LEFT, TOP -> 1;
+                case LEFT, CENTER -> 2;
+                case BOTTOM_LEFT, BOTTOM, UNSPECIFIED -> 0;
+            };
+            if (horizontal != 0) {
+                out.unsigned(EbmlIds.CHROMA_SITING_HORZ, horizontal);
+            }
+            if (vertical != 0) {
+                out.unsigned(EbmlIds.CHROMA_SITING_VERT, vertical);
+            }
+            out.unsigned(EbmlIds.RANGE, color.range() == ColorRange.FULL ? 2 : 1);
+            out.unsigned(EbmlIds.TRANSFER_CHARACTERISTICS, color.transfer().code());
+            out.unsigned(EbmlIds.PRIMARIES, color.primaries().code());
+            color.contentLightLevel().ifPresent(level -> {
+                out.unsigned(EbmlIds.MAX_CLL, level.maxContentLightLevel());
+                out.unsigned(EbmlIds.MAX_FALL, level.maxFrameAverageLightLevel());
+            });
+            color.masteringDisplay().ifPresent(display -> {
+                out.begin(EbmlIds.MASTERING_METADATA);
+                out.floating(EbmlIds.PRIMARY_R_CHROMATICITY_X, display.red().x());
+                out.floating(EbmlIds.PRIMARY_R_CHROMATICITY_Y, display.red().y());
+                out.floating(EbmlIds.PRIMARY_G_CHROMATICITY_X, display.green().x());
+                out.floating(EbmlIds.PRIMARY_G_CHROMATICITY_Y, display.green().y());
+                out.floating(EbmlIds.PRIMARY_B_CHROMATICITY_X, display.blue().x());
+                out.floating(EbmlIds.PRIMARY_B_CHROMATICITY_Y, display.blue().y());
+                out.floating(EbmlIds.WHITE_POINT_CHROMATICITY_X, display.whitePoint().x());
+                out.floating(EbmlIds.WHITE_POINT_CHROMATICITY_Y, display.whitePoint().y());
+                out.floating(EbmlIds.LUMINANCE_MAX, display.maxLuminance());
+                out.floating(EbmlIds.LUMINANCE_MIN, display.minLuminance());
+                out.end();
+            });
             out.end();
         }
 
@@ -1488,6 +2337,26 @@ public final class MatroskaMuxer implements Muxer {
                 throw new IllegalArgumentException("timestamp " + time + " of track " + track.id() + " is out of range", exception);
             }
             return lastMicros;
+        }
+
+        /**
+         * Returns where a packet ends in segment ticks: its exact end in its own time base, unrounded, when its
+         * timestamp and duration are known, otherwise its block timestamp plus its rounded duration.
+         *
+         * @param packet a packet of this track
+         * @param ticks the block timestamp of the packet in segment ticks, shifted
+         * @param shift the shift added to every block timestamp, in segment ticks
+         * @return the end, in segment ticks
+         */
+        double endTicks(Packet packet, long ticks, long shift) {
+            var time = packet.pts() != Packet.NO_TIMESTAMP ? packet.pts() : packet.dts();
+            if (time == Packet.NO_TIMESTAMP || packet.duration() <= 0) {
+                return ticks + durationTicks(packet);
+            }
+            var timeBase = track.timeBase();
+            var end = ((double) time + preSkip + packet.duration()) * timeBase.numerator() * segmentBase.denominator()
+                    / ((double) timeBase.denominator() * segmentBase.numerator()) + shift;
+            return Double.isFinite(end) ? Math.max(end, ticks) : ticks + durationTicks(packet);
         }
 
         /**
@@ -1527,24 +2396,40 @@ public final class MatroskaMuxer implements Muxer {
         }
 
         /**
-         * Returns the {@code DiscardPadding} of an Opus packet whose duration is shorter than
-         * its coded duration.
+         * Returns the {@code DiscardPadding} of an Opus or AAC packet whose duration is shorter
+         * than its coded duration.
          *
-         * @param packet an Opus packet of this track
+         * <p>A duration equal to the coded duration rounded to the track's time base, as a time
+         * base coarser than one sample gives every packet, is not shortened.
+         *
+         * @param packet a packet of this track
          * @return the padding in nanoseconds, or {@code 0}
          */
         long discardPadding(Packet packet) {
-            if (track.codec() != Codec.OPUS || packet.duration() <= 0) {
+            if (packet.duration() <= 0) {
                 return 0;
             }
-            var coded = opusSamples(packet.data());
+            long coded;
+            Rational base;
+            if (track.codec() == Codec.OPUS) {
+                coded = opusSamples(packet.data());
+                base = OPUS_RATE;
+            } else if (aacFrameSamples > 0) {
+                coded = aacFrameSamples;
+                base = Rational.timeBaseOf(aacOutputRate);
+            } else {
+                return 0;
+            }
             long kept;
             try {
-                kept = track.timeBase().rescale(packet.duration(), OPUS_RATE);
+                if (packet.duration() >= base.rescale(coded, track.timeBase())) {
+                    return 0;
+                }
+                kept = track.timeBase().rescale(packet.duration(), base);
             } catch (ArithmeticException exception) {
                 return 0;
             }
-            return coded > kept ? OPUS_RATE.rescale(coded - kept, NANOSECONDS) : 0;
+            return coded > kept ? base.rescale(coded - kept, NANOSECONDS) : 0;
         }
     }
 
@@ -1575,6 +2460,30 @@ public final class MatroskaMuxer implements Muxer {
             default -> packet.length < 2 ? 0 : packet[1] & 0x3F;
         };
         return frame * frames;
+    }
+
+    /**
+     * Returns whether a string is a Matroska codec identifier a data track can carry.
+     *
+     * @param id the candidate
+     * @return {@code true} for a capital letter other than {@code V} and {@code A}, an underscore,
+     * and at least one printable ASCII character
+     */
+    private static boolean isDataCodecId(String id) {
+        if (id.length() < 3 || id.charAt(1) != '_') {
+            return false;
+        }
+        var prefix = id.charAt(0);
+        if (prefix < 'A' || prefix > 'Z' || prefix == 'V' || prefix == 'A') {
+            return false;
+        }
+        for (var index = 2; index < id.length(); index++) {
+            var c = id.charAt(index);
+            if (c < 0x21 || c > 0x7E) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
