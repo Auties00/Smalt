@@ -106,7 +106,7 @@ public enum StandardTag {
      * The track number, optionally followed by {@code /} and the number of tracks.
      */
     TRACK("track", "TRCK", "TRACKNUMBER", "trkn", "PART_NUMBER", "ITRK", "TRCK", "ITRK", "IPRT", "TRACKNUMBER",
-            "PART_NUMBER"),
+            "PART_NUMBER", "TRACK NUMBER"),
 
     /**
      * The disc number, optionally followed by {@code /} and the number of discs.
@@ -116,7 +116,7 @@ public enum StandardTag {
     /**
      * A free-text comment.
      */
-    COMMENT("comment", "COMM", "COMMENT", "\u00A9cmt", "COMMENT", "ICMT", "COMM", "ICMT", "ANNO"),
+    COMMENT("comment", "COMM", "COMMENT", "\u00A9cmt", "COMMENT", "ICMT", "COMM", "ICMT", "ANNO", "COMMENTS"),
 
     /**
      * A short description of the content.
@@ -136,7 +136,7 @@ public enum StandardTag {
     /**
      * The software that encoded the file.
      */
-    ENCODER("encoder", "TSSE", "ENCODER", "\u00A9too", "ENCODER", "ISFT", "TSSE", "ISFT"),
+    ENCODER("encoder", "TSSE", "ENCODER", "\u00A9too", "ENCODER", "ISFT", "TSSE", "ISFT", "ENCODING APPLICATION"),
 
     /**
      * The person or organization that encoded the file.
@@ -172,7 +172,7 @@ public enum StandardTag {
     /**
      * The tempo, in beats per minute.
      */
-    BPM("bpm", "TBPM", "BPM", "tmpo", "BPM", null),
+    BPM("bpm", "TBPM", "BPM", "tmpo", "BPM", null, "TEMPO"),
 
     /**
      * The International Standard Recording Code of the recording (ISO 3901).

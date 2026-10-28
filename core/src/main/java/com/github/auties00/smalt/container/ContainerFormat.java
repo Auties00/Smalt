@@ -41,9 +41,27 @@ public enum ContainerFormat {
     ADTS,
 
     /**
+     * An AAC elementary stream in LOAS framing ({@code .loas}, {@code .latm}): the {@code AudioSyncStream} of
+     * ISO/IEC 14496-3 clause 1.7, LATM {@code AudioMuxElement}s after the 11-bit sync word {@code 0x2B7}.
+     */
+    LOAS,
+
+    /**
+     * An AAC elementary stream in the Audio Data Interchange Format ({@code .adif}, {@code .aac}): raw data blocks
+     * after an ADIF header, magic {@code ADIF}.
+     */
+    ADIF,
+
+    /**
      * RIFF WAVE and its RF64/BW64 extensions.
      */
     WAV,
+
+    /**
+     * Sony Wave64 ({@code .w64}): RIFF WAVE with GUID chunk identifiers and 64-bit sizes, magic {@code riff}
+     * followed by its GUID.
+     */
+    W64,
 
     /**
      * A native FLAC stream.
@@ -59,6 +77,16 @@ public enum ContainerFormat {
      * AIFF and AIFF-C.
      */
     AIFF,
+
+    /**
+     * Apple Core Audio Format ({@code .caf}), magic {@code caff}.
+     */
+    CAF,
+
+    /**
+     * Sun/NeXT audio ({@code .au}, {@code .snd}), magic {@code .snd}.
+     */
+    AU,
 
     /**
      * IVF, the container of the VP8, VP9 and AV1 reference tools.

@@ -82,6 +82,27 @@ class ContainerBombTest {
                     be16(data, indexOf(data, "COMM", 12) + 8, 100);
                     return data;
                 }),
+                new Input("Wave64", () -> {
+                    var data = pcm(ContainerFormat.W64, Codec.PCM_S16LE);
+                    // the fmt chunk body follows its 16-byte GUID and 64-bit size
+                    var fmt = indexOf(data, "fmt ", 40) + 24;
+                    le16(data, fmt + 2, 100);
+                    le32(data, fmt + 8, SAMPLE_RATE * 200L);
+                    le16(data, fmt + 12, 200);
+                    return data;
+                }),
+                new Input("CAF", () -> {
+                    var data = pcm(ContainerFormat.CAF, Codec.PCM_S16BE);
+                    // desc body at 20: rate, format, flags, bytes per packet, frames per packet, channels
+                    be32(data, 20 + 16, 200);
+                    be32(data, 20 + 24, 100);
+                    return data;
+                }),
+                new Input("AU", () -> {
+                    var data = pcm(ContainerFormat.AU, Codec.PCM_S16BE);
+                    be32(data, 20, 100);
+                    return data;
+                }),
                 new Input("Matroska", () -> {
                     var data = pcm(ContainerFormat.MATROSKA, Codec.PCM_S16LE);
                     var channels = indexOf(data, new byte[]{(byte) 0x9F, (byte) 0x81, 0x02}, 0);
@@ -194,6 +215,22 @@ class ContainerBombTest {
                     var bytes = out.toByteArray();
                     le32(bytes, 4, bytes.length - 8);
                     return bytes;
+                })),
+                Arguments.of(new Input("CAF pakt chunk of 2^40 bytes and 2^30 packets", () -> cafChunk("pakt",
+                        new byte[]{0, 0, 0, 0, 0x40, 0, 0, 0, 0, 0, 0, 0, 0x40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}))),
+                Arguments.of(new Input("CAF kuki chunk of 2^40 bytes", () -> cafChunk("kuki", new byte[16]))),
+                Arguments.of(new Input("CAF info chunk of 2^40 bytes", () -> cafChunk("info",
+                        new byte[]{0x7F, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, 't', 0, 'x', 0}))),
+                Arguments.of(new Input("AU annotation of 2 GB", () -> {
+                    var data = pcm(ContainerFormat.AU, Codec.PCM_S16BE);
+                    be32(data, 4, 0x7FFF_FFF0L);
+                    return data;
+                })),
+                Arguments.of(new Input("Wave64 chunk of 2^62 bytes", () -> {
+                    var data = pcm(ContainerFormat.W64, Codec.PCM_S16LE);
+                    var fmt = indexOf(data, "fmt ", 40);
+                    data[fmt + 16 + 7] = 0x40;
+                    return data;
                 })),
                 Arguments.of(new Input("AVI idx1 of 2 GB", () -> {
                     var data = pcm(ContainerFormat.AVI, Codec.PCM_S16LE);
@@ -326,6 +363,19 @@ class ContainerBombTest {
     static byte[] pcm(ContainerFormat format, Codec codec) {
         return mux(format, List.of(Streams.audio(codec, ChannelLayout.STEREO, SAMPLE_RATE, 40 * 160,
                 builder -> builder)));
+    }
+
+    /**
+     * Returns a CAF file of PCM samples followed by a chunk of the given type that declares 2^40 bytes and holds the
+     * given body.
+     */
+    static byte[] cafChunk(String type, byte[] body) {
+        var out = new ByteArrayOutputStream();
+        out.writeBytes(pcm(ContainerFormat.CAF, Codec.PCM_S16BE));
+        out.writeBytes(type.getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        out.writeBytes(new byte[]{0, 0, 1, 0, 0, 0, 0, 0});
+        out.writeBytes(body);
+        return out.toByteArray();
     }
 
     /** Returns a file of 40 VP8 frames, more than the 16 frame limit. */

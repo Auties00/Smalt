@@ -78,6 +78,31 @@ class DemuxerFuzzTest {
     }
 
     @FuzzTest
+    void caf(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.CAF, data);
+    }
+
+    @FuzzTest
+    void w64(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.W64, data);
+    }
+
+    @FuzzTest
+    void au(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.AU, data);
+    }
+
+    @FuzzTest
+    void loas(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.LOAS, data);
+    }
+
+    @FuzzTest
+    void adif(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.ADIF, data);
+    }
+
+    @FuzzTest
     void ivf(byte[] data) {
         FuzzMedia.demuxer(ContainerFormat.IVF, data);
     }

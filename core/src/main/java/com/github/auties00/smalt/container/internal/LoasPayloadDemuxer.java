@@ -1,12 +1,9 @@
-package com.github.auties00.smalt.container.wav;
+package com.github.auties00.smalt.container.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Demuxer;
-import com.github.auties00.smalt.container.internal.AacExtensions;
-import com.github.auties00.smalt.container.internal.Latm;
-import com.github.auties00.smalt.container.internal.SeekIndex;
 import com.github.auties00.smalt.internal.bits.MsbBitReader;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.io.ForwardOnlySource;
@@ -29,7 +26,7 @@ import java.util.Set;
 
 /**
  * Reads AAC in LOAS framing, {@code AudioSyncStream} frames back to back as ISO/IEC 14496-3 clause
- * 1.7 defines them, the payload of a WAVE {@code data} chunk of format tag {@code 0x1602} or of an
+ * 1.7 defines them: a LOAS file, or the payload of a WAVE {@code data} chunk of format tag {@code 0x1602} or of an
  * {@code HEAACWAVEINFO} of payload type 3.
  *
  * <p>Each frame holds one {@code AudioMuxElement} in the layouts {@link Latm} reads; each of its
@@ -47,7 +44,7 @@ import java.util.Set;
  *
  * <p>Instances are not thread-safe.
  */
-final class LoasDemuxer implements Demuxer {
+public final class LoasPayloadDemuxer implements Demuxer {
     /**
      * The largest data walked at construction for an exact duration and seek index.
      */
@@ -72,6 +69,11 @@ final class LoasDemuxer implements Demuxer {
      * The payloads of a frame that yields none.
      */
     private static final byte[][] NO_PAYLOADS = new byte[0][];
+
+    /**
+     * The format {@link #format()} reports.
+     */
+    private final ContainerFormat format;
 
     /**
      * The source read.
@@ -191,8 +193,9 @@ final class LoasDemuxer implements Demuxer {
     private long skipBefore = Long.MIN_VALUE;
 
     /**
-     * Constructs a demuxer over the frames of a data chunk.
+     * Constructs a demuxer over the frames of a range of a source.
      *
+     * @param format the format {@link #format()} reports: of the file whose data the frames are
      * @param source the input, not closed by this demuxer
      * @param dataStart the offset of the first byte of the data
      * @param dataEnd the offset of the end of the data, or {@code -1} when unknown
@@ -200,7 +203,9 @@ final class LoasDemuxer implements Demuxer {
      * @throws MediaException.Malformed if no frame with a supported configuration starts the data
      * @throws MediaException.LimitExceeded if the channel count exceeds the limits
      */
-    LoasDemuxer(MediaSource source, long dataStart, long dataEnd, MediaLimits limits) {
+    public LoasPayloadDemuxer(ContainerFormat format, MediaSource source, long dataStart, long dataEnd,
+                              MediaLimits limits) {
+        this.format = format;
         this.source = source;
         this.dataStart = dataStart;
         this.dataEnd = dataEnd < 0 ? Long.MAX_VALUE : dataEnd;
@@ -416,7 +421,7 @@ final class LoasDemuxer implements Demuxer {
 
     @Override
     public ContainerFormat format() {
-        return ContainerFormat.WAV;
+        return format;
     }
 
     @Override
@@ -455,7 +460,7 @@ final class LoasDemuxer implements Demuxer {
     @Override
     public void seek(long micros) {
         if (!isSeekable()) {
-            throw new MediaException.Unsupported("seek", "LOAS in a WAVE file of unknown size cannot seek");
+            throw new MediaException.Unsupported("seek", "a LOAS stream of unknown size cannot seek");
         }
         if (index == null) {
             walk(dataStart);

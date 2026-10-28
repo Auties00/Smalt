@@ -264,6 +264,59 @@ public final class AacRawBlocks {
     }
 
     /**
+     * Returns the channel elements of the raw data block that starts at an index, in the order they appear: the
+     * single channel, channel pair and LFE elements, each with its instance tag.
+     *
+     * @param data the bytes
+     * @param offset the index of the block's first byte
+     * @param length the number of bytes available from {@code offset}
+     * @return one entry per element, its element identifier ({@code 0} single channel, {@code 1} channel pair,
+     * {@code 3} LFE) times 16 plus its instance tag, or {@code null} when the block does not end within
+     * {@code length} bytes
+     * @throws MediaException.Malformed if the bytes are not a valid raw data block
+     */
+    public int[] channelElements(byte[] data, int offset, int length) {
+        this.data = data;
+        this.limit = offset + length;
+        this.bit = (long) offset << 3;
+        var end = (long) limit << 3;
+        var elements = new int[8];
+        var count = 0;
+        try {
+            while (true) {
+                var id = read(3);
+                if (id == ID_SCE || id == ID_CPE || id == ID_LFE) {
+                    if (count == elements.length) {
+                        elements = Arrays.copyOf(elements, count * 2);
+                    }
+                    elements[count++] = id << 4 | peek() >>> 28;
+                }
+                switch (id) {
+                    case ID_SCE, ID_LFE -> {
+                        skip(4);
+                        channelStream(false);
+                    }
+                    case ID_CPE -> channelPair();
+                    case ID_CCE -> couplingChannel();
+                    case ID_DSE -> dataStream();
+                    case ID_PCE -> programConfig();
+                    case ID_FIL -> fill();
+                    default -> {
+                        return bit > end ? null : Arrays.copyOf(elements, count);
+                    }
+                }
+                if (bit > end) {
+                    return null;
+                }
+            }
+        } catch (Truncated exception) {
+            return null;
+        } finally {
+            this.data = null;
+        }
+    }
+
+    /**
      * Returns the length of the raw data block that starts at an index.
      *
      * <p>The block starts byte-aligned and ends, byte-aligned, after its {@code ID_END} element.
@@ -323,6 +376,76 @@ public final class AacRawBlocks {
      */
     public record Adif(int length, int objectType, int samplingIndex, int bitrate, int channels,
                        byte[] audioSpecificConfig) {
+    }
+
+    /**
+     * Returns the channel configuration whose channel elements the program config element of an
+     * {@code AudioSpecificConfig} declares, so that a stream described by the element is laid out as one of that
+     * configuration.
+     *
+     * @param config an {@code AudioSpecificConfig}
+     * @return its channel configuration when it is not 0; for channel configuration 0, the configuration from 1 to 7
+     * whose front, side, back and LFE elements (ISO/IEC 14496-3 table 1.19) the element declares, or 0 when it declares
+     * others or the configuration is truncated
+     */
+    public static int equivalentConfiguration(byte[] config) {
+        var reader = new MsbBitReader(config);
+        var type = reader.read(5);
+        if (type == 31) {
+            type = 32 + reader.read(6);
+        }
+        if (reader.read(4) == 15) {
+            reader.skip(24);
+        }
+        var channels = reader.read(4);
+        if (channels != 0 || reader.overrun()) {
+            return reader.overrun() ? 0 : channels;
+        }
+        if (type == 5 || type == 29) {
+            if (reader.read(4) == 15) {
+                reader.skip(24);
+            }
+            if (reader.read(5) == 31) {
+                reader.skip(6);
+            }
+        }
+        reader.skip(1);
+        if (reader.readFlag()) {
+            reader.skip(14);
+        }
+        reader.skip(1 + 4 + 2 + 4);
+        var front = reader.read(4);
+        var side = reader.read(4);
+        var back = reader.read(4);
+        var lfe = reader.read(2);
+        reader.skip(3 + 4);
+        for (var mixdown = 0; mixdown < 3; mixdown++) {
+            if (reader.readFlag()) {
+                reader.skip(mixdown == 2 ? 3 : 4);
+            }
+        }
+        var layout = new StringBuilder();
+        for (var group : new int[]{front, side, back}) {
+            for (var element = 0; element < group; element++) {
+                layout.append(reader.readFlag() ? 'C' : 'S');
+                reader.skip(4);
+            }
+            layout.append('|');
+        }
+        layout.append(lfe);
+        if (reader.overrun()) {
+            return 0;
+        }
+        return switch (layout.toString()) {
+            case "S|||0" -> 1;
+            case "C|||0" -> 2;
+            case "SC|||0" -> 3;
+            case "SC||S|0" -> 4;
+            case "SC||C|0" -> 5;
+            case "SC||C|1" -> 6;
+            case "SCC||C|1" -> 7;
+            default -> 0;
+        };
     }
 
     /**

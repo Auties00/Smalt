@@ -46,6 +46,8 @@ def generator(root, relative):
         return "make-bitmap-caption-samples.py"
     if relative in ("matroska/pgs.mkv", "matroska/vobsub.mkv", "mp4/vobsub.mp4", "ts/h264-captions.ts"):
         return "make-samples.sh, make-bitmap-caption-samples.py"
+    if relative.split("/")[0] in ("caf", "w64", "au", "loas", "adif"):
+        return "make-audio-container-samples.py"
     if relative.startswith("subtitle/") and relative not in ("subtitle/cues.srt", "subtitle/cues.vtt"):
         return "make-subtitle-samples.py"
     return "make-samples.sh"

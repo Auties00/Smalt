@@ -49,11 +49,14 @@ capture.internal.linux	capture
 capture.internal.macos	capture
 capture.internal.windows	capture
 container	core
+container.aac	core
 container.ac3	core
 container.adts	core
 container.aiff	core
 container.amr	core
+container.au	core
 container.avi	core
+container.caf	core
 container.dash	core
 container.flac	core
 container.hls	core

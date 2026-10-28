@@ -2,6 +2,7 @@
 # path	size	sha256	generator
 core/src/test/resources/samples/ac3/ac3.ac3	32322	b3927abe93db8a170f4c0e698f772fc86b3fb974d38d7a2b60511bc19fcc59ce	make-samples.sh
 core/src/test/resources/samples/ac3/eac3.eac3	24240	400d4df66702dc55e5386a0525678c77a1a81992456931e6bb5c0dfe749ec986	make-samples.sh
+core/src/test/resources/samples/adif/aac.adif	16070	cb5174d3b404863bb6880e98e0b5088b494ce77ddded841531f0e4962d940696	make-audio-container-samples.py
 core/src/test/resources/samples/adts/aac.aac	16672	402c234b16a46779b820e19712b09b77070920f6299152664757ec5de94fdd29	make-samples.sh
 core/src/test/resources/samples/aiff/ima4.aifc	5172	b32b512bd0e61d1987673aa4bed83e2668f804eedc6674dd22c6d2d6179a9b0b	make-adpcm-samples.py
 core/src/test/resources/samples/aiff/markers.aiff	16200	3f7f05851c739cf957c03aa8a16a09dd484f02fd1a3c575d5dbeeb757621e688	make-descriptive-samples.py
@@ -11,12 +12,20 @@ core/src/test/resources/samples/amr/nb-tags.amr	3496	f988b6243a86c13a5cb39cb622b
 core/src/test/resources/samples/amr/nb.amr	3238	5230e69f4b53d1e3508f7833241f30688da4703c9452aa576c2f636ade80fd3d	make-samples.sh
 core/src/test/resources/samples/amr/wb-3ch.awb	18319	d4ba98ff4315a67df08b4ff23e2555941bcb9d358df89aa75c826c237aa75ad6	make-amr-mc-samples.py
 core/src/test/resources/samples/amr/wb.awb	6109	ccfea779b46271014282f1f88f9342071ec30b4088977745a6a347b797219f9e	make-samples.sh
+core/src/test/resources/samples/au/g721.au	2432	9815aca448ce0fa3fd35f4a371a3c0233a769ce69f70968a9fc984ccce43602d	make-audio-container-samples.py
+core/src/test/resources/samples/au/g723-3.au	1832	5acf199f0a4b7ff9f3dc89317cb68a9165bedd2305e5f93294ec7f228dcfab58	make-audio-container-samples.py
+core/src/test/resources/samples/au/mulaw.au	4832	080f519b23bd334a3e370483e6bb5c1311a16d87f0c287179b493f8f0886043c	make-audio-container-samples.py
+core/src/test/resources/samples/au/s16.au	52960	f3ed3a56907ad07bb3a3f6a240975f631ad1883f134c9a212e5d9ca73b3e9c26	make-audio-container-samples.py
 core/src/test/resources/samples/avi/g726.avi	7512	16c5c828da4ec4aeb740c46d442aaaf6c9a5e90150744ec2cf9c4ed14453f25a	make-adpcm-samples.py
 core/src/test/resources/samples/avi/ima-adpcm.avi	10906	73b35d6fb60171f670e03ad644a7d8ebeaec5411da9b6865529423240a198f5f	make-adpcm-samples.py
 core/src/test/resources/samples/avi/mjpeg-pcm.avi	146694	299c10a8f4e72831adcf250d0ee65d248e02c3ca0c8d6d1987f1ca81ac07dbac	make-samples.sh
 core/src/test/resources/samples/avi/mpeg2-422.avi	42360	5ecf2158698f0fa27268d7841271abea745cb31b8286b2491d81000408c3a81f	make-samples.sh
 core/src/test/resources/samples/avi/mpeg4-mp3.avi	67810	40c50cc0c09dead43a126999f6b0fc1f5684f0ccf38b6e27c91af0cc7f09e406	make-samples.sh
 core/src/test/resources/samples/avi/ms-adpcm.avi	8840	dfc3067b397f4d5887986ee1c79a0bc339d6d3372b5bb38d516036d059a67f3b	make-adpcm-samples.py
+core/src/test/resources/samples/caf/alac.caf	46380	43616f94df3600f9a0e3804616a2488e1ff602bb7613d35bdb6a8dbd700c625b	make-audio-container-samples.py
+core/src/test/resources/samples/caf/ima4.caf	14205	27ec48c5fb9fe33e39dbaab3cef4baccba6fc5316e7d69c45395413408dce01c	make-audio-container-samples.py
+core/src/test/resources/samples/caf/opus.caf	2534	76e61e028f2aaa1ca91b304a60272c0484670591bebb5b1003c0f3a8a1d76d19	make-audio-container-samples.py
+core/src/test/resources/samples/caf/s16.caf	53049	7142b32d44cddd530e27ad914d454139d6dce6a8f4e59168e0d1b4ef8763296a	make-audio-container-samples.py
 core/src/test/resources/samples/elementary/av1-annexb.obu	15637	b5e670c82b8d929fbf930383ba83b5cb1eaed75974afde393a72266e7551ebfc	make-samples.sh
 core/src/test/resources/samples/elementary/av1.obu	15577	c2b46137baf88f641c5a1e81ce48578c2a8df0a0e652ad43440d04c5801809b7	make-samples.sh
 core/src/test/resources/samples/elementary/h263.263	31736	1bbd3e459ac6c382583220c98331ac2bce55d933c828c4d1228b0e104abedeba	make-samples.sh
@@ -27,6 +36,7 @@ core/src/test/resources/samples/flac/cuesheet.flac	20925	2d20344714a889ebde9731b
 core/src/test/resources/samples/flac/flac.flac	41162	ce6a98f6c7c00d9c83f7937ff762b2397322ded955d980e2c26e02253c82db78	make-samples.sh
 core/src/test/resources/samples/ivf/av1.ivf	15789	183cdc6db1fb06753f9e9b1c1e08d33c22a6d3e450c056fb8f2ed2cf8daa761c	make-samples.sh
 core/src/test/resources/samples/ivf/vp8.ivf	26473	ce9c8209c150f896f751f82167ae8131668b8c5037ff7424776f5284a5e8e32a	make-samples.sh
+core/src/test/resources/samples/loas/aac.loas	16521	cfc64ffe4968468c1cd09348f5a0059b006bf67da431dd14c16c236b8f7b4cb0	make-audio-container-samples.py
 core/src/test/resources/samples/matroska/dolby-vision-p84.mkv	9941	96e0cdaebc69e962ca80cb3f806d73f48af9e115f4c5fc4d6a1627ffe72f9746	make-dolby-vision-samples.py
 core/src/test/resources/samples/matroska/editions.mkv	20004	9f1d4908991bf072a0fbdc88cc9d3e5bdf00dbf28a1bafb316edeaa3fb749b66	make-descriptive-samples.py
 core/src/test/resources/samples/matroska/flac.mka	33512	ac1975ad374f475c70b81e40f222627176b0ac58f054af62142efbaf2b8b1ed0	make-samples.sh
@@ -99,6 +109,8 @@ core/src/test/resources/samples/ts/mpeg4-lpcm.m2ts	159744	72de59960c421f590a8dcb
 core/src/test/resources/samples/ts/pmt-change.ts	68244	d2b5e4852700e5cae87b28157f1513484d6808ada4fef97cac2a87ec3b582db9	make-samples.sh
 core/src/test/resources/samples/ts/s302m.ts	75388	4e8b88fff340d198301def2a4bb3bd769f62282737e1cbff632efde13be00633	make-samples.sh
 core/src/test/resources/samples/ts/teletext.ts	2068	898068f4e85efb92586d19fbaeb637010cf69ff3ac7d82b6ea104d0ebe17b102	make-bitmap-caption-samples.py
+core/src/test/resources/samples/w64/ima.w64	3216	bef154ce0d95a9fa36bee804aaa63e6f85e77f5d85636bc7dbe811e120374c97	make-audio-container-samples.py
+core/src/test/resources/samples/w64/s24.w64	79512	01eec072f4902d82bc3f9125e38171a23ec636eee786659e4a1cf8054003f3d4	make-audio-container-samples.py
 core/src/test/resources/samples/wav/aac-raw.wav	8082	ced6abefd6ca5a8e4e315de9b087bdc5c62fff7eb740031901becf99c426867b	make-wav-samples.py
 core/src/test/resources/samples/wav/ac3.wav	16476	b76cc7668502a43cd91534ccef394cc8a67c247dfa57f76caa2fd9ffbf88c9d1	make-wav-samples.py
 core/src/test/resources/samples/wav/ambisonic-bformat.wav	96068	be1f071aaa716603d3b68b3079b44e7d307af88f4d2b0869be0a019cd082240f	make-ambisonic-samples.py

@@ -294,8 +294,8 @@ class MuxDemuxIdentityTest {
      */
     private static boolean anchorsItsOwnTimeline(OutputContainer container, Codec codec) {
         return container.format() == ContainerFormat.OGG
-                || (container.format() == ContainerFormat.MATROSKA || container.format() == ContainerFormat.WAV)
-                && codec == Codec.OPUS;
+                || (container.format() == ContainerFormat.MATROSKA || container.format() == ContainerFormat.WAV
+                || container.format() == ContainerFormat.W64) && codec == Codec.OPUS;
     }
 
     /**

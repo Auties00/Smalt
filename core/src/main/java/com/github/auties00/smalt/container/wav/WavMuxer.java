@@ -180,6 +180,11 @@ public final class WavMuxer implements Muxer {
     private final long riffLimit;
 
     /**
+     * Whether the file is Sony Wave64 rather than RIFF WAVE.
+     */
+    private final boolean wave64;
+
+    /**
      * The declared track, or {@code null}.
      */
     private AudioTrack track;
@@ -285,9 +290,24 @@ public final class WavMuxer implements Muxer {
      * @param riffLimit the largest RIFF size written without RF64
      */
     WavMuxer(MediaSink output, WavMuxerOptions options, long riffLimit) {
+        this(output, options, riffLimit, false);
+    }
+
+    /**
+     * Constructs a muxer writing RIFF WAVE or Sony Wave64 to a sink.
+     *
+     * @param output the sink, written from its position; not closed by this muxer
+     * @param options the options; a Wave64 file uses only their encapsulation
+     * @param riffLimit the largest RIFF size written without RF64
+     * @param wave64 whether to write Sony Wave64
+     * @throws MediaException.Unsupported if the options always write RF64 and the sink is not seekable
+     * @throws MediaException.Io if the sink position cannot be read
+     */
+    WavMuxer(MediaSink output, WavMuxerOptions options, long riffLimit, boolean wave64) {
+        this.wave64 = wave64;
         this.output = Objects.requireNonNull(output, "output");
         this.options = Objects.requireNonNull(options, "options");
-        if (options.rf64Policy() == WavMuxerOptions.Rf64.ALWAYS && !output.isSeekable()) {
+        if (!wave64 && options.rf64Policy() == WavMuxerOptions.Rf64.ALWAYS && !output.isSeekable()) {
             throw new MediaException.Unsupported("non-seekable output",
                     "an RF64 header is patched after the samples are written, so it needs a seekable output");
         }
@@ -488,7 +508,7 @@ public final class WavMuxer implements Muxer {
      * @throws IllegalStateException if the file would reach 4 GiB under the policy
      */
     private void checkSize(long end) {
-        if (options.rf64Policy() == WavMuxerOptions.Rf64.NEVER && headerSize - 8L + end + (end & 1) > riffLimit) {
+        if (!wave64 && options.rf64Policy() == WavMuxerOptions.Rf64.NEVER && headerSize - 8L + end + (end & 1) > riffLimit) {
             throw new IllegalStateException("the WAV file would exceed 4 GiB; use an RF64 policy other than NEVER");
         }
     }
@@ -550,6 +570,10 @@ public final class WavMuxer implements Muxer {
             dataSize += pending;
         }
         finished = true;
+        if (wave64) {
+            finishWave64();
+            return;
+        }
         if ((dataSize & 1) != 0) {
             output.write(new byte[1]);
         }
@@ -613,6 +637,10 @@ public final class WavMuxer implements Muxer {
      */
     private void writeHeader(Packet first, int stored) {
         started = true;
+        if (wave64) {
+            writeWave64Header(first, stored);
+            return;
+        }
         var seekable = output.isSeekable();
         var policy = options.rf64Policy();
         var header = new ByteWriter(128);
@@ -683,6 +711,98 @@ public final class WavMuxer implements Muxer {
     }
 
     /**
+     * Writes the header of a Sony Wave64 file up to the first sample.
+     *
+     * @param first the first packet, or {@code null} when there is none
+     * @param stored the size the first packet takes in the data chunk
+     */
+    private void writeWave64Header(Packet first, int stored) {
+        var header = new ByteWriter(160);
+        wave64Guid(header, "riff");
+        header.u64le(0);
+        wave64Guid(header, "wave");
+        byte[] format;
+        if (coded != null) {
+            format = coded.format(first, stored);
+        } else if (bursts != null) {
+            format = bursts.format(false);
+            blockAlign = bursts.blockAlign();
+        } else {
+            format = pcmFormat();
+        }
+        wave64Guid(header, "fmt ");
+        header.u64le(24L + format.length);
+        formatOffset = header.size();
+        header.bytes(format);
+        header.zeros(-format.length & 7);
+        if (coded != null || storedCodec == Codec.PCM_F32LE || storedCodec == Codec.PCM_F64LE
+                || storedCodec == Codec.PCM_ALAW || storedCodec == Codec.PCM_MULAW) {
+            wave64Guid(header, "fact");
+            header.u64le(32);
+            factOffset = header.size();
+            header.u64le(0);
+        }
+        wave64Guid(header, "data");
+        header.u64le(0);
+        headerSize = header.size();
+        output.position(base);
+        header.writeTo(output);
+        if (coded != null) {
+            var prefix = coded.prefix();
+            if (prefix.length > 0) {
+                output.write(ByteBuffer.wrap(prefix));
+                dataSize += prefix.length;
+            }
+        }
+    }
+
+    /**
+     * On a seekable sink, pads the data of a Sony Wave64 file to a multiple of eight bytes and writes the sizes, the
+     * sample count and the final format into its header; a streaming file keeps its zero sizes and ends with the
+     * data.
+     */
+    private void finishWave64() {
+        if (!output.isSeekable()) {
+            return;
+        }
+        var padding = (int) (-dataSize & 7);
+        if (padding > 0) {
+            output.write(new byte[padding]);
+        }
+        var end = output.position();
+        var frames = coded != null ? coded.samples() : dataSize / blockAlign;
+        if (coded != null) {
+            writeAt(formatOffset, coded.format());
+        } else if (bursts != null) {
+            writeAt(formatOffset, bursts.format(true));
+        }
+        patch64(16, headerSize + dataSize + padding);
+        patch64(headerSize - 8, 24 + dataSize);
+        if (factOffset >= 0) {
+            patch64(factOffset, frames);
+        }
+        output.position(end);
+    }
+
+    /**
+     * Writes the GUID that names a Sony Wave64 chunk: its four-character code followed by the GUID suffix of the
+     * {@code riff} header or of the WAVE chunks.
+     *
+     * @param header the header being built
+     * @param code the four-character code
+     */
+    private static void wave64Guid(ByteWriter header, String code) {
+        header.fourCc(code);
+        if (code.equals("riff")) {
+            header.bytes(new byte[]{0x2E, (byte) 0x91, (byte) 0xCF, 0x11, (byte) 0xA5, (byte) 0xD6, 0x28,
+                    (byte) 0xDB, 0x04, (byte) 0xC1, 0x00, 0x00});
+        } else {
+            header.bytes(new byte[]{(byte) 0xF3, (byte) 0xAC, (byte) 0xD3, 0x11, (byte) 0x8C, (byte) 0xD1, 0x00,
+                    (byte) 0xC0, 0x4F, (byte) 0x8E, (byte) 0xDB, (byte) 0x8A});
+        }
+    }
+
+    /**
      * Returns the {@code fmt } chunk body of PCM.
      *
      * @return the body
@@ -708,6 +828,18 @@ public final class WavMuxer implements Muxer {
         var out = new ByteWriter(format.size(tag != WaveFormat.PCM));
         format.write(out, tag != WaveFormat.PCM);
         return out.toByteArray();
+    }
+
+    /**
+     * Rewrites a 64-bit little-endian field of the header.
+     *
+     * @param offset the field offset relative to the start of the file
+     * @param value the field value
+     */
+    private void patch64(int offset, long value) {
+        var field = new ByteWriter(8);
+        field.u64le(value);
+        writeAt(offset, field);
     }
 
     /**

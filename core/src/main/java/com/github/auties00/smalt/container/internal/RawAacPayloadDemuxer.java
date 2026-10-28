@@ -1,13 +1,11 @@
-package com.github.auties00.smalt.container.wav;
+package com.github.auties00.smalt.container.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Demuxer;
-import com.github.auties00.smalt.container.internal.AacExtensions;
-import com.github.auties00.smalt.container.internal.AacRawBlocks;
-import com.github.auties00.smalt.container.internal.SeekIndex;
-import com.github.auties00.smalt.internal.bits.MsbBitReader;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.header.AacRates;
 import com.github.auties00.smalt.internal.io.ForwardOnlySource;
@@ -22,13 +20,14 @@ import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 /**
- * Reads unframed AAC, raw data blocks back to back, optionally after an ADIF header: the payload of a
- * WAVE {@code data} chunk of an AAC format tag whose data is neither ADTS nor LOAS.
+ * Reads unframed AAC, raw data blocks back to back, optionally after an ADIF header: an ADIF file, or the
+ * payload of a WAVE {@code data} chunk of an AAC format tag whose data is neither ADTS nor LOAS.
  *
  * <p>The blocks carry no lengths, so each one's end is found by walking its syntax with
  * {@link AacRawBlocks}; each block becomes one packet of one frame (1024 or 960 samples at the core
@@ -40,11 +39,12 @@ import java.util.Set;
  *
  * <p>When the data is at most {@value #MAX_WALK} bytes, a walk over the blocks at construction gives an
  * exact duration and indexes every sixteenth block for {@link #seek(long)}; a larger stream is walked on
- * its first seek, and its duration is left to the {@code fact} chunk.
+ * its first seek, and its duration is left to the container that holds it (the {@code fact} chunk of a WAVE file),
+ * or unknown.
  *
  * <p>Instances are not thread-safe.
  */
-final class RawAacDemuxer implements Demuxer {
+public final class RawAacPayloadDemuxer implements Demuxer {
     /**
      * The largest raw data block, in bytes.
      */
@@ -53,12 +53,17 @@ final class RawAacDemuxer implements Demuxer {
     /**
      * The largest data walked at construction for an exact duration and seek index.
      */
-    static final long MAX_WALK = 16L << 20;
+    public static final long MAX_WALK = 16L << 20;
 
     /**
      * The flags of a raw data block.
      */
     private static final Set<PacketFlag> KEY = Set.of(PacketFlag.KEY);
+
+    /**
+     * The format {@link #format()} reports.
+     */
+    private final ContainerFormat format;
 
     /**
      * The source read.
@@ -146,8 +151,9 @@ final class RawAacDemuxer implements Demuxer {
     private long skipBefore = Long.MIN_VALUE;
 
     /**
-     * Constructs a demuxer over the blocks of a data chunk.
+     * Constructs a demuxer over the blocks of a range of a source.
      *
+     * @param format the format {@link #format()} reports: of the file whose data the blocks are
      * @param source the input, not closed by this demuxer
      * @param dataStart the offset of the first byte of the data
      * @param dataEnd the offset of the end of the data, or {@code -1} when unknown
@@ -159,8 +165,9 @@ final class RawAacDemuxer implements Demuxer {
      * @throws MediaException.Unsupported if the object type has no raw data block element syntax
      * @throws MediaException.LimitExceeded if the channel count exceeds the limits
      */
-    RawAacDemuxer(MediaSource source, long dataStart, long dataEnd, MediaLimits limits, byte[] config, int sampleRate,
-                  int channels) {
+    public RawAacPayloadDemuxer(ContainerFormat format, MediaSource source, long dataStart, long dataEnd,
+                                MediaLimits limits, byte[] config, int sampleRate, int channels) {
+        this.format = format;
         this.source = source;
         this.dataStart = dataStart;
         this.dataEnd = dataEnd < 0 ? Long.MAX_VALUE : dataEnd;
@@ -192,9 +199,12 @@ final class RawAacDemuxer implements Demuxer {
         this.blocks = new AacRawBlocks(parsed.objectType(),
                 samplingIndex >= 0 ? samplingIndex : AacRawBlocks.samplingIndexFor(coreRate), parsed.frameLength());
         this.frameLength = parsed.frameLength();
-        var configuration = channelConfiguration(config);
+        var configuration = AacRawBlocks.equivalentConfiguration(config);
         var layout = AudioConfigs.aacLayout(configuration);
         var count = layout != null ? layout.channels() : Math.max(parsed.channels(), declaredChannels);
+        if (layout == null && count > 0) {
+            layout = new ChannelLayout(Collections.nCopies(count, Speaker.UNKNOWN));
+        }
         if (count > 0) {
             LimitChecks.checkChannels(limits, count);
         }
@@ -237,23 +247,6 @@ final class RawAacDemuxer implements Demuxer {
                     + " Hz without an AudioSpecificConfig");
         }
         return AudioConfigs.audioSpecificConfig(AacRawBlocks.AOT_LC, sampleRate, configuration, 0, false);
-    }
-
-    /**
-     * Returns the channel configuration of an {@code AudioSpecificConfig}.
-     *
-     * @param config the configuration
-     * @return the channel configuration, from 0 to 15
-     */
-    private static int channelConfiguration(byte[] config) {
-        var reader = new MsbBitReader(config);
-        if (reader.read(5) == 31) {
-            reader.skip(6);
-        }
-        if (reader.read(4) == AacRates.ESCAPE) {
-            reader.skip(24);
-        }
-        return reader.read(4);
     }
 
     /**
@@ -367,7 +360,7 @@ final class RawAacDemuxer implements Demuxer {
 
     @Override
     public ContainerFormat format() {
-        return ContainerFormat.WAV;
+        return format;
     }
 
     @Override
@@ -406,7 +399,7 @@ final class RawAacDemuxer implements Demuxer {
     @Override
     public void seek(long micros) {
         if (!isSeekable()) {
-            throw new MediaException.Unsupported("seek", "raw AAC in a WAVE file of unknown size cannot seek");
+            throw new MediaException.Unsupported("seek", "raw AAC of unknown size cannot seek");
         }
         if (index == null) {
             walk();

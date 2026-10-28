@@ -203,6 +203,16 @@ class FuzzSeedWriter {
         copy(DemuxerFuzzTest.class, "aiff", "valid-s16.aiff", ffmpeg("aiff", tone(8000, 0.05),
                 "-c:a", "pcm_s16be"));
 
+        // the behavior samples of tools/testdata/behavior/make-audio-container-samples.py
+        var audioSamples = Path.of("src", "test", "resources", "samples");
+        copy(DemuxerFuzzTest.class, "caf", "valid-opus.caf", audioSamples.resolve("caf/opus.caf"));
+        copy(DemuxerFuzzTest.class, "caf", "valid-ima4.caf", audioSamples.resolve("caf/ima4.caf"));
+        copy(DemuxerFuzzTest.class, "w64", "valid-ima.w64", audioSamples.resolve("w64/ima.w64"));
+        copy(DemuxerFuzzTest.class, "au", "valid-g721.au", audioSamples.resolve("au/g721.au"));
+        copy(DemuxerFuzzTest.class, "au", "valid-mulaw.au", audioSamples.resolve("au/mulaw.au"));
+        copy(DemuxerFuzzTest.class, "loas", "valid-aac.loas", audioSamples.resolve("loas/aac.loas"));
+        copy(DemuxerFuzzTest.class, "adif", "valid-aac.adif", audioSamples.resolve("adif/aac.adif"));
+
         copy(DemuxerFuzzTest.class, "ivf", "valid-vp8.ivf", ffmpeg("ivf", video(32, 32, 2), "-c:v", "libvpx",
                 "-deadline", "realtime", "-b:v", "50k"));
         copy(DemuxerFuzzTest.class, "ivf", "valid-av1.ivf", ffmpeg("ivf", video(32, 32, 2), "-c:v", "libaom-av1",

@@ -228,6 +228,27 @@ public final class Latm {
     }
 
     /**
+     * Returns the length of the syntax of an {@code AudioSpecificConfig} a {@code StreamMuxConfig} of
+     * {@code audioMuxVersion} 0 carries, which a reader finds by parsing it: the object types, rates, channel
+     * configuration and {@code GASpecificConfig}, a program config element included.
+     *
+     * @param config the configuration, byte aligned
+     * @return the length in bits, at most {@code 8 * config.length}, or {@code -1} when the configuration is not of a
+     * General Audio object type this class reads, alone or under HE-AAC or HE-AAC v2, or is truncated
+     */
+    public static long audioSpecificConfigBits(byte[] config) {
+        var bits = new MsbBitReader(config);
+        try {
+            if (readAudioSpecificConfig(bits, 0) == null || bits.overrun()) {
+                return -1;
+            }
+        } catch (MediaException exception) {
+            return -1;
+        }
+        return bits.bitPosition();
+    }
+
+    /**
      * Reads the payloads of the subframes of an {@code AudioMuxElement}, after its configuration, and returns
      * those of the first stream.
      *

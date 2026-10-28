@@ -14,6 +14,8 @@ import com.github.auties00.smalt.container.adts.AdtsDemuxer;
 import com.github.auties00.smalt.container.amr.AmrDemuxer;
 import com.github.auties00.smalt.container.flac.FlacDemuxer;
 import com.github.auties00.smalt.container.internal.AdpcmBlocks;
+import com.github.auties00.smalt.container.internal.LoasPayloadDemuxer;
+import com.github.auties00.smalt.container.internal.RawAacPayloadDemuxer;
 import com.github.auties00.smalt.container.internal.WaveFormat;
 import com.github.auties00.smalt.container.mpeg.MpegAudioDemuxer;
 import com.github.auties00.smalt.container.mpeg.internal.Id3v2;
@@ -44,7 +46,7 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Reads RIFF WAVE files, including the 64-bit RF64 and BW64 variants and big-endian RIFX.
+ * Reads RIFF WAVE files, including the 64-bit RF64 and BW64 variants and big-endian RIFX, and Sony Wave64 files.
  *
  * <p>The {@code fmt } chunk may use {@code WAVE_FORMAT_PCM} (8-bit unsigned, 16, 24, 32 and 64-bit
  * signed integers), {@code WAVE_FORMAT_IEEE_FLOAT} (32 and 64-bit), {@code WAVE_FORMAT_ALAW},
@@ -142,6 +144,11 @@ import java.util.Objects;
  * pre-skip of zero. Any other format tag or sub-format GUID raises {@link MediaException.Unsupported}
  * naming it.
  *
+ * <p>A Sony Wave64 file ({@link ContainerFormat#W64}) is read as a WAVE file whose chunks are named by GUIDs,
+ * whose sizes are 64-bit and count the 24-byte chunk header, and which start on multiples of eight bytes: its
+ * {@code fmt }, {@code fact} (a 64-bit sample count), {@code data} and {@code bext} chunks are read as in a WAVE
+ * file, a {@code data} size of zero extends to the end of the file, and the other chunks are skipped.
+ *
  * <p>Chunks are walked in order, honoring the pad byte after odd-sized chunks (and tolerating
  * writers that omit it). A {@code data} chunk whose size is {@code 0} or {@code 0xFFFFFFFF}
  * outside RF64 is a streaming header and extends to the end of the file, as does a size larger
@@ -217,9 +224,27 @@ public final class WavDemuxer implements Demuxer {
     }
 
     /**
+     * The last twelve bytes of the Sony Wave64 GUIDs of the {@code wave} form and of the {@code fmt }, {@code fact},
+     * {@code data} and other Wave64-specific chunks, after the chunk's four-character code.
+     */
+    private static final byte[] WAVE64_SUFFIX = {(byte) 0xF3, (byte) 0xAC, (byte) 0xD3, 0x11, (byte) 0x8C,
+            (byte) 0xD1, 0x00, (byte) 0xC0, 0x4F, (byte) 0x8E, (byte) 0xDB, (byte) 0x8A};
+
+    /**
+     * The last twelve bytes of the Sony Wave64 GUID of the {@code riff} header, after its four-character code.
+     */
+    private static final byte[] WAVE64_RIFF_SUFFIX = {0x2E, (byte) 0x91, (byte) 0xCF, 0x11, (byte) 0xA5,
+            (byte) 0xD6, 0x28, (byte) 0xDB, 0x04, (byte) 0xC1, 0x00, 0x00};
+
+    /**
      * The source read.
      */
     private final MediaSource source;
+
+    /**
+     * Whether the file is Sony Wave64.
+     */
+    private final boolean wave64;
 
     /**
      * The resource bounds.
@@ -345,6 +370,7 @@ public final class WavDemuxer implements Demuxer {
         try {
             var header = new Header();
             parse(new SourceReader(source, 4096), header);
+            this.wave64 = header.wave64;
             if (header.payload == Payload.PCM && (header.channels == 2 || header.channels == 8)
                     && (header.codec == Codec.PCM_S16LE || header.codec == Codec.PCM_S16BE)) {
                 detectBursts(header);
@@ -432,6 +458,11 @@ public final class WavDemuxer implements Demuxer {
          * Whether the file is RF64 or BW64.
          */
         private boolean rf64;
+
+        /**
+         * Whether the file is Sony Wave64.
+         */
+        private boolean wave64;
 
         /**
          * The 64-bit size of the {@code data} chunk from {@code ds64}, or {@code -1}.
@@ -558,6 +589,10 @@ public final class WavDemuxer implements Demuxer {
      */
     private void parse(SourceReader reader, Header header) {
         var riff = reader.fourCc();
+        if (riff == 0x72696666) {
+            parseWave64(reader, header);
+            return;
+        }
         switch (riff) {
             case 0x52494646 -> {
             }
@@ -643,6 +678,105 @@ public final class WavDemuxer implements Demuxer {
         if (header.dataStart < 0) {
             throw new MediaException.Malformed("WAVE file without a data chunk");
         }
+    }
+
+    /**
+     * Walks the chunks of a Sony Wave64 file: chunks named by a GUID, whose 64-bit little-endian size counts their
+     * 24-byte header, each starting on a multiple of eight bytes.
+     *
+     * @param reader the reader positioned after the first four bytes, {@code riff}
+     * @param header receives the parsed values
+     */
+    private void parseWave64(SourceReader reader, Header header) {
+        header.wave64 = true;
+        var guid = new byte[16];
+        reader.readFully(guid, 4, 12);
+        if (!Arrays.equals(guid, 4, 16, WAVE64_RIFF_SUFFIX, 0, 12)) {
+            throw new MediaException.Malformed("not a Sony Wave64 file");
+        }
+        reader.skip(8);
+        reader.readFully(guid, 0, 16);
+        if (guidFourCc(guid) != 0x77617665 || !Arrays.equals(guid, 4, 16, WAVE64_SUFFIX, 0, 12)) {
+            throw new MediaException.Malformed("Sony Wave64 file is not of form wave");
+        }
+        var size = source.size();
+        while (size >= 0 ? size - reader.position() >= 24 : !reader.atEnd()) {
+            var chunkStart = reader.position();
+            reader.readFully(guid, 0, 16);
+            var declared = reader.u64le();
+            var body = reader.position();
+            var id = Arrays.equals(guid, 4, 16, WAVE64_SUFFIX, 0, 12) ? guidFourCc(guid) : 0;
+            long chunkSize;
+            if (declared >= 24) {
+                chunkSize = declared - 24;
+            } else if (id == 0x64617461 && declared == 0) {
+                chunkSize = -1;
+            } else {
+                throw new MediaException.Malformed("Sony Wave64 chunk of " + declared + " bytes is too small");
+            }
+            switch (id) {
+                case 0x666D7420 -> parseFormat(reader, header, chunkSize);
+                case 0x66616374 -> {
+                    if (chunkSize >= 8 && reader.remaining() >= 8) {
+                        header.factSamples = reader.u64le();
+                    }
+                }
+                case 0x62657874 -> parseDescriptive(reader, header, id, chunkSize);
+                case 0x64617461 -> {
+                    if (header.dataStart >= 0) {
+                        break;
+                    }
+                    if (!header.hasFormat) {
+                        throw new MediaException.Malformed("Sony Wave64 file without a fmt chunk before its data");
+                    }
+                    header.dataStart = body;
+                    header.dataEnd = chunkSize < 0 ? size : size < 0 ? body + chunkSize
+                            : Math.min(size, body + chunkSize);
+                    var next = chunkSize < 0 ? -1 : align8(body + chunkSize);
+                    if (chunkSize < 0 || size < 0 || header.dataEnd < body + chunkSize || size - next < 24
+                            || !ForwardOnlySource.isCheapToReach(source, next + 24)) {
+                        return;
+                    }
+                }
+                // TODO: read the tags of the Wave64 list and summary list chunks
+                default -> {
+                }
+            }
+            if (size >= 0 && chunkSize > size - body) {
+                break;
+            }
+            var next = align8(chunkStart + 24 + chunkSize);
+            if (next <= chunkStart) {
+                break;
+            }
+            reader.seek(next);
+        }
+        if (!header.hasFormat) {
+            throw new MediaException.Malformed("Sony Wave64 file without a fmt chunk");
+        }
+        if (header.dataStart < 0) {
+            throw new MediaException.Malformed("Sony Wave64 file without a data chunk");
+        }
+    }
+
+    /**
+     * Reads the four-character code that starts a Sony Wave64 GUID, stored in the order of its characters.
+     *
+     * @param guid the GUID bytes
+     * @return the code as a big-endian integer, as {@link SourceReader#fourCc()} returns RIFF chunk identifiers
+     */
+    private static int guidFourCc(byte[] guid) {
+        return (guid[0] & 0xFF) << 24 | (guid[1] & 0xFF) << 16 | (guid[2] & 0xFF) << 8 | guid[3] & 0xFF;
+    }
+
+    /**
+     * Rounds an offset up to a multiple of eight, where every Sony Wave64 chunk starts.
+     *
+     * @param offset the offset, non-negative
+     * @return the offset rounded up
+     */
+    private static long align8(long offset) {
+        return offset + 7 & ~7L;
     }
 
     /**
@@ -965,9 +1099,9 @@ public final class WavDemuxer implements Demuxer {
             case AC3 -> new Ac3Demuxer(new SlicedSource(source, start, length), options);
             case AAC -> switch (aacFraming(format, lead)) {
                 case ADTS -> new AdtsDemuxer(new SlicedSource(source, start, length), options);
-                case LOAS -> new LoasDemuxer(source, start, header.dataEnd, limits);
-                default -> new RawAacDemuxer(source, start, header.dataEnd, limits, aacConfig(format),
-                        (int) Math.min(format.sampleRate(), Integer.MAX_VALUE), format.channels());
+                case LOAS -> new LoasPayloadDemuxer(format(), source, start, header.dataEnd, limits);
+                default -> new RawAacPayloadDemuxer(format(), source, start, header.dataEnd, limits,
+                        aacConfig(format), (int) Math.min(format.sampleRate(), Integer.MAX_VALUE), format.channels());
             };
             case FLAC -> new FlacDemuxer(flacSource(format, lead, start, length), options);
             case AMR -> {
@@ -1279,7 +1413,7 @@ public final class WavDemuxer implements Demuxer {
 
     @Override
     public ContainerFormat format() {
-        return ContainerFormat.WAV;
+        return wave64 ? ContainerFormat.W64 : ContainerFormat.WAV;
     }
 
     @Override

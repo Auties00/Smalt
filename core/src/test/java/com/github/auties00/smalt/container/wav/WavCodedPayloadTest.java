@@ -1399,7 +1399,7 @@ class WavCodedPayloadTest {
         void large() {
             var data = dataChunk(stereo("wav"));
             var blocks = packets(stereo("aac"), AdtsDemuxer::new).size();
-            var copies = (int) (RawAacDemuxer.MAX_WALK / data.length) + 2;
+            var copies = (int) (com.github.auties00.smalt.container.internal.RawAacPayloadDemuxer.MAX_WALK / data.length) + 2;
             var repeated = new byte[data.length * copies];
             for (var copy = 0; copy < copies; copy++) {
                 System.arraycopy(data, 0, repeated, copy * data.length, data.length);

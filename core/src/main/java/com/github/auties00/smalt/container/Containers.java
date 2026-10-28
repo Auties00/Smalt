@@ -2,16 +2,25 @@ package com.github.auties00.smalt.container;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.ac3.Ac3Demuxer;
+import com.github.auties00.smalt.container.aac.AdifDemuxer;
+import com.github.auties00.smalt.container.aac.AdifMuxer;
+import com.github.auties00.smalt.container.aac.LoasDemuxer;
+import com.github.auties00.smalt.container.aac.LoasMuxer;
 import com.github.auties00.smalt.container.adts.AdtsDemuxer;
 import com.github.auties00.smalt.container.adts.AdtsMuxer;
 import com.github.auties00.smalt.container.aiff.AiffDemuxer;
 import com.github.auties00.smalt.container.aiff.AiffMuxer;
+import com.github.auties00.smalt.container.au.AuDemuxer;
+import com.github.auties00.smalt.container.au.AuMuxer;
 import com.github.auties00.smalt.container.amr.AmrDemuxer;
 import com.github.auties00.smalt.container.avi.AviDemuxer;
 import com.github.auties00.smalt.container.avi.AviMuxer;
+import com.github.auties00.smalt.container.caf.CafDemuxer;
+import com.github.auties00.smalt.container.caf.CafMuxer;
 import com.github.auties00.smalt.container.dash.DashDemuxer;
 import com.github.auties00.smalt.container.flac.FlacDemuxer;
 import com.github.auties00.smalt.container.hls.HlsDemuxer;
+import com.github.auties00.smalt.container.internal.Latm;
 import com.github.auties00.smalt.container.ivf.IvfDemuxer;
 import com.github.auties00.smalt.container.ivf.IvfMuxer;
 import com.github.auties00.smalt.container.matroska.MatroskaDemuxer;
@@ -53,10 +62,12 @@ import com.github.auties00.smalt.container.ts.TsDemuxer;
 import com.github.auties00.smalt.container.ts.TsMuxer;
 import com.github.auties00.smalt.container.wav.WavDemuxer;
 import com.github.auties00.smalt.container.wav.WavMuxer;
+import com.github.auties00.smalt.container.wav.Wave64Muxer;
 import com.github.auties00.smalt.container.y4m.Y4mDemuxer;
 import com.github.auties00.smalt.container.y4m.Y4mMuxer;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.internal.header.MpegAudioHeader;
+import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.limits.Guards;
 import com.github.auties00.smalt.internal.provider.Artifacts;
 import com.github.auties00.smalt.internal.provider.Providers;
@@ -91,13 +102,14 @@ import java.util.function.Predicate;
  *
  * <p>Recognition never trusts a file name or a declared mimetype: it inspects the leading bytes,
  * skipping an ID3v2 tag first because MP3, AAC, AC-3, AMR and FLAC files often start with one. Formats with a
- * magic number (MP4 family, Matroska, Ogg, RIFF WAVE, RIFF AVI, AIFF, FLAC, AMR, YUV4MPEG2, the {@code "PG"}
- * segments of a {@code .sup} file, the signature line of a VobSub index) are recognized exactly, a VobSub
- * {@code .sub} file by a pack header followed by a subpicture PES packet, MPEG transport streams by the sync bytes
- * of their first packets, and raw AC-3 and E-AC-3 streams
+ * magic number (MP4 family, Matroska, Ogg, RIFF WAVE, Sony Wave64, RIFF AVI, AIFF, CAF, Sun AU, ADIF, FLAC, AMR,
+ * YUV4MPEG2, the {@code "PG"} segments of a {@code .sup} file, the signature line of a VobSub index) are recognized
+ * exactly, a VobSub {@code .sub} file by a pack header followed by a subpicture PES packet, MPEG transport streams by
+ * the sync bytes of their first packets, and raw AC-3 and E-AC-3 streams
  * by two consecutive sync frames;
  * raw MPEG audio and ADTS streams, which have only a frame sync word, are recognized by requiring
- * two consecutive consistent frame headers. Elementary video streams are recognized by their structure up to a
+ * two consecutive consistent frame headers, and LOAS streams by two consecutive {@code AudioSyncStream} frames (or
+ * one that ends the input). Elementary video streams are recognized by their structure up to a
  * sequence header: H.264 and HEVC Annex B streams by {@link AnnexBDemuxer#detect(byte[])}, AV1 OBU streams by
  * {@link ObuDemuxer#detect(byte[])}, MPEG-4 Part 2 and H.263 streams by {@link Mpeg4VideoDemuxer#detect(byte[])}.
  * Text files are recognized last, in this order: an HLS playlist by its {@code #EXTM3U} first line, a DASH manifest
@@ -110,7 +122,8 @@ import java.util.function.Predicate;
  *
  * <p>{@link #openMuxer(ContainerFormat, MediaSink)} creates muxers with each format's default options: a
  * fast-start {@link Mp4Muxer}, a Matroska (not WebM) {@link MatroskaMuxer}, an {@link OggMuxer}, and the
- * {@link WavMuxer}, {@link AiffMuxer}, {@link AdtsMuxer}, {@link IvfMuxer}, {@link TsMuxer}, {@link AviMuxer} and
+ * {@link WavMuxer}, {@link Wave64Muxer}, {@link AiffMuxer}, {@link CafMuxer}, {@link AuMuxer}, {@link AdtsMuxer},
+ * {@link LoasMuxer}, {@link AdifMuxer}, {@link IvfMuxer}, {@link TsMuxer}, {@link AviMuxer} and
  * {@link Y4mMuxer}; MPEG audio, FLAC, AMR, AC-3, H.264, HEVC, AV1 (low-overhead and Annex B), MPEG-4 Part 2,
  * H.263 and PCM files are the elementary streams a {@link RawMuxer} writes.
  * {@link #openMuxer(OutputContainer, MediaSink)} also writes WebM, M4A, QuickTime and fragmented MP4
@@ -132,6 +145,18 @@ public final class Containers {
      * The number of leading bytes inspected when no ID3v2 tag is present.
      */
     private static final int HEADER_LENGTH = 4096;
+
+    /**
+     * The last twelve bytes of the GUID of the {@code riff} header of a Sony Wave64 file.
+     */
+    private static final byte[] WAVE64_RIFF = {0x2E, (byte) 0x91, (byte) 0xCF, 0x11, (byte) 0xA5, (byte) 0xD6, 0x28,
+            (byte) 0xDB, 0x04, (byte) 0xC1, 0x00, 0x00};
+
+    /**
+     * The last twelve bytes of the GUID of the {@code wave} form of a Sony Wave64 file.
+     */
+    private static final byte[] WAVE64_WAVE = {(byte) 0xF3, (byte) 0xAC, (byte) 0xD3, 0x11, (byte) 0x8C, (byte) 0xD1,
+            0x00, (byte) 0xC0, 0x4F, (byte) 0x8E, (byte) 0xDB, (byte) 0x8A};
 
     /**
      * The largest ID3v2 tag skipped during recognition, in bytes.
@@ -218,6 +243,9 @@ public final class Containers {
             if (matches(header, 0, "#!AMR")) {
                 return new Detection(ContainerFormat.AMR, null);
             }
+            if (matches(header, 0, "ADIF")) {
+                return new Detection(ContainerFormat.ADIF, null);
+            }
             provided = detectProvided(providers, source, offset, header);
             if (provided != null) {
                 return provided;
@@ -226,6 +254,9 @@ public final class Containers {
         var frames = detectFrameStream(header);
         if (frames != null) {
             return new Detection(frames, null);
+        }
+        if (isLoas(source, offset, header)) {
+            return new Detection(ContainerFormat.LOAS, null);
         }
         if (offset == 0) {
             var video = detectElementaryVideo(source, leading);
@@ -375,10 +406,14 @@ public final class Containers {
             case OGG -> new OggDemuxer(source, options);
             case MPEG_AUDIO -> new MpegAudioDemuxer(source, options);
             case ADTS -> new AdtsDemuxer(source, options);
-            case WAV -> new WavDemuxer(source, options);
+            case LOAS -> new LoasDemuxer(source, options);
+            case ADIF -> new AdifDemuxer(source, options);
+            case WAV, W64 -> new WavDemuxer(source, options);
             case FLAC -> new FlacDemuxer(source, options);
             case AMR -> new AmrDemuxer(source, options);
             case AIFF -> new AiffDemuxer(source, options);
+            case CAF -> new CafDemuxer(source, options);
+            case AU -> new AuDemuxer(source, options);
             case IVF -> new IvfDemuxer(source, options);
             case MPEG_TS -> new TsDemuxer(source, options);
             case AC3 -> new Ac3Demuxer(source, options);
@@ -444,8 +479,13 @@ public final class Containers {
             case MATROSKA -> MatroskaMuxer.supports(MatroskaDocType.MATROSKA, codec);
             case OGG -> OggMuxer.supports(codec);
             case WAV -> WavMuxer.supports(codec);
+            case W64 -> Wave64Muxer.supports(codec);
             case AIFF -> AiffMuxer.supports(codec);
+            case CAF -> CafMuxer.supports(codec);
+            case AU -> AuMuxer.supports(codec);
             case ADTS -> AdtsMuxer.supports(codec);
+            case LOAS -> LoasMuxer.supports(codec);
+            case ADIF -> AdifMuxer.supports(codec);
             case IVF -> IvfMuxer.supports(codec);
             case MPEG_TS -> TsMuxer.supports(codec);
             case MPEG_AUDIO, FLAC, AMR, AC3, H264, HEVC, AV1, AV1_ANNEX_B, MPEG4_VIDEO, H263, PCM ->
@@ -530,8 +570,13 @@ public final class Containers {
             case MATROSKA -> new MatroskaMuxer(output);
             case OGG -> new OggMuxer(output);
             case WAV -> new WavMuxer(output);
+            case W64 -> new Wave64Muxer(output);
             case AIFF -> new AiffMuxer(output);
+            case CAF -> new CafMuxer(output);
+            case AU -> new AuMuxer(output);
             case ADTS -> new AdtsMuxer(output);
+            case LOAS -> new LoasMuxer(output);
+            case ADIF -> new AdifMuxer(output);
             case IVF -> new IvfMuxer(output);
             case MPEG_AUDIO, FLAC, AMR, AC3, H264, HEVC, AV1, MPEG4_VIDEO, H263, PCM ->
                     new FormatMuxer(format, new RawMuxer(output));
@@ -779,6 +824,19 @@ public final class Containers {
         if (matches(header, 0, "FORM") && (matches(header, 8, "AIFF") || matches(header, 8, "AIFC"))) {
             return ContainerFormat.AIFF;
         }
+        if (matches(header, 0, "caff") && header[4] == 0 && header[5] == 1) {
+            return ContainerFormat.CAF;
+        }
+        if (header.length >= 40 && matches(header, 0, "riff") && Arrays.equals(header, 4, 16, WAVE64_RIFF, 0, 12)
+                && matches(header, 24, "wave") && Arrays.equals(header, 28, 40, WAVE64_WAVE, 0, 12)) {
+            return ContainerFormat.W64;
+        }
+        if (isAu(header)) {
+            return ContainerFormat.AU;
+        }
+        if (matches(header, 0, "ADIF")) {
+            return ContainerFormat.ADIF;
+        }
         if (header.length >= 24 && header[0] == 0 && header[1] == 0 && header[2] == 0 && header[3] == 12
                 && matches(header, 4, "jP  ") && matches(header, 16, "ftyp")
                 && (matches(header, 20, "mjp2") || matches(header, 20, "mj2s"))) {
@@ -911,6 +969,53 @@ public final class Containers {
             return obu.get();
         }
         return Mpeg4VideoDemuxer.detect(probe).orElse(null);
+    }
+
+    /**
+     * Returns whether bytes start a Sun/NeXT audio file: the magic {@code .snd} (or {@code dns.} for the little-endian
+     * variant), a header of at least 24 bytes, an encoding from 1 to 27 and a channel count and rate that are not zero.
+     *
+     * @param header the leading bytes of the input
+     * @return {@code true} for an AU file
+     */
+    private static boolean isAu(byte[] header) {
+        if (header.length < 24) {
+            return false;
+        }
+        var little = matches(header, 0, "dns.");
+        if (!little && !matches(header, 0, ".snd")) {
+            return false;
+        }
+        var offset = little ? ByteArrays.u32le(header, 4) : ByteArrays.u32be(header, 4);
+        var encoding = little ? ByteArrays.u32le(header, 12) : ByteArrays.u32be(header, 12);
+        var rate = little ? ByteArrays.u32le(header, 16) : ByteArrays.u32be(header, 16);
+        var channels = little ? ByteArrays.u32le(header, 20) : ByteArrays.u32be(header, 20);
+        return offset >= 24 && encoding >= 1 && encoding <= 27 && rate != 0 && channels != 0;
+    }
+
+    /**
+     * Recognizes an AAC stream in LOAS framing by two consecutive {@code AudioSyncStream} frames, or by one frame that
+     * ends the input.
+     *
+     * @param source the input
+     * @param offset the offset of {@code header}
+     * @param header the bytes at the start of the frame stream
+     * @return {@code true} for a LOAS stream
+     * @throws MediaException.Io if reading the source fails
+     */
+    private static boolean isLoas(MediaSource source, long offset, byte[] header) {
+        var length = Latm.frameLength(header, 0, header.length);
+        if (length <= 3) {
+            return false;
+        }
+        var probe = header;
+        if (length + 2 > probe.length && probe.length == HEADER_LENGTH) {
+            probe = read(source, offset, length + 2);
+        }
+        if (length == probe.length) {
+            return true;
+        }
+        return length + 2 <= probe.length && Latm.frameLength(probe, length, probe.length - length) > 0;
     }
 
     /**

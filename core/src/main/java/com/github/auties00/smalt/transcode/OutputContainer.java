@@ -97,14 +97,41 @@ public enum OutputContainer {
     WAV(ContainerFormat.WAV, "wav", "audio/wav", List.of(), List.of(Codec.PCM_S16LE)),
 
     /**
+     * A Sony Wave64 file: the streams of {@link #WAV} in chunks of 64-bit sizes, with no 4 GiB limit. A transcode
+     * copies coded audio into it as it does into {@link #WAV}.
+     */
+    W64(ContainerFormat.W64, "w64", "audio/x-w64", List.of(), List.of(Codec.PCM_S16LE)),
+
+    /**
      * An AIFF or AIFF-C file.
      */
     AIFF(ContainerFormat.AIFF, "aiff", "audio/aiff", List.of(), List.of(Codec.PCM_S16BE)),
 
     /**
+     * An Apple Core Audio Format file; a transcode picks ALAC when the caller names no audio codec, and 16-bit PCM
+     * when no ALAC encoder is installed.
+     */
+    CAF(ContainerFormat.CAF, "caf", "audio/x-caf", List.of(), List.of(Codec.ALAC, Codec.PCM_S16BE)),
+
+    /**
+     * A Sun/NeXT audio file.
+     */
+    AU(ContainerFormat.AU, "au", "audio/basic", List.of(), List.of(Codec.PCM_S16BE)),
+
+    /**
      * An AAC elementary stream in ADTS framing.
      */
     ADTS(ContainerFormat.ADTS, "aac", "audio/aac", List.of(), List.of(Codec.AAC)),
+
+    /**
+     * An AAC elementary stream in LOAS framing.
+     */
+    LOAS(ContainerFormat.LOAS, "loas", "audio/x-loas", List.of(), List.of(Codec.AAC)),
+
+    /**
+     * An AAC elementary stream in the Audio Data Interchange Format.
+     */
+    ADIF(ContainerFormat.ADIF, "adif", "audio/aac", List.of(), List.of(Codec.AAC)),
 
     /**
      * An IVF file, the container of the VP8, VP9 and AV1 reference tools.
@@ -379,7 +406,7 @@ public enum OutputContainer {
      * otherwise
      */
     boolean copiesByDefault(Codec codec) {
-        return this != WAV || codec.isPcm() || !AudioDecoders.isSupported(codec);
+        return this != WAV && this != W64 || codec.isPcm() || !AudioDecoders.isSupported(codec);
     }
 
     /**
@@ -431,15 +458,16 @@ public enum OutputContainer {
      *
      * <p>What each file stores is what its muxer writes
      * ({@link Muxer#setTags(com.github.auties00.smalt.metadata.MediaTags) Muxer.setTags}): everything in the MP4
-     * family, Matroska, WebM, Ogg, FLAC, MP3, AC-3, E-AC-3, AMR, ADTS, WAV and AIFF files; the tags and the track
-     * names in an AVI file; the track names and some audio dispositions in a transport stream; and the title,
+     * family, Matroska, WebM, Ogg, FLAC, MP3, AC-3, E-AC-3, AMR, ADTS, WAV, AIFF, CAF and AU files; the tags and the
+     * track names in an AVI file; the track names and some audio dispositions in a transport stream; and the title,
      * artist and album in an LRC file.
      *
-     * @return {@code false} for IVF, YUV4MPEG2, the video elementary streams and the subtitle files other than LRC
+     * @return {@code false} for IVF, YUV4MPEG2, Wave64, LOAS, ADIF, the video elementary streams and the subtitle files
+     * other than LRC
      */
     public boolean supportsTags() {
         return switch (this) {
-            case IVF, H264, HEVC, AV1, Y4M, SRT, WEBVTT, ASS, SSA, TTML, SAMI, MICRODVD -> false;
+            case IVF, H264, HEVC, AV1, Y4M, W64, LOAS, ADIF, SRT, WEBVTT, ASS, SSA, TTML, SAMI, MICRODVD -> false;
             default -> true;
         };
     }
@@ -476,7 +504,9 @@ public enum OutputContainer {
                 default -> false;
             };
             case OGG -> codec == Codec.VORBIS || codec == Codec.FLAC;
-            case WAV -> codec == Codec.AAC || codec == Codec.FLAC;
+            case WAV, W64 -> codec == Codec.AAC || codec == Codec.FLAC;
+            case CAF -> codec == Codec.AAC || codec == Codec.ALAC || codec == Codec.OPUS;
+            case LOAS, ADIF -> codec == Codec.AAC;
             case H264 -> codec == Codec.H264;
             case HEVC -> codec == Codec.HEVC;
             case Y4M -> codec == Codec.RAW_VIDEO;
@@ -491,7 +521,9 @@ public enum OutputContainer {
      * {@link #M4A}, {@code mkv} and
      * {@code mka} to {@link #MATROSKA}, {@code webm} to {@link #WEBM}, {@code ogg}, {@code oga}
      * and {@code opus} to {@link #OGG}, {@code wav} to {@link #WAV}, {@code aif}, {@code aiff} and
-     * {@code aifc} to {@link #AIFF}, {@code aac} and {@code adts} to {@link #ADTS}, and
+     * {@code aifc} to {@link #AIFF}, {@code aac} and {@code adts} to {@link #ADTS}, {@code loas} and {@code latm} to
+     * {@link #LOAS}, {@code adif} to {@link #ADIF}, {@code w64} to {@link #W64}, {@code caf} to {@link #CAF},
+     * {@code au} and {@code snd} to {@link #AU}, and
      * {@code ivf}, {@code mp3}, {@code flac}, {@code amr}, {@code ac3} and {@code avi} to their constants,
      * {@code ec3} and {@code eac3} to {@link #EAC3}, {@code h264} and {@code 264} to {@link #H264},
      * {@code h265}, {@code 265} and {@code hevc} to {@link #HEVC}, {@code obu} to {@link #AV1}, {@code y4m} to
@@ -519,6 +551,11 @@ public enum OutputContainer {
             case "wav" -> WAV;
             case "aif", "aiff", "aifc" -> AIFF;
             case "aac", "adts" -> ADTS;
+            case "loas", "latm" -> LOAS;
+            case "adif" -> ADIF;
+            case "w64" -> W64;
+            case "caf" -> CAF;
+            case "au", "snd" -> AU;
             case "ivf" -> IVF;
             case "y4m" -> Y4M;
             case "mp3" -> MP3;

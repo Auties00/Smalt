@@ -2,6 +2,7 @@
 # job	module	class	reason	count
 linux-arm64-vector-full	audio	com.github.auties00.smalt.audio.alac.AlacEncoderInteropTest	platform:macos	1
 linux-arm64-vector-full	audio	com.github.auties00.smalt.audio.opus.OpusEncoderAllocationTest	simd:enabled	12
+linux-arm64-vector-full	core	com.github.auties00.smalt.container.caf.CafAppleTest	platform:macos	29
 linux-arm64-vector-full	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
 linux-arm64-vector-full	image	com.github.auties00.smalt.image.ico.AniTest	platform:windows	1
 linux-arm64-vector-full	image	com.github.auties00.smalt.video.vp8.Vp8RtQualityTest	opt-in:vp8rt-quality	1
@@ -38,6 +39,7 @@ linux-arm64-vector-smoke	capture	com.github.auties00.smalt.capture.internal.wind
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.audio.loudness.LoudnessFfmpegTest	data:vector	8
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.container.ConformanceTest	data:vector	8
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.container.FileFormatConformanceTest	data:vector	144
+linux-arm64-vector-smoke	core	com.github.auties00.smalt.container.caf.CafAppleTest	platform:macos	29
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.container.packaging.DashTestVectorsTest	data:vector	2
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.image.color.ColorProfileTest	data:vector	3
@@ -77,7 +79,7 @@ linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.AacLowDelaySbr
 linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.AacObjectTypesConformanceTest	data:vector	324
 linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.BsacConformanceTest	data:vector	206
 linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.HeAacConformanceTest	data:vector	86
-linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.HeAacContainersTest	data:vector	6
+linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.HeAacContainersTest	data:vector	10
 linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.HeAacSignalingTest	data:vector	2
 linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.LowDelayWindowDerivationTest	data:vector	2
 linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.ScalableConformanceTest	data:vector	14
@@ -179,6 +181,7 @@ linux-x64-scalar-smoke	core	com.github.auties00.smalt.audio.loudness.LoudnessFfm
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.audio.loudness.TruePeakKernelTest	simd:disabled	4
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.ConformanceTest	data:vector	8
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.FileFormatConformanceTest	data:vector	144
+linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.caf.CafAppleTest	platform:macos	29
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.ogg.OggCrcTest	simd:disabled	16
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.packaging.DashTestVectorsTest	data:vector	2
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
@@ -222,7 +225,7 @@ linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.audio.aac.AacLowDelaySbrTe
 linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.audio.aac.AacObjectTypesConformanceTest	data:vector	324
 linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.audio.aac.BsacConformanceTest	data:vector	206
 linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.audio.aac.HeAacConformanceTest	data:vector	86
-linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.audio.aac.HeAacContainersTest	data:vector	6
+linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.audio.aac.HeAacContainersTest	data:vector	10
 linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.audio.aac.HeAacSignalingTest	data:vector	2
 linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.audio.aac.LowDelayWindowDerivationTest	data:vector	2
 linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.audio.aac.ScalableConformanceTest	data:vector	14
@@ -308,6 +311,7 @@ linux-x64-vector-full	capture	com.github.auties00.smalt.capture.internal.linux.L
 linux-x64-vector-full	capture	com.github.auties00.smalt.capture.internal.windows.WasapiAudioTest	platform:windows	5
 linux-x64-vector-full	capture	com.github.auties00.smalt.capture.internal.windows.WindowsCaptureTest	platform:windows	3
 linux-x64-vector-full	capture	com.github.auties00.smalt.capture.internal.windows.WindowsWindowCaptureTest	platform:windows	2
+linux-x64-vector-full	core	com.github.auties00.smalt.container.caf.CafAppleTest	platform:macos	29
 linux-x64-vector-full	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
 linux-x64-vector-full	desktop	com.github.auties00.smalt.desktop.sound.JavaSoundReadTest	device:audio-output	1
 linux-x64-vector-full	image	com.github.auties00.smalt.image.ico.AniTest	platform:windows	1
@@ -343,6 +347,7 @@ linux-x64-vector-smoke	capture	com.github.auties00.smalt.capture.internal.window
 linux-x64-vector-smoke	core	com.github.auties00.smalt.audio.loudness.LoudnessFfmpegTest	data:vector	8
 linux-x64-vector-smoke	core	com.github.auties00.smalt.container.ConformanceTest	data:vector	8
 linux-x64-vector-smoke	core	com.github.auties00.smalt.container.FileFormatConformanceTest	data:vector	144
+linux-x64-vector-smoke	core	com.github.auties00.smalt.container.caf.CafAppleTest	platform:macos	29
 linux-x64-vector-smoke	core	com.github.auties00.smalt.container.packaging.DashTestVectorsTest	data:vector	2
 linux-x64-vector-smoke	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
 linux-x64-vector-smoke	core	com.github.auties00.smalt.image.color.ColorProfileTest	data:vector	3
@@ -382,7 +387,7 @@ linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.AacLowDelaySbrTe
 linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.AacObjectTypesConformanceTest	data:vector	324
 linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.BsacConformanceTest	data:vector	206
 linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.HeAacConformanceTest	data:vector	86
-linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.HeAacContainersTest	data:vector	6
+linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.HeAacContainersTest	data:vector	10
 linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.HeAacSignalingTest	data:vector	2
 linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.LowDelayWindowDerivationTest	data:vector	2
 linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.ScalableConformanceTest	data:vector	14
@@ -522,7 +527,7 @@ macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.AacLowDelaySbr
 macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.AacObjectTypesConformanceTest	data:vector	324
 macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.BsacConformanceTest	data:vector	206
 macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.HeAacConformanceTest	data:vector	86
-macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.HeAacContainersTest	data:vector	6
+macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.HeAacContainersTest	data:vector	10
 macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.HeAacSignalingTest	data:vector	2
 macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.LowDelayWindowDerivationTest	data:vector	2
 macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.ScalableConformanceTest	data:vector	14
@@ -591,6 +596,7 @@ windows-x64-capture	capture	com.github.auties00.smalt.capture.internal.windows.W
 windows-x64-vector-full	audio	com.github.auties00.smalt.audio.alac.AlacEncoderInteropTest	platform:macos	1
 windows-x64-vector-full	audio	com.github.auties00.smalt.audio.opus.OpusEncoderAllocationTest	simd:enabled	12
 windows-x64-vector-full	core	com.github.auties00.smalt.SkipTest	platform:unix	1
+windows-x64-vector-full	core	com.github.auties00.smalt.container.caf.CafAppleTest	platform:macos	29
 windows-x64-vector-full	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
 windows-x64-vector-full	image	com.github.auties00.smalt.video.vp8.Vp8RtQualityTest	opt-in:vp8rt-quality	1
 windows-x64-vector-full	it	com.github.auties00.smalt.jit.JitStressTest	opt-in:jit-stress	1
@@ -623,6 +629,7 @@ windows-x64-vector-smoke	core	com.github.auties00.smalt.SkipTest	platform:unix	1
 windows-x64-vector-smoke	core	com.github.auties00.smalt.audio.loudness.LoudnessFfmpegTest	data:vector	8
 windows-x64-vector-smoke	core	com.github.auties00.smalt.container.ConformanceTest	data:vector	8
 windows-x64-vector-smoke	core	com.github.auties00.smalt.container.FileFormatConformanceTest	data:vector	144
+windows-x64-vector-smoke	core	com.github.auties00.smalt.container.caf.CafAppleTest	platform:macos	29
 windows-x64-vector-smoke	core	com.github.auties00.smalt.container.packaging.DashTestVectorsTest	data:vector	2
 windows-x64-vector-smoke	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
 windows-x64-vector-smoke	core	com.github.auties00.smalt.image.color.ColorProfileTest	data:vector	3
@@ -661,7 +668,7 @@ windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.AacLowDelaySbr
 windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.AacObjectTypesConformanceTest	data:vector	324
 windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.BsacConformanceTest	data:vector	206
 windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.HeAacConformanceTest	data:vector	86
-windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.HeAacContainersTest	data:vector	6
+windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.HeAacContainersTest	data:vector	10
 windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.HeAacSignalingTest	data:vector	2
 windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.LowDelayWindowDerivationTest	data:vector	2
 windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.aac.ScalableConformanceTest	data:vector	14
