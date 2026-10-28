@@ -1,0 +1,16 @@
+# video decode dump of mp4/jpeg2000.mov; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 400000
+seekable true
+track 1 JPEG2000 64x48 timebase=1/15360
+0 pts=0 dur=1024 key=true 64x48 yuv8 YUV422 color=BT601/FULL/BT709/SRGB y=df3ae6e2 u=923df460 v=cc140934
+1 pts=1024 dur=1024 key=true 64x48 yuv8 YUV422 color=BT601/FULL/BT709/SRGB y=df3ae6e2 u=923df460 v=cc140934
+2 pts=2048 dur=1024 key=true 64x48 yuv8 YUV422 color=BT601/FULL/BT709/SRGB y=15b39009 u=851f6ba8 v=13b4d6ba
+3 pts=3072 dur=1024 key=true 64x48 yuv8 YUV422 color=BT601/FULL/BT709/SRGB y=15b39009 u=851f6ba8 v=13b4d6ba
+4 pts=4096 dur=1024 key=true 64x48 yuv8 YUV422 color=BT601/FULL/BT709/SRGB y=b504394d u=aa7a6057 v=2b96b661
+5 pts=5120 dur=1024 key=true 64x48 yuv8 YUV422 color=BT601/FULL/BT709/SRGB y=b504394d u=aa7a6057 v=2b96b661
+seek 0: @0
+seek 133333: @1
+seek 266666: @3
+seek 400000: end
+seek -1000000: @0

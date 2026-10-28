@@ -1,0 +1,15 @@
+# image dump of raf/compressed-lossy; regenerate with -Dsmalt.test.updateDumps=true
+format RAW
+info ImageInfo[format=RAW, width=92, height=22, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 92x22 rgba8 alpha=false crc=a60617f6
+  format=RAW orientation=NORMAL source=92x22
+  icc=520:86132914 exif=none xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+scaled 23x5
+picture 92x22 rgba8 alpha=false crc=a60617f6
+  format=RAW orientation=NORMAL source=92x22
+  icc=520:86132914 exif=none xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+decoder raw sensor data
+sensor 92x22 channels=1 cfa=BGBRGR/GRGGBG/GBGGRG/RGRBGB/GBGGRG/GRGGBG neutral=[0.58984375, 1.0, 0.7365853658536585] crc=dab86b70

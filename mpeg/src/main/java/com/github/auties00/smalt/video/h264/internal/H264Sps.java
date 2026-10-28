@@ -17,7 +17,7 @@ import java.util.Arrays;
  * afterwards. Fields hold the syntax element values, with the derived variables the decoding
  * process uses most often precomputed.
  */
-public final class H264Sps {
+public final class H264Sps implements Cloneable {
     /**
      * The {@code profile_idc}.
      */
@@ -236,6 +236,31 @@ public final class H264Sps {
     public long timeScale;
 
     /**
+     * Whether the VUI carried NAL or VCL HRD parameters ({@code CpbDpbDelaysPresentFlag}), which
+     * put the {@code cpb_removal_delay} and {@code dpb_output_delay} in picture timing SEI
+     * messages.
+     */
+    public boolean cpbDpbDelaysPresent;
+
+    /**
+     * The length in bits of {@code cpb_removal_delay}, from 1 to 32, when
+     * {@link #cpbDpbDelaysPresent} is set.
+     */
+    public int cpbRemovalDelayLength;
+
+    /**
+     * The length in bits of {@code dpb_output_delay}, from 1 to 32, when
+     * {@link #cpbDpbDelaysPresent} is set.
+     */
+    public int dpbOutputDelayLength;
+
+    /**
+     * The VUI {@code pic_struct_present_flag}: whether picture timing SEI messages carry
+     * {@code pic_struct}.
+     */
+    public boolean picStructPresent;
+
+    /**
      * Whether the VUI carried a {@code bitstream_restriction_flag} equal to 1.
      */
     public boolean bitstreamRestriction;
@@ -256,9 +281,62 @@ public final class H264Sps {
     public byte[] raw;
 
     /**
+     * The {@code chroma_format_idc} as coded, which decides the syntax of the picture parameter
+     * sets that refer to this set even when {@link #chromaFormatIdc} is inferred to be 0, as for
+     * auxiliary coded pictures.
+     */
+    public int codedChromaFormatIdc = 1;
+
+    /**
+     * Whether the set is a subset sequence parameter set, the sequence parameter set of the
+     * scalable and multiview extensions.
+     */
+    public boolean subset;
+
+    /**
+     * The MVC extension of a subset set of a multiview profile, or {@code null}.
+     */
+    public H264MvcExtension mvc;
+
+    /**
+     * The SVC extension of a subset set of a scalable profile, or {@code null}.
+     */
+    public H264SvcExtension svc;
+
+    /**
      * Constructs an empty set; used by {@link #parse(byte[], int, int)}.
      */
     private H264Sps() {
+    }
+
+    /**
+     * Returns a copy of this set for the decoding of auxiliary coded pictures (ITU-T H.264
+     * 7.4.2.1.2): monochrome, with the auxiliary bit depth as the luma bit depth.
+     *
+     * @param bitDepth the bit depth of the auxiliary pictures, 8 to 12
+     * @return the copy
+     */
+    public H264Sps auxiliary(int bitDepth) {
+        var copy = copy();
+        copy.chromaFormatIdc = 0;
+        copy.separateColorPlane = false;
+        copy.bitDepthLuma = bitDepth;
+        copy.bitDepthChroma = 8;
+        return copy;
+    }
+
+    /**
+     * Returns a shallow copy of this set: the arrays are shared, which is safe because sets are
+     * never modified after parsing.
+     *
+     * @return the copy
+     */
+    public H264Sps copy() {
+        try {
+            return (H264Sps) clone();
+        } catch (CloneNotSupportedException exception) {
+            throw new AssertionError(exception);
+        }
     }
 
     /**
@@ -273,6 +351,38 @@ public final class H264Sps {
      * truncated
      */
     public static H264Sps parse(byte[] rbsp, int offset, int length) {
+        return parse(rbsp, offset, length, false);
+    }
+
+    /**
+     * Parses a subset sequence parameter set (ITU-T H.264 7.3.2.1.3): the sequence parameter set
+     * data followed by the extension of its profile, the MVC extension for the multiview profiles,
+     * the SVC extension for the scalable profiles.
+     *
+     * @param rbsp the unescaped payload, starting after the NAL header byte and followed by
+     * {@link H264BitReader#PADDING} zero bytes
+     * @param offset the index of the first payload byte
+     * @param length the payload length
+     * @return the parsed set, with {@link #subset} set
+     * @throws MediaException.Malformed if a field is out of its range or the payload is
+     * truncated
+     */
+    public static H264Sps parseSubset(byte[] rbsp, int offset, int length) {
+        return parse(rbsp, offset, length, true);
+    }
+
+    /**
+     * Parses a sequence parameter set or a subset sequence parameter set.
+     *
+     * @param rbsp the unescaped payload, followed by {@link H264BitReader#PADDING} zero bytes
+     * @param offset the index of the first payload byte
+     * @param length the payload length
+     * @param subset whether the payload is a subset sequence parameter set
+     * @return the parsed set
+     * @throws MediaException.Malformed if a field is out of its range or the payload is
+     * truncated
+     */
+    private static H264Sps parse(byte[] rbsp, int offset, int length, boolean subset) {
         var reader = new H264BitReader();
         reader.init(rbsp, offset, length);
         var sps = new H264Sps();
@@ -289,12 +399,13 @@ public final class H264Sps {
             if (sps.chromaFormatIdc > 3) {
                 throw new MediaException.Malformed("chroma_format_idc " + sps.chromaFormatIdc + " out of range");
             }
+            sps.codedChromaFormatIdc = sps.chromaFormatIdc;
             if (sps.chromaFormatIdc == 3) {
                 sps.separateColorPlane = reader.readFlag();
             }
             sps.bitDepthLuma = 8 + reader.readUe();
             sps.bitDepthChroma = 8 + reader.readUe();
-            if (sps.bitDepthLuma > 14 || sps.bitDepthChroma > 14) {
+            if (sps.bitDepthLuma < 8 || sps.bitDepthLuma > 14 || sps.bitDepthChroma < 8 || sps.bitDepthChroma > 14) {
                 throw new MediaException.Malformed("bit depth out of range");
             }
             sps.transformBypass = reader.readFlag();
@@ -369,15 +480,45 @@ public final class H264Sps {
         if (reader.overrun()) {
             throw new MediaException.Malformed("truncated sequence parameter set");
         }
+        if (subset) {
+            sps.subset = true;
+            if (reader.readFlag()) {
+                parseVui(reader, sps);
+                sps.timingInfoPresent = false;
+                sps.cpbDpbDelaysPresent = false;
+                sps.picStructPresent = false;
+            }
+            switch (sps.profileIdc) {
+                case 83, 86 -> sps.svc = H264SvcExtension.parse(reader, sps.chromaArrayType());
+                case 118, 128, 134 -> {
+                    reader.readFlag();
+                    sps.mvc = H264MvcExtension.parse(reader, sps.profileIdc, sps.frameMbsOnly);
+                }
+                case 135, 138 -> {
+                    reader.readFlag();
+                    sps.mvc = H264MvcExtension.parseMvcd(reader);
+                }
+                default -> {
+                }
+            }
+            if (reader.overrun()) {
+                throw new MediaException.Malformed("truncated subset sequence parameter set");
+            }
+            return sps;
+        }
         if (reader.readFlag()) {
             try {
                 parseVui(reader, sps);
             } catch (MediaException.Malformed ignored) {
                 sps.bitstreamRestriction = false;
                 sps.timingInfoPresent = false;
+                sps.cpbDpbDelaysPresent = false;
+                sps.picStructPresent = false;
             }
             if (reader.overrun()) {
                 sps.bitstreamRestriction = false;
+                sps.cpbDpbDelaysPresent = false;
+                sps.picStructPresent = false;
                 sps.timingInfoPresent = sps.timingInfoPresent && sps.timeScale > 0 && sps.numUnitsInTick > 0;
             }
         }
@@ -441,16 +582,17 @@ public final class H264Sps {
         }
         var nalHrd = reader.readFlag();
         if (nalHrd) {
-            skipHrd(reader);
+            parseHrd(reader, sps);
         }
         var vclHrd = reader.readFlag();
         if (vclHrd) {
-            skipHrd(reader);
+            parseHrd(reader, sps);
         }
         if (nalHrd || vclHrd) {
+            sps.cpbDpbDelaysPresent = true;
             reader.readFlag();
         }
-        reader.readFlag();
+        sps.picStructPresent = reader.readFlag();
         if (reader.readFlag()) {
             reader.readFlag();
             reader.readUe();
@@ -468,11 +610,13 @@ public final class H264Sps {
     }
 
     /**
-     * Skips an {@code hrd_parameters()} structure (ITU-T H.264 E.1.2).
+     * Parses an {@code hrd_parameters()} structure (ITU-T H.264 E.1.2), keeping the lengths of the
+     * delays that picture timing SEI messages carry.
      *
      * @param reader the reader positioned at the start of the structure
+     * @param sps the set being filled
      */
-    private static void skipHrd(H264BitReader reader) {
+    private static void parseHrd(H264BitReader reader, H264Sps sps) {
         var count = reader.readUe() + 1;
         if (count > 32) {
             throw new MediaException.Malformed("cpb_cnt_minus1 out of range");
@@ -484,7 +628,10 @@ public final class H264Sps {
             reader.readUe();
             reader.readFlag();
         }
-        reader.readBits(20);
+        reader.readBits(5);
+        sps.cpbRemovalDelayLength = reader.readBits(5) + 1;
+        sps.dpbOutputDelayLength = reader.readBits(5) + 1;
+        reader.readBits(5);
     }
 
     /**
@@ -495,6 +642,28 @@ public final class H264Sps {
             1, 1, 12, 11, 10, 11, 16, 11, 40, 33, 24, 11, 20, 11, 32, 11, 80, 33, 18, 11, 15, 11, 64, 33,
             160, 99, 4, 3, 3, 2, 2, 1
     };
+
+    /**
+     * Returns the width term of the sample aspect ratio of an {@code aspect_ratio_idc} of H.264
+     * Table E-1, which H.265 Table E.1 repeats.
+     *
+     * @param idc the {@code aspect_ratio_idc}
+     * @return the width term, or 0 for 0 (unspecified), 255 ({@code Extended_SAR}) and the reserved values
+     */
+    public static int aspectWidthOf(int idc) {
+        return idc > 0 && idc <= SAR.length / 2 ? SAR[(idc - 1) * 2] : 0;
+    }
+
+    /**
+     * Returns the height term of the sample aspect ratio of an {@code aspect_ratio_idc}; see
+     * {@link #aspectWidthOf(int)}.
+     *
+     * @param idc the {@code aspect_ratio_idc}
+     * @return the height term, or 0 when {@link #aspectWidthOf(int)} is 0
+     */
+    public static int aspectHeightOf(int idc) {
+        return idc > 0 && idc <= SAR.length / 2 ? SAR[(idc - 1) * 2 + 1] : 0;
+    }
 
     /**
      * Returns {@code ChromaArrayType}: the chroma format, or 0 when color planes are coded

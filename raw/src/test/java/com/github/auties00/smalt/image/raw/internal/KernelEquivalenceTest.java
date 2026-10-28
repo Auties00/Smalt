@@ -191,7 +191,9 @@ class KernelEquivalenceTest {
         var scalar = new float[][]{r.clone(), g.clone(), b.clone()};
         var vector = new float[][]{r.clone(), g.clone(), b.clone()};
         new ScalarHueSatKernel().apply(table, scalar[0], scalar[1], scalar[2], count);
-        VectorHueSatKernel.create().apply(table, vector[0], vector[1], vector[2], count);
+        var kernel = VectorHueSatKernel.create();
+        kernel.prepare(table);
+        kernel.apply(table, vector[0], vector[1], vector[2], count);
         for (var c = 0; c < 3; c++) {
             if (!special) {
                 assertArrayEquals(expected[c], scalar[c], "scalar channel " + c);
