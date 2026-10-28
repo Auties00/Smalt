@@ -12,8 +12,10 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -132,8 +134,178 @@ class ConfigurationTest {
         }
 
         @ParameterizedTest(name = "object type {0}")
-        @CsvSource({"1, aac main", "3, aac ssr", "4, aac ltp", "6, aac scalable", "17, aac er lc", "19, aac er ltp",
-                "23, aac ld", "39, aac eld", "42, usac", "8, mpeg-4 audio object type 8"})
+        @CsvSource({"1, 2", "3, 1", "4, 2"})
+        @DisplayName("parses the AAC Main, SSR and LTP object types")
+        void coreObjectTypes(int objectType, int channels) {
+            var config = AudioSpecificConfig.parse(bits(objectType, 5, 3, 4, channels, 4, 0, 3));
+            assertEquals(objectType, config.objectType());
+            assertEquals(48000, config.sampleRate());
+            assertEquals(channels, config.channelConfiguration());
+            assertEquals(1024, config.frameLength());
+            assertEquals(objectType == AudioSpecificConfig.AOT_LTP, config.longTermPrediction());
+            assertFalse(config.errorResilient());
+        }
+
+        @Test
+        @DisplayName("parses ER AAC LTP with its resilience flags and epConfig")
+        void errorResilientLtp() {
+            var config = AudioSpecificConfig.parse(HexFormat.of().parseHex("998900"));
+            assertEquals(AudioSpecificConfig.AOT_ER_LTP, config.objectType());
+            assertEquals(1, config.channelConfiguration());
+            assertTrue(config.errorResilient());
+            assertTrue(config.longTermPrediction());
+            assertFalse(config.sbr());
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({
+                "898900, 17, 48000, 1, 1024, 0, 0",
+                "8991a0, 17, 48000, 2, 1024, 5, 0",
+                "899144, 17, 48000, 2, 1024, 2, 1",
+                "998904, 19, 48000, 1, 1024, 0, 1",
+                "9989c0, 19, 48000, 1, 1024, 6, 0",
+                "b98900, 23, 48000, 1, 512, 0, 0",
+                "b98d20, 23, 48000, 1, 480, 1, 0",
+                "b995c0, 23, 48000, 2, 480, 6, 0",
+                "f8e62000, 39, 48000, 1, 512, 0, 0",
+                "f8e63000, 39, 48000, 1, 480, 0, 0",
+                "f8e65a00, 39, 48000, 2, 480, 5, 0"
+        })
+        @DisplayName("parses ER AAC LC, ER AAC LTP, AAC-LD and AAC-ELD with their resilience flags and epConfig")
+        void errorResilientTypes(String hex, int objectType, int rate, int channels, int frameLength, int resilience,
+                                 int epConfig) {
+            // the conformance configurations of er_al10, er_al26, er_al23 (ep1), er_ad1000, er_ad1111, er_ad2160,
+            // er_eld1000np, er_eld1100np and er_eld2150np, plus two ER AAC LTP variants
+            var config = AudioSpecificConfig.parse(HexFormat.of().parseHex(hex));
+            assertEquals(objectType, config.objectType());
+            assertEquals(rate, config.sampleRate());
+            assertEquals(channels, config.channelConfiguration());
+            assertEquals(frameLength, config.frameLength());
+            assertEquals(resilience, config.resilience());
+            assertEquals(epConfig, config.epConfig());
+            assertTrue(config.errorResilient());
+            assertEquals(objectType == AudioSpecificConfig.AOT_ER_LD || objectType == AudioSpecificConfig.AOT_ER_ELD,
+                    config.lowDelay());
+            assertEquals(objectType != AudioSpecificConfig.AOT_ER_LC && objectType != AudioSpecificConfig.AOT_ER_ELD,
+                    config.longTermPrediction());
+            assertFalse(config.sbr());
+            assertNull(config.lowDelaySbr());
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({"f8ec21b9209c00, 24000, 48000, true", "f8ec2126808200, 24000, 24000, false",
+                "f8ec41af0000, 24000, 48000, true", "f8ee41af0000, 22050, 44100, true"})
+        @DisplayName("parses the low delay SBR of AAC-ELD at dual rate and downsampled")
+        void lowDelaySbr(String hex, int rate, int extensionRate, boolean dualRate) {
+            // er_eld_sbr_e_1_48, er_eld_sbr_twi_1_24, er_eld_sbr_e_2_48 and er_eld_sbr_s_2_44
+            var config = AudioSpecificConfig.parse(HexFormat.of().parseHex(hex));
+            assertEquals(AudioSpecificConfig.AOT_ER_ELD, config.objectType());
+            assertEquals(rate, config.sampleRate());
+            assertEquals(512, config.frameLength());
+            assertTrue(config.sbr());
+            assertEquals(extensionRate, config.extensionSampleRate());
+            assertNotNull(config.lowDelaySbr());
+            assertEquals(dualRate, config.lowDelaySbr().dualRate());
+            assertFalse(config.lowDelaySbr().crc());
+            assertEquals(1, config.lowDelaySbr().headerOffsets().length);
+        }
+
+        @ParameterizedTest(name = "object type {0}")
+        @ValueSource(ints = {17, 19, 23, 39})
+        @DisplayName("parses SBR signaled around an error resilient core")
+        void sbrAroundErrorResilientCore(int objectType) {
+            // object type 5 at 48 kHz, mono, a 96 kHz extension, then the core's specific configuration and
+            // epConfig 0: GASpecificConfig with the extension flag, or an ELDSpecificConfig without low delay SBR
+            var core = objectType == AudioSpecificConfig.AOT_ER_ELD
+                    ? new int[]{31, 5, 7, 6, 0, 1, 0, 3, 0, 1, 0, 4}
+                    : new int[]{objectType, 5, 0, 1, 0, 1, 1, 1, 0, 3, 0, 1};
+            var fields = IntStream.concat(IntStream.concat(IntStream.of(5, 5, 3, 4, 1, 4, 0, 4), Arrays.stream(core)),
+                    IntStream.of(0, 2)).toArray();
+            var config = AudioSpecificConfig.parse(bits(fields));
+            assertEquals(objectType, config.objectType());
+            assertEquals(48000, config.sampleRate());
+            assertTrue(config.errorResilient());
+            assertTrue(config.sbr());
+            assertTrue(config.sbrSignaled());
+            assertEquals(96000, config.extensionSampleRate());
+            assertEquals(0, config.epConfig());
+            assertNull(config.lowDelaySbr());
+        }
+
+        /** Builds an AAC-ELD configuration with low delay SBR headers, one extension and the given epConfig. */
+        static byte[] eldWithHeaders(int channels, int headers, int epConfig) {
+            var fields = new java.util.ArrayList<Integer>(java.util.List.of(31, 5, 7, 6, 6, 4, channels, 4, 0, 1, 0, 3,
+                    1, 1, 1, 1, 0, 1));
+            for (var i = 0; i < headers; i++) {
+                // sbr_header: amp res, start, stop, crossover, reserved, then both extra header flags on
+                fields.addAll(java.util.List.of(i, 14, 1, 1, 1, 1, i, 5, 2 * i, 6));
+            }
+            // one extension of type 1 with two bytes, the terminator, epConfig
+            fields.addAll(java.util.List.of(1, 4, 2, 4, 0xABCD, 16, 0, 4, epConfig, 2));
+            return bits(fields.stream().mapToInt(Integer::intValue).toArray());
+        }
+
+        @ParameterizedTest(name = "channel configuration {0}")
+        @CsvSource({"1, 1", "2, 1", "3, 2", "4, 3", "5, 3", "6, 3", "7, 4"})
+        @DisplayName("reads one low delay SBR header per SBR element, then the extensions and epConfig")
+        void lowDelaySbrHeaders(int channels, int headers) {
+            var config = AudioSpecificConfig.parse(eldWithHeaders(channels, headers, 0));
+            assertEquals(channels, config.channelConfiguration());
+            assertEquals(headers, config.lowDelaySbr().headerOffsets().length);
+            for (var i = 0; i < headers; i++) {
+                assertEquals(26 + 27 * i, config.lowDelaySbr().headerOffsets()[i]);
+            }
+            assertEquals(0, config.epConfig());
+            // epConfig lands after the headers and the extension list, so a misread header shifts it
+            var exception = assertThrows(MediaException.Unsupported.class,
+                    () -> AudioSpecificConfig.parse(eldWithHeaders(channels, headers, 1)));
+            assertEquals("aac eld epconfig 1", exception.format());
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({"99890c, aac er epconfig 3", "899148, aac er epconfig 2", "8b09ec0624480500715400101a012238001c1a, aac er epconfig 3",
+                "f8e62004, aac eld epconfig 1"})
+        @DisplayName("rejects the error protection tool and AAC-ELD with separate category instances as unsupported")
+        void errorProtection(String hex, String format) {
+            // the third configuration is that of er_al18_24_ep3_crc02, with its ErrorProtectionSpecificConfig
+            var exception = assertThrows(MediaException.Unsupported.class,
+                    () -> AudioSpecificConfig.parse(HexFormat.of().parseHex(hex)));
+            assertEquals(format, exception.format());
+        }
+
+        @Test
+        @DisplayName("rejects truncated AAC-ELD extensions and reserved low delay channel configurations as malformed")
+        void malformedLowDelay() {
+            assertThrows(MediaException.Malformed.class, () -> AudioSpecificConfig.parse(bits(31, 5, 7, 6, 3, 4, 1, 4, 0, 1,
+                    0, 3, 0, 1, 1, 4, 15, 4, 255, 8, 0xFFFF, 16)));
+            assertThrows(MediaException.Malformed.class, () -> AudioSpecificConfig.parse(bits(31, 5, 7, 6, 3, 4, 0, 4, 0, 1,
+                    0, 3, 0, 1, 0, 4, 0, 2)));
+            assertThrows(MediaException.Malformed.class, () -> AudioSpecificConfig.parse(bits(23, 5, 3, 4, 11, 4, 0, 1, 0, 1,
+                    1, 1, 0, 3, 0, 1, 0, 2)));
+        }
+
+        @Test
+        @DisplayName("rejects 960-sample SSR frames and the reserved channel configurations of ER AAC LTP as malformed")
+        void invalidCombinations() {
+            assertThrows(MediaException.Malformed.class, () -> AudioSpecificConfig.parse(bits(3, 5, 3, 4, 1, 4, 4, 3)));
+            // the 5.1 program configuration of surroundProgramConfig behind an ER AAC LTP header
+            var program = bits(19, 5, 3, 4, 0, 4, 1, 3,
+                    0, 4, 1, 2, 3, 4, 2, 4, 0, 4, 1, 4, 1, 2, 0, 3, 0, 4, 0, 1, 0, 1, 0, 1,
+                    0, 1, 0, 4, 1, 1, 0, 4, 1, 1, 1, 4, 0, 4,
+                    0, 3, 0, 8, 0, 3, 0, 1, 0, 2);
+            var exception = assertThrows(MediaException.Malformed.class, () -> AudioSpecificConfig.parse(program));
+            assertTrue(exception.getMessage().contains("channel configuration 0"), exception.getMessage());
+            // channel configurations 11, 12 and 14 have no error resilient element list
+            for (var channels : new int[]{11, 12, 14}) {
+                var config = bits(19, 5, 3, 4, channels, 4, 1, 3, 0, 3, 0, 1, 0, 2);
+                var reserved = assertThrows(MediaException.Malformed.class, () -> AudioSpecificConfig.parse(config));
+                assertTrue(reserved.getMessage().contains("channel configuration " + channels), reserved.getMessage());
+            }
+        }
+
+        @ParameterizedTest(name = "object type {0}")
+        @CsvSource({"42, usac", "7, mpeg-4 audio object type 7", "8, mpeg-4 audio object type 8",
+                "24, mpeg-4 audio object type 24"})
         @DisplayName("rejects other object types as unsupported, naming them")
         void unsupported(int objectType, String format) {
             var config = objectType < 31 ? bits(objectType, 5, 3, 4, 2, 4, 0, 3) : bits(31, 5, objectType - 32, 6, 3, 4, 2, 4, 0, 3);
@@ -142,7 +314,65 @@ class ConfigurationTest {
         }
 
         @Test
-        @DisplayName("rejects reserved fields and truncation as malformed, 22.2 as unsupported")
+        @DisplayName("parses scalable AAC layer configurations with their layer number, core delay and resilience flags")
+        void scalable() {
+            // ac02, layer 4: a stereo AAC scalable layer at 48 kHz
+            var stereo = AudioSpecificConfig.parse(java.util.HexFormat.of().parseHex("319080"));
+            assertEquals(AudioSpecificConfig.AOT_SCALABLE, stereo.objectType());
+            assertTrue(stereo.scalable() && !stereo.errorResilient());
+            assertEquals(48000, stereo.sampleRate());
+            assertEquals(2, stereo.channelConfiguration());
+            assertEquals(4, stereo.layer());
+            assertEquals(-1, stereo.coreCoderDelay());
+            assertEquals(1024, stereo.frameLength());
+            // er_ac118, layer 3: ER AAC scalable at 64 kHz with virtual codebooks and codeword reordering
+            var resilient = AudioSpecificConfig.parse(java.util.HexFormat.of().parseHex("a1117400"));
+            assertEquals(AudioSpecificConfig.AOT_ER_SCALABLE, resilient.objectType());
+            assertTrue(resilient.scalable() && resilient.errorResilient());
+            assertEquals(64000, resilient.sampleRate());
+            assertEquals(3, resilient.layer());
+            assertEquals(AudioSpecificConfig.VIRTUAL_CODEBOOKS | AudioSpecificConfig.CODEWORD_REORDERING,
+                    resilient.resilience());
+            assertEquals(0, resilient.epConfig());
+            // ac04, layer 0: a 960-sample layer over a CELP core delayed by 8000 samples
+            var cored = AudioSpecificConfig.parse(java.util.HexFormat.of().parseHex("320efa0000"));
+            assertEquals(44100, cored.sampleRate());
+            assertEquals(960, cored.frameLength());
+            assertEquals(8000, cored.coreCoderDelay());
+            assertEquals(0, cored.layer());
+            // a scalable layer must be mono or stereo
+            for (var channels : new int[]{3, 6}) {
+                var config = bits(6, 5, 3, 4, channels, 4, 0, 3, 0, 3);
+                var exception = assertThrows(MediaException.Malformed.class, () -> AudioSpecificConfig.parse(config));
+                assertTrue(exception.getMessage().contains("scalable AAC layer"), exception.getMessage());
+            }
+        }
+
+        @Test
+        @DisplayName("parses ER BSAC configurations with their layer fields, epConfig and SBR sync extension")
+        void bsac() {
+            // er_bs01_48_ep1: numOfSubFrame 1, layer_length 11, epConfig 1
+            var layered = AudioSpecificConfig.parse(java.util.HexFormat.of().parseHex("b189080b20"));
+            assertEquals(AudioSpecificConfig.AOT_ER_BSAC, layered.objectType());
+            assertTrue(layered.bsac());
+            assertEquals(48000, layered.sampleRate());
+            assertEquals(1, layered.channelConfiguration());
+            assertEquals(1024, layered.frameLength());
+            assertEquals(1, layered.epConfig());
+            assertTrue(!layered.sbr() && !layered.errorResilient());
+            // er_bs13_sbr_1_48: sync extension with extensionAudioObjectType 22, SBR at 48 kHz over a 24 kHz core
+            var sbr = AudioSpecificConfig.parse(java.util.HexFormat.of().parseHex("b30908000adedf00bb8010"));
+            assertEquals(24000, sbr.sampleRate());
+            assertTrue(sbr.sbr() && sbr.sbrSignaled());
+            assertEquals(48000, sbr.extensionSampleRate());
+            assertEquals(0, sbr.epConfig());
+            var exception = assertThrows(MediaException.Unsupported.class,
+                    () -> AudioSpecificConfig.parse(java.util.HexFormat.of().parseHex("b189080b60")));
+            assertEquals("aac er epconfig 3", exception.format());
+        }
+
+        @Test
+        @DisplayName("rejects reserved fields and truncation as malformed")
         void invalid() {
             assertThrows(MediaException.Malformed.class, () -> AudioSpecificConfig.parse(new byte[0]));
             assertThrows(MediaException.Malformed.class, () -> AudioSpecificConfig.parse(bits(0, 5, 3, 4, 2, 4, 0, 3)));
@@ -153,8 +383,21 @@ class ConfigurationTest {
             var truncated = surroundProgramConfig();
             assertThrows(MediaException.Malformed.class,
                     () -> AudioSpecificConfig.parse(java.util.Arrays.copyOf(truncated, truncated.length - 3)));
-            var exception = assertThrows(MediaException.Unsupported.class, () -> AudioSpecificConfig.parse(bits(2, 5, 3, 4, 13, 4, 0, 3)));
-            assertEquals("aac channel configuration 13", exception.format());
+        }
+
+        @Test
+        @DisplayName("maps the 22.2 configuration onto 24 channels in the order of the 22.2 layout")
+        void twentyTwoTwo() {
+            var config = AudioSpecificConfig.parse(bits(2, 5, 3, 4, 13, 4, 0, 3));
+            assertEquals(13, config.channelConfiguration());
+            var layout = ChannelMapping.ofConfiguration(13, MediaLimits.DEFAULT).layout();
+            assertEquals(List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.FRONT_CENTER,
+                    Speaker.LOW_FREQUENCY, Speaker.BACK_LEFT, Speaker.BACK_RIGHT, Speaker.FRONT_LEFT_OF_CENTER,
+                    Speaker.FRONT_RIGHT_OF_CENTER, Speaker.BACK_CENTER, Speaker.SIDE_LEFT, Speaker.SIDE_RIGHT,
+                    Speaker.TOP_CENTER, Speaker.TOP_FRONT_LEFT, Speaker.TOP_FRONT_CENTER, Speaker.TOP_FRONT_RIGHT,
+                    Speaker.TOP_BACK_LEFT, Speaker.TOP_BACK_CENTER, Speaker.TOP_BACK_RIGHT, Speaker.LOW_FREQUENCY_2,
+                    Speaker.TOP_SIDE_LEFT, Speaker.TOP_SIDE_RIGHT, Speaker.BOTTOM_FRONT_CENTER,
+                    Speaker.BOTTOM_FRONT_LEFT, Speaker.BOTTOM_FRONT_RIGHT), layout.speakers());
         }
 
         @Test

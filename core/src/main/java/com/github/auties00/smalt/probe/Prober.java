@@ -2,6 +2,7 @@ package com.github.auties00.smalt.probe;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.container.DemuxerOptions;
@@ -17,6 +18,7 @@ import com.github.auties00.smalt.internal.codec.Ac3Configs;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.internal.codec.VideoConfigs;
+import com.github.auties00.smalt.internal.tags.TagFiles;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -26,11 +28,14 @@ import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.VideoTrack;
 
+import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Implements {@link com.github.auties00.smalt.Media#probe}: recognizes the file, then describes an
@@ -73,12 +78,12 @@ final class Prober {
         var image = Images.detect(source).orElse(null);
         if (image != null) {
             var header = ImageHeaders.read(source, image);
-            var fields = new StreamFields(0, -1, null, header.durationMicros, -1, header.frames, Map.of());
+            var fields = new StreamFields(0, -1, null, header.durationMicros, -1, header.frames, Map.of(), Set.of());
             var stream = new ImageStreamInfo(fields, image, header.width, header.height, header.orientation,
                     header.bitDepth, header.alpha, header.animated, header.loops);
             var bitRate = size >= 0 && header.durationMicros > 0 ? size * 8_000_000L / header.durationMicros : -1;
-            return new MediaInfo(null, image, size, header.durationMicros, bitRate, List.of(stream), header.tags, List.of(),
-                    List.of());
+            return new MediaInfo(null, null, image, size, header.durationMicros, bitRate, List.of(stream), header.tags,
+                    List.of(), List.of());
         }
         var format = Containers.detect(source).orElseThrow(() -> new MediaException.Unsupported("unknown format",
                 "the input is neither a recognized image nor a recognized container"));
@@ -108,7 +113,7 @@ final class Prober {
             var bytes = statistics != null ? statistics.sampleBytes().applyAsLong(track.id()) : -1;
             var bitRate = bytes >= 0 && duration > 0 ? bytes * 8_000_000L / duration : -1;
             var fields = new StreamFields(index, track.id(), track.language().orElse(null), duration, -1, frames,
-                    TagNames.normalize(demuxer.trackMetadata(track.id())));
+                    TagNames.normalize(demuxer.trackMetadata(track.id())), Set.copyOf(demuxer.trackDisposition(track.id())));
             streams.add(switch (track) {
                 case VideoTrack video -> {
                     longest = Math.max(longest, duration);
@@ -124,8 +129,15 @@ final class Prober {
         }
         var duration = demuxer.durationMicros() >= 0 ? demuxer.durationMicros() : longest;
         var bitRate = size >= 0 && duration > 0 ? size * 8_000_000L / duration : -1;
-        return new MediaInfo(demuxer.format(), null, size, duration, bitRate, streams, TagNames.normalize(demuxer.metadata()),
-                demuxer.chapters(), options.attachedPictures() ? demuxer.attachedPictures() : List.of());
+        var metadata = demuxer.metadata();
+        if (demuxer.format() == ContainerFormat.WAV || demuxer.format() == ContainerFormat.AVI) {
+            var renamed = new LinkedHashMap<String, String>();
+            metadata.forEach((key, value) -> renamed.putIfAbsent(TagFiles.riffInfoKey(key), value));
+            metadata = renamed;
+        }
+        return new MediaInfo(demuxer.format(), demuxer.formatName(), null, size, duration, bitRate, streams,
+                TagNames.normalize(metadata), demuxer.chapters(),
+                options.attachedPictures() ? demuxer.attachedPictures() : List.of());
     }
 
     /**
@@ -151,7 +163,7 @@ final class Prober {
      */
     private static StreamFields withBitRate(StreamFields fields, long bitRate) {
         return new StreamFields(fields.index(), fields.trackId(), fields.language(), fields.durationMicros(), bitRate,
-                fields.frameCount(), fields.tags());
+                fields.frameCount(), fields.tags(), fields.disposition());
     }
 
     /**
@@ -206,11 +218,11 @@ final class Prober {
      * Returns whether a video track lacks a configuration record that describes it.
      *
      * @param track a video track
-     * @return {@code true} for VP8, ProRes and DNxHD tracks, and VP9 and AV1 tracks without one
+     * @return {@code true} for VP8, ProRes, DNxHD and Motion JPEG 2000 tracks, and VP9 and AV1 tracks without one
      */
     private static boolean needsKeyFrame(VideoTrack track) {
         return switch (track.codec()) {
-            case VP8, PRORES, DNXHD -> true;
+            case VP8, PRORES, DNXHD, JPEG2000 -> true;
             case VP9, AV1 -> track.codecConfig().isEmpty();
             default -> false;
         };
@@ -233,14 +245,16 @@ final class Prober {
         var bitDepth = 0;
         ChromaFormat chroma = null;
         ColorInfo color = track.color().orElse(null);
-        Rational sar = null;
+        var sar = track.sampleAspectRatio().orElse(null);
         Rational frameRate = track.frameRate().orElse(null);
         if (info != null) {
             profile = info.profile();
             level = info.level();
             bitDepth = info.bitDepth();
             chroma = info.chroma();
-            sar = info.sampleAspect();
+            if (sar == null && info.sampleAspect() != null) {
+                sar = info.sampleAspect().reduce();
+            }
             if (color == null) {
                 color = info.color();
             }
@@ -276,7 +290,8 @@ final class Prober {
                         }
                         bitDepth = header.bitDepth();
                         chroma = header.subsamplingX() == 1 && header.subsamplingY() == 1 ? ChromaFormat.YUV420
-                                : header.subsamplingX() == 1 ? ChromaFormat.YUV422 : ChromaFormat.YUV444;
+                                : header.subsamplingX() == 1 ? ChromaFormat.YUV422
+                                : header.subsamplingY() == 1 ? ChromaFormat.YUV440 : ChromaFormat.YUV444;
                         if (width <= 0 || height <= 0) {
                             width = header.width();
                             height = header.height();
@@ -284,9 +299,10 @@ final class Prober {
                     }
                 }
                 case AV1 -> {
-                    var header = VideoConfigs.sequenceHeaderOf(keyFrame);
+                    var obus = av1LowOverhead(keyFrame);
+                    var header = VideoConfigs.sequenceHeaderOf(obus);
                     if (header != null) {
-                        var described = VideoConfigs.describe(Codec.AV1, av1Record(keyFrame));
+                        var described = VideoConfigs.describe(Codec.AV1, av1Record(obus));
                         if (described != null) {
                             profile = described.profile();
                             level = described.level();
@@ -295,6 +311,18 @@ final class Prober {
                             if (color == null) {
                                 color = described.color();
                             }
+                        }
+                    }
+                }
+                case JPEG2000 -> {
+                    var header = IntraFrameHeaders.jpeg2000(keyFrame, track.codecConfig().orElse(null));
+                    if (header != null) {
+                        profile = header.profile();
+                        bitDepth = header.bitDepth();
+                        chroma = header.chroma();
+                        if (width <= 0 || height <= 0) {
+                            width = header.width();
+                            height = header.height();
                         }
                     }
                 }
@@ -322,7 +350,7 @@ final class Prober {
             }
         }
         return new VideoStreamInfo(fields, track.codec(), profile, level, width, height, track.orientation(), frameRate,
-                sar, color, bitDepth, chroma);
+                sar, color, bitDepth, chroma, track.interlacing().orElse(null), track.dolbyVision().orElse(null));
     }
 
     /**
@@ -334,6 +362,82 @@ final class Prober {
     private static byte[] av1Record(byte[] keyFrame) {
         var record = CodecConfigs.av1Config(keyFrame);
         return record != null ? record : new byte[0];
+    }
+
+    /**
+     * Returns the OBUs of an AV1 temporal unit in the low-overhead format: the OBUs of a well-formed
+     * length-delimited unit of the AV1 specification's Annex B (every size field consistent with the
+     * unit's length), each given an {@code obu_size} field, or the unit itself otherwise.
+     *
+     * @param unit the temporal unit
+     * @return the OBUs, each with an {@code obu_size} field when the unit is length-delimited
+     */
+    private static byte[] av1LowOverhead(byte[] unit) {
+        var field = leb128(unit, 0, unit.length);
+        if (field < 0 || field >>> 4 != unit.length - (field & 15)) {
+            return unit;
+        }
+        var out = new ByteArrayOutputStream(unit.length + 16);
+        var pos = (int) (field & 15);
+        while (pos < unit.length) {
+            field = leb128(unit, pos, unit.length);
+            if (field < 0) {
+                return unit;
+            }
+            pos += (int) (field & 15);
+            if (field >>> 4 > unit.length - pos) {
+                return unit;
+            }
+            var frameEnd = pos + (int) (field >>> 4);
+            while (pos < frameEnd) {
+                field = leb128(unit, pos, frameEnd);
+                if (field < 0) {
+                    return unit;
+                }
+                pos += (int) (field & 15);
+                var length = (int) (field >>> 4);
+                if (length == 0 || length > frameEnd - pos) {
+                    return unit;
+                }
+                var header = unit[pos] & 0xFF;
+                var headerLength = (header & 4) != 0 ? 2 : 1;
+                if ((header & 2) != 0 || length < headerLength) {
+                    out.write(unit, pos, length);
+                } else {
+                    out.write(header | 2);
+                    out.write(unit, pos + 1, headerLength - 1);
+                    var payload = length - headerLength;
+                    do {
+                        out.write((payload & 0x7F) | (payload > 0x7F ? 0x80 : 0));
+                        payload >>>= 7;
+                    } while (payload != 0);
+                    out.write(unit, pos + headerLength, length - headerLength);
+                }
+                pos += length;
+            }
+        }
+        return out.toByteArray();
+    }
+
+    /**
+     * Reads a {@code leb128()} value of at most 8 bytes.
+     *
+     * @param data the buffer
+     * @param pos the first byte of the value
+     * @param end the end of the readable bytes
+     * @return the value shifted left by 4 bits with the number of bytes it took in the low 4 bits, or
+     * {@code -1} when it runs past {@code end} or past 8 bytes
+     */
+    private static long leb128(byte[] data, int pos, int end) {
+        long value = 0;
+        for (var i = 0; i < 8 && pos + i < end; i++) {
+            var b = data[pos + i] & 0xFF;
+            value |= (long) (b & 0x7F) << (7 * i);
+            if ((b & 0x80) == 0) {
+                return value << 4 | (i + 1);
+            }
+        }
+        return -1;
     }
 
     /**

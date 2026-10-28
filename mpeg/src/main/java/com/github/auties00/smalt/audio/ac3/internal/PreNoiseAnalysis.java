@@ -8,22 +8,28 @@ import java.util.Arrays;
  * transient location and time scaling length, which make the decoder overwrite the quantization
  * noise the transform spreads ahead of a transient with earlier audio.
  *
- * <p>The analysis keeps the input of every channel and the time-domain quantization error of the
- * frames coded so far, both in the time base of the decoded output, which lags the input by 256
- * samples. A transient is an onset in the high-pass filtered input: a 16-sample segment whose energy
- * exceeds {@link #ONSET_RATIO} times the largest energy of the eight segments before it. For the
- * strongest onset of a channel in the frame, the decoded output is estimated as the input plus the
- * frame's quantization error, the processing of clause E.2.7.2 is applied to the estimate for a few
- * time scaling lengths, and the length that removes the most error energy ahead of the transient is
- * kept when it removes at least half of it. Corrections that would start
- * before the frame's first decoded sample or reach past its last are not attempted: their samples
- * belong to frames already output or not coded yet. Instances are not thread-safe.
+ * <p>A decoder applies only locations {@code 4 * transprocloc} from 1024 to 2559, the transients at
+ * decoded samples 1280 to 2815 of the frame carrying the data (see {@link TransientPreNoise}), so the
+ * data of a frame mostly concerns the frames after it: the analysis chooses the data of a frame once
+ * the {@link #lookahead()} frames after it are coded. It keeps the input of every channel and the
+ * time-domain quantization error of the frame and of those later frames, both in the time base of
+ * the decoded output, which lags the input by 256 samples.
  *
- * @implNote This implementation estimates the decoder with the raised-cosine cross-fades of
- * {@link TransientPreNoise}, which the specification leaves to the implementation, takes the earlier
- * audio the decoder copies from the input itself and treats the coefficients spectral extension
- * synthesizes as error-free; these approximations affect only the choice, never the validity of the
- * data.
+ * <p>A transient is an onset in the high-pass filtered input: a 16-sample segment whose energy
+ * exceeds {@link #ONSET_RATIO} times the largest energy of the eight segments before it. For the
+ * strongest onset of a channel among the decoded samples a decoder corrects, the decoded output is
+ * estimated as the input plus the quantization error, the processing of clause E.2.7.2 is applied to
+ * the estimate for a few time scaling lengths, and the length that removes the most error energy
+ * ahead of the transient is kept when it removes at least half of it. A correction is attempted only
+ * when its synthesis buffer ends within the frame carrying the data or the corrected samples begin
+ * after it, so that a decoder that outputs each frame as it decodes it applies all of it, and when its
+ * buffer and corrected samples begin after the transient of the correction chosen before, so that
+ * each transient is corrected once and corrections never overlap. Instances are not thread-safe.
+ *
+ * @implNote This implementation estimates the decoder with the cross-fades of
+ * {@link TransientPreNoise}, takes the earlier audio the decoder copies from the input itself and
+ * treats the coefficients spectral extension synthesizes as error-free; these approximations affect
+ * only the choice, never the validity of the data.
  */
 final class PreNoiseAnalysis {
     /**
@@ -37,10 +43,22 @@ final class PreNoiseAnalysis {
     private static final int TC2 = TransientPreNoise.TC2;
 
     /**
-     * The number of past input samples kept per channel: enough for a buffer that starts
-     * {@code 2 * TC1 + 2 * 511} samples before a transient.
+     * The first decoded sample, from the start of the frame carrying the data, at which a transient
+     * may lie.
      */
-    private static final int HISTORY = 2048;
+    static final int FIRST_TRANSIENT = TransientPreNoise.FIRST_LOCATION + TransientPreNoise.DELAY;
+
+    /**
+     * The end of the decoded samples at which a transient may lie, exclusive.
+     */
+    static final int TRANSIENT_LIMIT = TransientPreNoise.LOCATION_LIMIT + TransientPreNoise.DELAY;
+
+    /**
+     * The number of input samples kept ahead of the frame being chosen for: the decoded output lags
+     * the input by 256 samples, and the onset filter and the eight segments before the first
+     * candidate reach 192 samples further back.
+     */
+    private static final int HISTORY = 512;
 
     /**
      * The energy ratio between a segment and the largest of the eight before it that marks an
@@ -64,27 +82,29 @@ final class PreNoiseAnalysis {
     private static final double REQUIRED_GAIN = 0.5;
 
     /**
-     * The weight of the decoded samples over the first cross-fade, from one to zero.
-     */
-    private static final float[] FADE_OUT_1 = fadeOut(TC1);
-
-    /**
-     * The weight of the decoded samples over the last cross-fade, from one to zero.
-     */
-    private static final float[] FADE_OUT_2 = fadeOut(TC2);
-
-    /**
      * The samples per channel of a frame.
      */
     private final int frameSize;
 
     /**
-     * The input of each channel: {@link #HISTORY} past samples, then the frame being coded.
+     * The number of frames coded after a frame before its data is chosen.
+     */
+    private final int lookahead;
+
+    /**
+     * The decoded samples the analysis covers: the frame being chosen for and its lookahead.
+     */
+    private final int span;
+
+    /**
+     * The input of each channel: {@link #HISTORY} samples before the frame being chosen for, then
+     * that frame and the frames coded after it.
      */
     private final float[][] input;
 
     /**
-     * The quantization error of each channel over the decoded samples of the frame being coded.
+     * The quantization error of each channel over the decoded samples of the frame being chosen for
+     * and the frames coded after it.
      */
     private final float[][] error;
 
@@ -95,13 +115,8 @@ final class PreNoiseAnalysis {
     private final float[][] tail;
 
     /**
-     * The overlap of every channel saved by {@link #saveTails()}.
-     */
-    private final float[][] savedTail;
-
-    /**
-     * The high-pass filtered input of one channel over the onset candidates of the frame and the
-     * eight segments before them, scratch.
+     * The high-pass filtered input of one channel over the onset candidates and the eight segments
+     * before them, scratch.
      */
     private final float[] filtered;
 
@@ -111,13 +126,29 @@ final class PreNoiseAnalysis {
     private final float[] windowed = new float[512];
 
     /**
-     * The transient location {@code 4 * transprocloc} of each channel, or {@code -1} without
-     * processing.
+     * The number of frames pushed, at most {@code lookahead + 1}: the frames the buffers hold.
+     */
+    private int held;
+
+    /**
+     * The first decoded sample of the oldest frame the buffers hold, counted from the first.
+     */
+    private long origin;
+
+    /**
+     * The decoded sample, counted from the first, after the transient of the last correction
+     * chosen for each channel.
+     */
+    private final long[] lastTransient;
+
+    /**
+     * The transient location {@code 4 * transprocloc} of each channel chosen last, or {@code -1}
+     * without processing.
      */
     final int[] location;
 
     /**
-     * The time scaling length {@code transproclen} of each channel.
+     * The time scaling length {@code transproclen} of each channel chosen last.
      */
     final int[] length;
 
@@ -125,69 +156,81 @@ final class PreNoiseAnalysis {
      * Creates the analysis of a substream.
      *
      * @param channels the number of full-bandwidth channels
-     * @param frameSize the samples per channel of a frame
+     * @param frameSize the samples per channel of a frame, at least 768
      */
     PreNoiseAnalysis(int channels, int frameSize) {
         this.frameSize = frameSize;
-        this.input = new float[channels][HISTORY + frameSize];
-        this.error = new float[channels][frameSize];
+        this.lookahead = lookahead(frameSize);
+        this.span = (lookahead + 1) * frameSize;
+        this.input = new float[channels][HISTORY + span];
+        this.error = new float[channels][span];
         this.tail = new float[channels][256];
-        this.savedTail = new float[channels][256];
-        this.filtered = new float[frameSize];
+        this.filtered = new float[TRANSIENT_LIMIT];
         this.location = new int[channels];
         this.length = new int[channels];
+        this.lastTransient = new long[channels];
         Arrays.fill(location, -1);
     }
 
     /**
-     * Builds a raised-cosine fade from one to zero.
+     * Returns the number of frames that follow a frame whose decoded samples may hold a transient
+     * of its data.
      *
-     * @param length the number of samples
-     * @return the weights
+     * @param frameSize the samples per channel of a frame
+     * @return the frames after the frame carrying the data up to the last possible transient
      */
-    private static float[] fadeOut(int length) {
-        var weights = new float[length];
-        for (var n = 0; n < length; n++) {
-            weights[n] = (float) (0.5 * (1 + Math.cos(Math.PI * (n + 0.5) / length)));
-        }
-        return weights;
+    static int lookahead(int frameSize) {
+        return (TRANSIENT_LIMIT - 1) / frameSize;
     }
 
     /**
-     * Appends the input of a channel's frame to its history.
+     * {@return the number of frames coded after a frame before its data is chosen}
+     */
+    int lookahead() {
+        return lookahead;
+    }
+
+    /**
+     * Appends the input of a channel's frame, which is about to be coded, dropping the oldest frame
+     * when the buffers are full; the channels are pushed in order.
      *
      * @param ch the channel
      * @param plane the samples
      * @param offset the index of the frame's first sample
      */
     void push(int ch, float[] plane, int offset) {
-        var buffer = input[ch];
-        System.arraycopy(buffer, frameSize, buffer, 0, HISTORY);
-        System.arraycopy(plane, offset, buffer, HISTORY, frameSize);
-    }
-
-    /**
-     * Saves the overlap of every channel before the error of a frame is measured.
-     */
-    void saveTails() {
-        for (var ch = 0; ch < tail.length; ch++) {
-            System.arraycopy(tail[ch], 0, savedTail[ch], 0, 256);
+        if (ch == 0 && held == lookahead + 1) {
+            drop();
+        }
+        System.arraycopy(plane, offset, input[ch], HISTORY + held * frameSize, frameSize);
+        Arrays.fill(error[ch], held * frameSize, (held + 1) * frameSize, 0);
+        if (ch == input.length - 1) {
+            held++;
         }
     }
 
     /**
-     * Restores the overlap {@link #saveTails()} saved, before the error of the frame is measured
-     * again.
+     * Forgets the oldest frame the buffers hold, once its data is chosen.
      */
-    void restoreTails() {
-        for (var ch = 0; ch < tail.length; ch++) {
-            System.arraycopy(savedTail[ch], 0, tail[ch], 0, 256);
+    void drop() {
+        for (var ch = 0; ch < input.length; ch++) {
+            System.arraycopy(input[ch], frameSize, input[ch], 0, HISTORY + span - frameSize);
+            System.arraycopy(error[ch], frameSize, error[ch], 0, span - frameSize);
         }
+        held--;
+        origin += frameSize;
     }
 
     /**
-     * Adds the quantization error of one block of a channel, in the transform domain, to the
-     * channel's time-domain error.
+     * {@return the number of frames the buffers hold, the frame being chosen for first}
+     */
+    int held() {
+        return held;
+    }
+
+    /**
+     * Adds the quantization error of one block of a channel of the newest frame, in the transform
+     * domain, to the channel's time-domain error.
      *
      * @param ch the channel
      * @param b the block
@@ -199,7 +242,7 @@ final class PreNoiseAnalysis {
         transform.inverse(difference, shortBlocks, 2, windowed);
         var target = error[ch];
         var overlap = tail[ch];
-        var at = 256 * b;
+        var at = (held - 1) * frameSize + 256 * b;
         for (var n = 0; n < 256; n++) {
             target[at + n] = windowed[n] + overlap[n];
             overlap[n] = windowed[256 + n];
@@ -207,10 +250,11 @@ final class PreNoiseAnalysis {
     }
 
     /**
-     * Chooses the processing data of a channel from its input and error over the frame: at the
-     * strongest onset, rounded down to the four-sample resolution of the location, the time scaling
-     * length of {@link #LENGTHS} that removes the most error energy among those that remove at least
-     * half of it, or none.
+     * Chooses the processing data of a channel for the oldest frame the buffers hold, from the
+     * input and the error of that frame and of the frames coded after it: at the strongest onset,
+     * rounded down to the four-sample resolution of the location, the time scaling length of
+     * {@link #LENGTHS} that removes the most error energy among those that remove at least half of
+     * it, or none.
      *
      * @param ch the channel
      * @param filter the biquad coefficients of the high-pass filter: b0, b1, b2, a1, a2
@@ -218,18 +262,28 @@ final class PreNoiseAnalysis {
     void choose(int ch, float[] filter) {
         location[ch] = -1;
         length[ch] = 0;
-        var onset = onset(ch, filter);
+        var available = held * frameSize;
+        // a buffer starts at least 1024 samples before its transient
+        var from = (int) Math.max(FIRST_TRANSIENT, Math.min(TRANSIENT_LIMIT, lastTransient[ch] - origin + 1024));
+        var onset = onset(ch, filter, from, Math.min(TRANSIENT_LIMIT, available));
         if (onset < 0) {
             return;
         }
         var position = onset & ~3;
-        var preNoise = position - (position / 256 - 1) * 256;
+        var blockStart = (position / 256 - 1) * 256;
+        var preNoise = position - blockStart;
         var errors = error[ch];
         var bestReduction = 0.0;
         for (var candidate : LENGTHS) {
             var start = position - preNoise - candidate - TC1;
-            if (start < 0) {
-                break;
+            // a decoder applies all of the correction when its buffer is complete at the end of the
+            // frame carrying the data, or when the correction starts after that frame
+            if (blockStart > frameSize && start < frameSize) {
+                continue;
+            }
+            // the buffer and the corrected samples stay clear of the correction chosen before
+            if (origin + position - 2 * TC1 - 2L * preNoise < lastTransient[ch]) {
+                continue;
             }
             var plain = 0.0;
             for (var k = start; k < position; k++) {
@@ -238,25 +292,33 @@ final class PreNoiseAnalysis {
             var processed = processedError(ch, position, preNoise, candidate);
             if (processed < plain * REQUIRED_GAIN && plain - processed > bestReduction) {
                 bestReduction = plain - processed;
-                location[ch] = position;
+                location[ch] = position - TransientPreNoise.DELAY;
                 length[ch] = candidate;
             }
+        }
+        if (location[ch] >= 0) {
+            lastTransient[ch] = origin + position;
         }
     }
 
     /**
-     * Finds the strongest onset of a channel among the decoded samples of the frame from which a
-     * correction stays within the frame.
+     * Finds the strongest onset of a channel among the decoded samples from {@code from} to
+     * {@code end}.
      *
      * @param ch the channel
      * @param filter the high-pass filter coefficients
-     * @return the onset in decoded samples from the frame's first decoded sample, or {@code -1}
+     * @param from the first candidate, at least {@link #FIRST_TRANSIENT}, in decoded samples from the
+     * start of the oldest frame
+     * @param end the end of the candidates, exclusive
+     * @return the onset in decoded samples from the start of the oldest frame, or {@code -1}
      */
-    private int onset(int ch, float[] filter) {
+    private int onset(int ch, float[] filter, int from, int end) {
         var buffer = input[ch];
-        // filtered[0] is the input sample decoded at 384, eight segments before the first candidate
-        var first = HISTORY + 128;
-        var count = frameSize - 384;
+        // filtered[0] is the input sample decoded at FIRST_TRANSIENT - 128, eight segments before
+        // the first candidate
+        var base = FIRST_TRANSIENT - 128;
+        var first = HISTORY + base - TransientPreNoise.DELAY;
+        var count = end - base;
         if (count <= 128) {
             return -1;
         }
@@ -277,7 +339,7 @@ final class PreNoiseAnalysis {
         }
         var best = -1;
         var bestRatio = ONSET_RATIO;
-        for (var s = 8; s < count / 16; s++) {
+        for (var s = Math.max(8, (from - base + 15) / 16); s < count / 16; s++) {
             var energy = segmentEnergy(s);
             if (energy < ONSET_FLOOR * 16) {
                 continue;
@@ -289,7 +351,7 @@ final class PreNoiseAnalysis {
             var ratio = energy / Math.max(previous, 1e-30);
             if (ratio > bestRatio) {
                 bestRatio = ratio;
-                best = 384 + 16 * s;
+                best = base + 16 * s;
             }
         }
         return best;
@@ -314,7 +376,7 @@ final class PreNoiseAnalysis {
      * estimated decoded output, as {@link TransientPreNoise} applies it.
      *
      * @param ch the channel
-     * @param position the transient location in decoded samples
+     * @param position the transient in decoded samples from the start of the oldest frame
      * @param preNoise the pre-noise length {@code pnlen}
      * @param scaling the time scaling length
      * @return the error energy over the corrected samples
@@ -329,19 +391,18 @@ final class PreNoiseAnalysis {
         var energy = 0.0;
         for (var k = 0; k < total; k++) {
             var index = start + k;
-            var original = buffer[HISTORY + index - 256];
+            var original = buffer[HISTORY + index - TransientPreNoise.DELAY];
             var decoded = original + errors[index];
             var source = bufferStart + k;
-            var copied = buffer[HISTORY + source - 256] + (source >= 0 ? errors[source] : 0);
+            var copied = buffer[HISTORY + source - TransientPreNoise.DELAY] + errors[source];
             float value;
             if (k < TC1) {
-                var weight = FADE_OUT_1[k];
-                value = decoded * weight + copied * (1 - weight);
+                value = decoded * TransientPreNoise.FADE_OUT[k] + copied * TransientPreNoise.FADE_IN[k];
             } else if (k < tailStart) {
                 value = copied;
             } else {
-                var weight = FADE_OUT_2[k - tailStart];
-                value = decoded * (1 - weight) + copied * weight;
+                value = decoded * TransientPreNoise.TAIL_DECODED[k - tailStart]
+                        + copied * TransientPreNoise.TAIL_BUFFER[k - tailStart];
             }
             var difference = value - original;
             energy += (double) difference * difference;

@@ -14,12 +14,23 @@ abstract class CabacCoder {
     /**
      * The packed context states, {@code (pStateIdx << 1) | valMPS} by {@code ctxIdx}.
      */
-    final byte[] states = new byte[CabacTables.CONTEXT_COUNT];
+    final byte[] states;
 
     /**
-     * Constructs a coder.
+     * Constructs a coder of the 460 contexts of 4:2:0, 4:2:2 and 4:0:0 coding.
      */
     CabacCoder() {
+        this(CabacTables.CONTEXT_COUNT);
+    }
+
+    /**
+     * Constructs a coder of a number of contexts.
+     *
+     * @param count {@link CabacTables#CONTEXT_COUNT}, or {@link CabacTables#CONTEXT_COUNT_444} for
+     * 4:4:4 coding
+     */
+    CabacCoder(int count) {
+        this.states = new byte[count];
     }
 
     /**
@@ -31,6 +42,18 @@ abstract class CabacCoder {
      */
     final void initContexts(int table, int qp) {
         CabacTables.initContexts(states, table, qp);
+    }
+
+    /**
+     * Initializes a number of contexts for a slice (clause 9.3.1.1).
+     *
+     * @param table the initialization table: 0 for I slices, 1 to 3 for P slices with
+     * {@code cabac_init_idc} 0 to 2
+     * @param qp the slice quantization parameter {@code SliceQPY}, clipped to 0 to 51
+     * @param count the number of contexts, at most the coder's
+     */
+    final void initContexts(int table, int qp, int count) {
+        CabacTables.initContexts(states, table, qp, count);
     }
 
     /**
