@@ -33,6 +33,7 @@ https://raw.githubusercontent.com/saucecontrol/Compact-ICC-Profiles/	Compact ICC
 https://raw.githubusercontent.com/uclouvain/openjpeg-data/	OpenJPEG test data: BSD-2-Clause repository; conformance files from ISO/IEC 15444-4
 https://raw.githubusercontent.com/webmproject/libwebp-test-data/	libwebp test data: BSD-3-Clause (WebM project)
 https://raw.pixls.us/	RAW samples archive (raw.pixls.us): CC0-1.0 per file (stated by the archive), except the files of the getfile.php prefixes below
+https://raw.pixls.us/getfile.php/562/	RAW samples archive (raw.pixls.us), Mamiya ZD sample: CC BY-NC-SA 4.0 (stated by the archive); used for testing only, never redistributed
 https://raw.pixls.us/getfile.php/592/	RAW samples archive (raw.pixls.us), Fujifilm FinePix HS20EXR sample imported from rawsamples.ch: CC BY-NC-SA 4.0 (stated by the archive); used for testing only, never redistributed
 https://raw.pixls.us/getfile.php/607/	RAW samples archive (raw.pixls.us), Fujifilm FinePix F700 sample imported from rawsamples.ch: CC BY-NC-SA 4.0 (stated by the archive); used for testing only, never redistributed
 https://raw.pixls.us/getfile.php/618/	RAW samples archive (raw.pixls.us), Fujifilm FinePix F900EXR sample imported from rawsamples.ch: CC BY-NC-SA 4.0 (stated by the archive); used for testing only, never redistributed

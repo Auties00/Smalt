@@ -17,7 +17,7 @@ import java.util.zip.CRC32;
  * Runs the DNG and camera raw decoders through the I/O behavior harness ({@link ImageDecoderAsserts}), with
  * the sensor data of {@link RawDecoder#decodeRaw} as an extra decode, over DNG files made by
  * {@link TinyDng} in every sample layout and by {@link DngSpecSamples} in the layouts and profile features of DNG
- * 1.2 to 1.7, synthetic Sigma X3F files ({@link X3fWriter}) and Canon CR3 files ({@link Cr3Writer}), a smoke-tier DNG
+ * 1.2 to 1.7, a smoke-tier GoPro GPR file of VC-5 sensor data, synthetic Sigma X3F files ({@link X3fWriter}) and Canon CR3 files ({@link Cr3Writer}), a smoke-tier DNG
  * and full-tier files of every camera raw format (three for CR3: a lossless file, a version 2 C-RAW file and a
  * version 1 C-RAW file of two tiles),
  * comparing each with its golden dump under {@code src/test/resources/dumps}.
@@ -281,11 +281,27 @@ class RawDecoderBehaviorTest {
             "rawpixls-olympus-e-10-16bit-4-3.orf", "rawpixls-pentax-ist-dl-12bit-3-2.pef",
             "rawpixls-fujifilm-x-a1-12bit-12bit-uncompressed-3-2.raf", "rawpixls-fujifilm-x-t2-14bit-14bit-compressed-3-2.raf",
             "rawpixls-fujifilm-finepix-s5000-4-3.raf", "rawpixls-fujifilm-finepix-s1-12bit-12bit-uncompressed-4-3.raf",
-            "rawpixls-panasonic-dmc-lx3-1-1.rw2",
+            "rawpixls-panasonic-dmc-lx3-1-1.rw2", "rawpixls-panasonic-dmc-fz8-4-3.raw",
+            "rawpixls-samsung-nx1000-12bit-3-2.srw", "rawpixls-epson-r-d1-12bit-3-2.erf",
+            "rawpixls-kodak-dcs520c-12bit-3-2.tif", "rawpixls-kodak-dcs760c-12bit-3-2.dcr",
+            "rawpixls-kodak-p880-nan.kdc", "rawpixls-leaf-aptus-22-16bit-4-3-3196.mos",
+            "rawpixls-hasselblad-h3d-16bit-4-3.3fr", "rawpixls-mamiya-zd.mef",
             "rawpixls-sigma-dp1-3-2-1116.x3f"})
     @DisplayName("camera raw files of the full tier, at least one per format: identical pictures and sensor data under every "
             + "source behavior and clean faults")
     void camera(String name) throws IOException {
+        harness("vectors/" + name, Files.readAllBytes(Conformance.fetchListed(name)))
+                .noScaled()
+                .maxFaultReads(4)
+                .timeout(Duration.ofMinutes(5))
+                .run();
+    }
+
+    @Test
+    @DisplayName("a smoke-tier GoPro GPR file of VC-5 sensor data: identical pictures and sensor data under every "
+            + "source behavior and clean faults")
+    void gpr() throws IOException {
+        var name = "rawpixls-gopro-hero7-black-16bit-4-3-2908.gpr";
         harness("vectors/" + name, Files.readAllBytes(Conformance.fetchListed(name)))
                 .noScaled()
                 .maxFaultReads(4)

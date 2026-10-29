@@ -109,8 +109,38 @@ class RawFuzzTest {
     }
 
     @FuzzTest
+    void dcr(byte[] data) {
+        decode(RawFormat.DCR, data);
+    }
+
+    @FuzzTest
+    void fff(byte[] data) {
+        decode(RawFormat.FFF, data);
+    }
+
+    @FuzzTest
+    void mos(byte[] data) {
+        decode(RawFormat.MOS, data);
+    }
+
+    @FuzzTest
+    void iiq(byte[] data) {
+        decode(RawFormat.IIQ, data);
+    }
+
+    @FuzzTest
+    void mef(byte[] data) {
+        decode(RawFormat.MEF, data);
+    }
+
+    @FuzzTest
     void mrw(byte[] data) {
         decode(RawFormat.MRW, data);
+    }
+
+    @FuzzTest
+    void erf(byte[] data) {
+        decode(RawFormat.ERF, data);
     }
 
     @FuzzTest

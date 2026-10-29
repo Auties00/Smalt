@@ -208,4 +208,41 @@ class WorkloadsTest {
         assertEquals(sensor.width() * sensor.height() * 2, sensor.samples().length);
         assertTrue(RawDecoder.decode(MediaSource.of(superCcd)).picture().width() > 0);
     }
+
+    @Test
+    @DisplayName("a synthetic GPR file is a decodable DNG of VC-5 sensor data whose photosites follow the picture's green")
+    void syntheticGpr() {
+        var picture = SyntheticImages.rgba(SyntheticVideo.natural(256, 128, 1).getFirst(), false);
+        var file = SyntheticRaw.gpr(picture);
+        var info = RawDecoder.info(MediaSource.of(file));
+        assertEquals(RawFormat.DNG, info.format());
+        assertTrue(info.isDecodable(), info.unsupportedFeature().orElse(""));
+        assertEquals(256, info.width());
+        assertEquals(128, info.height());
+        var sensor = RawDecoder.decodeRaw(MediaSource.of(file));
+        // the mean photosite of each 16 by 16 block against the mean green of the picture there, which the lowpass
+        // band of the green sum carries
+        var decoded = new double[16 * 8];
+        var green = new double[16 * 8];
+        for (var y = 0; y < 128; y++) {
+            for (var x = 0; x < 256; x++) {
+                decoded[y / 16 * 16 + x / 16] += sensor.samples()[y * 256 + x] & 0xFFFF;
+                green[y / 16 * 16 + x / 16] += picture.pixels()[y * picture.stride() + x * 4 + 1] & 0xFF;
+            }
+        }
+        double meanA = 0, meanB = 0;
+        for (var index = 0; index < decoded.length; index++) {
+            meanA += decoded[index] / decoded.length;
+            meanB += green[index] / green.length;
+        }
+        double covariance = 0, varianceA = 0, varianceB = 0;
+        for (var index = 0; index < decoded.length; index++) {
+            covariance += (decoded[index] - meanA) * (green[index] - meanB);
+            varianceA += (decoded[index] - meanA) * (decoded[index] - meanA);
+            varianceB += (green[index] - meanB) * (green[index] - meanB);
+        }
+        var correlation = covariance / Math.sqrt(varianceA * varianceB);
+        assertTrue(correlation > 0.9, "the correlation of the photosites with the picture's green is " + correlation);
+        assertTrue(RawDecoder.decode(MediaSource.of(file)).picture().width() > 0);
+    }
 }

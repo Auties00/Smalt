@@ -20,7 +20,7 @@ import java.util.zip.DataFormatException;
 /**
  * Reads the sensor samples a TIFF directory stores in strips or tiles, with the compressions and
  * predictors of TIFF 6.0 and DNG: none, lossless JPEG (7, also JPEG-LS codestreams in its place), Deflate (8),
- * lossy JPEG (34892) and JPEG
+ * VC-5 (9, the Bayer coding of GoPro's GPR files, decoded by {@link Vc5Decoder}), lossy JPEG (34892) and JPEG
  * XL (52546, DNG 1.7, decoded by {@link JxlDecoder}), with the integer predictors (2, and DNG's
  * 34892 and 34893, which predict from 2 and 4 pixels back) on integer samples and the
  * floating-point predictors (3, and DNG's 34894 and 34895) on floating-point samples.
@@ -135,6 +135,16 @@ final class TiffSamples {
     static final int COMPRESSION_JPEG_XL = 52546;
 
     /**
+     * The VC-5 compression (SMPTE ST 2073) of GoPro's GPR files.
+     */
+    static final int COMPRESSION_VC5 = 9;
+
+    /**
+     * The lossless JPEG compression code of Leaf's MOS files, read as the standard code 7.
+     */
+    static final int COMPRESSION_LEAF_JPEG = 99;
+
+    /**
      * The lossy JPEG compression of DNG 1.4.
      */
     static final int COMPRESSION_LOSSY_JPEG = 34892;
@@ -178,9 +188,11 @@ final class TiffSamples {
      * @param subTileColumns the columns of a sub-tile block, 1 without one
      * @param rowFactor the number of fields the rows are stored in, 1 when not interleaved
      * @param columnFactor the number of fields the columns are stored in, 1 when not interleaved
+     * @param vc5Bits the bits of the photosites a VC-5 block decodes to, 12 or 14
+     * @param vc5GreenFirst whether a VC-5 block's Bayer quads are green, blue, red, green
      */
     private record Layout(int compression, int predictor, int bits, boolean floating, int subTileRows,
-                          int subTileColumns, int rowFactor, int columnFactor) {
+                          int subTileColumns, int rowFactor, int columnFactor, int vc5Bits, boolean vc5GreenFirst) {
         /**
          * {@return whether the pixels of a block are grouped in sub-tile blocks}
          */
@@ -221,7 +233,8 @@ final class TiffSamples {
             throw new MediaException.Malformed("planar configuration " + planarConfiguration);
         }
         var planar = planarConfiguration == 2;
-        var compression = ifd.intValue(COMPRESSION, 1);
+        var stated = ifd.intValue(COMPRESSION, 1);
+        var compression = stated == COMPRESSION_LEAF_JPEG ? 7 : stated;
         var predictor = ifd.intValue(PREDICTOR, 1);
         sensor.width = width;
         sensor.height = height;
@@ -232,6 +245,7 @@ final class TiffSamples {
             case 1 -> "uncompressed";
             case 7 -> "lossless JPEG";
             case 8 -> "deflate";
+            case COMPRESSION_VC5 -> "VC-5";
             case COMPRESSION_LOSSY_JPEG -> "lossy JPEG";
             case COMPRESSION_JPEG_XL -> "JPEG XL";
             default -> "compression " + compression;
@@ -242,8 +256,12 @@ final class TiffSamples {
             throw new MediaException.Unsupported("raw", "JPEG XL sensor data of " + samples + " " + bits + "-bit "
                     + (floating ? "floating-point" : "integer") + " samples is not supported");
         }
+        if (compression == COMPRESSION_VC5 && (floating || bits != 16 || samples != 1)) {
+            throw new MediaException.Unsupported("raw", "VC-5 sensor data of " + samples + " " + bits + "-bit "
+                    + (floating ? "floating-point" : "integer") + " samples is not supported");
+        }
         if (compression != 1 && compression != 7 && compression != 8 && compression != COMPRESSION_LOSSY_JPEG
-                && compression != COMPRESSION_JPEG_XL) {
+                && compression != COMPRESSION_JPEG_XL && compression != COMPRESSION_VC5) {
             throw new MediaException.Unsupported("raw", "TIFF compression " + compression
                     + " is not supported for sensor data");
         }
@@ -274,8 +292,14 @@ final class TiffSamples {
         }
         var rowFactor = interleave(ifd, ROW_INTERLEAVE_FACTOR, height);
         var columnFactor = interleave(ifd, COLUMN_INTERLEAVE_FACTOR, width);
+        var white = ifd.longValue(50717, 0);
+        var cfa = ifd.bytes(33422);
+        var greenFirst = cfa != null && cfa.length == 4 && cfa[0] == 1 && cfa[1] == 2 && cfa[2] == 0 && cfa[3] == 1;
         var layout = new Layout(compression, predictor, bits, floating, subTileRows, subTileColumns, rowFactor,
-                columnFactor);
+                columnFactor, white > 0 && white <= 4095 ? 12 : 14, greenFirst);
+        if (compression == COMPRESSION_VC5) {
+            sensor.bitsPerSample = layout.vc5Bits();
+        }
         var blocks = blocks(ifd, width, height, planar ? samples : 1);
         if (layout.subTiled()) {
             for (var block : blocks) {
@@ -507,6 +531,8 @@ final class TiffSamples {
             case 7 -> losslessJpeg(data, block, plane, limits);
             case COMPRESSION_LOSSY_JPEG -> lossyJpeg(data, block, plane, limits);
             case COMPRESSION_JPEG_XL -> jpegXl(data, block, plane, bits, floating, limits);
+            case COMPRESSION_VC5 -> Vc5Decoder.decode(data, 0, data.length, layout.vc5Bits(), layout.vc5GreenFirst(),
+                    plane.integers, plane.width, plane.height, block.x, block.y, limits);
             default -> {
                 var spp = block.samples;
                 var bytesPerSample = floating ? bits / 8 : 0;
@@ -787,6 +813,7 @@ final class TiffSamples {
             height = jpegLs.height();
             components = jpegLs.outputComponents();
         } else {
+            matchScanComponents(data);
             var lossless = new LosslessJpeg(data, 0, data.length);
             jpeg = lossless;
             width = lossless.width();
@@ -834,6 +861,59 @@ final class TiffSamples {
                 index += run;
             }
         });
+    }
+
+    /**
+     * Renumbers the component selectors of a lossless JPEG stream's scans that each name the component after the
+     * one the frame header lists at their place, as Leaf's MOS files do, to the frame's identifiers; a stream whose
+     * selectors name its components, or that does not follow that pattern, is left as it is.
+     *
+     * @param data the stream, changed in place
+     */
+    static void matchScanComponents(byte[] data) {
+        int[] identifiers = null;
+        var position = 2;
+        while (position + 4 <= data.length && (data[position] & 0xFF) == 0xFF) {
+            var marker = data[position + 1] & 0xFF;
+            if (marker == 0xFF) {
+                position++;
+                continue;
+            }
+            if (marker == 0xD8 || marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7)) {
+                position += 2;
+                continue;
+            }
+            var length = (data[position + 2] & 0xFF) << 8 | data[position + 3] & 0xFF;
+            var body = position + 4;
+            if (length < 2 || position + 2 + length > data.length) {
+                return;
+            }
+            if (marker == 0xC3 && length >= 8) {
+                var count = data[body + 5] & 0xFF;
+                if (length < 8 + 3 * count) {
+                    return;
+                }
+                identifiers = new int[count];
+                for (var k = 0; k < count; k++) {
+                    identifiers[k] = data[body + 6 + 3 * k] & 0xFF;
+                }
+            } else if (marker == 0xDA) {
+                var count = data[body] & 0xFF;
+                if (identifiers == null || count != identifiers.length || length < 6 + 2 * count) {
+                    return;
+                }
+                for (var k = 0; k < count; k++) {
+                    if ((data[body + 1 + 2 * k] & 0xFF) != identifiers[k] + 1) {
+                        return;
+                    }
+                }
+                for (var k = 0; k < count; k++) {
+                    data[body + 1 + 2 * k] = (byte) identifiers[k];
+                }
+                return;
+            }
+            position += 2 + length;
+        }
     }
 
     /**

@@ -100,7 +100,7 @@ final class ImageIoFormats {
             case JP2 -> reader ? List.of("jp2", "jpf", "jpx", "j2k", "j2c", "jph", "jhc")
                     : List.of("jp2", "jpf", "jpx", "j2k", "j2c");
             case RAW -> List.of("cr2", "cr3", "crw", "nef", "nrw", "arw", "srf", "sr2", "raf", "orf", "rw2", "rwl",
-                    "pef", "srw", "mrw", "x3f");
+                    "pef", "srw", "erf", "3fr", "fff", "mos", "mef", "dcr", "kdc", "mrw", "x3f");
             default -> List.of(format.name().toLowerCase(Locale.ROOT));
         };
     }

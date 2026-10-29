@@ -53,6 +53,18 @@ public enum RawSamples {
             "bf4c6d21136aa4fd626212fe72b962b6404e3fca45cdc3b6afbed8e73fee2cf8"),
 
     /**
+     * rawpixls-sony-dslr-a900-12bit-12bit-compressed-3-2.arw (37933568 bytes).
+     */
+    ARW_A900_UNCOMPRESSED_12("rawpixls-sony-dslr-a900-12bit-12bit-compressed-3-2.arw", "https://raw.pixls.us/getfile.php/5858/nice/Sony%20-%20DSLR-A900%20-%2012bit%2012bit%20compressed%20%283%3A2%29.ARW",
+            "ac7c1532df77c321e8010aa1be60c1b9f245b1ac0db6f38fe617a73aae81af50"),
+
+    /**
+     * rawpixls-sony-dslr-a200-12bit-12bit-compressed-3-2.arw (11418600 bytes).
+     */
+    ARW_A200_COMPRESSED_12("rawpixls-sony-dslr-a200-12bit-12bit-compressed-3-2.arw", "https://raw.pixls.us/getfile.php/2271/nice/Sony%20-%20DSLR-A200%20-%2012bit%2012bit%20compressed%20%283%3A2%29.ARW",
+            "04eacd403d92e0c90da9d91b87615af8eda1afc963350d3ab774557c36763eef"),
+
+    /**
      * rawpixls-canon-eos-40d-sraw2-sraw-3-2.cr2 (5805950 bytes).
      */
     CR2_40D_SRAW("rawpixls-canon-eos-40d-sraw2-sraw-3-2.cr2", "https://raw.pixls.us/getfile.php/2102/nice/Canon%20-%20EOS%2040D%20-%20sRAW2%20%28sRAW%29%20%283%3A2%29.CR2",
@@ -1054,7 +1066,619 @@ public enum RawSamples {
      * rawpixls-sigma-sigma-dp2-quattro-3-2-5540.x3f (54740948 bytes).
      */
     X3F_DP2_QUATTRO("rawpixls-sigma-sigma-dp2-quattro-3-2-5540.x3f", "https://raw.pixls.us/getfile.php/5540/nice/Sigma%20-%20SIGMA%20dp2%20Quattro%20-%203%3A2.X3F",
-            "e89f40df6881bbf60a83e56eee92d04f71b89e9ff55d6ff5d498afd4590cfcb3");
+            "e89f40df6881bbf60a83e56eee92d04f71b89e9ff55d6ff5d498afd4590cfcb3"),
+
+    /**
+     * rawpixls-samsung-nx1-14bit-3-2.srw (36896768 bytes).
+     */
+    SRW_NX1("rawpixls-samsung-nx1-14bit-3-2.srw", "https://raw.pixls.us/getfile.php/837/nice/Samsung%20-%20NX1%20-%2014bit%20%283%3A2%29.srw",
+            "ec57f83c23094766b723ba9446cdf79388c527934d6689c1ac5b1b6ab3ea8378"),
+
+    /**
+     * rawpixls-samsung-nx200-12bit-3-2.srw (34541344 bytes).
+     */
+    SRW_NX200("rawpixls-samsung-nx200-12bit-3-2.srw", "https://raw.pixls.us/getfile.php/839/nice/Samsung%20-%20NX200%20-%2012bit%20%283%3A2%29.srw",
+            "03563eadfe4ef32b5bf2a2850abb40b29fcc1f8d56b3b2ed92ef307b90d7d9dc"),
+
+    /**
+     * rawpixls-samsung-nx30-12bit-3-2.srw (31184954 bytes).
+     */
+    SRW_NX30("rawpixls-samsung-nx30-12bit-3-2.srw", "https://raw.pixls.us/getfile.php/881/nice/Samsung%20-%20NX30%20-%2012bit%20%283%3A2%29.srw",
+            "691438acdecd54ab96d326b96f83daa02fa68f7d66a38ff2fee4e8dd00c79d24"),
+
+    /**
+     * rawpixls-samsung-nx3000-12bit-3-2.srw (21530327 bytes).
+     */
+    SRW_NX3000("rawpixls-samsung-nx3000-12bit-3-2.srw", "https://raw.pixls.us/getfile.php/1190/nice/Samsung%20-%20NX3000%20-%2012bit%20%283%3A2%29.SRW",
+            "b517dbe12d6d25a9b89116663892d0461e11f3160633e707ddc49c94e5469385"),
+
+    /**
+     * rawpixls-samsung-ex1-14bit-4-3.srw (21699313 bytes).
+     */
+    SRW_EX1("rawpixls-samsung-ex1-14bit-4-3.srw", "https://raw.pixls.us/getfile.php/1204/nice/Samsung%20-%20EX1%20-%2014bit%20%284%3A3%29.SRW",
+            "a084890fd9d7995ceb746c18ecf5be48c95baf14286d5c0c480cc3daa25f3e37"),
+
+    /**
+     * rawpixls-samsung-nx210-12bit-3-2.srw (34221984 bytes).
+     */
+    SRW_NX210("rawpixls-samsung-nx210-12bit-3-2.srw", "https://raw.pixls.us/getfile.php/1831/nice/Samsung%20-%20NX210%20-%2012bit%20%283%3A2%29.SRW",
+            "d613503ddf9bedd2d2e84708749b1a94f0cccd4fa15492e01242368c5c07cfad"),
+
+    /**
+     * rawpixls-samsung-nx300-12bit-3-2.srw (22835672 bytes).
+     */
+    SRW_NX300("rawpixls-samsung-nx300-12bit-3-2.srw", "https://raw.pixls.us/getfile.php/1832/nice/Samsung%20-%20NX300%20-%2012bit%20%283%3A2%29.SRW",
+            "2087d4b351134e307c1c5e7a4fbf5691998a4c7b20451ba46f8f577d87b38052"),
+
+    /**
+     * rawpixls-samsung-nx1000-12bit-3-2.srw (37588192 bytes).
+     */
+    SRW_NX1000("rawpixls-samsung-nx1000-12bit-3-2.srw", "https://raw.pixls.us/getfile.php/2588/nice/Samsung%20-%20NX1000%20-%2012bit%20%283%3A2%29.SRW",
+            "beef4d1e6f25ff28fb20bb3ad00ffadb62ab57d7041237e295b0b62f7de5309c"),
+
+    /**
+     * rawpixls-samsung-nx500-12bit-12bit-normal-compression-3-2.srw (20750652 bytes).
+     */
+    SRW_NX500_12_NORMAL("rawpixls-samsung-nx500-12bit-12bit-normal-compression-3-2.srw", "https://raw.pixls.us/getfile.php/3668/nice/Samsung%20-%20NX500%20-%2012bit%2012bit%20normal%20compression%20%283%3A2%29.SRW",
+            "156e43118811bcecb6fcc600b5f41ee1773c4f00b6a5b2dd72e177e35f6596ab"),
+
+    /**
+     * rawpixls-samsung-nx500-12bit-12bit-lossless-compression-3-2.srw (26249903 bytes).
+     */
+    SRW_NX500_12_LOSSLESS("rawpixls-samsung-nx500-12bit-12bit-lossless-compression-3-2.srw", "https://raw.pixls.us/getfile.php/3669/nice/Samsung%20-%20NX500%20-%2012bit%2012bit%20lossless%20compression%20%283%3A2%29.SRW",
+            "77ed2a18ca6923a0c1f3a9ad41ade3676136a3272dfe6bf0d8f53d03b0c8db3d"),
+
+    /**
+     * rawpixls-samsung-nx500-14bit-14bit-normal-compression-3-2.srw (23951257 bytes).
+     */
+    SRW_NX500_14_NORMAL("rawpixls-samsung-nx500-14bit-14bit-normal-compression-3-2.srw", "https://raw.pixls.us/getfile.php/3670/nice/Samsung%20-%20NX500%20-%2014bit%2014bit%20normal%20compression%20%283%3A2%29.SRW",
+            "3a1aeeb631b15dfa5be1bebe0e9c96f660ec96021eb6c45c073e33e982ab61b7"),
+
+    /**
+     * rawpixls-samsung-nx500-14bit-14bit-lossless-compression-3-2.srw (32831534 bytes).
+     */
+    SRW_NX500_14_LOSSLESS("rawpixls-samsung-nx500-14bit-14bit-lossless-compression-3-2.srw", "https://raw.pixls.us/getfile.php/3671/nice/Samsung%20-%20NX500%20-%2014bit%2014bit%20lossless%20compression%20%283%3A2%29.SRW",
+            "8a3fac531057ab416fc92d4e09560840c7700388a4b566b685df178cd5be8213"),
+
+    /**
+     * rawpixls-samsung-nx-mini-12bit-3-2.srw (21052805 bytes).
+     */
+    SRW_NX_MINI("rawpixls-samsung-nx-mini-12bit-3-2.srw", "https://raw.pixls.us/getfile.php/3765/nice/Samsung%20-%20NX%20mini%20-%2012bit%20%283%3A2%29.SRW",
+            "8e1bd19fff8c3b458f63bd6cf0ceda97e708efaf576424cf6c8ebf58eb0c3fc3"),
+
+    /**
+     * rawpixls-samsung-wb2000-14bit-4-3.srw (25267103 bytes).
+     */
+    SRW_WB2000("rawpixls-samsung-wb2000-14bit-4-3.srw", "https://raw.pixls.us/getfile.php/4262/nice/Samsung%20-%20WB2000%20-%2014bit%20%284%3A3%29.SRW",
+            "b9a1149fb0dda9d23aee0ad8c402bf2f9ba42832366d46c4c1b739c0b0f48497"),
+
+    /**
+     * rawpixls-samsung-nx1100-12bit-3-2-4422.srw (35266464 bytes).
+     */
+    SRW_NX1100_4422("rawpixls-samsung-nx1100-12bit-3-2-4422.srw", "https://raw.pixls.us/getfile.php/4422/nice/Samsung%20-%20NX1100%20-%2012bit%20%283%3A2%29.srw",
+            "d230af65ee55314792c5337ea8e0e757626a8541e7a25ed03d63b8df202ed9cb"),
+
+    /**
+     * rawpixls-samsung-nx1100-12bit-3-2-4423.srw (34815904 bytes).
+     */
+    SRW_NX1100_4423("rawpixls-samsung-nx1100-12bit-3-2-4423.srw", "https://raw.pixls.us/getfile.php/4423/nice/Samsung%20-%20NX1100%20-%2012bit%20%283%3A2%29.srw",
+            "56670e323d3457d6d5dbd1633517a022dcd68b26a8f9762475de5d325e5d865c"),
+
+    /**
+     * rawpixls-samsung-nx1100-12bit-3-2-4424.srw (34259360 bytes).
+     */
+    SRW_NX1100_4424("rawpixls-samsung-nx1100-12bit-3-2-4424.srw", "https://raw.pixls.us/getfile.php/4424/nice/Samsung%20-%20NX1100%20-%2012bit%20%283%3A2%29.srw",
+            "1c85f21c0c786f02f1aa9c4d9bf09ba5f50cc60b81ed0ce7a661d8d43fd19a33"),
+
+    /**
+     * rawpixls-samsung-nx2000-12bit-3-2.srw (25748909 bytes).
+     */
+    SRW_NX2000("rawpixls-samsung-nx2000-12bit-3-2.srw", "https://raw.pixls.us/getfile.php/5365/nice/Samsung%20-%20NX2000%20-%2012bit%20%283%3A2%29.SRW",
+            "79ec05b29fbe86f978eac0e82ad76e026b8480e99772044142464505c32f2cd0"),
+
+    /**
+     * rawpixls-samsung-nx20-12bit-3-2.srw (38192032 bytes).
+     */
+    SRW_NX20("rawpixls-samsung-nx20-12bit-3-2.srw", "https://raw.pixls.us/getfile.php/5370/nice/Samsung%20-%20NX20%20-%2012bit%20%283%3A2%29.SRW",
+            "8a367db506b8f7a6661a6f33a730467cfb3bfd7e46020a9f0df702330a7b45bb"),
+
+    /**
+     * rawpixls-samsung-nx5-12bit-3-2.srw (25463376 bytes).
+     */
+    SRW_NX5("rawpixls-samsung-nx5-12bit-3-2.srw", "https://raw.pixls.us/getfile.php/5684/nice/Samsung%20-%20NX5%20-%2012bit%20%283%3A2%29.SRW",
+            "908fc61d5bbc1f0d0a5cea4f4e39e7753060c1af8673f7a4a9199284b70930f7"),
+
+    /**
+     * rawpixls-samsung-nx10-12bit-3-2.srw (28564528 bytes).
+     */
+    SRW_NX10("rawpixls-samsung-nx10-12bit-3-2.srw", "https://raw.pixls.us/getfile.php/5913/nice/Samsung%20-%20NX10%20-%2012bit%20%283%3A2%29.SRW",
+            "dead7b4ad83b739ff7b8a1218882589f66cb14efc09f79eeba7a1dcbf7abd29f"),
+
+    /**
+     * rawpixls-samsung-nx11-12bit-3-2.srw (28874496 bytes).
+     */
+    SRW_NX11("rawpixls-samsung-nx11-12bit-3-2.srw", "https://raw.pixls.us/getfile.php/5985/nice/Samsung%20-%20NX11%20-%2012bit%20%283%3A2%29.SRW",
+            "bdce6179b4180478057f4971b512e0303da71528db454cb3f399ab10e05b68fe"),
+
+    /**
+     * rawpixls-samsung-nx3300-12bit-3-2.srw (21900287 bytes).
+     */
+    SRW_NX3300("rawpixls-samsung-nx3300-12bit-3-2.srw", "https://raw.pixls.us/getfile.php/6854/nice/Samsung%20-%20NX3300%20-%2012bit%20%283%3A2%29.SRW",
+            "c56a6f57caa53c99df6c59943670d2fe422d2cb543d9d21cff95ec0ff2f70381"),
+
+    /**
+     * rawpixls-samsung-ek-gn120-12bit-3-2.srw (21273740 bytes).
+     */
+    SRW_EK_GN120("rawpixls-samsung-ek-gn120-12bit-3-2.srw", "https://raw.pixls.us/getfile.php/6880/nice/Samsung%20-%20EK-GN120%20-%2012bit%20%283%3A2%29.srw",
+            "21f9dc02676e0d2e5e5b9b5b090852ca00e1423c3a7d7395214472e6d6ea9cea"),
+
+    /**
+     * rawpixls-epson-r-d1-12bit-3-2.erf (9958994 bytes).
+     */
+    ERF_R_D1("rawpixls-epson-r-d1-12bit-3-2.erf", "https://raw.pixls.us/getfile.php/2680/nice/Epson%20-%20R-D1%20-%2012bit%20%283%3A2%29.ERF",
+            "09d8e533d93116294a9f3e161ed868e929454c7b946e083b644bd6bb75bcb5e4"),
+
+    /**
+     * rawpixls-epson-r-d1s-12bit-3-2.erf (10092985 bytes).
+     */
+    ERF_R_D1S("rawpixls-epson-r-d1s-12bit-3-2.erf", "https://raw.pixls.us/getfile.php/2834/nice/Epson%20-%20R-D1s%20-%2012bit%20%283%3A2%29.ERF",
+            "45bb0081baf1c813c7cd9e05b3e6ae734b90aba408dd1195118dc94dc6abbbb9"),
+
+    /**
+     * rawpixls-epson-r-d1x-12bit-3-2.erf (9986661 bytes).
+     */
+    ERF_R_D1X("rawpixls-epson-r-d1x-12bit-3-2.erf", "https://raw.pixls.us/getfile.php/3158/nice/Epson%20-%20R-D1x%20-%2012bit%20%283%3A2%29.ERF",
+            "fa1bff3e0b9b9a14f83b8db9fae022c2aca8d455896bf4f25f2c1a0034e295e6"),
+
+    /**
+     * rawpixls-hasselblad-h3d-16bit-4-3.3fr (53594112 bytes).
+     */
+    FFF_H3D_16BIT_4_3("rawpixls-hasselblad-h3d-16bit-4-3.3fr", "https://raw.pixls.us/getfile.php/2851/nice/Hasselblad%20-%20H3D%20-%2016bit%20%284%3A3%29.3FR",
+            "34fdb93cb215e4f419ae0f7252c57b881fa381003124b4f9c143d27741f211b3"),
+
+    /**
+     * rawpixls-hasselblad-h4d-40-16bit-4-3.fff (73144108 bytes).
+     */
+    FFF_H4D_40_16BIT_4_3("rawpixls-hasselblad-h4d-40-16bit-4-3.fff", "https://raw.pixls.us/getfile.php/931/nice/Hasselblad%20-%20H4D-40%20-%2016bit%20%284%3A3%29.fff",
+            "1bfe64fa6fc07453ae74ed50c2f817d77a12a310b34a7f9893d32dd03f8c2ad0"),
+
+    /**
+     * rawpixls-hasselblad-x1d-16bit-4-3.3fr (110379008 bytes).
+     */
+    FFF_X1D_16BIT_4_3("rawpixls-hasselblad-x1d-16bit-4-3.3fr", "https://raw.pixls.us/getfile.php/2058/nice/Hasselblad%20-%20X1D%20-%2016bit%20%284%3A3%29.3FR",
+            "395acb2c706dc10270c58ec261e42a5e36f6ac8c39d2a767e86e83648aa318a3"),
+
+    /**
+     * rawpixls-hasselblad-hasselblad-h4d-16bit-4-3.3fr (81199104 bytes).
+     */
+    FFF_HASSELBLAD_H4D_16BIT_4_3("rawpixls-hasselblad-hasselblad-h4d-16bit-4-3.3fr", "https://raw.pixls.us/getfile.php/2631/nice/Hasselblad%20-%20Hasselblad%20H4D%20-%2016bit%20%284%3A3%29.3FR",
+            "5c0b033e2978035637d07c3e1567bf7748a06c5d5c0ae168027c74d54df7ff80"),
+
+    /**
+     * rawpixls-hasselblad-x1d-ii-50c-16bit-4-3.3fr (108399104 bytes).
+     */
+    FFF_X1D_II_50C_16BIT_4_3("rawpixls-hasselblad-x1d-ii-50c-16bit-4-3.3fr", "https://raw.pixls.us/getfile.php/3941/nice/Hasselblad%20-%20X1D%20II%2050C%20-%2016bit%20%284%3A3%29.3FR",
+            "809d498263d6f07cbaa4b9a5be97933057b4ab21e7243bb7afbe3862f3b48b47"),
+
+    /**
+     * rawpixls-hasselblad-cfv-100c-16bit-4-3.3fr (211857408 bytes).
+     */
+    FFF_CFV_100C_16BIT_4_3("rawpixls-hasselblad-cfv-100c-16bit-4-3.3fr", "https://raw.pixls.us/getfile.php/7782/nice/Hasselblad%20-%20CFV%20100C%20-%2016bit%20%284%3A3%29.3FR",
+            "e3375d7d19a231dd590aaaf07976ffef6e654c4c27d419fa74528bd72271ff4b"),
+
+    /**
+     * rawpixls-hasselblad-cfv-50c-16bit-4-3-7199.fff (88050502 bytes).
+     */
+    FFF_CFV_50C_16BIT_4_3_7199("rawpixls-hasselblad-cfv-50c-16bit-4-3-7199.fff", "https://raw.pixls.us/getfile.php/7199/nice/Hasselblad%20-%20CFV-50c%20-%2016bit%20%284%3A3%29.fff",
+            "e8fccbf0f746561f6445b54cbe9c40e4962b8019a9436627c326b73c3a30c1b2"),
+
+    /**
+     * rawpixls-hasselblad-cfv-50c-16bit-4-3.3fr (72417280 bytes).
+     */
+    FFF_CFV_50C_16BIT_4_3("rawpixls-hasselblad-cfv-50c-16bit-4-3.3fr", "https://raw.pixls.us/getfile.php/7217/nice/Hasselblad%20-%20CFV-50c%20-%2016bit%20%284%3A3%29.3FR",
+            "e27ff177519298fe7bae64506b975190789dc0e6ad70bea58be7c78fd094eae0"),
+
+    /**
+     * rawpixls-hasselblad-cfv-50c-16bit-4-3-7218.fff (79620782 bytes).
+     */
+    FFF_CFV_50C_16BIT_4_3_7218("rawpixls-hasselblad-cfv-50c-16bit-4-3-7218.fff", "https://raw.pixls.us/getfile.php/7218/nice/Hasselblad%20-%20CFV-50c%20-%2016bit%20%284%3A3%29.fff",
+            "c8d78912ae725a59acff42a4b4731350bbddd4a600423f319579261bd41da932"),
+
+    /**
+     * rawpixls-leaf-aptus-22-16bit-4-3-3196.mos (23423633 bytes).
+     */
+    MOS_APTUS_22_16BIT_4_3_3196("rawpixls-leaf-aptus-22-16bit-4-3-3196.mos", "https://raw.pixls.us/getfile.php/3196/nice/Leaf%20-%20Aptus%2022%20-%2016bit%20%284%3A3%29.mos",
+            "8a1a101cb3940b0648af54a721d92e6fb8612dd29a0909036ea2753196a00ec2"),
+
+    /**
+     * rawpixls-leaf-aptus-22-16bit-4-3-3197.mos (43365202 bytes).
+     */
+    MOS_APTUS_22_16BIT_4_3_3197("rawpixls-leaf-aptus-22-16bit-4-3-3197.mos", "https://raw.pixls.us/getfile.php/3197/nice/Leaf%20-%20Aptus%2022%20-%2016bit%20%284%3A3%29.mos",
+            "2a54d6fb8da0f01a966aaa21b896a036428c83fb2009824bb2ba946b9216a81c"),
+
+    /**
+     * rawpixls-leaf-afi-ii-12-16bit-4-3.mos (84007412 bytes).
+     */
+    MOS_AFI_II_12_16BIT_4_3("rawpixls-leaf-afi-ii-12-16bit-4-3.mos", "https://raw.pixls.us/getfile.php/5432/nice/Leaf%20-%20AFi-II%2012%20-%2016bit%20%284%3A3%29.mos",
+            "5442fb5342bacc2b9c7e461ee516f68aa01301623adef872363d1c6e68b78027"),
+
+    /**
+     * rawpixls-kodak-dcs760c-12bit-3-2.dcr (7547392 bytes).
+     */
+    DCR_DCS760C_12BIT_3_2("rawpixls-kodak-dcs760c-12bit-3-2.dcr", "https://raw.pixls.us/getfile.php/1347/nice/Kodak%20-%20DCS760C%20-%2012bit%20%283%3A2%29.DCR",
+            "d0e6bd0a3339daff884e73a08fed8e75b20fe05bba438fc185e3f0bd019d0da8"),
+
+    /**
+     * rawpixls-kodak-dc120-8bit-4-3.kdc (843328 bytes).
+     */
+    DCR_DC120_8BIT_4_3("rawpixls-kodak-dc120-8bit-4-3.kdc", "https://raw.pixls.us/getfile.php/2338/nice/Kodak%20-%20DC120%20-%208bit%20%284%3A3%29.kdc",
+            "967c3af47289e6cc5ab4f9bd24135b7e5386f574fc76deb3b13e884bfda87856"),
+
+    /**
+     * rawpixls-phase-one-iq140-iiq-l-sensor-4-3.tif (10897729 bytes).
+     */
+    IIQ_IQ140_IIQ_L_SENSOR_4_3("rawpixls-phase-one-iq140-iiq-l-sensor-4-3.tif", "https://raw.pixls.us/getfile.php/2022/nice/Phase%20One%20-%20IQ140%20-%20IIQ%20L%2C%20Sensor%2B%20%284%3A3%29.TIF",
+            "56dbb1d9d200245fe84928b0c05d84229fccc7fb61a47db8c46605e2c1ff5e06"),
+
+    /**
+     * rawpixls-mamiya-zd.mef (36575308 bytes).
+     */
+    MEF_ZD("rawpixls-mamiya-zd.mef", "https://raw.pixls.us/getfile.php/562/nice/Mamiya%20-%20ZD.MEF",
+            "bcd63507c3c4cc3ea1bad2945e3f88cb4677a1a3c762e1acc38df4445714eb7c"),
+
+    /**
+     * rawpixls-phase-one-p40-iiq-s-4-3.iiq (11172571 bytes).
+     */
+    IIQ_P40_IIQ_S_4_3("rawpixls-phase-one-p40-iiq-s-4-3.iiq", "https://raw.pixls.us/getfile.php/8010/nice/Phase%20One%20-%20P40%2B%20-%20IIQ%20S%20%284%3A3%29.IIQ",
+            "61aa32c5947d386f0d5ee465c5183185df6c9cd7ff7eb66ffec12e84b487878c"),
+
+    /**
+     * rawpixls-kodak-p880-nan.kdc (13828802 bytes).
+     */
+    DCR_P880_NAN("rawpixls-kodak-p880-nan.kdc", "https://raw.pixls.us/getfile.php/2339/nice/Kodak%20-%20P880%20-%20NAN.KDC",
+            "8138d068d14e9ce90c6877b175759fc92358024303b8cd5e9b9eb5ae11e8c4b1"),
+
+    /**
+     * rawpixls-kodak-kodak-p712-zoom-digital-camera-nan.kdc (12245402 bytes).
+     */
+    DCR_KODAK_P712_ZOOM_DIGITAL_CAMERA_NAN("rawpixls-kodak-kodak-p712-zoom-digital-camera-nan.kdc", "https://raw.pixls.us/getfile.php/2345/nice/Kodak%20-%20KODAK%20P712%20ZOOM%20DIGITAL%20CAMERA%20-%20NAN.KDC",
+            "b1c3870c8c794f0271053a80a15296e3a9b575ab736796cdb53929d50c86a084"),
+
+    /**
+     * rawpixls-kodak-eos-dcs-3-8bit-4-3.tif (1374208 bytes).
+     */
+    DCR_EOS_DCS_3_8BIT_4_3("rawpixls-kodak-eos-dcs-3-8bit-4-3.tif", "https://raw.pixls.us/getfile.php/2465/nice/Kodak%20-%20EOS%20DCS%203%20-%208bit%20%284%3A3%29.TIF",
+            "dd05419fedb091ca14c86485106e8c338509b09c8188dacf92eef6c78007deca"),
+
+    /**
+     * rawpixls-kodak-dcs520c-12bit-3-2.tif (1970973 bytes).
+     */
+    DCR_DCS520C_12BIT_3_2("rawpixls-kodak-dcs520c-12bit-3-2.tif", "https://raw.pixls.us/getfile.php/2573/nice/Kodak%20-%20DCS520C%20-%2012bit%20%283%3A2%29.TIF",
+            "d95e983bea9cf13f356e49b0f59629306bc7a51882ff20766c74ccff5f007d69"),
+
+    /**
+     * rawpixls-kodak-easyshare-z990-nan.kdc (22483665 bytes).
+     */
+    DCR_EASYSHARE_Z990_NAN("rawpixls-kodak-easyshare-z990-nan.kdc", "https://raw.pixls.us/getfile.php/2969/nice/Kodak%20-%20EasyShare%20Z990%20-%20NAN.KDC",
+            "378607dffc5e40f95d36fe7e0a5ce015c91b441c685843767b571d6f79ba2518"),
+
+    /**
+     * rawpixls-kodak-dcs-pro-14n-12bit-3-2.dcr (15913984 bytes).
+     */
+    DCR_DCS_PRO_14N_12BIT_3_2("rawpixls-kodak-dcs-pro-14n-12bit-3-2.dcr", "https://raw.pixls.us/getfile.php/2970/nice/Kodak%20-%20DCS%20Pro%2014n%20-%2012bit%20%283%3A2%29.DCR",
+            "a2fa7abe9dc1a4978ec7bda31dd6b5e4b37ce1ddf9067e0eeb9123d38ea13f69"),
+
+    /**
+     * rawpixls-kodak-easyshare-z981.kdc (25702448 bytes).
+     */
+    DCR_EASYSHARE_Z981("rawpixls-kodak-easyshare-z981.kdc", "https://raw.pixls.us/getfile.php/3482/nice/Kodak%20-%20EasyShare%20Z981.KDC",
+            "b2642a8ff212781b6990a9281e3f8bf7a404bfcf9fc249ec76abe258dd008bee"),
+
+    /**
+     * rawpixls-kodak-dcs-pro-14nx-12bit-3-2.dcr (13881344 bytes).
+     */
+    DCR_DCS_PRO_14NX_12BIT_3_2("rawpixls-kodak-dcs-pro-14nx-12bit-3-2.dcr", "https://raw.pixls.us/getfile.php/2319/nice/Kodak%20-%20DCS%20Pro%2014nx%20-%2012bit%20%283%3A2%29.DCR",
+            "0850ca7337169b609cef369f0de1e71952646d922b50cf1752b7ed6a2ef81ed5"),
+
+    /**
+     * rawpixls-kodak-dcs-pro-slr-n-12bit-3-2.dcr (12880896 bytes).
+     */
+    DCR_DCS_PRO_SLR_N_12BIT_3_2("rawpixls-kodak-dcs-pro-slr-n-12bit-3-2.dcr", "https://raw.pixls.us/getfile.php/2635/nice/Kodak%20-%20DCS%20Pro%20SLR/n%20-%2012bit%20%283%3A2%29.DCR",
+            "c32e54a18969751a5502c16c5d69b152fc841831151121c1d2ae18e6656fae86"),
+
+    /**
+     * rawpixls-kodak-dcs-pro-slr-c-12bit-3-2.dcr (14920832 bytes).
+     */
+    DCR_DCS_PRO_SLR_C_12BIT_3_2("rawpixls-kodak-dcs-pro-slr-c-12bit-3-2.dcr", "https://raw.pixls.us/getfile.php/5138/nice/Kodak%20-%20DCS%20Pro%20SLR/c%20-%2012bit%20%283%3A2%29.DCR",
+            "dca493a81bd4f87428d1584fa4ee6a4e98c97d6540b16a7a42d25916b0fd6107"),
+
+    /**
+     * rawpixls-nikon-1-j1-12bit-12bit-compressed-lossy-type-2-3-2-1017.nef (9624896 bytes).
+     */
+    NEF_1_J1_LOSSY_12("rawpixls-nikon-1-j1-12bit-12bit-compressed-lossy-type-2-3-2-1017.nef", "https://raw.pixls.us/getfile.php/1017/nice/Nikon%20-%201%20J1%20-%2012bit%2012bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "5965935729931b72ca8398041f8fc15cb0a226004db941d1f0626ccc2c5bb5f3"),
+
+    /**
+     * rawpixls-nikon-coolpix-a-14bit-14bit-compressed-lossy-type-2-3-2.nef (18027123 bytes).
+     */
+    NEF_COOLPIX_A_LOSSY_14("rawpixls-nikon-coolpix-a-14bit-14bit-compressed-lossy-type-2-3-2.nef", "https://raw.pixls.us/getfile.php/2238/nice/Nikon%20-%20Coolpix%20A%20-%2014bit%2014bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "c5ca0333a7cda8a2fc33fb2157d18dfa89f1844548dc49c2fd2e67f502f72e25"),
+
+    /**
+     * rawpixls-nikon-d3-12bit-12bit-compressed-lossy-type-2-3-2.nef (8891234 bytes).
+     */
+    NEF_D3_LOSSY_12("rawpixls-nikon-d3-12bit-12bit-compressed-lossy-type-2-3-2.nef", "https://raw.pixls.us/getfile.php/3516/nice/Nikon%20-%20D3%20-%2012bit%2012bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "880c60c5f611adf6b70de3d099f8433492de3a3d96866d570122f17f0a651fc8"),
+
+    /**
+     * rawpixls-nikon-d3-14bit-14bit-compressed-lossy-type-2-3-2.nef (11334958 bytes).
+     */
+    NEF_D3_LOSSY_14("rawpixls-nikon-d3-14bit-14bit-compressed-lossy-type-2-3-2.nef", "https://raw.pixls.us/getfile.php/3519/nice/Nikon%20-%20D3%20-%2014bit%2014bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "0626c09a58ca12ee4c12f919772abd4fd053c7d88c2f2b25e8d9be7c26cc7fd5"),
+
+    /**
+     * rawpixls-nikon-d5-14bit-14bit-compressed-lossy-type-2-3-2.nef (29971795 bytes).
+     */
+    NEF_D5_LOSSY_14("rawpixls-nikon-d5-14bit-14bit-compressed-lossy-type-2-3-2.nef", "https://raw.pixls.us/getfile.php/2218/nice/Nikon%20-%20D5%20-%2014bit%2014bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "febde1abbb52dcd207f10d44412742af491d63ef96a9cbd8a491a33b98944eeb"),
+
+    /**
+     * rawpixls-nikon-d500-12bit-12bit-compressed-lossy-type-2-3-2.nef (16691242 bytes).
+     */
+    NEF_D500_LOSSY_12("rawpixls-nikon-d500-12bit-12bit-compressed-lossy-type-2-3-2.nef", "https://raw.pixls.us/getfile.php/2504/nice/Nikon%20-%20D500%20-%2012bit%2012bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "33c96a2ba7167f780928767c0545719737d601883e5f98e5edba4f71bdc99d83"),
+
+    /**
+     * rawpixls-nikon-d750-14bit-14bit-compressed-lossy-type-2-3-2.nef (22861674 bytes).
+     */
+    NEF_D750_LOSSY_14("rawpixls-nikon-d750-14bit-14bit-compressed-lossy-type-2-3-2.nef", "https://raw.pixls.us/getfile.php/896/nice/Nikon%20-%20D750%20-%2014bit%2014bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "3389da2bd0997be2f8e1408d8d0fba09f5062de05c4017a0bbf2849d8f0cd2a1"),
+
+    /**
+     * rawpixls-nikon-d810-12bit-12bit-compressed-lossy-type-2-3-2.nef (29734746 bytes).
+     */
+    NEF_D810_LOSSY_12("rawpixls-nikon-d810-12bit-12bit-compressed-lossy-type-2-3-2.nef", "https://raw.pixls.us/getfile.php/2034/nice/Nikon%20-%20D810%20-%2012bit%2012bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "6aa49c8cdfcde936b10a342d4901391fe4dcdb54cfb6b9b5d02ce46c65ac5ebf"),
+
+    /**
+     * rawpixls-nikon-d850-14bit-14bit-compressed-lossy-type-2-3-2.nef (47609342 bytes).
+     */
+    NEF_D850_LOSSY_14("rawpixls-nikon-d850-14bit-14bit-compressed-lossy-type-2-3-2.nef", "https://raw.pixls.us/getfile.php/1841/nice/Nikon%20-%20D850%20-%2014bit%2014bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "e54b5d4f0d5c721a90309741c60754e687750f1b2d366ac2587d870eef121126"),
+
+    /**
+     * rawpixls-nikon-d90-12bit-12bit-compressed-lossy-type-2-3-2.nef (11653767 bytes).
+     */
+    NEF_D90_LOSSY_12("rawpixls-nikon-d90-12bit-12bit-compressed-lossy-type-2-3-2.nef", "https://raw.pixls.us/getfile.php/1325/nice/Nikon%20-%20D90%20-%2012bit%2012bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "9eb3daa4e3d1c1614bccc4c6d136c4166960f936f17c437cc4d11a5786b2df06"),
+
+    /**
+     * rawpixls-nikon-df-14bit-14bit-compressed-lossy-type-2-3-2.nef (16091700 bytes).
+     */
+    NEF_DF_LOSSY_14("rawpixls-nikon-df-14bit-14bit-compressed-lossy-type-2-3-2.nef", "https://raw.pixls.us/getfile.php/1388/nice/Nikon%20-%20Df%20-%2014bit%2014bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "452ed50be5e212cf7832cd5fc992d920206cebde8864c073988aeaf5a9d07708"),
+
+    /**
+     * rawpixls-nikon-d6-12bit-12bit-compressed-lossy-type-2-3-2.nef (14562481 bytes).
+     */
+    NEF_D6_LOSSY_12("rawpixls-nikon-d6-12bit-12bit-compressed-lossy-type-2-3-2.nef", "https://raw.pixls.us/getfile.php/4726/nice/Nikon%20-%20D6%20-%2012bit%2012bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "3a098e704d0e1af97efc37541b43a37e5b3457d2f4e7828c0d8d9af37332f233"),
+
+    /**
+     * rawpixls-nikon-d6-14bit-14bit-compressed-lossy-type-2-3-2.nef (18600326 bytes).
+     */
+    NEF_D6_LOSSY_14("rawpixls-nikon-d6-14bit-14bit-compressed-lossy-type-2-3-2.nef", "https://raw.pixls.us/getfile.php/4721/nice/Nikon%20-%20D6%20-%2014bit%2014bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "081d5dbc1d6c97935020d33ffa486dcaa8d4564cbde280cfadcf26ff61da2838"),
+
+    /**
+     * rawpixls-nikon-d780-12bit-12bit-compressed-lossy-type-2-3-2.nef (25019527 bytes).
+     */
+    NEF_D780_LOSSY_12("rawpixls-nikon-d780-12bit-12bit-compressed-lossy-type-2-3-2.nef", "https://raw.pixls.us/getfile.php/3827/nice/Nikon%20-%20D780%20-%2012bit%2012bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "986488947e552af25c6824667aed5a1622140a581dc57efd4b00f0b55b5e4ae0"),
+
+    /**
+     * rawpixls-nikon-d780-14bit-14bit-compressed-lossy-type-2-3-2.nef (30764714 bytes).
+     */
+    NEF_D780_LOSSY_14("rawpixls-nikon-d780-14bit-14bit-compressed-lossy-type-2-3-2.nef", "https://raw.pixls.us/getfile.php/3829/nice/Nikon%20-%20D780%20-%2014bit%2014bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "6ee9e13f6f2532a5ba66f43b75885cf8a3f27f252d39969545f0471eff7d3f6f"),
+
+    /**
+     * rawpixls-nikon-z-5-12bit-12bit-compressed-lossy-type-2-3-2.nef (22183585 bytes).
+     */
+    NEF_Z5_LOSSY_12("rawpixls-nikon-z-5-12bit-12bit-compressed-lossy-type-2-3-2.nef", "https://raw.pixls.us/getfile.php/4138/nice/Nikon%20-%20Z%205%20-%2012bit%2012bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "d893b6f7e7d2c0aa7d4b016a559bf0d9af440c9ec7486119085c2b2368c7a2a4"),
+
+    /**
+     * rawpixls-nikon-z-5-14bit-14bit-compressed-lossy-type-2-3-2.nef (27265178 bytes).
+     */
+    NEF_Z5_LOSSY_14("rawpixls-nikon-z-5-14bit-14bit-compressed-lossy-type-2-3-2.nef", "https://raw.pixls.us/getfile.php/4139/nice/Nikon%20-%20Z%205%20-%2014bit%2014bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "e675138e7185b026000c97b654b80ac230c5796f48a9180633672ddacee01bed"),
+
+    /**
+     * rawpixls-nikon-z-6-2-14bit-14bit-compressed-lossy-type-2-3-2.nef (35015960 bytes).
+     */
+    NEF_Z6II_LOSSY_14("rawpixls-nikon-z-6-2-14bit-14bit-compressed-lossy-type-2-3-2.nef", "https://raw.pixls.us/getfile.php/4161/nice/Nikon%20-%20Z%206_2%20-%2014bit%2014bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "c79fa1f8986ba059771f125af283dc3b0ed8bd27c46db9e4f83d2a0e3fb34059"),
+
+    /**
+     * rawpixls-nikon-z-7-2-12bit-12bit-compressed-lossy-type-2-3-2.nef (38448793 bytes).
+     */
+    NEF_Z7II_LOSSY_12("rawpixls-nikon-z-7-2-12bit-12bit-compressed-lossy-type-2-3-2.nef", "https://raw.pixls.us/getfile.php/4216/nice/Nikon%20-%20Z%207_2%20-%2012bit%2012bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "5b8322b8bb2bd72a5a824e558d5ee9cdc5790085baaf3e6c14825c3e3b919286"),
+
+    /**
+     * rawpixls-nikon-z-7-2-14bit-14bit-compressed-lossy-type-2-3-2.nef (47203410 bytes).
+     */
+    NEF_Z7II_LOSSY_14("rawpixls-nikon-z-7-2-14bit-14bit-compressed-lossy-type-2-3-2.nef", "https://raw.pixls.us/getfile.php/4215/nice/Nikon%20-%20Z%207_2%20-%2014bit%2014bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "60de3df0af395adac77c20db7f2714760450eaff99f8d0a76834c447bedf7381"),
+
+    /**
+     * rawpixls-nikon-d300-12bit-12bit-compressed-lossy-type-2-3-2.nef (9132977 bytes).
+     */
+    NEF_D300_LOSSY_12("rawpixls-nikon-d300-12bit-12bit-compressed-lossy-type-2-3-2.nef", "https://raw.pixls.us/getfile.php/928/nice/Nikon%20-%20D300%20-%2012bit%2012bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "f1162624678ae9b0e0e835fcbe77d97584fc88ceefd996e38ee126942b54bc8c"),
+
+    /**
+     * rawpixls-nikon-d700-12bit-12bit-compressed-lossy-type-2-3-2.nef (11434022 bytes).
+     */
+    NEF_D700_LOSSY_12("rawpixls-nikon-d700-12bit-12bit-compressed-lossy-type-2-3-2.nef", "https://raw.pixls.us/getfile.php/2255/nice/Nikon%20-%20D700%20-%2012bit%2012bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "bfd5e164c3fa10ffdc38237000ccb63f52a53bcd080ceb48de1443534dd17036"),
+
+    /**
+     * rawpixls-nikon-d3s-12bit-12bit-compressed-lossy-type-2-3-2.nef (11593381 bytes).
+     */
+    NEF_D3S_LOSSY_12("rawpixls-nikon-d3s-12bit-12bit-compressed-lossy-type-2-3-2.nef", "https://raw.pixls.us/getfile.php/5207/nice/Nikon%20-%20D3S%20-%2012bit%2012bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "322ec3cea1f0be42ea38b3e4974dcfdadd1ff6574743d82d2a59f07242852297"),
+
+    /**
+     * rawpixls-nikon-d300s-12bit-12bit-compressed-lossy-type-2-3-2.nef (10391867 bytes).
+     */
+    NEF_D300S_LOSSY_12("rawpixls-nikon-d300s-12bit-12bit-compressed-lossy-type-2-3-2.nef", "https://raw.pixls.us/getfile.php/3055/nice/Nikon%20-%20D300S%20-%2012bit%2012bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "bb9834d03bc158731aefebc5bef11ab1607c9c8cc12f8ae964e6c1b031696d05"),
+
+    /**
+     * rawpixls-nikon-d4-12bit-12bit-compressed-lossy-type-2-3-2.nef (15419789 bytes).
+     */
+    NEF_D4_LOSSY_12("rawpixls-nikon-d4-12bit-12bit-compressed-lossy-type-2-3-2.nef", "https://raw.pixls.us/getfile.php/1978/nice/Nikon%20-%20D4%20-%2012bit%2012bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "1148bcbf80106b21f7788d0b926751bf5a14ebb5b8cf45ff67bf5bfe6b4ac84f"),
+
+    /**
+     * rawpixls-nikon-d3100-12bit-12bit-compressed-lossy-type-2-3-2.nef (11388395 bytes).
+     */
+    NEF_D3100_LOSSY_12("rawpixls-nikon-d3100-12bit-12bit-compressed-lossy-type-2-3-2.nef", "https://raw.pixls.us/getfile.php/4229/nice/Nikon%20-%20D3100%20-%2012bit%2012bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "e8113b6e7285155f9f2b88f81566dab63a59cf5559d6915113b74e8c3a8680f6"),
+
+    /**
+     * rawpixls-nikon-d5000-12bit-12bit-compressed-lossy-type-2-3-2-1341.nef (10269709 bytes).
+     */
+    NEF_D5000_LOSSY_12("rawpixls-nikon-d5000-12bit-12bit-compressed-lossy-type-2-3-2-1341.nef", "https://raw.pixls.us/getfile.php/1341/nice/Nikon%20-%20D5000%20-%2012bit%2012bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283%3A2%29.NEF",
+            "5f8e8005be87366bbf7746d35c3c88f82a12a1dd18206c939d8f1254c5922360"),
+
+    /**
+     * rawpixls-gopro-hero5-black-16bit-4-3-936.gpr (3701646 bytes).
+     */
+    GPR_HERO5_BLACK_16BIT_4_3_936("rawpixls-gopro-hero5-black-16bit-4-3-936.gpr", "https://raw.pixls.us/getfile.php/936/nice/GoPro%20-%20HERO5%20Black%20-%2016bit%20%284%3A3%29.GPR",
+            "191901b64412083146256ccebeacd954783f6c40a4556ef355a067915136159b"),
+
+    /**
+     * rawpixls-gopro-hero5-black-16bit-4-3-1634.gpr (4579178 bytes).
+     */
+    GPR_HERO5_BLACK_16BIT_4_3_1634("rawpixls-gopro-hero5-black-16bit-4-3-1634.gpr", "https://raw.pixls.us/getfile.php/1634/nice/GoPro%20-%20HERO5%20Black%20-%2016bit%20%284%3A3%29.GPR",
+            "88ca49daa9c0f7d20b7f7de1dbabfc9228ca9cb2e19415f28887a6658ad0f918"),
+
+    /**
+     * rawpixls-gopro-hero6-black-16bit-4-3-2556.gpr (3835682 bytes).
+     */
+    GPR_HERO6_BLACK_16BIT_4_3_2556("rawpixls-gopro-hero6-black-16bit-4-3-2556.gpr", "https://raw.pixls.us/getfile.php/2556/nice/GoPro%20-%20HERO6%20Black%20-%2016bit%20%284%3A3%29.GPR",
+            "ca9b79fcdfab1cc071405209063fb736cc0b7169a7a88fe091fceee803f546fb"),
+
+    /**
+     * rawpixls-gopro-hero6-black-16bit-4-3-2557.gpr (3386578 bytes).
+     */
+    GPR_HERO6_BLACK_16BIT_4_3_2557("rawpixls-gopro-hero6-black-16bit-4-3-2557.gpr", "https://raw.pixls.us/getfile.php/2557/nice/GoPro%20-%20HERO6%20Black%20-%2016bit%20%284%3A3%29.GPR",
+            "c2ed9c01933f3136a6f886ae57fd59692ee5f565e4c07cc73087fb6bceaec80e"),
+
+    /**
+     * rawpixls-gopro-hero6-black-16bit-4-3-2558.gpr (3622730 bytes).
+     */
+    GPR_HERO6_BLACK_16BIT_4_3_2558("rawpixls-gopro-hero6-black-16bit-4-3-2558.gpr", "https://raw.pixls.us/getfile.php/2558/nice/GoPro%20-%20HERO6%20Black%20-%2016bit%20%284%3A3%29.GPR",
+            "17a24d42735464525773048172c888ea24d13ba4b907e64580b63c3bab987ae5"),
+
+    /**
+     * rawpixls-gopro-hero7-black-16bit-4-3-2786.gpr (4153712 bytes).
+     */
+    GPR_HERO7_BLACK_16BIT_4_3_2786("rawpixls-gopro-hero7-black-16bit-4-3-2786.gpr", "https://raw.pixls.us/getfile.php/2786/nice/GoPro%20-%20HERO7%20Black%20-%2016bit%20%284%3A3%29.GPR",
+            "0c2003137feb0ca7c9a8adf6cd832bc8fba7ff1b89cf5d77822b22558b9a20fe"),
+
+    /**
+     * rawpixls-gopro-hero7-black-16bit-4-3-2846.gpr (5223038 bytes).
+     */
+    GPR_HERO7_BLACK_16BIT_4_3_2846("rawpixls-gopro-hero7-black-16bit-4-3-2846.gpr", "https://raw.pixls.us/getfile.php/2846/nice/GoPro%20-%20HERO7%20Black%20-%2016bit%20%284%3A3%29.GPR",
+            "dbbda002a09e98e70bf8a5133783dc5c91610e5b9447d685127c43c255a0d055"),
+
+    /**
+     * rawpixls-gopro-hero7-black-16bit-4-3-2908.gpr (3045278 bytes).
+     */
+    GPR_HERO7_BLACK_16BIT_4_3_2908("rawpixls-gopro-hero7-black-16bit-4-3-2908.gpr", "https://raw.pixls.us/getfile.php/2908/nice/GoPro%20-%20HERO7%20Black%20-%2016bit%20%284%3A3%29.GPR",
+            "f7d8a5b693bc173a777164dbad48921c8d145d602d5422925a13090404514b66"),
+
+    /**
+     * rawpixls-gopro-hero8-black-16bit-4-3-3949.gpr (4073376 bytes).
+     */
+    GPR_HERO8_BLACK_16BIT_4_3_3949("rawpixls-gopro-hero8-black-16bit-4-3-3949.gpr", "https://raw.pixls.us/getfile.php/3949/nice/GoPro%20-%20HERO8%20Black%20-%2016bit%20%284%3A3%29.GPR",
+            "bfd992594af380748f3d46e37814dae595356cb6fce182d4188230ca978e6a9f"),
+
+    /**
+     * rawpixls-gopro-hero9-black-16bit-4-3.gpr (8055720 bytes).
+     */
+    GPR_HERO9_BLACK_16BIT_4_3("rawpixls-gopro-hero9-black-16bit-4-3.gpr", "https://raw.pixls.us/getfile.php/4483/nice/GoPro%20-%20HERO9%20Black%20-%2016bit%20%284%3A3%29.GPR",
+            "bf6f67d0c7096f347b864310f6d58be35237c3d0e715b47a1b30e650e9d785b1"),
+
+    /**
+     * rawpixls-gopro-hero10-black-16bit-4-3-4883.gpr (6069216 bytes).
+     */
+    GPR_HERO10_BLACK_16BIT_4_3_4883("rawpixls-gopro-hero10-black-16bit-4-3-4883.gpr", "https://raw.pixls.us/getfile.php/4883/nice/GoPro%20-%20HERO10%20Black%20-%2016bit%20%284%3A3%29.GPR",
+            "f462ea1e695a0491960a496e3998c8806a2a02a2830c9c696c7067c0039a437c"),
+
+    /**
+     * rawpixls-gopro-hero10-black-16bit-4-3-4894.gpr (8705046 bytes).
+     */
+    GPR_HERO10_BLACK_16BIT_4_3_4894("rawpixls-gopro-hero10-black-16bit-4-3-4894.gpr", "https://raw.pixls.us/getfile.php/4894/nice/GoPro%20-%20HERO10%20Black%20-%2016bit%20%284%3A3%29.GPR",
+            "92a47ef8a30b9e22440b0eb71c519e271e66e64c51765415b9de644c902b358f"),
+
+    /**
+     * rawpixls-gopro-hero7-black-16bit-4-3-5766.gpr (4291460 bytes).
+     */
+    GPR_HERO7_BLACK_16BIT_4_3_5766("rawpixls-gopro-hero7-black-16bit-4-3-5766.gpr", "https://raw.pixls.us/getfile.php/5766/nice/GoPro%20-%20HERO7%20Black%20-%2016bit%20%284%3A3%29.GPR",
+            "17998cd871ef258d29f85419163d4e506411bba57fda05f0c3e0488c2088344f"),
+
+    /**
+     * rawpixls-gopro-hero8-black-16bit-4-3-5767.gpr (6419796 bytes).
+     */
+    GPR_HERO8_BLACK_16BIT_4_3_5767("rawpixls-gopro-hero8-black-16bit-4-3-5767.gpr", "https://raw.pixls.us/getfile.php/5767/nice/GoPro%20-%20HERO8%20Black%20-%2016bit%20%284%3A3%29.GPR",
+            "a0bc88bd5f4f18829b66314b4bbde0318d32bae427a2cd06fa3964eb92177f4e"),
+
+    /**
+     * rawpixls-gopro-hero11-black-16bit-5-4.gpr (13920706 bytes).
+     */
+    GPR_HERO11_BLACK_16BIT_5_4("rawpixls-gopro-hero11-black-16bit-5-4.gpr", "https://raw.pixls.us/getfile.php/7319/nice/GoPro%20-%20HERO11%20Black%20-%2016bit%20%285%3A4%29.GPR",
+            "d7a6be163c847cb8456e6858a99aef3b85dc3d8836bca1da1b8886effe0d43e1"),
+
+    /**
+     * rawpixls-gopro-fusion-16bit-1-1-7370.gpr (4965234 bytes).
+     */
+    GPR_FUSION_16BIT_1_1_7370("rawpixls-gopro-fusion-16bit-1-1-7370.gpr", "https://raw.pixls.us/getfile.php/7370/nice/GoPro%20-%20FUSION%20-%2016bit%20%281%3A1%29.GPR",
+            "f90535bbb28f8b24093c6112bd982f89c47cb0181bcfaba97471e191861a1e80"),
+
+    /**
+     * rawpixls-gopro-fusion-16bit-1-1-7371.gpr (4310812 bytes).
+     */
+    GPR_FUSION_16BIT_1_1_7371("rawpixls-gopro-fusion-16bit-1-1-7371.gpr", "https://raw.pixls.us/getfile.php/7371/nice/GoPro%20-%20FUSION%20-%2016bit%20%281%3A1%29.GPR",
+            "f3eb9413ed30c92ac6e1834b8228ecf5c9a546c142e8e7ec01146c13035cb532"),
+
+    /**
+     * rawpixls-panasonic-dmc-fz8-4-3.raw (11615232 bytes).
+     */
+    RW2_DMC_FZ8_4_3("rawpixls-panasonic-dmc-fz8-4-3.raw", "https://raw.pixls.us/getfile.php/2282/nice/Panasonic%20-%20DMC-FZ8%20-%204%3A3.RAW",
+            "a11f1534f3092a4d5f2b57d182f6b06f8d26cf766eb463c3e02b26a338b63b8b"),
+
+    /**
+     * rawpixls-panasonic-dmc-fz50-16-9.raw (15255996 bytes).
+     */
+    RW2_DMC_FZ50_16_9("rawpixls-panasonic-dmc-fz50-16-9.raw", "https://raw.pixls.us/getfile.php/2323/nice/Panasonic%20-%20DMC-FZ50%20-%2016%3A9.RAW",
+            "30cac8cf14686387f2d5b8823c6d2ce3af19e62fc910e6abd77e6038e99412a7"),
+
+    /**
+     * rawpixls-panasonic-dmc-lx1-16-9.raw (16841216 bytes).
+     */
+    RW2_DMC_LX1_16_9("rawpixls-panasonic-dmc-lx1-16-9.raw", "https://raw.pixls.us/getfile.php/2639/nice/Panasonic%20-%20DMC-LX1%20-%2016%3A9.RAW",
+            "8ff982526d215d337706640cc6aa0822cccbe65a86ebe01daef0fd43cb45a4ca"),
+
+    /**
+     * rawpixls-leica-digilux-3-4-3.raw (15041536 bytes).
+     */
+    RW2_DIGILUX_3_4_3("rawpixls-leica-digilux-3-4-3.raw", "https://raw.pixls.us/getfile.php/4884/nice/Leica%20-%20Digilux%203%20-%204%3A3.RAW",
+            "d2a4c556fe3660b70df34846dbb19c900a4e1fda0416e5651b1f8b6be7bfdd38");
 
     private final String file;
     private final String url;

@@ -117,6 +117,8 @@ Contents
   60. WavPack
   61. libspeex
   62. libtheora
+  63. gpr (GoPro VC-5 decoder)
+  64. Adobe DNG SDK
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -1453,7 +1455,8 @@ Derived Smalt packages:
 
 Derivation: the DNG reader, its color model (camera matrices, illuminant
 interpolation, camera profiles) and its opcode lists implement the DNG
-Specification. No code of the Adobe DNG SDK is used.
+Specification. The calibration of Hasselblad CCD files ports parts of the
+Adobe DNG SDK (see section 59).
 
 Notice required by the Adobe DNG patent license:
   This product includes DNG technology under license by Adobe.
@@ -2174,6 +2177,57 @@ Copyright:
 EOF
 license_start "BSD 3-Clause License (COPYING)"
 cat "$LIC/libtheora-COPYING"
+section "63. gpr (GoPro VC-5 decoder)"
+cat <<'EOF'
+Project:      gpr, GoPro's General Purpose Raw SDK, version 1.0.0, with the
+              VC-5 reference decoder
+Source:       https://github.com/gopro/gpr (source/lib/vc5_decoder: decoder.c,
+              inverse.c, wavelet.c, dequantize.c, vlc.c, raw.c;
+              source/lib/vc5_common: bitstream.c, companding.c, logcurve.c,
+              codec.c, table17.inc)
+License text: https://raw.githubusercontent.com/gopro/gpr/master/LICENSE-MIT
+License:      MIT License (the project is licensed under the Apache License 2.0
+              or the MIT License, at the user's option; Smalt uses the MIT
+              License)
+
+Derived Smalt packages:
+  image.raw.internal (Vc5Decoder)
+  aot.internal (SyntheticVc5)
+
+Derivation: C code translated to Java and the codebook transcribed (the
+codes the training files use, in aot.internal).
+
+Copyright:
+  Copyright 2018 GoPro, Inc.
+EOF
+license_start "gpr license (LICENSE-MIT)"
+cat "$LIC/gpr-LICENSE-MIT"
+
+section "64. Adobe DNG SDK"
+cat <<'EOF'
+Project:      DNG SDK, version 1.4, Adobe, as carried by the Android Open
+              Source Project
+Source:       https://android.googlesource.com/platform/external/dng_sdk
+              (source/dng_bad_pixels.cpp, source/dng_gain_map.cpp,
+              source/dng_image.cpp)
+License text: https://android.googlesource.com/platform/external/dng_sdk/+/refs/heads/main/LICENSE
+License:      DNG SDK License Agreement (royalty-free license to use,
+              reproduce, modify, distribute and sublicense, keeping Adobe's
+              notices)
+
+Derived Smalt packages:
+  image.raw.internal (HasselbladColumns, HasselbladFlatField)
+
+Derivation: C++ code translated to Java: the interpolation of the bad
+rectangles of opcode FixBadPixelsList with the edge repeat of dng_image::Get,
+and the gain map interpolator of opcode GainMap, which Adobe DNG Converter
+applies to the calibration of Hasselblad CCD files.
+
+Copyright:
+  Copyright 2006-2009 Adobe Systems Incorporated. All Rights Reserved.
+EOF
+license_start "DNG SDK license (LICENSE)"
+cat "$LIC/dng-sdk-LICENSE"
 } > "$OUT"
 
 echo "wrote $OUT"

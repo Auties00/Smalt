@@ -15,8 +15,9 @@ S-series and compacts (SuperCCD, transposed or not, the F700's rows of two image
 packings of the FinePix compacts with EXR and other CMOS sensors (F550EXR, F770EXR, X10, S1, SL1000, HS10, and the
 EXR HR and DR files of the F600EXR, F900EXR and HS20EXR, an S200EXR file in EXR HR mode and an X10 file in EXR SN
 mode). The F700, E550, E900, S5600, HS10, F600EXR, F900EXR and HS20EXR samples of raw.pixls.us and the S200EXR and
-X10 samples of rawsamples.ch are licensed CC BY-NC-SA 4.0 (tools/testdata/licences.tsv); like every sample they are only
-downloaded into the local cache for testing, never committed or redistributed. This script produces those values: it downloads Adobe DNG
+X10 samples of rawsamples.ch and the Mamiya ZD sample of raw.pixls.us are licensed CC BY-NC-SA 4.0
+(tools/testdata/licences.tsv); like every sample they are only downloaded into the local cache for testing, never
+committed or redistributed. This script produces those values: it downloads Adobe DNG
 Converter 18.0 for Windows and innoextract 1.9 (both pinned by SHA-256), extracts the converter
 without installing it, and runs it as a black box on each sample, writing an uncompressed DNG file
 (-u) per sample into <conformance cache>/raw-oracle, where the tests look by default
@@ -42,12 +43,27 @@ no other. The sample files are fetched first when the cache lacks them.
 With --coverage it instead converts every ORF sample of vectors.tsv and every RW2 or RWL sample of
 raw format version 4 (about 160 files; the DNG files take about 6 GB) into
 <conformance cache>/raw-oracle-coverage, which RawOracleCoverageTest checks photosite for
-photosite (-Dsmalt.test.rawCoverage overrides the directory).
+photosite (-Dsmalt.test.rawCoverage overrides the directory), and every Sony ARW sample of vectors.tsv (one per
+camera model) into a <stem>.levels file there, whose black and white levels and white balance VendorOracleTest
+checks.
 
 Windows only: the converter is a Windows executable. Run the script with a Windows build of Python;
 under an MSYS2 Python the converter fails to open its input. Version 18.0 stores the same values as 14.0
 for every sample both support (checked on RW2 files); 18.0 is needed for the 2022 and later
 Panasonic models. The converter is free to download and use; nothing of it is redistributed.
+
+For the samples of VENDOR_SAMPLES (the Samsung SRW, Epson ERF, GoPro GPR, Hasselblad 3FR and FFF, Leaf MOS,
+Mamiya MEF and Kodak DCR, KDC and TIFF files, the packed DSLR-A900 ARW file and the uncompressed Panasonic RAW files
+of the oldest models) and the copies of samples with bytes changed (PATCHED_SAMPLES: a Minolta DiMAGE A2 file whose
+Bayer pattern byte is set to 4, and Mamiya ZD files with other white balance values), it keeps instead of the DNG file a
+<stem>.photosites summary and a <stem>.levels file, and for the samples of CURVE_SAMPLES (the lossy Nikon NEF
+files and the 8-bit Kodak EOS DCS 3 file, whose photosites the summary cannot hold) only the
+<stem>.levels file. A <stem>.levels file holds, one per line after a comment line, the converter's camera
+(model, its UniqueCameraModel), the stored size (size, width and height), the active area (active, top, left,
+bottom and right), the default crop relative to it (crop, x, y, width and height), the filter array (cfa, its
+columns, rows and colors), the black levels (black, the repeat's rows and columns, then the levels), the white
+levels (white), the as-shot neutral (neutral) and the linearization table (linearization, its length, then its
+entries); VendorOracleTest compares the decoder with them.
 
 Naming sample files converts only those (for example the MRW samples of SAMPLES), leaving the other
 oracle files in place.
@@ -207,6 +223,141 @@ SAMPLES = [
     'rawpixls-canon-powershot-v1-craw-3-2.cr3',
 ]
 
+
+# kept as <stem>.photosites and <stem>.levels summaries instead of DNG files
+VENDOR_SAMPLES = [
+    'rawpixls-leica-digilux-3-4-3.raw',
+    'rawpixls-panasonic-dmc-fz50-16-9.raw',
+    'rawpixls-panasonic-dmc-fz8-4-3.raw',
+    'rawpixls-panasonic-dmc-lx1-16-9.raw',
+    'rawpixls-samsung-nx1-14bit-3-2.srw',
+    'rawpixls-samsung-nx200-12bit-3-2.srw',
+    'rawpixls-samsung-nx30-12bit-3-2.srw',
+    'rawpixls-samsung-nx3000-12bit-3-2.srw',
+    'rawpixls-samsung-ex1-14bit-4-3.srw',
+    'rawpixls-samsung-nx210-12bit-3-2.srw',
+    'rawpixls-samsung-nx300-12bit-3-2.srw',
+    'rawpixls-samsung-nx1000-12bit-3-2.srw',
+    'rawpixls-samsung-nx500-12bit-12bit-normal-compression-3-2.srw',
+    'rawpixls-samsung-nx500-12bit-12bit-lossless-compression-3-2.srw',
+    'rawpixls-samsung-nx500-14bit-14bit-normal-compression-3-2.srw',
+    'rawpixls-samsung-nx500-14bit-14bit-lossless-compression-3-2.srw',
+    'rawpixls-samsung-nx-mini-12bit-3-2.srw',
+    'rawpixls-samsung-wb2000-14bit-4-3.srw',
+    'rawpixls-samsung-nx1100-12bit-3-2-4422.srw',
+    'rawpixls-samsung-nx1100-12bit-3-2-4423.srw',
+    'rawpixls-samsung-nx1100-12bit-3-2-4424.srw',
+    'rawpixls-samsung-nx2000-12bit-3-2.srw',
+    'rawpixls-samsung-nx20-12bit-3-2.srw',
+    'rawpixls-samsung-nx5-12bit-3-2.srw',
+    'rawpixls-samsung-nx10-12bit-3-2.srw',
+    'rawpixls-samsung-nx11-12bit-3-2.srw',
+    'rawpixls-samsung-nx3300-12bit-3-2.srw',
+    'rawpixls-samsung-ek-gn120-12bit-3-2.srw',
+    'rawpixls-epson-r-d1-12bit-3-2.erf',
+    'rawpixls-epson-r-d1s-12bit-3-2.erf',
+    'rawpixls-epson-r-d1x-12bit-3-2.erf',
+    'rawpixls-gopro-hero5-black-16bit-4-3-936.gpr',
+    'rawpixls-gopro-hero5-black-16bit-4-3-1634.gpr',
+    'rawpixls-gopro-hero6-black-16bit-4-3-2556.gpr',
+    'rawpixls-gopro-hero6-black-16bit-4-3-2557.gpr',
+    'rawpixls-gopro-hero6-black-16bit-4-3-2558.gpr',
+    'rawpixls-gopro-hero7-black-16bit-4-3-2786.gpr',
+    'rawpixls-gopro-hero7-black-16bit-4-3-2846.gpr',
+    'rawpixls-gopro-hero7-black-16bit-4-3-2908.gpr',
+    'rawpixls-gopro-hero8-black-16bit-4-3-3949.gpr',
+    'rawpixls-gopro-hero9-black-16bit-4-3.gpr',
+    'rawpixls-gopro-hero10-black-16bit-4-3-4883.gpr',
+    'rawpixls-gopro-hero10-black-16bit-4-3-4894.gpr',
+    'rawpixls-gopro-hero7-black-16bit-4-3-5766.gpr',
+    'rawpixls-gopro-hero8-black-16bit-4-3-5767.gpr',
+    'rawpixls-gopro-hero11-black-16bit-5-4.gpr',
+    'rawpixls-gopro-fusion-16bit-1-1-7370.gpr',
+    'rawpixls-gopro-fusion-16bit-1-1-7371.gpr',
+    'rawpixls-hasselblad-h3d-16bit-4-3.3fr',
+    'rawpixls-hasselblad-hasselblad-h4d-16bit-4-3.3fr',
+    'rawpixls-hasselblad-cfv-50c-16bit-4-3.3fr',
+    'rawpixls-hasselblad-x1d-16bit-4-3.3fr',
+    'rawpixls-hasselblad-x1d-ii-50c-16bit-4-3.3fr',
+    'rawpixls-hasselblad-cfv-100c-16bit-4-3.3fr',
+    'rawpixls-hasselblad-h4d-40-16bit-4-3.fff',
+    'rawpixls-hasselblad-cfv-50c-16bit-4-3-7199.fff',
+    'rawpixls-hasselblad-cfv-50c-16bit-4-3-7218.fff',
+    'rawpixls-leaf-aptus-22-16bit-4-3-3197.mos',
+    'rawpixls-kodak-easyshare-z981.kdc',
+    'rawpixls-kodak-easyshare-z990-nan.kdc',
+    'rawpixls-kodak-p880-nan.kdc',
+    'rawpixls-kodak-kodak-p712-zoom-digital-camera-nan.kdc',
+    'rawpixls-kodak-dcs520c-12bit-3-2.tif',
+    'rawpixls-kodak-dcs760c-12bit-3-2.dcr',
+    'rawpixls-kodak-dcs-pro-14n-12bit-3-2.dcr',
+    'rawpixls-kodak-dcs-pro-14nx-12bit-3-2.dcr',
+    'rawpixls-kodak-dcs-pro-slr-c-12bit-3-2.dcr',
+    'rawpixls-kodak-dcs-pro-slr-n-12bit-3-2.dcr',
+    'rawpixls-sony-dslr-a900-12bit-12bit-compressed-3-2.arw',
+    'rawpixls-mamiya-zd.mef',
+]
+
+# kept as <stem>.levels files instead of DNG files, for their linearization tables
+CURVE_SAMPLES = [
+    'rawpixls-kodak-eos-dcs-3-8bit-4-3.tif',
+    'rawpixls-nikon-1-j1-12bit-12bit-compressed-lossy-type-2-3-2-1017.nef',
+    'rawpixls-nikon-coolpix-a-14bit-14bit-compressed-lossy-type-2-3-2.nef',
+    'rawpixls-nikon-d3-12bit-12bit-compressed-lossy-type-2-3-2.nef',
+    'rawpixls-nikon-d3-14bit-14bit-compressed-lossy-type-2-3-2.nef',
+    'rawpixls-nikon-d300-12bit-12bit-compressed-lossy-type-2-3-2.nef',
+    'rawpixls-nikon-d300s-12bit-12bit-compressed-lossy-type-2-3-2.nef',
+    'rawpixls-nikon-d3100-12bit-12bit-compressed-lossy-type-2-3-2.nef',
+    'rawpixls-nikon-d3s-12bit-12bit-compressed-lossy-type-2-3-2.nef',
+    'rawpixls-nikon-d4-12bit-12bit-compressed-lossy-type-2-3-2.nef',
+    'rawpixls-nikon-d5-14bit-14bit-compressed-lossy-type-2-3-2.nef',
+    'rawpixls-nikon-d500-12bit-12bit-compressed-lossy-type-2-3-2.nef',
+    'rawpixls-nikon-d5000-12bit-12bit-compressed-lossy-type-2-3-2-1341.nef',
+    'rawpixls-nikon-d5600-12bit-12bit-compressed-lossy-type-2-3-2-2261.nef',
+    'rawpixls-nikon-d6-12bit-12bit-compressed-lossy-type-2-3-2.nef',
+    'rawpixls-nikon-d6-14bit-14bit-compressed-lossy-type-2-3-2.nef',
+    'rawpixls-nikon-d700-12bit-12bit-compressed-lossy-type-2-3-2.nef',
+    'rawpixls-nikon-d7000-12bit-12bit-compressed-lossy-type-2-3-2.nef',
+    'rawpixls-nikon-d7000-14bit-14bit-compressed-lossy-type-2-3-2-2578.nef',
+    'rawpixls-nikon-d70s-12bit-12bit-compressed-lossy-type-1-3-2.nef',
+    'rawpixls-nikon-d750-14bit-14bit-compressed-lossy-type-2-3-2.nef',
+    'rawpixls-nikon-d780-12bit-12bit-compressed-lossy-type-2-3-2.nef',
+    'rawpixls-nikon-d780-14bit-14bit-compressed-lossy-type-2-3-2.nef',
+    'rawpixls-nikon-d810-12bit-12bit-compressed-lossy-type-2-3-2.nef',
+    'rawpixls-nikon-d850-14bit-14bit-compressed-lossy-type-2-3-2.nef',
+    'rawpixls-nikon-d90-12bit-12bit-compressed-lossy-type-2-3-2.nef',
+    'rawpixls-nikon-df-14bit-14bit-compressed-lossy-type-2-3-2.nef',
+    'rawpixls-nikon-z-5-12bit-12bit-compressed-lossy-type-2-3-2.nef',
+    'rawpixls-nikon-z-5-14bit-14bit-compressed-lossy-type-2-3-2.nef',
+    'rawpixls-nikon-z-6-2-12bit-12bit-compressed-lossy-type-2-3-2.nef',
+    'rawpixls-nikon-z-6-2-14bit-14bit-compressed-lossy-type-2-3-2.nef',
+    'rawpixls-nikon-z-7-2-12bit-12bit-compressed-lossy-type-2-3-2.nef',
+    'rawpixls-nikon-z-7-2-14bit-14bit-compressed-lossy-type-2-3-2.nef',
+]
+
+A2 = 'rawpixls-minolta-dimage-a2-4-3.mrw'
+
+# copies of samples with bytes changed, each the source sample and its (offset of a block name, offset within its
+# body, new byte) change: the DiMAGE A2 file with the Bayer pattern byte of its picture description (offset 23 of
+# the PRD block's body) set to 4, the green-first pattern no CC0 file has; kept as summaries like VENDOR_SAMPLES
+PATCHED_SAMPLES = {
+    'patched-minolta-dimage-a2-gbrg.mrw': (A2, b'\0PRD', 23, 4),
+}
+
+ZD = 'rawpixls-mamiya-zd.mef'
+
+# copies of the Mamiya ZD sample with values of its maker note's white balance directory changed (an absolute
+# offset, no block name, and the bytes from there): the white balance mode (tag 0xA2, at 7402) and its fine-tuning
+# (tag 0xA3, at 7414, the entry bytes between kept), or the red multiplier of the camera's white balance (tag 0xB3,
+# at 100392); VendorOracleTest compares the as-shot neutral of each with the converter's
+_BETWEEN = bytes.fromhex('000000a3000300000001')
+for _name, _offset, _value in (
+        ('mode-5-fine-2', 7402, bytes.fromhex('0005') + _BETWEEN + bytes.fromhex('0002')),
+        ('mode-6-fine-minus-3', 7402, bytes.fromhex('0006') + _BETWEEN + bytes.fromhex('0007')),
+        ('mode-12', 7402, bytes.fromhex('000c')),
+        ('temperature-4000', 7402, bytes.fromhex('0028') + _BETWEEN + bytes.fromhex('0001')),
+        ('no-red-multiplier', 100392, bytes(4))):
+    PATCHED_SAMPLES[f'patched-mamiya-zd-{_name}.mef'] = (ZD, None, _offset, _value)
 
 # converted a second time into DNG 1.7 files with JPEG XL data, previews and fast load data
 JXL_SAMPLES = [
@@ -421,6 +572,97 @@ def write_summary(path, target):
         output.write('\n'.join(lines) + '\n')
 
 
+def number(value):
+    """Formats a level: an integer when it is one."""
+    return str(int(value)) if float(value).is_integer() else repr(float(value))
+
+
+def dng_directories(data):
+    """Returns the first directory's tags and those of the main raw image of a DNG file, values as numbers and text."""
+    order = '<' if data[:2] == b'II' else '>'
+
+    def directory(offset):
+        count = struct.unpack(order + 'H', data[offset:offset + 2])[0]
+        tags = {}
+        for index in range(count):
+            entry = offset + 2 + 12 * index
+            tag, kind, number = struct.unpack(order + 'HHI', data[entry:entry + 8])
+            size = TIFF_SIZES.get(kind, 1) * number
+            if size > len(data):
+                continue
+            at = entry + 8 if size <= 4 else struct.unpack(order + 'I', data[entry + 8:entry + 12])[0]
+            if kind in (5, 10):
+                parts = struct.unpack(order + ('I' if kind == 5 else 'i') * (2 * number), data[at:at + size])
+                tags[tag] = [parts[2 * k] / parts[2 * k + 1] if parts[2 * k + 1] else 0.0 for k in range(number)]
+            elif kind == 2:
+                tags[tag] = data[at:at + size].split(b'\0')[0].decode('latin-1')
+            elif kind in TIFF_FORMATS:
+                tags[tag] = list(struct.unpack(order + TIFF_FORMATS[kind] * number, data[at:at + size]))
+        following = struct.unpack(order + 'I', data[offset + 2 + 12 * count:offset + 6 + 12 * count])[0]
+        return tags, following
+
+    first = None
+    queue = [struct.unpack(order + 'I', data[4:8])[0]]
+    while queue:
+        offset = queue.pop(0)
+        if offset <= 0 or offset >= len(data):
+            continue
+        tags, following = directory(offset)
+        if first is None:
+            first = tags
+        queue.extend(tags.get(330, []))
+        if following:
+            queue.append(following)
+        if tags.get(254, [1])[0] == 0 and tags.get(262, [0])[0] in (32803, 34892):
+            return first, tags
+    sys.exit('no raw image in the DNG file')
+
+
+def write_levels(path, target):
+    """Writes the <stem>.levels file of a DNG file (see the module documentation)."""
+    with open(path, 'rb') as source:
+        data = source.read()
+    first, raw = dng_directories(data)
+    width, height = raw[256][0], raw[257][0]
+    active = raw.get(50829, [0, 0, height, width])
+    lines = [f'# the levels of {os.path.basename(path)}, written by tools/testdata/raw-oracle.py',
+             f'model {first.get(50708, "")}', f'size {width} {height}',
+             'active ' + ' '.join(str(int(v)) for v in active)]
+    origin = raw.get(50719, [0, 0])
+    size = raw.get(50720, [active[3] - active[1], active[2] - active[0]])
+    lines.append('crop ' + ' '.join(number(v) for v in (*origin, *size)))
+    if 33421 in raw:
+        dimensions = raw[33421]
+        lines.append('cfa ' + ' '.join(str(v) for v in [dimensions[1], dimensions[0], *raw[33422]]))
+    repeat = raw.get(50713, [1, 1])
+    lines.append('black ' + ' '.join(number(v) for v in [*repeat, *raw.get(50714, [0])]))
+    lines.append('white ' + ' '.join(number(v) for v in raw.get(50717, [(1 << raw.get(258, [16])[0]) - 1])))
+    if 50728 in first:
+        lines.append('neutral ' + ' '.join(repr(float(v)) for v in first[50728]))
+    if 50712 in raw:
+        lines.append('linearization ' + ' '.join(str(v) for v in [len(raw[50712]), *raw[50712]]))
+    with open(target, 'w', newline='\n') as output:
+        output.write('\n'.join(lines) + '\n')
+
+
+def patched(data, block, offset, value):
+    """Returns a copy of a file with bytes changed: given a block name, one byte of an MRW header block's body;
+    without one, the bytes of value at an absolute offset."""
+    data = bytearray(data)
+    if block is None:
+        data[offset:offset + len(value)] = value
+        return bytes(data)
+    length = struct.unpack('>I', data[4:8])[0]
+    position = 8
+    while position + 8 <= 8 + length:
+        size = struct.unpack('>I', data[position + 4:position + 8])[0]
+        if bytes(data[position:position + 4]) == block:
+            data[position + 8 + offset] = value
+            return bytes(data)
+        position += 8 + size
+    sys.exit(f'no {block} block')
+
+
 def main():
     if os.name != 'nt':
         sys.exit('Adobe DNG Converter for Windows is needed; run this script on Windows')
@@ -430,22 +672,31 @@ def main():
     named = [argument for argument in sys.argv[1:] if not argument.startswith('--')]
     if coverage:
         samples = sorted(name for name in vectors if name.startswith('rawpixls-') and name.endswith(('.orf', '.rw2', '.rwl')))
+        samples += sorted(name for name in vectors if name.startswith('rawpixls-sony-') and name.endswith('.arw'))
     else:
-        samples = SAMPLES
+        samples = SAMPLES + VENDOR_SAMPLES + CURVE_SAMPLES
     if named:
-        unknown = [name for name in named if name not in samples]
+        unknown = [name for name in named if name not in samples and name not in PATCHED_SAMPLES]
         if unknown:
             sys.exit(f'not an oracle sample: {", ".join(unknown)}')
-        samples = named
+        samples = [name for name in named if name not in PATCHED_SAMPLES]
+    unavailable = []
     for name in samples:
         row = vectors[name]
         path = os.path.join(directory, name)
         if not testdata.valid(path, row['sha256']):
             print(f'fetching {name}')
-            testdata.download(row['url'], path, row['sha256'])
+            try:
+                testdata.download(row['url'], path, row['sha256'])
+            except (OSError, ValueError) as error:
+                # a host that stops serving a sample, or serves other bytes, leaves only its tests without oracle
+                # files, which skip
+                print(f'skipping {name}: {error}', file=sys.stderr)
+                unavailable.append(name)
+    samples = [name for name in samples if name not in unavailable]
     if coverage:
         samples = [name for name in samples
-                   if name.endswith('.orf') or rw2_version(os.path.join(directory, name)) == 4]
+                   if name.endswith(('.orf', '.arw')) or rw2_version(os.path.join(directory, name)) == 4]
     output = os.path.join(directory, 'raw-oracle-coverage' if coverage else 'raw-oracle')
     os.makedirs(output, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='raw-oracle-') as work:
@@ -471,6 +722,13 @@ def main():
             if not coverage and name in SUMMARY_SAMPLES:
                 write_summary(target, os.path.splitext(target)[0] + '.photosites')
                 os.remove(target)
+            if not coverage and name in VENDOR_SAMPLES:
+                write_summary(target, os.path.splitext(target)[0] + '.photosites')
+                write_levels(target, os.path.splitext(target)[0] + '.levels')
+                os.remove(target)
+            if (not coverage and name in CURVE_SAMPLES) or (coverage and name.endswith('.arw')):
+                write_levels(target, os.path.splitext(target)[0] + '.levels')
+                os.remove(target)
             if not coverage and name in LINEAR_SAMPLES:
                 staging = os.path.join(work, 'linear')
                 os.makedirs(staging, exist_ok=True)
@@ -492,6 +750,30 @@ def main():
                     sys.exit(f'Adobe DNG Converter wrote no {staged}')
                 os.replace(staged, os.path.join(output, os.path.splitext(name)[0] + '-jxl.dng'))
         renamed = 0
+        for name, (source, block, offset, value) in PATCHED_SAMPLES.items():
+            if coverage or (named and name not in named):
+                continue
+            row = vectors[source]
+            path = os.path.join(directory, source)
+            if not testdata.valid(path, row['sha256']):
+                print(f'fetching {source}')
+                testdata.download(row['url'], path, row['sha256'])
+            print(f'converting {name}')
+            with open(path, 'rb') as stream:
+                data = stream.read()
+            copy = os.path.join(work, name)
+            with open(copy, 'wb') as stream:
+                stream.write(patched(data, block, offset, value))
+            subprocess.run([converter, '-u', '-d', windows(output), windows(copy)], check=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            os.remove(copy)
+            target = os.path.join(output, os.path.splitext(name)[0] + '.dng')
+            if not os.path.isfile(target):
+                sys.exit(f'Adobe DNG Converter wrote no {target}')
+            write_summary(target, os.path.splitext(target)[0] + '.photosites')
+            write_levels(target, os.path.splitext(target)[0] + '.levels')
+            os.remove(target)
+            renamed += 1
         for copies, accepted in ((RENAMED_SAMPLES, True), (REFUSED_SAMPLES, False)):
             for name, (source, model, sibling) in copies.items():
                 if coverage or source not in samples:

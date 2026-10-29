@@ -13,8 +13,9 @@ import static com.github.auties00.smalt.aot.internal.WorkloadFactory.file;
 
 /**
  * Creates the workloads of {@link TrainingFamily#RAW}, the camera raw decoder of
- * {@code smalt-raw}, on synthetic DNG (Bayer, linear raw, and a staggered mosaic with profile
- * tables), Minolta MRW, Canon CRW, Canon CR3, Sigma X3F and Fujifilm RAF files.
+ * {@code smalt-raw}, on synthetic DNG (Bayer, linear raw, a staggered mosaic with profile
+ * tables, and VC-5 sensor data as GoPro's GPR files store it), Minolta MRW, Canon CRW, Canon CR3,
+ * Sigma X3F and Fujifilm RAF files.
  */
 final class RawWorkloads {
     /**
@@ -34,6 +35,7 @@ final class RawWorkloads {
                 file("raw-decode-bayer", RawWorkloads::bayer),
                 file("raw-decode-linear", RawWorkloads::linear),
                 file("raw-decode-staggered", RawWorkloads::staggered),
+                file("raw-decode-gpr", RawWorkloads::gpr),
                 file("raw-decode-mrw", RawWorkloads::mrw),
                 file("raw-decode-crw", RawWorkloads::crw),
                 file("raw-decode-cr3", RawWorkloads::cr3),
@@ -92,6 +94,17 @@ final class RawWorkloads {
                 Blackhole.consume(RawDecoder.decode(MediaSource.of(file), option).picture().width());
             }
         });
+    }
+
+    /**
+     * Returns a workload that describes, extracts the sensor values of and decodes with Menon
+     * demosaicing a 1024x768 GPR file, a DNG whose sensor data is a VC-5 bitstream.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload gpr() {
+        var picture = SyntheticImages.rgba(SyntheticVideo.natural(1024, 768, 1).getFirst(), false);
+        return vendor("raw-decode-gpr", List.of(SyntheticRaw.gpr(picture)));
     }
 
     /**

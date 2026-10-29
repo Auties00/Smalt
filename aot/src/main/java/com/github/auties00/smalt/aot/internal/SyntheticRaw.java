@@ -13,8 +13,8 @@ import java.util.zip.Deflater;
 /**
  * Writes the DNG files the camera raw training workloads decode, deterministically: a single
  * strip of linear 16-bit sensor data derived from a synthetic picture, either a Bayer mosaic,
- * three-channel linear raw data, or a staggered mosaic with a gain table map and an RGB table,
- * with the color tags a renderer needs.
+ * three-channel linear raw data, a staggered mosaic with a gain table map and an RGB table, or a
+ * Bayer mosaic coded as VC-5 as GoPro's GPR files store it, with the color tags a renderer needs.
  */
 final class SyntheticRaw {
     /**
@@ -26,6 +26,16 @@ final class SyntheticRaw {
      * The white level of the sensor data.
      */
     private static final int WHITE = 60_000;
+
+    /**
+     * The DNG compression code of VC-5 data.
+     */
+    private static final int VC5_COMPRESSION = 9;
+
+    /**
+     * The white level of the VC-5 sensor data, which decodes to 14-bit photosites.
+     */
+    private static final int VC5_WHITE = 16383;
 
     /**
      * Prevents instantiation.
@@ -97,6 +107,18 @@ final class SyntheticRaw {
     }
 
     /**
+     * Writes a DNG whose sensor data is the RGGB Bayer mosaic of a picture coded as a VC-5
+     * bitstream (DNG compression 9), as GoPro's GPR files store it.
+     *
+     * @param picture the picture, whose width and height are even
+     * @return the DNG file
+     */
+    static byte[] gpr(RgbaPicture picture) {
+        var strip = SyntheticVc5.bitstream(picture, 1);
+        return write(picture.width(), picture.height(), 1, strip, VC5_COMPRESSION, 0, VC5_WHITE, false);
+    }
+
+    /**
      * Maps an 8-bit sRGB-like value to a linear sensor value between the black and white levels.
      *
      * @param value the 8-bit gamma-encoded value
@@ -108,7 +130,8 @@ final class SyntheticRaw {
     }
 
     /**
-     * Writes a little-endian DNG with one strip.
+     * Writes a little-endian DNG with one strip of 16-bit samples, at the black and white levels of
+     * the sensor data.
      *
      * @param width the width in pixels
      * @param height the height in pixels
@@ -125,6 +148,24 @@ final class SyntheticRaw {
             raw.putShort(sample);
         }
         var strip = deflate ? deflate(raw.array()) : raw.array();
+        return write(width, height, channels, strip, deflate ? 8 : 1, BLACK, WHITE, staggered);
+    }
+
+    /**
+     * Writes a little-endian DNG with one strip of coded 16-bit samples.
+     *
+     * @param width the width in pixels
+     * @param height the height in pixels
+     * @param channels {@code 1} for a Bayer mosaic, {@code 3} for linear raw data
+     * @param strip the strip's bytes
+     * @param compression the strip's TIFF compression
+     * @param black the black level
+     * @param white the white level
+     * @param staggered whether the mosaic is the staggered two-by-four pattern, with the profile tables
+     * @return the file
+     */
+    private static byte[] write(int width, int height, int channels, byte[] strip, int compression, int black,
+                                int white, boolean staggered) {
         var tags = new TreeMap<Integer, byte[]>();
         var types = new TreeMap<Integer, Integer>();
         var counts = new TreeMap<Integer, Integer>();
@@ -132,7 +173,7 @@ final class SyntheticRaw {
         longs(tags, types, counts, 256, width);
         longs(tags, types, counts, 257, height);
         shorts(tags, types, counts, 258, channels == 1 ? new int[]{16} : new int[]{16, 16, 16});
-        shorts(tags, types, counts, 259, deflate ? 8 : 1);
+        shorts(tags, types, counts, 259, compression);
         shorts(tags, types, counts, 262, channels == 1 ? 32803 : 34892);
         ascii(tags, types, counts, 271, "Smalt");
         ascii(tags, types, counts, 272, "Synthetic");
@@ -153,8 +194,8 @@ final class SyntheticRaw {
             put(tags, types, counts, 33422, 1, 4, new byte[]{0, 1, 1, 2});
         }
         put(tags, types, counts, 50706, 1, 4, new byte[]{1, 4, 0, 0});
-        longs(tags, types, counts, 50714, BLACK);
-        longs(tags, types, counts, 50717, WHITE);
+        longs(tags, types, counts, 50714, black);
+        longs(tags, types, counts, 50717, white);
         rationals(tags, types, counts, 50721, true, 0.8, -0.2, -0.1, -0.4, 1.3, 0.1, -0.1, 0.2, 0.7);
         rationals(tags, types, counts, 50728, false, 0.5, 1, 0.7);
         shorts(tags, types, counts, 50778, 21);
