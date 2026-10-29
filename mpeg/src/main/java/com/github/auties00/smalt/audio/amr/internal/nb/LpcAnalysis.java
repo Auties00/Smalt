@@ -129,37 +129,27 @@ final class LpcAnalysis {
      * @return the normalization shift
      */
     private short autocorr(short[] x, int xOffset, short[] wind) {
-        var sum = 0;
-        var overflowed = false;
-        var i = L_WINDOW;
-        var n = 0;
-        for (; i != 0; i--, n++) {
-            var temp = (short) (fxpMac(x[xOffset + n], wind[n], 0x04000) >> 15);
-            y[n] = temp;
-            sum += (temp * temp) << 1;
-            if (sum < 0) {
-                overflowed = true;
+        for (var n = 0; n < L_WINDOW; n++) {
+            y[n] = (short) (fxpMac(x[xOffset + n], wind[n], 0x04000) >> 15);
+        }
+        // the energy is the saturating sum of the doubled squares; while it saturates, the window is scaled by 1/4
+        short overflowShift = 0;
+        long energy;
+        while (true) {
+            energy = 0L;
+            for (var n = 0; n < L_WINDOW; n++) {
+                energy += y[n] * y[n];
+            }
+            if (energy << 1 < Integer.MAX_VALUE) {
                 break;
             }
-        }
-        if (overflowed) {
-            for (n = L_WINDOW - i; i != 0; i--, n++) {
-                y[n] = (short) (fxpMac(x[xOffset + n], wind[n], 0x04000) >> 15);
-            }
-        }
-        short overflowShift = 0;
-        while (overflowed) {
             overflowShift += 4;
-            sum = 0;
-            for (n = 0; n < L_WINDOW; n++) {
-                var temp = (short) (y[n] >> 2);
-                y[n] = temp;
-                sum += (temp * temp) << 1;
-            }
-            if (sum > 0) {
-                overflowed = false;
+            for (var n = 0; n < L_WINDOW; n++) {
+                y[n] = (short) (y[n] >> 2);
             }
         }
+        var sum = (int) (energy << 1);
+        int i;
         sum += 1;
         var norm = normL(sum);
         sum <<= norm;

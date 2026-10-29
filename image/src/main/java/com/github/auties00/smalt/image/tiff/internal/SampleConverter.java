@@ -7,17 +7,22 @@ package com.github.auties00.smalt.image.tiff.internal;
  *
  * <p>Work samples are 8-bit when the stored samples are integers of at most 8 bits, and 16-bit
  * otherwise. Unpacking scales an {@code n}-bit sample {@code v} to {@code round(v * M / (2^n - 1))}
- * where {@code M} is 255 or 65535 (exact for 1, 2, 4, 8 and 16 bits), except palette indexes and
- * YCbCr codes, which are kept as stored. Signed integers are offset by {@code 2^(n-1)}, so their
- * range maps onto the unsigned one. Floating-point samples (16-, 32- and 64-bit IEEE) map the
- * range from {@code SMinSampleValue} to {@code SMaxSampleValue} (0 to 1 when the tags are absent)
- * linearly onto 0..65535, clamping values outside it and mapping NaN to 0.
+ * where {@code M} is 255 or 65535 (exact for 1, 2, 4, 8 and 16 bits), except palette indexes,
+ * YCbCr codes and L*a*b* codes, which are kept as stored together with the extra samples of their
+ * pixels; those extra samples are scaled the same way when they are mapped to pixels. Signed
+ * integers are offset by {@code 2^(n-1)}, so their range maps onto the unsigned one.
+ * Floating-point samples (16-, 32- and 64-bit IEEE, and the 24-bit format of
+ * {@link #float24ToFloat(int)}) map the range from {@code SMinSampleValue} to
+ * {@code SMaxSampleValue} (0 to 1 when the tags are absent) linearly onto 0..65535, clamping
+ * values outside it and mapping NaN to 0.
  *
  * <p>Mapping follows libtiff's {@code TIFFReadRGBAImage}: white-is-zero gray is inverted;
- * a palette index selects a {@code ColorMap} entry; CMYK is converted naively with
- * {@code R = (M - K) * (M - C) / M} (truncating, likewise for G and B) and any embedded profile is
- * left to color management; YCbCr uses {@link YCbCrTables}; L*a*b* uses {@link LabTables}, from
- * 8- or 16-bit codes kept as stored, always producing 8-bit values. The raw CMYK kind copies the
+ * a palette index selects a {@code ColorMap} entry; CMYK is converted naively, from the inks
+ * divided by an associated alpha first, as {@code R = round((M - C) * (M - K) / M)} for work samples of
+ * largest value {@code M} (likewise for G and B), which is the conversion of {@code ImageOps.toRgba}, and
+ * any embedded profile is left to color management; YCbCr uses {@link YCbCrTables}, from codes kept as
+ * stored, producing 8-bit values for 8-bit samples and 16-bit values otherwise; L*a*b* uses {@link LabTables},
+ * from 8- or 16-bit codes kept as stored, always producing 8-bit values. The raw CMYK kind copies the
  * ink samples into the red, green, blue and alpha slots unchanged, for conversion through a CMYK
  * color profile. Associated (premultiplied) alpha is divided out, rounding to nearest, so the
  * pixels always carry straight alpha.
@@ -134,6 +139,12 @@ public final class SampleConverter {
     private final LabTables lab;
 
     /**
+     * The largest stored value of an alpha sample that unpacking keeps as stored, or 0 when
+     * unpacking scales alpha samples.
+     */
+    private final int storedAlphaMax;
+
+    /**
      * Configures a converter.
      *
      * @param kind       the photometric kind
@@ -167,6 +178,8 @@ public final class SampleConverter {
         this.floatScale = floatMax > floatMin ? 65535.0 / (floatMax - floatMin) : 65535.0;
         this.ycbcr = ycbcr;
         this.lab = lab;
+        var unscaled = kind == PALETTE || kind == YCBCR || kind == LAB;
+        this.storedAlphaMax = unscaled && !floating && bits != 8 && bits < 16 ? (1 << bits) - 1 : 0;
         if (colorMap != null) {
             var entries = colorMap.length / 3;
             var eightBit = true;
@@ -291,6 +304,7 @@ public final class SampleConverter {
             for (var i = 0; i < count; i++) {
                 double value = switch (bits) {
                     case 16 -> Float.float16ToFloat((short) read(raw, rawOffset + i * 2, 2, lsb));
+                    case 24 -> float24ToFloat((int) read(raw, rawOffset + i * 3, 3, lsb));
                     case 32 -> Float.intBitsToFloat((int) read(raw, rawOffset + i * 4, 4, lsb));
                     default -> Double.longBitsToDouble(read(raw, rawOffset + i * 8, 8, lsb));
                 };
@@ -299,7 +313,7 @@ public final class SampleConverter {
             }
             return;
         }
-        var scale = kind != PALETTE && kind != LAB;
+        var scale = kind != PALETTE && kind != YCBCR && kind != LAB;
         switch (bits) {
             case 16 -> {
                 var flip = signed ? 0x8000 : 0;
@@ -333,6 +347,66 @@ public final class SampleConverter {
                 }
             }
         }
+    }
+
+    /**
+     * Unpacks stored floating-point samples into floats as stored, neither normalized nor clamped;
+     * 64-bit samples are narrowed to the nearest float.
+     *
+     * @param raw        the stored row
+     * @param rawOffset  the index of the row's first byte
+     * @param count      the number of samples
+     * @param work       the destination
+     * @param workOffset the index of the first destination sample
+     * @param workStride the distance between destination samples
+     * @param bigEndian  whether the samples are big-endian whatever the file's byte order (after
+     *                   the floating-point predictor)
+     */
+    public void unpackFloat(byte[] raw, int rawOffset, int count, float[] work, int workOffset, int workStride,
+                            boolean bigEndian) {
+        var lsb = little && !bigEndian;
+        for (var i = 0; i < count; i++) {
+            work[workOffset + i * workStride] = switch (bits) {
+                case 16 -> Float.float16ToFloat((short) read(raw, rawOffset + i * 2, 2, lsb));
+                case 24 -> float24ToFloat((int) read(raw, rawOffset + i * 3, 3, lsb));
+                case 32 -> Float.intBitsToFloat((int) read(raw, rawOffset + i * 4, 4, lsb));
+                default -> (float) Double.longBitsToDouble(read(raw, rawOffset + i * 8, 8, lsb));
+            };
+        }
+    }
+
+    /**
+     * Converts a 24-bit floating-point value to a float.
+     *
+     * <p>The format has 1 sign bit, 7 exponent bits biased by 63 and 16 fraction bits, with the
+     * IEEE 754 rules: exponent 0 holds zero and subnormal values, exponent 127 infinity and NaN.
+     * Every value is exactly representable as a float.
+     *
+     * @param bits the 24 bits, sign first, in the low bits of the integer
+     * @return the value
+     */
+    public static float float24ToFloat(int bits) {
+        var sign = (bits >>> 23 & 1) << 31;
+        var exponent = bits >>> 16 & 0x7F;
+        var fraction = bits & 0xFFFF;
+        if (exponent == 0x7F) {
+            return Float.intBitsToFloat(sign | 0x7F800000 | fraction << 7);
+        }
+        if (exponent == 0) {
+            // subnormal: fraction * 2^(1 - 63 - 16)
+            var magnitude = Math.scalb((float) fraction, -78);
+            return sign != 0 ? -magnitude : magnitude;
+        }
+        return Float.intBitsToFloat(sign | (exponent + 64) << 23 | fraction << 7);
+    }
+
+    /**
+     * Returns whether the stored samples are floating point.
+     *
+     * @return {@code true} for {@code SampleFormat} 3
+     */
+    public boolean floating() {
+        return floating;
     }
 
     /**
@@ -393,7 +467,7 @@ public final class SampleConverter {
                     out[o] = (byte) (rgb >>> 16);
                     out[o + 1] = (byte) (rgb >>> 8);
                     out[o + 2] = (byte) rgb;
-                    out[o + 3] = a >= 0 ? work[in + a] : (byte) 0xFF;
+                    out[o + 3] = a >= 0 ? alpha8(work[in + a]) : (byte) 0xFF;
                 }
             }
             case LAB -> {
@@ -405,7 +479,7 @@ public final class SampleConverter {
                     out[o] = (byte) (rgb >>> 16);
                     out[o + 1] = (byte) (rgb >>> 8);
                     out[o + 2] = (byte) rgb;
-                    out[o + 3] = a >= 0 ? work[in + a] : (byte) 0xFF;
+                    out[o + 3] = a >= 0 ? alpha8(work[in + a]) : (byte) 0xFF;
                 }
             }
             case RAW_CMYK -> {
@@ -419,26 +493,46 @@ public final class SampleConverter {
                 }
             }
             case CMYK -> {
+                var divide = associated && a >= 0;
                 for (var i = 0; i < pixels; i++) {
                     var in = workOffset + i * spp;
                     var o = outOffset + i * 4;
-                    var k = 255 - (work[in + 3] & 0xFF);
-                    out[o] = (byte) (k * (255 - (work[in] & 0xFF)) / 255);
-                    out[o + 1] = (byte) (k * (255 - (work[in + 1] & 0xFF)) / 255);
-                    out[o + 2] = (byte) (k * (255 - (work[in + 2] & 0xFF)) / 255);
-                    out[o + 3] = a >= 0 ? work[in + a] : (byte) 0xFF;
+                    var alphaValue = a >= 0 ? work[in + a] & 0xFF : 255;
+                    var c = work[in] & 0xFF;
+                    var m = work[in + 1] & 0xFF;
+                    var y = work[in + 2] & 0xFF;
+                    var k = work[in + 3] & 0xFF;
+                    if (divide) {
+                        c = unpremultiply(c, alphaValue, 255);
+                        m = unpremultiply(m, alphaValue, 255);
+                        y = unpremultiply(y, alphaValue, 255);
+                        k = unpremultiply(k, alphaValue, 255);
+                    }
+                    out[o] = (byte) cmyk(c, k, 255);
+                    out[o + 1] = (byte) cmyk(m, k, 255);
+                    out[o + 2] = (byte) cmyk(y, k, 255);
+                    out[o + 3] = (byte) alphaValue;
                 }
+                return;
             }
             default -> {
                 var tables = ycbcr;
+                var eightBit = tables.eightBit();
                 for (var i = 0; i < pixels; i++) {
                     var in = workOffset + i * spp;
                     var o = outOffset + i * 4;
-                    var rgb = tables.toRgb(work[in] & 0xFF, work[in + 1] & 0xFF, work[in + 2] & 0xFF);
-                    out[o] = (byte) (rgb >>> 16);
-                    out[o + 1] = (byte) (rgb >>> 8);
-                    out[o + 2] = (byte) rgb;
-                    out[o + 3] = a >= 0 ? work[in + a] : (byte) 0xFF;
+                    if (eightBit) {
+                        var rgb = tables.toRgb(work[in] & 0xFF, work[in + 1] & 0xFF, work[in + 2] & 0xFF);
+                        out[o] = (byte) (rgb >>> 16);
+                        out[o + 1] = (byte) (rgb >>> 8);
+                        out[o + 2] = (byte) rgb;
+                    } else {
+                        var rgb = tables.toRgb16(work[in] & 0xFF, work[in + 1] & 0xFF, work[in + 2] & 0xFF);
+                        out[o] = (byte) reduce((int) (rgb >>> 32) & 0xFFFF);
+                        out[o + 1] = (byte) reduce((int) (rgb >>> 16) & 0xFFFF);
+                        out[o + 2] = (byte) reduce((int) rgb & 0xFFFF);
+                    }
+                    out[o + 3] = a >= 0 ? alpha8(work[in + a]) : (byte) 0xFF;
                 }
             }
         }
@@ -460,6 +554,10 @@ public final class SampleConverter {
     public void toRgba16(short[] work, int workOffset, int pixels, byte[] out8, short[] out16, int outOffset) {
         var spp = samples;
         var a = alpha;
+        if (kind == CMYK) {
+            toRgba16Cmyk(work, workOffset, pixels, out8, out16, outOffset);
+            return;
+        }
         for (var i = 0; i < pixels; i++) {
             var in = workOffset + i * spp;
             int r;
@@ -492,19 +590,19 @@ public final class SampleConverter {
                     g = (rgb >>> 8 & 0xFF) * 257;
                     b = (rgb & 0xFF) * 257;
                 }
-                case RAW_CMYK -> {
+                case YCBCR -> {
+                    var rgb = ycbcr.toRgb16(work[in] & 0xFFFF, work[in + 1] & 0xFFFF, work[in + 2] & 0xFFFF);
+                    r = (int) (rgb >>> 32) & 0xFFFF;
+                    g = (int) (rgb >>> 16) & 0xFFFF;
+                    b = (int) rgb & 0xFFFF;
+                }
+                default -> {
                     r = work[in] & 0xFFFF;
                     g = work[in + 1] & 0xFFFF;
                     b = work[in + 2] & 0xFFFF;
                 }
-                default -> {
-                    var k = 65535 - (work[in + 3] & 0xFFFF);
-                    r = (int) ((long) k * (65535 - (work[in] & 0xFFFF)) / 65535);
-                    g = (int) ((long) k * (65535 - (work[in + 1] & 0xFFFF)) / 65535);
-                    b = (int) ((long) k * (65535 - (work[in + 2] & 0xFFFF)) / 65535);
-                }
             }
-            var alphaValue = kind == RAW_CMYK ? work[in + 3] & 0xFFFF : a >= 0 ? work[in + a] & 0xFFFF : 65535;
+            var alphaValue = kind == RAW_CMYK ? work[in + 3] & 0xFFFF : a >= 0 ? alpha16(work[in + a]) : 65535;
             if (associated && a >= 0) {
                 r = unpremultiply(r, alphaValue, 65535);
                 g = unpremultiply(g, alphaValue, 65535);
@@ -523,6 +621,64 @@ public final class SampleConverter {
                 out16[o + 3] = (short) alphaValue;
             }
         }
+    }
+
+    /**
+     * Maps 16-bit CMYK work samples to RGBA pixels, 16-bit or 8-bit.
+     *
+     * @param work       the work samples, {@code samples} per pixel
+     * @param workOffset the index of the first pixel's first sample
+     * @param pixels     the number of pixels
+     * @param out8       the 8-bit RGBA destination, or {@code null} to write {@code out16}
+     * @param out16      the 16-bit RGBA destination, used when {@code out8} is {@code null}
+     * @param outOffset  the index of the first pixel's red sample
+     */
+    private void toRgba16Cmyk(short[] work, int workOffset, int pixels, byte[] out8, short[] out16, int outOffset) {
+        var spp = samples;
+        var a = alpha;
+        var divide = associated && a >= 0;
+        for (var i = 0; i < pixels; i++) {
+            var in = workOffset + i * spp;
+            var alphaValue = a >= 0 ? work[in + a] & 0xFFFF : 65535;
+            var c = work[in] & 0xFFFF;
+            var m = work[in + 1] & 0xFFFF;
+            var y = work[in + 2] & 0xFFFF;
+            var k = work[in + 3] & 0xFFFF;
+            if (divide) {
+                c = unpremultiply(c, alphaValue, 65535);
+                m = unpremultiply(m, alphaValue, 65535);
+                y = unpremultiply(y, alphaValue, 65535);
+                k = unpremultiply(k, alphaValue, 65535);
+            }
+            var o = outOffset + i * 4;
+            var r = cmyk(c, k, 65535);
+            var g = cmyk(m, k, 65535);
+            var b = cmyk(y, k, 65535);
+            if (out8 != null) {
+                out8[o] = (byte) reduce(r);
+                out8[o + 1] = (byte) reduce(g);
+                out8[o + 2] = (byte) reduce(b);
+                out8[o + 3] = (byte) reduce(alphaValue);
+            } else {
+                out16[o] = (short) r;
+                out16[o + 1] = (short) g;
+                out16[o + 2] = (short) b;
+                out16[o + 3] = (short) alphaValue;
+            }
+        }
+    }
+
+    /**
+     * Converts one CMYK ink pair to an RGB component without color management.
+     *
+     * @param ink the cyan, magenta or yellow amount
+     * @param black the black amount
+     * @param max the largest work sample, 255 or 65535
+     * @return {@code round((max - ink) * (max - black) / max)}; {@code max} is odd, so no value is
+     *         halfway
+     */
+    private static int cmyk(int ink, int black, int max) {
+        return (int) (((long) (max - ink) * (max - black) + max / 2) / max);
     }
 
     /**
@@ -558,6 +714,30 @@ public final class SampleConverter {
             return 0;
         }
         return (int) Math.min(max, ((long) value * max + (alphaValue >> 1)) / alphaValue);
+    }
+
+    /**
+     * Scales an 8-bit work alpha sample that unpacking kept as stored.
+     *
+     * @param value the work sample
+     * @return the alpha scaled to 0..255, {@code round(v * 255 / (2^n - 1))} for {@code n}-bit
+     *         samples kept as stored, and {@code value} itself otherwise
+     */
+    private byte alpha8(byte value) {
+        var max = storedAlphaMax;
+        return max == 0 ? value : (byte) (((value & 0xFF) * 255 + (max >> 1)) / max);
+    }
+
+    /**
+     * Scales a 16-bit work alpha sample that unpacking kept as stored.
+     *
+     * @param value the work sample
+     * @return the alpha scaled to 0..65535, {@code round(v * 65535 / (2^n - 1))} for {@code n}-bit
+     *         samples kept as stored, and {@code value} itself otherwise
+     */
+    private int alpha16(short value) {
+        var max = storedAlphaMax;
+        return max == 0 ? value & 0xFFFF : ((value & 0xFFFF) * 65535 + (max >> 1)) / max;
     }
 
     /**
