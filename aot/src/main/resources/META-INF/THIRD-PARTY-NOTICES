@@ -5,4 +5,71 @@ Smalt AOT (Maven artifact com.github.auties00:smalt-aot, JPMS module
 com.github.auties00.smalt.aot) is part of Smalt, a pure-Java media library
 (https://github.com/Auties00/Smalt), and is licensed under the MIT License.
 
-This module contains no code derived from third-party projects.
+Smalt is written in Java, but parts of it are ports of, or are
+otherwise derived from, the open source projects listed below: C code
+translated to Java, tables copied from the C sources, or algorithms and code
+structure followed closely. Each section names the project, where its code
+and license text were obtained, the Smalt packages that derive from it, the
+upstream copyright notices, and the full upstream license text, reproduced
+as published upstream.
+
+The derived Java code is NOT the original software. It has been translated
+from C to Java and modified: restructured, adapted to Smalt's APIs,
+extended, and in places vectorized with the Java Vector API. The Java
+sources that derive from a project name the upstream files or functions they
+follow in their documentation.
+
+All package names below are relative to com.github.auties00.smalt.
+
+Contents
+  58. gpr (GoPro VC-5 decoder)
+
+
+===============================================================================
+58. gpr (GoPro VC-5 decoder)
+===============================================================================
+
+Project:      gpr, GoPro's General Purpose Raw SDK, version 1.0.0, with the
+              VC-5 reference decoder
+Source:       https://github.com/gopro/gpr (source/lib/vc5_decoder: decoder.c,
+              inverse.c, wavelet.c, dequantize.c, vlc.c, raw.c;
+              source/lib/vc5_common: bitstream.c, companding.c, logcurve.c,
+              codec.c, table17.inc)
+License text: https://raw.githubusercontent.com/gopro/gpr/master/LICENSE-MIT
+License:      MIT License (the project is licensed under the Apache License 2.0
+              or the MIT License, at the user's option; Smalt uses the MIT
+              License)
+
+Derived Smalt packages:
+  image.raw.internal (Vc5Decoder)
+  aot.internal (SyntheticVc5)
+
+Derivation: C code translated to Java and the codebook transcribed (the
+codes the training files use, in aot.internal).
+
+Copyright:
+  Copyright 2018 GoPro, Inc.
+
+-------------------------------------------------------------------------------
+gpr license (LICENSE-MIT)
+-------------------------------------------------------------------------------
+
+Copyright 2018 GoPro, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a 
+copy of this software and associated documentation files (the "Software"), 
+to deal in the Software without restriction, including without limitation 
+the rights to use, copy, modify, merge, publish, distribute, sublicense, 
+and/or sell copies of the Software, and to permit persons to whom the 
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included 
+in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS 
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL 
+THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING 
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER 
+DEALINGS IN THE SOFTWARE.

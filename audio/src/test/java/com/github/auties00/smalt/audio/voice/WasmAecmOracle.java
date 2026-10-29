@@ -88,13 +88,13 @@ public final class WasmAecmOracle implements AutoCloseable {
         this.noisyPointer = (int) malloc.apply(FRAME * 2)[0];
         this.cleanPointer = (int) malloc.apply(FRAME * 2)[0];
         this.outPointer = (int) malloc.apply(FRAME * 2)[0];
-        this.handle = (int) instance.export("cobalt_webrtc_aecm_create").apply(echoMode, comfortNoise ? 1 : 0)[0];
+        this.handle = (int) instance.export("smalt_aecm_create").apply(echoMode, comfortNoise ? 1 : 0)[0];
         if (handle == 0) {
-            throw new IllegalStateException("cobalt_webrtc_aecm_create returned NULL");
+            throw new IllegalStateException("smalt_aecm_create returned NULL");
         }
-        this.bufferFarend = instance.export("cobalt_webrtc_aecm_buffer_farend");
-        this.process = instance.export("cobalt_webrtc_aecm_process");
-        this.destroy = instance.export("cobalt_webrtc_aecm_destroy");
+        this.bufferFarend = instance.export("smalt_aecm_buffer_farend");
+        this.process = instance.export("smalt_aecm_process");
+        this.destroy = instance.export("smalt_aecm_destroy");
     }
 
     public int bufferFarend(short[] farend, int offset) {

@@ -62,6 +62,26 @@ Contents
   37. Adobe Digital Negative (DNG) specification
   38. rawtoaces-data (camera spectral sensitivities)
   39. libdeflate
+  40. X3F tools
+  41. opusfile
+  42. libxaac
+  43. LERC (Limited Error Raster Compression)
+  44. OpenJPH
+  45. OpenHTJ2K
+  46. CharLS
+  47. libultrahdr
+  48. ISO/IEC 13818-5 MPEG-2 audio reference software (dist10)
+  49. PFFFT
+  50. RNNoise
+  51. bzip2
+  52. lzokay
+  53. Shaka Packager
+  54. MPEG-4 Visual reference software (Microsoft)
+  55. dovi_tool (the dolby_vision crate)
+  56. ISO/IEC 23003-3 MPEG-D USAC reference software
+  57. ISO/IEC 23003-4 MPEG-D DRC reference software
+  58. gpr (GoPro VC-5 decoder)
+  59. Adobe DNG SDK
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -86,14 +106,18 @@ Derived Smalt packages:
   audio.opus.internal.silk
 
 Derivation: a port of the float build of libopus 1.5.2 (CELT, SILK, the
-Opus framing, multistream and repacketizer layers, the tonality analysis and
-its MLP), including tables copied from the C sources.
+Opus framing, multistream, projection and repacketizer layers, the
+ambisonic mixing and demixing matrices, the tonality analysis and its MLP),
+including tables copied from the C sources.
 
 Copyright:
   Copyright 2001-2023 Xiph.Org, Skype Limited, Octasic,
                       Jean-Marc Valin, Timothy B. Terriberry,
                       CSIRO, Gregory Maxwell, Mark Borgerding,
                       Erik de Castro Lopo, Mozilla, Amazon
+  Copyright (c) 2017 Google Inc. (src/mapping_matrix.c,
+                      src/opus_projection_encoder.c,
+                      src/opus_projection_decoder.c)
 
 -------------------------------------------------------------------------------
 libopus license (COPYING)
@@ -143,6 +167,37 @@ https://datatracker.ietf.org/ipr/1914/
 
 Broadcom Corporation:
 https://datatracker.ietf.org/ipr/1526/
+
+-------------------------------------------------------------------------------
+License of the projection files (header of src/mapping_matrix.c)
+-------------------------------------------------------------------------------
+
+/* Copyright (c) 2017 Google Inc.
+   Written by Andrew Allen */
+/*
+   Redistribution and use in source and binary forms, with or without
+   modification, are permitted provided that the following conditions
+   are met:
+
+   - Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+
+   - Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+   ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER
+   OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+   EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+   PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+   PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+   LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+   NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*/
 
 
 ===============================================================================
@@ -219,12 +274,14 @@ Derived Smalt packages:
   image.webp.internal.riff
   video.vp8.internal
 
-Derivation: the WebP decoder and encoder (VP8L lossless codec, alpha
-coding and filters, animation encoding and decoding, RIFF container rules,
-YUV conversion) follow libwebp's src/dec, src/enc, src/dsp, src/utils,
-src/mux and src/demux; the lossy VP8 encoder in video.vp8.internal is a
-port of libwebp 1.6.0's src/enc and src/dsp encoder, including tables
-copied verbatim.
+Derivation: the WebP decoder and encoder (VP8L lossless codec and its
+near-lossless modes, alpha coding and filters, animation encoding and
+decoding, RIFF container rules, YUV conversion with dithering, and the
+sharp YUV conversion of sharpyuv/) follow libwebp's src/dec, src/enc,
+src/dsp, src/utils, src/mux, src/demux and sharpyuv; the lossy VP8 encoder
+in video.vp8.internal (multi-pass PSNR search and loop filter search
+included) is a port of libwebp 1.6.0's src/enc and src/dsp encoder,
+including tables copied verbatim.
 
 Copyright:
   Copyright (c) 2010, Google Inc. All rights reserved.
@@ -294,7 +351,14 @@ port of libvpx 1.17.0's one-pass real-time CBR path (vp8/encoder: onyx_if.c,
 encodeframe.c, rdopt.c, pickinter.c, mcomp.c, encodemb.c, tokenize.c,
 bitstream.c, ratectrl.c, picklpf.c, encodemv.c, modecosts.c, segmentation.c,
 vp8_skin_detection.c, and vp8/common/findnearmv.c) with the vpx_dsp C
-kernels it uses and its speed, threshold and cost tables. The VP9 decoder is
+kernels it uses and its speed, threshold and cost tables. Its good-quality
+usage ports libvpx 1.15.1's good-quality path (vp8/encoder: the first pass
+and the two-pass rate control of firstpass.c, the recode loop and the
+alternate reference coding of onyx_if.c, temporal_filter.c, the
+rate-distortion mode decision and split motion search of rdopt.c, the
+token costs of rdopt.c and tokenize.c, the full filter level search of
+picklpf.c, encodeintra.c and the minimum quantizer and split threshold
+tables of onyx_if.c). The VP9 decoder is
 a port of libvpx's VP9 decoder (vp9/decoder, vp9/common, vp9/vp9_dx_iface.c
 and the vpx_dsp C kernels it uses: inverse transforms, sub-pixel
 convolution, loop filters, intra prediction and their high bit depth
@@ -309,7 +373,14 @@ vp9_rd.c, vp9_picklpf.c, vp9_quantize.c, vp9_dct.c, vp9_encodemv.c and
 vp9_cost.c) with the vpx_dsp C kernels it uses (boolean encoder, forward
 transforms, sums of absolute differences, variances, Hadamard transforms,
 integral projections and skin detection) and its speed, threshold, rate
-model and cost tables.
+model and cost tables. Its good-quality usage, and its 4:2:2, 4:4:0, 4:4:4,
+10-bit and 12-bit coding, port libvpx 1.15.1's good-quality path
+(vp9/encoder: the rate-distortion partition and mode search of
+vp9_encodeframe.c, vp9_rdopt.c and vp9_rd.c, the first and second pass of
+vp9_firstpass.c, the two-pass rate control of vp9_ratectrl.c, the
+recode loop of vp9_encoder.c, vp9_temporal_filter.c and the filter level
+search of vp9_picklpf.c) and its high bit depth quantizer and token
+tables.
 
 Copyright:
   Copyright (c) 2010, The WebM Project authors. All rights reserved.
@@ -382,14 +453,25 @@ integer inverse DCTs, the accurate integer forward DCT, Huffman table
 optimization, the Huffman bit writer, color conversion, chroma upsampling
 and downsampling, quality scaling, quantization reciprocals, and ICC profile
 reassembly, including tables and constants taken from the C sources. The
-lossless transforms (JpegTransforms, JpegTransformOptions and, in
-image.jpeg.internal, LosslessTransform, CoefficientWriter and
-JpegTranscoder) port the jpegtran sample program: the coefficient
-rotations, flips, transpositions and crops of transupp.c, the transcoding
-of jctrans.c, the marker writer of jcmarker.c, the progressive Huffman
-encoder of jcphuff.c, the pass sequence of jcmaster.c, and the parameter
-handling of jpegtran.c. The accurate integer inverse DCT is also the inverse
-DCT of the MPEG-4 Part 2 and H.263 decoders.
+lossless transforms (JpegTransforms, JpegTransformOptions, JpegFill and,
+in image.jpeg.internal, LosslessTransform, LosslessEdit, CoefficientWriter
+and JpegTranscoder) port the jpegtran sample program: the coefficient
+rotations, flips, transpositions, crops, crop extensions, wipes, drops and
+quantization table adjustment of transupp.c, the transcoding of jctrans.c,
+the marker writer of jcmarker.c, the progressive Huffman encoder of
+jcphuff.c, the pass sequence and per-scan restart intervals of jcmaster.c,
+and the parameter handling of jpegtran.c. The encoder's coding modes (in
+image.jpeg.internal, JpegEncoding, SampleRows, ComponentBands,
+DctFrameEncoder, WideFdct, ArithmeticEncoder and LosslessFrameEncoder) port
+the compression library: the preprocessing and downsampling controllers
+(jcprepct.c, jcsample.c), color conversion at 8 to 16 bits with the CMYK
+and YCCK transforms (jccolor.c, cmyk.h) and the PPM sample rescaling
+(rdppm.c), the 8-bit and 12-bit forward DCT and quantization (jfdctint.c,
+jcdctmgr.c), the coefficient controller (jccoefct.c), the arithmetic
+encoder (jcarith.c, jaricom.c), the lossless compressor (jclossls.c,
+jcdiffct.c, jclhuff.c) and the parameter setup (jcparam.c, jcmaster.c). The
+accurate integer inverse DCT is also the inverse DCT of the MPEG-4 Part 2
+and H.263 decoders.
 
 This software is based in part on the work of the Independent JPEG Group.
 
@@ -566,6 +648,52 @@ Java code derives from):
     Copyright (C) 1995-2019, Thomas G. Lane, Guido Vollbeding.
     libjpeg-turbo Modifications:
     Copyright (C) 2010, 2014, 2017, 2019-2022, 2024, D. R. Commander.
+  jcarith.c
+    This file was part of the Independent JPEG Group's software:
+    Developed 1997-2009 by Guido Vollbeding.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2015, 2018, 2021-2022, D. R. Commander.
+  jccoefct.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1994-1997, Thomas G. Lane.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2022, 2024, D. R. Commander.
+  jcprepct.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1994-1996, Thomas G. Lane.
+    Lossless JPEG Modifications:
+    Copyright (C) 1999, Ken Murchison.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2022, 2024, D. R. Commander.
+  jclossls.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1998, Thomas G. Lane.
+    Lossless JPEG Modifications:
+    Copyright (C) 1999, Ken Murchison.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2022, 2024, D. R. Commander.
+  jcdiffct.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1994-1997, Thomas G. Lane.
+    Lossless JPEG Modifications:
+    Copyright (C) 1999, Ken Murchison.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2022, 2024, D. R. Commander.
+  jclhuff.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1991-1997, Thomas G. Lane.
+    Lossless JPEG Modifications:
+    Copyright (C) 1999, Ken Murchison.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2022, D. R. Commander.
+  cmyk.h
+    Copyright (C) 2017-2018, 2022, 2024-2025, D. R. Commander.
+  rdppm.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1991-1997, Thomas G. Lane.
+    Modified 2009 by Bill Allombert, Guido Vollbeding.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2015-2017, 2020-2025, D. R. Commander.
 
 -------------------------------------------------------------------------------
 libjpeg-turbo license overview (LICENSE.md)
@@ -1001,6 +1129,7 @@ License:      Apache License, Version 2.0
 Derived Smalt packages:
   audio.aac.internal (HuffmanTables; BandLayout, EncoderChannel,
   EncoderEngine, TnsEncoder, TransientDetector)
+  container.internal (AacHuffmanTables)
 
 Derivation: the AAC Huffman codeword and length values are taken from the
 tables of aacenc/src/aac_rom.c. The encoder's psychoacoustic model, block
@@ -1247,9 +1376,10 @@ and double precision; residue partition bounds follow
 vorbis_book_decodev_add.
 
 The Vorbis encoder is a port of the libvorbis 1.3.7 encoder in its quality
-mode (lib/vorbisenc.c, block.c, envelope.c, psy.c, floor1.c, res0.c,
-mapping0.c, mdct.c, smallft.c, lpc.c, window.c, sharedbook.c, codebook.c and
-info.c, including the aoTuV tuning merged into libvorbis), translated to Java
+and bitrate managed modes (lib/vorbisenc.c, block.c, envelope.c, psy.c,
+floor1.c, res0.c, mapping0.c, mdct.c, smallft.c, lpc.c, window.c,
+sharedbook.c, codebook.c, info.c and bitrate.c, including the aoTuV tuning
+merged into libvorbis), translated to Java
 with libvorbis's single and double precision arithmetic kept. The setup
 templates, static codebooks, psychoacoustic tables and window tables of
 libvorbis 1.3.7 are copied, serialized by tools/codegen/vorbis/dump.c, into the
@@ -1687,12 +1817,15 @@ Derived Smalt packages:
   video.h264.encoder.internal (CabacEncoder: the binary arithmetic encoder
   engine of source/Lib/TLibEncoder/TEncBinCoderCABAC.cpp)
   video.hevc.internal (CabacDecoder: the binary arithmetic decoder engine
-  of source/Lib/TLibDecoder/TDecBinCoderCABAC.cpp)
+  of source/Lib/TLibDecoder/TDecBinCoderCABAC.cpp; PaletteCoding: the
+  palette mode parsing and reconstruction of the HM-16.21+SCM-8.8 screen
+  content coding branch, source/Lib/TLibDecoder/TDecSbac.cpp and
+  TDecCu.cpp)
 
 Derivation: algorithm structure followed; H.264 and HEVC share the CABAC
 engine. The rest of the HEVC decoder is written from the ITU-T H.265
-specification; HM served as the reference decoder its output is compared
-with.
+specification; HM and HM-SCM served as the reference decoders its output
+is compared with.
 
 Copyright:
   Copyright (c) 2010-2026, ITU/ISO/IEC
@@ -1775,9 +1908,9 @@ is preserved.
 ===============================================================================
 
 Project:      WebRTC, the audio processing module (AEC3 echo canceller, mobile
-              echo canceller, noise suppression, gain controller, high-pass
-              filter) and its signal processing library, as packaged by
-              webrtc-audio-processing 2.1
+              echo canceller, noise suppression, gain controllers, band
+              splitting, resampling, high-pass filter) and its signal
+              processing library, as packaged by webrtc-audio-processing 2.1
 Source:       https://webrtc.googlesource.com/src
               https://gitlab.freedesktop.org/pulseaudio/webrtc-audio-processing
               (tag v2.1)
@@ -1788,10 +1921,17 @@ License:      BSD 3-Clause License, plus Google's additional IP rights grant
 Derived Smalt packages:
   audio.voice, audio.voice.internal, audio.voice.internal.aec3,
   audio.voice.internal.aecm, audio.voice.internal.agc,
-  audio.voice.internal.ns (VoiceProcessor: the capture path of
-  modules/audio_processing: aec3, aecm, agc/legacy with gain_control_impl,
-  ns, the capture high-pass filter, utility/delay_estimator and the
-  fixed-point routines of common_audio/signal_processing it uses)
+  audio.voice.internal.agc2, audio.voice.internal.ns (VoiceProcessor: both
+  signal paths of modules/audio_processing: aec3 with its multichannel
+  support, aecm, agc/legacy with gain_control_impl, the analog
+  gain controller of agc (agc_manager_direct, its voice activity detector
+  in vad and the iSAC pitch analysis of modules/audio_coding/codecs/isac),
+  agc2 (gain_controller2, the RNN voice activity detector, the adaptive
+  digital gain, the limiter, the input volume controller and the clipping
+  predictor), ns, the splitting filter and three-band filter bank, the push
+  sinc resampler, the capture high-pass filter, utility/delay_estimator,
+  common_audio/vad and the fixed-point routines of
+  common_audio/signal_processing it uses)
 
 Derivation: C++ code translated to Java, restructured, and in places
 vectorized with the Java Vector API.
@@ -1881,7 +2021,8 @@ License:      Ooura permissive notice (use, copy, modification and
 
 Derived Smalt packages:
   audio.voice.internal (OouraRealFft: the 128-point real FFT of the noise
-  suppressor)
+  suppressor and the 512-point one of the analog gain controller's voice
+  activity detector)
   audio.voice.internal.aec3 (Aec3Fft: the 128-point split-radix FFT of the
   echo canceller)
 
@@ -1915,7 +2056,9 @@ License:      MIT License; powf and its tables come from Arm's optimized
 
 Derived Smalt packages:
   audio.voice.internal (FloatMath: powf with __powf_log2_data and
-  __exp2f_data, tanhf, expm1f, cosf and sinf, rounded exactly as musl)
+  __exp2f_data, tanhf, expm1f, cosf, sinf and log10f; DoubleMath: exp, log
+  and pow with __exp_data, __log_data and __pow_log_data, log10, and sin
+  with __sin, __cos and __rem_pio2; all rounded exactly as musl)
 
 Derivation: C code and tables translated to Java.
 
@@ -2203,7 +2346,8 @@ License:      BSD 2-Clause License
 
 Derived Smalt packages:
   video.av1, video.av1.internal.encoder (Av1Encoder, and the intra-only still
-  encoder behind AvifEncoder and its animations)
+  encoder behind AvifEncoder and its animations), video.av1.internal (the
+  large scale tile decoding of Av1Decoder)
 
 Derivation: the real-time AV1 encoder is a port of libaom 3.12.1's one-pass
 real-time path at speeds 7 to 10 (av1/encoder: nonrd_pickmode.c, nonrd_opt.c,
@@ -2248,6 +2392,25 @@ filter (mcomp.c), the choice of the motion mode of a block by its coded cost
 (rdopt.c, motion_mode_rd), the compound mode set of the mode search (rdopt.c)
 and the speed features that widen the all-intra searches of key frames
 (speed_features.c).
+
+The predicted AV1 encoders' high bit depth, film grain, two-pass, screen
+content, super-resolution and timing support follows libaom 3.13.1: the high
+bit depth variances, sums of absolute differences and block errors
+(aom_dsp/variance.c, aom_dsp/sad.c, av1/encoder/av1_quantize.c), the film
+grain table format (av1/encoder/grain_table.c), the noise model, flat block
+finder, Wiener denoiser and noise strength solver (aom_dsp/noise_model.c,
+aom_dsp/noise_util.c, aom_dsp/mathutils.h), the two-pass bit allocation
+(av1/encoder/pass2_strategy.c), the palette search of the non-RD mode
+decision (nonrd_pickmode.c, intra_mode_search.c, palette.c), the whole-sample
+motion decision (encoder_utils.c, hash_motion.c), the non-normative
+downscaling filters of super-resolution (av1/common/resize.c) and the decoder
+model parameters (av1/common/timing.c).
+
+The large scale tile decoding of the AV1 decoder follows libaom 3.13.1's
+decoding of tile list OBUs (av1/decoder/obu.c: read_and_decode_one_tile_list,
+copy_decoded_tile_to_tile_list_buffer; av1/decoder/decodeframe.c: the tiles
+of large scale tile mode decoded without CDF adaptation; av1/av1_dx_iface.c:
+the output frame of a tile list without film grain).
 
 Copyright:
   Copyright (c) 2016, Alliance for Open Media. All rights reserved.
@@ -2296,27 +2459,42 @@ POSSIBILITY OF SUCH DAMAGE.
 
 Project:      libavif, the reference library of the AV1 Image File Format
 Source:       https://github.com/AOMediaCodec/libavif
-              (revision e4db889c6b574bf221a380e9bddde0273c942023)
+              (revision e4db889c6b574bf221a380e9bddde0273c942023; the sample
+              transforms at revision b1e4d339c1ff5b547664c85f1713279f4997d694)
 License text: LICENSE at the root of the repository
 License:      BSD 2-Clause License
 
 Derived Smalt packages:
   internal.heif (the HEIF item parser: the container rules it enforces, the
   clean aperture arithmetic and the loop count of image sequences; the
-  limited-range alpha expansion of the image canvas)
+  limited-range alpha expansion of the image canvas; the operators of the
+  sample transform expressions, HeifSampleTransform)
   image.avif, image.avif.internal (AvifDecoder: the choice between the primary
   item and the image sequence, the color, alpha and grid tile selection, the
   grid validation, the limited-range alpha expansion and the unpremultiplying
-  of premultiplied alpha; AvifEncoder: the box layout of still images, alpha
+  of premultiplied alpha, the choice of the sample transform item shown in
+  place of the primary item; AvifEncoder: the box layout of still images, alpha
   auxiliary items, grids, Exif and XMP items and image sequences, the quality
   scale, the automatic tiling, the orientation properties and the RGB to YUV
-  conversion defaults)
+  conversion defaults; the tone map items of gain maps, which AvifDecoder reads
+  and AvifEncoder writes as src/read.c and src/write.c do)
+  internal.gainmap (HeifToneMaps: the rules by which a tmap item counts, as
+  avifDecoderFindGainMapItem and avifParseToneMappedImageBox apply them)
+  image.gainmap (GainMapComputer: the gain map computation of
+  avifRGBImageComputeGainMap and the gain range without outliers of
+  avifFindMinMaxWithoutOutliers; GainMapRenderer: the signed weight of
+  avifGetGainMapWeight)
 
 Derivation: the semantics of src/read.c, src/write.c, src/avif.c, src/alpha.c
-and src/reformat.c followed in Java; no code was translated line by line.
+and src/reformat.c followed in Java, and the operators of
+src/sampletransform.c (Copyright 2024 Google LLC) and the gain map
+computation of src/gainmap.c (Copyright 2023 Google LLC, libavif 1.3.0)
+ported; no other code was translated line by line.
 
 Copyright:
   Copyright 2019 Joe Drago. All rights reserved.
+  Copyright 2023 Google LLC
+  Copyright 2024 Google LLC
 
 -------------------------------------------------------------------------------
 libavif license (LICENSE)
@@ -2911,17 +3089,21 @@ Derived Smalt packages:
   and old-style bit order of tif_lzw.c; Predictor: the horizontal and
   floating-point predictors of tif_predict.c; ThunderScan: ThunderDecode of
   tif_thunder.c; CcittFaxDecoder: the end-of-line and fill-bit handling of
-  tif_fax3.c; TiffPageDecoder and SampleConverter: the extra-sample, palette,
+  tif_fax3.c; CcittFaxEncoder: Fax3Encode1DRow, Fax3Encode2DRow, putspan,
+  Fax3PutEOL and the row alignment of tif_fax3.c; TiffPageDecoder and SampleConverter: the extra-sample, palette,
   CMYK and YCbCr rules of tif_getimage.c; TiffJpeg: the old-style JPEG stream
   reconstruction of tif_ojpeg.c; LabTables: TIFFCIELabToRGBInit,
   TIFFCIELab16ToXYZ and TIFFXYZToRGB of tif_color.c with the display_sRGB
   constants of tif_getimage.c; SgiLog: the LogL and LogLuv decoders and
-  conversions of tif_luv.c and the chromaticity table of uvcode.h)
+  conversions of tif_luv.c and the chromaticity table of uvcode.h;
+  PixarLog: PixarLogMakeTables and the horizontalAccumulate functions of
+  tif_pixarlog.c; NeXT: NeXTDecode of tif_next.c; TiffLerc: the mask, alpha
+  and byte-order conventions of tif_lerc.c)
 
 Derivation: the YCbCr tables, the CIE L*a*b* conversion, the SGILog decoders
-and conversions, the uvcode.h table and ThunderDecode translated to Java; the
-other listed functions followed for their algorithms and conventions, with the
-Java code structured differently.
+and conversions, the uvcode.h table, the PixarLog tables, NeXTDecode and
+ThunderDecode translated to Java; the other listed functions followed for their
+algorithms and conventions, with the Java code structured differently.
 
 Copyright:
   Copyright (c) 1988-1997 Sam Leffler
@@ -2929,6 +3111,9 @@ Copyright:
   Copyright (c) 1985, 1986 The Regents of the University of California
   (tif_lzw.c)
   Copyright (c) 1997 Greg Ward Larson (tif_luv.c, uvcode.h)
+  Copyright (c) 1996-1997 Sam Leffler, Copyright (c) 1996 Pixar
+  (tif_pixarlog.c)
+  Copyright (c) 2018 Even Rouault (tif_lerc.c)
 
 -------------------------------------------------------------------------------
 LibTIFF license (LICENSE.md)
@@ -2996,13 +3181,20 @@ License text: https://raw.githubusercontent.com/macosforge/alac/master/LICENSE
 License:      Apache License, Version 2.0
 
 Derived Smalt packages:
-  audio.alac (AlacDecoder, AlacResidual, AlacPredictor, AlacBitReader)
+  audio.alac (AlacDecoder, AlacResidual, AlacPredictor, AlacBitReader,
+  AlacEncoder, AlacElementEncoder, AlacResidualEncoder)
 
 Derivation: the decoder follows codec/ALACDecoder.cpp (element parsing,
 shifted-off bytes, partial frames, uncompressed elements), codec/ag_dec.c
 (the adaptive Golomb residual decoder with its zero runs), codec/dp_dec.c
 (the adaptive predictor unpc_block) and codec/matrix_dec.c (the matrixed
 stereo unmix), and the channel orders of ALACMagicCookieDescription.txt.
+The encoder follows codec/ALACEncoder.cpp (the element layout of each
+channel count, the stereo matrixing and predictor order searches, fast
+mode, escaped and partial elements, the magic cookie), codec/ag_enc.c
+(the adaptive Golomb residual coder dyn_comp), codec/dp_enc.c (the
+adaptive predictor pc_block and its initial coefficients) and
+codec/matrix_enc.c (the stereo mix).
 
 Copyright:
   Copyright (c) 2011 Apple Inc. All rights reserved.
@@ -3180,8 +3372,9 @@ Derived Smalt packages:
   fixed-point operators, LPC, LSP and LSF processing, quantizer tables, the
   decoder of sp_dec.cpp and dec_amr.cpp with its comfort noise, concealment
   and post-processing, the encoder of sp_enc.cpp and cod_amr.cpp with its
-  pitch, codebook and gain searches, VAD option 1 and DTX, and the bit
-  ordering of the RFC 4867 storage format)
+  pitch, codebook and gain searches, VAD options 1 and 2 (vad1.cpp,
+  vad2.cpp, r_fft.cpp, lflg_upd.cpp) and DTX, and the bit ordering of the
+  RFC 4867 storage format)
   audio.amr.internal.wb (the AMR-WB decoder of pvamrwbdecoder.cpp and the
   files it calls, with its comfort noise, concealment, high-band synthesis
   and bit ordering)
@@ -3198,8 +3391,17 @@ absent from the AMR-NB code, was added. In the AMR-WB decoder, the arithmetic
 of the basic operators, filters, excitation, concealment and comfort noise
 routines was then aligned with the 3GPP TS 26.173 fixed-point reference (the
 normative specification of AMR-WB, release 18) wherever opencore departs from
-it, so that the decoder passes the TS 26.174 test sequences; no 3GPP source
-text was copied. The source files carry this notice about their 3GPP origin:
+it, so that the decoder passes the TS 26.174 test sequences, and the muting of
+the AMR-NB comfort noise was aligned with the TS 26.073 reference, which does
+not clamp the muted energy. The saturating arithmetic of the AMR-NB encoder and
+decoder (the pre-processing filter, the synthesis and analysis filters and the
+decoder's synthesis overflow rescaling, the autocorrelation, the codebook and
+pitch correlations, the gain computations, the 32-bit normalization of negative
+values and the comfort noise parameter update) was likewise aligned with the
+TS 26.073 reference where opencore wraps instead of saturating, so that the
+codec passes the A-law and mu-law TS 26.074 sequences and codes full-scale
+input like the reference; no 3GPP source text was copied. The source files
+carry this notice about their 3GPP origin:
 
   Portions of this file are derived from the following 3GPP standard:
       3GPP TS 26.073 (AMR-NB) / 3GPP TS 26.173 (AMR-WB)
@@ -3685,9 +3887,13 @@ tile geometry and coding pipeline of tcd.c, the tier-1 coder of t1.c and its
 MQ coder (mqc.c, including the lookup tables), the tier-2 packet coder of t2.c,
 the packet iterators of pi.c, the tag trees of tgt.c, the bit I/O of bio.c,
 the wavelet transforms of dwt.c, the component transforms of mct.c, the rate
-allocation of tcd.c, and the sYCC, e-sYCC and CMYK conversions of the
-opj_decompress tool (src/bin/common/color.c), including tables and constants
-taken from the C sources.
+allocation of tcd.c, the high-throughput (HTJ2K) block decoder of ht_dec.c,
+the encoder's tile-part division, TLM and PLT writers, progression changes,
+region of interest segments, guard bits and the digital cinema and IMF
+profile parameters and checks of j2k.c, the coding options of the
+opj_compress tool (src/bin/jp2/opj_compress.c), and the sYCC, e-sYCC and CMYK
+conversions of the opj_decompress tool (src/bin/common/color.c), including
+tables and constants taken from the C sources.
 
 Copyright (as stated in the headers of the OpenJPEG source files the Java
 code derives from):
@@ -3708,6 +3914,9 @@ code derives from):
   Copyright (c) 2012, CS Systemes d'Information, France
   Copyright (c) 2012, Carl Hetherington
   Copyright (c) 2017, IntoPIX SA <support@intopix.com>
+  Copyright (c) 2021, Aous Naman (ht_dec.c)
+  Copyright (c) 2021, Kakadu Software Pty Ltd, Australia (ht_dec.c)
+  Copyright (c) 2021, The University of New South Wales, Australia (ht_dec.c)
 
 -------------------------------------------------------------------------------
 OpenJPEG license (LICENSE)
@@ -3827,7 +4036,9 @@ DEALINGS IN THE SOFTWARE.
 ===============================================================================
 
 Project:      libjxl, the JPEG XL reference implementation
-              (commit 5f92f524f1407de323c409c360ab38cae1d97b27)
+              (commit 5f92f524f1407de323c409c360ab38cae1d97b27, and
+              release 0.11.2 for the spot color stage and the gain map
+              bundle)
 Home:         https://jpeg.org/jpegxl/
 Source:       https://github.com/libjxl/libjxl
 License text: LICENSE and PATENTS at the root of the repository
@@ -3835,6 +4046,7 @@ License:      BSD 3-Clause, with the Additional IP Rights Grant (Patents)
               reproduced below
 
 Derived Smalt packages:
+  image.jxl.internal.bitstream
   image.jxl.internal.color
   image.jxl.internal.header
   image.jxl.internal.jpeg
@@ -3849,7 +4061,10 @@ the sRGB curve (lib/jxl/cms) and the fast power function used by the BT.709,
 DCI and gamma curves (lib/jxl/base/fast_math-inl.h), the ICC profiles
 synthesized for enumerated color encodings, the rendering order of the
 frame pipeline (lib/jxl/render_pipeline), and the MCU grid of a JPEG scan
-of one subsampled component (lib/jxl/jpeg/dec_jpeg_data_writer.cc).
+of one subsampled component (lib/jxl/jpeg/dec_jpeg_data_writer.cc). The
+spot color blend and its place in the pipeline follow
+lib/jxl/render_pipeline/stage_spot.cc and lib/jxl/dec_cache.cc, and the
+layout of the jhgm gain map bundle follows lib/extras/gain_map.cc.
 
 Copyright:
   Copyright (c) the JPEG XL Project Authors.
@@ -4068,7 +4283,8 @@ Derived Smalt packages:
 
 Derivation: the DNG reader, its color model (camera matrices, illuminant
 interpolation, camera profiles) and its opcode lists implement the DNG
-Specification. No code of the Adobe DNG SDK is used.
+Specification. The calibration of Hasselblad CCD files ports parts of the
+Adobe DNG SDK (see section 59).
 
 Notice required by the Adobe DNG patent license:
   This product includes DNG technology under license by Adobe.
@@ -4376,23 +4592,28 @@ SOFTWARE.
 
 Project:      X3F tools, a library for Sigma X3F raw files (commit e8b48ca)
 Source:       https://github.com/Kalpanika/x3f (src/x3f_io.c, x3f_meta.c,
-              x3f_image.c, x3f_process.c)
+              x3f_image.c, x3f_process.c, x3f_spatial_gain.c,
+              x3f_denoise.cpp, x3f_denoise_utils.cpp)
 License text: https://github.com/Kalpanika/x3f/blob/master/doc/copyright.txt
 License:      BSD 3-Clause License
 
 Derived Smalt packages:
-  image.raw.internal (X3fCamf, X3fDecoder, X3fParser)
+  image.raw.internal (X3fCamf, X3fCorrections, X3fDecoder, X3fParser,
+  X3fQuattro)
 
-Derivation: the decoding of the camera metadata block (the type 2 XOR stream
-and the type 4 coding, the CMbM, CMbT and CMbP entries), the TRUE and the
-older Huffman codings of the raw layers, the mapping of the KeepImageArea
-rectangles, the dark shield and white level entries, and the color conversion
-from the white balance gain, color correction, illuminant and gain factor
-entries follow that library's x3f_io.c, x3f_meta.c, x3f_image.c and
-x3f_process.c.
+Derivation: the decoding of the camera metadata block (the type 2 XOR stream,
+the type 4 and type 5 codings, the CMbM, CMbT and CMbP entries), the TRUE and
+Quattro codings and the older coding, Huffman coded or not, of the raw layers,
+the mapping of the KeepImageArea rectangles, the dark shield and white level
+entries, the bad pixel interpolation, the spatial gain tables, the expansion
+of the Quattro layers and the color conversion from the white balance gain,
+color correction, illuminant and gain factor entries follow that library's
+x3f_io.c, x3f_meta.c, x3f_image.c, x3f_process.c, x3f_spatial_gain.c,
+x3f_denoise.cpp and x3f_denoise_utils.cpp.
 
 Copyright:
   Copyright 2015 Roland and Erik Karlsson
+  Copyright 2015 Mark Roden and Erik Karlsson
 
 -------------------------------------------------------------------------------
 X3F tools license (doc/copyright.txt)
@@ -4429,3 +4650,1928 @@ BSD-style License
 * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+===============================================================================
+41. opusfile
+===============================================================================
+
+Project:      opusfile, the Xiph.Org library for decoding Ogg Opus files,
+              version 0.12
+Home:         https://opus-codec.org/
+Source:       https://gitlab.xiph.org/xiph/opusfile
+License text: https://gitlab.xiph.org/xiph/opusfile/-/raw/v0.12/COPYING
+License:      BSD 3-Clause
+
+Derived Smalt packages:
+  audio.opus (OpusDownmix)
+
+Derivation: the stereo downmix matrices of three to eight channels in the
+Vorbis order (OP_STEREO_DOWNMIX in src/opusfile.c) are copied.
+
+Copyright:
+  Copyright (c) 1994-2013 Xiph.Org Foundation and contributors
+
+-------------------------------------------------------------------------------
+opusfile license (COPYING)
+-------------------------------------------------------------------------------
+
+Copyright (c) 1994-2013 Xiph.Org Foundation and contributors
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+- Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+- Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+- Neither the name of the Xiph.Org Foundation nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION
+OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+===============================================================================
+42. libxaac
+===============================================================================
+
+Project:      libxaac, the Android extended HE-AAC decoder and encoder, at
+              commit 2fbadd57bca46693b7a077bcf1513131106d960c
+Source:       https://github.com/ittiam-systems/libxaac
+              https://android.googlesource.com/platform/external/libxaac
+License text: https://raw.githubusercontent.com/ittiam-systems/libxaac/2fbadd57bca46693b7a077bcf1513131106d960c/LICENSE
+NOTICE:       https://raw.githubusercontent.com/ittiam-systems/libxaac/2fbadd57bca46693b7a077bcf1513131106d960c/NOTICE
+License:      Apache License, Version 2.0
+
+Derived Smalt packages:
+  audio.aac.internal (CodewordReordering, ReversibleScalefactors,
+  LowDelayWindows, SamplingTables)
+  audio.aac.internal.sbr (LowDelayQmfWindow, SbrFrameData)
+  audio.aac.internal.usac (Avq, LpdDecoder, LpdState, LpdTables: the USAC
+  linear prediction domain decoder)
+
+Derivation: Huffman codeword reordering follows the codebook priorities,
+section sorting, segmentation and set-wise decoding of
+decoder/ixheaacd_huff_code_reorder.c; the RVLC and escape codeword tables
+and the decoding order of RVLC scalefactors are taken from
+decoder/ixheaacd_rev_vlc.c. The 512-sample AAC-ELD synthesis window is
+taken from low_delay_window_eld of encoder/ixheaace_rom.c, the CLD QMF
+prototype of low delay SBR from cld_fb_64_640 of encoder/ixheaace_sbr_rom.c,
+the scalefactor band offsets and TNS limits of 512- and 480-sample frames
+from decoder/ixheaacd_aac_rom.c, and the LD_TRAN envelope tables from
+decoder/ixheaacd_env_extr.c. The USAC linear prediction domain decoder
+(ACELP, TCX, the LPC and FAC decoding and the RE8 lattice of the AVQ) is
+translated from decoder/ixheaacd_acelp_*.c, ixheaacd_lpc*.c, ixheaacd_tcx_*.c,
+ixheaacd_fwd_alias_cnx.c, ixheaacd_avq_dec.c and the tables of
+ixheaacd_rom.c and ixheaacd_avq_rom.c. The other Java code is a new
+implementation; it is not a copy of the original files.
+
+Copyright:
+  Copyright (C) 2018, 2023 The Android Open Source Project
+  Ittiam Systems
+
+Attribution notices from the upstream NOTICE file (Apache License 2.0,
+section 4(d)):
+
+/******************************************************************************
+ *                                                                            *
+ * Copyright (C) 2018 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at:
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ *****************************************************************************
+ * Originally developed and contributed by Ittiam Systems Pvt. Ltd, Bangalore
+*/
+
+-------------------------------------------------------------------------------
+Apache License, Version 2.0 (libxaac LICENSE)
+-------------------------------------------------------------------------------
+
+
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   Copyright (c) 2018, The Android Open Source Project
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+
+
+===============================================================================
+43. LERC (Limited Error Raster Compression)
+===============================================================================
+
+Project:      LERC, Esri's Limited Error Raster Compression library, version 4.2.0
+Source:       https://github.com/Esri/lerc
+License text: https://raw.githubusercontent.com/Esri/lerc/v4.2.0/LICENSE
+NOTICE:       https://raw.githubusercontent.com/Esri/lerc/v4.2.0/NOTICE
+License:      Apache License, Version 2.0, with the patent grant of its
+              clause 3 (see the NOTICE below)
+
+Derived Smalt packages:
+  image.internal.lerc (LercDecoder, BitStuffer, LercHuffman, LosslessFloat,
+  Lerc1)
+
+Derivation: the Lerc2 decoder of src/LercLib (Lerc.cpp, Lerc2.cpp, Lerc2.h,
+BitStuffer2.cpp, Huffman.cpp, BitMask.cpp, RLE.cpp), the lossless
+floating-point decoder of the fpl_ files (fpl_Lerc2Ext.cpp,
+fpl_EsriHuffman.cpp, fpl_Compression.cpp, fpl_Predictor.cpp,
+fpl_UnitTypes.cpp) and the Lerc1 decoder of src/LercLib/Lerc1Decode
+(CntZImage.cpp, BitStuffer.cpp) translated to Java.
+
+Copyright:
+  Copyright 2015-2026 Esri
+  Original coding 2021 Yuriy Yakimenko (the fpl_ files)
+
+Attribution notices from the upstream NOTICE file (Apache License 2.0,
+section 4(d)):
+
+
+LERC
+Copyright 2015-2026 Esri
+
+This software embodiment is an implementation of
+
+United States Patent 9,002,126, Limited Error Raster Compression (LERC).
+Assignee: Esri.
+Assignors/Inventors: Maurer, Thomas (Redlands, CA); Gao, Peng (Redlands, CA); Becker, Peter (Redlands, CA).
+
+The right to practice this patent is hereby granted under the Apache V2.0 License Agreement,
+Clause 3 - Grant of Patent License.
+
+The license is available at
+http://github.com/Esri/lerc/
+
+For additional information, contact:
+
+Environmental Systems Research Institute, Inc.
+Attn: Contracts and Legal Department
+380 New York Street
+Redlands, CA 92373
+E-mail: contracts@esri.com
+
+-------------------------------------------------------------------------------
+Apache License, Version 2.0 (LERC LICENSE)
+-------------------------------------------------------------------------------
+
+Apache License - 2.0
+
+TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+1. Definitions.
+
+"License" shall mean the terms and conditions for use, reproduction, and distribution as defined by Sections 1 through 9 of this document.
+
+"Licensor" shall mean the copyright owner or entity authorized by the copyright owner that is granting the License.
+
+"Legal Entity" shall mean the union of the acting entity and all other entities that control, are controlled by, or are under common control 
+with that entity. For the purposes of this definition, "control" means (i) the power, direct or indirect, to cause the direction or management 
+of such entity, whether by contract or otherwise, or (ii) ownership of fifty percent (50%) or more of the outstanding shares, or (iii) beneficial 
+ownership of such entity.
+
+"You" (or "Your") shall mean an individual or Legal Entity exercising permissions granted by this License.
+
+"Source" form shall mean the preferred form for making modifications, including but not limited to software source code, documentation source, 
+and configuration files.
+
+"Object" form shall mean any form resulting from mechanical transformation or translation of a Source form, including but not limited to 
+compiled object code, generated documentation, and conversions to other media types.
+
+"Work" shall mean the work of authorship, whether in Source or Object form, made available under the License, as indicated by a copyright notice 
+that is included in or attached to the work (an example is provided in the Appendix below).
+
+"Derivative Works" shall mean any work, whether in Source or Object form, that is based on (or derived from) the Work and for which the 
+editorial revisions, annotations, elaborations, or other modifications represent, as a whole, an original work of authorship. For the purposes 
+of this License, Derivative Works shall not include works that remain separable from, or merely link (or bind by name) to the interfaces of, 
+the Work and Derivative Works thereof.
+
+"Contribution" shall mean any work of authorship, including the original version of the Work and any modifications or additions to that Work 
+or Derivative Works thereof, that is intentionally submitted to Licensor for inclusion in the Work by the copyright owner or by an individual 
+or Legal Entity authorized to submit on behalf of the copyright owner. For the purposes of this definition, "submitted" means any form of 
+electronic, verbal, or written communication sent to the Licensor or its representatives, including but not limited to communication on 
+electronic mailing lists, source code control systems, and issue tracking systems that are managed by, or on behalf of, the Licensor for 
+the purpose of discussing and improving the Work, but excluding communication that is conspicuously marked or otherwise designated in writing 
+by the copyright owner as "Not a Contribution."
+
+"Contributor" shall mean Licensor and any individual or Legal Entity on behalf of whom a Contribution has been received by Licensor and 
+subsequently incorporated within the Work.
+
+2. Grant of Copyright License. Subject to the terms and conditions of this License, each Contributor hereby grants to You a perpetual, 
+worldwide, non-exclusive, no-charge, royalty-free, irrevocable copyright license to reproduce, prepare Derivative Works of, publicly display, 
+publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
+
+3. Grant of Patent License. Subject to the terms and conditions of this License, each Contributor hereby grants to You a perpetual, worldwide, 
+non-exclusive, no-charge, royalty-free, irrevocable (except as stated in this section) patent license to make, have made, use, offer to sell, 
+sell, import, and otherwise transfer the Work, where such license applies only to those patent claims licensable by such Contributor that are 
+necessarily infringed by their Contribution(s) alone or by combination of their Contribution(s) with the Work to which such Contribution(s) was
+submitted. If You institute patent litigation against any entity (including a cross-claim or counterclaim in a lawsuit) alleging that the Work
+or a Contribution incorporated within the Work constitutes direct or contributory patent infringement, then any patent licenses granted to You
+under this License for that Work shall terminate as of the date such litigation is filed.
+
+4. Redistribution. You may reproduce and distribute copies of the Work or Derivative Works thereof in any medium, with or without modifications,
+and in Source or Object form, provided that You meet the following conditions:
+
+    1. You must give any other recipients of the Work or Derivative Works a copy of this License; and
+
+    2. You must cause any modified files to carry prominent notices stating that You changed the files; and
+
+    3. You must retain, in the Source form of any Derivative Works that You distribute, all copyright, patent, trademark, and attribution notices 
+    from the Source form of the Work, excluding those notices that do not pertain to any part of the Derivative Works; and
+
+    4. If the Work includes a "NOTICE" text file as part of its distribution, then any Derivative Works that You distribute must include a 
+    readable copy of the attribution notices contained within such NOTICE file, excluding those notices that do not pertain to any part of the 
+    Derivative Works, in at least one of the following places: within a NOTICE text file distributed as part of the Derivative Works; within the 
+    Source form or documentation, if provided along with the Derivative Works; or, within a display generated by the Derivative Works, if and wherever 
+    such third-party notices normally appear. The contents of the NOTICE file are for informational purposes only and do not modify the License. 
+    You may add Your own attribution notices within Derivative Works that You distribute, alongside or as an addendum to the NOTICE text from the Work, 
+    provided that such additional attribution notices cannot be construed as modifying the License. You may add Your own copyright statement to 
+    Your modifications and may provide additional or different license terms and conditions for use, reproduction, or distribution of Your 
+    modifications, or for any such Derivative Works as a whole, provided Your use, reproduction, and distribution of the Work otherwise complies with 
+    the conditions stated in this License.
+
+5. Submission of Contributions. Unless You explicitly state otherwise, any Contribution intentionally submitted for inclusion in the Work by You 
+to the Licensor shall be under the terms and conditions of this License, without any additional terms or conditions. Notwithstanding the above, 
+nothing herein shall supersede or modify the terms of any separate license agreement you may have executed with Licensor regarding such Contributions.
+
+6. Trademarks. This License does not grant permission to use the trade names, trademarks, service marks, or product names of the Licensor, except 
+as required for reasonable and customary use in describing the origin of the Work and reproducing the content of the NOTICE file.
+
+7. Disclaimer of Warranty. Unless required by applicable law or agreed to in writing, Licensor provides the Work (and each Contributor provides 
+its Contributions) on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied, including, without limitation, 
+any warranties or conditions of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A PARTICULAR PURPOSE. You are solely responsible for 
+determining the appropriateness of using or redistributing the Work and assume any risks associated with Your exercise of permissions under 
+this License.
+
+8. Limitation of Liability. In no event and under no legal theory, whether in tort (including negligence), contract, or otherwise, unless required
+by applicable law (such as deliberate and grossly negligent acts) or agreed to in writing, shall any Contributor be liable to You for damages, 
+including any direct, indirect, special, incidental, or consequential damages of any character arising as a result of this License or out of the 
+use or inability to use the Work (including but not limited to damages for loss of goodwill, work stoppage, computer failure or malfunction, or 
+any and all other commercial damages or losses), even if such Contributor has been advised of the possibility of such damages.
+
+9. Accepting Warranty or Additional Liability. While redistributing the Work or Derivative Works thereof, You may choose to offer, and charge a 
+fee for, acceptance of support, warranty, indemnity, or other liability obligations and/or rights consistent with this License. However, in accepting 
+such obligations, You may act only on Your own behalf and on Your sole responsibility, not on behalf of any other Contributor, and only if You agree 
+to indemnify, defend, and hold each Contributor harmless for any liability incurred by, or claims asserted against, such Contributor by reason of your
+accepting any such warranty or additional liability.
+
+END OF TERMS AND CONDITIONS
+
+===============================================================================
+44. OpenJPH
+===============================================================================
+
+Project:      OpenJPH, an implementation of HTJ2K (JPEG 2000 Part 15),
+              version 0.21.3
+Home:         https://github.com/aous72/OpenJPH
+Source:       https://github.com/aous72/OpenJPH (src/core/coding)
+License text: https://raw.githubusercontent.com/aous72/OpenJPH/0.21.3/LICENSE
+License:      BSD 2-Clause License
+
+Derived Smalt packages:
+  image.jp2.internal (HtEncoder, HtTables)
+
+Derivation: the HT cleanup pass encoder of ojph_block_encoder.cpp
+(ojph_encode_codeblock32 with its MEL, VLC and MagSgn writers and the
+termination of their byte-streams) translated to Java, and the CxtVLC tables
+of table0.h and table1.h with the decoding and encoding lookup tables built
+from them as ojph_block_common.cpp and ojph_block_encoder.cpp build them.
+
+Copyright:
+  Copyright (c) 2019, Aous Naman
+  Copyright (c) 2019, Kakadu Software Pty Ltd, Australia
+  Copyright (c) 2019, The University of New South Wales, Sydney, Australia
+
+-------------------------------------------------------------------------------
+OpenJPH license (LICENSE)
+-------------------------------------------------------------------------------
+
+BSD 2-Clause License
+
+Copyright (c) 2019, Aous Naman
+Copyright (c) 2019, Kakadu Software Pty Ltd, Australia
+Copyright (c) 2019, The University of New South Wales, Sydney, Australia
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+===============================================================================
+45. OpenHTJ2K
+===============================================================================
+
+Project:      OpenHTJ2K, an HTJ2K (JPEG 2000 Part 15) codec
+              (commit dacb452ecb21f50e88a74bf860c60f4aafa8a602)
+Home:         https://github.com/osamu620/OpenHTJ2K
+Source:       https://github.com/osamu620/OpenHTJ2K (source/core/coding)
+License text: LICENSE at the root of the repository
+License:      BSD 3-Clause License
+
+Derived Smalt packages:
+  image.jp2.internal (PacketDecoder)
+
+Derivation: the reading of the codeword lengths of HT code-blocks in packet
+headers follows j2k_precinct_subband::parse_packet_header of coding_units.cpp:
+the placeholder passes before the first HT cleanup pass and the
+classification of the code-blocks of a tile-component that mixes block
+coders.
+
+Copyright:
+  Copyright (c) 2019 - 2021, Osamu Watanabe
+
+-------------------------------------------------------------------------------
+OpenHTJ2K license (LICENSE)
+-------------------------------------------------------------------------------
+
+BSD 3-Clause License
+
+Copyright (c) 2019 - 2021, Osamu Watanabe
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+===============================================================================
+46. CharLS
+===============================================================================
+
+Project:      CharLS, a JPEG-LS (ITU-T T.87 | ISO/IEC 14495-1) codec
+              (commit 1153c2529abf1d1740d245bcddb2b756df62df62)
+Home:         https://github.com/team-charls/charls
+Source:       https://github.com/team-charls/charls (src)
+License text: LICENSE.md at the root of the repository
+License:      BSD 3-Clause License
+
+Derived Smalt packages:
+  image.jpeg.internal (JpegLsModel, JpegLsBitReader, JpegLsDecoder,
+  JpegLsWriter)
+
+Derivation: the context modeling, prediction, Golomb coding and run mode
+arithmetic of jpegls_algorithm.hpp, regular_mode_context.hpp,
+run_mode_context.hpp, default_traits.hpp and
+jpegls_preset_coding_parameters.hpp; the scan decoder and encoder of
+scan_decoder.hpp, scan_decoder_core.hpp, scan_decoder_impl.hpp,
+scan_encoder.hpp, scan_encoder_core.hpp and scan_encoder_impl.hpp,
+including the bit stuffing; the marker segment reading and writing of
+jpeg_stream_reader.cpp, jpeg_stream_writer.cpp and charls_jpegls_encoder.cpp;
+and the HP color transforms of color_transform.hpp, translated to Java.
+
+Copyright:
+  Copyright (c) 2007, Jan de Vaan and Victor Derks (Team CharLS)
+
+-------------------------------------------------------------------------------
+CharLS license (LICENSE.md)
+-------------------------------------------------------------------------------
+
+BSD 3-Clause License
+
+Copyright (c) 2007, Jan de Vaan and Victor Derks  
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+===============================================================================
+47. libultrahdr
+===============================================================================
+
+Project:      libultrahdr, the reference library of the Ultra HDR image
+              format, version 1.4.0
+Source:       https://github.com/google/libultrahdr
+License text: LICENSE at the root of the repository
+NOTICE:       adobe-hdr-gain-map-license/NOTICE of the repository
+License:      Apache License, Version 2.0
+
+Derived Smalt packages:
+  image.gainmap (Fractions: the continued-fraction search of
+  floatToUnsignedFractionImpl in lib/src/gainmapmath.cpp)
+  image.jpeg.internal (UltraHdr: the layout of Ultra HDR files that
+  JpegR::appendGainMap writes in lib/src/jpegr.cpp and the Multi-Picture
+  Format index of lib/src/multipictureformat.cpp)
+
+Derivation: floatToUnsignedFractionImpl translated to Java; the segment
+order and index of the Ultra HDR writer followed. The Java code is a new
+implementation otherwise.
+
+Copyright:
+  Copyright 2022 The Android Open Source Project
+
+Attribution notices from the upstream NOTICE file (Apache License 2.0,
+section 4(d)):
+
+This product includes Gain Map technology under license by Adobe.
+
+-------------------------------------------------------------------------------
+Apache License, Version 2.0 (libultrahdr LICENSE)
+-------------------------------------------------------------------------------
+
+
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright [yyyy] [name of copyright owner]
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+
+
+===============================================================================
+48. ISO/IEC 13818-5 MPEG-2 audio reference software (dist10)
+===============================================================================
+
+Project:      the MPEG-2 audio reference software of ISO/IEC 13818-5, the ISO
+              MPEG Audio Subgroup Software Simulation Group's distribution 10
+Source:       c039486_ISO_IEC_13818-5_2005_Reference_Software.zip (mpeg2audio)
+              of ISO's Publicly Available Standards
+License text: the disclaimer of doc/readme.dp.01.txt and the notices of the
+              source files
+License:      free of license fee or royalty, as is; use in products
+              conforming to ISO/IEC 11172-3 and 13818-3
+
+Derived Smalt packages:
+  audio.mp3 (Mp2FrameEncoder: the Layer I and II scalefactors, scalefactor
+  selection, bit allocation, quantization and bitstream formatting of
+  lsf/encoder/encode.c; Mp2Psychoacoustics: psychoacoustic model 1 of
+  lsf/encoder/tonal.c; Mp2PsychoTables: the critical band and threshold
+  tables of lsf/encoder/tables; Mp2Multichannel: the multichannel extension
+  decoding of mc/decoder/decode.c and common.c)
+
+Derivation: C code translated to Java and tables transcribed.
+
+Copyright:
+  ISO MPEG Audio Subgroup Software Simulation Group (1995, 1996)
+
+-------------------------------------------------------------------------------
+Disclaimer and notices (doc/readme.dp.01.txt, source files)
+-------------------------------------------------------------------------------
+
+ISO/IEC 13818-5 MPEG-2 audio reference software (dist10), doc/readme.dp.01.txt:
+
+Disclaimer of Warranty
+        These software programs are available to the user without any
+license fee or royalty on an "as is" basis.  ISO disclaims any and all
+warranties,  whether express, implied, or statuary, including any
+implied warranties or merchantability or of fitness for a particular
+purpose.  In no event shall ISO be liable for any incidental, punitive,
+or consequential damages of any kind whatsoever arising from the
+use of these programs.
+
+        This disclaimer of warranty extends to the user of these
+programs and user's customers, employees, agents, transferees,
+successors, and assigns,
+
+        ISO does not represent or warrant that the programs furnished
+hereunder are free of infringement or any third-party patents,
+copyrights or trade secrets.
+
+        The purpose of this software is to provide a tool to help in the
+learning and understanding of the MPEG/audio compression and
+decompression algorithm.  It is not an efficient implementation.
+
+The source files carry the notice (mc/decoder/decode.c):
+
+/**********************************************************************
+ * ISO MPEG Audio Subgroup Software Simulation Group (1996)
+ * ISO 13818-3 MPEG-2 Audio Multichannel Decoder
+
+and the makefiles (mc/decoder/makefile):
+
+## Copyright (c) 1995 MPEG/audio software simulation group
+## All Rights Reserved
+
+
+===============================================================================
+49. PFFFT
+===============================================================================
+
+Project:      PFFFT, Julien Pommier's FFT based on FFTPACKv4, as included in
+              WebRTC (third_party/pffft) and webrtc-audio-processing 2.1
+Source:       https://bitbucket.org/jpommier/pffft
+              https://webrtc.googlesource.com/src (third_party/pffft)
+License text: third_party/pffft/LICENSE of webrtc-audio-processing 2.1
+License:      FFTPACK license (BSD-style)
+
+Derived Smalt packages:
+  audio.voice.internal.agc2 (Pffft: the scalar real FFT of the RNN voice
+  activity detector, with the radix-2, 3, 4 and 5 butterflies, the
+  unordered and ordered layouts and the accumulating spectral product)
+
+Derivation: C code translated to Java.
+
+Copyright:
+  Copyright (c) 2013 Julien Pommier
+  Copyright (c) 2004 the University Corporation for Atmospheric Research
+
+-------------------------------------------------------------------------------
+PFFFT license (LICENSE)
+-------------------------------------------------------------------------------
+
+Copyright (c) 2013  Julien Pommier ( pommier@modartt.com )
+
+Based on original fortran 77 code from FFTPACKv4 from NETLIB,
+authored by Dr Paul Swarztrauber of NCAR, in 1985.
+
+As confirmed by the NCAR fftpack software curators, the following
+FFTPACKv5 license applies to FFTPACKv4 sources. My changes are
+released under the same terms.
+
+FFTPACK license:
+
+http://www.cisl.ucar.edu/css/software/fftpack5/ftpk.html
+
+Copyright (c) 2004 the University Corporation for Atmospheric
+Research ("UCAR"). All rights reserved. Developed by NCAR's
+Computational and Information Systems Laboratory, UCAR,
+www.cisl.ucar.edu.
+
+Redistribution and use of the Software in source and binary forms,
+with or without modification, is permitted provided that the
+following conditions are met:
+
+- Neither the names of NCAR's Computational and Information Systems
+Laboratory, the University Corporation for Atmospheric Research,
+nor the names of its sponsors or contributors may be used to
+endorse or promote products derived from this Software without
+specific prior written permission.
+
+- Redistributions of source code must retain the above copyright
+notices, this list of conditions, and the disclaimer below.
+
+- Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions, and the disclaimer below in the
+documentation and/or other materials provided with the
+distribution.
+
+THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING, BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE CONTRIBUTORS OR COPYRIGHT
+HOLDERS BE LIABLE FOR ANY CLAIM, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE
+SOFTWARE.
+
+
+===============================================================================
+50. RNNoise
+===============================================================================
+
+Project:      RNNoise, as included in WebRTC (third_party/rnnoise) and
+              webrtc-audio-processing 2.1
+Source:       https://gitlab.xiph.org/xiph/rnnoise
+              https://webrtc.googlesource.com/src (third_party/rnnoise)
+License text: third_party/rnnoise/COPYING of webrtc-audio-processing 2.1
+License:      BSD 3-Clause License
+
+Derived Smalt packages:
+  audio.voice.internal.agc2 (RnnVadWeights: the weights of the RNN voice
+  activity detector; RnnVad: the activation functions of rnn_activations.h)
+
+Derivation: tables copied and C code translated to Java.
+
+Copyright:
+  Copyright (c) 2017, Mozilla
+  Copyright (c) 2007-2017, Jean-Marc Valin
+  Copyright (c) 2005-2017, Xiph.Org Foundation
+  Copyright (c) 2003-2004, Mark Borgerding
+
+-------------------------------------------------------------------------------
+RNNoise license (COPYING)
+-------------------------------------------------------------------------------
+
+Copyright (c) 2017, Mozilla
+Copyright (c) 2007-2017, Jean-Marc Valin
+Copyright (c) 2005-2017, Xiph.Org Foundation
+Copyright (c) 2003-2004, Mark Borgerding
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+- Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+- Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+- Neither the name of the Xiph.Org Foundation nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION
+OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+===============================================================================
+51. bzip2
+===============================================================================
+
+Project:      bzip2 and libbzip2, a block-sorting file compressor (1.0.8)
+Home:         https://sourceware.org/bzip2/
+Source:       https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz (decompress.c,
+              huffman.c, bzlib.c, randtable.c, crctable.c)
+License text: LICENSE of the source distribution
+License:      bzip2 license (BSD-style)
+
+Derived Smalt packages:
+  internal.compress (Bzip2Decoder)
+
+Derivation: the decompression of decompress.c (the stream and block headers,
+the symbol map, the selectors and their move-to-front coding, the coding
+tables, the Huffman decoding tables of huffman.c, the run-length and
+move-to-front decoding of the symbols, the inverse Burrows-Wheeler transform
+of the fast path) and the run-length decoding and derandomization of
+bzlib.c, translated to Java; the table of randtable.c copied, and the CRC
+table of crctable.c computed from its polynomial.
+
+Copyright:
+  Copyright (C) 1996-2019 Julian R Seward
+
+-------------------------------------------------------------------------------
+bzip2 license (LICENSE)
+-------------------------------------------------------------------------------
+
+
+--------------------------------------------------------------------------
+
+This program, "bzip2", the associated library "libbzip2", and all
+documentation, are copyright (C) 1996-2019 Julian R Seward.  All
+rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+
+2. The origin of this software must not be misrepresented; you must 
+   not claim that you wrote the original software.  If you use this 
+   software in a product, an acknowledgment in the product 
+   documentation would be appreciated but is not required.
+
+3. Altered source versions must be plainly marked as such, and must
+   not be misrepresented as being the original software.
+
+4. The name of the author may not be used to endorse or promote 
+   products derived from this software without specific prior written 
+   permission.
+
+THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS
+OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE
+GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Julian Seward, jseward@acm.org
+bzip2/libbzip2 version 1.0.8 of 13 July 2019
+
+--------------------------------------------------------------------------
+
+
+===============================================================================
+52. lzokay
+===============================================================================
+
+Project:      lzokay, a minimal LZO1X compressor and decompressor (commit
+              db2df1fcbebc2ed06c10f727f72567d40f06a2be)
+Source:       https://github.com/jackoalan/lzokay (lzokay.cpp)
+License text: https://github.com/jackoalan/lzokay/blob/master/LICENSE
+License:      MIT
+
+Derived Smalt packages:
+  internal.compress (Lzo1xDecoder)
+
+Derivation: the LZO1X decompressor of lzokay.cpp (the first literal run, the
+M1, M2, M3 and M4 instructions and their state, the zero-byte length
+extension and the end instruction) translated to Java.
+
+Copyright:
+  Copyright (c) 2018 Jack Andersen
+
+-------------------------------------------------------------------------------
+lzokay license (LICENSE)
+-------------------------------------------------------------------------------
+
+The MIT License
+
+Copyright (c) 2018 Jack Andersen
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+
+===============================================================================
+53. Shaka Packager
+===============================================================================
+
+Project:      Shaka Packager v3.9.3
+Source:       https://github.com/shaka-project/shaka-packager
+              (packager/media/base/aes_encryptor.cc, aes_pattern_cryptor.cc,
+              packager/media/crypto/subsample_generator.cc,
+              encryption_handler.cc, sample_aes_ec3_cryptor.cc,
+              packager/media/codecs/h264_parser.cc, h265_parser.cc,
+              vp9_parser.cc, av1_parser.cc,
+              nal_unit_to_byte_stream_converter.cc, hls_audio_util.cc)
+License text: https://github.com/shaka-project/shaka-packager/blob/main/LICENSE
+License:      BSD 3-Clause
+
+Derived Smalt packages:
+  internal.cenc (CencCipher, SliceHeaders, Vp9Frames, Av1Tiles)
+  container.mp4 (TrackEncryptor)
+  container.ts (SampleAesEncryptor)
+
+Derivation: the AES-CTR block counter of the last eight bytes of the counter
+block and the rule that a partial pattern encrypts its whole blocks only
+(aes_encryptor.cc, aes_pattern_cryptor.cc); the subsamples of NAL-structured
+video, slice headers clear and protected ranges cut to whole blocks for every
+scheme but cbcs, and the whole-block encryption of audio in the pattern
+schemes (subsample_generator.cc, encryption_handler.cc); the parameter set and
+slice header syntax read to find where the slice data of an H.264 or HEVC
+slice starts (h264_parser.cc, h265_parser.cc); the VP9 superframe index and
+uncompressed header syntax, and the AV1 OBU, sequence header, frame header
+and tile group syntax with the reference frame state they need, read to find
+the clear headers and the protected tile data of VP9 and AV1 samples
+(vp9_parser.cc, av1_parser.cc); the E-AC-3 syncframe walk, the
+escaping of encrypted NAL units and the audio setup information of SAMPLE-AES
+transport streams (sample_aes_ec3_cryptor.cc,
+nal_unit_to_byte_stream_converter.cc, hls_audio_util.cc); rewritten in Java.
+
+Copyright:
+  Copyright 2014 Google LLC. All rights reserved.
+
+-------------------------------------------------------------------------------
+Shaka Packager license (LICENSE)
+-------------------------------------------------------------------------------
+
+Copyright 2014, Google LLC. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+    * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+    * Neither the name of Google LLC. nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+------------------------------------------------------------------------
+
+*** LICENSE addendum from the Chromium-LICENSE file. ***
+
+// Copyright 2014 The Chromium Authors. All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are
+// met:
+//
+//    * Redistributions of source code must retain the above copyright
+// notice, this list of conditions and the following disclaimer.
+//    * Redistributions in binary form must reproduce the above
+// copyright notice, this list of conditions and the following disclaimer
+// in the documentation and/or other materials provided with the
+// distribution.
+//    * Neither the name of Google LLC. nor the names of its
+// contributors may be used to endorse or promote products derived from
+// this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+===============================================================================
+54. MPEG-4 Visual reference software (Microsoft)
+===============================================================================
+
+Project:      the Microsoft MPEG-4 Visual reference software of ISO/IEC
+              14496-5:2001, version 2 (FDAM1-2.3-001213)
+Source:       ISO/IEC 14496-5:2001 reference software (video.zip,
+              video/natural/microsoft-2.3-001213) of ISO's Publicly
+              Available Standards
+License text: the notice at the head of every source file
+License:      free license for use in hardware or software products claiming
+              conformance to MPEG-4 Video (ISO/IEC 14496-2); the copyright
+              notice must be included in all copies or derivative works
+
+Derived Smalt packages:
+  video.mpeg4.internal.object (the decoder of binary and grayscale shape, the
+  shape-adaptive DCT, static sprites, N-bit samples, NEWPRED, reduced
+  resolution VOPs and spatial and temporal scalability of sys/decoder, sys and
+  tools, with the layer orchestration of app/decoder/decoder.cpp and the
+  background composition of sys/tps_bfshape.cpp)
+
+Derivation: C++ code translated to Java and tables transcribed.
+
+Copyright:
+  Copyright (c) 1996-2000 Microsoft Corporation, Sharp Corporation, Sony
+  Corporation, Oki Electric Industry, Toshiba Corporation, Samsung AIT and the
+  other developers and editors named in the source files
+
+-------------------------------------------------------------------------------
+License notice (sys/decoder/vopsedec.cpp and the other source files)
+-------------------------------------------------------------------------------
+
+in the course of development of the MPEG-4 Video (ISO/IEC 14496-2).
+This software module is an implementation of a part of one or more MPEG-4 Video tools
+as specified by the MPEG-4 Video.
+ISO/IEC gives users of the MPEG-4 Video free license to this software module or modifications
+thereof for use in hardware or software products claiming conformance to the MPEG-4 Video.
+Those intending to use this software module in hardware or software products are advised that its use may infringe existing patents.
+The original developer of this software module and his/her company,
+the subsequent editors and their companies,
+and ISO/IEC have no liability for use of this software module or modifications thereof in an implementation.
+Copyright is not released for non MPEG-4 Video conforming products.
+Microsoft retains full right to use the code for his/her own purpose,
+assign or donate the code to a third party and to inhibit third parties from using the code for non <MPEG standard> conforming products.
+This copyright notice must be included in all copies or derivative works.
+
+Copyright (c) 1996, 1997.
+
+
+===============================================================================
+55. dovi_tool (the dolby_vision crate)
+===============================================================================
+
+Project:      dovi_tool, the dolby_vision crate 3.4.0
+              (commit 41dae646193c12de152333ff5dbc33579cb9ef4a)
+Source:       https://github.com/quietvoid/dovi_tool (dolby_vision/src/rpu:
+              dovi_rpu.rs, rpu_data_header.rs, rpu_data_mapping.rs,
+              rpu_data_nlq.rs, vdr_dm_data.rs, extension_metadata/mod.rs)
+License text: https://github.com/quietvoid/dovi_tool/blob/main/LICENSE
+License:      MIT
+
+Derived Smalt packages:
+  internal.nal (DolbyVisionRpu)
+
+Derivation: the syntax of the Dolby Vision reference processing unit (the
+header, the reshaping mapping with its polynomial and MMR pieces, the
+nonlinear quantization parameters, the display management data and its
+extension block lists, the CRC-32 and the final byte), the profile it implies
+and the test that tells a minimal enhancement layer from a full one,
+translated to Java.
+
+Copyright:
+  Copyright (c) 2026 quietvoid
+
+-------------------------------------------------------------------------------
+dovi_tool license (LICENSE)
+-------------------------------------------------------------------------------
+
+MIT License
+
+Copyright (c) 2026 quietvoid
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+===============================================================================
+56. ISO/IEC 23003-3 MPEG-D USAC reference software
+===============================================================================
+
+Project:      the reference software of ISO/IEC 23003-3:2019 (MPEG-D Unified
+              Speech and Audio Coding), MPEG-D_USAC_refSoft_src_v02_03_00_20190711,
+              with the MPEG Surround decoder of ISO/IEC 23003-1, the SBR
+              decoder of ISO/IEC 14496-3 and the ER BSAC and scalable AAC
+              decoders of ISO/IEC 14496-3 it includes
+Source:       ISO/IEC 23003-3:2019 reference software, ISO's Publicly
+              Available Standards
+License text: the notices of the source files
+License:      free license to the software modules or modifications thereof
+              for use in implementations of ISO/IEC 23003 and products claiming
+              conformance to the MPEG-2 AAC/MPEG-4 Audio standards
+
+Derived Smalt packages:
+  audio.aac.internal (BsacDecoder, BsacTables: the ER BSAC decoder of
+  sam_decode_frame.c, sam_decoder.c, sam_decode_bsac.c, sam_fadecode.c,
+  sam_bitbuffer.c, sam_tns.c and the models of sam_model.h; ScalableDecoder:
+  the scalable AAC decoder of scal_dec_frame.c)
+  audio.aac.internal.usac (the frequency domain decoder, the arithmetic
+  spectral decoder, complex prediction, the time-warped filterbank of
+  usac_tw_tools.c, the frame and extension element decoding of src_usac;
+  eSBR with the QMF transposer and PVC of the ct_*,
+  harmsbrQmftrans.c and sony_pvc* files of src_tf; the MPEG Surround 2-1-2
+  decoder of the sac_* files of mp4spatialdec)
+  audio.aac.internal.mps (the MPEG Surround decoder of the sac_* files of
+  mp4spatialdec: the SpatialSpecificConfig and SpatialFrame parsers, the
+  parameter mapping, the M1 and M2 matrices of every tree, smoothing, the
+  decorrelators, the hybrid and QMF filterbanks, subband domain temporal
+  processing, guided envelope shaping and the MDCT to QMF conversion of the
+  residual signals)
+
+Derivation: C code translated to Java and tables transcribed.
+
+Copyright:
+  AT&T, Dolby Laboratories, Fraunhofer IIS, VoiceAge Corp., Sony
+  Corporation, Coding Technologies, Agere Systems, Philips, Samsung AIT and
+  ISO/IEC (1999 to 2019)
+
+-------------------------------------------------------------------------------
+Notices of the source files
+-------------------------------------------------------------------------------
+
+The ISO/IEC 23003-3:2019 reference software (MPEG-D USAC, MPEG-D_USAC_refSoft_src_v02_03_00_20190711,
+from ISO's Publicly Available Standards) carries these notices in its source files.
+
+USAC decoder modules (usacEncDec/src_usac/decoder_usac.c; the same notice, naming their developers, heads the other src_usac files and the eSBR, PVC and harmonic transposer modules of src_tf):
+
+/*******************************************************************************
+This software module was originally developed by
+
+AT&T, Dolby Laboratories, Fraunhofer IIS, VoiceAge Corp.
+
+and edited by
+Yoshiaki Oikawa     (Sony Corporation),
+Mitsuyuki Hatanaka  (Sony Corporation),
+Ralph Sperschneider (Fraunhofer Gesellschaft IIS)
+Markus Werner       (SEED / Software Development Karlsruhe)
+Eugen Dodenhoeft    (Fraunhofer IIS)
+
+-
+
+in the course of development of ISO/IEC 23003 for reference purposes and its
+performance may not have been optimized. This software module is an
+implementation of one or more tools as specified by ISO/IEC 23003. ISO/IEC gives
+You a royalty-free, worldwide, non-exclusive, copyright license to copy,
+distribute, and make derivative works of this software module or modifications
+thereof for use in implementations of ISO/IEC 23003 in products that satisfy
+conformance criteria (if any). Those intending to use this software module in
+products are advised that its use may infringe existing patents. ISO/IEC have no
+liability for use of this software module or modifications thereof. Copyright is
+not released for products that do not conform to audiovisual and image-coding
+related ITU Recommendations and/or ISO/IEC International Standards.
+
+Assurance that the originally developed software module can be used (1) in
+ISO/IEC 23003 once ISO/IEC 23003 has been adopted; and (2) to develop ISO/IEC
+23003:s
+Fraunhofer IIS, VoiceAge Corp. grant(s) ISO/IEC all
+rights necessary to include the originally developed software module or
+modifications thereof in ISO/IEC 23003 and to permit ISO/IEC to offer You a
+royalty-free, worldwide, non-exclusive, copyright license to copy, distribute,
+and make derivative works for use in implementations of ISO/IEC 23003 in
+products that satisfy conformance criteria (if any), and to the extent that such
+originally developed software module or portions of it are included in ISO/IEC
+23003. To the extent that Fraunhofer IIS, VoiceAge Corp.
+own(s) patent rights that would be required to make, use, or sell the
+originally developed software module or portions thereof included in ISO/IEC
+23003 in a conforming product, Fraunhofer IIS, VoiceAge Corp.
+will assure the ISO/IEC that it is (they are) willing to negotiate
+licenses under reasonable and non-discriminatory terms and conditions with
+applicants throughout the world. ISO/IEC gives You a free license to this
+software module or modifications thereof for the sole purpose of developing
+ISO/IEC 23003.
+
+Fraunhofer IIS, VoiceAge Corp. retain full right to
+modify and use the code for its (their) own purpose, assign or donate the code
+to a third party and to inhibit third parties from using the code for products
+that do not conform to MPEG-related ITU Recommendations and/or ISO/IEC
+International Standards. This copyright notice must be included in all copies or
+derivative works.
+
+Copyright (c) ISO/IEC 2008.
+$Id: decoder_usac.c,v 1.21.2.1 2012-04-19 09:15:33 frd Exp $
+*******************************************************************************/
+
+MPEG Surround decoder modules (mp4spatialdec/src/sac_dec.c; the same notice heads the other sac_* files):
+
+/*******************************************************************************
+This software module was originally developed by
+
+Agere Systems, Coding Technologies, Fraunhofer IIS, Philips
+
+and edited by
+
+-
+
+in the course of development of ISO/IEC 23003 for reference purposes and its
+performance may not have been optimized. This software module is an
+implementation of one or more tools as specified by ISO/IEC 23003. ISO/IEC gives
+You a royalty-free, worldwide, non-exclusive, copyright license to copy,
+distribute, and make derivative works of this software module or modifications
+thereof for use in implementations of ISO/IEC 23003 in products that satisfy
+conformance criteria (if any). Those intending to use this software module in
+products are advised that its use may infringe existing patents. ISO/IEC have no
+liability for use of this software module or modifications thereof. Copyright is
+not released for products that do not conform to audiovisual and image-coding
+related ITU Recommendations and/or ISO/IEC International Standards.
+
+Agere Systems, Coding Technologies, Fraunhofer IIS, Philips retain full right to
+modify and use the code for its (their) own purpose, assign or donate the code
+to a third party and to inhibit third parties from using the code for products
+that do not conform to MPEG-related ITU Recommendations and/or ISO/IEC
+International Standards. This copyright notice must be included in all copies or
+derivative works.
+
+Copyright (c) ISO/IEC 2008.
+*******************************************************************************/
+
+SBR decoder modules (usacEncDec/src_tf/ct_sbrdec.c; the same notice heads the other ct_* files):
+
+/****************************************************************************
+
+SC 29 Software Copyright Licencing Disclaimer:
+
+This software module was originally developed by
+  Coding Technologies
+
+and edited by
+  -
+
+in the course of development of the ISO/IEC 13818-7 and ISO/IEC 14496-3
+standards for reference purposes and its performance may not have been
+optimized. This software module is an implementation of one or more tools as
+specified by the ISO/IEC 13818-7 and ISO/IEC 14496-3 standards.
+ISO/IEC gives users free license to this software module or modifications
+thereof for use in products claiming conformance to audiovisual and
+image-coding related ITU Recommendations and/or ISO/IEC International
+Standards. ISO/IEC gives users the same free license to this software module or
+modifications thereof for research purposes and further ISO/IEC standardisation.
+Those intending to use this software module in products are advised that its
+use may infringe existing patents. ISO/IEC have no liability for use of this
+software module or modifications thereof. Copyright is not released for
+products that do not conform to audiovisual and image-coding related ITU
+Recommendations and/or ISO/IEC International Standards.
+The original developer retains full right to modify and use the code for its
+own purpose, assign or donate the code to a third party and to inhibit third
+parties from using the code for products that do not conform to audiovisual and
+image-coding related ITU Recommendations and/or ISO/IEC International Standards.
+This copyright notice must be included in all copies or derivative works.
+Copyright (c) ISO/IEC 2002.
+
+ $Id: ct_sbrdec.c,v 1.37.2.1 2012-04-19 09:15:33 frd Exp $
+
+*******************************************************************************/
+
+ER BSAC decoder modules (usacEncDec/src_tf/sam_decode_frame.c; the same notice heads the other sam_* files):
+
+/**********************************************************************
+MPEG-4 Audio VM
+
+This software module was originally developed by
+  Y.B. Thomas Kim and S.H. Park (Samsung AIT)
+and edited by
+  Y.B. Thomas Kim (Samsung AIT) on 1999-07-30
+
+in the course of development of the MPEG-2 AAC/MPEG-4 Audio standard
+ISO/IEC 13818-7, 14496-1,2 and 3. This software module is an
+implementation of a part of one or more MPEG-2 AAC/MPEG-4 Audio tools
+as specified by the MPEG-2 AAC/MPEG-4 Audio standard. ISO/IEC gives
+users of the MPEG-2 AAC/MPEG-4 Audio standards free license to this
+software module or modifications thereof for use in hardware or
+software products claiming conformance to the MPEG-2 AAC/ MPEG-4 Audio
+standards. Those intending to use this software module in hardware or
+software products are advised that this use may infringe existing
+patents. The original developer of this software module and his/her
+company, the subsequent editors and their companies, and ISO/IEC have
+no liability for use of this software module or modifications thereof
+in an implementation. Copyright is not released for non MPEG-2
+AAC/MPEG-4 Audio conforming products. The original developer retains
+full right to use the code for his/her own purpose, assign or donate
+the code to a third party and to inhibit third party from using the
+code for non MPEG-2 AAC/MPEG-4 Audio conforming products. This
+copyright notice must be included in all copies or derivative works.
+
+Copyright (c) 1999.
+
+**********************************************************************/
+
+Scalable AAC decoder module (usacEncDec/src_tf/scal_dec_frame.c):
+
+/*******************************************************************************
+This software module was originally developed by
+
+Fraunhofer IIS, VoiceAge Corp.
+
+
+Initial author:
+Bodo Teichmann      (Fraunhofer IIS)
+
+and edited by
+Bernhard Grill      (Fraunhofer IIS)
+Takashi koike       (Sony Corporation)
+Markus Werner       (SEED / Software Development Karlsruhe) 
+Olaf Kaehler        (Fraunhofer IIS)
+
+-
+
+in the course of development of ISO/IEC 23003 for reference purposes and its
+performance may not have been optimized. This software module is an
+implementation of one or more tools as specified by ISO/IEC 23003. ISO/IEC gives
+You a royalty-free, worldwide, non-exclusive, copyright license to copy,
+distribute, and make derivative works of this software module or modifications
+thereof for use in implementations of ISO/IEC 23003 in products that satisfy
+conformance criteria (if any). Those intending to use this software module in
+products are advised that its use may infringe existing patents. ISO/IEC have no
+liability for use of this software module or modifications thereof. Copyright is
+not released for products that do not conform to audiovisual and image-coding
+related ITU Recommendations and/or ISO/IEC International Standards.
+
+Assurance that the originally developed software module can be used (1) in
+ISO/IEC 23003 once ISO/IEC 23003 has been adopted; and (2) to develop ISO/IEC
+23003:s
+Fraunhofer IIS, VoiceAge Corp. grant(s) ISO/IEC all
+rights necessary to include the originally developed software module or
+modifications thereof in ISO/IEC 23003 and to permit ISO/IEC to offer You a
+royalty-free, worldwide, non-exclusive, copyright license to copy, distribute,
+and make derivative works for use in implementations of ISO/IEC 23003 in
+products that satisfy conformance criteria (if any), and to the extent that such
+originally developed software module or portions of it are included in ISO/IEC
+23003. To the extent that Fraunhofer IIS, VoiceAge Corp.
+own(s) patent rights that would be required to make, use, or sell the
+originally developed software module or portions thereof included in ISO/IEC
+23003 in a conforming product, Fraunhofer IIS, VoiceAge Corp. 
+will assure the ISO/IEC that it is (they are) willing to negotiate
+licenses under reasonable and non-discriminatory terms and conditions with
+applicants throughout the world. ISO/IEC gives You a free license to this
+software module or modifications thereof for the sole purpose of developing
+ISO/IEC 23003.
+
+Fraunhofer IIS, VoiceAge Corp. retain full right to
+modify and use the code for its (their) own purpose, assign or donate the code
+to a third party and to inhibit third parties from using the code for products
+that do not conform to MPEG-related ITU Recommendations and/or ISO/IEC
+International Standards. This copyright notice must be included in all copies or
+derivative works.
+
+Copyright (c) ISO/IEC 2008.
+$Id: scal_dec_frame.c,v 1.1.1.1 2009-05-29 14:10:17 mul Exp $
+*******************************************************************************/
+
+
+===============================================================================
+57. ISO/IEC 23003-4 MPEG-D DRC reference software
+===============================================================================
+
+Project:      the reference software of ISO/IEC 23003-4 (MPEG-D Dynamic Range
+              Control), MPEG_D_DRC_refsoft
+Source:       ISO/IEC 23003-4 reference software, ISO's Publicly Available
+              Standards
+License text: the notices of the source files
+License:      royalty-free copyright license for use in implementations or
+              products claiming conformance to ISO/IEC 23003-4
+
+Derived Smalt packages:
+  audio.aac.internal.drc (the bitstream parser of uniDrcParser.c and
+  uniDrcInterfaceParser.c, the selection process of uniDrcSelectionProcess*,
+  the gain decoder of uniDrcGainDecoder.c, uniDrcGainDecoder_*.c and
+  uniDrcFilterBank.c, the parametric DRC of parametricDrcDecoder.c, the shape
+  filters of uniDrcShapeFilter.c, the time domain equalizer of uniDrcEq.c,
+  the peak limiter of peakLimiter.c, the tables of uniDrcTables.c and the
+  processing chain of drcToolDecoder.c)
+
+Derivation: C code translated to Java and tables transcribed.
+
+Copyright:
+  Apple Inc., Fraunhofer IIS and ISO/IEC (2014)
+
+-------------------------------------------------------------------------------
+Notices of the source files
+-------------------------------------------------------------------------------
+
+The ISO/IEC 23003-4 reference software (MPEG-D DRC) carries this notice in its source files
+(modules/uniDrcModules/uniDrcBitstreamDecoderLib/src/uniDrcParser.c; the peak limiter of
+peakLimiter.c names Fraunhofer IIS alone):
+
+/***********************************************************************************
+
+ This software module was originally developed by
+
+ Apple Inc. and Fraunhofer IIS
+
+ in the course of development of the ISO/IEC 23003-4 for reference purposes and its
+ performance may not have been optimized. This software module is an implementation
+ of one or more tools as specified by the ISO/IEC 23003-4 standard. ISO/IEC gives
+ you a royalty-free, worldwide, non-exclusive, copyright license to copy, distribute,
+ and make derivative works of this software module or modifications  thereof for use
+ in implementations or products claiming conformance to the ISO/IEC 23003-4 standard
+ and which satisfy any specified conformance criteria. Those intending to use this
+ software module in products are advised that its use may infringe existing patents.
+ ISO/IEC have no liability for use of this software module or modifications thereof.
+ Copyright is not released for products that do not conform to the ISO/IEC 23003-4
+ standard.
+
+ Apple Inc. and Fraunhofer IIS retains full right to modify and use the code for its
+ own purpose, assign or donate the code to a third party and to inhibit third parties
+ from using the code for products that do not conform to MPEG-related ITU Recommenda-
+ tions and/or ISO/IEC International Standards.
+
+ This copyright notice must be included in all copies or derivative works.
+
+ Copyright (c) ISO/IEC 2014.
+
+ ***********************************************************************************/
+
+
+===============================================================================
+58. gpr (GoPro VC-5 decoder)
+===============================================================================
+
+Project:      gpr, GoPro's General Purpose Raw SDK, version 1.0.0, with the
+              VC-5 reference decoder
+Source:       https://github.com/gopro/gpr (source/lib/vc5_decoder: decoder.c,
+              inverse.c, wavelet.c, dequantize.c, vlc.c, raw.c;
+              source/lib/vc5_common: bitstream.c, companding.c, logcurve.c,
+              codec.c, table17.inc)
+License text: https://raw.githubusercontent.com/gopro/gpr/master/LICENSE-MIT
+License:      MIT License (the project is licensed under the Apache License 2.0
+              or the MIT License, at the user's option; Smalt uses the MIT
+              License)
+
+Derived Smalt packages:
+  image.raw.internal (Vc5Decoder)
+  aot.internal (SyntheticVc5)
+
+Derivation: C code translated to Java and the codebook transcribed (the
+codes the training files use, in aot.internal).
+
+Copyright:
+  Copyright 2018 GoPro, Inc.
+
+-------------------------------------------------------------------------------
+gpr license (LICENSE-MIT)
+-------------------------------------------------------------------------------
+
+Copyright 2018 GoPro, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a 
+copy of this software and associated documentation files (the "Software"), 
+to deal in the Software without restriction, including without limitation 
+the rights to use, copy, modify, merge, publish, distribute, sublicense, 
+and/or sell copies of the Software, and to permit persons to whom the 
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included 
+in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS 
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL 
+THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING 
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER 
+DEALINGS IN THE SOFTWARE.
+
+
+===============================================================================
+59. Adobe DNG SDK
+===============================================================================
+
+Project:      DNG SDK, version 1.4, Adobe, as carried by the Android Open
+              Source Project
+Source:       https://android.googlesource.com/platform/external/dng_sdk
+              (source/dng_bad_pixels.cpp, source/dng_gain_map.cpp,
+              source/dng_image.cpp)
+License text: https://android.googlesource.com/platform/external/dng_sdk/+/refs/heads/main/LICENSE
+License:      DNG SDK License Agreement (royalty-free license to use,
+              reproduce, modify, distribute and sublicense, keeping Adobe's
+              notices)
+
+Derived Smalt packages:
+  image.raw.internal (HasselbladColumns, HasselbladFlatField)
+
+Derivation: C++ code translated to Java: the interpolation of the bad
+rectangles of opcode FixBadPixelsList with the edge repeat of dng_image::Get,
+and the gain map interpolator of opcode GainMap, which Adobe DNG Converter
+applies to the calibration of Hasselblad CCD files.
+
+Copyright:
+  Copyright 2006-2009 Adobe Systems Incorporated. All Rights Reserved.
+
+-------------------------------------------------------------------------------
+DNG SDK license (LICENSE)
+-------------------------------------------------------------------------------
+
+This product includes DNG technology under license by Adobe Systems
+Incorporated.
+
+DNG SDK License Agreement
+NOTICE TO USER:
+Adobe Systems Incorporated provides the Software and Documentation for use under
+the terms of this Agreement. Any download, installation, use, reproduction,
+modification or distribution of the Software or Documentation, or any
+derivatives or portions thereof, constitutes your acceptance of this Agreement.
+
+As used in this Agreement, "Adobe" means Adobe Systems Incorporated. "Software"
+means the software code, in any format, including sample code and source code,
+accompanying this Agreement. "Documentation" means the documents, specifications
+and all other items accompanying this Agreement other than the Software.
+
+1. LICENSE GRANT
+Software License.  Subject to the restrictions below and other terms of this
+Agreement, Adobe hereby grants you a non-exclusive, worldwide, royalty free
+license to use, reproduce, prepare derivative works from, publicly display,
+publicly perform, distribute and sublicense the Software for any purpose.
+
+Document License.  Subject to the terms of this Agreement, Adobe hereby grants
+you a non-exclusive, worldwide, royalty free license to make a limited number of
+copies of the Documentation for your development purposes and to publicly
+display, publicly perform and distribute such copies.  You may not modify the
+Documentation.
+
+2. RESTRICTIONS AND OWNERSHIP
+You will not remove any copyright or other notice included in the Software or
+Documentation and you will include such notices in any copies of the Software
+that you distribute in human-readable format.
+
+You will not copy, use, display, modify or distribute the Software or
+Documentation in any manner not permitted by this Agreement. No title to the
+intellectual property in the Software or Documentation is transferred to you
+under the terms of this Agreement. You do not acquire any rights to the Software
+or the Documentation except as expressly set forth in this Agreement. All rights
+not granted are reserved by Adobe.
+
+3. DISCLAIMER OF WARRANTY
+ADOBE PROVIDES THE SOFTWARE AND DOCUMENTATION ONLY ON AN "AS IS" BASIS WITHOUT
+WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING
+WITHOUT LIMITATION ANY WARRANTIES OR CONDITIONS OF TITLE, NON-INFRINGEMENT,
+MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE. ADOBE MAKES NO WARRANTY
+THAT THE SOFTWARE OR DOCUMENTATION WILL BE ERROR-FREE. To the extent
+permissible, any warranties that are not and cannot be excluded by the foregoing
+are limited to ninety (90) days.
+
+4. LIMITATION OF LIABILITY
+ADOBE AND ITS SUPPLIERS SHALL NOT BE LIABLE FOR LOSS OR DAMAGE ARISING OUT OF
+THIS AGREEMENT OR FROM THE USE OF THE SOFTWARE OR DOCUMENTATION. IN NO EVENT
+WILL ADOBE BE LIABLE TO YOU OR ANY THIRD PARTY FOR ANY DIRECT, INDIRECT,
+CONSEQUENTIAL, INCIDENTAL, OR SPECIAL DAMAGES INCLUDING LOST PROFITS, LOST
+SAVINGS, COSTS, FEES, OR EXPENSES OF ANY KIND ARISING OUT OF ANY PROVISION OF
+THIS AGREEMENT OR THE USE OR THE INABILITY TO USE THE SOFTWARE OR DOCUMENTATION,
+HOWEVER CAUSED AND UNDER ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE), EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGES. ADOBE'S AGGREGATE LIABILITY AND THAT OF ITS
+SUPPLIERS UNDER OR IN CONNECTION WITH THIS AGREEMENT SHALL BE LIMITED TO THE
+AMOUNT PAID BY YOU FOR THE SOFTWARE AND DOCUMENTATION.
+
+5. INDEMNIFICATION
+If you choose to distribute the Software in a commercial product, you do so with
+the understanding that you agree to defend, indemnify and hold harmless Adobe
+against any losses, damages and costs arising from the claims, lawsuits or other
+legal actions arising out of such distribution.
+
+6. TRADEMARK USAGE
+Adobe and the DNG logo are the trademarks or registered trademarks of Adobe
+Systems Incorporated in the United States and other countries. Such trademarks
+may not be used to endorse or promote any product unless expressly permitted
+under separate agreement with Adobe. For information on how to license the DNG
+logo please go to www.adobe.com.
+
+7. TERM
+Your rights under this Agreement shall terminate if you fail to comply with any
+of the material terms or conditions of this Agreement. If all your rights under
+this Agreement terminate, you will immediately cease use and distribution of the
+Software and Documentation.
+
+8. GOVERNING LAW AND JURISDICTION. This Agreement is governed by the statutes
+and laws of the State of California, without regard to the conflicts of law
+principles thereof. The federal and state courts located in Santa Clara County,
+California, USA, will have non-exclusive jurisdiction over any dispute arising
+out of this Agreement.
+
+9. GENERAL
+This Agreement supersedes any prior agreement, oral or written, between Adobe
+and you with respect to the licensing to you of the Software and Documentation.
+No variation of the terms of this Agreement will be enforceable against Adobe
+unless Adobe gives its express consent in writing signed by an authorized
+signatory of Adobe. If any part of this Agreement is found void and
+unenforceable, it will not affect the validity of the balance of the Agreement,
+which shall remain valid and enforceable according to its terms.

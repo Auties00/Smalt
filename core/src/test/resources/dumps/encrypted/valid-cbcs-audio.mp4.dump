@@ -1,0 +1,37 @@
+# demux dump of encrypted/valid-cbcs-audio.mp4; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 664000
+seekable true
+metadata compatible_brands="iso8isommp41dashcmfc"
+metadata creation_time="2026-10-25T02:26:37.000000Z"
+metadata major_brand="mp41"
+metadata minor_version="0"
+track 1 AUDIO AAC timebase=1/16000 duration=9600 config=5:ddcebb1b
+  audio rate=16000 bits=0 skip=1024 layout=[FRONT_CENTER]
+packets 11
+0 t1 pts=0 dts=0 dur=1024 flags=KEY size=267 crc=00b40267
+1 t1 pts=1024 dts=1024 dur=1024 flags=KEY size=277 crc=250d811c
+2 t1 pts=2048 dts=2048 dur=1024 flags=KEY size=188 crc=f03791c3
+3 t1 pts=3072 dts=3072 dur=1024 flags=KEY size=206 crc=f2be4a10
+4 t1 pts=4096 dts=4096 dur=1024 flags=KEY size=186 crc=db7416ad
+5 t1 pts=5120 dts=5120 dur=1024 flags=KEY size=192 crc=4fec1d87
+6 t1 pts=6144 dts=6144 dur=1024 flags=KEY size=186 crc=1649a181
+7 t1 pts=7168 dts=7168 dur=1024 flags=KEY size=198 crc=90bb5199
+8 t1 pts=8192 dts=8192 dur=1024 flags=KEY size=203 crc=c00e6956
+9 t1 pts=9216 dts=9216 dur=1024 flags=KEY size=252 crc=506d46f8
+10 t1 pts=10240 dts=10240 dur=384 flags=KEY size=5 crc=5eb4caea
+seek 0: t1@0
+seek 221333: t1@3
+seek 442666: t1@6
+seek 664000: end
+seek -1000000: t1@0
+header over READ_ONCE, READ_ONCE_UNKNOWN_LENGTH:
+  format MP4
+  duration 664000
+  seekable true
+  metadata compatible_brands="iso8isommp41dashcmfc"
+  metadata creation_time="2026-10-25T02:26:37.000000Z"
+  metadata major_brand="mp41"
+  metadata minor_version="0"
+  track 1 AUDIO AAC timebase=1/16000 duration=? config=5:ddcebb1b
+    audio rate=16000 bits=0 skip=1024 layout=[FRONT_CENTER]

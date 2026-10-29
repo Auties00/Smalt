@@ -34,7 +34,7 @@ import static com.github.auties00.smalt.video.vp9.internal.Vp9Constants.TX_MODE_
  * @implNote This implementation ports libvpx's {@code vp9/encoder/vp9_bitstream.c}
  * ({@code vp9_pack_bitstream} and its helpers) and
  * {@code vp9_choose_segmap_coding_method} of {@code vp9_segmentation.c}, for
- * profile 0, one tile row and single reference prediction.
+ * one tile row and single reference prediction.
  */
 final class Vp9RtBitstream {
     /**
@@ -284,29 +284,36 @@ final class Vp9RtBitstream {
      */
     private void writeUncompressedHeader() {
         var w = header;
+        var profile = enc.profile();
         w.writeLiteral(2, 2);
-        w.writeLiteral(0, 2);
+        w.writeBit(profile & 1);
+        w.writeBit(profile >> 1);
+        if (profile == 3) {
+            w.writeBit(0);
+        }
         w.writeBit(0);
         w.writeBit(enc.keyFrame ? 0 : 1);
-        w.writeBit(1);
+        w.writeBit(enc.showFrame ? 1 : 0);
         w.writeBit(enc.errorResilient ? 1 : 0);
         if (enc.keyFrame) {
             w.writeLiteral(0x49, 8);
             w.writeLiteral(0x83, 8);
             w.writeLiteral(0x42, 8);
-            w.writeLiteral(0, 3);
-            w.writeBit(0);
+            writeColorConfig(w, profile);
             w.writeLiteral(enc.width - 1, 16);
             w.writeLiteral(enc.height - 1, 16);
             w.writeBit(0);
         } else {
+            if (!enc.showFrame) {
+                w.writeBit(0);
+            }
             if (!enc.errorResilient) {
                 w.writeLiteral(0, 2);
             }
             w.writeLiteral(enc.refreshMask, 8);
             for (var ref = LAST_FRAME; ref <= Vp9Constants.ALTREF_FRAME; ref++) {
                 w.writeLiteral(enc.refSlot[ref - 1], 3);
-                w.writeBit(0);
+                w.writeBit(enc.signBias[ref]);
             }
             var found = false;
             for (var ref = LAST_FRAME; ref <= Vp9Constants.ALTREF_FRAME; ref++) {
@@ -355,6 +362,30 @@ final class Vp9RtBitstream {
             w.writeBit(0);
         }
         w.writeBit(0);
+    }
+
+    /**
+     * Writes the bit depth, color space, color range and chroma subsampling of a key frame
+     * ({@code write_bitdepth_colorspace_sampling}).
+     *
+     * @param w the header writer
+     * @param profile the stream's profile
+     */
+    private void writeColorConfig(Vp9BitWriter w, int profile) {
+        if (profile >= 2) {
+            w.writeBit(enc.bitDepth == 10 ? 0 : 1);
+        }
+        w.writeLiteral(enc.colorSpace, 3);
+        if (enc.colorSpace != Vp9Constants.CS_SRGB) {
+            w.writeBit(enc.fullRange ? 1 : 0);
+            if (profile == 1 || profile == 3) {
+                w.writeBit(enc.ssX);
+                w.writeBit(enc.ssY);
+                w.writeBit(0);
+            }
+        } else {
+            w.writeBit(0);
+        }
     }
 
     /**
@@ -497,11 +528,31 @@ final class Vp9RtBitstream {
                 Vp9Probability.condUpdate(w, probs, Vp9FrameContext.INTRA_INTER + i, c[Vp9EncCounts.INTRA_INTER + i * 2],
                         c[Vp9EncCounts.INTRA_INTER + i * 2 + 1], result);
             }
+            if (enc.compoundReferenceAllowed()) {
+                var compound = enc.referenceMode != Vp9RtEncoder.SINGLE_REFERENCE;
+                w.write(compound ? 1 : 0, 128);
+                if (compound) {
+                    var select = enc.referenceMode == Vp9RtEncoder.REFERENCE_MODE_SELECT;
+                    w.write(select ? 1 : 0, 128);
+                    if (select) {
+                        for (var i = 0; i < 5; i++) {
+                            Vp9Probability.condUpdate(w, probs, Vp9FrameContext.COMP_INTER + i,
+                                    c[Vp9EncCounts.COMP_INTER + i * 2], c[Vp9EncCounts.COMP_INTER + i * 2 + 1], result);
+                        }
+                    }
+                }
+            }
             for (var i = 0; i < 5; i++) {
                 Vp9Probability.condUpdate(w, probs, Vp9FrameContext.SINGLE_REF + i * 2,
                         c[Vp9EncCounts.SINGLE_REF + i * 4], c[Vp9EncCounts.SINGLE_REF + i * 4 + 1], result);
                 Vp9Probability.condUpdate(w, probs, Vp9FrameContext.SINGLE_REF + i * 2 + 1,
                         c[Vp9EncCounts.SINGLE_REF + i * 4 + 2], c[Vp9EncCounts.SINGLE_REF + i * 4 + 3], result);
+            }
+            if (enc.referenceMode != Vp9RtEncoder.SINGLE_REFERENCE) {
+                for (var i = 0; i < 5; i++) {
+                    Vp9Probability.condUpdate(w, probs, Vp9FrameContext.COMP_REF + i, c[Vp9EncCounts.COMP_REF + i * 2],
+                            c[Vp9EncCounts.COMP_REF + i * 2 + 1], result);
+                }
             }
             for (var i = 0; i < 4; i++) {
                 Vp9Probability.treeUpdate(w, Vp9Trees.INTRA_MODE, probs, Vp9FrameContext.Y_MODE + i * 9, c,
@@ -1148,10 +1199,55 @@ final class Vp9RtBitstream {
         if (m.sbType >= BLOCK_8X8 && enc.txMode == TX_MODE_SELECT) {
             writeTxSize(w, m, above, left);
         }
-        var a = above == null || above.isInter() ? 0 : above.yMode(2);
-        var l = left == null || left.isInter() ? 0 : left.yMode(1);
-        writeIntraMode(w, m.mode, Vp9ProbTables.KF_Y_MODE_PROBS, (a * 10 + l) * 9);
+        if (m.sbType >= BLOCK_8X8) {
+            var a = above == null || above.isInter() ? 0 : above.yMode(2);
+            var l = left == null || left.isInter() ? 0 : left.yMode(1);
+            writeIntraMode(w, m.mode, Vp9ProbTables.KF_Y_MODE_PROBS, (a * 10 + l) * 9);
+        } else {
+            var w4 = Vp9RtCoder.NUM_4X4_WIDE[m.sbType];
+            var h4 = Vp9RtCoder.NUM_4X4_HIGH[m.sbType];
+            for (var idy = 0; idy < 2; idy += h4) {
+                for (var idx = 0; idx < 2; idx += w4) {
+                    var block = idy * 2 + idx;
+                    var a = aboveBlockMode(m, above, block);
+                    var l = leftBlockMode(m, left, block);
+                    writeIntraMode(w, m.subModes[block], Vp9ProbTables.KF_Y_MODE_PROBS, (a * 10 + l) * 9);
+                }
+            }
+        }
         writeIntraMode(w, m.uvMode, Vp9ProbTables.KF_UV_MODE_PROBS, m.mode * 9);
+    }
+
+    /**
+     * Returns the intra mode of the 4x4 block above a sub-block, the context of its mode in a key
+     * frame ({@code vp9_above_block_mode}).
+     *
+     * @param m the block
+     * @param above the block above, or {@code null}
+     * @param block the sub-block, from 0 to 3
+     * @return the mode, {@code DC_PRED} for a missing or inter block
+     */
+    static int aboveBlockMode(ModeInfo m, ModeInfo above, int block) {
+        if (block == 0 || block == 1) {
+            return above == null || above.isInter() ? Vp9Constants.DC_PRED : above.yMode(block + 2);
+        }
+        return m.subModes[block - 2];
+    }
+
+    /**
+     * Returns the intra mode of the 4x4 block on the left of a sub-block
+     * ({@code vp9_left_block_mode}).
+     *
+     * @param m the block
+     * @param left the block on the left, or {@code null}
+     * @param block the sub-block, from 0 to 3
+     * @return the mode, {@code DC_PRED} for a missing or inter block
+     */
+    static int leftBlockMode(ModeInfo m, ModeInfo left, int block) {
+        if (block == 0 || block == 2) {
+            return left == null || left.isInter() ? Vp9Constants.DC_PRED : left.yMode(block + 1);
+        }
+        return m.subModes[block - 1];
     }
 
     /**
@@ -1183,29 +1279,74 @@ final class Vp9RtBitstream {
             writeTxSize(w, m, above, left);
         }
         if (!inter) {
-            writeIntraMode(w, m.mode, probs, Vp9FrameContext.Y_MODE + Vp9Constants.SIZE_GROUP[m.sbType] * 9);
+            if (m.sbType >= BLOCK_8X8) {
+                writeIntraMode(w, m.mode, probs, Vp9FrameContext.Y_MODE + Vp9Constants.SIZE_GROUP[m.sbType] * 9);
+            } else {
+                var w4 = Vp9RtCoder.NUM_4X4_WIDE[m.sbType];
+                var h4 = Vp9RtCoder.NUM_4X4_HIGH[m.sbType];
+                for (var idy = 0; idy < 2; idy += h4) {
+                    for (var idx = 0; idx < 2; idx += w4) {
+                        writeIntraMode(w, m.subModes[idy * 2 + idx], probs, Vp9FrameContext.Y_MODE);
+                    }
+                }
+            }
             writeIntraMode(w, m.uvMode, probs, Vp9FrameContext.UV_MODE + m.mode * 9);
             return;
         }
-        var bit0 = m.ref0 != LAST_FRAME ? 1 : 0;
-        w.write(bit0, probs[Vp9FrameContext.SINGLE_REF + Vp9PredContexts.singleRefP1(above, left) * 2]);
-        if (bit0 != 0) {
-            w.write(m.ref0 != GOLDEN_FRAME ? 1 : 0,
-                    probs[Vp9FrameContext.SINGLE_REF + Vp9PredContexts.singleRefP2(above, left) * 2 + 1]);
+        var compound = m.hasSecondRef();
+        if (enc.referenceMode == Vp9RtEncoder.REFERENCE_MODE_SELECT) {
+            w.write(compound ? 1 : 0,
+                    probs[Vp9FrameContext.COMP_INTER + Vp9PredContexts.referenceMode(above, left, enc.compFixedRef)]);
+        }
+        if (compound) {
+            var fixedIdx = enc.signBias[enc.compFixedRef];
+            var varRef = fixedIdx == 1 ? m.ref0 : m.ref1;
+            w.write(varRef == enc.compVarRef1 ? 1 : 0, probs[Vp9FrameContext.COMP_REF + Vp9PredContexts.compRef(above,
+                    left, fixedIdx, enc.compVarRef0, enc.compVarRef1, enc.compFixedRef)]);
+        } else {
+            var bit0 = m.ref0 != LAST_FRAME ? 1 : 0;
+            w.write(bit0, probs[Vp9FrameContext.SINGLE_REF + Vp9PredContexts.singleRefP1(above, left) * 2]);
+            if (bit0 != 0) {
+                w.write(m.ref0 != GOLDEN_FRAME ? 1 : 0,
+                        probs[Vp9FrameContext.SINGLE_REF + Vp9PredContexts.singleRefP2(above, left) * 2 + 1]);
+            }
         }
         var modeCtx = enc.blockModeContext[index];
-        var token = INTER_MODE_TOKENS[m.mode - NEARESTMV];
-        w.writeTree(Vp9Trees.INTER_MODE, probs, Vp9FrameContext.INTER_MODE + modeCtx * 3, token >>> 5, token & 31);
+        if (m.sbType >= BLOCK_8X8) {
+            var token = INTER_MODE_TOKENS[m.mode - NEARESTMV];
+            w.writeTree(Vp9Trees.INTER_MODE, probs, Vp9FrameContext.INTER_MODE + modeCtx * 3, token >>> 5,
+                    token & 31);
+        }
         if (enc.interpFilter == SWITCHABLE) {
             var ctx = Vp9PredContexts.switchableInterp(above, left);
             var filterToken = INTERP_TOKENS[m.interpFilter];
             w.writeTree(Vp9Trees.SWITCHABLE_INTERP, probs, Vp9FrameContext.SWITCHABLE_INTERP + ctx * 2,
                     filterToken >>> 5, filterToken & 31);
         }
-        if (m.mode == NEWMV) {
-            var ref = enc.blockRefMv[index];
-            var usehp = enc.allowHp;
-            Vp9EncMv.write(w, probs, m.mv0, ref, usehp);
+        var usehp = enc.allowHp;
+        if (m.sbType < BLOCK_8X8) {
+            var w4 = Vp9RtCoder.NUM_4X4_WIDE[m.sbType];
+            var h4 = Vp9RtCoder.NUM_4X4_HIGH[m.sbType];
+            for (var idy = 0; idy < 2; idy += h4) {
+                for (var idx = 0; idx < 2; idx += w4) {
+                    var j = idy * 2 + idx;
+                    var bMode = m.subModes[j];
+                    var token = INTER_MODE_TOKENS[bMode - NEARESTMV];
+                    w.writeTree(Vp9Trees.INTER_MODE, probs, Vp9FrameContext.INTER_MODE + modeCtx * 3, token >>> 5,
+                            token & 31);
+                    if (bMode == NEWMV) {
+                        Vp9EncMv.write(w, probs, m.subMv0[j], enc.blockRefMv[index], usehp);
+                        if (compound) {
+                            Vp9EncMv.write(w, probs, m.subMv1[j], enc.blockRefMv1[index], usehp);
+                        }
+                    }
+                }
+            }
+        } else if (m.mode == NEWMV) {
+            Vp9EncMv.write(w, probs, m.mv0, enc.blockRefMv[index], usehp);
+            if (compound) {
+                Vp9EncMv.write(w, probs, m.mv1, enc.blockRefMv1[index], usehp);
+            }
         }
     }
 
@@ -1257,11 +1398,21 @@ final class Vp9RtBitstream {
                 w.writeTree(Vp9EncTables.COEF_CON_TREE, pareto, (fc[base + 2] - 1) * 8, enc2 >>> 5, (enc2 & 31) - 3);
                 if (token >= Vp9EncTables.CATEGORY1_TOKEN) {
                     var v = extra >> 1;
-                    var n = Vp9EncTables.EXTRA_BITS[token];
-                    var pb = Vp9Constants.EXTRA_START[token];
+                    int n;
+                    int pb;
+                    int[] probs;
+                    if (token == Vp9EncTables.CATEGORY6_TOKEN && enc.bitDepth > 8) {
+                        n = Vp9EncTables.cat6Bits(enc.bitDepth);
+                        probs = Vp9EncTables.CAT6_PROBS_HIGH12;
+                        pb = probs.length - n;
+                    } else {
+                        n = Vp9EncTables.EXTRA_BITS[token];
+                        probs = Vp9EncTables.EXTRA_PROBS;
+                        pb = Vp9Constants.EXTRA_START[token];
+                    }
                     do {
                         var bb = (v >> --n) & 1;
-                        w.write(bb, Vp9EncTables.EXTRA_PROBS[pb++]);
+                        w.write(bb, probs[pb++]);
                     } while (n > 0);
                 }
                 w.writeBit(extra & 1);

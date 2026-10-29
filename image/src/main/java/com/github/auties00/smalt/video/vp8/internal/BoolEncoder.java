@@ -291,6 +291,25 @@ final class BoolEncoder {
      */
     static byte[] assembleFrame(boolean key, int version, int width, int height, BoolEncoder first,
                                 BoolEncoder[] parts) {
+        return assembleFrame(key, true, version, width, height, first, parts);
+    }
+
+    /**
+     * Assembles a frame like {@link #assembleFrame(boolean, int, int, int, BoolEncoder, BoolEncoder[])},
+     * with the {@code show_frame} flag of the frame tag given.
+     *
+     * @param key whether the frame is a key frame
+     * @param show whether the decoder shows the frame
+     * @param version the bitstream version
+     * @param width the picture width
+     * @param height the picture height
+     * @param first the first partition
+     * @param parts the token partitions
+     * @return the frame
+     * @throws MediaException.Unsupported if a partition exceeds the size the format allows
+     */
+    static byte[] assembleFrame(boolean key, boolean show, int version, int width, int height, BoolEncoder first,
+                                BoolEncoder[] parts) {
         var size0 = first.size();
         if (size0 >= 1 << 19) {
             throw new MediaException.Unsupported("vp8 partition 0 overflow",
@@ -309,7 +328,7 @@ final class BoolEncoder {
             throw new MediaException.Unsupported("vp8 frame too large", "the vp8 frame exceeds 2 GiB");
         }
         var out = new byte[(int) total];
-        var tag = (size0 << 5) | (1 << 4) | (version << 1) | (key ? 0 : 1);
+        var tag = (size0 << 5) | ((show ? 1 : 0) << 4) | (version << 1) | (key ? 0 : 1);
         out[0] = (byte) tag;
         out[1] = (byte) (tag >> 8);
         out[2] = (byte) (tag >> 16);
