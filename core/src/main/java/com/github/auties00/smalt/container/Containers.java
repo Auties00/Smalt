@@ -2,14 +2,26 @@ package com.github.auties00.smalt.container;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.ac3.Ac3Demuxer;
+import com.github.auties00.smalt.container.dts.DtsDemuxer;
+import com.github.auties00.smalt.container.aac.AdifDemuxer;
+import com.github.auties00.smalt.container.aac.AdifMuxer;
+import com.github.auties00.smalt.container.aac.LoasDemuxer;
+import com.github.auties00.smalt.container.aac.LoasMuxer;
 import com.github.auties00.smalt.container.adts.AdtsDemuxer;
 import com.github.auties00.smalt.container.adts.AdtsMuxer;
 import com.github.auties00.smalt.container.aiff.AiffDemuxer;
 import com.github.auties00.smalt.container.aiff.AiffMuxer;
+import com.github.auties00.smalt.container.au.AuDemuxer;
+import com.github.auties00.smalt.container.au.AuMuxer;
 import com.github.auties00.smalt.container.amr.AmrDemuxer;
 import com.github.auties00.smalt.container.avi.AviDemuxer;
 import com.github.auties00.smalt.container.avi.AviMuxer;
+import com.github.auties00.smalt.container.caf.CafDemuxer;
+import com.github.auties00.smalt.container.caf.CafMuxer;
+import com.github.auties00.smalt.container.dash.DashDemuxer;
 import com.github.auties00.smalt.container.flac.FlacDemuxer;
+import com.github.auties00.smalt.container.hls.HlsDemuxer;
+import com.github.auties00.smalt.container.internal.Latm;
 import com.github.auties00.smalt.container.ivf.IvfDemuxer;
 import com.github.auties00.smalt.container.ivf.IvfMuxer;
 import com.github.auties00.smalt.container.matroska.MatroskaDemuxer;
@@ -23,23 +35,55 @@ import com.github.auties00.smalt.container.mp4.Mp4MuxerOptions;
 import com.github.auties00.smalt.container.mpeg.MpegAudioDemuxer;
 import com.github.auties00.smalt.container.ogg.OggDemuxer;
 import com.github.auties00.smalt.container.ogg.OggMuxer;
+import com.github.auties00.smalt.container.raw.AnnexBDemuxer;
+import com.github.auties00.smalt.container.raw.ElementaryStreamOptions;
+import com.github.auties00.smalt.container.raw.Mpeg4VideoDemuxer;
+import com.github.auties00.smalt.container.raw.ObuDemuxer;
 import com.github.auties00.smalt.container.raw.RawMuxer;
+import com.github.auties00.smalt.container.subtitle.AssDemuxer;
+import com.github.auties00.smalt.container.subtitle.AssMuxer;
+import com.github.auties00.smalt.container.subtitle.AssScriptType;
+import com.github.auties00.smalt.container.subtitle.LrcDemuxer;
+import com.github.auties00.smalt.container.subtitle.LrcMuxer;
+import com.github.auties00.smalt.container.subtitle.MicroDvdDemuxer;
+import com.github.auties00.smalt.container.subtitle.MicroDvdMuxer;
+import com.github.auties00.smalt.container.subtitle.SamiDemuxer;
+import com.github.auties00.smalt.container.subtitle.SamiMuxer;
+import com.github.auties00.smalt.container.raw.RawMuxerOptions;
 import com.github.auties00.smalt.container.subtitle.SubRipDemuxer;
 import com.github.auties00.smalt.container.subtitle.SubRipMuxer;
+import com.github.auties00.smalt.container.subtitle.SupDemuxer;
+import com.github.auties00.smalt.container.subtitle.SupMuxer;
+import com.github.auties00.smalt.container.subtitle.TtmlDemuxer;
+import com.github.auties00.smalt.container.subtitle.TtmlMuxer;
+import com.github.auties00.smalt.container.subtitle.VobSubDemuxer;
 import com.github.auties00.smalt.container.subtitle.WebVttDemuxer;
 import com.github.auties00.smalt.container.subtitle.WebVttMuxer;
 import com.github.auties00.smalt.container.ts.TsDemuxer;
 import com.github.auties00.smalt.container.ts.TsMuxer;
 import com.github.auties00.smalt.container.wav.WavDemuxer;
 import com.github.auties00.smalt.container.wav.WavMuxer;
+import com.github.auties00.smalt.container.wav.Wave64Muxer;
+import com.github.auties00.smalt.container.y4m.Y4mDemuxer;
+import com.github.auties00.smalt.container.y4m.Y4mMuxer;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.internal.header.MpegAudioHeader;
+import com.github.auties00.smalt.internal.io.ByteArrays;
+import com.github.auties00.smalt.internal.limits.Guards;
+import com.github.auties00.smalt.internal.provider.Artifacts;
+import com.github.auties00.smalt.internal.provider.Providers;
+import com.github.auties00.smalt.internal.subtitle.AssFile;
+import com.github.auties00.smalt.internal.subtitle.LrcText;
+import com.github.auties00.smalt.internal.subtitle.MicroDvdText;
+import com.github.auties00.smalt.internal.subtitle.SamiText;
 import com.github.auties00.smalt.internal.subtitle.SubRipText;
 import com.github.auties00.smalt.internal.subtitle.TextFiles;
+import com.github.auties00.smalt.internal.subtitle.TtmlDocument;
 import com.github.auties00.smalt.internal.subtitle.WebVttText;
 import com.github.auties00.smalt.internal.tags.Id3v2Tag;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.metadata.MediaTags;
+import com.github.auties00.smalt.spi.ContainerProvider;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Track;
@@ -47,30 +91,55 @@ import com.github.auties00.smalt.transcode.OutputContainer;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Predicate;
 
 /**
  * Recognizes the container of a media file from its content and opens the matching demuxer, and
  * creates the muxer that writes a container.
  *
  * <p>Recognition never trusts a file name or a declared mimetype: it inspects the leading bytes,
- * skipping an ID3v2 tag first because MP3, AAC and FLAC files often start with one. Formats with a
- * magic number (MP4 family, Matroska, Ogg, RIFF WAVE, RIFF AVI, AIFF, FLAC, AMR) are recognized exactly,
- * MPEG transport streams by the sync bytes of their first packets, and raw AC-3 and E-AC-3 streams
+ * skipping an ID3v2 tag first because MP3, AAC, AC-3, AMR and FLAC files often start with one. Formats with a
+ * magic number (MP4 family, Matroska, Ogg, RIFF WAVE, Sony Wave64, RIFF AVI, AIFF, CAF, Sun AU, ADIF, FLAC, AMR,
+ * YUV4MPEG2, the {@code "PG"} segments of a {@code .sup} file, the signature line of a VobSub index) are recognized
+ * exactly, a VobSub {@code .sub} file by a pack header followed by a subpicture PES packet, MPEG transport streams by
+ * the sync bytes of their first packets, and raw AC-3 and E-AC-3 streams
  * by two consecutive sync frames;
  * raw MPEG audio and ADTS streams, which have only a frame sync word, are recognized by requiring
- * two consecutive consistent frame headers. Text subtitle files are recognized last: a WebVTT file
- * by its {@code WEBVTT} signature, a SubRip file by a timing line among its first lines.
+ * two consecutive consistent frame headers, and LOAS streams by two consecutive {@code AudioSyncStream} frames (or
+ * one that ends the input). Elementary video streams are recognized by their structure up to a
+ * sequence header: H.264 and HEVC Annex B streams by {@link AnnexBDemuxer#detect(byte[])}, AV1 OBU streams by
+ * {@link ObuDemuxer#detect(byte[])}, MPEG-4 Part 2 and H.263 streams by {@link Mpeg4VideoDemuxer#detect(byte[])}.
+ * Text files are recognized last, in this order: an HLS playlist by its {@code #EXTM3U} first line, a DASH manifest
+ * by its {@code MPD} root element, a WebVTT file by its {@code WEBVTT} signature, a TTML
+ * document by its {@code tt} root element, a SAMI file by its {@code SAMI} tag, an SSA or ASS script by its
+ * {@code [Script Info]} section, a SubRip file by a timing line among its first lines, a MicroDVD file by a
+ * {@code {start}{end}} first line, and an LRC file by a time or ID tag on its first line. Raw PCM
+ * ({@link ContainerFormat#PCM}) has nothing to recognize it by; it is read with a
+ * {@link com.github.auties00.smalt.container.raw.PcmDemuxer} given its sample format.
  *
  * <p>{@link #openMuxer(ContainerFormat, MediaSink)} creates muxers with each format's default options: a
- * fast-start {@link Mp4Muxer}, a Matroska (not WebM) {@link MatroskaMuxer}, an Opus {@link OggMuxer}, and the
- * {@link WavMuxer}, {@link AiffMuxer}, {@link AdtsMuxer}, {@link IvfMuxer}, {@link TsMuxer} and {@link AviMuxer};
- * MPEG audio, FLAC, AMR and AC-3 files are the elementary streams a {@link RawMuxer} writes.
+ * fast-start {@link Mp4Muxer}, a Matroska (not WebM) {@link MatroskaMuxer}, an {@link OggMuxer}, and the
+ * {@link WavMuxer}, {@link Wave64Muxer}, {@link AiffMuxer}, {@link CafMuxer}, {@link AuMuxer}, {@link AdtsMuxer},
+ * {@link LoasMuxer}, {@link AdifMuxer}, {@link IvfMuxer}, {@link TsMuxer}, {@link AviMuxer} and
+ * {@link Y4mMuxer}; MPEG audio, FLAC, AMR, AC-3, H.264, HEVC, AV1 (low-overhead and Annex B), MPEG-4 Part 2,
+ * H.263 and PCM files are the elementary streams a {@link RawMuxer} writes.
  * {@link #openMuxer(OutputContainer, MediaSink)} also writes WebM, M4A, QuickTime and fragmented MP4
  * ({@link FragmentedMp4Muxer}). A caller that needs other options (RF64 policies, fragment durations)
  * constructs the muxer directly.
+ *
+ * <p>Other artifacts and applications add containers through {@link ContainerProvider}s: the formats core names
+ * but does not implement, and containers {@link ContainerFormat} does not name, which are
+ * {@link ContainerFormat#OTHER} and identified by their short name ({@link #detectName(MediaSource)},
+ * {@link #openMuxer(String, MediaSink)}). Core's own containers take precedence. Recognition asks the providers
+ * after the formats with a magic number and before the ones recognized by heuristics, as
+ * {@link ContainerProvider} describes. A container that is recognized but that neither core nor a provider on the
+ * module or class path reads or writes raises {@link MediaException.Unsupported} naming it and, when a Smalt
+ * artifact implements it, the artifact to add. A method that consults the providers throws
+ * {@link java.util.ServiceConfigurationError} when one is misconfigured.
  */
 public final class Containers {
     /**
@@ -79,9 +148,26 @@ public final class Containers {
     private static final int HEADER_LENGTH = 4096;
 
     /**
+     * The last twelve bytes of the GUID of the {@code riff} header of a Sony Wave64 file.
+     */
+    private static final byte[] WAVE64_RIFF = {0x2E, (byte) 0x91, (byte) 0xCF, 0x11, (byte) 0xA5, (byte) 0xD6, 0x28,
+            (byte) 0xDB, 0x04, (byte) 0xC1, 0x00, 0x00};
+
+    /**
+     * The last twelve bytes of the GUID of the {@code wave} form of a Sony Wave64 file.
+     */
+    private static final byte[] WAVE64_WAVE = {(byte) 0xF3, (byte) 0xAC, (byte) 0xD3, 0x11, (byte) 0x8C, (byte) 0xD1,
+            0x00, (byte) 0xC0, 0x4F, (byte) 0x8E, (byte) 0xDB, (byte) 0x8A};
+
+    /**
      * The largest ID3v2 tag skipped during recognition, in bytes.
      */
     private static final int MAX_ID3_SKIP = 64 * 1024 * 1024;
+
+    /**
+     * The number of leading bytes inspected to recognize an elementary video stream that starts with a start code.
+     */
+    private static final int VIDEO_PROBE_LENGTH = 64 * 1024;
 
     /**
      * The four-character box types that may start an ISO base media file.
@@ -103,27 +189,145 @@ public final class Containers {
      * @throws MediaException.Io if reading the source fails
      */
     public static Optional<ContainerFormat> detect(MediaSource source) {
+        return Optional.ofNullable(recognize(source)).map(Detection::format);
+    }
+
+    /**
+     * Recognizes the container of a media file, by content only, and returns its short name.
+     *
+     * <p>The name is {@link ContainerFormat#shortName()} of the format {@link #detect(MediaSource)} recognizes,
+     * or, for a container a {@link ContainerProvider} adds that {@link ContainerFormat} does not name, the
+     * provider's {@linkplain ContainerProvider#name() name}.
+     *
+     * @param source the input
+     * @return the name, for example {@code "mp4"}, or empty when the content matches no known container
+     * @throws MediaException.Io if reading the source fails
+     */
+    public static Optional<String> detectName(MediaSource source) {
+        return Optional.ofNullable(recognize(source)).map(Detection::name);
+    }
+
+    /**
+     * Recognizes the container of a media file.
+     *
+     * @param source the input
+     * @return the recognized container, or {@code null}
+     * @throws MediaException.Io if reading the source fails
+     */
+    private static Detection recognize(MediaSource source) {
         Objects.requireNonNull(source, "source");
         var header = read(source, 0, HEADER_LENGTH);
         var magic = detectMagic(header);
         if (magic != null) {
-            return Optional.of(magic);
+            return new Detection(magic, null);
+        }
+        var providers = Providers.containers();
+        var provided = detectProvided(providers, source, 0, header);
+        if (provided != null) {
+            return provided;
         }
         var leading = header;
         var offset = 0L;
         var tagSize = Id3v2Tag.size(header, 0);
         if (tagSize >= 0) {
             if (tagSize > MAX_ID3_SKIP) {
-                return Optional.empty();
+                return null;
             }
             offset = tagSize;
             header = read(source, offset, HEADER_LENGTH);
             if (header.length >= 4 && header[0] == 'f' && header[1] == 'L' && header[2] == 'a' && header[3] == 'C') {
-                return Optional.of(ContainerFormat.FLAC);
+                return new Detection(ContainerFormat.FLAC, null);
+            }
+            if (Ac3Demuxer.matches(header)) {
+                return new Detection(ContainerFormat.AC3, null);
+            }
+            if (matches(header, 0, "#!AMR")) {
+                return new Detection(ContainerFormat.AMR, null);
+            }
+            if (matches(header, 0, "ADIF")) {
+                return new Detection(ContainerFormat.ADIF, null);
+            }
+            provided = detectProvided(providers, source, offset, header);
+            if (provided != null) {
+                return provided;
             }
         }
         var frames = detectFrameStream(header);
-        return Optional.ofNullable(frames != null ? frames : detectText(leading));
+        if (frames != null) {
+            return new Detection(frames, null);
+        }
+        if (isLoas(source, offset, header)) {
+            return new Detection(ContainerFormat.LOAS, null);
+        }
+        if (offset == 0) {
+            var video = detectElementaryVideo(source, leading);
+            if (video != null) {
+                return new Detection(video, null);
+            }
+        }
+        var text = detectText(leading);
+        return text == null ? null : new Detection(text, null);
+    }
+
+    /**
+     * Asks the container providers whether they recognize the bytes at an offset.
+     *
+     * @param providers the container providers, in the order the service loader found them
+     * @param source the input
+     * @param offset the offset of {@code header}: zero, or the size of a leading ID3v2 tag
+     * @param header the {@value #HEADER_LENGTH} bytes at {@code offset}, or fewer at the end of the input
+     * @return the container of the first provider that recognizes the bytes, or {@code null}
+     * @throws MediaException.Io if reading the source fails
+     */
+    private static Detection detectProvided(List<ContainerProvider> providers, MediaSource source, long offset,
+                                            byte[] header) {
+        if (providers.isEmpty()) {
+            return null;
+        }
+        var longest = 0;
+        for (var provider : providers) {
+            longest = Math.max(longest, probeLength(provider));
+        }
+        var probe = longest <= header.length || header.length < HEADER_LENGTH ? header : read(source, offset, longest);
+        for (var provider : providers) {
+            var view = Arrays.copyOf(probe, Math.min(probe.length, probeLength(provider)));
+            boolean matched;
+            try {
+                matched = provider.matches(view, offset);
+            } catch (RuntimeException exception) {
+                // A provider that breaks the contract by throwing must not make detection fail for every input
+                matched = false;
+            }
+            if (matched) {
+                return new Detection(provider.format(), provider);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Returns how many leading bytes a provider recognizes its format from.
+     *
+     * @param provider the container provider asked
+     * @return its {@link ContainerProvider#probeLength()}, from 0 to {@link ContainerProvider#MAX_PROBE_LENGTH}
+     */
+    private static int probeLength(ContainerProvider provider) {
+        return Math.clamp(provider.probeLength(), 0, ContainerProvider.MAX_PROBE_LENGTH);
+    }
+
+    /**
+     * A recognized container.
+     *
+     * @param format the recognized format, {@link ContainerFormat#OTHER} for a container the enum does not name
+     * @param provider the provider that recognized it, or {@code null} when core did
+     */
+    private record Detection(ContainerFormat format, ContainerProvider provider) {
+        /**
+         * {@return the short name of the container}
+         */
+        String name() {
+            return provider != null ? provider.name() : format.shortName();
+        }
     }
 
     /**
@@ -134,7 +338,8 @@ public final class Containers {
      * @return the demuxer, which the caller closes
      * @throws MediaException.Unsupported if the content is not a recognized container
      * @throws MediaException.Malformed if the container is corrupt
-     * @throws MediaException.LimitExceeded if a size the container declares exceeds the limits
+     * @throws MediaException.LimitExceeded if a size the container declares exceeds the limits, or reading its
+     * structure runs out of memory or stack
      * @throws MediaException.Io if reading the source fails
      */
     public static Demuxer openDemuxer(MediaSource source) {
@@ -150,30 +355,114 @@ public final class Containers {
      * @return the demuxer, which the caller closes
      * @throws MediaException.Unsupported if the content is not a recognized container
      * @throws MediaException.Malformed if the container is corrupt
-     * @throws MediaException.LimitExceeded if a size the container declares exceeds the limits
+     * @throws MediaException.LimitExceeded if a size the container declares exceeds the limits, or reading its
+     * structure runs out of memory or stack
      * @throws MediaException.Io if reading the source fails
      */
     public static Demuxer openDemuxer(MediaSource source, DemuxerOptions options) {
         Objects.requireNonNull(options, "options");
-        var format = detect(source).orElseThrow(() -> new MediaException.Unsupported(
-                "unknown container", "the input is not a recognized media container"));
+        return Guards.bounded("container", () -> open(source, options));
+    }
+
+    /**
+     * Creates the demuxer of the container format {@link #detect(MediaSource)} recognizes.
+     *
+     * @param source the input
+     * @param options the demuxing options
+     * @return the demuxer
+     * @throws MediaException.Unsupported if the content is not a recognized container
+     */
+    private static Demuxer open(MediaSource source, DemuxerOptions options) {
+        var detection = recognize(source);
+        if (detection == null) {
+            throw new MediaException.Unsupported("unknown container", "the input is not a recognized media container");
+        }
+        var format = detection.format();
+        var demuxer = openBuiltIn(format, source, options);
+        if (demuxer != null) {
+            return demuxer;
+        }
+        var provider = detection.provider() != null && detection.provider().demuxes() ? detection.provider()
+                : provider(format, detection.name(), ContainerProvider::demuxes);
+        if (provider == null) {
+            var name = detection.name();
+            throw Artifacts.unsupportedContainer(name, "demuxable", missingArtifact(format, name));
+        }
+        return Objects.requireNonNull(provider.openDemuxer(source, options), "the demuxer a provider opens");
+    }
+
+    /**
+     * Creates the demuxer core implements for a container format.
+     *
+     * @param format the format of the input
+     * @param source the input
+     * @param options the demuxing options
+     * @return the demuxer, or {@code null} when core reads no file of {@code format}
+     * @throws MediaException.Unsupported if core recognizes the format but cannot read it from the input alone
+     */
+    private static Demuxer openBuiltIn(ContainerFormat format, MediaSource source, DemuxerOptions options) {
         return switch (format) {
             case MP4 -> new Mp4Demuxer(source, options);
             case MATROSKA -> new MatroskaDemuxer(source, options);
             case OGG -> new OggDemuxer(source, options);
             case MPEG_AUDIO -> new MpegAudioDemuxer(source, options);
             case ADTS -> new AdtsDemuxer(source, options);
-            case WAV -> new WavDemuxer(source, options);
+            case LOAS -> new LoasDemuxer(source, options);
+            case ADIF -> new AdifDemuxer(source, options);
+            case WAV, W64 -> new WavDemuxer(source, options);
             case FLAC -> new FlacDemuxer(source, options);
             case AMR -> new AmrDemuxer(source, options);
             case AIFF -> new AiffDemuxer(source, options);
+            case CAF -> new CafDemuxer(source, options);
+            case AU -> new AuDemuxer(source, options);
             case IVF -> new IvfDemuxer(source, options);
             case MPEG_TS -> new TsDemuxer(source, options);
             case AC3 -> new Ac3Demuxer(source, options);
+            case DTS -> new DtsDemuxer(source, options);
             case SUBRIP -> new SubRipDemuxer(source, options);
             case WEBVTT -> new WebVttDemuxer(source, options);
+            case ASS -> new AssDemuxer(source, options);
+            case TTML -> new TtmlDemuxer(source, options);
+            case SAMI -> new SamiDemuxer(source, options);
+            case LRC -> new LrcDemuxer(source, options);
+            case MICRODVD -> new MicroDvdDemuxer(source, options);
+            case SUP -> new SupDemuxer(source, options);
+            case VOBSUB -> {
+                var header = read(source, 0, 64);
+                if (VobSubDemuxer.matchesIndex(header)) {
+                    throw new MediaException.Unsupported("vobsub index", "a VobSub index cannot be read without"
+                            + " its .sub file: open the pair with VobSubDemuxer");
+                }
+                yield new VobSubDemuxer(source, options);
+            }
             case AVI -> new AviDemuxer(source, options);
+            case HLS -> new HlsDemuxer(source, options);
+            case DASH -> new DashDemuxer(source, options);
+            case H264, HEVC -> new AnnexBDemuxer(source, ElementaryStreamOptions.of(options));
+            case AV1, AV1_ANNEX_B -> new ObuDemuxer(source, ElementaryStreamOptions.of(options));
+            case MPEG4_VIDEO, H263 -> new Mpeg4VideoDemuxer(source, options);
+            case Y4M -> new Y4mDemuxer(source, options);
+            case PCM -> throw new MediaException.Unsupported("pcm", "raw PCM needs its sample format: use PcmDemuxer");
+            default -> null;
         };
+    }
+
+    /**
+     * Finds the provider of a container that offers an operation.
+     *
+     * @param format the format of the container, {@link ContainerFormat#OTHER} for one the enum does not name
+     * @param name the short name of the container
+     * @param offers whether a provider offers the operation
+     * @return the first provider of the container that offers it, or {@code null}
+     */
+    private static ContainerProvider provider(ContainerFormat format, String name,
+                                              Predicate<ContainerProvider> offers) {
+        for (var provider : Providers.containers()) {
+            if (provider.format() == format && provider.name().equals(name) && offers.test(provider)) {
+                return provider;
+            }
+        }
+        return null;
     }
 
     /**
@@ -192,15 +481,54 @@ public final class Containers {
             case MATROSKA -> MatroskaMuxer.supports(MatroskaDocType.MATROSKA, codec);
             case OGG -> OggMuxer.supports(codec);
             case WAV -> WavMuxer.supports(codec);
+            case W64 -> Wave64Muxer.supports(codec);
             case AIFF -> AiffMuxer.supports(codec);
+            case CAF -> CafMuxer.supports(codec);
+            case AU -> AuMuxer.supports(codec);
             case ADTS -> AdtsMuxer.supports(codec);
+            case LOAS -> LoasMuxer.supports(codec);
+            case ADIF -> AdifMuxer.supports(codec);
             case IVF -> IvfMuxer.supports(codec);
             case MPEG_TS -> TsMuxer.supports(codec);
-            case MPEG_AUDIO, FLAC, AMR, AC3 -> RawMuxer.supports(format, codec);
+            case MPEG_AUDIO, FLAC, AMR, AC3, DTS, H264, HEVC, AV1, AV1_ANNEX_B, MPEG4_VIDEO, H263, PCM ->
+                    RawMuxer.supports(format, codec);
             case SUBRIP -> SubRipMuxer.supports(codec);
             case WEBVTT -> WebVttMuxer.supports(codec);
+            case ASS -> AssMuxer.supports(codec);
+            case TTML -> TtmlMuxer.supports(codec);
+            case SAMI -> SamiMuxer.supports(codec);
+            case LRC -> LrcMuxer.supports(codec);
+            case MICRODVD -> MicroDvdMuxer.supports(codec);
+            case SUP -> SupMuxer.supports(codec);
+            case VOBSUB, HLS, DASH -> false;
             case AVI -> AviMuxer.supports(codec);
+            case Y4M -> Y4mMuxer.supports(codec);
+            case OTHER -> false;
+            default -> {
+                var provider = provider(format, format.shortName(), ContainerProvider::muxes);
+                yield provider != null && provider.carries(codec);
+            }
         };
+    }
+
+    /**
+     * Returns whether the muxer of a container, named by its short name, accepts tracks of a codec.
+     *
+     * @param name the short name of the container: a {@link ContainerFormat#shortName()} or the
+     * {@linkplain ContainerProvider#name() name} of a container a provider adds
+     * @param codec the codec of the track
+     * @return {@code true} when the muxer {@link #openMuxer(String, MediaSink)} returns for {@code name} can carry
+     * {@code codec}; {@code false} for a name no container has
+     */
+    public static boolean isMuxable(String name, Codec codec) {
+        Objects.requireNonNull(name, "name");
+        Objects.requireNonNull(codec, "codec");
+        var format = ContainerFormat.ofShortName(name).orElse(null);
+        if (format != null) {
+            return isMuxable(format, codec);
+        }
+        var provider = provider(ContainerFormat.OTHER, name, ContainerProvider::muxes);
+        return provider != null && provider.carries(codec);
     }
 
     /**
@@ -222,12 +550,18 @@ public final class Containers {
     /**
      * Creates the muxer that writes a container format with the default options of that format.
      *
-     * <p>The muxers are the ones the class description lists; MPEG audio, FLAC, AMR and AC-3 files
-     * are elementary streams whose muxer accepts only the codecs of the format.
+     * <p>The muxers are the ones the class description lists; MPEG audio, FLAC, AMR, AC-3, H.264, HEVC,
+     * AV1, MPEG-4 Part 2, H.263 and PCM files are elementary streams whose muxer accepts only the codecs of the
+     * format.
      *
      * @param format the container format
      * @param output the sink, written from its position and not closed by the muxer
      * @return the muxer, which the caller finishes and closes
+     * @throws IllegalArgumentException if {@code format} is {@link ContainerFormat#VOBSUB}, which writes two files
+     * ({@code VobSubMuxer}), {@link ContainerFormat#HLS} or {@link ContainerFormat#DASH}, presentations of many
+     * files that {@link com.github.auties00.smalt.container.packaging.Packager} writes, or
+     * {@link ContainerFormat#OTHER}, which names no single container
+     * @throws MediaException.Unsupported if no muxer of a format core does not write is on the module or class path
      * @throws MediaException.Io if the sink position cannot be read
      */
     public static Muxer openMuxer(ContainerFormat format, MediaSink output) {
@@ -238,15 +572,87 @@ public final class Containers {
             case MATROSKA -> new MatroskaMuxer(output);
             case OGG -> new OggMuxer(output);
             case WAV -> new WavMuxer(output);
+            case W64 -> new Wave64Muxer(output);
             case AIFF -> new AiffMuxer(output);
+            case CAF -> new CafMuxer(output);
+            case AU -> new AuMuxer(output);
             case ADTS -> new AdtsMuxer(output);
+            case LOAS -> new LoasMuxer(output);
+            case ADIF -> new AdifMuxer(output);
             case IVF -> new IvfMuxer(output);
-            case MPEG_AUDIO, FLAC, AMR, AC3 -> new FormatMuxer(format, new RawMuxer(output));
+            case MPEG_AUDIO, FLAC, AMR, AC3, DTS, H264, HEVC, AV1, MPEG4_VIDEO, H263, PCM ->
+                    new FormatMuxer(format, new RawMuxer(output));
+            case AV1_ANNEX_B -> new FormatMuxer(format, new RawMuxer(output,
+                    RawMuxerOptions.builder().av1AnnexB(true).build()));
             case MPEG_TS -> new TsMuxer(output);
             case SUBRIP -> new SubRipMuxer(output);
             case WEBVTT -> new WebVttMuxer(output);
+            case ASS -> new AssMuxer(output);
+            case TTML -> new TtmlMuxer(output);
+            case SAMI -> new SamiMuxer(output);
+            case LRC -> new LrcMuxer(output);
+            case MICRODVD -> new MicroDvdMuxer(output);
+            case SUP -> new SupMuxer(output);
+            case VOBSUB -> throw new IllegalArgumentException("VobSub writes two files: use VobSubMuxer");
+            case HLS, DASH -> throw new IllegalArgumentException("an " + format + " presentation is many files: use "
+                    + "Packager");
             case AVI -> new AviMuxer(output);
+            case Y4M -> new Y4mMuxer(output);
+            case OTHER -> throw new IllegalArgumentException("OTHER names no single container: name the container");
+            default -> openProvided(format, format.shortName(), output);
         };
+    }
+
+    /**
+     * Creates the muxer that writes a container, named by its short name, with the default options of that
+     * container.
+     *
+     * <p>A {@link ContainerFormat#shortName()} gives the muxer {@link #openMuxer(ContainerFormat, MediaSink)}
+     * returns for that format; any other name gives the muxer of the {@link ContainerProvider} of that name.
+     *
+     * @param name the short name of the container, for example {@code "matroska"}
+     * @param output the sink, written from its position and not closed by the muxer
+     * @return the muxer, which the caller finishes and closes
+     * @throws IllegalArgumentException if {@code name} is {@code "vobsub"}, {@code "hls"}, {@code "dash"} or
+     * {@code "other"}, as for {@link #openMuxer(ContainerFormat, MediaSink)}
+     * @throws MediaException.Unsupported if no container of that name is written by core or a provider on the
+     * module or class path
+     * @throws MediaException.Io if the sink position cannot be read
+     */
+    public static Muxer openMuxer(String name, MediaSink output) {
+        Objects.requireNonNull(name, "name");
+        Objects.requireNonNull(output, "output");
+        var format = ContainerFormat.ofShortName(name).orElse(null);
+        return format != null ? openMuxer(format, output) : openProvided(ContainerFormat.OTHER, name, output);
+    }
+
+    /**
+     * Returns the Smalt artifact to add for a container no provider on the module or class path handles.
+     *
+     * @param format the format of the container
+     * @param name the short name of the container
+     * @return the artifact that implements the container, or {@code null} when none does or a provider of the
+     * container is present
+     */
+    private static String missingArtifact(ContainerFormat format, String name) {
+        return provider(format, name, _ -> true) != null ? null : Artifacts.containerOf(format);
+    }
+
+    /**
+     * Creates the muxer of a container a provider writes.
+     *
+     * @param format the format of the container, {@link ContainerFormat#OTHER} for one the enum does not name
+     * @param name the short name of the container
+     * @param output the sink
+     * @return the muxer
+     * @throws MediaException.Unsupported if no provider writes the container
+     */
+    private static Muxer openProvided(ContainerFormat format, String name, MediaSink output) {
+        var provider = provider(format, name, ContainerProvider::muxes);
+        if (provider == null) {
+            throw Artifacts.unsupportedContainer(name, "writable", missingArtifact(format, name));
+        }
+        return Objects.requireNonNull(provider.openMuxer(output), "the muxer a provider opens");
     }
 
     /**
@@ -262,8 +668,12 @@ public final class Containers {
      *   <li>{@link OutputContainer#MATROSKA} and {@link OutputContainer#WEBM} get a
      *       {@link MatroskaMuxer} with the {@link MatroskaMuxerOptions#matroska()} and
      *       {@link MatroskaMuxerOptions#webm()} options;</li>
+     *   <li>{@link OutputContainer#ASS} and {@link OutputContainer#SSA} get an {@link AssMuxer} that writes
+     *       that version of the format;</li>
      *   <li>every other profile gets the muxer {@link #openMuxer(ContainerFormat, MediaSink)} returns
-     *       for its {@linkplain OutputContainer#format() format}.</li>
+     *       for its {@linkplain OutputContainer#format() format}; for {@link OutputContainer#OGG_FLAC},
+     *       {@link OutputContainer#AC3} and {@link OutputContainer#EAC3} it rejects a track of a codec
+     *       the profile does not {@linkplain OutputContainer#supports(Codec) carry}.</li>
      * </ul>
      *
      * @param container the output container profile
@@ -282,17 +692,41 @@ public final class Containers {
             case FRAGMENTED_MP4 -> new FragmentedMp4Muxer(output);
             case MATROSKA -> new MatroskaMuxer(output, MatroskaMuxerOptions.matroska());
             case WEBM -> new MatroskaMuxer(output, MatroskaMuxerOptions.webm());
+            case OGG_FLAC, AC3, EAC3 -> new FormatMuxer(container, openMuxer(container.format(), output));
+            case ASS -> new AssMuxer(output, AssScriptType.V4_PLUS);
+            case SSA -> new AssMuxer(output, AssScriptType.V4);
             default -> openMuxer(container.format(), output);
         };
     }
 
     /**
-     * Restricts a {@link RawMuxer} to the codecs of one elementary-stream format.
+     * Restricts a muxer to the codecs of one file format or profile.
      *
-     * @param format the format written
-     * @param raw the muxer writing the stream
+     * @param name the name of the format, for messages
+     * @param accepts whether the format carries a codec
+     * @param raw the muxer writing the file
      */
-    private record FormatMuxer(ContainerFormat format, RawMuxer raw) implements Muxer {
+    private record FormatMuxer(String name, Predicate<Codec> accepts, Muxer raw) implements Muxer {
+        /**
+         * Restricts a {@link RawMuxer} to the codecs of an elementary-stream format.
+         *
+         * @param format the format written
+         * @param raw the muxer writing the stream
+         */
+        private FormatMuxer(ContainerFormat format, RawMuxer raw) {
+            this(format.name().toLowerCase(Locale.ROOT).replace('_', '-'), codec -> isMuxable(format, codec), raw);
+        }
+
+        /**
+         * Restricts a muxer to the codecs of an output container profile.
+         *
+         * @param container the profile written
+         * @param raw the muxer writing the file
+         */
+        private FormatMuxer(OutputContainer container, Muxer raw) {
+            this(container.name().toLowerCase(Locale.ROOT).replace('_', '-'), container::supports, raw);
+        }
+
         /**
          * {@inheritDoc}
          *
@@ -301,9 +735,8 @@ public final class Containers {
         @Override
         public void addTrack(Track track) {
             Objects.requireNonNull(track, "track");
-            if (!isMuxable(format, track.codec())) {
-                throw new IllegalArgumentException(format.name().toLowerCase(Locale.ROOT).replace('_', '-') + " cannot carry "
-                        + track.codec().displayName());
+            if (!accepts.test(track.codec())) {
+                throw new IllegalArgumentException(name + " cannot carry " + track.codec().displayName());
             }
             raw.addTrack(track);
         }
@@ -311,6 +744,11 @@ public final class Containers {
         @Override
         public boolean supportsTags() {
             return raw.supportsTags();
+        }
+
+        @Override
+        public boolean supportsAlpha() {
+            return raw.supportsAlpha();
         }
 
         /**
@@ -364,8 +802,17 @@ public final class Containers {
         if (IvfDemuxer.matches(header)) {
             return ContainerFormat.IVF;
         }
+        if (SupDemuxer.matches(header)) {
+            return ContainerFormat.SUP;
+        }
+        if (VobSubDemuxer.matches(header) || VobSubDemuxer.matchesIndex(header)) {
+            return ContainerFormat.VOBSUB;
+        }
         if (matches(header, 0, "#!AMR")) {
             return ContainerFormat.AMR;
+        }
+        if (Y4mDemuxer.matches(header)) {
+            return ContainerFormat.Y4M;
         }
         if (matches(header, 0, "RIFF") || matches(header, 0, "RIFX") || matches(header, 0, "RF64") || matches(header, 0, "BW64")) {
             if (matches(header, 8, "WAVE")) {
@@ -379,6 +826,24 @@ public final class Containers {
         if (matches(header, 0, "FORM") && (matches(header, 8, "AIFF") || matches(header, 8, "AIFC"))) {
             return ContainerFormat.AIFF;
         }
+        if (matches(header, 0, "caff") && header[4] == 0 && header[5] == 1) {
+            return ContainerFormat.CAF;
+        }
+        if (header.length >= 40 && matches(header, 0, "riff") && Arrays.equals(header, 4, 16, WAVE64_RIFF, 0, 12)
+                && matches(header, 24, "wave") && Arrays.equals(header, 28, 40, WAVE64_WAVE, 0, 12)) {
+            return ContainerFormat.W64;
+        }
+        if (isAu(header)) {
+            return ContainerFormat.AU;
+        }
+        if (matches(header, 0, "ADIF")) {
+            return ContainerFormat.ADIF;
+        }
+        if (header.length >= 24 && header[0] == 0 && header[1] == 0 && header[2] == 0 && header[3] == 12
+                && matches(header, 4, "jP  ") && matches(header, 16, "ftyp")
+                && (matches(header, 20, "mjp2") || matches(header, 20, "mj2s"))) {
+            return ContainerFormat.MP4;
+        }
         for (var box : MP4_LEADING_BOXES) {
             if (matches(header, 4, box)) {
                 return ContainerFormat.MP4;
@@ -390,23 +855,42 @@ public final class Containers {
         if (Ac3Demuxer.matches(header)) {
             return ContainerFormat.AC3;
         }
+        if (DtsDemuxer.matches(header)) {
+            return ContainerFormat.DTS;
+        }
         return null;
     }
 
     /**
-     * Recognizes a text subtitle file from its leading bytes: a WebVTT file by its signature, a
-     * SubRip file by a timing line as the first or second of its first non-blank lines.
+     * Recognizes a text subtitle file from its leading bytes: a WebVTT, TTML, SAMI, SSA or ASS file by its
+     * signature, a SubRip file by a timing line as the first or second of its first non-blank lines, then a
+     * MicroDVD or LRC file by its first line.
      *
      * @param header the leading bytes of the input
-     * @return {@link ContainerFormat#WEBVTT}, {@link ContainerFormat#SUBRIP}, or {@code null}
+     * @return the text subtitle format, or {@code null}
      */
     private static ContainerFormat detectText(byte[] header) {
         if (header.length == 0) {
             return null;
         }
         var text = TextFiles.decode(header);
+        if (text.startsWith("#EXTM3U") && (text.length() == 7 || text.charAt(7) == '\n' || text.charAt(7) == '\r')) {
+            return ContainerFormat.HLS;
+        }
+        if (isManifest(text)) {
+            return ContainerFormat.DASH;
+        }
         if (WebVttText.isSignature(text)) {
             return ContainerFormat.WEBVTT;
+        }
+        if (TtmlDocument.isSignature(text)) {
+            return ContainerFormat.TTML;
+        }
+        if (SamiText.isSignature(text)) {
+            return ContainerFormat.SAMI;
+        }
+        if (AssFile.isSignature(text)) {
+            return ContainerFormat.ASS;
         }
         var times = new long[2];
         var seen = 0;
@@ -421,7 +905,122 @@ public final class Containers {
                 break;
             }
         }
+        if (MicroDvdText.isSignature(text)) {
+            return ContainerFormat.MICRODVD;
+        }
+        if (LrcText.isSignature(text)) {
+            return ContainerFormat.LRC;
+        }
         return null;
+    }
+
+    /**
+     * Returns whether text is an XML document whose root element is a DASH {@code MPD}: after an XML declaration,
+     * comments and blanks, the first element is {@code MPD}, with or without a prefix.
+     *
+     * @param text the leading text
+     * @return {@code true} for a DASH manifest
+     */
+    private static boolean isManifest(String text) {
+        var position = 0;
+        while (position < text.length()) {
+            var c = text.charAt(position);
+            if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+                position++;
+            } else if (text.startsWith("<?", position) || text.startsWith("<!--", position)) {
+                var end = text.indexOf(text.startsWith("<?", position) ? "?>" : "-->", position);
+                if (end < 0) {
+                    return false;
+                }
+                position = end + (text.startsWith("?>", end) ? 2 : 3);
+            } else {
+                break;
+            }
+        }
+        if (!text.startsWith("<", position)) {
+            return false;
+        }
+        var end = position + 1;
+        while (end < text.length() && !Character.isWhitespace(text.charAt(end)) && text.charAt(end) != '>'
+                && text.charAt(end) != '/') {
+            end++;
+        }
+        var name = text.substring(position + 1, end);
+        return end < text.length() && (name.equals("MPD") || name.endsWith(":MPD"));
+    }
+
+    /**
+     * Recognizes an elementary video stream: an H.264 or HEVC Annex B stream, an AV1 OBU stream, or an MPEG-4 Part 2
+     * or H.263 stream.
+     *
+     * <p>A stream that starts with a start code is examined over up to {@value #VIDEO_PROBE_LENGTH} bytes, so that
+     * the sequence header after large SEI messages is reached.
+     *
+     * @param source the input
+     * @param header the leading bytes of the input
+     * @return the recognized format, or {@code null}
+     */
+    private static ContainerFormat detectElementaryVideo(MediaSource source, byte[] header) {
+        var probe = header;
+        if (header.length >= HEADER_LENGTH && header[0] == 0 && header[1] == 0) {
+            probe = read(source, 0, VIDEO_PROBE_LENGTH);
+        }
+        var nal = AnnexBDemuxer.detect(probe);
+        if (nal.isPresent()) {
+            return nal.get();
+        }
+        var obu = ObuDemuxer.detect(probe);
+        if (obu.isPresent()) {
+            return obu.get();
+        }
+        return Mpeg4VideoDemuxer.detect(probe).orElse(null);
+    }
+
+    /**
+     * Returns whether bytes start a Sun/NeXT audio file: the magic {@code .snd} (or {@code dns.} for the little-endian
+     * variant), a header of at least 24 bytes, an encoding from 1 to 27 and a channel count and rate that are not zero.
+     *
+     * @param header the leading bytes of the input
+     * @return {@code true} for an AU file
+     */
+    private static boolean isAu(byte[] header) {
+        if (header.length < 24) {
+            return false;
+        }
+        var little = matches(header, 0, "dns.");
+        if (!little && !matches(header, 0, ".snd")) {
+            return false;
+        }
+        var offset = little ? ByteArrays.u32le(header, 4) : ByteArrays.u32be(header, 4);
+        var encoding = little ? ByteArrays.u32le(header, 12) : ByteArrays.u32be(header, 12);
+        var rate = little ? ByteArrays.u32le(header, 16) : ByteArrays.u32be(header, 16);
+        var channels = little ? ByteArrays.u32le(header, 20) : ByteArrays.u32be(header, 20);
+        return offset >= 24 && encoding >= 1 && encoding <= 27 && rate != 0 && channels != 0;
+    }
+
+    /**
+     * Recognizes an AAC stream in LOAS framing by two consecutive {@code AudioSyncStream} frames, or by one frame that
+     * ends the input.
+     *
+     * @param source the input
+     * @param offset the offset of {@code header}
+     * @param header the bytes at the start of the frame stream
+     * @return {@code true} for a LOAS stream
+     * @throws MediaException.Io if reading the source fails
+     */
+    private static boolean isLoas(MediaSource source, long offset, byte[] header) {
+        var length = Latm.frameLength(header, 0, header.length);
+        if (length <= 3) {
+            return false;
+        }
+        var probe = header;
+        if (length + 2 > probe.length && probe.length == HEADER_LENGTH) {
+            probe = read(source, offset, length + 2);
+        }
+        if (length == probe.length) {
+            return true;
+        }
+        return length + 2 <= probe.length && Latm.frameLength(probe, length, probe.length - length) > 0;
     }
 
     /**

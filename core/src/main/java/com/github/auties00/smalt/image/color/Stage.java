@@ -1,3 +1,4 @@
+/* Ports Little CMS 2.17 (cmslut.c, cmsnamed.c). Copyright Marti Maria Saguer; MIT License. Modified for Smalt. */
 package com.github.auties00.smalt.image.color;
 
 import java.util.Arrays;
@@ -8,15 +9,20 @@ import java.util.Arrays;
  * <p>Values travel between stages in the Little CMS normalized encoding: device values span
  * {@code 0..1}; CIE XYZ is divided by {@link ColorMath#MAX_ENCODEABLE_XYZ}; CIE L*a*b* is
  * {@code L / 100}, {@code (a + 128) / 255} and {@code (b + 128) / 255} (the ICC version 4
- * encoding).
+ * encoding). Inside a floating-point {@code multiProcessElementType} table, between the
+ * normalization matrices {@link Matrix#fromLabFloat()}, {@link Matrix#toLabFloat()},
+ * {@link Matrix#fromXyzFloat()} and {@link Matrix#toXyzFloat()}, XYZ and L*a*b* values are in
+ * their natural units.
  *
  * <p>Instances are immutable and thread-safe.
  *
  * @implNote This implementation follows the stage evaluators of Little CMS 2.17 ({@code cmslut.c}): curves evaluate per
  * channel, matrices accumulate in double precision, lookup tables quantize their inputs to 16 bits and interpolate in
- * fixed point, and the L*a*b* conversions use the version 4 encoding.
+ * fixed point, floating-point lookup tables interpolate in single precision, and the L*a*b* conversions use the
+ * version 4 encoding.
  */
-abstract sealed class Stage permits Stage.Curves, Stage.Matrix, Stage.Clut, Stage.LabToXyz, Stage.XyzToLab {
+abstract sealed class Stage permits Stage.Curves, Stage.Matrix, Stage.Clut, Stage.FloatClut, Stage.NamedColor,
+        Stage.LabToXyz, Stage.XyzToLab {
     /**
      * Identifies the structure of a stage.
      */
@@ -35,6 +41,11 @@ abstract sealed class Stage permits Stage.Curves, Stage.Matrix, Stage.Clut, Stag
          * A multidimensional lookup table.
          */
         CLUT,
+
+        /**
+         * The lookup of a color in a named color list.
+         */
+        NAMED_COLOR,
 
         /**
          * The L*a*b* to XYZ conversion.
@@ -69,7 +80,27 @@ abstract sealed class Stage permits Stage.Curves, Stage.Matrix, Stage.Clut, Stag
         /**
          * The L*a*b* version 4 to version 2 rescaling.
          */
-        LAB_V4_TO_V2
+        LAB_V4_TO_V2,
+
+        /**
+         * The scaling of natural L*a*b* values to the normalized encoding ({@code cmsSigLab2FloatPCS}).
+         */
+        LAB_FLOAT_TO_PCS,
+
+        /**
+         * The scaling of normalized L*a*b* values to natural units ({@code cmsSigFloatPCS2Lab}).
+         */
+        PCS_TO_LAB_FLOAT,
+
+        /**
+         * The scaling of natural XYZ values to the normalized encoding ({@code cmsSigXYZ2FloatPCS}).
+         */
+        XYZ_FLOAT_TO_PCS,
+
+        /**
+         * The scaling of normalized XYZ values to natural units ({@code cmsSigFloatPCS2XYZ}).
+         */
+        PCS_TO_XYZ_FLOAT
     }
 
     /**
@@ -114,6 +145,26 @@ abstract sealed class Stage permits Stage.Curves, Stage.Matrix, Stage.Clut, Stag
      * @param out receives the outputs
      */
     abstract void evaluate(float[] in, float[] out);
+
+    /**
+     * {@return the scratch space that {@link #evaluate(float[], float[], Object)} needs, or {@code null} for a stage
+     * that evaluates without any}
+     */
+    Object scratch() {
+        return null;
+    }
+
+    /**
+     * Evaluates the stage without allocating, with scratch space from {@link #scratch()} owned by the calling
+     * thread; the result equals {@link #evaluate(float[], float[])}.
+     *
+     * @param in the inputs
+     * @param out receives the outputs
+     * @param scratch the stage's scratch space
+     */
+    void evaluate(float[] in, float[] out, Object scratch) {
+        evaluate(in, out);
+    }
 
     /**
      * Applies one curve per channel.
@@ -228,6 +279,48 @@ abstract sealed class Stage permits Stage.Curves, Stage.Matrix, Stage.Clut, Stag
             return new Matrix(3, 3, new double[]{s, 0, 0, 0, s, 0, 0, 0, s}, null, Role.LAB_V4_TO_V2);
         }
 
+        /**
+         * Creates the scaling of natural L*a*b* values to the normalized encoding
+         * ({@code _cmsStageNormalizeFromLabFloat}).
+         *
+         * @return the stage
+         */
+        static Matrix fromLabFloat() {
+            return new Matrix(3, 3, new double[]{1.0 / 100.0, 0, 0, 0, 1.0 / 255.0, 0, 0, 0, 1.0 / 255.0},
+                    new double[]{0, 128.0 / 255.0, 128.0 / 255.0}, Role.LAB_FLOAT_TO_PCS);
+        }
+
+        /**
+         * Creates the scaling of normalized L*a*b* values to natural units ({@code _cmsStageNormalizeToLabFloat}).
+         *
+         * @return the stage
+         */
+        static Matrix toLabFloat() {
+            return new Matrix(3, 3, new double[]{100.0, 0, 0, 0, 255.0, 0, 0, 0, 255.0}, new double[]{0, -128.0, -128.0},
+                    Role.PCS_TO_LAB_FLOAT);
+        }
+
+        /**
+         * Creates the scaling of natural XYZ values to the normalized encoding
+         * ({@code _cmsStageNormalizeFromXyzFloat}).
+         *
+         * @return the stage
+         */
+        static Matrix fromXyzFloat() {
+            var n = 32768.0 / 65535.0;
+            return new Matrix(3, 3, new double[]{n, 0, 0, 0, n, 0, 0, 0, n}, null, Role.XYZ_FLOAT_TO_PCS);
+        }
+
+        /**
+         * Creates the scaling of normalized XYZ values to natural units ({@code _cmsStageNormalizeToXyzFloat}).
+         *
+         * @return the stage
+         */
+        static Matrix toXyzFloat() {
+            var n = 65535.0 / 32768.0;
+            return new Matrix(3, 3, new double[]{n, 0, 0, 0, n, 0, 0, 0, n}, null, Role.PCS_TO_XYZ_FLOAT);
+        }
+
         @Override
         Kind kind() {
             return Kind.MATRIX;
@@ -299,14 +392,127 @@ abstract sealed class Stage permits Stage.Curves, Stage.Matrix, Stage.Clut, Stag
 
         @Override
         void evaluate(float[] in, float[] out) {
-            var in16 = new int[inputs];
-            var out16 = new int[outputs];
+            evaluate(in, out, scratch());
+        }
+
+        @Override
+        Object scratch() {
+            return new Words(new int[inputs], new int[outputs], interpolator.scratch());
+        }
+
+        @Override
+        void evaluate(float[] in, float[] out, Object scratch) {
+            var words = (Words) scratch;
+            var in16 = words.in();
+            var out16 = words.out();
             for (var i = 0; i < inputs; i++) {
                 in16[i] = ColorMath.saturateWord(in[i] * 65535.0);
             }
-            interpolator.evaluate(in16, out16);
+            interpolator.evaluate(in16, out16, words.levels());
             for (var i = 0; i < outputs; i++) {
                 out[i] = out16[i] / 65535.0f;
+            }
+        }
+
+        /**
+         * Holds the scratch space of a table evaluation.
+         *
+         * @param in the quantized inputs
+         * @param out the interpolated outputs
+         * @param levels the interpolator's scratch space, or {@code null}
+         */
+        private record Words(int[] in, int[] out, int[][] levels) {
+        }
+    }
+
+    /**
+     * Interpolates a multidimensional lookup table of {@code float} samples, without quantizing its inputs.
+     */
+    static final class FloatClut extends Stage {
+        /**
+         * The interpolator over the table.
+         */
+        final FloatInterpolator interpolator;
+
+        /**
+         * Creates a table stage.
+         *
+         * @param grid the number of grid points per input, each at least two
+         * @param outputs the number of outputs
+         * @param table the samples, not copied
+         */
+        FloatClut(int[] grid, int outputs, float[] table) {
+            super(grid.length, outputs, Role.PLAIN);
+            this.interpolator = new FloatInterpolator(grid.clone(), outputs, table);
+        }
+
+        @Override
+        Kind kind() {
+            return Kind.CLUT;
+        }
+
+        @Override
+        void evaluate(float[] in, float[] out) {
+            interpolator.evaluate(in, out);
+        }
+
+        @Override
+        Object scratch() {
+            return interpolator.scratch();
+        }
+
+        @Override
+        void evaluate(float[] in, float[] out, Object scratch) {
+            interpolator.evaluate(in, out, (float[][]) scratch);
+        }
+    }
+
+    /**
+     * Looks up a color of a named color list: the input is the color index divided by 65535, the output its
+     * connection space or device values divided by 65535 ({@code EvalNamedColorPCS}, {@code EvalNamedColor}).
+     *
+     * <p>An index at or past the end of the list gives zeros.
+     */
+    static final class NamedColor extends Stage {
+        /**
+         * The 16-bit values of each color, {@code outputs} per color.
+         */
+        private final int[] values;
+
+        /**
+         * Creates a lookup stage.
+         *
+         * @param outputs the number of values per color
+         * @param values the 16-bit values of each color, {@code outputs} per color; not copied
+         */
+        NamedColor(int outputs, int[] values) {
+            super(1, outputs, Role.PLAIN);
+            this.values = values;
+        }
+
+        /**
+         * {@return the number of colors}
+         */
+        int colors() {
+            return values.length / outputs;
+        }
+
+        @Override
+        Kind kind() {
+            return Kind.NAMED_COLOR;
+        }
+
+        @Override
+        void evaluate(float[] in, float[] out) {
+            var index = ColorMath.saturateWord(in[0] * 65535.0);
+            if (index >= colors()) {
+                for (var o = 0; o < outputs; o++) {
+                    out[o] = 0.0f;
+                }
+                return;
+            }
+            for (var o = 0; o < outputs; o++) {
+                out[o] = (float) (values[index * outputs + o] / 65535.0);
             }
         }
     }
@@ -329,10 +535,12 @@ abstract sealed class Stage permits Stage.Curves, Stage.Matrix, Stage.Clut, Stag
 
         @Override
         void evaluate(float[] in, float[] out) {
-            var xyz = ColorMath.labToXyz(new double[]{in[0] * 100.0, in[1] * 255.0 - 128.0, in[2] * 255.0 - 128.0});
-            out[0] = (float) (xyz[0] / ColorMath.MAX_ENCODEABLE_XYZ);
-            out[1] = (float) (xyz[1] / ColorMath.MAX_ENCODEABLE_XYZ);
-            out[2] = (float) (xyz[2] / ColorMath.MAX_ENCODEABLE_XYZ);
+            var y = (in[0] * 100.0 + 16.0) / 116.0;
+            var x = y + 0.002 * (in[1] * 255.0 - 128.0);
+            var z = y - 0.005 * (in[2] * 255.0 - 128.0);
+            out[0] = (float) (ColorMath.labInverse(x) * ColorMath.D50_X / ColorMath.MAX_ENCODEABLE_XYZ);
+            out[1] = (float) (ColorMath.labInverse(y) * ColorMath.D50_Y / ColorMath.MAX_ENCODEABLE_XYZ);
+            out[2] = (float) (ColorMath.labInverse(z) * ColorMath.D50_Z / ColorMath.MAX_ENCODEABLE_XYZ);
         }
     }
 
@@ -354,14 +562,12 @@ abstract sealed class Stage permits Stage.Curves, Stage.Matrix, Stage.Clut, Stag
 
         @Override
         void evaluate(float[] in, float[] out) {
-            var lab = ColorMath.xyzToLab(new double[]{
-                    in[0] * ColorMath.MAX_ENCODEABLE_XYZ,
-                    in[1] * ColorMath.MAX_ENCODEABLE_XYZ,
-                    in[2] * ColorMath.MAX_ENCODEABLE_XYZ
-            });
-            out[0] = (float) (lab[0] / 100.0);
-            out[1] = (float) ((lab[1] + 128.0) / 255.0);
-            out[2] = (float) ((lab[2] + 128.0) / 255.0);
+            var fx = ColorMath.labForward(in[0] * ColorMath.MAX_ENCODEABLE_XYZ / ColorMath.D50_X);
+            var fy = ColorMath.labForward(in[1] * ColorMath.MAX_ENCODEABLE_XYZ / ColorMath.D50_Y);
+            var fz = ColorMath.labForward(in[2] * ColorMath.MAX_ENCODEABLE_XYZ / ColorMath.D50_Z);
+            out[0] = (float) ((116.0 * fy - 16.0) / 100.0);
+            out[1] = (float) ((500.0 * (fx - fy) + 128.0) / 255.0);
+            out[2] = (float) ((200.0 * (fy - fz) + 128.0) / 255.0);
         }
     }
 }

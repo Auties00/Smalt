@@ -10,6 +10,7 @@ import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.ImageInfo;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.raw.internal.RawDecoding;
+import com.github.auties00.smalt.internal.region.ImageRegions;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.io.MediaSource;
 
@@ -27,9 +28,9 @@ import java.util.Optional;
  * applies the exposure and tone curve; {@link RawDecoderOptions} configures each step. The result
  * is an 8-bit sRGB {@linkplain com.github.auties00.smalt.image.RgbaPicture picture} by default, or a
  * {@linkplain com.github.auties00.smalt.image.Rgba16Picture 16-bit one}, tagged with the output
- * color space's profile. Thumbnails come from the embedded JPEG previews when a size hint allows
- * it. {@link #decodeRaw(MediaSource, RawDecoderOptions)} returns the linear sensor image itself, for
- * callers that render it on their own.
+ * color space's profile. Thumbnails come from the embedded previews when a size hint allows it.
+ * {@link #decodeRaw(MediaSource, RawDecoderOptions)} returns the linear sensor image itself, for callers that
+ * render it on their own.
  *
  * <p>The picture is returned as stored: {@link DecodedImage#orientation()} reports the rotation
  * that displays it upright. Its EXIF metadata is returned too, without the maker note.
@@ -111,7 +112,7 @@ public final class RawDecoder {
                 facts.sensorWidth(), facts.sensorHeight(), facts.orientation(), facts.bitsPerSample(), facts.cfa(),
                 facts.compression(), facts.unsupported(), facts.calibrated(), facts.iso(), facts.exposureTime(),
                 facts.fNumber(), facts.focalLength(), facts.lens(), facts.captureTime(), facts.dngVersion(),
-                facts.previews());
+                facts.previews(), facts.layout(), facts.profiles(), facts.enhanced());
     }
 
     /**
@@ -134,9 +135,13 @@ public final class RawDecoder {
      * Decodes a raw image with generic image decoder options, as the image registry does: their
      * limits, size hint and bit depth choice apply, with the default rendering otherwise.
      *
+     * <p>A {@linkplain ImageDecoderOptions#region() region} is cut out of the whole rendering, at the size the
+     * hint scaled to the image selects.
+     *
      * @param source the input
-     * @param options the limits, size hint and bit depth
+     * @param options the limits, size hint, region and bit depth
      * @return the decoded image
+     * @throws IllegalArgumentException if the region does not lie inside the image
      * @throws MediaException.Malformed if the file is corrupt
      * @throws MediaException.Unsupported if the input is not a recognized raw format or uses a
      * feature the decoder lacks
@@ -144,18 +149,24 @@ public final class RawDecoder {
      * @throws MediaException.Io if reading the source fails
      */
     public static DecodedImage decode(MediaSource source, ImageDecoderOptions options) {
-        return decode(source, RawDecoderOptions.of(Objects.requireNonNull(options, "options")));
+        Objects.requireNonNull(options, "options");
+        return ImageRegions.decode(options, () -> probe(source),
+                whole -> decode(source, RawDecoderOptions.of(whole)));
     }
 
     /**
      * Decodes a raw image.
      *
      * <p>Without a size hint the sensor image is rendered at full size. With one, the result is
-     * the largest embedded preview when one is at least as large as the hint (and the options
-     * allow it), else a half-size rendering when that is large enough, else the full rendering;
-     * {@link DecodedImage#sourceWidth()} and {@link DecodedImage#sourceHeight()} always give the
-     * size of the full rendering. A file whose sensor data does not decode returns its largest
-     * preview when a size hint is set and it has one.
+     * the smallest embedded preview (JPEG, JPEG XL in a DNG 1.7 file, or the RGB thumbnail of a Sigma
+     * X3F file) at least as large as the hint when the options allow it, else the smallest rendering
+     * at least as large as the hint
+     * among a rendering of a reduced-resolution linear raw image the DNG file stores (when the
+     * options apply the default crop and the opcode lists, which such an image has applied), a half-size
+     * rendering and the full rendering; {@link DecodedImage#sourceWidth()} and
+     * {@link DecodedImage#sourceHeight()} always give the size of the full rendering. A file whose
+     * sensor data does not decode returns its largest preview when a size hint is set and it has
+     * one.
      *
      * @param source the input
      * @param options the rendering settings, size hint and limits
@@ -202,8 +213,10 @@ public final class RawDecoder {
     /**
      * Extracts the linear sensor image of a raw file, before demosaicing and color rendering.
      *
-     * <p>The options' limits, opcode and default crop choices apply, and their white balance and
-     * color matrix decide the image's color description; the rendering choices are ignored.
+     * <p>The options' limits, opcode, default crop, user crop, enhanced image and camera profile
+     * choices apply, and their white balance and color matrix decide the image's color description;
+     * the rendering choices are ignored. A four-color sensor whose file carries no color matrices
+     * decodes with an empty color matrix unless the options supply one.
      *
      * @param source the input
      * @param options the limits, the opcode and crop choices and the color description
@@ -221,13 +234,13 @@ public final class RawDecoder {
             var file = RawDecoding.open(source, options.limits());
             var image = RawDecoding.sensorImage(file, options);
             return new RawImage(image.width(), image.height(), image.channels(), image.samples(), image.cfa(),
-                    image.neutral(), image.balancedToXyz());
+                    image.neutral(), image.balancedToXyz(), image.layout());
         }
     }
 
     /**
      * Returns the largest JPEG preview a raw file embeds, as stored: usually the camera's own
-     * rendering of the shot at full or near full size.
+     * rendering of the shot at full or near full size. JPEG XL previews are left out.
      *
      * @param source the input
      * @return the JPEG stream, or empty when the file embeds no JPEG preview

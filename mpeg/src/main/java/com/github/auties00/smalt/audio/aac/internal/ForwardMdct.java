@@ -3,7 +3,7 @@ package com.github.auties00.smalt.audio.aac.internal;
 import java.util.Arrays;
 
 /**
- * Computes the encoder's forward MDCT of one 1024-sample frame for any window sequence and
+ * Computes the encoder's forward MDCT of one 1024- or 960-sample frame for any window sequence and
  * shape, the exact inverse of {@link Synthesis}.
  *
  * <p>Input samples are in {@code [-1, 1]}; spectral values come out in the decoder's domain,
@@ -15,12 +15,12 @@ public final class ForwardMdct {
     /**
      * The number of spectral lines of a long window.
      */
-    private static final int LENGTH = 1024;
+    private final int length;
 
     /**
      * The number of spectral lines of a short window.
      */
-    private static final int SHORT_LENGTH = 128;
+    private final int shortLength;
 
     /**
      * The folding kernel.
@@ -61,43 +61,57 @@ public final class ForwardMdct {
     /**
      * The folded DCT-IV input.
      */
-    private final float[] folded = new float[LENGTH];
+    private final float[] folded;
 
     /**
-     * Prepares the transform.
+     * Prepares the transform of 1024-sample frames.
      *
      * @param kernel the DSP kernel
      */
     public ForwardMdct(AacKernel kernel) {
+        this(1024, kernel);
+    }
+
+    /**
+     * Prepares the transform of one frame length.
+     *
+     * @param length the frame length, 1024 or 960
+     * @param kernel the DSP kernel
+     */
+    public ForwardMdct(int length, AacKernel kernel) {
         this.kernel = kernel;
-        this.longDct = new Dct4(LENGTH, 2 * 32768.0, kernel);
-        this.shortDct = new Dct4(SHORT_LENGTH, 2 * 32768.0, kernel);
-        this.longWindows = new float[][]{Windows.of(Windows.SINE, 2 * LENGTH), Windows.of(Windows.KBD, 2 * LENGTH)};
-        this.shortWindows = new float[][]{Windows.of(Windows.SINE, 2 * SHORT_LENGTH), Windows.of(Windows.KBD, 2 * SHORT_LENGTH)};
+        this.length = length;
+        this.shortLength = length / 8;
+        this.folded = new float[length];
+        this.longDct = new Dct4(length, 2 * 32768.0, kernel);
+        this.shortDct = new Dct4(shortLength, 2 * 32768.0, kernel);
+        this.longWindows = new float[][]{Windows.of(Windows.SINE, 2 * length), Windows.of(Windows.KBD, 2 * length)};
+        this.shortWindows = new float[][]{Windows.of(Windows.SINE, 2 * shortLength),
+                Windows.of(Windows.KBD, 2 * shortLength)};
     }
 
     /**
      * Transforms one frame.
      *
      * @param input         the input samples
-     * @param offset        the index of the first of the frame's 2048 samples
+     * @param offset        the index of the first of the frame's {@code 2 * length} samples
      * @param sequence      the window sequence
      * @param previousShape the window shape of the previous frame
      * @param shape         the window shape of this frame
-     * @param spectrum      receives 1024 spectral values; for eight short windows, window
+     * @param spectrum      receives {@code length} spectral values; for eight short windows, window
      *                      after window
      */
     public void transform(float[] input, int offset, int sequence, int previousShape, int shape, float[] spectrum) {
         if (sequence == ChannelStream.EIGHT_SHORT_SEQUENCE) {
-            var start = offset + (LENGTH - SHORT_LENGTH) / 2;
+            var start = offset + (length - shortLength) / 2;
             for (var window = 0; window < 8; window++) {
                 var shortWindow = window == 0 ? firstShort(previousShape, shape) : shortWindows[shape];
-                kernel.fold(input, start + window * SHORT_LENGTH, shortWindow, folded, SHORT_LENGTH);
-                shortDct.transform(folded, 0, spectrum, window * SHORT_LENGTH);
+                kernel.fold(input, start + window * shortLength, shortWindow, folded, shortLength);
+                shortDct.transform(folded, 0, spectrum, window * shortLength);
             }
             return;
         }
-        kernel.fold(input, offset, composite(sequence, previousShape, shape), folded, LENGTH);
+        kernel.fold(input, offset, composite(sequence, previousShape, shape), folded, length);
         longDct.transform(folded, 0, spectrum, 0);
     }
 
@@ -113,9 +127,9 @@ public final class ForwardMdct {
         var index = previousShape * 2 + shape;
         var window = firstShortWindows[index];
         if (window == null) {
-            window = new float[2 * SHORT_LENGTH];
-            System.arraycopy(shortWindows[previousShape], 0, window, 0, SHORT_LENGTH);
-            System.arraycopy(shortWindows[shape], SHORT_LENGTH, window, SHORT_LENGTH, SHORT_LENGTH);
+            window = new float[2 * shortLength];
+            System.arraycopy(shortWindows[previousShape], 0, window, 0, shortLength);
+            System.arraycopy(shortWindows[shape], shortLength, window, shortLength, shortLength);
             firstShortWindows[index] = window;
         }
         return window;
@@ -127,7 +141,7 @@ public final class ForwardMdct {
      * @param sequence      the window sequence
      * @param previousShape the shape of the rising half
      * @param shape         the shape of the falling half
-     * @return the window, 2048 values
+     * @return the window, {@code 2 * length} values
      */
     private float[] composite(int sequence, int previousShape, int shape) {
         var index = sequence * 4 + previousShape * 2 + shape;
@@ -135,22 +149,22 @@ public final class ForwardMdct {
         if (window != null) {
             return window;
         }
-        window = new float[2 * LENGTH];
-        var flat = (LENGTH - SHORT_LENGTH) / 2;
+        window = new float[2 * length];
+        var flat = (length - shortLength) / 2;
         switch (sequence) {
             case ChannelStream.LONG_START_SEQUENCE -> {
-                System.arraycopy(longWindows[previousShape], 0, window, 0, LENGTH);
-                Arrays.fill(window, LENGTH, LENGTH + flat, 1);
-                System.arraycopy(shortWindows[shape], SHORT_LENGTH, window, LENGTH + flat, SHORT_LENGTH);
+                System.arraycopy(longWindows[previousShape], 0, window, 0, length);
+                Arrays.fill(window, length, length + flat, 1);
+                System.arraycopy(shortWindows[shape], shortLength, window, length + flat, shortLength);
             }
             case ChannelStream.LONG_STOP_SEQUENCE -> {
-                System.arraycopy(shortWindows[previousShape], 0, window, flat, SHORT_LENGTH);
-                Arrays.fill(window, flat + SHORT_LENGTH, LENGTH, 1);
-                System.arraycopy(longWindows[shape], LENGTH, window, LENGTH, LENGTH);
+                System.arraycopy(shortWindows[previousShape], 0, window, flat, shortLength);
+                Arrays.fill(window, flat + shortLength, length, 1);
+                System.arraycopy(longWindows[shape], length, window, length, length);
             }
             default -> {
-                System.arraycopy(longWindows[previousShape], 0, window, 0, LENGTH);
-                System.arraycopy(longWindows[shape], LENGTH, window, LENGTH, LENGTH);
+                System.arraycopy(longWindows[previousShape], 0, window, 0, length);
+                System.arraycopy(longWindows[shape], length, window, length, length);
             }
         }
         composites[index] = window;

@@ -11,14 +11,16 @@ import com.github.auties00.smalt.internal.bits.MsbBitReader;
 import com.github.auties00.smalt.internal.nal.NalUnits;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Rational;
+import com.github.auties00.smalt.track.VideoTrack;
 
 import java.util.Arrays;
 
 /**
  * Parses the out-of-band configuration records of video codecs and the sequence-level headers
  * they carry: the H.264 {@code avcC} record and its sequence parameter set, the HEVC
- * {@code hvcC} record, the AV1 {@code av1C} record and sequence header OBU, and the VP9
- * {@code vpcC} record and uncompressed key frame header.
+ * {@code hvcC} record, the AV1 {@code av1C} record and sequence header OBU, the VP9
+ * {@code vpcC} record and uncompressed key frame header, and the MPEG-1 and MPEG-2 video sequence header
+ * ({@link MpegVideoHeaders}).
  *
  * <p>Every parser returns {@code null} instead of throwing when the bytes do not hold what it
  * needs, so a caller can fall back to the container's own description. The results feed the
@@ -101,6 +103,22 @@ public final class VideoConfigs {
     }
 
     /**
+     * Returns the sample aspect ratio a player applies to a video track: the one the track
+     * declares, else the one its configuration record signals.
+     *
+     * @param track the video track whose container declaration and configuration record are read
+     * @return the ratio in lowest terms, or {@code null} when neither declares one
+     */
+    public static Rational sampleAspect(VideoTrack track) {
+        var declared = track.sampleAspectRatio();
+        if (declared.isPresent()) {
+            return declared.get();
+        }
+        var info = describe(track.codec(), track.codecConfig().orElse(null));
+        return info == null || info.sampleAspect() == null ? null : info.sampleAspect().reduce();
+    }
+
+    /**
      * Describes the configuration record of a video track.
      *
      * @param codec the codec of the track
@@ -118,6 +136,7 @@ public final class VideoConfigs {
                 case AV1 -> av1(config);
                 case VP9 -> vp9(config);
                 case VP8 -> new Info("0", -1, 8, ChromaFormat.YUV420, null, 0, 0, null, null);
+                case MPEG1_VIDEO, MPEG2_VIDEO -> MpegVideoHeaders.describe(config);
                 default -> null;
             };
         } catch (RuntimeException exception) {
