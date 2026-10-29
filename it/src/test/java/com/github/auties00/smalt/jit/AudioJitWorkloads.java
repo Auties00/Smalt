@@ -10,12 +10,16 @@ import com.github.auties00.smalt.audio.ac3.Ac3Decoder;
 import com.github.auties00.smalt.audio.ac3.Ac3Encoder;
 import com.github.auties00.smalt.audio.ac3.Ac3EncoderOptions;
 import com.github.auties00.smalt.audio.aac.AacEncoderOptions;
+import com.github.auties00.smalt.audio.aac.AacProfile;
 import com.github.auties00.smalt.audio.amr.AmrDecoder;
+import com.github.auties00.smalt.audio.alac.AlacEncoder;
 import com.github.auties00.smalt.audio.amr.AmrEncoder;
 import com.github.auties00.smalt.audio.amr.AmrEncoderOptions;
 import com.github.auties00.smalt.audio.amr.AmrMode;
 import com.github.auties00.smalt.audio.flac.FlacEncoder;
 import com.github.auties00.smalt.audio.flac.FlacEncoderOptions;
+import com.github.auties00.smalt.audio.mp3.Mp2Encoder;
+import com.github.auties00.smalt.audio.mp3.Mp2EncoderOptions;
 import com.github.auties00.smalt.audio.mp3.Mp3Encoder;
 import com.github.auties00.smalt.audio.mp3.Mp3EncoderOptions;
 import com.github.auties00.smalt.audio.opus.OpusEncoder;
@@ -179,7 +183,7 @@ final class AudioJitWorkloads {
     }
 
     /** Encodes synthetic speech as voice notes: 16 kHz mono Opus, 20 ms packets. */
-    static JitWorkload.Workload opusVoiceNote(long bound, double seconds) {
+    static JitWorkload.Workload opusVoiceNote(double seconds) {
         var speech = new float[][]{speech(16000, seconds)};
         var encoder = new OpusEncoder(OpusEncoderOptions.forSpeech(16000));
         var block = new AudioBuffer(ChannelLayout.MONO, 16000, AudioReaderOptions.DEFAULT_BLOCK_FRAMES);
@@ -188,7 +192,7 @@ final class AudioJitWorkloads {
             packets[0]++;
             sink += packet.size();
         };
-        return JitWorkload.named("opusvoice", bound, () -> {
+        return JitWorkload.named("opusvoice", () -> {
             packets[0] = 0;
             feed(speech, block, buffer -> encoder.encode(buffer, output));
             return packets[0];
@@ -200,7 +204,7 @@ final class AudioJitWorkloads {
      * complexity 9, in-band FEC for 10% loss, DTX, 60 ms frames) and decodes the packets,
      * recovering every fifth from the next packet's FEC and concealing every seventh.
      */
-    static JitWorkload.Workload opusCall(long bound, double seconds) {
+    static JitWorkload.Workload opusCall(double seconds) {
         var speech = speech(16000, seconds);
         var encoder = new OpusStreamEncoder(16000, 1, OpusDefines.OPUS_APPLICATION_VOIP);
         encoder.setBitrate(25000);
@@ -218,7 +222,7 @@ final class AudioJitWorkloads {
         var packets = new byte[count][1500];
         var lengths = new int[count];
         var pcm = new float[2 * frame];
-        return JitWorkload.named("opuscall", bound, () -> {
+        return JitWorkload.named("opuscall", () -> {
             for (var i = 0; i < count; i++) {
                 lengths[i] = encoder.encodeFloat(speech, i * frame, frame, packets[i], 0, packets[i].length);
             }
@@ -238,7 +242,7 @@ final class AudioJitWorkloads {
     }
 
     /** Encodes synthetic stereo music as 44.1 kHz AAC-LC at 128 kb/s. */
-    static JitWorkload.Workload aacEncode(long bound, double seconds) {
+    static JitWorkload.Workload aacEncode(double seconds) {
         var music = music(44100, seconds);
         var encoder = new AacEncoder(AacEncoderOptions.of(44100, ChannelLayout.STEREO, 128000));
         var block = new AudioBuffer(ChannelLayout.STEREO, 44100, AudioReaderOptions.DEFAULT_BLOCK_FRAMES);
@@ -247,7 +251,7 @@ final class AudioJitWorkloads {
             packets[0]++;
             sink += packet.size();
         };
-        return JitWorkload.named("aacenc", bound, () -> {
+        return JitWorkload.named("aacenc", () -> {
             packets[0] = 0;
             feed(music, block, buffer -> encoder.encode(buffer, output));
             return packets[0];
@@ -258,7 +262,7 @@ final class AudioJitWorkloads {
      * Encodes synthetic stereo music as 48 kHz AC-3 at 192 kb/s and decodes the frames back, one
      * encoder and decoder across rounds.
      */
-    static JitWorkload.Workload ac3(long bound, double seconds) {
+    static JitWorkload.Workload ac3(double seconds) {
         var music = music(48000, seconds);
         var encoder = new Ac3Encoder(Ac3EncoderOptions.of(48000, ChannelLayout.STEREO).toBuilder()
                 .bitrate(192000).build());
@@ -271,7 +275,7 @@ final class AudioJitWorkloads {
             packets[0]++;
             decoder.decode(packet, decoded);
         };
-        return JitWorkload.named("ac3", bound, () -> {
+        return JitWorkload.named("ac3", () -> {
             packets[0] = 0;
             feed(music, block, buffer -> encoder.encode(buffer, output));
             return packets[0];
@@ -282,7 +286,7 @@ final class AudioJitWorkloads {
      * Encodes synthetic speech as AMR and decodes the frames back, one encoder and decoder across
      * rounds, the mode changing every round through the codec's modes.
      */
-    static JitWorkload.Workload amr(String name, Codec codec, long bound, double seconds) {
+    static JitWorkload.Workload amr(String name, Codec codec, double seconds) {
         var wide = codec == Codec.AMR_WB;
         var rate = wide ? 16000 : 8000;
         var speech = new float[][]{speech(rate, seconds)};
@@ -298,7 +302,7 @@ final class AudioJitWorkloads {
             packets[0]++;
             decoder.decode(packet, decoded);
         };
-        return JitWorkload.named(name, bound, () -> {
+        return JitWorkload.named(name, () -> {
             packets[0] = 0;
             encoder.setMode(modes.get(modes.size() - 1 - round[0]++ % modes.size()));
             feed(speech, block, buffer -> encoder.encode(buffer, output));
@@ -307,20 +311,21 @@ final class AudioJitWorkloads {
     }
 
     /**
-     * Decodes the Low Complexity packets of a 22.05 kHz core announced as HE-AAC, which runs the
-     * decoder's spectral band replication stages.
+     * Decodes HE-AAC packets of 44.1 kHz stereo music at 48 kb/s, which runs the decoder's spectral band
+     * replication stages on the envelopes, noise floors and sinusoids of real high bands.
      */
-    static JitWorkload.Workload heAac(long bound, double seconds) {
-        var encoder = new AacEncoder(AacEncoderOptions.of(22050, ChannelLayout.STEREO, 48000));
-        var block = new AudioBuffer(ChannelLayout.STEREO, 22050, AudioReaderOptions.DEFAULT_BLOCK_FRAMES);
+    static JitWorkload.Workload heAac(double seconds) {
+        var encoder = new AacEncoder(AacEncoderOptions.builder().format(44100, ChannelLayout.STEREO).bitrate(48000)
+                .profile(AacProfile.HE).build());
+        var block = new AudioBuffer(ChannelLayout.STEREO, 44100, AudioReaderOptions.DEFAULT_BLOCK_FRAMES);
         var packets = new ArrayList<Packet>();
-        feed(music(22050, seconds), block, buffer -> encoder.encode(buffer, packets::add));
+        feed(music(44100, seconds), block, buffer -> encoder.encode(buffer, packets::add));
         encoder.flush(packets::add);
-        var decoder = new AacDecoder(AudioTrack.builder().id(0).codec(Codec.AAC).timeBase(Rational.timeBaseOf(22050))
-                .sampleRate(22050).layout(ChannelLayout.STEREO)
-                .codecConfig(new byte[]{0x2B, (byte) 0x92, 0x08, 0x00}).build());
+        var decoder = new AacDecoder(AudioTrack.builder().id(0).codec(Codec.AAC).timeBase(Rational.timeBaseOf(44100))
+                .sampleRate(44100).layout(ChannelLayout.STEREO)
+                .codecConfig(encoder.codecConfig().orElseThrow()).build());
         Consumer<AudioBuffer> decoded = buffer -> sink += Float.floatToRawIntBits(buffer.plane(0)[7]);
-        return JitWorkload.named("heaac", bound, () -> {
+        return JitWorkload.named("heaac", () -> {
             for (var packet : packets) {
                 decoder.decode(packet, decoded);
             }
@@ -328,8 +333,29 @@ final class AudioJitWorkloads {
         });
     }
 
+    /**
+     * Encodes synthetic stereo music as 44.1 kHz HE-AAC v2 at 32 kb/s, through the QMF banks, the spectral band
+     * replication and the parametric stereo encoder, one encoder across rounds.
+     */
+    static JitWorkload.Workload heAacEncode(double seconds) {
+        var music = music(44100, seconds);
+        var encoder = new AacEncoder(AacEncoderOptions.builder().format(44100, ChannelLayout.STEREO).bitrate(32000)
+                .profile(AacProfile.HE_V2).build());
+        var block = new AudioBuffer(ChannelLayout.STEREO, 44100, AudioReaderOptions.DEFAULT_BLOCK_FRAMES);
+        int[] packets = {0};
+        Consumer<Packet> output = packet -> {
+            packets[0]++;
+            sink += packet.size();
+        };
+        return JitWorkload.named("heaacenc", () -> {
+            packets[0] = 0;
+            feed(music, block, buffer -> encoder.encode(buffer, output));
+            return packets[0];
+        });
+    }
+
     /** Encodes synthetic stereo music as 44.1 kHz 16-bit FLAC at compression level 5, one stream across rounds. */
-    static JitWorkload.Workload flacEncode(long bound, double seconds) {
+    static JitWorkload.Workload flacEncode(double seconds) {
         var music = music(44100, seconds);
         var encoder = new FlacEncoder(FlacEncoderOptions.defaults());
         var block = new AudioBuffer(ChannelLayout.STEREO, 44100, AudioReaderOptions.DEFAULT_BLOCK_FRAMES);
@@ -338,7 +364,24 @@ final class AudioJitWorkloads {
             packets[0]++;
             sink += packet.size();
         };
-        return JitWorkload.named("flacenc", bound, () -> {
+        return JitWorkload.named("flacenc", () -> {
+            packets[0] = 0;
+            feed(music, block, buffer -> encoder.encode(buffer, output));
+            return packets[0];
+        });
+    }
+
+    /** Encodes synthetic stereo music as 44.1 kHz 16-bit ALAC with the full parameter search, one stream across rounds. */
+    static JitWorkload.Workload alacEncode(double seconds) {
+        var music = music(44100, seconds);
+        var encoder = new AlacEncoder();
+        var block = new AudioBuffer(ChannelLayout.STEREO, 44100, AudioReaderOptions.DEFAULT_BLOCK_FRAMES);
+        int[] packets = {0};
+        Consumer<Packet> output = packet -> {
+            packets[0]++;
+            sink += packet.size();
+        };
+        return JitWorkload.named("alacenc", () -> {
             packets[0] = 0;
             feed(music, block, buffer -> encoder.encode(buffer, output));
             return packets[0];
@@ -346,7 +389,7 @@ final class AudioJitWorkloads {
     }
 
     /** Encodes synthetic stereo music to 128 kbit/s MP3, the encoder's defaults. */
-    static JitWorkload.Workload mp3Encode(long bound, double seconds) {
+    static JitWorkload.Workload mp3Encode(double seconds) {
         var music = music(44100, seconds);
         var encoder = new Mp3Encoder(Mp3EncoderOptions.defaults());
         var block = new AudioBuffer(ChannelLayout.STEREO, 44100, AudioReaderOptions.DEFAULT_BLOCK_FRAMES);
@@ -355,7 +398,24 @@ final class AudioJitWorkloads {
             packets[0]++;
             sink += packet.size();
         };
-        return JitWorkload.named("mp3enc", bound, () -> {
+        return JitWorkload.named("mp3enc", () -> {
+            packets[0] = 0;
+            feed(music, block, buffer -> encoder.encode(buffer, output));
+            return packets[0];
+        });
+    }
+
+    /** Encodes synthetic 48 kHz stereo music to 192 kbit/s MPEG audio Layer II, the encoder's defaults. */
+    static JitWorkload.Workload mp2Encode(double seconds) {
+        var music = music(48000, seconds);
+        var encoder = new Mp2Encoder(Mp2EncoderOptions.defaults());
+        var block = new AudioBuffer(ChannelLayout.STEREO, 48000, AudioReaderOptions.DEFAULT_BLOCK_FRAMES);
+        int[] packets = {0};
+        Consumer<Packet> output = packet -> {
+            packets[0]++;
+            sink += packet.size();
+        };
+        return JitWorkload.named("mp2enc", () -> {
             packets[0] = 0;
             feed(music, block, buffer -> encoder.encode(buffer, output));
             return packets[0];
@@ -363,9 +423,9 @@ final class AudioJitWorkloads {
     }
 
     /** Decodes an MP3 file at its own rate and layout, as the audio reader does for a received file. */
-    static JitWorkload.Workload mp3Decode(long bound, Path input) throws Exception {
+    static JitWorkload.Workload mp3Decode(Path input) throws Exception {
         var bytes = Files.readAllBytes(input);
-        return JitWorkload.named("mp3dec", bound, () -> {
+        return JitWorkload.named("mp3dec", () -> {
             var samples = 0L;
             try (var reader = AudioReader.open(MediaSource.of(bytes))) {
                 AudioBuffer block;
@@ -382,7 +442,7 @@ final class AudioJitWorkloads {
      * Resamples synthetic stereo music from 44.1 to 48 kHz and synthetic speech from 48 to 16 kHz
      * (the voice-note input path), in 4096-frame blocks.
      */
-    static JitWorkload.Workload resample(long bound, double seconds) {
+    static JitWorkload.Workload resample(double seconds) {
         var music = music(44100, seconds);
         var speech = new float[][]{speech(48000, seconds)};
         var up = new Resampler(44100, 48000, 2, Resampler.Quality.STANDARD);
@@ -394,7 +454,7 @@ final class AudioJitWorkloads {
         var upOutput = new float[2][2 * blockFrames];
         var downOutput = new float[1][blockFrames];
         int[] blocks = {0};
-        return JitWorkload.named("resample", bound, () -> {
+        return JitWorkload.named("resample", () -> {
             blocks[0] = 0;
             feed(music, musicBlock, buffer -> {
                 sink += up.process(buffer.planes(), buffer.frames(), upOutput, 0);
@@ -413,7 +473,7 @@ final class AudioJitWorkloads {
      * synthetic far-end speech and a capture made of its echo (60 ms, two reflections) plus a
      * near-end talker that speaks over it, in 10 ms frames.
      */
-    static JitWorkload.Workload voiceCall(long bound, double seconds) {
+    static JitWorkload.Workload voiceCall(double seconds) {
         var far = speech(16000, seconds);
         var near = speech(16000, seconds + 1.37);
         var capture = new float[far.length];
@@ -426,7 +486,7 @@ final class AudioJitWorkloads {
         var frame = processor.frameSamples();
         var count = far.length / frame;
         var buffer = new float[frame];
-        return JitWorkload.named("voice", bound, () -> {
+        return JitWorkload.named("voice", () -> {
             for (var i = 0; i < count; i++) {
                 System.arraycopy(capture, i * frame, buffer, 0, frame);
                 processor.processRender(far, i * frame);

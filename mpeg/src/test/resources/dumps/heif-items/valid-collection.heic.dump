@@ -1,0 +1,36 @@
+# image dump of heif-items/valid-collection.heic; regenerate with -Dsmalt.test.updateDumps=true
+format HEIC
+info ImageInfo[format=HEIC, width=32, height=32, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 32x32 yuv8 YUV420 color=BT601/LIMITED/BT709/SRGB y=fc2310a1 u=a0497043 v=25b4e63e
+  format=HEIC orientation=NORMAL source=32x32
+  icc=none exif=none xmp=none
+  profile=none
+scaled 8x8
+picture 32x32 yuv8 YUV420 color=BT601/LIMITED/BT709/SRGB y=fc2310a1 u=a0497043 v=25b4e63e
+  format=HEIC orientation=NORMAL source=32x32
+  icc=none exif=none xmp=none
+  profile=none
+pages 4
+group ster [1, 2]
+group brst [0, 1, 2]
+page 0 ImageInfo[format=HEIC, width=32, height=32, hasAlpha=false, animated=false, frameCount=4, orientation=NORMAL]
+picture 32x32 yuv8 YUV420 color=BT601/LIMITED/BT709/SRGB y=fc2310a1 u=a0497043 v=25b4e63e
+  format=HEIC orientation=NORMAL source=32x32
+  icc=none exif=none xmp=none
+  profile=none
+page 1 ImageInfo[format=HEIC, width=32, height=32, hasAlpha=false, animated=false, frameCount=4, orientation=NORMAL]
+picture 32x32 yuv8 YUV420 color=BT601/LIMITED/BT709/SRGB y=fc2310a1 u=a0497043 v=25b4e63e
+  format=HEIC orientation=NORMAL source=32x32
+  icc=none exif=none xmp=none
+  profile=none
+page 2 ImageInfo[format=HEIC, width=32, height=32, hasAlpha=false, animated=false, frameCount=4, orientation=NORMAL]
+picture 32x32 yuv8 YUV420 color=BT601/LIMITED/BT709/SRGB y=fc2310a1 u=a0497043 v=25b4e63e
+  format=HEIC orientation=NORMAL source=32x32
+  icc=none exif=none xmp=none
+  profile=none
+page 3 ImageInfo[format=HEIC, width=32, height=32, hasAlpha=false, animated=false, frameCount=4, orientation=NORMAL]
+picture 32x32 yuv8 YUV420 color=BT601/LIMITED/BT709/SRGB y=fc2310a1 u=a0497043 v=25b4e63e
+  format=HEIC orientation=NORMAL source=32x32
+  icc=none exif=none xmp=none
+  profile=none

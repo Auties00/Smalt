@@ -1,2 +1,3 @@
 com.github.auties00.smalt.desktop.imageio.SmaltImageReaderSpi
 com.github.auties00.smalt.desktop.imageio.TiffImageReaderSpi
+com.github.auties00.smalt.desktop.imageio.BmpImageReaderSpi
