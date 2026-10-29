@@ -96,7 +96,7 @@ class RegistryCoverageTest {
         assertTrue(AudioEncoders.isSupported(Codec.AC3));
         assertTrue(AudioEncoders.isSupported(Codec.EAC3));
         for (var codec : new Codec[]{Codec.H264, Codec.HEVC, Codec.VP8, Codec.VP9, Codec.AV1, Codec.MJPEG,
-                Codec.JPEG2000, Codec.PRORES, Codec.DNXHD}) {
+                Codec.JPEG2000, Codec.PRORES, Codec.DNXHD, Codec.MPEG4_PART2, Codec.H263}) {
             assertTrue(VideoEncoders.isSupported(codec), codec.name());
         }
         assertTrue(AudioEncoders.isSupported(Codec.OPUS));

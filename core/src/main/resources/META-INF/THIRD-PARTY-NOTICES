@@ -58,6 +58,7 @@ Derived Smalt packages:
   image.jpeg.internal
   image.ops (ColorMatrix, ColorKernel, ScalarColorKernel, ChromaUpsampling)
   video.mpeg4.internal (ScalarMpeg4Dsp, VectorMpeg4Dsp)
+  video.mpeg4.internal.encoder (ForwardDct)
 
 Derivation: ports of the libjpeg API library code of libjpeg-turbo: the
 marker reader, the sequential and progressive Huffman decoders, the
@@ -84,7 +85,8 @@ jcdctmgr.c), the coefficient controller (jccoefct.c), the arithmetic
 encoder (jcarith.c, jaricom.c), the lossless compressor (jclossls.c,
 jcdiffct.c, jclhuff.c) and the parameter setup (jcparam.c, jcmaster.c). The
 accurate integer inverse DCT is also the inverse DCT of the MPEG-4 Part 2
-and H.263 decoders.
+and H.263 decoders, and the accurate integer forward DCT (jfdctint.c) the
+forward DCT of the MPEG-4 Part 2 and H.263 encoders.
 
 This software is based in part on the work of the Independent JPEG Group.
 

@@ -134,7 +134,7 @@ public final class ThreadDigest {
         }
         gainMaps(picture, digests);
         for (var codec : new Codec[]{Codec.H264, Codec.HEVC, Codec.VP8, Codec.VP9, Codec.AV1, Codec.PRORES,
-                Codec.DNXHD, Codec.MJPEG, Codec.JPEG2000}) {
+                Codec.DNXHD, Codec.MJPEG, Codec.JPEG2000, Codec.MPEG4_PART2, Codec.H263}) {
             var stream = Streams.video(codec, 640, 360, 8, builder -> builder.realtime(codec != Codec.H264));
             digests.put(codec.name().toLowerCase() + "-encode", sha256Packets(stream));
             digests.put(codec.name().toLowerCase() + "-decode", decodeDigest(stream));

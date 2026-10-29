@@ -454,6 +454,21 @@ final class BoxTypes {
     static final int MJ2S = 0x6D6A3273;
 
     /**
+     * The 3GPP Release 6 brand ({@code 3gp6}).
+     */
+    static final int THREE_GP6 = 0x33677036;
+
+    /**
+     * The 3GPP Release 5 brand ({@code 3gp5}).
+     */
+    static final int THREE_GP5 = 0x33677035;
+
+    /**
+     * The 3GPP Release 4 brand ({@code 3gp4}).
+     */
+    static final int THREE_GP4 = 0x33677034;
+
+    /**
      * The JPEG 2000 signature box ({@code jP  }), the first box of a Motion JPEG 2000 file.
      */
     static final int JP_SIGNATURE = 0x6A502020;

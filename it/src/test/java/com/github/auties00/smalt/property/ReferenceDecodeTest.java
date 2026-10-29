@@ -85,6 +85,11 @@ class ReferenceDecodeTest {
             entry(Codec.H264, of(OutputContainer.MP4, "h264", NORMATIVE)),
             entry(Codec.HEVC, of(OutputContainer.MP4, "hevc", NORMATIVE)),
             entry(Codec.VP8, of(OutputContainer.WEBM, "libvpx", NORMATIVE)),
+            // The inverse DCT is free within the IEEE 1180 accuracy: ffmpeg's integer transform of the same IJG family
+            // differs from Smalt's by one level in a few samples, which the predictions carry a few pictures on.
+            entry(Codec.MPEG4_PART2, of(OutputContainer.MP4, "mpeg4", Tolerance.psnr(45), "-cpuflags", "0", "-idct",
+                    "int")),
+            entry(Codec.H263, of(OutputContainer.MP4, "h263", Tolerance.psnr(45), "-cpuflags", "0", "-idct", "int")),
             entry(Codec.VP9, of(OutputContainer.WEBM, "libvpx-vp9", NORMATIVE)),
             entry(Codec.AV1, of(OutputContainer.IVF, "libdav1d", NORMATIVE)),
             // SMPTE RDD 36 leaves the inverse DCT to the decoder within an accuracy bound

@@ -373,8 +373,8 @@ public final class Mp4Muxer implements Muxer {
      * Returns whether an MP4 file of a brand can carry a codec, so that {@link #addTrack(Track)}
      * accepts a track of it given the configuration the codec needs.
      *
-     * <p>Every brand carries AAC, Opus, MP3, MP2, ALAC, FLAC, AMR-NB, AMR-WB, AC-3 and E-AC-3;
-     * {@link Mp4MuxerOptions.Brand#MP4}, {@link Mp4MuxerOptions.Brand#QUICKTIME} and
+     * <p>Every brand but {@link Mp4MuxerOptions.Brand#THREE_GPP} carries AAC, Opus, MP3, MP2, ALAC, FLAC, AMR-NB,
+     * AMR-WB, AC-3 and E-AC-3; {@link Mp4MuxerOptions.Brand#MP4}, {@link Mp4MuxerOptions.Brand#QUICKTIME} and
      * {@link Mp4MuxerOptions.Brand#MJ2} add Motion JPEG 2000; {@link Mp4MuxerOptions.Brand#MP4} and
      * {@link Mp4MuxerOptions.Brand#QUICKTIME} add H.264, HEVC, VP8, VP9, AV1, MPEG-4 Part 2, MPEG-1 and MPEG-2
      * video, H.263, Motion-JPEG, the 16-, 24- and 32-bit integer and 32- and 64-bit float PCM formats,
@@ -382,6 +382,8 @@ public final class Mp4Muxer implements Muxer {
      * {@link Codec#CEA_608} and {@link Codec#CEA_708}; only
      * {@link Mp4MuxerOptions.Brand#QUICKTIME} carries ProRes, DNxHD, 8-bit PCM, A-law, mu-law, {@code ima4} IMA ADPCM,
      * GSM 06.10 ({@code agsm}) and MACE ({@code MAC3}, {@code MAC6}), whose packets hold whole frames.
+     * {@link Mp4MuxerOptions.Brand#THREE_GPP} carries the codecs of 3GPP TS 26.244: H.263, MPEG-4 Part 2, H.264,
+     * AMR-NB, AMR-WB, AAC and {@link Codec#MOV_TEXT}.
      *
      * @param brand the brand of the file
      * @param codec the codec of the track
@@ -389,6 +391,12 @@ public final class Mp4Muxer implements Muxer {
      */
     public static boolean supports(Mp4MuxerOptions.Brand brand, Codec codec) {
         Objects.requireNonNull(brand, "brand");
+        if (brand == Mp4MuxerOptions.Brand.THREE_GPP) {
+            return switch (Objects.requireNonNull(codec, "codec")) {
+                case H263, MPEG4_PART2, H264, AMR_NB, AMR_WB, AAC, MOV_TEXT -> true;
+                default -> false;
+            };
+        }
         return switch (Objects.requireNonNull(codec, "codec")) {
             case AAC, OPUS, MP3, MP2, ALAC, FLAC, AMR_NB, AMR_WB, AC3, EAC3 -> true;
             case JPEG2000 -> brand != Mp4MuxerOptions.Brand.M4A;
@@ -471,6 +479,10 @@ public final class Mp4Muxer implements Muxer {
             if (options.brand() == Mp4MuxerOptions.Brand.MJ2 && supports(Mp4MuxerOptions.Brand.MP4, codec)) {
                 throw new IllegalArgumentException("the MJ2 brand carries Motion JPEG 2000 video and compressed audio"
                         + " only, not " + codec.displayName());
+            }
+            if (options.brand() == Mp4MuxerOptions.Brand.THREE_GPP && supports(Mp4MuxerOptions.Brand.MP4, codec)) {
+                throw new IllegalArgumentException("the 3GP brand carries H.263, MPEG-4 Part 2, H.264, AMR, AAC and "
+                        + "timed text only, not " + codec.displayName());
             }
             if (options.brand() == Mp4MuxerOptions.Brand.M4A && supports(Mp4MuxerOptions.Brand.MP4, codec)) {
                 throw new IllegalArgumentException(codec.kind() != TrackKind.AUDIO ? "the M4A brand carries audio only"
@@ -1241,6 +1253,13 @@ public final class Mp4Muxer implements Muxer {
             writer.u32(BoxTypes.QT);
             writer.u32(0x200);
             writer.u32(BoxTypes.QT);
+        } else if (options.brand() == Mp4MuxerOptions.Brand.THREE_GPP) {
+            writer.u32(BoxTypes.THREE_GP6);
+            writer.u32(0x200);
+            writer.u32(BoxTypes.THREE_GP6);
+            writer.u32(BoxTypes.THREE_GP5);
+            writer.u32(BoxTypes.THREE_GP4);
+            writer.u32(BoxTypes.ISOM);
         } else {
             writer.u32(BoxTypes.ISOM);
             writer.u32(0x200);

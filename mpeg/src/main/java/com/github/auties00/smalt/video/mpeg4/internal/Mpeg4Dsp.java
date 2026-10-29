@@ -31,10 +31,11 @@ public abstract class Mpeg4Dsp {
     private static final Mpeg4Dsp FIXED = Simd.WIDE ? VectorMpeg4Dsp.create() : SCALAR;
 
     /**
-     * The minimum size of the {@code int} scratch buffer of {@link #quarterPel}: the horizontally
-     * filtered rows of a 16 by 16 block with its mirrored margins.
+     * The minimum size of the {@code int} scratch buffer of {@link #quarterPel}: the reference
+     * samples of a 16 by 16 block and its horizontally interpolated rows, each with its mirrored
+     * margins.
      */
-    public static final int SCRATCH_INTS = 4 * 24 * 24;
+    public static final int SCRATCH_INTS = 2 * 24 * 24;
 
     /**
      * Constructs a kernel set.
@@ -131,8 +132,11 @@ public abstract class Mpeg4Dsp {
     /**
      * Predicts a block at quarter sample precision (ISO/IEC 14496-2 7.6.2.2): the block of
      * {@code width + 1} by {@code height + 1} reference samples at the integer position is mirrored
-     * by three samples at its boundaries, filtered to half samples with the 8-tap filter, and the
-     * quarter samples are interpolated bilinearly between the half and integer samples.
+     * by three samples at its boundaries and interpolated separably, first every row to the
+     * horizontal fraction, then every column of that result to the vertical fraction. In each
+     * direction a half sample comes from the 8-tap filter, and a quarter sample is the rounded
+     * average of that half sample and the nearer sample of the pass's input; both roundings follow
+     * the rounding control.
      *
      * @param src the reference plane
      * @param srcOffset the index of the reference sample at the block's integer position

@@ -38,6 +38,12 @@ public final class Mp4MuxerOptions {
     private static final Mp4MuxerOptions MJ2 = new Mp4MuxerOptions(Brand.MJ2, true, null, DEFAULT_INTERLEAVE_MICROS);
 
     /**
+     * The options of {@link #threeGpp()}.
+     */
+    private static final Mp4MuxerOptions THREE_GPP = new Mp4MuxerOptions(Brand.THREE_GPP, true, null,
+            DEFAULT_INTERLEAVE_MICROS);
+
+    /**
      * Enumerates the file types the muxer can declare in its {@code ftyp} box.
      *
      * <p>This enum may gain constants in later releases; a {@code switch} over it needs a
@@ -69,7 +75,14 @@ public final class Mp4MuxerOptions {
          * compressed audio of every brand, each video sample stored as the Contiguous Codestream boxes of its
          * frame.
          */
-        MJ2
+        MJ2,
+
+        /**
+         * A 3GPP file (3GPP TS 26.244, {@code .3gp}): major brand {@code 3gp6}, compatible with {@code 3gp6},
+         * {@code 3gp5}, {@code 3gp4} and {@code isom}; carries H.263, MPEG-4 Part 2 and H.264 video, AMR-NB, AMR-WB
+         * and AAC audio, and 3GPP timed text.
+         */
+        THREE_GPP
     }
 
     private final Brand brand;
@@ -125,6 +138,15 @@ public final class Mp4MuxerOptions {
      */
     public static Mp4MuxerOptions mj2() {
         return MJ2;
+    }
+
+    /**
+     * Returns the options for a fast-start 3GPP file ({@code .3gp}) with the default interleaving.
+     *
+     * @return the options
+     */
+    public static Mp4MuxerOptions threeGpp() {
+        return THREE_GPP;
     }
 
     /**

@@ -190,6 +190,7 @@ video.mpeg2	mpeg
 video.mpeg2.internal	mpeg
 video.mpeg4	mpeg
 video.mpeg4.internal	mpeg
+video.mpeg4.internal.encoder	mpeg
 video.mpeg4.internal.object	mpeg
 video.prores	video
 video.prores.internal	video

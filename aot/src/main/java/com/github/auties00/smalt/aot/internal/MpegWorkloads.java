@@ -47,6 +47,9 @@ import com.github.auties00.smalt.video.h264.encoder.H264FirstPassStats;
 import com.github.auties00.smalt.video.h264.encoder.H264PacketFormat;
 import com.github.auties00.smalt.video.h264.encoder.H264Profile;
 import com.github.auties00.smalt.video.h264.encoder.H264RateControl;
+import com.github.auties00.smalt.video.h263.H263Decoder;
+import com.github.auties00.smalt.video.h263.H263Encoder;
+import com.github.auties00.smalt.video.h263.H263EncoderOptions;
 import com.github.auties00.smalt.video.hevc.HevcDecoder;
 import com.github.auties00.smalt.video.hevc.HevcDecoderOptions;
 import com.github.auties00.smalt.video.hevc.encoder.HevcEncoder;
@@ -55,6 +58,10 @@ import com.github.auties00.smalt.video.hevc.encoder.HevcEncoderSpeed;
 import com.github.auties00.smalt.video.hevc.encoder.HevcPictureHash;
 import com.github.auties00.smalt.video.hevc.encoder.HevcProfile;
 import com.github.auties00.smalt.video.mpeg2.Mpeg2Decoder;
+import com.github.auties00.smalt.video.mpeg4.Mpeg4Decoder;
+import com.github.auties00.smalt.video.mpeg4.Mpeg4Encoder;
+import com.github.auties00.smalt.video.mpeg4.Mpeg4EncoderOptions;
+import com.github.auties00.smalt.video.mpeg4.Mpeg4Profile;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
@@ -74,8 +81,8 @@ import static com.github.auties00.smalt.aot.internal.WorkloadFactory.realtime;
 
 /**
  * Creates the workloads of {@link TrainingFamily#MPEG}, the codecs of {@code smalt-mpeg}: H.264, HEVC, HEIC,
- * MPEG-1 and MPEG-2 video, AAC, AC-3 and E-AC-3, and AMR, each keeping its codecs across rounds as a
- * long-running application does.
+ * MPEG-1 and MPEG-2 video, MPEG-4 Part 2, H.263, AAC, AC-3 and E-AC-3, and AMR, each keeping its codecs across
+ * rounds as a long-running application does.
  */
 final class MpegWorkloads {
     /**
@@ -96,8 +103,9 @@ final class MpegWorkloads {
      * @return the factories, in order
      */
     static List<WorkloadFactory> factories() {
-        // TODO: train the MPEG-4 Part 2, H.263 and USAC decoders and the separate color plane path of the H.264
-        //  decoder, which need streams that no Smalt encoder produces
+        // TODO: train the USAC decoder, the H.263 decoder of the modes the H.263 encoder does not code (PB-frames,
+        //  B-pictures, scalability and the optional modes beyond Annexes D, F, I, J, K and T), and the separate color
+        //  plane path of the H.264 decoder, which need streams that no Smalt encoder produces
         return List.of(
                 realtime("h264-encode-rt-t1", () -> h264Encode(1, null, null)),
                 realtime("h264-encode-rt-tools", MpegWorkloads::h264RealtimeTools),
@@ -113,6 +121,16 @@ final class MpegWorkloads {
                         HevcEncoderOptions.forRealtime().toBuilder().timeBase(TIME_BASE).bitrate(BITRATE).threads(2)
                                 .build())),
                 realtime("hevc-decode-rt-t1", () -> hevcDecode(1, true)),
+                realtime("mpeg4-session-t1", () -> VideoStreams.session("mpeg4-session-t1", Codec.MPEG4_PART2,
+                        () -> new Mpeg4Encoder(WIDTH, HEIGHT, Mpeg4EncoderOptions.forRealtime().toBuilder()
+                                .timeBase(TIME_BASE).frameRate(new Rational(30, 1)).bitrate(BITRATE).threads(1)
+                                .build()),
+                        track -> new Mpeg4Decoder(track, VideoDecoderOptions.builder().threads(1).build()))),
+                realtime("h263-session-t1", () -> VideoStreams.session("h263-session-t1", Codec.H263,
+                        () -> new H263Encoder(WIDTH, HEIGHT, H263EncoderOptions.forRealtime().toBuilder()
+                                .timeBase(TIME_BASE).frameRate(new Rational(30, 1)).bitrate(BITRATE)
+                                .deblockingFilter(true).threads(1).build()),
+                        track -> new H263Decoder(track, VideoDecoderOptions.builder().threads(1).build()))),
                 realtime("ac3-encode-rt", () -> ac3Realtime(6)),
                 realtime("eac3-rt", () -> eac3("eac3-rt", Eac3EncoderOptions.forRealtime(), 6)),
                 realtime("aac-encode-retarget", () -> aacRetarget(6)),
@@ -132,6 +150,15 @@ final class MpegWorkloads {
                 file("h264-decode-t2", () -> h264Decode(2, false)),
                 file("h264-decode-film-grain-t2", () -> h264FilmGrainDecode(2)),
                 file("h264-svc-decode", MpegWorkloads::h264ScalableDecode),
+                file("mpeg4-encode-asp-t2", () -> VideoStreams.encode("mpeg4-encode-asp-t2",
+                        new Mpeg4Encoder(WIDTH, HEIGHT, mpeg4Options(true, 2)))),
+                file("mpeg4-encode-simple-t1", () -> VideoStreams.encode("mpeg4-encode-simple-t1",
+                        new Mpeg4Encoder(WIDTH, HEIGHT, mpeg4Options(false, 1)))),
+                file("mpeg4-decode-t1", () -> mpeg4Decode(1)),
+                file("mpeg4-decode-t2", () -> mpeg4Decode(2)),
+                file("h263-encode-baseline", () -> h263Encode("h263-encode-baseline", false)),
+                file("h263-encode-annexes", () -> h263Encode("h263-encode-annexes", true)),
+                file("h263-decode", MpegWorkloads::h263Decode),
                 file("mpeg2-decode-t1", () -> mpegVideoDecode(1)),
                 file("mpeg2-decode-t2", () -> mpegVideoDecode(2)),
                 file("hevc-encode-fast-b-t2", () -> hevcEncode("hevc-encode-fast-b-t2",
@@ -494,6 +521,117 @@ final class MpegWorkloads {
             }
         }
         return TrainingWorkload.of("h264-svc-decode", () -> rounds.forEach(Runnable::run));
+    }
+
+    /**
+     * The size of the baseline H.263 pictures of the H.263 workloads, CIF.
+     */
+    private static final int CIF_WIDTH = 352;
+
+    /**
+     * The height of the baseline H.263 pictures.
+     */
+    private static final int CIF_HEIGHT = 288;
+
+    /**
+     * The macroblocks of a slice of the custom-format H.263 pictures, which make slices end inside macroblock rows.
+     */
+    private static final int H263_SLICE_MACROBLOCKS = 17;
+
+    /**
+     * Returns the settings of the MPEG-4 Part 2 file workloads.
+     *
+     * @param advanced whether the stream is of the Advanced Simple profile with B-VOPs, quarter-sample vectors and
+     * the MPEG quantization method, rather than of the Simple profile with video packets
+     * @param threads the encoder threads
+     * @return the settings
+     */
+    private static Mpeg4EncoderOptions mpeg4Options(boolean advanced, int threads) {
+        var builder = Mpeg4EncoderOptions.builder().timeBase(TIME_BASE).frameRate(new Rational(30, 1))
+                .bitrate(BITRATE).keyframeInterval(12).threads(threads);
+        if (advanced) {
+            builder.profile(Mpeg4Profile.ADVANCED_SIMPLE).bFrames(2).quarterSample(true).mpegQuantization(true);
+        } else {
+            builder.videoPacketSize(600);
+        }
+        return builder.build();
+    }
+
+    /**
+     * Returns a workload that decodes the streams of the MPEG-4 Part 2 encoder in both profiles: I-, P- and B-VOPs
+     * with one and four vectors, AC prediction, half and quarter samples, both quantization methods and video
+     * packets.
+     *
+     * @param threads the decoder threads
+     * @return the workload
+     */
+    private static TrainingWorkload mpeg4Decode(int threads) {
+        var rounds = new ArrayList<Runnable>();
+        for (var advanced : new boolean[]{true, false}) {
+            var encoder = new Mpeg4Encoder(WIDTH, HEIGHT, mpeg4Options(advanced, 2));
+            var codecConfig = encoder.codecConfig().orElseThrow();
+            var packets = VideoStreams.encodeAll(encoder, SyntheticVideo.natural(WIDTH, HEIGHT,
+                    VideoStreams.DECODED_FRAMES / 2));
+            rounds.add(VideoStreams.decodeRound(packets, new Mpeg4Decoder(VideoStreams.track(Codec.MPEG4_PART2,
+                    codecConfig), VideoDecoderOptions.builder().threads(threads).build())));
+        }
+        return TrainingWorkload.of("mpeg4-decode-t" + threads, () -> rounds.forEach(Runnable::run));
+    }
+
+    /**
+     * Returns the H.263 encoder of the H.263 workloads.
+     *
+     * @param annexes whether the encoder codes custom-format pictures with the Unrestricted Motion Vector,
+     * Advanced Prediction, Advanced INTRA Coding, Deblocking Filter, Slice Structured and Modified Quantization
+     * modes, rather than baseline CIF pictures with group of blocks headers
+     * @return the encoder
+     */
+    private static H263Encoder h263Encoder(boolean annexes) {
+        var builder = H263EncoderOptions.builder().timeBase(TIME_BASE).frameRate(new Rational(30, 1))
+                .bitrate(BITRATE).keyframeInterval(12).threads(2);
+        if (annexes) {
+            builder.unrestrictedVectors(true).advancedPrediction(true).advancedIntraCoding(true)
+                    .deblockingFilter(true).modifiedQuantization(true).sliceSize(H263_SLICE_MACROBLOCKS);
+            return new H263Encoder(WIDTH, HEIGHT, builder.build());
+        }
+        return new H263Encoder(CIF_WIDTH, CIF_HEIGHT, builder.groupOfBlocksHeaders(true).build());
+    }
+
+    /**
+     * Returns a workload that encodes with the H.263 encoder.
+     *
+     * @param name the name of the workload
+     * @param annexes whether the encoder codes the optional modes, as {@link #h263Encoder(boolean)} describes
+     * @return the workload
+     */
+    private static TrainingWorkload h263Encode(String name, boolean annexes) {
+        var encoder = h263Encoder(annexes);
+        var pictures = SyntheticVideo.natural(encoder.width(), encoder.height(), VideoStreams.ENCODED_FRAMES);
+        long[] pts = {0};
+        Consumer<Packet> output = packet -> Blackhole.consume(packet.size());
+        return TrainingWorkload.of(name, () -> {
+            for (var picture : pictures) {
+                encoder.encode(new VideoFrame(picture, pts[0]++, 1, false), output);
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that decodes the streams of the H.263 encoder: baseline CIF pictures with group of blocks
+     * headers, and custom-format pictures in slices with the optional modes the encoder codes.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload h263Decode() {
+        var rounds = new ArrayList<Runnable>();
+        for (var annexes : new boolean[]{false, true}) {
+            var encoder = h263Encoder(annexes);
+            var packets = VideoStreams.encodeAll(encoder, SyntheticVideo.natural(encoder.width(), encoder.height(),
+                    VideoStreams.DECODED_FRAMES / 2));
+            rounds.add(VideoStreams.decodeRound(packets, new H263Decoder(VideoStreams.track(Codec.H263,
+                    encoder.width(), encoder.height(), null), VideoDecoderOptions.defaults())));
+        }
+        return TrainingWorkload.of("h263-decode", () -> rounds.forEach(Runnable::run));
     }
 
     /**

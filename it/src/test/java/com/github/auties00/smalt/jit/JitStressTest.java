@@ -78,6 +78,10 @@ class JitStressTest {
         // child past its compile budget.
         encode.addAll(List.of("vp9enc:speed=6:threads=1",
                 "vp9enc:speed=8:threads=2:resilient=false", "vp9enc:speed=5:threads=1:layers=3"));
+        // The MPEG-4 Part 2 and H.263 encoders and the decoder of their streams, kept out of the mixed child for its
+        // compile budget like the VP9 encoder.
+        encode.addAll(List.of("mpeg4enc:threads=1", "h263enc:threads=2"));
+        decode.add("mpeg4dec:threads=2");
         // The AV1 encoder runs in a child of its own: it reuses the AV1 decoder's kernels, and some
         // of them (the 4-point ADST, the 8x4 DCT) run seldom enough that sharing the encoders'
         // child leaves them on the first compilation tier through the warm-up.

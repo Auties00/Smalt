@@ -219,7 +219,6 @@ class VideoBombTest {
         private static Streams.Encoded large(Codec codec) {
             return switch (codec) {
                 case HEVC -> ffmpeg(codec, "libx265", "mp4", List.of("-x265-params", "log-level=error"));
-                case MPEG4_PART2 -> ffmpeg(codec, "mpeg4", "mp4", List.of());
                 case MPEG2_VIDEO -> ffmpeg(codec, "mpeg2video", "ts", List.of());
                 default -> Streams.video(codec, LARGE, LARGE, 2, options(codec));
             };

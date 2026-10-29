@@ -419,6 +419,9 @@ public final class JitWorkload {
                     track -> new Av1Decoder(track));
             case "vp9dec" -> ivfDecode("vp9dec", Path.of(options.get("input")), Codec.VP9,
                     track -> new Vp9Decoder(track));
+            case "mpeg4enc" -> MpegPart2JitWorkloads.mpeg4Encode(threads);
+            case "mpeg4dec" -> MpegPart2JitWorkloads.mpeg4Decode(threads);
+            case "h263enc" -> MpegPart2JitWorkloads.h263Encode(threads);
             case "proresdec" -> IntraJitWorkloads.proresDecode();
             case "proresenc" -> IntraJitWorkloads.proresEncode();
             case "dnxhddec" -> IntraJitWorkloads.dnxhdDecode();
