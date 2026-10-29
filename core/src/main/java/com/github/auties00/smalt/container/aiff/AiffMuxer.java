@@ -2,6 +2,7 @@ package com.github.auties00.smalt.container.aiff;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.Muxer;
+import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.internal.io.ByteWriter;
 import com.github.auties00.smalt.internal.tags.MuxerTags;
 import com.github.auties00.smalt.io.MediaSink;
@@ -17,7 +18,7 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Writes AIFF and AIFF-C files from the packets of one PCM track.
+ * Writes AIFF and AIFF-C files from the packets of one PCM, IMA ADPCM, GSM 06.10 or MACE track.
  *
  * <p>The track must be an {@link AudioTrack} that declares its sample rate and channel layout,
  * with one of the codecs {@link #supports(Codec)} accepts. Signed big-endian integers (8, 16, 24
@@ -25,8 +26,11 @@ import java.util.Objects;
  * chunk and the compression type that names it: {@code sowt} for little-endian integers,
  * {@code raw } for unsigned 8-bit, {@code fl32} and {@code fl64} for big-endian floats,
  * {@code alaw} and {@code ulaw} for G.711 (declared with a 16-bit sample size, as QuickTime
- * does). AIFF has no channel mask, so only the channel count of the layout is stored. Packets are
- * appended to the {@code SSND} chunk in the order they arrive; their timestamps are ignored.
+ * does), {@code ima4} for {@link Codec#ADPCM_IMA_QT}, {@code GSM } for mono {@link Codec#GSM} and
+ * {@code MAC3} and {@code MAC6} for MACE; a packet of a compressed type holds whole frames of the type,
+ * which the {@code COMM} frame count then counts. AIFF has no channel mask, so only the channel count
+ * of the layout is stored. Packets are appended to the {@code SSND} chunk in the order they arrive; their
+ * timestamps are ignored.
  *
  * <p>The {@code COMM} chunk precedes the sound data and states the frame count, so on a seekable
  * sink the header is written with the first packet and its counts and sizes are patched by
@@ -85,9 +89,9 @@ public final class AiffMuxer implements Muxer {
     private long dataSize;
 
     /**
-     * The metadata chunks the tags were encoded to, written before {@code SSND}.
+     * The tags of {@link #setTags(MediaTags)}, encoded into chunks before {@code SSND} when the header is written.
      */
-    private List<byte[]> metadata = List.of();
+    private MediaTags tags = MediaTags.empty();
 
     /**
      * Whether the header was written.
@@ -114,8 +118,9 @@ public final class AiffMuxer implements Muxer {
      * Returns whether AIFF files can carry a codec.
      *
      * @param codec the codec of the track to write
-     * @return {@code true} for the signed integer formats of either byte order, unsigned 8-bit, big-endian 32 and
-     * 64-bit floats, A-law and mu-law
+     * @return {@code true} for the signed 8, 16, 24 and 32-bit integer formats of either byte order, unsigned 8-bit,
+     * big-endian 32 and 64-bit floats, A-law and mu-law; {@code false} for 64-bit integers, wider than the 32-bit
+     * sample size AIFF allows
      */
     public static boolean supports(Codec codec) {
         return compression(Objects.requireNonNull(codec, "codec")) != null;
@@ -137,6 +142,10 @@ public final class AiffMuxer implements Muxer {
             case PCM_F64BE -> "fl64";
             case PCM_ALAW -> "alaw";
             case PCM_MULAW -> "ulaw";
+            case ADPCM_IMA_QT -> "ima4";
+            case GSM -> "GSM ";
+            case MACE3 -> "MAC3";
+            case MACE6 -> "MAC6";
             default -> null;
         };
     }
@@ -154,6 +163,10 @@ public final class AiffMuxer implements Muxer {
             case "fl64" -> "64-bit floating point";
             case "alaw" -> "ALaw 2:1";
             case "ulaw" -> "uLaw 2:1";
+            case "ima4" -> "IMA 4:1";
+            case "GSM " -> "GSM";
+            case "MAC3" -> "MACE 3-to-1";
+            case "MAC6" -> "MACE 6-to-1";
             default -> "";
         };
     }
@@ -184,8 +197,17 @@ public final class AiffMuxer implements Muxer {
         if (channels > Short.MAX_VALUE) {
             throw new IllegalArgumentException(channels + " channels do not fit an AIFF header");
         }
+        if (audio.codec() == Codec.GSM && channels != 1) {
+            throw new IllegalArgumentException("an AIFF-C GSM 06.10 track is mono, not " + channels + " channels");
+        }
         this.track = audio;
-        this.blockAlign = audio.codec().pcmBitsPerSample().orElseThrow() / 8 * channels;
+        this.blockAlign = switch (audio.codec()) {
+            case ADPCM_IMA_QT -> 34 * channels;
+            case GSM -> 33;
+            case MACE3 -> 2 * channels;
+            case MACE6 -> channels;
+            default -> audio.codec().pcmBitsPerSample().orElseThrow() / 8 * channels;
+        };
     }
 
     /**
@@ -202,8 +224,14 @@ public final class AiffMuxer implements Muxer {
      * {@inheritDoc}
      *
      * <p>The tags become {@code NAME}, {@code AUTH}, {@code (c) } and {@code ANNO} chunks for the
-     * values they can hold and, when pictures, chapters or other keys need it, an {@code ID3 }
-     * chunk with every tag, all before {@code SSND}.
+     * values they can hold and, when pictures or other keys need it, an {@code ID3 } chunk with every
+     * tag, and the XMP packet an {@code APPL} chunk of signature {@code XMP }. The chapters become the markers of a
+     * {@code MARK} chunk, named by their titles, and the
+     * instrument keys an {@code INST} chunk (whose loops add markers), as
+     * {@link com.github.auties00.smalt.metadata.TagEditor} writes them. Every chunk is written before
+     * {@code SSND}.
+     *
+     * @throws IllegalArgumentException if the value of an instrument key is malformed
      */
     @Override
     public void setTags(MediaTags tags) {
@@ -211,7 +239,8 @@ public final class AiffMuxer implements Muxer {
         if (started || finished) {
             throw new IllegalStateException("tags must be set before the first packet");
         }
-        this.metadata = MuxerTags.riffChunks(tags, true);
+        MuxerTags.riffChunks(tags, true, 0);
+        this.tags = tags;
     }
 
     /**
@@ -220,6 +249,7 @@ public final class AiffMuxer implements Muxer {
      * @throws IllegalArgumentException if the packet belongs to another track or does not hold whole frames
      * @throws IllegalStateException if no track was declared, the muxer is finished, or the file would exceed the 4 GiB
      * an AIFF header can describe
+     * @throws MediaException.Unsupported if the packet changes the codec configuration
      */
     @Override
     public void writePacket(Packet packet) {
@@ -233,6 +263,7 @@ public final class AiffMuxer implements Muxer {
         if (packet.trackId() != track.id()) {
             throw new IllegalArgumentException("packet for undeclared track " + packet.trackId());
         }
+        ConfigChanges.reject(packet, track.codecConfig().orElse(null), "AIFF");
         if (packet.size() % blockAlign != 0) {
             throw new IllegalArgumentException("a packet of " + packet.size() + " bytes does not hold whole frames of "
                     + blockAlign + " bytes");
@@ -321,7 +352,7 @@ public final class AiffMuxer implements Muxer {
                 header.u8(0);
             }
         }
-        for (var chunk : metadata) {
+        for (var chunk : MuxerTags.riffChunks(tags, true, track.sampleRate())) {
             header.bytes(chunk);
         }
         var seekable = output.isSeekable();
@@ -357,7 +388,8 @@ public final class AiffMuxer implements Muxer {
      */
     private static int sampleSizeBits(Codec codec) {
         return switch (codec) {
-            case PCM_ALAW, PCM_MULAW -> 16;
+            case PCM_ALAW, PCM_MULAW, ADPCM_IMA_QT, GSM -> 16;
+            case MACE3, MACE6 -> 8;
             default -> codec.pcmBitsPerSample().orElseThrow();
         };
     }

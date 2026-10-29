@@ -1,3 +1,4 @@
+com.github.auties00.smalt.internal.provider.image.AniCodecProvider
 com.github.auties00.smalt.internal.provider.image.BmpCodecProvider
 com.github.auties00.smalt.internal.provider.image.GifCodecProvider
 com.github.auties00.smalt.internal.provider.image.IcoCodecProvider
