@@ -10,6 +10,8 @@ import com.github.auties00.smalt.image.jpeg.JpegDecoder;
 import com.github.auties00.smalt.image.jpeg.MjpegDecoder;
 import com.github.auties00.smalt.image.jpeg.JpegEncoder;
 import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions;
+import com.github.auties00.smalt.image.jpeg.JpegTransforms;
+import com.github.auties00.smalt.video.VideoDecoderOptions;
 import com.github.auties00.smalt.io.MediaSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -207,6 +209,61 @@ class JpegRobustnessTest {
             assertNoWrappedBug(expected);
         }
     }
+
+    private static List<byte[]> twelveBitSeeds() {
+        var seeds = new ArrayList<byte[]>();
+        for (var name : List.of("227x149-yuv420-baseline-rst3.jpg", "33x65-yuv422-progressive.jpg",
+                "33x65-yuv444-progressive-arithmetic.jpg", "227x149-monochrome-arithmetic.jpg",
+                "64x48-rgb-progressive-q100.jpg", "64x48-yuv420-baseline-q100.jpg")) {
+            seeds.add(Djpeg12ConformanceTest.resource(name));
+        }
+        var cmyk = JpegStreamTest.fourComponents(new int[]{1, 2, 3, 4});
+        cmyk.jfif = false;
+        cmyk.adobeTransform = 2;
+        cmyk.precision = 12;
+        seeds.add(cmyk.sequential(new int[]{0, 1, 2, 3}));
+        return seeds;
+    }
+
+    @Test
+    @DisplayName("every mutated 12-bit stream decodes, at its depth or not, or fails with a MediaException")
+    void twelveBitMutations() {
+        var random = new Random(20261017L);
+        var outcomes = new LinkedHashMap<String, Integer>();
+        var variants = 0;
+        for (var seed : twelveBitSeeds()) {
+            for (var kind = 0; kind < 6; kind++) {
+                var count = kind == 0 ? 16 : 8;
+                for (var i = 0; i < count; i++) {
+                    var mutated = mutate(seed, kind, random);
+                    variants++;
+                    var outcome = assertTimeoutPreemptively(Duration.ofSeconds(10), () -> run(mutated), () -> "variant hung");
+                    attempt(() -> JpegDecoder.decode(MediaSource.of(mutated), WIDE));
+                    attempt(() -> JpegDecoder.decode(MediaSource.of(mutated),
+                            WIDE.toBuilder().minSize(mutated.length % 60 + 1, 9).build()));
+                    attempt(() -> new MjpegDecoder(VideoDecoderOptions.builder().highBitDepth(true).build())
+                            .decodeFrame(mutated, 0, mutated.length));
+                    attempt(() -> JpegTransforms.progressive(MediaSource.of(mutated)));
+                    outcomes.merge(kind + ": " + outcome, 1, Integer::sum);
+                }
+            }
+        }
+        System.out.println(variants + " 12-bit variants: " + outcomes);
+        assertTrue(variants >= 300);
+    }
+
+    @Test
+    @DisplayName("a 12-bit CMYK stream decodes to 8-bit RGBA even with highBitDepth")
+    void twelveBitCmyk() {
+        var seeds = twelveBitSeeds();
+        var cmyk = seeds.getLast();
+        var narrow = JpegDecoder.decode(MediaSource.of(cmyk), ImageDecoderOptions.defaults()).picture();
+        var wide = JpegDecoder.decode(MediaSource.of(cmyk), WIDE).picture();
+        assertInstanceOf(RgbaPicture.class, narrow);
+        assertArrayEquals(((RgbaPicture) narrow).pixels(), assertInstanceOf(RgbaPicture.class, wide).pixels());
+    }
+
+    private static final ImageDecoderOptions WIDE = ImageDecoderOptions.builder().highBitDepth(true).build();
 
     @Test
     @DisplayName("random bytes behind a SOI marker never escape as anything but a MediaException")

@@ -4,6 +4,7 @@ package com.github.auties00.smalt.video.vp9.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.plane.Planes;
@@ -48,6 +49,12 @@ public final class Vp9RtEncoder {
     static final int[] SAD_PER_BIT16 = new int[256];
 
     /**
+     * The sum-of-differences weight of the motion search of sub-8x8 blocks per quantizer index
+     * ({@code sad_per_bit4lut_8}).
+     */
+    static final int[] SAD_PER_BIT4 = new int[256];
+
+    /**
      * The adaptive threshold base factor of each block size ({@code rd_thresh_block_size_factor}).
      */
     private static final int[] RD_THRESH_BLOCK_SIZE_FACTOR = {2, 3, 3, 4, 6, 6, 8, 12, 12, 16, 24, 24, 32};
@@ -56,6 +63,7 @@ public final class Vp9RtEncoder {
         for (var i = 0; i < 256; i++) {
             var q = Vp9EncTables.qindexToQ(i);
             SAD_PER_BIT16[i] = (int) (0.0418 * q + 2.4107);
+            SAD_PER_BIT4[i] = (int) (0.063 * q + 2.742);
         }
     }
 
@@ -68,6 +76,32 @@ public final class Vp9RtEncoder {
      * The frame height in samples.
      */
     final int height;
+
+    /**
+     * The horizontal chroma subsampling shift.
+     */
+    final int ssX;
+
+    /**
+     * The vertical chroma subsampling shift.
+     */
+    final int ssY;
+
+    /**
+     * The bit depth of the samples: 8, 10 or 12.
+     */
+    final int bitDepth;
+
+    /**
+     * The {@code color_space} code of the key frame headers ({@code CS_UNKNOWN} to
+     * {@code CS_SRGB}).
+     */
+    int colorSpace;
+
+    /**
+     * Whether the key frame headers signal full-range samples.
+     */
+    boolean fullRange;
 
     /**
      * The number of 8x8 block columns.
@@ -150,9 +184,16 @@ public final class Vp9RtEncoder {
     final Vp9RtContent content;
 
     /**
-     * The quantizer parameters of every quantizer index.
+     * The quantizer parameters of every quantizer index of 8-bit content, with which the mode
+     * decisions model the 8-bit proxies of high bit depth content too.
      */
     final Vp9Quantizer quant = new Vp9Quantizer();
+
+    /**
+     * The quantizer parameters of every quantizer index at the stream's bit depth, with which the
+     * blocks are coded.
+     */
+    final Vp9Quantizer codingQuant;
 
     /**
      * The probabilities the current frame is coded with.
@@ -277,6 +318,50 @@ public final class Vp9RtEncoder {
      * which the bitstream writer codes new motion vectors.
      */
     final int[] blockRefMv;
+
+    /**
+     * The reference motion vector of each coded compound block's second reference, by 8x8 index,
+     * against which a second new vector is coded.
+     */
+    final int[] blockRefMv1;
+
+    /**
+     * The sign bias of each reference, {@code [reference]}: 1 for a reference that lies after the
+     * current frame in display order, as an alternate reference does.
+     */
+    final int[] signBias = new int[4];
+
+    /**
+     * The reference mode of the current frame: {@link #SINGLE_REFERENCE} or
+     * {@link #REFERENCE_MODE_SELECT}.
+     */
+    int referenceMode;
+
+    /**
+     * The single reference mode ({@code SINGLE_REFERENCE}).
+     */
+    static final int SINGLE_REFERENCE = 0;
+
+    /**
+     * The reference mode choosing per block between single and compound prediction
+     * ({@code REFERENCE_MODE_SELECT}).
+     */
+    static final int REFERENCE_MODE_SELECT = 2;
+
+    /**
+     * The fixed reference of compound prediction, the alternate reference ({@code comp_fixed_ref}).
+     */
+    final int compFixedRef = ALTREF_FRAME;
+
+    /**
+     * The first variable reference of compound prediction ({@code comp_var_ref[0]}).
+     */
+    final int compVarRef0 = LAST_FRAME;
+
+    /**
+     * The second variable reference of compound prediction ({@code comp_var_ref[1]}).
+     */
+    final int compVarRef1 = GOLDEN_FRAME;
 
     /**
      * The block size of each 8x8 block in the previous frame, for partition copying.
@@ -677,6 +762,135 @@ public final class Vp9RtEncoder {
     boolean nonReferenceFrame;
 
     /**
+     * Whether frames are coded by the good-quality rate-distortion search, which
+     * {@link #codeGoodFrame} drives, rather than by {@link #encode(YuvPicture, long, long, boolean)}.
+     */
+    boolean good;
+
+    /**
+     * Whether the coding of the good-quality blocks optimizes their quantized coefficients, as
+     * libvpx does in its second pass only.
+     */
+    boolean optimizeCoefficients;
+
+    /**
+     * Whether the good-quality alternate references are coded from their unfiltered source, which
+     * restricts the search of a frame showing the alternate reference's source to the zero vector
+     * of the alternate reference ({@code arnr_max_frames == 0}).
+     */
+    boolean unfilteredAltRef;
+
+    /**
+     * Whether {@link #codeGoodFrame} measures {@link #unfilteredLumaError}.
+     */
+    boolean measureLumaError;
+
+    /**
+     * The luma squared error of the reconstruction of the last {@link #codeGoodFrame} before the
+     * loop filter, over the visible picture, when {@link #measureLumaError} asks for it, libvpx's
+     * {@code vpx_get_y_sse} and {@code vpx_highbd_get_y_sse}.
+     */
+    long unfilteredLumaError;
+
+    /**
+     * Returns the luma squared error of the reconstruction against the source over the visible
+     * picture, on the samples of the bit depth.
+     *
+     * @return the error
+     */
+    private long lumaError() {
+        long sum = 0;
+        var stride = recon.strides[0];
+        for (var y = 0; y < height; y++) {
+            var s = source.offset(0, 0, y);
+            var r = y * stride;
+            if (bitDepth > 8) {
+                var a = source.planes16[0];
+                var b = recon.planes16[0];
+                for (var x = 0; x < width; x++) {
+                    long d = a[s + x] - b[r + x];
+                    sum += d * d;
+                }
+            } else {
+                var a = source.planes[0];
+                var b = recon.planes8[0];
+                for (var x = 0; x < width; x++) {
+                    var d = (a[s + x] & 0xFF) - (b[r + x] & 0xFF);
+                    sum += d * d;
+                }
+            }
+        }
+        return sum;
+    }
+
+    /**
+     * The speed features of the good-quality frame being coded.
+     */
+    final Vp9GoodSpeed goodSpeed = new Vp9GoodSpeed();
+
+    /**
+     * The symbol costs of the good-quality frame being coded, at 8 bits as its decisions are.
+     */
+    final Vp9RdCosts rdCosts = new Vp9RdCosts(8);
+
+    /**
+     * Whether the current frame is shown, or only refreshes references.
+     */
+    boolean showFrame = true;
+
+    /**
+     * Whether the previous coded frame was shown, which allows the current frame to predict
+     * motion vectors from it.
+     */
+    private boolean lastShowFrame = true;
+
+    /**
+     * Whether the current frame codes the source an alternate reference was made from, so that
+     * it mostly copies the reference ({@code is_src_frame_alt_ref}).
+     */
+    boolean srcFrameAltRef;
+
+    /**
+     * The number of shown frames since the golden reference was refreshed.
+     */
+    int framesSinceGolden;
+
+    /**
+     * The first scale of the motion searches of the current good-quality frame
+     * ({@code mv_step_param}).
+     */
+    int mvStepParam;
+
+    /**
+     * The largest motion vector component of the previous shown frame, in full samples, or -1
+     * after a key frame ({@code max_mv_magnitude}).
+     */
+    private int maxMvMagnitude = -1;
+
+    /**
+     * The share of the rate-distortion multiplier the current frame's update type keeps, in
+     * 1/128 ({@code rd_frame_type_factor}).
+     */
+    private int rdFrameTypeFactor = 128;
+
+    /**
+     * The share of the rate-distortion multiplier added for the boost of the current frame's
+     * group, in 1/128 ({@code rd_boost_factor}).
+     */
+    private int rdBoostFactor;
+
+    /**
+     * The loop filter reference deltas the decoder held before the current good-quality frame,
+     * restored before each of its codings.
+     */
+    private final int[] goodRefDeltas = new int[4];
+
+    /**
+     * The loop filter mode deltas the decoder held before the current good-quality frame.
+     */
+    private final int[] goodModeDeltas = new int[2];
+
+    /**
      * Whether the previous frame was dropped.
      */
     private boolean lastFrameDropped;
@@ -784,9 +998,36 @@ public final class Vp9RtEncoder {
      */
     public Vp9RtEncoder(int width, int height, int temporalLayers, int tileColumnsLog2, int threads,
                         MediaLimits limits) {
+        this(width, height, 1, 1, 8, temporalLayers, tileColumnsLog2, threads, limits);
+    }
+
+    /**
+     * Creates an encoder for a frame size and picture format.
+     *
+     * <p>The tile column count is clamped to the range the width allows. A 10 or 12-bit stream
+     * takes its decisions on the 8-bit proxies of its pictures and codes its blocks at full
+     * precision.
+     *
+     * @param width the frame width
+     * @param height the frame height
+     * @param ssX the horizontal chroma subsampling shift, 0 or 1
+     * @param ssY the vertical chroma subsampling shift, 0 or 1
+     * @param bitDepth the bit depth, 8, 10 or 12
+     * @param temporalLayers the number of temporal layers, 1 to 3
+     * @param tileColumnsLog2 the requested log2 of the tile column count
+     * @param threads the number of threads
+     * @param limits the limits of the frame allocations
+     * @throws MediaException.LimitExceeded if the frame size exceeds {@code limits}
+     */
+    public Vp9RtEncoder(int width, int height, int ssX, int ssY, int bitDepth, int temporalLayers,
+                        int tileColumnsLog2, int threads, MediaLimits limits) {
         LimitChecks.checkPicture(limits, width, height);
         this.width = width;
         this.height = height;
+        this.ssX = ssX;
+        this.ssY = ssY;
+        this.bitDepth = bitDepth;
+        this.codingQuant = bitDepth == 8 ? quant : new Vp9Quantizer(bitDepth);
         this.temporalLayers = temporalLayers;
         this.threads = threads;
         this.miCols = (width + 7) >> 3;
@@ -826,6 +1067,7 @@ public final class Vp9RtEncoder {
         lastSegMap = new byte[units];
         blockModeContext = new int[units];
         blockRefMv = new int[units];
+        blockRefMv1 = new int[units];
         prevPartition = new byte[units];
         var sbs = sbCols * sbRows;
         prevSegmentId = new byte[sbs];
@@ -851,17 +1093,23 @@ public final class Vp9RtEncoder {
             tokens[i] = new Vp9RtTokens(1024);
         }
         bitstream = new Vp9RtBitstream(this);
-        recon.allocate(sbCols * 64, sbRows * 64, 1, 1, 8, limits);
+        recon.allocate(sbCols * 64, sbRows * 64, ssX, ssY, bitDepth, limits);
+        if (bitDepth > 8) {
+            for (var plane = 0; plane < 3; plane++) {
+                recon.planes8[plane] = new byte[recon.planes16[plane].length];
+            }
+        }
         recon.width = width;
         recon.height = height;
         recon.alignedWidth = miCols * 8;
         recon.alignedHeight = miRows * 8;
         for (var plane = 0; plane < 3; plane++) {
-            var ss = plane == 0 ? 0 : 1;
-            recon.planeWidths[plane] = (miCols * 8) >> ss;
-            recon.planeHeights[plane] = (miRows * 8) >> ss;
-            recon.cropWidths[plane] = (width + ss) >> ss;
-            recon.cropHeights[plane] = (height + ss) >> ss;
+            var sx = plane == 0 ? 0 : ssX;
+            var sy = plane == 0 ? 0 : ssY;
+            recon.planeWidths[plane] = (miCols * 8) >> sx;
+            recon.planeHeights[plane] = (miRows * 8) >> sy;
+            recon.cropWidths[plane] = (width + sx) >> sx;
+            recon.cropHeights[plane] = (height + sy) >> sy;
         }
         lfParams.setGrid(miGrid, miRows, miCols);
         loopFilters = new Vp9LoopFilter[coders.length];
@@ -1161,6 +1409,53 @@ public final class Vp9RtEncoder {
     }
 
     /**
+     * Returns the profile of the stream: 0 for 8-bit 4:2:0, 1 for 8-bit 4:2:2, 4:4:0 and
+     * 4:4:4, 2 and 3 for the same subsamplings at 10 and 12 bits.
+     *
+     * @return the profile, from 0 to 3
+     */
+    int profile() {
+        return (bitDepth > 8 ? 2 : 0) + (ssX == 1 && ssY == 1 ? 0 : 1);
+    }
+
+    /**
+     * Sets the color description of the key frame headers.
+     *
+     * @param colorSpace the {@code color_space} code, from 0 to 7; {@code CS_SRGB} only for
+     * 4:4:4
+     * @param fullRange whether the samples use the full range; ignored for {@code CS_SRGB}, which
+     * is always full range
+     */
+    public void setColor(int colorSpace, boolean fullRange) {
+        this.colorSpace = colorSpace;
+        this.fullRange = fullRange || colorSpace == Vp9Constants.CS_SRGB;
+    }
+
+    /**
+     * Returns the chroma block size of a block size ({@code ss_size_lookup}).
+     *
+     * @param bsize the luma block size
+     * @return the chroma block size, or {@link Vp9Constants#BLOCK_INVALID} when the subsampling
+     * splits the block
+     */
+    int uvBsize(int bsize) {
+        return Vp9Constants.SS_SIZE[bsize * 4 + ssX * 2 + ssY];
+    }
+
+    /**
+     * Returns the chroma transform size of a block ({@code get_uv_tx_size}).
+     *
+     * @param m the block's mode information
+     * @return the transform size
+     */
+    int uvTxSize(ModeInfo m) {
+        if (m.sbType < Vp9Constants.BLOCK_8X8) {
+            return Vp9Constants.TX_4X4;
+        }
+        return Vp9Constants.UV_TX_SIZE[((m.sbType * 4 + m.txSize) * 2 + ssX) * 2 + ssY];
+    }
+
+    /**
      * Returns the first 8x8 column of a tile column.
      *
      * @param tile the tile column, or the tile count for the end
@@ -1340,12 +1635,17 @@ public final class Vp9RtEncoder {
         double mult;
         if (keyFrame) {
             mult = 4.35 + 0.001 * qindex;
-        } else if (refreshGolden || refreshAlt) {
+        } else if (!srcFrameAltRef && (refreshGolden || refreshAlt)) {
             mult = 4.25 + 0.001 * qindex;
         } else {
             mult = 4.15 + 0.001 * qindex;
         }
         rdmult = (int) ((double) rdmult * mult);
+        if (good && !keyFrame) {
+            var scaled = ((long) rdmult * rdFrameTypeFactor) >> 7;
+            scaled += (scaled * rdBoostFactor) >> 7;
+            rdmult = (int) Math.min(scaled, Integer.MAX_VALUE);
+        }
         return rdmult > 0 ? rdmult : 1;
     }
 
@@ -1419,10 +1719,48 @@ public final class Vp9RtEncoder {
      * @return the coded frame, or {@code null} if it was dropped
      */
     public byte[] encode(YuvPicture picture, long start, long end, boolean forceKey) {
+        nextSource().copyFrom(picture, coders.length);
+        return encodeSource(start, end, forceKey);
+    }
+
+    /**
+     * Codes a high bit depth frame, as {@link #encode(YuvPicture, long, long, boolean)} codes an
+     * 8-bit one.
+     *
+     * @param picture the frame, of the encoder's size and bit depth, in its subsampling or in 4:4:4
+     * for 4:4:0
+     * @param start the start timestamp in {@link #TICKS_PER_SECOND} ticks
+     * @param end the end timestamp in ticks
+     * @param forceKey whether to code a key frame
+     * @return the coded frame, or {@code null} if it was dropped
+     */
+    public byte[] encode(Yuv16Picture picture, long start, long end, boolean forceKey) {
+        nextSource().copyFrom(picture, coders.length);
+        return encodeSource(start, end, forceKey);
+    }
+
+    /**
+     * Makes the current source the last source and returns the picture that receives the next
+     * source.
+     *
+     * @return the picture
+     */
+    private Vp9EncPicture nextSource() {
         var previous = lastSource;
         lastSource = source;
-        source = previous != null ? previous : new Vp9EncPicture(width, height);
-        source.copyFrom(picture, coders.length);
+        source = previous != null ? previous : new Vp9EncPicture(width, height, ssX, ssY, bitDepth);
+        return source;
+    }
+
+    /**
+     * Codes the frame whose samples are in {@link #source}.
+     *
+     * @param start the start timestamp in ticks
+     * @param end the end timestamp in ticks
+     * @param forceKey whether to code a key frame
+     * @return the coded frame, or {@code null} if it was dropped
+     */
+    private byte[] encodeSource(long start, long end, boolean forceKey) {
         adjustFrameRate(start, end);
         refreshLast = true;
         refreshGolden = false;
@@ -1673,7 +2011,7 @@ public final class Vp9RtEncoder {
             mvCostRow = allowHp ? mvCostRowHp : mvCostRowLp;
             mvCostCol = allowHp ? mvCostColHp : mvCostColLp;
         }
-        useSkinDetection = cyclicRefreshEnabled && speed >= 5;
+        useSkinDetection = cyclicRefreshEnabled && speed >= 5 && ssX == 1 && ssY == 1 && bitDepth == 8;
         baseQindex = q;
         Vp9RtPartition.setFrameThresholds(this, q);
         setupFrame();
@@ -1743,7 +2081,7 @@ public final class Vp9RtEncoder {
         if (keyFrame || errorResilient) {
             setupPastIndependence();
         } else {
-            frameContextIdx = 0;
+            frameContextIdx = good && refreshAlt ? 1 : 0;
         }
         if (keyFrame) {
             refreshGolden = true;
@@ -1781,11 +2119,15 @@ public final class Vp9RtEncoder {
      * Sets the threshold multiplier of each mode ({@code vp9_set_rd_speed_thresholds}).
      */
     private void setRdSpeedThresholds() {
-        Arrays.fill(threshMult, 0);
-        if (sf.adaptiveRdThresh != 0) {
+        Arrays.fill(threshMult, good && goodSpeed.best ? -500 : 0);
+        if ((good ? goodSpeed.adaptiveRdThresh : sf.adaptiveRdThresh) != 0) {
             threshMult[0] = 300;
             threshMult[2] = 300;
             threshMult[1] = 300;
+        } else {
+            threshMult[0] = 0;
+            threshMult[2] = 0;
+            threshMult[1] = 0;
         }
         threshMult[3] += 1000;
         threshMult[4] += 1000;
@@ -1814,16 +2156,35 @@ public final class Vp9RtEncoder {
     }
 
     /**
+     * The threshold multiplier of each reference combination of the sub-8x8 mode search, in the
+     * order of {@code vp9_ref_order} ({@code vp9_set_rd_speed_thresholds_sub8x8}).
+     */
+    private static final int[] SUB8X8_THRESH_MULT = {2500, 2500, 2500, 4500, 4500, 2500};
+
+    /**
+     * The threshold multipliers of {@link #SUB8X8_THRESH_MULT} at the best quality.
+     */
+    private static final int[] SUB8X8_THRESH_MULT_BEST = {2000, 2000, 2000, 4000, 4000, 2000};
+
+    /**
      * Computes the mode thresholds of every segment and block size ({@code set_block_thresholds}).
      */
     private void setBlockThresholds() {
         for (var seg = 0; seg < 8; seg++) {
             var qindex = Math.clamp(segQindex(seg), 0, 255);
-            var q = Math.max((int) (Math.pow(Vp9EncTables.dcQuant(qindex, 0) / 4.0, 1.25) * 5.12), 8);
+            var q = Math.max((int) (StrictMath.pow(Vp9EncTables.dcQuant(qindex, 0) / 4.0, 1.25) * 5.12), 8);
             for (var bsize = 0; bsize < 13; bsize++) {
                 var t = q * RD_THRESH_BLOCK_SIZE_FACTOR[bsize];
                 var threshMax = Integer.MAX_VALUE / t;
                 var base = (seg * 13 + bsize) * Vp9RtPickMode.MAX_MODES;
+                if (bsize < Vp9Constants.BLOCK_8X8) {
+                    var sub8x8 = good && goodSpeed.best ? SUB8X8_THRESH_MULT_BEST : SUB8X8_THRESH_MULT;
+                    for (var i = 0; i < sub8x8.length; i++) {
+                        rdThreshes[base + i] = sub8x8[i] < threshMax ? sub8x8[i] * t / 4
+                                : Integer.MAX_VALUE;
+                    }
+                    continue;
+                }
                 for (var i = 0; i < Vp9RtPickMode.MAX_MODES; i++) {
                     rdThreshes[base + i] = threshMult[i] < threshMax ? threshMult[i] * t / 4 : Integer.MAX_VALUE;
                 }
@@ -1838,7 +2199,10 @@ public final class Vp9RtEncoder {
     private void initializeRdConsts() {
         rdMult = computeRdMult(baseQindex);
         setBlockThresholds();
-        if ((currentFrame & 7) == 1 || keyFrame) {
+        if (good) {
+            rdCosts.build(fc.probs, keyFrame);
+        }
+        if (good || (currentFrame & 7) == 1 || keyFrame) {
             fillModeCosts();
             if (!keyFrame) {
                 var probs = fc.probs;
@@ -1884,15 +2248,21 @@ public final class Vp9RtEncoder {
     private void encodeFrame(boolean finalPass) {
         frameCounts.clear();
         lossless = baseQindex == 0;
-        txMode = lossless ? 0 : keyFrame ? 2 : Vp9Constants.TX_MODE_SELECT;
+        if (lossless) {
+            txMode = 0;
+        } else if (good) {
+            txMode = goodSpeed.txSizeSearch == Vp9GoodSpeed.TX_LARGEST ? 3 : Vp9Constants.TX_MODE_SELECT;
+        } else {
+            txMode = keyFrame ? 2 : Vp9Constants.TX_MODE_SELECT;
+        }
         initializeRdConsts();
         var alignedCols = (miCols + 7) & ~7;
         for (var plane = 0; plane < 3; plane++) {
             Arrays.fill(aboveEntropy[plane], (byte) 0);
         }
         Arrays.fill(abovePartition, (byte) 0);
-        usePrevFrameMvs = !errorResilient && anyFrameCoded && !lastKeyFrame;
-        if (!keyFrame && rc.framesSinceGolden == 0 && temporalLayers == 1) {
+        usePrevFrameMvs = !errorResilient && anyFrameCoded && !lastKeyFrame && lastShowFrame;
+        if (!good && !keyFrame && rc.framesSinceGolden == 0 && temporalLayers == 1) {
             refFrameFlags &= ~2;
         }
         for (var i = 0; i < miGrid.length; i++) {
@@ -1905,6 +2275,13 @@ public final class Vp9RtEncoder {
         filteredInLoop = wavefront.run(coders, 1 << log2TileCols, filter);
         for (var coder : coders) {
             frameCounts.add(coder.counts);
+        }
+        if (good) {
+            var magnitude = 0;
+            for (var coder : coders) {
+                magnitude = Math.max(magnitude, coder.maxMvMagnitude);
+            }
+            frameMaxMvMagnitude = magnitude;
         }
         updateVectorTransforms();
         if (sf.skipEncodeSb) {
@@ -1978,8 +2355,12 @@ public final class Vp9RtEncoder {
             filterLevel = 0;
             return;
         }
-        var q = Vp9EncTables.acQuant(baseQindex, 0);
-        var guess = (q * 20723 + 1015158 + (1 << 17)) >> 18;
+        var q = Vp9EncTables.acQuant(baseQindex, 0, bitDepth);
+        var guess = switch (bitDepth) {
+            case 10 -> (int) ((q * 20723L + 4060632 + (1 << 19)) >> 20);
+            case 12 -> (int) ((q * 20723L + 16242526 + (1 << 21)) >> 22);
+            default -> (q * 20723 + 1015158 + (1 << 17)) >> 18;
+        };
         if (cyclicRefreshEnabled && segEnabled && (baseQindex < 200 || width * height > 320 * 240) && !keyFrame) {
             guess = (5 * guess) >> 3;
         }
@@ -2092,7 +2473,7 @@ public final class Vp9RtEncoder {
         for (var i = 0; i < pool.length; i++) {
             var candidate = pool[i];
             if (candidate == null) {
-                candidate = new Vp9EncPicture(width, height);
+                candidate = new Vp9EncPicture(width, height, ssX, ssY, bitDepth);
                 pool[i] = candidate;
                 return candidate;
             }
@@ -2366,5 +2747,324 @@ public final class Vp9RtEncoder {
             return q;
         }
         return -1;
+    }
+
+    /**
+     * The largest motion vector component the blocks of the frame coded last chose, in full
+     * samples.
+     */
+    private int frameMaxMvMagnitude;
+
+    /**
+     * Starts a good-quality frame: sets its picture, type, visibility, references and speed
+     * features, for one or more {@link #codeGoodFrame} calls and one {@link #commitGoodFrame}.
+     *
+     * <p>The frame predicts from every reference slot holding a distinct picture. Its
+     * rate-distortion multiplier is scaled by its update type and its group's boost, as libvpx's
+     * two-pass encoder does ({@code modulate_rdmult}).
+     *
+     * @param picture the picture to code, of the encoder's size and format; read until the
+     * frame is committed
+     * @param key whether the frame is a key frame
+     * @param show whether the frame is shown
+     * @param refreshLast whether the frame refreshes the last reference
+     * @param refreshGolden whether the frame refreshes the golden reference
+     * @param refreshAlt whether the frame refreshes the alternate reference
+     * @param srcAltRef whether the frame codes the source of the current alternate reference
+     * @param speedLevel the good-quality speed, from 0 to 4
+     * @param best whether the frame is coded at the best quality, whose search ignores
+     * {@code speedLevel}
+     * @param frameTypeFactor the rate-distortion multiplier share of the update type, in 1/128
+     * @param boost the boost of the frame's group, which raises the multiplier of its frames
+     * @param futureAltRef whether the alternate reference lies after the frame in display order,
+     * which signals its sign bias and lets blocks average it with the last or golden reference
+     */
+    void beginGoodFrame(Vp9EncPicture picture, boolean key, boolean show, boolean refreshLast, boolean refreshGolden,
+                        boolean refreshAlt, boolean srcAltRef, int speedLevel, boolean best, int frameTypeFactor,
+                        int boost, boolean futureAltRef) {
+        lastSource = source;
+        source = picture;
+        keyFrame = key;
+        showFrame = show;
+        this.refreshLast = refreshLast || key;
+        this.refreshGolden = refreshGolden || key;
+        this.refreshAlt = refreshAlt || key;
+        srcFrameAltRef = srcAltRef && !key;
+        errorResilient = false;
+        refreshFrameContext = true;
+        nonReferenceFrame = false;
+        temporalLayerId = 0;
+        speed = speedLevel;
+        refFrameFlags = key ? 7 : refFrameFlagsAfter();
+        Arrays.fill(signBias, 0);
+        signBias[ALTREF_FRAME] = !key && futureAltRef ? 1 : 0;
+        referenceMode = !key && futureAltRef && !refreshAlt && refFrameFlag(ALTREF_FRAME)
+                && (refFrameFlag(LAST_FRAME) || refFrameFlag(GOLDEN_FRAME)) ? REFERENCE_MODE_SELECT : SINGLE_REFERENCE;
+        rdFrameTypeFactor = frameTypeFactor;
+        rdBoostFactor = RD_BOOST_FACTOR[Math.min(15, boost / 100)];
+        goodSpeed.set(speedLevel, best, key, (key || refreshGolden || refreshAlt) && !srcFrameAltRef, width, height);
+        sf.useQuantFp = false;
+        sf.reuseInterPredSby = false;
+        sf.skipEncodeSb = false;
+        sf.skipEncodeFrame = false;
+        sf.useSourceSad = false;
+        sf.coeffProbApproxStep = 1;
+        sf.oneLoopReducedCoefUpdates = speedLevel >= 4;
+        setRdSpeedThresholds();
+        if (key) {
+            disableSegmentation();
+            Arrays.fill(segAltQEnabled, false);
+            Arrays.fill(segAltQ, 0);
+            maxMvMagnitude = -1;
+        }
+        var maxMvDef = Math.min(Math.min(width, height), Vp9RtMotion.MAX_FULL_PEL_VAL);
+        mvStepParam = Vp9RdCoder.initSearchRange(goodSpeed.autoMvStepSize && show && maxMvMagnitude >= 0
+                ? Math.min(maxMvDef, 2 * maxMvMagnitude) : maxMvDef);
+        System.arraycopy(lfLastRefDeltas, 0, goodRefDeltas, 0, 4);
+        System.arraycopy(lfLastModeDeltas, 0, goodModeDeltas, 0, 2);
+    }
+
+    /**
+     * Returns whether the references' sign biases differ, so that the frame header signals a
+     * reference mode ({@code vp9_compound_reference_allowed}).
+     *
+     * @return whether compound prediction may be signaled
+     */
+    boolean compoundReferenceAllowed() {
+        return signBias[GOLDEN_FRAME] != signBias[LAST_FRAME] || signBias[ALTREF_FRAME] != signBias[LAST_FRAME];
+    }
+
+    /**
+     * The extra rate-distortion multiplier share of each hundred of a group's boost, in 1/128
+     * ({@code rd_boost_factor}).
+     */
+    private static final int[] RD_BOOST_FACTOR = {64, 32, 32, 32, 24, 16, 12, 12, 8, 8, 4, 4, 2, 2, 1, 0};
+
+    /**
+     * Codes the frame {@link #beginGoodFrame} started at a quantizer: searches and codes its
+     * superblocks, filters the reconstruction and writes the bitstream into {@link #buffer()}.
+     *
+     * <p>The references and the stored probabilities are left as they were, so the frame can be
+     * coded again at another quantizer before {@link #commitGoodFrame} keeps the last coding.
+     *
+     * @param qindex the quantizer index, from 0 to 255
+     * @return the frame size in bytes
+     */
+    int codeGoodFrame(int qindex) {
+        System.arraycopy(goodRefDeltas, 0, lfLastRefDeltas, 0, 4);
+        System.arraycopy(goodModeDeltas, 0, lfLastModeDeltas, 0, 2);
+        lfDeltaUpdate = false;
+        baseQindex = qindex;
+        if (!keyFrame) {
+            allowHp = qindex < 200;
+            mvCostRow = allowHp ? mvCostRowHp : mvCostRowLp;
+            mvCostCol = allowHp ? mvCostColHp : mvCostColLp;
+        }
+        interpFilter = keyFrame ? Vp9Constants.EIGHTTAP : Vp9Constants.SWITCHABLE;
+        setupFrame();
+        encodeFrame(false);
+        unfilteredLumaError = measureLumaError ? lumaError() : 0;
+        searchFilterLevel();
+        applyLoopFilter();
+        var goldenSlot = srcFrameAltRef ? refSlot[2] : refSlot[1];
+        refreshMask = keyFrame ? 0xFF : (refreshLast ? 1 << refSlot[0] : 0) | (refreshGolden ? 1 << goldenSlot : 0)
+                | (refreshAlt ? 1 << refSlot[2] : 0);
+        return bitstream.pack();
+    }
+
+    /**
+     * Keeps the last coding of the current good-quality frame: stores its reconstruction in the
+     * slots it refreshes and its probabilities in its frame context.
+     *
+     * <p>A frame that codes the source of the alternate reference and refreshes the golden
+     * reference stores its reconstruction in the alternate reference's slot, which then becomes
+     * the golden reference, and keeps the previous golden reference as the alternate reference
+     * ({@code vp9_preserve_existing_gf}).
+     */
+    void commitGoodFrame() {
+        var swapGoldenAlt = srcFrameAltRef && refreshGolden && !keyFrame;
+        var reference = refreshMask == 0 ? null : freePicture();
+        updateReferenceFrames(reference, true);
+        if (refreshFrameContext) {
+            frameContexts[frameContextIdx].copyFrom(fc);
+        }
+        if (swapGoldenAlt) {
+            var slot = refSlot[1];
+            refSlot[1] = refSlot[2];
+            refSlot[2] = slot;
+        }
+        if (!keyFrame) {
+            maxMvMagnitude = frameMaxMvMagnitude;
+        }
+        lastFilterLevel = filterLevel;
+        lastKeyFrame = keyFrame;
+        lastFrameKey = keyFrame;
+        lastShowFrame = showFrame;
+        lastQuantizer = baseQindex;
+        var swap = prevFrameMvs;
+        prevFrameMvs = curFrameMvs;
+        curFrameMvs = swap;
+        if (refreshGolden && !keyFrame) {
+            framesSinceGolden = 0;
+        } else if (showFrame) {
+            framesSinceGolden++;
+        }
+        if (keyFrame) {
+            framesSinceGolden = 0;
+        }
+        currentFrame++;
+        anyFrameCoded = true;
+        codedFrames++;
+    }
+
+    /**
+     * The filter level of the previous good-quality frame, where the search of the next starts
+     * ({@code last_filt_level}).
+     */
+    private int lastFilterLevel;
+
+    /**
+     * The unfiltered luma of the reconstruction during the filter level search, 8-bit.
+     */
+    private byte[] unfiltered8;
+
+    /**
+     * The unfiltered luma of the reconstruction during the filter level search, 10 or 12-bit.
+     */
+    private short[] unfiltered16;
+
+    /**
+     * The luma error of each filter level tried by the search, -1 when not tried.
+     */
+    private final long[] levelErrors = new long[64];
+
+    /**
+     * Picks the loop filter level that leaves the luma of the reconstruction closest to the
+     * source, by a search that halves its step around the previous frame's level and favors lower
+     * levels ({@code search_filter_level} with {@code LPF_PICK_FROM_FULL_IMAGE}); a lossless frame
+     * is not filtered.
+     */
+    private void searchFilterLevel() {
+        if (lossless) {
+            filterLevel = 0;
+            return;
+        }
+        var high = bitDepth > 8;
+        if (high) {
+            if (unfiltered16 == null) {
+                unfiltered16 = new short[recon.planes16[0].length];
+            }
+            System.arraycopy(recon.planes16[0], 0, unfiltered16, 0, unfiltered16.length);
+        } else {
+            if (unfiltered8 == null) {
+                unfiltered8 = new byte[recon.planes8[0].length];
+            }
+            System.arraycopy(recon.planes8[0], 0, unfiltered8, 0, unfiltered8.length);
+        }
+        Arrays.fill(levelErrors, -1);
+        var maxLevel = 63;
+        var mid = Math.clamp(lastFilterLevel, 0, maxLevel);
+        var step = mid < 16 ? 4 : mid / 4;
+        var bestErr = tryFilterLevel(mid);
+        var best = mid;
+        levelErrors[mid] = bestErr;
+        var direction = 0;
+        while (step > 0) {
+            var highLevel = Math.min(mid + step, maxLevel);
+            var lowLevel = Math.max(mid - step, 0);
+            var bias = (bestErr >> (15 - (mid / 8))) * step;
+            if (txMode != 0) {
+                bias >>= 1;
+            }
+            if (direction <= 0 && lowLevel != mid) {
+                if (levelErrors[lowLevel] < 0) {
+                    levelErrors[lowLevel] = tryFilterLevel(lowLevel);
+                }
+                if (levelErrors[lowLevel] - bias < bestErr) {
+                    if (levelErrors[lowLevel] < bestErr) {
+                        bestErr = levelErrors[lowLevel];
+                    }
+                    best = lowLevel;
+                }
+            }
+            if (direction >= 0 && highLevel != mid) {
+                if (levelErrors[highLevel] < 0) {
+                    levelErrors[highLevel] = tryFilterLevel(highLevel);
+                }
+                if (levelErrors[highLevel] < bestErr - bias) {
+                    bestErr = levelErrors[highLevel];
+                    best = highLevel;
+                }
+            }
+            if (best == mid) {
+                step /= 2;
+                direction = 0;
+            } else {
+                direction = best < mid ? -1 : 1;
+                mid = best;
+            }
+        }
+        filterLevel = best;
+    }
+
+    /**
+     * Filters the luma of the reconstruction at a level, measures its error against the source
+     * and restores the unfiltered luma ({@code try_filter_frame}).
+     *
+     * @param level the filter level
+     * @return the sum of squared luma differences, at the stream's bit depth
+     */
+    private long tryFilterLevel(int level) {
+        filterLevel = level;
+        if (level > 0) {
+            setFilterLevels();
+            var filter = loopFilters[0];
+            filter.lumaOnly = true;
+            try {
+                for (var sbRow = 0; sbRow < sbRows; sbRow++) {
+                    filter.filterRow(recon, sbRow << 3, null);
+                }
+            } finally {
+                filter.lumaOnly = false;
+            }
+        }
+        long sum = 0;
+        var src = source;
+        var stride = recon.strides[0];
+        if (bitDepth > 8) {
+            var r = recon.planes16[0];
+            var s = src.planes16[0];
+            for (var y = 0; y < height; y++) {
+                var ro = y * stride;
+                var so = src.offset(0, 0, y);
+                for (var x = 0; x < width; x++) {
+                    var d = s[so + x] - r[ro + x];
+                    sum += (long) d * d;
+                }
+            }
+            System.arraycopy(unfiltered16, 0, recon.planes16[0], 0, unfiltered16.length);
+        } else {
+            var edsp = Vp9EncDsp.INSTANCE;
+            for (var y = 0; y < height; y += 16) {
+                var h = Math.min(16, height - y);
+                for (var x = 0; x < width; x += 16) {
+                    var w = Math.min(16, width - x);
+                    sum += Vp9EncDsp.sse(edsp.variance(src.planes[0], src.offset(0, x, y), src.strides[0],
+                            recon.planes8[0], y * stride + x, stride, w, h));
+                }
+            }
+            System.arraycopy(unfiltered8, 0, recon.planes8[0], 0, unfiltered8.length);
+        }
+        return sum;
+    }
+
+    /**
+     * Returns the bitstream of the last coded frame, valid up to the size the coding returned and
+     * until the next coding.
+     *
+     * @return the buffer
+     */
+    byte[] buffer() {
+        return bitstream.buffer();
     }
 }

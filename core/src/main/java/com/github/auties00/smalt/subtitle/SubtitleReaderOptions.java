@@ -1,16 +1,20 @@
 package com.github.auties00.smalt.subtitle;
 
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.internal.check.Checks;
+import com.github.auties00.smalt.track.Rational;
 
+import java.nio.charset.Charset;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
 
 /**
  * Holds the settings of a {@link SubtitleReader}: which track it reads, the markup of the cues it
- * returns and the limits of the demuxer. Instances are immutable and thread-safe; create them with
- * {@link #builder()} or a preset such as {@link #defaults()}.
+ * returns, the text encoding and MicroDVD frame rate of subtitle files and the limits of the demuxer.
+ * Instances are immutable and thread-safe; create them with {@link #builder()} or a preset such as
+ * {@link #defaults()}.
  */
 public final class SubtitleReaderOptions {
     /**
@@ -30,15 +34,37 @@ public final class SubtitleReaderOptions {
 
     private final MediaLimits limits;
 
-    private SubtitleReaderOptions(int trackId, SubtitleMarkup markup, MediaLimits limits) {
+    /**
+     * The text encoding, or {@code null} to detect it.
+     */
+    private final Charset charset;
+
+    /**
+     * The MicroDVD frame rate, or {@code null} for the file's or the default.
+     */
+    private final Rational subtitleFrameRate;
+
+    /**
+     * The caption service decoded, or {@code null} for each track's default.
+     */
+    private final CaptionService captionService;
+
+    private final boolean embeddedCaptions;
+
+    private SubtitleReaderOptions(int trackId, SubtitleMarkup markup, MediaLimits limits, Charset charset,
+                                  Rational subtitleFrameRate, CaptionService captionService, boolean embeddedCaptions) {
         this.trackId = trackId;
         this.markup = markup;
         this.limits = limits;
+        this.charset = charset;
+        this.subtitleFrameRate = subtitleFrameRate;
+        this.captionService = captionService;
+        this.embeddedCaptions = embeddedCaptions;
     }
 
     /**
-     * Returns the default options: the first text subtitle track, in its own markup, under
-     * {@link MediaLimits#defaults()}.
+     * Returns the default options: the first text subtitle track, in its own markup, the text encoding
+     * detected, under {@link MediaLimits#defaults()}.
      *
      * @return the options
      */
@@ -65,8 +91,9 @@ public final class SubtitleReaderOptions {
     }
 
     /**
-     * {@return the identifier of the track read, zero or more, or empty for the first text subtitle
-     * track; empty by default}
+     * {@return the identifier of the track read, zero or more, or empty for the first text subtitle, TTML or
+     * caption track (or, with {@link #embeddedCaptions()}, the first video track that can carry captions); empty by
+     * default}
      */
     public OptionalInt trackId() {
         return trackId < 0 ? OptionalInt.empty() : OptionalInt.of(trackId);
@@ -86,27 +113,70 @@ public final class SubtitleReaderOptions {
         return limits;
     }
 
+    /**
+     * {@return the character encoding of subtitle files without a byte order mark, or empty to detect it;
+     * empty by default}
+     *
+     * <p>The meaning is that of {@link DemuxerOptions#charset()}.
+     */
+    public Optional<Charset> charset() {
+        return Optional.ofNullable(charset);
+    }
+
+    /**
+     * {@return the frame rate of MicroDVD frame numbers, or empty for the rate the file declares or
+     * 24000/1001; empty by default}
+     *
+     * <p>The meaning is that of {@link DemuxerOptions#subtitleFrameRate()}.
+     */
+    public Optional<Rational> subtitleFrameRate() {
+        return Optional.ofNullable(subtitleFrameRate);
+    }
+
+    /**
+     * {@return the caption service read from a caption track or from the captions carried in video, or empty for the
+     * track's default ({@link CaptionService#defaultFor}); empty by default}
+     *
+     * <p>A service the selected track cannot carry (a teletext page for a closed caption track) leaves the track's
+     * default.
+     */
+    public Optional<CaptionService> captionService() {
+        return Optional.ofNullable(captionService);
+    }
+
+    /**
+     * {@return whether the reader reads the closed captions carried in a video track rather than a subtitle track;
+     * {@code false} by default}
+     */
+    public boolean embeddedCaptions() {
+        return embeddedCaptions;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof SubtitleReaderOptions that && trackId == that.trackId && markup == that.markup
-                && limits.equals(that.limits);
+                && limits.equals(that.limits) && Objects.equals(charset, that.charset)
+                && Objects.equals(subtitleFrameRate, that.subtitleFrameRate)
+                && Objects.equals(captionService, that.captionService) && embeddedCaptions == that.embeddedCaptions;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(trackId, markup, limits);
+        return Objects.hash(trackId, markup, limits, charset, subtitleFrameRate, captionService, embeddedCaptions);
     }
 
     @Override
     public String toString() {
-        return "SubtitleReaderOptions[trackId=" + trackId() + ", markup=" + markup() + ", limits=" + limits + "]";
+        return "SubtitleReaderOptions[trackId=" + trackId() + ", markup=" + markup() + ", limits=" + limits
+                + ", charset=" + charset() + ", subtitleFrameRate=" + subtitleFrameRate() + ", captionService="
+                + captionService() + ", embeddedCaptions=" + embeddedCaptions + "]";
     }
 
     /**
      * Assembles {@link SubtitleReaderOptions} setting by setting.
      *
      * <p>Setters reject {@code null} and store their value unchecked; {@link #build()} checks the
-     * track identifier. Instances are not thread-safe.
+     * track identifier and the frame rate. Instances are not thread-safe.
      */
     public static final class Builder {
         /**
@@ -117,6 +187,10 @@ public final class SubtitleReaderOptions {
         private long trackId = FIRST_TRACK;
         private SubtitleMarkup markup;
         private MediaLimits limits = MediaLimits.DEFAULT;
+        private Charset charset;
+        private Rational subtitleFrameRate;
+        private CaptionService captionService;
+        private boolean embeddedCaptions;
 
         private Builder() {
         }
@@ -125,6 +199,10 @@ public final class SubtitleReaderOptions {
             this.trackId = options.trackId < 0 ? FIRST_TRACK : options.trackId;
             this.markup = options.markup;
             this.limits = options.limits;
+            this.charset = options.charset;
+            this.subtitleFrameRate = options.subtitleFrameRate;
+            this.captionService = options.captionService;
+            this.embeddedCaptions = options.embeddedCaptions;
         }
 
         /**
@@ -139,7 +217,7 @@ public final class SubtitleReaderOptions {
         }
 
         /**
-         * Selects the first text subtitle track; see {@link SubtitleReaderOptions#trackId()}.
+         * Selects the first text subtitle, TTML or caption track; see {@link SubtitleReaderOptions#trackId()}.
          *
          * @return this builder
          */
@@ -181,14 +259,95 @@ public final class SubtitleReaderOptions {
         }
 
         /**
+         * Sets the text encoding of subtitle files; see {@link SubtitleReaderOptions#charset()}.
+         *
+         * @param charset the value
+         * @return this builder
+         */
+        public Builder charset(Charset charset) {
+            this.charset = Objects.requireNonNull(charset, "charset");
+            return this;
+        }
+
+        /**
+         * Detects the text encoding of subtitle files; see {@link SubtitleReaderOptions#charset()}.
+         *
+         * @return this builder
+         */
+        public Builder automaticCharset() {
+            this.charset = null;
+            return this;
+        }
+
+        /**
+         * Sets the MicroDVD frame rate; see {@link SubtitleReaderOptions#subtitleFrameRate()}.
+         *
+         * @param frameRate the value, in frames per second
+         * @return this builder
+         */
+        public Builder subtitleFrameRate(Rational frameRate) {
+            this.subtitleFrameRate = Objects.requireNonNull(frameRate, "frameRate");
+            return this;
+        }
+
+        /**
+         * Uses the MicroDVD frame rate the file declares, or 24000/1001; see
+         * {@link SubtitleReaderOptions#subtitleFrameRate()}.
+         *
+         * @return this builder
+         */
+        public Builder automaticSubtitleFrameRate() {
+            this.subtitleFrameRate = null;
+            return this;
+        }
+
+        /**
+         * Sets the caption service read; see {@link SubtitleReaderOptions#captionService()}.
+         *
+         * @param captionService the value
+         * @return this builder
+         */
+        public Builder captionService(CaptionService captionService) {
+            this.captionService = Objects.requireNonNull(captionService, "captionService");
+            return this;
+        }
+
+        /**
+         * Reads each caption track's default service; see {@link SubtitleReaderOptions#captionService()}.
+         *
+         * @return this builder
+         */
+        public Builder defaultCaptionService() {
+            this.captionService = null;
+            return this;
+        }
+
+        /**
+         * Sets whether the captions carried in video are read; see {@link SubtitleReaderOptions#embeddedCaptions()}.
+         *
+         * @param embeddedCaptions the value
+         * @return this builder
+         */
+        public Builder embeddedCaptions(boolean embeddedCaptions) {
+            this.embeddedCaptions = embeddedCaptions;
+            return this;
+        }
+
+        /**
          * Builds the options.
          *
          * @return the options
-         * @throws IllegalArgumentException if the track identifier is negative
+         * @throws IllegalArgumentException if the track identifier is negative or the frame rate is not
+         * positive
          */
         public SubtitleReaderOptions build() {
             var id = trackId == FIRST_TRACK ? -1 : Checks.nonNegative("track identifier", (int) trackId);
-            return new SubtitleReaderOptions(id, markup, limits);
+            if (subtitleFrameRate != null && (subtitleFrameRate.numerator() <= 0
+                    || subtitleFrameRate.denominator() <= 0)) {
+                throw new IllegalArgumentException("the subtitle frame rate must be positive, not " + subtitleFrameRate);
+            }
+            return new SubtitleReaderOptions(id, markup, limits, charset, subtitleFrameRate, captionService,
+                    embeddedCaptions);
         }
     }
 }
