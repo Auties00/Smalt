@@ -907,7 +907,7 @@ final class IntraPartitionCnn {
         convolve(branch3, 8, 20, CNN_KERNELS[2], CNN_BIASES[2], 2, 2, 20, branch2);
         convolve(branch2, 4, 20, CNN_KERNELS[3], CNN_BIASES[3], 2, 2, 4, branch1);
         convolve(branch1, 2, 4, CNN_KERNELS[4], CNN_BIASES[4], 2, 2, 20, branch0);
-        logQ = ((float) Math.log1p((float) (dcQuant * dcQuant) / 256.0f) - LOG_Q_MEAN) / LOG_Q_STD;
+        logQ = ((float) StrictMath.log1p((float) (dcQuant * dcQuant) / 256.0f) - LOG_Q_MEAN) / LOG_Q_STD;
     }
 
     /**

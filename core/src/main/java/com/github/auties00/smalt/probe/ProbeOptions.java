@@ -91,8 +91,8 @@ public final class ProbeOptions {
 
     /**
      * {@return whether the first packets of a video track stored without a configuration record (VP8
-     * and VP9 in IVF or WebM, AV1 in IVF) are read to describe the stream from its first key frame;
-     * {@code true} by default}
+     * and VP9 in IVF or WebM, AV1 in IVF, MPEG-1 and MPEG-2 video in MP4, Matroska and AVI) are read to describe the
+     * stream from its first key frame; {@code true} by default}
      */
     public boolean readFirstFrames() {
         return readFirstFrames;

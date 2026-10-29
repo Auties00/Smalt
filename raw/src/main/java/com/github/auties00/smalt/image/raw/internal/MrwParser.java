@@ -177,10 +177,10 @@ final class MrwParser {
             return;
         }
         if (file.exposureTime == 0 && exif.has(37377)) {
-            file.exposureTime = Math.pow(2, -exif.doubleValue(37377, 0));
+            file.exposureTime = StrictMath.pow(2, -exif.doubleValue(37377, 0));
         }
         if (file.fNumber == 0 && exif.has(37378)) {
-            file.fNumber = Math.pow(2, exif.doubleValue(37378, 0) / 2);
+            file.fNumber = StrictMath.pow(2, exif.doubleValue(37378, 0) / 2);
         }
         var note = exif.valuePosition(TiffTree.MAKER_NOTE);
         if (note < 0 || exif.valueCount(TiffTree.MAKER_NOTE) < 6) {
