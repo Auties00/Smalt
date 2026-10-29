@@ -46,7 +46,7 @@ final class TiffEpParser {
             file.unsupported = exception.getMessage();
             return;
         }
-        if (raw.intValue(TiffSamples.PHOTOMETRIC, 0) == DngParser.PHOTOMETRIC_CFA) {
+        if (raw.intValue(TiffSamples.PHOTOMETRIC, DngParser.PHOTOMETRIC_CFA) == DngParser.PHOTOMETRIC_CFA) {
             sensor.cfa = cfa(raw, tree.exif);
             if (sensor.cfa == null) {
                 file.unsupported = "the raw image has no readable CFA pattern";
@@ -65,7 +65,9 @@ final class TiffEpParser {
     }
 
     /**
-     * Finds the largest directory holding a color filter array or linear raw image.
+     * Finds the largest directory holding a color filter array or linear raw image: one whose
+     * photometric interpretation says so, or one without a photometric interpretation that holds
+     * the TIFF/EP color filter array tags, as Samsung writes them.
      *
      * @param tree the directories
      * @return the directory, or {@code null}
@@ -75,7 +77,8 @@ final class TiffEpParser {
         var bestPixels = 0L;
         for (var ifd : tree.directories) {
             var photometric = ifd.intValue(TiffSamples.PHOTOMETRIC, 0);
-            if (photometric != DngParser.PHOTOMETRIC_CFA && photometric != DngParser.PHOTOMETRIC_LINEAR_RAW) {
+            var unstated = !ifd.has(TiffSamples.PHOTOMETRIC) && ifd.has(33421) && ifd.has(33422);
+            if (photometric != DngParser.PHOTOMETRIC_CFA && photometric != DngParser.PHOTOMETRIC_LINEAR_RAW && !unstated) {
                 continue;
             }
             var pixels = ifd.longValue(TiffSamples.IMAGE_WIDTH, 0) * ifd.longValue(TiffSamples.IMAGE_LENGTH, 0);

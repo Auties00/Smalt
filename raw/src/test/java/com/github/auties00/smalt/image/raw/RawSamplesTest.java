@@ -21,8 +21,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Decodes the CC0 sample files of every supported format and checks each description, the size of
  * the rendering, and the rendering against the camera's own embedded preview (its image area, when it
- * letterboxes a wider image): their luminance on a coarse grid must correlate, which catches wrong
- * CFA layouts, bit packings, crops and levels.
+ * letterboxes a wider image), as stored or both turned upright by their orientations: their luminance on a
+ * coarse grid must correlate, which catches wrong CFA layouts, bit packings, crops, levels and orientations.
  */
 class RawSamplesTest {
     private static final int GRID_WIDTH = 48;
@@ -55,11 +55,31 @@ class RawSamplesTest {
             "NEF_D300S_LOSSLESS_14, NEF, 4288, 2848, RGGB, 14, true, NIKON D300S, 0",
             "NEF_D5600_LOSSY_12_SPLIT, NEF, 6000, 4000, RGGB, 12, true, NIKON D5600, 12800",
             "NEF_D7000_LOSSY_14_SPLIT, NEF, 4928, 3264, RGGB, 14, true, NIKON D7000, 0",
-            "NEF_E5700, NEF, 2576, 1924, YCGM, 12, false, E5700, 0",
+            "NEF_E5700, NEF, 2576, 1924, GMYC, 12, false, E5700, 0",
             "NEF_E8400, NEF, 3280, 2454, BGGR, 12, true, E8400, 0",
             "NEF_E8800, NEF, 3280, 2454, BGGR, 12, true, E8800, 0",
             "ARW_NEX6_CRAW_12, ARW, 4912, 3264, RGGB, 14, true, NEX-6, 200",
             "ARW_A7M2_UNCOMPRESSED_14, ARW, 6000, 4000, RGGB, 14, true, ILCE-7M2, 100",
+            "ARW_A900_UNCOMPRESSED_12, ARW, 6048, 4032, RGGB, 12, true, DSLR-A900, 200",
+            "ARW_A200_COMPRESSED_12, ARW, 0, 0, -, 0, false, DSLR-A200, 800",
+            "SRW_NX1000, SRW, 5472, 3648, GRBG, 12, true, NX1000, 400",
+            "ERF_R_D1, ERF, 3008, 2000, RGGB, 12, true, R-D1, 400",
+            "GPR_HERO7_BLACK_16BIT_4_3_2908, DNG, 4000, 3000, RGGB, 14, true, HERO7 Black, 100",
+            "RW2_DMC_FZ8_4_3, RW2, 3072, 2304, BGGR, 12, true, DMC-FZ8, 100",
+            "RW2_DMC_LX1_16_9, RW2, 3840, 2160, RGGB, 12, true, DMC-LX1, 100",
+            "FFF_H3D_16BIT_4_3, FFF, 7216, 5412, RGGB, 16, true, Hasselblad H3D, 50",
+            "FFF_H4D_40_16BIT_4_3, FFF, 7304, 5478, RGGB, 16, true, Hasselblad H4D-40, 100",
+            "MOS_APTUS_22_16BIT_4_3_3196, MOS, 4008, 5344, RGGB, 16, true, Aptus 22, 0",
+            "MOS_AFI_II_12_16BIT_4_3, MOS, 10320, 7752, RGGB, 16, true, AFi-II 12, 0",
+            "DCR_EASYSHARE_Z981, DCR, 4288, 3216, GRBG, 12, true, KODAK EasyShare Z981 Digital Camera, 100",
+            "DCR_EASYSHARE_Z990_NAN, DCR, 4000, 3000, GRBG, 12, true, KODAK EasyShare Z990 Digital Camera, 125",
+            "DCR_P880_NAN, DCR, 3264, 2448, GRBG, 12, true, KODAK P880 ZOOM DIGITAL CAMERA, 50",
+            "DCR_DCS520C_12BIT_3_2, DCR, 1728, 1152, GRBG, 12, true, DCS520C, 0",
+            "DCR_DCS760C_12BIT_3_2, DCR, 3032, 2008, GRBG, 12, true, DCS760C, 0",
+            "DCR_DC120_8BIT_4_3, DCR, 0, 0, -, 0, false, Kodak DC120 ZOOM Digital Camera, 0",
+            "IIQ_P40_IIQ_S_4_3, IIQ, 0, 0, -, 0, false, P40+, 400",
+            "IIQ_IQ140_IIQ_L_SENSOR_4_3, IIQ, 0, 0, -, 0, false, IQ140, 200",
+            "MEF_ZD, MEF, 4008, 5336, RGGB, 12, true, MAMIYA ZD, 50",
             "DNG_RICOH_GR, DNG, 4928, 3264, RGGB, 12, true, GR, 100",
             "DNG_SAMSUNG_GX20, DNG, 4672, 3104, BGGR, 12, true, SAMSUNG GX20, 400",
             "ORF_EM10, ORF, 4608, 3456, RGGB, 12, true, E-M10, 200",
@@ -82,8 +102,50 @@ class RawSamplesTest {
             "CR2_40D_SRAW, CR2, 1944, 1296, -, 16, true, Canon EOS 40D, 100",
             "RAF_XA1, RAF, 4896, 3264, RGGB, 12, true, X-A1, 1000",
             "RAF_XE2, RAF, 4896, 3264, GGBGGR/GGRGGB/RBGBRG/GGRGGB/GGBGGR/BRGRBG, 14, true, X-E2, 200",
-            "RAF_XT2_COMPRESSED, RAF, 0, 0, -, 0, false, X-T2, 400",
-            "CR3_250D, CR3, 0, 0, -, 0, false, Canon EOS 250D, 100",
+            "RAF_XT2_COMPRESSED, RAF, 6000, 4000, GRGGBG/GBGGRG/RGRBGB/GBGGRG/GRGGBG/BGBRGR, 14, true, X-T2, 400",
+            "RAF_XT4_LOSSLESS, RAF, 6240, 4160, GGBGGR/BRGRBG/GGBGGR/GGRGGB/RBGBRG/GGRGGB, 14, true, X-T4, 160",
+            "RAF_GFX50SII_LOSSLESS, RAF, 8256, 6192, RGGB, 14, true, GFX50S II, 100",
+            "RAF_XE5_LOSSY, RAF, 7728, 5152, GGBGGR/GGRGGB/RBGBRG/GGRGGB/GGBGGR/BRGRBG, 14, true, X-E5, 250",
+            "RAF_GFX50SII_LOSSY, RAF, 8256, 6192, RGGB, 14, true, GFX50S II, 100",
+            "RAF_S3PRO, RAF, 4256, 2848, RGBG/BGRG, 14, true, FinePix S3Pro, 100",
+            "RAF_S5500, RAF, 2272, 1704, RGGB, 14, true, FinePix S5500, 100",
+            "RAF_S6000FD, RAF, 4048, 3036, BGRG/RGBG, 14, true, FinePix S6000fd, 3200",
+            "RAF_S100FS, RAF, 5440, 4080, RGBG/BGRG, 14, true, FinePix S100FS, 100",
+            "RAF_S200EXR, RAF, 2808, 2108, RGGB, 14, true, FinePix S200EXR, 100",
+            "RAF_S200EXR_HR, RAF, 5616, 4216, RRGG/GGBB, 14, true, FinePix S200EXR, 100",
+            "RAF_S2PRO, RAF, 2848, 4256, RGBG/BGRG, 12, true, FinePixS2Pro, 100",
+            "RAF_S5PRO, RAF, 4256, 2848, RGBG/BGRG, 14, true, FinePix S5Pro, 100",
+            "RAF_S5000, RAF, 2120, 2816, RGBG/BGRG, 14, true, FinePix S5000, 200",
+            "RAF_S5200, RAF, 2736, 3648, RGBG/BGRG, 14, true, FinePix S5200, 64",
+            "RAF_S6500FD, RAF, 4048, 3036, BGRG/RGBG, 14, true, FinePix S6500fd, 100",
+            "RAF_S7000, RAF, 3040, 4048, RGBG/BGRG, 14, true, FinePix S7000, 200",
+            "RAF_S9500, RAF, 3648, 4864, RGBG/BGRG, 14, true, FinePix S9500, 80",
+            "RAF_S9600, RAF, 3648, 4864, RGBG/BGRG, 14, true, FinePix S9600, 200",
+            "RAF_F770EXR, RAF, 3248, 2436, RGGB, 12, true, FinePix F770EXR, 100",
+            "RAF_X10, RAF, 5632, 4232, BBGG/GGRR, 12, true, X10, 200",
+            "RAF_X10_SN, RAF, 2816, 2116, BGGR, 12, true, X10, 100",
+            "RAF_S1, RAF, 4624, 3470, RGGB, 12, true, FinePix S1, 200",
+            "RAF_SL1000, RAF, 4624, 3470, RGGB, 12, true, FinePix SL1000, 100",
+            "RAF_DBP_GX680, RAF, 5408, 7648, RGBG/BGRG, 12, true, DBP for GX680, 100",
+            "RAF_F700, RAF, 2128, 2832, RGBG/BGRG, 14, true, FinePix F700, 200",
+            "RAF_E550, RAF, 3040, 4048, RGBG/BGRG, 14, true, FinePix E550, 200",
+            "RAF_E900, RAF, 3648, 4864, RGBG/BGRG, 14, true, FinePix E900, 80",
+            "RAF_S5600, RAF, 2736, 3648, RGBG/BGRG, 14, true, FinePix S5600, 64",
+            "RAF_HS10, RAF, 3664, 2742, BGGR, 12, true, FinePix HS10 HS11, 200",
+            "RAF_F600EXR, RAF, 3248, 2436, RGGB, 12, true, FinePix F600EXR, 100",
+            "RAF_XT4_LOSSY, RAF, 6240, 4160, GGBGGR/BRGRBG/GGBGGR/GGRGGB/RBGBRG/GGRGGB, 14, true, X-T4, 160",
+            "RAF_XE5_LOSSLESS, RAF, 7728, 5152, GGBGGR/GGRGGB/RBGBRG/GGRGGB/GGBGGR/BRGRBG, 14, true, X-E5, 250",
+            "RAF_GFX50S_COMPRESSED, RAF, 8256, 6192, RGGB, 14, true, GFX 50S, 100",
+            "CR3_250D, CR3, 6000, 4000, RGGB, 14, true, Canon EOS 250D, 100",
+            "CR3_EOS_250D_C_RAW, CR3, 6000, 4000, RGGB, 14, true, Canon EOS 250D, 100",
+            "CR3_EOS_90D, CR3, 6960, 4640, RGGB, 14, true, Canon EOS 90D, 100",
+            "CR3_EOS_R, CR3, 4176, 2784, RGGB, 14, true, Canon EOS R, 100",
+            "CR3_EOS_RP, CR3, 3888, 2592, RGGB, 14, true, Canon EOS RP, 100",
+            "CR3_EOS_R5, CR3, 5088, 3392, RGGB, 14, true, Canon EOS R5, 100",
+            "CR3_EOS_1D_X_MARK_III, CR3, 5472, 3648, RGGB, 14, true, Canon EOS-1D X Mark III, 100",
+            "CR3_EOS_R5_RAW_1_6_CROP_DUAL_PIXEL, CR3, 5088, 3392, RGGB, 14, true, Canon EOS R5, 100",
+            "CR3_EOS_R6_MARK_III_RAW, CR3, 4320, 2880, RGGB, 14, true, Canon EOS R6 Mark III, 100",
+            "CR3_POWERSHOT_V1_CRAW, CR3, 5760, 3840, RGGB, 14, true, Canon PowerShot V1, 100",
             "MRW_ALPHA_7D, MRW, 3008, 2000, RGGB, 12, true, ALPHA-7 DIGITAL, 200",
             "MRW_ALPHA_7D_2025, MRW, 3008, 2000, RGGB, 12, true, ALPHA-7 DIGITAL, 100",
             "MRW_ALPHA_SWEET, MRW, 3008, 2000, RGGB, 12, true, ALPHA SWEET DIGITAL, 400",
@@ -108,7 +170,7 @@ class RawSamplesTest {
             "X3F_SD15, X3F, 2640, 1760, -, 12, true, SIGMA SD15, 50",
             "X3F_SD1_MERRILL, X3F, 4704, 3136, -, 12, true, SIGMA SD1 Merrill, 100",
             "X3F_DP2_MERRILL, X3F, 4704, 3136, -, 12, true, SIGMA DP2 Merrill, 100",
-            "X3F_DP2_QUATTRO, X3F, 0, 0, -, 0, false, SIGMA dp2 Quattro, 100"
+            "X3F_DP2_QUATTRO, X3F, 5424, 3616, -, 14, true, SIGMA dp2 Quattro, 100"
     })
     void sample(RawSamples sample, RawFormat format, int width, int height, String cfa, int bits, boolean decodable,
                 String model, long iso) {
@@ -144,9 +206,16 @@ class RawSamplesTest {
                 assertArrayEquals(preview.get(), RawDecoder.extractPreview(source, MediaLimits.DEFAULT).orElseThrow());
                 var tight = MediaLimits.builder().maxBytes(preview.get().length - 1).build();
                 assertThrows(MediaException.LimitExceeded.class, () -> RawDecoder.extractPreview(source, tight));
-                var camera = letterboxed(Images.decode(MediaSource.of(preview.get())).picture(), width, height);
-                var correlation = correlation(grid(image.picture()), grid(camera));
-                assertTrue(correlation > 0.9, "luminance correlation with the preview " + correlation);
+                // a preview without an orientation of its own may be stored as the sensor is, while a file stored
+                // transposed or turned renders in its stored orientation: one of the two pairings must match
+                var decoded = Images.decode(MediaSource.of(preview.get()));
+                var stored = correlation(grid(image.picture()), grid(letterboxed(decoded.picture(), width, height)));
+                var rendered = ImageOps.orient(image.picture(), image.orientation());
+                var camera = letterboxed(ImageOps.orient(decoded.picture(), decoded.orientation()), rendered.width(),
+                        rendered.height());
+                var upright = correlation(grid(rendered), grid(camera));
+                assertTrue(Math.max(stored, upright) > 0.9,
+                        "luminance correlation with the preview " + stored + " as stored, " + upright + " upright");
             }
         }
     }

@@ -5,6 +5,7 @@ import com.github.auties00.smalt.container.AttachedPicture;
 import com.github.auties00.smalt.container.internal.Annotations;
 import com.github.auties00.smalt.internal.heif.BoxCursor;
 import com.github.auties00.smalt.internal.io.FourCc;
+import com.github.auties00.smalt.internal.tags.LocationInformation;
 import com.github.auties00.smalt.metadata.StandardTag;
 
 import java.nio.charset.StandardCharsets;
@@ -18,7 +19,9 @@ import java.util.Map;
 
 /**
  * Collects the descriptive metadata of a movie: iTunes-style {@code ilst} items, QuickTime keyed
- * metadata ({@code mdta}), QuickTime user data text atoms, and 3GPP asset boxes.
+ * metadata ({@code mdta}), QuickTime user data text atoms, and 3GPP asset boxes; the coordinates of a 3GPP
+ * location information box ({@code loci}) become the {@code location} tag, in ISO 6709 form, unless a QuickTime
+ * {@code xyz} atom gives one.
  *
  * <p>An item that a {@link StandardTag} stores is kept under that tag's {@linkplain StandardTag#key()
  * key}, for example {@code title} for the copyright-sign-prefixed {@code nam} item; the other
@@ -134,6 +137,12 @@ final class MetadataReader {
                     readNeroChapters(box);
                 } else if (((type >>> 24) & 0xFF) == 0xA9) {
                     readQuickTimeText(type, box);
+                } else if (type == FourCc.of("loci")) {
+                    var coordinates = LocationInformation.coordinates(box.data(), box.position(),
+                            box.position() + box.remaining());
+                    if (coordinates != null && !tags.containsKey("location")) {
+                        put("location", coordinates);
+                    }
                 } else {
                     readAsset(type, box);
                 }
@@ -239,7 +248,7 @@ final class MetadataReader {
                 }
                 case BoxTypes.DATA -> {
                     if (value == null) {
-                        value = readData(item.type(), body);
+                        value = readData(item.type(), body, keys != null);
                     }
                 }
                 default -> {
@@ -329,15 +338,40 @@ final class MetadataReader {
     /**
      * Decodes the value of a {@code data} atom.
      *
+     * <p>Type 0 is an integer in an iTunes item, whose atom implies its type, and binary data in keyed metadata;
+     * the fixed-width integer types 65 to 67 and 74 to 78 of keyed metadata are read too.
+     *
      * @param itemType the type of the enclosing item
      * @param body the atom payload
+     * @param keyed whether the item is keyed metadata
      * @return the value as text, or {@code null} when it is binary
      */
-    private static String readData(int itemType, BoxCursor body) {
+    private static String readData(int itemType, BoxCursor body, boolean keyed) {
         var type = body.s32() & 0xFFFFFF;
         body.s32();
         var length = body.remaining();
-        if (itemType == FourCc.of("trkn") || itemType == FourCc.of("disk")) {
+        if (keyed && type == 0) {
+            return null;
+        }
+        if (type >= 65 && type <= 78) {
+            var width = switch (type) {
+                case 65, 75 -> 1;
+                case 66, 76 -> 2;
+                case 67, 77 -> 4;
+                case 74, 78 -> 8;
+                default -> 0;
+            };
+            if (width == 0 || width != length) {
+                return null;
+            }
+            var value = body.uN(width);
+            if (type >= 75) {
+                return Long.toUnsignedString(value);
+            }
+            var unused = 64 - 8 * width;
+            return Long.toString(value << unused >> unused);
+        }
+        if (!keyed && (itemType == FourCc.of("trkn") || itemType == FourCc.of("disk"))) {
             if (length < 6) {
                 return null;
             }
@@ -352,8 +386,12 @@ final class MetadataReader {
             case 21, 22, 0 -> switch (length) {
                 case 1 -> Integer.toString(type == 21 ? (byte) body.u8() : body.u8());
                 case 2 -> Integer.toString(type == 21 ? body.s16() : body.u16());
+                case 3 -> {
+                    var value = (body.u16() << 8) | body.u8();
+                    yield Integer.toString(type == 21 ? value << 8 >> 8 : value);
+                }
                 case 4 -> type == 21 ? Integer.toString(body.s32()) : Long.toString(body.u32());
-                case 8 -> Long.toString(body.u64());
+                case 8 -> type == 22 ? Long.toUnsignedString(body.u64()) : Long.toString(body.u64());
                 default -> null;
             };
             case 23 -> length == 4 ? Float.toString(Float.intBitsToFloat(body.s32())) : null;
