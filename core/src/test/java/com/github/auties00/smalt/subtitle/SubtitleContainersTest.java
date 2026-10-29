@@ -63,7 +63,9 @@ class SubtitleContainersTest {
             }
             muxer.finish();
         }
-        return sink.toByteArray();
+        var data = sink.toByteArray();
+        com.github.auties00.smalt.testkit.validate.Validators.assertValid("subtitles-" + codec.name().toLowerCase(java.util.Locale.ROOT) + ".bin", data);
+        return data;
     }
 
     private static List<SubtitleCue> read(byte[] file, SubtitleMarkup markup) {

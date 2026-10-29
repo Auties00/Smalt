@@ -44,6 +44,8 @@ final class TestJpegWriter {
     boolean dnl;
     int sofMarker = -1;
     int precision = 8;
+    // a differential frame of hierarchical coding codes its DC coefficients without prediction
+    boolean differentialDc;
 
     TestJpegWriter(int width, int height, Component[] components, int[][] quantTables) {
         this.width = width;
@@ -418,7 +420,7 @@ final class TestJpegWriter {
             if (scan.ss == 0) {
                 if (scan.ah == 0) {
                     var value = coefficients[base] >> scan.al;
-                    var diff = value - lastDc[ci];
+                    var diff = value - (writer.differentialDc ? 0 : lastDc[ci]);
                     lastDc[ci] = value;
                     var size = 32 - Integer.numberOfLeadingZeros(Math.abs(diff));
                     symbol(true, table, size);
@@ -437,7 +439,7 @@ final class TestJpegWriter {
 
         private void sequentialBlock(short[] coefficients, int base, int table, int ci) {
             var value = coefficients[base];
-            var diff = value - lastDc[ci];
+            var diff = value - (writer.differentialDc ? 0 : lastDc[ci]);
             lastDc[ci] = value;
             var size = 32 - Integer.numberOfLeadingZeros(Math.abs(diff));
             symbol(true, table, size);
