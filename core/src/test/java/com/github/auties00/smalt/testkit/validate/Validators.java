@@ -26,6 +26,7 @@ import java.util.regex.Pattern;
  *   <li>Matroska and WebM: {@link MatroskaValidator} and the Matroska foundation's {@code mkvalidator};</li>
  *   <li>MPEG-2 transport streams: {@link TsValidator} and TSDuck's {@code tsp -P analyze};</li>
  *   <li>MPEG program streams and MPEG-1 system streams: {@link PsValidator};</li>
+ *   <li>MXF: {@link MxfValidator};</li>
  *   <li>HLS: {@link HlsValidator}, which validates every segment with the validators above;</li>
  *   <li>MPEG-DASH: {@link DashValidator}, likewise, with the MPD schema of ISO/IEC 23009-1.</li>
  * </ul>
@@ -48,6 +49,8 @@ public final class Validators {
         TRANSPORT_STREAM,
         /** An MPEG program stream or MPEG-1 system stream. */
         PROGRAM_STREAM,
+        /** An MXF file. */
+        MXF,
         /** An HLS playlist. */
         HLS,
         /** A DASH manifest. */
@@ -110,6 +113,11 @@ public final class Validators {
         if (data.length >= 12 && data[0] == 0 && data[1] == 0 && data[2] == 1 && (data[3] & 0xFF) == 0xBA) {
             return Format.PROGRAM_STREAM;
         }
+        if (data.length >= 16 && (data[0] & 0xFF) == 0x06 && data[1] == 0x0E && data[2] == 0x2B && data[3] == 0x34
+                && data[4] == 0x02 && data[5] == 0x05 && data[8] == 0x0D && data[9] == 0x01 && data[10] == 0x02
+                && data[11] == 0x01 && data[12] == 0x01 && data[13] == 0x02) {
+            return Format.MXF;
+        }
         var head = new String(data, 0, Math.min(data.length, 512), StandardCharsets.ISO_8859_1);
         if (head.startsWith("#EXTM3U")) {
             return Format.HLS;
@@ -153,6 +161,7 @@ public final class Validators {
             case MATROSKA -> matroska(file, data);
             case TRANSPORT_STREAM -> transportStream(file, data);
             case PROGRAM_STREAM -> programStream(file.toString(), data, false);
+            case MXF -> assertValidMxf(file.toString(), data);
             case HLS -> assertValidHls(file);
             case DASH -> assertValidDash(file);
             case OTHER -> {
@@ -203,6 +212,20 @@ public final class Validators {
      */
     public static TsValidator.Summary assertValidTs(Path file) {
         return transportStream(file, read(file));
+    }
+
+    /**
+     * Validates an MXF file.
+     *
+     * @param name the name of the file, for the failure message
+     * @param data the file
+     * @return what validation learned of the file
+     */
+    public static MxfValidator.Summary assertValidMxf(String name, byte[] data) {
+        var findings = new Findings(name);
+        var summary = MxfValidator.validate(data, findings);
+        findings.assertNone("MxfValidator");
+        return summary;
     }
 
     /**

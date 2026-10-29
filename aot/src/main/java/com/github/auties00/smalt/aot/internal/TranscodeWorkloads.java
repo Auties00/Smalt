@@ -26,6 +26,7 @@ import com.github.auties00.smalt.container.mp4.Mp4Muxer;
 import com.github.auties00.smalt.container.mp4.Mp4MuxerOptions;
 import com.github.auties00.smalt.container.mp4.Mp4Remuxer;
 import com.github.auties00.smalt.container.mp4.RemuxOptions;
+import com.github.auties00.smalt.container.mxf.MxfMuxer;
 import com.github.auties00.smalt.container.ts.PsMuxer;
 import com.github.auties00.smalt.container.ts.TsMuxer;
 import com.github.auties00.smalt.container.wav.WavMuxer;
@@ -196,9 +197,9 @@ final class TranscodeWorkloads {
     /**
      * Returns a workload that remuxes a synthetic MP4 with H.264 video and AAC audio to
      * fragmented MP4, Matroska, MPEG-TS and MPEG-PS, remuxes the Matroska file back to MP4 with
-     * {@link Mp4Remuxer}, writes the H.264 track as an Annex B elementary stream, stereo PCM as WAV, as a
-     * QuickTime movie, as an ISO MP4 and as a fragmented MP4, and uncompressed frames as YUV4MPEG2, and probes
-     * and demuxes every file, the source included, decoding the uncompressed frames.
+     * {@link Mp4Remuxer}, writes the H.264 track as an Annex B elementary stream and as MXF, stereo PCM as WAV, as
+     * a QuickTime movie, as an ISO MP4, as a fragmented MP4 and as MXF, and uncompressed frames as YUV4MPEG2, and
+     * probes and demuxes every file, the source included, decoding the uncompressed frames.
      *
      * @return the workload
      */
@@ -250,11 +251,19 @@ final class TranscodeWorkloads {
                 muxer.finish();
             }
             files.add(annexB.toByteArray());
+            var mxf = MediaSink.memory();
+            try (var muxer = new MxfMuxer(mxf)) {
+                muxer.addTrack(video);
+                packets.stream().filter(packet -> packet.trackId() == video.id()).forEach(muxer::writePacket);
+                muxer.finish();
+            }
+            files.add(mxf.toByteArray());
             files.add(y4m());
             List<Function<MediaSink, Muxer>> pcmMuxers = List.of(
                     sink -> new Mp4Muxer(sink, Mp4MuxerOptions.quickTime()),
                     sink -> new Mp4Muxer(sink, Mp4MuxerOptions.mp4()),
-                    FragmentedMp4Muxer::new);
+                    FragmentedMp4Muxer::new,
+                    MxfMuxer::new);
             for (var factory : pcmMuxers) {
                 var sink = MediaSink.memory();
                 try (var muxer = factory.apply(sink)) {

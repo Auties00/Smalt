@@ -263,7 +263,8 @@ public final class Subtitles {
             case WEBVTT, LRC -> Codec.WEBVTT;
             case ASS -> Codec.ASS;
             case TTML -> Codec.TTML;
-            case MP4, MATROSKA, OGG, MPEG_AUDIO, ADTS, WAV, FLAC, AMR, AIFF, IVF, AVI, MPEG_TS, MPEG_PS, AC3, SUP, VOBSUB,
+            case MP4, MATROSKA, OGG, MPEG_AUDIO, ADTS, WAV, FLAC, AMR, AIFF, IVF, AVI, MPEG_TS, MPEG_PS, MXF, AC3, SUP,
+                 VOBSUB,
                  H264, HEVC, AV1, AV1_ANNEX_B, MPEG4_VIDEO, H263, Y4M, HLS, DASH, PCM, OTHER -> null;
             default -> textCodec(candidate -> Containers.isMuxable(format, candidate));
         };

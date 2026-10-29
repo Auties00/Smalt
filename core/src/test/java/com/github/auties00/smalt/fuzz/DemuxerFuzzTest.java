@@ -128,6 +128,11 @@ class DemuxerFuzzTest {
     }
 
     @FuzzTest
+    void mxf(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.MXF, data);
+    }
+
+    @FuzzTest
     void ac3(byte[] data) {
         FuzzMedia.demuxer(ContainerFormat.AC3, data);
     }

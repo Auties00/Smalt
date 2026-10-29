@@ -59,6 +59,8 @@ import com.github.auties00.smalt.container.subtitle.TtmlMuxer;
 import com.github.auties00.smalt.container.subtitle.VobSubDemuxer;
 import com.github.auties00.smalt.container.subtitle.WebVttDemuxer;
 import com.github.auties00.smalt.container.subtitle.WebVttMuxer;
+import com.github.auties00.smalt.container.mxf.MxfDemuxer;
+import com.github.auties00.smalt.container.mxf.MxfMuxer;
 import com.github.auties00.smalt.container.ts.PsDemuxer;
 import com.github.auties00.smalt.container.ts.PsMuxer;
 import com.github.auties00.smalt.container.ts.TsDemuxer;
@@ -106,9 +108,9 @@ import java.util.function.Predicate;
  * <p>Recognition never trusts a file name or a declared mimetype: it inspects the leading bytes,
  * skipping an ID3v2 tag first because MP3, AAC, AC-3, AMR and FLAC files often start with one. Formats with a
  * magic number (MP4 family, Matroska, Ogg, RIFF WAVE, Sony Wave64, RIFF AVI, AIFF, CAF, Sun AU, ADIF, FLAC, AMR,
- * WavPack, YUV4MPEG2, the {@code "PG"} segments of a {@code .sup} file, the signature line of a VobSub index) are
- * recognized exactly, a VobSub {@code .sub} file by a pack header followed by a subpicture PES packet, other MPEG
- * program streams by their first pack header, MPEG transport streams by
+ * WavPack, MXF, YUV4MPEG2, the {@code "PG"} segments of a {@code .sup} file, the signature line of a VobSub index)
+ * are recognized exactly, a VobSub {@code .sub} file by a pack header followed by a subpicture PES packet, other
+ * MPEG program streams by their first pack header, MPEG transport streams by
  * the sync bytes of their first packets, and raw AC-3 and E-AC-3 streams
  * by two consecutive sync frames;
  * raw MPEG audio and ADTS streams, which have only a frame sync word, are recognized by requiring
@@ -127,9 +129,9 @@ import java.util.function.Predicate;
  * <p>{@link #openMuxer(ContainerFormat, MediaSink)} creates muxers with each format's default options: a
  * fast-start {@link Mp4Muxer}, a Matroska (not WebM) {@link MatroskaMuxer}, an {@link OggMuxer}, and the
  * {@link WavMuxer}, {@link Wave64Muxer}, {@link AiffMuxer}, {@link CafMuxer}, {@link AuMuxer}, {@link AdtsMuxer},
- * {@link LoasMuxer}, {@link AdifMuxer}, {@link IvfMuxer}, {@link TsMuxer}, {@link PsMuxer}, {@link AviMuxer} and
- * {@link Y4mMuxer}; MPEG audio, FLAC, AMR, AC-3, H.264, HEVC, AV1 (low-overhead and Annex B), MPEG-4 Part 2,
- * H.263 and PCM files are the elementary streams a {@link RawMuxer} writes.
+ * {@link LoasMuxer}, {@link AdifMuxer}, {@link IvfMuxer}, {@link TsMuxer}, {@link PsMuxer}, {@link MxfMuxer},
+ * {@link AviMuxer} and {@link Y4mMuxer}; MPEG audio, FLAC, AMR, AC-3, H.264, HEVC, AV1 (low-overhead and Annex B),
+ * MPEG-4 Part 2, H.263 and PCM files are the elementary streams a {@link RawMuxer} writes.
  * {@link #openMuxer(OutputContainer, MediaSink)} also writes WebM, M4A, QuickTime and fragmented MP4
  * ({@link FragmentedMp4Muxer}). A caller that needs other options (RF64 policies, fragment durations)
  * constructs the muxer directly.
@@ -161,6 +163,11 @@ public final class Containers {
      */
     private static final byte[] WAVE64_WAVE = {(byte) 0xF3, (byte) 0xAC, (byte) 0xD3, 0x11, (byte) 0x8C, (byte) 0xD1,
             0x00, (byte) 0xC0, 0x4F, (byte) 0x8E, (byte) 0xDB, (byte) 0x8A};
+
+    /**
+     * The largest run-in before the header partition of an MXF file, in bytes (SMPTE ST 377-1 clause 6.5).
+     */
+    private static final int MXF_RUN_IN = 65536;
 
     /**
      * The largest ID3v2 tag skipped during recognition, in bytes.
@@ -224,6 +231,9 @@ public final class Containers {
         if (magic != null) {
             return new Detection(magic, null);
         }
+        if (MxfDemuxer.matches(header)) {
+            return new Detection(ContainerFormat.MXF, null);
+        }
         var providers = Providers.containers();
         var provided = detectProvided(providers, source, 0, header);
         if (provided != null) {
@@ -267,6 +277,9 @@ public final class Containers {
             if (video != null) {
                 return new Detection(video, null);
             }
+        }
+        if (leading.length >= HEADER_LENGTH && MxfDemuxer.matches(read(source, 0, MXF_RUN_IN + 16))) {
+            return new Detection(ContainerFormat.MXF, null);
         }
         var text = detectText(leading);
         return text == null ? null : new Detection(text, null);
@@ -421,6 +434,7 @@ public final class Containers {
             case IVF -> new IvfDemuxer(source, options);
             case MPEG_TS -> new TsDemuxer(source, options);
             case MPEG_PS -> new PsDemuxer(source, options);
+            case MXF -> new MxfDemuxer(source, options);
             case AC3 -> new Ac3Demuxer(source, options);
             case WAVPACK -> new WavPackDemuxer(source, options);
             case SUBRIP -> new SubRipDemuxer(source, options);
@@ -495,6 +509,7 @@ public final class Containers {
             case IVF -> IvfMuxer.supports(codec);
             case MPEG_TS -> TsMuxer.supports(codec);
             case MPEG_PS -> PsMuxer.supports(codec);
+            case MXF -> MxfMuxer.supports(codec);
             case MPEG_AUDIO, FLAC, AMR, AC3, H264, HEVC, AV1, AV1_ANNEX_B, MPEG4_VIDEO, H263, PCM, WAVPACK ->
                     RawMuxer.supports(format, codec);
             case SUBRIP -> SubRipMuxer.supports(codec);
@@ -591,6 +606,7 @@ public final class Containers {
                     RawMuxerOptions.builder().av1AnnexB(true).build()));
             case MPEG_TS -> new TsMuxer(output);
             case MPEG_PS -> new PsMuxer(output);
+            case MXF -> new MxfMuxer(output);
             case SUBRIP -> new SubRipMuxer(output);
             case WEBVTT -> new WebVttMuxer(output);
             case ASS -> new AssMuxer(output);

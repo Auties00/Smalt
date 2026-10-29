@@ -101,6 +101,7 @@ SEED_EXTENSIONS = {
     'core:DemuxerFuzzTest.avi': ['.avi'],
     'core:DemuxerFuzzTest.mpegTs': ['.ts', '.m2ts', '.mts'],
     'core:DemuxerFuzzTest.mpegPs': ['.vob', '.mpg', '.mpeg', '.m2p'],
+    'core:DemuxerFuzzTest.mxf': ['.mxf'],
     'core:DemuxerFuzzTest.ac3': ['.ac3', '.eac3', '.ec3'],
     'core:DemuxerFuzzTest.subRip': ['.srt'],
     'core:DemuxerFuzzTest.webVtt': ['.vtt'],

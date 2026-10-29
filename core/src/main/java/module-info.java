@@ -101,6 +101,7 @@ module com.github.auties00.smalt {
     exports com.github.auties00.smalt.container.matroska;
     exports com.github.auties00.smalt.container.mp4;
     exports com.github.auties00.smalt.container.mpeg;
+    exports com.github.auties00.smalt.container.mxf;
     exports com.github.auties00.smalt.container.ogg;
     exports com.github.auties00.smalt.container.packaging;
     exports com.github.auties00.smalt.container.raw;

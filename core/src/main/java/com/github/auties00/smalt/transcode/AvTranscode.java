@@ -657,13 +657,13 @@ final class AvTranscode {
 
     /**
      * {@return whether {@link Mp4Remuxer} reads an input container: ISO base media, Matroska, MPEG
-     * transport streams, MPEG program streams, AVI and Ogg}
+     * transport streams, MPEG program streams, MXF, AVI and Ogg}
      *
      * @param format the input container
      */
     private static boolean remuxable(ContainerFormat format) {
         return switch (format) {
-            case MP4, MATROSKA, MPEG_TS, MPEG_PS, AVI, OGG -> true;
+            case MP4, MATROSKA, MPEG_TS, MPEG_PS, MXF, AVI, OGG -> true;
             default -> false;
         };
     }

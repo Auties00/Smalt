@@ -51,6 +51,7 @@ linux-arm64-vector-smoke	core	com.github.auties00.smalt.audio.loudness.LoudnessF
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.container.ConformanceTest	data:vector	8
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.container.FileFormatConformanceTest	data:vector	144
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.container.caf.CafAppleTest	platform:macos	29
+linux-arm64-vector-smoke	core	com.github.auties00.smalt.container.mxf.MxfThirdPartyTest	data:vector	2
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.container.packaging.DashTestVectorsTest	data:vector	2
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.image.color.ColorProfileTest	data:vector	3
@@ -205,6 +206,7 @@ linux-x64-scalar-smoke	core	com.github.auties00.smalt.audio.loudness.TruePeakKer
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.ConformanceTest	data:vector	8
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.FileFormatConformanceTest	data:vector	144
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.caf.CafAppleTest	platform:macos	29
+linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.mxf.MxfThirdPartyTest	data:vector	2
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.ogg.OggCrcTest	simd:disabled	16
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.packaging.DashTestVectorsTest	data:vector	2
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
@@ -394,6 +396,7 @@ linux-x64-vector-smoke	core	com.github.auties00.smalt.audio.loudness.LoudnessFfm
 linux-x64-vector-smoke	core	com.github.auties00.smalt.container.ConformanceTest	data:vector	8
 linux-x64-vector-smoke	core	com.github.auties00.smalt.container.FileFormatConformanceTest	data:vector	144
 linux-x64-vector-smoke	core	com.github.auties00.smalt.container.caf.CafAppleTest	platform:macos	29
+linux-x64-vector-smoke	core	com.github.auties00.smalt.container.mxf.MxfThirdPartyTest	data:vector	2
 linux-x64-vector-smoke	core	com.github.auties00.smalt.container.packaging.DashTestVectorsTest	data:vector	2
 linux-x64-vector-smoke	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
 linux-x64-vector-smoke	core	com.github.auties00.smalt.image.color.ColorProfileTest	data:vector	3
@@ -555,6 +558,7 @@ macos-arm64-vector-smoke	capture	com.github.auties00.smalt.capture.internal.wind
 macos-arm64-vector-smoke	core	com.github.auties00.smalt.audio.loudness.LoudnessFfmpegTest	data:vector	8
 macos-arm64-vector-smoke	core	com.github.auties00.smalt.container.ConformanceTest	data:vector	8
 macos-arm64-vector-smoke	core	com.github.auties00.smalt.container.FileFormatConformanceTest	data:vector	144
+macos-arm64-vector-smoke	core	com.github.auties00.smalt.container.mxf.MxfThirdPartyTest	data:vector	2
 macos-arm64-vector-smoke	core	com.github.auties00.smalt.container.packaging.DashTestVectorsTest	data:vector	2
 macos-arm64-vector-smoke	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
 macos-arm64-vector-smoke	core	com.github.auties00.smalt.image.color.ColorProfileTest	data:vector	3
@@ -718,6 +722,7 @@ windows-x64-vector-smoke	core	com.github.auties00.smalt.audio.loudness.LoudnessF
 windows-x64-vector-smoke	core	com.github.auties00.smalt.container.ConformanceTest	data:vector	8
 windows-x64-vector-smoke	core	com.github.auties00.smalt.container.FileFormatConformanceTest	data:vector	144
 windows-x64-vector-smoke	core	com.github.auties00.smalt.container.caf.CafAppleTest	platform:macos	29
+windows-x64-vector-smoke	core	com.github.auties00.smalt.container.mxf.MxfThirdPartyTest	data:vector	2
 windows-x64-vector-smoke	core	com.github.auties00.smalt.container.packaging.DashTestVectorsTest	data:vector	2
 windows-x64-vector-smoke	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
 windows-x64-vector-smoke	core	com.github.auties00.smalt.image.color.ColorProfileTest	data:vector	3

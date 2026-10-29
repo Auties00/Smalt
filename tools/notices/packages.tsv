@@ -68,6 +68,7 @@ container.matroska	core
 container.mp4	core
 container.mpeg	core
 container.mpeg.internal	core
+container.mxf	core
 container.ogg	core
 container.packaging	core
 container.raw	core

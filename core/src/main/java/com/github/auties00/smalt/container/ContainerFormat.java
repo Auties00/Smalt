@@ -110,6 +110,13 @@ public enum ContainerFormat {
     MPEG_PS,
 
     /**
+     * Material Exchange Format ({@code .mxf}, SMPTE ST 377-1), OP1a, OP-Atom and the other operational patterns of
+     * internal essence: a header partition pack key {@code 06 0E 2B 34 02 05 01 01 0D 01 02 01 01 02}, after a
+     * run-in of up to 64 KiB.
+     */
+    MXF,
+
+    /**
      * A raw Dolby Digital (AC-3, {@code .ac3}) or Dolby Digital Plus (E-AC-3, {@code .ec3})
      * elementary stream of sync frames.
      */

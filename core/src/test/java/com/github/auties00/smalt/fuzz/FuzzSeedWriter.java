@@ -350,6 +350,26 @@ class FuzzSeedWriter {
                 "dvd"));
     }
 
+    @Test
+    @DisplayName("writes the MXF seeds: OP1a of ProRes, MPEG-2 and H.264 with PCM, OP-Atom of VC-3 and of PCM")
+    void mxf() throws IOException {
+        var video = List.of("-f", "lavfi", "-i", "testsrc2=size=32x32:rate=25:duration=0.12");
+        var audio = tone(48000, 0.12);
+        copy(DemuxerFuzzTest.class, "mxf", "valid-op1a-prores.mxf", ffmpeg("mxf", args(video, audio), "-c:v",
+                "prores_ks", "-profile:v", "0", "-pix_fmt", "yuv422p10le", "-c:a", "pcm_s16le", "-ac", "1", "-f",
+                "mxf"));
+        copy(DemuxerFuzzTest.class, "mxf", "valid-op1a-mpeg2.mxf", ffmpeg("mxf", args(video, audio), "-c:v",
+                "mpeg2video", "-q:v", "20", "-g", "3", "-bf", "1", "-c:a", "pcm_s16le", "-ac", "1", "-f", "mxf"));
+        copy(DemuxerFuzzTest.class, "mxf", "valid-op1a-h264.mxf", ffmpeg("mxf", args(video, audio), "-c:v",
+                "libx264", "-preset", "ultrafast", "-g", "3", "-bf", "1", "-x264-params", "threads=1", "-c:a",
+                "pcm_s24le", "-ac", "1", "-f", "mxf"));
+        copy(DemuxerFuzzTest.class, "mxf", "valid-opatom-dnxhr.mxf", ffmpeg("mxf", List.of("-f", "lavfi", "-i",
+                "testsrc2=size=256x120:rate=25:duration=0.08"), "-c:v", "dnxhd", "-profile:v", "dnxhr_lb", "-pix_fmt",
+                "yuv422p", "-f", "mxf_opatom"));
+        copy(DemuxerFuzzTest.class, "mxf", "valid-opatom-pcm.mxf", ffmpeg("mxf", tone(48000, 0.04), "-c:a",
+                "pcm_s24le", "-ac", "1", "-f", "mxf_opatom", "-mxf_audio_edit_rate", "25"));
+    }
+
     /** The index of the VobSub behavior sample, as make-bitmap-caption-samples.py writes it. */
     private static final String VOBSUB_INDEX = """
             # VobSub index file, v7 (do not modify this line!)

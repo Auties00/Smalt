@@ -222,6 +222,31 @@ class ContainerBombTest {
                 Arguments.of(new Input("CAF kuki chunk of 2^40 bytes", () -> cafChunk("kuki", new byte[16]))),
                 Arguments.of(new Input("CAF info chunk of 2^40 bytes", () -> cafChunk("info",
                         new byte[]{0x7F, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, 't', 0, 'x', 0}))),
+                Arguments.of(new Input("MXF essence element of 2^50 bytes", () -> mxf(data -> {
+                    var element = indexOf(data, new byte[]{0x06, 0x0E, 0x2B, 0x34, 0x01, 0x02, 0x01, 0x01, 0x0D, 0x01,
+                            0x03, 0x01, 0x16}, 0);
+                    data[element + 16] = (byte) 0x87;
+                    data[element + 17] = 0x04;
+                }))),
+                Arguments.of(new Input("MXF header metadata set of 16 MB", () -> mxf(data -> {
+                    var set = indexOf(data, new byte[]{0x06, 0x0E, 0x2B, 0x34, 0x02, 0x53, 0x01, 0x01, 0x0D, 0x01, 0x01,
+                            0x01, 0x01, 0x01, 0x2F}, 0);
+                    data[set + 16] = (byte) 0x83;
+                    data[set + 17] = (byte) 0xFF;
+                    data[set + 18] = (byte) 0xFF;
+                }))),
+                Arguments.of(new Input("MXF primer pack of 2^31 entries", () -> mxf(data -> {
+                    var primer = indexOf(data, new byte[]{0x06, 0x0E, 0x2B, 0x34, 0x02, 0x05, 0x01, 0x01, 0x0D, 0x01,
+                            0x02, 0x01, 0x01, 0x05, 0x01}, 0);
+                    be32(data, primer + 20, 0x7FFF_FFFFL);
+                }))),
+                Arguments.of(new Input("MXF index table segment starting at edit unit 2^30", () -> mxf(data -> {
+                    var segment = indexOf(data, new byte[]{0x06, 0x0E, 0x2B, 0x34, 0x02, 0x53, 0x01, 0x01, 0x0D, 0x01,
+                            0x02, 0x01, 0x01, 0x10, 0x01}, 0);
+                    var start = indexOf(data, new byte[]{0x3F, 0x0C, 0x00, 0x08}, segment);
+                    be32(data, start + 4, 0);
+                    be32(data, start + 8, 0x4000_0000L);
+                }))),
                 Arguments.of(new Input("AU annotation of 2 GB", () -> {
                     var data = pcm(ContainerFormat.AU, Codec.PCM_S16BE);
                     be32(data, 4, 0x7FFF_FFF0L);
@@ -367,6 +392,27 @@ class ContainerBombTest {
     static byte[] pcm(ContainerFormat format, Codec codec) {
         return mux(format, List.of(Streams.audio(codec, ChannelLayout.STEREO, SAMPLE_RATE, 40 * 160,
                 builder -> builder)));
+    }
+
+    /** Returns an MXF file of PCM samples, frame wrapped at 25 Hz, edited in place. */
+    static byte[] mxf(java.util.function.Consumer<byte[]> edit) {
+        var track = com.github.auties00.smalt.track.AudioTrack.builder().id(1).codec(Codec.PCM_S16LE)
+                .timeBase(com.github.auties00.smalt.track.Rational.timeBaseOf(SAMPLE_RATE)).sampleRate(SAMPLE_RATE)
+                .layout(ChannelLayout.MONO).build();
+        var second = track.toBuilder().id(2).build();
+        var sink = MediaSink.memory();
+        try (var muxer = new com.github.auties00.smalt.container.mxf.MxfMuxer(sink)) {
+            muxer.addTrack(track);
+            muxer.addTrack(second);
+            for (var id = 1; id <= 2; id++) {
+                muxer.writePacket(new com.github.auties00.smalt.track.Packet(id, new byte[2 * SAMPLE_RATE], 0, 0,
+                        SAMPLE_RATE, true));
+            }
+            muxer.finish();
+        }
+        var data = sink.toByteArray();
+        edit.accept(data);
+        return data;
     }
 
     /**

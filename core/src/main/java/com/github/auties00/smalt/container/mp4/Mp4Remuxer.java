@@ -30,7 +30,7 @@ import java.util.Objects;
 import java.util.function.Consumer;
 
 /**
- * Copies the tracks of an ISO base media, Matroska, MPEG transport stream, MPEG program stream, AVI or Ogg file
+ * Copies the tracks of an ISO base media, Matroska, MPEG transport stream, MPEG program stream, MXF, AVI or Ogg file
  * into a fast-start MP4, M4A or QuickTime movie without re-encoding.
  *
  * <p>{@link #remux} detects the input container by its magic, keeps the tracks {@link RemuxOptions}
@@ -255,7 +255,8 @@ public final class Mp4Remuxer {
      *
      * @param input the input, read from its start; not closed
      * @return {@link ContainerFormat#MP4}, {@link ContainerFormat#MATROSKA},
-     * {@link ContainerFormat#MPEG_TS}, {@link ContainerFormat#MPEG_PS}, {@link ContainerFormat#AVI} or
+     * {@link ContainerFormat#MPEG_TS}, {@link ContainerFormat#MPEG_PS}, {@link ContainerFormat#MXF},
+     * {@link ContainerFormat#AVI} or
      * {@link ContainerFormat#OGG}
      * @throws MediaException.Unsupported if the input is none of those
      */
@@ -263,9 +264,10 @@ public final class Mp4Remuxer {
         return Containers.detect(input)
                 .filter(format -> format == ContainerFormat.MP4 || format == ContainerFormat.MATROSKA
                         || format == ContainerFormat.MPEG_TS || format == ContainerFormat.MPEG_PS
-                        || format == ContainerFormat.AVI || format == ContainerFormat.OGG)
+                        || format == ContainerFormat.MXF || format == ContainerFormat.AVI
+                        || format == ContainerFormat.OGG)
                 .orElseThrow(() -> new MediaException.Unsupported("unknown container", "the input is not an ISO base"
-                        + " media, Matroska, MPEG transport stream, MPEG program stream, AVI or Ogg file"));
+                        + " media, Matroska, MPEG transport stream, MPEG program stream, MXF, AVI or Ogg file"));
     }
 
     /**

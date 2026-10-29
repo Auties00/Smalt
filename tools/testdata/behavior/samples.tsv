@@ -81,6 +81,17 @@ core/src/test/resources/samples/mp4/prores.mov	11125	76b429c682e15e7ea6537ac906d
 core/src/test/resources/samples/mp4/quicktime.mov	65138	aa49fbc8e1940cb53ce15527fcb2b4e8f6204f0c628824655c7178227c9001ae	make-samples.sh
 core/src/test/resources/samples/mp4/timecode-spherical.mov	16384	45ecc9d0b26f2948bcbf18aee14ad74dfec237c399b63bb258c5b571cdeda227	make-descriptive-samples.py
 core/src/test/resources/samples/mp4/vobsub.mp4	6344	764945832252bf06f3b6819a9cadcda14147a18adba3f0c9c3d897a10f4d7ded	make-samples.sh, make-bitmap-caption-samples.py
+core/src/test/resources/samples/mxf/bmx-op1a-avci50-headerless.mxf	165075	aa3f61e1c55b312ae13d54a1fcb6fe0766c94bcfbc64a813e7aaa059600dfa23	make-mxf-samples.sh
+core/src/test/resources/samples/mxf/bmx-op1a-clip-pcm.mxf	77898	a1a07c43b9bdb845e1e26cf1fd4b89a2a568321b65292f72a67951b8576206ee	make-mxf-samples.sh
+core/src/test/resources/samples/mxf/bmx-op1a-prores.mxf	89052	81b597f2b7d10771652a0c922683cdec5c3fed1943b2cdd0f8766ce3e5d47e51	make-mxf-samples.sh
+core/src/test/resources/samples/mxf/bmx-op1a-vc3.mxf	214201	7d74ab8e5774beb4cd569e0bd0ee22279ec92a78a301ba449723be2a377d2a88	make-mxf-samples.sh
+core/src/test/resources/samples/mxf/op1a-avci50.mxf	152109	57fbfe487f8a82555072761fc474e3432ed1ac65c977efa925d4c897ed6f55b1	make-mxf-samples.sh
+core/src/test/resources/samples/mxf/op1a-dnxhr.mxf	133165	457c190166cb456ee2c7c4254fd8b656b966d29c156328440e53e2d89b8394a1	make-mxf-samples.sh
+core/src/test/resources/samples/mxf/op1a-h264.mxf	119865	5b462d31cca5d1452316f82ae4d127a66f1bef3f3926de326be3191c1a583b69	make-mxf-samples.sh
+core/src/test/resources/samples/mxf/op1a-mpeg2.mxf	138809	30e5b5d1ebf925edaacab8cb0f4b17bf033820ee13e357b207a4364271407384	make-mxf-samples.sh
+core/src/test/resources/samples/mxf/op1a-prores.mxf	47673	ad6cb3e31da439d65b4c6da4ad0fbab1d9ea55ed177b5bf0839b4d2329d2067c	make-mxf-samples.sh
+core/src/test/resources/samples/mxf/opatom-dnxhr.mxf	31801	392472fb6cb0e3cf5307fd0d57959a4261ab0a6fdb6c54d9fdf2da3184ba7d0f	make-mxf-samples.sh
+core/src/test/resources/samples/mxf/opatom-pcm.mxf	41529	f7e5737d2bd3f013c3644d519819e64d1be24eaa3aa219d153d1846373fa3002	make-mxf-samples.sh
 core/src/test/resources/samples/ogg/chained.ogg	10178	143e9c49ce5401aa9da89334a3f834acebfc9c5b32ff44d8f9c90bbf12f48e01	make-samples.sh
 core/src/test/resources/samples/ogg/flac.oga	34014	35fbcd1131ae0a7cec861958eb461ad41ada8cfe68916840d89af93f1b1959f9	make-samples.sh
 core/src/test/resources/samples/ogg/opus-ambisonic.opus	2876	225919e440f5d788e6a56ecd73b4be65ee7fd3bd29b13878b5ffa1f825624ba4	make-ambisonic-samples.py

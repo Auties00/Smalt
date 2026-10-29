@@ -208,6 +208,15 @@ public enum OutputContainer {
             List.of(Codec.MP2, Codec.AC3, Codec.AAC)),
 
     /**
+     * An OP1a MXF file (SMPTE ST 377-1 and ST 378), the interchange file of broadcast and post-production: it carries
+     * DNxHD, ProRes, H.264, MPEG-1, MPEG-2 and MPEG-4 Part 2 video and 8, 16, 24 and 32-bit PCM, frame wrapped and
+     * written as it is produced (on a seekable sink the header is rewritten closed and complete at the end), and a
+     * transcode picks DNxHD and 24-bit PCM when the caller names no codec.
+     */
+    MXF(ContainerFormat.MXF, "mxf", "application/mxf", List.of(Codec.DNXHD, Codec.PRORES, Codec.H264),
+            List.of(Codec.PCM_S24LE)),
+
+    /**
      * An AVI file with the OpenDML extensions, for players that expect the Video for Windows
      * format; it needs a seekable sink and carries video at a constant frame rate.
      */
@@ -431,11 +440,11 @@ public enum OutputContainer {
      * Returns whether the file stores a sample aspect ratio for video, so that a transcode can keep
      * non-square samples as stored instead of resampling them to square ones.
      *
-     * @return {@code true} for the MP4 family, Matroska, WebM, AVI and YUV4MPEG2
+     * @return {@code true} for the MP4 family, Matroska, WebM, AVI, MXF and YUV4MPEG2
      */
     public boolean storesSampleAspectRatio() {
         return format == ContainerFormat.MP4 || format == ContainerFormat.MATROSKA || format == ContainerFormat.AVI
-                || format == ContainerFormat.Y4M;
+                || format == ContainerFormat.MXF || format == ContainerFormat.Y4M;
     }
 
     /**
@@ -467,8 +476,8 @@ public enum OutputContainer {
      * <p>What each file stores is what its muxer writes
      * ({@link Muxer#setTags(com.github.auties00.smalt.metadata.MediaTags) Muxer.setTags}): everything in the MP4
      * family, Matroska, WebM, Ogg, FLAC, MP3, AC-3, E-AC-3, AMR, ADTS, WAV, AIFF, CAF and AU files; the tags and the
-     * track names in an AVI file; the track names and some audio dispositions in a transport stream; and the title,
-     * artist and album in an LRC file.
+     * track names in AVI and MXF files; the track names and some audio dispositions in a transport stream; and the
+     * title, artist and album in an LRC file.
      *
      * @return {@code false} for IVF, YUV4MPEG2, Wave64, LOAS, ADIF, MPEG program streams, the video elementary streams
      * and the subtitle files other than LRC
@@ -483,11 +492,13 @@ public enum OutputContainer {
     /**
      * Returns whether the file can hold more than one audio track.
      *
-     * @return {@code true} for the MP4 family, Matroska, WebM, Ogg, MPEG transport streams and MPEG program streams
+     * @return {@code true} for the MP4 family, Matroska, WebM, Ogg, MPEG transport streams, MPEG program streams and
+     * MXF
      */
     boolean carriesSeveralTracks() {
         return format == ContainerFormat.MP4 || format == ContainerFormat.MATROSKA || format == ContainerFormat.OGG
-                || format == ContainerFormat.MPEG_TS || format == ContainerFormat.MPEG_PS;
+                || format == ContainerFormat.MPEG_TS || format == ContainerFormat.MPEG_PS
+                || format == ContainerFormat.MXF;
     }
 
     /**
@@ -516,6 +527,7 @@ public enum OutputContainer {
                 default -> false;
             };
             case OGG -> codec == Codec.VORBIS || codec == Codec.FLAC;
+            case MXF -> codec == Codec.H264;
             case WAV, W64 -> codec == Codec.AAC || codec == Codec.FLAC;
             case CAF -> codec == Codec.AAC || codec == Codec.ALAC || codec == Codec.OPUS;
             case LOAS, ADIF -> codec == Codec.AAC;
@@ -540,7 +552,7 @@ public enum OutputContainer {
      * {@code ec3} and {@code eac3} to {@link #EAC3}, {@code h264} and {@code 264} to {@link #H264},
      * {@code h265}, {@code 265} and {@code hevc} to {@link #HEVC}, {@code obu} to {@link #AV1}, {@code y4m} to
      * {@link #Y4M}, {@code ts} to {@link #MPEG_TS}, {@code mpg}, {@code mpeg}, {@code m2p}, {@code ps} and
-     * {@code vob} to {@link #MPEG_PS}, {@code srt} to {@link #SRT}, {@code vtt} to
+     * {@code vob} to {@link #MPEG_PS}, {@code mxf} to {@link #MXF}, {@code srt} to {@link #SRT}, {@code vtt} to
      * {@link #WEBVTT}, {@code ass} and {@code ssa} to {@link #ASS} and {@link #SSA}, {@code ttml},
      * {@code dfxp} and {@code xml} to {@link #TTML}, {@code smi} and {@code sami} to {@link #SAMI},
      * {@code lrc} to {@link #LRC} and {@code sub} to {@link #MICRODVD}; no extension
@@ -582,6 +594,7 @@ public enum OutputContainer {
             case "ts" -> MPEG_TS;
             case "mpg", "mpeg", "m2p", "ps", "vob" -> MPEG_PS;
             case "avi" -> AVI;
+            case "mxf" -> MXF;
             case "srt" -> SRT;
             case "vtt" -> WEBVTT;
             case "ass" -> ASS;
