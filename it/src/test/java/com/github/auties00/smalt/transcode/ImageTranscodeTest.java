@@ -12,6 +12,7 @@ import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.image.RasterTesting;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -88,7 +89,7 @@ class ImageTranscodeTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @CsvSource({"TIFF, tif", "ICO, ico", "JP2, jp2"})
+    @CsvSource({"TIFF, tif", "ICO, ico", "ANI, ani", "JP2, jp2"})
     @DisplayName("keeps transparency for every other output format that stores it")
     void keepsAlpha(ImageFormat format, String extension, @TempDir Path directory) {
         var output = directory.resolve("out." + extension);
@@ -137,6 +138,40 @@ class ImageTranscodeTest {
             assertEquals(10, frames);
             assertEquals(1_000_000, duration);
         }
+    }
+
+    @Test
+    @DisplayName("writes an animation as an animated cursor whose steps keep every frame and the duration")
+    void animatedCursor(@TempDir Path directory) {
+        var source = animation("gif", List.of());
+        var output = directory.resolve("out.ani");
+        var result = transcode(source, output, ImageTranscodeOptions.of(ImageFormat.ANI).toBuilder().maxLongEdge(80).build());
+        assertTrue(result.animated());
+        assertEquals(10, result.frames());
+        try (var reader = Images.openAnimation(MediaSource.of(Fixtures.read(output)));
+             var expected = Images.openAnimation(MediaSource.of(Fixtures.read(transcodeTo(source, directory))))) {
+            assertEquals(80, reader.width());
+            assertEquals(60, reader.height());
+            assertEquals(0, reader.loopCount());
+            var frames = 0;
+            var duration = 0L;
+            for (var frame = reader.read(); frame != null; frame = reader.read()) {
+                var reference = expected.read();
+                assertArrayEquals(RasterTesting.tight(reference.picture()), RasterTesting.tight(frame.picture()),
+                        "frame " + frames);
+                frames++;
+                duration += frame.durationMicros();
+            }
+            assertEquals(10, frames);
+            assertEquals(1_000_000, duration);
+        }
+    }
+
+    /** Scales an animation as the animated cursor transcode does, into a lossless APNG. */
+    static Path transcodeTo(Path source, Path directory) {
+        var output = directory.resolve("reference.png");
+        transcode(source, output, ImageTranscodeOptions.of(ImageFormat.PNG).toBuilder().maxLongEdge(80).build());
+        return output;
     }
 
     @Test
@@ -211,6 +246,184 @@ class ImageTranscodeTest {
         assertTrue(tiny.width() < 1600, "shrunk " + tiny.width());
         assertThrows(MediaException.LimitExceeded.class, () -> transcode(photo(), directory.resolve("none.png"),
                 ImageTranscodeOptions.of(ImageFormat.PNG).toBuilder().maxBytes(10).build()));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @CsvSource({"WEBP, webp", "GIF, gif", "PNG, apng"})
+    @DisplayName("fits an animation into a byte budget keeping every frame and the duration")
+    void animatedBudget(ImageFormat format, String extension, @TempDir Path directory) {
+        var input = animation("gif", List.of());
+        var free = transcode(input, directory.resolve("free." + extension), ImageTranscodeOptions.of(format));
+        assertTrue(free.animated());
+        assertEquals(10, free.frames());
+        var budget = free.bytes() / 3;
+        var output = directory.resolve("out." + extension);
+        var result = transcode(input, output, ImageTranscodeOptions.of(format).toBuilder().maxBytes(budget).build());
+        assertTrue(result.bytes() <= budget, result.bytes() + " > " + budget);
+        assertEquals(result.bytes(), output.toFile().length());
+        assertEquals(10, result.frames());
+        try (var reader = Images.openAnimation(MediaSource.of(Fixtures.read(output)))) {
+            assertEquals(result.width(), reader.width());
+            assertEquals(result.height(), reader.height());
+            var frames = 0;
+            var duration = 0L;
+            for (var frame = reader.read(); frame != null; frame = reader.read()) {
+                frames++;
+                duration += frame.durationMicros();
+            }
+            assertEquals(10, frames);
+            assertEquals(1_000_000, duration);
+        }
+        if (format == ImageFormat.PNG) {
+            assertTrue(result.width() < 160, "a lossless animation shrinks: " + result.width());
+        }
+        if (format != ImageFormat.WEBP) {
+            Oracle.assertDecodesCleanly(output);
+            assertEquals(10, Oracle.decodeVideo(output, "rgb24", 0).length / (result.width() * result.height() * 3));
+        }
+        assertThrows(MediaException.LimitExceeded.class, () -> transcode(input, directory.resolve("none." + extension),
+                ImageTranscodeOptions.of(format).toBuilder().maxBytes(8).build()));
+    }
+
+    @Test
+    @DisplayName("steps an animation's quality, then its size, then keeps fewer frames until it fits the budget")
+    void animatedBudgetLadder() {
+        // a fake encoder whose output grows with the canvas, the quality and the frame count, so the
+        // ladder's outcome is exact: 16 + width * height * quality / 7500 bytes a frame
+        var attempts = new ArrayList<int[]>();
+        var frames = new ArrayList<Long>();
+        var writers = new AnimationWriters() {
+            @Override
+            public boolean supports(ImageFormat format) {
+                return format == ImageFormat.WEBP;
+            }
+
+            @Override
+            public AnimationWriter open(ImageFormat format, int width, int height, ImageEncoderOptions options,
+                                        MediaSink sink) {
+                var quality = options.quality().orElse(75);
+                attempts.add(new int[]{width, height, quality});
+                frames.clear();
+                return new AnimationWriter() {
+                    @Override
+                    public int width() {
+                        return width;
+                    }
+
+                    @Override
+                    public int height() {
+                        return height;
+                    }
+
+                    @Override
+                    public void write(RgbaPicture picture, long durationMicros) {
+                        assertEquals(width, picture.width());
+                        frames.add(durationMicros);
+                        sink.write(new byte[16 + width * height * quality / 7500]);
+                    }
+
+                    @Override
+                    public void finish() {
+                    }
+
+                    @Override
+                    public void close() {
+                    }
+                };
+            }
+        };
+        var input = Fixtures.read(animation("gif", List.of()));
+        // 10 frames at 160x120: 208 bytes a frame at quality 75, 80 at 25 and 54 at 15
+        var quality = run(input, writers, 10 * 70);
+        assertEquals(10, quality.frames());
+        assertEquals(160, quality.width());
+        assertArrayEquals(new int[]{160, 120, 15}, attempts.getLast());
+        assertEquals(List.of(75, 65, 55, 45, 35, 25, 15), attempts.stream().map(attempt -> attempt[2]).toList());
+        attempts.clear();
+        // 16 bytes a frame of overhead: ten frames never fit 100 bytes, five frames of 20 bytes do
+        var decimated = run(input, writers, 100);
+        assertEquals(5, decimated.frames());
+        assertEquals(List.of(200_000L, 200_000L, 200_000L, 200_000L, 200_000L), frames);
+        assertTrue(decimated.bytes() <= 100);
+        assertTrue(Math.max(decimated.width(), decimated.height()) < 160);
+        // a single frame takes 16 bytes
+        assertThrows(MediaException.LimitExceeded.class, () -> run(input, writers, 15));
+    }
+
+    @Test
+    @DisplayName("keeps the right frames when it drops frames of an animation at its full size")
+    void animatedBudgetKeptFrames() {
+        // 16x12 is already the smallest size the budget shrinks to, so the frames are dropped at full
+        // size, where the kept frame is the reader's own picture until the next kept one is read
+        var input = Fixtures.read(Fixtures.ffmpeg("gif", List.of("-f", "lavfi", "-i",
+                "nullsrc=size=16x12:rate=10:duration=0.8,format=rgb24,geq=r='N*30':g='255-N*30':b='X*16'"), List.of()));
+        var source = new ArrayList<byte[]>();
+        try (var reader = Images.openAnimation(MediaSource.of(input))) {
+            for (var frame = reader.read(); frame != null; frame = reader.read()) {
+                source.add(ImageOps.toRgba(frame.picture()).pixels().clone());
+            }
+        }
+        assertEquals(8, source.size());
+        for (var index = 1; index < 8; index++) {
+            assertFalse(java.util.Arrays.equals(source.get(index - 1), source.get(index)), "frame " + index + " changes");
+        }
+        var written = new ArrayList<byte[]>();
+        var durations = new ArrayList<Long>();
+        var writers = new AnimationWriters() {
+            @Override
+            public boolean supports(ImageFormat format) {
+                return format == ImageFormat.WEBP;
+            }
+
+            @Override
+            public AnimationWriter open(ImageFormat format, int width, int height, ImageEncoderOptions options,
+                                        MediaSink sink) {
+                written.clear();
+                durations.clear();
+                return new AnimationWriter() {
+                    @Override
+                    public int width() {
+                        return width;
+                    }
+
+                    @Override
+                    public int height() {
+                        return height;
+                    }
+
+                    @Override
+                    public void write(RgbaPicture picture, long durationMicros) {
+                        written.add(picture.pixels().clone());
+                        durations.add(durationMicros);
+                        sink.write(new byte[20]);
+                    }
+
+                    @Override
+                    public void finish() {
+                    }
+
+                    @Override
+                    public void close() {
+                    }
+                };
+            }
+        };
+        // eight frames of 20 bytes pass 100 bytes, four fit
+        var result = run(input, writers, 100);
+        assertEquals(4, result.frames());
+        assertEquals(16, result.width());
+        assertEquals(List.of(200_000L, 200_000L, 200_000L, 200_000L), durations);
+        for (var index = 0; index < 4; index++) {
+            assertArrayEquals(source.get(index * 2), written.get(index), "kept frame " + index);
+        }
+    }
+
+    private static ImageTranscodeResult run(byte[] input, AnimationWriters writers, long budget) {
+        var output = MediaSink.memory();
+        var result = new ImageTranscode(MediaSource.of(input), output, ImageTranscodeOptions.of(ImageFormat.WEBP)
+                .toBuilder().maxBytes(budget).build(), writers).run();
+        assertEquals(result.bytes(), output.size());
+        return result;
     }
 
     @Test
