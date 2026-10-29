@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.property;
 
+import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.AnimationFrame;
 import com.github.auties00.smalt.image.Channel8Picture;
 import com.github.auties00.smalt.image.ChromaFormat;
@@ -11,6 +12,8 @@ import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.metadata.ImageMetadataEdit;
 import com.github.auties00.smalt.image.metadata.ImageMetadataEditor;
+import com.github.auties00.smalt.internal.heif.HeifFile;
+import com.github.auties00.smalt.internal.heif.HeifProperty;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.metadata.XmpPacket;
@@ -44,7 +47,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Re-reads the images Smalt writes with the formats' reference decoders: libpng (through
  * {@code tools/testdata/png-oracle}), libjpeg-turbo's djpeg, libwebp's dwebp, OpenJPEG's opj_decompress, libtiff's
- * tools and ffmpeg's decoders (dav1d for AVIF), and requires the pixels to equal Smalt's own decode (or the source, for
+ * tools and ffmpeg's decoders (dav1d for AVIF, its HEVC decoder for HEIC), and requires the pixels to equal Smalt's own decode (or the source, for
  * lossless coding) within the tolerance declared for the format; JPEG-LS, which no image format constant names,
  * through ffmpeg's decoder. Metadata edits are checked the same way: a reference
  * decoder reads the edited file without a warning and to exactly the pixels of the original.
@@ -63,7 +66,7 @@ class ReferenceImageDecodeTest {
     /** The image formats Smalt encodes whose reference decoding this class covers, and how. */
     private static final Set<ImageFormat> COVERED = Set.of(ImageFormat.PNG, ImageFormat.JPEG, ImageFormat.WEBP,
             ImageFormat.GIF, ImageFormat.BMP, ImageFormat.TIFF, ImageFormat.ICO, ImageFormat.JP2, ImageFormat.AVIF,
-            ImageFormat.ANI, ImageFormat.JXL);
+            ImageFormat.ANI, ImageFormat.JXL, ImageFormat.HEIC);
 
     /** A picture with gradients, edges and noise, and with alpha when asked. */
     static RgbaPicture source(boolean alpha) {
@@ -152,6 +155,50 @@ class ReferenceImageDecodeTest {
                 for (var y = 0; y < yuv.chromaHeight(); y++) {
                     out.write(plane, y * yuv.uvStride(), yuv.chromaWidth());
                 }
+            }
+        }
+        return out.toByteArray();
+    }
+
+    /** Converts an {@code hvcC} record and a length-prefixed payload into an Annex B stream. */
+    static byte[] annexB(byte[] hvcC, byte[] payload) {
+        var out = new ByteArrayOutputStream();
+        var lengthSize = (hvcC[21] & 3) + 1;
+        var position = 23;
+        for (var array = 0; array < (hvcC[22] & 0xFF); array++) {
+            var count = ((hvcC[position + 1] & 0xFF) << 8) | (hvcC[position + 2] & 0xFF);
+            position += 3;
+            for (var n = 0; n < count; n++) {
+                var length = ((hvcC[position] & 0xFF) << 8) | (hvcC[position + 1] & 0xFF);
+                out.writeBytes(new byte[]{0, 0, 0, 1});
+                out.write(hvcC, position + 2, length);
+                position += 2 + length;
+            }
+        }
+        for (var offset = 0; offset < payload.length; ) {
+            var length = 0;
+            for (var i = 0; i < lengthSize; i++) {
+                length = (length << 8) | (payload[offset + i] & 0xFF);
+            }
+            out.writeBytes(new byte[]{0, 0, 0, 1});
+            out.write(payload, offset + lengthSize, length);
+            offset += lengthSize + length;
+        }
+        return out.toByteArray();
+    }
+
+    /** Returns the top left rectangle of tight 8-bit 4:2:0 planes. */
+    static byte[] crop420(byte[] planes, int width, int height, int cropWidth, int cropHeight) {
+        var out = new ByteArrayOutputStream();
+        for (var y = 0; y < cropHeight; y++) {
+            out.write(planes, y * width, cropWidth);
+        }
+        var chromaWidth = (width + 1) / 2;
+        var chromaHeight = (height + 1) / 2;
+        for (var plane = 0; plane < 2; plane++) {
+            var base = width * height + plane * chromaWidth * chromaHeight;
+            for (var y = 0; y < (cropHeight + 1) / 2; y++) {
+                out.write(planes, base + y * chromaWidth, (cropWidth + 1) / 2);
             }
         }
         return out.toByteArray();
@@ -432,6 +479,24 @@ class ReferenceImageDecodeTest {
                 Tolerance.psnr(40).assertWithin("dav1d", Oracle.decodeVideo(file, List.of("-c:v", "libdav1d"), "rgba",
                         1), rgba(picture));
             }
+        }
+
+        @Test
+        @DisplayName("HEIC decodes in ffmpeg's HEVC decoder exactly as in Smalt")
+        void heic() {
+            var bytes = Images.encode(source(false), ImageFormat.HEIC);
+            var yuv = (YuvPicture) Images.decode(MediaSource.of(bytes)).picture();
+            // ffmpeg 7.1 rejects every HEIF file whose items carry a clean aperture, which this odd-sized picture's
+            // does, so its HEVC decoder reads the item's payload as an Annex B stream, and the coded picture, one
+            // sample larger on each odd side, is cropped here as the clean aperture crops it
+            var file = HeifFile.parse(MediaSource.of(bytes), MediaLimits.DEFAULT, true);
+            var item = file.primaryItem();
+            var hvcC = item.property(HeifProperty.HevcConfiguration.class).record();
+            var stream = save("still-heic.hevc", annexB(hvcC, file.readItem(MediaSource.of(bytes), item,
+                    MediaLimits.DEFAULT)));
+            var raw = Oracle.decodeVideo(stream, List.of("-f", "hevc"), "yuv420p", 1);
+            EXACT.assertWithin("ffmpeg hevc", crop420(raw, (WIDTH + 1) & ~1, (HEIGHT + 1) & ~1, WIDTH, HEIGHT),
+                    planes(yuv));
         }
 
         @ParameterizedTest(name = "{0}")

@@ -10,7 +10,7 @@ import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.image.Yuv16Picture;
-import com.github.auties00.smalt.image.avif.internal.EncodeImage;
+import com.github.auties00.smalt.internal.heif.EncodeImage;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Quality;
@@ -80,7 +80,7 @@ class AvifCicpMatrixTest {
     void samples(ColorInfo color) {
         var source = source();
         for (var format : new ChromaFormat[]{ChromaFormat.YUV444, ChromaFormat.YUV420}) {
-            var image = EncodeImage.of(source, format, 10, color, false, false);
+            var image = EncodeImage.of("avif", source, format, 10, color, false, false);
             var expected = ImageOps.toYuv16(source, format, color, 10);
             var cw = format.chromaWidth(WIDTH);
             var ch = format.chromaHeight(HEIGHT);
@@ -186,7 +186,7 @@ class AvifCicpMatrixTest {
         var source = source();
         var color = new ColorInfo(MatrixCoefficients.YCGCO, ColorRange.LIMITED, ColorPrimaries.BT709,
                 TransferCharacteristics.SRGB);
-        var image = EncodeImage.of(source, ChromaFormat.YUV444, 8, color, false, false);
+        var image = EncodeImage.of("avif", source, ChromaFormat.YUV444, 8, color, false, false);
         var expected = ImageOps.toYuv(source, ChromaFormat.YUV444, color);
         for (var i = 0; i < WIDTH * HEIGHT; i++) {
             assertTrue(Math.abs((expected.u()[i] & 0xFF) - image.planes()[1][i]) <= 1, "Cg " + i);

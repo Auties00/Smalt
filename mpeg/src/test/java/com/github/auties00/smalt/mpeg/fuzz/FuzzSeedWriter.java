@@ -1,8 +1,12 @@
 package com.github.auties00.smalt.mpeg.fuzz;
 
 import com.github.auties00.smalt.container.Containers;
+import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.image.heic.HeicEncoder;
+import com.github.auties00.smalt.image.heic.HeicEncoderOptions;
 import com.github.auties00.smalt.internal.bits.MsbBitWriter;
 import com.github.auties00.smalt.internal.sei.SeiWriter;
+import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.HeifBuilder;
@@ -12,6 +16,7 @@ import com.github.auties00.smalt.testkit.fuzz.FuzzPackets;
 import com.github.auties00.smalt.testkit.fuzz.FuzzSeeds;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.VideoTrack;
+import com.github.auties00.smalt.video.hevc.encoder.HevcEncoderSpeed;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
@@ -37,9 +42,10 @@ import static com.github.auties00.smalt.testkit.fuzz.FuzzSeeds.write;
  * Writes the committed seeds of the mpeg fuzz targets (tools/fuzz/README.md): short streams encoded by ffmpeg and
  * converted to the packet format through Smalt's demuxers, raw elementary streams and H.264 parameter sets made by
  * ffmpeg (and from a separate-color-plane test stream), HEIF stills built with the test kit's
- * {@link HeifBuilder} around x265 and x264 pictures and uncompressed pixels, AAC LTP, ER AAC LTP, SSR and ER BSAC streams
- * written bit by bit, AAC with MPEG Surround side information (from the {@code MpegSurroundTest} resources), and
- * the scalable and alpha H.264 test streams, one NAL unit per packet. Runs only with {@code -Dsmalt.fuzz.writeSeeds=true}.
+ * {@link HeifBuilder} around x265 and x264 pictures and uncompressed pixels, HEIC files of the HEIC encoder, AAC
+ * LTP, ER AAC LTP, SSR and ER BSAC streams written bit by bit, AAC with MPEG Surround side information (from the
+ * {@code MpegSurroundTest} resources), and the scalable and alpha H.264 test streams, one NAL unit per packet. Runs
+ * only with {@code -Dsmalt.fuzz.writeSeeds=true}.
  */
 @EnabledIfSystemProperty(named = "smalt.fuzz.writeSeeds", matches = "true",
         disabledReason = "[opt-in:fuzz-seeds] runs only with -Dsmalt.fuzz.writeSeeds=true")
@@ -770,6 +776,37 @@ class FuzzSeedWriter {
         writer.write(7, 3);
         writer.alignWithZeros();
         return writer.toByteArray();
+    }
+
+    @Test
+    @DisplayName("writes the seeds of the HEIC target that the HEIC encoder makes")
+    void heicEncoder() {
+        var options = HeicEncoderOptions.ofQuality(30).toBuilder().speed(HevcEncoderSpeed.FASTEST).threads(1);
+        write(MpegFuzzTest.class, "heic", "valid-encoder-grid-alpha.heic",
+                HeicEncoder.encode(gradient(100, 30, 0, true), options.gridTileSize(64).build()));
+        var sink = MediaSink.memory();
+        try (var writer = HeicEncoder.openAnimationWriter(33, 19, options.automaticGridTileSize().build(), sink)) {
+            for (var frame = 0; frame < 4; frame++) {
+                writer.write(gradient(33, 19, frame, frame > 0), 40_000);
+            }
+            writer.finish();
+        }
+        write(MpegFuzzTest.class, "heic", "valid-encoder-sequence.heic", sink.toByteArray());
+    }
+
+    /** Returns a picture of gradients that moves with {@code frame}, more transparent to the left when asked. */
+    private static RgbaPicture gradient(int width, int height, int frame, boolean transparent) {
+        var pixels = new byte[width * height * 4];
+        for (var y = 0; y < height; y++) {
+            for (var x = 0; x < width; x++) {
+                var i = (y * width + x) * 4;
+                pixels[i] = (byte) (x * 255 / width);
+                pixels[i + 1] = (byte) (y * 255 / height);
+                pixels[i + 2] = (byte) (frame * 60);
+                pixels[i + 3] = (byte) (transparent ? x * 255 / width : 255);
+            }
+        }
+        return RgbaPicture.of(width, height, width * 4, pixels, true);
     }
 
     @Test

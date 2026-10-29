@@ -24,7 +24,7 @@ class AnimationSeekTest {
     private static final int FRAMES = 10;
 
     @ParameterizedTest(name = "{0}")
-    @EnumSource(value = ImageFormat.class, names = {"AVIF", "GIF", "PNG", "WEBP", "ANI"})
+    @EnumSource(value = ImageFormat.class, names = {"AVIF", "HEIC", "GIF", "PNG", "WEBP", "ANI"})
     @DisplayName("returns after a seek the frame and the frames a linear read returns from the target on")
     void seek(ImageFormat format) {
         assertTrue(Images.isAnimationEncodable(format), format + " animations are written");

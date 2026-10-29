@@ -125,7 +125,8 @@ public final class ImageEncoderOptions {
      * lossless JPEG (ITU-T T.81 Annex H) at the picture's bit depth, an RGB picture in RGB; a format that
      * holds fewer bits per sample than the picture has (8 for WebP, GIF, ICO and BMP, 12 for AVIF, 16 for
      * JPEG) rejects a lossless request with {@link com.github.auties00.smalt.MediaException.Unsupported},
-     * unless the picture's samples are exactly those of an 8-bit picture, which it then codes.
+     * unless the picture's samples are exactly those of an 8-bit picture, which it then codes. HEIC, whose encoder
+     * codes lossy images only, rejects every lossless request.
      */
     public boolean isLossless() {
         return lossless;

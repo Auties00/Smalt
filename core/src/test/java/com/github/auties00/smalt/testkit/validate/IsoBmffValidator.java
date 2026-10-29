@@ -433,10 +433,21 @@ public final class IsoBmffValidator {
                 trak.child("edts").map(this::editOffset).orElse(0L));
         var expectedTrackDuration = timescale > 0 ? Math.round((double) mediaDuration * movieTimescale / timescale) : 0;
         var edts = trak.child("edts");
+        var repeating = false;
         if (edts.isPresent()) {
             expectedTrackDuration = editList(edts.get(), where + "/edts", mediaDuration);
+            repeating = edts.get().child("elst").filter(elst -> elst.payloadSize() >= 4)
+                    .map(elst -> (flags(data, elst) & 1) != 0).orElse(false);
         }
-        if (!fragmented && samples > 0) {
+        if (!fragmented && samples > 0 && repeating) {
+            // a repeating edit list (ISO/IEC 14496-12 8.6.6) plays its edits again until the track duration, which
+            // is a whole number of plays or, for endless repetition, indefinite (all ones)
+            var indefinite = trackDuration == 0xFFFFFFFFL || trackDuration == -1L;
+            var plays = expectedTrackDuration > 0 ? Math.round((double) trackDuration / expectedTrackDuration) : 0;
+            findings.require(indefinite || plays >= 1 && Math.abs(trackDuration - plays * expectedTrackDuration)
+                    <= plays, where + "/tkhd", "duration " + trackDuration + " is not a whole number of plays of"
+                    + " the repeating edit duration " + expectedTrackDuration + " in the movie timescale");
+        } else if (!fragmented && samples > 0) {
             findings.require(Math.abs(trackDuration - expectedTrackDuration) <= 1, where + "/tkhd", "duration "
                     + trackDuration + " differs from the media or edit duration " + expectedTrackDuration
                     + " in the movie timescale");

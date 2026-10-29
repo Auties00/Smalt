@@ -9,7 +9,7 @@ import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
-import com.github.auties00.smalt.image.avif.internal.EncodeImage;
+import com.github.auties00.smalt.internal.heif.EncodeImage;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.ops.YuvConverter;
 import com.github.auties00.smalt.internal.codec.FrameClock;
@@ -544,7 +544,8 @@ public final class Av1Encoder implements VideoEncoder {
             still.filmGrain(data);
             intraGrainSeed = FilmGrains.nextSeed(seed);
         }
-        var image = EncodeImage.of(picture, options.chromaFormat(), options.bitDepth(), options.color(), false, false);
+        var image = EncodeImage.of("av1", picture, options.chromaFormat(), options.bitDepth(), options.color(), false,
+                false);
         var chromaWidth = image.chromaWidth();
         var obus = still.encode(image.planes(), new int[]{image.width(), chromaWidth, chromaWidth});
         var data = new byte[obus.length + 2];

@@ -372,6 +372,28 @@ class AvifEncoderTest {
             assertEquals(96 * 64 * 4, ffmpegDecode(file, "rgba").length);
         }
 
+        @Test
+        @DisplayName("a premultiplied image sequence has a prem track reference and plays back as straight color")
+        void premultipliedSequence() throws Exception {
+            var source = rgba(96, 64, true);
+            var file = animation(AvifEncoderOptions.lossy(80).toBuilder().speed(10).premultipliedAlpha(true).build(),
+                    List.of(source, source));
+            try (var reader = AvifDecoder.openAnimation(MediaSource.of(file))) {
+                var count = 0;
+                for (var frame = reader.read(); frame != null; frame = reader.read()) {
+                    var picture = ImageOps.toRgba(frame.picture());
+                    // compare the more opaque right half, where premultiplying keeps most of the precision
+                    var offset = 48 * 4;
+                    var psnr = psnr(Arrays.copyOfRange(source.pixels(), offset, source.pixels().length),
+                            source.stride(), Arrays.copyOfRange(picture.pixels(), offset, picture.pixels().length),
+                            picture.stride(), 47, 64, 4);
+                    assertTrue(psnr > 28, "frame " + count + " PSNR " + psnr);
+                    count++;
+                }
+                assertEquals(2, count);
+            }
+        }
+
         private static RgbaPicture panned(RgbaPicture source, int width, int height, int shift) {
             var out = RgbaPicture.allocate(width, height, false);
             for (var y = 0; y < height; y++) {

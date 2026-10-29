@@ -72,7 +72,7 @@ public final class ThreadDigest {
         var digests = new LinkedHashMap<String, String>();
         var picture = picture(1024, 768);
         for (var format : new ImageFormat[]{ImageFormat.JPEG, ImageFormat.PNG, ImageFormat.WEBP, ImageFormat.JP2,
-                ImageFormat.AVIF, ImageFormat.TIFF, ImageFormat.GIF, ImageFormat.JXL}) {
+                ImageFormat.AVIF, ImageFormat.HEIC, ImageFormat.TIFF, ImageFormat.GIF, ImageFormat.JXL}) {
             for (var lossless : new boolean[]{false, true}) {
                 var options = lossless ? ImageEncoderOptions.lossless() : ImageEncoderOptions.ofQuality(80);
                 byte[] encoded;

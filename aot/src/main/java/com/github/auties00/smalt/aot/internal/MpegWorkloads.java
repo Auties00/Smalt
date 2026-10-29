@@ -22,6 +22,11 @@ import com.github.auties00.smalt.audio.amr.AmrMode;
 import com.github.auties00.smalt.audio.amr.AmrVad;
 import com.github.auties00.smalt.container.wav.WavDemuxer;
 import com.github.auties00.smalt.image.ChromaFormat;
+import com.github.auties00.smalt.image.ImageDecoderOptions;
+import com.github.auties00.smalt.image.heic.HeicDecoder;
+import com.github.auties00.smalt.image.heic.HeicEncoder;
+import com.github.auties00.smalt.image.heic.HeicEncoderOptions;
+import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -68,7 +73,7 @@ import static com.github.auties00.smalt.aot.internal.WorkloadFactory.file;
 import static com.github.auties00.smalt.aot.internal.WorkloadFactory.realtime;
 
 /**
- * Creates the workloads of {@link TrainingFamily#MPEG}, the codecs of {@code smalt-mpeg}: H.264, HEVC,
+ * Creates the workloads of {@link TrainingFamily#MPEG}, the codecs of {@code smalt-mpeg}: H.264, HEVC, HEIC,
  * MPEG-1 and MPEG-2 video, AAC, AC-3 and E-AC-3, and AMR, each keeping its codecs across rounds as a
  * long-running application does.
  */
@@ -91,8 +96,8 @@ final class MpegWorkloads {
      * @return the factories, in order
      */
     static List<WorkloadFactory> factories() {
-        // TODO: train the HEIC, MPEG-4 Part 2, H.263 and USAC decoders and the separate color plane path of the
-        //  H.264 decoder, which need streams that no Smalt encoder produces
+        // TODO: train the MPEG-4 Part 2, H.263 and USAC decoders and the separate color plane path of the H.264
+        //  decoder, which need streams that no Smalt encoder produces
         return List.of(
                 realtime("h264-encode-rt-t1", () -> h264Encode(1, null, null)),
                 realtime("h264-encode-rt-tools", MpegWorkloads::h264RealtimeTools),
@@ -137,6 +142,8 @@ final class MpegWorkloads {
                         hevcFileOptions(HevcEncoderSpeed.SLOW, 2).toBuilder().profile(HevcProfile.MAIN_10)
                                 .bitDepth(10).pictureHash(HevcPictureHash.MD5).build())),
                 file("hevc-encode-still", MpegWorkloads::hevcStillEncode),
+                file("heic-encode", MpegWorkloads::heicEncode),
+                file("heic-decode", MpegWorkloads::heicDecode),
                 file("hevc-decode-t1", () -> hevcDecode(1, false)),
                 file("hevc-decode-t2", () -> hevcDecode(2, false)),
                 file("aac-encode", () -> aacEncode(6)),
@@ -231,6 +238,71 @@ final class MpegWorkloads {
                     encoder.flush(packet -> {
                     });
                 }
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that encodes HEIC images: a 384x256 picture with alpha, the same picture as a 10-bit
+     * grid of 128-sample images on two threads, and an animation with alpha and predicted frames.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload heicEncode() {
+        var alpha = SyntheticImages.rgba(SyntheticVideo.natural(384, 256, 1).getFirst(), true);
+        var frames = SyntheticVideo.natural(128, 96, 4);
+        var grid = HeicEncoderOptions.ofQuality(70).toBuilder().bitDepth(10).gridTileSize(128).threads(2).build();
+        var animation = HeicEncoderOptions.ofQuality(60).toBuilder().speed(HevcEncoderSpeed.FAST).threads(1).build();
+        return TrainingWorkload.of("heic-encode", () -> {
+            Blackhole.consume(HeicEncoder.encode(alpha, HeicEncoderOptions.defaults()).length);
+            Blackhole.consume(HeicEncoder.encode(alpha, grid).length);
+            var sink = MediaSink.memory();
+            try (var writer = HeicEncoder.openAnimationWriter(128, 96, animation, sink)) {
+                for (var frame : frames) {
+                    writer.write(SyntheticImages.rgba(frame, true), 40_000);
+                }
+                writer.finish();
+            }
+            Blackhole.consume(sink.toByteArray().length);
+        });
+    }
+
+    /**
+     * Returns a workload that probes and decodes HEIC files of the HEIC encoder: a picture with alpha, a region of
+     * a grid, a 10-bit picture at its full depth, and an animation with alpha and reordered samples played and
+     * sought back.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload heicDecode() {
+        var picture = SyntheticImages.rgba(SyntheticVideo.natural(384, 256, 1).getFirst(), true);
+        var still = HeicEncoder.encode(picture, HeicEncoderOptions.defaults());
+        var grid = HeicEncoder.encode(picture, HeicEncoderOptions.ofQuality(60).toBuilder().gridTileSize(64)
+                .speed(HevcEncoderSpeed.FASTEST).build());
+        var deep = HeicEncoder.encode(picture, HeicEncoderOptions.forArchive().toBuilder()
+                .speed(HevcEncoderSpeed.FASTEST).build());
+        var sink = MediaSink.memory();
+        try (var writer = HeicEncoder.openAnimationWriter(128, 96, HeicEncoderOptions.ofQuality(60).toBuilder()
+                .speed(HevcEncoderSpeed.FASTEST).build(), sink)) {
+            for (var frame : SyntheticVideo.natural(128, 96, 5)) {
+                writer.write(SyntheticImages.rgba(frame, true), 40_000);
+            }
+            writer.finish();
+        }
+        var animated = sink.toByteArray();
+        var region = ImageDecoderOptions.builder().region(100, 70, 120, 90).build();
+        var highBitDepth = ImageDecoderOptions.builder().highBitDepth(true).build();
+        return TrainingWorkload.of("heic-decode", () -> {
+            Blackhole.consume(HeicDecoder.probe(MediaSource.of(still)).hashCode());
+            Blackhole.consume(HeicDecoder.decode(MediaSource.of(still)).picture().width());
+            Blackhole.consume(HeicDecoder.decode(MediaSource.of(grid), region).picture().width());
+            Blackhole.consume(HeicDecoder.decode(MediaSource.of(deep), highBitDepth).picture().width());
+            try (var reader = HeicDecoder.openAnimation(MediaSource.of(animated))) {
+                for (var frame = reader.read(); frame != null; frame = reader.read()) {
+                    Blackhole.consume(frame.picture().width());
+                }
+                reader.seek(40_000);
+                Blackhole.consume(reader.read().picture().width());
             }
         });
     }

@@ -1,4 +1,4 @@
-package com.github.auties00.smalt.image.avif.internal;
+package com.github.auties00.smalt.internal.heif;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.ChannelPicture;
@@ -19,8 +19,8 @@ import com.github.auties00.smalt.internal.color.YcgcoR;
 import java.util.Optional;
 
 /**
- * Holds a picture prepared for AV1 coding: planar Y'CbCr samples at the coded bit depth and
- * chroma format, the color description the file signals, and the alpha plane, if any.
+ * Holds a picture prepared for coding as a HEIF image or a video frame: planar Y'CbCr samples at the coded bit
+ * depth and chroma format, the color description the file signals, and the alpha plane, if any.
  *
  * <p>RGB pictures are converted with the matrix and range of the requested color description
  * at full precision ({@code ITU-T H.273} equations, chroma averaged over the pixels a subsampled
@@ -46,6 +46,7 @@ public record EncodeImage(int width, int height, ChromaFormat format, int bitDep
     /**
      * Prepares a picture.
      *
+     * @param codec the name of the coding that errors name, for example {@code "avif"}
      * @param picture the picture to prepare, RGBA or planar Y'CbCr at any depth
      * @param format the requested chroma format, or {@code null} for automatic
      * @param bitDepth the requested bit depth, or 0 for automatic
@@ -55,20 +56,20 @@ public record EncodeImage(int width, int height, ChromaFormat format, int bitDep
      * @return the prepared image
      * @throws MediaException.Unsupported if the color description cannot be applied
      */
-    public static EncodeImage of(Picture picture, ChromaFormat format, int bitDepth, ColorInfo rgbColor,
-                                 boolean lossless, boolean premultiplied) {
+    public static EncodeImage of(String codec, Picture picture, ChromaFormat format, int bitDepth,
+                                 ColorInfo rgbColor, boolean lossless, boolean premultiplied) {
         var reversible = YcgcoR.applies(rgbColor.matrix());
         return switch (picture) {
-            case RgbaPicture rgba -> fromRgba(rgba.width(), rgba.height(), rgba.pixels(), null, rgba.stride(),
+            case RgbaPicture rgba -> fromRgba(codec, rgba.width(), rgba.height(), rgba.pixels(), null, rgba.stride(),
                     rgba.hasAlpha(), format, bitDepth != 0 ? bitDepth : reversible ? 10 : 8, rgbColor, lossless,
                     premultiplied);
-            case Rgba16Picture rgba -> fromRgba(rgba.width(), rgba.height(), null, rgba.pixels(), rgba.stride(),
+            case Rgba16Picture rgba -> fromRgba(codec, rgba.width(), rgba.height(), null, rgba.pixels(), rgba.stride(),
                     rgba.hasAlpha(), format, bitDepth != 0 ? bitDepth : reversible ? 12 : 10, rgbColor, lossless,
                     premultiplied);
             case YuvPicture yuv -> fromYuv(yuv, format, bitDepth == 0 ? 8 : bitDepth);
             case Yuv16Picture yuv -> fromYuv16(yuv, format,
                     bitDepth != 0 ? bitDepth : yuv.bitDepth() <= 8 ? 8 : yuv.bitDepth() <= 10 ? 10 : 12);
-            case ChannelPicture channels -> of(channels.bitDepth() > 8 ? ImageOps.toRgba16(channels)
+            case ChannelPicture channels -> of(codec, channels.bitDepth() > 8 ? ImageOps.toRgba16(channels)
                     : ImageOps.toRgba(channels), format, bitDepth, rgbColor, lossless, premultiplied);
         };
     }
@@ -110,6 +111,7 @@ public record EncodeImage(int width, int height, ChromaFormat format, int bitDep
     /**
      * Converts an RGBA picture.
      *
+     * @param codec the name of the coding that errors name
      * @param width the picture width, in pixels
      * @param height the picture height, in pixels
      * @param rgba8 the 8-bit samples, or {@code null}
@@ -123,9 +125,9 @@ public record EncodeImage(int width, int height, ChromaFormat format, int bitDep
      * @param premultiplied whether color is premultiplied
      * @return the image
      */
-    private static EncodeImage fromRgba(int width, int height, byte[] rgba8, short[] rgba16, int stride,
-                                        boolean hasAlpha, ChromaFormat format, int depth, ColorInfo color,
-                                        boolean lossless, boolean premultiplied) {
+    private static EncodeImage fromRgba(String codec, int width, int height, byte[] rgba8, short[] rgba16,
+                                        int stride, boolean hasAlpha, ChromaFormat format, int depth,
+                                        ColorInfo color, boolean lossless, boolean premultiplied) {
         if (format == null) {
             format = lossless ? ChromaFormat.YUV444 : ChromaFormat.YUV420;
         }
@@ -135,7 +137,7 @@ public record EncodeImage(int width, int height, ChromaFormat format, int bitDep
         }
         var matrix = color.matrix();
         if (matrix == MatrixCoefficients.IDENTITY && format != ChromaFormat.YUV444) {
-            throw new MediaException.Unsupported("avif", "the identity matrix needs 4:4:4");
+            throw new MediaException.Unsupported(codec, "the identity matrix needs 4:4:4");
         }
         if (YcgcoR.applies(matrix)) {
             return reversible(width, height, rgba8, rgba16, stride, hasAlpha, format, depth, color, premultiplied);

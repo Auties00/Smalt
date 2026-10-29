@@ -835,16 +835,19 @@ Derived Smalt packages:
   internal.heif (the HEIF item parser: the container rules it enforces, the
   clean aperture arithmetic and the loop count of image sequences; the
   limited-range alpha expansion of the image canvas; the operators of the
-  sample transform expressions, HeifSampleTransform)
+  sample transform expressions, HeifSampleTransform; HeifWriter and
+  HeifTrackWriter: the box layout of still images, grids, alpha, Exif and XMP
+  items and image sequences, and the orientation properties, of
+  src/write.c, which the AVIF and HEIC encoders share)
   image.avif, image.avif.internal (AvifDecoder: the choice between the primary
   item and the image sequence, the color, alpha and grid tile selection, the
   grid validation, the limited-range alpha expansion and the unpremultiplying
   of premultiplied alpha, the choice of the sample transform item shown in
-  place of the primary item; AvifEncoder: the box layout of still images, alpha
-  auxiliary items, grids, Exif and XMP items and image sequences, the quality
-  scale, the automatic tiling, the orientation properties and the RGB to YUV
-  conversion defaults; the tone map items of gain maps, which AvifDecoder reads
-  and AvifEncoder writes as src/read.c and src/write.c do)
+  place of the primary item; AvifEncoder: the items and properties of still
+  images, alpha auxiliary items, grids and image sequences, the quality scale,
+  the automatic tiling and the RGB to YUV conversion defaults; the tone map
+  items of gain maps, which AvifDecoder reads and AvifEncoder writes as
+  src/read.c and src/write.c do)
   internal.gainmap (HeifToneMaps: the rules by which a tmap item counts, as
   avifDecoderFindGainMapItem and avifParseToneMappedImageBox apply them)
   image.gainmap (GainMapComputer: the gain map computation of

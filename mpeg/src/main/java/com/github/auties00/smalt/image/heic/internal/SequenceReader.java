@@ -14,6 +14,7 @@ import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.internal.heif.HeifCanvas;
 import com.github.auties00.smalt.internal.heif.HeifFile;
+import com.github.auties00.smalt.internal.heif.HeifGeometry;
 import com.github.auties00.smalt.internal.heif.HeifMovie;
 import com.github.auties00.smalt.internal.heif.HeifPictures;
 import com.github.auties00.smalt.internal.heif.HeifProperty;
@@ -26,6 +27,7 @@ import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.VideoTrack;
 
 import java.util.ArrayDeque;
+import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -45,9 +47,10 @@ import java.util.function.Supplier;
  * before the start of the edit list, are skipped.
  *
  * <p>Each frame is converted to RGBA: 16-bit RGBA when the reader keeps a source depth above 8
- * bits, 8-bit RGBA otherwise. Color premultiplied by alpha ({@code prem} track reference) is
- * divided back, and alpha pictures of another size than the color pictures are resampled to it
- * with {@link HeifPictures#resampleAlpha}. A frame's timestamp is the presentation time of the
+ * bits, 8-bit RGBA otherwise, cropped to the clean aperture ({@code clap}) of the color track's sample entry
+ * when it has one. Color premultiplied by alpha ({@code prem} track reference) is divided back,
+ * and alpha pictures of another size than the color pictures are resampled to it with
+ * {@link HeifPictures#resampleAlpha}. A frame's timestamp is the presentation time of the
  * sample that carried its picture, relative to the first picture shown, and it lasts until that
  * sample's duration ends.
  *
@@ -86,6 +89,11 @@ public final class SequenceReader implements AnimationReader {
      * The {@code nclx} box of the alpha track's sample entry, or {@code null}.
      */
     private final HeifProperty.ColorNclx alphaNclx;
+
+    /**
+     * The clean aperture of the color track's sample entry, or {@code null}.
+     */
+    private final HeifProperty.CleanAperture aperture;
 
     /**
      * Whether the color is premultiplied by the alpha.
@@ -326,6 +334,7 @@ public final class SequenceReader implements AnimationReader {
         this.highBitDepth = highBitDepth;
         this.premultiplied = alphaInfo != null && colorInfo.references("prem", alphaInfo.id());
         this.alphaNclx = alphaInfo == null ? null : alphaInfo.property(HeifProperty.ColorNclx.class);
+        this.aperture = colorInfo.property(HeifProperty.CleanAperture.class);
         this.demuxer = new Mp4Demuxer(source, DemuxerOptions.builder().limits(limits).build());
         ItemDecoder colorDecoder = null;
         ItemDecoder alphaDecoder = null;
@@ -505,6 +514,9 @@ public final class SequenceReader implements AnimationReader {
             var plane = alpha == null ? null : alpha.next();
             if (alpha != null && plane == null) {
                 throw new MediaException.Malformed("heic: the alpha track has fewer pictures than the color track");
+            }
+            if (plane != null && alphaBase == Packet.NO_TIMESTAMP) {
+                alphaBase = plane.pts();
             }
             var frame = frame(next, plane);
             frames++;
@@ -691,7 +703,14 @@ public final class SequenceReader implements AnimationReader {
             canvas.writeAlpha(HeifPictures.resampleAlpha(plane.picture(), canvas.width(), canvas.height()),
                     plane.limited());
         }
-        return canvas.toPicture(next.color());
+        var picture = canvas.toPicture(next.color());
+        if (aperture != null) {
+            var geometry = HeifGeometry.resolve(List.of(aperture), picture.width(), picture.height());
+            if (geometry.crops(picture.width(), picture.height())) {
+                picture = HeifPictures.crop(picture, geometry.x(), geometry.y(), geometry.width(), geometry.height());
+            }
+        }
+        return picture;
     }
 
     @Override

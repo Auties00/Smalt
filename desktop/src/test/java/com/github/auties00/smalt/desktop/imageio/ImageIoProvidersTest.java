@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 // The codec artifacts on this test class path are smalt-image, smalt-audio, smalt-mpeg and
-// smalt-video: they decode WebP, PNG, HEIC and AVIF and encode WebP and AVIF, and nothing encodes HEIC.
+// smalt-video: they decode WebP, PNG, HEIC and AVIF and encode WebP, AVIF and HEIC.
 @DisplayName("ImageIO provider discovery")
 class ImageIoProvidersTest {
     static <T> List<T> list(Iterator<T> iterator) {
@@ -77,7 +77,7 @@ class ImageIoProvidersTest {
     }
 
     @Test
-    @DisplayName("the WebP, AVIF and JPEG XL writers are registered and the HEIC writer deregisters itself")
+    @DisplayName("the WebP, AVIF, JPEG XL and HEIC writers are registered")
     void writers() {
         var webp = list(ImageIO.getImageWritersByFormatName("webp"));
         assertEquals(1, webp.size());
@@ -86,15 +86,18 @@ class ImageIoProvidersTest {
         var avif = list(ImageIO.getImageWritersByFormatName("avif"));
         assertEquals(1, avif.size());
         assertInstanceOf(SmaltImageWriter.class, avif.getFirst());
-        assertTrue(list(ImageIO.getImageWritersByFormatName("heic")).isEmpty());
         var jxl = list(ImageIO.getImageWritersByFormatName("jxl"));
         assertEquals(1, jxl.size());
         assertInstanceOf(SmaltImageWriter.class, jxl.getFirst());
+        var heic = list(ImageIO.getImageWritersByFormatName("heic"));
+        assertEquals(1, heic.size());
+        assertInstanceOf(SmaltImageWriter.class, heic.getFirst());
+        assertInstanceOf(SmaltImageWriter.class, list(ImageIO.getImageWritersByMIMEType("image/heic")).getFirst());
         var registered = list(IIORegistry.getDefaultInstance().getServiceProviders(ImageWriterSpi.class, false));
         assertTrue(registered.stream().anyMatch(WebpImageWriterSpi.class::isInstance));
         assertTrue(registered.stream().anyMatch(AvifImageWriterSpi.class::isInstance));
         assertTrue(registered.stream().anyMatch(JxlImageWriterSpi.class::isInstance));
-        assertTrue(registered.stream().noneMatch(HeicImageWriterSpi.class::isInstance));
+        assertTrue(registered.stream().anyMatch(HeicImageWriterSpi.class::isInstance));
     }
 
     @Test

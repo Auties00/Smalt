@@ -160,7 +160,16 @@ public final class Oracle {
         AVIFGAINMAPUTIL("avifgainmaputil"),
 
         /** libavif's AVIF decoder CLI. */
-        AVIFDEC("avifdec");
+        AVIFDEC("avifdec"),
+
+        /** libheif's HEIF decoder CLI. */
+        HEIF_DEC("heif-dec"),
+
+        /** libheif's HEIF decoder CLI under the name of libheif 1.17 and earlier. */
+        HEIF_CONVERT("heif-convert"),
+
+        /** libheif's HEIF structure dump CLI. */
+        HEIF_INFO("heif-info");
 
         /** The executable name without extension. */
         private final String executable;

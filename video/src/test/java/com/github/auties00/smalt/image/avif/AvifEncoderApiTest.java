@@ -4,9 +4,12 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.io.MediaSink;
+import com.github.auties00.smalt.io.MediaSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
@@ -120,6 +123,17 @@ class AvifEncoderApiTest {
         void sameFile() throws Exception {
             var options = AvifEncoderOptions.lossy(50).toBuilder().speed(10).threads(1).build();
             assertArrayEquals(encode(options), encode(options.toBuilder().threads(0).build()));
+        }
+
+        @ParameterizedTest(name = "{0} plays")
+        @ValueSource(ints = {0, 1, 2, 5})
+        @DisplayName("keeps the loop count, which the decoder reads back")
+        void loops(int loops) throws Exception {
+            var file = encode(AvifEncoderOptions.lossy(50).toBuilder().speed(10).threads(1).loopCount(loops).build());
+            try (var reader = AvifDecoder.openAnimation(MediaSource.of(file))) {
+                assertEquals(loops, reader.loopCount());
+                assertEquals(3, reader.frameCount());
+            }
         }
 
         @Test

@@ -1,8 +1,12 @@
-/* Ports libavif (src/write.c: the box layout of avifEncoderFinish). Copyright 2019 Joe Drago; BSD 2-Clause
-   License. Modified for Smalt. */
-package com.github.auties00.smalt.image.avif.internal;
+/* Ports libavif (src/write.c: the box layout of avifEncoderFinish and avifImageExifOrientationToIrotImir).
+   Copyright 2019 Joe Drago; BSD 2-Clause License. Modified for Smalt. */
+package com.github.auties00.smalt.internal.heif;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.ColorRange;
+import com.github.auties00.smalt.image.Orientation;
+import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.internal.io.ByteWriter;
 import com.github.auties00.smalt.internal.io.FourCc;
 
@@ -13,8 +17,8 @@ import java.util.List;
 import java.util.function.LongFunction;
 
 /**
- * Writes the boxes of an AVIF file (AV1 Image File Format 1.1 over HEIF, ISO/IEC 23008-12, and the
- * ISO base media file format, ISO/IEC 14496-12): the {@code ftyp} box, a {@code meta} box
+ * Writes the boxes of a HEIF file (ISO/IEC 23008-12 over the ISO base media file format, ISO/IEC 14496-12),
+ * whatever the coding of its images: the {@code ftyp} box, a {@code meta} box
  * describing the items and their properties, an optional {@code moov} box of an image sequence,
  * and an {@code mdat} box holding the coded items and samples.
  *
@@ -28,7 +32,14 @@ import java.util.function.LongFunction;
  * {@code hdlr}, {@code pitm}, {@code iloc}, {@code iinf}, {@code iref}, {@code iprp} and
  * {@code idat} inside {@code meta}, then {@code moov} and {@code mdat}.
  */
-public final class AvifWriter {
+public final class HeifWriter {
+    /**
+     * The most items a file holds, and the most items one reference names: the item identifiers and reference
+     * counts of the {@code pitm}, {@code iloc}, {@code iinf}, {@code iref} and {@code ipma} boxes this writer
+     * emits are 16-bit.
+     */
+    public static final int MAX_ITEMS = 0xFFFF;
+
     /**
      * One property: its serialized box and whether readers must understand it.
      *
@@ -144,6 +155,11 @@ public final class AvifWriter {
     private int primary;
 
     /**
+     * The format name that prefixes error messages, for example {@code "avif"}.
+     */
+    private final String format;
+
+    /**
      * The major brand.
      */
     private final String majorBrand;
@@ -166,10 +182,12 @@ public final class AvifWriter {
     /**
      * Constructs a writer for a file with the given brands.
      *
+     * @param format the format name that prefixes error messages, for example {@code "avif"}
      * @param majorBrand the major brand
      * @param brands the compatible brands
      */
-    public AvifWriter(String majorBrand, List<String> brands) {
+    public HeifWriter(String format, String majorBrand, List<String> brands) {
+        this.format = format;
         this.majorBrand = majorBrand;
         this.brands = List.copyOf(brands);
     }
@@ -177,11 +195,12 @@ public final class AvifWriter {
     /**
      * Adds an item whose data goes to the {@code mdat} box.
      *
-     * @param type the item type, for example {@code "av01"}
+     * @param type the item type, for example {@code "hvc1"} or {@code "av01"}
      * @param data the item data
      * @param hidden whether the item is hidden
      * @param properties the item's properties, in association order
      * @return the item identifier
+     * @throws MediaException.LimitExceeded if the file already holds {@value #MAX_ITEMS} items
      */
     public int addItem(String type, byte[] data, boolean hidden, Property... properties) {
         return add(new Item(items.size() + 1, type, data, null, false, hidden), properties);
@@ -195,6 +214,7 @@ public final class AvifWriter {
      * @param length the length of the data
      * @param properties the item's properties, in association order
      * @return the item identifier
+     * @throws MediaException.LimitExceeded if the file already holds {@value #MAX_ITEMS} items
      */
     public int addSampleItem(String type, long offset, int length, Property... properties) {
         var item = new Item(items.size() + 1, type, new byte[0], null, false, false);
@@ -225,6 +245,7 @@ public final class AvifWriter {
      * @param data the item data
      * @param properties the item's properties, in association order
      * @return the item identifier
+     * @throws MediaException.LimitExceeded if the file already holds {@value #MAX_ITEMS} items
      */
     public int addIdatItem(String type, byte[] data, Property... properties) {
         return add(new Item(items.size() + 1, type, data, null, true, false), properties);
@@ -236,6 +257,7 @@ public final class AvifWriter {
      * @param contentType the content type, for example {@code "application/rdf+xml"}
      * @param data the item data
      * @return the item identifier
+     * @throws MediaException.LimitExceeded if the file already holds {@value #MAX_ITEMS} items
      */
     public int addMimeItem(String contentType, byte[] data) {
         return add(new Item(items.size() + 1, "mime", data, contentType, false, false));
@@ -247,8 +269,12 @@ public final class AvifWriter {
      * @param item the new item, whose identifier follows the last one
      * @param properties the properties, in association order
      * @return the item identifier
+     * @throws MediaException.LimitExceeded if the file already holds {@value #MAX_ITEMS} items
      */
     private int add(Item item, Property... properties) {
+        if (item.id > MAX_ITEMS) {
+            throw new MediaException.LimitExceeded(format + ": a file holds at most " + MAX_ITEMS + " items");
+        }
         items.add(item);
         for (var property : properties) {
             var index = -1;
@@ -283,8 +309,12 @@ public final class AvifWriter {
      * {@code "prem"}
      * @param from the referencing item
      * @param to the referenced items, in order
+     * @throws MediaException.LimitExceeded if more than {@value #MAX_ITEMS} items are referenced
      */
     public void reference(String type, int from, int... to) {
+        if (to.length > MAX_ITEMS) {
+            throw new MediaException.LimitExceeded(format + ": a reference names at most " + MAX_ITEMS + " items");
+        }
         references.add(new Reference(type, from, to.clone()));
     }
 
@@ -325,7 +355,7 @@ public final class AvifWriter {
      * @param exif the metadata, a TIFF header optionally preceded by other bytes
      * @return the item data; the offset is 0 when no TIFF header is found
      */
-    static byte[] exifPayload(byte[] exif) {
+    public static byte[] exifPayload(byte[] exif) {
         var offset = 0;
         for (var i = 0; i + 3 < exif.length; i++) {
             if ((exif[i] == 'I' && exif[i + 1] == 'I' && exif[i + 2] == 42 && exif[i + 3] == 0)
@@ -360,7 +390,7 @@ public final class AvifWriter {
         var mdatSize = itemData + samples.length;
         var total = base + mdatSize;
         if (total > Integer.MAX_VALUE - 16) {
-            throw new MediaException.LimitExceeded("avif: the file would exceed 2 GiB");
+            throw new MediaException.LimitExceeded(format + ": the file would exceed 2 GiB");
         }
         var out = new ByteWriter((int) total);
         out.bytes(ftyp);
@@ -581,7 +611,7 @@ public final class AvifWriter {
      * @param out the output
      * @param handler the four-character handler type
      */
-    static void hdlr(ByteWriter out, String handler) {
+    public static void hdlr(ByteWriter out, String handler) {
         out.beginFull(FourCc.of("hdlr"), 0, 0);
         out.u32be(0);
         out.fourCc(handler);
@@ -636,26 +666,28 @@ public final class AvifWriter {
     }
 
     /**
-     * Returns an AV1 codec configuration property.
+     * Returns a codec configuration property, for example an {@code hvcC} or {@code av1C} box.
      *
-     * @param record the {@code av1C} record
+     * @param type the four-character box type
+     * @param record the configuration record the box holds
      * @return the property, essential
      */
-    public static Property av1C(byte[] record) {
+    public static Property configuration(String type, byte[] record) {
         var out = new ByteWriter(record.length + 8);
-        av1C(out, record);
+        box(out, type, record);
         return property(out, true);
     }
 
     /**
-     * Writes an {@code av1C} box.
+     * Writes a box holding a payload as it is.
      *
      * @param out the output
-     * @param record the {@code av1C} record
+     * @param type the four-character box type
+     * @param payload the box payload
      */
-    static void av1C(ByteWriter out, byte[] record) {
-        out.begin(FourCc.of("av1C"));
-        out.bytes(record);
+    public static void box(ByteWriter out, String type, byte[] payload) {
+        out.begin(FourCc.of(type));
+        out.bytes(payload);
         out.end();
     }
 
@@ -683,7 +715,7 @@ public final class AvifWriter {
      * @param matrix the matrix coefficients code
      * @param fullRange whether the samples are full range
      */
-    static void nclx(ByteWriter out, int primaries, int transfer, int matrix, boolean fullRange) {
+    public static void nclx(ByteWriter out, int primaries, int transfer, int matrix, boolean fullRange) {
         out.begin(FourCc.of("colr"));
         out.fourCc("nclx");
         out.u16be(primaries);
@@ -701,11 +733,48 @@ public final class AvifWriter {
      */
     public static Property icc(byte[] profile) {
         var out = new ByteWriter(profile.length + 12);
+        icc(out, profile);
+        return property(out, false);
+    }
+
+    /**
+     * Writes a {@code colr} box holding an ICC profile.
+     *
+     * @param out the output
+     * @param profile the serialized ICC profile
+     */
+    public static void icc(ByteWriter out, byte[] profile) {
         out.begin(FourCc.of("colr"));
         out.fourCc("prof");
         out.bytes(profile);
         out.end();
-        return property(out, false);
+    }
+
+    /**
+     * Returns a clean aperture property that keeps the top left {@code width} by {@code height} samples of an
+     * image of {@code imageWidth} by {@code imageHeight} samples.
+     *
+     * @param width the width kept, from 1 to {@code imageWidth}
+     * @param height the height kept, from 1 to {@code imageHeight}
+     * @param imageWidth the width of the reconstructed image
+     * @param imageHeight the height of the reconstructed image
+     * @return the property, essential
+     */
+    public static Property clap(int width, int height, int imageWidth, int imageHeight) {
+        var out = new ByteWriter(40);
+        out.begin(FourCc.of("clap"));
+        out.u32be(width);
+        out.u32be(1);
+        out.u32be(height);
+        out.u32be(1);
+        // the offsets place the aperture's center relative to the image's: (kept - full) / 2, so the left and top
+        // edges stay at 0
+        out.u32be((width - imageWidth) & 0xFFFFFFFFL);
+        out.u32be(2);
+        out.u32be((height - imageHeight) & 0xFFFFFFFFL);
+        out.u32be(2);
+        out.end();
+        return property(out, true);
     }
 
     /**
@@ -792,6 +861,64 @@ public final class AvifWriter {
         out.u32be(minLuminance);
         out.end();
         return property(out, false);
+    }
+
+    /**
+     * Returns the color properties of a color image: the {@code nclx} description, the ICC profile, and the
+     * content light level and mastering display of high dynamic range content.
+     *
+     * @param color the color description of the samples
+     * @param profile the ICC profile to embed, or {@code null} for none
+     * @return the properties, in that order
+     */
+    public static List<Property> colorProperties(ColorInfo color, ColorProfile profile) {
+        var props = new ArrayList<Property>();
+        props.add(nclx(color.primaries().code(), color.transfer().code(), color.matrix().code(),
+                color.range() == ColorRange.FULL));
+        if (profile != null) {
+            props.add(icc(profile.toByteArray()));
+        }
+        color.contentLightLevel().ifPresent(level -> props.add(clli(
+                Math.clamp(level.maxContentLightLevel(), 0, 65535), Math.clamp(level.maxFrameAverageLightLevel(), 0,
+                        65535))));
+        color.masteringDisplay().ifPresent(display -> props.add(mdcv(new int[]{
+                chromaticity(display.green().x()), chromaticity(display.green().y()),
+                chromaticity(display.blue().x()), chromaticity(display.blue().y()),
+                chromaticity(display.red().x()), chromaticity(display.red().y())},
+                chromaticity(display.whitePoint().x()), chromaticity(display.whitePoint().y()),
+                Math.clamp(Math.round(display.maxLuminance() * 10000), 0, 0xFFFFFFFFL),
+                Math.clamp(Math.round(display.minLuminance() * 10000), 0, 0xFFFFFFFFL))));
+        return props;
+    }
+
+    /**
+     * Returns a chromaticity coordinate in units of 0.00002.
+     *
+     * @param value the coordinate
+     * @return the coded value
+     */
+    private static int chromaticity(double value) {
+        return (int) Math.clamp(Math.round(value / 0.00002), 0, 65535);
+    }
+
+    /**
+     * Returns the rotation and mirroring properties that display an image in an orientation
+     * ({@code avifImageExifOrientationToIrotImir}).
+     *
+     * @param orientation the display orientation
+     * @return the properties, rotation first
+     */
+    public static List<Property> orientation(Orientation orientation) {
+        return switch (orientation) {
+            case NORMAL -> List.of();
+            case FLIP_HORIZONTAL -> List.of(imir(1));
+            case ROTATE_180 -> List.of(irot(2));
+            case FLIP_VERTICAL -> List.of(imir(0));
+            case TRANSPOSE -> List.of(irot(1), imir(0));
+            case ROTATE_90 -> List.of(irot(3));
+            case TRANSVERSE -> List.of(irot(3), imir(0));
+            case ROTATE_270 -> List.of(irot(1));
+        };
     }
 
     /**
