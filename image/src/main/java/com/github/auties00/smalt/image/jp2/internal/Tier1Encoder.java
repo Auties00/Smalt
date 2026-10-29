@@ -147,7 +147,7 @@ final class Tier1Encoder {
      * Returns the 5-3 or 9-7 wavelet norm of a sub-band.
      *
      * @param level       the decomposition level, 0 for the highest resolution's bands
-     * @param orientation the orientation
+     * @param orientation the sub-band orientation, 0 to 3
      * @param reversible  whether the 5-3 wavelet is used
      * @return the norm, the last tabulated level's for deeper levels
      */
@@ -174,12 +174,18 @@ final class Tier1Encoder {
      * @param reversible  whether the 5-3 wavelet is used
      * @param style       the code-block style flags
      * @param weight      the component's weight in the distortion (its color transform norm)
+     * @param mask        the region of interest mask of the tile-component, nonzero for a coefficient scaled up by
+     *                    {@code shift}, in the layout of {@code samples}; or {@code null}
+     * @param shift       the max-shift scaling of the coefficients {@code mask} selects; the caller ensures that a
+     *                    scaled coefficient keeps at most 25 magnitude bits
+     * @param maxBitPlanes the number of magnitude bit-planes above which a coefficient saturates, or 0 for none
      * @return the block's total weighted distortion reduction
      */
     double encode(EncodedBlock block, int[] samples, float[] floats, int offset, int stride, int orientation,
-                  int level, float stepSize, boolean reversible, int style, double weight) {
-        var w = block.x1 - block.x0;
-        var h = block.y1 - block.y0;
+                  int level, float stepSize, boolean reversible, int style, double weight, byte[] mask, int shift,
+                  int maxBitPlanes) {
+        var w = (int) (block.x1 - block.x0);
+        var h = (int) (block.y1 - block.y0);
         allocate(w, h);
         var position = 0;
         var k = 0;
@@ -196,6 +202,15 @@ final class Tier1Encoder {
                     data[position++] = quantize(samples, floats, offset + r * stride + i, stepSize, reversible);
                 }
             }
+        }
+        if (maxBitPlanes > 0 && maxBitPlanes + Tier1Tables.NMSEDEC_FRACBITS < 31) {
+            var limit = (1 << (maxBitPlanes + Tier1Tables.NMSEDEC_FRACBITS)) - 1;
+            for (var i = 0; i < position; i++) {
+                data[i] = Math.clamp(data[i], -limit, limit);
+            }
+        }
+        if (mask != null && shift > 0) {
+            scale(mask, offset, stride, w, h, shift);
         }
         var max = 0;
         for (var i = 0; i < position; i++) {
@@ -302,6 +317,58 @@ final class Tier1Encoder {
     }
 
     /**
+     * Scales up the quantized coefficients of a code-block that a region of interest mask selects, in the
+     * stripe-column order of {@link #data}: the integer part of each magnitude moves up by {@code shift} bits, and
+     * its fractional bits stay below the lowest bit-plane.
+     *
+     * @param mask the mask, in the layout of the coefficients
+     * @param offset the index of the block's first coefficient
+     * @param stride the row stride of the coefficients
+     * @param w the block width
+     * @param h the block height
+     * @param shift the scaling exponent
+     */
+    private void scale(byte[] mask, int offset, int stride, int w, int h, int shift) {
+        var position = 0;
+        var k = 0;
+        for (; k < (h & ~3); k += 4) {
+            for (var i = 0; i < w; i++) {
+                for (var r = 0; r < 4; r++) {
+                    if (mask[offset + (k + r) * stride + i] != 0) {
+                        data[position] = scaled(data[position], shift);
+                    }
+                    position++;
+                }
+            }
+        }
+        if (k < h) {
+            for (var i = 0; i < w; i++) {
+                for (var r = k; r < h; r++) {
+                    if (mask[offset + r * stride + i] != 0) {
+                        data[position] = scaled(data[position], shift);
+                    }
+                    position++;
+                }
+            }
+        }
+    }
+
+    /**
+     * Scales up the integer part of a fixed-point coefficient.
+     *
+     * @param value the signed fixed-point value
+     * @param shift the scaling exponent
+     * @return the scaled value
+     */
+    private static int scaled(int value, int shift) {
+        var magnitude = Math.abs(value);
+        var fraction = (1 << Tier1Tables.NMSEDEC_FRACBITS) - 1;
+        var result = ((magnitude >>> Tier1Tables.NMSEDEC_FRACBITS) << (shift + Tier1Tables.NMSEDEC_FRACBITS))
+                | (magnitude & fraction);
+        return value < 0 ? -result : result;
+    }
+
+    /**
      * Quantizes one coefficient to the coder's fixed-point form with
      * {@link Tier1Tables#NMSEDEC_FRACBITS} fractional bits.
      *
@@ -313,6 +380,8 @@ final class Tier1Encoder {
      * @return the fixed-point value
      */
     private static int quantize(int[] samples, float[] floats, int index, float stepSize, boolean reversible) {
+        // FIXME: a reversible coefficient of more than 25 magnitude bits (a precision above 24 bits) overflows the
+        // fixed-point form, so lossless coding of deeper channels does not decode to the input
         if (reversible) {
             return samples[index] << Tier1Tables.NMSEDEC_FRACBITS;
         }
@@ -349,7 +418,7 @@ final class Tier1Encoder {
      *
      * @param nmsedec     the pass's normalized distortion reduction
      * @param level       the decomposition level
-     * @param orientation the orientation
+     * @param orientation the sub-band orientation, 0 to 3
      * @param bitPlane    the bit-plane
      * @param reversible  whether the 5-3 wavelet is used
      * @param stepSize    the step size
@@ -370,6 +439,31 @@ final class Tier1Encoder {
         var w = weight * norm * step * (1 << bitPlane);
         w *= w * nmsedec / 8192.0;
         return w;
+    }
+
+    /**
+     * Returns the weight of a squared error of one quantization step in the distortion a pass's
+     * weighted reduction measures, as {@link #weightedDistortion} weighs it.
+     *
+     * @param level the decomposition level
+     * @param orientation the sub-band orientation, 0 to 3
+     * @param reversible whether the 5-3 wavelet is used
+     * @param stepSize the step size
+     * @param weight the component's weight
+     * @return the weight
+     */
+    static double distortionScale(int level, int orientation, boolean reversible, float stepSize, double weight) {
+        double norm;
+        double step = stepSize;
+        if (reversible) {
+            norm = norm(level, orientation, true);
+        } else {
+            var gain = orientation == 0 ? 0 : orientation == 3 ? 2 : 1;
+            norm = norm(level, orientation, false);
+            step /= (1 << gain);
+        }
+        var w = weight * norm * step;
+        return w * w;
     }
 
     /**
@@ -412,7 +506,7 @@ final class Tier1Encoder {
     /**
      * Codes one decision with the MQ coder (C.2).
      *
-     * @param context the context
+     * @param context the context index
      * @param d       the decision
      */
     private void encode(int context, int d) {

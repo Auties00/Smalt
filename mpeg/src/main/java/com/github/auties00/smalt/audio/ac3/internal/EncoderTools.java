@@ -12,15 +12,19 @@ package com.github.auties00.smalt.audio.ac3.internal;
  * @param hybridTransform whether stationary channels of six-block frames may use the adaptive
  * hybrid transform
  * @param preNoise whether the frames carry transient pre-noise processing data
+ * @param enhancedCoupling whether coupling is coded as enhanced coupling
  * @param channelMap the custom channel map {@code chanmap} of a dependent substream, or
  * {@code -1} for an independent substream
+ * @param substreamId the substream identification {@code substreamid} of a dependent substream,
+ * from 0 to 7
  */
 public record EncoderTools(int spxStartCode, int spxBeginCode, int spxEndCode, boolean hybridTransform,
-                           boolean preNoise, int channelMap) {
+                           boolean preNoise, boolean enhancedCoupling, int channelMap,
+                           int substreamId) {
     /**
      * The tools of AC-3 alone: an independent substream without any E-AC-3 tool.
      */
-    public static final EncoderTools NONE = new EncoderTools(-1, 0, 0, false, false, -1);
+    public static final EncoderTools NONE = new EncoderTools(-1, 0, 0, false, false, false, -1, 0);
 
     /**
      * The first coefficient of the extension region at 48 kHz of the three spectral extension
@@ -118,7 +122,7 @@ public record EncoderTools(int spxStartCode, int spxBeginCode, int spxEndCode, b
      * @return the new tools
      */
     public EncoderTools withSpectralExtension(int startCode, int beginCode, int endCode) {
-        return new EncoderTools(startCode, beginCode, endCode, hybridTransform, preNoise, channelMap);
+        return new EncoderTools(startCode, beginCode, endCode, hybridTransform, preNoise, enhancedCoupling, channelMap, substreamId);
     }
 
     /**
@@ -128,7 +132,7 @@ public record EncoderTools(int spxStartCode, int spxBeginCode, int spxEndCode, b
      * @return the new tools
      */
     public EncoderTools withHybridTransform(boolean hybridTransform) {
-        return new EncoderTools(spxStartCode, spxBeginCode, spxEndCode, hybridTransform, preNoise, channelMap);
+        return new EncoderTools(spxStartCode, spxBeginCode, spxEndCode, hybridTransform, preNoise, enhancedCoupling, channelMap, substreamId);
     }
 
     /**
@@ -138,7 +142,18 @@ public record EncoderTools(int spxStartCode, int spxBeginCode, int spxEndCode, b
      * @return the new tools
      */
     public EncoderTools withPreNoise(boolean preNoise) {
-        return new EncoderTools(spxStartCode, spxBeginCode, spxEndCode, hybridTransform, preNoise, channelMap);
+        return new EncoderTools(spxStartCode, spxBeginCode, spxEndCode, hybridTransform, preNoise, enhancedCoupling, channelMap, substreamId);
+    }
+
+    /**
+     * Returns these tools with coupling coded as enhanced coupling or as standard coupling.
+     *
+     * @param enhancedCoupling whether coupling is enhanced coupling
+     * @return the new tools
+     */
+    public EncoderTools withEnhancedCoupling(boolean enhancedCoupling) {
+        return new EncoderTools(spxStartCode, spxBeginCode, spxEndCode, hybridTransform, preNoise, enhancedCoupling,
+                channelMap, substreamId);
     }
 
     /**
@@ -148,6 +163,19 @@ public record EncoderTools(int spxStartCode, int spxBeginCode, int spxEndCode, b
      * @return the new tools
      */
     public EncoderTools withChannelMap(int channelMap) {
-        return new EncoderTools(spxStartCode, spxBeginCode, spxEndCode, hybridTransform, preNoise, channelMap);
+        return withSubstream(channelMap, 0);
+    }
+
+    /**
+     * Returns these tools for a dependent substream with a custom channel map and an
+     * identification.
+     *
+     * @param channelMap the channel map, or {@code -1} for an independent substream
+     * @param substreamId the substream identification, from 0 to 7
+     * @return the new tools
+     */
+    public EncoderTools withSubstream(int channelMap, int substreamId) {
+        return new EncoderTools(spxStartCode, spxBeginCode, spxEndCode, hybridTransform, preNoise, enhancedCoupling,
+                channelMap, substreamId);
     }
 }

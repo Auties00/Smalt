@@ -19,9 +19,14 @@ import java.util.Arrays;
  * backward-compatible signaling of HE-AAC added when the first frame decodes to twice the core
  * rate through the registered AAC decoder, as the ADTS demuxer does. Timestamps count samples of
  * the core rate. Each packet is the payload of one ADTS frame, header and CRC words removed; a
- * frame of several raw data blocks stays one packet lasting {@code 1024} samples per block. Frames
- * whose version, profile, sampling frequency or channel configuration differ from the first one
- * are skipped as garbage.
+ * frame of several raw data blocks stays one packet lasting {@code 1024} samples per block. A frame
+ * whose version, profile, sampling frequency or channel configuration differ from the previous one
+ * starts a new stream configuration when the frame after it repeats them, and is skipped as
+ * garbage otherwise; the first packet of a new configuration carries its
+ * {@code AudioSpecificConfig}, refined for HE-AAC as the track's is, as its new codec
+ * configuration, and its durations stay in samples of the track's rate. A {@linkplain #fresh()
+ * fresh} parser, which a read pass or a seek starts with, starts from the track's configuration,
+ * so the first frame of another configuration it meets is announced again.
  */
 final class AdtsParser extends FrameParser {
     /**
@@ -42,6 +47,22 @@ final class AdtsParser extends FrameParser {
     private int channels;
 
     /**
+     * The sampling rate of the current stream configuration.
+     */
+    private int rate;
+
+    /**
+     * The shared header bits of the stream configuration the track describes, or {@code -1}
+     * before the track is configured.
+     */
+    private int baseReference = -1;
+
+    /**
+     * The channel configuration of the stream configuration the track describes.
+     */
+    private int baseChannels;
+
+    /**
      * Constructs a parser.
      *
      * @param entry the program map entry of the stream
@@ -54,8 +75,11 @@ final class AdtsParser extends FrameParser {
     @Override
     ElementaryParser fresh() {
         var parser = inheritTiming(new AdtsParser(entry, limits));
-        parser.reference = reference;
-        parser.channels = channels;
+        parser.reference = baseReference;
+        parser.channels = baseChannels;
+        parser.baseReference = baseReference;
+        parser.baseChannels = baseChannels;
+        parser.rate = timestampRate;
         return parser;
     }
 
@@ -81,20 +105,74 @@ final class AdtsParser extends FrameParser {
         }
         var shared = ((data[offset + 1] & 0xFF) << 8 | (data[offset + 2] & 0xFF)) & STREAM_MASK;
         if (reference >= 0 && (shared != reference || header.channelConfiguration() != channels)) {
-            return -1;
+            return repeated(data, offset, available, header, shared);
         }
         return header.frameLength();
+    }
+
+    /**
+     * Measures a frame whose configuration differs from the stream's, which starts a new
+     * configuration only when the next frame repeats it.
+     *
+     * @param data the bytes
+     * @param offset the index of the frame
+     * @param available the number of bytes available from {@code offset}
+     * @param header the frame's header
+     * @param shared the stream bits of the frame's header
+     * @return the frame length, {@code 0} when more bytes are needed to tell, or {@code -1} when
+     * the next frame does not repeat the configuration
+     */
+    private int repeated(byte[] data, int offset, int available, AdtsHeader header, int shared) {
+        var length = header.frameLength();
+        if (available < length + AdtsHeader.SIZE) {
+            return flushing() && available >= length ? -1 : 0;
+        }
+        var next = offset + length;
+        if ((data[next] & 0xFF) != 0xFF || (data[next + 1] & 0xF6) != 0xF0) {
+            return -1;
+        }
+        var following = AdtsHeader.parse(data, next);
+        var followingShared = ((data[next + 1] & 0xFF) << 8 | (data[next + 2] & 0xFF)) & STREAM_MASK;
+        return following != null && followingShared == shared
+                && following.channelConfiguration() == header.channelConfiguration() ? length : -1;
     }
 
     @Override
     void frame(byte[] data, int offset, int length, boolean first, FrameOutput output) {
         var header = AdtsHeader.parse(data, offset);
         var payload = Arrays.copyOfRange(data, offset + header.headerSize(), offset + length);
+        var shared = ((data[offset + 1] & 0xFF) << 8 | (data[offset + 2] & 0xFF)) & STREAM_MASK;
         if (track == null) {
             configure(header, data, offset, payload);
+        } else if (shared != reference || header.channelConfiguration() != channels) {
+            reconfigure(header, shared, payload);
         }
-        var samples = 1024 * header.blocks();
+        var samples = toTimestampRate(1024 * header.blocks(), rate);
         output.emit(payload, samples, samples);
+    }
+
+    /**
+     * Switches to the stream configuration of a frame and announces its
+     * {@code AudioSpecificConfig}.
+     *
+     * @param header the frame's header
+     * @param shared the stream bits of the frame's header
+     * @param payload the frame's raw data block
+     */
+    private void reconfigure(AdtsHeader header, int shared, byte[] payload) {
+        reference = shared;
+        channels = header.channelConfiguration();
+        rate = header.sampleRate();
+        var count = channels == 7 ? 8 : channels;
+        var described = ((AudioTrack) track).toBuilder()
+                .codecConfig(header.audioSpecificConfig())
+                .sampleRate(rate)
+                .layout(count > 0 ? ChannelLayout.defaultFor(count) : null)
+                .build();
+        if (header.profile() == 1 && rate <= AacExtensions.MAX_IMPLICIT_CORE_RATE) {
+            described = AacExtensions.refine(described, payload);
+        }
+        announce(described.codecConfig().orElseThrow());
     }
 
     /**
@@ -110,7 +188,7 @@ final class AdtsParser extends FrameParser {
         var channelConfiguration = header.channelConfiguration();
         var count = channelConfiguration == 7 ? 8 : channelConfiguration;
         var described = AudioTrack.builder()
-                .id(pid())
+                .id(trackId())
                 .codec(Codec.AAC)
                 .timeBase(Rational.timeBaseOf(rate))
                 .codecConfig(header.audioSpecificConfig())
@@ -123,7 +201,10 @@ final class AdtsParser extends FrameParser {
         }
         this.track = described;
         this.timestampRate = rate;
+        this.rate = rate;
         this.reference = ((data[offset + 1] & 0xFF) << 8 | (data[offset + 2] & 0xFF)) & STREAM_MASK;
         this.channels = channelConfiguration;
+        this.baseReference = reference;
+        this.baseChannels = channelConfiguration;
     }
 }
