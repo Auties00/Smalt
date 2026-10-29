@@ -1,0 +1,17 @@
+# demux dump of caf/alac.caf; regenerate with -Dsmalt.test.updateDumps=true
+format CAF
+duration 743039
+seekable true
+metadata encoder="Lavf61.7.100"
+track 0 AUDIO ALAC timebase=1/22050 duration=16384 config=24:7a79cb53
+  audio rate=22050 bits=24 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 4
+0 t0 pts=0 dts=0 dur=4096 flags=KEY size=14279 crc=967ef462
+1 t0 pts=4096 dts=4096 dur=4096 flags=KEY size=14282 crc=47a30569
+2 t0 pts=8192 dts=8192 dur=4096 flags=KEY size=14279 crc=5058b39d
+3 t0 pts=12288 dts=12288 dur=4096 flags=KEY size=3307 crc=0dee1f5e
+seek 0: t0@0
+seek 247679: t0@1
+seek 495359: t0@2
+seek 743039: end
+seek -1000000: t0@0

@@ -10,9 +10,11 @@ import com.github.auties00.smalt.image.Chromaticity;
 import com.github.auties00.smalt.image.ContentLightLevel;
 import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.TransferCharacteristics;
+import com.github.auties00.smalt.internal.compress.CompressVectors;
 import com.github.auties00.smalt.internal.tags.EbmlIds;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Fixtures;
+import com.github.auties00.smalt.testkit.container.DemuxerAsserts;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -100,7 +102,11 @@ class MatroskaDemuxerTest {
         cases.add(new Case("alac", () -> Fixtures.ffmpeg("mkv", audio(44100, 1), List.of("-c:a", "alac"))));
         cases.add(new Case("ac3", () -> Fixtures.ffmpeg("mkv", audio(48000, 0.6), List.of("-c:a", "ac3"))));
         cases.add(new Case("eac3", () -> Fixtures.ffmpeg("mkv", audio(48000, 0.6), List.of("-c:a", "eac3"))));
-        for (var pcm : List.of("pcm_s16le", "pcm_s16be", "pcm_s24le", "pcm_s32le", "pcm_f32le", "pcm_f64le", "pcm_u8")) {
+        cases.add(new Case("dts", () -> Fixtures.ffmpeg("mkv", audio(48000, 0.6), List.of("-strict", "-2", "-c:a", "dca"))));
+        cases.add(new Case("truehd", () -> Fixtures.ffmpeg("mkv", audio(48000, 0.6), List.of("-strict", "-2", "-c:a",
+                "truehd"))));
+        for (var pcm : List.of("pcm_s16le", "pcm_s16be", "pcm_s24le", "pcm_s32le", "pcm_s64le", "pcm_f32le", "pcm_f64le",
+                "pcm_u8")) {
             cases.add(new Case(pcm, () -> Fixtures.ffmpeg("mkv", audio(22050, 0.5), List.of("-ac", "2", "-c:a", pcm))));
         }
         cases.add(new Case("opus webm audio only", () -> Fixtures.ffmpeg("webm", audio(48000, 1), List.of("-c:a", "libopus"))));
@@ -593,6 +599,102 @@ class MatroskaDemuxerTest {
             DemuxAssertions.assertPacketsMatch(DemuxAssertions.inProbeTimeBase(ours, probe), probe, track -> 0, false);
         }
 
+        /**
+         * Builds a PCM track whose frames are the frame-* streams of the compression vectors, compressed with one
+         * algorithm, and checks the demuxed frames against the SHA-256 of their content and against ffprobe, which
+         * reads bzlib and LZO1X tracks with decoders of its own.
+         */
+        void compressedFrames(String format, String extension, int algorithm) {
+            var vectors = CompressVectors.of(format).stream().filter(vector -> vector.name().startsWith("frame-"))
+                    .toList();
+            assertEquals(15, vectors.size());
+            var blocks = new ArrayList<EbmlWriter.Node>();
+            blocks.add(uint(EbmlIds.TIMESTAMP, 0));
+            for (var index = 0; index < vectors.size(); index++) {
+                assertTrue(vectors.get(index).name().endsWith(extension));
+                blocks.add(binary(EbmlIds.SIMPLE_BLOCK, block(1, index * 20, 0x80, vectors.get(index).stream())));
+            }
+            var data = file("matroska", false, master(EbmlIds.INFO, uint(EbmlIds.TIMESTAMP_SCALE, 1_000_000)),
+                    pcmTrack(1, 0, master(EbmlIds.CONTENT_ENCODINGS, master(EbmlIds.CONTENT_ENCODING,
+                            uint(EbmlIds.CONTENT_ENCODING_SCOPE, 1),
+                            master(EbmlIds.CONTENT_COMPRESSION, uint(EbmlIds.CONTENT_COMP_ALGO, algorithm))))),
+                    master(EbmlIds.CLUSTER, blocks));
+            var ours = demux(data);
+            assertEquals(vectors.size(), ours.order().size());
+            for (var index = 0; index < vectors.size(); index++) {
+                var packet = ours.order().get(index).data();
+                assertEquals(vectors.get(index).size(), packet.length, "frame " + index);
+                assertEquals(vectors.get(index).sha256(), CompressVectors.sha256(packet), "frame " + index);
+            }
+            DemuxerAsserts.of("matroska/" + format + "-frames", data).noDump().run();
+            var probe = ContainerProbe.probe(write(format, data));
+            DemuxAssertions.assertPacketsMatch(DemuxAssertions.inProbeTimeBase(ours, probe), probe, track -> 0, false);
+        }
+
+        @Test
+        @DisplayName("decompresses bzlib-compressed frames (ContentCompAlgo 1) as ffprobe does")
+        void bzlib() {
+            compressedFrames("bzip2", ".bz2", 1);
+        }
+
+        @Test
+        @DisplayName("decompresses LZO1X-compressed frames (ContentCompAlgo 2) as ffprobe does")
+        void lzo() {
+            compressedFrames("lzo", ".lzo", 2);
+        }
+
+        @ParameterizedTest(name = "ContentCompAlgo {0}")
+        @org.junit.jupiter.params.provider.ValueSource(ints = {0, 1, 2})
+        @DisplayName("decompresses codec private data compressed with zlib, bzlib or LZO1X as ffprobe does")
+        void codecPrivate(int algorithm) {
+            var head = new byte[]{'O', 'p', 'u', 's', 'H', 'e', 'a', 'd', 1, 1, 0x38, 0x01, (byte) 0x80, (byte) 0xBB, 0, 0, 0,
+                    0, 0};
+            var compressed = switch (algorithm) {
+                case 0 -> {
+                    var deflater = new Deflater();
+                    deflater.setInput(head);
+                    deflater.finish();
+                    var out = new byte[256];
+                    var length = deflater.deflate(out);
+                    deflater.end();
+                    yield Arrays.copyOf(out, length);
+                }
+                case 1 -> CompressVectors.named("bzip2", "opus-head-9.bz2").stream();
+                default -> CompressVectors.named("lzo", "opus-head.lzo").stream();
+            };
+            var frame = new byte[]{(byte) 0xF8, 0x01, 0x02};
+            var data = file("webm", false, master(EbmlIds.INFO, uint(EbmlIds.TIMESTAMP_SCALE, 1_000_000)),
+                    master(EbmlIds.TRACKS, master(EbmlIds.TRACK_ENTRY, uint(EbmlIds.TRACK_NUMBER, 1), uint(EbmlIds.TRACK_UID, 1),
+                            uint(EbmlIds.TRACK_TYPE, 2), string(EbmlIds.CODEC_ID, "A_OPUS"),
+                            binary(EbmlIds.CODEC_PRIVATE, compressed),
+                            master(EbmlIds.AUDIO, floating(EbmlIds.SAMPLING_FREQUENCY, 48000), uint(EbmlIds.CHANNELS, 1)),
+                            master(EbmlIds.CONTENT_ENCODINGS, master(EbmlIds.CONTENT_ENCODING,
+                                    uint(EbmlIds.CONTENT_ENCODING_SCOPE, 2),
+                                    master(EbmlIds.CONTENT_COMPRESSION, uint(EbmlIds.CONTENT_COMP_ALGO, algorithm)))))),
+                    master(EbmlIds.CLUSTER, uint(EbmlIds.TIMESTAMP, 0), binary(EbmlIds.SIMPLE_BLOCK, block(1, 0, 0x80, frame))));
+            var ours = demux(data);
+            assertArrayEquals(head, ours.tracks().getFirst().codecConfig().orElseThrow());
+            assertArrayEquals(frame, ours.order().getFirst().data(), "the frames are not compressed");
+            var probe = ContainerProbe.probe(write("private-" + algorithm, data));
+            assertArrayEquals(head, probe.streams().getFirst().extradata(), "ffprobe's codec private data");
+        }
+
+        @Test
+        @DisplayName("rejects a damaged bzlib or LZO1X frame as malformed")
+        void damagedFrames() {
+            for (var algorithm : new int[]{1, 2}) {
+                var vector = CompressVectors.named(algorithm == 1 ? "bzip2" : "lzo", algorithm == 1 ? "frame-00.bz2"
+                        : "frame-00.lzo");
+                var truncated = Arrays.copyOf(vector.stream(), vector.stream().length / 2);
+                var data = file("matroska", false, master(EbmlIds.INFO, uint(EbmlIds.TIMESTAMP_SCALE, 1_000_000)),
+                        pcmTrack(1, 0, master(EbmlIds.CONTENT_ENCODINGS, master(EbmlIds.CONTENT_ENCODING,
+                                master(EbmlIds.CONTENT_COMPRESSION, uint(EbmlIds.CONTENT_COMP_ALGO, algorithm))))),
+                        master(EbmlIds.CLUSTER, uint(EbmlIds.TIMESTAMP, 0),
+                                binary(EbmlIds.SIMPLE_BLOCK, block(1, 0, 0x80, truncated))));
+                assertThrows(MediaException.Malformed.class, () -> demux(data), "algorithm " + algorithm);
+            }
+        }
+
         @Test
         @DisplayName("rejects encrypted tracks and unsupported compression")
         void unsupported() {
@@ -601,9 +703,10 @@ class MatroskaDemuxerTest {
                             uint(EbmlIds.CONTENT_ENCODING_TYPE, 1), master(EbmlIds.CONTENT_ENCRYPTION)))));
             var failure = assertThrows(MediaException.Unsupported.class, () -> demux(encrypted));
             assertEquals("matroska encryption", failure.format());
-            var lzo = file("webm", false, pcmTrack(1, 0, master(EbmlIds.CONTENT_ENCODINGS, master(EbmlIds.CONTENT_ENCODING,
-                    master(EbmlIds.CONTENT_COMPRESSION, uint(EbmlIds.CONTENT_COMP_ALGO, 2))))));
-            assertThrows(MediaException.Unsupported.class, () -> demux(lzo));
+            var undefined = file("webm", false, pcmTrack(1, 0, master(EbmlIds.CONTENT_ENCODINGS, master(EbmlIds.CONTENT_ENCODING,
+                    master(EbmlIds.CONTENT_COMPRESSION, uint(EbmlIds.CONTENT_COMP_ALGO, 4))))));
+            var compression = assertThrows(MediaException.Unsupported.class, () -> demux(undefined));
+            assertEquals("matroska compression 4", compression.format());
         }
     }
 
@@ -718,6 +821,7 @@ class MatroskaDemuxerTest {
                     com.github.auties00.smalt.container.mp4.RemuxOptions.audio());
             assertEquals(frames.size(), result.packets());
         }
+        com.github.auties00.smalt.testkit.validate.Validators.assertValid("matroska-remux.mp4", output.toByteArray());
         try (var source = MediaSource.of(output.toByteArray());
              var demuxer = new com.github.auties00.smalt.container.mp4.Mp4Demuxer(source)) {
             var packets = ContainerProbe.demuxAll(demuxer).order();

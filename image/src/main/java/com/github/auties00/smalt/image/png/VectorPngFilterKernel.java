@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.image.png;
 
+import com.github.auties00.smalt.internal.simd.Simd;
 import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.IntVector;
 import jdk.incubator.vector.ShortVector;
@@ -17,6 +18,8 @@ import jdk.incubator.vector.VectorSpecies;
  * reconstruction runs one pixel per step for filter distances of 3 and more, as libpng's SSE2
  * filter code does, and Sub with distances 1 and 2 as a strided prefix sum per vector. The
  * branch-free Paeth predictor follows stb_image and equals the specification's for all 2^24 inputs.
+ * The filters that choose a row's filter type sum their costs over 16 bytes per step where
+ * {@link Simd#WIDE} holds and over 8 otherwise.
  */
 final class VectorPngFilterKernel implements PngFilterKernel {
     /**
@@ -25,14 +28,25 @@ final class VectorPngFilterKernel implements PngFilterKernel {
     private static final VectorSpecies<Byte> BYTES = ByteVector.SPECIES_128;
 
     /**
-     * The 256-bit short species that holds {@link #BYTES} widened to 16 bits.
+     * The byte species of the filters that choose a row's filter type: 16 lanes where the platform
+     * has 256-bit vectors, 8 otherwise.
      */
-    private static final VectorSpecies<Short> SHORTS = ShortVector.SPECIES_256;
+    private static final VectorSpecies<Byte> COST_BYTES = Simd.WIDE ? ByteVector.SPECIES_128 : ByteVector.SPECIES_64;
 
     /**
-     * The 256-bit integer species that holds pairs of {@link #SHORTS} lanes.
+     * The number of lanes of {@link #COST_BYTES}.
      */
-    private static final VectorSpecies<Integer> INTS = IntVector.SPECIES_256;
+    private static final int COST_LANES = COST_BYTES.length();
+
+    /**
+     * The short species that holds {@link #COST_BYTES} widened to 16 bits.
+     */
+    private static final VectorSpecies<Short> SHORTS = Simd.WIDE ? ShortVector.SPECIES_256 : ShortVector.SPECIES_128;
+
+    /**
+     * The integer species that holds pairs of {@link #SHORTS} lanes.
+     */
+    private static final VectorSpecies<Integer> INTS = Simd.WIDE ? IntVector.SPECIES_256 : IntVector.SPECIES_128;
 
     /**
      * The preferred byte species used by the lane-wise kernels.
@@ -61,7 +75,7 @@ final class VectorPngFilterKernel implements PngFilterKernel {
     private static final int PIXEL_LANES = 8;
 
     /**
-     * The number of 16-byte steps a 16-bit cost accumulator absorbs before it could overflow.
+     * The number of steps a 16-bit cost accumulator absorbs before it could overflow.
      */
     private static final int COST_FLUSH = 255;
 
@@ -71,9 +85,14 @@ final class VectorPngFilterKernel implements PngFilterKernel {
     private static final Class<ByteVector> BYTE16 = vectorClass(BYTES);
 
     /**
+     * The exact class of the vectors of {@link #COST_BYTES}.
+     */
+    private static final Class<ByteVector> COST_BYTE_VECTOR = vectorClass(COST_BYTES);
+
+    /**
      * The exact class of the vectors of {@link #SHORTS}.
      */
-    private static final Class<ShortVector> SHORT16 = vectorClass(SHORTS);
+    private static final Class<ShortVector> SHORT_VECTOR = vectorClass(SHORTS);
 
     /**
      * The exact class of the vectors of {@link #INTS}.
@@ -599,16 +618,16 @@ final class VectorPngFilterKernel implements PngFilterKernel {
         var sum = 0;
         var head = 0;
         var i = head;
-        while (i + LANES <= length) {
-            var accumulator = SHORT16.cast(ShortVector.zero(SHORTS));
-            for (var steps = 0; steps < COST_FLUSH && i + LANES <= length; steps++, i += LANES) {
-                var vector = BYTE16.cast(ByteVector.fromArray(BYTES, row, offset + i));
-                BYTE16.cast(vector).intoArray(out, outOffset + i);
-                accumulator = SHORT16.cast(BYTE16.cast(vector.lanewise(VectorOperators.ABS))
+        while (i + COST_LANES <= length) {
+            var accumulator = SHORT_VECTOR.cast(ShortVector.zero(SHORTS));
+            for (var steps = 0; steps < COST_FLUSH && i + COST_LANES <= length; steps++, i += COST_LANES) {
+                var vector = COST_BYTE_VECTOR.cast(ByteVector.fromArray(COST_BYTES, row, offset + i));
+                COST_BYTE_VECTOR.cast(vector).intoArray(out, outOffset + i);
+                accumulator = SHORT_VECTOR.cast(COST_BYTE_VECTOR.cast(vector.lanewise(VectorOperators.ABS))
                                 .convertShape(VectorOperators.ZERO_EXTEND_B2S, SHORTS, 0))
                         .lanewise(VectorOperators.ADD, accumulator);
             }
-            var pairs = INT_VECTOR.cast(SHORT16.cast(ZERO_SHORTS.lanewise(VectorOperators.ADD, accumulator))
+            var pairs = INT_VECTOR.cast(SHORT_VECTOR.cast(ZERO_SHORTS.lanewise(VectorOperators.ADD, accumulator))
                     .reinterpretShape(INTS, 0));
             sum += pairs.lanewise(VectorOperators.AND, LOW_HALF)
                     .lanewise(VectorOperators.ADD, pairs.lanewise(VectorOperators.LSHR, 16))
@@ -632,17 +651,17 @@ final class VectorPngFilterKernel implements PngFilterKernel {
             sum += Math.abs((int) value);
         }
         var i = head;
-        while (i + LANES <= length) {
-            var accumulator = SHORT16.cast(ShortVector.zero(SHORTS));
-            for (var steps = 0; steps < COST_FLUSH && i + LANES <= length; steps++, i += LANES) {
-                var vector = BYTE16.cast(ByteVector.fromArray(BYTES, row, offset + i))
-                        .lanewise(VectorOperators.SUB, ByteVector.fromArray(BYTES, row, offset + i - distance));
-                BYTE16.cast(vector).intoArray(out, outOffset + i);
-                accumulator = SHORT16.cast(BYTE16.cast(vector.lanewise(VectorOperators.ABS))
+        while (i + COST_LANES <= length) {
+            var accumulator = SHORT_VECTOR.cast(ShortVector.zero(SHORTS));
+            for (var steps = 0; steps < COST_FLUSH && i + COST_LANES <= length; steps++, i += COST_LANES) {
+                var vector = COST_BYTE_VECTOR.cast(ByteVector.fromArray(COST_BYTES, row, offset + i))
+                        .lanewise(VectorOperators.SUB, ByteVector.fromArray(COST_BYTES, row, offset + i - distance));
+                COST_BYTE_VECTOR.cast(vector).intoArray(out, outOffset + i);
+                accumulator = SHORT_VECTOR.cast(COST_BYTE_VECTOR.cast(vector.lanewise(VectorOperators.ABS))
                                 .convertShape(VectorOperators.ZERO_EXTEND_B2S, SHORTS, 0))
                         .lanewise(VectorOperators.ADD, accumulator);
             }
-            var pairs = INT_VECTOR.cast(SHORT16.cast(ZERO_SHORTS.lanewise(VectorOperators.ADD, accumulator))
+            var pairs = INT_VECTOR.cast(SHORT_VECTOR.cast(ZERO_SHORTS.lanewise(VectorOperators.ADD, accumulator))
                     .reinterpretShape(INTS, 0));
             sum += pairs.lanewise(VectorOperators.AND, LOW_HALF)
                     .lanewise(VectorOperators.ADD, pairs.lanewise(VectorOperators.LSHR, 16))
@@ -661,17 +680,17 @@ final class VectorPngFilterKernel implements PngFilterKernel {
         var sum = 0;
         var head = 0;
         var i = head;
-        while (i + LANES <= length) {
-            var accumulator = SHORT16.cast(ShortVector.zero(SHORTS));
-            for (var steps = 0; steps < COST_FLUSH && i + LANES <= length; steps++, i += LANES) {
-                var vector = BYTE16.cast(ByteVector.fromArray(BYTES, row, offset + i))
-                        .lanewise(VectorOperators.SUB, ByteVector.fromArray(BYTES, prior, priorOffset + i));
-                BYTE16.cast(vector).intoArray(out, outOffset + i);
-                accumulator = SHORT16.cast(BYTE16.cast(vector.lanewise(VectorOperators.ABS))
+        while (i + COST_LANES <= length) {
+            var accumulator = SHORT_VECTOR.cast(ShortVector.zero(SHORTS));
+            for (var steps = 0; steps < COST_FLUSH && i + COST_LANES <= length; steps++, i += COST_LANES) {
+                var vector = COST_BYTE_VECTOR.cast(ByteVector.fromArray(COST_BYTES, row, offset + i))
+                        .lanewise(VectorOperators.SUB, ByteVector.fromArray(COST_BYTES, prior, priorOffset + i));
+                COST_BYTE_VECTOR.cast(vector).intoArray(out, outOffset + i);
+                accumulator = SHORT_VECTOR.cast(COST_BYTE_VECTOR.cast(vector.lanewise(VectorOperators.ABS))
                                 .convertShape(VectorOperators.ZERO_EXTEND_B2S, SHORTS, 0))
                         .lanewise(VectorOperators.ADD, accumulator);
             }
-            var pairs = INT_VECTOR.cast(SHORT16.cast(ZERO_SHORTS.lanewise(VectorOperators.ADD, accumulator))
+            var pairs = INT_VECTOR.cast(SHORT_VECTOR.cast(ZERO_SHORTS.lanewise(VectorOperators.ADD, accumulator))
                     .reinterpretShape(INTS, 0));
             sum += pairs.lanewise(VectorOperators.AND, LOW_HALF)
                     .lanewise(VectorOperators.ADD, pairs.lanewise(VectorOperators.LSHR, 16))
@@ -696,23 +715,23 @@ final class VectorPngFilterKernel implements PngFilterKernel {
             sum += Math.abs((int) value);
         }
         var i = head;
-        while (i + LANES <= length) {
-            var accumulator = SHORT16.cast(ShortVector.zero(SHORTS));
-            for (var steps = 0; steps < COST_FLUSH && i + LANES <= length; steps++, i += LANES) {
-                var a = BYTE16.cast(ByteVector.fromArray(BYTES, row, offset + i - distance));
-                var b = BYTE16.cast(ByteVector.fromArray(BYTES, prior, priorOffset + i));
+        while (i + COST_LANES <= length) {
+            var accumulator = SHORT_VECTOR.cast(ShortVector.zero(SHORTS));
+            for (var steps = 0; steps < COST_FLUSH && i + COST_LANES <= length; steps++, i += COST_LANES) {
+                var a = COST_BYTE_VECTOR.cast(ByteVector.fromArray(COST_BYTES, row, offset + i - distance));
+                var b = COST_BYTE_VECTOR.cast(ByteVector.fromArray(COST_BYTES, prior, priorOffset + i));
                 // floor((a + b) / 2) without widening: (a & b) + ((a ^ b) >>> 1)
                 var average = a.lanewise(VectorOperators.AND, b)
-                        .lanewise(VectorOperators.ADD, BYTE16.cast(a.lanewise(VectorOperators.XOR, b))
+                        .lanewise(VectorOperators.ADD, COST_BYTE_VECTOR.cast(a.lanewise(VectorOperators.XOR, b))
                         .lanewise(VectorOperators.LSHR, AVERAGE_SHIFT));
-                var vector = BYTE16.cast(ByteVector.fromArray(BYTES, row, offset + i))
+                var vector = COST_BYTE_VECTOR.cast(ByteVector.fromArray(COST_BYTES, row, offset + i))
                         .lanewise(VectorOperators.SUB, average);
-                BYTE16.cast(vector).intoArray(out, outOffset + i);
-                accumulator = SHORT16.cast(BYTE16.cast(vector.lanewise(VectorOperators.ABS))
+                COST_BYTE_VECTOR.cast(vector).intoArray(out, outOffset + i);
+                accumulator = SHORT_VECTOR.cast(COST_BYTE_VECTOR.cast(vector.lanewise(VectorOperators.ABS))
                                 .convertShape(VectorOperators.ZERO_EXTEND_B2S, SHORTS, 0))
                         .lanewise(VectorOperators.ADD, accumulator);
             }
-            var pairs = INT_VECTOR.cast(SHORT16.cast(ZERO_SHORTS.lanewise(VectorOperators.ADD, accumulator))
+            var pairs = INT_VECTOR.cast(SHORT_VECTOR.cast(ZERO_SHORTS.lanewise(VectorOperators.ADD, accumulator))
                     .reinterpretShape(INTS, 0));
             sum += pairs.lanewise(VectorOperators.AND, LOW_HALF)
                     .lanewise(VectorOperators.ADD, pairs.lanewise(VectorOperators.LSHR, 16))
@@ -739,14 +758,17 @@ final class VectorPngFilterKernel implements PngFilterKernel {
             sum += Math.abs((int) value);
         }
         var i = head;
-        while (i + LANES <= length) {
-            var accumulator = SHORT16.cast(ShortVector.zero(SHORTS));
-            for (var steps = 0; steps < COST_FLUSH && i + LANES <= length; steps++, i += LANES) {
-                var a = SHORT16.cast(BYTE16.cast(ByteVector.fromArray(BYTES, row, offset + i - distance))
+        while (i + COST_LANES <= length) {
+            var accumulator = SHORT_VECTOR.cast(ShortVector.zero(SHORTS));
+            for (var steps = 0; steps < COST_FLUSH && i + COST_LANES <= length; steps++, i += COST_LANES) {
+                var a = SHORT_VECTOR.cast(COST_BYTE_VECTOR.cast(ByteVector.fromArray(COST_BYTES, row,
+                        offset + i - distance))
                         .convertShape(VectorOperators.ZERO_EXTEND_B2S, SHORTS, 0));
-                var b = SHORT16.cast(BYTE16.cast(ByteVector.fromArray(BYTES, prior, priorOffset + i))
+                var b = SHORT_VECTOR.cast(COST_BYTE_VECTOR.cast(ByteVector.fromArray(COST_BYTES, prior,
+                        priorOffset + i))
                         .convertShape(VectorOperators.ZERO_EXTEND_B2S, SHORTS, 0));
-                var c = SHORT16.cast(BYTE16.cast(ByteVector.fromArray(BYTES, prior, priorOffset + i - distance))
+                var c = SHORT_VECTOR.cast(COST_BYTE_VECTOR.cast(ByteVector.fromArray(COST_BYTES, prior,
+                        priorOffset + i - distance))
                         .convertShape(VectorOperators.ZERO_EXTEND_B2S, SHORTS, 0));
                 var threshold = THREE.lanewise(VectorOperators.MUL, c).lanewise(VectorOperators.SUB, a
                         .lanewise(VectorOperators.ADD, b));
@@ -754,15 +776,16 @@ final class VectorPngFilterKernel implements PngFilterKernel {
                 var high = a.lanewise(VectorOperators.MAX, b);
                 var middle = c.blend(low, high.compare(VectorOperators.LE, threshold));
                 var predictor = middle.blend(high, threshold.compare(VectorOperators.LE, low));
-                var narrowed = BYTE16.cast(SHORT16.cast(predictor).convertShape(VectorOperators.S2B, BYTES, 0));
-                var vector = BYTE16.cast(ByteVector.fromArray(BYTES, row, offset + i))
+                var narrowed = COST_BYTE_VECTOR.cast(SHORT_VECTOR.cast(predictor).convertShape(VectorOperators.S2B,
+                        COST_BYTES, 0));
+                var vector = COST_BYTE_VECTOR.cast(ByteVector.fromArray(COST_BYTES, row, offset + i))
                         .lanewise(VectorOperators.SUB, narrowed);
-                BYTE16.cast(vector).intoArray(out, outOffset + i);
-                accumulator = SHORT16.cast(BYTE16.cast(vector.lanewise(VectorOperators.ABS))
+                COST_BYTE_VECTOR.cast(vector).intoArray(out, outOffset + i);
+                accumulator = SHORT_VECTOR.cast(COST_BYTE_VECTOR.cast(vector.lanewise(VectorOperators.ABS))
                                 .convertShape(VectorOperators.ZERO_EXTEND_B2S, SHORTS, 0))
                         .lanewise(VectorOperators.ADD, accumulator);
             }
-            var pairs = INT_VECTOR.cast(SHORT16.cast(ZERO_SHORTS.lanewise(VectorOperators.ADD, accumulator))
+            var pairs = INT_VECTOR.cast(SHORT_VECTOR.cast(ZERO_SHORTS.lanewise(VectorOperators.ADD, accumulator))
                     .reinterpretShape(INTS, 0));
             sum += pairs.lanewise(VectorOperators.AND, LOW_HALF)
                     .lanewise(VectorOperators.ADD, pairs.lanewise(VectorOperators.LSHR, 16))

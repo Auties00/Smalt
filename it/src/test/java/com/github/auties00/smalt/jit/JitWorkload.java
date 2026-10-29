@@ -39,6 +39,12 @@ import com.github.auties00.smalt.video.vp9.Vp9Encoder;
 import com.github.auties00.smalt.video.vp9.Vp9EncoderOptions;
 import com.github.auties00.smalt.video.vp9.Vp9EncoderSpeed;
 
+import jdk.jfr.Recording;
+import jdk.jfr.consumer.RecordedClass;
+import jdk.jfr.consumer.RecordedFrame;
+import jdk.jfr.consumer.RecordedMethod;
+import jdk.jfr.consumer.RecordingFile;
+
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -48,7 +54,11 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -56,23 +66,24 @@ import java.util.concurrent.Future;
 import java.util.function.Consumer;
 
 /**
- * The child process of {@link JitRobustnessTest}: runs media workloads round after round in a
- * fresh JVM until their steady-state heap allocation per frame settles under a bound, or a
- * deadline passes.
+ * The child process of {@link JitStressTest}: runs media workloads interleaved in one fresh JVM, a fixed number of
+ * warm-up rounds and then a fixed number of measured rounds, and reports what a flight recording shows of the
+ * measured rounds.
  *
- * <p>A Vector API operation the JIT fails to compile runs its allocating Java fallback on every
- * call, so a workload stuck on such a fallback allocates far more per frame than its bound and
- * never settles; a healthy workload settles as soon as its kernels are compiled. Arguments are
- * {@code seconds=N} (the deadline) followed by workload specifications, each a name and
- * {@code key=value} options joined by colons, for example
- * {@code h264enc:speed=BALANCED:threads=2:bound=65536} ({@code rt=true} selects the real-time preset of
- * calls); several workloads run interleaved in one
- * JVM. The process prints one {@code ROUND} line per workload and round, then {@code PASS} or {@code FAIL}, and
- * exits with 0 or 1.
+ * <p>A Vector API operation the JIT fails to compile runs its allocating Java fallback on every call. The measured
+ * rounds therefore sample allocations ({@code jdk.ObjectAllocationSample}, with stack traces) and report every sample
+ * of a Vector API class (a boxed vector, mask or shuffle) or allocated from inside the Vector API
+ * ({@code jdk.incubator.vector}, {@code jdk.internal.vm.vector}), with the first Smalt frame of its stack, which
+ * names the kernel; the whole run also reports the failed compilations of Smalt methods ({@code jdk.Compilation} and
+ * {@code jdk.CompilationFailure}). Arguments are {@code warm=N}, {@code measure=N} and {@code recording=<directory>},
+ * followed by workload specifications, each a name and {@code key=value} options joined by colons, for example
+ * {@code h264enc:speed=BALANCED:threads=2} ({@code rt=true} selects the real-time preset of calls). The process
+ * prints one {@code ROUND} line per workload and measured round, a {@code FALLBACK} line per kernel allocating from the
+ * fallback in C2 code, a {@code COLD} line per kernel allocating from it in the interpreter, in C1 code or in C2 code a
+ * deoptimization invalidated, a {@code WHY} line per Vector API call that C2 did not inline in the compilations the
+ * {@code FALLBACK} samples ran in, a {@code FAILED} line per failed compilation, then {@code DONE}.
  */
 public final class JitWorkload {
-    private static final int STABLE_ROUNDS = 3;
-    private static final int MIN_ROUNDS = 5;
 
     private static long sink;
 
@@ -96,42 +107,272 @@ public final class JitWorkload {
     interface Workload {
         String name();
 
-        long bound();
-
         int round();
     }
 
     public static void main(String[] args) throws Exception {
-        var deadline = System.nanoTime() + Long.parseLong(args[0].substring("seconds=".length())) * 1_000_000_000L;
+        var warm = 0;
+        var measure = 0;
+        Path directory = null;
         var workloads = new ArrayList<Workload>();
-        for (var i = 1; i < args.length; i++) {
-            workloads.add(create(args[i]));
-        }
-        var history = new HashMap<String, List<Long>>();
-        for (var round = 0; ; round++) {
-            var settled = round >= MIN_ROUNDS;
-            for (var workload : workloads) {
-                var before = allocated();
-                var start = System.nanoTime();
-                var frames = workload.round();
-                var elapsed = System.nanoTime() - start;
-                var perFrame = (allocated() - before) / Math.max(1, frames);
-                var values = history.computeIfAbsent(workload.name(), key -> new ArrayList<>());
-                values.add(perFrame);
-                System.out.printf(Locale.ROOT, "ROUND %s %d %d bytes/frame %.1f ms bound %d%n", workload.name(), round,
-                        perFrame, elapsed / 1e6, workload.bound());
-                var recent = values.subList(Math.max(0, values.size() - STABLE_ROUNDS), values.size());
-                settled &= recent.size() == STABLE_ROUNDS && recent.stream().allMatch(value -> value <= workload.bound());
-            }
-            if (settled) {
-                System.out.println("PASS " + (sink & 1));
-                System.exit(0);
-            }
-            if (System.nanoTime() > deadline) {
-                System.out.println("FAIL " + (sink & 1));
-                System.exit(1);
+        for (var argument : args) {
+            if (argument.startsWith("warm=")) {
+                warm = Integer.parseInt(argument.substring("warm=".length()));
+            } else if (argument.startsWith("measure=")) {
+                measure = Integer.parseInt(argument.substring("measure=".length()));
+            } else if (argument.startsWith("recording=")) {
+                directory = Path.of(argument.substring("recording=".length()));
+            } else {
+                workloads.add(create(argument));
             }
         }
+        Files.createDirectories(directory);
+        try (var compilations = new Recording(); var samples = new Recording()) {
+            compilations.enable("jdk.Compilation").withThreshold(Duration.ZERO).withoutStackTrace();
+            compilations.enable("jdk.CompilationFailure");
+            compilations.enable("jdk.CompilerInlining");
+            compilations.enable("jdk.Deoptimization").withoutStackTrace();
+            compilations.start();
+            for (var round = 0; round < warm; round++) {
+                for (var workload : workloads) {
+                    workload.round();
+                }
+            }
+            samples.enable("jdk.ObjectAllocationSample").with("throttle", "2000/s").withStackTrace();
+            samples.start();
+            for (var round = 0; round < measure; round++) {
+                for (var workload : workloads) {
+                    var before = allocated();
+                    var start = System.nanoTime();
+                    var frames = workload.round();
+                    var elapsed = System.nanoTime() - start;
+                    System.out.printf(Locale.ROOT, "ROUND %s %d %d bytes/frame %.1f ms%n", workload.name(), round,
+                            (allocated() - before) / Math.max(1, frames), elapsed / 1e6);
+                }
+            }
+            samples.stop();
+            compilations.stop();
+            var sampled = directory.resolve("samples.jfr");
+            var compiled = directory.resolve("compilations.jfr");
+            samples.dump(sampled);
+            compilations.dump(compiled);
+            var c2 = c2Compilations(compiled);
+            var invalidated = invalidations(compiled);
+            var roots = new TreeMap<String, Set<Long>>();
+            fallbacks(sampled, c2, invalidated, roots).forEach((kernel, weight) -> System.out.println(kernel + " " + weight
+                    + " bytes sampled"));
+            inliningFailures(compiled, roots).forEach(reason -> System.out.println("WHY " + reason));
+            failures(compiled).forEach(failure -> System.out.println("FAILED " + failure));
+        }
+        System.out.println("DONE " + (sink & 1));
+        System.exit(0);
+    }
+
+    /**
+     * A successful C2 (level 4) compilation: its id, when it ended, and whether it compiled a loop for on-stack
+     * replacement, code a running invocation enters at a loop back edge, while new invocations keep the method's
+     * entry code.
+     */
+    private record C2Compilation(long id, java.time.Instant end, boolean osr) {
+    }
+
+    /** A deoptimization that made a compilation's code not entrant: when, and the uncommon trap that caused it. */
+    private record Invalidation(java.time.Instant time, String reason) {
+    }
+
+    /** Streams the events of a recording, without holding them all in memory. */
+    private static void events(Path recording, Consumer<jdk.jfr.consumer.RecordedEvent> consumer)
+            throws java.io.IOException {
+        try (var file = new RecordingFile(recording)) {
+            while (file.hasMoreEvents()) {
+                consumer.accept(file.readEvent());
+            }
+        }
+    }
+
+    /** Returns the successful C2 compilations of a recording, keyed by method. */
+    private static Map<String, List<C2Compilation>> c2Compilations(Path compilations) throws java.io.IOException {
+        var c2 = new HashMap<String, List<C2Compilation>>();
+        events(compilations, event -> {
+            if (event.getEventType().getName().equals("jdk.Compilation") && event.getBoolean("succeded")
+                    && event.getShort("compileLevel") == 4) {
+                RecordedMethod method = event.getValue("method");
+                if (method != null) {
+                    c2.computeIfAbsent(method.getType().getName() + "." + method.getName() + method.getDescriptor(),
+                            ignored -> new ArrayList<>()).add(new C2Compilation(event.getLong("compileId"),
+                            event.getEndTime(), event.getBoolean("isOsr")));
+                }
+            }
+        });
+        return c2;
+    }
+
+    /**
+     * Returns the deoptimizations that invalidated compiled code, keyed by compilation id: the {@code reinterpret},
+     * {@code make_not_entrant} and {@code make_not_compilable} actions, after which the method runs in the
+     * interpreter and then in C1 code until C2 compiles it again ({@code none} and {@code maybe_recompile} leave the
+     * code in use).
+     */
+    private static Map<Long, List<Invalidation>> invalidations(Path compilations) throws java.io.IOException {
+        var invalidated = new HashMap<Long, List<Invalidation>>();
+        events(compilations, event -> {
+            if (!event.getEventType().getName().equals("jdk.Deoptimization")) {
+                return;
+            }
+            var action = event.getString("action");
+            if (action == null || action.equals("none") || action.equals("maybe_recompile")) {
+                return;
+            }
+            RecordedMethod method = event.getValue("method");
+            var where = (method == null ? "?" : method.getType().getName() + "." + method.getName()) + " line "
+                    + event.getInt("lineNumber");
+            invalidated.computeIfAbsent(event.getLong("compileId"), ignored -> new ArrayList<>())
+                    .add(new Invalidation(event.getStartTime(), event.getString("reason") + " " + action + " at "
+                            + where));
+        });
+        return invalidated;
+    }
+
+    /**
+     * Returns the sampled allocations of the Vector API fallback, keyed by what ran them, the first Smalt frame of
+     * their stack, the class allocated and the top frame, with the bytes the samples stand for, and adds to
+     * {@code roots} the C2 compilations the {@code FALLBACK} samples ran in.
+     *
+     * <p>A sample whose Smalt frame runs in compiled code, inlined or not, into a method that C2 had compiled (a
+     * level 4 {@code jdk.Compilation} of the method's entry, not of a loop for on-stack replacement, that ended
+     * before the sample) is C2 code calling the fallback, a JIT failure,
+     * and is keyed {@code FALLBACK}. A sample from the interpreter, or from a method C2 had not compiled yet, is code
+     * that was not hot enough to reach C2 during the warm-up (a kernel path the workloads take seldom), and is keyed
+     * {@code COLD}, with the tier it ran at; so is a sample from a method whose C2 code a deoptimization had
+     * invalidated before the sample (the method runs in the interpreter and in C1 code until C2 compiles it again),
+     * with the uncommon trap that invalidated it.
+     */
+    private static Map<String, Long> fallbacks(Path recording, Map<String, List<C2Compilation>> c2,
+                                               Map<Long, List<Invalidation>> invalidated,
+                                               Map<String, Set<Long>> roots) throws java.io.IOException {
+        var found = new TreeMap<String, Long>();
+        events(recording, event -> {
+            if (!event.getEventType().getName().equals("jdk.ObjectAllocationSample")) {
+                return;
+            }
+            RecordedClass type = event.getValue("objectClass");
+            var frames = event.getStackTrace() == null ? List.<RecordedFrame>of() : event.getStackTrace().getFrames();
+            var top = frames.isEmpty() ? "" : frames.getFirst().getMethod().getType().getName();
+            var boxed = type != null && type.getName().startsWith("jdk.incubator.vector.");
+            var inside = top.startsWith("jdk.incubator.vector.") || top.startsWith("jdk.internal.vm.vector.");
+            if (!boxed && !inside) {
+                return;
+            }
+            var smalt = "no Smalt frame";
+            var ran = "FALLBACK";
+            for (var i = 0; i < frames.size(); i++) {
+                var frame = frames.get(i);
+                var owner = frame.getMethod().getType().getName();
+                if (owner.startsWith("com.github.auties00.smalt.")) {
+                    smalt = owner + "." + frame.getMethod().getName() + " line " + frame.getLineNumber();
+                    ran = tier(frames, i, c2, invalidated, event.getStartTime(), roots);
+                    break;
+                }
+            }
+            var key = ran + " " + smalt + " allocates " + (type == null ? "?" : type.getName()) + " in "
+                    + (frames.isEmpty() ? "?" : top + "." + frames.getFirst().getMethod().getName());
+            found.merge(key, event.getLong("weight"), Long::sum);
+        });
+        return found;
+    }
+
+    /**
+     * Returns {@code FALLBACK} when the frame at {@code index} runs in a method C2 had compiled when the sample was
+     * taken (the frame itself, or the compiled frame it is inlined into) and no deoptimization had invalidated since,
+     * recording those C2 compilations in {@code roots}, else {@code COLD} with where it ran.
+     */
+    private static String tier(List<RecordedFrame> frames, int index, Map<String, List<C2Compilation>> c2,
+                               Map<Long, List<Invalidation>> invalidated, java.time.Instant sampled,
+                               Map<String, Set<Long>> roots) {
+        if (!frames.get(index).isJavaFrame() || "Interpreted".equals(frames.get(index).getType())) {
+            return "COLD (interpreted)";
+        }
+        for (var i = index; i < frames.size(); i++) {
+            var frame = frames.get(i);
+            if ("JIT compiled".equals(frame.getType())) {
+                var method = frame.getMethod();
+                var root = method.getType().getName() + "." + method.getName() + method.getDescriptor();
+                var ended = c2.getOrDefault(root, List.of()).stream()
+                        .filter(compilation -> compilation.end().isBefore(sampled)).toList();
+                var before = ended.stream().filter(compilation -> !compilation.osr()).map(C2Compilation::id).toList();
+                if (before.isEmpty()) {
+                    return "COLD (C1 code of " + method.getType().getName() + "." + method.getName()
+                            + (ended.isEmpty() ? "" : ", whose loops alone C2 had compiled, for on-stack replacement")
+                            + ")";
+                }
+                var live = before.stream().filter(id -> invalidated.getOrDefault(id, List.of()).stream()
+                        .noneMatch(invalidation -> invalidation.time().isBefore(sampled))).toList();
+                if (live.isEmpty()) {
+                    var last = invalidated.get(before.getLast()).stream()
+                            .filter(invalidation -> invalidation.time().isBefore(sampled))
+                            .max(java.util.Comparator.comparing(Invalidation::time)).orElseThrow();
+                    return "COLD (C2 code of " + method.getType().getName() + "." + method.getName()
+                            + " deoptimized: " + last.reason() + ")";
+                }
+                roots.computeIfAbsent(root, ignored -> new TreeSet<>()).addAll(live);
+                return "FALLBACK";
+            }
+        }
+        return "FALLBACK";
+    }
+
+    /**
+     * Returns, for each C2 compilation a {@code FALLBACK} sample ran in, the calls into the Vector API that C2 did
+     * not inline ({@code jdk.CompilerInlining}), with the compiler's reason: they name why the compiled code calls
+     * the fallback.
+     */
+    private static List<String> inliningFailures(Path compilations, Map<String, Set<Long>> roots)
+            throws java.io.IOException {
+        var rootOf = new HashMap<Long, String>();
+        roots.forEach((root, ids) -> ids.forEach(id -> rootOf.put(id, root)));
+        if (rootOf.isEmpty()) {
+            return List.of();
+        }
+        var found = new TreeSet<String>();
+        events(compilations, event -> {
+            if (!event.getEventType().getName().equals("jdk.CompilerInlining") || event.getBoolean("succeeded")) {
+                return;
+            }
+            var root = rootOf.get(event.getLong("compileId"));
+            jdk.jfr.consumer.RecordedObject callee = event.getValue("callee");
+            if (root == null || callee == null) {
+                return;
+            }
+            var calleeType = callee.getString("type").replace('/', '.');
+            if (!calleeType.startsWith("jdk.incubator.vector.") && !calleeType.startsWith("jdk.internal.vm.vector.")) {
+                return;
+            }
+            RecordedMethod caller = event.getValue("caller");
+            found.add(root + ": " + (caller == null ? "?" : caller.getType().getName() + "." + caller.getName())
+                    + " bci " + event.getInt("bci") + " -> " + calleeType + "." + callee.getString("name")
+                    + callee.getString("descriptor") + ": " + event.getString("message"));
+        });
+        return List.copyOf(found);
+    }
+
+    /** Returns the failed compilations of Smalt methods, each with the compiler's message. */
+    private static List<String> failures(Path recording) throws java.io.IOException {
+        var messages = new HashMap<Long, String>();
+        var failed = new HashMap<Long, String>();
+        events(recording, event -> {
+            if (event.getEventType().getName().equals("jdk.CompilationFailure")) {
+                messages.put(event.getLong("compileId"), event.getString("failureMessage"));
+            } else if (event.getEventType().getName().equals("jdk.Compilation") && !event.getBoolean("succeded")) {
+                RecordedMethod method = event.getValue("method");
+                if (method != null && method.getType().getName().startsWith("com.github.auties00.smalt.")) {
+                    failed.put(event.getLong("compileId"), method.getType().getName() + "." + method.getName()
+                            + method.getDescriptor() + " at level " + event.getShort("compileLevel"));
+                }
+            }
+        });
+        var found = new TreeSet<String>();
+        failed.forEach((id, method) -> found.add(method + ": " + messages.getOrDefault(id, "no message")));
+        return List.copyOf(found);
     }
 
     private static long allocated() {
@@ -156,55 +397,57 @@ public final class JitWorkload {
                 options.merge(key, ":" + parts[i], String::concat);
             }
         }
-        var bound = Long.parseLong(options.getOrDefault("bound", "65536"));
         var threads = Integer.parseInt(options.getOrDefault("threads", "1"));
         return switch (parts[0]) {
-            case "h264enc" -> h264Encode(bound, threads, H264EncoderSpeed.valueOf(options.getOrDefault("speed", "BALANCED")),
+            case "h264enc" -> h264Encode(threads, H264EncoderSpeed.valueOf(options.getOrDefault("speed", "BALANCED")),
                     profile(options.getOrDefault("profile", "main")), options.get("input"),
                     Integer.parseInt(options.getOrDefault("width", "640")), Integer.parseInt(options.getOrDefault("height", "360")),
                     Boolean.parseBoolean(options.getOrDefault("rt", "false")));
-            case "h264dec" -> h264Decode(bound, threads, options.get("input"));
-            case "hevcdec" -> hevcDecode(bound, threads, Path.of(options.get("input")));
-            case "vp8dec" -> vp8Decode(bound, Path.of(options.get("input")));
-            case "vp8enc" -> vp8Encode(bound, threads, Integer.parseInt(options.getOrDefault("speed", "6")),
+            case "h264dec" -> h264Decode(threads, options.get("input"));
+            case "hevcdec" -> hevcDecode(threads, Path.of(options.get("input")));
+            case "vp8dec" -> vp8Decode(Path.of(options.get("input")));
+            case "vp8enc" -> vp8Encode(threads, Integer.parseInt(options.getOrDefault("speed", "6")),
                     Boolean.parseBoolean(options.getOrDefault("resilient", "true")),
                     Integer.parseInt(options.getOrDefault("width", "640")), Integer.parseInt(options.getOrDefault("height", "360")));
-            case "vp9enc" -> vp9Encode(bound, threads, Integer.parseInt(options.getOrDefault("speed", "6")),
+            case "vp9enc" -> vp9Encode(threads, Integer.parseInt(options.getOrDefault("speed", "6")),
                     Boolean.parseBoolean(options.getOrDefault("resilient", "true")),
                     Integer.parseInt(options.getOrDefault("layers", "1")),
                     Integer.parseInt(options.getOrDefault("width", "640")), Integer.parseInt(options.getOrDefault("height", "360")));
-            case "av1enc" -> av1Encode(bound, threads, Av1EncoderSpeed.valueOf(options.getOrDefault("speed", "FASTER")),
+            case "av1enc" -> av1Encode(threads, Av1EncoderSpeed.valueOf(options.getOrDefault("speed", "FASTER")),
                     Integer.parseInt(options.getOrDefault("width", "640")), Integer.parseInt(options.getOrDefault("height", "360")));
-            case "av1dec" -> ivfDecode("av1dec", bound, Path.of(options.get("input")), Codec.AV1,
+            case "av1dec" -> ivfDecode("av1dec", Path.of(options.get("input")), Codec.AV1,
                     track -> new Av1Decoder(track));
-            case "vp9dec" -> ivfDecode("vp9dec", bound, Path.of(options.get("input")), Codec.VP9,
+            case "vp9dec" -> ivfDecode("vp9dec", Path.of(options.get("input")), Codec.VP9,
                     track -> new Vp9Decoder(track));
-            case "proresdec" -> IntraJitWorkloads.proresDecode(bound);
-            case "proresenc" -> IntraJitWorkloads.proresEncode(bound);
-            case "dnxhddec" -> IntraJitWorkloads.dnxhdDecode(bound);
-            case "dnxhdenc" -> IntraJitWorkloads.dnxhdEncode(bound);
-            case "webpenc" -> webpEncode(bound);
-            case "webpdec" -> webpDecode(bound);
-            case "webpanim" -> webpAnimation(bound, Integer.parseInt(options.getOrDefault("concurrent", "2")),
+            case "proresdec" -> IntraJitWorkloads.proresDecode();
+            case "proresenc" -> IntraJitWorkloads.proresEncode();
+            case "dnxhddec" -> IntraJitWorkloads.dnxhdDecode();
+            case "dnxhdenc" -> IntraJitWorkloads.dnxhdEncode();
+            case "webpenc" -> webpEncode();
+            case "webpdec" -> webpDecode();
+            case "webpanim" -> webpAnimation(Integer.parseInt(options.getOrDefault("concurrent", "2")),
                     Integer.parseInt(options.getOrDefault("frames", "8")));
-            case "capture" -> named("capture", bound, CaptureWorkloads::round);
-            case "opusvoice" -> AudioJitWorkloads.opusVoiceNote(bound, seconds(options, 8));
-            case "opuscall" -> AudioJitWorkloads.opusCall(bound, seconds(options, 6));
-            case "aacenc" -> AudioJitWorkloads.aacEncode(bound, seconds(options, 6));
-            case "amrnb" -> AudioJitWorkloads.amr("amrnb", Codec.AMR_NB, bound, seconds(options, 4));
-            case "amrwb" -> AudioJitWorkloads.amr("amrwb", Codec.AMR_WB, bound, seconds(options, 4));
-            case "heaac" -> AudioJitWorkloads.heAac(bound, seconds(options, 6));
-            case "ac3" -> AudioJitWorkloads.ac3(bound, seconds(options, 6));
-            case "flacenc" -> AudioJitWorkloads.flacEncode(bound, seconds(options, 6));
-            case "mp3dec" -> AudioJitWorkloads.mp3Decode(bound, Path.of(options.get("input")));
-            case "mp3enc" -> AudioJitWorkloads.mp3Encode(bound, seconds(options, 6));
-            case "resample" -> AudioJitWorkloads.resample(bound, seconds(options, 10));
-            case "voice" -> AudioJitWorkloads.voiceCall(bound, seconds(options, 6));
-            case "jpegsend" -> ImageJitWorkloads.jpegSend(bound, Integer.parseInt(options.getOrDefault("count", "2")));
-            case "pngdec" -> ImageJitWorkloads.pngDecode(bound, Integer.parseInt(options.getOrDefault("count", "2")));
-            case "gifdec" -> ImageJitWorkloads.gifDecode(bound, Integer.parseInt(options.getOrDefault("count", "4")));
-            case "convert" -> ImageJitWorkloads.convert(bound, Integer.parseInt(options.getOrDefault("count", "2")));
-            case "effects" -> ImageJitWorkloads.effects(bound, Integer.parseInt(options.getOrDefault("count", "1")));
+            case "capture" -> named("capture", CaptureWorkloads::round);
+            case "opusvoice" -> AudioJitWorkloads.opusVoiceNote(seconds(options, 8));
+            case "opuscall" -> AudioJitWorkloads.opusCall(seconds(options, 6));
+            case "aacenc" -> AudioJitWorkloads.aacEncode(seconds(options, 6));
+            case "amrnb" -> AudioJitWorkloads.amr("amrnb", Codec.AMR_NB, seconds(options, 4));
+            case "amrwb" -> AudioJitWorkloads.amr("amrwb", Codec.AMR_WB, seconds(options, 4));
+            case "heaac" -> AudioJitWorkloads.heAac(seconds(options, 6));
+            case "heaacenc" -> AudioJitWorkloads.heAacEncode(seconds(options, 6));
+            case "ac3" -> AudioJitWorkloads.ac3(seconds(options, 6));
+            case "flacenc" -> AudioJitWorkloads.flacEncode(seconds(options, 6));
+            case "alacenc" -> AudioJitWorkloads.alacEncode(seconds(options, 6));
+            case "mp3dec" -> AudioJitWorkloads.mp3Decode(Path.of(options.get("input")));
+            case "mp3enc" -> AudioJitWorkloads.mp3Encode(seconds(options, 6));
+            case "mp2enc" -> AudioJitWorkloads.mp2Encode(seconds(options, 6));
+            case "resample" -> AudioJitWorkloads.resample(seconds(options, 10));
+            case "voice" -> AudioJitWorkloads.voiceCall(seconds(options, 6));
+            case "jpegsend" -> ImageJitWorkloads.jpegSend(Integer.parseInt(options.getOrDefault("count", "2")));
+            case "pngdec" -> ImageJitWorkloads.pngDecode(Integer.parseInt(options.getOrDefault("count", "2")));
+            case "gifdec" -> ImageJitWorkloads.gifDecode(Integer.parseInt(options.getOrDefault("count", "4")));
+            case "convert" -> ImageJitWorkloads.convert(Integer.parseInt(options.getOrDefault("count", "2")));
+            case "effects" -> ImageJitWorkloads.effects(Integer.parseInt(options.getOrDefault("count", "1")));
             default -> throw new IllegalArgumentException(spec);
         };
     }
@@ -221,16 +464,11 @@ public final class JitWorkload {
         };
     }
 
-    static Workload named(String name, long bound, java.util.function.IntSupplier round) {
+    static Workload named(String name, java.util.function.IntSupplier round) {
         return new Workload() {
             @Override
             public String name() {
                 return name;
-            }
-
-            @Override
-            public long bound() {
-                return bound;
             }
 
             @Override
@@ -319,7 +557,7 @@ public final class JitWorkload {
     }
 
     // rt=true runs the real-time preset of calls.
-    private static Workload h264Encode(long bound, int threads, H264EncoderSpeed speed,
+    private static Workload h264Encode(int threads, H264EncoderSpeed speed,
                                        H264Profile profile, String input, int width, int height, boolean realtime)
             throws Exception {
         var pictures = input == null ? synthesize(width, height, 24) : read(Path.of(input), width, height, 24);
@@ -331,7 +569,7 @@ public final class JitWorkload {
         long[] pts = {0};
         Consumer<Packet> output = packet -> sink += packet.size();
         var name = realtime ? "h264enc-rt-t" + threads : "h264enc-" + speed + "-" + profile + "-t" + threads;
-        return named(name, bound, () -> {
+        return named(name, () -> {
             for (var picture : pictures) {
                 encoder.encode(new VideoFrame(picture, pts[0]++, 1, false), output);
             }
@@ -339,7 +577,7 @@ public final class JitWorkload {
         });
     }
 
-    private static Workload vp8Encode(long bound, int threads, int speed, boolean errorResilient, int width, int height) {
+    private static Workload vp8Encode(int threads, int speed, boolean errorResilient, int width, int height) {
         var pictures = synthesize(width, height, 24);
         var encoder = new Vp8Encoder(width, height, Vp8EncoderOptions.builder()
                 .timeBase(new Rational(1, 30))
@@ -355,7 +593,7 @@ public final class JitWorkload {
                 .build());
         long[] pts = {0};
         Consumer<Packet> output = packet -> sink += packet.size();
-        return named("vp8enc-s" + speed + (errorResilient ? "-er" : "") + "-t" + threads, bound, () -> {
+        return named("vp8enc-s" + speed + (errorResilient ? "-er" : "") + "-t" + threads, () -> {
             for (var picture : pictures) {
                 encoder.encode(new VideoFrame(picture, pts[0]++, 1, false), output);
             }
@@ -363,7 +601,7 @@ public final class JitWorkload {
         });
     }
 
-    private static Workload vp9Encode(long bound, int threads, int speed, boolean errorResilient, int layers, int width,
+    private static Workload vp9Encode(int threads, int speed, boolean errorResilient, int layers, int width,
                                       int height) {
         var pictures = synthesize(width, height, 24);
         var encoder = new Vp9Encoder(width, height, Vp9EncoderOptions.builder()
@@ -383,7 +621,7 @@ public final class JitWorkload {
                 .build());
         long[] pts = {0};
         Consumer<Packet> output = packet -> sink += packet.size();
-        return named("vp9enc-s" + speed + (errorResilient ? "-er" : "") + "-l" + layers + "-t" + threads, bound, () -> {
+        return named("vp9enc-s" + speed + (errorResilient ? "-er" : "") + "-l" + layers + "-t" + threads, () -> {
             for (var picture : pictures) {
                 encoder.encode(new VideoFrame(picture, pts[0]++, 1, false), output);
             }
@@ -391,14 +629,14 @@ public final class JitWorkload {
         });
     }
 
-    private static Workload av1Encode(long bound, int threads, Av1EncoderSpeed speed, int width, int height) {
+    private static Workload av1Encode(int threads, Av1EncoderSpeed speed, int width, int height) {
         var pictures = synthesize(width, height, 24);
         var encoder = new Av1Encoder(width, height, Av1EncoderOptions.forRealtime().toBuilder().bitrate(800_000).speed(speed)
                 .dropFrames(false).threads(threads).tileColumnsLog2(threads > 1 ? 1 : 0)
                 .timeBase(new Rational(1, 30)).build());
         long[] pts = {0};
         Consumer<Packet> output = packet -> sink += packet.size();
-        return named("av1enc-" + speed.name().toLowerCase(Locale.ROOT) + "-t" + threads, bound, () -> {
+        return named("av1enc-" + speed.name().toLowerCase(Locale.ROOT) + "-t" + threads, () -> {
             for (var picture : pictures) {
                 encoder.encode(new VideoFrame(picture, pts[0]++, 1, false), output);
             }
@@ -406,7 +644,7 @@ public final class JitWorkload {
         });
     }
 
-    private static Workload h264Decode(long bound, int threads, String input) throws Exception {
+    private static Workload h264Decode(int threads, String input) throws Exception {
         var packets = new ArrayList<Packet>();
         Optional<byte[]> codecConfig;
         String name;
@@ -436,7 +674,7 @@ public final class JitWorkload {
             count[0]++;
             sink += ((YuvPicture) frame.picture()).y()[17];
         };
-        return named(name, bound, () -> {
+        return named(name, () -> {
             count[0] = 0;
             for (var packet : packets) {
                 decoder.decode(packet, output);
@@ -446,7 +684,7 @@ public final class JitWorkload {
         });
     }
 
-    private static Workload hevcDecode(long bound, int threads, Path input) throws Exception {
+    private static Workload hevcDecode(int threads, Path input) throws Exception {
         var packets = new ArrayList<Packet>();
         for (var unit : nalUnits(Files.readAllBytes(input))) {
             packets.add(new Packet(1, unit, Packet.NO_TIMESTAMP, Packet.NO_TIMESTAMP, 0, false));
@@ -458,7 +696,7 @@ public final class JitWorkload {
             count[0]++;
             sink += ((YuvPicture) frame.picture()).y()[17];
         };
-        return named("hevcdec-t" + threads, bound, () -> {
+        return named("hevcdec-t" + threads, () -> {
             count[0] = 0;
             for (var packet : packets) {
                 decoder.decode(packet, output);
@@ -495,7 +733,7 @@ public final class JitWorkload {
         return frames;
     }
 
-    private static Workload vp8Decode(long bound, Path input) throws Exception {
+    private static Workload vp8Decode(Path input) throws Exception {
         var bytes = Files.readAllBytes(input);
         var width = (bytes[12] & 0xFF) | (bytes[13] & 0xFF) << 8;
         var height = (bytes[14] & 0xFF) | (bytes[15] & 0xFF) << 8;
@@ -510,7 +748,7 @@ public final class JitWorkload {
             count[0]++;
             sink += ((YuvPicture) frame.picture()).y()[17];
         };
-        return named("vp8dec", bound, () -> {
+        return named("vp8dec", () -> {
             count[0] = 0;
             for (var frame : frames) {
                 decoder.decode(new Packet(1, frame, pts[0], pts[0], 1, false), output);
@@ -521,7 +759,7 @@ public final class JitWorkload {
     }
 
     /** Decodes every frame of an IVF file per round with the decoder the factory creates. */
-    private static Workload ivfDecode(String name, long bound, Path input, Codec codec,
+    private static Workload ivfDecode(String name, Path input, Codec codec,
                                       java.util.function.Function<VideoTrack, VideoDecoder> factory) throws Exception {
         var bytes = Files.readAllBytes(input);
         var width = (bytes[12] & 0xFF) | (bytes[13] & 0xFF) << 8;
@@ -536,7 +774,7 @@ public final class JitWorkload {
             count[0]++;
             sink += ((YuvPicture) frame.picture()).y()[17];
         };
-        return named(name, bound, () -> {
+        return named(name, () -> {
             count[0] = 0;
             for (var frame : frames) {
                 decoder.decode(new Packet(1, frame, pts[0], pts[0], 1, false), output);
@@ -576,11 +814,11 @@ public final class JitWorkload {
      * {@code concurrent} attempts at falling qualities encoded at once, each encoder running its
      * own workers.
      */
-    private static Workload webpAnimation(long bound, int concurrent, int frameCount) {
+    private static Workload webpAnimation(int concurrent, int frameCount) {
         var frames = stickers(512, frameCount);
         int[] qualities = {75, 50, 35, 20};
         ExecutorService attempts = Executors.newFixedThreadPool(concurrent, Thread.ofPlatform().daemon().factory());
-        return named("webpanim-c" + concurrent, bound, () -> {
+        return named("webpanim-c" + concurrent, () -> {
             var results = new ArrayList<Future<byte[]>>();
             for (var attempt = 0; attempt < concurrent; attempt++) {
                 var quality = qualities[attempt % qualities.length];
@@ -603,11 +841,11 @@ public final class JitWorkload {
         });
     }
 
-    private static Workload webpEncode(long bound) {
+    private static Workload webpEncode() {
         var stickers = stickers();
         var lossy = WebpEncoderOptions.lossy(75);
         var lossless = WebpEncoderOptions.lossless();
-        return named("webpenc", bound, () -> {
+        return named("webpenc", () -> {
             for (var sticker : stickers) {
                 sink += WebpEncoder.encode(sticker, lossy).length + WebpEncoder.encode(sticker, lossless).length;
             }
@@ -615,13 +853,13 @@ public final class JitWorkload {
         });
     }
 
-    private static Workload webpDecode(long bound) {
+    private static Workload webpDecode() {
         var images = new ArrayList<byte[]>();
         for (var sticker : stickers()) {
             images.add(WebpEncoder.encode(sticker, WebpEncoderOptions.lossy(75)));
             images.add(WebpEncoder.encode(sticker, WebpEncoderOptions.lossless()));
         }
-        return named("webpdec", bound, () -> {
+        return named("webpdec", () -> {
             for (var image : images) {
                 sink += WebpDecoder.decode(MediaSource.of(image), ImageDecoderOptions.defaults()).hashCode();
             }

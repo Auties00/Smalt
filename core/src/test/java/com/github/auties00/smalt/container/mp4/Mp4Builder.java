@@ -163,6 +163,24 @@ final class Mp4Builder {
         return concat(ftyp(), box("mdat", data), box("moov", concat(moovChildren)));
     }
 
+    /**
+     * Builds a {@code sinf} box: the original format, a scheme type and the scheme information children.
+     */
+    static byte[] sinf(String original, String scheme, byte[]... schemeInformation) {
+        return box("sinf", box("frma", fourCc(original)), full("schm", 0, 0, fourCc(scheme), u32(0x10000)),
+                box("schi", concat(schemeInformation)));
+    }
+
+    /**
+     * Builds a {@code tenc} box; version 1 carries the pattern, and a protected box without per-sample
+     * initialization vectors carries the constant one.
+     */
+    static byte[] tenc(int version, int crypt, int skip, boolean isProtected, int ivSize, byte[] keyId, byte[] constantIv) {
+        var constant = constantIv == null ? new byte[0] : concat(u8(constantIv.length), constantIv);
+        return full("tenc", version, 0, u8(0), u8(version > 0 ? crypt << 4 | skip : 0), u8(isProtected ? 1 : 0),
+                u8(ivSize), keyId, constant);
+    }
+
     /** Returns {@code count} samples of {@code size} bytes each, sample {@code i} filled with {@code i}. */
     static byte[] samples(int count, int size) {
         var out = new byte[count * size];

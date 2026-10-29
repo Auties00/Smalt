@@ -42,7 +42,8 @@ public enum ImageFormat {
     WEBP("image/webp"),
 
     /**
-     * Windows bitmap, magic {@code BM}.
+     * Windows and OS/2 bitmap, magic {@code BM}, or an OS/2 bitmap array, magic {@code BA}, whose first
+     * entry is a bitmap.
      */
     BMP("image/bmp"),
 
@@ -50,13 +51,22 @@ public enum ImageFormat {
      * HEIF with an HEVC-coded primary image (HEIC), an ISO-BMFF file whose {@code ftyp} brands
      * include {@code heic}, {@code heix}, {@code heim}, {@code heis}, {@code hevc} or {@code hevx};
      * a file with only the generic HEIF brands ({@code mif1}, {@code mif2}, {@code msf1} or
-     * {@code miaf}) and no AVIF brand is taken as HEIC too, the codec HEIF files use most.
+     * {@code miaf}) and no AVIF brand is taken as HEIC too, the codec HEIF files use most, and so is
+     * HEIF with AVC, JPEG or JPEG 2000 images (brands {@code avci}, {@code avcs}, {@code jpeg},
+     * {@code jpgs}, {@code j2ki} and {@code j2is}), which the same decoder reads.
+     *
+     * <p>{@link #detect(byte[], int)} reads only the brands;
+     * {@link Images#detect(com.github.auties00.smalt.io.MediaSource)} reads the items and tells a HEIF file by the
+     * coding of the image it shows, so that a file with only the generic brands whose image is AV1-coded is
+     * recognized as {@link #AVIF}.
      */
     HEIC("image/heic"),
 
     /**
      * HEIF with an AV1-coded primary image (AVIF), an ISO-BMFF file whose {@code ftyp} brands
-     * include {@code avif} or {@code avis}.
+     * include {@code avif} or {@code avis}, or, as
+     * {@link Images#detect(com.github.auties00.smalt.io.MediaSource)} recognizes it, any HEIF file whose primary
+     * image, or whose image sequence without a primary image, is AV1-coded.
      */
     AVIF("image/avif"),
 
@@ -71,6 +81,12 @@ public enum ImageFormat {
      * or {@code 00 00 02 00} (cursor) whose first entry is consistent.
      */
     ICO("image/vnd.microsoft.icon"),
+
+    /**
+     * Windows animated cursor (ANI), a RIFF container with form type {@code ACON} whose frames are
+     * icons or cursors.
+     */
+    ANI("application/x-navi-animation"),
 
     /**
      * JPEG 2000: a JP2 or JPX file, starting with the 12-byte signature box
@@ -120,21 +136,22 @@ public enum ImageFormat {
     public static final int DETECTION_LENGTH = 64;
 
     /**
-     * The IANA media type of the format.
+     * The media type of the format: the IANA one where registered, the customary one otherwise.
      */
     private final String mimeType;
 
     /**
      * Constructs a constant.
      *
-     * @param mimeType the IANA media type
+     * @param mimeType the media type
      */
     ImageFormat(String mimeType) {
         this.mimeType = mimeType;
     }
 
     /**
-     * Returns the IANA media type of the format.
+     * Returns the media type of the format: the IANA one where registered, the customary one
+     * otherwise.
      *
      * @return the media type, for example {@code image/jpeg}
      */
@@ -184,7 +201,14 @@ public enum ImageFormat {
                 && header[8] == 'W' && header[9] == 'E' && header[10] == 'B' && header[11] == 'P') {
             return WEBP;
         }
+        if (length >= 12 && header[0] == 'R' && header[1] == 'I' && header[2] == 'F' && header[3] == 'F'
+                && header[8] == 'A' && header[9] == 'C' && header[10] == 'O' && header[11] == 'N') {
+            return ANI;
+        }
         if (length >= 14 && header[0] == 'B' && header[1] == 'M') {
+            return BMP;
+        }
+        if (length >= 28 && header[0] == 'B' && header[1] == 'A' && header[14] == 'B' && header[15] == 'M') {
             return BMP;
         }
         if (length >= 4 && ((header[0] == 'I' && header[1] == 'I' && (header[2] == 42 || header[2] == 43) && header[3] == 0)
@@ -259,9 +283,14 @@ public enum ImageFormat {
                 && u8(header, 3) == 0x51) {
             return true;
         }
-        return length >= 12 && header[0] == 0 && header[1] == 0 && header[2] == 0 && header[3] == 0x0C
+        var signature = length >= 12 && header[0] == 0 && header[1] == 0 && header[2] == 0 && header[3] == 0x0C
                 && header[4] == 'j' && header[5] == 'P' && header[6] == ' ' && header[7] == ' '
                 && header[8] == 0x0D && header[9] == 0x0A && u8(header, 10) == 0x87 && header[11] == 0x0A;
+        // a Motion JPEG 2000 file shares the signature box; its ftyp brand makes it a video container
+        var motion = length >= 24 && header[16] == 'f' && header[17] == 't' && header[18] == 'y' && header[19] == 'p'
+                && header[20] == 'm' && header[21] == 'j' && ((header[22] == 'p' && header[23] == '2')
+                || (header[22] == '2' && header[23] == 's'));
+        return signature && !motion;
     }
 
     /**
@@ -292,7 +321,8 @@ public enum ImageFormat {
                 case "avif", "avis" -> {
                     return AVIF;
                 }
-                case "heic", "heix", "heim", "heis", "hevc", "hevx", "mif1", "mif2", "msf1", "miaf" -> match = HEIC;
+                case "heic", "heix", "heim", "heis", "hevc", "hevx", "mif1", "mif2", "msf1", "miaf", "avci", "avcs", "jpeg",
+                     "jpgs", "j2ki", "j2is" -> match = HEIC;
                 default -> {
                 }
             }

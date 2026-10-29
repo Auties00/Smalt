@@ -6,9 +6,11 @@ import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.avif.AvifEncoderOptions;
+import com.github.auties00.smalt.internal.heif.EncodeImage;
 import com.github.auties00.smalt.internal.heif.HeifProperty;
+import com.github.auties00.smalt.internal.heif.HeifTrackWriter;
+import com.github.auties00.smalt.internal.heif.HeifWriter;
 import com.github.auties00.smalt.internal.io.ByteWriter;
-import com.github.auties00.smalt.internal.io.FourCc;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.track.Packet;
@@ -19,7 +21,6 @@ import com.github.auties00.smalt.video.av1.Av1EncoderOptions;
 import com.github.auties00.smalt.video.av1.Av1EncoderSpeed;
 import com.github.auties00.smalt.video.av1.internal.Obu;
 
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -40,13 +41,10 @@ import java.util.Objects;
  * one million. Frames that report alpha but are opaque, and frames before the first transparent
  * one, share one coded opaque alpha frame.
  *
- * @implNote This implementation lays out the tracks and sample tables as libavif's
- * {@code avifEncoderFinish} ({@code src/write.c}, BSD-2) does for image sequences: a
- * {@code pict} color track and an
+ * @implNote This implementation lays out the tracks as libavif's {@code avifEncoderFinish}
+ * ({@code src/write.c}, BSD-2) does for image sequences: a {@code pict} color track and an
  * {@code auxv} alpha track referring to it with {@code auxl}, {@code av01} sample entries
- * with {@code av1C} and {@code ccst} (and {@code auxi} for alpha), every sample in one
- * chunk, a sync sample table when not every sample is a key frame, and a repeating
- * edit list for the loop count.
+ * with {@code av1C} and {@code ccst} (and {@code auxi} for alpha), through {@link HeifTrackWriter}.
  */
 public final class AvifAnimationWriter implements AnimationWriter {
     /**
@@ -163,7 +161,7 @@ public final class AvifAnimationWriter implements AnimationWriter {
         if (durationMicros <= 0) {
             throw new IllegalArgumentException("duration " + durationMicros + " is not positive");
         }
-        var image = EncodeImage.of(picture, options.chromaFormat().orElse(null), options.bitDepth().orElse(0),
+        var image = EncodeImage.of("avif", picture, options.chromaFormat().orElse(null), options.bitDepth().orElse(0),
                 options.color(), options.isLossless(), options.premultipliedAlpha());
         if (first == null) {
             first = image;
@@ -313,22 +311,22 @@ public final class AvifAnimationWriter implements AnimationWriter {
                 brands.add(brand);
             }
         }
-        var writer = new AvifWriter("avis", brands);
+        var writer = new HeifWriter("avif", "avis", brands);
         var depth = first.bitDepth();
         var channels = first.format() == ChromaFormat.MONOCHROME ? 1 : 3;
-        var props = new ArrayList<AvifWriter.Property>();
-        props.add(AvifWriter.ispe(width, height));
-        props.add(AvifWriter.pixi(depth, channels));
-        props.add(AvifWriter.av1C(color.getFirst().av1C()));
+        var props = new ArrayList<HeifWriter.Property>();
+        props.add(HeifWriter.ispe(width, height));
+        props.add(HeifWriter.pixi(depth, channels));
+        props.add(AvifStillEncoder.av1C(color.getFirst().av1C()));
         props.addAll(AvifStillEncoder.colorProperties(first.color(), options));
-        props.addAll(AvifStillEncoder.orientation(options.orientation()));
-        var colorId = writer.addSampleItem("av01", 0, colorSizes[0], props.toArray(AvifWriter.Property[]::new));
+        props.addAll(HeifWriter.orientation(options.orientation()));
+        var colorId = writer.addSampleItem("av01", 0, colorSizes[0], props.toArray(HeifWriter.Property[]::new));
         writer.primary(colorId);
         if (transparent) {
             var firstAlpha = alphaList.getFirst();
-            var alphaId = writer.addSampleItem("av01", colorEnd, alphaSizes[0], AvifWriter.ispe(width, height),
-                    AvifWriter.pixi(depth, 1), AvifWriter.av1C(firstAlpha.av1C()),
-                    AvifWriter.auxC(HeifProperty.AuxiliaryType.ALPHA_URN));
+            var alphaId = writer.addSampleItem("av01", colorEnd, alphaSizes[0], HeifWriter.ispe(width, height),
+                    HeifWriter.pixi(depth, 1), AvifStillEncoder.av1C(firstAlpha.av1C()),
+                    HeifWriter.auxC(HeifProperty.AuxiliaryType.ALPHA_URN));
             writer.reference("auxl", alphaId, colorId);
             if (options.premultipliedAlpha()) {
                 writer.reference("prem", colorId, alphaId);
@@ -353,20 +351,21 @@ public final class AvifAnimationWriter implements AnimationWriter {
      */
     private byte[] moov(long base, int[] colorSizes, int alphaOffset, int[] alphaSizes, byte[] alphaConfig) {
         long duration = 0;
-        for (var d : durations) {
-            duration += d;
+        var deltas = new long[durations.size()];
+        for (var i = 0; i < deltas.length; i++) {
+            deltas[i] = durations.get(i);
+            duration += deltas[i];
         }
-        var loops = options.loopCount();
-        var movieDuration = loops == 0 ? 0xFFFFFFFFL : Math.min(0xFFFFFFFEL, duration * loops);
-        var out = new ByteWriter(1024 + 8 * (colorSizes.length + (alphaSizes == null ? 0 : alphaSizes.length)));
-        out.begin(FourCc.of("moov"));
-        mvhd(out, movieDuration, alphaSizes != null ? 3 : 2);
-        trak(out, 1, 0, base, colorSizes, color.getFirst().av1C(), duration, movieDuration, false, syncSamples());
+        var tracks = new ArrayList<HeifTrackWriter.Track>();
+        var colorConfig = color.getFirst().av1C();
+        var premultipliedBy = alphaSizes != null && options.premultipliedAlpha() ? 2 : 0;
+        tracks.add(new HeifTrackWriter.Track(1, 0, premultipliedBy, "pict", 0, colorSizes, deltas, null,
+                syncSamples(), 0, out -> sampleEntry(out, colorConfig, false)));
         if (alphaSizes != null) {
-            trak(out, 2, 1, base + alphaOffset, alphaSizes, alphaConfig, duration, movieDuration, true, null);
+            tracks.add(new HeifTrackWriter.Track(2, 1, 0, "auxv", alphaOffset, alphaSizes, deltas, null, null, 0,
+                    out -> sampleEntry(out, alphaConfig, true)));
         }
-        out.end();
-        return out.toByteArray();
+        return HeifTrackWriter.moov(base, width, height, TIMESCALE, duration, options.loopCount(), tracks);
     }
 
     /**
@@ -387,204 +386,26 @@ public final class AvifAnimationWriter implements AnimationWriter {
     }
 
     /**
-     * Writes the {@code mvhd} box.
+     * Writes the {@code av01} sample entry of a track: the {@code av1C} and {@code ccst} boxes, then the
+     * {@code auxi} box of the alpha track or the color boxes of the color track.
      *
      * @param out the output
-     * @param duration the movie duration, in the timescale
-     * @param nextTrackId the identifier after the last track's
-     */
-    private static void mvhd(ByteWriter out, long duration, int nextTrackId) {
-        out.beginFull(FourCc.of("mvhd"), 0, 0);
-        out.u32be(0);
-        out.u32be(0);
-        out.u32be(TIMESCALE);
-        out.u32be(duration);
-        out.u32be(0x00010000);
-        out.u16be(0x0100);
-        out.u16be(0);
-        out.u32be(0);
-        out.u32be(0);
-        matrix(out);
-        out.zeros(24);
-        out.u32be(nextTrackId);
-        out.end();
-    }
-
-    /**
-     * Writes the unity transformation matrix.
-     *
-     * @param out the output
-     */
-    private static void matrix(ByteWriter out) {
-        long[] unity = {0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000};
-        for (var v : unity) {
-            out.u32be(v);
-        }
-    }
-
-    /**
-     * Writes a {@code trak} box.
-     *
-     * @param out the output
-     * @param id the track identifier
-     * @param reference the track an alpha track describes, 0 for none
-     * @param chunkOffset the file offset of the track's single chunk
-     * @param sizes the sample sizes
-     * @param av1C the codec configuration record
-     * @param duration the media duration, in the timescale
-     * @param movieDuration the presentation duration, in the timescale
-     * @param alphaTrack whether the track is the alpha track
-     * @param sync the sync flag of each sample, or {@code null} when every sample is one
-     */
-    private void trak(ByteWriter out, int id, int reference, long chunkOffset, int[] sizes, byte[] av1C,
-                      long duration, long movieDuration, boolean alphaTrack, boolean[] sync) {
-        out.begin(FourCc.of("trak"));
-        out.beginFull(FourCc.of("tkhd"), 0, 1);
-        out.u32be(0);
-        out.u32be(0);
-        out.u32be(id);
-        out.u32be(0);
-        out.u32be(movieDuration);
-        out.zeros(16);
-        matrix(out);
-        out.u32be((long) width << 16);
-        out.u32be((long) height << 16);
-        out.end();
-        if (reference != 0) {
-            out.begin(FourCc.of("tref"));
-            out.begin(FourCc.of("auxl"));
-            out.u32be(reference);
-            out.end();
-            out.end();
-        }
-        out.begin(FourCc.of("edts"));
-        out.beginFull(FourCc.of("elst"), 0, 1);
-        out.u32be(1);
-        out.u32be(movieDuration);
-        out.u32be(0);
-        out.u16be(1);
-        out.u16be(0);
-        out.end();
-        out.end();
-        out.begin(FourCc.of("mdia"));
-        out.beginFull(FourCc.of("mdhd"), 0, 0);
-        out.u32be(0);
-        out.u32be(0);
-        out.u32be(TIMESCALE);
-        out.u32be(duration);
-        out.u16be(('u' - 0x60) << 10 | ('n' - 0x60) << 5 | ('d' - 0x60));
-        out.u16be(0);
-        out.end();
-        AvifWriter.hdlr(out, alphaTrack ? "auxv" : "pict");
-        out.begin(FourCc.of("minf"));
-        out.beginFull(FourCc.of("vmhd"), 0, 1);
-        out.zeros(8);
-        out.end();
-        out.begin(FourCc.of("dinf"));
-        out.beginFull(FourCc.of("dref"), 0, 0);
-        out.u32be(1);
-        out.beginFull(FourCc.of("url "), 0, 1);
-        out.end();
-        out.end();
-        out.end();
-        stbl(out, chunkOffset, sizes, av1C, alphaTrack, sync);
-        out.end();
-        out.end();
-        out.end();
-    }
-
-    /**
-     * Writes an {@code stbl} box: the sample entry, the decoding times, the chunk, the sample
-     * sizes and, when not every sample is a sync sample, the sync sample table.
-     *
-     * @param out the output
-     * @param chunkOffset the file offset of the single chunk
-     * @param sizes the sample sizes
      * @param av1C the codec configuration record
      * @param alphaTrack whether the track is the alpha track
-     * @param sync the sync flag of each sample, or {@code null} when every sample is one
      */
-    private void stbl(ByteWriter out, long chunkOffset, int[] sizes, byte[] av1C, boolean alphaTrack,
-                      boolean[] sync) {
-        out.begin(FourCc.of("stbl"));
-        out.beginFull(FourCc.of("stsd"), 0, 0);
-        out.u32be(1);
-        out.begin(FourCc.of("av01"));
-        out.zeros(6);
-        out.u16be(1);
-        out.zeros(16);
-        out.u16be(width);
-        out.u16be(height);
-        out.u32be(0x00480000);
-        out.u32be(0x00480000);
-        out.u32be(0);
-        out.u16be(1);
-        out.zeros(32);
-        out.u16be(0x0018);
-        out.u16be(0xFFFF);
-        AvifWriter.av1C(out, av1C);
-        out.beginFull(FourCc.of("ccst"), 0, 0);
-        out.u32be(0xC0000000L | (15L << 26));
-        out.end();
-        if (alphaTrack) {
-            out.beginFull(FourCc.of("auxi"), 0, 0);
-            out.bytes(HeifProperty.AuxiliaryType.ALPHA_URN.getBytes(StandardCharsets.US_ASCII));
-            out.u8(0);
-            out.end();
-        } else {
-            var c = first.color();
-            AvifWriter.nclx(out, c.primaries().code(), c.transfer().code(), c.matrix().code(),
-                    c.range() == ColorRange.FULL);
-        }
-        out.end();
-        out.end();
-        var runs = new ArrayList<long[]>();
-        for (var d : durations) {
-            if (!runs.isEmpty() && runs.getLast()[1] == d) {
-                runs.getLast()[0]++;
+    private void sampleEntry(ByteWriter out, byte[] av1C, boolean alphaTrack) {
+        HeifTrackWriter.visualSampleEntry(out, "av01", width, height, entry -> {
+            HeifWriter.box(entry, "av1C", av1C);
+            HeifTrackWriter.ccst(entry, true, true, 15);
+            if (alphaTrack) {
+                HeifTrackWriter.auxi(entry, HeifProperty.AuxiliaryType.ALPHA_URN);
             } else {
-                runs.add(new long[]{1, d});
+                var c = first.color();
+                HeifWriter.nclx(entry, c.primaries().code(), c.transfer().code(), c.matrix().code(),
+                        c.range() == ColorRange.FULL);
+                options.colorProfile().ifPresent(profile -> HeifWriter.icc(entry, profile.toByteArray()));
             }
-        }
-        out.beginFull(FourCc.of("stts"), 0, 0);
-        out.u32be(runs.size());
-        for (var run : runs) {
-            out.u32be(run[0]);
-            out.u32be(run[1]);
-        }
-        out.end();
-        out.beginFull(FourCc.of("stsc"), 0, 0);
-        out.u32be(1);
-        out.u32be(1);
-        out.u32be(sizes.length);
-        out.u32be(1);
-        out.end();
-        out.beginFull(FourCc.of("stsz"), 0, 0);
-        out.u32be(0);
-        out.u32be(sizes.length);
-        for (var size : sizes) {
-            out.u32be(size);
-        }
-        out.end();
-        if (sync != null) {
-            var count = 0;
-            for (var s : sync) {
-                count += s ? 1 : 0;
-            }
-            out.beginFull(FourCc.of("stss"), 0, 0);
-            out.u32be(count);
-            for (var i = 0; i < sync.length; i++) {
-                if (sync[i]) {
-                    out.u32be(i + 1);
-                }
-            }
-            out.end();
-        }
-        out.beginFull(FourCc.of("stco"), 0, 0);
-        out.u32be(1);
-        out.u32be(chunkOffset);
-        out.end();
-        out.end();
+        });
     }
 
     @Override
