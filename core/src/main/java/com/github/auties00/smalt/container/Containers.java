@@ -58,6 +58,8 @@ import com.github.auties00.smalt.container.subtitle.TtmlMuxer;
 import com.github.auties00.smalt.container.subtitle.VobSubDemuxer;
 import com.github.auties00.smalt.container.subtitle.WebVttDemuxer;
 import com.github.auties00.smalt.container.subtitle.WebVttMuxer;
+import com.github.auties00.smalt.container.ts.PsDemuxer;
+import com.github.auties00.smalt.container.ts.PsMuxer;
 import com.github.auties00.smalt.container.ts.TsDemuxer;
 import com.github.auties00.smalt.container.ts.TsMuxer;
 import com.github.auties00.smalt.container.wav.WavDemuxer;
@@ -104,7 +106,8 @@ import java.util.function.Predicate;
  * skipping an ID3v2 tag first because MP3, AAC, AC-3, AMR and FLAC files often start with one. Formats with a
  * magic number (MP4 family, Matroska, Ogg, RIFF WAVE, Sony Wave64, RIFF AVI, AIFF, CAF, Sun AU, ADIF, FLAC, AMR,
  * YUV4MPEG2, the {@code "PG"} segments of a {@code .sup} file, the signature line of a VobSub index) are recognized
- * exactly, a VobSub {@code .sub} file by a pack header followed by a subpicture PES packet, MPEG transport streams by
+ * exactly, a VobSub {@code .sub} file by a pack header followed by a subpicture PES packet, other MPEG program streams
+ * by their first pack header, MPEG transport streams by
  * the sync bytes of their first packets, and raw AC-3 and E-AC-3 streams
  * by two consecutive sync frames;
  * raw MPEG audio and ADTS streams, which have only a frame sync word, are recognized by requiring
@@ -123,7 +126,7 @@ import java.util.function.Predicate;
  * <p>{@link #openMuxer(ContainerFormat, MediaSink)} creates muxers with each format's default options: a
  * fast-start {@link Mp4Muxer}, a Matroska (not WebM) {@link MatroskaMuxer}, an {@link OggMuxer}, and the
  * {@link WavMuxer}, {@link Wave64Muxer}, {@link AiffMuxer}, {@link CafMuxer}, {@link AuMuxer}, {@link AdtsMuxer},
- * {@link LoasMuxer}, {@link AdifMuxer}, {@link IvfMuxer}, {@link TsMuxer}, {@link AviMuxer} and
+ * {@link LoasMuxer}, {@link AdifMuxer}, {@link IvfMuxer}, {@link TsMuxer}, {@link PsMuxer}, {@link AviMuxer} and
  * {@link Y4mMuxer}; MPEG audio, FLAC, AMR, AC-3, H.264, HEVC, AV1 (low-overhead and Annex B), MPEG-4 Part 2,
  * H.263 and PCM files are the elementary streams a {@link RawMuxer} writes.
  * {@link #openMuxer(OutputContainer, MediaSink)} also writes WebM, M4A, QuickTime and fragmented MP4
@@ -416,6 +419,7 @@ public final class Containers {
             case AU -> new AuDemuxer(source, options);
             case IVF -> new IvfDemuxer(source, options);
             case MPEG_TS -> new TsDemuxer(source, options);
+            case MPEG_PS -> new PsDemuxer(source, options);
             case AC3 -> new Ac3Demuxer(source, options);
             case SUBRIP -> new SubRipDemuxer(source, options);
             case WEBVTT -> new WebVttDemuxer(source, options);
@@ -488,6 +492,7 @@ public final class Containers {
             case ADIF -> AdifMuxer.supports(codec);
             case IVF -> IvfMuxer.supports(codec);
             case MPEG_TS -> TsMuxer.supports(codec);
+            case MPEG_PS -> PsMuxer.supports(codec);
             case MPEG_AUDIO, FLAC, AMR, AC3, H264, HEVC, AV1, AV1_ANNEX_B, MPEG4_VIDEO, H263, PCM ->
                     RawMuxer.supports(format, codec);
             case SUBRIP -> SubRipMuxer.supports(codec);
@@ -583,6 +588,7 @@ public final class Containers {
             case AV1_ANNEX_B -> new FormatMuxer(format, new RawMuxer(output,
                     RawMuxerOptions.builder().av1AnnexB(true).build()));
             case MPEG_TS -> new TsMuxer(output);
+            case MPEG_PS -> new PsMuxer(output);
             case SUBRIP -> new SubRipMuxer(output);
             case WEBVTT -> new WebVttMuxer(output);
             case ASS -> new AssMuxer(output);
@@ -805,6 +811,9 @@ public final class Containers {
         }
         if (VobSubDemuxer.matches(header) || VobSubDemuxer.matchesIndex(header)) {
             return ContainerFormat.VOBSUB;
+        }
+        if (PsDemuxer.matches(header)) {
+            return ContainerFormat.MPEG_PS;
         }
         if (matches(header, 0, "#!AMR")) {
             return ContainerFormat.AMR;

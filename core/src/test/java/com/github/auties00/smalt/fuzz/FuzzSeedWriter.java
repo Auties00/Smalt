@@ -319,6 +319,65 @@ class FuzzSeedWriter {
         }
     }
 
+    @Test
+    @DisplayName("writes the program stream seeds of MPEG-1 and MPEG-2 video, H.264, MP2, AC-3, DTS, linear PCM and"
+            + " subpictures")
+    void programStreams() throws IOException {
+        var video = List.of("-f", "lavfi", "-i", "testsrc2=size=32x32:rate=25:duration=0.12");
+        var audio = tone(48000, 0.1);
+        copy(DemuxerFuzzTest.class, "mpegPs", "valid-mpeg2-mp2.vob", ffmpeg("vob", args(video, audio), "-c:v",
+                "mpeg2video", "-q:v", "20", "-g", "3", "-bf", "1", "-c:a", "mp2", "-b:a", "32k", "-ac", "1", "-f", "vob"));
+        copy(DemuxerFuzzTest.class, "mpegPs", "valid-mpeg1.mpg", ffmpeg("mpg", args(video, audio), "-c:v",
+                "mpeg1video", "-q:v", "20", "-g", "3", "-bf", "1", "-c:a", "mp2", "-b:a", "32k", "-ac", "1", "-f",
+                "mpeg"));
+        copy(DemuxerFuzzTest.class, "mpegPs", "valid-dvd-ac3-lpcm.vob", ffmpeg("vob", args(video, audio), "-map", "0",
+                "-map", "1", "-map", "1", "-c:v", "mpeg2video", "-q:v", "20", "-g", "3", "-bf", "1", "-c:a:0", "ac3",
+                "-b:a:0", "64k", "-ac:a:0", "1", "-c:a:1", "pcm_dvd", "-ac:a:1", "1", "-f", "dvd"));
+        copy(DemuxerFuzzTest.class, "mpegPs", "valid-dts.vob", ffmpeg("vob", args(video, audio), "-c:v", "mpeg2video",
+                "-q:v", "20", "-g", "3", "-bf", "1", "-c:a", "dca", "-strict", "-2", "-ac", "2", "-f", "dvd"));
+        copy(DemuxerFuzzTest.class, "mpegPs", "valid-h264.mpg", ffmpeg("mpg", args(video, audio), "-c:v", "libx264",
+                "-preset", "ultrafast", "-g", "3", "-bf", "1", "-x264-params", "threads=1", "-c:a", "mp2", "-b:a", "32k",
+                "-ac", "1", "-f", "mpeg"));
+        // the first subpicture of the VobSub sample, made by make-bitmap-caption-samples.py, over a second of video
+        var idx = Path.of("target", "fuzz-vobsub", "vobsub.idx");
+        Files.createDirectories(idx.getParent());
+        Files.copy(Path.of("src", "test", "resources", "samples", "subtitle", "vobsub.sub"),
+                idx.resolveSibling("vobsub.sub"), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        Files.writeString(idx, VOBSUB_INDEX);
+        copy(DemuxerFuzzTest.class, "mpegPs", "valid-subpicture.vob", ffmpeg("vob", args(List.of("-f", "lavfi", "-i",
+                "testsrc2=size=32x32:rate=25:duration=1.1"), List.of("-i", idx.toString())), "-map", "0:v", "-map",
+                "1:s:0", "-c:v", "mpeg2video", "-q:v", "31", "-g", "30", "-bf", "0", "-c:s", "copy", "-t", "1.1", "-f",
+                "dvd"));
+    }
+
+    /** The index of the VobSub behavior sample, as make-bitmap-caption-samples.py writes it. */
+    private static final String VOBSUB_INDEX = """
+            # VobSub index file, v7 (do not modify this line!)
+            size: 720x480
+            org: 0, 0
+            scale: 100%, 100%
+            alpha: 100%
+            smooth: OFF
+            fadein/out: 0, 0
+            align: OFF at LEFT TOP
+            time offset: 0
+            forced subs: OFF
+            palette: 000000, ffffff, 808080, ff0000, 00ff00, 0000ff, ffff00, ff00ff, 00ffff, 404040, c0c0c0, 800000, \
+            008000, 000080, 808000, 800080
+            custom colors: OFF, tridx: 0000, colors: 000000, 000000, 000000, 000000
+            langidx: 0
+
+            id: en, index: 0
+            timestamp: 00:00:01:000, filepos: 000000000
+            timestamp: 00:00:02:000, filepos: 000001000
+            timestamp: 00:00:03:000, filepos: 000002800
+
+            id: de, index: 1
+            timestamp: 00:00:01:500, filepos: 000000800
+            timestamp: 00:00:02:500, filepos: 000002000
+            timestamp: 00:00:03:500, filepos: 000003000
+            """;
+
     /** Returns an SCTE 35 {@code splice_info_section} holding a {@code splice_null} command. */
     private static byte[] spliceNull() {
         var section = new byte[]{(byte) 0xFC, 0x30, 0x11, 0, 0, 0, 0, 0, 0, 0, (byte) 0xFF, (byte) 0xF0, 0, 0, 0, 0,

@@ -26,6 +26,7 @@ import com.github.auties00.smalt.container.mp4.Mp4Muxer;
 import com.github.auties00.smalt.container.mp4.Mp4MuxerOptions;
 import com.github.auties00.smalt.container.mp4.Mp4Remuxer;
 import com.github.auties00.smalt.container.mp4.RemuxOptions;
+import com.github.auties00.smalt.container.ts.PsMuxer;
 import com.github.auties00.smalt.container.ts.TsMuxer;
 import com.github.auties00.smalt.container.wav.WavMuxer;
 import com.github.auties00.smalt.image.Channel8Picture;
@@ -194,7 +195,7 @@ final class TranscodeWorkloads {
 
     /**
      * Returns a workload that remuxes a synthetic MP4 with H.264 video and AAC audio to
-     * fragmented MP4, Matroska and MPEG-TS, remuxes the Matroska file back to MP4 with
+     * fragmented MP4, Matroska, MPEG-TS and MPEG-PS, remuxes the Matroska file back to MP4 with
      * {@link Mp4Remuxer}, writes the H.264 track as an Annex B elementary stream, stereo PCM as WAV, as a
      * QuickTime movie, as an ISO MP4 and as a fragmented MP4, and uncompressed frames as YUV4MPEG2, and probes
      * and demuxes every file, the source included, decoding the uncompressed frames.
@@ -217,7 +218,8 @@ final class TranscodeWorkloads {
         List<Function<MediaSink, Muxer>> muxers = List.of(
                 FragmentedMp4Muxer::new,
                 sink -> new MatroskaMuxer(sink, MatroskaMuxerOptions.matroska()),
-                TsMuxer::new);
+                TsMuxer::new,
+                PsMuxer::new);
         return TrainingWorkload.of("containers", () -> {
             var files = new ArrayList<byte[]>();
             files.add(source);

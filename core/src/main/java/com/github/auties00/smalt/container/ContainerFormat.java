@@ -104,6 +104,12 @@ public enum ContainerFormat {
     MPEG_TS,
 
     /**
+     * MPEG program stream (ISO/IEC 13818-1) and MPEG-1 system stream (ISO/IEC 11172-1): {@code .mpg},
+     * {@code .mpeg}, {@code .m2p}, {@code .ps} and the {@code .vob} files of DVD-Video, magic {@code 00 00 01 BA}.
+     */
+    MPEG_PS,
+
+    /**
      * A raw Dolby Digital (AC-3, {@code .ac3}) or Dolby Digital Plus (E-AC-3, {@code .ec3})
      * elementary stream of sync frames.
      */

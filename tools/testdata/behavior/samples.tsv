@@ -83,6 +83,12 @@ core/src/test/resources/samples/ogg/flac.oga	34014	35fbcd1131ae0a7cec861958eb461
 core/src/test/resources/samples/ogg/opus-ambisonic.opus	2876	225919e440f5d788e6a56ecd73b4be65ee7fd3bd29b13878b5ffa1f825624ba4	make-ambisonic-samples.py
 core/src/test/resources/samples/ogg/opus.opus	10841	ac8202a28ae12f6b7f4e381d83ee823cc7dace2f6d6e69ab50584fb053bc39d3	make-samples.sh
 core/src/test/resources/samples/ogg/vorbis.ogg	18054	fb11a857110af7946c0609e0074b65588e749df24fb3d6fc7c16af4bf67f7f70	make-samples.sh
+core/src/test/resources/samples/ps/dts.vob	96256	f310c35d1bf94a57a7d5aaf7e9c898b5c0582d3df62ac3766a4135122627407f	make-samples.sh
+core/src/test/resources/samples/ps/dvd.vob	143360	ec013e94ad21e3f3996cb9637d28c040135188a11c5ce37cc237a47b0d09cabd	make-samples.sh, make-bitmap-caption-samples.py
+core/src/test/resources/samples/ps/h264.mpg	26624	715d58d831d4e1f890a878969edba8da83eb667c567fa00a403fa7ba56aa3f97	make-samples.sh
+core/src/test/resources/samples/ps/lpcm.vob	102400	cdde4a3186dbc1f698c39e4f9fb5c75874c201b5c761759da7d5e184ea2f659f	make-samples.sh
+core/src/test/resources/samples/ps/mpeg1.mpg	38912	4f6c0da9a6ce1c162e5172edbb9fabd86bfe2dffa52722db17e935013773e780	make-samples.sh
+core/src/test/resources/samples/ps/mpeg2-mp2.vob	40960	f8f8e2ec7739a16798480e6d97f3daf8828b3eb0327d9b478fd0c0f4c84bfc26	make-samples.sh
 core/src/test/resources/samples/rawvideo/2vuy.mov	37645	de78ffa5a82b5b130b1f2ec1bdce42d79e61b66fc387b8a0a568e43d22468cd7	make-samples.sh
 core/src/test/resources/samples/rawvideo/i420.mkv	28433	dea6cf4951729e7924af2718a26e49f7934fa20dc8ca5ed8a2636352d922c210	make-samples.sh
 core/src/test/resources/samples/rawvideo/pal8.avi	10602	becd63b3f3ef2ee95d9b6c9ece69e16040b1d223a80fae1bc438de478aac67a4	make-samples.sh

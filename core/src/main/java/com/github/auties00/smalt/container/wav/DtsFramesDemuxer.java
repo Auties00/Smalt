@@ -55,11 +55,6 @@ final class DtsFramesDemuxer implements Demuxer {
     private static final int MAX_LEADING = 1 << 16;
 
     /**
-     * The size of an extension substream header's fields read, sync word included.
-     */
-    private static final int SUBSTREAM_HEADER = 10;
-
-    /**
      * The number of stored bytes that hold the {@value DtsConfigs#HEADER_SIZE} header bytes of a 14-bit frame.
      */
     private static final int PACKED_HEADER = 14;
@@ -446,8 +441,8 @@ final class DtsFramesDemuxer implements Demuxer {
             }
             var length = form.packed ? DtsConfigs.packedSize(frameBytes) : frameBytes;
             if (!form.packed) {
-                while (length + SUBSTREAM_HEADER <= available && isSubstream(buffer, at + length)) {
-                    length += substreamSize(buffer, at + length);
+                while (length + DtsConfigs.EXTENSION_HEADER_SIZE <= available && DtsConfigs.isExtensionSync(buffer, at + length)) {
+                    length += DtsConfigs.extensionSize(buffer, at + length);
                 }
                 frameBytes = length;
             }
@@ -461,35 +456,6 @@ final class DtsFramesDemuxer implements Demuxer {
             return length;
         }
         return -1;
-    }
-
-    /**
-     * Returns whether a DTS-HD extension substream starts at an index.
-     *
-     * @param data the bytes
-     * @param at the index
-     * @return {@code true} for the sync word {@code 0x64582025}
-     */
-    private static boolean isSubstream(byte[] data, int at) {
-        return data[at] == 0x64 && data[at + 1] == 0x58 && data[at + 2] == 0x20 && data[at + 3] == 0x25;
-    }
-
-    /**
-     * Returns the size of the extension substream that starts at an index ({@code nuExtSSFsize}).
-     *
-     * @param data the bytes
-     * @param at the index of the substream's sync word
-     * @return the size in bytes
-     */
-    private static int substreamSize(byte[] data, int at) {
-        // after the sync word: UserDefinedBits (8), nExtSSIndex (2), bHeaderSizeType (1), then the header size and
-        // the substream size, 8 and 16 bits or 12 and 20 bits, each coded minus one
-        var bits = 0L;
-        for (var index = 0; index < 6; index++) {
-            bits = bits << 8 | data[at + 4 + index] & 0xFF;
-        }
-        var wide = (bits >>> (48 - 11) & 1) != 0;
-        return wide ? (int) (bits >>> (48 - 11 - 12 - 20) & 0xFFFFF) + 1 : (int) (bits >>> (48 - 11 - 8 - 16) & 0xFFFF) + 1;
     }
 
     /**

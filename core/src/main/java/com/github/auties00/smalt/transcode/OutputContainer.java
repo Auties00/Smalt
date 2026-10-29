@@ -200,6 +200,14 @@ public enum OutputContainer {
             List.of(Codec.AAC, Codec.MP3, Codec.OPUS)),
 
     /**
+     * An MPEG-2 program stream of packs of at most 2048 bytes, written as it is produced, so a streaming sink works;
+     * it carries MPEG-1 and MPEG-2 video, MPEG-4 Part 2, H.264, HEVC, MP2, MP3, AAC, AC-3, E-AC-3, DTS, 16 and 24-bit
+     * PCM and DVD subtitles.
+     */
+    MPEG_PS(ContainerFormat.MPEG_PS, "mpg", "video/mpeg", List.of(Codec.H264, Codec.HEVC),
+            List.of(Codec.MP2, Codec.AC3, Codec.AAC)),
+
+    /**
      * An AVI file with the OpenDML extensions, for players that expect the Video for Windows
      * format; it needs a seekable sink and carries video at a constant frame rate.
      */
@@ -462,12 +470,12 @@ public enum OutputContainer {
      * track names in an AVI file; the track names and some audio dispositions in a transport stream; and the title,
      * artist and album in an LRC file.
      *
-     * @return {@code false} for IVF, YUV4MPEG2, Wave64, LOAS, ADIF, the video elementary streams and the subtitle files
-     * other than LRC
+     * @return {@code false} for IVF, YUV4MPEG2, Wave64, LOAS, ADIF, MPEG program streams, the video elementary streams
+     * and the subtitle files other than LRC
      */
     public boolean supportsTags() {
         return switch (this) {
-            case IVF, H264, HEVC, AV1, Y4M, W64, LOAS, ADIF, SRT, WEBVTT, ASS, SSA, TTML, SAMI, MICRODVD -> false;
+            case IVF, H264, HEVC, AV1, Y4M, W64, LOAS, ADIF, MPEG_PS, SRT, WEBVTT, ASS, SSA, TTML, SAMI, MICRODVD -> false;
             default -> true;
         };
     }
@@ -475,11 +483,11 @@ public enum OutputContainer {
     /**
      * Returns whether the file can hold more than one audio track.
      *
-     * @return {@code true} for the MP4 family, Matroska, WebM, Ogg and MPEG transport streams
+     * @return {@code true} for the MP4 family, Matroska, WebM, Ogg, MPEG transport streams and MPEG program streams
      */
     boolean carriesSeveralTracks() {
         return format == ContainerFormat.MP4 || format == ContainerFormat.MATROSKA || format == ContainerFormat.OGG
-                || format == ContainerFormat.MPEG_TS;
+                || format == ContainerFormat.MPEG_TS || format == ContainerFormat.MPEG_PS;
     }
 
     /**
@@ -501,6 +509,10 @@ public enum OutputContainer {
             };
             case MPEG_TS -> switch (codec) {
                 case H264, HEVC, MPEG4_PART2, AAC, OPUS -> true;
+                default -> false;
+            };
+            case MPEG_PS -> switch (codec) {
+                case H264, HEVC, MPEG4_PART2, AAC -> true;
                 default -> false;
             };
             case OGG -> codec == Codec.VORBIS || codec == Codec.FLAC;
@@ -527,7 +539,8 @@ public enum OutputContainer {
      * {@code ivf}, {@code mp3}, {@code flac}, {@code amr}, {@code ac3} and {@code avi} to their constants,
      * {@code ec3} and {@code eac3} to {@link #EAC3}, {@code h264} and {@code 264} to {@link #H264},
      * {@code h265}, {@code 265} and {@code hevc} to {@link #HEVC}, {@code obu} to {@link #AV1}, {@code y4m} to
-     * {@link #Y4M}, {@code ts} to {@link #MPEG_TS}, {@code srt} to {@link #SRT}, {@code vtt} to
+     * {@link #Y4M}, {@code ts} to {@link #MPEG_TS}, {@code mpg}, {@code mpeg}, {@code m2p}, {@code ps} and
+     * {@code vob} to {@link #MPEG_PS}, {@code srt} to {@link #SRT}, {@code vtt} to
      * {@link #WEBVTT}, {@code ass} and {@code ssa} to {@link #ASS} and {@link #SSA}, {@code ttml},
      * {@code dfxp} and {@code xml} to {@link #TTML}, {@code smi} and {@code sami} to {@link #SAMI},
      * {@code lrc} to {@link #LRC} and {@code sub} to {@link #MICRODVD}; no extension
@@ -567,6 +580,7 @@ public enum OutputContainer {
             case "h265", "265", "hevc" -> HEVC;
             case "obu" -> AV1;
             case "ts" -> MPEG_TS;
+            case "mpg", "mpeg", "m2p", "ps", "vob" -> MPEG_PS;
             case "avi" -> AVI;
             case "srt" -> SRT;
             case "vtt" -> WEBVTT;

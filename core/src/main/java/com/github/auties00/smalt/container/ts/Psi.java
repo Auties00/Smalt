@@ -303,6 +303,66 @@ final class Psi {
     }
 
     /**
+     * Describes a stream of a program stream that no program stream map declares: a stream type, without
+     * descriptors.
+     *
+     * @param trackId the identifier of the track, which also stands for the PID
+     * @param streamType the {@code stream_type} the stream is read as
+     * @param language the ISO 639-2 language code, or {@code null}
+     * @return the entry
+     */
+    static StreamEntry plainEntry(int trackId, int streamType, String language) {
+        return new StreamEntry(trackId, trackId, streamType, List.of(), List.of(), language, false, false, -1, false,
+                null, null, -1, null, null);
+    }
+
+    /**
+     * Parses a program stream map (ISO/IEC 13818-1 clause 2.5.4): the PES packet of stream id {@code 0xBC}.
+     *
+     * <p>Each entry's PID and track identifier are its {@code elementary_stream_id}; the descriptors of the map
+     * itself are the program registrations of every entry.
+     *
+     * @param map the whole PES packet, from its start code prefix to its {@code CRC_32}
+     * @return the entries in map order, or {@code null} when the map is truncated, not current or fails its
+     * {@code CRC_32}, computed over the whole map or, as some writers compute it, from after its length field
+     */
+    static List<StreamEntry> parseProgramStreamMap(byte[] map) {
+        if (map.length < 16 || (map[6] & 0x80) == 0
+                || Crc32Mpeg.update(Crc32Mpeg.MPEG_INIT, map, 0, map.length) != 0
+                && Crc32Mpeg.update(Crc32Mpeg.MPEG_INIT, map, 6, map.length - 6) != 0) {
+            return null;
+        }
+        var end = map.length - 4;
+        var infoLength = (map[8] & 0xFF) << 8 | (map[9] & 0xFF);
+        var position = 10;
+        if (position + infoLength + 2 > end) {
+            return null;
+        }
+        var programDescriptors = new Descriptors(map, position, infoLength);
+        position += infoLength;
+        var mapLength = (map[position] & 0xFF) << 8 | (map[position + 1] & 0xFF);
+        position += 2;
+        var mapEnd = Math.min(end, position + mapLength);
+        var streams = new ArrayList<StreamEntry>();
+        while (position + 4 <= mapEnd) {
+            var type = map[position] & 0xFF;
+            var id = map[position + 1] & 0xFF;
+            var length = (map[position + 2] & 0xFF) << 8 | (map[position + 3] & 0xFF);
+            position += 4;
+            if (position + length > mapEnd) {
+                return null;
+            }
+            var descriptors = new Descriptors(map, position, length);
+            position += length;
+            streams.add(new StreamEntry(id, id, type, List.copyOf(descriptors.registrations),
+                    List.copyOf(programDescriptors.registrations), descriptors.language, descriptors.ac3,
+                    descriptors.eac3, descriptors.opusChannels, descriptors.id3, descriptors.subtitles,
+                    descriptors.teletext, descriptors.audioType, descriptors.name, descriptors.dolbyVision));
+        }
+        return streams;
+    }
+
+    /**
      * Holds what this demuxer reads from a descriptor loop (ISO/IEC 13818-1 clause 2.6 and ETSI
      * EN 300 468 clause 6).
      */

@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.ByteArrayOutputStream;
 import java.lang.management.ManagementFactory;
@@ -241,6 +242,8 @@ class ContainerBombTest {
                 Arguments.of(new Input("Ogg packet continued over 100 pages", ContainerBombTest::endlessOgg)),
                 Arguments.of(new Input("MPEG-TS PES of unbounded length over 40000 packets",
                         ContainerBombTest::endlessTs)),
+                Arguments.of(new Input("MPEG-PS video access unit continued over 2000 PES packets",
+                        ContainerBombTest::endlessPs)),
                 Arguments.of(new Input("DASH segment timeline repeated 2^31 times", () -> dash(
                         "<SegmentTemplate media=\"s$Number$.m4s\"><SegmentTimeline><S t=\"0\" d=\"1\" "
                                 + "r=\"2147483647\"/></SegmentTimeline></SegmentTemplate>"))),
@@ -314,11 +317,12 @@ class ContainerBombTest {
             });
         }
 
-        @org.junit.jupiter.api.Test
-        @DisplayName("a PES of unbounded length larger than the buffer limit is never returned whole")
-        void endlessPes() {
-            var data = endlessTs();
-            assertBounded("endless PES", data.length, () -> {
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"MPEG-TS", "MPEG-PS"})
+        @DisplayName("a PES or access unit of unbounded length larger than the buffer limit is never returned whole")
+        void endlessPes(String format) {
+            var data = format.equals("MPEG-TS") ? endlessTs() : endlessPs();
+            assertBounded("endless " + format + " unit", data.length, () -> {
                 try (var demuxer = Containers.openDemuxer(MediaSource.of(data),
                         DemuxerOptions.builder().limits(SIZE_LIMITS).build())) {
                     for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
@@ -653,6 +657,33 @@ class ContainerBombTest {
         }
         for (var packet = 1; packet <= 40_000; packet++) {
             out.writeBytes(tsPacket(0x100, false, packet & 15, filler));
+        }
+        return out.toByteArray();
+    }
+
+    /**
+     * Returns a program stream of one MPEG-2 video stream whose first picture never ends: a sequence header and a
+     * picture header followed by 4 MB without a start code, over 2000 packs.
+     */
+    static byte[] endlessPs() {
+        var out = new ByteArrayOutputStream();
+        var pack = new byte[]{0, 0, 1, (byte) 0xBA, 0x44, 0, 0x04, 0, 0x04, 0x01, 0x01, (byte) 0x89, (byte) 0xC3,
+                (byte) 0xF8};
+        var headers = new byte[]{0, 0, 1, (byte) 0xB3, 0x0A, 0, 0x78, 0x13, (byte) 0xFF, (byte) 0xFF, (byte) 0xE0,
+                (byte) 0xA0, 0, 0, 1, 0, 0, 0x0F, (byte) 0xFF, (byte) 0xF8};
+        var filler = new byte[2000];
+        for (var index = 0; index < filler.length; index++) {
+            filler[index] = (byte) (index | 1);
+        }
+        for (var packet = 0; packet < 2000; packet++) {
+            out.writeBytes(pack);
+            var payload = packet == 0 ? headers : filler;
+            var header = packet == 0 ? new byte[]{(byte) 0x81, (byte) 0x80, 5, 0x21, 0, 1, 0, 1}
+                    : new byte[]{(byte) 0x81, 0, 0};
+            var length = header.length + payload.length;
+            out.writeBytes(new byte[]{0, 0, 1, (byte) 0xE0, (byte) (length >> 8), (byte) length});
+            out.writeBytes(header);
+            out.writeBytes(payload);
         }
         return out.toByteArray();
     }

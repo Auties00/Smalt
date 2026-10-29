@@ -25,6 +25,7 @@ import java.util.regex.Pattern;
  *       {@code MP4Box -info};</li>
  *   <li>Matroska and WebM: {@link MatroskaValidator} and the Matroska foundation's {@code mkvalidator};</li>
  *   <li>MPEG-2 transport streams: {@link TsValidator} and TSDuck's {@code tsp -P analyze};</li>
+ *   <li>MPEG program streams and MPEG-1 system streams: {@link PsValidator};</li>
  *   <li>HLS: {@link HlsValidator}, which validates every segment with the validators above;</li>
  *   <li>MPEG-DASH: {@link DashValidator}, likewise, with the MPD schema of ISO/IEC 23009-1.</li>
  * </ul>
@@ -45,6 +46,8 @@ public final class Validators {
         MATROSKA,
         /** An MPEG-2 transport stream. */
         TRANSPORT_STREAM,
+        /** An MPEG program stream or MPEG-1 system stream. */
+        PROGRAM_STREAM,
         /** An HLS playlist. */
         HLS,
         /** A DASH manifest. */
@@ -104,6 +107,9 @@ public final class Validators {
         if (isTransportStream(data)) {
             return Format.TRANSPORT_STREAM;
         }
+        if (data.length >= 12 && data[0] == 0 && data[1] == 0 && data[2] == 1 && (data[3] & 0xFF) == 0xBA) {
+            return Format.PROGRAM_STREAM;
+        }
         var head = new String(data, 0, Math.min(data.length, 512), StandardCharsets.ISO_8859_1);
         if (head.startsWith("#EXTM3U")) {
             return Format.HLS;
@@ -146,6 +152,7 @@ public final class Validators {
             case ISOBMFF -> isoBmff(file, data);
             case MATROSKA -> matroska(file, data);
             case TRANSPORT_STREAM -> transportStream(file, data);
+            case PROGRAM_STREAM -> programStream(file.toString(), data, false);
             case HLS -> assertValidHls(file);
             case DASH -> assertValidDash(file);
             case OTHER -> {
@@ -199,6 +206,18 @@ public final class Validators {
     }
 
     /**
+     * Validates an MPEG program stream or MPEG-1 system stream.
+     *
+     * @param name the name of the stream, for the failure message
+     * @param data the stream
+     * @param strict whether the pacing of the system clock references is checked too
+     * @return what validation learned of the stream
+     */
+    public static PsValidator.Summary assertValidPs(String name, byte[] data, boolean strict) {
+        return programStream(name, data, strict);
+    }
+
+    /**
      * Validates an HLS presentation: a master playlist with everything it references, or a media playlist with its
      * segments.
      *
@@ -238,6 +257,13 @@ public final class Validators {
         if (Oracle.find(Oracle.Tool.MKVALIDATOR).isPresent()) {
             mkvalidator(file, summary.live(), !summary.media());
         }
+    }
+
+    private static PsValidator.Summary programStream(String name, byte[] data, boolean strict) {
+        var findings = new Findings(name);
+        var summary = PsValidator.validate(data, findings, strict);
+        findings.assertNone("the program stream validator");
+        return summary;
     }
 
     private static TsValidator.Summary transportStream(Path file, byte[] data) {

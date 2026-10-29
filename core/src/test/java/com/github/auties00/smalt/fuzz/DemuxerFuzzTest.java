@@ -118,6 +118,11 @@ class DemuxerFuzzTest {
     }
 
     @FuzzTest
+    void mpegPs(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.MPEG_PS, data);
+    }
+
+    @FuzzTest
     void ac3(byte[] data) {
         FuzzMedia.demuxer(ContainerFormat.AC3, data);
     }

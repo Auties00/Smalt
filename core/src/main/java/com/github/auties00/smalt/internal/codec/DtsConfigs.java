@@ -180,6 +180,38 @@ public final class DtsConfigs {
     }
 
     /**
+     * The size of the header fields of a DTS-HD extension substream that {@link #extensionSize(byte[], int)} reads,
+     * sync word included, in bytes.
+     */
+    public static final int EXTENSION_HEADER_SIZE = 10;
+
+    /**
+     * Returns whether a DTS-HD extension substream starts at an offset.
+     *
+     * @param data the bytes
+     * @param offset the index of the first byte, with at least 4 bytes after it
+     * @return {@code true} for the sync word {@code 0x64582025}
+     */
+    public static boolean isExtensionSync(byte[] data, int offset) {
+        return data[offset] == 0x64 && data[offset + 1] == 0x58 && data[offset + 2] == 0x20 && data[offset + 3] == 0x25;
+    }
+
+    /**
+     * Returns the size of the DTS-HD extension substream that starts at an offset ({@code nuExtSSFsize + 1}).
+     *
+     * @param data the bytes
+     * @param offset the index of the substream's sync word, with at least {@value #EXTENSION_HEADER_SIZE} bytes
+     * after it
+     * @return the size in bytes, sync word included
+     */
+    public static int extensionSize(byte[] data, int offset) {
+        // after the sync word: UserDefinedBits (8), nExtSSIndex (2), bHeaderSizeType (1), then the header size and
+        // the substream size, 8 and 16 bits or 12 and 20 bits, each coded minus one
+        var wide = bits(data, offset, 42, 1) != 0;
+        return wide ? (int) bits(data, offset, 55, 20) + 1 : (int) bits(data, offset, 51, 16) + 1;
+    }
+
+    /**
      * Returns header bits counted from the first bit of the sync word.
      *
      * @param data the bytes

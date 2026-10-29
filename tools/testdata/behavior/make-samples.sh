@@ -8,7 +8,7 @@
 set -euo pipefail
 
 out="${1:-core/src/test/resources/samples}"
-mkdir -p "$out"/{mp4,matroska,ogg,ts,avi,wav,aiff,mp3,adts,amr,ac3,ivf,flac,subtitle,elementary,y4m,rawvideo}
+mkdir -p "$out"/{mp4,matroska,ogg,ts,ps,avi,wav,aiff,mp3,adts,amr,ac3,ivf,flac,subtitle,elementary,y4m,rawvideo}
 
 ff() {
     ffmpeg -hide_banner -loglevel error -y -bitexact "$@"
@@ -161,4 +161,13 @@ ff -i "$captions/vobsub.idx" -map 0 -c copy "$out/mp4/vobsub.mp4"
 ff -f lavfi -i "testsrc=s=64x48:r=30000/1001:d=3" -c:v libx264 -pix_fmt yuv420p -bf 0 -g 30 -x264-params aud=1     "$captions/raw.h264"
 python -I "$bitmap" captions "$captions/raw.h264" "$captions/captions.h264"
 ff -fflags +genpts -r 30000/1001 -f h264 -i "$captions/captions.h264" -c copy "$out/ts/h264-captions.ts"
+# MPEG program streams: a DVD-Video object with navigation packs, AC-3 and the two subpicture streams of
+# the VobSub sample, MPEG-2 and MPEG-1 system streams, DTS and 16-bit linear PCM substreams, and H.264 without a
+# program stream map
+ff -f lavfi -i "testsrc2=size=160x120:rate=25:duration=3" -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=3"     -i "$captions/vobsub.idx" -map 0:v -map 1:a -map 2:s -c:v mpeg2video -q:v 12 -g 12 -bf 2     -c:a ac3 -b:a 64k -ac 1 -c:s copy -f dvd "$out/ps/dvd.vob"
 rm -rf "$captions"
+ff -f lavfi -i "$mpv" -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=0.8" -c:v mpeg2video -q:v 8 -g 10     -bf 2 -c:a mp2 -b:a 64k -ac 1 -f vob "$out/ps/mpeg2-mp2.vob"
+ff -f lavfi -i "$mpv" -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=0.8" -c:v mpeg1video -q:v 8 -g 10     -bf 2 -c:a mp2 -b:a 64k -ac 1 -f mpeg "$out/ps/mpeg1.mpg"
+ff -f lavfi -i "testsrc2=size=160x120:rate=25:duration=0.4" -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=0.4"     -c:v mpeg2video -q:v 8 -g 5 -bf 2 -c:a dca -strict -2 -ac 2 -f dvd "$out/ps/dts.vob"
+ff -f lavfi -i "testsrc2=size=160x120:rate=25:duration=0.4" -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=0.4"     -c:v mpeg2video -q:v 8 -g 5 -bf 2 -c:a pcm_dvd -ac 2 -f dvd "$out/ps/lpcm.vob"
+ff -f lavfi -i "$video" -f lavfi -i "$tone" -t 1 "${x264[@]}" -c:a mp2 -b:a 64k -ac 1 -f mpeg "$out/ps/h264.mpg"

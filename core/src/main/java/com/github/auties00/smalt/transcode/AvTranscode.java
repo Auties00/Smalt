@@ -14,6 +14,8 @@ import com.github.auties00.smalt.container.mp4.Mp4MuxerOptions;
 import com.github.auties00.smalt.container.mp4.Mp4Remuxer;
 import com.github.auties00.smalt.container.mp4.RemuxOptions;
 import com.github.auties00.smalt.container.mp4.RemuxResult;
+import com.github.auties00.smalt.container.ts.PsMuxer;
+import com.github.auties00.smalt.container.ts.PsMuxerOptions;
 import com.github.auties00.smalt.container.ts.TsMuxer;
 import com.github.auties00.smalt.container.y4m.Y4mMuxer;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
@@ -64,7 +66,7 @@ import java.util.function.Predicate;
  * needs is checked against the registries, so a missing artifact fails here with a
  * {@link MediaException.Unsupported} naming it. When the plan copies every stream (subtitles
  * included) into an MP4, M4A or QuickTime file without trimming, and the input is an ISO base
- * media, Matroska, MPEG transport stream, AVI or Ogg file, the job is handed to
+ * media, Matroska, MPEG transport stream, MPEG program stream, AVI or Ogg file, the job is handed to
  * {@link Mp4Remuxer}, which plans the file layout from the input's index and repairs the timing
  * of Matroska video and of audio stored in another time base than its sampling rate. Otherwise
  * one demuxer feeds every stage in file order, so memory stays bounded by the codecs' own
@@ -655,13 +657,13 @@ final class AvTranscode {
 
     /**
      * {@return whether {@link Mp4Remuxer} reads an input container: ISO base media, Matroska, MPEG
-     * transport streams, AVI and Ogg}
+     * transport streams, MPEG program streams, AVI and Ogg}
      *
      * @param format the input container
      */
     private static boolean remuxable(ContainerFormat format) {
         return switch (format) {
-            case MP4, MATROSKA, MPEG_TS, AVI, OGG -> true;
+            case MP4, MATROSKA, MPEG_TS, MPEG_PS, AVI, OGG -> true;
             default -> false;
         };
     }
@@ -999,6 +1001,8 @@ final class AvTranscode {
             reason = "the track has no codec configuration";
         } else if (container == OutputContainer.MPEG_TS && !TsMuxer.supports(track)) {
             reason = container + " carries PCM at 48, 96 or 192 kHz with one to eight channels only";
+        } else if (container == OutputContainer.MPEG_PS && !PsMuxer.supports(track, PsMuxerOptions.defaults())) {
+            reason = container + " carries PCM at 32, 44.1, 48 or 96 kHz with one to eight channels only";
         } else if ((codec == Codec.AMR_NB || codec == Codec.AMR_WB) && container != OutputContainer.AMR
                 && container != OutputContainer.WAV && track.layout().map(ChannelLayout::channels).orElse(1) > 1) {
             reason = container + " carries single-channel " + codec.displayName() + " only";
