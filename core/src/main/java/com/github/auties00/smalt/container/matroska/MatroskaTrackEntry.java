@@ -827,6 +827,7 @@ final class MatroskaTrackEntry {
                 case "V_JPEG2000" -> Codec.JPEG2000;
                 case "V_PRORES" -> Codec.PRORES;
                 case "V_THEORA" -> Codec.THEORA;
+                case "V_FFV1" -> Codec.FFV1;
                 case "V_MS/VFW/FOURCC" -> videoFromBitmapInfo();
                 case "V_QUICKTIME" -> videoFromImageDescription();
                 case "V_UNCOMPRESSED" -> colourSpace != null && RawVideoTags.fourCc(colourSpace, 0) != null
@@ -886,7 +887,8 @@ final class MatroskaTrackEntry {
             if (dolbyVision != null && (codec == Codec.HEVC || codec == Codec.H264 || codec == Codec.AV1)) {
                 builder.dolbyVision(dolbyVision);
             }
-            return builder.alpha(alphaMode == 1).build();
+            // FFV1 codes its transparency plane in band, whatever AlphaMode a writer declares
+            return builder.alpha(alphaMode == 1 && codec != Codec.FFV1).build();
         }
         if (type == TYPE_AUDIO || codecId.startsWith("A_")) {
             var config = codecPrivate;
@@ -906,6 +908,7 @@ final class MatroskaTrackEntry {
                 case "A_DTS", "A_DTS/EXPRESS", "A_DTS/LOSSLESS" -> Codec.DTS;
                 case "A_TRUEHD" -> Codec.TRUEHD;
                 case "A_ALAC" -> Codec.ALAC;
+                case "A_WAVPACK4" -> Codec.WAVPACK;
                 case "A_AMR/NB" -> Codec.AMR_NB;
                 case "A_AMR/WB" -> Codec.AMR_WB;
                 case "A_MS/ACM" -> audioFromWaveFormat();
@@ -955,7 +958,8 @@ final class MatroskaTrackEntry {
                     .language(lang.orElse(null))
                     .sampleRate(sampleRate)
                     .layout(audioLayout(codec, config, channelCount))
-                    .bitsPerSample(codec.isPcm() ? bits : AdpcmBlocks.supports(codec) ? codeSize : 0)
+                    .bitsPerSample(codec.isPcm() || codec == Codec.WAVPACK ? bits
+                            : AdpcmBlocks.supports(codec) ? codeSize : 0)
                     .skipSamples(Math.max(skip, 0))
                     .build();
         }
@@ -1077,6 +1081,7 @@ final class MatroskaTrackEntry {
             case "VP90" -> Codec.VP9;
             case "AV01" -> Codec.AV1;
             case "AVDN", "AVDH" -> Codec.DNXHD;
+            case "FFV1" -> Codec.FFV1;
             default -> Codec.UNKNOWN_VIDEO;
         };
     }

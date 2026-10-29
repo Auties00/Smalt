@@ -357,7 +357,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         var indexed = depth == 1 || depth == 2 || depth == 4 || depth == 8;
         var colorTable = colorTableId == 0 && indexed ? parseColorTable(payload) : null;
         var sinfs = new ArrayList<BoxCursor>();
-        byte[] avcC = null, hvcC = null, lhvC = null, vpcC = null, av1C = null, jp2h = null;
+        byte[] avcC = null, hvcC = null, lhvC = null, vpcC = null, av1C = null, jp2h = null, glbl = null;
         var layerConfigs = new ArrayList<byte[]>();
         EsDescriptor esds = null;
         ColorInfo color = null;
@@ -383,6 +383,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                     }
                 }
                 case BoxTypes.AV1C -> av1C = body.rest();
+                case BoxTypes.GLBL -> glbl = body.rest();
                 case BoxTypes.JP2H -> jp2h = withHeader(BoxTypes.JP2H, body.rest());
                 case BoxTypes.ESDS -> esds = parseEsds(body);
                 case BoxTypes.COLR -> {
@@ -479,6 +480,10 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
             case BoxTypes.APCH, BoxTypes.APCN, BoxTypes.APCS, BoxTypes.APCO, BoxTypes.AP4H, BoxTypes.AP4X -> {
                 codec = Codec.PRORES;
                 config = fourCc(format);
+            }
+            case BoxTypes.FFV1 -> {
+                codec = Codec.FFV1;
+                config = glbl;
             }
             case BoxTypes.AVDN, BoxTypes.AVDH -> {
                 codec = Codec.DNXHD;

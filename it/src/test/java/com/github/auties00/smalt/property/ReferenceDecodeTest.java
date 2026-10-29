@@ -95,6 +95,9 @@ class ReferenceDecodeTest {
             // SMPTE RDD 36 leaves the inverse DCT to the decoder within an accuracy bound
             entry(Codec.PRORES, of(OutputContainer.MOV, "prores", Tolerance.offByOne().and(Tolerance.psnr(50)))),
             // SMPTE ST 2019-1 likewise; ffmpeg also reconstructs AC levels a quarter step further from zero
+            // lossless, and Theora's reconstruction (the loop filter included) is normative
+            entry(Codec.FFV1, new Reference("mkv", MatroskaMuxer::new, "ffv1", NORMATIVE, List.of())),
+            entry(Codec.THEORA, new Reference("mkv", MatroskaMuxer::new, "theora", NORMATIVE, List.of())),
             entry(Codec.DNXHD, new Reference("mov", sink -> new Mp4Muxer(sink, Mp4MuxerOptions.builder()
                     .brand(Mp4MuxerOptions.Brand.QUICKTIME).build()), "dnxhd", Tolerance.maxAbs(4)
                     .and(Tolerance.psnr(50)), List.of())),

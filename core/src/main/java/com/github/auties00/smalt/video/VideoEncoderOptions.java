@@ -195,8 +195,8 @@ public final class VideoEncoderOptions {
      * <p>Input of another depth is scaled to the coded depth. A codec that cannot code this depth codes
      * the nearest depth it can, the next higher one when there is one: H.264 codes 8 to 14 bits
      * (High 10 up to 10 bits, High 4:4:4 Predictive above), VP9, AV1 and DNxHD 8, 10 or 12 bits,
-     * ProRes always 10 bits or more, Motion JPEG 2000 every depth from 8 to 16 bits, and VP8 and
-     * Motion-JPEG only 8 bits.
+     * ProRes always 10 bits or more, Motion JPEG 2000 and FFV1 every depth from 8 to 16 bits, and VP8,
+     * Theora and Motion-JPEG only 8 bits.
      */
     public int bitDepth() {
         return bitDepth;

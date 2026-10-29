@@ -107,6 +107,7 @@ module com.github.auties00.smalt {
     exports com.github.auties00.smalt.container.subtitle;
     exports com.github.auties00.smalt.container.ts;
     exports com.github.auties00.smalt.container.wav;
+    exports com.github.auties00.smalt.container.wavpack;
     exports com.github.auties00.smalt.container.y4m;
 
     // Audio codecs and processing
@@ -147,7 +148,8 @@ module com.github.auties00.smalt {
             com.github.auties00.smalt.capture;
     exports com.github.auties00.smalt.internal.header to
             com.github.auties00.smalt.audio,
-            com.github.auties00.smalt.mpeg;
+            com.github.auties00.smalt.mpeg,
+            com.github.auties00.smalt.video;
     exports com.github.auties00.smalt.internal.edit to com.github.auties00.smalt.image;
     exports com.github.auties00.smalt.internal.gainmap to
             com.github.auties00.smalt.image,

@@ -15,6 +15,7 @@ import com.github.auties00.smalt.internal.io.MeasuredSource;
 import com.github.auties00.smalt.internal.io.SegmentBacked;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.AudioTrack;
+import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.DataTrack;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
@@ -1025,11 +1026,13 @@ public final class OggDemuxer implements Demuxer {
      * {@inheritDoc}
      *
      * <p>On a source that reads its input once, a target at or past the end of every packet read
-     * so far is reached by reading on, and a track whose key frame before the target was already
-     * read restarts at its next key frame.
+     * so far is reached by reading on. A Theora stream restarts at the key frame at or before the
+     * target, which may precede the packets read, so such a source with a Theora stream seeks only
+     * before its first packet is read.
      *
      * @throws MediaException.Unsupported if no stream is timestamped, or the source reads its input
-     *                                    once and the target precedes the end of the packets read
+     *                                    once and the target precedes the end of the packets read or
+     *                                    a packet of a link with a Theora stream was read
      */
     @Override
     public void seek(long micros) {
@@ -1086,6 +1089,10 @@ public final class OggDemuxer implements Demuxer {
      *                                    the end of the packets read
      */
     private void seekByReading(long micros) {
+        if (forwardOnly && producedMicros != Long.MIN_VALUE && hasTheora()) {
+            throw new MediaException.Unsupported("seek", "an Ogg stream with Theora video that is read once cannot"
+                    + " seek after a packet was read");
+        }
         if (micros < producedMicros) {
             if (forwardOnly) {
                 throw new MediaException.Unsupported("seek", "an Ogg stream that is read once cannot seek backward");
@@ -1107,6 +1114,22 @@ public final class OggDemuxer implements Demuxer {
         }
         filter = new SeekFilter(kept, micros);
         passedTracks = passed;
+    }
+
+    /**
+     * Returns whether a link holds a Theora stream, whose decoding restarts at a key frame.
+     *
+     * @return {@code true} when a track of a link is Theora video
+     */
+    private boolean hasTheora() {
+        for (var span : spans) {
+            for (var track : span.tracks()) {
+                if (track.codec() == Codec.THEORA) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**

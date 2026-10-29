@@ -84,11 +84,12 @@ SEED_EXTENSIONS = {
     'core:TagFuzzTest.tags': ['.mp3', '.flac', '.ogg', '.opus', '.m4a', '.mp4'],
     'core:DemuxerFuzzTest.mp4': ['.mp4', '.mov', '.m4a', '.3gp', '.m4v'],
     'core:DemuxerFuzzTest.matroska': ['.mkv', '.webm', '.mka'],
-    'core:DemuxerFuzzTest.ogg': ['.ogg', '.opus', '.oga', '.ogv'],
+    'core:DemuxerFuzzTest.ogg': ['.ogg', '.opus', '.oga', '.ogv', '.spx'],
     'core:DemuxerFuzzTest.mpegAudio': ['.mp3', '.mp2'],
     'core:DemuxerFuzzTest.adts': ['.aac', '.adts'],
     'core:DemuxerFuzzTest.wav': ['.wav'],
     'core:DemuxerFuzzTest.flac': ['.flac'],
+    'core:DemuxerFuzzTest.wavpack': ['.wv'],
     'core:DemuxerFuzzTest.amr': ['.amr', '.awb'],
     'core:DemuxerFuzzTest.aiff': ['.aif', '.aiff', '.aifc'],
     'core:DemuxerFuzzTest.caf': ['.caf'],
@@ -111,8 +112,10 @@ SEED_CODECS = {
     'audio:AudioFuzzTest.opus': ['opus'], 'audio:AudioFuzzTest.vorbis': ['vorbis'],
     'audio:AudioFuzzTest.flac': ['flac'], 'audio:AudioFuzzTest.alac': ['alac'],
     'audio:AudioFuzzTest.mp3': ['mp3'], 'audio:AudioFuzzTest.mp2': ['mp2'],
+    'audio:AudioFuzzTest.speex': ['speex'], 'audio:AudioFuzzTest.wavpack': ['wavpack'],
     'video:VideoFuzzTest.vp9': ['vp9'], 'video:VideoFuzzTest.av1': ['av1'],
     'video:VideoFuzzTest.proRes': ['prores'], 'video:VideoFuzzTest.dnxhd': ['dnxhd'],
+    'video:VideoFuzzTest.theora': ['theora'], 'video:VideoFuzzTest.ffv1': ['ffv1'],
     'mpeg:MpegFuzzTest.h264': ['h264'], 'mpeg:MpegFuzzTest.hevc': ['hevc'], 'mpeg:MpegFuzzTest.hevcLayers': ['hevc'],
     'mpeg:MpegFuzzTest.mpeg4': ['mpeg4_part2'], 'mpeg:MpegFuzzTest.h263': ['h263'],
     'mpeg:MpegFuzzTest.mpeg1Video': ['mpeg1video'], 'mpeg:MpegFuzzTest.mpeg2Video': ['mpeg2video'],
@@ -120,7 +123,7 @@ SEED_CODECS = {
     'mpeg:MpegFuzzTest.ac3': ['ac3'], 'mpeg:MpegFuzzTest.eac3': ['eac3'],
 }
 CONTAINER_EXTENSIONS = ['.ivf', '.webm', '.mkv', '.mp4', '.mov', '.ogg', '.opus', '.flac', '.mp3', '.m4a',
-                        '.ac3', '.eac3', '.aac', '.amr', '.avi', '.ts', '.3gp']
+                        '.ac3', '.eac3', '.aac', '.amr', '.avi', '.ts', '.3gp', '.ogv', '.spx', '.wv', '.mka']
 
 
 class Target:

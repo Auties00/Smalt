@@ -40,6 +40,9 @@ def generator(root, relative):
                     "avi/ms-adpcm.avi", "avi/g726.avi", "matroska/ms-adpcm.mka", "matroska/ima-adpcm.mka",
                     "matroska/g722.mka"):
         return "make-adpcm-samples.py"
+    if relative in ("wavpack/wavpack.wv", "matroska/wavpack.mka", "ogg/speex.spx", "matroska/ffv1.mkv",
+                    "avi/ffv1.avi", "ogg/theora.ogv"):
+        return "make-xiph-lossless-samples.py"
     if relative.startswith("wav/") and relative not in ("wav/s16.wav", "wav/f32.wav"):
         return "make-wav-samples.py"
     if relative in ("subtitle/pgs.sup", "subtitle/vobsub.sub", "ts/dvb-subtitles.ts", "ts/teletext.ts"):

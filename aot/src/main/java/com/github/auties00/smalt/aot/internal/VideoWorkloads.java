@@ -30,11 +30,18 @@ import com.github.auties00.smalt.video.dnxhd.DnxhdDecoderOptions;
 import com.github.auties00.smalt.video.dnxhd.DnxhdEncoder;
 import com.github.auties00.smalt.video.dnxhd.DnxhdEncoderOptions;
 import com.github.auties00.smalt.video.dnxhd.DnxhdProfile;
+import com.github.auties00.smalt.video.ffv1.Ffv1Coder;
+import com.github.auties00.smalt.video.ffv1.Ffv1Decoder;
+import com.github.auties00.smalt.video.ffv1.Ffv1Encoder;
+import com.github.auties00.smalt.video.ffv1.Ffv1EncoderOptions;
 import com.github.auties00.smalt.video.prores.ProResDecoder;
 import com.github.auties00.smalt.video.prores.ProResDecoderOptions;
 import com.github.auties00.smalt.video.prores.ProResEncoder;
 import com.github.auties00.smalt.video.prores.ProResEncoderOptions;
 import com.github.auties00.smalt.video.prores.ProResProfile;
+import com.github.auties00.smalt.video.theora.TheoraDecoder;
+import com.github.auties00.smalt.video.theora.TheoraEncoder;
+import com.github.auties00.smalt.video.theora.TheoraEncoderOptions;
 import com.github.auties00.smalt.video.vp9.Vp9Decoder;
 import com.github.auties00.smalt.video.vp9.Vp9Encoder;
 import com.github.auties00.smalt.video.vp9.Vp9EncoderOptions;
@@ -54,7 +61,7 @@ import static com.github.auties00.smalt.aot.internal.WorkloadFactory.realtime;
 
 /**
  * Creates the workloads of {@link TrainingFamily#VIDEO}, the codecs of {@code smalt-video}: VP9,
- * AV1 and AVIF, and the ProRes and DNxHR intra codecs.
+ * AV1 and AVIF, the ProRes and DNxHR intra codecs, Theora and FFV1.
  */
 final class VideoWorkloads {
     /**
@@ -125,7 +132,11 @@ final class VideoWorkloads {
                 file("prores-encode", VideoWorkloads::proresEncode),
                 file("prores-decode", VideoWorkloads::proresDecode),
                 file("dnxhd-encode", VideoWorkloads::dnxhdEncode),
-                file("dnxhd-decode", VideoWorkloads::dnxhdDecode));
+                file("dnxhd-decode", VideoWorkloads::dnxhdDecode),
+                file("theora-encode", VideoWorkloads::theoraEncode),
+                file("theora-decode", VideoWorkloads::theoraDecode),
+                file("ffv1-encode", VideoWorkloads::ffv1Encode),
+                file("ffv1-decode", VideoWorkloads::ffv1Decode));
     }
 
     /**
@@ -503,6 +514,103 @@ final class VideoWorkloads {
         return intraDecode("dnxhd-decode", frames,
                 frame -> single.decodeFrame(frame, 0, frame.length).width()
                         + parallel.decodeFrame(frame, 0, frame.length).width());
+    }
+
+    /**
+     * Returns a workload that encodes frames with the Theora encoder at a fine quality in 4:2:0 and at a coarse one
+     * in 4:4:4, on the calling thread.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload theoraEncode() {
+        var pictures = SyntheticVideo.natural(SMALL_WIDTH, SMALL_HEIGHT, 2);
+        var fine = new TheoraEncoder(SMALL_WIDTH, SMALL_HEIGHT);
+        var coarse = new TheoraEncoder(SMALL_WIDTH, SMALL_HEIGHT, TheoraEncoderOptions.builder().quality(10)
+                .chromaFormat(ChromaFormat.YUV444).build());
+        long[] pts = {0};
+        java.util.function.Consumer<Packet> output = packet -> Blackhole.consume(packet.size());
+        return TrainingWorkload.of("theora-encode", () -> {
+            for (var picture : pictures) {
+                fine.encode(new VideoFrame(picture, pts[0], 1, true), output);
+                coarse.encode(new VideoFrame(picture, pts[0]++, 1, true), output);
+            }
+        });
+    }
+
+    /**
+     * The Theora streams decoded by {@link #theoraDecode()}: a scrolling test pattern libtheora coded in 4:2:0 with
+     * inter frames and motion vectors, and a 4:2:2 stream whose picture region is cropped from its coded frame, both
+     * test vectors of {@code tools/testdata/theora-oracle/make-vectors.py} (synthetic ffmpeg patterns).
+     */
+    private static final List<String> THEORA_STREAMS = List.of("420-motion.ogv", "422-odd.ogv");
+
+    /**
+     * Returns a workload that decodes the bundled Theora streams, one decoder per stream across rounds.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload theoraDecode() {
+        var rounds = new ArrayList<Runnable>();
+        for (var name : THEORA_STREAMS) {
+            var stream = TrainingStreams.demux("theora/" + name);
+            rounds.add(VideoStreams.decodeRound(stream.packets(),
+                    new TheoraDecoder((com.github.auties00.smalt.track.VideoTrack) stream.track())));
+        }
+        return TrainingWorkload.of("theora-decode", () -> rounds.forEach(Runnable::run));
+    }
+
+    /**
+     * Returns a workload that encodes frames with the FFV1 encoder: version 3 with the range coder on the calling
+     * thread and at 10 bits on two threads, and version 1 with the Golomb Rice coder, each with a key frame every
+     * other frame.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload ffv1Encode() {
+        var rounds = new ArrayList<Runnable>();
+        for (var options : ffv1Options()) {
+            var encoder = new Ffv1Encoder(SMALL_WIDTH, SMALL_HEIGHT, options);
+            var pictures = SyntheticVideo.natural(SMALL_WIDTH, SMALL_HEIGHT, 2);
+            long[] pts = {0};
+            rounds.add(() -> {
+                for (var picture : pictures) {
+                    Blackhole.consume(encoder.encodeFrame(new VideoFrame(picture, pts[0]++, 1, false)).size());
+                }
+            });
+        }
+        return TrainingWorkload.of("ffv1-encode", () -> rounds.forEach(Runnable::run));
+    }
+
+    /**
+     * Returns the FFV1 settings of {@link #ffv1Encode()} and {@link #ffv1Decode()}.
+     *
+     * @return the settings
+     */
+    private static List<Ffv1EncoderOptions> ffv1Options() {
+        var base = Ffv1EncoderOptions.defaults().toBuilder().keyframeInterval(2);
+        return List.of(base.threads(1).build(),
+                base.bitDepth(10).threads(2).build(),
+                base.version(1).coder(Ffv1Coder.GOLOMB_RICE).bitDepth(8).threads(1).build());
+    }
+
+    /**
+     * Returns a workload that decodes the FFV1 streams of the settings of {@link #ffv1Options()}, the 10-bit one at
+     * its depth on two threads, one decoder per stream across rounds.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload ffv1Decode() {
+        var rounds = new ArrayList<Runnable>();
+        for (var options : ffv1Options()) {
+            var encoder = new Ffv1Encoder(SMALL_WIDTH, SMALL_HEIGHT, options);
+            var config = encoder.codecConfig().orElse(null);
+            var packets = VideoStreams.encodeAll(encoder, SyntheticVideo.natural(SMALL_WIDTH, SMALL_HEIGHT, 4));
+            var decoder = new Ffv1Decoder(VideoStreams.track(Codec.FFV1, SMALL_WIDTH, SMALL_HEIGHT, config),
+                    VideoDecoderOptions.builder().threads(options.threads()).highBitDepth(options.bitDepth() > 8)
+                            .build());
+            rounds.add(VideoStreams.decodeRound(packets, decoder));
+        }
+        return TrainingWorkload.of("ffv1-decode", () -> rounds.forEach(Runnable::run));
     }
 
     /**

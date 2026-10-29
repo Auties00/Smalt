@@ -115,13 +115,38 @@ class VideoBombTest {
                     be16(packet, 0x18, height);
                     be16(packet, 0x1A, width);
                     be16(packet, 0x16C, (height + 15) >> 4);
-                }), new int[]{4096, 1088}));
+                }), new int[]{4096, 1088}),
+                new Bomb(Codec.THEORA, VideoBombTest::theora));
         var arguments = new ArrayList<Arguments>();
         for (var bomb : bombs) {
             arguments.add(Arguments.of(bomb, "side", SIDE));
             arguments.add(Arguments.of(bomb, "area", bomb.area()));
         }
         return arguments.stream();
+    }
+
+    /**
+     * Resizes the identification header of a 16x16 Theora stream: the frame size in macro blocks and the picture size,
+     * in the first of the three Xiph-laced headers of the configuration.
+     */
+    private static Forged theora(int width, int height) {
+        var encoded = Streams.video(Codec.THEORA, 16, 16, 1, options(Codec.THEORA));
+        var config = ((VideoTrack) encoded.track()).codecConfig().orElseThrow().clone();
+        var offset = 1;
+        for (var lace = 0; lace < 2; lace++) {
+            while ((config[offset] & 0xFF) == 255) {
+                offset++;
+            }
+            offset++;
+        }
+        if (config[offset] != (byte) 0x80 || config[offset + 1] != 't') {
+            throw new AssertionError("the first Theora header is not the identification header");
+        }
+        be16(config, offset + 10, (width + 15) >> 4);
+        be16(config, offset + 12, (height + 15) >> 4);
+        patchBits(config, (offset + 14) * 8, 24, width);
+        patchBits(config, (offset + 17) * 8, 24, height);
+        return new Forged(Codec.THEORA, config, List.of(encoded.packets().getFirst().data()));
     }
 
     @FunctionalInterface
@@ -198,7 +223,7 @@ class VideoBombTest {
 
     static Stream<Codec> encodable() {
         return Stream.of(Codec.H264, Codec.AV1, Codec.VP8, Codec.VP9, Codec.MJPEG, Codec.JPEG2000, Codec.PRORES,
-                Codec.DNXHD, Codec.HEVC, Codec.MPEG4_PART2, Codec.MPEG2_VIDEO);
+                Codec.DNXHD, Codec.HEVC, Codec.MPEG4_PART2, Codec.MPEG2_VIDEO, Codec.THEORA, Codec.FFV1);
     }
 
     @Nested

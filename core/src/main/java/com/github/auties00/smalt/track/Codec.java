@@ -115,6 +115,15 @@ public enum Codec {
     THEORA(TrackKind.VIDEO, "theora"),
 
     /**
+     * FFV1, the lossless intra-frame video codec of RFC 9043.
+     *
+     * <p>A packet is one frame. Versions 0 and 1 carry no configuration; version 3 and later carry the
+     * configuration record (Matroska {@code CodecPrivate}, the MP4 {@code glbl} box, the bytes of an AVI
+     * {@code strf} chunk after the bitmap header), which holds the coding parameters of every frame.
+     */
+    FFV1(TrackKind.VIDEO, "ffv1"),
+
+    /**
      * An animated GIF treated as a video stream.
      */
     GIF(TrackKind.VIDEO, "gif"),
@@ -182,9 +191,24 @@ public enum Codec {
      *
      * <p>A packet holds the number of frames the configuration declares. The configuration is the 80-byte
      * {@code "Speex   "} identification header, which gives the sampling rate, channel count, frame size and frames
-     * per packet.
+     * per packet. A track without one carries Speex as FLV does: mono, of the mode of its sampling rate, each packet
+     * holding as many frames as it codes.
      */
     SPEEX(TrackKind.AUDIO, "speex"),
+
+    /**
+     * WavPack lossless, hybrid lossy, floating-point and DSD audio.
+     *
+     * <p>A packet holds one frame of every channel: either the complete WavPack blocks of a {@code .wv} file, each
+     * starting with its 32-byte {@code "wvpk"} header (with any blocks without audio around them), or the blocks as
+     * Matroska ({@code A_WAVPACK4}) stores them,
+     * without the header: the block's sample count, then the flags and checksum of each block (and its size when
+     * the frame has several blocks) before its metadata. The configuration is the stream version in two
+     * little-endian bytes when the packets have no headers, and is absent otherwise. The correction data of a hybrid
+     * stream travels as the packet's side data: the complete correction blocks under {@code "wavpack:correction"},
+     * or the Matroska {@code BlockAdditional} of {@code BlockAddID} 1.
+     */
+    WAVPACK(TrackKind.AUDIO, "wavpack"),
 
     /**
      * Dolby Digital (AC-3).

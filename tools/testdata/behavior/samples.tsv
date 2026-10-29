@@ -16,6 +16,7 @@ core/src/test/resources/samples/au/g721.au	2432	9815aca448ce0fa3fd35f4a371a3c023
 core/src/test/resources/samples/au/g723-3.au	1832	5acf199f0a4b7ff9f3dc89317cb68a9165bedd2305e5f93294ec7f228dcfab58	make-audio-container-samples.py
 core/src/test/resources/samples/au/mulaw.au	4832	080f519b23bd334a3e370483e6bb5c1311a16d87f0c287179b493f8f0886043c	make-audio-container-samples.py
 core/src/test/resources/samples/au/s16.au	52960	f3ed3a56907ad07bb3a3f6a240975f631ad1883f134c9a212e5d9ca73b3e9c26	make-audio-container-samples.py
+core/src/test/resources/samples/avi/ffv1.avi	30098	368719406055613df6a8e43d1f9fca775243b7e2fa74e94b13547c46d81edc96	make-xiph-lossless-samples.py
 core/src/test/resources/samples/avi/g726.avi	7512	16c5c828da4ec4aeb740c46d442aaaf6c9a5e90150744ec2cf9c4ed14453f25a	make-adpcm-samples.py
 core/src/test/resources/samples/avi/ima-adpcm.avi	10906	73b35d6fb60171f670e03ad644a7d8ebeaec5411da9b6865529423240a198f5f	make-adpcm-samples.py
 core/src/test/resources/samples/avi/mjpeg-pcm.avi	146694	299c10a8f4e72831adcf250d0ee65d248e02c3ca0c8d6d1987f1ca81ac07dbac	make-samples.sh
@@ -39,6 +40,7 @@ core/src/test/resources/samples/ivf/vp8.ivf	26473	ce9c8209c150f896f751f82167ae81
 core/src/test/resources/samples/loas/aac.loas	16521	cfc64ffe4968468c1cd09348f5a0059b006bf67da431dd14c16c236b8f7b4cb0	make-audio-container-samples.py
 core/src/test/resources/samples/matroska/dolby-vision-p84.mkv	9941	96e0cdaebc69e962ca80cb3f806d73f48af9e115f4c5fc4d6a1627ffe72f9746	make-dolby-vision-samples.py
 core/src/test/resources/samples/matroska/editions.mkv	20004	9f1d4908991bf072a0fbdc88cc9d3e5bdf00dbf28a1bafb316edeaa3fb749b66	make-descriptive-samples.py
+core/src/test/resources/samples/matroska/ffv1.mkv	13755	e8099b92d395e845fd60c1dafb20b0b9b3ab8281890b7ddf2bd724ded68c94f4	make-xiph-lossless-samples.py
 core/src/test/resources/samples/matroska/flac.mka	33512	ac1975ad374f475c70b81e40f222627176b0ac58f054af62142efbaf2b8b1ed0	make-samples.sh
 core/src/test/resources/samples/matroska/g722.mka	5587	baf6824ef113709c7580e6dd3659a20f0edd69f31519ae40d53b33fac02cd241	make-adpcm-samples.py
 core/src/test/resources/samples/matroska/h264-opus.mkv	42823	597f618dcacde3dc4964fa011395778eba2c0439c421286d3606510d5db752d2	make-samples.sh
@@ -51,6 +53,7 @@ core/src/test/resources/samples/matroska/vobsub.mkv	6354	3850b30dc5e15183e99298c
 core/src/test/resources/samples/matroska/vp8-alpha.webm	6304	fc3aeedca0862f0cabff7587539cfe4906172f6aabc7d820c569886365a4bb9c	make-samples.sh
 core/src/test/resources/samples/matroska/vp9-alpha.webm	5569	c88fd93110a7f5024561bace71431031e9964aaa3f809afe727d3ab3c0e58318	make-samples.sh
 core/src/test/resources/samples/matroska/vp9-vorbis.webm	49662	b3180818268eaebab00b86b5108356f8303eec3cd45bff0664873b14820b0205	make-samples.sh
+core/src/test/resources/samples/matroska/wavpack.mka	26322	92857e497d6e6e16007e1cb218514a77c9d0c5c268d5b109aecb40ddafa3472e	make-xiph-lossless-samples.py
 core/src/test/resources/samples/mp3/cbr.mp3	16320	31d01dbcaaca53513b3cbca0e8013017ae692cefe488005eed0432d17be2a219	make-samples.sh
 core/src/test/resources/samples/mp3/mp2-id3v1.mp2	16256	f1ea5ce2d6d0635840ad39de502fa10ca5498cc5c87bd63da2e1d2b0b0617dd1	make-samples.sh
 core/src/test/resources/samples/mp3/vbr-xing.mp3	16291	a2ca147138148b6847109c3ac5a45491a4b3f4c73404c35633675884ed69b4a4	make-samples.sh
@@ -82,6 +85,8 @@ core/src/test/resources/samples/ogg/chained.ogg	10178	143e9c49ce5401aa9da89334a3
 core/src/test/resources/samples/ogg/flac.oga	34014	35fbcd1131ae0a7cec861958eb461ad41ada8cfe68916840d89af93f1b1959f9	make-samples.sh
 core/src/test/resources/samples/ogg/opus-ambisonic.opus	2876	225919e440f5d788e6a56ecd73b4be65ee7fd3bd29b13878b5ffa1f825624ba4	make-ambisonic-samples.py
 core/src/test/resources/samples/ogg/opus.opus	10841	ac8202a28ae12f6b7f4e381d83ee823cc7dace2f6d6e69ab50584fb053bc39d3	make-samples.sh
+core/src/test/resources/samples/ogg/speex.spx	2347	42d64246abc2a3f06c20f933d4ed31021c8c2883084f680bde005bf37b979215	make-xiph-lossless-samples.py
+core/src/test/resources/samples/ogg/theora.ogv	9528	3c6bccc701a6196f877056e7bae011d387db6b59544c648e0c5d6cd06a98e394	make-xiph-lossless-samples.py
 core/src/test/resources/samples/ogg/vorbis.ogg	18054	fb11a857110af7946c0609e0074b65588e749df24fb3d6fc7c16af4bf67f7f70	make-samples.sh
 core/src/test/resources/samples/ps/dts.vob	96256	f310c35d1bf94a57a7d5aaf7e9c898b5c0582d3df62ac3766a4135122627407f	make-samples.sh
 core/src/test/resources/samples/ps/dvd.vob	143360	ec013e94ad21e3f3996cb9637d28c040135188a11c5ce37cc237a47b0d09cabd	make-samples.sh, make-bitmap-caption-samples.py
@@ -136,6 +141,7 @@ core/src/test/resources/samples/wav/mp3.wav	8464	d8187f739d3453df41eb2fa6c7e4999
 core/src/test/resources/samples/wav/ms-adpcm.wav	2172	96202df7b5b39c94cd59e57d6f69187fe6717f0912ad94a0a30c7b16090b5954	make-wav-samples.py
 core/src/test/resources/samples/wav/opus.wav	5640	41f0fe0d9788d3f3293ca7e97d0738a21350a2859d03b99968bdaaffa4686a76	make-wav-samples.py
 core/src/test/resources/samples/wav/s16.wav	52998	def1667eea52a9535f3b427e3d8da558d7d3904520dcf4001e388bd8f0466cfa	make-samples.sh
+core/src/test/resources/samples/wavpack/wavpack.wv	27340	f718ef2be6f7bc772f5689b7192b937617cc816f483e657e722f9bbbfd904834	make-xiph-lossless-samples.py
 core/src/test/resources/samples/y4m/yuv420.y4m	27740	a2dda6c6ce26d65a99ff346e9c19d55696559cb155a776e814d9958105ad52a0	make-samples.sh
 core/src/test/resources/samples/y4m/yuv422p10.y4m	73818	6752570da7a3f7b7d32c838bf2a3854cd493d5ce9179fc0decac28957326ec3a	make-samples.sh
 image/src/test/resources/samples/bmp/bgra.bmp	6198	cbc3329273eee03e3210a4e8442b4e71ec52ccb5e0aef7e8734b8eb4918ac0b3	make-image-samples.sh

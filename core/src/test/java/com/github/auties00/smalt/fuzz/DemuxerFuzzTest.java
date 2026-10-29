@@ -73,6 +73,11 @@ class DemuxerFuzzTest {
     }
 
     @FuzzTest
+    void wavpack(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.WAVPACK, data);
+    }
+
+    @FuzzTest
     void aiff(byte[] data) {
         FuzzMedia.demuxer(ContainerFormat.AIFF, data);
     }

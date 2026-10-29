@@ -51,12 +51,12 @@ class ThreadCountInvarianceTest {
 
     static Stream<Codec> encoders() {
         return Stream.of(Codec.H264, Codec.HEVC, Codec.VP8, Codec.VP9, Codec.AV1, Codec.MJPEG, Codec.JPEG2000,
-                Codec.PRORES, Codec.DNXHD, Codec.MPEG4_PART2, Codec.H263);
+                Codec.PRORES, Codec.DNXHD, Codec.MPEG4_PART2, Codec.H263, Codec.FFV1);
     }
 
     static Stream<Codec> decoders() {
         return Stream.of(Codec.H264, Codec.VP8, Codec.VP9, Codec.AV1, Codec.MJPEG, Codec.JPEG2000, Codec.PRORES,
-                Codec.DNXHD, Codec.HEVC, Codec.MPEG4_PART2, Codec.H263, Codec.MPEG2_VIDEO);
+                Codec.DNXHD, Codec.HEVC, Codec.MPEG4_PART2, Codec.H263, Codec.MPEG2_VIDEO, Codec.FFV1);
     }
 
     @Nested

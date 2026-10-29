@@ -13,8 +13,7 @@ import java.util.Map;
 
 /**
  * Implements the Ogg Theora mapping of the Theora I specification (sections 6.2 and A.2), so that
- * Theora streams are described, timestamped and remuxed even though this module does not decode
- * Theora.
+ * Theora streams are described, timestamped and remuxed; {@code smalt-video} decodes them.
  *
  * <p>The identification header gives the picture size, frame rate, pixel aspect ratio
  * ({@code PARN}/{@code PARD}) and the keyframe granule shift; the three headers are Xiph-laced into

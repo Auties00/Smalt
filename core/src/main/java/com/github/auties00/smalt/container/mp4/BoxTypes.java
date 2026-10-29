@@ -936,6 +936,16 @@ final class BoxTypes {
     static final int QT = 0x71742020;
 
     /**
+     * The FFV1 sample entry ({@code FFV1}).
+     */
+    static final int FFV1 = 0x46465631;
+
+    /**
+     * The global codec extra data box ({@code glbl}), which holds an FFV1 configuration record.
+     */
+    static final int GLBL = 0x676C626C;
+
+    /**
      * The Avid DNxHD sample entry ({@code AVdn}).
      */
     static final int AVDN = 0x4156646E;

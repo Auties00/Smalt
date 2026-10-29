@@ -39,6 +39,7 @@ import com.github.auties00.smalt.audio.opus.OpusDecoderOptions;
 import com.github.auties00.smalt.audio.opus.OpusEncoder;
 import com.github.auties00.smalt.audio.opus.OpusEncoderOptions;
 import com.github.auties00.smalt.audio.opus.OpusSignal;
+import com.github.auties00.smalt.audio.speex.SpeexDecoder;
 import com.github.auties00.smalt.audio.voice.AnalogGainControllerOptions;
 import com.github.auties00.smalt.audio.voice.ClippingPrediction;
 import com.github.auties00.smalt.audio.voice.EchoCancellation;
@@ -49,6 +50,9 @@ import com.github.auties00.smalt.audio.voice.VoiceProcessorOptions;
 import com.github.auties00.smalt.audio.vorbis.VorbisDecoder;
 import com.github.auties00.smalt.audio.vorbis.VorbisEncoder;
 import com.github.auties00.smalt.audio.vorbis.VorbisEncoderOptions;
+import com.github.auties00.smalt.audio.wavpack.WavPackDecoder;
+import com.github.auties00.smalt.container.DemuxerOptions;
+import com.github.auties00.smalt.container.wavpack.WavPackDemuxer;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -67,8 +71,8 @@ import static com.github.auties00.smalt.aot.internal.WorkloadFactory.realtime;
 
 /**
  * Creates the workloads of {@link TrainingFamily#AUDIO}, the codecs of {@code smalt-audio}: Opus,
- * Vorbis, FLAC, ALAC, MP3, MP2, IMA and Microsoft ADPCM, G.722, G.726 and GSM 06.10 encoding and decoding, and the
- * voice processor, each on synthetic speech or
+ * Vorbis, FLAC, ALAC, MP3, MP2, IMA and Microsoft ADPCM, G.722, G.726 and GSM 06.10 encoding and decoding, Speex and
+ * WavPack decoding, and the voice processor, each on synthetic speech or
  * music and keeping its codecs across rounds as a long-running application does.
  */
 final class AudioWorkloads {
@@ -98,6 +102,7 @@ final class AudioWorkloads {
                 realtime("mp3-decode-loss", () -> lossyDecode("mp3-decode-loss", Codec.MP3, 4)),
                 realtime("vorbis-decode-loss", () -> lossyDecode("vorbis-decode-loss", Codec.VORBIS, 4)),
                 realtime("flac-decode-loss", () -> lossyDecode("flac-decode-loss", Codec.FLAC, 4)),
+                realtime("speex-decode-loss", AudioWorkloads::speexDecode),
                 realtime("g722-encode", () -> telephonyEncode("g722-encode", new G722Encoder(), 6)),
                 realtime("g722-decode", () -> telephonyDecode("g722-decode", new G722Encoder(), 6)),
                 realtime("g726-encode", () -> telephonyEncode("g726-encode", new G726Encoder(
@@ -139,7 +144,88 @@ final class AudioWorkloads {
                 file("adpcm-ms-encode", () -> adpcmEncode("adpcm-ms-encode", Codec.ADPCM_MS, 2)),
                 file("adpcm-ima-decode", () -> adpcmDecode("adpcm-ima-decode", Codec.ADPCM_IMA_WAV, 6)),
                 file("adpcm-ima4-decode", () -> adpcmDecode("adpcm-ima4-decode", Codec.ADPCM_IMA_QT, 6)),
-                file("adpcm-ms-decode", () -> adpcmDecode("adpcm-ms-decode", Codec.ADPCM_MS, 6)));
+                file("adpcm-ms-decode", () -> adpcmDecode("adpcm-ms-decode", Codec.ADPCM_MS, 6)),
+                file("wavpack-decode", AudioWorkloads::wavpackDecode));
+    }
+
+    /**
+     * The Speex streams decoded by {@link #speexDecode()}: narrowband with variable bit rate, wideband at quality 8,
+     * ultra-wideband with variable bit rate and intensity stereo wideband, test vectors of
+     * {@code tools/testdata/speex-oracle/make-vectors.py} (synthetic speech-like signals coded by libspeex).
+     */
+    private static final List<String> SPEEX_STREAMS = List.of("nb-vbr.spx", "wb-q8.spx", "uwb-vbr.spx",
+            "wb-stereo.spx");
+
+    /**
+     * Returns a workload that decodes the bundled Speex streams as a real-time receiver that loses every seventh
+     * packet, one decoder per stream across rounds.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload speexDecode() {
+        var rounds = new ArrayList<TrainingWorkload>();
+        for (var name : SPEEX_STREAMS) {
+            var stream = TrainingStreams.demux("speex/" + name);
+            rounds.add(AudioStreams.decodeLossy(name, stream.packets(), new SpeexDecoder((AudioTrack) stream.track())));
+        }
+        return sequence("speex-decode-loss", rounds);
+    }
+
+    /**
+     * The WavPack streams decoded by {@link #wavpackDecode()}: lossless 24-bit in the high mode, 32-bit floats, DSD
+     * (decimated to PCM) and a hybrid 16-bit stream with its correction file, test vectors of
+     * {@code tools/testdata/wavpack/make-vectors.py} (synthetic tones, chirps and noise coded by WavPack 5.8.1).
+     */
+    private static final List<String> WAVPACK_STREAMS = List.of("s24-stereo-high", "f32-stereo", "dsd64-stereo",
+            "hybrid-s16-stereo-lossless");
+
+    /**
+     * Returns a workload that decodes the bundled WavPack streams, the hybrid one with its correction data, one
+     * decoder per stream across rounds.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload wavpackDecode() {
+        var rounds = new ArrayList<TrainingWorkload>();
+        for (var name : WAVPACK_STREAMS) {
+            var data = TrainingStreams.bytes("wavpack/" + name + ".wv");
+            var correction = name.startsWith("hybrid") ? MediaSource.of(TrainingStreams.bytes("wavpack/" + name
+                    + ".wvc")) : null;
+            TrainingStreams.Demuxed stream;
+            try (var demuxer = new WavPackDemuxer(MediaSource.of(data), correction, DemuxerOptions.defaults())) {
+                stream = TrainingStreams.read(demuxer);
+            }
+            rounds.add(AudioStreams.decode(name, stream.packets(), new WavPackDecoder((AudioTrack) stream.track())));
+        }
+        return sequence("wavpack-decode", rounds);
+    }
+
+    /**
+     * Returns a workload whose round runs one round of each of the given workloads, in order.
+     *
+     * @param name the name of the workload
+     * @param workloads the workloads whose rounds one round runs, in order
+     * @return the workload
+     */
+    private static TrainingWorkload sequence(String name, List<TrainingWorkload> workloads) {
+        return new TrainingWorkload() {
+            @Override
+            public String name() {
+                return name;
+            }
+
+            @Override
+            public void round() throws Exception {
+                for (var workload : workloads) {
+                    workload.round();
+                }
+            }
+
+            @Override
+            public String toString() {
+                return name;
+            }
+        };
     }
 
     /**

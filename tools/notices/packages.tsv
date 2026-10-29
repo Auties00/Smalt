@@ -31,6 +31,7 @@ audio.opus.internal.celt	audio
 audio.opus.internal.silk	audio
 audio.pcm	core
 audio.process	core
+audio.speex	audio
 audio.voice	audio
 audio.voice.internal	audio
 audio.voice.internal.aec3	audio
@@ -40,6 +41,7 @@ audio.voice.internal.agc2	audio
 audio.voice.internal.ns	audio
 audio.vorbis	audio
 audio.vorbis.internal	audio
+audio.wavpack	audio
 capture	capture
 capture.audio	capture
 capture.internal	capture
@@ -72,6 +74,7 @@ container.raw	core
 container.subtitle	core
 container.ts	core
 container.wav	core
+container.wavpack	core
 container.y4m	core
 desktop.imageio	desktop
 desktop.sound	desktop
@@ -175,6 +178,8 @@ video.av1.internal	video
 video.av1.internal.encoder	video
 video.dnxhd	video
 video.dnxhd.internal	video
+video.ffv1	video
+video.ffv1.internal	video
 video.h263	mpeg
 video.h263.internal	mpeg
 video.h264	mpeg
@@ -194,6 +199,8 @@ video.mpeg4.internal.encoder	mpeg
 video.mpeg4.internal.object	mpeg
 video.prores	video
 video.prores.internal	video
+video.theora	video
+video.theora.internal	video
 video.vp8	image
 video.vp8.internal	image
 video.vp9	video

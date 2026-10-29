@@ -114,6 +114,9 @@ Contents
   57. ISO/IEC 23003-4 MPEG-D DRC reference software
   58. ISO/IEC 13818-5 MPEG-2 video reference software (MPEG Software Simulation Group)
   59. libgsm
+  60. WavPack
+  61. libspeex
+  62. libtheora
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -2092,6 +2095,85 @@ Copyright:
 EOF
 license_start "libgsm license (COPYRIGHT)"
 cat "$LIC/libgsm-COPYRIGHT"
+
+section "60. WavPack"
+cat <<'EOF'
+Project:      WavPack 5.8.1, the hybrid lossless audio compressor of David Bryant
+Home:         https://www.wavpack.com/
+Source:       https://github.com/dbry/WavPack/releases/download/5.8.1/wavpack-5.8.1.tar.xz
+License text: COPYING at the root of the distribution
+License:      BSD 3-Clause
+
+Derived Smalt packages:
+  audio.wavpack (WavPackDecoder, WavPackStream, WavPackBitReader, WavPackTables,
+  WavPackDsd, WavPackDecimator: the decoder of src/unpack.c, read_words.c,
+  entropy_utils.c, decorr_utils.c, unpack_floats.c, unpack_dsd.c,
+  open_utils.c and unpack_utils.c, and the tables of entropy_utils.c and
+  common_utils.c)
+
+Derivation: C code translated to Java and tables transcribed.
+
+Copyright:
+  Copyright (c) 1998 - 2025 David Bryant
+  Copyright (c) 1998 - 2013 Conifer Software
+EOF
+license_start "BSD 3-Clause License (COPYING)"
+cat "$LIC/wavpack-COPYING"
+
+section "61. libspeex"
+cat <<'EOF'
+Project:      libspeex 1.2.1, the reference implementation of the Speex speech
+              codec
+Home:         https://www.speex.org/
+Source:       https://downloads.xiph.org/releases/speex/speex-1.2.1.tar.gz
+License text: COPYING at the root of the distribution
+License:      BSD 3-Clause
+
+Derived Smalt packages:
+  audio.speex (the fixed-point decoder of libspeex/nb_celp.c, sb_celp.c,
+  filters.c, lsp.c, ltp.c, cb_search.c, quant_lsp.c, bits.c, stereo.c,
+  speex_callbacks.c, modes.c, modes_wb.c, fixed_generic.h and math_approx.h,
+  and the codebooks of gain_table.c, gain_table_lbr.c, exc_*_table.c,
+  hexc_table.c, hexc_10_32_table.c, lsp_tables_nb.c and high_lsp_tables.c)
+
+Derivation: C code translated to Java and tables transcribed.
+
+Copyright:
+  Copyright 2002-2008 Xiph.org Foundation
+  Copyright 2002-2008 Jean-Marc Valin
+  Copyright 2005-2007 Analog Devices Inc.
+  Copyright 2005-2008 Commonwealth Scientific and Industrial Research
+                      Organisation (CSIRO)
+  Copyright 1993, 2002, 2006 David Rowe
+  Copyright 2003 EpicGames
+  Copyright 1992-1994 Jutta Degener, Carsten Bormann
+EOF
+license_start "BSD 3-Clause License (COPYING)"
+cat "$LIC/speex-COPYING"
+
+section "62. libtheora"
+cat <<'EOF'
+Project:      libtheora 1.2.0, the reference implementation of the Theora video
+              codec
+Home:         https://www.theora.org/
+Source:       https://downloads.xiph.org/releases/theora/libtheora-1.2.0.tar.gz
+License text: COPYING at the root of the distribution
+License:      BSD 3-Clause
+
+Derived Smalt packages:
+  video.theora.internal (TheoraBits, TheoraHuffman, TheoraSetup,
+  TheoraFrameDecoder: the decoder of lib/bitpack.c, decinfo.c, dequant.c,
+  quant.c, huffdec.c, decode.c, state.c, idct.c and fragment.c, and the
+  tables of internal.c and state.c; TheoraFrameEncoder: the VP3
+  quantization parameters of lib/encode.c)
+
+Derivation: C code translated to Java and tables transcribed.
+
+Copyright:
+  Copyright (C) 2002-2009 Xiph.org Foundation
+EOF
+license_start "BSD 3-Clause License (COPYING)"
+cat "$LIC/libtheora-COPYING"
 } > "$OUT"
 
 echo "wrote $OUT"

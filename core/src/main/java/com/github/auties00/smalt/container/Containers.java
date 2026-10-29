@@ -50,6 +50,7 @@ import com.github.auties00.smalt.container.subtitle.SamiDemuxer;
 import com.github.auties00.smalt.container.subtitle.SamiMuxer;
 import com.github.auties00.smalt.container.raw.RawMuxerOptions;
 import com.github.auties00.smalt.container.subtitle.SubRipDemuxer;
+import com.github.auties00.smalt.container.wavpack.WavPackDemuxer;
 import com.github.auties00.smalt.container.subtitle.SubRipMuxer;
 import com.github.auties00.smalt.container.subtitle.SupDemuxer;
 import com.github.auties00.smalt.container.subtitle.SupMuxer;
@@ -105,9 +106,9 @@ import java.util.function.Predicate;
  * <p>Recognition never trusts a file name or a declared mimetype: it inspects the leading bytes,
  * skipping an ID3v2 tag first because MP3, AAC, AC-3, AMR and FLAC files often start with one. Formats with a
  * magic number (MP4 family, Matroska, Ogg, RIFF WAVE, Sony Wave64, RIFF AVI, AIFF, CAF, Sun AU, ADIF, FLAC, AMR,
- * YUV4MPEG2, the {@code "PG"} segments of a {@code .sup} file, the signature line of a VobSub index) are recognized
- * exactly, a VobSub {@code .sub} file by a pack header followed by a subpicture PES packet, other MPEG program streams
- * by their first pack header, MPEG transport streams by
+ * WavPack, YUV4MPEG2, the {@code "PG"} segments of a {@code .sup} file, the signature line of a VobSub index) are
+ * recognized exactly, a VobSub {@code .sub} file by a pack header followed by a subpicture PES packet, other MPEG
+ * program streams by their first pack header, MPEG transport streams by
  * the sync bytes of their first packets, and raw AC-3 and E-AC-3 streams
  * by two consecutive sync frames;
  * raw MPEG audio and ADTS streams, which have only a frame sync word, are recognized by requiring
@@ -421,6 +422,7 @@ public final class Containers {
             case MPEG_TS -> new TsDemuxer(source, options);
             case MPEG_PS -> new PsDemuxer(source, options);
             case AC3 -> new Ac3Demuxer(source, options);
+            case WAVPACK -> new WavPackDemuxer(source, options);
             case SUBRIP -> new SubRipDemuxer(source, options);
             case WEBVTT -> new WebVttDemuxer(source, options);
             case ASS -> new AssDemuxer(source, options);
@@ -493,7 +495,7 @@ public final class Containers {
             case IVF -> IvfMuxer.supports(codec);
             case MPEG_TS -> TsMuxer.supports(codec);
             case MPEG_PS -> PsMuxer.supports(codec);
-            case MPEG_AUDIO, FLAC, AMR, AC3, H264, HEVC, AV1, AV1_ANNEX_B, MPEG4_VIDEO, H263, PCM ->
+            case MPEG_AUDIO, FLAC, AMR, AC3, H264, HEVC, AV1, AV1_ANNEX_B, MPEG4_VIDEO, H263, PCM, WAVPACK ->
                     RawMuxer.supports(format, codec);
             case SUBRIP -> SubRipMuxer.supports(codec);
             case WEBVTT -> WebVttMuxer.supports(codec);
@@ -583,7 +585,7 @@ public final class Containers {
             case LOAS -> new LoasMuxer(output);
             case ADIF -> new AdifMuxer(output);
             case IVF -> new IvfMuxer(output);
-            case MPEG_AUDIO, FLAC, AMR, AC3, H264, HEVC, AV1, MPEG4_VIDEO, H263, PCM ->
+            case MPEG_AUDIO, FLAC, AMR, AC3, H264, HEVC, AV1, MPEG4_VIDEO, H263, PCM, WAVPACK ->
                     new FormatMuxer(format, new RawMuxer(output));
             case AV1_ANNEX_B -> new FormatMuxer(format, new RawMuxer(output,
                     RawMuxerOptions.builder().av1AnnexB(true).build()));
@@ -817,6 +819,9 @@ public final class Containers {
         }
         if (matches(header, 0, "#!AMR")) {
             return ContainerFormat.AMR;
+        }
+        if (WavPackDemuxer.matches(header)) {
+            return ContainerFormat.WAVPACK;
         }
         if (Y4mDemuxer.matches(header)) {
             return ContainerFormat.Y4M;

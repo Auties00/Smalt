@@ -116,6 +116,11 @@ public enum ContainerFormat {
     AC3,
 
     /**
+     * A WavPack file ({@code .wv}): a sequence of blocks, magic {@code wvpk}.
+     */
+    WAVPACK,
+
+    /**
      * A SubRip ({@code .srt}) text subtitle file.
      */
     SUBRIP,

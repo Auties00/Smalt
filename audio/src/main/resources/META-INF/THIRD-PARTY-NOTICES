@@ -36,6 +36,8 @@ Contents
   49. PFFFT
   50. RNNoise
   59. libgsm
+  60. WavPack
+  61. libspeex
 
 
 ===============================================================================
@@ -1170,3 +1172,128 @@ terms, we append this additional permission:
 Berkeley/Bremen, 05.04.2009
 Jutta Degener
 Carsten Bormann
+
+
+===============================================================================
+60. WavPack
+===============================================================================
+
+Project:      WavPack 5.8.1, the hybrid lossless audio compressor of David Bryant
+Home:         https://www.wavpack.com/
+Source:       https://github.com/dbry/WavPack/releases/download/5.8.1/wavpack-5.8.1.tar.xz
+License text: COPYING at the root of the distribution
+License:      BSD 3-Clause
+
+Derived Smalt packages:
+  audio.wavpack (WavPackDecoder, WavPackStream, WavPackBitReader, WavPackTables,
+  WavPackDsd, WavPackDecimator: the decoder of src/unpack.c, read_words.c,
+  entropy_utils.c, decorr_utils.c, unpack_floats.c, unpack_dsd.c,
+  open_utils.c and unpack_utils.c, and the tables of entropy_utils.c and
+  common_utils.c)
+
+Derivation: C code translated to Java and tables transcribed.
+
+Copyright:
+  Copyright (c) 1998 - 2025 David Bryant
+  Copyright (c) 1998 - 2013 Conifer Software
+
+-------------------------------------------------------------------------------
+BSD 3-Clause License (COPYING)
+-------------------------------------------------------------------------------
+
+                  Copyright (c) 1998 - 2025 David Bryant
+                          All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+    * Redistributions of source code must retain the above copyright notice,
+      this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above copyright notice,
+      this list of conditions and the following disclaimer in the
+      documentation and/or other materials provided with the distribution.
+    * Neither the name of the copyright holder nor the names of its
+      contributors may be used to endorse or promote products derived from
+      this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+===============================================================================
+61. libspeex
+===============================================================================
+
+Project:      libspeex 1.2.1, the reference implementation of the Speex speech
+              codec
+Home:         https://www.speex.org/
+Source:       https://downloads.xiph.org/releases/speex/speex-1.2.1.tar.gz
+License text: COPYING at the root of the distribution
+License:      BSD 3-Clause
+
+Derived Smalt packages:
+  audio.speex (the fixed-point decoder of libspeex/nb_celp.c, sb_celp.c,
+  filters.c, lsp.c, ltp.c, cb_search.c, quant_lsp.c, bits.c, stereo.c,
+  speex_callbacks.c, modes.c, modes_wb.c, fixed_generic.h and math_approx.h,
+  and the codebooks of gain_table.c, gain_table_lbr.c, exc_*_table.c,
+  hexc_table.c, hexc_10_32_table.c, lsp_tables_nb.c and high_lsp_tables.c)
+
+Derivation: C code translated to Java and tables transcribed.
+
+Copyright:
+  Copyright 2002-2008 Xiph.org Foundation
+  Copyright 2002-2008 Jean-Marc Valin
+  Copyright 2005-2007 Analog Devices Inc.
+  Copyright 2005-2008 Commonwealth Scientific and Industrial Research
+                      Organisation (CSIRO)
+  Copyright 1993, 2002, 2006 David Rowe
+  Copyright 2003 EpicGames
+  Copyright 1992-1994 Jutta Degener, Carsten Bormann
+
+-------------------------------------------------------------------------------
+BSD 3-Clause License (COPYING)
+-------------------------------------------------------------------------------
+
+Copyright 2002-2008 	Xiph.org Foundation
+Copyright 2002-2008 	Jean-Marc Valin
+Copyright 2005-2007	Analog Devices Inc.
+Copyright 2005-2008	Commonwealth Scientific and Industrial Research
+                        Organisation (CSIRO)
+Copyright 1993, 2002, 2006 David Rowe
+Copyright 2003 		EpicGames
+Copyright 1992-1994	Jutta Degener, Carsten Bormann
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+- Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+- Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+- Neither the name of the Xiph.org Foundation nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.

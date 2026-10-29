@@ -136,6 +136,16 @@ class VideoFuzzTest {
     }
 
     @FuzzTest
+    void theora(byte[] data) {
+        FuzzMedia.video(Codec.THEORA, data);
+    }
+
+    @FuzzTest
+    void ffv1(byte[] data) {
+        FuzzMedia.video(Codec.FFV1, data);
+    }
+
+    @FuzzTest
     void avif(byte[] data) {
         FuzzMedia.image(ImageFormat.AVIF, data);
     }

@@ -24,8 +24,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class Catalog {
     /** The video codecs Smalt does not encode, with the ffmpeg encoder and container that make them. */
     private static final Map<Codec, String[]> FFMPEG_VIDEO = Map.of(
-            Codec.MPEG2_VIDEO, new String[]{"mpeg2video", "ts", "-g", "4", "-bf", "2"},
-            Codec.THEORA, new String[]{"libtheora", "ogg", "-g", "4"});
+            Codec.MPEG2_VIDEO, new String[]{"mpeg2video", "ts", "-g", "4", "-bf", "2"});
 
     /** The audio codecs Smalt does not encode, with the ffmpeg encoder, container and sample rate. */
     private static final Map<Codec, String[]> FFMPEG_AUDIO = Map.of(

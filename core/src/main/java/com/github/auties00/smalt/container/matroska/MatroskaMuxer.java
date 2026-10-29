@@ -16,6 +16,7 @@ import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.codec.NalConfigs;
+import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.io.ByteWriter;
 import com.github.auties00.smalt.internal.nal.NalUnits;
 import com.github.auties00.smalt.internal.subtitle.AssScript;
@@ -44,6 +45,7 @@ import com.github.auties00.smalt.track.TrackDisposition;
 import com.github.auties00.smalt.track.TrackKind;
 import com.github.auties00.smalt.track.VideoTrack;
 
+import java.io.ByteArrayOutputStream;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -78,11 +80,15 @@ import java.util.Set;
  *       two {@code jp2c} boxes of an interlaced frame after a copy of the header box), H.263
  *       ({@code V_MS/VFW/FOURCC}, a {@code BITMAPINFOHEADER} with the FourCC {@code H263}), ProRes
  *       ({@code V_PRORES}, the four-character sample entry type of the track's configuration), Theora
- *       ({@code V_THEORA}, the Xiph-laced headers), DNxHD and DNxHR ({@code V_QUICKTIME}, a
+ *       ({@code V_THEORA}, the Xiph-laced headers), FFV1 ({@code V_FFV1}, the configuration record of a version 3
+ *       stream, none for versions 0 and 1), DNxHD and DNxHR ({@code V_QUICKTIME}, a
  *       QuickTime video sample description of the four-character sample entry type of the
  *       track's configuration, {@code AVdn} or {@code AVdh}), AAC ({@code A_AAC}, the
  *       {@code AudioSpecificConfig}), FLAC ({@code A_FLAC}, the {@code fLaC} marker and metadata
- *       blocks), ALAC ({@code A_ALAC}, the 24-byte {@code ALACSpecificConfig}), MP3 and MP2
+ *       blocks), ALAC ({@code A_ALAC}, the 24-byte {@code ALACSpecificConfig}), WavPack ({@code A_WAVPACK4}, the
+ *       two-byte stream version, taken from the first packet when the track has no configuration; packets of
+ *       complete blocks are written without their headers and their {@code "wavpack:correction"} side data as the
+ *       {@code BlockAdditional} of {@code BlockAddID} 1), MP3 and MP2
  *       ({@code A_MPEG/L3}, {@code A_MPEG/L2}), AC-3 and E-AC-3, AMR-NB and AMR-WB
  *       ({@code A_MS/ACM}, a {@code WAVEFORMATEX} of format tag {@code 0x0038} or {@code 0x0058};
  *       storage-format frames), G.711 A-law and mu-law ({@code A_MS/ACM}, a {@code WAVEFORMATEX}
@@ -301,6 +307,11 @@ public final class MatroskaMuxer implements Muxer {
      * The {@code BlockAddID} of the alpha frames of a video track whose {@code AlphaMode} is 1.
      */
     private static final int ALPHA_ADD_ID = 1;
+
+    /**
+     * The side data key of the WavPack correction data a block carries as its {@code BlockAdditional} 1.
+     */
+    private static final String WAVPACK_CORRECTION = "matroska:BlockAdditional:1";
 
     /**
      * The {@code BlockAddIDType} of ITU-T T.35 metadata.
@@ -577,12 +588,14 @@ public final class MatroskaMuxer implements Muxer {
             case H263 -> "V_MS/VFW/FOURCC";
             case PRORES -> "V_PRORES";
             case THEORA -> "V_THEORA";
+            case FFV1 -> "V_FFV1";
             case DNXHD -> "V_QUICKTIME";
             case OPUS -> "A_OPUS";
             case VORBIS -> "A_VORBIS";
             case AAC -> "A_AAC";
             case FLAC -> "A_FLAC";
             case ALAC -> "A_ALAC";
+            case WAVPACK -> "A_WAVPACK4";
             case MP3 -> "A_MPEG/L3";
             case MP2 -> "A_MPEG/L2";
             case AC3 -> "A_AC3";
@@ -858,7 +871,9 @@ public final class MatroskaMuxer implements Muxer {
         packet = inBand(state, packet);
         accepting = true;
         var data = packet.data();
-        if (state.track.codec() == Codec.PRORES && data.length >= 8 && data[4] == 'i' && data[5] == 'c' && data[6] == 'p'
+        if (state.track.codec() == Codec.WAVPACK) {
+            packet = state.wavPack(packet);
+        } else if (state.track.codec() == Codec.PRORES && data.length >= 8 && data[4] == 'i' && data[5] == 'c' && data[6] == 'p'
                 && data[7] == 'f') {
             // Matroska blocks of V_PRORES omit the frame size and icpf identifier of the frame
             packet = packet.withData(java.util.Arrays.copyOfRange(data, 8, data.length));
@@ -1263,7 +1278,8 @@ public final class MatroskaMuxer implements Muxer {
         var relative = ticks - clusterTicks;
         var padding = state.discardPadding(packet);
         var hdr10Plus = state.video ? packet.sideData().hdr10Plus().orElse(null) : null;
-        var alpha = state.alpha ? packet.sideData().alphaFrame().orElse(null) : null;
+        var alpha = state.alpha ? packet.sideData().alphaFrame().orElse(null)
+                : state.track.codec() == Codec.WAVPACK ? packet.sideData().extra(WAVPACK_CORRECTION).orElse(null) : null;
         var trailer = groupTrailer(key, previousTicks - ticks, padding, hdr10Plus, alpha);
         var trackNumberLength = Ebml.sizeLength(state.number);
         var payload = trackNumberLength + 3L + packet.size();
@@ -1769,7 +1785,7 @@ public final class MatroskaMuxer implements Muxer {
                 switch (codec) {
                     case H264, HEVC, PRORES, THEORA -> codecPrivate = require(config);
                     case DNXHD -> codecPrivate = imageDescription(require(config), videoTrack);
-                    case AV1, MPEG4_PART2, MPEG1_VIDEO, MPEG2_VIDEO -> codecPrivate = config;
+                    case AV1, MPEG4_PART2, MPEG1_VIDEO, MPEG2_VIDEO, FFV1 -> codecPrivate = config;
                     case VP9 -> codecPrivate = config == null ? null : vp9Features(config);
                     case H263 -> codecPrivate = bitmapInfo(videoTrack, config);
                     default -> {
@@ -1803,6 +1819,16 @@ public final class MatroskaMuxer implements Muxer {
                 case VORBIS -> {
                     codecPrivate = require(config);
                     vorbisParameters(codecPrivate);
+                }
+                case WAVPACK -> {
+                    if (config != null && config.length != 2) {
+                        throw new IllegalArgumentException("a WavPack configuration is the two-byte stream version");
+                    }
+                    codecPrivate = config;
+                    if (sampleRate <= 0 || channels <= 0) {
+                        throw new IllegalArgumentException("audio track " + track.id()
+                                + " needs its sample rate and channel layout");
+                    }
                 }
                 case AAC -> {
                     codecPrivate = require(config);
@@ -2066,6 +2092,99 @@ public final class MatroskaMuxer implements Muxer {
         }
 
         /**
+         * Whether a WavPack track's packets carry correction data.
+         */
+        boolean wavPackCorrection;
+
+        /**
+         * Rewrites a WavPack packet of complete blocks into the Matroska form (the block's sample count, then the
+         * flags, checksum and, when the frame has several blocks, size of each block before its metadata; blocks
+         * without audio are left out) and its correction blocks into the {@code BlockAdditional} form (the checksum
+         * and, for several blocks, size of each correction block before its metadata), taking the stream version of
+         * the first block as the track's {@code CodecPrivate}.
+         *
+         * @param packet a packet of complete blocks, or one already in the Matroska form
+         * @return the packet to write
+         * @throws IllegalArgumentException if the packet holds a truncated block
+         */
+        Packet wavPack(Packet packet) {
+            var data = packet.data();
+            if (!isWavPackBlock(data, 0)) {
+                return packet;
+            }
+            if (codecPrivate == null) {
+                codecPrivate = new byte[]{data[8], data[9]};
+            }
+            var count = 0;
+            var samples = 0;
+            for (var position = 0; position < data.length; ) {
+                if (!isWavPackBlock(data, position)) {
+                    throw new IllegalArgumentException("a WavPack packet must hold whole blocks");
+                }
+                if (ByteArrays.i32le(data, position + 20) != 0) {
+                    count++;
+                    samples = ByteArrays.i32le(data, position + 20);
+                }
+                position += ByteArrays.i32le(data, position + 4) + 8;
+            }
+            var single = count == 1;
+            var out = new ByteArrayOutputStream(data.length);
+            writeLe(out, samples);
+            for (var position = 0; position < data.length; ) {
+                var size = ByteArrays.i32le(data, position + 4) - 24;
+                if (ByteArrays.i32le(data, position + 20) == 0) {
+                    // blocks without audio (the original file's wrapper, the MD5 signature) have no Matroska form
+                    position += size + 32;
+                    continue;
+                }
+                writeLe(out, ByteArrays.i32le(data, position + 24));
+                writeLe(out, ByteArrays.i32le(data, position + 28));
+                if (!single) {
+                    writeLe(out, size);
+                }
+                out.write(data, position + 32, size);
+                position += size + 32;
+            }
+            var side = packet.sideData();
+            var correction = side.extra("wavpack:correction").orElse(null);
+            var builder = side.toBuilder().extra("wavpack:correction", null);
+            if (correction != null) {
+                var additional = new ByteArrayOutputStream(correction.length);
+                for (var position = 0; position < correction.length; ) {
+                    if (!isWavPackBlock(correction, position)) {
+                        throw new IllegalArgumentException("WavPack correction data must hold whole blocks");
+                    }
+                    var size = ByteArrays.i32le(correction, position + 4) - 24;
+                    writeLe(additional, ByteArrays.i32le(correction, position + 28));
+                    if (!single) {
+                        writeLe(additional, size);
+                    }
+                    additional.write(correction, position + 32, size);
+                    position += size + 32;
+                }
+                builder.extra(WAVPACK_CORRECTION, additional.toByteArray());
+                wavPackCorrection = true;
+            }
+            return packet.withData(out.toByteArray()).withSideData(builder.build());
+        }
+
+        private static boolean isWavPackBlock(byte[] data, int position) {
+            if (data.length - position < 32 || data[position] != 'w' || data[position + 1] != 'v'
+                    || data[position + 2] != 'p' || data[position + 3] != 'k') {
+                return false;
+            }
+            var size = ByteArrays.i32le(data, position + 4) & 0xFFFFFFFFL;
+            return size >= 24 && size + 8 <= data.length - position;
+        }
+
+        private static void writeLe(ByteArrayOutputStream out, int value) {
+            out.write(value);
+            out.write(value >> 8);
+            out.write(value >> 16);
+            out.write(value >> 24);
+        }
+
+        /**
          * Derives a missing AV1 or VP9 configuration from the first packet.
          *
          * @param first the track's first packet
@@ -2131,7 +2250,7 @@ public final class MatroskaMuxer implements Muxer {
             } else if (codecPrivate != null) {
                 out.binary(EbmlIds.CODEC_PRIVATE, codecPrivate);
             }
-            if (alpha && !hdr10PlusMapping) {
+            if ((alpha || wavPackCorrection) && !hdr10PlusMapping) {
                 out.unsigned(EbmlIds.MAX_BLOCK_ADDITION_ID, ALPHA_ADD_ID);
             }
             if (hdr10PlusMapping) {
@@ -2192,6 +2311,10 @@ public final class MatroskaMuxer implements Muxer {
                 out.unsigned(EbmlIds.CHANNELS, channels);
                 if (track.codec().isPcm() && codecId.startsWith("A_PCM/")) {
                     out.unsigned(EbmlIds.BIT_DEPTH, track.codec().pcmBitsPerSample().orElseThrow());
+                }
+                if (track instanceof AudioTrack audioTrack && track.codec() == Codec.WAVPACK
+                        && audioTrack.bitsPerSample() > 0) {
+                    out.unsigned(EbmlIds.BIT_DEPTH, audioTrack.bitsPerSample());
                 }
                 out.end();
             }

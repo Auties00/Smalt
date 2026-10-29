@@ -1652,8 +1652,9 @@ public final class AudioStreamDecoder implements AutoCloseable {
          * memories keep decaying for a few hundred more milliseconds before the floats agree
          * exactly), two of the longest Vorbis blocks (8192 samples each), four AAC frames, sixteen
          * MPEG audio frames (the Layer III bit reservoir reaches back up to 511 bytes, several
-         * frames at low bitrates), one second of G.722 and G.726, whose adaptive predictors forget the
-         * past only gradually, nothing for codecs without state between packets (PCM, FLAC, ALAC, and IMA
+         * frames at low bitrates), one second of G.722, G.726 and Speex, whose adaptive predictors (and
+         * Speex's pitch excitation memory) forget the past only gradually, nothing for codecs without
+         * state between packets (PCM, FLAC, ALAC, and IMA
          * and Microsoft ADPCM in WAVE blocks) and 100 ms for any other codec, plus {@value #RESAMPLING_MARGIN_MICROS}
          * microseconds for the resampler: its filter reaches back a few milliseconds and its phase
          * repeats every {@code inputRate / gcd(inputRate, outputRate)} samples, at most 441 (10 ms)
@@ -1678,7 +1679,7 @@ public final class AudioStreamDecoder implements AutoCloseable {
                 case VORBIS -> 2L * 8192 * 1_000_000 / rate;
                 case AAC -> 4L * 2048 * 1_000_000 / rate;
                 case MP3, MP2 -> 16L * 1152 * 1_000_000 / rate;
-                case ADPCM_G722, ADPCM_G726 -> 1_000_000;
+                case ADPCM_G722, ADPCM_G726, SPEEX -> 1_000_000;
                 case FLAC, ALAC, ADPCM_IMA_WAV, ADPCM_MS, PCM_S16LE, PCM_S16BE, PCM_S24LE, PCM_S24BE, PCM_S32LE,
                      PCM_S32BE, PCM_S64LE, PCM_S64BE, PCM_F32LE, PCM_F32BE, PCM_F64LE, PCM_F64BE, PCM_U8, PCM_S8,
                      PCM_ALAW, PCM_MULAW -> 0;

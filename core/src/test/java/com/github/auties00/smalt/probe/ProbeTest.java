@@ -137,6 +137,8 @@ class ProbeTest {
                 Arguments.of("flac 24-bit", audio("flac", List.of("-c:a", "flac", "-sample_fmt", "s32"))),
                 Arguments.of("mka flac + chapters", audio("mka", List.of("-c:a", "flac"))),
                 Arguments.of("wav s24 + info", audio("wav", List.of("-c:a", "pcm_s24le"))),
+                Arguments.of("wv wavpack 24-bit", audio("wv", List.of("-c:a", "wavpack", "-sample_fmt", "s32p"))),
+                Arguments.of("mka wavpack", audio("mka", List.of("-c:a", "wavpack"))),
                 Arguments.of("aiff", audio("aiff", List.of("-c:a", "pcm_s16be"))),
                 Arguments.of("adts aac", audio("aac", List.of("-c:a", "aac", "-f", "adts"))),
                 Arguments.of("amr", Fixtures.ffmpeg("amr", List.of("-f", "lavfi", "-i", "sine=sample_rate=8000:duration=2"),
@@ -158,6 +160,7 @@ class ProbeTest {
             case "aac" -> ContainerFormat.ADTS;
             case "amr" -> ContainerFormat.AMR;
             case "ivf" -> ContainerFormat.IVF;
+            case "wv" -> ContainerFormat.WAVPACK;
             default -> throw new AssertionError("unexpected format " + formatName);
         };
     }

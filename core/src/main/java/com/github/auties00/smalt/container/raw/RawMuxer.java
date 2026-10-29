@@ -52,7 +52,12 @@ import java.util.Objects;
  *       Annex B;</li>
  *   <li>MPEG-4 Part 2: the pictures, back to back (an {@code .m4v} file), the configuration headers
  *       of the track repeated before every key frame that does not start with its own;</li>
- *   <li>H.263: the pictures, back to back (a {@code .263} file).</li>
+ *   <li>H.263: the pictures, back to back (a {@code .263} file);</li>
+ *   <li>WavPack: the blocks, back to back (a {@code .wv} file); a packet of complete blocks is written as it is,
+ *       and the headerless blocks of a Matroska track ({@code A_WAVPACK4}, whose configuration is the stream
+ *       version) get their headers back, the block index counting the samples written and the total length
+ *       unknown. A hybrid stream's correction data is not written: it belongs to a separate {@code .wvc}
+ *       file.</li>
  * </ul>
  * AAC needs ADTS framing ({@link com.github.auties00.smalt.container.adts.AdtsMuxer}) and VP8
  * and VP9 an IVF file ({@link com.github.auties00.smalt.container.ivf.IvfMuxer}); every other
@@ -215,6 +220,16 @@ public final class RawMuxer implements Muxer {
     private boolean started;
 
     /**
+     * The index of the first sample of the next headerless WavPack packet.
+     */
+    private long wavPackIndex;
+
+    /**
+     * The rebuilt block of a headerless WavPack block, its header followed by its data, grown as needed.
+     */
+    private byte[] wavPackBlock = new byte[0];
+
+    /**
      * The channel count of an AMR track.
      */
     private int amrChannels;
@@ -251,12 +266,12 @@ public final class RawMuxer implements Muxer {
      * Returns whether a codec has a raw elementary-stream form this muxer writes.
      *
      * @param codec the codec of the track
-     * @return {@code true} for PCM, MP3, MP2, FLAC, AMR-NB, AMR-WB, AC-3, E-AC-3, H.264, HEVC, AV1, MPEG-4 Part 2
-     * and H.263
+     * @return {@code true} for PCM, MP3, MP2, FLAC, AMR-NB, AMR-WB, AC-3, E-AC-3, H.264, HEVC, AV1, MPEG-4 Part 2,
+     * H.263 and WavPack
      */
     public static boolean supports(Codec codec) {
         return switch (Objects.requireNonNull(codec, "codec")) {
-            case MP3, MP2, FLAC, AMR_NB, AMR_WB, AC3, EAC3, H264, HEVC, AV1, MPEG4_PART2, H263 -> true;
+            case MP3, MP2, FLAC, AMR_NB, AMR_WB, AC3, EAC3, H264, HEVC, AV1, MPEG4_PART2, H263, WAVPACK -> true;
             default -> codec.isPcm();
         };
     }
@@ -267,9 +282,9 @@ public final class RawMuxer implements Muxer {
      * <p>{@link ContainerFormat#MPEG_AUDIO} carries MP3 and MP2, {@link ContainerFormat#FLAC} FLAC,
      * {@link ContainerFormat#AMR} AMR-NB and AMR-WB, {@link ContainerFormat#AC3} AC-3 and E-AC-3,
      * {@link ContainerFormat#H264}, {@link ContainerFormat#HEVC}, {@link ContainerFormat#AV1},
-     * {@link ContainerFormat#AV1_ANNEX_B}, {@link ContainerFormat#MPEG4_VIDEO} and {@link ContainerFormat#H263}
-     * their codec, and {@link ContainerFormat#PCM} every PCM codec; every other format is not an elementary stream
-     * this muxer writes.
+     * {@link ContainerFormat#AV1_ANNEX_B}, {@link ContainerFormat#MPEG4_VIDEO}, {@link ContainerFormat#H263} and
+     * {@link ContainerFormat#WAVPACK} their codec, and {@link ContainerFormat#PCM} every PCM codec; every other
+     * format is not an elementary stream this muxer writes.
      *
      * @param format the file format
      * @param codec the codec of the track
@@ -288,6 +303,7 @@ public final class RawMuxer implements Muxer {
             case AV1, AV1_ANNEX_B -> codec == Codec.AV1;
             case MPEG4_VIDEO -> codec == Codec.MPEG4_PART2;
             case H263 -> codec == Codec.H263;
+            case WAVPACK -> codec == Codec.WAVPACK;
             case PCM -> codec.isPcm();
             default -> false;
         };
@@ -477,8 +493,138 @@ public final class RawMuxer implements Muxer {
                 }
                 output.write(ByteBuffer.wrap(packet.data()));
             }
+            case WAVPACK -> writeWavPack(packet.data());
             default -> output.write(ByteBuffer.wrap(packet.data()));
         }
+    }
+
+    /**
+     * Writes the blocks of a WavPack packet, rebuilding the 32-byte block headers of a headerless packet: its
+     * block sample count, then for each block its flags, its checksum and, unless the first block is also the
+     * last, its size, then its data. A rebuilt header declares the stream length unknown, so the block checksum
+     * metadata sub-block, which covers the header, is computed again over the rebuilt block.
+     *
+     * @param data the packet
+     * @throws IllegalArgumentException if a headerless packet is truncated or the track declares no stream
+     *                                  version for it
+     */
+    private void writeWavPack(byte[] data) {
+        if (data.length >= 4 && data[0] == 'w' && data[1] == 'v' && data[2] == 'p' && data[3] == 'k') {
+            output.write(ByteBuffer.wrap(data));
+            return;
+        }
+        if (config == null || config.length < 2) {
+            throw new IllegalArgumentException("a headerless WavPack packet needs the stream version as its "
+                    + "track configuration");
+        }
+        if (data.length < 12) {
+            throw new IllegalArgumentException("WavPack packet truncated");
+        }
+        var samples = le32(data, 0);
+        var single = (le32(data, 4) & 0x1800) == 0x1800;
+        // the first pass checks every block, so that a malformed packet writes nothing
+        for (var write = 0; write < 2; write++) {
+            var position = 4;
+            while (position < data.length) {
+                if (data.length - position < (single ? 8 : 12)) {
+                    throw new IllegalArgumentException("WavPack block header truncated");
+                }
+                var flags = le32(data, position);
+                var crc = le32(data, position + 4);
+                position += 8;
+                int size;
+                if (single) {
+                    size = data.length - position;
+                } else {
+                    size = le32(data, position);
+                    position += 4;
+                }
+                if (size < 0 || size > data.length - position) {
+                    throw new IllegalArgumentException("WavPack block of size " + size + " runs past its packet");
+                }
+                if (write == 1) {
+                    if (wavPackBlock.length < 32 + size) {
+                        wavPackBlock = new byte[Math.max(32 + size, wavPackBlock.length * 2)];
+                    }
+                    var header = wavPackBlock;
+                    header[0] = 'w';
+                    header[1] = 'v';
+                    header[2] = 'p';
+                    header[3] = 'k';
+                    putLe32(header, 4, size + 24);
+                    header[8] = config[0];
+                    header[9] = config[1];
+                    header[10] = (byte) (wavPackIndex >>> 32);
+                    putLe32(header, 12, -1);
+                    putLe32(header, 16, (int) wavPackIndex);
+                    putLe32(header, 20, samples);
+                    putLe32(header, 24, flags);
+                    putLe32(header, 28, crc);
+                    System.arraycopy(data, position, header, 32, size);
+                    resealWavPackChecksum(header, 32 + size);
+                    output.write(ByteBuffer.wrap(header, 0, 32 + size));
+                }
+                position += size;
+                if (single || (flags & 0x1000) != 0) {
+                    break;
+                }
+            }
+        }
+        wavPackIndex += Integer.toUnsignedLong(samples);
+    }
+
+    /**
+     * Recomputes the block checksum metadata sub-block of a complete WavPack block, when it has one, over the
+     * block's bytes before that sub-block.
+     *
+     * @param block the block, its header first
+     * @param length the length of the block in bytes
+     */
+    private static void resealWavPackChecksum(byte[] block, int length) {
+        var position = 32;
+        while (length - position >= 2) {
+            var id = block[position] & 0xFF;
+            var size = (block[position + 1] & 0xFF) << 1;
+            var header = 2;
+            if ((id & 0x80) != 0) {
+                if (length - position < 4) {
+                    return;
+                }
+                size += (block[position + 2] & 0xFF) << 9 | (block[position + 3] & 0xFF) << 17;
+                header = 4;
+            }
+            var data = position + header;
+            if (size > length - data) {
+                return;
+            }
+            if ((id & 0x3F) == 0x2F && header == 2 && (id & 0x40) == 0 && (size == 2 || size == 4)) {
+                var sum = 0xFFFFFFFF;
+                for (var i = 0; i < position; i += 2) {
+                    sum = sum * 3 + ((block[i] & 0xFF) | (block[i + 1] & 0xFF) << 8);
+                }
+                if (size == 4) {
+                    putLe32(block, data, sum);
+                } else {
+                    sum ^= sum >>> 16;
+                    block[data] = (byte) sum;
+                    block[data + 1] = (byte) (sum >> 8);
+                }
+                return;
+            }
+            position = data + size;
+        }
+    }
+
+    private static int le32(byte[] data, int offset) {
+        return data[offset] & 0xFF | (data[offset + 1] & 0xFF) << 8 | (data[offset + 2] & 0xFF) << 16
+                | (data[offset + 3] & 0xFF) << 24;
+    }
+
+    private static void putLe32(byte[] data, int offset, int value) {
+        data[offset] = (byte) value;
+        data[offset + 1] = (byte) (value >> 8);
+        data[offset + 2] = (byte) (value >> 16);
+        data[offset + 3] = (byte) (value >> 24);
     }
 
     /**

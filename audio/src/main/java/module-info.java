@@ -1,5 +1,5 @@
 /**
- * Audio codecs of Smalt: the Opus, Vorbis, FLAC, ALAC and MP3 (and MP2) decoders, the Opus, FLAC,
+ * Audio codecs of Smalt: the Opus, Vorbis, FLAC, ALAC, MP3 (and MP2), Speex and WavPack decoders, the Opus, FLAC,
  * ALAC, MP3, MP2 and Vorbis encoders, the ADPCM and telephony codecs (IMA and Microsoft ADPCM, G.722, G.726 and
  * GSM 06.10, decoders and encoders), and voice processing (echo cancellation, noise suppression, automatic gain
  * control and the capture high-pass filter).
@@ -13,7 +13,7 @@
  * model are those of the core module ({@code com.github.auties00.smalt}).
  *
  * @provides com.github.auties00.smalt.spi.AudioCodecProvider ALAC, FLAC, MP3 (and MP2), Opus, Vorbis, IMA and
- * Microsoft ADPCM, G.722, G.726 and GSM 06.10
+ * Microsoft ADPCM, G.722, G.726, GSM 06.10, Speex and WavPack
  */
 module com.github.auties00.smalt.audio {
     // Smalt core: the model and the codec service-provider interfaces
@@ -31,8 +31,10 @@ module com.github.auties00.smalt.audio {
     exports com.github.auties00.smalt.audio.gsm;
     exports com.github.auties00.smalt.audio.mp3;
     exports com.github.auties00.smalt.audio.opus;
+    exports com.github.auties00.smalt.audio.speex;
     exports com.github.auties00.smalt.audio.voice;
     exports com.github.auties00.smalt.audio.vorbis;
+    exports com.github.auties00.smalt.audio.wavpack;
 
     // The codecs of this module
     provides com.github.auties00.smalt.spi.AudioCodecProvider with
@@ -41,5 +43,7 @@ module com.github.auties00.smalt.audio {
             com.github.auties00.smalt.internal.provider.audio.FlacCodecProvider,
             com.github.auties00.smalt.internal.provider.audio.Mp3CodecProvider,
             com.github.auties00.smalt.internal.provider.audio.OpusCodecProvider,
-            com.github.auties00.smalt.internal.provider.audio.VorbisCodecProvider;
+            com.github.auties00.smalt.internal.provider.audio.SpeexCodecProvider,
+            com.github.auties00.smalt.internal.provider.audio.VorbisCodecProvider,
+            com.github.auties00.smalt.internal.provider.audio.WavPackCodecProvider;
 }

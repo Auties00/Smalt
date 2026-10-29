@@ -72,8 +72,9 @@ public final class AudioDecoderOptions {
     /**
      * {@return whether the decoder checks the whole-stream checksum the stream carries; {@code false} by default}
      *
-     * <p>Only FLAC carries one, the MD5 signature of {@code STREAMINFO}. When it is set (not all zeros) and the
-     * first frame decoded starts the stream, the flush compares the signature with the decoded samples and raises
+     * <p>FLAC carries one, the MD5 signature of {@code STREAMINFO}, and WavPack its MD5 signature metadata. When it is
+     * set (not all zeros) and the first frame decoded starts the stream, the flush compares the signature with the
+     * decoded samples and raises
      * {@link com.github.auties00.smalt.MediaException.Malformed} on a mismatch, as it does when frames were lost or
      * repeated or the decode ended before the declared length. A decode that starts after the first sample is not
      * checked. The check hashes every decoded sample, a cost linear in the length of the stream.

@@ -47,6 +47,16 @@ class AudioFuzzTest {
     }
 
     @FuzzTest
+    void wavpack(byte[] data) {
+        FuzzMedia.audio(Codec.WAVPACK, data);
+    }
+
+    @FuzzTest
+    void speex(byte[] data) {
+        FuzzMedia.audio(Codec.SPEEX, data);
+    }
+
+    @FuzzTest
     void adpcmImaWav(byte[] data) {
         FuzzMedia.audio(Codec.ADPCM_IMA_WAV, data);
     }

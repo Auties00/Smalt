@@ -26,7 +26,7 @@ class AudioDecoderBehaviorTest {
             "wav/opus.wav", "ogg/opus-ambisonic.opus", "wav/ima-adpcm.wav", "wav/ms-adpcm.wav", "wav/gsm.wav",
             "wav/g722.wav", "wav/g726.wav", "aiff/ima4.aifc", "mp4/ima4.mov", "mp4/gsm.mov", "mp4/ms-adpcm.mov",
             "avi/ima-adpcm.avi", "avi/ms-adpcm.avi", "avi/g726.avi", "matroska/ms-adpcm.mka", "matroska/g722.mka",
-            "matroska/ima-adpcm.mka"})
+            "matroska/ima-adpcm.mka", "wavpack/wavpack.wv", "matroska/wavpack.mka", "ogg/speex.spx"})
     @DisplayName("samples: identical samples under every source behavior and clean faults")
     void sample(String sample) throws IOException {
         ReaderAsserts.audio(sample, Files.readAllBytes(SAMPLES.resolve(sample))).run();

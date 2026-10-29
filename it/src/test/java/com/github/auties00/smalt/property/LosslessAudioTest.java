@@ -36,7 +36,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 /**
  * Lossless audio coding is the identity: FLAC (every sample size from 4 to 32 bits, one to eight channels, every
  * compression level, block sizes from the smallest to the largest) and ALAC (Smalt's encoder at every sample size,
- * channel count and frame length, searched and fast, and ffmpeg's) decode to every input sample, and so does every integer and floating-point PCM codec through every
+ * channel count and frame length, searched and fast, and ffmpeg's) and WavPack (ffmpeg's encoder) decode to every
+ * input sample, and so does every integer and floating-point PCM codec through every
  * container that carries it. The inputs are seeded sweeps and noise quantized to the codec's grid, silence,
  * full-scale squares, alternating extremes and lone impulses, of lengths from one sample to several blocks.
  */
@@ -211,6 +212,35 @@ class LosslessAudioTest {
             var output = OracleEncoders.path("alac-" + bits + "-" + layout.channels() + ".m4a");
             OracleEncoders.ffmpeg(List.of("-i", wav.toString(), "-c:a", "alac", "-sample_fmt", sampleFormat), output);
             assertArrayEquals(flatten(planes), flatten(read(OracleEncoders.read(output))), "ALAC " + layout);
+        }
+    }
+
+    static Stream<Arguments> wavPack() {
+        return Stream.of(
+                Arguments.of("s16p", 16, ChannelLayout.MONO, 0),
+                Arguments.of("s16p", 16, ChannelLayout.STEREO, 3),
+                Arguments.of("s32p", 24, ChannelLayout.STEREO, 8),
+                Arguments.of("s32p", 24, ChannelLayout.SURROUND_5_1, 1),
+                Arguments.of("s16p", 16, ChannelLayout.defaultFor(3), 5));
+    }
+
+    @Nested
+    @DisplayName("WavPack encoded by ffmpeg")
+    class WavPackFfmpeg {
+        @ParameterizedTest(name = "{1}-bit {2} compression level {3}")
+        @MethodSource("com.github.auties00.smalt.property.LosslessAudioTest#wavPack")
+        @DisplayName("decodes to every sample of the WAV it was encoded from")
+        void identity(String sampleFormat, int bits, ChannelLayout layout, int level) {
+            OracleEncoders.assumeFfmpegEncoder("wavpack");
+            var planes = new Signal(layout, 44_100, 30_000, bits, Content.SWEEP, bits * 10L + layout.channels() + 7)
+                    .planes();
+            var codec = bits == 16 ? Codec.PCM_S16LE : Codec.PCM_S24LE;
+            var name = "wavpack-" + bits + "-" + layout.channels() + "-" + level;
+            var wav = OracleEncoders.write(name + ".wav", mux(OutputContainer.WAV, pcm(codec, planes, 44_100, layout)));
+            var output = OracleEncoders.path(name + ".wv");
+            OracleEncoders.ffmpeg(List.of("-i", wav.toString(), "-c:a", "wavpack", "-sample_fmt", sampleFormat,
+                    "-compression_level", Integer.toString(level)), output);
+            assertArrayEquals(flatten(planes), flatten(read(OracleEncoders.read(output))), "WavPack " + layout);
         }
     }
 
