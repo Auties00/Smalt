@@ -1,0 +1,12 @@
+# audio decode dump of matroska/ms-adpcm.mka; regenerate with -Dsmalt.test.updateDumps=true
+format MATROSKA
+duration 600000
+seekable true
+track 1 ADPCM_MS rate=8000 layout=[FRONT_LEFT, FRONT_RIGHT]
+0 frames=4096 crc16=38d10be4
+1 frames=704 crc16=e90aecdd
+seek 0: @sample 0
+seek 200000: @sample 1600
+seek 400000: @sample 3200
+seek 600000: end
+seek -1000000: @sample 0
