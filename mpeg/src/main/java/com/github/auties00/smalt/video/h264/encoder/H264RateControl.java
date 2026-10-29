@@ -12,12 +12,15 @@ public enum H264RateControl {
 
     /**
      * Approaches the target bitrate on average while a video buffering verifier never
-     * underflows.
+     * underflows; with {@link H264EncoderOptions#firstPassStats()} the second pass of a two-pass encode
+     * spends the bits over the whole video.
      */
     AVERAGE_BITRATE,
 
     /**
-     * Holds every frame within a tight buffer at the target bitrate, for real-time transmission.
+     * Holds every frame within a tight buffer at the target bitrate, for real-time transmission; with
+     * {@link H264EncoderOptions#hrd()} filler data also keeps the stream's rate exactly constant, as
+     * broadcast transport streams need.
      */
     CONSTANT_BITRATE
 }

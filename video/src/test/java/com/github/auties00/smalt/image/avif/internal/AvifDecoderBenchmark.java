@@ -65,7 +65,7 @@ public class AvifDecoderBenchmark {
     public Picture baseline() {
         var source = MediaSource.of(data);
         var file = HeifFile.parse(source, MediaLimits.DEFAULT);
-        var plan = StillPlan.of(source, file, MediaLimits.DEFAULT);
+        var plan = StillPlan.of(source, file, file.primaryItem(), MediaLimits.DEFAULT);
         var decoder = new ItemDecoder(MediaLimits.DEFAULT, true);
         Canvas canvas;
         if (plan.grid() == null) {

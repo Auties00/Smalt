@@ -1,26 +1,21 @@
 package com.github.auties00.smalt.image.heic.internal;
 
-import com.github.auties00.smalt.MediaException;
-import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.ChromaFormat;
-import com.github.auties00.smalt.internal.heif.DecodedTile;
-import com.github.auties00.smalt.internal.heif.HeifCanvas;
+import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.internal.heif.HeifPictures;
+import com.github.auties00.smalt.internal.heif.HeifProperty;
 import com.github.auties00.smalt.video.hevc.internal.HevcFrame;
 
 /**
- * Presents a decoded HEVC picture, cropped by its conformance window, to a {@link HeifCanvas},
- * and allocates the canvases decoded pictures are written into.
+ * Presents a decoded HEVC picture, cropped by its conformance window, as a {@link CodedFrame}.
  *
  * <p>Color samples reach the canvas as the HEVC decoder of this module hands out its output:
- * copied at the source depth, or reduced to 8 bits by rounding to nearest. A tile is a view of
+ * copied at the source depth, the planes of a shallower component shifted left to the depth of
+ * the deeper one, or reduced to 8 bits by rounding to nearest. A tile is a view of
  * the engine's picture, valid while the engine keeps it.
  */
-final class HevcTile implements DecodedTile {
-    /**
-     * The format name of the canvases, for messages.
-     */
-    private static final String FORMAT = "heic";
-
+final class HevcTile implements CodedFrame {
     /**
      * The decoded picture.
      */
@@ -31,25 +26,29 @@ final class HevcTile implements DecodedTile {
      *
      * @param frame the decoded picture
      */
-    private HevcTile(HevcFrame frame) {
+    HevcTile(HevcFrame frame) {
         this.frame = frame;
     }
 
     /**
-     * {@return a view of a decoded picture}
-     *
-     * @param frame the decoded picture
+     * {@return the decoded picture}
      */
-    static HevcTile of(HevcFrame frame) {
-        return new HevcTile(frame);
+    HevcFrame frame() {
+        return frame;
     }
 
-    /**
-     * {@return the chroma layout of a decoded picture}
-     *
-     * @param frame the decoded picture
-     */
-    static ChromaFormat formatOf(HevcFrame frame) {
+    @Override
+    public int width() {
+        return frame.sps.width - frame.sps.cropLeft - frame.sps.cropRight;
+    }
+
+    @Override
+    public int height() {
+        return frame.sps.height - frame.sps.cropTop - frame.sps.cropBottom;
+    }
+
+    @Override
+    public ChromaFormat format() {
         return switch (frame.sps.chromaFormatIdc) {
             case 0 -> ChromaFormat.MONOCHROME;
             case 2 -> ChromaFormat.YUV422;
@@ -58,72 +57,51 @@ final class HevcTile implements DecodedTile {
         };
     }
 
-    /**
-     * {@return the width of a decoded picture after its conformance window}
-     *
-     * @param frame the decoded picture
-     */
-    static int widthOf(HevcFrame frame) {
-        return frame.sps.width - frame.sps.cropLeft - frame.sps.cropRight;
+    @Override
+    public int bitDepth() {
+        return frame.sps.pictureBitDepth();
     }
 
     /**
-     * {@return the height of a decoded picture after its conformance window}
+     * {@inheritDoc}
      *
-     * @param frame the decoded picture
+     * <p>Each H.273 code point the VUI signals is kept, and the full range flag when the VUI
+     * carries a video signal type; the chroma siting and the mastering display and content light
+     * level SEI messages come from the stream too.
      */
-    static int heightOf(HevcFrame frame) {
-        return frame.sps.height - frame.sps.cropTop - frame.sps.cropBottom;
-    }
-
-    /**
-     * Allocates a canvas of the size of one decoded picture.
-     *
-     * @param limits the bounds of the canvas
-     * @param frame the decoded picture whose layout and depth the canvas takes
-     * @param wide whether a source of more than 8 bits keeps its depth
-     * @param hasAlpha whether to allocate an alpha plane
-     * @return the canvas
-     * @throws MediaException.Unsupported if a deep picture has different luma and chroma depths
-     * @throws MediaException.LimitExceeded if the canvas exceeds the limits
-     */
-    static HeifCanvas canvas(MediaLimits limits, HevcFrame frame, boolean wide, boolean hasAlpha) {
-        return canvas(limits, frame, widthOf(frame), heightOf(frame), wide, hasAlpha);
-    }
-
-    /**
-     * Allocates a canvas in the layout and depth of a decoded picture.
-     *
-     * @param limits the bounds of the canvas
-     * @param frame the decoded picture whose layout and depth the canvas takes
-     * @param width the canvas width
-     * @param height the canvas height
-     * @param wide whether a source of more than 8 bits keeps its depth
-     * @param hasAlpha whether to allocate an alpha plane
-     * @return the canvas
-     * @throws MediaException.Unsupported if a deep picture has different luma and chroma depths
-     * @throws MediaException.LimitExceeded if the canvas exceeds the limits
-     */
-    static HeifCanvas canvas(MediaLimits limits, HevcFrame frame, int width, int height, boolean wide,
-                             boolean hasAlpha) {
+    @Override
+    public ColorInfo color() {
         var sps = frame.sps;
-        var depth = sps.pictureBitDepth();
-        var keep = wide && depth > 8;
-        if (keep && sps.mixedBitDepth()) {
-            throw new MediaException.Unsupported(FORMAT, "luma of " + sps.bitDepthLuma + " bits with chroma of "
-                    + sps.bitDepthChroma + " bits");
-        }
-        return new HeifCanvas(FORMAT, limits, width, height, formatOf(frame), depth, keep, hasAlpha);
+        return Colors.ofStream(sps.colorPrimaries, sps.transferCharacteristics, sps.matrixCoefficients,
+                sps.videoSignalTypePresent, sps.fullRange, frame.color);
     }
 
-    /**
-     * {@return whether a decoded picture has the chroma layout and the bit depth of a canvas}
-     *
-     * @param canvas the canvas to write into
-     * @param frame the decoded picture
-     */
-    static boolean fits(HeifCanvas canvas, HevcFrame frame) {
-        return formatOf(frame) == canvas.format() && frame.sps.pictureBitDepth() == canvas.bitDepth();
+    @Override
+    public boolean limitedAlpha(HeifProperty.ColorNclx nclx) {
+        if (nclx != null) {
+            return !nclx.fullRange();
+        }
+        return frame.sps.videoSignalTypePresent && !frame.sps.fullRange;
+    }
+
+    @Override
+    public Picture lumaPicture() {
+        var sps = frame.sps;
+        var offset = sps.cropTop * frame.width + sps.cropLeft;
+        if (frame.eightBit()) {
+            return HeifPictures.lumaPicture(frame.y8, offset, frame.width, width(), height());
+        }
+        return HeifPictures.lumaPicture(frame.y, offset, frame.width, width(), height(), sps.bitDepthLuma);
+    }
+
+    @Override
+    public long pts() {
+        return frame.pts;
+    }
+
+    @Override
+    public long duration() {
+        return frame.duration;
     }
 
     @Override

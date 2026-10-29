@@ -2,7 +2,10 @@ package com.github.auties00.smalt.container.ts;
 
 import com.github.auties00.smalt.internal.check.Checks;
 
+import java.util.Arrays;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.OptionalLong;
 
 /**
  * Holds the settings of a {@link TsMuxer}. Instances are immutable and thread-safe; create them with
@@ -29,7 +32,7 @@ public final class TsMuxerOptions {
      * The options of {@link #defaults()}.
      */
     private static final TsMuxerOptions DEFAULTS = new TsMuxerOptions(PacketFormat.TS, 0, 100_000, 40_000, 700_000,
-            1, 0x1000, 0x100, 6_000_000);
+            1, 0x1000, 0x100, 6_000_000, null, null, Long.MIN_VALUE);
 
     /**
      * The options of {@link #m2ts()}.
@@ -51,8 +54,24 @@ public final class TsMuxerOptions {
     private final int firstPid;
     private final long segmentMicros;
 
+    /**
+     * The SAMPLE-AES key, or {@code null} for clear streams.
+     */
+    private final byte[] sampleAesKey;
+
+    /**
+     * The SAMPLE-AES initialization vector, or {@code null} for clear streams.
+     */
+    private final byte[] sampleAesIv;
+
+    /**
+     * The time that maps to the delay, in microseconds, or {@link Long#MIN_VALUE} for the first decoding time.
+     */
+    private final long timestampOrigin;
+
     private TsMuxerOptions(PacketFormat packetFormat, long muxRate, long psiIntervalMicros, long pcrIntervalMicros,
-                           long delayMicros, int programNumber, int pmtPid, int firstPid, long segmentMicros) {
+                           long delayMicros, int programNumber, int pmtPid, int firstPid, long segmentMicros,
+                           byte[] sampleAesKey, byte[] sampleAesIv, long timestampOrigin) {
         this.packetFormat = packetFormat;
         this.muxRate = muxRate;
         this.psiIntervalMicros = psiIntervalMicros;
@@ -62,6 +81,9 @@ public final class TsMuxerOptions {
         this.pmtPid = pmtPid;
         this.firstPid = firstPid;
         this.segmentMicros = segmentMicros;
+        this.sampleAesKey = sampleAesKey;
+        this.sampleAesIv = sampleAesIv;
+        this.timestampOrigin = timestampOrigin;
     }
 
     /**
@@ -134,10 +156,23 @@ public final class TsMuxerOptions {
      * {@return the multiplexing delay, how far the program clock runs behind the decoding times, in
      * microseconds; from 0 to 10000000; 700 ms by default}
      *
-     * <p>The timestamps of the first packet are shifted to this delay.
+     * <p>The timestamps are shifted so that the {@linkplain #timestampOriginMicros() timestamp origin} equals this
+     * delay.
      */
     public long delayMicros() {
         return delayMicros;
+    }
+
+    /**
+     * {@return the time of the input timeline that becomes the {@linkplain #delayMicros() delay} on the stream's 90
+     * kHz timeline, in microseconds, or empty for the first decoding time written; empty by default}
+     *
+     * <p>Muxers given one origin write the same timestamps for the same input times, so that streams written apart
+     * (the variants and alternate renditions of an HLS presentation) stay synchronized; timestamps before the origin
+     * wrap modulo 2^33.
+     */
+    public OptionalLong timestampOriginMicros() {
+        return timestampOrigin == Long.MIN_VALUE ? OptionalLong.empty() : OptionalLong.of(timestampOrigin);
     }
 
     /**
@@ -173,26 +208,69 @@ public final class TsMuxerOptions {
         return segmentMicros;
     }
 
+    /**
+     * {@return the AES-128 key of the SAMPLE-AES encryption of the elementary streams, a copy, or empty for clear
+     * streams; empty by default}
+     *
+     * <p>With a key, the muxer encrypts the samples as the HLS SAMPLE-AES format of the "MPEG-2 Stream Encryption
+     * Format for HTTP Live Streaming" describes, with AES-128 in CBC mode and the initialization vector of
+     * {@link #sampleAesInitializationVector()}, restarted for each NAL unit or audio frame:
+     * <ul>
+     *   <li>H.264: a slice (NAL unit types 1 and 5) longer than 48 bytes, as stored with its emulation prevention
+     *       bytes, keeps its first 32 bytes clear, then the first of every ten 16-byte blocks is encrypted while more
+     *       than 16 bytes are left, and the encrypted unit is escaped again, so that removing one level of emulation
+     *       prevention bytes and decrypting gives the stored unit back; other NAL units stay clear;</li>
+     *   <li>AAC: each ADTS frame keeps its header and the next 16 bytes clear and encrypts every whole block after
+     *       them;</li>
+     *   <li>AC-3 and E-AC-3: each syncframe keeps its first 16 bytes clear and encrypts every whole block after
+     *       them, the chain running on through the syncframes of one E-AC-3 frame.</li>
+     * </ul>
+     * The encrypted streams take the {@code stream_type} values {@code 0xDB} (H.264), {@code 0xCF} (AAC),
+     * {@code 0xC1} (AC-3) and {@code 0xC2} (E-AC-3) with a private data indicator descriptor ({@code zavc},
+     * {@code aacd}, {@code ac3d}, {@code ec3d}), and the audio streams a registration descriptor {@code apad} carrying
+     * their audio setup information. Tracks of other codecs raise {@link IllegalArgumentException} when they are
+     * added.
+     */
+    public Optional<byte[]> sampleAesKey() {
+        return Optional.ofNullable(sampleAesKey).map(byte[]::clone);
+    }
+
+    /**
+     * {@return the 16-byte initialization vector of the SAMPLE-AES encryption, a copy, or empty for clear streams;
+     * empty by default}
+     */
+    public Optional<byte[]> sampleAesInitializationVector() {
+        return Optional.ofNullable(sampleAesIv).map(byte[]::clone);
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof TsMuxerOptions that && packetFormat == that.packetFormat && muxRate == that.muxRate
                 && psiIntervalMicros == that.psiIntervalMicros && pcrIntervalMicros == that.pcrIntervalMicros
                 && delayMicros == that.delayMicros && programNumber == that.programNumber && pmtPid == that.pmtPid
-                && firstPid == that.firstPid && segmentMicros == that.segmentMicros;
+                && firstPid == that.firstPid && segmentMicros == that.segmentMicros
+                && Arrays.equals(sampleAesKey, that.sampleAesKey) && Arrays.equals(sampleAesIv, that.sampleAesIv)
+                && timestampOrigin == that.timestampOrigin;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(packetFormat, muxRate, psiIntervalMicros, pcrIntervalMicros, delayMicros, programNumber, pmtPid,
-                firstPid, segmentMicros);
+                firstPid, segmentMicros, Arrays.hashCode(sampleAesKey), timestampOrigin);
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The SAMPLE-AES key is not shown.
+     */
     @Override
     public String toString() {
         return "TsMuxerOptions[packetFormat=" + packetFormat + ", muxRate=" + muxRate + ", psiIntervalMicros="
                 + psiIntervalMicros + ", pcrIntervalMicros=" + pcrIntervalMicros + ", delayMicros=" + delayMicros
                 + ", programNumber=" + programNumber + ", pmtPid=" + pmtPid + ", firstPid=" + firstPid
-                + ", segmentMicros=" + segmentMicros + "]";
+                + ", segmentMicros=" + segmentMicros + ", sampleAes=" + (sampleAesKey != null)
+                + (timestampOrigin == Long.MIN_VALUE ? "" : ", timestampOriginMicros=" + timestampOrigin) + "]";
     }
 
     /**
@@ -216,6 +294,9 @@ public final class TsMuxerOptions {
         private int pmtPid;
         private int firstPid;
         private long segmentMicros;
+        private byte[] sampleAesKey;
+        private byte[] sampleAesIv;
+        private long timestampOrigin;
 
         private Builder(TsMuxerOptions options) {
             this.packetFormat = options.packetFormat;
@@ -227,6 +308,9 @@ public final class TsMuxerOptions {
             this.pmtPid = options.pmtPid;
             this.firstPid = options.firstPid;
             this.segmentMicros = options.segmentMicros;
+            this.sampleAesKey = options.sampleAesKey;
+            this.sampleAesIv = options.sampleAesIv;
+            this.timestampOrigin = options.timestampOrigin;
         }
 
         /**
@@ -295,6 +379,32 @@ public final class TsMuxerOptions {
         }
 
         /**
+         * Sets the timestamp origin; see {@link TsMuxerOptions#timestampOriginMicros()}.
+         *
+         * @param micros the value, greater than {@link Long#MIN_VALUE}
+         * @return this builder
+         * @throws IllegalArgumentException if {@code micros} is {@link Long#MIN_VALUE}
+         */
+        public Builder timestampOriginMicros(long micros) {
+            if (micros == Long.MIN_VALUE) {
+                throw new IllegalArgumentException("timestamp origin " + micros);
+            }
+            this.timestampOrigin = micros;
+            return this;
+        }
+
+        /**
+         * Takes the first decoding time written as the timestamp origin, the default; see
+         * {@link TsMuxerOptions#timestampOriginMicros()}.
+         *
+         * @return this builder
+         */
+        public Builder automaticTimestampOrigin() {
+            this.timestampOrigin = Long.MIN_VALUE;
+            return this;
+        }
+
+        /**
          * Sets the program number; see {@link TsMuxerOptions#programNumber()}.
          *
          * @param number the value
@@ -339,12 +449,40 @@ public final class TsMuxerOptions {
         }
 
         /**
+         * Sets the SAMPLE-AES encryption of the elementary streams; see {@link TsMuxerOptions#sampleAesKey()}.
+         *
+         * @param key the 16-byte AES key, copied
+         * @param initializationVector the 16-byte initialization vector, copied
+         * @return this builder
+         */
+        public Builder sampleAes(byte[] key, byte[] initializationVector) {
+            this.sampleAesKey = key.clone();
+            this.sampleAesIv = initializationVector.clone();
+            return this;
+        }
+
+        /**
+         * Writes clear elementary streams, the default; see {@link TsMuxerOptions#sampleAesKey()}.
+         *
+         * @return this builder
+         */
+        public Builder noSampleAes() {
+            this.sampleAesKey = null;
+            this.sampleAesIv = null;
+            return this;
+        }
+
+        /**
          * Builds the options.
          *
          * @return the options
-         * @throws IllegalArgumentException if a value is outside the range its accessor documents
+         * @throws IllegalArgumentException if a value is outside the range its accessor documents, or the SAMPLE-AES
+         * key or initialization vector is not 16 bytes long
          */
         public TsMuxerOptions build() {
+            if (sampleAesKey != null && (sampleAesKey.length != 16 || sampleAesIv.length != 16)) {
+                throw new IllegalArgumentException("the SAMPLE-AES key and initialization vector must be 16 bytes");
+            }
             var rate = muxRate == VARIABLE_RATE ? 0 : Checks.inRange("mux rate", muxRate, 64_000, Long.MAX_VALUE);
             return new TsMuxerOptions(packetFormat, rate,
                     Checks.inRange("program table interval", psiIntervalMicros, 1, 10_000_000L),
@@ -353,7 +491,7 @@ public final class TsMuxerOptions {
                     Checks.inRange("program number", programNumber, 1, 0xFFFF),
                     Checks.inRange("program map PID", pmtPid, 0x10, 0x1FFE),
                     Checks.inRange("first elementary PID", firstPid, 0x10, 0x1F00),
-                    Checks.positive("segment duration", segmentMicros));
+                    Checks.positive("segment duration", segmentMicros), sampleAesKey, sampleAesIv, timestampOrigin);
         }
     }
 }

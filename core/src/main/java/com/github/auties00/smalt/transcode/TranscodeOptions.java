@@ -1,7 +1,10 @@
 package com.github.auties00.smalt.transcode;
 
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.io.DataReferenceResolver;
 import com.github.auties00.smalt.internal.check.Checks;
+import com.github.auties00.smalt.metadata.MediaTags;
+import com.github.auties00.smalt.metadata.TagMode;
 
 import java.util.Arrays;
 import java.util.Objects;
@@ -17,7 +20,8 @@ import java.util.OptionalLong;
  * <p>Data tracks other than text subtitles are not written. The output timeline starts at zero at
  * the start of the kept range. Encoded streams are trimmed exactly (to the frame for video, to the
  * sample for audio, with the encoder's end padding marked so players stop at the last kept sample);
- * copied streams are trimmed as described by {@link StreamMode#COPY}.
+ * copied streams are trimmed as described by {@link StreamMode#COPY}. The output carries the input's tags, cover
+ * art, chapters and track tags unless {@link #tagMode()} says otherwise.
  */
 public final class TranscodeOptions {
     /**
@@ -49,6 +53,13 @@ public final class TranscodeOptions {
     private final TranscodeListener listener;
 
     private final MediaLimits limits;
+    private final DataReferenceResolver dataReferences;
+    private final TagMode tagMode;
+
+    /**
+     * The tags of {@link TagMode#REPLACE} and {@link TagMode#MERGE}, or {@code null}.
+     */
+    private final MediaTags tags;
 
     private TranscodeOptions(Builder builder, long startMicros, long endMicros, long maxDurationMicros) {
         this.container = builder.container;
@@ -61,6 +72,9 @@ public final class TranscodeOptions {
         this.seeking = builder.seeking;
         this.listener = builder.listener;
         this.limits = builder.limits;
+        this.dataReferences = builder.dataReferences;
+        this.tagMode = builder.tagMode;
+        this.tags = builder.tags;
     }
 
     /**
@@ -173,7 +187,11 @@ public final class TranscodeOptions {
      * {@return whether the job seeks the input to the start of the kept range when the demuxer supports
      * it, instead of reading and discarding the media before it; {@code true} by default}
      *
-     * <p>The output is the same either way.
+     * <p>The output is the same either way. When subtitle streams are kept, the packets before the
+     * start are still read (not decoded) to find the cues shown at the start, which costs reading
+     * time linear in the start position; a source that reads its input once
+     * ({@link com.github.auties00.smalt.io.MediaSource#of(java.io.InputStream, long)}) cannot be read
+     * a second time, so such a job does not seek and decodes the media before the start.
      */
     public boolean seeking() {
         return seeking;
@@ -192,6 +210,39 @@ public final class TranscodeOptions {
      */
     public MediaLimits limits() {
         return limits;
+    }
+
+    /**
+     * {@return the resolver of the other files the input names, such as the linked segments a Matroska file plays and
+     * the data references of an MP4 file; {@link DataReferenceResolver#none()} by default}
+     *
+     * <p>The demuxer of the input asks it for those files, as
+     * {@link com.github.auties00.smalt.container.DemuxerOptions#dataReferences()} describes. A transcode of a file
+     * on disk resolves the files of the input's directory when this resolves nothing.
+     */
+    public DataReferenceResolver dataReferences() {
+        return dataReferences;
+    }
+
+    /**
+     * {@return which tags, attached pictures, chapters and track tags the output carries; {@link TagMode#COPY}, the
+     * input's, by default}
+     *
+     * <p>The tags are on the input's terms and mapped to the output as {@link TagMode} describes: the track tags of
+     * an input track go to the output track written from it, and the chapters are cut to the kept range and moved
+     * by {@link #startMicros()} to the output's timeline. An output container that stores no tags
+     * ({@link OutputContainer#supportsTags()}) gets none.
+     */
+    public TagMode tagMode() {
+        return tagMode;
+    }
+
+    /**
+     * {@return the tags {@link TagMode#REPLACE} writes or {@link TagMode#MERGE} merges into the input's, on the
+     * input's terms, or empty for the other modes; empty by default}
+     */
+    public Optional<MediaTags> tags() {
+        return Optional.ofNullable(tags);
     }
 
     /**
@@ -215,7 +266,7 @@ public final class TranscodeOptions {
      */
     private Object[] state() {
         return new Object[]{container, video, audio, subtitles, startMicros, endMicros, maxDurationMicros, seeking, listener,
-                limits};
+                limits, dataReferences, tagMode, tags};
     }
 
     @Override
@@ -233,7 +284,9 @@ public final class TranscodeOptions {
         return "TranscodeOptions[container=" + container + ", video=" + video + ", audio=" + audio + ", subtitles="
                 + subtitles + ", startMicros="
                 + startMicros + ", endMicros=" + endMicros() + ", maxDurationMicros=" + maxDurationMicros()
-                + ", seeking=" + seeking + ", listener=" + listener + ", limits=" + limits + "]";
+                + ", seeking=" + seeking + ", listener=" + listener + ", limits=" + limits + ", dataReferences="
+                + dataReferences + ", tagMode=" + tagMode
+                + (tags == null ? "" : ", tags=" + tags) + "]";
     }
 
     /**
@@ -265,6 +318,9 @@ public final class TranscodeOptions {
         private boolean seeking = true;
         private TranscodeListener listener;
         private MediaLimits limits = MediaLimits.DEFAULT;
+        private DataReferenceResolver dataReferences = DataReferenceResolver.none();
+        private TagMode tagMode = TagMode.COPY;
+        private MediaTags tags;
 
         private Builder() {
         }
@@ -282,6 +338,9 @@ public final class TranscodeOptions {
             this.seeking = options.seeking;
             this.listener = options.listener;
             this.limits = options.limits;
+            this.dataReferences = options.dataReferences;
+            this.tagMode = options.tagMode;
+            this.tags = options.tags;
         }
 
         /**
@@ -441,6 +500,77 @@ public final class TranscodeOptions {
          */
         public Builder limits(MediaLimits limits) {
             this.limits = Objects.requireNonNull(limits, "limits");
+            return this;
+        }
+
+        /**
+         * Sets the resolver of the other files the input names; see {@link TranscodeOptions#dataReferences()}.
+         *
+         * @param dataReferences the value
+         * @return this builder
+         */
+        public Builder dataReferences(DataReferenceResolver dataReferences) {
+            this.dataReferences = Objects.requireNonNull(dataReferences, "dataReferences");
+            return this;
+        }
+
+        /**
+         * Resolves no other file, the default; see {@link TranscodeOptions#dataReferences()}.
+         *
+         * @return this builder
+         */
+        public Builder noDataReferences() {
+            this.dataReferences = DataReferenceResolver.none();
+            return this;
+        }
+
+        /**
+         * Writes the input's tags, pictures, chapters and track tags, setting the tag mode to {@link TagMode#COPY};
+         * see {@link TranscodeOptions#tagMode()}.
+         *
+         * @return this builder
+         */
+        public Builder copyTags() {
+            this.tagMode = TagMode.COPY;
+            this.tags = null;
+            return this;
+        }
+
+        /**
+         * Writes no tag, picture, chapter or track tag, setting the tag mode to {@link TagMode#DROP}; see
+         * {@link TranscodeOptions#tagMode()}.
+         *
+         * @return this builder
+         */
+        public Builder noTags() {
+            this.tagMode = TagMode.DROP;
+            this.tags = null;
+            return this;
+        }
+
+        /**
+         * Writes the given tags instead of the input's, setting the tag mode to {@link TagMode#REPLACE}; see
+         * {@link TranscodeOptions#tags()}.
+         *
+         * @param tags the value, on the input's terms
+         * @return this builder
+         */
+        public Builder tags(MediaTags tags) {
+            this.tags = Objects.requireNonNull(tags, "tags");
+            this.tagMode = TagMode.REPLACE;
+            return this;
+        }
+
+        /**
+         * Writes the input's tags updated with the given ones, setting the tag mode to {@link TagMode#MERGE}; see
+         * {@link TranscodeOptions#tags()}.
+         *
+         * @param tags the value, on the input's terms
+         * @return this builder
+         */
+        public Builder mergeTags(MediaTags tags) {
+            this.tags = Objects.requireNonNull(tags, "tags");
+            this.tagMode = TagMode.MERGE;
             return this;
         }
 
