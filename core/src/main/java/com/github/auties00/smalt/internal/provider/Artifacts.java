@@ -90,7 +90,7 @@ public final class Artifacts {
      */
     public static String imageDecoderOf(ImageFormat format) {
         return switch (format) {
-            case JPEG, PNG, GIF, WEBP, BMP, TIFF, ICO, ANI, JP2, JXL -> IMAGE;
+            case JPEG, PNG, GIF, WEBP, BMP, TIFF, ICO, ANI, JP2, JXL, PNM, TGA, QOI, HDR, ICNS, PSD, EXR, DDS, JXR -> IMAGE;
             case AVIF -> VIDEO;
             case HEIC -> MPEG;
             case DNG, RAW -> CAMERA_RAW;
@@ -106,7 +106,7 @@ public final class Artifacts {
      */
     public static String imageEncoderOf(ImageFormat format) {
         return switch (format) {
-            case JPEG, PNG, GIF, WEBP, TIFF, ICO, ANI, JP2 -> IMAGE;
+            case JPEG, PNG, GIF, WEBP, TIFF, ICO, ANI, JP2, PNM, TGA, QOI, HDR, ICNS -> IMAGE;
             case AVIF -> VIDEO;
             default -> null;
         };

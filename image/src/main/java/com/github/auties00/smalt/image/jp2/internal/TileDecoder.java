@@ -374,12 +374,18 @@ final class TileDecoder {
             } else {
                 offset = 0;
             }
-            var values = finish(plane, offset, precision, signed);
             var nonLinearity = extensions.nonLinearities()[j];
+            var unrounded = nonLinearity != null && nonLinearity.type() == NonLinearity.SIGN_MAGNITUDE_LOOKUP
+                    && plane.floats() != null;
+            var values = unrounded
+                    ? nonLinearity.applyUnrounded(plane.floats(), offset + plane.addend(), precision, signed)
+                    : finish(plane, offset, precision, signed);
             var finalPrecision = precision;
             var finalSigned = signed;
             if (nonLinearity != null) {
-                nonLinearity.apply(values, precision, signed);
+                if (!unrounded) {
+                    nonLinearity.apply(values, precision, signed);
+                }
                 finalPrecision = nonLinearity.precision();
                 finalSigned = nonLinearity.signed();
             }
@@ -621,6 +627,7 @@ final class TileDecoder {
                     }
                     decodeHighThroughput(htDecoder, job.block, body, job.band, roi, style);
                     decoded = htDecoder.data();
+                    wide = htDecoder.wideData();
                 }
                 var size = job.block.width() * job.block.height();
                 if (mask != null || wide != null) {
@@ -770,7 +777,7 @@ final class TileDecoder {
      * @param roi the region-of-interest shift
      * @param style the code-block style flags
      * @throws MediaException.Malformed if the HT set is invalid
-     * @throws MediaException.Unsupported if the sub-band has more than 30 magnitude bit-planes
+     * @throws MediaException.Unsupported if the sub-band has more than 61 magnitude bit-planes
      */
     private static void decodeHighThroughput(HtDecoder decoder, CodeBlock block, byte[] body, Band band, int roi,
                                              int style) {

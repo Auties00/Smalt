@@ -119,6 +119,8 @@ Contents
   62. libtheora
   63. gpr (GoPro VC-5 decoder)
   64. Adobe DNG SDK
+  65. OpenEXR
+  66. jxrlib
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -1672,13 +1674,18 @@ License text: https://raw.githubusercontent.com/aous72/OpenJPH/0.21.3/LICENSE
 License:      BSD 2-Clause License
 
 Derived Smalt packages:
-  image.jp2.internal (HtEncoder, HtTables)
+  image.jp2.internal (HtEncoder, HtTables; HtDecoder: the 64-bit magnitudes
+  of ojph_block_decoder64.cpp of OpenJPH 0.32.0; NonLinearity: the
+  experimental NLT type 4 of ojph_params.cpp and ojph_colour.cpp of OpenJPH
+  0.32.0, as bundled with OpenEXR 3.5.2)
 
 Derivation: the HT cleanup pass encoder of ojph_block_encoder.cpp
 (ojph_encode_codeblock32 with its MEL, VLC and MagSgn writers and the
 termination of their byte-streams) translated to Java, and the CxtVLC tables
 of table0.h and table1.h with the decoding and encoding lookup tables built
-from them as ojph_block_common.cpp and ojph_block_encoder.cpp build them.
+from them as ojph_block_common.cpp and ojph_block_encoder.cpp build them; the
+decoding of HT code-blocks of more than 30 magnitude bit-planes and the
+LUT-plus-sign-magnitude non-linearity translated to Java.
 
 Copyright:
   Copyright (c) 2019, Aous Naman
@@ -2233,6 +2240,66 @@ Copyright:
 EOF
 license_start "DNG SDK license (LICENSE)"
 cat "$LIC/dng-sdk-LICENSE"
+
+section "65. OpenEXR"
+cat <<'EOF'
+Project:      OpenEXR 3.3.5 and 3.5.2, the reference implementation of the
+              OpenEXR image file format, of the Academy Software Foundation
+Home:         https://openexr.com/
+Source:       https://github.com/AcademySoftwareFoundation/openexr/archive/refs/tags/v3.3.5.tar.gz
+              https://github.com/AcademySoftwareFoundation/openexr/archive/refs/tags/v3.5.2.tar.gz
+License text: LICENSE.md at the root of the distribution
+License:      BSD 3-Clause
+
+Derived Smalt packages:
+  image.exr.internal (ExrHeader, ExrFile, ExrBlock, ExrSamples: the header,
+  chunk and offset table layout and the deep compositing of
+  src/lib/OpenEXRCore and src/lib/OpenEXR/ImfDeepCompositing.cpp;
+  ExrCodecs: internal_rle.c, internal_zip.c, internal_pxr24.c,
+  internal_b44.c and the logarithm table of b44ExpLogTable.cpp; ExrPiz and
+  ExrHuffman: internal_piz.c and internal_huf.c; ExrDwa: the DWAA and DWAB
+  decoder of internal_dwa_compressor.h, internal_dwa_decoder.h,
+  internal_dwa_classifier.h and internal_dwa_simd.h and the table of
+  dwaLookups.cpp; ExrYca: ImfRgbaYca.cpp, ImfRgbaFile.cpp and the RGB to
+  XYZ matrix of ImfChromaticities.cpp; from 3.5.2, ExrHt: internal_ht.cpp,
+  internal_ht_common.cpp and internal_ht_common.h; ExrZstd: internal_zstd.c,
+  internal_zstd_delta.c and internal_zstd_shuffle.c)
+
+Derivation: C and C++ code translated to Java and tables computed from their
+generators.
+
+Copyright:
+  Copyright (c) Contributors to the OpenEXR Project. All rights reserved.
+  Copyright (c) DreamWorks Animation LLC and Contributors of the OpenEXR
+  Project (B44 tables)
+EOF
+license_start "BSD 3-Clause License (LICENSE.md)"
+cat "$LIC/openexr-LICENSE.md"
+
+section "66. jxrlib"
+cat <<'EOF'
+Project:      jxrlib 1.1, the reference implementation of the JPEG XR image
+              coding format (ITU-T T.832, ISO/IEC 29199-2), of Microsoft
+Home:         https://github.com/4creators/jxrlib
+Source:       https://github.com/4creators/jxrlib/archive/refs/heads/master.zip
+License text: LICENSE at the root of the distribution
+License:      BSD 2-Clause
+
+Derived Smalt packages:
+  image.jxr.internal (JxrHeader, JxrPlaneDecoder, JxrHuffman, JxrTransform,
+  JxrBits, JxrOutput, JxrCodestream, JxrContainer)
+
+Derivation: C code translated to Java and tables copied: the codestream
+decoder of the decode directory (strdec.c, segdec.c, strPredQuantDec.c,
+strInvTransform.c, decode.c) and of the sys directory (strcodec.c,
+strPredQuant.c, adapthuff.c, strTransform.c), and the container reader of
+jxrgluelib/JXRGlueJxr.c.
+
+Copyright:
+  Copyright (c) Microsoft Corp. All rights reserved.
+EOF
+license_start "BSD 2-Clause License (LICENSE)"
+cat "$LIC/jxrlib-LICENSE"
 } > "$OUT"
 
 echo "wrote $OUT"

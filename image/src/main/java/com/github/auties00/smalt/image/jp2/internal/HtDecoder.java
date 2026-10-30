@@ -1,6 +1,6 @@
-/* Ports OpenJPEG 2.5.3 (src/lib/openjp2/ht_dec.c). Copyright (c) 2021, Aous Naman; Copyright (c) 2021, Kakadu
-   Software Pty Ltd, Australia; Copyright (c) 2021, The University of New South Wales, Australia; BSD 2-Clause License.
-   Modified for Smalt. */
+/* Ports OpenJPEG 2.5.3 (src/lib/openjp2/ht_dec.c) and OpenJPH 0.32.0 (src/core/coding/ojph_block_decoder64.cpp).
+   Copyright (c) 2021, Aous Naman; Copyright (c) 2021, Kakadu Software Pty Ltd, Australia; Copyright (c) 2021, The
+   University of New South Wales, Australia; BSD 2-Clause License. Modified for Smalt. */
 package com.github.auties00.smalt.image.jp2.internal;
 
 import com.github.auties00.smalt.MediaException;
@@ -17,6 +17,8 @@ import java.util.Arrays;
  *
  * @implNote This implementation follows OpenJPEG's {@code opj_t1_ht_decode_cblk} sample for sample; its readers
  * consume the byte-streams one byte at a time where OpenJPEG reads aligned 32-bit words, which gives the same bits.
+ * Code-blocks of more than 30 magnitude bit-planes, which OpenJPEG rejects, decode in 64-bit arithmetic as OpenJPH's
+ * 64-bit block decoder decodes them.
  */
 final class HtDecoder {
     /**
@@ -62,6 +64,17 @@ final class HtDecoder {
      * The decoded coefficients, row-major.
      */
     private final int[] data = new int[MAX_AREA];
+
+    /**
+     * The decoded coefficients of a code-block of more than 30 magnitude bit-planes, row-major, sign in bit 63 until
+     * the end of the decode.
+     */
+    private long[] wideData;
+
+    /**
+     * Whether the last code-block's coefficients are in {@link #wideData}.
+     */
+    private boolean wide;
 
     /**
      * The significance and SigProp membership words: four arrays of 132 words, each word holding four rows of eight
@@ -131,6 +144,16 @@ final class HtDecoder {
     }
 
     /**
+     * Returns the decoded coefficients of the last code-block when it has more than 30 magnitude bit-planes.
+     *
+     * @return the coefficients, row-major with the code-block's width as stride, or {@code null} when they are in
+     * {@link #data()}
+     */
+    long[] wideData() {
+        return wide ? wideData : null;
+    }
+
+    /**
      * Returns a buffer able to hold a code-block's segments, valid until the next call.
      *
      * @param length the number of bytes
@@ -150,6 +173,7 @@ final class HtDecoder {
      * @param height the code-block height
      */
     void clear(int width, int height) {
+        wide = false;
         Arrays.fill(data, 0, width * height, 0);
     }
 
@@ -167,19 +191,27 @@ final class HtDecoder {
      * @param height the code-block height
      * @param causal whether vertically causal context formation is selected
      * @throws MediaException.Malformed if the segments are not a valid HT set
-     * @throws MediaException.Unsupported if the sub-band has more than 30 magnitude bit-planes
+     * @throws MediaException.Unsupported if the sub-band has more than 61 magnitude bit-planes
      */
     void decode(int cleanup, int refinement, int passes, int magnitudeBits, int skipped, int width, int height,
                 boolean causal) {
-        Arrays.fill(data, 0, width * height, 0);
-        Arrays.fill(flags, 0);
-        Arrays.fill(lineState, (byte) 0);
-        if (magnitudeBits > 30) {
-            // TODO: decode HT code-blocks of 31 to 74 magnitude bit-planes in 64-bit arithmetic (OpenJPH's 64-bit
-            // block decoder), as deep channels need
+        if (magnitudeBits > 61) {
+            // TODO: decode HT code-blocks of 62 to 74 magnitude bit-planes, which only a region-of-interest shift
+            // reaches, in arithmetic wider than 64 bits
             throw new MediaException.Unsupported("JPEG 2000", "HT code-blocks of " + magnitudeBits
                     + " magnitude bit-planes");
         }
+        wide = magnitudeBits > 30;
+        if (wide) {
+            if (wideData == null) {
+                wideData = new long[MAX_AREA];
+            }
+            Arrays.fill(wideData, 0, width * height, 0);
+        } else {
+            Arrays.fill(data, 0, width * height, 0);
+        }
+        Arrays.fill(flags, 0);
+        Arrays.fill(lineState, (byte) 0);
         if (skipped > magnitudeBits) {
             throw new MediaException.Malformed("JPEG 2000 HT code-block with " + skipped + " skipped bit-planes of "
                     + magnitudeBits);
@@ -270,7 +302,8 @@ final class HtDecoder {
             if (((((q0 & 0xF0) >>> 4) | (q1 & 0xF0)) & ~locs) != 0) {
                 throw new MediaException.Malformed("JPEG 2000 HT significance outside the code-block");
             }
-            sp = quadPair(q0, q1, u[0], u[1], locs, sp, stride, lsp, p);
+            sp = wide ? quadPairWide(q0, q1, u[0], u[1], locs, sp, stride, lsp, p)
+                    : quadPair(q0, q1, u[0], u[1], locs, sp, stride, lsp, p);
             lsp += 2;
         }
         for (var y = 2; y < height; ) {
@@ -340,7 +373,8 @@ final class HtDecoder {
                 if (((((q0 & 0xF0) >>> 4) | (q1 & 0xF0)) & ~locs) != 0) {
                     throw new MediaException.Malformed("JPEG 2000 HT significance outside the code-block");
                 }
-                sp = quadPair(q0, q1, u[0], u[1], locs, sp, stride, lsp, p);
+                sp = wide ? quadPairWide(q0, q1, u[0], u[1], locs, sp, stride, lsp, p)
+                        : quadPair(q0, q1, u[0], u[1], locs, sp, stride, lsp, p);
                 lsp += 2;
             }
             y += 2;
@@ -381,6 +415,15 @@ final class HtDecoder {
             }
         }
         var size = width * height;
+        if (wide) {
+            var values = wideData;
+            for (var i = 0; i < size; i++) {
+                var value = values[i];
+                var magnitude = value & Long.MAX_VALUE;
+                values[i] = value < 0 ? -magnitude : magnitude;
+            }
+            return;
+        }
         for (var i = 0; i < size; i++) {
             var value = data[i];
             var magnitude = value & 0x7FFFFFFF;
@@ -483,6 +526,112 @@ final class HtDecoder {
         v |= ((q >>> e1Bit) & 1) << m;
         v |= 1;
         exponent = 32 - Integer.numberOfLeadingZeros(v);
+        return sign | ((v + 2) << (p - 1));
+    }
+
+    /**
+     * Decodes the MagSgn values of a quad pair of a code-block of more than 30 magnitude bit-planes into
+     * {@link #wideData} and updates the line state.
+     *
+     * @param q0 the VLC information of the first quad
+     * @param q1 the VLC information of the second quad
+     * @param u0 the exponent bound of the first quad
+     * @param u1 the exponent bound of the second quad
+     * @param locs the mask of the samples inside the code-block
+     * @param sp the index of the quad pair's top-left sample
+     * @param stride the row stride
+     * @param lsp the index of the quad pair's line state
+     * @param p the shift placing a decoded magnitude
+     * @return the index of the next quad pair's top-left sample
+     */
+    private int quadPairWide(int q0, int q1, int u0, int u1, int locs, int sp, int stride, int lsp, int p) {
+        var data = wideData;
+        var lines = lineState;
+        if ((q0 & 0x10) != 0) {
+            data[sp] = magnitudeWide(q0, u0, 12, 8, p);
+        } else if ((locs & 0x1) != 0) {
+            data[sp] = 0;
+        }
+        if ((q0 & 0x20) != 0) {
+            var value = magnitudeWide(q0, u0, 13, 9, p);
+            data[sp + stride] = value;
+            var t = lines[lsp] & 0x7F;
+            var e = exponent;
+            lines[lsp] = (byte) (0x80 | Math.max(t, e));
+        } else if ((locs & 0x2) != 0) {
+            data[sp + stride] = 0;
+        }
+        lsp++;
+        sp++;
+        if ((q0 & 0x40) != 0) {
+            data[sp] = magnitudeWide(q0, u0, 14, 10, p);
+        } else if ((locs & 0x4) != 0) {
+            data[sp] = 0;
+        }
+        lines[lsp] = 0;
+        if ((q0 & 0x80) != 0) {
+            data[sp + stride] = magnitudeWide(q0, u0, 15, 11, p);
+            lines[lsp] = (byte) (0x80 | exponent);
+        } else if ((locs & 0x8) != 0) {
+            data[sp + stride] = 0;
+        }
+        sp++;
+        if ((q1 & 0x10) != 0) {
+            data[sp] = magnitudeWide(q1, u1, 12, 8, p);
+        } else if ((locs & 0x10) != 0) {
+            data[sp] = 0;
+        }
+        if ((q1 & 0x20) != 0) {
+            data[sp + stride] = magnitudeWide(q1, u1, 13, 9, p);
+            var t = lines[lsp] & 0x7F;
+            lines[lsp] = (byte) (0x80 | Math.max(t, exponent));
+        } else if ((locs & 0x20) != 0) {
+            data[sp + stride] = 0;
+        }
+        lsp++;
+        sp++;
+        if ((q1 & 0x40) != 0) {
+            data[sp] = magnitudeWide(q1, u1, 14, 10, p);
+        } else if ((locs & 0x40) != 0) {
+            data[sp] = 0;
+        }
+        lines[lsp] = 0;
+        if ((q1 & 0x80) != 0) {
+            data[sp + stride] = magnitudeWide(q1, u1, 15, 11, p);
+            lines[lsp] = (byte) (0x80 | exponent);
+        } else if ((locs & 0x80) != 0) {
+            data[sp + stride] = 0;
+        }
+        sp++;
+        return sp;
+    }
+
+    /**
+     * Decodes one significant sample's magnitude and sign, of up to 62 bits, from the MagSgn bit-stream.
+     *
+     * @param q the VLC information of the quad
+     * @param uq the quad's exponent bound
+     * @param ekBit the position of the sample's {@code e_k} bit in {@code q}
+     * @param e1Bit the position of the sample's {@code e_1} bit in {@code q}
+     * @param p the shift placing the magnitude
+     * @return the sample in sign-magnitude form, sign in bit 63
+     */
+    private long magnitudeWide(int q, int uq, int ekBit, int e1Bit, int p) {
+        var m = uq - ((q >>> ekBit) & 1);
+        long v;
+        if (m <= 32) {
+            v = magSgn.fetch() & ((1L << m) - 1);
+            magSgn.advance(m);
+        } else {
+            v = magSgn.fetch() & 0xFFFFFFFFL;
+            magSgn.advance(32);
+            v |= (magSgn.fetch() & ((1L << (m - 32)) - 1)) << 32;
+            magSgn.advance(m - 32);
+        }
+        var sign = v << 63;
+        v |= (long) ((q >>> e1Bit) & 1) << m;
+        v |= 1;
+        exponent = 64 - Long.numberOfLeadingZeros(v);
         return sign | ((v + 2) << (p - 1));
     }
 
@@ -604,6 +753,10 @@ final class HtDecoder {
      * @param p the shift placing a decoded magnitude
      */
     private void magnitudeRefinement(int sigma, int row, int width, int stride, int p) {
+        if (wide) {
+            magnitudeRefinementWide(sigma, row, width, stride, p);
+            return;
+        }
         var data = this.data;
         var half = 1 << (p - 2);
         for (var i = 0; i < width; i += 8) {
@@ -620,6 +773,45 @@ final class HtDecoder {
                                 var at = dp + r * stride;
                                 var symbol = cwd & 1;
                                 data[at] ^= (1 - symbol) << (p - 1);
+                                data[at] |= half;
+                                cwd >>>= 1;
+                            }
+                            sampleMask += sampleMask;
+                        }
+                    }
+                    columnMask <<= 4;
+                }
+            }
+            magRef.advanceMrp(Integer.bitCount(sig));
+        }
+    }
+
+    /**
+     * Applies the HT MagRef pass to one four-row stripe of a code-block of more than 30 magnitude bit-planes.
+     *
+     * @param sigma the offset of the stripe's significance words
+     * @param row the index of the stripe's first sample
+     * @param width the code-block width
+     * @param stride the row stride
+     * @param p the shift placing a decoded magnitude
+     */
+    private void magnitudeRefinementWide(int sigma, int row, int width, int stride, int p) {
+        var data = wideData;
+        var half = 1L << (p - 2);
+        for (var i = 0; i < width; i += 8) {
+            var cwd = magRef.fetchMrp();
+            var sig = flags[sigma++];
+            var columnMask = 0xF;
+            var dp = row + i;
+            if (sig != 0) {
+                for (var j = 0; j < 8; j++, dp++) {
+                    if ((sig & columnMask) != 0) {
+                        var sampleMask = 0x11111111 & columnMask;
+                        for (var r = 0; r < 4; r++) {
+                            if ((sig & sampleMask) != 0) {
+                                var at = dp + r * stride;
+                                var symbol = cwd & 1;
+                                data[at] ^= (long) (1 - symbol) << (p - 1);
                                 data[at] |= half;
                                 cwd >>>= 1;
                             }
@@ -674,6 +866,8 @@ final class HtDecoder {
                                          boolean causal, int pattern, boolean addNext) {
         var flags = this.flags;
         var data = this.data;
+        var wideValues = wide ? wideData : null;
+        var wideValue = 3L << (p - 2);
         var swap = (row & 0x4) != 0;
         var curSig = swap ? SIGMA2 : SIGMA1;
         var curMbr = swap ? MBR2 : MBR1;
@@ -757,7 +951,11 @@ final class HtDecoder {
                             var sampleMask = 0x11111111 & columnMask;
                             for (var r = 0; r < 4; r++) {
                                 if ((newSig & sampleMask) != 0) {
-                                    data[dq + r * stride] |= ((cwd & 1) << 31) | value;
+                                    if (wideValues != null) {
+                                        wideValues[dq + r * stride] |= ((long) (cwd & 1) << 63) | wideValue;
+                                    } else {
+                                        data[dq + r * stride] |= ((cwd & 1) << 31) | value;
+                                    }
                                     cwd >>>= 1;
                                     count++;
                                 }

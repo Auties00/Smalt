@@ -3,7 +3,9 @@ package com.github.auties00.smalt.property;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.AnimationFrame;
 import com.github.auties00.smalt.image.Channel8Picture;
+import com.github.auties00.smalt.image.ChannelFloatPicture;
 import com.github.auties00.smalt.image.ChromaFormat;
+import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.ImageEncoderOptions;
 import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.Images;
@@ -25,6 +27,7 @@ import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.metadata.XmpPacket;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.testkit.Tolerance;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -49,6 +52,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -73,7 +77,8 @@ class ReferenceImageDecodeTest {
     /** The image formats Smalt encodes whose reference decoding this class covers, and how. */
     private static final Set<ImageFormat> COVERED = Set.of(ImageFormat.PNG, ImageFormat.JPEG, ImageFormat.WEBP,
             ImageFormat.GIF, ImageFormat.BMP, ImageFormat.TIFF, ImageFormat.ICO, ImageFormat.JP2, ImageFormat.AVIF,
-            ImageFormat.ANI, ImageFormat.JXL, ImageFormat.HEIC);
+            ImageFormat.ANI, ImageFormat.JXL, ImageFormat.HEIC, ImageFormat.PNM, ImageFormat.TGA, ImageFormat.QOI,
+            ImageFormat.HDR, ImageFormat.ICNS);
 
     /** A picture with gradients, edges and noise, and with alpha when asked. */
     static RgbaPicture source(boolean alpha) {
@@ -432,11 +437,11 @@ class ReferenceImageDecodeTest {
         }
 
         @ParameterizedTest(name = "{0}")
-        @EnumSource(value = ImageFormat.class, names = {"GIF", "BMP", "TIFF", "ICO"})
-        @DisplayName("GIF, BMP, TIFF and ICO decode in ffmpeg to Smalt's decode exactly")
+        @EnumSource(value = ImageFormat.class, names = {"GIF", "BMP", "TIFF", "ICO", "PNM", "TGA", "QOI"})
+        @DisplayName("GIF, BMP, TIFF, ICO, Netpbm, TGA and QOI decode in ffmpeg to Smalt's decode exactly")
         void ffmpeg(ImageFormat format) {
             var source = source(false);
-            var extension = format.name().toLowerCase(Locale.ROOT);
+            var extension = format == ImageFormat.PNM ? "ppm" : format.name().toLowerCase(Locale.ROOT);
             var file = save("still." + extension, Images.encode(source, format));
             EXACT.assertWithin("ffmpeg " + extension, ffmpegRgba(file, 1), smalt(read(file)));
             if (format != ImageFormat.GIF) {
@@ -479,6 +484,49 @@ class ReferenceImageDecodeTest {
                 }
             }
             EXACT.assertWithin("dng_validate stage 1", samples, cropped, 16);
+        }
+
+        @Test
+        @DisplayName("Radiance HDR decodes in ffmpeg to Smalt's floating-point samples exactly")
+        void hdr() {
+            var file = save("still.hdr", Images.encode(source(false), ImageFormat.HDR));
+            var ours = assertInstanceOf(ChannelFloatPicture.class, Images.decode(MediaSource.of(read(file)),
+                    ImageDecoderOptions.builder().keepChannels(true).build()).picture());
+            var planar = Oracle.decodeVideo(file, "gbrpf32le", 1);
+            var floats = java.nio.ByteBuffer.wrap(planar).order(java.nio.ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
+            var plane = WIDTH * HEIGHT;
+            assertEquals(3 * plane, floats.remaining());
+            int[] order = {2, 0, 1};
+            for (var index = 0; index < plane; index++) {
+                for (var channel = 0; channel < 3; channel++) {
+                    assertEquals(floats.get(order[channel] * plane + index), ours.pixels()[index * 3 + channel],
+                            "sample " + index + " channel " + channel);
+                }
+            }
+        }
+
+        @Test
+        @DisplayName("ICNS decodes in macOS's sips exactly as in Smalt")
+        void icns() {
+            var os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+            Skip.unless(os.startsWith("mac"), "platform:macos", "sips is part of macOS");
+            var sips = Oracle.find("sips").orElseThrow(() -> new AssertionError("macOS without sips"));
+            var picture = RgbaPicture.allocate(128, 128, false);
+            var pixels = picture.pixels();
+            var random = new Random(23);
+            for (var index = 0; index < pixels.length; index += 4) {
+                pixels[index] = (byte) random.nextInt(256);
+                pixels[index + 1] = (byte) (index / 512);
+                pixels[index + 2] = (byte) (index / 4 % 128 * 2);
+                pixels[index + 3] = (byte) 255;
+            }
+            var file = save("still.icns", Images.encode(picture, ImageFormat.ICNS));
+            var png = file.resolveSibling("still.icns.png");
+            var result = Oracle.execute(sips, Duration.ofMinutes(1), null, List.of("-s", "format", "png",
+                    file.toString(), "--out", png.toString()));
+            assertEquals(0, result.exitCode(), result.stderr());
+            EXACT.assertWithin("sips icns", smalt(read(png)), smalt(read(file)));
+            EXACT.assertWithin("icns source", rgba(picture), smalt(read(file)));
         }
 
         @Test

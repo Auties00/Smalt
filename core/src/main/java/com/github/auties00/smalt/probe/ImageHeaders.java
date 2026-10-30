@@ -108,6 +108,15 @@ final class ImageHeaders {
                 case JP2 -> Jp2Headers.read(source);
                 case JXL -> JxlHeaders.read(source);
                 case DNG, RAW -> RawHeaders.read(source);
+                case PNM -> RasterHeaders.pnm(source);
+                case TGA -> RasterHeaders.tga(source);
+                case QOI -> RasterHeaders.qoi(source);
+                case HDR -> RasterHeaders.hdr(source);
+                case ICNS -> RasterHeaders.icns(source);
+                case PSD -> RasterHeaders.psd(source);
+                case EXR -> RasterHeaders.exr(source);
+                case JXR -> RasterHeaders.jxr(source);
+                case DDS -> RasterHeaders.dds(source);
             };
             if (header.width <= 0 || header.height <= 0) {
                 throw new MediaException.Malformed("the " + format.name().toLowerCase(Locale.ROOT)

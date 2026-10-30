@@ -13,6 +13,12 @@ ROOTS = ["core/src/test/resources/samples", "image/src/test/resources/samples", 
 
 
 def generator(root, relative):
+    if root.startswith("image/") and relative.split("/")[0] in ("pnm", "tga", "qoi", "hdr", "exr"):
+        return "make-raster-samples.sh"
+    if root.startswith("image/") and relative.split("/")[0] in ("icns", "psd", "dds"):
+        return "make-raster-samples.py"
+    if root.startswith("image/") and relative.split("/")[0] == "jxr":
+        return "make-jxr-vectors.py"
     if root.startswith("image/"):
         return "make-image-samples.sh"
     if root.startswith("video/"):

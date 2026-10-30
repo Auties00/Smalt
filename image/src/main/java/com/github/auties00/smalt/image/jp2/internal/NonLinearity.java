@@ -1,3 +1,6 @@
+/* Ports OpenJPH 0.32.0 (src/core/codestream/ojph_params.cpp, src/core/transform/ojph_colour.cpp: the NLT type 4).
+   Copyright (c) 2019, Aous Naman; Copyright (c) 2019, Kakadu Software Pty Ltd, Australia; Copyright (c) 2019, The
+   University of New South Wales, Australia; BSD 2-Clause License. Modified for Smalt. */
 package com.github.auties00.smalt.image.jp2.internal;
 
 import com.github.auties00.smalt.MediaException;
@@ -9,12 +12,17 @@ import com.github.auties00.smalt.internal.io.ByteArrays;
  *
  * <p>Instances are immutable and thread-safe.
  *
- * @param type the transformation: 0 for none, 1 gamma-style, 2 LUT-style, 3 two's complement to sign-magnitude
+ * @param type the transformation: 0 for none, 1 gamma-style, 2 LUT-style, 3 two's complement to sign-magnitude, 4
+ * LUT-style followed by the two's complement to sign-magnitude conversion
  * @param precision the bit depth of the decoded component, from 1 to 38
  * @param signed whether the decoded component is signed
  * @param parameters the gamma-style parameters {@code E}, {@code S}, {@code T}, {@code A} and {@code B}, or the
  * LUT-style {@code Dmin} and {@code Dmax}; empty for the other types
  * @param table the normalized LUT-style table values {@code t_k}, or {@code null}
+ * @implNote This implementation also reads type 4, which is not part of ISO/IEC 15444-2: OpenJPH's experimental
+ * {@code OJPH_NLT_BINARY_COMPLEMENT_PLUS_LUT}, which OpenEXR's LJ2K compression writes. Its segment has the layout
+ * of the LUT-style one, its table values are scaled by {@code 2^BDnlt} rather than {@code 2^PTval - 1}, and it
+ * applies, as in OpenJPH, to the unrounded samples of an irreversible component.
  */
 record NonLinearity(int type, int precision, boolean signed, double[] parameters, double[] table) {
     /**
@@ -36,6 +44,11 @@ record NonLinearity(int type, int precision, boolean signed, double[] parameters
      * The two's complement to sign-magnitude conversion.
      */
     static final int SIGN_MAGNITUDE = 3;
+
+    /**
+     * The LUT-style transformation followed by the two's complement to sign-magnitude conversion.
+     */
+    static final int SIGN_MAGNITUDE_LOOKUP = 4;
 
     /**
      * Holds a parsed {@code NLT} segment.
@@ -84,7 +97,7 @@ record NonLinearity(int type, int precision, boolean signed, double[] parameters
                     throw new MediaException.Malformed("JPEG 2000 NLT gamma with a zero E, S or A parameter");
                 }
             }
-            case LOOKUP -> {
+            case LOOKUP, SIGN_MAGNITUDE_LOOKUP -> {
                 if (end - at < 11) {
                     throw new MediaException.Malformed("truncated JPEG 2000 NLT segment");
                 }
@@ -100,7 +113,7 @@ record NonLinearity(int type, int precision, boolean signed, double[] parameters
                 if ((long) end - at < (long) points * size) {
                     throw new MediaException.Malformed("truncated JPEG 2000 NLT lookup table");
                 }
-                var scale = (double) ((1L << bits) - 1);
+                var scale = type == LOOKUP ? (double) ((1L << bits) - 1) : Math.scalb(1.0, precision);
                 table = new double[points];
                 for (var k = 0; k < points; k++) {
                     var value = switch (size) {
@@ -134,6 +147,13 @@ record NonLinearity(int type, int precision, boolean signed, double[] parameters
         switch (type) {
             case GAMMA -> gamma(samples, inputPrecision, outputMin, outputMax);
             case LOOKUP -> lookup(samples, inputPrecision, inputSigned, outputMin, outputMax);
+            case SIGN_MAGNITUDE_LOOKUP -> {
+                var bias = inputSigned ? Math.scalb(1.0, inputPrecision - 1) : 0;
+                var scale = Math.scalb(1.0, -inputPrecision);
+                for (var i = 0; i < samples.length; i++) {
+                    samples[i] = signMagnitudeLookup((samples[i] + bias) * scale, outputMin, outputMax);
+                }
+            }
             case SIGN_MAGNITUDE -> {
                 var limit = 1L << (inputPrecision - 1);
                 for (var i = 0; i < samples.length; i++) {
@@ -150,6 +170,53 @@ record NonLinearity(int type, int precision, boolean signed, double[] parameters
                 }
             }
         }
+    }
+
+    /**
+     * Applies the transformation of type {@link #SIGN_MAGNITUDE_LOOKUP} to the unrounded samples of an irreversible
+     * component.
+     *
+     * @param values the reconstructed samples, before their DC offset
+     * @param offset the DC offset
+     * @param inputPrecision the bit depth of the reconstructed component
+     * @param inputSigned whether the reconstructed component is signed
+     * @return the decoded component's samples
+     */
+    long[] applyUnrounded(float[] values, double offset, int inputPrecision, boolean inputSigned) {
+        var outputMin = signed ? -(1L << (precision - 1)) : 0;
+        var outputMax = signed ? (1L << (precision - 1)) - 1 : (1L << precision) - 1;
+        var bias = offset + (inputSigned ? Math.scalb(1.0, inputPrecision - 1) : 0);
+        var scale = Math.scalb(1.0, -inputPrecision);
+        var result = new long[values.length];
+        for (var i = 0; i < values.length; i++) {
+            result[i] = signMagnitudeLookup((values[i] + bias) * scale, outputMin, outputMax);
+        }
+        return result;
+    }
+
+    /**
+     * Maps a sample through the table of type {@link #SIGN_MAGNITUDE_LOOKUP} and converts the result from two's
+     * complement to sign-magnitude.
+     *
+     * @param normalized the sample, normalized to the range {@code [0, 1)} of the reconstructed component
+     * @param outputMin the smallest decoded value
+     * @param outputMax the largest decoded value
+     * @return the decoded value
+     */
+    private long signMagnitudeLookup(double normalized, long outputMin, long outputMax) {
+        var dmin = parameters[0];
+        var dmax = parameters[1];
+        var points = table.length;
+        var t = Double.isNaN(normalized) ? dmin : Math.clamp(normalized, dmin, dmax);
+        var delta = (dmax - dmin) / (points - 1);
+        var k = Math.min((int) ((t - dmin) / delta), points - 2);
+        var z = table[k] + (t - (dmin + k * delta)) / delta * (table[k + 1] - table[k]);
+        var value = z * Math.scalb(1.0, precision) - (signed ? Math.scalb(1.0, precision - 1) : 0);
+        var rounded = (long) (value < 0 ? -Math.floor(-value + 0.5) : Math.floor(value + 0.5));
+        if (signed && rounded < 0) {
+            rounded = -rounded - (1L << (precision - 1)) - 1;
+        }
+        return Math.clamp(rounded, outputMin, outputMax);
     }
 
     /**

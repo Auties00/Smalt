@@ -59,8 +59,8 @@ import java.util.Optional;
  *       arbitrary decompositions ({@code DFS} and {@code ADS}), arbitrary wavelet kernels ({@code ATK}),
  *       array-based and wavelet-based multiple component transformations with any number of stages
  *       ({@code MCT}, {@code MCC}, {@code MCO} and {@code CBD}), non-linear point transformations
- *       ({@code NLT}), and rectangular and elliptic regions of interest coded with the scaling method
- *       ({@code RGN});</li>
+ *       ({@code NLT}, OpenJPH's experimental type 4 included), and rectangular and elliptic regions of
+ *       interest coded with the scaling method ({@code RGN});</li>
  *   <li>the whole of HTJ2K coding: HT code-blocks with their cleanup, SigProp and MagRef passes,
  *       placeholder passes and any number of HT sets (the last one is decoded), HT and ISO/IEC
  *       15444-1 code-blocks mixed in one tile-component, regions of interest, and JPH files,
@@ -88,7 +88,7 @@ import java.util.Optional;
  * composition. Motion JPEG 2000 video is decoded by {@link Mj2Decoder}.
  *
  * <p>Unsupported, and rejected with {@link MediaException.Unsupported} naming the feature: HTJ2K
- * code-blocks of sub-bands with more than 30 magnitude bit-planes; the Part 2 coding extensions of variable deadzone
+ * code-blocks of sub-bands with more than 61 magnitude bit-planes; the Part 2 coding extensions of variable deadzone
  * and trellis coded quantization, visual masking, single sample overlap transformations, precinct-dependent
  * quantization, code-block anchor points and block coder extensions; derived quantization of sub-bands split in one
  * direction only; and codestream fragments stored in another file.

@@ -93,6 +93,51 @@ class ImageFuzzTest {
     }
 
     @FuzzTest
+    void pnm(byte[] data) {
+        FuzzMedia.image(ImageFormat.PNM, data);
+    }
+
+    @FuzzTest
+    void tga(byte[] data) {
+        FuzzMedia.image(ImageFormat.TGA, data);
+    }
+
+    @FuzzTest
+    void qoi(byte[] data) {
+        FuzzMedia.image(ImageFormat.QOI, data);
+    }
+
+    @FuzzTest
+    void hdr(byte[] data) {
+        FuzzMedia.image(ImageFormat.HDR, data);
+    }
+
+    @FuzzTest
+    void dds(byte[] data) {
+        FuzzMedia.image(ImageFormat.DDS, data);
+    }
+
+    @FuzzTest
+    void psd(byte[] data) {
+        FuzzMedia.image(ImageFormat.PSD, data);
+    }
+
+    @FuzzTest
+    void icns(byte[] data) {
+        FuzzMedia.image(ImageFormat.ICNS, data);
+    }
+
+    @FuzzTest
+    void exr(byte[] data) {
+        FuzzMedia.image(ImageFormat.EXR, data);
+    }
+
+    @FuzzTest
+    void jxr(byte[] data) {
+        FuzzMedia.image(ImageFormat.JXR, data);
+    }
+
+    @FuzzTest
     void jp2Channels(byte[] data) {
         var run = Fuzz.start("jp2Channels");
         // the last byte, which mutations of it explore, picks the reduction and the quality layers

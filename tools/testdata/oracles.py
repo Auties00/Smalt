@@ -65,7 +65,7 @@ VERSION_ARGS = {
     'flac': ['--version'], 'metaflac': ['--version'], 'mkvextract': ['--version'], 'opusenc': ['--version'], 'opusdec': ['--version'], 'opus_compare': [],
     'tiffcp': [], 'tiffinfo': ['-v'], 'tiffdump': [], 'tiff2rgba': [], 'MP4Box': ['-version'],
     'mkvmerge': ['--version'], 'mkvinfo': ['--version'], 'mkvalidator': ['--version'], 'tsp': ['--version'],
-    'sox': ['--version'], 'smalt-pngdump': [], 'smalt-lcmsdump': [], 'smalt-mpeg4ref': [], 'smalt-gifenc': [],
+    'sox': ['--version'], 'smalt-pngdump': [], 'smalt-lcmsdump': [], 'smalt-mpeg4ref': [], 'smalt-gifenc': [], 'smalt-bcdec': [],
     'smalt-alacenc': [], 'smalt-mpeg2dec': [], 'smalt-mpeg2enc': [],
     'ultrahdr_app': [], 'avifgainmaputil': ['--version'], 'avifdec': ['--version'], 'dng_validate': [],
 }
@@ -421,6 +421,8 @@ def build(row, target):
         key += ' ' + digest(os.path.join(HERE, 'mpeg2-oracle', 'smalt_idct.c'))
     if name == 'smalt-gifenc':
         key += ' ' + digest(os.path.join(HERE, 'gif-oracle', 'smalt-gifenc.c'))
+    if name == 'smalt-bcdec':
+        key += ' ' + digest(os.path.join(HERE, 'bcn-oracle', 'smalt-bcdec.c'))
     if name == 'smalt-alacenc':
         key += ' ' + digest(os.path.join(HERE, 'alac-oracle', 'smalt-alacenc.cpp'))
     outputs = [os.path.join(out, tool + EXE) for tool, _ in provided(row)]
@@ -527,6 +529,13 @@ def build(row, target):
             sources = [os.path.join(tree, file) for file in GIFLIB_SOURCES]
             run(compiler(target) + ['-O2', '-I' + tree, '-o', executable,
                                     os.path.join(HERE, 'gif-oracle', 'smalt-gifenc.c')] + sources, env=env)
+        elif name == 'smalt-bcdec':
+            # bcdec is a single header, compiled into the driver, so that every platform runs the same code. Its
+            # signed BC4 and BC5 decoders read plain char as signed, which the Linux Arm ABI leaves unsigned.
+            header = download(row['source'], row['sha256'])
+            signed = [] if target.startswith('windows') else ['-fsigned-char']
+            run(compiler(target) + ['-O2'] + signed + ['-I' + os.path.dirname(header), '-o', executable,
+                                    os.path.join(HERE, 'bcn-oracle', 'smalt-bcdec.c')], env=env)
         elif name == 'smalt-alacenc':
             # The library's encoder compiled into the program with g++, as its own makefile builds every file. Its
             # byte-order helpers recognize only x86 as little-endian, so the macro is given for every runner, all

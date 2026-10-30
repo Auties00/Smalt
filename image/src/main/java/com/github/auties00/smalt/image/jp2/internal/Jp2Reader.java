@@ -222,6 +222,30 @@ public final class Jp2Reader {
     }
 
     /**
+     * Returns the number of decomposition levels of a component of the first tile of a codestream.
+     *
+     * @param codestream the parsed codestream
+     * @param component the component index
+     * @return the number of decomposition levels
+     * @throws MediaException.Malformed if the tile's headers are invalid
+     */
+    public static int decompositionLevels(Codestream codestream, int component) {
+        return codestream.parameters(0).codings()[component].resolutions() - 1;
+    }
+
+    /**
+     * Returns whether a component of the first tile of a codestream uses a reversible wavelet.
+     *
+     * @param codestream the parsed codestream
+     * @param component the component index
+     * @return whether the component is coded reversibly
+     * @throws MediaException.Malformed if the tile's headers are invalid
+     */
+    public static boolean reversible(Codestream codestream, int component) {
+        return codestream.parameters(0).codings()[component].reversible();
+    }
+
+    /**
      * Returns the largest reduction every tile-component of a codestream allows.
      *
      * @param codestream the parsed codestream
