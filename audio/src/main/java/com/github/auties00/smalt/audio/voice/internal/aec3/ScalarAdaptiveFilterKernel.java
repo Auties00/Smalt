@@ -21,8 +21,8 @@ final class ScalarAdaptiveFilterKernel implements AdaptiveFilterKernel {
     }
 
     @Override
-    public void apply(float[] xRe, float[] xIm, int position, int numPartitions, float[] hRe, float[] hIm, float[] sRe,
-                      float[] sIm) {
+    public void apply(float[] xRe, float[] xIm, int position, int bufferSize, int numPartitions, float[] hRe,
+                      float[] hIm, float[] sRe, float[] sIm) {
         Arrays.fill(sRe, 0.f);
         Arrays.fill(sIm, 0.f);
         var index = position;
@@ -37,13 +37,13 @@ final class ScalarAdaptiveFilterKernel implements AdaptiveFilterKernel {
                 sRe[k] += xr * hr - xi * hi;
                 sIm[k] += xr * hi + xi * hr;
             }
-            index = index < RenderBuffer.SIZE - 1 ? index + 1 : 0;
+            index = index < bufferSize - 1 ? index + 1 : 0;
         }
     }
 
     @Override
-    public void adapt(float[] xRe, float[] xIm, int position, int numPartitions, float[] gRe, float[] gIm, float[] hRe,
-                      float[] hIm) {
+    public void adapt(float[] xRe, float[] xIm, int position, int bufferSize, int numPartitions, float[] gRe,
+                      float[] gIm, float[] hRe, float[] hIm) {
         var index = position;
         for (var p = 0; p < numPartitions; ++p) {
             var xo = index * FFT_LENGTH_BY_2_PLUS_1;
@@ -54,17 +54,21 @@ final class ScalarAdaptiveFilterKernel implements AdaptiveFilterKernel {
                 hRe[ho + k] += xr * gRe[k] + xi * gIm[k];
                 hIm[ho + k] += xr * gIm[k] - xi * gRe[k];
             }
-            index = index < RenderBuffer.SIZE - 1 ? index + 1 : 0;
+            index = index < bufferSize - 1 ? index + 1 : 0;
         }
     }
 
     @Override
-    public void frequencyResponse(int numPartitions, float[] hRe, float[] hIm, float[] h2) {
+    public void frequencyResponse(int numPartitions, int numChannels, float[] hRe, float[] hIm, float[] h2) {
         for (var p = 0; p < numPartitions; ++p) {
             var o = p * FFT_LENGTH_BY_2_PLUS_1;
-            for (var j = 0; j < FFT_LENGTH_BY_2_PLUS_1; ++j) {
-                var tmp = hRe[o + j] * hRe[o + j] + hIm[o + j] * hIm[o + j];
-                h2[o + j] = 0.f < tmp ? tmp : 0.f;
+            Arrays.fill(h2, o, o + FFT_LENGTH_BY_2_PLUS_1, 0.f);
+            for (var ch = 0; ch < numChannels; ++ch) {
+                var ho = (p * numChannels + ch) * FFT_LENGTH_BY_2_PLUS_1;
+                for (var j = 0; j < FFT_LENGTH_BY_2_PLUS_1; ++j) {
+                    var tmp = hRe[ho + j] * hRe[ho + j] + hIm[ho + j] * hIm[ho + j];
+                    h2[o + j] = h2[o + j] < tmp ? tmp : h2[o + j];
+                }
             }
         }
     }

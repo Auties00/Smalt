@@ -40,6 +40,8 @@ public final class Ac3EncoderOptions {
 
     private final boolean fastSearch;
 
+    private final Ac3Metadata metadata;
+
     private Ac3EncoderOptions(Builder builder) {
         this.sampleRate = builder.sampleRate;
         this.layout = builder.layout;
@@ -48,11 +50,13 @@ public final class Ac3EncoderOptions {
         this.blockSwitching = builder.blockSwitching;
         this.channelCoupling = builder.channelCoupling;
         this.fastSearch = builder.fastSearch;
+        this.metadata = builder.metadata;
     }
 
     /**
      * Returns the default options: 48 kHz stereo at the bit rate of the layout, dialogue level -31
-     * dBFS, block switching and channel coupling on, the full search of every frame.
+     * dBFS, block switching and channel coupling on, the full search of every frame, and the
+     * metadata of {@link Ac3Metadata#defaults()}.
      *
      * @return the default options
      */
@@ -216,6 +220,17 @@ public final class Ac3EncoderOptions {
         return fastSearch;
     }
 
+    /**
+     * {@return the metadata the frames carry besides the dialogue level; {@link Ac3Metadata#defaults()}
+     * by default}
+     *
+     * <p>AC-3 has no LFE mix level, program scale factors or source sample rate flag, so those
+     * fields of the metadata are not written.
+     */
+    public Ac3Metadata metadata() {
+        return metadata;
+    }
+
     @Override
     public boolean equals(Object object) {
         return object instanceof Ac3EncoderOptions that
@@ -225,19 +240,21 @@ public final class Ac3EncoderOptions {
                 && dialogueLevel == that.dialogueLevel
                 && blockSwitching == that.blockSwitching
                 && channelCoupling == that.channelCoupling
-                && fastSearch == that.fastSearch;
+                && fastSearch == that.fastSearch
+                && metadata.equals(that.metadata);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(sampleRate, layout, bitrate, dialogueLevel, blockSwitching, channelCoupling, fastSearch);
+        return Objects.hash(sampleRate, layout, bitrate, dialogueLevel, blockSwitching, channelCoupling, fastSearch,
+                metadata);
     }
 
     @Override
     public String toString() {
         return "Ac3EncoderOptions[sampleRate=" + sampleRate + ", layout=" + layout.speakers() + ", bitrate=" + effectiveBitrate()
                 + ", dialogueLevel=" + dialogueLevel + ", blockSwitching=" + blockSwitching + ", channelCoupling="
-                + channelCoupling + ", fastSearch=" + fastSearch + "]";
+                + channelCoupling + ", fastSearch=" + fastSearch + ", metadata=" + metadata + "]";
     }
 
     /**
@@ -252,6 +269,24 @@ public final class Ac3EncoderOptions {
             }
         }
         return false;
+    }
+
+    /**
+     * Checks that a metadata fits a layout: a voice over is mono, karaoke has two or more
+     * full-bandwidth channels.
+     *
+     * @param metadata the metadata to check
+     * @param layout the layout the metadata describes
+     * @throws IllegalArgumentException if the type of service does not fit the layout
+     */
+    static void checkServiceType(Ac3Metadata metadata, ChannelLayout layout) {
+        var fullBandwidth = ChannelMap.fullBandwidthChannels(layout);
+        if (metadata.serviceType() == Ac3ServiceType.VOICE_OVER && fullBandwidth != 1) {
+            throw new IllegalArgumentException("a voice over service is mono");
+        }
+        if (metadata.serviceType() == Ac3ServiceType.KARAOKE && fullBandwidth < 2) {
+            throw new IllegalArgumentException("a karaoke service has two or more full-bandwidth channels");
+        }
     }
 
     /**
@@ -287,6 +322,8 @@ public final class Ac3EncoderOptions {
 
         private boolean fastSearch;
 
+        private Ac3Metadata metadata;
+
         private Builder() {
             this.sampleRate = 48_000;
             this.layout = ChannelLayout.STEREO;
@@ -295,6 +332,7 @@ public final class Ac3EncoderOptions {
             this.blockSwitching = true;
             this.channelCoupling = true;
             this.fastSearch = false;
+            this.metadata = Ac3Metadata.defaults();
         }
 
         private Builder(Ac3EncoderOptions options) {
@@ -306,6 +344,7 @@ public final class Ac3EncoderOptions {
             this.blockSwitching = options.blockSwitching;
             this.channelCoupling = options.channelCoupling;
             this.fastSearch = options.fastSearch;
+            this.metadata = options.metadata;
         }
 
         /**
@@ -392,17 +431,30 @@ public final class Ac3EncoderOptions {
         }
 
         /**
+         * Sets the metadata; see {@link Ac3EncoderOptions#metadata()}.
+         *
+         * @param metadata the value
+         * @return this builder
+         */
+        public Builder metadata(Ac3Metadata metadata) {
+            this.metadata = Objects.requireNonNull(metadata, "metadata");
+            return this;
+        }
+
+        /**
          * Returns the options holding the settings of this builder.
          *
          * @return the options
-         * @throws IllegalArgumentException if the bit rate is not one of A/52 table 5.18, or the
-         * dialogue level is not in [-31, -1]
+         * @throws IllegalArgumentException if the bit rate is not one of A/52 table 5.18, the
+         * dialogue level is not in [-31, -1], or the metadata declares a voice over for a layout that
+         * is not mono or karaoke for a mono one
          */
         public Ac3EncoderOptions build() {
             if (explicitBitrate && !isBitrate(bitrate)) {
                 throw new IllegalArgumentException("bitrate " + bitrate + " is not an AC-3 bit rate");
             }
             Checks.inRange("dialogue level", dialogueLevel, -31, -1);
+            checkServiceType(metadata, layout);
             return new Ac3EncoderOptions(this);
         }
     }
