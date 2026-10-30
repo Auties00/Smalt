@@ -1,7 +1,6 @@
 package com.github.auties00.smalt.container.subtitle;
 
 import com.github.auties00.smalt.MediaException;
-import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.internal.subtitle.WebVttText;
@@ -13,8 +12,9 @@ import java.nio.charset.StandardCharsets;
 /**
  * Demuxes a WebVTT ({@code .vtt}) file into one {@link Codec#WEBVTT} track.
  *
- * <p>The file is read whole and decoded like a SubRip file (a byte order mark, then UTF-8, then
- * Windows-1252), and must start with the {@code WEBVTT} signature. The track configuration is the
+ * <p>The file is read whole and decoded like a SubRip file (a byte order mark, then the encoding of
+ * {@link DemuxerOptions#charset()} or the one detected), and must start with the {@code WEBVTT}
+ * signature. The track configuration is the
  * file header: the {@code WEBVTT} block and the {@code STYLE}, {@code REGION} and {@code NOTE}
  * blocks before the first cue. Each packet is one cue payload, with the cue identifier and
  * settings as side data, in a millisecond time base; cues are returned in start order.
@@ -31,24 +31,20 @@ public final class WebVttDemuxer extends CueFileDemuxer {
      * @throws MediaException.Io if reading the source fails
      */
     public WebVttDemuxer(MediaSource source) {
-        this(source, MediaLimits.DEFAULT);
+        this(source, DemuxerOptions.defaults());
     }
 
     /**
      * Constructs a demuxer over {@code source} that enforces the limits of {@code options}.
      *
      * @param source the input, not closed by this demuxer
-     * @param options the demuxing options
+     * @param options the limits and the text encoding
      * @throws MediaException.Malformed if the file does not start with the WebVTT signature
      * @throws MediaException.LimitExceeded if the file is larger than the limits allow
      * @throws MediaException.Io if reading the source fails
      */
     public WebVttDemuxer(MediaSource source, DemuxerOptions options) {
-        this(source, options.limits());
-    }
-
-    private WebVttDemuxer(MediaSource source, MediaLimits limits) {
-        this(WebVttText.parse(readText(source, limits)));
+        this(WebVttText.parse(readText(source, options)));
     }
 
     /**

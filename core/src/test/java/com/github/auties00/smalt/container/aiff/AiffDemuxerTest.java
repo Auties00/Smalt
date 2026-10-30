@@ -184,13 +184,75 @@ class AiffDemuxerTest {
             }
         }
 
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({"NONE, false", "twos, false", "sowt, true"})
+        @DisplayName("reads 64-bit integer samples in eight bytes and rejects other sizes past 32 bits")
+        void sixtyFourBits(String type, boolean littleEndian) {
+            var values = new long[]{Long.MIN_VALUE, Long.MAX_VALUE, 0, -1, 0x0123_4567_89AB_CDEFL, 1L << 40};
+            var sound = ByteBuffer.allocate(values.length * 8)
+                    .order(littleEndian ? java.nio.ByteOrder.LITTLE_ENDIAN : java.nio.ByteOrder.BIG_ENDIAN);
+            for (var value : values) {
+                sound.putLong(value);
+            }
+            var bytes = aiff(true, type, 2, 3, 64, extended(48000), sound.array(), 56);
+            try (var demuxer = new AiffDemuxer(MediaSource.of(bytes))) {
+                var track = (AudioTrack) demuxer.tracks().getFirst();
+                assertEquals(littleEndian ? Codec.PCM_S64LE : Codec.PCM_S64BE, track.codec());
+                assertEquals(64, track.bitsPerSample());
+                assertEquals(3, track.duration());
+            }
+            var decoded = decode(bytes).interleaved();
+            for (var index = 0; index < values.length; index++) {
+                var expected = new java.math.BigDecimal(values[index])
+                        .divide(new java.math.BigDecimal(java.math.BigInteger.ONE.shiftLeft(63))).floatValue();
+                assertEquals(expected, decoded[index], "sample " + index);
+            }
+            var forty = aiff(true, "NONE", 1, 1, 40, extended(8000), new byte[5], 13);
+            assertThrows(MediaException.Unsupported.class, () -> new AiffDemuxer(MediaSource.of(forty)));
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({"ima4, ADPCM_IMA_QT, 2, 68, 64", "'GSM ', GSM, 1, 33, 160", "MAC3, MACE3, 2, 4, 6",
+                "MAC6, MACE6, 2, 2, 6"})
+        @DisplayName("reads compressed AIFF-C types as whole frames that the COMM count counts")
+        void compressedFrames(String type, Codec codec, int channels, int frameBytes, int frameSamples) {
+            var frames = 300;
+            var sound = new byte[frames * frameBytes];
+            for (var i = 0; i < sound.length; i++) {
+                sound[i] = (byte) (i * 31);
+            }
+            var bytes = aiff(true, type, channels, frames, 16, extended(8000), sound, 8 + sound.length);
+            try (var demuxer = new AiffDemuxer(MediaSource.of(bytes))) {
+                var track = (AudioTrack) demuxer.tracks().getFirst();
+                assertEquals(codec, track.codec());
+                assertEquals((long) frames * frameSamples, track.duration());
+                var read = new java.io.ByteArrayOutputStream();
+                var time = 0L;
+                for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                    assertEquals(0, packet.size() % frameBytes, "whole frames");
+                    assertEquals(time, packet.pts());
+                    assertEquals((long) packet.size() / frameBytes * frameSamples, packet.duration());
+                    time += packet.duration();
+                    read.writeBytes(packet.data());
+                }
+                assertArrayEquals(sound, read.toByteArray());
+                // a seek lands on the start of the packet a sequential read gives
+                demuxer.seek(1_000_000L * frames * frameSamples / 8000 / 2);
+                var packet = demuxer.read();
+                var perPacket = Math.max(1, 4096 / frameBytes);
+                assertEquals(0, packet.pts() % ((long) perPacket * frameSamples));
+            }
+        }
+
         @Test
         @DisplayName("rejects unsupported and malformed files with the right exception")
         void rejects() {
-            var ima = aiff(true, "ima4", 1, 1, 16, extended(8000), new byte[34], 42);
+            var qdesign = aiff(true, "QDMC", 1, 1, 16, extended(8000), new byte[34], 42);
             var unsupported = assertThrows(MediaException.Unsupported.class,
-                    () -> new AiffDemuxer(MediaSource.of(ima)));
-            assertEquals("aifc compression 'ima4'", unsupported.format());
+                    () -> new AiffDemuxer(MediaSource.of(qdesign)));
+            assertEquals("aifc compression 'QDMC'", unsupported.format());
+            var stereoGsm = aiff(true, "GSM ", 2, 1, 16, extended(8000), new byte[66], 74);
+            assertThrows(MediaException.Unsupported.class, () -> new AiffDemuxer(MediaSource.of(stereoGsm)));
             var zeroRate = aiff(false, null, 1, 1, 16, new byte[10], new byte[2], 10);
             assertThrows(MediaException.Malformed.class, () -> new AiffDemuxer(MediaSource.of(zeroRate)));
             var noChannels = aiff(false, null, 0, 1, 16, extended(8000), new byte[2], 10);

@@ -26,6 +26,16 @@ final class PacketDecoder {
     static final int IGNORED = -1;
 
     /**
+     * The seed of the generator of the signs of concealed spectra.
+     */
+    private static final int NOISE_SEED = 0x2545F491;
+
+    /**
+     * The number of concealed packets in a row that are heard; later ones are silent.
+     */
+    private static final int AUDIBLE_CONCEALMENT = 4;
+
+    /**
      * The stream configuration.
      */
     private final VorbisSetup setup;
@@ -112,6 +122,31 @@ final class PacketDecoder {
     private int previousSize;
 
     /**
+     * The audio spectrum of each channel of the last decoded packet, which concealment repeats.
+     */
+    private final float[][] lastSpectra;
+
+    /**
+     * Whether each channel's floor was unused in the last decoded packet.
+     */
+    private final boolean[] lastUnused;
+
+    /**
+     * The next window flag of the last packet: whether the block after it is long.
+     */
+    private boolean lastNextLong;
+
+    /**
+     * The number of packets concealed since the last decoded one.
+     */
+    private int concealedRun;
+
+    /**
+     * The state of the generator of the signs of concealed spectra.
+     */
+    private int noise = NOISE_SEED;
+
+    /**
      * Allocates the decoding state of a stream.
      *
      * @param setup  the stream configuration
@@ -125,10 +160,12 @@ final class PacketDecoder {
         var channels = setup.channels;
         var blocksize1 = setup.blocksizes[1];
         var half = blocksize1 / 2;
-        budget.charge(3L * channels * half + 2L * blocksize1, 4);
+        budget.charge(4L * channels * half + 2L * blocksize1, 4);
         this.transforms = new Imdct[]{new Imdct(setup.blocksizes[0]), new Imdct(blocksize1)};
         this.spectra = new float[channels][half];
         this.saved = new float[channels][half];
+        this.lastSpectra = new float[channels][half];
+        this.lastUnused = new boolean[channels];
         this.block = new float[blocksize1];
         this.re = new float[blocksize1 / 4];
         this.im = new float[blocksize1 / 4];
@@ -175,6 +212,7 @@ final class PacketDecoder {
      */
     void reset() {
         previousSize = 0;
+        concealedRun = 0;
     }
 
     /**
@@ -222,7 +260,64 @@ final class PacketDecoder {
         var mapping = setup.mappings[mode.mapping()];
         var channels = setup.channels;
         decodeSpectra(reader, mapping, half, longBlock);
-        return synthesize(transform, size, half, longBlock, previousLong, nextLong, output, channels);
+        // the inverse MDCT may use the spectra as scratch, so they are kept before it runs
+        for (var ch = 0; ch < channels; ch++) {
+            System.arraycopy(spectra[ch], 0, lastSpectra[ch], 0, half);
+        }
+        System.arraycopy(unused, 0, lastUnused, 0, channels);
+        var samples = synthesize(transform, size, half, longBlock, previousLong, nextLong, output, channels);
+        lastNextLong = !longBlock || nextLong;
+        concealedRun = 0;
+        return samples;
+    }
+
+    /**
+     * {@return the number of samples one concealed packet returns: half the block size of the previous packet, or
+     * half the short block size before the first}
+     */
+    int concealmentUnit() {
+        return (previousSize == 0 ? setup.blocksizes[0] : previousSize) / 2;
+    }
+
+    /**
+     * Conceals one lost packet with a block of the previous packet's size, whose spectrum repeats the last decoded
+     * one with random signs: at full amplitude for the first packet lost in a row, halved for each further one, and
+     * silent from the fifth on.
+     *
+     * <p>A long block starts with the slope the previous block ended with and ends with a long slope.
+     *
+     * @param output one array per channel, in stream channel order, receiving the samples from index zero; each at
+     *               least {@link #maxSamples()} long
+     * @return the number of samples written per channel, {@link #concealmentUnit()}, or {@link #IGNORED} before the
+     *         first packet, when nothing is written
+     */
+    int conceal(float[][] output) {
+        if (previousSize == 0) {
+            return IGNORED;
+        }
+        concealedRun = Math.min(concealedRun + 1, AUDIBLE_CONCEALMENT + 1);
+        var gain = concealedRun <= AUDIBLE_CONCEALMENT ? 1.0f / (1 << (concealedRun - 1)) : 0;
+        var longBlock = previousSize == setup.blocksizes[1] && setup.blocksizes[1] != setup.blocksizes[0];
+        var transform = transforms[longBlock ? 1 : 0];
+        var half = transform.half;
+        var channels = setup.channels;
+        var state = noise;
+        for (var ch = 0; ch < channels; ch++) {
+            unused[ch] = lastUnused[ch] || gain == 0;
+            if (unused[ch]) {
+                continue;
+            }
+            var source = lastSpectra[ch];
+            var target = spectra[ch];
+            for (var k = 0; k < half; k++) {
+                state = state * 1664525 + 1013904223;
+                target[k] = state < 0 ? -gain * source[k] : gain * source[k];
+            }
+        }
+        noise = state;
+        var samples = synthesize(transform, transform.size, half, longBlock, lastNextLong, true, output, channels);
+        lastNextLong = true;
+        return samples;
     }
 
     /**

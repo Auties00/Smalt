@@ -3,7 +3,7 @@ package com.github.auties00.smalt.audio.voice.internal.agc;
 import com.github.auties00.smalt.audio.voice.internal.FixedPointMath;
 
 /**
- * Runs WebRTC's legacy automatic gain controller on one 16 kHz channel: the analog volume
+ * Runs WebRTC's legacy automatic gain controller on the lowest 16 kHz band of one channel: the analog volume
  * adaptation (a feedback loop that recommends a microphone level from the speech energy), its
  * emulation on the signal itself (the virtual microphone of the adaptive digital mode) and the
  * digital compressor of {@link DigitalAgc}.
@@ -16,7 +16,8 @@ import com.github.auties00.smalt.audio.voice.internal.FixedPointMath;
  *
  * @implNote This implementation ports {@code LegacyAgc} and the {@code WebRtcAgc_*} functions of
  * {@code modules/audio_processing/agc/legacy/analog_agc.cc} (webrtc-audio-processing 2.1) for a
- * 16 kHz single-band signal, keeping the 16-bit and 32-bit widths of every field. The fixed-point
+ * 16, 32 or 48 kHz signal, keeping the 16-bit and 32-bit widths of every field. The upper bands
+ * only receive gains, which {@link GainController} applies, so they are not passed in. The fixed-point
  * application of the gains ({@code WebRtcAgc_Process}) is not ported: the audio processing module
  * applies the gains in floating point, which {@link GainController} reproduces.
  */
@@ -441,9 +442,18 @@ final class LegacyAgc {
     private final short[] tmpSpeech;
 
     /**
-     * Creates an uninitialized controller; {@link #init(int, int, int)} must be called first.
+     * Whether the signal is split into bands (32 or 48 kHz), in which case the energy of a 2 ms
+     * block is computed on its first 16 samples instead of on the block downsampled to 8 kHz.
      */
-    LegacyAgc() {
+    private final boolean multiband;
+
+    /**
+     * Creates an uninitialized controller; {@link #init(int, int, int)} must be called first.
+     *
+     * @param multiband whether the signal is split into bands, at 32 or 48 kHz
+     */
+    LegacyAgc(boolean multiband) {
+        this.multiband = multiband;
         this.filterState = new int[8];
         this.rxx16VectorW32 = new int[RXX_BUFFER_LEN];
         this.rxx16w32Array = new int[2][5];
@@ -503,7 +513,11 @@ final class LegacyAgc {
 
         var energies = inQueue > 0 ? rxx16w32Array[1] : rxx16w32Array[0];
         for (var i = 0; i < NUM_SUBFRAMES / 2; i++) {
-            FixedPointMath.downsampleBy2(inMic, offset + i * 32, 32, tmpSpeech, 0, filterState);
+            if (multiband) {
+                System.arraycopy(inMic, offset + i * 16, tmpSpeech, 0, 16);
+            } else {
+                FixedPointMath.downsampleBy2(inMic, offset + i * 32, 32, tmpSpeech, 0, filterState);
+            }
             energies[i] = FixedPointMath.dotProductWithScale(tmpSpeech, 0, tmpSpeech, 0, 16, 4);
         }
 
