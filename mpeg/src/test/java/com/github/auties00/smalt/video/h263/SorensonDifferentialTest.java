@@ -21,8 +21,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * Encodes synthetic scenes with ffmpeg's Sorenson Spark encoder (which writes version 1 pictures, with the 7 and
  * 11-bit escapes) into FLV files and compares the decoder's output with ffmpeg's decode, within the noise floor that
  * the freedom of the inverse DCT leaves, as {@link H263DifferentialTest} does: every standard picture
- * size, custom sizes of 8 and 16 bits, intra-only streams, four vectors per macroblock, and a fine quantizer over
- * noise, whose levels need the 11-bit escape.
+ * size, custom sizes of 8 and 16 bits, intra-only streams, four vectors per macroblock, a fine quantizer over
+ * noise, whose levels need the 11-bit escape, and fast scrolling motion, whose vectors reach the edge of their range
+ * and point outside the picture.
  */
 @DisplayName("Sorenson Spark decoder against ffmpeg")
 class SorensonDifferentialTest {
@@ -45,7 +46,12 @@ class SorensonDifferentialTest {
                 new Case("four vectors per macroblock", "176x144", "", List.of("-flags", "+mv4", "-g", "12")),
                 new Case("fine quantizer over noise", "176x144", ",noise=alls=60:allf=t",
                         List.of("-q:v", "1", "-g", "6")),
-                new Case("coarse quantizer", "176x144", "", List.of("-q:v", "31", "-g", "20")));
+                new Case("coarse quantizer", "176x144", "", List.of("-q:v", "31", "-g", "20")),
+                // about 21 and 12 pixels a frame: vectors at the edge of the baseline range, pointing outside
+                new Case("fast motion", "176x144", ",scroll=horizontal=0.12:vertical=0.08",
+                        List.of("-g", "30")),
+                new Case("fast motion with four vectors", "176x144", ",scroll=horizontal=-0.1:vertical=0.09",
+                        List.of("-flags", "+mv4", "-g", "30")));
     }
 
     @ParameterizedTest(name = "{0}")

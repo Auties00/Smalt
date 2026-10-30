@@ -574,6 +574,44 @@ class FlvDemuxerTest {
         }
 
         @Test
+        @DisplayName("finds the next tag after a tag header whose size runs past the end of the file")
+        void sizePastEnd() {
+            var good = new FlvBuilder(true, false).tag(8, 0, bytes(0x3E, 1, 2)).bytes();
+            var tail = new FlvBuilder(true, false).tag(8, 46, bytes(0x3E, 3, 4)).bytes();
+            // an audio tag header whose 24-bit size (0xFFFFFF) runs far past the end of the file
+            var damaged = bytes(8, 0xFF, 0xFF, 0xFF, 0, 0, 23, 0, 0, 0, 0);
+            var data = concat(good, damaged, Arrays.copyOfRange(tail, 13, tail.length));
+            var packets = read(data);
+            assertEquals(List.of(0L, 46L), packets.stream().map(Packet::pts).toList());
+            assertArrayEquals(bytes(3, 4), packets.get(1).data());
+        }
+
+        @Test
+        @DisplayName("indexes the tags after a damaged region, so a seek past it starts at its target")
+        void seekPastDamage() {
+            var builder = new FlvBuilder(true, false);
+            for (var index = 0; index < 4000; index++) {
+                if (index == 100) {
+                    builder.raw(bytes(0x55, 0, 0, 2, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14));
+                }
+                var body = new byte[200];
+                body[0] = 0x3E;
+                body[1] = (byte) index;
+                builder.tag(8, index * 23, body);
+            }
+            var data = builder.bytes();
+            var counting = new Counting(data);
+            try (var demuxer = new FlvDemuxer(counting)) {
+                demuxer.seek(3900 * 23_000L);
+                var before = counting.read;
+                var packet = demuxer.read();
+                assertEquals(3900 * 23L, packet.pts());
+                assertTrue(counting.read - before < data.length / 8, "read " + (counting.read - before) + " of "
+                        + data.length + " bytes after the seek");
+            }
+        }
+
+        @Test
         @DisplayName("ends at a truncated last tag and refuses encrypted tags")
         void truncatedAndEncrypted() {
             var data = new FlvBuilder(true, false)

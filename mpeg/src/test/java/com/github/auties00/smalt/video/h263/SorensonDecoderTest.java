@@ -140,10 +140,55 @@ class SorensonDecoderTest {
     }
 
     static List<Packet> ffmpegPackets() {
-        var file = Fixtures.ffmpeg("flv", List.of("-f", "lavfi", "-i", "testsrc2=size=176x144:rate=15"),
+        return ffmpegPackets("176x144");
+    }
+
+    static List<Packet> ffmpegPackets(String size) {
+        var file = Fixtures.ffmpeg("flv", List.of("-f", "lavfi", "-i", "testsrc2=size=" + size + ":rate=15"),
                 List.of("-t", "1", "-c:v", "flv1", "-q:v", "4", "-g", "15"));
         try (var demuxer = Containers.openDemuxer(MediaSource.of(file))) {
             return Packets.readAll(demuxer);
+        }
+    }
+
+    @Test
+    @DisplayName("follows picture size changes at intra pictures, standard and custom sizes alike")
+    void sizeChanges() {
+        var sizes = List.of("176x144", "100x76", "352x288", "640x360");
+        var all = new ArrayList<Packet>();
+        var expected = new ArrayList<byte[]>();
+        var dimensions = new ArrayList<String>();
+        var offset = 0L;
+        for (var size : sizes) {
+            var packets = ffmpegPackets(size);
+            var parts = size.split("x");
+            expected.addAll(decode(Codec.FLV1, Integer.parseInt(parts[0]), Integer.parseInt(parts[1]), packets));
+            for (var packet : packets) {
+                all.add(packet.withTiming(packet.pts() + offset, packet.dts() + offset, packet.duration()));
+                dimensions.add(size);
+            }
+            offset += 1000;
+        }
+        var track = VideoTrack.builder().id(1).codec(Codec.FLV1).timeBase(Rational.MILLISECONDS).width(176)
+                .height(144).build();
+        var frames = new ArrayList<byte[]>();
+        var shown = new ArrayList<String>();
+        try (var decoder = new H263Decoder(track)) {
+            for (var packet : all) {
+                decoder.decode(packet, frame -> {
+                    frames.add(H263DifferentialTest.raw((YuvPicture) frame.picture()));
+                    shown.add(frame.picture().width() + "x" + frame.picture().height());
+                });
+            }
+            decoder.flush(frame -> {
+                frames.add(H263DifferentialTest.raw((YuvPicture) frame.picture()));
+                shown.add(frame.picture().width() + "x" + frame.picture().height());
+            });
+        }
+        assertEquals(dimensions, shown);
+        assertEquals(expected.size(), frames.size());
+        for (var index = 0; index < expected.size(); index++) {
+            assertArrayEquals(expected.get(index), frames.get(index), "picture " + index);
         }
     }
 

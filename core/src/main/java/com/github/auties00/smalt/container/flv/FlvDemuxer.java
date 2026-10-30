@@ -87,10 +87,10 @@ import java.util.Set;
  * {@code onMetaData}, numbers as their shortest decimal form. The duration is that of {@code onMetaData}, or the
  * span of the tag timestamps when it declares none.
  *
- * <p>A tag whose type is not audio, video or script data makes the demuxer look for the next plausible tag (one
- * whose following back-pointer matches its size) within 1 MiB; a tag whose body contradicts its size is skipped;
- * a truncated last tag ends the stream. An encrypted tag (filter flag set) raises
- * {@link MediaException.Unsupported}.
+ * <p>A tag whose type is not audio, video or script data, or whose size runs past the end of the input, makes the
+ * demuxer look for the next plausible tag (one whose following back-pointer matches its size) within 1 MiB, when
+ * reading and when indexing; a tag whose body contradicts its size is skipped; a truncated last tag ends the stream.
+ * An encrypted tag (filter flag set) raises {@link MediaException.Unsupported}.
  *
  * <p>The demuxer seeks through the {@code keyframes} object of {@code onMetaData} ({@code times} in seconds and
  * {@code filepositions} of the video tags of the key frames) when it has one whose positions point at key frame
@@ -267,6 +267,16 @@ public final class FlvDemuxer implements Demuxer {
      * The packets of the last tag not yet returned.
      */
     private final ArrayDeque<Packet> pending = new ArrayDeque<>();
+
+    /**
+     * The header of the tag being read.
+     */
+    private final TagHeader tag = new TagHeader();
+
+    /**
+     * The body of the tag being read, reused from tag to tag: its units are copied into the packets.
+     */
+    private byte[] tagBody = new byte[0];
 
     /**
      * The filter trimming the packets after a seek, or {@code null}.
@@ -487,14 +497,13 @@ public final class FlvDemuxer implements Demuxer {
             var timestamp = reader.u24be() | (reader.u8() << 24);
             reader.u24be();
             var type = first & 0x1F;
-            if (type != AUDIO && type != VIDEO && type != SCRIPT) {
-                if (!resync(position + 1)) {
+            if ((type != AUDIO && type != VIDEO && type != SCRIPT) || reader.remaining(size) < size) {
+                var next = resync(reader.source(), position + 1);
+                if (next < 0) {
                     return false;
                 }
+                reader.seek(next);
                 continue;
-            }
-            if (reader.remaining(size) < size) {
-                return false;
             }
             tag.position = position;
             tag.type = type;
@@ -506,22 +515,22 @@ public final class FlvDemuxer implements Demuxer {
     }
 
     /**
-     * Moves the reader to the next plausible tag header: an audio, video or script data tag whose back-pointer
-     * holds its size.
+     * Finds the next plausible tag header: an audio, video or script data tag whose back-pointer holds its size.
      *
      * <p>The candidate headers are read in order through one buffer and their back-pointers through a second,
      * small one, so that checking a candidate never discards the buffer of the scan.
      *
+     * @param source the input
      * @param from the first offset tried
-     * @return {@code true} when one was found within {@link #RESYNC_BYTES}
+     * @return the offset of the tag header, or {@code -1} when none was found within {@link #RESYNC_BYTES}
      */
-    private boolean resync(long from) {
-        var scan = new SourceReader(reader.source(), 64 * 1024);
-        var check = new SourceReader(reader.source(), 64);
+    private static long resync(MediaSource source, long from) {
+        var scan = new SourceReader(source, 64 * 1024);
+        var check = new SourceReader(source, 64);
         for (var position = from; position < from + RESYNC_BYTES; position++) {
             scan.seek(position);
             if (scan.remaining(TAG_HEADER) < TAG_HEADER) {
-                return false;
+                return -1;
             }
             var type = scan.u8() & 0xFF;
             if (type != AUDIO && type != VIDEO && type != SCRIPT) {
@@ -533,11 +542,10 @@ public final class FlvDemuxer implements Demuxer {
                 continue;
             }
             if (check.u32be() == size + TAG_HEADER) {
-                reader.seek(position);
-                return true;
+                return position;
             }
         }
-        return false;
+        return -1;
     }
 
     /**
@@ -1593,31 +1601,39 @@ public final class FlvDemuxer implements Demuxer {
     }
 
     /**
-     * Reads the next tag header of an index scan, ending at an implausible tag.
+     * Reads the next tag header of an index scan, looking for a plausible one after an implausible one as
+     * {@link #nextTag(TagHeader)} does.
      *
      * @param scan the reader of the scan
      * @param tag receives the header
      * @return {@code false} at the end of the scan
      */
     private static boolean nextTag(SourceReader scan, TagHeader tag) {
-        var position = scan.position();
-        if (scan.remaining(TAG_HEADER) < TAG_HEADER) {
-            return false;
+        while (true) {
+            var position = scan.position();
+            if (scan.remaining(TAG_HEADER) < TAG_HEADER) {
+                return false;
+            }
+            var first = scan.u8();
+            var size = scan.u24be();
+            var timestamp = scan.u24be() | (scan.u8() << 24);
+            scan.u24be();
+            var type = first & 0x1F;
+            if ((type != AUDIO && type != VIDEO && type != SCRIPT) || scan.remaining(size) < size) {
+                var next = resync(scan.source(), position + 1);
+                if (next < 0) {
+                    return false;
+                }
+                scan.seek(next);
+                continue;
+            }
+            tag.position = position;
+            tag.type = type;
+            tag.size = size;
+            tag.timestamp = timestamp;
+            tag.encrypted = (first & 0x20) != 0;
+            return true;
         }
-        var first = scan.u8();
-        var size = scan.u24be();
-        var timestamp = scan.u24be() | (scan.u8() << 24);
-        scan.u24be();
-        var type = first & 0x1F;
-        if ((type != AUDIO && type != VIDEO && type != SCRIPT) || scan.remaining(size) < size) {
-            return false;
-        }
-        tag.position = position;
-        tag.type = type;
-        tag.size = size;
-        tag.timestamp = timestamp;
-        tag.encrypted = (first & 0x20) != 0;
-        return true;
     }
 
     /**
@@ -1659,7 +1675,7 @@ public final class FlvDemuxer implements Demuxer {
      * @return the packet, or {@code null} at the end of the input
      */
     private Packet nextPacket() {
-        var tag = new TagHeader();
+        var tag = this.tag;
         while (pending.isEmpty()) {
             if (finished || !nextTag(tag)) {
                 finished = true;
@@ -1674,9 +1690,14 @@ public final class FlvDemuxer implements Demuxer {
             if (tag.encrypted) {
                 throw new MediaException.Unsupported("flv encryption", "encrypted FLV tags cannot be read");
             }
-            var payload = payload(tag);
+            LimitChecks.checkAllocation(limits, tag.size);
+            if (tagBody.length < tag.size) {
+                tagBody = new byte[tag.size];
+            }
+            reader.readFully(tagBody, 0, tag.size);
+            reader.skip(Math.min(4, reader.remaining(4)));
             ForwardOnlySource.release(reader.source(), reader.position());
-            parse(tag.type, tag.timestamp, payload, 0, payload.length, true);
+            parse(tag.type, tag.timestamp, tagBody, 0, tag.size, true);
             for (var unit : units) {
                 var stream = byKey.get(unit.key);
                 if (stream == null || stream.codec != unit.codec) {
