@@ -30,6 +30,7 @@ final class RiffCodecs {
                     Codec.MJPEG;
             case "MJ2C", "MJP2", "LJ2C", "LJ2K", "IPJ2", "AVJ2" -> Codec.JPEG2000;
             case "H263", "S263", "U263", "X263", "M263", "L263", "VX1K", "ZYGO", "VIV1", "T263", "LSVX" -> Codec.H263;
+            case "FLV1" -> Codec.FLV1;
             case "VP80" -> Codec.VP8;
             case "VP90" -> Codec.VP9;
             case "AV01" -> Codec.AV1;
@@ -58,6 +59,7 @@ final class RiffCodecs {
             case H264 -> "H264";
             case HEVC -> "HEVC";
             case H263 -> "H263";
+            case FLV1 -> "FLV1";
             case VP8 -> "VP80";
             case VP9 -> "VP90";
             case FFV1 -> "FFV1";

@@ -14,7 +14,8 @@ import java.util.function.Consumer;
 
 /**
  * Decodes an ITU-T H.263 video track: the {@code s263} streams of 3GP and MP4 files and the
- * H.263 streams of Matroska and AVI files.
+ * H.263 streams of Matroska and AVI files; and a Sorenson Spark ({@link Codec#FLV1}) track, the Sorenson H.263 of
+ * Flash Video.
  *
  * <p>The decoder implements the baseline syntax and every optional coding mode of ITU-T H.263
  * (2005): the extended picture type with custom picture formats and clock frequencies, Continuous
@@ -44,6 +45,15 @@ import java.util.function.Consumer;
  * the temporal references, since a packet carries both pictures of a PB-frame and the pictures of
  * the layers of an instant share a temporal reference. A frame is a keyframe when it is an I- or
  * EI-picture.
+ *
+ * <p>A Sorenson Spark packet is one picture: its picture header (version 0 or 1, a standard or custom size,
+ * an I-, P- or disposable P-picture type) is followed by baseline macroblocks without groups of blocks, whose
+ * motion vectors keep the baseline range and may point outside the picture, with four vectors per macroblock
+ * allowed and predicted without overlapped block motion compensation, and, in version 1, coefficient escapes of
+ * 7 or 11-bit levels. A disposable P-picture is handed out at once and never predicted from. The deblocking flag of
+ * the header only suggests a post filter, which the decoder does not apply, so the output is the reconstruction the
+ * encoder predicts from. Corrupt macroblock data conceals the rest of the picture. Frames are keyframes when they
+ * are I-pictures and carry the timestamps of their packets.
  *
  * <p>Of the pictures of the layers of a scalable stream that share an instant, the frame is the
  * picture of the highest layer decoded. Once a stream has shown an enhancement layer or a second
@@ -83,7 +93,7 @@ public final class H263Decoder implements VideoDecoder {
      * Constructs a decoder for a track under {@link VideoDecoderOptions#defaults()}.
      *
      * @param track the track to decode
-     * @throws IllegalArgumentException if the track is not an H.263 track
+     * @throws IllegalArgumentException if the track is not an H.263 or Sorenson Spark track
      * @throws MediaException.Malformed if the track's configuration is corrupt
      * @throws MediaException.Unsupported if the configuration uses a coding tool the decoder lacks
      */
@@ -101,15 +111,15 @@ public final class H263Decoder implements VideoDecoder {
      *
      * @param track the track to decode
      * @param options the decoder settings
-     * @throws IllegalArgumentException if the track is not an H.263 track
+     * @throws IllegalArgumentException if the track is not an H.263 or Sorenson Spark track
      * @throws MediaException.Malformed if the track's configuration is corrupt
      * @throws MediaException.Unsupported if the configuration uses a coding tool the decoder lacks
      */
     public H263Decoder(VideoTrack track, VideoDecoderOptions options) {
         Objects.requireNonNull(track, "track");
         this.options = Objects.requireNonNull(options, "options");
-        if (track.codec() != Codec.H263) {
-            throw new IllegalArgumentException(track.codec() + " is not an H.263 track");
+        if (track.codec() != Codec.H263 && track.codec() != Codec.FLV1) {
+            throw new IllegalArgumentException(track.codec() + " is not an H.263 or Sorenson Spark track");
         }
         this.core = new DecoderCore(track, options.limits(), options.threads(), true, false);
     }

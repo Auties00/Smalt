@@ -16,6 +16,8 @@ import com.github.auties00.smalt.container.au.AuMuxer;
 import com.github.auties00.smalt.container.amr.AmrDemuxer;
 import com.github.auties00.smalt.container.avi.AviDemuxer;
 import com.github.auties00.smalt.container.avi.AviMuxer;
+import com.github.auties00.smalt.container.flv.FlvDemuxer;
+import com.github.auties00.smalt.container.flv.FlvMuxer;
 import com.github.auties00.smalt.container.caf.CafDemuxer;
 import com.github.auties00.smalt.container.caf.CafMuxer;
 import com.github.auties00.smalt.container.dash.DashDemuxer;
@@ -108,7 +110,7 @@ import java.util.function.Predicate;
  *
  * <p>Recognition never trusts a file name or a declared mimetype: it inspects the leading bytes,
  * skipping an ID3v2 tag first because MP3, AAC, AC-3, AMR and FLAC files often start with one. Formats with a
- * magic number (MP4 family, Matroska, Ogg, RIFF WAVE, Sony Wave64, RIFF AVI, AIFF, CAF, Sun AU, ADIF, FLAC, AMR,
+ * magic number (MP4 family, Matroska, Ogg, RIFF WAVE, Sony Wave64, RIFF AVI, FLV, AIFF, CAF, Sun AU, ADIF, FLAC, AMR,
  * WavPack, MXF, YUV4MPEG2, the {@code "PG"} segments of a {@code .sup} file, the signature line of a VobSub index)
  * are recognized exactly, a VobSub {@code .sub} file by a pack header followed by a subpicture PES packet, other
  * MPEG program streams by their first pack header, MPEG transport streams by
@@ -131,7 +133,8 @@ import java.util.function.Predicate;
  * fast-start {@link Mp4Muxer}, a Matroska (not WebM) {@link MatroskaMuxer}, an {@link OggMuxer}, and the
  * {@link WavMuxer}, {@link Wave64Muxer}, {@link AiffMuxer}, {@link CafMuxer}, {@link AuMuxer}, {@link AdtsMuxer},
  * {@link LoasMuxer}, {@link AdifMuxer}, {@link IvfMuxer}, {@link TsMuxer}, {@link PsMuxer}, {@link MxfMuxer},
- * {@link AviMuxer} and {@link Y4mMuxer}; MPEG audio, FLAC, AMR, AC-3, H.264, HEVC, AV1 (low-overhead and Annex B),
+ * {@link AviMuxer}, {@link FlvMuxer} and {@link Y4mMuxer}; MPEG audio, FLAC, AMR, AC-3, H.264, HEVC, AV1 (low-overhead
+ * and Annex B),
  * MPEG-4 Part 2, H.263 and PCM files are the elementary streams a {@link RawMuxer} writes.
  * {@link #openMuxer(OutputContainer, MediaSink)} also writes WebM, M4A, QuickTime and fragmented MP4
  * ({@link FragmentedMp4Muxer}). A caller that needs other options (RF64 policies, fragment durations)
@@ -456,6 +459,7 @@ public final class Containers {
                 yield new VobSubDemuxer(source, options);
             }
             case AVI -> new AviDemuxer(source, options);
+            case FLV -> new FlvDemuxer(source, options);
             case HLS -> new HlsDemuxer(source, options);
             case DASH -> new DashDemuxer(source, options);
             case H264, HEVC -> new AnnexBDemuxer(source, ElementaryStreamOptions.of(options));
@@ -524,6 +528,7 @@ public final class Containers {
             case SUP -> SupMuxer.supports(codec);
             case VOBSUB, HLS, DASH -> false;
             case AVI -> AviMuxer.supports(codec);
+            case FLV -> FlvMuxer.supports(codec);
             case Y4M -> Y4mMuxer.supports(codec);
             case OTHER -> false;
             default -> {
@@ -621,6 +626,7 @@ public final class Containers {
             case HLS, DASH -> throw new IllegalArgumentException("an " + format + " presentation is many files: use "
                     + "Packager");
             case AVI -> new AviMuxer(output);
+            case FLV -> new FlvMuxer(output);
             case Y4M -> new Y4mMuxer(output);
             case OTHER -> throw new IllegalArgumentException("OTHER names no single container: name the container");
             default -> openProvided(format, format.shortName(), output);
@@ -825,6 +831,9 @@ public final class Containers {
         }
         if (IvfDemuxer.matches(header)) {
             return ContainerFormat.IVF;
+        }
+        if (FlvDemuxer.matches(header)) {
+            return ContainerFormat.FLV;
         }
         if (SupDemuxer.matches(header)) {
             return ContainerFormat.SUP;

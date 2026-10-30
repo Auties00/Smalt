@@ -30,7 +30,8 @@ class VideoDecoderBehaviorTest {
     private static final Path AVIF_SAMPLES = Path.of("src", "test", "resources", "samples");
 
     @ParameterizedTest(name = "{0}")
-    @ValueSource(strings = {"matroska/vp9-vorbis.webm", "matroska/vp9-alpha.webm", "ivf/av1.ivf", "mp4/prores.mov", "mp4/dnxhr.mov",
+    @ValueSource(strings = {"flv/vp9.flv", "flv/av1.flv", "matroska/vp9-vorbis.webm", "matroska/vp9-alpha.webm",
+            "ivf/av1.ivf", "mp4/prores.mov", "mp4/dnxhr.mov",
             "matroska/ffv1.mkv", "avi/ffv1.avi", "ogg/theora.ogv"})
     @DisplayName("video samples: identical frames under every source behavior and clean faults")
     void sample(String sample) throws IOException {

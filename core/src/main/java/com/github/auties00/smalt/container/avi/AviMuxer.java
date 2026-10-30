@@ -36,7 +36,8 @@ import java.util.Objects;
  * Writes AVI files with the OpenDML 1.02 extensions.
  *
  * <p>Video tracks of Motion-JPEG, Motion JPEG 2000, MPEG-1 and MPEG-2 video ({@code mpg1}, {@code mpg2}), MPEG-4
- * Part 2, H.264, HEVC, H.263, VP8, VP9 and FFV1, and audio tracks of PCM (8-bit unsigned, 16, 24, 32 and 64-bit signed
+ * Part 2, H.264, HEVC, H.263, Sorenson Spark ({@code FLV1}), VP8, VP9 and FFV1, and audio tracks of PCM (8-bit
+ * unsigned, 16, 24, 32 and 64-bit signed
  * and 32 and 64-bit float little-endian, A-law, mu-law), MP3, MP2, AAC, AC-3, IMA ADPCM, Microsoft ADPCM, GSM 06.10
  * in Microsoft's packing, G.722 and G.726 are accepted, at most 99 tracks in all. Video is stored at a constant
  * frame rate, the track's frame rate (or the inverse of its time base when that is a plausible frame period, 25

@@ -99,6 +99,11 @@ public enum ContainerFormat {
     AVI,
 
     /**
+     * Flash Video ({@code .flv}), magic {@code FLV}, with the Enhanced RTMP extensions (FourCC codecs, multitrack).
+     */
+    FLV,
+
+    /**
      * MPEG-2 transport stream (TS, M2TS, MTS).
      */
     MPEG_TS,

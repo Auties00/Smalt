@@ -42,7 +42,7 @@ class MpegDecoderBehaviorTest {
             "mp4/h264-444.mp4", "ts/h264-aac.ts", "avi/mpeg4-mp3.avi", "mp4/h263-amr.3gp", "mp4/quicktime.mov",
             "mp4/dolby-vision-p84.mp4", "matroska/dolby-vision-p84.mkv", "ts/dolby-vision-p84.ts", "ts/mpeg2.ts",
             "mp4/mpeg2.mp4", "matroska/mpeg1.mkv", "avi/mpeg2-422.avi", "ts/vc1.ts", "mp4/vc1.mp4", "avi/wmv3.avi",
-            "matroska/wmv3.mkv"})
+            "matroska/wmv3.mkv", "flv/flv1-mp3.flv", "flv/h264-aac.flv", "flv/hevc.flv"})
     @DisplayName("video samples: identical frames under every source behavior and clean faults")
     void video(String sample) throws IOException {
         ReaderAsserts.video(sample, Files.readAllBytes(SAMPLES.resolve(sample))).run();
@@ -68,7 +68,7 @@ class MpegDecoderBehaviorTest {
     @ValueSource(strings = {"mp4/moov-last.mp4", "adts/aac.aac", "ts/h264-ac3.m2ts", "ac3/ac3.ac3", "ac3/eac3.eac3",
             "amr/nb.amr", "amr/wb.awb", "amr/nb-stereo.amr", "amr/wb-3ch.awb", "mp4/h263-amr.3gp", "wav/loas.wav",
             "wav/aac-raw.wav", "wav/ac3.wav", "wav/iec61937-ac3.wav", "wav/iec61937-aac.wav", "wav/amr.wav",
-            "dts/dts.dts", "ts/h264-dts.m2ts", "wav/dts.wav"})
+            "dts/dts.dts", "ts/h264-dts.m2ts", "wav/dts.wav", "flv/h264-aac.flv"})
     @DisplayName("audio samples: identical samples under every source behavior and clean faults")
     void audio(String sample) throws IOException {
         ReaderAsserts.audio(sample, Files.readAllBytes(SAMPLES.resolve(sample))).run();

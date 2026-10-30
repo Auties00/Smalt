@@ -89,6 +89,9 @@ class FuzzSeedWriter {
         seed("h263", "valid-sqcif.bin", Codec.H263, ffmpeg("3gp", video(128, 96, 3), "-c:v", "h263", "-q:v", "20"));
         seed("h263", "valid-plus-annexes.bin", Codec.H263, ffmpeg("avi", video(176, 144, 2), "-c:v", "h263p",
                 "-q:v", "20", "-flags", "+aic+loop", "-umv", "1", "-aiv", "1"));
+        seed("flv1", "valid-qcif.bin", Codec.FLV1, ffmpeg("flv", video(176, 144, 3), "-c:v", "flv1", "-q:v", "20"));
+        seed("flv1", "valid-custom-mv4.bin", Codec.FLV1, ffmpeg("flv", video(40, 24, 4), "-c:v", "flv1", "-q:v",
+                "2", "-flags", "+mv4"));
         // MPEG-1 and MPEG-2 have no 10 Hz frame rate
         var mpegVideo = List.of("-f", "lavfi", "-i", "testsrc2=size=32x32:rate=25:duration=0.24");
         seed("mpeg1Video", "valid-bframes-mkv.bin", Codec.MPEG1_VIDEO, ffmpeg("mkv", mpegVideo, "-c:v", "mpeg1video",

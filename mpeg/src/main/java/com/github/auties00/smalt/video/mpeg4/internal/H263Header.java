@@ -20,6 +20,9 @@ import com.github.auties00.smalt.video.h263.internal.H263PlusStream;
  * {@link com.github.auties00.smalt.video.h263.internal.H263PlusStream} before this parser sees
  * them (see {@link #state()}), so only a short video header reaches these errors.
  *
+ * <p>{@link #parseSorenson} reads the Sorenson H.263 picture header of Flash Video instead, after which the
+ * macroblock layer has no groups of blocks and, in version 1, other coefficient escapes.
+ *
  * <p>The mode states persist from picture to picture as the inference rules of 5.1.4.5 require.
  * An instance belongs to one decoder and is not thread-safe.
  */
@@ -89,6 +92,16 @@ public final class H263Header {
      * Whether the Modified Quantization mode is on.
      */
     public boolean modifiedQuantization;
+
+    /**
+     * The Sorenson H.263 version of the last header, 0 or 1, or {@code -1} for an ITU-T H.263 header.
+     */
+    public int sorensonVersion = -1;
+
+    /**
+     * Whether the last header is a Sorenson H.263 disposable inter picture, which no later picture predicts from.
+     */
+    public boolean disposable;
 
     /**
      * The picture coding type of the last header.
@@ -200,6 +213,8 @@ public final class H263Header {
             return null;
         }
         reader.skip(22);
+        sorensonVersion = -1;
+        disposable = false;
         var reference = reader.read(8);
         if (reader.readBit() != 1 || reader.readBit() != 0) {
             throw new MediaException.Malformed("invalid H.263 PTYPE");
@@ -416,6 +431,135 @@ public final class H263Header {
         layer.parWidth = parWidth;
         layer.parHeight = parHeight;
         return layer;
+    }
+
+    /**
+     * Parses a Sorenson H.263 picture header (the {@code H263VIDEOPACKET} of the SWF specification): the 17-bit
+     * picture start code, the version, the temporal reference, the picture size (a standard size or a custom one of
+     * 8 or 16-bit dimensions), the picture type, the deblocking flag, the quantizer and the extra information.
+     *
+     * <p>The picture uses the baseline macroblock syntax without groups of blocks, with vectors that may point
+     * outside the picture and, in version 1, the escape coding of 7 and 11-bit levels. The deblocking flag only
+     * suggests a post filter, which is not applied. Pixels are square.
+     *
+     * @param reader the reader, positioned at the picture start code
+     * @param previous the active layer, or {@code null}
+     * @param limits the limits bounding the picture size
+     * @return the layer of the picture: {@code previous} when its size is unchanged, a new layer otherwise
+     * @throws MediaException.Malformed if the header is corrupt or truncated
+     * @throws MediaException.Unsupported if the header has a version other than 0 and 1
+     * @throws MediaException.LimitExceeded if the picture exceeds the limits
+     */
+    public VideoObjectLayer parseSorenson(BitReader reader, VideoObjectLayer previous, MediaLimits limits) {
+        if (reader.peek(17) != 1) {
+            throw new MediaException.Malformed("missing Sorenson H.263 picture start code");
+        }
+        reader.skip(17);
+        var version = reader.read(5);
+        if (version > 1) {
+            throw new MediaException.Unsupported("sorenson h263 version " + version,
+                    "Sorenson H.263 versions 0 and 1 are decoded");
+        }
+        var reference = reader.read(8);
+        int width;
+        int height;
+        switch (reader.read(3)) {
+            case 0 -> {
+                width = reader.read(8);
+                height = reader.read(8);
+            }
+            case 1 -> {
+                width = reader.read(16);
+                height = reader.read(16);
+            }
+            case 2 -> {
+                width = 352;
+                height = 288;
+            }
+            case 3 -> {
+                width = 176;
+                height = 144;
+            }
+            case 4 -> {
+                width = 128;
+                height = 96;
+            }
+            case 5 -> {
+                width = 320;
+                height = 240;
+            }
+            case 6 -> {
+                width = 160;
+                height = 120;
+            }
+            default -> throw new MediaException.Malformed("reserved Sorenson H.263 picture size");
+        }
+        var type = reader.read(2);
+        if (type == 3) {
+            throw new MediaException.Malformed("reserved Sorenson H.263 picture type");
+        }
+        reader.skip(1);
+        quant = reader.read(5);
+        if (quant == 0) {
+            throw new MediaException.Malformed("Sorenson H.263 quantizer is zero");
+        }
+        var guard = 0;
+        while (reader.readBit() == 1) {
+            reader.skip(8);
+            if (++guard > 4096 || reader.overrun()) {
+                throw new MediaException.Malformed("runaway Sorenson H.263 extra information");
+            }
+        }
+        if (width == 0 || height == 0) {
+            throw new MediaException.Malformed("Sorenson H.263 picture of size " + width + "x" + height);
+        }
+        if (reader.overrun()) {
+            throw new MediaException.Malformed("truncated Sorenson H.263 picture header");
+        }
+        sorensonVersion = version;
+        disposable = type == 2;
+        codingType = type == 0 ? Vop.I : Vop.P;
+        extended = false;
+        unrestrictedVectors = false;
+        advancedPrediction = false;
+        advancedIntra = false;
+        deblocking = false;
+        slices = false;
+        alternativeInterVlc = false;
+        modifiedQuantization = false;
+        customClock = false;
+        periodTicks = 60060;
+        rounding = 0;
+        parWidth = 1;
+        parHeight = 1;
+        dataPosition = reader.position();
+        if (lastReference < 0) {
+            clockPeriods = 0;
+        } else {
+            var delta = (reference - lastReference) & 255;
+            clockPeriods += delta == 0 ? 1 : delta;
+        }
+        lastReference = reference;
+        if (previous != null && previous.width == width && previous.height == height && previous.shortVideoHeader
+                && previous.parWidth == 1 && previous.parHeight == 1) {
+            return previous;
+        }
+        LimitChecks.checkPicture(limits, width, height);
+        var layer = VideoObjectLayer.shortHeader(width, height);
+        layer.timeResolution = 1800000;
+        layer.fixedTimeIncrement = periodTicks;
+        layer.parWidth = 1;
+        layer.parHeight = 1;
+        return layer;
+    }
+
+    /**
+     * Returns whether the last header is a Sorenson H.263 header.
+     *
+     * @return {@code true} after {@link #parseSorenson}
+     */
+    public boolean sorenson() {
+        return sorensonVersion >= 0;
     }
 
     /**

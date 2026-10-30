@@ -8,6 +8,7 @@ import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.internal.codec.ConsumerFailure;
 import com.github.auties00.smalt.internal.plane.Planes;
 import com.github.auties00.smalt.internal.task.ParallelBands;
+import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
@@ -66,13 +67,14 @@ public final class DecoderCore {
      * @param limits the resource bounds checked against every picture size
      * @param threads the thread count of the options: 0 for the shared pool, 1 for the calling
      * thread, or the most threads to use
-     * @param h263 whether the track is H.263
+     * @param h263 whether the track is H.263, or Sorenson H.263 when its codec is {@link Codec#FLV1}
      * @param highBitDepth whether pictures of more than 8 bits keep their depth
      * @throws MediaException.Malformed if the track's configuration is corrupt
      * @throws MediaException.Unsupported if the configuration uses a tool the decoder lacks
      */
     public DecoderCore(VideoTrack track, MediaLimits limits, int threads, boolean h263, boolean highBitDepth) {
-        this.name = h263 ? "H.263" : "MPEG-4";
+        var sorenson = h263 && track.codec() == Codec.FLV1;
+        this.name = sorenson ? "Sorenson H.263" : h263 ? "H.263" : "MPEG-4";
         var timeBase = track.timeBase();
         var frameDuration = track.frameRate()
                 .map(rate -> Math.max(0, rate.invert().rescale(1, timeBase)))
@@ -89,7 +91,7 @@ public final class DecoderCore {
                 DecoderCore.this.emitPicture(picture, pts, duration, keyframe, sideData);
             }
         };
-        this.engine = new Mpeg4DecoderEngine(limits, h263, threads == 0 ? ParallelBands.THREADS : threads,
+        this.engine = new Mpeg4DecoderEngine(limits, h263, sorenson, threads == 0 ? ParallelBands.THREADS : threads,
                 threads > 1, frameDuration, (ticks, resolution) -> rescale(ticks, resolution, timeBase),
                 track.width(), track.height(), highBitDepth, sink);
         var config = track.codecConfig().orElse(null);

@@ -64,6 +64,7 @@ class DeepNestingTest {
                 new Input("MP4 user data boxes nested " + DEPTH + " deep", () -> mp4("udta", false)),
                 new Input("MP4 metadata boxes nested " + DEPTH + " deep", () -> mp4("meta", true)),
                 new Input("AVI lists nested " + DEPTH + " deep", DeepNestingTest::avi),
+                new Input("FLV onMetaData objects nested " + DEPTH + " deep", DeepNestingTest::flv),
                 new Input("MP3 whose ID3 tables of contents nest 2000 deep", () -> id3Chain(2000)),
                 new Input("TTML spans nested " + DEPTH + " deep", () -> ttml(DEPTH)),
                 new Input("DASH manifest elements nested " + DEPTH + " deep", () -> mpd(DEPTH)));
@@ -366,6 +367,38 @@ class DeepNestingTest {
             }
         }
         return data;
+    }
+
+    /** Returns an FLV file whose onMetaData nests objects {@link #DEPTH} deep, then holds one PCM audio tag. */
+    static byte[] flv() {
+        var script = new ByteArrayOutputStream();
+        script.writeBytes(new byte[]{2, 0, 10});
+        script.writeBytes("onMetaData".getBytes(StandardCharsets.US_ASCII));
+        script.writeBytes(new byte[]{8, 0, 0, 0, 1});
+        for (var level = 0; level < DEPTH; level++) {
+            script.writeBytes(new byte[]{0, 1, 'a', 3});
+        }
+        for (var level = 0; level <= DEPTH; level++) {
+            script.writeBytes(new byte[]{0, 0, 9});
+        }
+        var out = new ByteArrayOutputStream();
+        out.writeBytes(new byte[]{'F', 'L', 'V', 1, 4, 0, 0, 0, 9, 0, 0, 0, 0});
+        tag(out, 18, script.toByteArray());
+        tag(out, 8, new byte[]{0x3E, 1, 2, 3, 4});
+        return out.toByteArray();
+    }
+
+    private static void tag(ByteArrayOutputStream out, int type, byte[] body) {
+        var header = new byte[11];
+        header[0] = (byte) type;
+        header[1] = (byte) (body.length >>> 16);
+        header[2] = (byte) (body.length >>> 8);
+        header[3] = (byte) body.length;
+        out.writeBytes(header);
+        out.writeBytes(body);
+        var size = new byte[4];
+        be32(size, 0, body.length + 11);
+        out.writeBytes(size);
     }
 
     static byte[] avi() {

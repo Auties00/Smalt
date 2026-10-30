@@ -218,6 +218,15 @@ class FuzzSeedWriter {
         copy(DemuxerFuzzTest.class, "ivf", "valid-av1.ivf", ffmpeg("ivf", video(32, 32, 2), "-c:v", "libaom-av1",
                 "-cpu-used", "8", "-b:v", "50k"));
 
+        // the FLV behavior samples of tools/testdata/behavior/make-flv-samples.py: AV1 and HEVC of ffmpeg's enhanced
+        // headers, and the hand-built Opus and FLAC multitrack file cut after its first 24 frames (at a tag
+        // boundary), within the frame limit of the fuzz targets
+        for (var name : new String[]{"av1", "hevc"}) {
+            copy(DemuxerFuzzTest.class, "flv", "valid-" + name + ".flv", audioSamples.resolve("flv/" + name + ".flv"));
+        }
+        write(DemuxerFuzzTest.class, "flv", "valid-opus-flac-multitrack.flv",
+                Arrays.copyOf(Files.readAllBytes(audioSamples.resolve("flv/opus-flac-multitrack.flv")), 4497));
+
         copy(DemuxerFuzzTest.class, "avi", "valid-mjpeg-pcm.avi", ffmpeg("avi", args(video(32, 32, 2),
                 tone(8000, 0.2)), "-c:v", "mjpeg", "-q:v", "20", "-c:a", "pcm_u8"));
         copy(DemuxerFuzzTest.class, "avi", "valid-mpeg4-mp3.avi", ffmpeg("avi", args(video(32, 32, 2),

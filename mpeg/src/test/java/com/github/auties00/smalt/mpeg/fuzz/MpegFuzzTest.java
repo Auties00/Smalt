@@ -223,6 +223,11 @@ class MpegFuzzTest {
     }
 
     @FuzzTest
+    void flv1(byte[] data) {
+        FuzzMedia.video(Codec.FLV1, data);
+    }
+
+    @FuzzTest
     void aac(byte[] data) {
         FuzzMedia.audio(Codec.AAC, data);
     }

@@ -27,6 +27,7 @@ import java.util.regex.Pattern;
  *   <li>MPEG-2 transport streams: {@link TsValidator} and TSDuck's {@code tsp -P analyze};</li>
  *   <li>MPEG program streams and MPEG-1 system streams: {@link PsValidator};</li>
  *   <li>MXF: {@link MxfValidator};</li>
+ *   <li>Flash Video: {@link FlvValidator};</li>
  *   <li>HLS: {@link HlsValidator}, which validates every segment with the validators above;</li>
  *   <li>MPEG-DASH: {@link DashValidator}, likewise, with the MPD schema of ISO/IEC 23009-1.</li>
  * </ul>
@@ -51,6 +52,8 @@ public final class Validators {
         PROGRAM_STREAM,
         /** An MXF file. */
         MXF,
+        /** A Flash Video file. */
+        FLV,
         /** An HLS playlist. */
         HLS,
         /** A DASH manifest. */
@@ -118,6 +121,9 @@ public final class Validators {
                 && data[11] == 0x01 && data[12] == 0x01 && data[13] == 0x02) {
             return Format.MXF;
         }
+        if (data.length >= 9 && data[0] == 'F' && data[1] == 'L' && data[2] == 'V') {
+            return Format.FLV;
+        }
         var head = new String(data, 0, Math.min(data.length, 512), StandardCharsets.ISO_8859_1);
         if (head.startsWith("#EXTM3U")) {
             return Format.HLS;
@@ -162,6 +168,7 @@ public final class Validators {
             case TRANSPORT_STREAM -> transportStream(file, data);
             case PROGRAM_STREAM -> programStream(file.toString(), data, false);
             case MXF -> assertValidMxf(file.toString(), data);
+            case FLV -> assertValidFlv(file.toString(), data);
             case HLS -> assertValidHls(file);
             case DASH -> assertValidDash(file);
             case OTHER -> {
@@ -225,6 +232,20 @@ public final class Validators {
         var findings = new Findings(name);
         var summary = MxfValidator.validate(data, findings);
         findings.assertNone("MxfValidator");
+        return summary;
+    }
+
+    /**
+     * Validates a Flash Video file.
+     *
+     * @param name the name of the file, for the failure message
+     * @param data the file
+     * @return what validation learned of the file
+     */
+    public static FlvValidator.Summary assertValidFlv(String name, byte[] data) {
+        var findings = new Findings(name);
+        var summary = FlvValidator.validate(data, findings);
+        findings.assertNone("FlvValidator");
         return summary;
     }
 

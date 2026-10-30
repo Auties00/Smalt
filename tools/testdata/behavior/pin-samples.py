@@ -53,6 +53,8 @@ def generator(root, relative):
         return "make-mxf-samples.sh"
     if relative in ("ts/vc1.ts", "mp4/vc1.mp4", "avi/wmv3.avi", "matroska/wmv3.mkv"):
         return "make-vc1-samples.sh"
+    if relative.startswith("flv/"):
+        return "make-flv-samples.py"
     if relative.split("/")[0] in ("caf", "w64", "au", "loas", "adif"):
         return "make-audio-container-samples.py"
     if relative.startswith("subtitle/") and relative not in ("subtitle/cues.srt", "subtitle/cues.vtt"):

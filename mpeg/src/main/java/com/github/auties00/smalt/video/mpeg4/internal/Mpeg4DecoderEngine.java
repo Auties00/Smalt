@@ -114,6 +114,11 @@ public final class Mpeg4DecoderEngine {
     private final boolean h263;
 
     /**
+     * Whether the stream is Sorenson H.263, one picture per packet.
+     */
+    private final boolean sorenson;
+
+    /**
      * The number of threads reconstruction may use.
      */
     private final int threads;
@@ -401,6 +406,7 @@ public final class Mpeg4DecoderEngine {
      *
      * @param limits the resource bounds checked against every picture size
      * @param h263 whether the stream is H.263
+     * @param sorenson whether the H.263 stream is Sorenson H.263, one picture per packet
      * @param threads the number of threads reconstruction may use, positive
      * @param frameThreads whether up to {@code threads} pictures are decoded concurrently on
      * the helper threads, handing pictures out up to that many pictures
@@ -413,7 +419,7 @@ public final class Mpeg4DecoderEngine {
      * @param highBitDepth whether pictures of more than 8 bits keep their depth
      * @param output the receiver of pictures
      */
-    public Mpeg4DecoderEngine(MediaLimits limits, boolean h263, int threads, boolean frameThreads,
+    public Mpeg4DecoderEngine(MediaLimits limits, boolean h263, boolean sorenson, int threads, boolean frameThreads,
                               long trackFrameDuration, TimeScale timeScale, int displayWidth, int displayHeight,
                               boolean highBitDepth, Output output) {
         this.limits = limits;
@@ -421,6 +427,7 @@ public final class Mpeg4DecoderEngine {
         this.displayWidth = displayWidth;
         this.displayHeight = displayHeight;
         this.h263 = h263;
+        this.sorenson = h263 && sorenson;
         this.threads = Math.max(1, threads);
         this.frameThreads = frameThreads && !h263 && this.threads > 1;
         this.trackFrameDuration = trackFrameDuration;
@@ -549,6 +556,15 @@ public final class Mpeg4DecoderEngine {
      */
     private void scan(byte[] data, long pts, boolean decode) {
         var length = data.length;
+        if (sorenson) {
+            if (decode) {
+                if (pts != Long.MIN_VALUE) {
+                    timestamps.add(pts);
+                }
+                decodeShortPicture(data, 0, length, pts, 0);
+            }
+            return;
+        }
         var vops = 0;
         var timestampAdded = false;
         var shortMode = h263 || (layer != null && layer.shortVideoHeader) || (layer == null && startsShort(data));
@@ -926,7 +942,7 @@ public final class Mpeg4DecoderEngine {
      * @param index the number of pictures of the packet decoded before
      */
     private void decodeShortPicture(byte[] data, int offset, int length, long pts, int index) {
-        if (plus == null && h263) {
+        if (plus == null && h263 && !sorenson) {
             reader.load(data, offset, length);
             if (H263PlusStream.required(reader, layer == null ? 0 : layer.width, layer == null ? 0 : layer.height)) {
                 startPlus(pts);
@@ -941,7 +957,14 @@ public final class Mpeg4DecoderEngine {
             return;
         }
         reader.load(data, offset, length);
-        var parsed = h263Header.parse(reader, h263, layer, limits);
+        VideoObjectLayer parsed;
+        try {
+            parsed = sorenson ? h263Header.parseSorenson(reader, layer, limits)
+                    : h263Header.parse(reader, h263, layer, limits);
+        } catch (MediaException exception) {
+            dropTimestamp(pts, index);
+            throw exception;
+        }
         if (parsed == null) {
             dropTimestamp(pts, index);
             return;
@@ -960,7 +983,40 @@ public final class Mpeg4DecoderEngine {
         parser.setH263(h263Header);
         layer.obmcDisable = !h263Header.advancedPrediction;
         var time = h263Header.time();
-        decodePicture(vop, time, pts, index);
+        if (h263Header.disposable) {
+            decodeDisposable(time, pts, index);
+        } else {
+            decodePicture(vop, time, pts, index);
+        }
+    }
+
+    /**
+     * Decodes a Sorenson H.263 disposable inter picture: predicted from the reference like a P-picture and handed
+     * out at once, after the reference when it is still held, without becoming a reference itself.
+     *
+     * @param time the picture time in ticks
+     * @param pts the packet timestamp
+     * @param index the number of pictures of the packet decoded before
+     */
+    private void decodeDisposable(long time, long pts, int index) {
+        if (future == null) {
+            dropTimestamp(pts, index);
+            return;
+        }
+        var frame = allocate();
+        frame.codingType = Vop.P;
+        frame.time = time;
+        frame.keyframe = false;
+        run(frame, future, null, 0, 0, 0, 0);
+        if (!futureShown) {
+            futureShown = true;
+            emit(future);
+        }
+        try {
+            emit(frame);
+        } finally {
+            pool.add(frame);
+        }
     }
 
     /**

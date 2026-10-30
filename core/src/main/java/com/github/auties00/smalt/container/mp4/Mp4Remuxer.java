@@ -30,8 +30,8 @@ import java.util.Objects;
 import java.util.function.Consumer;
 
 /**
- * Copies the tracks of an ISO base media, Matroska, MPEG transport stream, MPEG program stream, MXF, AVI or Ogg file
- * into a fast-start MP4, M4A or QuickTime movie without re-encoding.
+ * Copies the tracks of an ISO base media, Matroska, MPEG transport stream, MPEG program stream, MXF, AVI, FLV or Ogg
+ * file into a fast-start MP4, M4A or QuickTime movie without re-encoding.
  *
  * <p>{@link #remux} detects the input container by its magic, keeps the tracks {@link RemuxOptions}
  * selects (by default the first video track and the first audio track; several audio tracks and
@@ -53,7 +53,7 @@ import java.util.function.Consumer;
  * are. Timing is repaired where the input is inconsistent: decoding timestamps that step backwards
  * are held, video stored with presentation timestamps only (Matroska) gets decoding timestamps
  * derived from them, and audio whose stored timestamps use a time base other than its sampling
- * rate (Matroska, a millisecond by default; transport streams, 90 kHz; AVI) is retimed to exact
+ * rate (Matroska, a millisecond by default; FLV, a millisecond; transport streams, 90 kHz; AVI) is retimed to exact
  * sample counts read from the frames.
  *
  * <p>The tags, cover art, chapters and track tags of the input are carried over as
@@ -256,7 +256,7 @@ public final class Mp4Remuxer {
      * @param input the input, read from its start; not closed
      * @return {@link ContainerFormat#MP4}, {@link ContainerFormat#MATROSKA},
      * {@link ContainerFormat#MPEG_TS}, {@link ContainerFormat#MPEG_PS}, {@link ContainerFormat#MXF},
-     * {@link ContainerFormat#AVI} or
+     * {@link ContainerFormat#AVI}, {@link ContainerFormat#FLV} or
      * {@link ContainerFormat#OGG}
      * @throws MediaException.Unsupported if the input is none of those
      */
@@ -265,9 +265,9 @@ public final class Mp4Remuxer {
                 .filter(format -> format == ContainerFormat.MP4 || format == ContainerFormat.MATROSKA
                         || format == ContainerFormat.MPEG_TS || format == ContainerFormat.MPEG_PS
                         || format == ContainerFormat.MXF || format == ContainerFormat.AVI
-                        || format == ContainerFormat.OGG)
+                        || format == ContainerFormat.FLV || format == ContainerFormat.OGG)
                 .orElseThrow(() -> new MediaException.Unsupported("unknown container", "the input is not an ISO base"
-                        + " media, Matroska, MPEG transport stream, MPEG program stream, MXF, AVI or Ogg file"));
+                        + " media, Matroska, MPEG transport stream, MPEG program stream, MXF, AVI, FLV or Ogg file"));
     }
 
     /**
@@ -436,6 +436,7 @@ public final class Mp4Remuxer {
         }
         var rate = codec == Codec.OPUS ? 48000 : audio.sampleRate();
         var coarse = format == ContainerFormat.MATROSKA || format == ContainerFormat.AVI
+                || format == ContainerFormat.FLV
                 || !audio.timeBase().equals(Rational.timeBaseOf(rate));
         if (format != ContainerFormat.MP4 && rate > 0 && coarse) {
             var retimer = new AudioRetimer(audio, rate);

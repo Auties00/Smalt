@@ -61,6 +61,7 @@ container.avi	core
 container.caf	core
 container.dash	core
 container.flac	core
+container.flv	core
 container.hls	core
 container.internal	core
 container.ivf	core

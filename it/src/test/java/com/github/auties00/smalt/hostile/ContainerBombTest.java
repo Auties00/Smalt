@@ -169,7 +169,8 @@ class ContainerBombTest {
         return Stream.of(
                 new Input("MP4", () -> video(ContainerFormat.MP4)),
                 new Input("AVI", () -> video(ContainerFormat.AVI)),
-                new Input("IVF", () -> video(ContainerFormat.IVF)));
+                new Input("IVF", () -> video(ContainerFormat.IVF)),
+                new Input("FLV", () -> video(ContainerFormat.FLV)));
     }
 
     @Nested
@@ -186,7 +187,7 @@ class ContainerBombTest {
                     while (demuxer.read() != null) {
                         // drains
                     }
-                    // IVF indexes its frames on the first seek.
+                    // IVF and FLV index their frames on the first seek.
                     if (demuxer.isSeekable()) {
                         demuxer.seek(demuxer.durationMicros() / 2);
                     }

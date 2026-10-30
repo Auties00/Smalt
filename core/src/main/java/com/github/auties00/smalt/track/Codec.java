@@ -51,6 +51,16 @@ public enum Codec {
     H263(TrackKind.VIDEO, "h263"),
 
     /**
+     * Sorenson Spark, the Sorenson H.263 of Flash Video (FLV codec identifier 2, the video of SWF 6 and later).
+     *
+     * <p>A packet is one picture: a Sorenson picture header (a 17-bit start code, a version of 0 or 1, the picture
+     * size and type) followed by H.263 macroblocks without groups of blocks. Version 1 codes coefficient escapes
+     * with 7 or 11-bit levels. A disposable inter picture (picture type 2) is a P-picture no later picture
+     * predicts from. The codec carries no configuration.
+     */
+    FLV1(TrackKind.VIDEO, "flv1"),
+
+    /**
      * ISO/IEC 11172-2 MPEG-1 video, {@code stream_type 0x01} of MPEG transport streams and the Matroska
      * {@code V_MPEG1} codec.
      *

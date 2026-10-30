@@ -37,6 +37,12 @@ core/src/test/resources/samples/elementary/hevc.h265	18756	f173383521ea3912fbc79
 core/src/test/resources/samples/elementary/mpeg4.m4v	48722	fab0246b11352d4b08a0d7b6bba3af4197175065f1e8a13cee68ae0d47f1e0b9	make-samples.sh
 core/src/test/resources/samples/flac/cuesheet.flac	20925	2d20344714a889ebde9731b78362990881e8327df711c8cf5705e7c00fe126d8	make-descriptive-samples.py
 core/src/test/resources/samples/flac/flac.flac	41162	ce6a98f6c7c00d9c83f7937ff762b2397322ded955d980e2c26e02253c82db78	make-samples.sh
+core/src/test/resources/samples/flv/av1.flv	1712	ccd9009b96d8472cac9c08a1f84dbe12b175172d226b9295b5190562d7c55247	make-flv-samples.py
+core/src/test/resources/samples/flv/flv1-mp3.flv	72032	929153f35b12eb1f893c0957b9d703e2a7479c1a7ba1da9cdba364846a391cc6	make-flv-samples.py
+core/src/test/resources/samples/flv/h264-aac.flv	46315	f5e27e2f6e43bf0a9b6ff9fbfcae953835aedaeebd5d6cc2b66f935079dd4102	make-flv-samples.py
+core/src/test/resources/samples/flv/hevc.flv	18573	1a50d239f468732034a062d0817aea09ba290d845d6b959d189e6515e1dcac87	make-flv-samples.py
+core/src/test/resources/samples/flv/opus-flac-multitrack.flv	11459	568f8494e29765584d680f9e4fe07f01c3b3eff72185be8f9d9ef1b05437c5fa	make-flv-samples.py
+core/src/test/resources/samples/flv/vp9.flv	22421	2af6ac09d2f098f6c4595f881bef3e810ad037b630b95b9ee25c2a74aaf1b11d	make-flv-samples.py
 core/src/test/resources/samples/ivf/av1.ivf	15789	183cdc6db1fb06753f9e9b1c1e08d33c22a6d3e450c056fb8f2ed2cf8daa761c	make-samples.sh
 core/src/test/resources/samples/ivf/vp8.ivf	26473	ce9c8209c150f896f751f82167ae8131668b8c5037ff7424776f5284a5e8e32a	make-samples.sh
 core/src/test/resources/samples/loas/aac.loas	16521	cfc64ffe4968468c1cd09348f5a0059b006bf67da431dd14c16c236b8f7b4cb0	make-audio-container-samples.py

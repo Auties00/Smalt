@@ -161,6 +161,7 @@ final class MpegWorkloads {
                 file("h263-encode-baseline", () -> h263Encode("h263-encode-baseline", false)),
                 file("h263-encode-annexes", () -> h263Encode("h263-encode-annexes", true)),
                 file("h263-decode", MpegWorkloads::h263Decode),
+                file("flv1-decode", MpegWorkloads::sorensonDecode),
                 file("mpeg2-decode-t1", () -> mpegVideoDecode(1)),
                 file("mpeg2-decode-t2", () -> mpegVideoDecode(2)),
                 file("vc1-decode", MpegWorkloads::vc1Decode),
@@ -636,6 +637,77 @@ final class MpegWorkloads {
                     encoder.width(), encoder.height(), null), VideoDecoderOptions.defaults())));
         }
         return TrainingWorkload.of("h263-decode", () -> rounds.forEach(Runnable::run));
+    }
+
+    /**
+     * Returns a workload that decodes Sorenson Spark, which no encoder here writes: the baseline CIF pictures of the
+     * H.263 encoder, without group of blocks headers, with their picture headers rewritten as Sorenson H.263
+     * version 0 headers, whose macroblock layer is the baseline one.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload sorensonDecode() {
+        var encoder = new H263Encoder(CIF_WIDTH, CIF_HEIGHT, H263EncoderOptions.builder().timeBase(TIME_BASE)
+                .frameRate(new Rational(30, 1)).bitrate(BITRATE).keyframeInterval(12).threads(2).build());
+        var packets = new ArrayList<Packet>();
+        for (var packet : VideoStreams.encodeAll(encoder, SyntheticVideo.natural(CIF_WIDTH, CIF_HEIGHT,
+                VideoStreams.DECODED_FRAMES / 2))) {
+            packets.add(packet.withData(sorensonPicture(packet.data())));
+        }
+        var round = VideoStreams.decodeRound(packets, new H263Decoder(VideoStreams.track(Codec.FLV1, CIF_WIDTH,
+                CIF_HEIGHT, null), VideoDecoderOptions.defaults()));
+        return TrainingWorkload.of("flv1-decode", round);
+    }
+
+    /**
+     * Rewrites a baseline H.263 picture (a standard source format, no optional mode, no continuous presence
+     * multipoint) into a Sorenson H.263 version 0 picture of the same macroblocks.
+     *
+     * @param picture the H.263 picture, from its picture start code
+     * @return the Sorenson picture
+     */
+    static byte[] sorensonPicture(byte[] picture) {
+        var reference = bits(picture, 22, 8);
+        var format = bits(picture, 35, 3);
+        var inter = bits(picture, 38, 1);
+        var quant = bits(picture, 43, 5);
+        var position = 49;
+        while (bits(picture, position, 1) == 1) {
+            position += 9;
+        }
+        position++;
+        var size = format == 1 ? 4 : format == 2 ? 3 : 2;
+        var header = (1L << 25) | ((long) reference << 12) | ((long) size << 9) | ((long) inter << 7)
+                | ((long) quant << 1);
+        var total = 42 + (long) picture.length * 8 - position;
+        var out = new byte[(int) ((total + 7) >>> 3)];
+        for (var bit = 0; bit < 42; bit++) {
+            if ((header >>> (41 - bit) & 1) != 0) {
+                out[bit >>> 3] |= (byte) (0x80 >>> (bit & 7));
+            }
+        }
+        for (var bit = 42; bit < total; bit++) {
+            if (bits(picture, (int) (position + bit - 42), 1) != 0) {
+                out[bit >>> 3] |= (byte) (0x80 >>> (bit & 7));
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Reads bits of a byte array, most significant first.
+     *
+     * @param data the bytes
+     * @param position the bit position of the first bit
+     * @param count the number of bits, from 1 to 31
+     * @return the bits
+     */
+    private static int bits(byte[] data, int position, int count) {
+        var value = 0;
+        for (var bit = position; bit < position + count; bit++) {
+            value = value << 1 | ((data[bit >>> 3] >> (7 - (bit & 7))) & 1);
+        }
+        return value;
     }
 
     /**

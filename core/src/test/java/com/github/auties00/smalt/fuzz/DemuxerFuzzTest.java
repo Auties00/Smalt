@@ -118,6 +118,11 @@ class DemuxerFuzzTest {
     }
 
     @FuzzTest
+    void flv(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.FLV, data);
+    }
+
+    @FuzzTest
     void mpegTs(byte[] data) {
         FuzzMedia.demuxer(ContainerFormat.MPEG_TS, data);
     }

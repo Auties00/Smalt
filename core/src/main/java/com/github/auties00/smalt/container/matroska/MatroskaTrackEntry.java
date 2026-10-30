@@ -1077,6 +1077,7 @@ final class MatroskaTrackEntry {
             case "MJPG", "AVRN", "LJPG", "JPGL", "AVDJ", "DMB1" -> Codec.MJPEG;
             case "MJ2C", "MJP2", "LJ2C", "LJ2K", "IPJ2", "AVJ2" -> Codec.JPEG2000;
             case "H263", "S263" -> Codec.H263;
+            case "FLV1" -> Codec.FLV1;
             case "VP80" -> Codec.VP8;
             case "VP90" -> Codec.VP9;
             case "AV01" -> Codec.AV1;

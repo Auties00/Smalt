@@ -1995,6 +1995,10 @@ public final class VopParser {
             parseSlices();
             return;
         }
+        if (h263 != null && h263.sorenson()) {
+            parseSorensonMacroblocks();
+            return;
+        }
         var gobRows = H263Header.gobRows(layer.height);
         var gobSize = gobRows * mbWidth;
         var gobCount = (mbHeight + gobRows - 1) / gobRows;
@@ -2042,6 +2046,26 @@ public final class VopParser {
                     return;
                 }
             }
+        }
+    }
+
+    /**
+     * Parses the macroblocks of a Sorenson H.263 picture, which has no groups of blocks: corrupt data conceals the
+     * rest of the picture.
+     */
+    private void parseSorensonMacroblocks() {
+        startPacket(0);
+        var mb = 0;
+        try {
+            for (; mb < mbCount; mb++) {
+                parseShortMacroblock(mb);
+                if (reader.overrun()) {
+                    throw CORRUPT;
+                }
+            }
+        } catch (CorruptPacket corrupt) {
+            damaged = true;
+            lose(mb, mbCount);
         }
     }
 
@@ -2167,7 +2191,7 @@ public final class VopParser {
         var mbType = mcbpc >> 2;
         var cbpc = mcbpc & 3;
         var fourVectors = mbType == 2 || mbType == 5;
-        if (fourVectors && (modes == null || !(modes.advancedPrediction || modes.deblocking))) {
+        if (fourVectors && (modes == null || !(modes.advancedPrediction || modes.deblocking || modes.sorenson()))) {
             throw CORRUPT;
         }
         var intra = mbType == 3 || mbType == 4;
@@ -2495,7 +2519,9 @@ public final class VopParser {
 
     /**
      * Reads the coefficient events of an H.263 block into a raster-ordered level array, with the
-     * fixed-length escape of 5.4.2 and the extended escape of the Modified Quantization mode (T.4).
+     * fixed-length escape of 5.4.2, the extended escape of the Modified Quantization mode (T.4) and the
+     * escape of Sorenson H.263 version 1: after a format bit, the last flag, the run and a level of 7 bits
+     * (format 0) or 11 bits (format 1) in two's complement, whose most negative value is forbidden.
      *
      * @param levels receives the levels
      * @param start the scan index of the first coefficient
@@ -2505,6 +2531,7 @@ public final class VopParser {
      */
     private int readH263Events(int[] levels, int start, int[] scan, Vlc table) {
         var extendedEscape = h263 != null && h263.modifiedQuantization;
+        var sorensonEscape = h263 != null && h263.sorensonVersion == 1;
         var index = start;
         while (true) {
             var symbol = table.decode(reader);
@@ -2514,7 +2541,15 @@ public final class VopParser {
             int last;
             int run;
             int level;
-            if (symbol == Tables.ESCAPE) {
+            if (symbol == Tables.ESCAPE && sorensonEscape) {
+                var wide = reader.readBit() == 1;
+                last = reader.readBit();
+                run = reader.read(6);
+                level = wide ? reader.read(11) << 21 >> 21 : reader.read(7) << 25 >> 25;
+                if (level == 0 || level == (wide ? -1024 : -64)) {
+                    throw CORRUPT;
+                }
+            } else if (symbol == Tables.ESCAPE) {
                 last = reader.readBit();
                 run = reader.read(6);
                 level = reader.read(8) << 24 >> 24;

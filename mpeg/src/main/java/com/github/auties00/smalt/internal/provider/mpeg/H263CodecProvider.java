@@ -14,7 +14,7 @@ import com.github.auties00.smalt.video.h263.H263Encoder;
 import com.github.auties00.smalt.video.h263.H263EncoderOptions;
 
 /**
- * Provides {@link H263Decoder} to {@link VideoDecoders} for H.263 tracks and {@link H263Encoder} to
+ * Provides {@link H263Decoder} to {@link VideoDecoders} for H.263 and Sorenson Spark tracks and {@link H263Encoder} to
  * {@link VideoEncoders}.
  *
  * @implNote This implementation hands the codec-independent options to the decoder: the limits
@@ -41,7 +41,7 @@ public final class H263CodecProvider implements VideoCodecProvider {
 
     @Override
     public boolean decodes(Codec codec) {
-        return codec == Codec.H263;
+        return codec == Codec.H263 || codec == Codec.FLV1;
     }
 
     @Override
