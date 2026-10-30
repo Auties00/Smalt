@@ -2,8 +2,11 @@ package com.github.auties00.smalt.io;
 
 import com.github.auties00.smalt.MediaException;
 
+import java.net.URI;
 import java.nio.file.Path;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Predicate;
 
 /**
  * Supplies the files that the data references of a media file name, so that a demuxer or image decoder can read
@@ -22,7 +25,8 @@ import java.util.Optional;
  *
  * <p>Resolving a reference reads a file the media file chose, so a resolver for untrusted input should supply
  * only files the application means to expose: {@link #directory(Path)} supplies files of one directory and its
- * subdirectories only, and {@link #none()}, the default of the options that take a resolver, supplies nothing.
+ * subdirectories only, {@link #http(URI, HttpSourceOptions)} resources of one origin only, and {@link #none()}, the
+ * default of the options that take a resolver, supplies nothing.
  */
 @FunctionalInterface
 public interface DataReferenceResolver {
@@ -66,5 +70,46 @@ public interface DataReferenceResolver {
      */
     static DataReferenceResolver directory(Path directory) {
         return new DirectoryDataReferences(directory);
+    }
+
+    /**
+     * Returns a resolver that fetches the referenced resources over HTTP from the origin of {@code base}, usually
+     * the URI of the media file or playlist.
+     *
+     * <p>A {@link DataReference.Kind#URL URL} or {@link DataReference.Kind#URN URN} location resolves against
+     * {@code base} (RFC 3986 section 5), without its fragment, and the resource is opened as
+     * {@link MediaSource#of(URI, HttpSourceOptions)} opens it. It resolves only when the result is an
+     * {@code http} or {@code https} URI of the same origin as {@code base}, that is the same scheme, host and
+     * port (RFC 6454), so a media file cannot make the application fetch from another server; other references
+     * resolve to nothing. A resource the server fails to deliver fails with {@link MediaException.Io}. Resolvers
+     * with the same base and options are equal.
+     *
+     * @param base the absolute {@code http} or {@code https} URI relative locations resolve against
+     * @param options the options of the sources
+     * @return the resolver
+     * @throws IllegalArgumentException if {@code base} is not an absolute {@code http} or {@code https} URI with a
+     * host
+     */
+    static DataReferenceResolver http(URI base, HttpSourceOptions options) {
+        return new HttpDataReferences(base, options, null);
+    }
+
+    /**
+     * Returns a resolver that fetches the referenced resources over HTTP when a filter accepts them, such as the
+     * resources of a content delivery network serving the segments of a playlist.
+     *
+     * <p>The resolver behaves as {@link #http(URI, HttpSourceOptions)} describes, except that a resolved
+     * {@code http} or {@code https} URI is fetched when {@code filter} accepts it, whatever its origin. The filter
+     * may be called from several threads at once. Resolvers with the same base, options and filter are equal.
+     *
+     * @param base the absolute {@code http} or {@code https} URI relative locations resolve against
+     * @param options the options of the sources
+     * @param filter accepts the resolved URIs that may be fetched
+     * @return the resolver
+     * @throws IllegalArgumentException if {@code base} is not an absolute {@code http} or {@code https} URI with a
+     * host
+     */
+    static DataReferenceResolver http(URI base, HttpSourceOptions options, Predicate<? super URI> filter) {
+        return new HttpDataReferences(base, options, Objects.requireNonNull(filter, "filter"));
     }
 }

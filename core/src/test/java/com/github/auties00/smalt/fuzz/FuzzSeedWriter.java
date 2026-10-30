@@ -1079,4 +1079,33 @@ class FuzzSeedWriter {
             }
         }
     }
+
+    @Test
+    @DisplayName("scripted responses of the HTTP source target: ranges, a whole body, a retry, chunked, empty")
+    void httpSource() {
+        var body = filler(10_000);
+        write(HttpSourceFuzzTest.class, "responses", "valid-ranged.bin", HttpSourceFuzzTest.join(
+                HttpSourceFuzzTest.encode(206, "Content-Range: bytes 0-4095/10000\nETag: \"seed\"\n",
+                        Arrays.copyOfRange(body, 0, 4096)),
+                HttpSourceFuzzTest.encode(206, "Content-Range: bytes 4096-9999/10000\nETag: \"seed\"\n",
+                        Arrays.copyOfRange(body, 4096, 10_000))));
+        write(HttpSourceFuzzTest.class, "responses", "valid-whole.bin", HttpSourceFuzzTest.encode(200,
+                "Content-Length: 5000\n", filler(5000)));
+        write(HttpSourceFuzzTest.class, "responses", "valid-retry.bin", HttpSourceFuzzTest.join(
+                HttpSourceFuzzTest.encode(503, "Retry-After: 0\n", new byte[0]),
+                HttpSourceFuzzTest.encode(206, "Content-Range: bytes 0-99/100\n", filler(100))));
+        write(HttpSourceFuzzTest.class, "responses", "valid-chunked.bin", HttpSourceFuzzTest.encode(200, "",
+                filler(3000)));
+        write(HttpSourceFuzzTest.class, "responses", "empty.bin", HttpSourceFuzzTest.encode(416,
+                "Content-Range: bytes */0\n", new byte[0]));
+    }
+
+    /** Returns printable filler bytes: the letters a to z repeated. */
+    private static byte[] filler(int length) {
+        var bytes = new byte[length];
+        for (var index = 0; index < length; index++) {
+            bytes[index] = (byte) ('a' + index % 26);
+        }
+        return bytes;
+    }
 }

@@ -23,7 +23,8 @@
  * the decoders and encoders through the service-provider interfaces of the {@code spi} package,
  * so a module or class-path jar adds a codec by providing an implementation, and a container the
  * same way. Inputs are read
- * through {@code MediaSource} and outputs written through {@code MediaSink}. The {@code transcode}
+ * through {@code MediaSource}, from memory, files, streams or HTTP resources, and outputs written through
+ * {@code MediaSink}. The {@code transcode}
  * package converts files on top of them: remuxing, re-encoding, trimming, scaling and resampling;
  * the {@code container.packaging} package segments them into HLS and DASH presentations, which the
  * {@code container.hls} and {@code container.dash} demuxers read back.
@@ -50,6 +51,9 @@
 module com.github.auties00.smalt {
     // Vector API: optional, selected at runtime by internal.simd.Simd
     requires static jdk.incubator.vector;
+
+    // HTTP sources: MediaSource.of(URI) and HttpSourceOptions, which takes an HttpClient
+    requires transitive java.net.http;
 
     // Shared model: failures, limits, byte sources
     exports com.github.auties00.smalt;

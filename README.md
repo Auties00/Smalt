@@ -653,7 +653,7 @@ container below; each muxer that has the fields writes them from the track.
 | VobSub (`.idx` and `.sub`) | yes: `VobSubDemuxer(idx, sub, options)`, the MPEG program stream of subpicture units with one track per subpicture stream, and the index header (palette, size, time offset) and stream languages; a `.sub` alone decodes with a gray palette | the index entries | languages, canvas size | yes (`VobSubMuxer(idx, sub)`, one track) | `container.subtitle` | de facto format (DVD-Video subpictures) |
 | Raw elementary streams | yes: H.264 and HEVC Annex B (`AnnexBDemuxer`: access units split as ITU-T H.264 7.4.1.2.3 and H.265 7.4.2.4.4 define them, H.264 field pairs joined, `avcC`/`hvcC` built from the parameter sets, timestamps derived from the picture order counts, each picture timed at the rate of its own sequence parameter set (VUI, else HEVC VPS, else `ElementaryStreamOptions`) for the fields its `pic_struct` displays, decoding times from the decoder's reorder depth, the pictures `no_output_of_prior_pics_flag` discards left without a presentation time), AV1 low-overhead OBUs and Annex B (`ObuDemuxer`), MPEG-4 Part 2 (`.m4v`) and H.263 (`.263`) (`Mpeg4VideoDemuxer`: timestamps from the VOP times, group of VOP time codes and H.263 temporal references and picture clock), and headerless PCM in a sample format the caller gives (`PcmDemuxer`, `PcmDemuxerOptions`) | Annex B: the key frame at or before the target, resuming from the IDR or IRAP picture that starts its run (the first seek reads the stream once); AV1: key temporal units (one walk of the unit headers); MPEG-4 Part 2 and H.263: the intra picture at or before the target (the first seek reads the stream once); PCM: to the sample | picture size, frame rate, color and sample aspect ratio from the sequence headers | H.264 and HEVC Annex B, AV1 low-overhead or Annex B (`RawMuxerOptions.av1AnnexB`), MPEG-4 Part 2, H.263 and PCM through `RawMuxer` (`ContainerFormat.H264`, `HEVC`, `AV1`, `AV1_ANNEX_B`, `MPEG4_VIDEO`, `H263` and `PCM`, and the transcoder targets `OutputContainer.H264`, `HEVC` and `AV1`) | `container.raw` | spec (ITU-T H.264 and H.265 Annex B and clause 8.2.1 / 8.3.1, AV1 specification section 5 and Annex B) |
 | YUV4MPEG2 (`.y4m`) | yes: `C` colorspaces `420jpeg`, `420mpeg2`, `420paldv`, `422`, `444`, `411`, `444alpha`, `mono` and the 9 to 16-bit `420pN`, `422pN`, `444pN`, `monoN`; `F`, `A`, `I` and `XCOLORRANGE` parameters | to the frame | frame rate, sample aspect ratio, interlacing, range and chroma siting | yes (`Y4mMuxer`, transcoder target `OutputContainer.Y4M`) | `container.y4m` | YUV4MPEG2 description (mjpegtools) |
-| HLS (`.m3u8`) | yes: a master playlist with every media playlist it names, or one media playlist (`HlsDemuxer.open(Path)` for one on disk; otherwise the segments, initialization sections and keys opened through `DemuxerOptions.dataReferences`, such as an application's HTTP resolver, whose sources may stream without a known length): transport stream, fragmented MP4, WebVTT (cue times moved by each `X-TIMESTAMP-MAP`, repeated cues read once) and packed audio segments (timed by their ID3 `transportStreamTimestamp`), byte ranges, gaps, the `identity` key among several `KEYFORMAT`s, `AES-128` segments, CMAF `SAMPLE-AES` and `SAMPLE-AES-CTR` with the options' keys or the key URI's, I-frame playlists read alone; the tracks of all streams on one timeline | through the demuxer of each stream | a rendition's `LANGUAGE`, `NAME` (as the `title`), `DEFAULT`, `FORCED` and accessibility `CHARACTERISTICS` | presentations, through `Packager` | `container.hls` | RFC 8216 |
+| HLS (`.m3u8`) | yes: a master playlist with every media playlist it names, or one media playlist (`HlsDemuxer.open(Path)` for one on disk; otherwise the segments, initialization sections and keys opened through `DemuxerOptions.dataReferences`, such as `DataReferenceResolver.http` over HTTP, whose sources may stream without a known length): transport stream, fragmented MP4, WebVTT (cue times moved by each `X-TIMESTAMP-MAP`, repeated cues read once) and packed audio segments (timed by their ID3 `transportStreamTimestamp`), byte ranges, gaps, the `identity` key among several `KEYFORMAT`s, `AES-128` segments, CMAF `SAMPLE-AES` and `SAMPLE-AES-CTR` with the options' keys or the key URI's, I-frame playlists read alone; the tracks of all streams on one timeline | through the demuxer of each stream | a rendition's `LANGUAGE`, `NAME` (as the `title`), `DEFAULT`, `FORCED` and accessibility `CHARACTERISTICS` | presentations, through `Packager` | `container.hls` | RFC 8216 |
 | MPEG-DASH (`.mpd`) | yes: every representation of every period (`DashDemuxer`, `DashDemuxer.open(Path)`; segments opened as for HLS): `SegmentTemplate` with a `SegmentTimeline` (repeats to the next entry or the period's end included) or a segment duration (over the period, or in a dynamic manifest up to its `publishTime` and within its `timeShiftBufferDepth`), `$RepresentationID$`, `$Number$`, `$Time$`, `$Bandwidth$` and their widths, `SegmentList` with media ranges, `SegmentBase`, side files such as WebVTT and TTML subtitles; nested `BaseURL`s, period starts and presentation time offsets; adaptation sets with an `EssentialProperty` (trick play) left out | through the demuxer of each stream | `lang`, `Label` (as the `title`), roles and audio description `Accessibility` as dispositions | presentations, through `Packager` | `container.dash` | ISO/IEC 23009-1 |
 
 QuickTime movies are written by `Mp4Muxer` with `Mp4MuxerOptions.quickTime()` (major brand `qt  `), which
@@ -1220,8 +1220,8 @@ checks a FLAC source's MD5 signature on the way.
   itself, and the edited table must fit their payload (a table usually fills a fraction of its packet; 204-byte
   packets whose Reed-Solomon parity is a code rather than filler are not edited). AVI stores no pictures or chapters (`TagEditor`
   rejects them) and of the other tags only those `INFO` has an identifier for, the first value of each.
-- Tags in transcodes: the tags of an input that is not local (`MediaSource.of(InputStream, long)`, a source over
-  the network) are taken from its demuxer, which keeps one value per name, rather than read again from its tag
+- Tags in transcodes: the tags of an input that is not local (`MediaSource.of(InputStream, long)`, `MediaSource.of(URI)`
+  over the network) are taken from its demuxer, which keeps one value per name, rather than read again from its tag
   structure.
 - Tag vocabulary: the RIFF `INFO` identifier `ISRC` means the source, not the ISRC, and is read under the key
   `INFO:ISRC`. A rating that is not a number from 0 to 5 is stored in ID3v2 as a `TXXX` frame, not in `POPM`.
@@ -1989,8 +1989,12 @@ checks a FLAC source's MD5 signature on the way.
 - The pitch analysis of the voice detector of `GainControl.MANAGED_ANALOG` reads zeros where WebRTC reads
   outside the bounds of its correlation surface, so a frame with a pitch peak at its border may get another voice
   probability than WebRTC gives it.
-- Over HTTP, fragmented MP4 needs one request per fragment, and Matroska with its `Tags` at the end two extra
-  requests. `AudioReader.seek` on Matroska Vorbis or AAC, and on AAC Main, LTP, LD and ELD with SBR in any
+- Over HTTP (`MediaSource.of(URI)`), a demuxer that jumps between distant parts of a file, such as fragmented MP4
+  read fragment by fragment or Matroska with its `Tags` at the end, costs a request per jump. A server that ignores
+  range requests or sends no length gives a forward-only source, which cannot seek back past what was released and
+  is not resumed when its response breaks off. The request timeout bounds the wait for response headers only, so
+  a server that stops sending a body without closing the connection stalls the read until the connection fails.
+  `AudioReader.seek` on Matroska Vorbis or AAC, and on AAC Main, LTP, LD and ELD with SBR in any
   container, restarts from the start of the track (exact, but slower), and AAC seeks are bit-identical only
   without perceptual noise substitution.
 - The capture backends run on the Windows, macOS and Linux CI runners against virtual devices (loopback audio
@@ -2698,7 +2702,7 @@ try (var source = MediaSource.of(Path.of("movie.webm"));
 }
 ```
 
-### Read from a buffer, a memory segment or a stream
+### Read from a buffer, a memory segment, a stream or a URL
 
 ```java
 var buffer = MediaSource.of(byteBuffer);     // position to limit; a heap buffer is read in place
@@ -2708,6 +2712,10 @@ try (var upload = MediaSource.of(request.getInputStream(), contentLength);  // -
     // ...
 }
 var lazy = MediaSource.of(() -> openStream(url), -1);   // opened on the first read, closed by close()
+try (var remote = MediaSource.of(URI.create("https://example.com/movie.mp4"));     // range requests
+     var demuxer = Containers.openDemuxer(remote)) {
+    demuxer.seek(60_000_000);                    // fetches only the blocks the seek reads
+}
 ```
 
 A stream is read once, front to back, while parsers read at any offset, so the source keeps what it has read:
@@ -2719,6 +2727,14 @@ they have read, so MP3, AAC, WAV, Ogg, FLAC, Matroska, fast-start and fragmented
 small window and never spill; an MP4 whose `moov` comes last keeps its media data until the index is read. A
 stream cannot seek back past what was released (`MediaException.Unsupported`); open a file with `MediaSource.of(Path)`
 when seeking matters.
+
+`MediaSource.of(URI)` reads an HTTP or HTTPS resource with range requests: it fetches blocks of 64 KiB, keeps
+16 MiB of them, reads up to 2 MiB ahead of reads that follow one another (one request per window, not per block),
+retries failed requests and resumes a response that ends early, and fails a read with `MediaException.Io` when the
+resource changes underneath it (`If-Range`). A server that ignores ranges or states no length is read front to back
+as a stream is. `HttpSourceOptions` sets the client (proxy, authentication, TLS), request headers, block, cache and
+read-ahead sizes and retries, and `DataReferenceResolver.http(playlistUri, options)` serves the segments, keys and
+playlists of an HLS or DASH presentation from the playlist's origin.
 
 ### Read the pages of a TIFF and write one
 
