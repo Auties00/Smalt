@@ -3,6 +3,7 @@ package com.github.auties00.smalt.video.hevc.internal;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 
+import java.util.Arrays;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicIntegerArray;
@@ -81,6 +82,12 @@ final class PictureDecoder implements IntConsumer {
     private boolean protect;
 
     /**
+     * Whether the in-loop filters wait for the whole picture: the picture may reference itself,
+     * and intra block copy reads its samples before in-loop filtering.
+     */
+    private boolean deferFilters;
+
+    /**
      * The number of decoded coding tree blocks of each row.
      */
     private AtomicIntegerArray rowCount = new AtomicIntegerArray(0);
@@ -111,14 +118,119 @@ final class PictureDecoder implements IntConsumer {
     /**
      * Decodes a picture: its slices, its in-loop filters and the check of its decoded picture
      * hash. Corrupt slices are skipped after marking the picture damaged; every row is filtered and
-     * published whatever happens.
+     * published whatever happens. The color planes of a picture coded with separate color planes
+     * are decoded one after the other, or concurrently by other decoders taken from the job when
+     * its work may run on several threads.
      *
      * @param job the picture
      * @return the first failure of the picture, or {@code null}
      */
     MediaException decode(PictureJob job) {
-        frame = job.frame;
-        pic = job.pic;
+        var picture = job.frame;
+        var sps = job.states[0].sps;
+        MediaException failure = null;
+        if (picture.planes == null) {
+            failure = decodePlane(picture, job.states[0], job, -1);
+        } else {
+            var results = new MediaException[picture.planes.length];
+            if (job.parallel) {
+                // the planes do not depend on one another; a plane waits only for the rows of its references
+                var helpers = new PictureDecoder[]{this, job.borrow(), job.borrow()};
+                try {
+                    ParallelBands.pipeline(results.length, k -> results[k] = helpers[k].colorPlane(job, k));
+                } finally {
+                    job.release(helpers[1]);
+                    job.release(helpers[2]);
+                }
+            } else {
+                for (var k = 0; k < results.length; k++) {
+                    results[k] = colorPlane(job, k);
+                }
+            }
+            for (var k = 0; k < results.length; k++) {
+                picture.damaged |= picture.planes[k].damaged;
+                if (failure == null) {
+                    failure = results[k];
+                }
+            }
+        }
+        if (failure == null && job.hashType >= 0 && !PictureHash.matches(picture, sps, job.hashType, job.hash)) {
+            failure = new MediaException.Malformed("decoded picture hash mismatch at picture order count " + picture.poc);
+        }
+        return failure;
+    }
+
+    /**
+     * Decodes one color plane of a picture coded with separate color planes, or fills it as
+     * {@link #missingPlane} does when no slice segment codes it, then publishes that the plane is
+     * done.
+     *
+     * @param job the picture holding the slice segments
+     * @param plane the {@code colour_plane_id}
+     * @return the first failure of the plane, or {@code null}
+     */
+    private MediaException colorPlane(PictureJob job, int plane) {
+        var target = job.frame.planes[plane];
+        try {
+            return hasPlane(job, plane) ? decodePlane(target, job.states[plane], job, plane)
+                    : missingPlane(target, job.states[plane].sps, plane);
+        } finally {
+            target.publishDone();
+        }
+    }
+
+    /**
+     * Returns whether a job holds a slice segment of a color plane.
+     *
+     * @param job the picture holding the slice segments
+     * @param plane the {@code colour_plane_id}
+     * @return {@code true} when a slice segment of the job codes the plane
+     */
+    private static boolean hasPlane(PictureJob job, int plane) {
+        for (var slice : job.slices) {
+            if (slice.header().colorPlaneId == plane) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Fills a color plane that no slice segment of its picture codes with mid-gray samples and
+     * intra motion, as a missing reference picture is generated, and marks it damaged.
+     *
+     * @param target the picture of the color plane
+     * @param sps the active sequence parameter set
+     * @param plane the {@code colour_plane_id}
+     * @return the failure reporting the missing plane
+     */
+    private static MediaException missingPlane(HevcFrame target, HevcSps sps, int plane) {
+        target.damaged = true;
+        Arrays.fill(target.ctbSlice, -1);
+        if (target.eightBit()) {
+            Arrays.fill(target.y8, (byte) 128);
+        } else {
+            Arrays.fill(target.y, (short) (1 << (sps.bitDepthLuma - 1)));
+        }
+        target.publishRows(target.height);
+        return new MediaException.Malformed("picture at picture order count " + target.poc + " lacks color plane "
+                + plane);
+    }
+
+    /**
+     * Decodes one picture, or one color plane of a picture coded with separate color planes: its
+     * slices and its in-loop filters. Corrupt slices are skipped after marking the picture
+     * damaged; every row is filtered and published whatever happens.
+     *
+     * @param target the picture, or the picture of the color plane
+     * @param state the coding information of {@code target}
+     * @param job the job holding the slices
+     * @param plane the {@code colour_plane_id} of the slices to decode, or -1 for every slice
+     * @return the first failure, or {@code null}
+     */
+    private MediaException decodePlane(HevcFrame target, PictureState state, PictureJob job, int plane) {
+        frame = target;
+        pic = state;
         var sps = pic.sps;
         var rows = sps.heightInCtbs;
         if (rowCount.length() < rows) {
@@ -133,12 +245,17 @@ final class PictureDecoder implements IntConsumer {
         deblockedRows = 0;
         finalLines = 0;
         protect = sps.pcmEnabled && sps.pcmLoopFilterDisabled;
+        deferFilters = false;
         for (var slice : job.slices) {
             protect |= slice.header().pps.transquantBypassEnabled;
+            deferFilters |= slice.header().pps.currPicRefEnabled;
         }
         MediaException failure = null;
         try {
             for (var slice : job.slices) {
+                if (plane >= 0 && slice.header().colorPlaneId != plane) {
+                    continue;
+                }
                 try {
                     if (slice.substreams() != null && slice.header().pps.tilesEnabled) {
                         decodeTiles(slice);
@@ -171,12 +288,9 @@ final class PictureDecoder implements IntConsumer {
             }
         } finally {
             frame.publishRows(frame.height);
+            frame = null;
+            pic = null;
         }
-        if (failure == null && job.hashType >= 0 && !PictureHash.matches(frame, sps, job.hashType, job.hash)) {
-            failure = new MediaException.Malformed("decoded picture hash mismatch at picture order count " + frame.poc);
-        }
-        frame = null;
-        pic = null;
         return failure;
     }
 
@@ -295,7 +409,9 @@ final class PictureDecoder implements IntConsumer {
                 if (decoded > decodedRows) {
                     decodedRows = decoded;
                     frame.publishDecodedRows(decoded << pic.sps.log2CtbSize);
-                    filter(decoded, decoded >= rows ? frame.height : (decoded << pic.sps.log2CtbSize) - 4);
+                    if (!deferFilters) {
+                        filter(decoded, decoded >= rows ? frame.height : (decoded << pic.sps.log2CtbSize) - 4);
+                    }
                 }
             } finally {
                 filterLock.unlock();

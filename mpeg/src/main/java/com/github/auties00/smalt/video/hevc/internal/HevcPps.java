@@ -7,7 +7,7 @@ import com.github.auties00.smalt.video.h264.internal.H264BitReader;
  * Holds a parsed picture parameter set (ITU-T H.265 7.3.2.3) and, once activated for a sequence
  * parameter set, the tile layout and scan conversion arrays of ITU-T H.265 6.5.1 and 6.5.2.
  */
-public final class HevcPps {
+public final class HevcPps implements Cloneable {
     /**
      * {@code pps_pic_parameter_set_id}.
      */
@@ -240,13 +240,146 @@ public final class HevcPps {
     public int log2SaoOffsetScaleChroma;
 
     /**
-     * Whether the set carries a 3D or screen content coding extension.
-     *
-     * <p>A multilayer extension is ignored: it only affects the layers above the base layer, which
-     * this decoder skips, so a version 1 decoder decodes the base layer of a scalable or multiview
-     * stream.
+     * Whether the set carries a 3D extension, which this decoder does not parse.
      */
-    public boolean otherExtensions;
+    public boolean extension3d;
+
+    /**
+     * {@code poc_reset_info_present_flag}.
+     */
+    public boolean pocResetInfoPresent;
+
+    /**
+     * {@code pps_scaling_list_ref_layer_id}, or -1 when {@code pps_infer_scaling_list_flag} is
+     * clear.
+     */
+    public int scalingListRefLayerId = -1;
+
+    /**
+     * The reference layer location offsets of {@code pps_multilayer_extension()} by reference
+     * layer identifier, or {@code null} for a layer without them.
+     */
+    public final RefLocation[] refLocations = new RefLocation[64];
+
+    /**
+     * The colour mapping table, or {@code null} when {@code colour_mapping_enabled_flag} is clear.
+     */
+    public ColourMapping colourMapping;
+
+    /**
+     * The reference layer location offsets of one reference layer (F.7.4.3.3.4), in the units of
+     * the syntax elements.
+     *
+     * @param scaledLeft {@code scaled_ref_layer_left_offset}
+     * @param scaledTop {@code scaled_ref_layer_top_offset}
+     * @param scaledRight {@code scaled_ref_layer_right_offset}
+     * @param scaledBottom {@code scaled_ref_layer_bottom_offset}
+     * @param regionLeft {@code ref_region_left_offset}
+     * @param regionTop {@code ref_region_top_offset}
+     * @param regionRight {@code ref_region_right_offset}
+     * @param regionBottom {@code ref_region_bottom_offset}
+     * @param phaseHorLuma {@code phase_hor_luma}
+     * @param phaseVerLuma {@code phase_ver_luma}
+     * @param phaseHorChromaPlus8 {@code phase_hor_chroma_plus8}
+     * @param phaseVerChromaPlus8 {@code phase_ver_chroma_plus8}, -1 when absent (inferred from the
+     * scaling ratio)
+     */
+    public record RefLocation(int scaledLeft, int scaledTop, int scaledRight, int scaledBottom, int regionLeft,
+                              int regionTop, int regionRight, int regionBottom, int phaseHorLuma, int phaseVerLuma,
+                              int phaseHorChromaPlus8, int phaseVerChromaPlus8) {
+        /**
+         * The offsets of a reference layer the set gives none for.
+         */
+        public static final RefLocation NONE = new RefLocation(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, -1);
+    }
+
+    /**
+     * A colour mapping table (F.7.3.2.3.5 and F.7.4.3.3.5) with its coefficients
+     * {@code LutY}, {@code LutCb} and {@code LutCr}.
+     *
+     * @param refLayerIds {@code cm_ref_layer_id}
+     * @param octantDepth {@code cm_octant_depth}
+     * @param yPartNumLog2 {@code cm_y_part_num_log2}
+     * @param inputDepthLuma {@code BitDepthCmInputY}
+     * @param inputDepthChroma {@code BitDepthCmInputC}
+     * @param outputDepthLuma {@code BitDepthCmOutputY}
+     * @param outputDepthChroma {@code BitDepthCmOutputC}
+     * @param threshU {@code CMThreshU}
+     * @param threshV {@code CMThreshV}
+     * @param lut the coefficients, indexed {@code [component][((idxY * OctantNumC + idxCb) *
+     * OctantNumC + idxCr) * 4 + j]}
+     */
+    public record ColourMapping(int[] refLayerIds, int octantDepth, int yPartNumLog2, int inputDepthLuma,
+                                int inputDepthChroma, int outputDepthLuma, int outputDepthChroma, int threshU,
+                                int threshV, int[][] lut) {
+        /**
+         * Returns whether the table maps the pictures of a reference layer.
+         *
+         * @param layerId the {@code nuh_layer_id} of the reference layer
+         * @return {@code true} when {@code cm_ref_layer_id} lists the layer
+         */
+        public boolean appliesTo(int layerId) {
+            for (var id : refLayerIds) {
+                if (id == layerId) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
+    /**
+     * Whether the set carries a screen content coding extension ({@code pps_scc_extension()}).
+     */
+    public boolean sccExtension;
+
+    /**
+     * {@code pps_curr_pic_ref_enabled_flag}: whether the pictures of the set may reference
+     * themselves (intra block copy).
+     */
+    public boolean currPicRefEnabled;
+
+    /**
+     * {@code residual_adaptive_colour_transform_enabled_flag}.
+     */
+    public boolean actEnabled;
+
+    /**
+     * {@code pps_slice_act_qp_offsets_present_flag}.
+     */
+    public boolean sliceActQpOffsetsPresent;
+
+    /**
+     * {@code PpsActQpOffsetY}, {@code PpsActQpOffsetCb} and {@code PpsActQpOffsetCr}.
+     */
+    public int[] actQpOffset = {-5, -5, -3};
+
+    /**
+     * {@code pps_palette_predictor_initializers_present_flag}.
+     */
+    public boolean paletteInitializersPresent;
+
+    /**
+     * {@code pps_palette_predictor_initializer}, indexed {@code [comp][i]}: one component with
+     * {@code monochrome_palette_flag}, three otherwise, {@code pps_num_palette_predictor_initializers}
+     * entries each (none when that is 0).
+     */
+    public int[][] paletteInitializers = new int[0][];
+
+    /**
+     * {@code pps_num_palette_predictor_initializers}.
+     */
+    public int numPaletteInitializers;
+
+    /**
+     * {@code luma_bit_depth_entry_minus8 + 8}, or 0 without initializers.
+     */
+    public int paletteLumaBitDepth;
+
+    /**
+     * {@code chroma_bit_depth_entry_minus8 + 8}, or 0 without chroma initializers.
+     */
+    public int paletteChromaBitDepth;
 
     /**
      * The sequence parameter set the derived arrays below were computed for.
@@ -377,7 +510,19 @@ public final class HevcPps {
                 pps.log2SaoOffsetScaleLuma = reader.readUe(6, "log2_sao_offset_scale_luma");
                 pps.log2SaoOffsetScaleChroma = reader.readUe(6, "log2_sao_offset_scale_chroma");
             }
-            pps.otherExtensions = extension3d || sccExtension;
+            if (multilayerExtension) {
+                parseMultilayerExtension(reader, pps);
+            }
+            pps.extension3d = extension3d;
+            if (sccExtension && !extension3d) {
+                parseSccExtension(reader, pps);
+                if (reader.overrun()) {
+                    // the bit of a later version's extension data, set by an encoder of an earlier version
+                    pps.clearScc();
+                    return pps;
+                }
+                pps.sccExtension = true;
+            }
         }
         if (reader.overrun()) {
             throw new MediaException.Malformed("truncated picture parameter set");
@@ -392,10 +537,255 @@ public final class HevcPps {
      * @return the feature name for {@link MediaException.Unsupported}, or {@code null}
      */
     public String unsupportedFeature() {
-        if (otherExtensions) {
-            return "hevc screen content coding";
+        if (extension3d) {
+            // TODO: the 3D-HEVC extension of a base layer picture parameter set (Annex I)
+            return "hevc 3D extension";
         }
         return null;
+    }
+
+    /**
+     * Parses a {@code pps_multilayer_extension()} structure (F.7.3.2.3.4).
+     *
+     * @param reader the reader, positioned at the syntax structure
+     * @param pps the picture parameter set being parsed
+     * @throws MediaException.Malformed if a field is out of range
+     */
+    private static void parseMultilayerExtension(H264BitReader reader, HevcPps pps) {
+        pps.pocResetInfoPresent = reader.readFlag();
+        if (reader.readFlag()) {
+            pps.scalingListRefLayerId = reader.readBits(6);
+        }
+        var count = reader.readUe(63, "num_ref_loc_offsets");
+        for (var i = 0; i < count; i++) {
+            var layer = reader.readBits(6);
+            int sl = 0, st = 0, sr = 0, sb = 0;
+            if (reader.readFlag()) {
+                sl = readOffset(reader, "scaled_ref_layer_left_offset");
+                st = readOffset(reader, "scaled_ref_layer_top_offset");
+                sr = readOffset(reader, "scaled_ref_layer_right_offset");
+                sb = readOffset(reader, "scaled_ref_layer_bottom_offset");
+            }
+            int rl = 0, rt = 0, rr = 0, rb = 0;
+            if (reader.readFlag()) {
+                rl = readOffset(reader, "ref_region_left_offset");
+                rt = readOffset(reader, "ref_region_top_offset");
+                rr = readOffset(reader, "ref_region_right_offset");
+                rb = readOffset(reader, "ref_region_bottom_offset");
+            }
+            int hl = 0, vl = 0, hc = 8, vc = -1;
+            if (reader.readFlag()) {
+                hl = reader.readUe(31, "phase_hor_luma");
+                vl = reader.readUe(31, "phase_ver_luma");
+                hc = reader.readUe(63, "phase_hor_chroma_plus8");
+                vc = reader.readUe(63, "phase_ver_chroma_plus8");
+            }
+            pps.refLocations[layer] = new RefLocation(sl, st, sr, sb, rl, rt, rr, rb, hl, vl, hc, vc);
+        }
+        if (reader.readFlag()) {
+            pps.colourMapping = parseColourMapping(reader);
+        }
+    }
+
+    /**
+     * Reads a reference layer location offset, {@code se(v)} from {@code -2^14} to
+     * {@code 2^14 - 1}.
+     *
+     * @param reader the reader positioned at the offset
+     * @param name the syntax element name
+     * @return the offset
+     */
+    private static int readOffset(H264BitReader reader, String name) {
+        return reader.readSe(-(1 << 14), (1 << 14) - 1, name);
+    }
+
+    /**
+     * Parses a {@code colour_mapping_table()} structure and derives its coefficients (equations
+     * F-41 to F-51).
+     *
+     * @param reader the reader, positioned at the syntax structure
+     * @return the table
+     * @throws MediaException.Malformed if a field is out of range
+     */
+    private static ColourMapping parseColourMapping(H264BitReader reader) {
+        var layers = reader.readUe(61, "num_cm_ref_layers_minus1") + 1;
+        var ids = new int[layers];
+        for (var i = 0; i < layers; i++) {
+            ids[i] = reader.readBits(6);
+        }
+        var octantDepth = reader.readBits(2);
+        var yPartNumLog2 = reader.readBits(2);
+        if (octantDepth > 1 || octantDepth + yPartNumLog2 > 3) {
+            throw new MediaException.Malformed("colour mapping octant depth out of range");
+        }
+        var inY = reader.readUe(8, "luma_bit_depth_cm_input_minus8") + 8;
+        var inC = reader.readUe(8, "chroma_bit_depth_cm_input_minus8") + 8;
+        var outY = reader.readUe(8, "luma_bit_depth_cm_output_minus8") + 8;
+        var outC = reader.readUe(8, "chroma_bit_depth_cm_output_minus8") + 8;
+        if (outY < inY || outC < inC) {
+            throw new MediaException.Malformed("colour mapping output shallower than its input");
+        }
+        var quantBits = reader.readBits(2);
+        var flcBits = reader.readBits(2) + 1;
+        var threshU = 1 << (inC - 1);
+        var threshV = 1 << (inC - 1);
+        if (octantDepth == 1) {
+            var half = 1 << (inC - 1);
+            threshU += reader.readSe(-half, half - 1, "cm_adapt_threshold_u_delta");
+            threshV += reader.readSe(-half, half - 1, "cm_adapt_threshold_v_delta");
+        }
+        var octantNumC = 1 << octantDepth;
+        var octantNumY = 1 << (octantDepth + yPartNumLog2);
+        var resLsBits = Math.max(0, 10 + inY - outY - quantBits - flcBits);
+        var residuals = new int[3][octantNumY * octantNumC * octantNumC * 4];
+        new OctantParser(reader, octantDepth, 1 << yPartNumLog2, octantNumC, resLsBits, quantBits, residuals)
+                .parse(0, 0, 0, 0, octantNumC);
+        var lut = new int[3][residuals[0].length];
+        for (var idxY = 0; idxY < octantNumY; idxY++) {
+            for (var idxCb = 0; idxCb < octantNumC; idxCb++) {
+                for (var idxCr = 0; idxCr < octantNumC; idxCr++) {
+                    var base = ((idxY * octantNumC + idxCb) * octantNumC + idxCr) * 4;
+                    var previous = (((idxY - 1) * octantNumC + idxCb) * octantNumC + idxCr) * 4;
+                    for (var j = 0; j < 4; j++) {
+                        for (var c = 0; c < 3; c++) {
+                            var prediction = idxY == 0 ? (j == c ? 1024 : 0) : lut[c][previous + j];
+                            var value = residuals[c][base + j] + prediction;
+                            if (value < -(1 << 11) || value >= (1 << 11)) {
+                                throw new MediaException.Malformed("colour mapping coefficient out of range");
+                            }
+                            lut[c][base + j] = value;
+                        }
+                    }
+                }
+            }
+        }
+        return new ColourMapping(ids, octantDepth, yPartNumLog2, inY, inC, outY, outC, threshU, threshV, lut);
+    }
+
+    /**
+     * Parses the {@code colour_mapping_octants()} structures of a colour mapping table into its
+     * residuals {@code cmResCoeff} (equation F-50).
+     */
+    private static final class OctantParser {
+        private final H264BitReader reader;
+
+        private final int octantDepth;
+
+        private final int partNumY;
+
+        private final int octantNumC;
+
+        private final int resLsBits;
+
+        private final int quantBits;
+
+        /**
+         * The residuals, indexed like {@link ColourMapping#lut()}.
+         */
+        private final int[][] residuals;
+
+        OctantParser(H264BitReader reader, int octantDepth, int partNumY, int octantNumC, int resLsBits,
+                     int quantBits, int[][] residuals) {
+            this.reader = reader;
+            this.octantDepth = octantDepth;
+            this.partNumY = partNumY;
+            this.octantNumC = octantNumC;
+            this.resLsBits = resLsBits;
+            this.quantBits = quantBits;
+            this.residuals = residuals;
+        }
+
+        /**
+         * Parses one {@code colour_mapping_octants(inpDepth, idxY, idxCb, idxCr, inpLength)}; the
+         * recursion is at most {@code cm_octant_depth + 1}, that is two, levels deep.
+         *
+         * @param depth {@code inpDepth}
+         * @param idxY the luma octant index
+         * @param idxCb the Cb octant index
+         * @param idxCr the Cr octant index
+         * @param length {@code inpLength}
+         */
+        void parse(int depth, int idxY, int idxCb, int idxCr, int length) {
+            if (depth < octantDepth && reader.readFlag()) {
+                var half = length / 2;
+                for (var k = 0; k < 2; k++) {
+                    for (var m = 0; m < 2; m++) {
+                        for (var n = 0; n < 2; n++) {
+                            parse(depth + 1, idxY + partNumY * k * half, idxCb + m * half, idxCr + n * half, half);
+                        }
+                    }
+                }
+                return;
+            }
+            for (var i = 0; i < partNumY; i++) {
+                var idxShiftY = idxY + (i << (octantDepth - depth));
+                var base = ((idxShiftY * octantNumC + idxCb) * octantNumC + idxCr) * 4;
+                if (base + 4 > residuals[0].length) {
+                    throw new MediaException.Malformed("colour mapping octant out of range");
+                }
+                for (var j = 0; j < 4; j++) {
+                    if (!reader.readFlag()) {
+                        continue;
+                    }
+                    for (var c = 0; c < 3; c++) {
+                        var q = reader.readUe(1 << 12, "res_coeff_q");
+                        var r = resLsBits > 0 ? reader.readBits(resLsBits) : 0;
+                        var negative = (q != 0 || r != 0) && reader.readFlag();
+                        var magnitude = ((q << resLsBits) + r) << quantBits;
+                        residuals[c][base + j] = negative ? -magnitude : magnitude;
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Parses a {@code pps_scc_extension()} structure (ITU-T H.265 7.3.2.3.3).
+     *
+     * @param reader the reader, positioned at the syntax structure
+     * @param pps the picture parameter set being parsed
+     * @throws MediaException.Malformed if a field is out of range
+     */
+    private static void parseSccExtension(H264BitReader reader, HevcPps pps) {
+        pps.currPicRefEnabled = reader.readFlag();
+        pps.actEnabled = reader.readFlag();
+        if (pps.actEnabled) {
+            pps.sliceActQpOffsetsPresent = reader.readFlag();
+            pps.actQpOffset[0] = reader.readSe(-7, 17, "pps_act_y_qp_offset_plus5") - 5;
+            pps.actQpOffset[1] = reader.readSe(-7, 17, "pps_act_cb_qp_offset_plus5") - 5;
+            pps.actQpOffset[2] = reader.readSe(-9, 15, "pps_act_cr_qp_offset_plus3") - 3;
+        }
+        pps.paletteInitializersPresent = reader.readFlag();
+        if (pps.paletteInitializersPresent) {
+            pps.numPaletteInitializers = reader.readUe(128, "pps_num_palette_predictor_initializers");
+            if (pps.numPaletteInitializers > 0) {
+                var monochrome = reader.readFlag();
+                pps.paletteLumaBitDepth = reader.readUe(8, "luma_bit_depth_entry_minus8") + 8;
+                if (!monochrome) {
+                    pps.paletteChromaBitDepth = reader.readUe(8, "chroma_bit_depth_entry_minus8") + 8;
+                }
+                var components = monochrome ? 1 : 3;
+                pps.paletteInitializers = new int[components][pps.numPaletteInitializers];
+                for (var c = 0; c < components; c++) {
+                    var bits = c == 0 ? pps.paletteLumaBitDepth : pps.paletteChromaBitDepth;
+                    for (var i = 0; i < pps.numPaletteInitializers; i++) {
+                        pps.paletteInitializers[c][i] = reader.readBits(bits);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Returns {@code TwoVersionsOfCurrDecPicFlag} (equation 7-40): whether the pictures of the set
+     * reference themselves before in-loop filtering while in-loop filters may change their
+     * samples.
+     *
+     * @param sps the active sequence parameter set
+     * @return {@code true} when the current picture exists in two versions
+     */
+    public boolean twoVersions(HevcSps sps) {
+        return currPicRefEnabled && (sps.saoEnabled || !deblockingDisabled || deblockingOverrideEnabled);
     }
 
     /**
@@ -410,11 +800,122 @@ public final class HevcPps {
     }
 
     /**
+     * Resets the fields of the screen content coding extension to their values without one.
+     */
+    private void clearScc() {
+        sccExtension = false;
+        currPicRefEnabled = false;
+        actEnabled = false;
+        sliceActQpOffsetsPresent = false;
+        actQpOffset[0] = -5;
+        actQpOffset[1] = -5;
+        actQpOffset[2] = -3;
+        paletteInitializersPresent = false;
+        paletteInitializers = new int[0][];
+        numPaletteInitializers = 0;
+        paletteLumaBitDepth = 0;
+        paletteChromaBitDepth = 0;
+    }
+
+    /**
+     * Returns the copy of this set whose tables serve a sequence parameter set, for a set that
+     * pictures of several layers refer to with different sequence parameter sets: this set when it
+     * was never activated or was activated for {@code sps}, otherwise a copy kept for {@code sps},
+     * created the first time.
+     *
+     * @param sps the sequence parameter set
+     * @return the set to activate for {@code sps}
+     */
+    public HevcPps forSps(HevcSps sps) {
+        if (sccExtension && !sps.sccExtension) {
+            // the screen content coding extension of a set used by a sequence without one is extension data
+            if (withoutScc == null) {
+                withoutScc = copyOf();
+                withoutScc.clearScc();
+            }
+            return withoutScc.forSps(sps);
+        }
+        if (isActiveFor(sps)) {
+            return this;
+        }
+        for (var variant : variants) {
+            if (variant.activeFor == sps) {
+                return variant;
+            }
+        }
+        var copy = copyOf();
+        if (variants.length >= MAX_VARIANTS) {
+            variants[variants.length - 1] = copy;
+        } else {
+            variants = java.util.Arrays.copyOf(variants, variants.length + 1);
+            variants[variants.length - 1] = copy;
+        }
+        return copy;
+    }
+
+    /**
+     * Returns a copy of this set that was never activated, sharing its parsed arrays.
+     *
+     * @return the copy
+     */
+    private HevcPps copyOf() {
+        try {
+            var copy = (HevcPps) super.clone();
+            copy.actQpOffset = actQpOffset.clone();
+            copy.activeFor = null;
+            copy.variants = new HevcPps[0];
+            copy.withoutScc = null;
+            copy.withScalingList = null;
+            return copy;
+        } catch (CloneNotSupportedException exception) {
+            throw new AssertionError(exception);
+        }
+    }
+
+    /**
+     * The copy of this set without its screen content coding extension, or {@code null}.
+     */
+    private HevcPps withoutScc;
+
+    /**
+     * The copy of this set with the scaling lists another layer's set gives it, or {@code null}.
+     */
+    private HevcPps withScalingList;
+
+    /**
+     * Returns this set with the scaling lists of the set active for the layer that
+     * {@code pps_scaling_list_ref_layer_id} names (F.7.4.3.3.4), for a set that infers them.
+     *
+     * @param lists the scaling lists of that layer's set, or of its sequence parameter set when the
+     * set carries none
+     * @return a copy holding {@code lists}, the same one while they stay the same
+     */
+    public HevcPps inferScalingList(ScalingList lists) {
+        if (withScalingList == null || withScalingList.scalingList != lists) {
+            withScalingList = copyOf();
+            withScalingList.scalingList = lists;
+            withScalingList.scalingListRefLayerId = -1;
+        }
+        return withScalingList;
+    }
+
+    /**
+     * The most copies {@link #forSps} keeps: one per layer of the largest layer sets in use.
+     */
+    private static final int MAX_VARIANTS = 8;
+
+    /**
+     * The copies of this set activated for other sequence parameter sets.
+     */
+    private HevcPps[] variants = new HevcPps[0];
+
+    /**
      * Computes the tile layout and the scan conversion arrays for a sequence parameter set, once
      * per sequence parameter set (ITU-T H.265 6.5.1 and 6.5.2).
      *
      * @param sps the active sequence parameter set
-     * @throws MediaException.Malformed if the tile layout does not fit the picture
+     * @throws MediaException.Malformed if the tile layout does not fit the picture, or a range or
+     *                                  screen content extension field does not fit the sequence
      */
     public void activate(HevcSps sps) {
         if (activeFor == sps) {
@@ -430,6 +931,15 @@ public final class HevcPps {
                 || (crossComponentPrediction && sps.chromaArrayType != 3)
                 || (chromaQpOffsetList && sps.chromaArrayType == 0)) {
             throw new MediaException.Malformed("picture parameter set range extension does not fit its sequence");
+        }
+        if ((actEnabled && sps.chromaArrayType != 3)
+                || (currPicRefEnabled && !sps.currPicRefEnabled)
+                || (numPaletteInitializers > 0 && (!sps.paletteModeEnabled
+                || numPaletteInitializers > sps.paletteMaxPredictorSize
+                || paletteInitializers.length < (sps.chromaArrayType == 0 ? 1 : 3)
+                || paletteLumaBitDepth != sps.bitDepthLuma
+                || (sps.chromaArrayType != 0 && paletteChromaBitDepth != sps.bitDepthChroma)))) {
+            throw new MediaException.Malformed("picture parameter set screen content extension does not fit its sequence");
         }
         var widthCtbs = sps.widthInCtbs;
         var heightCtbs = sps.heightInCtbs;

@@ -1,0 +1,893 @@
+# The text imscJS 1.1.5 shows in each document of w3c/imsc-tests b7f88fe, between consecutive media time events.
+# Derived from the W3C IMSC test suite (https://github.com/w3c/imsc-tests), Copyright World Wide Web Consortium,
+# used under the W3C 3-clause BSD License. Written by tools/testdata/imsc-oracle/timeline.js; columns:
+# document, start and end in microseconds, the text of each paragraph shown
+imsc1/ttml/activeArea/ActiveArea001.ttml	0	6000000	This region is within the editorial area.	This region is within the editorial area.	This region is not.
+imsc1/ttml/altText/altText1.ttml	0	1000000
+imsc1/ttml/altText/altText1.ttml	1000000	9000000
+imsc1/ttml/animation/Animation001.ttml	0	5000000	This background of this sentence should change from red to blue at 5s
+imsc1/ttml/animation/Animation001.ttml	5000000	10000000	This background of this sentence should change from red to blue at 5s
+imsc1/ttml/animation/Animation001.ttml	10000000	20000000
+imsc1/ttml/animation/Animation002.ttml	0	5000000	This text of this sentence should change from white to yellow at 5s
+imsc1/ttml/animation/Animation002.ttml	5000000	10000000	This text of this sentence should change from white to yellow at 5s
+imsc1/ttml/animation/Animation002.ttml	10000000	20000000
+imsc1/ttml/animation/Animation003.ttml	0	5000000
+imsc1/ttml/animation/Animation003.ttml	5000000	10000000	This text of this sentence should appear at 5s
+imsc1/ttml/animation/Animation003.ttml	10000000	20000000
+imsc1/ttml/animation/Animation004.ttml	0	5000000	This text of this sentence should change from a serif to a sans serif font at 5s
+imsc1/ttml/animation/Animation004.ttml	5000000	10000000	This text of this sentence should change from a serif to a sans serif font at 5s
+imsc1/ttml/animation/Animation004.ttml	10000000	20000000
+imsc1/ttml/animation/Animation007.ttml	0	5000000	This font of this sentence should go from normal to bold at 5s
+imsc1/ttml/animation/Animation007.ttml	5000000	10000000	This font of this sentence should go from normal to bold at 5s
+imsc1/ttml/animation/Animation007.ttml	10000000	20000000
+imsc1/ttml/animation/Animation008.ttml	0	5000000	This line height of this sentence should\ngo from normal to zero at 5s
+imsc1/ttml/animation/Animation008.ttml	5000000	10000000	This line height of this sentence should\ngo from normal to zero at 5s
+imsc1/ttml/animation/Animation008.ttml	10000000	20000000
+imsc1/ttml/animation/Animation012.ttml	0	5000000	This sentence should move right at 5s for 5 seconds
+imsc1/ttml/animation/Animation012.ttml	5000000	10000000	This sentence should move right at 5s for 5 seconds
+imsc1/ttml/animation/Animation012.ttml	10000000	16000000	This sentence should move left at 6s for 4 seconds
+imsc1/ttml/animation/Animation012.ttml	16000000	20000000	This sentence should move left at 6s for 4 seconds
+imsc1/ttml/animation/Animation013.ttml	0	2000000	The line should move progressively down through this sentence every 2 seconds
+imsc1/ttml/animation/Animation013.ttml	2000000	4000000	The line should move progressively down through this sentence every 2 seconds
+imsc1/ttml/animation/Animation013.ttml	4000000	6000000	The line should move progressively down through this sentence every 2 seconds
+imsc1/ttml/animation/Animation013.ttml	6000000	10000000	The line should move progressively down through this sentence every 2 seconds
+imsc1/ttml/animation/Animation013.ttml	10000000	20000000
+imsc1/ttml/animation/Animation014.ttml	0	5000000	This text should be outlined in blurred red from 5s to 10s
+imsc1/ttml/animation/Animation014.ttml	5000000	10000000	This text should be outlined in blurred red from 5s to 10s
+imsc1/ttml/animation/Animation014.ttml	10000000	20000000
+imsc1/ttml/animation/Animation015.ttml	0	3000000	This text should become invisible from 3s to 8s
+imsc1/ttml/animation/Animation015.ttml	3000000	8000000	
+imsc1/ttml/animation/Animation015.ttml	8000000	10000000	This text should become invisible from 3s to 8s
+imsc1/ttml/animation/Animation016.ttml	0	3000000	This text should start to wrap from 3s to 8s it is a very long piece of text in order to ensure that it does in fact hit the region edges and thus require some wrapping action. Wrapping is not required to support hyphenation, so this text should wrap at whole word boundaries.
+imsc1/ttml/animation/Animation016.ttml	3000000	8000000	This text should start to wrap from 3s to 8s it is a very long piece of text in order to ensure that it does in fact hit the region edges and thus require some wrapping action. Wrapping is not required to support hyphenation, so this text should wrap at whole word boundaries.
+imsc1/ttml/animation/Animation016.ttml	8000000	10000000	This text should start to wrap from 3s to 8s it is a very long piece of text in order to ensure that it does in fact hit the region edges and thus require some wrapping action. Wrapping is not required to support hyphenation, so this text should wrap at whole word boundaries.
+imsc1/ttml/animation/Animation018.ttml	0	5000000	The font family should become "proportionalSansSerif" at 5s
+imsc1/ttml/animation/Animation018.ttml	5000000	10000000	The font family should become "proportionalSansSerif" at 5s
+imsc1/ttml/aspectRatio/aspectRatio1.ttml	0	1000000
+imsc1/ttml/aspectRatio/aspectRatio1.ttml	1000000	9000000	This region should have (a) an aspect ratio of 4:3, (b) be centered within the related video object and (c) be entirely within the related video object frame, and (d) have a height or width equal to that of the related video object frame.
+imsc1/ttml/aspectRatio/aspectRatio2.ttml	0	1000000
+imsc1/ttml/aspectRatio/aspectRatio2.ttml	1000000	9000000	This region should have (a) an aspect ratio of 16:9, (b) be centered within the related video object and (c) be entirely within the related video object frame, and (d) have a height or width equal to that of the related video object frame.
+imsc1/ttml/aspectRatio/aspectRatio3.ttml	0	1000000
+imsc1/ttml/aspectRatio/aspectRatio3.ttml	1000000	9000000
+imsc1/ttml/aspectRatio/aspectRatio4.ttml	0	1000000
+imsc1/ttml/aspectRatio/aspectRatio4.ttml	1000000	9000000
+imsc1/ttml/aspectRatio/aspectRatio5.ttml	0	1000000
+imsc1/ttml/aspectRatio/aspectRatio5.ttml	1000000	9000000	This region should fill the entire related video object frame.
+imsc1/ttml/aspectRatio/aspectRatio6.ttml	0	1000000
+imsc1/ttml/aspectRatio/aspectRatio6.ttml	1000000	9000000
+imsc1/ttml/backgroundColor/BackgroundColor001.ttml	0	10000000	The background is green.
+imsc1/ttml/backgroundColor/BackgroundColor002.ttml	0	10000000	The background is light green.
+imsc1/ttml/backgroundColor/BackgroundColor003.ttml	0	10000000	The background is green with 50% opacity. This text is 100% green.
+imsc1/ttml/backgroundColor/BackgroundColor004.ttml	0	10000000	The background is magenta.
+imsc1/ttml/backgroundColor/BackgroundColor005.ttml	0	10000000	The background is magenta with 50% opacity.\nThis text is 100% magenta.
+imsc1/ttml/backgroundColor/BackgroundColor006.ttml	0	10000000	The background is transparent.
+imsc1/ttml/backgroundColor/BackgroundColor007.ttml	0	10000000	The background color is blue.
+imsc1/ttml/backgroundColor/BackgroundColor008.ttml	0	10000000	The background is green.
+imsc1/ttml/backgroundColor/BackgroundColor009.ttml	0	10000000	The background color is magenta.
+imsc1/ttml/backgroundColor/BackgroundColor010.ttml	0	1000000	#FFFFFF
+imsc1/ttml/backgroundColor/BackgroundColor010.ttml	1000000	2000000	#FFFFFF7F
+imsc1/ttml/backgroundColor/BackgroundColor010.ttml	2000000	3000000	rgb(255,128,255)
+imsc1/ttml/backgroundColor/BackgroundColor010.ttml	3000000	4000000	rgba(128,255,255,63)
+imsc1/ttml/backgroundColor/BackgroundColor010.ttml	4000000	5000000	transparent
+imsc1/ttml/backgroundColor/BackgroundColor010.ttml	5000000	6000000	black
+imsc1/ttml/backgroundColor/BackgroundColor010.ttml	6000000	7000000	silver
+imsc1/ttml/backgroundColor/BackgroundColor010.ttml	7000000	8000000	gray
+imsc1/ttml/backgroundColor/BackgroundColor010.ttml	8000000	9000000	white
+imsc1/ttml/backgroundColor/BackgroundColor010.ttml	9000000	10000000	maroon
+imsc1/ttml/backgroundColor/BackgroundColor010.ttml	10000000	11000000	red
+imsc1/ttml/backgroundColor/BackgroundColor010.ttml	11000000	12000000	purple
+imsc1/ttml/backgroundColor/BackgroundColor010.ttml	12000000	13000000	fuchsia
+imsc1/ttml/backgroundColor/BackgroundColor010.ttml	13000000	14000000	magenta
+imsc1/ttml/backgroundColor/BackgroundColor010.ttml	14000000	15000000	green
+imsc1/ttml/backgroundColor/BackgroundColor010.ttml	15000000	16000000	lime
+imsc1/ttml/backgroundColor/BackgroundColor010.ttml	16000000	17000000	olive
+imsc1/ttml/backgroundColor/BackgroundColor010.ttml	17000000	18000000	yellow
+imsc1/ttml/backgroundColor/BackgroundColor010.ttml	18000000	19000000	navy
+imsc1/ttml/backgroundColor/BackgroundColor010.ttml	19000000	20000000	blue
+imsc1/ttml/backgroundColor/BackgroundColor010.ttml	20000000	21000000	teal
+imsc1/ttml/backgroundColor/BackgroundColor010.ttml	21000000	22000000	aqua
+imsc1/ttml/backgroundColor/BackgroundColor010.ttml	22000000	23000000	cyan
+imsc1/ttml/backgroundColor/backgroundColor-region-p-span-001.ttml	0	10000000	One line Subtitle.
+imsc1/ttml/backgroundColor/backgroundColor-region-p-span-002.ttml	0	10000000	One line Subtitle.
+imsc1/ttml/backgroundColor/backgroundcolor-rgba-001.ttml	0	10000000	One line Subtitle.
+imsc1/ttml/br/Br001.ttml	0	10000000	This text must be on the first line.\nThis text on a second line.
+imsc1/ttml/br/br-in-p-001.ttml	0	10000000	Two-\nline Subtitle.
+imsc1/ttml/br/br-in-span-001.ttml	0	10000000	Two-\nline Subtitle.
+imsc1/ttml/cellResolution/cellresolution-001.ttml	0	10000000	One line Subtitle.
+imsc1/ttml/cellResolution/initial-value-cellresolution-001.ttml	0	10000000	The initial cell grid has 15 rows.
+imsc1/ttml/color/Color001.ttml	0	10000000	This text must be red.
+imsc1/ttml/color/Color002.ttml	0	10000000	This text must be red.
+imsc1/ttml/color/Color003.ttml	0	10000000	This is the red color as a reference.\nThis text must be semi-transparent red.
+imsc1/ttml/color/Color004.ttml	0	10000000	This text must be green.
+imsc1/ttml/color/Color005.ttml	0	10000000	This is the green color as a reference.\nThis text must be semi-transparent green.
+imsc1/ttml/color/Color007.ttml	0	10000000	You must not see the word "transparent".
+imsc1/ttml/color/Color008.ttml	0	10000000	This word must be red\nand this one green.
+imsc1/ttml/color/Color009.ttml	0	10000000	This text must be red.
+imsc1/ttml/direction/Direction001.ttml	0	10000000	This text is displayed left to right.
+imsc1/ttml/direction/Direction002.ttml	0	10000000	This text is displayed left to right.
+imsc1/ttml/direction/Direction003.ttml	0	10000000	This text is displayed right to left.
+imsc1/ttml/direction/Direction004.ttml	0	10000000	The last three words are displayed\nright to left.
+imsc1/ttml/direction/Direction005.ttml	0	10000000	This text is displayed right to left.
+imsc1/ttml/direction/Direction006.ttml	0	10000000	The last three words are displayed\nleft to right.
+imsc1/ttml/displayAlign/DisplayAlign001.ttml	0	10000000	This text is aligned with\nthe before edge of the region.
+imsc1/ttml/displayAlign/DisplayAlign002.ttml	0	10000000	This text is aligned with\nthe after edge of the region.
+imsc1/ttml/displayAlign/DisplayAlign003.ttml	0	10000000	This text is aligned in\nthe center of the region.
+imsc1/ttml/displayAlign/DisplayAlign004.ttml	0	1000000	あいAB34三四
+imsc1/ttml/displayAlign/displayalign-after-001.ttml	0	10000000	One line Subtitle.
+imsc1/ttml/displayAlign/displayalign-before-001.ttml	0	10000000	One line Subtitle.
+imsc1/ttml/displayAlign/displayalign-center-001.ttml	0	10000000	One line Subtitle.
+imsc1/ttml/display/Display001.ttml	0	10000000	This text is displayed.
+imsc1/ttml/display/Display002.ttml	0	5000000	Only the first caption is visible.
+imsc1/ttml/display/Display002.ttml	5000000	10000000
+imsc1/ttml/display/Display004.ttml	0	10000000
+imsc1/ttml/div/Div001.ttml	0	5000000	This text must be red.
+imsc1/ttml/div/Div001.ttml	5000000	10000000	This text must be green.
+imsc1/ttml/div/Div001.ttml	10000000	15000000	This test is over.
+imsc1/ttml/div/Div001.ttml	15000000	20000000
+imsc1/ttml/div/Div002.ttml	0	5000000	This text must be red.
+imsc1/ttml/div/Div002.ttml	5000000	10000000	This text must be green.
+imsc1/ttml/div/Div002.ttml	10000000	15000000	This text must be red.
+imsc1/ttml/div/Div002.ttml	15000000	20000000	This test is over.
+imsc1/ttml/div/Div002.ttml	20000000	25000000
+imsc1/ttml/div/Div003.ttml	0	5000000	This text must be red.
+imsc1/ttml/div/Div003.ttml	5000000	10000000	Ce texte doit être vert.
+imsc1/ttml/div/Div003.ttml	10000000	15000000	このテキストは赤くなければならない。
+imsc1/ttml/div/Div003.ttml	15000000	20000000	This test is over.
+imsc1/ttml/div/Div003.ttml	20000000	25000000
+imsc1/ttml/div/content-in-multiple-div-001.ttml	0	10000000	A line within one div element.	A line within another div element.
+imsc1/ttml/document/DocumentExample120.ttml	0	760000
+imsc1/ttml/document/DocumentExample120.ttml	760000	3450000	It seems a paradox, does it not,
+imsc1/ttml/document/DocumentExample120.ttml	3450000	5000000
+imsc1/ttml/document/DocumentExample120.ttml	5000000	10000000	that the image formed on\nthe Retina should be inverted? 
+imsc1/ttml/document/DocumentExample120.ttml	10000000	16000000	It is puzzling, why is it\nwe do not see things upside-down? 
+imsc1/ttml/document/DocumentExample120.ttml	16000000	17200000
+imsc1/ttml/document/DocumentExample120.ttml	17200000	23000000	You have never heard the Theory,\nthen, that the Brain also is inverted? 
+imsc1/ttml/document/DocumentExample120.ttml	23000000	27000000	No indeed! What a beautiful fact!
+imsc1/ttml/document/DocumentExample120.ttml	27000000	28000000
+imsc1/ttml/document/DocumentExample120.ttml	28000000	34600000	But how is it proved?	Thus: what we call
+imsc1/ttml/document/DocumentExample120.ttml	34600000	45000000	the vertex of the Brain\nis really its base 
+imsc1/ttml/document/DocumentExample120.ttml	45000000	52000000	and what we call its base\nis really its vertex, 
+imsc1/ttml/document/DocumentExample120.ttml	52000000	53500000
+imsc1/ttml/document/DocumentExample120.ttml	53500000	58700000	it is simply a question of nomenclature.	How truly delightful!
+imsc1/ttml/document/DocumentExample822.ttml	0	10000000	Twinkle, twinkle, little bat!\nHow I wonder where you're at!
+imsc1/ttml/document/DocumentExample823.ttml	0	10000000	In spring, when woods are getting green,\nI'll try and tell you what I mean. 
+imsc1/ttml/document/DocumentExample824.ttml	0	10000000	Little birds are playing\nBagpipes on the shore,\nwhere the tourists snore.
+imsc1/ttml/document/DocumentExample825.ttml	0	1000000	[[[ ]]]
+imsc1/ttml/document/DocumentExample825.ttml	1000000	2000000	[[[ Beautiful soup, ]]]
+imsc1/ttml/document/DocumentExample825.ttml	2000000	3000000	[[[ so rich and green, ]]]
+imsc1/ttml/document/DocumentExample825.ttml	3000000	4000000	[[[ waiting in a hot tureen! ]]]
+imsc1/ttml/document/DocumentExample825.ttml	4000000	5000000	[[[ ]]]
+imsc1/ttml/extent/Extent001.ttml	0	10000000	The extent of this region has\nthe same dimensions as the root container.
+imsc1/ttml/extent/Extent002.ttml	0	10000000	The extent of this region is\n150px wide by 75px tall.
+imsc1/ttml/fillLineGap/FillLineGap001.ttml	0	30000000	##Line gaps##\nThe quick brown fox\njumps over the lazy dog\n##Line gaps##
+imsc1/ttml/fillLineGap/FillLineGap002.ttml	0	30000000	Paragraph 1	Paragraph 2	Paragraph 1	Paragraph 2
+imsc1/ttml/fillLineGap/FillLineGap003.ttml	0	5000000	tts:wrapOption = wrap Line break inside the span:\nSecond line. Line break between spans:\nSecond line.
+imsc1/ttml/fillLineGap/FillLineGap003.ttml	5000000	10000000	tts:wrapOption = noWrap Line break inside the span:\nSecond line. Line break between spans:\nSecond line.
+imsc1/ttml/fillLineGap/FillLineGap003.ttml	10000000	15000000	tts:lineHeight="normal" ! " # $ % & ' ( ) * + , - .\n/ 0 1 2 3 4 5 6 7 8 9 : ; > = < ? @ A B C D E H I J K L N O P Q R S T U V W X Y Z [ \ ] ^ _ ` a b c d e h i j k l n o p q r s t u v w x y z { | } ~ ¡ ¢ £ ¥ § ¤ ‘ “ « ← ↑ → ↓\n° ± ² ³ × µ ¶ · ÷ ’ ” » ¼ ½ ¾ ¿ ́ ̂ ̃ ̄ ̆ ̇ ̈ ̊ ̧ ̋\n̨ ― ¹ ® © ™ ♪ ¬ ¦ ⅛ ⅜ ⅝ ⅞ Ω Æ Đ ª Ħ Ĳ Ŀ Ł Ø Œ Þ Ŧ\nŊ ŉ ĸ æ đ ð ħ ı ĳ ŀ ł ø œ ß þ ŧ ŋ
+imsc1/ttml/fillLineGap/FillLineGap003.ttml	15000000	20000000	tts:lineHeight="100%" ! " # $ % & ' ( ) * + , - .\n/ 0 1 2 3 4 5 6 7 8 9 : ; > = < ? @ A B C D E H I J K L N O P Q R S T U V W X Y Z [ \ ] ^ _ ` a b c d e h i j k l n o p q r s t u v w x y z { | } ~ ¡ ¢ £ ¥ § ¤ ‘ “ « ← ↑ → ↓\n° ± ² ³ × µ ¶ · ÷ ’ ” » ¼ ½ ¾ ¿ ́ ̂ ̃ ̄ ̆ ̇ ̈ ̊ ̧ ̋\n̨ ― ¹ ® © ™ ♪ ¬ ¦ ⅛ ⅜ ⅝ ⅞ Ω Æ Đ ª Ħ Ĳ Ŀ Ł Ø Œ Þ Ŧ\nŊ ŉ ĸ æ đ ð ħ ı ĳ ŀ ł ø œ ß þ ŧ ŋ
+imsc1/ttml/fillLineGap/FillLineGap003.ttml	20000000	25000000	tts:lineHeight="120%" ! " # $ % & ' ( ) * + , - .\n/ 0 1 2 3 4 5 6 7 8 9 : ; > = < ? @ A B C D E H I J K L N O P Q R S T U V W X Y Z [ \ ] ^ _ ` a b c d e h i j k l n o p q r s t u v w x y z { | } ~ ¡ ¢ £ ¥ § ¤ ‘ “ « ← ↑ → ↓\n° ± ² ³ × µ ¶ · ÷ ’ ” » ¼ ½ ¾ ¿ ́ ̂ ̃ ̄ ̆ ̇ ̈ ̊ ̧ ̋\n̨ ― ¹ ® © ™ ♪ ¬ ¦ ⅛ ⅜ ⅝ ⅞ Ω Æ Đ ª Ħ Ĳ Ŀ Ł Ø Œ Þ Ŧ\nŊ ŉ ĸ æ đ ð ħ ı ĳ ŀ ł ø œ ß þ ŧ ŋ
+imsc1/ttml/fillLineGap/FillLineGap003.ttml	25000000	30000000	tts:lineHeight="80%" ! " # $ % & ' ( ) * + , - .\n/ 0 1 2 3 4 5 6 7 8 9 : ; > = < ? @ A B C D E H I J K L N O P Q R S T U V W X Y Z [ \ ] ^ _ ` a b c d e h i j k l n o p q r s t u v w x y z { | } ~ ¡ ¢ £ ¥ § ¤ ‘ “ « ← ↑ → ↓\n° ± ² ³ × µ ¶ · ÷ ’ ” » ¼ ½ ¾ ¿ ́ ̂ ̃ ̄ ̆ ̇ ̈ ̊ ̧ ̋\n̨ ― ¹ ® © ™ ♪ ¬ ¦ ⅛ ⅜ ⅝ ⅞ Ω Æ Đ ª Ħ Ĳ Ŀ Ł Ø Œ Þ Ŧ\nŊ ŉ ĸ æ đ ð ħ ı ĳ ŀ ł ø œ ß þ ŧ ŋ
+imsc1/ttml/fillLineGap/FillLineGap003.ttml	30000000	35000000	tts:lineHeight="150%" ! " # $ % & ' ( ) * + , - .\n/ 0 1 2 3 4 5 6 7 8 9 : ; > = < ? @ A B C D E H I J K L N O P Q R S T U V W X Y Z [ \ ] ^ _ ` a b c d e h i j k l n o p q r s t u v w x y z { | } ~ ¡ ¢ £ ¥ § ¤ ‘ “ « ← ↑ → ↓\n° ± ² ³ × µ ¶ · ÷ ’ ” » ¼ ½ ¾ ¿ ́ ̂ ̃ ̄ ̆ ̇ ̈ ̊ ̧ ̋\n̨ ― ¹ ® © ™ ♪ ¬ ¦ ⅛ ⅜ ⅝ ⅞ Ω Æ Đ ª Ħ Ĳ Ŀ Ł Ø Œ Þ Ŧ\nŊ ŉ ĸ æ đ ð ħ ı ĳ ŀ ł ø œ ß þ ŧ ŋ
+imsc1/ttml/fillLineGap/FillLineGap003.ttml	35000000	40000000	tts:lineHeight="250%" ! " # $ % & ' ( ) * + , - .\n/ 0 1 2 3 4 5 6 7 8 9 : ; > = < ? @ A B C D E H I J K L N O P Q R S T U V W X Y Z [ \ ] ^ _ ` a b c d e h i j k l n o p q r s t u v w x y z { | } ~ ¡ ¢ £ ¥ § ¤ ‘ “ « ← ↑ → ↓\n° ± ² ³ × µ ¶ · ÷ ’ ” » ¼ ½ ¾ ¿ ́ ̂ ̃ ̄ ̆ ̇ ̈ ̊ ̧ ̋\n̨ ― ¹ ® © ™ ♪ ¬ ¦ ⅛ ⅜ ⅝ ⅞ Ω Æ Đ ª Ħ Ĳ Ŀ Ł Ø Œ Þ Ŧ\nŊ ŉ ĸ æ đ ð ħ ı ĳ ŀ ł ø œ ß þ ŧ ŋ
+imsc1/ttml/fillLineGap/FillLineGap004.ttml	0	1000000	hello みなさん、\nこんにちは
+imsc1/ttml/fillLineGap/FillLineGap005.ttml	0	30000000	##Line gaps##\nThe quick brown fox\njumps over the lazy dog\n##Line gaps##
+imsc1/ttml/fontFamily/FontFamily001.ttml	0	10000000	The last words must be using a monospace font.
+imsc1/ttml/fontFamily/FontFamily002.ttml	0	10000000	The last words must be using a sansSerif font.
+imsc1/ttml/fontFamily/FontFamily003.ttml	0	10000000	The last words must be using a serif font.
+imsc1/ttml/fontFamily/FontFamily004.ttml	0	10000000	The last words must be using a monospaceSansSerif font.
+imsc1/ttml/fontFamily/FontFamily005.ttml	0	10000000	The last words must be using a monospaceSerif font.
+imsc1/ttml/fontFamily/FontFamily006.ttml	0	10000000	The last words must be using a proportionalSansSerif font.
+imsc1/ttml/fontFamily/FontFamily007.ttml	0	10000000	The last words must be using a proportionalSerif font.
+imsc1/ttml/fontFamily/FontFamily008.ttml	0	10000000	The last words must be using a Times New Roman font.
+imsc1/ttml/fontFamily/FontFamily009.ttml	0	10000000	The last words must be using a Times New Roman font.
+imsc1/ttml/fontSize/FontSize001.ttml	0	10000000	The last word must be in 24px.
+imsc1/ttml/fontSize/FontSize002.ttml	0	10000000	The last word must be in 2em.
+imsc1/ttml/fontSize/FontSize004.ttml	0	10000000	The last word must be in 150%.
+imsc1/ttml/fontSize/fontsize-001.ttml	0	10000000	One line Subtitle.
+imsc1/ttml/fontStyle/FontStyle001.ttml	0	10000000	The last words must not be italic.
+imsc1/ttml/fontStyle/FontStyle002.ttml	0	10000000	The last word must be in italic.
+imsc1/ttml/fontStyle/FontStyle003.ttml	0	10000000	The last word must be in oblique.
+imsc1/ttml/fontStyle/font-style-normal-001.ttml	0	10000000	One line Subtitle.
+imsc1/ttml/fontWeight/FontWeight001.ttml	0	10000000	The last words must not be bold.
+imsc1/ttml/fontWeight/FontWeight002.ttml	0	10000000	The last word must be bold.
+imsc1/ttml/fontWeight/font-weight-001.ttml	0	10000000	One line Subtitle.
+imsc1/ttml/fontWeight/font-weight-normal-001.ttml	0	10000000	One line Subtitle.
+imsc1/ttml/forcedDisplay/forcedDisplay1.ttml	0	1000000
+imsc1/ttml/forcedDisplay/forcedDisplay1.ttml	1000000	9000000	Hidden if displayForcedOnlyMode is true.	This text should be displayed in all circumstances.
+imsc1/ttml/foreign/Foreign001.ttml	0	5000000	This text must be visible.
+imsc1/ttml/foreign/foreign-namespace-in-header-001.ttml	0	10000000	Foreign namespace test.
+imsc1/ttml/foreign/foreign-namespace-in-p-001.ttml	0	10000000	Foreign namespace test.
+imsc1/ttml/lineHeight/LineHeight001.ttml	0	10000000	The line height of this\ntwo-row caption is normal.
+imsc1/ttml/lineHeight/LineHeight002.ttml	0	10000000	The line height of this\ntwo-row caption is normal.
+imsc1/ttml/lineHeight/LineHeight003.ttml	0	10000000	The line height of this\ntwo-row caption is 30 pixels.
+imsc1/ttml/lineHeight/LineHeight006.ttml	0	10000000	The line height of this\ntwo-row caption is 2em.
+imsc1/ttml/lineHeight/lineheight-001.ttml	0	10000000	A subtitles with a lineheight of 125%.\nThe subtitle has two lines.
+imsc1/ttml/linePadding/LinePadding005.ttml	0	1000000	نشاط التدويل، W3C	hello みなさん、\nこんにちは
+imsc1/ttml/linePadding/LinePadding006.ttml	0	2459000
+imsc1/ttml/linePadding/LinePadding006.ttml	2459000	2726000	Lorem ipsum dolor sit amet, consectetur\nadipiscing elit
+imsc1/ttml/linePadding/linePadding1.ttml	0	1000000
+imsc1/ttml/linePadding/linePadding1.ttml	1000000	9000000	Centered text on two lines\nwithout padding.	Centered text on two lines\nwith padding.
+imsc1/ttml/linePadding/linePadding2.ttml	0	9000000	There should be\none line break
+imsc1/ttml/linePadding/linePadding3.ttml	0	9000000	No spaces\n\nTwo lines with   spaces \n  
+imsc1/ttml/linePadding/linePadding4.ttml	0	10000000	This subtitle uses\nlinepadding
+imsc1/ttml/linePadding/linepadding-001.ttml	0	10000000	This subtitle uses\nlinepadding
+imsc1/ttml/misc/cumulative-rows-001.ttml	0	2000000	These lines appear step-by-step.
+imsc1/ttml/misc/cumulative-rows-001.ttml	2000000	4000000	These lines appear step-by-step.	This is the second line.
+imsc1/ttml/misc/cumulative-rows-001.ttml	4000000	6000000	This is the second line.	This is the third and last line.
+imsc1/ttml/misc/cumulative-rows-001.ttml	6000000	10000000	This is the third and last line.
+imsc1/ttml/misc/cumulative-rows-002.ttml	0	2000000	These lines appear step-by-step.
+imsc1/ttml/misc/cumulative-rows-002.ttml	2000000	4000000	These lines appear step-by-step.
+imsc1/ttml/misc/cumulative-rows-002.ttml	4000000	6000000	This is the second line.
+imsc1/ttml/misc/cumulative-rows-002.ttml	6000000	8000000	This is the second line.
+imsc1/ttml/misc/cumulative-rows-002.ttml	8000000	10000000	This is the third and last line.
+imsc1/ttml/misc/cumulative-rows-002.ttml	10000000	12000000	This is the third and last line.
+imsc1/ttml/misc/cumulative-words-001.ttml	0	2000000	These
+imsc1/ttml/misc/cumulative-words-001.ttml	2000000	4000000	These words
+imsc1/ttml/misc/cumulative-words-001.ttml	4000000	6000000	These words appear
+imsc1/ttml/misc/cumulative-words-001.ttml	6000000	10000000	These words appear step-by-step.
+imsc1/ttml/misc/cumulative-words-002.ttml	0	2000000
+imsc1/ttml/misc/cumulative-words-002.ttml	2000000	3000000	These
+imsc1/ttml/misc/cumulative-words-002.ttml	3000000	4000000	These words
+imsc1/ttml/misc/cumulative-words-002.ttml	4000000	5000000	These words appear
+imsc1/ttml/misc/cumulative-words-002.ttml	5000000	6000000	These words appear step-by-step.
+imsc1/ttml/misc/special-character-001.ttml	0	10000000	Ç ü é â ä à å ç ê ë è ï î ì Ä Å æ Æ ô ö ò\nû ù ÿ Ö Ü ø £ Ø × ƒ á í ó ú ñ Ñ ª º ¿ 
+imsc1/ttml/multiRowAlign/multiRowAlign1.ttml	0	1000000
+imsc1/ttml/multiRowAlign/multiRowAlign1.ttml	1000000	9000000	multiRowAlign="end"\ntextAlign="start" 	multiRowAlign="start"\ntextAlign="center" 
+imsc1/ttml/multiRowAlign/multirow-align-center-auto-001.ttml	0	10000000	textAlign is center\nand multirowAlign is auto
+imsc1/ttml/multiRowAlign/multirow-align-center-center-001.ttml	0	10000000	This subtitle's multiRowAlign is\nCenter Center
+imsc1/ttml/multiRowAlign/multirow-align-center-end-001.ttml	0	10000000	This subtitle's multiRowAlign is\nCenter End
+imsc1/ttml/multiRowAlign/multirow-align-center-start-001.ttml	0	10000000	This subtitle's multiRowAlign is\nCenter Start
+imsc1/ttml/multiRowAlign/multirow-align-end-center-001.ttml	0	10000000	This subtitle's multiRowAlign is\nEnd Center
+imsc1/ttml/multiRowAlign/multirow-align-end-start-001.ttml	0	10000000	This subtitle's multiRowAlign is\nEnd Start
+imsc1/ttml/multiRowAlign/multirow-align-start-center-001.ttml	0	10000000	This subtitle's multiRowAlign is\nStart Center
+imsc1/ttml/multiRowAlign/multirow-align-start-end-001.ttml	0	10000000	This subtitle's multiRowAlign is\nStart End
+imsc1/ttml/opacity/Opacity001.ttml	0	10000000	This region and text have an opacity of 1.00 (100% opaque).
+imsc1/ttml/opacity/Opacity002.ttml	0	10000000	This region and text have an opacity of 0.50 (50% opaque).
+imsc1/ttml/opacity/Opacity003.ttml	0	10000000	This region and text have an opacity of 0.10 (10% opaque).
+imsc1/ttml/opacity/Opacity004.ttml	0	10000000	The red region and text have an opacity of 0.60 (60% opaque).
+imsc1/ttml/origin/Origin001.ttml	0	10000000	This region originates at the same X and Y coordinates as the root container.
+imsc1/ttml/origin/Origin002.ttml	0	10000000	This region originates at X=30px and Y=30px.
+imsc1/ttml/overflow/Overflow001.ttml	0	10000000	None of this text is visible outside the text region.
+imsc1/ttml/overflow/Overflow002.ttml	0	10000000	Some of this text is visible outside the text region.
+imsc1/ttml/overflow/Overflow003.ttml	0	10000000	Text is visible below the after edge of the text region.
+imsc1/ttml/overflow/Overflow004.ttml	0	10000000	Text is not visible below the after edge of the text region.
+imsc1/ttml/overflow/Overflow005.ttml	0	10000000	Text is not visible below the after edge of the text region.
+imsc1/ttml/overflow/overflow-hidden-001.ttml	0	10000000	Overflow is hidden. One long long long long long long Subtitle.
+imsc1/ttml/overflow/overflow-visible-001.ttml	0	10000000	Overflow is visible. One long long long long long long Subtitle.
+imsc1/ttml/p/Paragraph001.ttml	0	10000000	This text must be visible.
+imsc1/ttml/p/Paragraph003.ttml	0	10000000	This text must be red.
+imsc1/ttml/p/Paragraph004.ttml	0	10000000	This text must appear on one line.
+imsc1/ttml/p/Paragraph005.ttml	0	10000000	This text\n must appear on two lines.
+imsc1/ttml/padding/Padding001.ttml	0	10000000	All the edges are padded\nby 20 pixels.
+imsc1/ttml/padding/Padding002.ttml	0	5000000	The before and after edges\nare padded by 10 pixels.
+imsc1/ttml/padding/Padding002.ttml	5000000	10000000	The start and end edges\nare padded by 30 pixels.
+imsc1/ttml/padding/Padding003.ttml	0	5000000	The before edge\nis padded by 10 pixels.
+imsc1/ttml/padding/Padding003.ttml	5000000	10000000	The start and end edges\nare padded by 20 pixels.
+imsc1/ttml/padding/Padding003.ttml	10000000	15000000	The after edge\nis padded by 40 pixels.
+imsc1/ttml/padding/Padding004.ttml	0	5000000	The before edge\nis padded by 10 pixels.
+imsc1/ttml/padding/Padding004.ttml	5000000	10000000	The end edge\nis padded by 20 pixels.
+imsc1/ttml/padding/Padding004.ttml	10000000	15000000	The after edge\nis padded by 30 pixels.
+imsc1/ttml/padding/Padding004.ttml	15000000	20000000	The start edge\nis padded by 40 pixels.
+imsc1/ttml/padding/Padding006.ttml	0	10000000	All the edges are padded\nby 2em.
+imsc1/ttml/padding/Padding007.ttml	0	10000000	All the edges are padded\nby 20%.
+imsc1/ttml/padding/padding-four-values-001.ttml	0	10000000	Region padding, four values.
+imsc1/ttml/padding/padding-one-value-001.ttml	0	10000000	Region padding, one value.
+imsc1/ttml/padding/padding-three-values-001.ttml	0	10000000	Region padding, three values.
+imsc1/ttml/padding/padding-two-values-001.ttml	0	10000000	Region padding, two values.
+imsc1/ttml/progressivelyDecodable/progressivelyDecodable1.ttml	0	1000000
+imsc1/ttml/progressivelyDecodable/progressivelyDecodable1.ttml	1000000	2000000	One.
+imsc1/ttml/progressivelyDecodable/progressivelyDecodable1.ttml	2000000	3000000	Two.
+imsc1/ttml/progressivelyDecodable/progressivelyDecodable1.ttml	3000000	4000000	Three.
+imsc1/ttml/progressivelyDecodable/progressivelyDecodable1.ttml	4000000	5000000	Over.
+imsc1/ttml/referenceFonts/referenceFonts1.ttml	0	9000000	Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed vitae tincidunt lacus. Pellentesque quis lorem est. Curabitur a lectus ut diam aliquam volutpat ut id ante. Vestibulum ac congue massa, in ornare velit.	Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed vitae tincidunt lacus. Pellentesque quis lorem est. Curabitur a lectus ut diam aliquam volutpat ut id ant.
+imsc1/ttml/region/four-active-regions-001.ttml	0	10000000	start/before	end/before	start/after	end/after
+imsc1/ttml/region/mutiple-regions-sequence-001.ttml	0	2000000	start/before
+imsc1/ttml/region/mutiple-regions-sequence-001.ttml	2000000	4000000	start/before	end/before
+imsc1/ttml/region/mutiple-regions-sequence-001.ttml	4000000	6000000	start/before	end/before	start/after
+imsc1/ttml/region/mutiple-regions-sequence-001.ttml	6000000	10000000	start/before	end/before	start/after	end/after
+imsc1/ttml/region/mutiple-regions-sequence-001.ttml	10000000	12000000	end/before	start/after	end/after
+imsc1/ttml/region/mutiple-regions-sequence-001.ttml	12000000	14000000	start/after	end/after
+imsc1/ttml/region/mutiple-regions-sequence-001.ttml	14000000	16000000	end/after
+imsc1/ttml/region/region-timing.ttml	0	5000000	This text should only appear during the interval [0s,10s)
+imsc1/ttml/region/region-timing.ttml	5000000	10000000	This text should only appear during the interval [0s,10s)
+imsc1/ttml/region/region-timing.ttml	10000000	12000000	This text should only appear during the interval [10s,15s)	This text should only appear during the interval [10s,20s)
+imsc1/ttml/region/region-timing.ttml	12000000	15000000	This text should only appear during the interval [10s,15s)	This text should only appear during the interval [12s,18s)	This text should only appear during the interval [10s,20s)
+imsc1/ttml/region/region-timing.ttml	15000000	16000000	This text should only appear during the interval [12s,18s)	This text should only appear during the interval [10s,20s)
+imsc1/ttml/region/region-timing.ttml	16000000	18000000	This text should only appear during the interval [12s,18s)	This text should only appear during the interval [10s,20s)	This text should only appear during the interval [16s,20s)
+imsc1/ttml/region/region-timing.ttml	18000000	20000000	This text should only appear during the interval [10s,20s)	This text should only appear during the interval [16s,20s)
+imsc1/ttml/region/region-timing.ttml	20000000	25000000
+imsc1/ttml/showBackground/ShowBackground001.ttml	0	5000000	The magenta background is always visible,
+imsc1/ttml/showBackground/ShowBackground001.ttml	5000000	7000000
+imsc1/ttml/showBackground/ShowBackground001.ttml	7000000	12000000	even when there is no text.
+imsc1/ttml/showBackground/ShowBackground002.ttml	0	5000000	The magenta background is only visible
+imsc1/ttml/showBackground/ShowBackground002.ttml	5000000	7000000
+imsc1/ttml/showBackground/ShowBackground002.ttml	7000000	12000000	when you see this text.
+imsc1/ttml/space/space-preserve-001.ttml	0	10000000	 Two- \nline Subtitle. 
+imsc1/ttml/span/Span001.ttml	0	10000000	This text must be visible.
+imsc1/ttml/span/Span002.ttml	0	10000000	This word must be red.
+imsc1/ttml/span/Span003.ttml	0	10000000	This text must be green.
+imsc1/ttml/span/Span004.ttml	0	10000000	Some of this text must red and green.
+imsc1/ttml/span/Span005.ttml	0	10000000	This text must appear\non two lines.
+imsc1/ttml/structure/Structure001.ttml	0	10000000	This text must be visible.
+imsc1/ttml/styling/Style001.ttml	0	10000000	This caption is aligned in the center, has a blue background and undecorated yellow text.
+imsc1/ttml/styling/Styling001.ttml	0	5000000	This caption is aligned in the center, has a blue background, red text and no decoration.
+imsc1/ttml/styling/Styling001.ttml	5000000	10000000	This caption is left aligned, has a green background and blue underlined text.
+imsc1/ttml/styling/idrefs-style-001.ttml	0	10000000	Should be: background black, text: bold, italic, yellow color
+imsc1/ttml/styling/styleInheritance-001.ttml	0	10000000	Inherited styles
+imsc1/ttml/textAlign/TextAlign001.ttml	0	10000000	This caption is on the right.
+imsc1/ttml/textAlign/TextAlign002.ttml	0	10000000	This caption is on the left.
+imsc1/ttml/textAlign/TextAlign003.ttml	0	10000000	This caption is in the center.
+imsc1/ttml/textAlign/TextAlign004.ttml	0	1000000
+imsc1/ttml/textAlign/TextAlign004.ttml	1000000	10000000	This caption is placed\nin the center.
+imsc1/ttml/textAlign/TextAlign005.ttml	0	10000000	This caption is aligned\nwith the start edge.
+imsc1/ttml/textAlign/TextAlign006.ttml	0	10000000	This caption is aligned\nwith the end edge.
+imsc1/ttml/textAlign/textalign-center-001.ttml	0	10000000	One line Subtitle.
+imsc1/ttml/textAlign/textalign-end-001.ttml	0	10000000	One line Subtitle.
+imsc1/ttml/textAlign/textalign-left-001.ttml	0	10000000	One line Subtitle.
+imsc1/ttml/textAlign/textalign-right-001.ttml	0	10000000	One line Subtitle.
+imsc1/ttml/textAlign/textalign-start-001.ttml	0	10000000	One line Subtitle.
+imsc1/ttml/textDecoration/TextDecoration001.ttml	0	10000000	This text has no decoration.
+imsc1/ttml/textDecoration/TextDecoration002.ttml	0	10000000	The last word in this caption is underlined.
+imsc1/ttml/textDecoration/TextDecoration003.ttml	0	10000000	The last two words in this caption are\nnot underlined.
+imsc1/ttml/textDecoration/TextDecoration004.ttml	0	10000000	All the words in this caption are underlined.
+imsc1/ttml/textDecoration/TextDecoration005.ttml	0	10000000	All the words in this caption are underlined.
+imsc1/ttml/textDecoration/TextDecoration006.ttml	0	10000000	All the words in this caption are underlined.
+imsc1/ttml/textDecoration/TextDecoration007.ttml	0	10000000	The last two words in this caption are\nnot underlined.
+imsc1/ttml/textDecoration/TextDecoration008.ttml	0	10000000	This text contains a throughline.
+imsc1/ttml/textDecoration/TextDecoration009.ttml	0	10000000	The last four words have\nno line through them.
+imsc1/ttml/textDecoration/TextDecoration010.ttml	0	10000000	This entire caption contains an overline.
+imsc1/ttml/textDecoration/TextDecoration011.ttml	0	10000000	The first row contains an overline,\nbut the second row does not.
+imsc1/ttml/textDecoration/TextDecoration012.ttml	0	10000000	The first text has an underline and a line through.
+imsc1/ttml/textDecoration/TextDecoration013.ttml	0	10000000	The first text has an underline, overline and a line through.
+imsc1/ttml/textDecoration/text-decoration-none-001.ttml	0	10000000	One line Subtitle.
+imsc1/ttml/textOutline/TextOutline001.ttml	0	10000000	This text has no outline.
+imsc1/ttml/textOutline/TextOutline002.ttml	0	10000000	This text has a three-pixel outline that is the same color as the text.
+imsc1/ttml/textOutline/TextOutline004.ttml	0	10000000	This text has a red, two-pixel outline.
+imsc1/ttml/textOutline/TextOutline005.ttml	0	5000000	This text has a red, 5% outline.
+imsc1/ttml/textOutline/TextOutline005.ttml	5000000	10000000	This text has a green, 10% outline.
+imsc1/ttml/timing/BasicTimeContainment001.ttml	0	5000000	This first sentence persists for 5 seconds. This second sentence persists for 10 seconds
+imsc1/ttml/timing/BasicTimeContainment001.ttml	5000000	10000000	This second sentence persists for 10 seconds
+imsc1/ttml/timing/BasicTimeContainment002.ttml	0	5000000	This first sentence persists for 5 seconds. This second sentence persists for 10 seconds
+imsc1/ttml/timing/BasicTimeContainment002.ttml	5000000	10000000	This second sentence persists for 10 seconds
+imsc1/ttml/timing/BasicTimeContainment002.ttml	10000000	20000000	This sentence appears at 10 seconds and persists for 10 seconds
+imsc1/ttml/timing/BasicTimeContainment003.ttml	0	5000000
+imsc1/ttml/timing/BasicTimeContainment003.ttml	5000000	10000000	This first sentence begins at 5 seconds and persists for 5 seconds.
+imsc1/ttml/timing/BasicTimeContainment003.ttml	10000000	15000000
+imsc1/ttml/timing/BasicTimeContainment003.ttml	15000000	20000000
+imsc1/ttml/timing/BasicTimeContainment004.ttml	0	5000000
+imsc1/ttml/timing/BasicTimeContainment004.ttml	5000000	10000000	This first sentence begins at 5 seconds and persists for 5 seconds.
+imsc1/ttml/timing/BasicTimeContainment004.ttml	10000000	15000000
+imsc1/ttml/timing/BasicTimeContainment004.ttml	15000000	20000000
+imsc1/ttml/timing/BasicTiming001.ttml	0	10000000
+imsc1/ttml/timing/BasicTiming001.ttml	10000000	20000000	This text must appear at 10 seconds\nand be remain visible to 20 seconds.
+imsc1/ttml/timing/BasicTiming002.ttml	0	10000000
+imsc1/ttml/timing/BasicTiming002.ttml	10000000	20000000	This text must appear at 10 seconds\nand remain visible to 20 seconds
+imsc1/ttml/timing/BasicTiming003.ttml	0	10000000
+imsc1/ttml/timing/BasicTiming003.ttml	10000000	20000000	This text must appear at 10 seconds\nand remain visible to 20 seconds
+imsc1/ttml/timing/BasicTiming005.ttml	0	1000000	This text must start to appear at 1 seconds\nand fade in to 10 seconds then fade out to 15 seconds
+imsc1/ttml/timing/BasicTiming005.ttml	1000000	2000000	This text must start to appear at 1 seconds\nand fade in to 10 seconds then fade out to 15 seconds
+imsc1/ttml/timing/BasicTiming005.ttml	2000000	3000000	This text must start to appear at 1 seconds\nand fade in to 10 seconds then fade out to 15 seconds
+imsc1/ttml/timing/BasicTiming005.ttml	3000000	4000000	This text must start to appear at 1 seconds\nand fade in to 10 seconds then fade out to 15 seconds
+imsc1/ttml/timing/BasicTiming005.ttml	4000000	5000000	This text must start to appear at 1 seconds\nand fade in to 10 seconds then fade out to 15 seconds
+imsc1/ttml/timing/BasicTiming005.ttml	5000000	6000000	This text must start to appear at 1 seconds\nand fade in to 10 seconds then fade out to 15 seconds
+imsc1/ttml/timing/BasicTiming005.ttml	6000000	7000000	This text must start to appear at 1 seconds\nand fade in to 10 seconds then fade out to 15 seconds
+imsc1/ttml/timing/BasicTiming005.ttml	7000000	8000000	This text must start to appear at 1 seconds\nand fade in to 10 seconds then fade out to 15 seconds
+imsc1/ttml/timing/BasicTiming005.ttml	8000000	9000000	This text must start to appear at 1 seconds\nand fade in to 10 seconds then fade out to 15 seconds
+imsc1/ttml/timing/BasicTiming005.ttml	9000000	10000000	This text must start to appear at 1 seconds\nand fade in to 10 seconds then fade out to 15 seconds
+imsc1/ttml/timing/BasicTiming005.ttml	10000000	11000000	This text must start to appear at 1 seconds\nand fade in to 10 seconds then fade out to 15 seconds
+imsc1/ttml/timing/BasicTiming005.ttml	11000000	12000000	This text must start to appear at 1 seconds\nand fade in to 10 seconds then fade out to 15 seconds
+imsc1/ttml/timing/BasicTiming005.ttml	12000000	13000000	This text must start to appear at 1 seconds\nand fade in to 10 seconds then fade out to 15 seconds
+imsc1/ttml/timing/BasicTiming005.ttml	13000000	14000000	This text must start to appear at 1 seconds\nand fade in to 10 seconds then fade out to 15 seconds
+imsc1/ttml/timing/BasicTiming005.ttml	14000000	15000000	This text must start to appear at 1 seconds\nand fade in to 10 seconds then fade out to 15 seconds
+imsc1/ttml/timing/BasicTiming006.ttml	0	15000000	This text must appear at 0 seconds and disappear at 15 seconds\nThis text must also appear at 0 seconds and disappear at 15 seconds 
+imsc1/ttml/timing/BasicTiming007.ttml	0	5000000
+imsc1/ttml/timing/BasicTiming007.ttml	5000000	15000000	This text should appear at 5 seconds and stay till 15 seconds
+imsc1/ttml/timing/BasicTiming007.ttml	15000000	20000000
+imsc1/ttml/timing/BasicTiming008.ttml	0	1000000
+imsc1/ttml/timing/BasicTiming008.ttml	1000000	2000000	This text must appear at 1 seconds and disappear at 15 seconds\n
+imsc1/ttml/timing/BasicTiming008.ttml	2000000	3000000	This text must appear at 2 seconds and disappear at 15 seconds\nThis text must appear at 1 seconds and disappear at 15 seconds\n
+imsc1/ttml/timing/BasicTiming008.ttml	3000000	4000000	This text must appear at 3 seconds and disappear at 15 seconds\nThis text must appear at 2 seconds and disappear at 15 seconds\nThis text must appear at 1 seconds and disappear at 15 seconds\n
+imsc1/ttml/timing/BasicTiming008.ttml	4000000	5000000	This text must appear at 4 seconds and disappear at 15 seconds\nThis text must appear at 3 seconds and disappear at 15 seconds\nThis text must appear at 2 seconds and disappear at 15 seconds\nThis text must appear at 1 seconds and disappear at 15 seconds\n
+imsc1/ttml/timing/BasicTiming008.ttml	5000000	6000000	This text must appear at 5 seconds and disappear at 15 seconds\nThis text must appear at 4 seconds and disappear at 15 seconds\nThis text must appear at 3 seconds and disappear at 15 seconds\nThis text must appear at 2 seconds and disappear at 15 seconds\nThis text must appear at 1 seconds and disappear at 15 seconds\n
+imsc1/ttml/timing/BasicTiming008.ttml	6000000	15000000	This text must appear at 6 seconds and disappear at 15 seconds\nThis text must appear at 5 seconds and disappear at 15 seconds\nThis text must appear at 4 seconds and disappear at 15 seconds\nThis text must appear at 3 seconds and disappear at 15 seconds\nThis text must appear at 2 seconds and disappear at 15 seconds\nThis text must appear at 1 seconds and disappear at 15 seconds\n
+imsc1/ttml/timing/BasicTiming008.ttml	15000000	21000000
+imsc1/ttml/timing/BasicTiming008.ttml	21000000	22000000
+imsc1/ttml/timing/BasicTiming008.ttml	22000000	23000000
+imsc1/ttml/timing/BasicTiming008.ttml	23000000	24000000
+imsc1/ttml/timing/BasicTiming008.ttml	24000000	25000000
+imsc1/ttml/timing/BasicTiming008.ttml	25000000	26000000
+imsc1/ttml/timing/BasicTiming010.ttml	0	10000000
+imsc1/ttml/timing/BasicTiming010.ttml	10000000	24400000	This text must appear at 10 seconds and disappear at 24.4 seconds\n
+imsc1/ttml/timing/BasicTiming010.ttml	24400000	25000000	\n
+imsc1/ttml/timing/BasicTiming010.ttml	25000000	35000000	\nThis text must appear at 25 seconds and disappear at 35 seconds
+imsc1/ttml/timing/BasicTiming010.ttml	35000000	40000000	\n
+imsc1/ttml/timing/BasicTiming011.ttml	0	187500
+imsc1/ttml/timing/BasicTiming011.ttml	187500	375000	This
+imsc1/ttml/timing/BasicTiming011.ttml	375000	562500	This text
+imsc1/ttml/timing/BasicTiming011.ttml	562500	750000	This text should
+imsc1/ttml/timing/BasicTiming011.ttml	750000	937500	This text should\nappear 
+imsc1/ttml/timing/BasicTiming011.ttml	937500	1125000	This text should\nappear one
+imsc1/ttml/timing/BasicTiming011.ttml	1125000	1312500	This text should\nappear one word
+imsc1/ttml/timing/BasicTiming011.ttml	1312500	1500000	This text should\nappear one word\nAt 
+imsc1/ttml/timing/BasicTiming011.ttml	1500000	1687500	This text should\nappear one word\nAt a
+imsc1/ttml/timing/BasicTiming011.ttml	1687500	1875000	This text should\nappear one word\nAt a time
+imsc1/ttml/timing/BasicTiming011.ttml	1875000	2062500	This text should\nappear one word\nAt a time\nspread 
+imsc1/ttml/timing/BasicTiming011.ttml	2062500	2250000	This text should\nappear one word\nAt a time\nspread over
+imsc1/ttml/timing/BasicTiming011.ttml	2250000	2437500	This text should\nappear one word\nAt a time\nspread over four
+imsc1/ttml/timing/BasicTiming011.ttml	2437500	2625000	This text should\nappear one word\nAt a time\nspread over four lines\n
+imsc1/ttml/timing/BasicTiming011.ttml	2625000	2812500	This text should\nappear one word\nAt a time\nspread over four lines\n\n
+imsc1/ttml/timing/BasicTiming011.ttml	2812500	3000000	This text should\nappear one word\nAt a time\nspread over four lines\n\n\n
+imsc1/ttml/timing/BasicTiming012.ttml	0	187500
+imsc1/ttml/timing/BasicTiming012.ttml	187500	375000	This
+imsc1/ttml/timing/BasicTiming012.ttml	375000	562500	This text
+imsc1/ttml/timing/BasicTiming012.ttml	562500	750000	This text should
+imsc1/ttml/timing/BasicTiming012.ttml	750000	937500	This text should appear
+imsc1/ttml/timing/BasicTiming012.ttml	937500	1125000	This text should appear on
+imsc1/ttml/timing/BasicTiming012.ttml	1125000	1312500	This text should appear on one
+imsc1/ttml/timing/BasicTiming012.ttml	1312500	1500000	This text should appear on one line
+imsc1/ttml/timing/BasicTiming012.ttml	1500000	1687500	This text should appear on one line scrolling
+imsc1/ttml/timing/BasicTiming012.ttml	1687500	1875000	This text should appear on one line scrolling from
+imsc1/ttml/timing/BasicTiming012.ttml	1875000	2062500	This text should appear on one line scrolling from right
+imsc1/ttml/timing/BasicTiming012.ttml	2062500	2250000	This text should appear on one line scrolling from right to
+imsc1/ttml/timing/BasicTiming012.ttml	2250000	2437500	This text should appear on one line scrolling from right to left
+imsc1/ttml/timing/BasicTiming012.ttml	2437500	2625000	This text should appear on one line scrolling from right to left         
+imsc1/ttml/timing/BasicTiming012.ttml	2625000	2812500	This text should appear on one line scrolling from right to left                  
+imsc1/ttml/timing/BasicTiming012.ttml	2812500	3000000	This text should appear on one line scrolling from right to left                          
+imsc1/ttml/timing/BasicTiming012.ttml	3000000	3187500	This text should appear on one line scrolling from right to left                                  
+imsc1/ttml/timing/BasicTiming012.ttml	3187500	3375000	This text should appear on one line scrolling from right to left                                          
+imsc1/ttml/timing/BeginDur001.ttml	0	6000000	This test is going to display a message\nevery other second.
+imsc1/ttml/timing/BeginDur001.ttml	6000000	7000000	From 6s to 7s,
+imsc1/ttml/timing/BeginDur001.ttml	7000000	8000000
+imsc1/ttml/timing/BeginDur001.ttml	8000000	9000000	from 8s to 9s,
+imsc1/ttml/timing/BeginDur001.ttml	9000000	10000000
+imsc1/ttml/timing/BeginDur001.ttml	10000000	11000000	from 10s to 11s,
+imsc1/ttml/timing/BeginDur001.ttml	11000000	12000000
+imsc1/ttml/timing/BeginDur001.ttml	12000000	13000000	from 12s to 13s,
+imsc1/ttml/timing/BeginDur001.ttml	13000000	14000000
+imsc1/ttml/timing/BeginDur001.ttml	14000000	15000000	from 14s to 15s,
+imsc1/ttml/timing/BeginDur001.ttml	15000000	16000000
+imsc1/ttml/timing/BeginDur001.ttml	16000000	17000000	from 16s to 17s,
+imsc1/ttml/timing/BeginDur001.ttml	17000000	18000000
+imsc1/ttml/timing/BeginDur001.ttml	18000000	19000000	and, from 18s to 19s.
+imsc1/ttml/timing/BeginDur001.ttml	19000000	20000000
+imsc1/ttml/timing/BeginDur001.ttml	20000000	25000000	This test is over.
+imsc1/ttml/timing/BeginEnd001.ttml	0	6000000	This test is going to display a message\nevery other second.
+imsc1/ttml/timing/BeginEnd001.ttml	6000000	7000000	From 6s to 7s,
+imsc1/ttml/timing/BeginEnd001.ttml	7000000	8000000
+imsc1/ttml/timing/BeginEnd001.ttml	8000000	9000000	from 8s to 9s,
+imsc1/ttml/timing/BeginEnd001.ttml	9000000	10000000
+imsc1/ttml/timing/BeginEnd001.ttml	10000000	11000000	from 10s to 11s,
+imsc1/ttml/timing/BeginEnd001.ttml	11000000	12000000
+imsc1/ttml/timing/BeginEnd001.ttml	12000000	13000000	from 12s to 13s,
+imsc1/ttml/timing/BeginEnd001.ttml	13000000	14000000
+imsc1/ttml/timing/BeginEnd001.ttml	14000000	15000000	from 14s to 15s,
+imsc1/ttml/timing/BeginEnd001.ttml	15000000	16000000
+imsc1/ttml/timing/BeginEnd001.ttml	16000000	17000000	from 16s to 17s,
+imsc1/ttml/timing/BeginEnd001.ttml	17000000	18000000
+imsc1/ttml/timing/BeginEnd001.ttml	18000000	19000000	and, from 18s to 19s.
+imsc1/ttml/timing/BeginEnd001.ttml	19000000	20000000
+imsc1/ttml/timing/BeginEnd001.ttml	20000000	25000000	This test is over.
+imsc1/ttml/timing/BeginEnd002.ttml	0	1000000	This test counts from 0 to 10 in 10 seconds.\n0
+imsc1/ttml/timing/BeginEnd002.ttml	1000000	2000000	This test counts from 0 to 10 in 10 seconds.\n0	This test counts from 0 to 10 in 10 seconds.\n1
+imsc1/ttml/timing/BeginEnd002.ttml	2000000	3000000	This test counts from 0 to 10 in 10 seconds.\n0	This test counts from 0 to 10 in 10 seconds.\n1	This test counts from 0 to 10 in 10 seconds.\n2
+imsc1/ttml/timing/BeginEnd002.ttml	3000000	4000000	This test counts from 0 to 10 in 10 seconds.\n0	This test counts from 0 to 10 in 10 seconds.\n1	This test counts from 0 to 10 in 10 seconds.\n2	This test counts from 0 to 10 in 10 seconds.\n3
+imsc1/ttml/timing/BeginEnd002.ttml	4000000	5000000	This test counts from 0 to 10 in 10 seconds.\n0	This test counts from 0 to 10 in 10 seconds.\n1	This test counts from 0 to 10 in 10 seconds.\n2	This test counts from 0 to 10 in 10 seconds.\n3	This test counts from 0 to 10 in 10 seconds.\n4
+imsc1/ttml/timing/BeginEnd002.ttml	5000000	6000000	This test counts from 0 to 10 in 10 seconds.\n0	This test counts from 0 to 10 in 10 seconds.\n1	This test counts from 0 to 10 in 10 seconds.\n2	This test counts from 0 to 10 in 10 seconds.\n3	This test counts from 0 to 10 in 10 seconds.\n4	This test counts from 0 to 10 in 10 seconds.\n5
+imsc1/ttml/timing/BeginEnd002.ttml	6000000	7000000	This test counts from 0 to 10 in 10 seconds.\n0	This test counts from 0 to 10 in 10 seconds.\n1	This test counts from 0 to 10 in 10 seconds.\n2	This test counts from 0 to 10 in 10 seconds.\n3	This test counts from 0 to 10 in 10 seconds.\n4	This test counts from 0 to 10 in 10 seconds.\n5	This test counts from 0 to 10 in 10 seconds.\n6
+imsc1/ttml/timing/BeginEnd002.ttml	7000000	8000000	This test counts from 0 to 10 in 10 seconds.\n0	This test counts from 0 to 10 in 10 seconds.\n1	This test counts from 0 to 10 in 10 seconds.\n2	This test counts from 0 to 10 in 10 seconds.\n3	This test counts from 0 to 10 in 10 seconds.\n4	This test counts from 0 to 10 in 10 seconds.\n5	This test counts from 0 to 10 in 10 seconds.\n6	This test counts from 0 to 10 in 10 seconds.\n7
+imsc1/ttml/timing/BeginEnd002.ttml	8000000	9000000	This test counts from 0 to 10 in 10 seconds.\n0	This test counts from 0 to 10 in 10 seconds.\n1	This test counts from 0 to 10 in 10 seconds.\n2	This test counts from 0 to 10 in 10 seconds.\n3	This test counts from 0 to 10 in 10 seconds.\n4	This test counts from 0 to 10 in 10 seconds.\n5	This test counts from 0 to 10 in 10 seconds.\n6	This test counts from 0 to 10 in 10 seconds.\n7	This test counts from 0 to 10 in 10 seconds.\n8
+imsc1/ttml/timing/BeginEnd002.ttml	9000000	10000000	This test counts from 0 to 10 in 10 seconds.\n0	This test counts from 0 to 10 in 10 seconds.\n1	This test counts from 0 to 10 in 10 seconds.\n2	This test counts from 0 to 10 in 10 seconds.\n3	This test counts from 0 to 10 in 10 seconds.\n4	This test counts from 0 to 10 in 10 seconds.\n5	This test counts from 0 to 10 in 10 seconds.\n6	This test counts from 0 to 10 in 10 seconds.\n7	This test counts from 0 to 10 in 10 seconds.\n8	This test counts from 0 to 10 in 10 seconds.\n9
+imsc1/ttml/timing/BeginEnd002.ttml	10000000	11000000	This test counts from 0 to 10 in 10 seconds.\n0	This test counts from 0 to 10 in 10 seconds.\n1	This test counts from 0 to 10 in 10 seconds.\n2	This test counts from 0 to 10 in 10 seconds.\n3	This test counts from 0 to 10 in 10 seconds.\n4	This test counts from 0 to 10 in 10 seconds.\n5	This test counts from 0 to 10 in 10 seconds.\n6	This test counts from 0 to 10 in 10 seconds.\n7	This test counts from 0 to 10 in 10 seconds.\n8	This test counts from 0 to 10 in 10 seconds.\n9	This test counts from 0 to 10 in 10 seconds.\n10
+imsc1/ttml/timing/BeginEnd002.ttml	11000000	20000000	This test counts from 0 to 10 in 10 seconds.\n0	This test counts from 0 to 10 in 10 seconds.\n1	This test counts from 0 to 10 in 10 seconds.\n2	This test counts from 0 to 10 in 10 seconds.\n3	This test counts from 0 to 10 in 10 seconds.\n4	This test counts from 0 to 10 in 10 seconds.\n5	This test counts from 0 to 10 in 10 seconds.\n6	This test counts from 0 to 10 in 10 seconds.\n7	This test counts from 0 to 10 in 10 seconds.\n8	This test counts from 0 to 10 in 10 seconds.\n9	This test counts from 0 to 10 in 10 seconds.\n10	This test is over.
+imsc1/ttml/timing/BeginEnd003.ttml	0	6000000	This test is going to display a message\nevery other second.
+imsc1/ttml/timing/BeginEnd003.ttml	6000000	7000000	From 6s to 7s,
+imsc1/ttml/timing/BeginEnd003.ttml	7000000	8000000
+imsc1/ttml/timing/BeginEnd003.ttml	8000000	9000000	from 8s to 9s,
+imsc1/ttml/timing/BeginEnd003.ttml	9000000	10000000
+imsc1/ttml/timing/BeginEnd003.ttml	10000000	11000000	from 10s to 11s,
+imsc1/ttml/timing/BeginEnd003.ttml	11000000	12000000
+imsc1/ttml/timing/BeginEnd003.ttml	12000000	13000000	from 12s to 13s,
+imsc1/ttml/timing/BeginEnd003.ttml	13000000	14000000
+imsc1/ttml/timing/BeginEnd003.ttml	14000000	15000000	from 14s to 15s,
+imsc1/ttml/timing/BeginEnd003.ttml	15000000	16000000
+imsc1/ttml/timing/BeginEnd003.ttml	16000000	17000000	from 16s to 17s,
+imsc1/ttml/timing/BeginEnd003.ttml	17000000	18000000
+imsc1/ttml/timing/BeginEnd003.ttml	18000000	19000000	and, from 18s to 19s.
+imsc1/ttml/timing/BeginEnd003.ttml	19000000	20000000
+imsc1/ttml/timing/BeginEnd003.ttml	20000000	25000000	This test is over.
+imsc1/ttml/timing/FixedBeginEnd002.ttml	0	1000000	This test counts from 0 to 10 in 10 seconds.\n0 
+imsc1/ttml/timing/FixedBeginEnd002.ttml	1000000	2000000	This test counts from 0 to 10 in 10 seconds.\n0 	This test counts from 0 to 10 in 10 seconds.\n1 
+imsc1/ttml/timing/FixedBeginEnd002.ttml	2000000	3000000	This test counts from 0 to 10 in 10 seconds.\n0 	This test counts from 0 to 10 in 10 seconds.\n1 	This test counts from 0 to 10 in 10 seconds.\n2 
+imsc1/ttml/timing/FixedBeginEnd002.ttml	3000000	4000000	This test counts from 0 to 10 in 10 seconds.\n0 	This test counts from 0 to 10 in 10 seconds.\n1 	This test counts from 0 to 10 in 10 seconds.\n2 	This test counts from 0 to 10 in 10 seconds.\n3 
+imsc1/ttml/timing/FixedBeginEnd002.ttml	4000000	5000000	This test counts from 0 to 10 in 10 seconds.\n0 	This test counts from 0 to 10 in 10 seconds.\n1 	This test counts from 0 to 10 in 10 seconds.\n2 	This test counts from 0 to 10 in 10 seconds.\n3 	This test counts from 0 to 10 in 10 seconds.\n4 
+imsc1/ttml/timing/FixedBeginEnd002.ttml	5000000	6000000	This test counts from 0 to 10 in 10 seconds.\n0 	This test counts from 0 to 10 in 10 seconds.\n1 	This test counts from 0 to 10 in 10 seconds.\n2 	This test counts from 0 to 10 in 10 seconds.\n3 	This test counts from 0 to 10 in 10 seconds.\n4 	This test counts from 0 to 10 in 10 seconds.\n5 
+imsc1/ttml/timing/FixedBeginEnd002.ttml	6000000	7000000	This test counts from 0 to 10 in 10 seconds.\n0 	This test counts from 0 to 10 in 10 seconds.\n1 	This test counts from 0 to 10 in 10 seconds.\n2 	This test counts from 0 to 10 in 10 seconds.\n3 	This test counts from 0 to 10 in 10 seconds.\n4 	This test counts from 0 to 10 in 10 seconds.\n5 	This test counts from 0 to 10 in 10 seconds.\n6 
+imsc1/ttml/timing/FixedBeginEnd002.ttml	7000000	8000000	This test counts from 0 to 10 in 10 seconds.\n0 	This test counts from 0 to 10 in 10 seconds.\n1 	This test counts from 0 to 10 in 10 seconds.\n2 	This test counts from 0 to 10 in 10 seconds.\n3 	This test counts from 0 to 10 in 10 seconds.\n4 	This test counts from 0 to 10 in 10 seconds.\n5 	This test counts from 0 to 10 in 10 seconds.\n6 	This test counts from 0 to 10 in 10 seconds.\n7 
+imsc1/ttml/timing/FixedBeginEnd002.ttml	8000000	9000000	This test counts from 0 to 10 in 10 seconds.\n0 	This test counts from 0 to 10 in 10 seconds.\n1 	This test counts from 0 to 10 in 10 seconds.\n2 	This test counts from 0 to 10 in 10 seconds.\n3 	This test counts from 0 to 10 in 10 seconds.\n4 	This test counts from 0 to 10 in 10 seconds.\n5 	This test counts from 0 to 10 in 10 seconds.\n6 	This test counts from 0 to 10 in 10 seconds.\n7 	This test counts from 0 to 10 in 10 seconds.\n8 
+imsc1/ttml/timing/FixedBeginEnd002.ttml	9000000	10000000	This test counts from 0 to 10 in 10 seconds.\n0 	This test counts from 0 to 10 in 10 seconds.\n1 	This test counts from 0 to 10 in 10 seconds.\n2 	This test counts from 0 to 10 in 10 seconds.\n3 	This test counts from 0 to 10 in 10 seconds.\n4 	This test counts from 0 to 10 in 10 seconds.\n5 	This test counts from 0 to 10 in 10 seconds.\n6 	This test counts from 0 to 10 in 10 seconds.\n7 	This test counts from 0 to 10 in 10 seconds.\n8 	This test counts from 0 to 10 in 10 seconds.\n9 
+imsc1/ttml/timing/FixedBeginEnd002.ttml	10000000	11000000	This test counts from 0 to 10 in 10 seconds.\n0 	This test counts from 0 to 10 in 10 seconds.\n1 	This test counts from 0 to 10 in 10 seconds.\n2 	This test counts from 0 to 10 in 10 seconds.\n3 	This test counts from 0 to 10 in 10 seconds.\n4 	This test counts from 0 to 10 in 10 seconds.\n5 	This test counts from 0 to 10 in 10 seconds.\n6 	This test counts from 0 to 10 in 10 seconds.\n7 	This test counts from 0 to 10 in 10 seconds.\n8 	This test counts from 0 to 10 in 10 seconds.\n9 	This test counts from 0 to 10 in 10 seconds.\n10 
+imsc1/ttml/timing/FixedBeginEnd002.ttml	11000000	20000000	This test counts from 0 to 10 in 10 seconds.\n0 	This test counts from 0 to 10 in 10 seconds.\n1 	This test counts from 0 to 10 in 10 seconds.\n2 	This test counts from 0 to 10 in 10 seconds.\n3 	This test counts from 0 to 10 in 10 seconds.\n4 	This test counts from 0 to 10 in 10 seconds.\n5 	This test counts from 0 to 10 in 10 seconds.\n6 	This test counts from 0 to 10 in 10 seconds.\n7 	This test counts from 0 to 10 in 10 seconds.\n8 	This test counts from 0 to 10 in 10 seconds.\n9 	This test counts from 0 to 10 in 10 seconds.\n10 	This test is over.
+imsc1/ttml/timing/MediaParTiming001.ttml	0	5000000
+imsc1/ttml/timing/MediaParTiming001.ttml	5000000	10000000	This text must appear at 5 seconds\nand be remain visible to 15 seconds,\n
+imsc1/ttml/timing/MediaParTiming001.ttml	10000000	15000000	This text must appear at 10 seconds\nand be remain visible to 20 seconds,\n	This text must appear at 5 seconds\nand be remain visible to 15 seconds,\n
+imsc1/ttml/timing/MediaParTiming001.ttml	15000000	20000000	This text must appear at 10 seconds\nand be remain visible to 20 seconds,\n
+imsc1/ttml/timing/MediaParTiming002.ttml	0	5000000
+imsc1/ttml/timing/MediaParTiming002.ttml	5000000	10000000	This text must appear at 5 seconds\nand be remain visible to 10 seconds,	This text must appear at 5 seconds\nand be remain visible to 10 seconds,	This text must appear at 5 seconds\nand remain visible to 10 seconds
+imsc1/ttml/timing/MediaParTiming002.ttml	10000000	20000000
+imsc1/ttml/timing/MediaParTiming002.ttml	20000000	25000000
+imsc1/ttml/timing/MediaParTiming003.ttml	0	5000000	This text must appear at 0 seconds\nand be remain visible to 5 seconds,
+imsc1/ttml/timing/MediaParTiming003.ttml	5000000	10000000	This text must appear at 5 seconds\nand be remain visible to 10 seconds,
+imsc1/ttml/timing/MediaParTiming003.ttml	10000000	15000000	This text must appear at 10 seconds\nand be remain visible to 20 seconds.
+imsc1/ttml/timing/MediaParTiming003.ttml	15000000	20000000	This text must appear at 15 seconds\nand be remain visible to 20 seconds.	This text must appear at 10 seconds\nand be remain visible to 20 seconds.
+imsc1/ttml/timing/MediaParTiming003.ttml	20000000	40000000
+imsc1/ttml/timing/MediaSeqTiming001.ttml	0	5000000
+imsc1/ttml/timing/MediaSeqTiming001.ttml	5000000	10000000	This text must appear at 5 seconds\nand be remain visible to 10 seconds,
+imsc1/ttml/timing/MediaSeqTiming001.ttml	10000000	15000000
+imsc1/ttml/timing/MediaSeqTiming001.ttml	15000000	20000000	This text must appear at 15 seconds\nand be remain visible to 20 seconds,
+imsc1/ttml/timing/MediaSeqTiming002.ttml	0	5000000
+imsc1/ttml/timing/MediaSeqTiming002.ttml	5000000	10000000	This text must appear at 5 seconds\nand be remain visible to 10 seconds,
+imsc1/ttml/timing/MediaSeqTiming002.ttml	10000000	15000000
+imsc1/ttml/timing/MediaSeqTiming002.ttml	15000000	20000000	This text must appear at 15 seconds\nand be remain visible to 20 seconds,
+imsc1/ttml/timing/MediaSeqTiming002.ttml	20000000	25000000
+imsc1/ttml/timing/MediaSeqTiming002.ttml	25000000	30000000	This text must appear at 25 seconds\nand be remain visible to 30 seconds.
+imsc1/ttml/timing/MediaSeqTiming002.ttml	30000000	35000000
+imsc1/ttml/timing/MediaSeqTiming002.ttml	35000000	40000000	This text must appear at 35 seconds\nand be remain visible to 40 seconds.
+imsc1/ttml/timing/MediaSeqTiming003.ttml	0	5000000
+imsc1/ttml/timing/MediaSeqTiming003.ttml	5000000	10000000
+imsc1/ttml/timing/MediaSeqTiming003.ttml	10000000	15000000
+imsc1/ttml/timing/MediaSeqTiming003.ttml	15000000	20000000
+imsc1/ttml/timing/MediaSeqTiming003.ttml	20000000	25000000
+imsc1/ttml/timing/MediaSeqTiming003.ttml	25000000	30000000	This text must appear at 25 seconds\nand be remain visible to 30 seconds.
+imsc1/ttml/timing/MediaSeqTiming003.ttml	30000000	35000000
+imsc1/ttml/timing/MediaSeqTiming003.ttml	35000000	40000000	This text must appear at 35 seconds\nand be remain visible to 40 seconds.
+imsc1/ttml/timing/MediaSeqTiming004.ttml	0	5000000
+imsc1/ttml/timing/MediaSeqTiming004.ttml	5000000	10000000	This text must appear at 5 seconds\nand be remain visible to 10 seconds,
+imsc1/ttml/timing/MediaSeqTiming004.ttml	10000000	15000000
+imsc1/ttml/timing/MediaSeqTiming004.ttml	15000000	20000000	This text must appear at 15 seconds\nand be remain visible to 20 seconds,
+imsc1/ttml/timing/MediaSeqTiming004.ttml	20000000	25000000
+imsc1/ttml/timing/MediaSeqTiming004.ttml	25000000	30000000
+imsc1/ttml/timing/MediaSeqTiming004.ttml	30000000	35000000
+imsc1/ttml/timing/MediaSeqTiming004.ttml	35000000	40000000
+imsc1/ttml/timing/MediaSeqTiming005.ttml	0	5000000
+imsc1/ttml/timing/MediaSeqTiming005.ttml	5000000	10000000	This text must appear at 5 seconds\nand be remain visible to 10 seconds,
+imsc1/ttml/timing/MediaSeqTiming005.ttml	10000000	15000000
+imsc1/ttml/timing/MediaSeqTiming005.ttml	15000000	20000000	This text must appear at 15 seconds\nand be remain visible to 20 seconds,
+imsc1/ttml/timing/MediaSeqTiming005.ttml	20000000	25000000
+imsc1/ttml/timing/MediaSeqTiming005.ttml	25000000	30000000	This text must appear at 25 seconds\nand be remain visible to 30 seconds.
+imsc1/ttml/timing/MediaSeqTiming005.ttml	30000000	35000000
+imsc1/ttml/timing/MediaSeqTiming005.ttml	35000000	40000000
+imsc1/ttml/timing/MediaSeqTiming006.ttml	0	5000000
+imsc1/ttml/timing/MediaSeqTiming006.ttml	5000000	10000000	This text must appear at 5 seconds\nand be remain visible to 10 seconds,	This text must appear at 5 seconds\nand be remain visible to 10 seconds.
+imsc1/ttml/timing/MediaSeqTiming006.ttml	10000000	15000000
+imsc1/ttml/timing/MediaSeqTiming006.ttml	15000000	20000000
+imsc1/ttml/timing/MediaSeqTiming007.ttml	0	5000000
+imsc1/ttml/timing/MediaSeqTiming007.ttml	5000000	10000000	This text must appear at 5 seconds\nand be remain visible to 10 seconds,	This text must appear at 5 seconds\nand remain visible to 10 seconds
+imsc1/ttml/timing/MediaSeqTiming007.ttml	10000000	15000000
+imsc1/ttml/timing/MediaSeqTiming007.ttml	15000000	20000000
+imsc1/ttml/timing/MediaSeqTiming007.ttml	20000000	25000000
+imsc1/ttml/timing/MediaSeqTiming007.ttml	25000000	30000000
+imsc1/ttml/timing/TimeExpressions001.ttml	0	1200000	1.2s = 1.2s
+imsc1/ttml/timing/TimeExpressions001.ttml	1200000	73200000	1.2m = 72s
+imsc1/ttml/timing/TimeExpressions001.ttml	73200000	4393200000	1.2h = 4320s
+imsc1/ttml/timing/TimeExpressions001.ttml	4393200000	4394201000	24f = 1.001s
+imsc1/ttml/timing/TimeExpressions001.ttml	4394201000	4396201000	120t = 2s
+imsc1/ttml/timing/TimeExpressions001.ttml	4396201000	8119201000	01:02:03 = 3723s
+imsc1/ttml/timing/TimeExpressions001.ttml	8119201000	11842436000	01:02:03.235 = 3723.235s
+imsc1/ttml/timing/TimeExpressions001.ttml	11842436000	15565671000	01:02:03.2350 = 3723.235s
+imsc1/ttml/timing/TimeExpressions001.ttml	15565671000	19289505167	01:02:03:20 = 3723.83416667s
+imsc1/ttml/timing/TimeExpressions001.ttml	19289505167	379289605167	100:00:00.1 = 360000.1s
+imsc1/ttml/timing/TimeExpressions001.ttml	379289605167	739289605167	100:00:00:00 = 360000s
+imsc1/ttml/timing/timing-on-span-001.ttml	0	10000000	One line Subtitle.
+imsc1/ttml/timing/timing-on-span-002.ttml	0	4000000	One line Subtitle.
+imsc1/ttml/timing/timing-on-span-002.ttml	4000000	10000000	One line Subtitle.
+imsc1/ttml/tt/Tt001.ttml	0	10000000	This text must appear on one line.
+imsc1/ttml/tt/Tt002.ttml	0	10000000	This text\n must appear on two lines.
+imsc1/ttml/tt/Tt003.ttml	0	10000000	This text must appear on one line.
+imsc1/ttml/unicodeBidi/UnicodeBidi001.ttml	0	10000000	This text is displayed left to right.
+imsc1/ttml/unicodeBidi/UnicodeBidi002.ttml	0	10000000	The last three words are displayed\nright to left.
+imsc1/ttml/unicodeBidi/UnicodeBidi003.ttml	0	10000000	This text is displayed right to left.
+imsc1/ttml/unicodeBidi/UnicodeBidi005.ttml	0	5000000	This text is displayed left to right.
+imsc1/ttml/unicodeBidi/UnicodeBidi005.ttml	5000000	10000000	This text is displayed right to left.
+imsc1/ttml/unicodeBidi/unicode-bidi-embed-direction-ltr-001.ttml	0	10000000	bahrain مصر 2015 kuwait
+imsc1/ttml/unicodeBidi/unicode-bidi-embed-direction-rtl-001.ttml	0	10000000	The title of the book is "نشاط التدويل، W3C"
+imsc1/ttml/unicodeBidi/unicode-bidi-override-direction-rtl-001.ttml	0	10000000	Inline direction LTR and LTR inside.
+imsc1/ttml/visibility/Visibility001.ttml	0	10000000	This text is visible.
+imsc1/ttml/visibility/Visibility002.ttml	0	10000000	All the words in this caption are visible.
+imsc1/ttml/visibility/Visibility003.ttml	0	10000000	The second row of text is invisible:\n
+imsc1/ttml/wrap/WrapOption001.ttml	0	10000000	The text in this caption wraps automatically no matter how much text is in the paragraph.
+imsc1/ttml/wrap/WrapOption002.ttml	0	10000000	The text in this caption does not wrap, so some of the text is not visible.
+imsc1/ttml/wrap/WrapOption003.ttml	0	10000000	The text in this caption does not wrap, so some of the text is not visible.
+imsc1/ttml/wrap/WrapOption004.ttml	0	5000000	The text in this caption does not wrap, extending beyond the end edge of the text region.
+imsc1/ttml/wrap/WrapOption004.ttml	5000000	10000000	The text in this row wraps, staying within the text region.
+imsc1/ttml/wrap/WrapOption005.ttml	0	5000000	The text in this caption wraps, staying within the text region.
+imsc1/ttml/wrap/WrapOption005.ttml	5000000	10000000	The text in this caption does not wrap, extending beyond the end edge of the text region.
+imsc1/ttml/wrap/wrapoption-nowrap-001.ttml	0	10000000	If a line overflows the extent of the region automated line wrapping shall not apply.
+imsc1/ttml/wrap/wrapoption-wrap-001.ttml	0	10000000	If a line overflows the extent of the region automated line wrapping shall apply.
+imsc1/ttml/writingMode/WritingMode001.ttml	0	10000000	This text is displayed left to right\nand top to bottom.
+imsc1/ttml/writingMode/WritingMode002.ttml	0	5000000	This text is displayed right to left\nand top to bottom,
+imsc1/ttml/writingMode/WritingMode002.ttml	5000000	10000000	with the words displayed\nin the left-to-right direction.
+imsc1/ttml/writingMode/WritingMode003.ttml	0	5000000	This text is displayed right to left\nand top to bottom,
+imsc1/ttml/writingMode/WritingMode003.ttml	5000000	10000000	with the words displayed\nin the right-to-left direction.
+imsc1/ttml/writingMode/WritingMode004.ttml	0	10000000	This text is displayed top to bottom in the inline progression direction\nand right to left in the block progression direction.
+imsc1/ttml/writingMode/WritingMode005.ttml	0	10000000	This text is displayed top to bottom\nand left to right.
+imsc1/ttml/writingMode/WritingMode006.ttml	0	10000000	This text is displayed left to right\nand top to bottom.
+imsc1/ttml/writingMode/WritingMode007.ttml	0	5000000	This text is displayed right to left\nand top to bottom,
+imsc1/ttml/writingMode/WritingMode007.ttml	5000000	10000000	with the words displayed\nin the left-to-right direction.
+imsc1/ttml/writingMode/WritingMode008.ttml	0	5000000	This text is displayed right to left\nand top to bottom,
+imsc1/ttml/writingMode/WritingMode008.ttml	5000000	10000000	with the words displayed\nin the right-to-left direction.
+imsc1/ttml/writingMode/WritingMode009.ttml	0	10000000	This text is displayed top to bottom in the inline progression direction\nand right to left in the block progression direction.
+imsc1/ttml/writingMode/WritingMode010.ttml	0	1000000	نشاط التدويل، W3C	hello みなさん、\nこんにちは
+imsc1/ttml/writingMode/writing-mode-lr-001.ttml	0	10000000	first line\nsecond line
+imsc1/ttml/writingMode/writing-mode-lrtb-001.ttml	0	10000000	bahrain مصر kuwait
+imsc1/ttml/writingMode/writing-mode-rl-001.ttml	0	10000000	first line\nsecond line
+imsc1/ttml/writingMode/writing-mode-rltb-001.ttml	0	10000000	bahrain مصر kuwait
+imsc1/ttml/writingMode/writing-mode-tb-001.ttml	0	2000000	first line
+imsc1/ttml/writingMode/writing-mode-tb-001.ttml	2000000	4000000	first line	second line
+imsc1/ttml/writingMode/writing-mode-tbrl-001.ttml	0	2000000	first line
+imsc1/ttml/writingMode/writing-mode-tbrl-001.ttml	2000000	4000000	first line	second line
+imsc1/ttml/zIndex/ZIndex001.ttml	0	1000000	tts:zIndex="1000"
+imsc1/ttml/zIndex/ZIndex001.ttml	1000000	2000000	tts:zIndex="1"
+imsc1/ttml/zIndex/ZIndex001.ttml	2000000	3000000	tts:zIndex="0"
+imsc1/ttml/zIndex/ZIndex001.ttml	3000000	4000000	tts:zIndex="auto"
+imsc1/ttml/zIndex/ZIndex001.ttml	4000000	5000000	tts:zIndex="-1"
+imsc1/ttml/zIndex/ZIndex001.ttml	5000000	6000000	tts:zIndex="-1000"
+imsc1_1/ttml/disparity/disparity001.ttml	0	1000000	Disparity of 2%
+imsc1_1/ttml/displayAspectRatio/displayAspectRatio001.ttml	0	1000000
+imsc1_1/ttml/displayAspectRatio/displayAspectRatio001.ttml	1000000	9000000	This region should have (a) an aspect ratio of 4:3, (b) be centered within the related video object and (c) be entirely within the related video object frame, and (d) have a height or width equal to that of the related video object frame.
+imsc1_1/ttml/displayAspectRatio/displayAspectRatio002.ttml	0	1000000
+imsc1_1/ttml/displayAspectRatio/displayAspectRatio002.ttml	1000000	9000000	This region should have (a) an aspect ratio of 16:9, (b) be centered within the related video object and (c) be entirely within the related video object frame, and (d) have a height or width equal to that of the related video object frame.
+imsc1_1/ttml/displayAspectRatio/displayAspectRatio003.ttml	0	1000000
+imsc1_1/ttml/displayAspectRatio/displayAspectRatio003.ttml	1000000	9000000
+imsc1_1/ttml/displayAspectRatio/displayAspectRatio004.ttml	0	1000000
+imsc1_1/ttml/displayAspectRatio/displayAspectRatio004.ttml	1000000	9000000
+imsc1_1/ttml/image/image001.ttml	0	1000000
+imsc1_1/ttml/initial/initial001.ttml	0	1000000	Text should be green
+imsc1_1/ttml/initial/initial001.ttml	1000000	2000000	Text should be yellow
+imsc1_1/ttml/initial/initial002.ttml	0	1000000	Text should be green and italic
+imsc1_1/ttml/initial/initial002.ttml	1000000	2000000	Text should be yellow and not italic
+imsc1_1/ttml/lengthRootContainerRelative/lengthRootContainerRelative001.ttml	0	1000000	tts:extent="50rw 50rh"
+imsc1_1/ttml/lengthRootContainerRelative/lengthRootContainerRelative002.ttml	0	1000000	10rh 20rh
+imsc1_1/ttml/lengthRootContainerRelative/lengthRootContainerRelative003.ttml	0	1000000	lineHeight="7rh"\nlineHeight="7rh"\nlineHeight="7rh" 	lineHeight="14rh"\nlineHeight="14rh"\nlineHeight="14rh" 
+imsc1_1/ttml/lengthRootContainerRelative/lengthRootContainerRelative004.ttml	0	1000000	tts:padding="0rh 5rw 10rh 20rw"\ntts:displayAlign="before" 	tts:padding="0rh 5rw 10rh 20rw"\ntts:displayAlign="after" 
+imsc1_1/ttml/lengthRootContainerRelative/lengthRootContainerRelative006.ttml	0	10000000	This text has a 10% outline that is black.
+imsc1_1/ttml/linePadding/linepadding002.ttml	0	1000000	ruby container boxed with padding0.25em\na span on a 2nd line
+imsc1_1/ttml/luminanceGain/luminanceGain001.ttml	0	1000000	█\nPixels at the center of the rectangle above must have an RGB value of (0xA0, 0xA0, 0xA0) when encoded using the Reference PQ EOTF and full-range quantization over 8-bits.
+imsc1_1/ttml/position/position001.ttml	0	1000000	center
+imsc1_1/ttml/position/position001.ttml	1000000	2000000	left
+imsc1_1/ttml/position/position001.ttml	2000000	3000000	right
+imsc1_1/ttml/position/position001.ttml	3000000	4000000	top
+imsc1_1/ttml/position/position001.ttml	4000000	5000000	bottom
+imsc1_1/ttml/position/position001.ttml	5000000	6000000	25%
+imsc1_1/ttml/position/position001.ttml	6000000	7000000	bottom center
+imsc1_1/ttml/position/position001.ttml	7000000	8000000	bottom left
+imsc1_1/ttml/position/position001.ttml	8000000	9000000	bottom right
+imsc1_1/ttml/position/position001.ttml	9000000	10000000	center center
+imsc1_1/ttml/position/position001.ttml	10000000	11000000	center top
+imsc1_1/ttml/position/position001.ttml	11000000	12000000	center bottom
+imsc1_1/ttml/position/position001.ttml	12000000	13000000	center left
+imsc1_1/ttml/position/position001.ttml	13000000	14000000	center right
+imsc1_1/ttml/position/position001.ttml	14000000	15000000	center 25%
+imsc1_1/ttml/position/position001.ttml	15000000	16000000	left center
+imsc1_1/ttml/position/position001.ttml	16000000	17000000	left top
+imsc1_1/ttml/position/position001.ttml	17000000	18000000	left bottom
+imsc1_1/ttml/position/position001.ttml	18000000	19000000	left 25%
+imsc1_1/ttml/position/position001.ttml	19000000	20000000	right center
+imsc1_1/ttml/position/position001.ttml	20000000	21000000	right top
+imsc1_1/ttml/position/position001.ttml	21000000	22000000	right bottom
+imsc1_1/ttml/position/position001.ttml	22000000	23000000	right 25%
+imsc1_1/ttml/position/position001.ttml	23000000	24000000	top center
+imsc1_1/ttml/position/position001.ttml	24000000	25000000	top left
+imsc1_1/ttml/position/position001.ttml	25000000	26000000	top right
+imsc1_1/ttml/position/position001.ttml	26000000	27000000	25% center
+imsc1_1/ttml/position/position001.ttml	27000000	28000000	25% top
+imsc1_1/ttml/position/position001.ttml	28000000	29000000	25% bottom
+imsc1_1/ttml/position/position001.ttml	29000000	30000000	25% 25%
+imsc1_1/ttml/position/position001.ttml	30000000	31000000	bottom left 25%
+imsc1_1/ttml/position/position001.ttml	31000000	32000000	bottom right 25%
+imsc1_1/ttml/position/position001.ttml	32000000	33000000	bottom 25% center
+imsc1_1/ttml/position/position001.ttml	33000000	34000000	bottom 25% left
+imsc1_1/ttml/position/position001.ttml	34000000	35000000	bottom 25% right
+imsc1_1/ttml/position/position001.ttml	35000000	36000000	center bottom 25%
+imsc1_1/ttml/position/position001.ttml	36000000	37000000	center left 25%
+imsc1_1/ttml/position/position001.ttml	37000000	38000000	center right 25%
+imsc1_1/ttml/position/position001.ttml	38000000	39000000	center top 25%
+imsc1_1/ttml/position/position001.ttml	39000000	40000000	left bottom 25%
+imsc1_1/ttml/position/position001.ttml	40000000	41000000	left top 25%
+imsc1_1/ttml/position/position001.ttml	41000000	42000000	left 25% bottom
+imsc1_1/ttml/position/position001.ttml	42000000	43000000	left 25% center
+imsc1_1/ttml/position/position001.ttml	43000000	44000000	left 25% top
+imsc1_1/ttml/position/position001.ttml	44000000	45000000	right bottom 25%
+imsc1_1/ttml/position/position001.ttml	45000000	46000000	right top 25%
+imsc1_1/ttml/position/position001.ttml	46000000	47000000	right 25% bottom
+imsc1_1/ttml/position/position001.ttml	47000000	48000000	right 25% center
+imsc1_1/ttml/position/position001.ttml	48000000	49000000	right 25% top
+imsc1_1/ttml/position/position001.ttml	49000000	50000000	top left 25%
+imsc1_1/ttml/position/position001.ttml	50000000	51000000	top right 25%
+imsc1_1/ttml/position/position001.ttml	51000000	52000000	top 25% center
+imsc1_1/ttml/position/position001.ttml	52000000	53000000	top 25% left
+imsc1_1/ttml/position/position001.ttml	53000000	54000000	top 25% right
+imsc1_1/ttml/position/position001.ttml	54000000	55000000	bottom 25% left 25%
+imsc1_1/ttml/position/position001.ttml	55000000	56000000	bottom 25% right 25%
+imsc1_1/ttml/position/position001.ttml	56000000	57000000	left 25% bottom 25%
+imsc1_1/ttml/position/position001.ttml	57000000	58000000	right 25% bottom 25%
+imsc1_1/ttml/position/position001.ttml	58000000	59000000	top 25% left 25%
+imsc1_1/ttml/position/position001.ttml	59000000	60000000	top 25% right 25%
+imsc1_1/ttml/position/position001.ttml	60000000	61000000	left 25% top 25%
+imsc1_1/ttml/position/position001.ttml	61000000	62000000	right 25% top 25%
+imsc1_1/ttml/position/position002.ttml	0	1000000	center
+imsc1_1/ttml/position/position002.ttml	1000000	2000000	left
+imsc1_1/ttml/position/position002.ttml	2000000	3000000	right
+imsc1_1/ttml/position/position002.ttml	3000000	4000000	top
+imsc1_1/ttml/position/position002.ttml	4000000	5000000	bottom
+imsc1_1/ttml/position/position002.ttml	5000000	6000000	48px
+imsc1_1/ttml/position/position002.ttml	6000000	7000000	bottom center
+imsc1_1/ttml/position/position002.ttml	7000000	8000000	bottom left
+imsc1_1/ttml/position/position002.ttml	8000000	9000000	bottom right
+imsc1_1/ttml/position/position002.ttml	9000000	10000000	center center
+imsc1_1/ttml/position/position002.ttml	10000000	11000000	center top
+imsc1_1/ttml/position/position002.ttml	11000000	12000000	center bottom
+imsc1_1/ttml/position/position002.ttml	12000000	13000000	center left
+imsc1_1/ttml/position/position002.ttml	13000000	14000000	center right
+imsc1_1/ttml/position/position002.ttml	14000000	15000000	center 48px
+imsc1_1/ttml/position/position002.ttml	15000000	16000000	left center
+imsc1_1/ttml/position/position002.ttml	16000000	17000000	left top
+imsc1_1/ttml/position/position002.ttml	17000000	18000000	left bottom
+imsc1_1/ttml/position/position002.ttml	18000000	19000000	left 48px
+imsc1_1/ttml/position/position002.ttml	19000000	20000000	right center
+imsc1_1/ttml/position/position002.ttml	20000000	21000000	right top
+imsc1_1/ttml/position/position002.ttml	21000000	22000000	right bottom
+imsc1_1/ttml/position/position002.ttml	22000000	23000000	right 48px
+imsc1_1/ttml/position/position002.ttml	23000000	24000000	top center
+imsc1_1/ttml/position/position002.ttml	24000000	25000000	top left
+imsc1_1/ttml/position/position002.ttml	25000000	26000000	top right
+imsc1_1/ttml/position/position002.ttml	26000000	27000000	48px center
+imsc1_1/ttml/position/position002.ttml	27000000	28000000	48px top
+imsc1_1/ttml/position/position002.ttml	28000000	29000000	48px bottom
+imsc1_1/ttml/position/position002.ttml	29000000	30000000	48px 48px
+imsc1_1/ttml/position/position002.ttml	30000000	31000000	bottom left 48px
+imsc1_1/ttml/position/position002.ttml	31000000	32000000	bottom right 48px
+imsc1_1/ttml/position/position002.ttml	32000000	33000000	bottom 48px center
+imsc1_1/ttml/position/position002.ttml	33000000	34000000	bottom 48px left
+imsc1_1/ttml/position/position002.ttml	34000000	35000000	bottom 48px right
+imsc1_1/ttml/position/position002.ttml	35000000	36000000	center bottom 48px
+imsc1_1/ttml/position/position002.ttml	36000000	37000000	center left 48px
+imsc1_1/ttml/position/position002.ttml	37000000	38000000	center right 48px
+imsc1_1/ttml/position/position002.ttml	38000000	39000000	center top 48px
+imsc1_1/ttml/position/position002.ttml	39000000	40000000	left bottom 48px
+imsc1_1/ttml/position/position002.ttml	40000000	41000000	left top 48px
+imsc1_1/ttml/position/position002.ttml	41000000	42000000	left 48px bottom
+imsc1_1/ttml/position/position002.ttml	42000000	43000000	left 48px center
+imsc1_1/ttml/position/position002.ttml	43000000	44000000	left 48px top
+imsc1_1/ttml/position/position002.ttml	44000000	45000000	right bottom 48px
+imsc1_1/ttml/position/position002.ttml	45000000	46000000	right top 48px
+imsc1_1/ttml/position/position002.ttml	46000000	47000000	right 48px bottom
+imsc1_1/ttml/position/position002.ttml	47000000	48000000	right 48px center
+imsc1_1/ttml/position/position002.ttml	48000000	49000000	right 48px top
+imsc1_1/ttml/position/position002.ttml	49000000	50000000	top left 48px
+imsc1_1/ttml/position/position002.ttml	50000000	51000000	top right 48px
+imsc1_1/ttml/position/position002.ttml	51000000	52000000	top 48px center
+imsc1_1/ttml/position/position002.ttml	52000000	53000000	top 48px left
+imsc1_1/ttml/position/position002.ttml	53000000	54000000	top 48px right
+imsc1_1/ttml/position/position002.ttml	54000000	55000000	bottom 48px left 48px
+imsc1_1/ttml/position/position002.ttml	55000000	56000000	bottom 48px right 48px
+imsc1_1/ttml/position/position002.ttml	56000000	57000000	left 48px bottom 48px
+imsc1_1/ttml/position/position002.ttml	57000000	58000000	right 48px bottom 48px
+imsc1_1/ttml/position/position002.ttml	58000000	59000000	top 48px left 48px
+imsc1_1/ttml/position/position002.ttml	59000000	60000000	top 48px right 48px
+imsc1_1/ttml/position/position002.ttml	60000000	61000000	left 48px top 48px
+imsc1_1/ttml/position/position002.ttml	61000000	62000000	right 48px top 48px
+imsc1_1/ttml/position/position003.ttml	0	1000000	center
+imsc1_1/ttml/position/position003.ttml	1000000	2000000	left
+imsc1_1/ttml/position/position003.ttml	2000000	3000000	right
+imsc1_1/ttml/position/position003.ttml	3000000	4000000	top
+imsc1_1/ttml/position/position003.ttml	4000000	5000000	bottom
+imsc1_1/ttml/position/position003.ttml	5000000	6000000	25rh
+imsc1_1/ttml/position/position003.ttml	6000000	7000000	bottom center
+imsc1_1/ttml/position/position003.ttml	7000000	8000000	bottom left
+imsc1_1/ttml/position/position003.ttml	8000000	9000000	bottom right
+imsc1_1/ttml/position/position003.ttml	9000000	10000000	center center
+imsc1_1/ttml/position/position003.ttml	10000000	11000000	center top
+imsc1_1/ttml/position/position003.ttml	11000000	12000000	center bottom
+imsc1_1/ttml/position/position003.ttml	12000000	13000000	center left
+imsc1_1/ttml/position/position003.ttml	13000000	14000000	center right
+imsc1_1/ttml/position/position003.ttml	14000000	15000000	center 25rh
+imsc1_1/ttml/position/position003.ttml	15000000	16000000	left center
+imsc1_1/ttml/position/position003.ttml	16000000	17000000	left top
+imsc1_1/ttml/position/position003.ttml	17000000	18000000	left bottom
+imsc1_1/ttml/position/position003.ttml	18000000	19000000	left 25rw
+imsc1_1/ttml/position/position003.ttml	19000000	20000000	right center
+imsc1_1/ttml/position/position003.ttml	20000000	21000000	right top
+imsc1_1/ttml/position/position003.ttml	21000000	22000000	right bottom
+imsc1_1/ttml/position/position003.ttml	22000000	23000000	right 25rw
+imsc1_1/ttml/position/position003.ttml	23000000	24000000	top center
+imsc1_1/ttml/position/position003.ttml	24000000	25000000	top left
+imsc1_1/ttml/position/position003.ttml	25000000	26000000	top right
+imsc1_1/ttml/position/position003.ttml	26000000	27000000	25rw center
+imsc1_1/ttml/position/position003.ttml	27000000	28000000	25rw top
+imsc1_1/ttml/position/position003.ttml	28000000	29000000	25rw bottom
+imsc1_1/ttml/position/position003.ttml	29000000	30000000	25rw 25rh
+imsc1_1/ttml/position/position003.ttml	30000000	31000000	bottom left 25rw
+imsc1_1/ttml/position/position003.ttml	31000000	32000000	bottom right 25rw
+imsc1_1/ttml/position/position003.ttml	32000000	33000000	bottom 25rh center
+imsc1_1/ttml/position/position003.ttml	33000000	34000000	bottom 25rh left
+imsc1_1/ttml/position/position003.ttml	34000000	35000000	bottom 25rh right
+imsc1_1/ttml/position/position003.ttml	35000000	36000000	center bottom 25rh
+imsc1_1/ttml/position/position003.ttml	36000000	37000000	center left 25rw
+imsc1_1/ttml/position/position003.ttml	37000000	38000000	center right 25rw
+imsc1_1/ttml/position/position003.ttml	38000000	39000000	center top 25rh
+imsc1_1/ttml/position/position003.ttml	39000000	40000000	left bottom 25rh
+imsc1_1/ttml/position/position003.ttml	40000000	41000000	left top 25rh
+imsc1_1/ttml/position/position003.ttml	41000000	42000000	left 25rw bottom
+imsc1_1/ttml/position/position003.ttml	42000000	43000000	left 25rw center
+imsc1_1/ttml/position/position003.ttml	43000000	44000000	left 25rw top
+imsc1_1/ttml/position/position003.ttml	44000000	45000000	right bottom 25rh
+imsc1_1/ttml/position/position003.ttml	45000000	46000000	right top 25rh
+imsc1_1/ttml/position/position003.ttml	46000000	47000000	right 25rw bottom
+imsc1_1/ttml/position/position003.ttml	47000000	48000000	right 25rw center
+imsc1_1/ttml/position/position003.ttml	48000000	49000000	right 25rw top
+imsc1_1/ttml/position/position003.ttml	49000000	50000000	top left 25rw
+imsc1_1/ttml/position/position003.ttml	50000000	51000000	top right 25rw
+imsc1_1/ttml/position/position003.ttml	51000000	52000000	top 25rh center
+imsc1_1/ttml/position/position003.ttml	52000000	53000000	top 25rh left
+imsc1_1/ttml/position/position003.ttml	53000000	54000000	top 25rh right
+imsc1_1/ttml/position/position003.ttml	54000000	55000000	bottom 25rh left 25rw
+imsc1_1/ttml/position/position003.ttml	55000000	56000000	bottom 25rh right 25rw
+imsc1_1/ttml/position/position003.ttml	56000000	57000000	left 25rw bottom 25rh
+imsc1_1/ttml/position/position003.ttml	57000000	58000000	right 25rw bottom 25rh
+imsc1_1/ttml/position/position003.ttml	58000000	59000000	top 25rh left 25rw
+imsc1_1/ttml/position/position003.ttml	59000000	60000000	top 25rh right 25rw
+imsc1_1/ttml/position/position003.ttml	60000000	61000000	left 25rw top 25rh
+imsc1_1/ttml/position/position003.ttml	61000000	62000000	right 25rw top 25rh
+imsc1_1/ttml/rubyAlign/rubyAlign001.ttml	0	1000000	利用許諾ライセンス
+imsc1_1/ttml/rubyAlign/rubyAlign002.ttml	0	1000000	利用許諾ライセンス
+imsc1_1/ttml/rubyAlign/rubyAlign003.ttml	0	1000000	利用許諾ライセンス
+imsc1_1/ttml/rubyAlign/rubyAlign004.ttml	0	1000000	利用許諾ライセンス\n	tts:rubyAlign="spaceAround"
+imsc1_1/ttml/rubyAlign/rubyAlign004.ttml	1000000	2000000	利用許諾ライセンス	tts:rubyAlign="spaceAround"
+imsc1_1/ttml/rubyAlign/rubyAlign004.ttml	2000000	3000000	利用許諾ライセンス	tts:rubyAlign="spaceAround"
+imsc1_1/ttml/rubyAlign/rubyAlign004.ttml	3000000	4000000	利用許諾ライセンス	tts:rubyAlign="center"
+imsc1_1/ttml/rubyReserve/rubyReserve001.ttml	0	1000000	スペイン外人部隊の歌うたです\n遠征でよく歌うたいました	スペイン外人部隊の歌うたです\n遠征でよく歌うたいました
+imsc1_1/ttml/rubyReserve/rubyReserve001.ttml	1000000	2000000	スペイン外人部隊の歌です\n遠征でよく歌いました 	スペイン外人部隊の歌です\n遠征でよく歌いました 
+imsc1_1/ttml/rubyReserve/rubyReserve002.ttml	0	1000000	rubyReservedefault length\nrubyReserveoutside	rubyReserve1em length\nrubyReserveoutside
+imsc1_1/ttml/rubyReserve/rubyReserve002.ttml	1000000	2000000	rubyReservedefault length\nrubyReserveoutside	rubyReserve100% length\nrubyReserveoutside
+imsc1_1/ttml/rubyReserve/rubyReserve002.ttml	2000000	3000000	rubyReservedefault length\nrubyReserveoutside	rubyReserve72px length\nrubyReserveoutside
+imsc1_1/ttml/rubyReserve/rubyReserve002.ttml	3000000	4000000	rubyReservedefault length\nrubyReserveoutside	rubyReserve6.7rh length\nrubyReserveoutside
+imsc1_1/ttml/rubyReserve/rubyReserve003.ttml	0	1000000	outside	base\nbase 
+imsc1_1/ttml/rubyReserve/rubyReserve003.ttml	1000000	2000000	before	base\nbase 
+imsc1_1/ttml/rubyReserve/rubyReserve003.ttml	2000000	3000000	after	base\nbase 
+imsc1_1/ttml/rubyReserve/rubyReserve003.ttml	3000000	4000000	both	base\nbase 
+imsc1_1/ttml/ruby/ruby001.ttml	0	1000000	利用許諾ライセンス
+imsc1_1/ttml/ruby/ruby002.ttml	0	1000000	東南とうなんたつみの方角
+imsc1_1/ttml/ruby/ruby003.ttml	0	1000000	Lorem ipsum\n利用許諾ライセンス\ndolor sit amet 
+imsc1_1/ttml/ruby/ruby004.ttml	0	1000000	利用許諾(ライセンス)
+imsc1_1/ttml/ruby/ruby005.ttml	0	1000000	base base base50% base font size
+imsc1_1/ttml/ruby/ruby005.ttml	1000000	2000000	base base base50% base font size
+imsc1_1/ttml/ruby/ruby005.ttml	2000000	3000000	base base base100% base font size
+imsc1_1/ttml/ruby/ruby005.ttml	3000000	4000000	base base base100% base font size
+imsc1_1/ttml/ruby/ruby005.ttml	4000000	5000000	base base base100% base font size
+imsc1_1/ttml/ruby/ruby005.ttml	5000000	6000000	base base base100% base font size
+imsc1_1/ttml/ruby/ruby006.ttml	0	1000000	single underline basedefault	single underline basepreserve 
+imsc1_1/ttml/shear/shear001.ttml	0	1000000	16.78842%\n三日坊主 	16.78842%\n三日坊主 	Positive shear
+imsc1_1/ttml/shear/shear001.ttml	1000000	2000000	50%\n三日坊主 	50%\n三日坊主 	Positive shear
+imsc1_1/ttml/shear/shear001.ttml	2000000	3000000	64.333%\n三日坊主 	64.333%\n三日坊主 	Positive shear
+imsc1_1/ttml/shear/shear001.ttml	3000000	4000000	-16.78842%\n三日坊主 	-16.78842%\n三日坊主 	Negative shear
+imsc1_1/ttml/shear/shear001.ttml	4000000	5000000	-50%\n三日坊主 	-50%\n三日坊主 	Negative shear
+imsc1_1/ttml/shear/shear001.ttml	5000000	6000000	-64.333%\n三日坊主 	-64.333%\n三日坊主 	Negative shear
+imsc1_1/ttml/shear/shear002.ttml	0	1000000	利用許諾ライセンス	あい34三四
+imsc1_1/ttml/shear/shear003.ttml	0	1000000	山やまの\n最多1998年ルビサンプル
+imsc1_1/ttml/textCombine/textCombine001.ttml	0	1000000	あいAB34三四	あいAB34三四
+imsc1_1/ttml/textCombine/textCombine002.ttml	0	1000000	あいAB342nd三四	あいAB342nd三四
+imsc1_1/ttml/textEmphasis/textEmphasis001.ttml	0	1000000	花 よ り だ ん ご\n花 よ り だ ん ご
+imsc1_1/ttml/textEmphasis/textEmphasis002.ttml	0	1000000	hello bonjour
+imsc1_1/ttml/textEmphasis/textEmphasis003.ttml	0	1000000	花より\n花より
+imsc1_1/ttml/textEmphasis/textEmphasis004.ttml	0	1000000	\ntbrl before
+imsc1_1/ttml/textEmphasis/textEmphasis004.ttml	1000000	2000000	tbrl after
+imsc1_1/ttml/textEmphasis/textEmphasis004.ttml	2000000	3000000	\ntblr before
+imsc1_1/ttml/textEmphasis/textEmphasis004.ttml	3000000	4000000	tblr after
+imsc1_1/ttml/textEmphasis/textEmphasis004.ttml	4000000	5000000	\nlrtb before
+imsc1_1/ttml/textEmphasis/textEmphasis004.ttml	5000000	6000000	lrtb after
+imsc1_1/ttml/textEmphasis/textEmphasis004.ttml	6000000	7000000	\nrltb before
+imsc1_1/ttml/textEmphasis/textEmphasis004.ttml	7000000	8000000	rltb after
+imsc1_2/ttml/region/region-extent.ttml	0	1000000	Region with tts:origin="5% 5%" and tts:extent="80% 20%"
+imsc1_2/ttml/region/region-extent.ttml	1000000	2000000	Region with tts:origin="5% 5%" and tts:extent="80% 20%"
+imsc1_2/ttml/region/region-extent.ttml	2000000	3000000	Region with tts:origin="5% 5%" and tts:extent="80% 20%"
+imsc1_2/ttml/region/region-extent.ttml	3000000	4000000	Region with tts:origin="5% 5%" and tts:extent="80% 20%"

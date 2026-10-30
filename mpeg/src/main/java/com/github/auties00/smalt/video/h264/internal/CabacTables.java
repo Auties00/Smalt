@@ -13,14 +13,28 @@ package com.github.auties00.smalt.video.h264.internal;
  * is shared and must be treated as read-only.
  *
  * @implNote This implementation holds the context initialization values of ITU-T H.264 Tables
- * 9-12 to 9-33 for context indices 0 to 459, which cover every syntax element of 4:2:0 and 4:0:0
- * frame and field coding.
+ * 9-12 to 9-24 for context indices 0 to 459, which cover every syntax element of 4:2:0, 4:2:2 and
+ * 4:0:0 frame and field coding. The contexts 460 to 1023 of the Cb and Cr residual blocks of
+ * 4:4:4 coding (Tables 9-25 to 9-33) take the values of the luma residual contexts they mirror,
+ * which those tables repeat value for value; {@link #INIT_SOURCE_444} names the mirrored context.
  */
 public final class CabacTables {
     /**
      * The number of contexts initialized: context indices 0 to 459.
      */
     public static final int CONTEXT_COUNT = 460;
+
+    /**
+     * The number of contexts of 4:4:4 coding, whose Cb and Cr residual blocks use context
+     * indices 460 to 1023.
+     */
+    public static final int CONTEXT_COUNT_444 = 1024;
+
+    /**
+     * The luma residual context whose initialization values each context from 460 to 1023 takes,
+     * indexed {@code ctxIdx - 460}.
+     */
+    private static final short[] INIT_SOURCE_444 = buildSource444();
 
     /**
      * The context initialization values {@code (m, n)}, indexed
@@ -305,28 +319,42 @@ public final class CabacTables {
     };
 
     /**
-     * The {@code coded_block_flag} context index offset of each {@code ctxBlockCat} from 0 to 4
-     * (ITU-T H.264 Table 9-40).
+     * The {@code coded_block_flag} context index offset of each {@code ctxBlockCat} from 0 to
+     * 13, {@code ctxIdxOffset + ctxIdxBlockCatOffset} (ITU-T H.264 Tables 9-34 and 9-40).
      */
-    public static final int[] CBF_OFFSET = {85, 89, 93, 97, 101};
+    public static final int[] CBF_OFFSET = {85, 89, 93, 97, 101, 1012, 460, 464, 468, 1016, 472, 476, 480, 1020};
 
     /**
      * The {@code significant_coeff_flag} context index offset of each {@code ctxBlockCat} from 0
-     * to 5, frame coded (ITU-T H.264 Table 9-40).
+     * to 13, frame coded (ITU-T H.264 Tables 9-34 and 9-40).
      */
-    public static final int[] SIG_OFFSET = {105, 120, 134, 149, 152, 402};
+    public static final int[] SIG_OFFSET = {105, 120, 134, 149, 152, 402, 484, 499, 513, 660, 528, 543, 557, 718};
 
     /**
      * The {@code last_significant_coeff_flag} context index offset of each {@code ctxBlockCat}
-     * from 0 to 5, frame coded (ITU-T H.264 Table 9-40).
+     * from 0 to 13, frame coded (ITU-T H.264 Tables 9-34 and 9-40).
      */
-    public static final int[] LAST_OFFSET = {166, 181, 195, 210, 213, 417};
+    public static final int[] LAST_OFFSET = {166, 181, 195, 210, 213, 417, 572, 587, 601, 690, 616, 631, 645, 748};
+
+    /**
+     * The {@code significant_coeff_flag} context index offset of each {@code ctxBlockCat} from 0
+     * to 13, field coded (ITU-T H.264 Tables 9-34 and 9-40).
+     */
+    public static final int[] SIG_OFFSET_FIELD = {277, 292, 306, 321, 324, 436, 776, 791, 805, 675, 820, 835, 849,
+            733};
+
+    /**
+     * The {@code last_significant_coeff_flag} context index offset of each {@code ctxBlockCat}
+     * from 0 to 13, field coded (ITU-T H.264 Tables 9-34 and 9-40).
+     */
+    public static final int[] LAST_OFFSET_FIELD = {338, 353, 367, 382, 385, 451, 864, 879, 893, 699, 908, 923, 937,
+            757};
 
     /**
      * The {@code coeff_abs_level_minus1} context index offset of each {@code ctxBlockCat} from 0
-     * to 5 (ITU-T H.264 Table 9-40).
+     * to 13 (ITU-T H.264 Tables 9-34 and 9-40).
      */
-    public static final int[] ABS_OFFSET = {227, 237, 247, 257, 266, 426};
+    public static final int[] ABS_OFFSET = {227, 237, 247, 257, 266, 426, 952, 962, 972, 708, 982, 992, 1002, 766};
 
     /**
      * The {@code significant_coeff_flag} context index increments of frame-coded 8x8 blocks by
@@ -337,6 +365,17 @@ public final class CabacTables {
             4, 4, 4, 4, 3, 3, 6, 7, 7, 7, 8, 9, 10, 9, 8, 7,
             7, 6, 11, 12, 13, 11, 6, 7, 8, 9, 14, 10, 9, 8, 6, 11,
             12, 13, 11, 6, 9, 14, 10, 9, 11, 12, 13, 11, 14, 10, 12, 14
+    };
+
+    /**
+     * The {@code significant_coeff_flag} context index increments of field-coded 8x8 blocks by
+     * scan position (ITU-T H.264 Table 9-43).
+     */
+    public static final byte[] SIG_8X8_FIELD = {
+            0, 1, 1, 2, 2, 3, 3, 4, 5, 6, 7, 7, 7, 8, 4, 5,
+            6, 9, 10, 10, 8, 11, 12, 11, 9, 9, 10, 10, 8, 11, 12, 11,
+            9, 9, 10, 10, 8, 11, 12, 11, 9, 9, 10, 10, 8, 13, 13, 9,
+            9, 10, 10, 8, 13, 13, 9, 9, 10, 10, 14, 14, 14, 14, 14
     };
 
     /**
@@ -396,14 +435,52 @@ public final class CabacTables {
      * @param sliceQp the slice luma quantization parameter {@code SliceQPY}
      */
     public static void initContexts(byte[] states, int model, int sliceQp) {
+        initContexts(states, model, sliceQp, CONTEXT_COUNT);
+    }
+
+    /**
+     * Initializes the first contexts for a slice (ITU-T H.264 9.3.1.1).
+     *
+     * @param states receives the combined state of each context, at least {@code count} entries
+     * @param model 0 for I and SI slices, {@code cabac_init_idc + 1} otherwise
+     * @param sliceQp the slice luma quantization parameter {@code SliceQPY}
+     * @param count the number of contexts to initialize: {@link #CONTEXT_COUNT}, or
+     * {@link #CONTEXT_COUNT_444} for 4:4:4 coding
+     */
+    public static void initContexts(byte[] states, int model, int sliceQp, int count) {
         var qp = Math.clamp(sliceQp, 0, 51);
         var base = model * CONTEXT_COUNT * 2;
-        for (var ctx = 0; ctx < CONTEXT_COUNT; ctx++) {
-            int m = INIT[base + ctx * 2];
-            int n = INIT[base + ctx * 2 + 1];
+        for (var ctx = 0; ctx < count; ctx++) {
+            var source = ctx < CONTEXT_COUNT ? ctx : INIT_SOURCE_444[ctx - CONTEXT_COUNT];
+            int m = INIT[base + source * 2];
+            int n = INIT[base + source * 2 + 1];
             var pre = Math.clamp(((m * qp) >> 4) + n, 1, 126);
             states[ctx] = (byte) (pre <= 63 ? (63 - pre) << 1 : ((pre - 64) << 1) | 1);
         }
+    }
+
+    /**
+     * Builds {@link #INIT_SOURCE_444}: each run of 4:4:4 contexts (Tables 9-25 to 9-33) mirrors a
+     * run of luma contexts of the same syntax element and block kind.
+     *
+     * @return the luma context of each context from 460 to 1023
+     */
+    private static short[] buildSource444() {
+        // {first 4:4:4 context, first luma context, run length}
+        int[][] runs = {
+                {460, 85, 12}, {472, 85, 12}, {484, 105, 44}, {528, 105, 44}, {572, 166, 44}, {616, 166, 44},
+                {660, 402, 15}, {675, 436, 15}, {690, 417, 9}, {699, 451, 9}, {708, 426, 10},
+                {718, 402, 15}, {733, 436, 15}, {748, 417, 9}, {757, 451, 9}, {766, 426, 10},
+                {776, 277, 44}, {820, 277, 44}, {864, 338, 44}, {908, 338, 44}, {952, 227, 30}, {982, 227, 30},
+                {1012, 93, 4}, {1016, 93, 4}, {1020, 93, 4}
+        };
+        var result = new short[CONTEXT_COUNT_444 - CONTEXT_COUNT];
+        for (var run : runs) {
+            for (var i = 0; i < run[2]; i++) {
+                result[run[0] + i - CONTEXT_COUNT] = (short) (run[1] + i);
+            }
+        }
+        return result;
     }
 
     /**
