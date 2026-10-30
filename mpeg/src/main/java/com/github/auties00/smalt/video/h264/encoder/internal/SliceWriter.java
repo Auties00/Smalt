@@ -3,20 +3,33 @@ package com.github.auties00.smalt.video.h264.encoder.internal;
 import com.github.auties00.smalt.internal.bits.MsbBitWriter;
 
 /**
- * Entropy codes the decided macroblocks of a picture, in raster order, as one slice.
+ * Entropy codes the decided macroblocks of a picture, in raster order, as one or more slices.
  *
  * <p>The writer owns the only state that follows the decoding order: the arithmetic coder or the
  * CAVLC skip run, and the quantizer each {@code mb_qp_delta} is relative to. It records the
  * quantizer of every macroblock in the picture tables, since skipped macroblocks and those
  * without residual inherit it from their predecessor. A macroblock whose coded size exceeds the
  * {@code 128 + RawMbBits} limit of Annex A is reported, so the picture can be coded again with
- * that macroblock as {@code I_PCM}. Instances are not thread-safe.
+ * that macroblock as {@code I_PCM}.
+ *
+ * <p>A macroblock is written in two steps: {@link #writeData} codes it, and
+ * {@link #endMacroblock(boolean)} codes the {@code end_of_slice_flag} that follows it once the
+ * caller knows whether the next macroblock starts a new slice. Between the two, {@link #save()}
+ * and {@link #restore()} let a caller undo the next macroblock and close the slice before it, and
+ * {@link #sizeBound()} bounds the size the slice's NAL unit would have if it closed now. Instances
+ * are not thread-safe.
  */
 final class SliceWriter {
     /**
      * The largest number of bits a macroblock may occupy (Annex A: {@code 128 + RawMbBits}).
      */
     private static final int MAX_MB_BITS = 3200;
+
+    /**
+     * The bits that closing a CABAC slice adds at most beyond the engine's position: the terminating
+     * bin, the flush, the stop bit and the alignment.
+     */
+    private static final int CABAC_CLOSE_BITS = 24;
 
     /**
      * The stream settings.
@@ -74,6 +87,11 @@ final class SliceWriter {
     private PictureInfo pi;
 
     /**
+     * The address of the first macroblock of the slice being written.
+     */
+    private int firstMb;
+
+    /**
      * The quantizer the next {@code mb_qp_delta} is relative to.
      */
     private int previousQp;
@@ -98,6 +116,53 @@ final class SliceWriter {
      * for tests.
      */
     private int bitLimit = MAX_MB_BITS;
+
+    /**
+     * The number of completed payload bytes whose emulation prevention bytes are counted in
+     * {@link #inserted}.
+     */
+    private int scanned;
+
+    /**
+     * The number of zero bytes that end the scanned bytes, at most 2.
+     */
+    private int zeros;
+
+    /**
+     * The number of emulation prevention bytes the scanned bytes need.
+     */
+    private int inserted;
+
+    /**
+     * The CABAC registers saved by {@link #save()}.
+     */
+    private final long[] savedRegisters = new long[7];
+
+    /**
+     * The CABAC context states saved by {@link #save()}.
+     */
+    private final byte[] savedContexts = new byte[CabacTables.CONTEXTS];
+
+    /**
+     * The writer position saved by {@link #save()} for CAVLC.
+     */
+    private long savedMark;
+
+    /**
+     * The scalar state saved by {@link #save()}: the previous quantizer, the delta flag, the skip
+     * run, the overflow flag, the scanned bytes, the trailing zeros and the inserted bytes.
+     */
+    private final int[] savedState = new int[7];
+
+    /**
+     * The {@link MbType} of the last macroblock written, or {@code -1}.
+     */
+    private int lastType = -1;
+
+    /**
+     * Whether the last macroblock written used the 8x8 transform.
+     */
+    private boolean lastTransform8x8;
 
     /**
      * The number of macroblocks written with each {@link MbType} constant since the writer was
@@ -129,19 +194,31 @@ final class SliceWriter {
     }
 
     /**
-     * Starts the slice of a picture: writes the slice header and initializes the entropy coder.
+     * Clears the overflow flag before a pass over a picture.
+     */
+    void startPicture() {
+        overflow = false;
+    }
+
+    /**
+     * Starts a slice of a picture: writes the slice header and initializes the entropy coder.
      *
      * @param picture the picture being encoded
+     * @param firstMb the address of the slice's first macroblock
      */
-    void start(PictureContext picture) {
+    void start(PictureContext picture, int firstMb) {
         this.picture = picture;
         this.pi = picture.info;
-        overflow = false;
+        this.firstMb = firstMb;
         out.reset();
         writeSliceHeader();
         previousQp = picture.sliceQp;
         previousQpDeltaNonZero = false;
         skipRun = 0;
+        scanned = 0;
+        zeros = 0;
+        inserted = 0;
+        lastType = -1;
         if (cabacMode) {
             out.alignWithOnes();
             cabac.initContexts(picture.pSlice || picture.bSlice ? 1 : 0, picture.sliceQp);
@@ -150,7 +227,9 @@ final class SliceWriter {
     }
 
     /**
-     * Finishes the slice: flushes the entropy coder and writes the trailing bits.
+     * Finishes the slice: flushes the entropy coder and writes the trailing bits. The last
+     * macroblock's {@code end_of_slice_flag} must have been written with
+     * {@link #endMacroblock(boolean) endMacroblock(true)}.
      *
      * @return the raw byte sequence payload, valid up to {@link #payloadLength()}
      */
@@ -186,7 +265,7 @@ final class SliceWriter {
     }
 
     /**
-     * Returns whether a macroblock of the slice exceeded the size limit.
+     * Returns whether a macroblock of the picture exceeded the size limit.
      *
      * @return whether the picture must be coded again
      */
@@ -205,10 +284,10 @@ final class SliceWriter {
     }
 
     /**
-     * Writes the slice header (clause 7.3.3) of the picture's only slice.
+     * Writes the slice header (clause 7.3.3) of the slice that starts at {@link #firstMb}.
      */
     private void writeSliceHeader() {
-        out.writeUe(0);
+        out.writeUe(firstMb);
         out.writeUe(picture.pSlice ? 0 : picture.bSlice ? 1 : 2);
         out.writeUe(0);
         out.write(picture.frameNum, settings.log2MaxFrameNum());
@@ -272,27 +351,41 @@ final class SliceWriter {
     }
 
     /**
-     * Writes one decided macroblock and records its quantizer in the picture tables.
-     *
-     * <p>A macroblock whose coded size exceeds the limit is still written, but marked in
-     * {@link PictureContext#forcePcm} and reported by {@link #overflowed()}.
+     * Writes one decided macroblock and its {@code end_of_slice_flag}, and records its quantizer
+     * in the picture tables.
      *
      * @param mb the macroblock, committed to the picture tables
      * @param address the macroblock address
      * @param last whether the macroblock is the last of the slice
      */
     void write(Macroblock mb, int address, boolean last) {
+        writeData(mb, address);
+        endMacroblock(last);
+    }
+
+    /**
+     * Writes one decided macroblock without its {@code end_of_slice_flag} and records its
+     * quantizer in the picture tables.
+     *
+     * <p>A macroblock whose coded size exceeds the limit is still written, but marked in
+     * {@link PictureContext#forcePcm} and reported by {@link #overflowed()}.
+     *
+     * @param mb the macroblock, committed to the picture tables
+     * @param address the macroblock address, in the slice being written
+     */
+    void writeData(Macroblock mb, int address) {
         var mbWidth = settings.mbWidth();
-        ctx.moveTo(address % mbWidth, address / mbWidth, mbWidth, 0);
+        ctx.moveTo(address % mbWidth, address / mbWidth, mbWidth, firstMb);
         var type = mb.type;
         typeCounts[type]++;
+        lastType = type;
+        lastTransform8x8 = mb.transform8x8;
         if (mb.transform8x8) {
             typeCounts[MbType.TRANSFORM_8x8]++;
         }
         if (MbType.isSkip(type)) {
             if (cabacMode) {
                 CabacWriter.writeSkipFlag(cabac, pi, ctx, true, picture.bSlice);
-                CabacWriter.writeEndOfSlice(cabac, last);
             } else {
                 skipRun++;
             }
@@ -308,7 +401,6 @@ final class SliceWriter {
             var start = cabac.bitPosition();
             writeLayer(mb, address);
             bits = cabac.bitPosition() - start + 16;
-            CabacWriter.writeEndOfSlice(cabac, last);
         } else {
             if (picture.pSlice) {
                 out.writeUe(skipRun);
@@ -329,6 +421,100 @@ final class SliceWriter {
             previousQpDeltaNonZero = false;
         }
         pi.qp[address] = (byte) previousQp;
+    }
+
+    /**
+     * Writes the {@code end_of_slice_flag} of the macroblock written last; CAVLC slices have none.
+     *
+     * @param last whether the macroblock ends the slice
+     */
+    void endMacroblock(boolean last) {
+        if (cabacMode) {
+            CabacWriter.writeEndOfSlice(cabac, last);
+        }
+    }
+
+    /**
+     * Saves the writer's state after a macroblock's data and before its {@code end_of_slice_flag},
+     * for {@link #restore()}.
+     */
+    void save() {
+        if (cabacMode) {
+            cabac.save(savedRegisters, savedContexts);
+        } else {
+            savedMark = out.mark();
+        }
+        savedState[0] = previousQp;
+        savedState[1] = previousQpDeltaNonZero ? 1 : 0;
+        savedState[2] = skipRun;
+        savedState[3] = overflow ? 1 : 0;
+        savedState[4] = scanned;
+        savedState[5] = zeros;
+        savedState[6] = inserted;
+    }
+
+    /**
+     * Returns the writer to the state of the last {@link #save()}, discarding the macroblock written
+     * since; its {@code end_of_slice_flag} and the macroblock that followed it.
+     */
+    void restore() {
+        if (lastType >= 0) {
+            typeCounts[lastType]--;
+            if (lastTransform8x8) {
+                typeCounts[MbType.TRANSFORM_8x8]--;
+            }
+            lastType = -1;
+        }
+        if (cabacMode) {
+            cabac.restore(savedRegisters, savedContexts);
+        } else {
+            out.rollback(savedMark);
+        }
+        previousQp = savedState[0];
+        previousQpDeltaNonZero = savedState[1] != 0;
+        skipRun = savedState[2];
+        overflow = savedState[3] != 0;
+        scanned = savedState[4];
+        zeros = savedState[5];
+        inserted = savedState[6];
+    }
+
+    /**
+     * Returns an upper bound of the size of the slice's NAL unit, header byte and emulation
+     * prevention bytes included, if the slice were closed after the macroblock written last.
+     *
+     * @return the bound in bytes
+     */
+    long sizeBound() {
+        var completed = out.size();
+        var data = out.array();
+        for (var i = scanned; i < completed; i++) {
+            var value = data[i] & 0xFF;
+            if (zeros >= 2 && value <= 3) {
+                inserted++;
+                zeros = 0;
+            }
+            zeros = value == 0 ? Math.min(zeros + 1, 2) : 0;
+        }
+        scanned = completed;
+        long finalBits;
+        if (cabacMode) {
+            finalBits = cabac.bitPosition() + CABAC_CLOSE_BITS;
+        } else {
+            finalBits = out.bitCount() + (skipRun > 0 ? ueBits(skipRun) : 0) + 8;
+        }
+        var tail = Math.max(0, (finalBits + 7) / 8 - completed);
+        return 1 + completed + inserted + tail + (tail + zeros) / 2 + 1;
+    }
+
+    /**
+     * Returns the length of the Exp-Golomb code of a value.
+     *
+     * @param value the value, non-negative
+     * @return the code length in bits
+     */
+    private static int ueBits(int value) {
+        return 2 * (31 - Integer.numberOfLeadingZeros(value + 1)) + 1;
     }
 
     /**

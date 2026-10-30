@@ -1,0 +1,19 @@
+# image dump of heif-items/valid-avc.heic; regenerate with -Dsmalt.test.updateDumps=true
+format HEIC
+info ImageInfo[format=HEIC, width=32, height=32, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 32x32 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=926fb1b1 u=06be6868 v=cbbf2815
+  format=HEIC orientation=NORMAL source=32x32
+  icc=none exif=none xmp=none
+  profile=none
+scaled 8x8
+picture 32x32 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=926fb1b1 u=06be6868 v=cbbf2815
+  format=HEIC orientation=NORMAL source=32x32
+  icc=none exif=none xmp=none
+  profile=none
+pages 1
+page 0 ImageInfo[format=HEIC, width=32, height=32, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+picture 32x32 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=926fb1b1 u=06be6868 v=cbbf2815
+  format=HEIC orientation=NORMAL source=32x32
+  icc=none exif=none xmp=none
+  profile=none
