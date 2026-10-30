@@ -48,7 +48,7 @@ final class PreviewBalance {
      */
     static void apply(RawFile file, LinearImage image, int[] window) {
         if (file.sensor == null || !file.sensor.estimateBalance || file.color.asShotNeutral != null || image.cfa == null
-                || image.colors != 3) {
+                || image.colors != 3 || image.samplesPerPixel != 1) {
             return;
         }
         var neutral = estimate(file, image, window);
@@ -195,7 +195,7 @@ final class PreviewBalance {
             var linear = new float[256];
             for (var index = 0; index < 256; index++) {
                 var v = index / 255.0;
-                linear[index] = (float) (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+                linear[index] = (float) (v <= 0.04045 ? v / 12.92 : StrictMath.pow((v + 0.055) / 1.055, 2.4));
             }
             var sums = new float[ROWS * COLUMNS * 3];
             var counts = new int[ROWS * COLUMNS];
@@ -219,6 +219,8 @@ final class PreviewBalance {
                 }
             }
             return sums;
+        } catch (MediaException.Io exception) {
+            throw exception;
         } catch (MediaException exception) {
             return null;
         }

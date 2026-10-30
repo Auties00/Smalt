@@ -35,6 +35,11 @@ final class LookaheadFrame {
     final int[] activity;
 
     /**
+     * The brightness of each macroblock, see {@link FrameAnalyzer#brightness}.
+     */
+    final int[] brightness;
+
+    /**
      * The sum of {@link #intraCost}.
      */
     long intraSum;
@@ -63,6 +68,11 @@ final class LookaheadFrame {
      * Whether a key frame was requested at or before this picture.
      */
     boolean keyframeRequested;
+
+    /**
+     * The SEI NAL unit of the picture's closed captions, or {@code null} for none.
+     */
+    byte[] captions;
 
     /**
      * The picture type of an intra coded (IDR) picture.
@@ -140,6 +150,7 @@ final class LookaheadFrame {
         this.interCost = new int[count];
         this.vectors = new int[count];
         this.activity = new int[count];
+        this.brightness = new int[count];
     }
 
     /**
@@ -152,6 +163,7 @@ final class LookaheadFrame {
         System.arraycopy(analyzer.interCost, 0, interCost, 0, interCost.length);
         System.arraycopy(analyzer.vectors, 0, vectors, 0, vectors.length);
         System.arraycopy(analyzer.activity, 0, activity, 0, activity.length);
+        System.arraycopy(analyzer.brightness, 0, brightness, 0, brightness.length);
         intraSum = analyzer.intraSum;
         interSum = analyzer.interSum;
     }
