@@ -1,8 +1,10 @@
 package com.github.auties00.smalt.container.raw;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Muxer;
+import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.internal.io.ByteWriter;
 import com.github.auties00.smalt.internal.header.MpegAudioHeader;
 import com.github.auties00.smalt.internal.nal.NalRecords;
@@ -34,7 +36,10 @@ import java.util.Objects;
  *   <li>FLAC: the {@code fLaC} marker and metadata blocks of the track configuration, then the
  *       frames (a native {@code .flac} file);</li>
  *   <li>AMR-NB and AMR-WB: the {@code #!AMR} or {@code #!AMR-WB} magic, then the storage-format
- *       frames (an {@code .amr} file, RFC 4867 section 5);</li>
+ *       frames (an {@code .amr} file, RFC 4867 section 5); a track of 2 to 15 channels gets the
+ *       multichannel magic {@code #!AMR_MC1.0} or {@code #!AMR-WB_MC1.0} and its channel count,
+ *       and each of its packets must hold one frame-block, the frames of every channel in the
+ *       channel order of RFC 3551 section 4.1;</li>
  *   <li>AC-3 and E-AC-3: the sync frames, back to back (an {@code .ac3} or {@code .ec3}
  *       file);</li>
  *   <li>H.264 and HEVC: an Annex B byte stream; length-prefixed NAL units become start-code
@@ -42,7 +47,17 @@ import java.util.Objects;
  *       key frame that does not carry its own, so decoding can start at any key frame;</li>
  *   <li>AV1: a low-overhead OBU stream (AV1 specification section 5): a temporal delimiter
  *       starts every temporal unit that lacks one, and the configuration's sequence header is
- *       inserted before every key frame that does not carry its own.</li>
+ *       inserted before every key frame that does not carry its own; with
+ *       {@link RawMuxerOptions#av1AnnexB()}, the same temporal units in the length-delimited format of
+ *       Annex B;</li>
+ *   <li>MPEG-4 Part 2: the pictures, back to back (an {@code .m4v} file), the configuration headers
+ *       of the track repeated before every key frame that does not start with its own;</li>
+ *   <li>H.263: the pictures, back to back (a {@code .263} file);</li>
+ *   <li>WavPack: the blocks, back to back (a {@code .wv} file); a packet of complete blocks is written as it is,
+ *       and the headerless blocks of a Matroska track ({@code A_WAVPACK4}, whose configuration is the stream
+ *       version) get their headers back, the block index counting the samples written and the total length
+ *       unknown. A hybrid stream's correction data is not written: it belongs to a separate {@code .wvc}
+ *       file.</li>
  * </ul>
  * AAC needs ADTS framing ({@link com.github.auties00.smalt.container.adts.AdtsMuxer}) and VP8
  * and VP9 an IVF file ({@link com.github.auties00.smalt.container.ivf.IvfMuxer}); every other
@@ -53,8 +68,9 @@ import java.util.Objects;
  * encoder's {@code STREAMINFO} with its MD5 signature and seek table) and to fill in a
  * {@code STREAMINFO} total sample count and frame size bounds still declared as unknown, and an
  * MP3 stream gets a Xing tag frame (see {@link RawMuxerOptions#xingTag()}) whose frame count,
- * byte count and seek table are filled in by {@link #finish()}. The sink is written from its
- * position at construction and is never closed by the muxer. Instances are not thread-safe.
+ * byte count, seek table and LAME tag (the encoder delay and padding of gapless playback) are filled
+ * in by {@link #finish()}. The sink is written from its position at construction and is never closed
+ * by the muxer. Instances are not thread-safe.
  */
 public final class RawMuxer implements Muxer {
     /**
@@ -64,9 +80,9 @@ public final class RawMuxer implements Muxer {
 
     /**
      * The size of the Xing payload after the side information: the tag word, the flags, the frame
-     * and byte counts and the 100-entry seek table.
+     * and byte counts, the 100-entry seek table, the quality indicator and the LAME tag.
      */
-    private static final int XING_PAYLOAD = 4 + 4 + 4 + 4 + 100;
+    private static final int XING_PAYLOAD = 4 + 4 + 4 + 4 + 100 + 4 + LameTag.SIZE;
 
     /**
      * The output sink.
@@ -94,6 +110,11 @@ public final class RawMuxer implements Muxer {
     private int xingSize;
 
     /**
+     * The sampling rate of the first MP3 frame, which the tag frame shares.
+     */
+    private int xingRate;
+
+    /**
      * The byte offset of each MP3 frame after the tag frame, relative to the tag frame.
      */
     private long[] frameOffsets = new long[0];
@@ -115,6 +136,28 @@ public final class RawMuxer implements Muxer {
     private int commonBitrate = -2;
 
     /**
+     * The smallest bitrate of the MP3 frames after the tag frame, in kilobits per second.
+     */
+    private int minimumKbps = Integer.MAX_VALUE;
+
+    /**
+     * The samples per channel the MP3 frames after the tag frame decode to, or {@code -1} once a
+     * frame without a valid header is written.
+     */
+    private long frameSamples;
+
+    /**
+     * The sum of the durations of the MP3 packets, in the track time base, or {@code -1} once a
+     * packet without a duration is written.
+     */
+    private long packetDurations;
+
+    /**
+     * The CRC-16 of the MP3 frames after the tag frame, as the LAME tag records it.
+     */
+    private int musicCrc;
+
+    /**
      * The sink position at construction, where the stream starts.
      */
     private final long base;
@@ -134,6 +177,11 @@ public final class RawMuxer implements Muxer {
      * OBUs of an AV1 track; empty when the configuration has none.
      */
     private byte[] parameterSets = new byte[0];
+
+    /**
+     * The codec configuration of the packets being written, initially the track's.
+     */
+    private byte[] config;
 
     /**
      * The configuration of a FLAC track: the declared one, or the one
@@ -162,9 +210,29 @@ public final class RawMuxer implements Muxer {
     private MediaTags tags;
 
     /**
+     * The ID3v2 tag written before an MPEG audio, AC-3 or AMR stream, or {@code null} for none.
+     */
+    private byte[] id3;
+
+    /**
      * Whether the stream header was written.
      */
     private boolean started;
+
+    /**
+     * The index of the first sample of the next headerless WavPack packet.
+     */
+    private long wavPackIndex;
+
+    /**
+     * The rebuilt block of a headerless WavPack block, its header followed by its data, grown as needed.
+     */
+    private byte[] wavPackBlock = new byte[0];
+
+    /**
+     * The channel count of an AMR track.
+     */
+    private int amrChannels;
 
     /**
      * Whether {@link #finish()} or {@link #close()} ran.
@@ -198,11 +266,12 @@ public final class RawMuxer implements Muxer {
      * Returns whether a codec has a raw elementary-stream form this muxer writes.
      *
      * @param codec the codec of the track
-     * @return {@code true} for PCM, MP3, MP2, FLAC, AMR-NB, AMR-WB, AC-3, E-AC-3, H.264, HEVC and AV1
+     * @return {@code true} for PCM, MP3, MP2, FLAC, AMR-NB, AMR-WB, AC-3, E-AC-3, H.264, HEVC, AV1, MPEG-4 Part 2,
+     * H.263 and WavPack
      */
     public static boolean supports(Codec codec) {
         return switch (Objects.requireNonNull(codec, "codec")) {
-            case MP3, MP2, FLAC, AMR_NB, AMR_WB, AC3, EAC3, H264, HEVC, AV1 -> true;
+            case MP3, MP2, FLAC, AMR_NB, AMR_WB, AC3, EAC3, H264, HEVC, AV1, MPEG4_PART2, H263, WAVPACK -> true;
             default -> codec.isPcm();
         };
     }
@@ -211,8 +280,11 @@ public final class RawMuxer implements Muxer {
      * Returns whether an elementary-stream file format can carry a codec.
      *
      * <p>{@link ContainerFormat#MPEG_AUDIO} carries MP3 and MP2, {@link ContainerFormat#FLAC} FLAC,
-     * {@link ContainerFormat#AMR} AMR-NB and AMR-WB, and {@link ContainerFormat#AC3} AC-3 and
-     * E-AC-3; every other format is not an elementary stream this muxer writes.
+     * {@link ContainerFormat#AMR} AMR-NB and AMR-WB, {@link ContainerFormat#AC3} AC-3 and E-AC-3,
+     * {@link ContainerFormat#H264}, {@link ContainerFormat#HEVC}, {@link ContainerFormat#AV1},
+     * {@link ContainerFormat#AV1_ANNEX_B}, {@link ContainerFormat#MPEG4_VIDEO}, {@link ContainerFormat#H263} and
+     * {@link ContainerFormat#WAVPACK} their codec, and {@link ContainerFormat#PCM} every PCM codec; every other
+     * format is not an elementary stream this muxer writes.
      *
      * @param format the file format
      * @param codec the codec of the track
@@ -226,6 +298,13 @@ public final class RawMuxer implements Muxer {
             case FLAC -> codec == Codec.FLAC;
             case AMR -> codec == Codec.AMR_NB || codec == Codec.AMR_WB;
             case AC3 -> codec == Codec.AC3 || codec == Codec.EAC3;
+            case H264 -> codec == Codec.H264;
+            case HEVC -> codec == Codec.HEVC;
+            case AV1, AV1_ANNEX_B -> codec == Codec.AV1;
+            case MPEG4_VIDEO -> codec == Codec.MPEG4_PART2;
+            case H263 -> codec == Codec.H263;
+            case WAVPACK -> codec == Codec.WAVPACK;
+            case PCM -> codec.isPcm();
             default -> false;
         };
     }
@@ -233,8 +312,8 @@ public final class RawMuxer implements Muxer {
     /**
      * {@inheritDoc}
      *
-     * @throws IllegalArgumentException if the codec has no raw form, or the configuration a FLAC, H.264 or HEVC track
-     * needs is missing or invalid
+     * @throws IllegalArgumentException if the codec has no raw form, the configuration a FLAC, H.264 or HEVC track
+     * needs is missing or invalid, or an AMR track has more than 15 channels
      * @throws IllegalStateException if a track was already declared or the muxer is finished
      */
     @Override
@@ -279,30 +358,47 @@ public final class RawMuxer implements Muxer {
             }
             case AV1 -> parameterSets = config != null && config.length > 4
                     ? Arrays.copyOfRange(config, 4, config.length) : new byte[0];
+            case AMR_NB, AMR_WB -> {
+                amrChannels = track instanceof AudioTrack audio
+                        ? audio.layout().map(ChannelLayout::channels).orElse(1) : 1;
+                if (amrChannels > 15) {
+                    throw new IllegalArgumentException("an AMR storage file holds at most 15 channels, not "
+                            + amrChannels);
+                }
+            }
             default -> {
             }
         }
+        this.config = config;
         this.track = track;
     }
 
     /**
      * {@inheritDoc}
      *
-     * @return {@code true} once an MP3, MP2 or FLAC track is declared
+     * @return {@code true} once an MP3, MP2, AC-3, E-AC-3, AMR or FLAC track is declared
      */
     @Override
     public boolean supportsTags() {
-        return track != null && (track.codec() == Codec.MP3 || track.codec() == Codec.MP2 || track.codec() == Codec.FLAC);
+        return track != null && switch (track.codec()) {
+            case MP3, MP2, AC3, EAC3, AMR_NB, AMR_WB, FLAC -> true;
+            default -> false;
+        };
     }
 
     /**
      * {@inheritDoc}
      *
-     * <p>An MP3 or MP2 stream gets an ID3v2.4 tag before its first frame; a FLAC stream gets a
+     * <p>An MP3, MP2, AC-3, E-AC-3 or AMR stream gets an ID3v2.4 tag before its first frame (before the AMR
+     * magic); a FLAC stream gets a
      * {@code VORBIS_COMMENT} block (with the chapters) and one {@code PICTURE} block per picture,
-     * replacing those of the track configuration. The track must be declared first.
+     * replacing those of the track configuration and placed before its padding, and a {@code CUESHEET} built from
+     * the chapters (none without chapters) in place of the configuration's. The track must be declared first.
+     * The tags are encoded here, so a tag the stream cannot hold is rejected before any packet is written.
      *
      * @throws MediaException.Unsupported if no track is declared or its raw form stores no tags
+     * @throws MediaException.LimitExceeded if a FLAC metadata block outgrows the 16 MiB its length holds, or the
+     * ID3v2 tag or one of its frames outgrows the 256 MiB its size holds
      */
     @Override
     public void setTags(MediaTags tags) {
@@ -311,7 +407,13 @@ public final class RawMuxer implements Muxer {
             throw new IllegalStateException("tags must be set before the first packet");
         }
         if (!supportsTags()) {
-            throw new MediaException.Unsupported("raw", "only MP3, MP2 and FLAC raw streams store tags");
+            throw new MediaException.Unsupported("raw", "only MP3, MP2, AC-3, E-AC-3, AMR and FLAC raw streams store tags");
+        }
+        if (track.codec() == Codec.FLAC) {
+            MuxerTags.flacMetadata(flacHeader(flacConfig), tags);
+            this.id3 = null;
+        } else {
+            this.id3 = MuxerTags.isGlobalEmpty(tags) ? null : MuxerTags.id3v2(tags);
         }
         this.tags = tags;
     }
@@ -319,9 +421,14 @@ public final class RawMuxer implements Muxer {
     /**
      * {@inheritDoc}
      *
-     * @throws IllegalArgumentException if the packet belongs to another track, or an H.264 or HEVC packet is not made
-     * of length-prefixed NAL units
+     * <p>A packet that changes the codec configuration of an H.264, HEVC or AV1 stream replaces the
+     * parameter sets or sequence header repeated before the key frames from then on.
+     *
+     * @throws IllegalArgumentException if the packet belongs to another track, an H.264 or HEVC packet is not made
+     * of length-prefixed NAL units, or a new H.264 or HEVC configuration cannot be parsed
      * @throws IllegalStateException if no track was declared or the muxer is finished
+     * @throws MediaException.Unsupported if the packet changes the codec configuration of a stream
+     * that is not H.264, HEVC or AV1
      */
     @Override
     public void writePacket(Packet packet) {
@@ -335,12 +442,38 @@ public final class RawMuxer implements Muxer {
         if (packet.trackId() != track.id()) {
             throw new IllegalArgumentException("packet for undeclared track " + packet.trackId());
         }
+        var newConfig = ConfigChanges.changed(packet, config);
+        if (newConfig != null) {
+            switch (track.codec()) {
+                case H264, HEVC -> {
+                    var parsed = track.codec() == Codec.H264 ? NalRecords.parseAvc(newConfig)
+                            : NalRecords.parseHevc(newConfig);
+                    if (parsed == null) {
+                        throw new IllegalArgumentException("the new " + track.codec().displayName()
+                                + " configuration cannot be parsed");
+                    }
+                    lengthSize = parsed.lengthSize();
+                    parameterSets = NalUnits.annexBParameterSets(parsed.parameterSets());
+                }
+                case AV1 -> parameterSets = newConfig.length > 4 ? Arrays.copyOfRange(newConfig, 4, newConfig.length)
+                        : new byte[0];
+                default -> throw ConfigChanges.unsupported("a raw " + track.codec().displayName() + " stream",
+                        packet.trackId());
+            }
+            config = newConfig;
+        }
         if (!started) {
             writeHeader();
         }
         switch (track.codec()) {
             case H264, HEVC -> writeAnnexB(packet);
             case AV1 -> writeTemporalUnit(packet);
+            case MPEG4_PART2 -> {
+                if (packet.keyframe() && config != null && !startsWithConfiguration(packet.data())) {
+                    output.write(ByteBuffer.wrap(config));
+                }
+                output.write(ByteBuffer.wrap(packet.data()));
+            }
             case FLAC -> {
                 output.write(ByteBuffer.wrap(packet.data()));
                 flacMinFrame = Math.min(flacMinFrame, packet.size());
@@ -355,11 +488,143 @@ public final class RawMuxer implements Muxer {
                 }
                 if (xingPosition >= 0) {
                     recordFrame(packet.data());
+                    packetDurations = packet.duration() > 0 && packetDurations >= 0
+                            ? packetDurations + packet.duration() : -1;
                 }
                 output.write(ByteBuffer.wrap(packet.data()));
             }
+            case WAVPACK -> writeWavPack(packet.data());
             default -> output.write(ByteBuffer.wrap(packet.data()));
         }
+    }
+
+    /**
+     * Writes the blocks of a WavPack packet, rebuilding the 32-byte block headers of a headerless packet: its
+     * block sample count, then for each block its flags, its checksum and, unless the first block is also the
+     * last, its size, then its data. A rebuilt header declares the stream length unknown, so the block checksum
+     * metadata sub-block, which covers the header, is computed again over the rebuilt block.
+     *
+     * @param data the packet
+     * @throws IllegalArgumentException if a headerless packet is truncated or the track declares no stream
+     *                                  version for it
+     */
+    private void writeWavPack(byte[] data) {
+        if (data.length >= 4 && data[0] == 'w' && data[1] == 'v' && data[2] == 'p' && data[3] == 'k') {
+            output.write(ByteBuffer.wrap(data));
+            return;
+        }
+        if (config == null || config.length < 2) {
+            throw new IllegalArgumentException("a headerless WavPack packet needs the stream version as its "
+                    + "track configuration");
+        }
+        if (data.length < 12) {
+            throw new IllegalArgumentException("WavPack packet truncated");
+        }
+        var samples = le32(data, 0);
+        var single = (le32(data, 4) & 0x1800) == 0x1800;
+        // the first pass checks every block, so that a malformed packet writes nothing
+        for (var write = 0; write < 2; write++) {
+            var position = 4;
+            while (position < data.length) {
+                if (data.length - position < (single ? 8 : 12)) {
+                    throw new IllegalArgumentException("WavPack block header truncated");
+                }
+                var flags = le32(data, position);
+                var crc = le32(data, position + 4);
+                position += 8;
+                int size;
+                if (single) {
+                    size = data.length - position;
+                } else {
+                    size = le32(data, position);
+                    position += 4;
+                }
+                if (size < 0 || size > data.length - position) {
+                    throw new IllegalArgumentException("WavPack block of size " + size + " runs past its packet");
+                }
+                if (write == 1) {
+                    if (wavPackBlock.length < 32 + size) {
+                        wavPackBlock = new byte[Math.max(32 + size, wavPackBlock.length * 2)];
+                    }
+                    var header = wavPackBlock;
+                    header[0] = 'w';
+                    header[1] = 'v';
+                    header[2] = 'p';
+                    header[3] = 'k';
+                    putLe32(header, 4, size + 24);
+                    header[8] = config[0];
+                    header[9] = config[1];
+                    header[10] = (byte) (wavPackIndex >>> 32);
+                    putLe32(header, 12, -1);
+                    putLe32(header, 16, (int) wavPackIndex);
+                    putLe32(header, 20, samples);
+                    putLe32(header, 24, flags);
+                    putLe32(header, 28, crc);
+                    System.arraycopy(data, position, header, 32, size);
+                    resealWavPackChecksum(header, 32 + size);
+                    output.write(ByteBuffer.wrap(header, 0, 32 + size));
+                }
+                position += size;
+                if (single || (flags & 0x1000) != 0) {
+                    break;
+                }
+            }
+        }
+        wavPackIndex += Integer.toUnsignedLong(samples);
+    }
+
+    /**
+     * Recomputes the block checksum metadata sub-block of a complete WavPack block, when it has one, over the
+     * block's bytes before that sub-block.
+     *
+     * @param block the block, its header first
+     * @param length the length of the block in bytes
+     */
+    private static void resealWavPackChecksum(byte[] block, int length) {
+        var position = 32;
+        while (length - position >= 2) {
+            var id = block[position] & 0xFF;
+            var size = (block[position + 1] & 0xFF) << 1;
+            var header = 2;
+            if ((id & 0x80) != 0) {
+                if (length - position < 4) {
+                    return;
+                }
+                size += (block[position + 2] & 0xFF) << 9 | (block[position + 3] & 0xFF) << 17;
+                header = 4;
+            }
+            var data = position + header;
+            if (size > length - data) {
+                return;
+            }
+            if ((id & 0x3F) == 0x2F && header == 2 && (id & 0x40) == 0 && (size == 2 || size == 4)) {
+                var sum = 0xFFFFFFFF;
+                for (var i = 0; i < position; i += 2) {
+                    sum = sum * 3 + ((block[i] & 0xFF) | (block[i + 1] & 0xFF) << 8);
+                }
+                if (size == 4) {
+                    putLe32(block, data, sum);
+                } else {
+                    sum ^= sum >>> 16;
+                    block[data] = (byte) sum;
+                    block[data + 1] = (byte) (sum >> 8);
+                }
+                return;
+            }
+            position = data + size;
+        }
+    }
+
+    private static int le32(byte[] data, int offset) {
+        return data[offset] & 0xFF | (data[offset + 1] & 0xFF) << 8 | (data[offset + 2] & 0xFF) << 16
+                | (data[offset + 3] & 0xFF) << 24;
+    }
+
+    private static void putLe32(byte[] data, int offset, int value) {
+        data[offset] = (byte) value;
+        data[offset + 1] = (byte) (value >> 8);
+        data[offset + 2] = (byte) (value >> 16);
+        data[offset + 3] = (byte) (value >> 24);
     }
 
     /**
@@ -378,6 +643,7 @@ public final class RawMuxer implements Muxer {
             return;
         }
         commonBitrate = MpegAudioHeader.bitrateIndex(header);
+        xingRate = MpegAudioHeader.sampleRate(header);
         var template = (header & 0xFFFE0C00) | 0x00010000 | (header & 0xC0) | (header & 0x0F);
         var needed = MpegAudioHeader.SIZE + MpegAudioHeader.sideInfoBytes(template) + XING_PAYLOAD;
         for (var index = commonBitrate; index < 15; index++) {
@@ -387,7 +653,7 @@ public final class RawMuxer implements Muxer {
                 xingHeader = candidate;
                 xingSize = size;
                 xingPosition = output.position();
-                output.write(ByteBuffer.wrap(xingFrame(new byte[100], 0, 0)));
+                output.write(ByteBuffer.wrap(xingFrame(new byte[100], 0, 0, null)));
                 streamBytes = size;
                 return;
             }
@@ -405,8 +671,20 @@ public final class RawMuxer implements Muxer {
         }
         frameOffsets[frameCount++] = streamBytes;
         streamBytes += frame.length;
-        if (frame.length >= MpegAudioHeader.SIZE && commonBitrate >= 0
-                && MpegAudioHeader.bitrateIndex(MpegAudioHeader.read(frame, 0)) != commonBitrate) {
+        musicCrc = LameTag.crc(musicCrc, frame, 0, frame.length);
+        var header = frame.length >= MpegAudioHeader.SIZE ? MpegAudioHeader.read(frame, 0) : 0;
+        if (!MpegAudioHeader.isValid(header)) {
+            frameSamples = -1;
+            commonBitrate = -1;
+            return;
+        }
+        if (frameSamples >= 0) {
+            frameSamples += MpegAudioHeader.samplesPerFrame(header);
+        }
+        if (!MpegAudioHeader.isFreeFormat(header)) {
+            minimumKbps = Math.min(minimumKbps, MpegAudioHeader.bitrateKbps(header));
+        }
+        if (commonBitrate >= 0 && MpegAudioHeader.bitrateIndex(header) != commonBitrate) {
             commonBitrate = -1;
         }
     }
@@ -414,23 +692,69 @@ public final class RawMuxer implements Muxer {
     /**
      * Returns the Xing tag frame: the reserved header, silent side information, then the
      * {@code Xing} word ({@code Info} when every frame has the same bitrate), the flags (frame
-     * count, byte count and seek table present), the counts and the seek table.
+     * count, byte count, seek table and quality present), the counts, the seek table, a zero
+     * quality and the LAME tag, or zeros in its place.
      *
      * @param toc the seek table
      * @param frames the number of audio frames after the tag frame
      * @param bytes the number of bytes from the tag frame on
+     * @param gapless the encoder delay and padding in samples, or {@code null} to leave the LAME tag
+     * out
      * @return the frame
      */
-    private byte[] xingFrame(byte[] toc, int frames, long bytes) {
+    private byte[] xingFrame(byte[] toc, int frames, long bytes, int[] gapless) {
         var frame = new ByteWriter(xingSize);
         frame.u32be(xingHeader & 0xFFFFFFFFL);
         frame.bytes(new byte[MpegAudioHeader.sideInfoBytes(xingHeader)]);
         frame.bytes((commonBitrate >= 0 ? "Info" : "Xing").getBytes(StandardCharsets.ISO_8859_1));
-        frame.u32be(7);
+        frame.u32be(15);
         frame.u32be(frames);
         frame.u32be(Math.min(bytes, 0xFFFFFFFFL));
         frame.bytes(toc);
-        return Arrays.copyOf(frame.toByteArray(), xingSize);
+        frame.u32be(0);
+        var tagged = Arrays.copyOf(frame.toByteArray(), xingSize);
+        if (gapless != null) {
+            var kbps = commonBitrate >= 0 ? MpegAudioHeader.bitrateKbps(xingHeader & ~0xF000 | commonBitrate << 12)
+                    : minimumKbps == Integer.MAX_VALUE ? 0 : minimumKbps;
+            LameTag.write(tagged, MpegAudioHeader.SIZE + MpegAudioHeader.sideInfoBytes(xingHeader) + 120,
+                    commonBitrate >= 0, kbps, gapless[0], gapless[1], bytes, musicCrc);
+        }
+        return tagged;
+    }
+
+    /**
+     * Returns the encoder delay and padding the LAME tag records for the stream written, from the
+     * track's {@link AudioTrack#skipSamples()} and its duration, or, when the track declares no
+     * duration, the sum of the packet durations.
+     *
+     * <p>The LAME tag counts the delay after the 529 samples of decoder delay of the synthesis
+     * filterbank and the padding from the end of the signal to 529 samples past the end of the
+     * decoded frames, so that a reader drops {@code delay + 529} decoded samples and keeps
+     * {@code frames * samplesPerFrame - delay - padding}.
+     *
+     * @return the delay and padding, or {@code null} when the track carries no gapless information
+     * or a value does not fit the tag's 12-bit fields
+     */
+    private int[] gapless() {
+        if (!(track instanceof AudioTrack audio) || frameSamples <= 0 || xingRate <= 0) {
+            return null;
+        }
+        var skip = audio.skipSamples();
+        long content;
+        var sampleBase = Rational.timeBaseOf(xingRate);
+        if (track.duration() >= 0) {
+            content = track.timeBase().rescale(track.duration(), sampleBase);
+        } else if (packetDurations > 0) {
+            content = track.timeBase().rescale(packetDurations, sampleBase) - skip;
+        } else {
+            return null;
+        }
+        var delay = skip - LameTag.DECODER_DELAY;
+        var padding = frameSamples - skip - content + LameTag.DECODER_DELAY;
+        if (delay < 0 || delay > LameTag.MAX_FIELD || content < 0 || padding < 0 || padding > LameTag.MAX_FIELD) {
+            return null;
+        }
+        return new int[]{(int) delay, (int) padding};
     }
 
     /**
@@ -446,7 +770,7 @@ public final class RawMuxer implements Muxer {
         }
         var end = output.position();
         output.position(xingPosition);
-        output.write(ByteBuffer.wrap(xingFrame(toc, frameCount, streamBytes)));
+        output.write(ByteBuffer.wrap(xingFrame(toc, frameCount, streamBytes, gapless())));
         output.position(end);
     }
 
@@ -522,19 +846,34 @@ public final class RawMuxer implements Muxer {
     }
 
     /**
-     * Writes what precedes the first packet: the FLAC marker and metadata, or the AMR magic.
+     * Writes what precedes the first packet: the FLAC marker and metadata, the ID3v2 tag of an MPEG audio,
+     * AC-3 or AMR stream, and the AMR magic and, for a multichannel track, the channel description.
      */
     private void writeHeader() {
         started = true;
         switch (track.codec()) {
             case FLAC -> output.write(ByteBuffer.wrap(writtenFlacHeader(flacConfig)));
-            case MP3, MP2 -> {
-                if (tags != null && !tags.isEmpty()) {
-                    output.write(ByteBuffer.wrap(MuxerTags.id3v2(tags)));
+            case MP3, MP2, AC3, EAC3 -> {
+                if (id3 != null) {
+                    output.write(ByteBuffer.wrap(id3));
                 }
             }
-            case AMR_NB -> output.write(ByteBuffer.wrap("#!AMR\n".getBytes(StandardCharsets.ISO_8859_1)));
-            case AMR_WB -> output.write(ByteBuffer.wrap("#!AMR-WB\n".getBytes(StandardCharsets.ISO_8859_1)));
+            case AMR_NB, AMR_WB -> {
+                if (id3 != null) {
+                    output.write(ByteBuffer.wrap(id3));
+                }
+                var wideband = track.codec() == Codec.AMR_WB;
+                if (amrChannels > 1) {
+                    var magic = (wideband ? "#!AMR-WB_MC1.0\n" : "#!AMR_MC1.0\n")
+                            .getBytes(StandardCharsets.ISO_8859_1);
+                    var header = Arrays.copyOf(magic, magic.length + 4);
+                    header[header.length - 1] = (byte) amrChannels;
+                    output.write(ByteBuffer.wrap(header));
+                } else {
+                    var magic = wideband ? "#!AMR-WB\n" : "#!AMR\n";
+                    output.write(ByteBuffer.wrap(magic.getBytes(StandardCharsets.ISO_8859_1)));
+                }
+            }
             default -> {
             }
         }
@@ -542,7 +881,7 @@ public final class RawMuxer implements Muxer {
 
     /**
      * Returns the native FLAC header written for a configuration: the header itself, or, when tags
-     * were set, the header with its tag and picture blocks in place of its padding.
+     * were set, the header with its tag and picture blocks rebuilt before its padding.
      *
      * @param config the {@code STREAMINFO} configuration and any following metadata blocks
      * @return the header bytes the output starts with
@@ -663,7 +1002,113 @@ public final class RawMuxer implements Muxer {
             unit.bytes(parameterSets);
         }
         unit.bytes(data);
+        if (options.av1AnnexB()) {
+            var annexB = toAnnexB(unit.toByteArray());
+            output.write(ByteBuffer.wrap(annexB));
+            return;
+        }
         unit.writeTo(output);
+    }
+
+    /**
+     * Rewrites a low-overhead temporal unit in the length-delimited format of Annex B.
+     *
+     * <p>Each frame unit holds one frame header or frame OBU with the tile groups after it and the OBUs before it
+     * since the previous frame's; sequence header and metadata OBUs after a frame start the next frame unit, and the
+     * OBUs after the last frame join its unit.
+     *
+     * @param unit the OBUs of the temporal unit, each with a size field
+     * @return the temporal unit with its size, frame units and OBU lengths
+     * @throws IllegalArgumentException if an OBU lacks its size field or runs past the unit
+     */
+    private static byte[] toAnnexB(byte[] unit) {
+        var frames = new ArrayList<ByteWriter>();
+        var pending = new ByteWriter(unit.length + 16);
+        var framed = false;
+        var position = 0;
+        while (position < unit.length) {
+            var header = unit[position] & 0xFF;
+            var headerBytes = (header & 0x04) != 0 ? 2 : 1;
+            if ((header & 0x02) == 0 || position + headerBytes > unit.length) {
+                throw new IllegalArgumentException("an AV1 OBU without its size field");
+            }
+            var size = 0L;
+            var at = position + headerBytes;
+            for (var shift = 0; ; shift += 7) {
+                if (at >= unit.length || shift > 56) {
+                    throw new IllegalArgumentException("truncated AV1 OBU size");
+                }
+                var b = unit[at++] & 0xFF;
+                size |= (long) (b & 0x7F) << shift;
+                if ((b & 0x80) == 0) {
+                    break;
+                }
+            }
+            if (size > unit.length - at) {
+                throw new IllegalArgumentException("an AV1 OBU runs past its temporal unit");
+            }
+            var type = (header >> 3) & 0x0F;
+            var frame = type == ElementaryProbe.OBU_FRAME_HEADER || type == ElementaryProbe.OBU_FRAME;
+            if (framed && (frame || type == ElementaryProbe.OBU_SEQUENCE_HEADER
+                    || type == ElementaryProbe.OBU_METADATA)) {
+                frames.add(pending);
+                pending = new ByteWriter(unit.length - position + 16);
+                framed = false;
+            }
+            framed |= frame;
+            writeLeb128(pending, headerBytes + size);
+            pending.u8(header & ~0x02);
+            if (headerBytes == 2) {
+                pending.u8(unit[position + 1] & 0xFF);
+            }
+            pending.bytes(unit, at, (int) size);
+            position = at + (int) size;
+        }
+        if (pending.size() > 0) {
+            if (!framed && !frames.isEmpty()) {
+                frames.getLast().bytes(pending.toByteArray());
+            } else {
+                frames.add(pending);
+            }
+        }
+        var temporal = new ByteWriter(unit.length + 32);
+        for (var frame : frames) {
+            writeLeb128(temporal, frame.size());
+            temporal.bytes(frame.toByteArray());
+        }
+        var out = new ByteWriter(temporal.size() + 8);
+        writeLeb128(out, temporal.size());
+        out.bytes(temporal.toByteArray());
+        return out.toByteArray();
+    }
+
+    /**
+     * Writes an unsigned LEB128 value.
+     *
+     * @param out the destination
+     * @param value the value, non-negative
+     */
+    private static void writeLeb128(ByteWriter out, long value) {
+        do {
+            var b = (int) (value & 0x7F);
+            value >>>= 7;
+            out.u8(value != 0 ? b | 0x80 : b);
+        } while (value != 0);
+    }
+
+    /**
+     * Returns whether an MPEG-4 Part 2 picture starts with configuration headers: a visual object sequence, visual
+     * object, video object or video object layer start code.
+     *
+     * @param data the packet
+     * @return {@code true} when the packet carries its own configuration
+     */
+    private static boolean startsWithConfiguration(byte[] data) {
+        if (data.length < 4 || data[0] != 0 || data[1] != 0 || data[2] != 1) {
+            return false;
+        }
+        var code = data[3] & 0xFF;
+        return code == 0xB0 || code == 0xB5 || code <= 0x2F;
     }
 
     /**

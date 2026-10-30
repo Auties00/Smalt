@@ -27,6 +27,10 @@ Contents
   36. arw (Go package by Sjon Kosse)
   37. Adobe Digital Negative (DNG) specification
   38. rawtoaces-data (camera spectral sensitivities)
+  40. X3F tools
+  59. libgsm
+  63. gpr (GoPro VC-5 decoder)
+  64. Adobe DNG SDK
 
 
 ===============================================================================
@@ -45,6 +49,7 @@ License:      Apache License, Version 2.0
 Derived Smalt packages:
   audio.aac.internal (HuffmanTables; BandLayout, EncoderChannel,
   EncoderEngine, TnsEncoder, TransientDetector)
+  container.internal (AacHuffmanTables)
 
 Derivation: the AAC Huffman codeword and length values are taken from the
 tables of aacenc/src/aac_rom.c. The encoder's psychoacoustic model, block
@@ -376,7 +381,8 @@ Derived Smalt packages:
 
 Derivation: the DNG reader, its color model (camera matrices, illuminant
 interpolation, camera profiles) and its opcode lists implement the DNG
-Specification. No code of the Adobe DNG SDK is used.
+Specification. The calibration of Hasselblad CCD files ports parts of the
+Adobe DNG SDK (see section 59).
 
 Notice required by the Adobe DNG patent license:
   This product includes DNG technology under license by Adobe.
@@ -628,23 +634,28 @@ rawtoaces-data license (LICENSE)
 
 Project:      X3F tools, a library for Sigma X3F raw files (commit e8b48ca)
 Source:       https://github.com/Kalpanika/x3f (src/x3f_io.c, x3f_meta.c,
-              x3f_image.c, x3f_process.c)
+              x3f_image.c, x3f_process.c, x3f_spatial_gain.c,
+              x3f_denoise.cpp, x3f_denoise_utils.cpp)
 License text: https://github.com/Kalpanika/x3f/blob/master/doc/copyright.txt
 License:      BSD 3-Clause License
 
 Derived Smalt packages:
-  image.raw.internal (X3fCamf, X3fDecoder, X3fParser)
+  image.raw.internal (X3fCamf, X3fCorrections, X3fDecoder, X3fParser,
+  X3fQuattro)
 
-Derivation: the decoding of the camera metadata block (the type 2 XOR stream
-and the type 4 coding, the CMbM, CMbT and CMbP entries), the TRUE and the
-older Huffman codings of the raw layers, the mapping of the KeepImageArea
-rectangles, the dark shield and white level entries, and the color conversion
-from the white balance gain, color correction, illuminant and gain factor
-entries follow that library's x3f_io.c, x3f_meta.c, x3f_image.c and
-x3f_process.c.
+Derivation: the decoding of the camera metadata block (the type 2 XOR stream,
+the type 4 and type 5 codings, the CMbM, CMbT and CMbP entries), the TRUE and
+Quattro codings and the older coding, Huffman coded or not, of the raw layers,
+the mapping of the KeepImageArea rectangles, the dark shield and white level
+entries, the bad pixel interpolation, the spatial gain tables, the expansion
+of the Quattro layers and the color conversion from the white balance gain,
+color correction, illuminant and gain factor entries follow that library's
+x3f_io.c, x3f_meta.c, x3f_image.c, x3f_process.c, x3f_spatial_gain.c,
+x3f_denoise.cpp and x3f_denoise_utils.cpp.
 
 Copyright:
   Copyright 2015 Roland and Erik Karlsson
+  Copyright 2015 Mark Roden and Erik Karlsson
 
 -------------------------------------------------------------------------------
 X3F tools license (doc/copyright.txt)
@@ -681,3 +692,240 @@ BSD-style License
 * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+===============================================================================
+59. libgsm
+===============================================================================
+
+Project:      libgsm 1.0.22, the GSM 06.10 full-rate speech codec of the
+              Technische Universitaet Berlin
+Source:       https://www.quut.com/gsm/gsm-1.0.22.tar.gz
+License text: COPYRIGHT at the root of the distribution
+License:      libgsm license (permissive; the notice must not be removed)
+
+Derived Smalt packages:
+  audio.gsm (Gsm0610: the RPE-LTP encoder and decoder of add.c, code.c,
+  decode.c, long_term.c, lpc.c, preprocess.c, rpe.c, short_term.c and the
+  tables of table.c)
+
+Derivation: C code translated to Java and tables transcribed.
+
+Copyright:
+  Copyright 1992, 1993, 1994 by Jutta Degener and Carsten Bormann,
+  Technische Universitaet Berlin
+
+-------------------------------------------------------------------------------
+libgsm license (COPYRIGHT)
+-------------------------------------------------------------------------------
+
+Copyright 1992, 1993, 1994 by Jutta Degener and Carsten Bormann,
+Technische Universitaet Berlin
+
+Any use of this software is permitted provided that this notice is not
+removed and that neither the authors nor the Technische Universitaet Berlin
+are deemed to have made any representations as to the suitability of this
+software for any purpose nor are held responsible for any defects of
+this software.  THERE IS ABSOLUTELY NO WARRANTY FOR THIS SOFTWARE.
+
+As a matter of courtesy, the authors request to be informed about uses
+this software has found, about bugs in this software, and about any
+improvements that may be of general interest.
+
+Berlin, 28.11.1994
+Jutta Degener
+Carsten Bormann
+
+                                 oOo
+
+Since the original terms of 15 years ago maybe do not make our
+intentions completely clear given today's refined usage of the legal
+terms, we append this additional permission:
+
+      Permission to use, copy, modify, and distribute this software
+      for any purpose with or without fee is hereby granted,
+      provided that this notice is not removed and that neither
+      the authors nor the Technische Universitaet Berlin are
+      deemed to have made any representations as to the suitability
+      of this software for any purpose nor are held responsible
+      for any defects of this software.  THERE IS ABSOLUTELY NO
+      WARRANTY FOR THIS SOFTWARE.
+
+Berkeley/Bremen, 05.04.2009
+Jutta Degener
+Carsten Bormann
+
+
+===============================================================================
+63. gpr (GoPro VC-5 decoder)
+===============================================================================
+
+Project:      gpr, GoPro's General Purpose Raw SDK, version 1.0.0, with the
+              VC-5 reference decoder
+Source:       https://github.com/gopro/gpr (source/lib/vc5_decoder: decoder.c,
+              inverse.c, wavelet.c, dequantize.c, vlc.c, raw.c;
+              source/lib/vc5_common: bitstream.c, companding.c, logcurve.c,
+              codec.c, table17.inc)
+License text: https://raw.githubusercontent.com/gopro/gpr/master/LICENSE-MIT
+License:      MIT License (the project is licensed under the Apache License 2.0
+              or the MIT License, at the user's option; Smalt uses the MIT
+              License)
+
+Derived Smalt packages:
+  image.raw.internal (Vc5Decoder)
+  aot.internal (SyntheticVc5)
+
+Derivation: C code translated to Java and the codebook transcribed (the
+codes the training files use, in aot.internal).
+
+Copyright:
+  Copyright 2018 GoPro, Inc.
+
+-------------------------------------------------------------------------------
+gpr license (LICENSE-MIT)
+-------------------------------------------------------------------------------
+
+Copyright 2018 GoPro, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a 
+copy of this software and associated documentation files (the "Software"), 
+to deal in the Software without restriction, including without limitation 
+the rights to use, copy, modify, merge, publish, distribute, sublicense, 
+and/or sell copies of the Software, and to permit persons to whom the 
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included 
+in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS 
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL 
+THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING 
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER 
+DEALINGS IN THE SOFTWARE.
+
+
+===============================================================================
+64. Adobe DNG SDK
+===============================================================================
+
+Project:      DNG SDK, version 1.4, Adobe, as carried by the Android Open
+              Source Project
+Source:       https://android.googlesource.com/platform/external/dng_sdk
+              (source/dng_bad_pixels.cpp, source/dng_gain_map.cpp,
+              source/dng_image.cpp)
+License text: https://android.googlesource.com/platform/external/dng_sdk/+/refs/heads/main/LICENSE
+License:      DNG SDK License Agreement (royalty-free license to use,
+              reproduce, modify, distribute and sublicense, keeping Adobe's
+              notices)
+
+Derived Smalt packages:
+  image.raw.internal (HasselbladColumns, HasselbladFlatField)
+
+Derivation: C++ code translated to Java: the interpolation of the bad
+rectangles of opcode FixBadPixelsList with the edge repeat of dng_image::Get,
+and the gain map interpolator of opcode GainMap, which Adobe DNG Converter
+applies to the calibration of Hasselblad CCD files.
+
+Copyright:
+  Copyright 2006-2009 Adobe Systems Incorporated. All Rights Reserved.
+
+-------------------------------------------------------------------------------
+DNG SDK license (LICENSE)
+-------------------------------------------------------------------------------
+
+This product includes DNG technology under license by Adobe Systems
+Incorporated.
+
+DNG SDK License Agreement
+NOTICE TO USER:
+Adobe Systems Incorporated provides the Software and Documentation for use under
+the terms of this Agreement. Any download, installation, use, reproduction,
+modification or distribution of the Software or Documentation, or any
+derivatives or portions thereof, constitutes your acceptance of this Agreement.
+
+As used in this Agreement, "Adobe" means Adobe Systems Incorporated. "Software"
+means the software code, in any format, including sample code and source code,
+accompanying this Agreement. "Documentation" means the documents, specifications
+and all other items accompanying this Agreement other than the Software.
+
+1. LICENSE GRANT
+Software License.  Subject to the restrictions below and other terms of this
+Agreement, Adobe hereby grants you a non-exclusive, worldwide, royalty free
+license to use, reproduce, prepare derivative works from, publicly display,
+publicly perform, distribute and sublicense the Software for any purpose.
+
+Document License.  Subject to the terms of this Agreement, Adobe hereby grants
+you a non-exclusive, worldwide, royalty free license to make a limited number of
+copies of the Documentation for your development purposes and to publicly
+display, publicly perform and distribute such copies.  You may not modify the
+Documentation.
+
+2. RESTRICTIONS AND OWNERSHIP
+You will not remove any copyright or other notice included in the Software or
+Documentation and you will include such notices in any copies of the Software
+that you distribute in human-readable format.
+
+You will not copy, use, display, modify or distribute the Software or
+Documentation in any manner not permitted by this Agreement. No title to the
+intellectual property in the Software or Documentation is transferred to you
+under the terms of this Agreement. You do not acquire any rights to the Software
+or the Documentation except as expressly set forth in this Agreement. All rights
+not granted are reserved by Adobe.
+
+3. DISCLAIMER OF WARRANTY
+ADOBE PROVIDES THE SOFTWARE AND DOCUMENTATION ONLY ON AN "AS IS" BASIS WITHOUT
+WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING
+WITHOUT LIMITATION ANY WARRANTIES OR CONDITIONS OF TITLE, NON-INFRINGEMENT,
+MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE. ADOBE MAKES NO WARRANTY
+THAT THE SOFTWARE OR DOCUMENTATION WILL BE ERROR-FREE. To the extent
+permissible, any warranties that are not and cannot be excluded by the foregoing
+are limited to ninety (90) days.
+
+4. LIMITATION OF LIABILITY
+ADOBE AND ITS SUPPLIERS SHALL NOT BE LIABLE FOR LOSS OR DAMAGE ARISING OUT OF
+THIS AGREEMENT OR FROM THE USE OF THE SOFTWARE OR DOCUMENTATION. IN NO EVENT
+WILL ADOBE BE LIABLE TO YOU OR ANY THIRD PARTY FOR ANY DIRECT, INDIRECT,
+CONSEQUENTIAL, INCIDENTAL, OR SPECIAL DAMAGES INCLUDING LOST PROFITS, LOST
+SAVINGS, COSTS, FEES, OR EXPENSES OF ANY KIND ARISING OUT OF ANY PROVISION OF
+THIS AGREEMENT OR THE USE OR THE INABILITY TO USE THE SOFTWARE OR DOCUMENTATION,
+HOWEVER CAUSED AND UNDER ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE), EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGES. ADOBE'S AGGREGATE LIABILITY AND THAT OF ITS
+SUPPLIERS UNDER OR IN CONNECTION WITH THIS AGREEMENT SHALL BE LIMITED TO THE
+AMOUNT PAID BY YOU FOR THE SOFTWARE AND DOCUMENTATION.
+
+5. INDEMNIFICATION
+If you choose to distribute the Software in a commercial product, you do so with
+the understanding that you agree to defend, indemnify and hold harmless Adobe
+against any losses, damages and costs arising from the claims, lawsuits or other
+legal actions arising out of such distribution.
+
+6. TRADEMARK USAGE
+Adobe and the DNG logo are the trademarks or registered trademarks of Adobe
+Systems Incorporated in the United States and other countries. Such trademarks
+may not be used to endorse or promote any product unless expressly permitted
+under separate agreement with Adobe. For information on how to license the DNG
+logo please go to www.adobe.com.
+
+7. TERM
+Your rights under this Agreement shall terminate if you fail to comply with any
+of the material terms or conditions of this Agreement. If all your rights under
+this Agreement terminate, you will immediately cease use and distribution of the
+Software and Documentation.
+
+8. GOVERNING LAW AND JURISDICTION. This Agreement is governed by the statutes
+and laws of the State of California, without regard to the conflicts of law
+principles thereof. The federal and state courts located in Santa Clara County,
+California, USA, will have non-exclusive jurisdiction over any dispute arising
+out of this Agreement.
+
+9. GENERAL
+This Agreement supersedes any prior agreement, oral or written, between Adobe
+and you with respect to the licensing to you of the Software and Documentation.
+No variation of the terms of this Agreement will be enforceable against Adobe
+unless Adobe gives its express consent in writing signed by an authorized
+signatory of Adobe. If any part of this Agreement is found void and
+unenforceable, it will not affect the validity of the balance of the Agreement,
+which shall remain valid and enforceable according to its terms.

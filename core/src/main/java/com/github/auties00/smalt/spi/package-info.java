@@ -1,7 +1,8 @@
 /**
- * The service-provider interfaces through which the registries find codecs: an artifact adds image, audio or
- * video codecs by providing an {@link ImageCodecProvider}, {@link AudioCodecProvider} or
- * {@link VideoCodecProvider}.
+ * The service-provider interfaces through which the registries find codecs and containers: an artifact adds image,
+ * audio or video codecs by providing an {@link ImageCodecProvider}, {@link AudioCodecProvider} or
+ * {@link VideoCodecProvider}, and a container by providing a {@link ContainerProvider}, whose tag edits it
+ * describes with a {@link TagRewrite}.
  *
  * <p>Unless otherwise noted, passing a {@code null} argument to a constructor or method in any class or
  * interface in this package will cause a {@link NullPointerException} to be thrown. The {@code @param}

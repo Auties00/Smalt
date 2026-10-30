@@ -1,0 +1,79 @@
+# Restores the oracle data files that .github/workflows/oracle-tools.yml writes (the DNG files of Adobe DNG Converter,
+# the libxaac and FDK AAC decodes of the AAC-ELD streams, the MPEG Surround reference decodes, the OpenSlide
+# renderings of the Aperio slides) into the conformance cache, where the raw, mpeg and image tests read them by default. The entries are saved with paths
+# relative to the workspace, on Windows or Linux, so every operating system restores them alike. An entry that is
+# missing (its generation failed) leaves its tests to skip, which the skip baseline then reports.
+name: Oracle data
+description: Restores the oracle data files of the scripted black-box oracles
+inputs:
+  artifact:
+    description: When an entry is missing (evicted from the 10 GB cache), take the files from the oracle-data-* artifacts that oracle-tools.yml uploads in this run
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - name: Restore the raw oracle files
+      id: raw
+      uses: actions/cache/restore@v4
+      with:
+        path: .oracle-data/raw-oracle
+        key: oracle-data-raw-${{ hashFiles('tools/testdata/raw-oracle.py') }}
+        enableCrossOsArchive: true
+
+    - name: Restore the NEF oracle files
+      id: nef
+      uses: actions/cache/restore@v4
+      with:
+        path: .oracle-data/nef-oracle
+        key: oracle-data-nef-${{ hashFiles('tools/testdata/nef-oracle.py') }}
+        enableCrossOsArchive: true
+
+    - name: Restore the AAC-ELD oracle files
+      id: eld
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          .oracle-data/eld-sbr-oracle
+          .oracle-data/eld-sbr-fdk
+        key: oracle-data-eld-sbr-${{ hashFiles('tools/testdata/eld-sbr-oracle.py') }}
+        enableCrossOsArchive: true
+
+    - name: Restore the MPEG Surround oracle files
+      id: mps
+      uses: actions/cache/restore@v4
+      with:
+        path: .oracle-data/mps-oracle
+        key: oracle-data-mps-${{ hashFiles('tools/testdata/mps-oracle.py', 'tools/testdata/mps-oracle/**') }}
+        enableCrossOsArchive: true
+
+    - name: Restore the Aperio slide oracle files
+      id: svs
+      uses: actions/cache/restore@v4
+      with:
+        path: .oracle-data/svs-oracle
+        key: oracle-data-svs-${{ hashFiles('tools/testdata/svs-oracle.py') }}
+        enableCrossOsArchive: true
+
+    - name: Download the oracle data files of this run
+      if: >-
+        inputs.artifact == 'true' && (steps.raw.outputs.cache-hit != 'true' || steps.nef.outputs.cache-hit != 'true'
+        || steps.eld.outputs.cache-hit != 'true' || steps.mps.outputs.cache-hit != 'true'
+        || steps.svs.outputs.cache-hit != 'true')
+      continue-on-error: true
+      uses: actions/download-artifact@v4
+      with:
+        pattern: oracle-data-*
+        merge-multiple: true
+        path: .oracle-data
+
+    - name: Move them into the conformance cache
+      shell: bash
+      run: |
+        mkdir -p ~/.smalt/cache/conformance
+        for directory in .oracle-data/*/; do
+          [ -d "$directory" ] || continue
+          name=$(basename "$directory")
+          rm -rf ~/.smalt/cache/conformance/"$name"
+          mv "$directory" ~/.smalt/cache/conformance/"$name"
+          echo "$name: $(ls ~/.smalt/cache/conformance/"$name" | wc -l) files"
+        done
