@@ -1,0 +1,19 @@
+# H.264 streams deeper than 8 bits, self-generated for H264HighBitDepthTest. Columns:
+# name	sha256	bytes	luma/chroma depth, size, frames	JM lencod parameters
+#
+# Each stream was encoded with the JM reference encoder 19.1 (lencod, jvet/JM master 8b34eee, built from
+# source) from its cfg/encoder.cfg (and cfg/q_matrix.cfg) with LevelIDC=30, HierarchicalCoding=0, InputFile holding ffmpeg 7.1's
+# "testsrc2=size=WxH:rate=25,noise=alls=10:allf=t+u" as yuv420p16le with each plane shifted right to its
+# bit depth (luma only for 4:0:0), and SourceBitDepth*/OutputBitDepth* set to the depths below. The
+# expected frame hashes in frames.tsv are the JM decoder's output (ldecod), which matches the encoder's
+# reconstruction; FFmpeg's output matches too for the streams it decodes (equal depths, not 12-bit 4:0:0).
+hd9-mbaff	989c760dfce56667bddbca20afce71a0b1277b5805d46488ce497d8771ce99b6	21911	9/9, 96x96, 6	ProfileIDC=110 SymbolMode=1 NumberBFrames=1 MbInterlace=2 ReferenceReorder=0 PocMemoryManagement=0 QPISlice=14 QPPSlice=16 QPBSlice=18 Transform8x8Mode=1
+hd10-8-paff	1e28fc862ec80fe886166c0a4eb2ab01733a160f34ddf1c48acae076e64ccc59	13896	10/8, 96x96, 6	ProfileIDC=110 SymbolMode=0 NumberBFrames=1 PicInterlace=2 ReferenceReorder=0 PocMemoryManagement=0 QPISlice=18 QPPSlice=20 QPBSlice=22 WeightedPrediction=1 WeightedBiprediction=1
+hd10-fields	403b9ec87a1839844fdf8901b976137d4b43f014a02c34ef353245f6f2acd82d	4171	10/10, 64x64, 3	ProfileIDC=110 SymbolMode=1 NumberBFrames=0 PicInterlace=1 ReferenceReorder=0 PocMemoryManagement=0 QPISlice=20 QPPSlice=22
+hd8-12-spatial	c1b9211066bd49fa54c06102765da98139e3b6adbe522f4401555eaa70ac0d4d	84497	8/12, 96x64, 8	ProfileIDC=244 SymbolMode=1 NumberBFrames=2 DirectModeType=1 QPISlice=8 QPPSlice=10 QPBSlice=12 WeightedPrediction=1 CbQPOffset=-12 CrQPOffset=-12
+hd12-cabac-wp	05439f3229102c67b71aef6d098fd61a531a3c600605ba004de6b9dd423856ae	51036	12/12, 96x64, 8	ProfileIDC=244 SymbolMode=1 NumberBFrames=2 QPISlice=-4 QPPSlice=0 QPBSlice=3 WeightedPrediction=1 WeightedBiprediction=1 CbQPOffset=-3 CrQPOffset=4 Transform8x8Mode=1 NumberReferenceFrames=3 DFParametersFlag=1 DFAlphaRefPSlice=2 DFBetaRefPSlice=-1 DFAlphaNRefBSlice=-2 DFBetaNRefBSlice=3
+hd12-mono	2df529210279ee6cc3067b44a0769b4f533d1f1ea60c7eb02564be22bcfa6f67	19328	12 (4:0:0), 96x64, 6	ProfileIDC=244 YUVFormat=0 SymbolMode=1 NumberBFrames=0 QPISlice=4 QPPSlice=6 WeightedPrediction=1
+hd14-cavlc-implicit	5beec1b1ceb6ed454d3e4962405f50720208ff8e4ca275aaf2e239b0ae82c250	38156	14/14, 96x64, 8	ProfileIDC=244 SymbolMode=0 NumberBFrames=2 QPISlice=6 QPPSlice=10 QPBSlice=12 WeightedBiprediction=2 DirectModeType=0 ScalingMatrixPresentFlag=3 Transform8x8Mode=1 CbQPOffset=5 CrQPOffset=-6
+hd14-mbaff-slices	02458ef21639117e504dea43e70fa5822c071ae4cc81eb51f74b45c0fcecb4ce	36312	14/14, 64x64, 4	ProfileIDC=244 SymbolMode=0 NumberBFrames=1 MbInterlace=2 ReferenceReorder=0 PocMemoryManagement=0 QPISlice=-30 QPPSlice=-20 QPBSlice=-10 SliceMode=1 SliceArgument=6 Transform8x8Mode=1 DFParametersFlag=1 DFAlphaRefISlice=3 DFBetaRefISlice=3 DFAlphaRefPSlice=-3 DFBetaRefPSlice=-3
+hd14-cabac-mbaff-pcm	9729c1b42399e9f6aeb891ec8d6533a566a37fcdc84d72ac1dc4b4e4ed5688ef	46850	14/14, 80x64, 6	ProfileIDC=244 SymbolMode=1 NumberBFrames=1 MbInterlace=2 ReferenceReorder=0 PocMemoryManagement=0 QPISlice=-24 QPPSlice=-22 QPBSlice=-20 Transform8x8Mode=1, from "testsrc2=size=80x32:rate=50,tinterlace=mode=merge,split[a][b];[b]crop=40:64:40:0,noise=alls=100:allf=t+u[n];[a][n]overlay=40:0" in place of the source above, so the noisy right half codes as I_PCM in frame and field macroblock pairs
+hd10-high422-profile	223275f1cdde616c158e867d8a2e36f0654f556b7267e8747bf426303a577881	9279	10/10, 64x64, 4	ProfileIDC=122 SymbolMode=1 NumberBFrames=1 ReferenceReorder=0 PocMemoryManagement=0 QPISlice=12 QPPSlice=14 QPBSlice=16 Transform8x8Mode=1 (a 4:2:0 stream of the High 4:2:2 profile)

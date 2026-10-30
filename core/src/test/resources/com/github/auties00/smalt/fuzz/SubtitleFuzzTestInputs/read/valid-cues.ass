@@ -1,0 +1,17 @@
+[Script Info]
+; I/O behavior sample
+ScriptType: v4.00+
+PlayResX: 384
+PlayResY: 288
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1
+Style: Top,Arial,18,&H0000FFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2,0,8,10,10,10,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.50,0:00:00.90,Default,,0,0,0,,{\i1}World{\i0}
+Dialogue: 0,0:00:00.00,0:00:00.40,Default,,0,0,0,,Hello
+Dialogue: 1,0:00:00.20,0:00:01.00,Top,Sign,0,0,0,,{\pos(192,30)}Overlap
+Dialogue: 0,0:00:01.25,0:00:02.00,Default,Bob,0,0,0,,Two\Nlines
