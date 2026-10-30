@@ -3,6 +3,7 @@ package com.github.auties00.smalt.container.mp4;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.internal.heif.BoxCursor;
 
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -18,7 +19,13 @@ import java.util.List;
  * sample as a sync sample unless {@code sample_is_non_sync_sample} is set or
  * {@code sample_depends_on} says it depends on other samples; samples a track fragment's
  * {@code sbgp} assigns to a random access ({@code rap } or {@code sync}) group are sync samples
- * too.
+ * too. The samples of a track fragment use the sample description its {@code tfhd} names, or else
+ * the default of the track's {@code trex}.
+ *
+ * <p>The samples of a protected track take their Common Encryption auxiliary information (ISO/IEC 23001-7) from the
+ * track fragment: the {@code seig} sample groups of its {@code sbgp} and {@code sgpd} boxes, then its sample
+ * encryption box ({@code senc}, or the PIFF one), or, without one, the information its {@code saiz} and {@code saio}
+ * boxes locate, whose offsets count from the base data offset.
  */
 final class FragmentParser {
     /**
@@ -96,10 +103,11 @@ final class FragmentParser {
      * @param moof the box payload
      * @param moofStart the absolute file offset of the first byte of the {@code moof} box
      * @param tracks the tracks of the movie
+     * @param aux reads the sample auxiliary information that {@code saio} boxes locate
      * @throws MediaException.Malformed if a box is corrupt
      * @throws MediaException.LimitExceeded if a track exceeds the sample limit
      */
-    static void parse(BoxCursor moof, long moofStart, List<Mp4Track> tracks) {
+    static void parse(BoxCursor moof, long moofStart, List<Mp4Track> tracks, CencSamples.AuxSource aux) {
         var previousEnd = moofStart;
         var firstTraf = true;
         while (moof.hasBox()) {
@@ -107,7 +115,7 @@ final class FragmentParser {
             if (box.type() != BoxTypes.TRAF) {
                 continue;
             }
-            previousEnd = parseTrackFragment(box, moofStart, firstTraf ? moofStart : previousEnd, tracks);
+            previousEnd = parseTrackFragment(box, moofStart, firstTraf ? moofStart : previousEnd, tracks, aux);
             firstTraf = false;
         }
     }
@@ -120,21 +128,43 @@ final class FragmentParser {
      * @param implicitBase the base data offset to use when neither {@code tfhd} nor
      * {@code default-base-is-moof} gives one
      * @param tracks the tracks of the movie
+     * @param aux reads the sample auxiliary information that {@code saio} boxes locate
      * @return the absolute offset just past the last sample of this track fragment
      */
-    private static long parseTrackFragment(BoxCursor traf, long moofStart, long implicitBase, List<Mp4Track> tracks) {
+    private static long parseTrackFragment(BoxCursor traf, long moofStart, long implicitBase, List<Mp4Track> tracks,
+                                           CencSamples.AuxSource aux) {
         BoxCursor tfhd = null;
         BoxCursor tfdt = null;
         BoxCursor randomAccess = null;
+        BoxCursor saiz = null, saio = null, senc = null, piffSenc = null, seigGroups = null, seigSamples = null;
         var start = traf.position();
         while (traf.hasBox()) {
             var box = traf.nextBox();
-            if (box.type() == BoxTypes.TFHD && tfhd == null) {
-                tfhd = box;
-            } else if (box.type() == BoxTypes.TFDT && tfdt == null) {
-                tfdt = box;
-            } else if (box.type() == BoxTypes.SBGP && randomAccess == null && MovieParser.isRandomAccessGroup(box)) {
-                randomAccess = box;
+            switch (box.type()) {
+                case BoxTypes.TFHD -> tfhd = tfhd == null ? box : tfhd;
+                case BoxTypes.TFDT -> tfdt = tfdt == null ? box : tfdt;
+                case BoxTypes.SBGP -> {
+                    if (randomAccess == null && MovieParser.isRandomAccessGroup(box)) {
+                        randomAccess = box;
+                    } else if (seigSamples == null && MovieParser.isGroup(box, BoxTypes.SEIG)) {
+                        seigSamples = box;
+                    }
+                }
+                case BoxTypes.SGPD -> {
+                    if (seigGroups == null && MovieParser.isGroup(box, BoxTypes.SEIG)) {
+                        seigGroups = box;
+                    }
+                }
+                case BoxTypes.SAIZ -> saiz = saiz == null ? box : saiz;
+                case BoxTypes.SAIO -> saio = saio == null ? box : saio;
+                case BoxTypes.SENC -> senc = senc == null ? box : senc;
+                case BoxTypes.UUID -> {
+                    if (piffSenc == null && MovieParser.isPiffSampleEncryption(box)) {
+                        piffSenc = box;
+                    }
+                }
+                default -> {
+                }
             }
         }
         if (tfhd == null) {
@@ -161,8 +191,9 @@ final class FragmentParser {
         } else if ((flags & TFHD_DEFAULT_BASE_IS_MOOF) != 0) {
             base = moofStart;
         }
+        var description = track.defaultDescription;
         if ((flags & TFHD_DESCRIPTION_INDEX) != 0) {
-            tfhd.u32();
+            description = MovieParser.descriptionIndex(tfhd.u32(), track.entries.length);
         }
         var defaultDuration = (flags & TFHD_DEFAULT_DURATION) != 0 ? tfhd.u32() : track.defaultDuration;
         var defaultSize = (flags & TFHD_DEFAULT_SIZE) != 0 ? tfhd.u32() : track.defaultSize;
@@ -173,15 +204,44 @@ final class FragmentParser {
         }
         var position = base;
         var first = track.samples.count;
+        var runs = new int[4];
+        var runCount = 0;
         traf.position(start);
         while (traf.hasBox()) {
             var box = traf.nextBox();
             if (box.type() == BoxTypes.TRUN) {
-                position = parseRun(box, track, base, position, defaultDuration, defaultSize, defaultFlags);
+                if (runCount == runs.length - 1) {
+                    runs = Arrays.copyOf(runs, runs.length * 2);
+                }
+                runs[runCount++] = track.samples.count;
+                position = parseRun(box, track, base, position, defaultDuration, defaultSize, defaultFlags, description);
             }
         }
+        runs[runCount++] = track.samples.count;
         if (randomAccess != null) {
             MovieParser.markRandomAccess(track.samples, randomAccess, first, track.samples.count);
+        }
+        var cenc = track.cenc;
+        var end = track.samples.count;
+        if (cenc != null && end > first) {
+            var fragmentGroups = -1;
+            if (seigGroups != null) {
+                var groups = cenc.groups.size();
+                if (cenc.addGroups(seigGroups) >= 0) {
+                    fragmentGroups = groups;
+                }
+            }
+            if (seigSamples != null) {
+                cenc.assignGroups(seigSamples, track.samples, first, end, fragmentGroups);
+            }
+            if (senc != null) {
+                cenc.readSampleEncryption(senc, false, track, first, end);
+            } else if (piffSenc != null) {
+                cenc.readSampleEncryption(piffSenc, true, track, first, end);
+            } else if (saiz != null && saio != null) {
+                cenc.readAuxiliaryInfo(saiz, saio, track, Arrays.copyOf(runs, runCount), base, aux,
+                        track.protection().scheme());
+            }
         }
         return position;
     }
@@ -199,10 +259,11 @@ final class FragmentParser {
      * @param defaultDuration the default sample duration
      * @param defaultSize the default sample size
      * @param defaultFlags the default sample flags
+     * @param description the zero-based sample description index of the run's samples
      * @return the absolute offset just past the run's data
      */
     private static long parseRun(BoxCursor trun, Mp4Track track, long base, long position, long defaultDuration,
-                                 long defaultSize, int defaultFlags) {
+                                 long defaultSize, int defaultFlags, int description) {
         var flags = trun.fullBoxHeader() & 0xFFFFFF;
         var count = trun.u32();
         if ((flags & TRUN_DATA_OFFSET) != 0) {
@@ -237,6 +298,7 @@ final class FragmentParser {
             }
             var keyframe = (sampleFlags & NON_SYNC) == 0 && ((sampleFlags >>> 24) & 3) != 1;
             table.add(position, (int) size, dts, (int) duration, cts, keyframe);
+            table.setDescription(table.count - 1, description);
             position += size;
             dts += duration;
         }

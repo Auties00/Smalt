@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.image;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.ops.ImageOps;
 
 /**
  * Encodes an animation frame by frame into a sink, the writing counterpart of
@@ -66,7 +67,8 @@ public interface AnimationWriter extends AutoCloseable {
      * shown back to back.
      *
      * @implSpec The default implementation calls {@link #write(RgbaPicture, long)} with
-     * {@link AnimationFrame#picture()} and {@link AnimationFrame#durationMicros()}.
+     * {@link AnimationFrame#picture()}, reduced to 8 bits with {@link ImageOps#toRgba(Picture)} when
+     * it is an {@link Rgba16Picture}, and {@link AnimationFrame#durationMicros()}.
      *
      * @param frame the frame, of the canvas size
      * @throws NullPointerException         if {@code frame} is {@code null}
@@ -76,7 +78,7 @@ public interface AnimationWriter extends AutoCloseable {
      * @throws MediaException.LimitExceeded if encoding runs out of memory
      */
     default void write(AnimationFrame frame) {
-        write(frame.picture(), frame.durationMicros());
+        write(ImageOps.toRgba(frame.picture()), frame.durationMicros());
     }
 
     /**

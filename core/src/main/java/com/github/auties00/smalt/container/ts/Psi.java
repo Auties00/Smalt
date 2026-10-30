@@ -1,11 +1,15 @@
 package com.github.auties00.smalt.container.ts;
 
+import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
 import com.github.auties00.smalt.internal.header.Crc32Mpeg;
+import com.github.auties00.smalt.internal.tags.TsDescriptors;
+import com.github.auties00.smalt.track.DolbyVision;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.Consumer;
 
 /**
@@ -24,9 +28,19 @@ final class Psi {
     static final int PMT_TABLE = 0x02;
 
     /**
+     * The {@code table_id} of an SCTE 35 {@code splice_info_section}.
+     */
+    static final int SPLICE_INFO_TABLE = 0xFC;
+
+    /**
      * The largest section, header included: a private section's 12-bit length plus its header.
      */
     private static final int MAX_SECTION = 4096;
+
+    /**
+     * The largest number of registration descriptors kept per descriptor loop.
+     */
+    private static final int MAX_REGISTRATIONS = 8;
 
     /**
      * The registration {@code format_identifier} of ID3 timed metadata ({@code "ID3 "}).
@@ -49,6 +63,21 @@ final class Psi {
     static final int OPUS = fourCc("Opus");
 
     /**
+     * The registration {@code format_identifier} of DTS with 512-sample frames ({@code "DTS1"}).
+     */
+    static final int DTS1 = 0x44545331;
+
+    /**
+     * The registration {@code format_identifier} of DTS with 1024-sample frames ({@code "DTS2"}).
+     */
+    static final int DTS2 = 0x44545332;
+
+    /**
+     * The registration {@code format_identifier} of DTS with 2048-sample frames ({@code "DTS3"}).
+     */
+    static final int DTS3 = 0x44545333;
+
+    /**
      * The registration {@code format_identifier} of HEVC ({@code "HEVC"}).
      */
     static final int HEVC = fourCc("HEVC");
@@ -57,6 +86,21 @@ final class Psi {
      * The registration {@code format_identifier} of Blu-ray and AVCHD programs ({@code "HDMV"}).
      */
     static final int HDMV = fourCc("HDMV");
+
+    /**
+     * The registration {@code format_identifier} of AV1 ({@code "AV01"}).
+     */
+    static final int AV1 = fourCc("AV01");
+
+    /**
+     * The registration {@code format_identifier} of SMPTE ST 302 AES3 data ({@code "BSSD"}).
+     */
+    static final int AES3 = fourCc("BSSD");
+
+    /**
+     * The registration {@code format_identifier} of SCTE 35 programs ({@code "CUEI"}).
+     */
+    static final int CUEI = fourCc("CUEI");
 
     private Psi() {
         throw new AssertionError();
@@ -86,33 +130,139 @@ final class Psi {
      * Describes an elementary stream as its program map entry declares it.
      *
      * @param pid the PID of the stream
+     * @param trackId the identifier of the track the stream feeds: its PID, unless the stream continues a track
+     * first carried on another PID or that PID is taken by another track
      * @param streamType the {@code stream_type}
-     * @param registration the {@code format_identifier} of the stream's registration descriptor, or
-     * {@code 0}
-     * @param programRegistration the {@code format_identifier} of the program's registration
-     * descriptor, or {@code 0}
+     * @param registrations the {@code format_identifier}s of the stream's registration descriptors, in order
+     * @param programRegistrations the {@code format_identifier}s of the program's registration descriptors, in
+     * order
      * @param language the ISO 639-2 language code, or {@code null}
      * @param ac3Descriptor whether a DVB AC-3 descriptor (tag {@code 0x6A}) is present
      * @param eac3Descriptor whether a DVB enhanced AC-3 descriptor (tag {@code 0x7A}) is present
+     * @param dtsDescriptor whether a DVB DTS descriptor (tag {@code 0x7B}) or DTS-HD descriptor (extension tag
+     * {@code 0x0E}) is present
      * @param opusChannels the {@code channel_config_code} of a DVB Opus extension descriptor, or
      * {@code -1}
      * @param id3Metadata whether a metadata descriptor (tag {@code 0x26}) announces ID3
-     * @param dvbSubtitles whether a DVB subtitling descriptor (tag {@code 0x59}) is present
-     * @param teletext whether a DVB teletext descriptor (tag {@code 0x56}) is present
+     * @param subtitling the body of the DVB subtitling descriptor (tag {@code 0x59}), or {@code null} when absent
+     * @param teletextPages the body of the DVB teletext descriptor (tag {@code 0x56}), or {@code null} when absent
+     * @param audioType the {@code audio_type} of the first language of the ISO 639 language descriptor, or
+     * {@code -1}
+     * @param name the first string of an ATSC component name descriptor (tag {@code 0xA3}), or {@code null}
+     * @param dolbyVision the configuration of a DOVI video stream descriptor (tag {@code 0xB0}), or {@code null}
      */
-    record StreamEntry(int pid, int streamType, int registration, int programRegistration, String language,
-                       boolean ac3Descriptor, boolean eac3Descriptor, int opusChannels, boolean id3Metadata,
-                       boolean dvbSubtitles, boolean teletext) {
+    record StreamEntry(int pid, int trackId, int streamType, List<Integer> registrations,
+                       List<Integer> programRegistrations, String language, boolean ac3Descriptor,
+                       boolean eac3Descriptor, boolean dtsDescriptor, int opusChannels, boolean id3Metadata,
+                       byte[] subtitling,
+                       byte[] teletextPages, int audioType, String name, DolbyVision dolbyVision) {
+        /**
+         * Returns whether a DVB subtitling descriptor is present.
+         *
+         * @return {@code true} when one is
+         */
+        boolean dvbSubtitles() {
+            return subtitling != null;
+        }
+
+        /**
+         * Returns whether a DVB teletext descriptor is present.
+         *
+         * @return {@code true} when one is
+         */
+        boolean teletext() {
+            return teletextPages != null;
+        }
+
+        /**
+         * Returns whether a registration descriptor of the stream carries an identifier.
+         *
+         * @param identifier the {@code format_identifier}
+         * @return {@code true} when one does
+         */
+        boolean registered(int identifier) {
+            return registrations.contains(identifier);
+        }
+
+        /**
+         * Returns whether a registration descriptor of the program carries an identifier.
+         *
+         * @param identifier the {@code format_identifier}
+         * @return {@code true} when one does
+         */
+        boolean programRegistered(int identifier) {
+            return programRegistrations.contains(identifier);
+        }
+
+        /**
+         * Returns this entry feeding another track.
+         *
+         * @param id the track identifier
+         * @return the entry
+         */
+        StreamEntry withTrackId(int id) {
+            return new StreamEntry(pid, id, streamType, registrations, programRegistrations, language, ac3Descriptor,
+                    eac3Descriptor, dtsDescriptor, opusChannels, id3Metadata, subtitling, teletextPages, audioType, name,
+                    dolbyVision);
+        }
+
+        /**
+         * Returns whether another entry declares the same coding: stream type, registrations, coding descriptors
+         * and language, whatever its PID.
+         *
+         * @param other the entry
+         * @return {@code true} for the same coding
+         */
+        boolean sameCoding(StreamEntry other) {
+            return streamType == other.streamType && registrations.equals(other.registrations)
+                    && programRegistrations.equals(other.programRegistrations)
+                    && Objects.equals(language, other.language) && ac3Descriptor == other.ac3Descriptor
+                    && eac3Descriptor == other.eac3Descriptor && dtsDescriptor == other.dtsDescriptor
+                    && opusChannels == other.opusChannels
+                    && id3Metadata == other.id3Metadata && Arrays.equals(subtitling, other.subtitling)
+                    && Arrays.equals(teletextPages, other.teletextPages)
+                    && Objects.equals(dolbyVision, other.dolbyVision);
+        }
     }
 
     /**
      * Describes a program map section.
      *
      * @param number the {@code program_number}
+     * @param version the {@code version_number}
      * @param pcrPid the {@code PCR_PID}
      * @param streams the elementary streams, in section order
      */
-    record PmtSection(int number, int pcrPid, List<StreamEntry> streams) {
+    record PmtSection(int number, int version, int pcrPid, List<StreamEntry> streams) {
+        /**
+         * Returns whether another section maps the same streams: the same PIDs with the same codings, in order.
+         *
+         * @param other the section
+         * @return {@code true} when nothing but the version or the clock PID differs
+         */
+        boolean sameStreams(PmtSection other) {
+            if (streams.size() != other.streams.size()) {
+                return false;
+            }
+            for (var index = 0; index < streams.size(); index++) {
+                var mine = streams.get(index);
+                var theirs = other.streams.get(index);
+                if (mine.pid() != theirs.pid() || !mine.sameCoding(theirs)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    /**
+     * Returns whether a long-form section applies now rather than announcing the next version.
+     *
+     * @param section the whole section
+     * @return {@code true} when its {@code current_next_indicator} is set
+     */
+    static boolean isCurrent(byte[] section) {
+        return section.length > 5 && (section[5] & 0x01) != 0;
     }
 
     /**
@@ -143,6 +293,7 @@ final class Psi {
             return null;
         }
         var number = (section[3] & 0xFF) << 8 | (section[4] & 0xFF);
+        var version = (section[5] >> 1) & 0x1F;
         var pcrPid = (section[8] & 0x1F) << 8 | (section[9] & 0xFF);
         var infoLength = (section[10] & 0x0F) << 8 | (section[11] & 0xFF);
         var end = section.length - 4;
@@ -163,11 +314,72 @@ final class Psi {
             }
             var descriptors = new Descriptors(section, position, length);
             position += length;
-            streams.add(new StreamEntry(pid, type, descriptors.registration, programDescriptors.registration,
-                    descriptors.language, descriptors.ac3, descriptors.eac3, descriptors.opusChannels,
-                    descriptors.id3, descriptors.subtitles, descriptors.teletext));
+            streams.add(new StreamEntry(pid, pid, type, List.copyOf(descriptors.registrations),
+                    List.copyOf(programDescriptors.registrations), descriptors.language, descriptors.ac3,
+                    descriptors.eac3, descriptors.dts, descriptors.opusChannels, descriptors.id3, descriptors.subtitles,
+                    descriptors.teletext, descriptors.audioType, descriptors.name, descriptors.dolbyVision));
         }
-        return new PmtSection(number, pcrPid, streams);
+        return new PmtSection(number, version, pcrPid, streams);
+    }
+
+    /**
+     * Describes a stream of a program stream that no program stream map declares: a stream type, without
+     * descriptors.
+     *
+     * @param trackId the identifier of the track, which also stands for the PID
+     * @param streamType the {@code stream_type} the stream is read as
+     * @param language the ISO 639-2 language code, or {@code null}
+     * @return the entry
+     */
+    static StreamEntry plainEntry(int trackId, int streamType, String language) {
+        return new StreamEntry(trackId, trackId, streamType, List.of(), List.of(), language, false, false, false, -1,
+                false, null, null, -1, null, null);
+    }
+
+    /**
+     * Parses a program stream map (ISO/IEC 13818-1 clause 2.5.4): the PES packet of stream id {@code 0xBC}.
+     *
+     * <p>Each entry's PID and track identifier are its {@code elementary_stream_id}; the descriptors of the map
+     * itself are the program registrations of every entry.
+     *
+     * @param map the whole PES packet, from its start code prefix to its {@code CRC_32}
+     * @return the entries in map order, or {@code null} when the map is truncated, not current or fails its
+     * {@code CRC_32}, computed over the whole map or, as some writers compute it, from after its length field
+     */
+    static List<StreamEntry> parseProgramStreamMap(byte[] map) {
+        if (map.length < 16 || (map[6] & 0x80) == 0
+                || Crc32Mpeg.update(Crc32Mpeg.MPEG_INIT, map, 0, map.length) != 0
+                && Crc32Mpeg.update(Crc32Mpeg.MPEG_INIT, map, 6, map.length - 6) != 0) {
+            return null;
+        }
+        var end = map.length - 4;
+        var infoLength = (map[8] & 0xFF) << 8 | (map[9] & 0xFF);
+        var position = 10;
+        if (position + infoLength + 2 > end) {
+            return null;
+        }
+        var programDescriptors = new Descriptors(map, position, infoLength);
+        position += infoLength;
+        var mapLength = (map[position] & 0xFF) << 8 | (map[position + 1] & 0xFF);
+        position += 2;
+        var mapEnd = Math.min(end, position + mapLength);
+        var streams = new ArrayList<StreamEntry>();
+        while (position + 4 <= mapEnd) {
+            var type = map[position] & 0xFF;
+            var id = map[position + 1] & 0xFF;
+            var length = (map[position + 2] & 0xFF) << 8 | (map[position + 3] & 0xFF);
+            position += 4;
+            if (position + length > mapEnd) {
+                return null;
+            }
+            var descriptors = new Descriptors(map, position, length);
+            position += length;
+            streams.add(new StreamEntry(id, id, type, List.copyOf(descriptors.registrations),
+                    List.copyOf(programDescriptors.registrations), descriptors.language, descriptors.ac3,
+                    descriptors.eac3, descriptors.dts, descriptors.opusChannels, descriptors.id3,
+                    descriptors.subtitles, descriptors.teletext, descriptors.audioType, descriptors.name, descriptors.dolbyVision));
+        }
+        return streams;
     }
 
     /**
@@ -176,9 +388,9 @@ final class Psi {
      */
     private static final class Descriptors {
         /**
-         * The registration {@code format_identifier}, or {@code 0}.
+         * The registration {@code format_identifier}s, in order.
          */
-        int registration;
+        final List<Integer> registrations = new ArrayList<>(1);
 
         /**
          * The ISO 639-2 language code, or {@code null}.
@@ -196,6 +408,11 @@ final class Psi {
         boolean eac3;
 
         /**
+         * Whether a DTS or DTS-HD descriptor is present.
+         */
+        boolean dts;
+
+        /**
          * The Opus {@code channel_config_code}, or {@code -1}.
          */
         int opusChannels = -1;
@@ -206,14 +423,29 @@ final class Psi {
         boolean id3;
 
         /**
-         * Whether a subtitling descriptor is present.
+         * The body of the subtitling descriptor, or {@code null}.
          */
-        boolean subtitles;
+        byte[] subtitles;
 
         /**
-         * Whether a teletext descriptor is present.
+         * The body of the teletext descriptor, or {@code null}.
          */
-        boolean teletext;
+        byte[] teletext;
+
+        /**
+         * The {@code audio_type} of the language descriptor, or {@code -1}.
+         */
+        int audioType = -1;
+
+        /**
+         * The component name, or {@code null}.
+         */
+        String name;
+
+        /**
+         * The configuration of the DOVI video stream descriptor, or {@code null}.
+         */
+        private DolbyVision dolbyVision;
 
         /**
          * Reads a descriptor loop.
@@ -234,24 +466,37 @@ final class Psi {
                 }
                 switch (tag) {
                     case 0x05 -> {
-                        if (size >= 4) {
-                            registration = (data[body] & 0xFF) << 24 | (data[body + 1] & 0xFF) << 16
-                                    | (data[body + 2] & 0xFF) << 8 | (data[body + 3] & 0xFF);
+                        if (size >= 4 && registrations.size() < MAX_REGISTRATIONS) {
+                            registrations.add((data[body] & 0xFF) << 24 | (data[body + 1] & 0xFF) << 16
+                                    | (data[body + 2] & 0xFF) << 8 | (data[body + 3] & 0xFF));
                         }
                     }
                     case 0x0A -> {
                         if (size >= 3 && isLetters(data, body)) {
                             language = new String(data, body, 3, StandardCharsets.US_ASCII).toLowerCase(java.util.Locale.ROOT);
                         }
+                        if (size >= 4) {
+                            audioType = data[body + 3] & 0xFF;
+                        }
                     }
+                    case TsDescriptors.COMPONENT_NAME -> name = TsDescriptors.multipleString(data, body, size);
                     case 0x26 -> id3 |= metadataIsId3(data, body, size);
-                    case 0x56 -> teletext = true;
-                    case 0x59 -> subtitles = true;
+                    case 0x56 -> teletext = Arrays.copyOfRange(data, body, body + size);
+                    case 0x59 -> subtitles = Arrays.copyOfRange(data, body, body + size);
                     case 0x6A -> ac3 = true;
                     case 0x7A -> eac3 = true;
+                    case 0x7B -> dts = true;
+                    case DolbyVisionConfigs.DESCRIPTOR_TAG -> {
+                        if (dolbyVision == null) {
+                            dolbyVision = DolbyVisionConfigs.parseDescriptor(data, body, size);
+                        }
+                    }
                     case 0x7F -> {
                         if (size >= 2 && (data[body] & 0xFF) == 0x80) {
                             opusChannels = data[body + 1] & 0xFF;
+                        }
+                        if (size >= 1 && (data[body] & 0xFF) == 0x0E) {
+                            dts = true;
                         }
                     }
                     default -> {
@@ -324,6 +569,28 @@ final class Psi {
          * The bytes of the section being collected.
          */
         private final byte[] buffer = new byte[MAX_SECTION];
+
+        /**
+         * Whether short-form sections that end with a {@code CRC_32} (SCTE 35 splice information) are accepted
+         * besides long-form ones.
+         */
+        private final boolean shortForm;
+
+        /**
+         * Constructs an assembler of long-form sections.
+         */
+        SectionAssembler() {
+            this(false);
+        }
+
+        /**
+         * Constructs an assembler.
+         *
+         * @param shortForm whether short-form sections ending with a {@code CRC_32} are accepted too
+         */
+        SectionAssembler(boolean shortForm) {
+            this.shortForm = shortForm;
+        }
 
         /**
          * The number of bytes collected.
@@ -422,8 +689,8 @@ final class Psi {
          * @param section a whole section, its {@code CRC_32} included
          * @return {@code true} for a usable section
          */
-        private static boolean isValid(byte[] section) {
-            if ((section[1] & 0x80) == 0) {
+        private boolean isValid(byte[] section) {
+            if ((section[1] & 0x80) == 0 && !shortForm) {
                 return false;
             }
             return section.length >= 12 && Crc32Mpeg.update(Crc32Mpeg.MPEG_INIT, section, 0, section.length) == 0;

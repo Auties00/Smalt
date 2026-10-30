@@ -2,11 +2,16 @@ package com.github.auties00.smalt.audio;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.Containers;
+import com.github.auties00.smalt.container.matroska.MatroskaMuxer;
 import com.github.auties00.smalt.container.wav.WavDemuxer;
+import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.audio.UnsizedSource;
 import com.github.auties00.smalt.track.AudioTrack;
+import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.track.Packet;
+import com.github.auties00.smalt.track.Rational;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -113,9 +118,47 @@ class ReaderSeekTest {
         }
 
         @Test
+        @DisplayName("seeks a short Matroska track whose last timestamp alone shows the rounding")
+        void roundedShortMatroska() {
+            // three packets of 2041 samples: Matroska's milliseconds put the second one sample early and the third
+            // two, so only the last packet, which a decoder holds until the track ends, shows the timestamps inexact
+            var track = AudioTrack.builder().id(1).codec(Codec.PCM_S16LE).timeBase(Rational.timeBaseOf(RATE))
+                    .sampleRate(RATE).layout(ChannelLayout.MONO).bitsPerSample(16).build();
+            var sink = MediaSink.memory();
+            try (var muxer = new MatroskaMuxer(sink)) {
+                muxer.addTrack(track);
+                for (var index = 0; index < 3; index++) {
+                    var data = ByteBuffer.allocate(2041 * 2).order(ByteOrder.LITTLE_ENDIAN);
+                    for (var i = 0; i < 2041; i++) {
+                        data.putShort((short) (index * 2041 + i - 3000));
+                    }
+                    muxer.writePacket(new Packet(1, data.array(), index * 2041L, index * 2041L, 2041, true));
+                }
+                muxer.finish();
+            }
+            var bytes = sink.toByteArray();
+            try (var demuxer = Containers.openDemuxer(MediaSource.of(bytes))) {
+                var read = (AudioTrack) demuxer.tracks().getFirst();
+                assertFalse(AudioStreamDecoder.measure(demuxer, read, AudioStreamDecoderOptions.defaults()).isExact());
+            }
+            float[] whole;
+            try (var reader = AudioReader.open(MediaSource.of(bytes))) {
+                whole = drain(reader);
+            }
+            for (var target : new long[]{200_000, 400_000, 600_000}) {
+                try (var reader = AudioReader.open(MediaSource.of(bytes))) {
+                    reader.seek(target);
+                    var start = (int) (target * RATE / 1_000_000);
+                    assertArrayEquals(Arrays.copyOfRange(whole, start, whole.length), drain(reader),
+                            "seek to " + target);
+                }
+            }
+        }
+
+        @Test
         @DisplayName("rejects seeking a container that cannot seek")
         void unsupported() {
-            var file = Fixtures.tone("opus", 440, 48_000, 1, 0.2, List.of("-c:a", "libopus", "-f", "ogg"));
+            var file = Fixtures.tone("aac", 440, 48_000, 1, 0.2, List.of("-c:a", "aac", "-f", "adts"));
             try (var demuxer = Containers.openDemuxer(new UnsizedSource(Fixtures.read(file), 4096))) {
                 assertFalse(demuxer.isSeekable());
                 assertThrows(MediaException.Unsupported.class, () -> demuxer.seek(0));

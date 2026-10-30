@@ -4,6 +4,7 @@ import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.Images;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.color.ColorProfile;
@@ -66,7 +67,8 @@ class TiffEncoderTest {
         var result = new ArrayList<Arguments>();
         for (var compression : compressions) {
             for (var predictor : List.of(TiffPredictor.NONE, TiffPredictor.HORIZONTAL)) {
-                for (var layout : TiffEncoderOptions.Layout.values()) {
+                for (var layout : List.of(TiffEncoderOptions.Layout.AUTO, TiffEncoderOptions.Layout.GRAY,
+                        TiffEncoderOptions.Layout.GRAY_ALPHA, TiffEncoderOptions.Layout.RGB, TiffEncoderOptions.Layout.RGBA)) {
                     var base = TiffEncoderOptions.builder().compression(compression).predictor(predictor)
                             .layout(layout).build();
                     result.add(Arguments.of(base));
@@ -232,7 +234,7 @@ class TiffEncoderTest {
                 assertFalse(page.isAlphaPremultiplied());
                 assertEquals(4, page.samplesPerPixel());
                 assertEquals(TiffPhotometric.RGB, page.photometric());
-                assertEquals(72, page.resolution().orElseThrow().horizontal(), 1e-9);
+                assertEquals(72, page.density().orElseThrow().horizontal(), 1e-9);
             }
         }
 
@@ -283,10 +285,10 @@ class TiffEncoderTest {
         @DisplayName("validates its settings")
         void validation() {
             var defaults = TiffEncoderOptions.defaults();
-            assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().compression(TiffCompression.JPEG)
+            assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().compression(TiffCompression.LZMA)
                     .build());
-            assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder()
-                    .predictor(TiffPredictor.FLOATING_POINT).build());
+            assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().compression(TiffCompression.JPEG)
+                    .layout(TiffEncoderOptions.Layout.RGBA).build());
             assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().compressionLevel(0).build());
             assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().tiles(17, 16).build());
             assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().tiles(0, 16).build());

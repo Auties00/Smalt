@@ -1,0 +1,35 @@
+# demux dump of encrypted/valid-cenc-video.mp4; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 600000
+seekable true
+metadata compatible_brands="iso8isommp41dashavc1cmfc"
+metadata creation_time="2026-10-25T02:26:37.000000Z"
+metadata major_brand="mp41"
+metadata minor_version="0"
+track 1 VIDEO H264 timebase=1/15360 duration=8192 config=44:ddff36ec
+  video 64x48 orientation=NORMAL rate=15/1
+packets 9
+0 t1 pts=0 dts=-1024 dur=1024 flags=KEY size=1601 crc=724cef05
+1 t1 pts=2048 dts=0 dur=1024 flags=- size=62 crc=0d7f5345
+2 t1 pts=1024 dts=1024 dur=1024 flags=- size=13 crc=f112a961
+3 t1 pts=3072 dts=2048 dur=1024 flags=- size=15 crc=fb119381
+4 t1 pts=4096 dts=3072 dur=1024 flags=KEY size=984 crc=89076569
+5 t1 pts=6144 dts=4096 dur=1024 flags=- size=28 crc=a71935ee
+6 t1 pts=5120 dts=5120 dur=1024 flags=- size=13 crc=f112a961
+7 t1 pts=7168 dts=6144 dur=1024 flags=- size=15 crc=8c16a317
+8 t1 pts=8192 dts=7168 dur=1024 flags=KEY size=843 crc=669a3c95
+seek 0: t1@0
+seek 200000: t1@0
+seek 400000: t1@4
+seek 600000: end
+seek -1000000: t1@0
+header over READ_ONCE, READ_ONCE_UNKNOWN_LENGTH:
+  format MP4
+  duration 600000
+  seekable true
+  metadata compatible_brands="iso8isommp41dashavc1cmfc"
+  metadata creation_time="2026-10-25T02:26:37.000000Z"
+  metadata major_brand="mp41"
+  metadata minor_version="0"
+  track 1 VIDEO H264 timebase=1/15360 duration=? config=44:ddff36ec
+    video 64x48 orientation=NORMAL rate=15/1
