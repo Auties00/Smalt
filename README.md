@@ -976,6 +976,7 @@ while ((frame = session.read()) != null) {
 | Resize, fit within, fit into a box, cover a square | `ImageOps.resize`, `fitWithin`, `fitInto`, `coverSquare`, `ResizeOptions` | yes | Pillow `resize` with `BOX`, `BILINEAR`, `HAMMING`, `BICUBIC`, `LANCZOS` (within 1 away from the edges); ffmpeg's scaler with the same kernels (38 dB at 8 bits, 50 dB at 10 bits, 60 dB at 16 bits) | nearest, box, bilinear, Hamming, Catmull-Rom, Mitchell-Netravali, Lanczos 2/3/4, area; separable, stretched when reducing, premultiplied for transparency; 8-bit in fixed point, 16-bit and linear light (`ResizeOptions.linearLight`, sRGB transfer) in double precision, rounded once |
 | Pad onto a canvas, flatten over a color | `ImageOps.pad`, `flatten` | yes | | flattening a Y'CbCr picture stays in Y'CbCr at its depth |
 | Rotate by any angle (expand, keep or inscribed canvas, background color), affine transform | `ImageOps.rotate`, `affine` | yes | Pillow `rotate` (nearest: exact; bilinear: within 1 inside the picture) | nearest, bilinear, bicubic (Catmull-Rom); premultiplied, edges antialiased against the background; right angles are exact |
+| Perspective transform, quadrilateral to rectangle, mesh warp | `ImageOps.perspective`, `quad`, `mesh`, `PerspectiveTransform` (`mapping` from four corners), `Quad`, `MeshCell` | yes | Pillow `transform` with `PERSPECTIVE`, `QUAD`, `MESH` (nearest: exact; bilinear: within 1 inside the picture) | sampling as for `affine`; points behind the horizon take the background (Pillow samples them) |
 | Flips, transpose, transverse | `ImageOps.flipHorizontal` ... | yes | | same as `orient` |
 | Trim uniform borders, extend (background, replicate, mirror, repeat), canvas resize with an anchor | `ImageOps.trim`, `trimBounds`, `extend`, `resizeCanvas` | yes | | trimming and cropping canvases keep the representation |
 | Smart crop to an aspect ratio | `ImageOps.findSmartCrop`, `smartCrop` | analysis at 8 bits | smartcrop.js 2.0.5 (same crop for the same pixels) | `CENTER`, `ENTROPY` (libvips idea), `ATTENTION` (smartcrop.js port) |
@@ -983,11 +984,15 @@ while ((frame = session.read()) != null) {
 | Box blur | `ImageFilters.boxBlur` | yes | Pillow `BoxBlur` (exact) | |
 | Unsharp mask, sharpen | `ImageFilters.unsharpMask`, `sharpen` | yes | Pillow `UnsharpMask`, `SHARPEN` (exact / interior) | alpha kept |
 | Convolution with any odd kernel up to 99x99 | `ImageFilters.convolve`, `ConvolutionKernel` | yes | Pillow `Kernel` filters inside the 1-pixel border | presets: sharpen, smooth, detail, edge enhance, find edges, emboss |
-| Median | `ImageFilters.median` | yes | Pillow `MedianFilter` (exact) | sliding histogram, radius up to 32 |
+| Median, minimum, maximum, any rank, mode | `ImageFilters.median`, `minimum`, `maximum`, `rank`, `mode` | yes | Pillow `MedianFilter`, `MinFilter`, `MaxFilter`, `RankFilter`, `ModeFilter` (exact) | sliding histograms, separable minimum and maximum, radius up to 32 |
 | Brightness, contrast, saturation | `ImageAdjustments` | yes | Pillow `ImageEnhance` (exact) | |
 | Levels, gamma, curves (monotone cubic through points, or any function) | `ImageAdjustments.levels`, `gamma`, `curves`, `ToneCurve` | yes | | lookup tables |
 | Auto levels (per channel), auto contrast (tone-preserving) | `ImageAdjustments.autoLevels`, `autoContrast` | yes | Pillow `autocontrast` (exact) | cutoff percentage |
 | Grayscale (BT.601, BT.709, linear-light luminance), sepia, colorize (duotone), tint, invert, threshold | `ImageAdjustments` | yes | Pillow `convert("L")`, `colorize`, `invert` (exact) | |
+| Histogram equalization (with a mask), posterize, solarize | `ImageAdjustments.equalize`, `posterize`, `solarize` | yes | Pillow `ImageOps.equalize`, `posterize`, `solarize` (exact) | 16-bit equalization uses the exact step |
+| Hue rotation, vignette, white balance (color temperature and tint) | `ImageAdjustments.rotateHue`, `vignette`, `whiteBalance` | yes | Pillow `HSV` round trip for the hue (within 8, Pillow quantizes HSV to 8 bits) | hue in HSV keeping value and saturation; vignette and white balance in linear light (Planckian locus, Bradford adaptation to 6504 K) |
+| Histogram and channel statistics (with a mask) | `ImageOps.histogram`, `Histogram`, `ChannelStatistics` | yes (65536 bins) | Pillow `histogram`, `ImageStat.Stat` (exact) | count, extrema, median, sum, sum of squares, mean, RMS, variance, standard deviation |
+| Split channels, merge channels, replace alpha | `ImageOps.split`, `merge`, `putAlpha` | yes, and channel pictures of every sample type | Pillow `split`, `merge`, `putalpha` (exact) | channel pictures keep their sample type and layout |
 | Composite with 14 blend modes, opacity, linear-light option; watermark (anchor, margins, scale, opacity) | `ImageCompositing.composite`, `watermark` | yes | W3C Compositing and Blending formulas | straight alpha in and out, premultiplied source-over |
 | Palette quantization to 2-256 colors with dithering | `ImageQuantization.quantize` | reduced to 8 bits | | median cut or NeuQuant; none, ordered, Floyd-Steinberg or Sierra dithering; exact palettes when the colors fit; the same code as the GIF encoder |
 
@@ -2137,11 +2142,14 @@ var marked = ImageCompositing.watermark(graded, logo, WatermarkOptions.builder()
 var gif = ImageQuantization.quantize(marked, QuantizeOptions.ofColors(64)); // palette + indices
 ```
 
-`ImageFilters` (Gaussian and box blur, unsharp mask, convolution, median), `ImageAdjustments` (brightness,
-contrast, saturation, levels, curves, auto levels, grayscale, sepia, tint, invert, threshold),
+`ImageFilters` (Gaussian and box blur, unsharp mask, convolution, median, minimum, maximum, rank and mode),
+`ImageAdjustments` (brightness, contrast, saturation, levels, curves, auto levels, equalization, grayscale,
+sepia, tint, invert, threshold, posterize, solarize, hue rotation, vignette, white balance),
 `ImageCompositing` (14 blend modes, opacity, linear light, watermarks) and the geometry of `ImageOps`
-(resampling, rotation, affine transforms, flips, trim, extend, pad, flatten) work on 8 and 16-bit pictures; on
-8-bit pictures the blurs, unsharp mask, median, enhancements and autocontrast reproduce Pillow's output exactly.
+(resampling, rotation, affine and perspective transforms, quadrilateral and mesh warps, flips, trim, extend,
+pad, flatten, histograms, channel split and merge) work on 8 and 16-bit pictures; on 8-bit pictures the
+blurs, unsharp mask, rank and mode filters, enhancements, autocontrast, equalization, posterization,
+solarization and histogram statistics reproduce Pillow's output exactly.
 
 ### Write AVIF
 

@@ -55,6 +55,8 @@ import com.github.auties00.smalt.image.ops.ImageFilters;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.ops.ImageQuantization;
 import com.github.auties00.smalt.image.ops.Interpolation;
+import com.github.auties00.smalt.image.ops.PerspectiveTransform;
+import com.github.auties00.smalt.image.ops.Quad;
 import com.github.auties00.smalt.image.ops.QuantizeMethod;
 import com.github.auties00.smalt.image.ops.QuantizeOptions;
 import com.github.auties00.smalt.image.ops.ResizeFilter;
@@ -446,7 +448,7 @@ final class TranscodeWorkloads {
     /**
      * Returns a workload that runs the effects of the picture operations on a 640x360 picture:
      * exact and box Gaussian blurs, an unsharp mask, convolution, a median, tone adjustments,
-     * compositing with two blend modes, and bilinear and bicubic rotations, which together
+     * compositing with two blend modes, bilinear and bicubic rotations and a perspective warp, which together
      * exercise every method of the effect and warp kernels.
      *
      * @param count the passes over every effect per round
@@ -458,6 +460,7 @@ final class TranscodeWorkloads {
         var mask = SyntheticImages.rgba(yuv, true);
         var deep = SyntheticImages.deep(opaque);
         var curve = ToneCurve.through(0, 0, 0.25, 0.2, 0.75, 0.8, 1, 1);
+        var keystone = PerspectiveTransform.mapping(Quad.of(0, 0, 640, 360), new Quad(40, 0, 600, 0, 640, 360, 0, 360));
         return TrainingWorkload.of("image-effects", () -> {
             for (var i = 0; i < count; i++) {
                 Blackhole.consume(ImageFilters.gaussianBlur(opaque, 2, BlurMethod.EXACT).width());
@@ -473,6 +476,7 @@ final class TranscodeWorkloads {
                 Blackhole.consume(ImageCompositing.composite(opaque, mask, -10, 0, CompositeOptions.of(BlendMode.NORMAL)).width());
                 Blackhole.consume(ImageOps.rotate(mask, 7, Interpolation.BILINEAR, RotationCanvas.EXPAND, 0).width());
                 Blackhole.consume(ImageOps.rotate(opaque, -12, Interpolation.BICUBIC, RotationCanvas.KEEP, 0xFFFFFFFF).width());
+                Blackhole.consume(ImageOps.perspective(opaque, keystone, 640, 360, Interpolation.BILINEAR, 0).width());
             }
         });
     }

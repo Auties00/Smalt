@@ -27,12 +27,15 @@ import com.github.auties00.smalt.image.color.ColorTransformOptions;
 import com.github.auties00.smalt.internal.color.YcgcoR;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
 /**
  * Transforms pictures: color conversion, resampling, orientation, rotation by any angle, affine
- * transforms, cropping, trimming, padding and extending, smart cropping and alpha flattening.
+ * and perspective transforms, quadrilateral and mesh warps, cropping, trimming, padding and
+ * extending, smart cropping, alpha flattening and replacement, channel splitting and merging, and
+ * histograms.
  *
  * <p>Filters, tone adjustments, compositing and palette quantization live in the sibling classes
  * {@link ImageFilters}, {@link ImageAdjustments}, {@link ImageCompositing} and
@@ -60,7 +63,8 @@ import java.util.Optional;
  * <p>High-bit-depth pictures ({@link Yuv16Picture}, {@link Rgba16Picture}) keep their depth
  * through every operation that does not name a depth: resampling ({@link #resize},
  * {@link #fitWithin}, {@link #fitInto}, {@link #coverSquare}, {@link #smartCrop}), {@link #crop},
- * {@link #orient}, the flips and transposes, {@link #rotate}, {@link #affine}, {@link #trim},
+ * {@link #orient}, the flips and transposes, {@link #rotate}, {@link #affine}, {@link #perspective},
+ * {@link #quad}, {@link #mesh}, {@link #putAlpha(Picture, Picture)}, {@link #histogram}, {@link #trim},
  * {@link #extend}, {@link #resizeCanvas}, {@link #pad}, {@link #flatten}, {@link #isOpaque} and
  * {@link #convertColor}; the operations that compute new pixels of a planar picture, except
  * resampling and flattening, return an {@link Rgba16Picture}. Depth changes through
@@ -72,7 +76,8 @@ import java.util.Optional;
  *
  * <p>A {@link ChannelPicture} keeps its sample type and layout through resampling ({@link #resize},
  * {@link #fitWithin}, {@link #coverSquare}, {@link #smartCrop}), {@link #crop}, {@link #orient}, the flips and
- * transposes, quarter turns by {@link #rotate} onto an expanded or inscribed canvas, and {@link #isOpaque};
+ * transposes, quarter turns by {@link #rotate} onto an expanded or inscribed canvas, {@link #isOpaque},
+ * {@link #split}, {@link #merge} and {@link #putAlpha(Picture, Picture)};
  * {@link #convertColor} converts its color channels and keeps its extra channels. The conversions
  * {@link #toRgba(Picture)}, {@link #toRgba16(Picture)}, {@link #toYuv(Picture, ChromaFormat, ColorInfo)},
  * {@link #toYuv16(Picture, ChromaFormat, ColorInfo, int)} and {@link #toSrgb(Picture)} convert it without color
@@ -981,6 +986,306 @@ public final class ImageOps {
                 var packed = Canvas.toPacked(picture);
                 return Rotation.warp(packed, transform.inverse(), width, height, interpolation, argbBackground,
                         packed.hasAlpha() || argbBackground >>> 24 != 255);
+            } catch (RuntimeException exception) {
+                throw OpChecks.translate(exception);
+            }
+        }
+    }
+
+    /**
+     * Maps a picture through a perspective transform onto a canvas of the given size.
+     *
+     * <p>{@code transform} maps the coordinates of the input to those of the result, as for
+     * {@link #affine}; each pixel of the result samples the input, with {@code interpolation}, at the
+     * point the inverse transform maps its center to, interpolating in premultiplied alpha against
+     * the background exactly as {@code affine} does. Pixels whose center the inverse transform maps
+     * to infinity or behind its horizon (a denominator that is not positive) take the background.
+     * With {@link Interpolation#NEAREST} on an 8-bit picture the result equals Pillow's
+     * {@code Image.transform(size, Transform.PERSPECTIVE, data)}, where {@code data} holds the
+     * coefficients of the inverse transform, except for points within rounding of a pixel boundary
+     * and for pixels behind the horizon, which Pillow still samples at the point the negative
+     * denominator gives.
+     *
+     * @apiNote {@link PerspectiveTransform#mapping} builds the transform from four corners, for example to straighten
+     * a photographed document onto a rectangle.
+     * @param picture the picture to map
+     * @param transform the map from input to output coordinates; invertible
+     * @param width the width of the result; positive
+     * @param height the height of the result; positive
+     * @param interpolation how to sample the picture between its pixels
+     * @param argbBackground the color of the areas the picture does not cover, as {@code 0xAARRGGBB} with straight
+     * alpha
+     * @return a new picture, as {@link #affine} describes
+     * @throws IllegalArgumentException if a dimension is not positive or {@code transform} is not invertible
+     * @throws MediaException.LimitExceeded if the result is larger than the input and exceeds the default limits
+     */
+    public static Picture perspective(Picture picture, PerspectiveTransform transform, int width, int height,
+                                      Interpolation interpolation, int argbBackground) {
+        Objects.requireNonNull(transform, "transform");
+        if (!transform.isInvertible()) {
+            throw new IllegalArgumentException("the perspective transform " + transform + " is not invertible");
+        }
+        return warp(picture, SourceMap.perspective(transform.inverse()), width, height, interpolation,
+                argbBackground);
+    }
+
+    /**
+     * Fills a canvas of the given size from a quadrilateral of a picture, stretching the
+     * quadrilateral's corners to the canvas corners.
+     *
+     * <p>The map is bilinear, not projective: the center {@code (x, y)} of a result pixel, measured
+     * as fractions {@code s = x / width} and {@code t = y / height} of the canvas, samples the input
+     * at {@code (1 - s)(1 - t) TL + s (1 - t) TR + s t BR + (1 - s) t BL} of the corners of
+     * {@code source}, so straight lines through the quadrilateral may bend. Sampling and the
+     * background work as in {@link #affine}. With {@link Interpolation#NEAREST} on an 8-bit picture
+     * the result equals Pillow's {@code Image.transform(size, Transform.QUAD, data)} with the same
+     * corners.
+     *
+     * @apiNote Use {@link #perspective} with {@link PerspectiveTransform#mapping} when straight lines must stay
+     * straight, as for a photograph of a flat surface.
+     * @param picture the picture to sample
+     * @param source the quadrilateral of the input, in input coordinates; any shape
+     * @param width the width of the result; positive
+     * @param height the height of the result; positive
+     * @param interpolation how to sample the picture between its pixels
+     * @param argbBackground the color of the areas the picture does not cover, as {@code 0xAARRGGBB} with straight
+     * alpha
+     * @return a new picture, as {@link #affine} describes
+     * @throws IllegalArgumentException if a dimension is not positive
+     * @throws MediaException.LimitExceeded if the result is larger than the input and exceeds the default limits
+     */
+    public static Picture quad(Picture picture, Quad source, int width, int height, Interpolation interpolation,
+                               int argbBackground) {
+        Objects.requireNonNull(source, "source");
+        requirePositive(width, height);
+        return warp(picture, SourceMap.quad(source, 0, 0, width, height), width, height, interpolation,
+                argbBackground);
+    }
+
+    /**
+     * Warps a picture through a mesh: each cell fills its rectangle of the result from its
+     * quadrilateral of the input, as {@link #quad} fills a whole canvas.
+     *
+     * <p>Where cells overlap, the later cell in the list wins; result pixels outside every cell, and
+     * pixels of a cell that sample outside the input, take the background. Sampling works as in
+     * {@link #affine}. With {@link Interpolation#NEAREST} on an 8-bit picture the result equals
+     * Pillow's {@code Image.transform(size, Transform.MESH, data)} with the same cells and no fill
+     * color; given a fill color, Pillow instead keeps the pixels of earlier cells where a later cell
+     * samples outside the input.
+     *
+     * @param picture the picture to sample
+     * @param cells the cells, in order; may be empty, which gives a canvas of background
+     * @param width the width of the result; positive
+     * @param height the height of the result; positive
+     * @param interpolation how to sample the picture between its pixels
+     * @param argbBackground the color of the areas the picture does not cover, as {@code 0xAARRGGBB} with straight
+     * alpha
+     * @return a new picture, as {@link #affine} describes
+     * @throws NullPointerException if a cell is {@code null}
+     * @throws IllegalArgumentException if a dimension is not positive
+     * @throws MediaException.LimitExceeded if the result is larger than the input and exceeds the default limits
+     */
+    public static Picture mesh(Picture picture, List<MeshCell> cells, int width, int height,
+                               Interpolation interpolation, int argbBackground) {
+        var copy = List.copyOf(cells);
+        return warp(picture, SourceMap.mesh(copy), width, height, interpolation, argbBackground);
+    }
+
+    /**
+     * Resamples a picture through a source map, with the checks and the conversions of {@link #affine}.
+     *
+     * @param picture the picture to sample
+     * @param map the map from result pixel centers to picture points
+     * @param width the width of the result
+     * @param height the height of the result
+     * @param interpolation how to sample between pixels
+     * @param argbBackground the background as {@code 0xAARRGGBB}
+     * @return the new picture
+     */
+    private static Picture warp(Picture picture, SourceMap map, int width, int height, Interpolation interpolation,
+                                int argbBackground) {
+        try (var _ = ParallelBands.operation()) {
+            Objects.requireNonNull(picture, "picture");
+            Objects.requireNonNull(interpolation, "interpolation");
+            requirePositive(width, height);
+            OpChecks.checkResult(picture, width, height);
+            try {
+                var packed = Canvas.toPacked(picture);
+                return Rotation.warp(packed, map, width, height, interpolation, argbBackground,
+                        packed.hasAlpha() || argbBackground >>> 24 != 255);
+            } catch (RuntimeException exception) {
+                throw OpChecks.translate(exception);
+            }
+        }
+    }
+
+    /**
+     * Counts the sample values of each channel of a picture.
+     *
+     * <p>Equivalent to {@link #histogram(Picture, Picture) histogram(picture, null)}.
+     *
+     * @param picture the picture to count
+     * @return the histogram
+     * @throws MediaException.Unsupported if the picture is a {@link ChannelPicture}
+     * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
+     */
+    public static Histogram histogram(Picture picture) {
+        return histogram(picture, null);
+    }
+
+    /**
+     * Counts the sample values of each channel of the pixels of a picture that a mask selects.
+     *
+     * <p>The picture is counted in its packed RGBA form, as {@link ImageAdjustments} reads it: 256
+     * bins per channel for 8-bit pictures, 65536 for 16-bit ones, and an alpha channel when the
+     * picture reports alpha. On an 8-bit picture the counts equal Pillow's
+     * {@code Image.histogram(mask)}, and {@link Histogram#statistics} gives Pillow's
+     * {@code ImageStat.Stat(image, mask)}.
+     *
+     * @param picture the picture to count
+     * @param mask the pixels to count, the picture's size, a pixel counting where any color channel of the mask is
+     * not zero (alpha is ignored); or {@code null} to count every pixel
+     * @return the histogram
+     * @throws IllegalArgumentException if the mask's size differs from the picture's
+     * @throws MediaException.Unsupported if the picture is a {@link ChannelPicture}, or the mask a channel picture
+     * of ink separations
+     * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
+     */
+    public static Histogram histogram(Picture picture, Picture mask) {
+        try (var _ = ParallelBands.operation()) {
+            Objects.requireNonNull(picture, "picture");
+            try {
+                var packed = Canvas.toPacked(picture);
+                var selected = mask == null ? null : Tone.selection(mask, packed.width(), packed.height());
+                var histograms = Tone.histograms(packed, selected);
+                var channels = packed.hasAlpha() ? 4 : 3;
+                var bins = histograms[0].length;
+                var counts = new long[channels * bins];
+                for (var c = 0; c < channels; c++) {
+                    System.arraycopy(histograms[c], 0, counts, c * bins, bins);
+                }
+                long pixels = 0;
+                for (var count : histograms[0]) {
+                    pixels += count;
+                }
+                return new Histogram(counts, channels, bins, pixels);
+            } catch (RuntimeException exception) {
+                throw OpChecks.translate(exception);
+            }
+        }
+    }
+
+    /**
+     * Splits a picture into one single-channel picture per channel.
+     *
+     * <p>Each result has the {@link PixelLayout#GRAY} layout, the size of the picture and the sample
+     * values of one channel. A {@link ChannelPicture} gives one result per channel of its layout, in
+     * layout order and of its sample type; an {@link RgbaPicture} gives red, green, blue and, when it
+     * reports alpha, alpha as {@link Channel8Picture}s, an {@link Rgba16Picture} the same as
+     * {@link Channel16Picture}s, and a Y'CbCr picture the channels of its RGBA form
+     * ({@link #toRgba(Picture)} or {@link #toRgba16(Picture)}). On an 8-bit picture this equals
+     * Pillow's {@code Image.split()}.
+     *
+     * @param picture the picture to split
+     * @return the channels, an immutable list
+     * @throws MediaException.LimitExceeded if the channels do not fit Java arrays
+     */
+    public static List<ChannelPicture> split(Picture picture) {
+        try (var _ = ParallelBands.operation()) {
+            Objects.requireNonNull(picture, "picture");
+            try {
+                return ChannelSplit.split(picture);
+            } catch (RuntimeException exception) {
+                throw OpChecks.translate(exception);
+            }
+        }
+    }
+
+    /**
+     * Interleaves single-channel pictures into one picture, the inverse of {@link #split}.
+     *
+     * <p>Picture {@code i} supplies channel {@code i} of {@code layout}; the samples are copied as
+     * they are, whatever the channel types, so {@code merge(PixelLayout.RGB, List.of(b, g, r))}
+     * swaps red and blue. {@link #toRgba(Picture)} turns the result into packed RGBA. On 8-bit
+     * pictures this equals Pillow's {@code Image.merge(mode, bands)}.
+     *
+     * @param layout the layout of the result
+     * @param channels one single-channel {@link ChannelPicture} per channel of {@code layout}, all of the same size
+     * and sample type
+     * @return the merged picture, of the channels' sample type
+     * @throws NullPointerException if a channel is {@code null}
+     * @throws IllegalArgumentException if the number of channels differs from {@code layout.count()}, or a channel is
+     * not a single-channel picture of the size and sample type of the first one
+     * @throws MediaException.LimitExceeded if the result does not fit one Java array
+     */
+    public static ChannelPicture merge(PixelLayout layout, List<? extends Picture> channels) {
+        try (var _ = ParallelBands.operation()) {
+            Objects.requireNonNull(layout, "layout");
+            var copy = List.copyOf(channels);
+            try {
+                return ChannelSplit.merge(layout, copy);
+            } catch (RuntimeException exception) {
+                throw OpChecks.translate(exception);
+            }
+        }
+    }
+
+    /**
+     * Replaces the alpha of a picture with the values of another picture.
+     *
+     * <p>The alpha values are the samples of {@code alpha} when it is a single-channel
+     * {@link ChannelPicture} and the BT.601 luma of its packed RGBA form otherwise (as
+     * {@link ImageAdjustments#grayscale} computes it), rescaled to the depth of the result as
+     * {@code v * 257} or {@code (v * 255 + 32767) / 65535} (floating-point results take
+     * {@code v / 255} or {@code v / 65535}). A {@link ChannelPicture} keeps its sample type and
+     * layout, its straight alpha channel replaced or, without one, an {@link
+     * com.github.auties00.smalt.image.ChannelType#ALPHA} channel appended; any other picture becomes
+     * its packed RGBA form, at its depth, with the new alpha. Colors are not changed. On 8-bit
+     * pictures this equals Pillow's {@code Image.putalpha(alpha)}.
+     *
+     * @param picture the picture whose alpha to replace
+     * @param alpha the alpha values, the picture's size
+     * @return the new picture
+     * @throws IllegalArgumentException if the sizes differ
+     * @throws MediaException.Unsupported if the picture is a channel picture with premultiplied alpha, or either
+     * picture a channel picture of ink separations that must be converted
+     * @throws MediaException.LimitExceeded if the result does not fit one Java array
+     */
+    public static Picture putAlpha(Picture picture, Picture alpha) {
+        try (var _ = ParallelBands.operation()) {
+            Objects.requireNonNull(picture, "picture");
+            Objects.requireNonNull(alpha, "alpha");
+            try {
+                return ChannelSplit.putAlpha(picture,
+                        ChannelSplit.alphaValues(alpha, picture.width(), picture.height()));
+            } catch (RuntimeException exception) {
+                throw OpChecks.translate(exception);
+            }
+        }
+    }
+
+    /**
+     * Gives every pixel of a picture the same alpha, as {@link #putAlpha(Picture, Picture)} does
+     * with a uniform alpha picture.
+     *
+     * @param picture the picture whose alpha to replace
+     * @param alpha the alpha in 8-bit units, {@code 0..255}: 0 is fully transparent; scaled by 257 for 16-bit
+     * results
+     * @return the new picture
+     * @throws IllegalArgumentException if {@code alpha} is out of range
+     * @throws MediaException.Unsupported if the picture is a channel picture with premultiplied alpha
+     * @throws MediaException.LimitExceeded if the result does not fit one Java array
+     */
+    public static Picture putAlpha(Picture picture, int alpha) {
+        if (alpha < 0 || alpha > 255) {
+            throw new IllegalArgumentException("alpha " + alpha + " is outside 0..255");
+        }
+        try (var _ = ParallelBands.operation()) {
+            Objects.requireNonNull(picture, "picture");
+            try {
+                OpChecks.checkArray((long) picture.width() * picture.height());
+                return ChannelSplit.putAlpha(picture,
+                        ChannelSplit.Values.uniform(alpha, picture.width() * picture.height()));
             } catch (RuntimeException exception) {
                 throw OpChecks.translate(exception);
             }
