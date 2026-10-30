@@ -26,6 +26,7 @@ Contents
   18. dav1d
   19. libaom
   20. libavif
+  62. libtheora
 
 
 ===============================================================================
@@ -52,7 +53,14 @@ port of libvpx 1.17.0's one-pass real-time CBR path (vp8/encoder: onyx_if.c,
 encodeframe.c, rdopt.c, pickinter.c, mcomp.c, encodemb.c, tokenize.c,
 bitstream.c, ratectrl.c, picklpf.c, encodemv.c, modecosts.c, segmentation.c,
 vp8_skin_detection.c, and vp8/common/findnearmv.c) with the vpx_dsp C
-kernels it uses and its speed, threshold and cost tables. The VP9 decoder is
+kernels it uses and its speed, threshold and cost tables. Its good-quality
+usage ports libvpx 1.15.1's good-quality path (vp8/encoder: the first pass
+and the two-pass rate control of firstpass.c, the recode loop and the
+alternate reference coding of onyx_if.c, temporal_filter.c, the
+rate-distortion mode decision and split motion search of rdopt.c, the
+token costs of rdopt.c and tokenize.c, the full filter level search of
+picklpf.c, encodeintra.c and the minimum quantizer and split threshold
+tables of onyx_if.c). The VP9 decoder is
 a port of libvpx's VP9 decoder (vp9/decoder, vp9/common, vp9/vp9_dx_iface.c
 and the vpx_dsp C kernels it uses: inverse transforms, sub-pixel
 convolution, loop filters, intra prediction and their high bit depth
@@ -67,7 +75,14 @@ vp9_rd.c, vp9_picklpf.c, vp9_quantize.c, vp9_dct.c, vp9_encodemv.c and
 vp9_cost.c) with the vpx_dsp C kernels it uses (boolean encoder, forward
 transforms, sums of absolute differences, variances, Hadamard transforms,
 integral projections and skin detection) and its speed, threshold, rate
-model and cost tables.
+model and cost tables. Its good-quality usage, and its 4:2:2, 4:4:0, 4:4:4,
+10-bit and 12-bit coding, port libvpx 1.15.1's good-quality path
+(vp9/encoder: the rate-distortion partition and mode search of
+vp9_encodeframe.c, vp9_rdopt.c and vp9_rd.c, the first and second pass of
+vp9_firstpass.c, the two-pass rate control of vp9_ratectrl.c, the
+recode loop of vp9_encoder.c, vp9_temporal_filter.c and the filter level
+search of vp9_picklpf.c) and its high bit depth quantizer and token
+tables.
 
 Copyright:
   Copyright (c) 2010, The WebM Project authors. All rights reserved.
@@ -194,7 +209,8 @@ License:      BSD 2-Clause License
 
 Derived Smalt packages:
   video.av1, video.av1.internal.encoder (Av1Encoder, and the intra-only still
-  encoder behind AvifEncoder and its animations)
+  encoder behind AvifEncoder and its animations), video.av1.internal (the
+  large scale tile decoding of Av1Decoder)
 
 Derivation: the real-time AV1 encoder is a port of libaom 3.12.1's one-pass
 real-time path at speeds 7 to 10 (av1/encoder: nonrd_pickmode.c, nonrd_opt.c,
@@ -239,6 +255,25 @@ filter (mcomp.c), the choice of the motion mode of a block by its coded cost
 (rdopt.c, motion_mode_rd), the compound mode set of the mode search (rdopt.c)
 and the speed features that widen the all-intra searches of key frames
 (speed_features.c).
+
+The predicted AV1 encoders' high bit depth, film grain, two-pass, screen
+content, super-resolution and timing support follows libaom 3.13.1: the high
+bit depth variances, sums of absolute differences and block errors
+(aom_dsp/variance.c, aom_dsp/sad.c, av1/encoder/av1_quantize.c), the film
+grain table format (av1/encoder/grain_table.c), the noise model, flat block
+finder, Wiener denoiser and noise strength solver (aom_dsp/noise_model.c,
+aom_dsp/noise_util.c, aom_dsp/mathutils.h), the two-pass bit allocation
+(av1/encoder/pass2_strategy.c), the palette search of the non-RD mode
+decision (nonrd_pickmode.c, intra_mode_search.c, palette.c), the whole-sample
+motion decision (encoder_utils.c, hash_motion.c), the non-normative
+downscaling filters of super-resolution (av1/common/resize.c) and the decoder
+model parameters (av1/common/timing.c).
+
+The large scale tile decoding of the AV1 decoder follows libaom 3.13.1's
+decoding of tile list OBUs (av1/decoder/obu.c: read_and_decode_one_tile_list,
+copy_decoded_tile_to_tile_list_buffer; av1/decoder/decodeframe.c: the tiles
+of large scale tile mode decoded without CDF adaptation; av1/av1_dx_iface.c:
+the output frame of a tile list without film grain).
 
 Copyright:
   Copyright (c) 2016, Alliance for Open Media. All rights reserved.
@@ -287,27 +322,45 @@ POSSIBILITY OF SUCH DAMAGE.
 
 Project:      libavif, the reference library of the AV1 Image File Format
 Source:       https://github.com/AOMediaCodec/libavif
-              (revision e4db889c6b574bf221a380e9bddde0273c942023)
+              (revision e4db889c6b574bf221a380e9bddde0273c942023; the sample
+              transforms at revision b1e4d339c1ff5b547664c85f1713279f4997d694)
 License text: LICENSE at the root of the repository
 License:      BSD 2-Clause License
 
 Derived Smalt packages:
   internal.heif (the HEIF item parser: the container rules it enforces, the
   clean aperture arithmetic and the loop count of image sequences; the
-  limited-range alpha expansion of the image canvas)
+  limited-range alpha expansion of the image canvas; the operators of the
+  sample transform expressions, HeifSampleTransform; HeifWriter and
+  HeifTrackWriter: the box layout of still images, grids, alpha, Exif and XMP
+  items and image sequences, and the orientation properties, of
+  src/write.c, which the AVIF and HEIC encoders share)
   image.avif, image.avif.internal (AvifDecoder: the choice between the primary
   item and the image sequence, the color, alpha and grid tile selection, the
   grid validation, the limited-range alpha expansion and the unpremultiplying
-  of premultiplied alpha; AvifEncoder: the box layout of still images, alpha
-  auxiliary items, grids, Exif and XMP items and image sequences, the quality
-  scale, the automatic tiling, the orientation properties and the RGB to YUV
-  conversion defaults)
+  of premultiplied alpha, the choice of the sample transform item shown in
+  place of the primary item; AvifEncoder: the items and properties of still
+  images, alpha auxiliary items, grids and image sequences, the quality scale,
+  the automatic tiling and the RGB to YUV conversion defaults; the tone map
+  items of gain maps, which AvifDecoder reads and AvifEncoder writes as
+  src/read.c and src/write.c do)
+  internal.gainmap (HeifToneMaps: the rules by which a tmap item counts, as
+  avifDecoderFindGainMapItem and avifParseToneMappedImageBox apply them)
+  image.gainmap (GainMapComputer: the gain map computation of
+  avifRGBImageComputeGainMap and the gain range without outliers of
+  avifFindMinMaxWithoutOutliers; GainMapRenderer: the signed weight of
+  avifGetGainMapWeight)
 
 Derivation: the semantics of src/read.c, src/write.c, src/avif.c, src/alpha.c
-and src/reformat.c followed in Java; no code was translated line by line.
+and src/reformat.c followed in Java, and the operators of
+src/sampletransform.c (Copyright 2024 Google LLC) and the gain map
+computation of src/gainmap.c (Copyright 2023 Google LLC, libavif 1.3.0)
+ported; no other code was translated line by line.
 
 Copyright:
   Copyright 2019 Joe Drago. All rights reserved.
+  Copyright 2023 Google LLC
+  Copyright 2024 Google LLC
 
 -------------------------------------------------------------------------------
 libavif license (LICENSE)
@@ -694,6 +747,63 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
 LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
 A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
 HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+===============================================================================
+62. libtheora
+===============================================================================
+
+Project:      libtheora 1.2.0, the reference implementation of the Theora video
+              codec
+Home:         https://www.theora.org/
+Source:       https://downloads.xiph.org/releases/theora/libtheora-1.2.0.tar.gz
+License text: COPYING at the root of the distribution
+License:      BSD 3-Clause
+
+Derived Smalt packages:
+  video.theora.internal (TheoraBits, TheoraHuffman, TheoraSetup,
+  TheoraFrameDecoder: the decoder of lib/bitpack.c, decinfo.c, dequant.c,
+  quant.c, huffdec.c, decode.c, state.c, idct.c and fragment.c, and the
+  tables of internal.c and state.c; TheoraFrameEncoder: the VP3
+  quantization parameters of lib/encode.c)
+
+Derivation: C code translated to Java and tables transcribed.
+
+Copyright:
+  Copyright (C) 2002-2009 Xiph.org Foundation
+
+-------------------------------------------------------------------------------
+BSD 3-Clause License (COPYING)
+-------------------------------------------------------------------------------
+
+Copyright (C) 2002-2009 Xiph.org Foundation
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+- Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+- Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+- Neither the name of the Xiph.org Foundation nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION
+OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
 SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
 LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
 DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY

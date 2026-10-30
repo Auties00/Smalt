@@ -1,0 +1,13 @@
+# image dump of gif/icc.gif; regenerate with -Dsmalt.test.updateDumps=true
+format GIF
+info ImageInfo[format=GIF, width=48, height=32, hasAlpha=true, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 48x32 rgba8 alpha=true crc=e9a96413
+  format=GIF orientation=NORMAL source=48x32
+  icc=480:06c5c13a exif=none xmp=none
+  profile=ColorProfile[sP3, RGB, DISPLAY, v4.2.0]
+scaled 12x8
+picture 48x32 rgba8 alpha=true crc=e9a96413
+  format=GIF orientation=NORMAL source=48x32
+  icc=480:06c5c13a exif=none xmp=none
+  profile=ColorProfile[sP3, RGB, DISPLAY, v4.2.0]
