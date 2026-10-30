@@ -8,7 +8,9 @@ import java.util.Arrays;
  *
  * <p>Output samples are scaled so that a full-scale 16-bit decoder output maps to
  * {@code [-1, 1]}. An instance holds scratch memory and is not thread-safe; the overlap memory
- * of each channel is owned by the caller.
+ * of each channel is owned by the caller. The AAC-LD filterbank uses the 512- or 480-sample
+ * transform with long windows only, window shape 1 selecting the low overlap window of
+ * {@link Windows#lowOverlap(int)} instead of the KBD window.
  */
 public final class Synthesis {
     /**
@@ -74,12 +76,24 @@ public final class Synthesis {
      * @param kernel the window kernel
      */
     public Synthesis(int length, AacKernel kernel) {
+        this(length, kernel, false);
+    }
+
+    /**
+     * Prepares the filterbank of a frame length, optionally with the windows of AAC-LD.
+     *
+     * @param length the frame length: 1024 or 960, or 512 or 480 for AAC-LD
+     * @param kernel the window kernel
+     * @param lowDelay whether window shape 1 is the low overlap window of AAC-LD
+     */
+    public Synthesis(int length, AacKernel kernel, boolean lowDelay) {
         this.length = length;
         this.shortLength = length / 8;
         this.kernel = kernel;
         this.longDct = new Dct4(length, OUTPUT_SCALE / length, kernel);
         this.shortDct = new Dct4(shortLength, OUTPUT_SCALE / shortLength, kernel);
-        this.longWindows = new float[][]{Windows.of(Windows.SINE, 2 * length), Windows.of(Windows.KBD, 2 * length)};
+        this.longWindows = new float[][]{Windows.of(Windows.SINE, 2 * length),
+                lowDelay ? Windows.lowOverlap(2 * length) : Windows.of(Windows.KBD, 2 * length)};
         this.shortWindows = new float[][]{Windows.of(Windows.SINE, 2 * shortLength), Windows.of(Windows.KBD, 2 * shortLength)};
         this.dctOutput = new float[length];
         this.shortBuffer = new float[2 * length];
@@ -154,9 +168,9 @@ public final class Synthesis {
      * @param sequence      the window sequence: only long, long start or long stop
      * @param previousShape the shape of the rising half
      * @param shape         the shape of the falling half
-     * @return the window, {@code 2 * length} samples
+     * @return the window, {@code 2 * length} samples; shared and not to be modified
      */
-    private float[] composite(int sequence, int previousShape, int shape) {
+    public float[] composite(int sequence, int previousShape, int shape) {
         var index = sequence * 4 + previousShape * 2 + shape;
         var window = composites[index];
         if (window != null) {

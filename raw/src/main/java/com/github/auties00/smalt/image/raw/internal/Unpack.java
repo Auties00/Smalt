@@ -45,6 +45,36 @@ final class Unpack {
     }
 
     /**
+     * Unpacks samples of up to 32 bits stored most significant bit first, back to back (TIFF fill
+     * order 1), into unsigned 32-bit values.
+     *
+     * @param data the bytes
+     * @param start the index of the first byte
+     * @param end the index after the last readable byte
+     * @param bits the bits of each sample, from 1 to 32
+     * @param out the samples, unsigned
+     * @param target the index of the first sample written
+     * @param count the number of samples
+     */
+    static void msbFirstWide(byte[] data, int start, int end, int bits, int[] out, int target, int count) {
+        var buffer = 0L;
+        var buffered = 0;
+        var position = start;
+        var mask = (1L << bits) - 1;
+        for (var index = 0; index < count; index++) {
+            while (buffered < bits) {
+                if (position >= end) {
+                    return;
+                }
+                buffer = (buffer << 8) | (data[position++] & 0xFF);
+                buffered += 8;
+            }
+            buffered -= bits;
+            out[target + index] = (int) ((buffer >>> buffered) & mask);
+        }
+    }
+
+    /**
      * Unpacks 12-bit samples stored most significant bit first, two in every three bytes; the
      * result equals {@link #msbFirst} with 12 bits for an even count.
      *
