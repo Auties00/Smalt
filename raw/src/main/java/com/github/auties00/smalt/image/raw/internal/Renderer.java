@@ -32,9 +32,9 @@ public final class Renderer {
     private static final int TILE_HEIGHT = 128;
 
     /**
-     * Why a four-color sensor without color matrices for its four colors cannot be rendered.
+     * Why a four-color sensor whose color matrices are not of four colors cannot be rendered.
      */
-    static final String NO_FOUR_COLOR_MATRICES = "the four-color sensor has no color matrices for its four colors";
+    static final String NO_FOUR_COLOR_MATRICES = "the color matrices of the four-color sensor are not of four colors";
 
     /**
      * The color kernel.

@@ -142,7 +142,7 @@ public final class DngWriting {
      * @param sink the output, written from its position; not closed
      * @throws MediaException.Malformed if the file is corrupt
      * @throws MediaException.Unsupported if the input is not a recognized raw format, its sensor data uses a
-     * feature the decoder lacks, or it is a four-color image without color matrices
+     * feature the decoder lacks, or it is a four-color image whose color matrices are not of four colors
      * @throws MediaException.LimitExceeded if the image exceeds the limits or the file would exceed 4 GiB
      * @throws MediaException.Io if reading the source or writing the sink fails
      */
@@ -167,10 +167,6 @@ public final class DngWriting {
             result.planes = image.planes();
             result.neutral = image.neutral();
             result.balancedToXyz = image.balancedToXyz();
-            if (!monochrome(result) && result.balancedToXyz.length == 0) {
-                throw new MediaException.Unsupported(file.format.extension(),
-                        "a four-color image without color matrices cannot be written as DNG");
-            }
             if (decoding.defaultCrop()) {
                 var crop = Renderer.window(sensor, image.width(), image.height(), true, false);
                 if (crop[0] != 0 || crop[1] != 0 || crop[2] != image.width() || crop[3] != image.height()) {
@@ -182,7 +178,7 @@ public final class DngWriting {
             result.scaleH = sensor.scaleH;
             result.scaleV = sensor.scaleV;
             var calibration = file.color(decoding);
-            if (decoding.colorMatrix().isEmpty() && calibration.colorMatrix[0] != null
+            if (decoding.colorMatrix().isEmpty() && calibration.colorMatrix[0] != null && !calibration.generic
                     && calibration.channels() == result.neutral.length) {
                 result.calibration = calibration;
                 result.baselineExposure = calibration.baselineExposure - calibration.exposureOffset;

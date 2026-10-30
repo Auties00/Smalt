@@ -100,7 +100,7 @@ public final class DngEncoder {
      * @return the DNG file
      * @throws MediaException.Malformed if the file is corrupt
      * @throws MediaException.Unsupported if the input is not a recognized raw format, its sensor data uses a
-     * feature the decoder lacks, or it is a four-color image without color matrices
+     * feature the decoder lacks, or it is a four-color image whose color matrices are not of four colors
      * @throws MediaException.LimitExceeded if the image exceeds the default limits or the file would exceed 4 GiB
      * @throws MediaException.Io if reading the source fails
      */
@@ -117,7 +117,7 @@ public final class DngEncoder {
      * @return the DNG file
      * @throws MediaException.Malformed if the file is corrupt
      * @throws MediaException.Unsupported if the input is not a recognized raw format, its sensor data uses a
-     * feature the decoder lacks, or it is a four-color image without color matrices
+     * feature the decoder lacks, or it is a four-color image whose color matrices are not of four colors
      * @throws MediaException.LimitExceeded if the image exceeds the limits or the file would exceed 4 GiB
      * @throws MediaException.Io if reading the source fails
      */
@@ -153,7 +153,7 @@ public final class DngEncoder {
      * @param sink the output, written from its position; not closed
      * @throws MediaException.Malformed if the file is corrupt
      * @throws MediaException.Unsupported if the input is not a recognized raw format, its sensor data uses a
-     * feature the decoder lacks, or it is a four-color image without color matrices
+     * feature the decoder lacks, or it is a four-color image whose color matrices are not of four colors
      * @throws MediaException.LimitExceeded if the image exceeds the limits or the file would exceed 4 GiB
      * @throws MediaException.Io if reading the source or writing the sink fails
      */

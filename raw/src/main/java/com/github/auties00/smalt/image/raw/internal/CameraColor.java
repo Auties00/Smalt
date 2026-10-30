@@ -372,8 +372,8 @@ final class CameraColor {
                 calibrated = true;
                 return;
             }
-            calibrated = color.colorMatrix[0] != null;
-            if (!calibrated) {
+            calibrated = color.colorMatrix[0] != null && !color.generic;
+            if (color.colorMatrix[0] == null) {
                 matrices = new double[][]{GENERIC_XYZ_TO_CAMERA};
                 calibrations = new double[][]{analog};
                 forwards = null;

@@ -408,7 +408,7 @@ class CrwParserTest {
     }
 
     @Test
-    @DisplayName("knows the white level of the EOS bodies that saturate at 4000 and the PowerShot G1's colors")
+    @DisplayName("knows the white level of the EOS bodies that saturate at 4000 and the PowerShot G1's colors and matrix")
     void models() {
         var eos = new Crw();
         eos.model = "Canon EOS 10D";
@@ -421,9 +421,15 @@ class CrwParserTest {
         assertEquals("GMYC", file.sensor.cfa.toString());
         assertArrayEquals(new double[]{1023}, file.sensor.white);
         assertArrayEquals(g1.samples, decode(file));
+        assertArrayEquals(FourColorMatrices.find("Canon", "PowerShot G1").d65(), file.color.colorMatrix[0]);
+        assertFalse(file.color.generic);
+        assertNull(file.color.asShotNeutral);
+        assertTrue(file.sensor.estimateBalance);
         var info = RawDecoder.info(MediaSource.of(bytes));
-        assertFalse(info.isDecodable());
-        assertThrows(MediaException.Unsupported.class, () -> RawDecoder.decode(MediaSource.of(bytes)));
+        assertTrue(info.isDecodable(), info.unsupportedFeature().orElse(""));
+        assertTrue(info.isColorCalibrated());
+        assertEquals(4, RawDecoder.decodeRaw(MediaSource.of(bytes)).cameraNeutral().length);
+        assertTrue(RawDecoder.decode(MediaSource.of(bytes)).picture().width() > 0);
     }
 
     @Test

@@ -655,11 +655,15 @@ class DngSpecGapsTest {
         }
 
         @Test
-        @DisplayName("a twelve-value matrix renders a file without matrices as the same matrix in the file does")
+        @DisplayName("a file without matrices renders with a generic matrix, and a twelve-value matrix renders it as the same matrix in the file does")
         void matrixOverride() {
             var without = file(false).write();
-            assertFalse(RawDecoder.info(MediaSource.of(without)).isDecodable());
-            assertThrows(MediaException.Unsupported.class, () -> RawDecoder.decode(MediaSource.of(without)));
+            var info = RawDecoder.info(MediaSource.of(without));
+            assertTrue(info.isDecodable(), info.unsupportedFeature().orElse(""));
+            assertFalse(info.isColorCalibrated());
+            assertTrue(RawDecoder.info(MediaSource.of(file(true).write())).isColorCalibrated());
+            var generic = render(without);
+            assertFalse(java.util.Arrays.equals(render(file(true).write()), generic));
             var options = RawDecoderOptions.builder().colorMatrix(MATRIX).build();
             assertArrayEquals(render(file(true).write()), render(without, options));
             assertThrows(MediaException.Unsupported.class, () -> RawDecoder.decode(MediaSource.of(without),
@@ -669,16 +673,33 @@ class DngSpecGapsTest {
         }
 
         @Test
-        @DisplayName("the sensor image of a file without matrices has the as-shot neutral and no matrix")
+        @DisplayName("the sensor image of a file without matrices has the as-shot neutral and a generic matrix")
         void decodeRaw() {
             var raw = RawDecoder.decodeRaw(MediaSource.of(file(false).write()));
             assertArrayEquals(new double[]{0.7, 1, 0.8, 0.9}, raw.cameraNeutral(), 1e-4);
-            assertEquals(0, raw.balancedToXyz().length);
+            assertEquals(12, raw.balancedToXyz().length);
             var balanced = RawDecoder.decodeRaw(MediaSource.of(file(false).write()), RawDecoderOptions.builder()
                     .whiteBalance(RawWhiteBalance.multipliers(1, 2, 1, 2)).build());
             assertArrayEquals(new double[]{1, 0.5, 1, 0.5}, balanced.cameraNeutral(), 1e-9);
-            assertThrows(MediaException.Unsupported.class, () -> RawDecoder.decodeRaw(MediaSource.of(file(false).write()),
-                    RawDecoderOptions.builder().whiteBalance(RawWhiteBalance.temperature(5000)).build()));
+            // the generic matrix gives the camera neutral of a color temperature
+            var warm = RawDecoder.decodeRaw(MediaSource.of(file(false).write()), RawDecoderOptions.builder()
+                    .whiteBalance(RawWhiteBalance.temperature(3000)).build()).cameraNeutral();
+            var cool = RawDecoder.decodeRaw(MediaSource.of(file(false).write()), RawDecoderOptions.builder()
+                    .whiteBalance(RawWhiteBalance.temperature(8000)).build()).cameraNeutral();
+            assertEquals(4, warm.length);
+            assertFalse(java.util.Arrays.equals(warm, cool));
+        }
+
+        @Test
+        @DisplayName("a file without matrices converts to DNG with the generic matrix it renders with")
+        void convertGeneric() {
+            var without = file(false).write();
+            var dng = DngEncoder.convert(MediaSource.of(without));
+            var source = RawDecoder.decodeRaw(MediaSource.of(without));
+            var converted = RawDecoder.decodeRaw(MediaSource.of(dng));
+            assertArrayEquals(source.cameraNeutral(), converted.cameraNeutral(), 1e-6);
+            assertArrayEquals(source.balancedToXyz(), converted.balancedToXyz(), 1e-6);
+            assertArrayEquals(source.samples(), converted.samples());
         }
 
         @Test

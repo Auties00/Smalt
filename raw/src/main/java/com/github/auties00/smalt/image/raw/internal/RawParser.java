@@ -30,7 +30,8 @@ public final class RawParser {
      * Parses a raw file without decoding its sensor data.
      *
      * <p>A file of a camera model {@link CameraMatrices} knows gets that model's color matrices
-     * when it carries none of its own.
+     * when it carries none of its own, and a file of a four-color camera without any gets the
+     * matrix {@link FourColorMatrices} gives it.
      *
      * @param source the raw file, read but not closed
      * @param limits the resource bounds
@@ -41,6 +42,7 @@ public final class RawParser {
     public static RawFile parse(MediaSource source, MediaLimits limits) {
         var file = parseFormat(source, limits);
         CameraMatrices.complete(file);
+        FourColorMatrices.complete(file);
         return file;
     }
 

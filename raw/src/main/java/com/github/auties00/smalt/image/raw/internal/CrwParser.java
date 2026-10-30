@@ -570,6 +570,7 @@ final class CrwParser {
             sensor.cfa = CfaPattern.of(2, 2, List.of(CfaColor.GREEN, CfaColor.MAGENTA, CfaColor.YELLOW, CfaColor.CYAN));
             sensor.planeOfColor = new int[]{-1, 0, -1, 2, 1, 3, -1};
             file.color.asShotNeutral = null;
+            sensor.estimateBalance = true;
         } else {
             sensor.cfa = CfaPattern.bayer("RGGB");
             sensor.estimateBalance = file.color.asShotNeutral == null;

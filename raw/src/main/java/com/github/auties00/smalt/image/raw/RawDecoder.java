@@ -216,7 +216,8 @@ public final class RawDecoder {
      * <p>The options' limits, opcode, default crop, user crop, enhanced image and camera profile
      * choices apply, and their white balance and color matrix decide the image's color description;
      * the rendering choices are ignored. A four-color sensor whose file carries no color matrices
-     * decodes with an empty color matrix unless the options supply one.
+     * decodes with the matrix {@link RawInfo#isColorCalibrated()} describes unless the options
+     * supply one.
      *
      * @param source the input
      * @param options the limits, the opcode and crop choices and the color description

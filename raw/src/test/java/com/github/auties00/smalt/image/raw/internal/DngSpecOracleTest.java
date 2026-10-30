@@ -35,8 +35,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * oracle: its DNG 1.7 files with lossless JPEG XL sensor data stored as interleaved subimages (decoded to the
  * samples of its uncompressed file of the same sample), their JPEG XL previews and fast load linear raw previews,
  * the staggered photosites of the Fujifilm SuperCCD (rendered like the converter's preview), and the four-color
- * Canon PowerShot G1 CRW file, whose camera has no color matrices, decoded raw and rendered with the converter's
- * matrix. The oracle files are those {@code tools/testdata/raw-oracle.py} writes into
+ * Canon PowerShot G1 CRW and Nikon E5700 NEF files, whose cameras have no color matrices, decoded raw, rendered by
+ * default with the fitted matrix and rendered with the converter's matrix. The oracle files are those {@code tools/testdata/raw-oracle.py} writes into
  * {@code <conformance cache>/raw-oracle} ({@code -Dsmalt.test.rawOracle} overrides the directory); the tests are
  * skipped without them.
  */
@@ -212,16 +212,17 @@ class DngSpecOracleTest {
 
     @ParameterizedTest(name = "{0}")
     @org.junit.jupiter.params.provider.EnumSource(value = RawSamples.class, names = {"CRW_G1", "NEF_E5700"})
-    @DisplayName("a four-color file without color matrices decodes raw like the converter's file and renders with its matrix and multipliers")
+    @DisplayName("a four-color file without color matrices decodes raw like the converter's file, renders by default near its preview and with its matrix and multipliers as it does")
     void fourColorWithoutMatrices(RawSamples sample) {
         var name = sample.fileName();
         var dng = oracle(name.substring(0, name.lastIndexOf('.')));
         try (var vendor = MediaSource.of(sample.fetch()); var oracle = MediaSource.of(dng)) {
             var info = RawDecoder.info(vendor);
-            assertTrue(info.unsupportedFeature().isPresent());
+            assertTrue(info.unsupportedFeature().isEmpty(), info.unsupportedFeature().orElse(""));
+            assertTrue(info.isColorCalibrated());
             var raw = RawDecoder.decodeRaw(vendor);
             assertEquals(4, raw.cameraNeutral().length);
-            assertEquals(0, raw.balancedToXyz().length);
+            assertEquals(12, raw.balancedToXyz().length);
             var theirs = RawDecoder.decodeRaw(oracle);
             var best = sampleOffset(raw.samples(), raw.width(), raw.height(), theirs.samples(), theirs.width(),
                     theirs.height());
@@ -252,6 +253,17 @@ class DngSpecOracleTest {
             var theirPicture = Images.decode(MediaSource.of(RawDecoder.extractPreview(oracle).orElseThrow())).picture();
             var rendered = grid(ourPicture);
             var preview = grid(theirPicture);
+            // the default rendering, with the fitted matrix and the neutral estimated from the camera's preview
+            var byDefault = grid(ImageOps.crop(RawDecoder.decode(vendor).picture(), Math.clamp((long) best[1], 0,
+                    full.width() - theirs.width()), Math.clamp((long) best[0], 0, full.height() - theirs.height()),
+                    theirs.width(), theirs.height()));
+            // without the converter's baseline exposure the default rendering's tones differ more
+            assertTrue(correlation(byDefault[1], preview[1]) > 0.95, "default structure " + correlation(byDefault[1],
+                    preview[1]));
+            for (var channel = 0; channel < 3; channel += 2) {
+                assertEquals(mean(preview[channel]) / mean(preview[1]), mean(byDefault[channel]) / mean(byDefault[1]),
+                        0.15, "the default balance of channel " + channel + " to green");
+            }
             assertTrue(correlation(rendered[1], preview[1]) > 0.98, "structure " + correlation(rendered[1], preview[1])
                     + " (" + ourPicture.width() + "x" + ourPicture.height() + " against " + theirPicture.width() + "x"
                     + theirPicture.height() + ")");
@@ -266,6 +278,29 @@ class DngSpecOracleTest {
                         + correlation(rendered[channel], direct[channel]) + " with the converter's file's rendering");
                 assertEquals(1, mean(rendered[channel]) / mean(direct[channel]), 0.04, "the level of channel " + channel);
             }
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.EnumSource(value = RawSamples.class, names = {"CRW_G1", "NEF_E5700"})
+    @DisplayName("the fitted matrix renders a four-color file's chroma as close to the camera's preview as the converter's matrix does")
+    void fourColorChroma(RawSamples sample) {
+        var name = sample.fileName();
+        var dng = oracle(name.substring(0, name.lastIndexOf('.')));
+        try (var vendor = MediaSource.of(sample.fetch()); var oracle = MediaSource.of(dng)) {
+            var preview = FourColorMatricesTest.grid(Images.decode(MediaSource.of(RawDecoder.extractPreview(vendor)
+                    .orElseThrow())).picture());
+            var color = RawParser.parse(oracle, MediaLimits.DEFAULT).color;
+            var theirs = color.colorMatrix[1] != null ? color.colorMatrix[1] : color.colorMatrix[0];
+            var fitted = FourColorMatricesTest.chromaDistance(FourColorMatricesTest.grid(RawDecoder.decode(vendor)
+                    .picture()), preview);
+            var converter = FourColorMatricesTest.chromaDistance(FourColorMatricesTest.grid(RawDecoder.decode(vendor,
+                    RawDecoderOptions.builder().colorMatrix(theirs).build()).picture()), preview);
+            var generic = FourColorMatricesTest.chromaDistance(FourColorMatricesTest.grid(RawDecoder.decode(vendor,
+                    RawDecoderOptions.builder().colorMatrix(FourColorMatrices.generic(FourColorMatricesTest.planes(
+                            RawParser.parse(vendor, MediaLimits.DEFAULT)))).build()).picture()), preview);
+            assertTrue(fitted <= converter, "mean chroma distance to the preview: fitted " + fitted + ", converter's "
+                    + converter + ", generic " + generic);
         }
     }
 

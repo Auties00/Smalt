@@ -43,6 +43,12 @@ final class ColorCalibration {
     final double[][] illuminantXy = new double[3][];
 
     /**
+     * Whether {@link #colorMatrix} holds a generic matrix of a four-color camera's filter colors
+     * rather than the camera's own.
+     */
+    boolean generic;
+
+    /**
      * The analog balance ({@code AnalogBalance}), or {@code null}.
      */
     double[] analogBalance;

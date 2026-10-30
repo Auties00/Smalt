@@ -170,7 +170,7 @@ public final class RawDecoding {
                                 : ImageFormat.JPEG));
             }
         }
-        var calibrated = file.color.colorMatrix[0] != null || file.color.cameraToSrgb != null;
+        var calibrated = file.color.colorMatrix[0] != null && !file.color.generic || file.color.cameraToSrgb != null;
         var unsupported = sensor == null && file.unsupported == null ? "the file holds no sensor image" : file.unsupported;
         if (unsupported == null) {
             unsupported = Renderer.fourColorProblem(file);

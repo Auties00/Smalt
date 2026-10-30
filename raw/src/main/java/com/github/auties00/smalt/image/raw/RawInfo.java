@@ -178,9 +178,11 @@ public final class RawInfo {
     /**
      * {@return the feature the decoder lacks to decode the sensor data, or empty when it decodes}
      *
-     * <p>A four-color sensor whose file carries no color matrices for its colors is reported here,
+     * <p>A four-color sensor whose file carries color matrices of three colors is reported here,
      * since the default rendering cannot render it; it still renders with a twelve-value
      * {@link RawDecoderOptions#colorMatrix()}, and {@link RawDecoder#decodeRaw} returns its samples.
+     * A four-color sensor whose file carries no color matrices renders with a matrix the decoder
+     * supplies (see {@link #isColorCalibrated()}).
      */
     public Optional<String> unsupportedFeature() {
         return Optional.ofNullable(unsupported);
@@ -281,8 +283,10 @@ public final class RawInfo {
      *
      * <p>The colors come from the file (DNG color matrices, or a camera to RGB matrix a vendor
      * format embeds) or, for some camera models whose files carry none, from matrices the decoder
-     * derives from the model's measured spectral sensitivities. Other files are rendered with a
-     * generic camera matrix, so their colors are approximate unless a matrix is supplied with
+     * derives from the model's measured spectral sensitivities or, for the four-color Canon PowerShot
+     * G1 and Nikon E5700, fits against the camera's own JPEG previews. Other files are rendered with a
+     * generic camera matrix (for a four-color sensor, one built from the colors of its filters), so
+     * their colors are approximate unless a matrix is supplied with
      * {@link RawDecoderOptions.Builder#colorMatrix(double[])}.
      */
     public boolean isColorCalibrated() {

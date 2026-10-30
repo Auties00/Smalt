@@ -40,6 +40,8 @@ class DngConvertTest {
         GOPRO_GPR_SMOKE(RawSamples.GPR_HERO7_BLACK_16BIT_4_3_2908),
         ADOBE_LINEAR_LOSSY_DNG_SMOKE(RawSamples.ADC_5D3_LINEAR_LOSSY),
         CANON_CR2(RawSamples.CR2_5D3),
+        CANON_CMYG(RawSamples.CRW_G1),
+        NIKON_CMYG(RawSamples.NEF_E5700),
         NIKON_NEF(RawSamples.NEF_D7000_LOSSLESS_14),
         SONY_ARW(RawSamples.ARW_A7M2_UNCOMPRESSED_14),
         FUJIFILM_X_TRANS(RawSamples.RAF_XT2_COMPRESSED),
@@ -117,12 +119,19 @@ class DngConvertTest {
         check(sample.name(), read(sample.path()));
     }
 
-    @Test
-    @DisplayName("a four-color file without color matrices cannot be converted")
-    void uncalibrated() {
-        var source = read(RawSamples.CRW_G1.fetch());
-        var failure = assertThrows(MediaException.Unsupported.class, () -> DngEncoder.convert(MediaSource.of(source)));
-        assertTrue(failure.getMessage().contains("color matri"), failure.getMessage());
+    @ParameterizedTest(name = "{0}")
+    @EnumSource(value = RawSamples.class, names = {"CRW_G1", "NEF_E5700"})
+    @DisplayName("a four-color file without color matrices is converted with its fitted matrix as ColorMatrix1 under D65")
+    void fourColorMatrix(RawSamples sample) {
+        var source = read(sample.fetch());
+        var dng = DngEncoder.convert(MediaSource.of(source));
+        var info = RawDecoder.info(MediaSource.of(dng));
+        assertTrue(info.isColorCalibrated());
+        var original = RawDecoder.decodeRaw(MediaSource.of(source));
+        var converted = RawDecoder.decodeRaw(MediaSource.of(dng));
+        assertEquals(12, original.balancedToXyz().length);
+        assertArrayEquals(original.cameraNeutral(), converted.cameraNeutral(), 1e-6);
+        assertArrayEquals(original.balancedToXyz(), converted.balancedToXyz(), 1e-6);
     }
 
     @Test
@@ -197,8 +206,9 @@ class DngConvertTest {
         assertEquals(sourceInfo.width(), info.width());
         assertEquals(sourceInfo.height(), info.height());
         assertEquals(sourceInfo.iso(), info.iso());
-        assertEquals(sourceInfo.exposureTime(), info.exposureTime());
-        assertEquals(sourceInfo.fNumber(), info.fNumber());
+        // a vendor exposure time or f-number computed from an APEX value is written as a rational, to nine decimals
+        assertClose(sourceInfo.exposureTime(), info.exposureTime());
+        assertClose(sourceInfo.fNumber(), info.fNumber());
         assertTrue(info.previews().stream().anyMatch(preview -> preview.format() == ImageFormat.JPEG
                 && Math.max(preview.width(), preview.height()) == Math.min(1024, Math.max(info.width(),
                 info.height()))), info.previews().toString());
@@ -209,6 +219,13 @@ class DngConvertTest {
         assertEquals(expected.width(), actual.width());
         assertEquals(expected.height(), actual.height());
         RENDERING.assertWithin(name + " rendering", expected, actual);
+    }
+
+    static void assertClose(java.util.OptionalDouble expected, java.util.OptionalDouble actual) {
+        assertEquals(expected.isPresent(), actual.isPresent(), expected + " against " + actual);
+        if (expected.isPresent()) {
+            assertEquals(expected.getAsDouble(), actual.getAsDouble(), 1e-9);
+        }
     }
 
     /**

@@ -15,8 +15,10 @@ import java.util.regex.Pattern;
  * <p>The maker note (a TIFF structure of its own after the {@code Nikon} signature) provides tag
  * {@code 0x0096}, the compression data: two version bytes, the four initial vertical predictors,
  * the size of the linearization curve and its values, and for some lossy versions the split row;
- * tag {@code 0x000C}, the red and blue white balance multipliers; and tag {@code 0x003D}, the black
- * level of each CFA channel. The compressed data is a single stream of Huffman-coded differences,
+ * tag {@code 0x000C}, the red and blue white balance multipliers; tag {@code 0x003D}, the black
+ * level of each CFA channel; and, in a file whose TIFF structure holds no JPEG preview, as the Coolpix
+ * files store only an uncompressed thumbnail there, tag {@code 0x0011} points to the directory of
+ * the camera's JPEG preview. The compressed data is a single stream of Huffman-coded differences,
  * one per photosite row by row: each photosite is predicted from the previous one of the same
  * color in its row, the first two of a row from the first two of the row two above, and the
  * decoded value indexes the linearization curve. A lossy stream with a split row switches from
@@ -48,6 +50,12 @@ final class NefParser {
     private static final int COOLPIX_BALANCE_SIZE = 2560;
 
     /**
+     * The maker note tag pointing to the directory of the camera's JPEG preview, relative to the
+     * maker note's TIFF header.
+     */
+    private static final int PREVIEW_IFD = 0x0011;
+
+    /**
      * The model names of the Coolpix cameras whose NEF files store interlaced rows.
      */
     private static final Pattern COOLPIX = Pattern.compile("E\\d{4}");
@@ -74,6 +82,12 @@ final class NefParser {
             return;
         }
         var note = makerNote(tree);
+        if (note != null && file.previews.isEmpty()) {
+            var preview = note.child(PREVIEW_IFD);
+            if (preview != null) {
+                TiffTree.preview(preview, file);
+            }
+        }
         var compression = raw.intValue(TiffSamples.COMPRESSION, 1);
         var sensor = new Sensor();
         if (compression == NIKON_COMPRESSION) {
@@ -119,6 +133,11 @@ final class NefParser {
         }
         if (note != null) {
             levels(note, sensor, file);
+        }
+        if (!sensor.cfa.isRgb()) {
+            // the maker note's red and blue multipliers do not balance four colors
+            file.color.asShotNeutral = null;
+            sensor.estimateBalance = true;
         }
         sensor.defaultCrop = previewCrop(file, sensor);
         file.sensor = sensor;
