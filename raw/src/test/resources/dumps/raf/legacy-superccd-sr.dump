@@ -1,0 +1,15 @@
+# image dump of raf/legacy-superccd-sr; regenerate with -Dsmalt.test.updateDumps=true
+format RAW
+info ImageInfo[format=RAW, width=40, height=60, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 40x60 rgba8 alpha=false crc=858cb1d3
+  format=RAW orientation=NORMAL source=40x60
+  icc=520:86132914 exif=none xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+scaled 10x15
+picture 40x60 rgba8 alpha=false crc=858cb1d3
+  format=RAW orientation=NORMAL source=40x60
+  icc=520:86132914 exif=none xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+decoder raw sensor data
+sensor 40x30 channels=2 cfa=RGBG/BGRG neutral=[0.58984375, 1.0, 0.7365853658536585] crc=653e7297

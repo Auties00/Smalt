@@ -1,0 +1,13 @@
+# image dump of vectors/jxl-conformance-alpha_triangles.jxl; regenerate with -Dsmalt.test.updateDumps=true
+format JXL
+info ImageInfo[format=JXL, width=1024, height=1024, hasAlpha=true, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 1024x1024 rgba8 alpha=true crc=0ad3013e
+  format=JXL orientation=NORMAL source=1024x1024
+  icc=512:5b447eb9 exif=none xmp=none
+  profile=ColorProfile[RGB_D65_SRG_Rel_SRG, RGB, DISPLAY, v4.4.0]
+scaled 256x256
+picture 1024x1024 rgba8 alpha=true crc=0ad3013e
+  format=JXL orientation=NORMAL source=1024x1024
+  icc=512:5b447eb9 exif=none xmp=none
+  profile=ColorProfile[RGB_D65_SRG_Rel_SRG, RGB, DISPLAY, v4.4.0]

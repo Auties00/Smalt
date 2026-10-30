@@ -1,14 +1,28 @@
 package com.github.auties00.smalt.transcode;
 
 import com.github.auties00.smalt.internal.subtitle.CueMerger;
+import com.github.auties00.smalt.internal.subtitle.TtmlWriter;
+import com.github.auties00.smalt.subtitle.CaptionService;
 import com.github.auties00.smalt.subtitle.SubtitleCue;
 import com.github.auties00.smalt.subtitle.SubtitleDecoder;
 import com.github.auties00.smalt.subtitle.SubtitleEncoder;
+import com.github.auties00.smalt.subtitle.SubtitleMarkup;
+import com.github.auties00.smalt.subtitle.Subtitles;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.DataTrack;
 import com.github.auties00.smalt.track.Packet;
+import com.github.auties00.smalt.track.PacketFlag;
+import com.github.auties00.smalt.track.PacketSideData;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
+
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Copies or converts one text subtitle track.
@@ -16,10 +30,18 @@ import com.github.auties00.smalt.track.Track;
  * <p>A copied track keeps its packets and configuration; each packet is moved to the output
  * timeline and cut to the kept range (a packet that starts before the range start begins at zero,
  * one that ends after the range end stops there), and packets wholly outside the range are
- * dropped. A converted track decodes each packet into a cue ({@link SubtitleDecoder}), joins the
- * pieces of cues an MP4 track split, cuts the cue to the kept range in the same way, and encodes
- * it for the output codec ({@link SubtitleEncoder}); a WebVTT or ASS track converted to the same
- * codec keeps its header.
+ * dropped. A converted track decodes each packet into its cues in the output codec's markup
+ * ({@link SubtitleDecoder#decodeAll(Packet, SubtitleMarkup)}, so that an ASS style's look and the
+ * placements and karaoke times carry over), joins the pieces of cues an MP4 track split, cuts each cue to
+ * the kept range in the same way, and encodes it for the output codec ({@link SubtitleEncoder}); a WebVTT
+ * or ASS track converted to the same codec keeps its header. A track converted to TTML becomes one
+ * document holding every cue, written when the stage finishes.
+ *
+ * <p>After the transcode seeks to a trimmed start, the stage is first {@linkplain #prime(Packet) primed}
+ * with the packets that start before the range, read from the start of the input; the packets the
+ * seeked demuxer delivers again (the same timing and payload, as many times as they were primed)
+ * are then ignored, while a packet the scan did not reach is processed when the seeked demuxer
+ * delivers it.
  *
  * <p>An instance is not thread-safe.
  */
@@ -60,6 +82,16 @@ final class SubtitleStage implements Stage {
     private final CueMerger merger;
 
     /**
+     * The markup of the output codec.
+     */
+    private final SubtitleMarkup markup;
+
+    /**
+     * The cues of a track converted to TTML, written as one document at the end, or {@code null}.
+     */
+    private final List<SubtitleCue> document;
+
+    /**
      * The end of the last packet written, on the output timeline in microseconds.
      */
     private long position;
@@ -70,19 +102,45 @@ final class SubtitleStage implements Stage {
     private boolean done;
 
     /**
+     * How many packets of each timing and payload {@link #prime(Packet)} received and the seeked
+     * demuxer has not delivered again.
+     */
+    private final Map<PrimedPacket, Integer> primed = new HashMap<>();
+
+    /**
+     * Identifies a primed packet by its timing and payload, so that a different packet with the
+     * same timestamp, such as another cue that appears at the same time, is not taken for it.
+     *
+     * @param time the timestamp in the source time base
+     * @param duration the duration in the source time base
+     * @param data the payload
+     */
+    private record PrimedPacket(long time, long duration, ByteBuffer data) {
+        /**
+         * {@return the identity of a packet}
+         *
+         * @param packet a packet of the input track
+         */
+        static PrimedPacket of(Packet packet) {
+            return new PrimedPacket(SubtitleStage.time(packet), packet.duration(), ByteBuffer.wrap(packet.data().clone()));
+        }
+    }
+
+    /**
      * Constructs a stage and declares its output track.
      *
-     * @param source the input track, whose codec is a text subtitle codec
+     * @param source the input track, whose codec is a text subtitle, bitmap subtitle or caption codec
      * @param codec the output codec; the source codec copies the packets unless {@code convert}
      * is set
      * @param convert whether to decode and encode even when the codec does not change
+     * @param service the caption service decoded from a caption track, or {@code null} for another track
      * @param outputId the output track identifier
      * @param output the muxer receiving the packets
      * @param startMicros the start of the kept range, in microseconds
      * @param endMicros the end of the kept range in microseconds, or {@code -1} for the end of the track
      */
-    SubtitleStage(Track source, Codec codec, boolean convert, int outputId, OutputMuxer output, long startMicros,
-                  long endMicros) {
+    SubtitleStage(Track source, Codec codec, boolean convert, CaptionService service, int outputId,
+                  OutputMuxer output, long startMicros, long endMicros) {
         this.source = source;
         this.copy = !convert && codec == source.codec();
         this.output = output;
@@ -95,15 +153,20 @@ final class SubtitleStage implements Stage {
             this.decoder = null;
             this.encoder = null;
             this.merger = null;
+            this.markup = null;
+            this.document = null;
         } else {
-            var created = SubtitleEncoder.track(codec, outputId).toBuilder().language(source.language().orElse(null));
+            var created = (codec == Codec.TTML ? TtmlWriter.track(outputId) : SubtitleEncoder.track(codec, outputId))
+                    .toBuilder().language(source.language().orElse(null));
             if ((codec == Codec.WEBVTT || codec == Codec.ASS) && codec == source.codec()) {
                 source.codecConfig().ifPresent(created::codecConfig);
             }
             this.declared = created.build();
-            this.decoder = new SubtitleDecoder(source);
-            this.encoder = new SubtitleEncoder(declared);
-            this.merger = new CueMerger(this::writeCue);
+            this.decoder = new SubtitleDecoder(source, service);
+            this.encoder = codec == Codec.TTML ? null : new SubtitleEncoder(declared);
+            this.merger = new CueMerger(this::writeCue, source.codec() == Codec.TTML);
+            this.markup = Subtitles.markupOf(codec);
+            this.document = codec == Codec.TTML ? new ArrayList<>() : null;
         }
         output.declare(declared);
     }
@@ -115,6 +178,58 @@ final class SubtitleStage implements Stage {
 
     @Override
     public void accept(Packet packet) {
+        if (!primed.isEmpty() && startsBeforeRange(packet)) {
+            var key = PrimedPacket.of(packet);
+            var count = primed.get(key);
+            if (count != null) {
+                if (count == 1) {
+                    primed.remove(key);
+                } else {
+                    primed.put(key, count - 1);
+                }
+                return;
+            }
+        }
+        process(packet);
+    }
+
+    /**
+     * {@return whether a packet starts before the kept range, as every primed packet does}
+     *
+     * @param packet a packet of the input track
+     */
+    private boolean startsBeforeRange(Packet packet) {
+        var time = time(packet);
+        return time != Packet.NO_TIMESTAMP && source.timeBase().toMicros(time) < startMicros;
+    }
+
+    /**
+     * Processes a packet that starts before the kept range and was read ahead of the seek point,
+     * so that the same packet delivered again by the seeked demuxer is ignored.
+     *
+     * @param packet a packet of the input track
+     */
+    void prime(Packet packet) {
+        primed.merge(PrimedPacket.of(packet), 1, Integer::sum);
+        process(packet);
+    }
+
+    /**
+     * {@return the timestamp of a packet in the source time base: its presentation time, else its
+     * decoding time, else {@link Packet#NO_TIMESTAMP}}
+     *
+     * @param packet a packet of the input track
+     */
+    private static long time(Packet packet) {
+        return packet.pts() != Packet.NO_TIMESTAMP ? packet.pts() : packet.dts();
+    }
+
+    /**
+     * Copies or decodes a packet.
+     *
+     * @param packet a packet of the input track
+     */
+    private void process(Packet packet) {
         if (done) {
             return;
         }
@@ -122,15 +237,13 @@ final class SubtitleStage implements Stage {
             copyPacket(packet);
             return;
         }
-        var cue = decoder.decode(packet);
-        if (cue == null) {
-            return;
+        for (var cue : decoder.decodeAll(packet, markup)) {
+            if (endMicros >= 0 && cue.startMicros() >= endMicros) {
+                done = true;
+                return;
+            }
+            merger.offer(cue);
         }
-        if (endMicros >= 0 && cue.startMicros() >= endMicros) {
-            done = true;
-            return;
-        }
-        merger.offer(cue);
     }
 
     /**
@@ -140,7 +253,7 @@ final class SubtitleStage implements Stage {
      */
     private void copyPacket(Packet packet) {
         var timeBase = source.timeBase();
-        var time = packet.pts() != Packet.NO_TIMESTAMP ? packet.pts() : packet.dts();
+        var time = time(packet);
         if (time == Packet.NO_TIMESTAMP) {
             return;
         }
@@ -174,14 +287,36 @@ final class SubtitleStage implements Stage {
         }
         var outputStart = Math.max(0, cue.startMicros() - startMicros);
         var outputEnd = Math.max(outputStart, end - startMicros);
-        output.write(encoder.encode(cue.withTiming(outputStart, outputEnd), decoder.markup()));
+        if (document != null) {
+            document.add(cue.withTiming(outputStart, outputEnd));
+        } else {
+            output.write(encoder.encode(cue.withTiming(outputStart, outputEnd), markup));
+        }
         position = Math.max(position, outputEnd);
     }
 
     @Override
     public void finish() {
+        if (decoder != null && !done) {
+            for (var cue : decoder.flush(markup)) {
+                if (endMicros < 0 || cue.startMicros() < endMicros) {
+                    merger.offer(cue);
+                }
+            }
+        }
         if (merger != null) {
             merger.finish();
+        }
+        if (document != null) {
+            document.sort(Comparator.comparingLong(SubtitleCue::startMicros));
+            var end = 0L;
+            for (var cue : document) {
+                end = Math.max(end, cue.endMicros());
+            }
+            var duration = Rational.MICROSECONDS.rescale(end, declared.timeBase());
+            output.write(new Packet(declared.id(), TtmlWriter.write(document, markup), 0, 0, Math.max(1, duration),
+                    Set.of(PacketFlag.KEY), PacketSideData.NONE));
+            document.clear();
         }
         done = true;
     }

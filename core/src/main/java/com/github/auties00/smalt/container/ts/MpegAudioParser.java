@@ -66,7 +66,7 @@ final class MpegAudioParser extends FrameParser {
         if (track == null) {
             var rate = MpegAudioHeader.sampleRate(header);
             track = AudioTrack.builder()
-                    .id(pid())
+                    .id(trackId())
                     .codec(MpegAudioHeader.layer(header) == 3 ? Codec.MP3 : Codec.MP2)
                     .timeBase(Rational.timeBaseOf(rate))
                     .language(entry.language())

@@ -15,7 +15,8 @@ import java.util.Arrays;
  * first, then red and blue as green plus the mean of the neighbors' color differences, which
  * keeps edges sharper and colors cleaner. Neighbors outside the image are left out of the means.
  * A four-color image (cyan, yellow, green and magenta, or red, green, blue and emerald) is
- * interpolated bilinearly in all four planes and mapped to three channels as it is demosaiced.
+ * interpolated bilinearly in all four planes and mapped to three channels as it is demosaiced, by
+ * {@link Projection}.
  */
 final class PatternDemosaic {
     /**
@@ -130,8 +131,8 @@ final class PatternDemosaic {
 
     /**
      * Demosaics a window of a four-color image and maps it to three channels: each photosite's
-     * four camera values (its own and the means of the stencils of the other three planes) are
-     * white balanced, clipped to 1 and multiplied by the projection matrix.
+     * four camera values (its own and the means of the stencils of the other three planes) go
+     * through {@link Projection#project}.
      *
      * @param image the image, of four color planes
      * @param x0 the first column of the window
@@ -143,14 +144,16 @@ final class PatternDemosaic {
      * @param b receives the third projected channel
      * @param projection the {@code 3 x 4} projection matrix followed by the four white balance
      * multipliers
+     * @param blend whether highlights are blended rather than clipped
      */
     void projected(LinearImage image, int x0, int y0, int width, int height, float[] r, float[] g, float[] b,
-                   float[] projection) {
+                   float[] projection, boolean blend) {
         var data = image.data;
         var w = image.width;
         var h = image.height;
         var pattern = image.cfa;
         var values = new float[4];
+        var out = new float[3];
         for (var row = 0; row < height; row++) {
             var y = y0 + row;
             for (var column = 0; column < width; column++) {
@@ -159,14 +162,14 @@ final class PatternDemosaic {
                 var phase = (y % pattern.height()) * pattern.width() + x % pattern.width();
                 var interior = y >= 3 && x >= 3 && y < h - 3 && x < w - 3;
                 for (var p = 0; p < 4; p++) {
-                    var value = p == own ? data[y * w + x]
+                    values[p] = p == own ? data[y * w + x]
                             : mean(data, w, h, x, y, rowOffsets[phase][p], columnOffsets[phase][p], interior);
-                    values[p] = Math.min(value * projection[12 + p], 1f);
                 }
+                Projection.project(values, projection, blend, out, 0);
                 var at = row * width + column;
-                r[at] = projection[0] * values[0] + projection[1] * values[1] + projection[2] * values[2] + projection[3] * values[3];
-                g[at] = projection[4] * values[0] + projection[5] * values[1] + projection[6] * values[2] + projection[7] * values[3];
-                b[at] = projection[8] * values[0] + projection[9] * values[1] + projection[10] * values[2] + projection[11] * values[3];
+                r[at] = out[0];
+                g[at] = out[1];
+                b[at] = out[2];
             }
         }
     }
