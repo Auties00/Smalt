@@ -87,7 +87,7 @@ class FrameSideDataTest {
         assertThrows(NullPointerException.class, () -> builder.framePacking(null));
         assertThrows(NullPointerException.class, () -> builder.orientation(null));
         assertThrows(IllegalArgumentException.class, () -> builder.repeatedFields(-1));
-        assertThrows(IllegalArgumentException.class, () -> builder.repeatedFields(5));
+        assertThrows(IllegalArgumentException.class, () -> builder.repeatedFields(7));
     }
 
     @Test

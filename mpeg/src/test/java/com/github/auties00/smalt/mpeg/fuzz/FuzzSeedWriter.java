@@ -1294,6 +1294,37 @@ class FuzzSeedWriter {
         return parts;
     }
 
+    @Test
+    @DisplayName("writes the VC-1 seeds: synthetic advanced profile streams with I, P, B and skipped pictures, and a "
+            + "simple profile stream with its STRUCT_C")
+    void vc1() {
+        var advanced = com.github.auties00.smalt.video.vc1.Vc1Synthetic.advanced(1, 48, 32, "IPBSPB", true);
+        write(MpegFuzzTest.class, "vc1", "valid-advanced-ipbs.bin", FuzzPackets.video(0, 48, 32, null,
+                vc1Units(advanced)));
+        var odd = com.github.auties00.smalt.video.vc1.Vc1Synthetic.advanced(2, 34, 18, "IBPI", false);
+        write(MpegFuzzTest.class, "vc1", "valid-advanced-odd-size.bin", FuzzPackets.video(0, 34, 18, null,
+                vc1Units(odd)));
+        var simple = com.github.auties00.smalt.video.vc1.Vc1Synthetic.simple(3, 32, 32, "IPSPI");
+        var parts = new ArrayList<FuzzPackets.Part>();
+        for (var packet : simple.packets()) {
+            parts.add(new FuzzPackets.Part(packet.data(), packet.keyframe()));
+        }
+        write(MpegFuzzTest.class, "vc1", "valid-simple-structc.bin", FuzzPackets.video(0, 32, 32, simple.config(),
+                parts));
+    }
+
+    /**
+     * Cuts an advanced profile elementary stream into one part per frame, the sequence and entry-point headers with
+     * the first.
+     */
+    private static List<FuzzPackets.Part> vc1Units(byte[] stream) {
+        var parts = new ArrayList<FuzzPackets.Part>();
+        for (var packet : com.github.auties00.smalt.video.vc1.Vc1TestStreams.elementary(stream).packets()) {
+            parts.add(new FuzzPackets.Part(packet.data(), parts.isEmpty()));
+        }
+        return parts;
+    }
+
     private static void seed(String method, String name, Codec codec, Path file) {
         write(MpegFuzzTest.class, method, name, FuzzSeeds.packets(file, codec, 0, 6));
     }

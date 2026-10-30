@@ -120,6 +120,7 @@ SEED_CODECS = {
     'mpeg:MpegFuzzTest.h264': ['h264'], 'mpeg:MpegFuzzTest.hevc': ['hevc'], 'mpeg:MpegFuzzTest.hevcLayers': ['hevc'],
     'mpeg:MpegFuzzTest.mpeg4': ['mpeg4_part2'], 'mpeg:MpegFuzzTest.h263': ['h263'],
     'mpeg:MpegFuzzTest.mpeg1Video': ['mpeg1video'], 'mpeg:MpegFuzzTest.mpeg2Video': ['mpeg2video'],
+    'mpeg:MpegFuzzTest.vc1': ['vc1'],
     'mpeg:MpegFuzzTest.aac': ['aac'], 'mpeg:MpegFuzzTest.amrNb': ['amr_nb'], 'mpeg:MpegFuzzTest.amrWb': ['amr_wb'],
     'mpeg:MpegFuzzTest.ac3': ['ac3'], 'mpeg:MpegFuzzTest.eac3': ['eac3'],
 }

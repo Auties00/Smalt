@@ -59,7 +59,7 @@ public final class FrameSideData {
      * Constructs side data from validated components.
      *
      * @param fieldOrder the scan, or {@code null}
-     * @param repeatedFields the extra field periods, from 0 to 4
+     * @param repeatedFields the extra field periods, from 0 to 6
      * @param framePacking the packing, or {@code null}
      * @param orientation the orientation, or {@code null}
      * @param layer the layer, or {@code null}
@@ -118,13 +118,14 @@ public final class FrameSideData {
 
     /**
      * Returns the number of field periods the frame is displayed for beyond its own two: 1 when
-     * its first field is shown again after the second, 2 when the frame is shown twice and 4 when
-     * it is shown three times.
+     * its first field is shown again after the second, 2 when the frame is shown twice, 4 when
+     * it is shown three times and 6 when it is shown four times (a VC-1 frame with {@code RPTFRM}
+     * 3).
      *
      * <p>A decoder that derives a frame's duration from the nominal frame rate already includes
      * these periods in {@link VideoFrame#duration()}.
      *
-     * @return the extra field periods, from 0 to 4
+     * @return the extra field periods, from 0 to 6
      */
     public int repeatedFields() {
         return repeatedFields;
@@ -279,11 +280,11 @@ public final class FrameSideData {
          *
          * @param repeatedFields the value
          * @return this builder
-         * @throws IllegalArgumentException if {@code repeatedFields} is not from 0 to 4
+         * @throws IllegalArgumentException if {@code repeatedFields} is not from 0 to 6
          */
         public Builder repeatedFields(int repeatedFields) {
-            if (repeatedFields < 0 || repeatedFields > 4) {
-                throw new IllegalArgumentException("repeated fields outside 0 to 4: " + repeatedFields);
+            if (repeatedFields < 0 || repeatedFields > 6) {
+                throw new IllegalArgumentException("repeated fields outside 0 to 6: " + repeatedFields);
             }
             this.repeatedFields = repeatedFields;
             return this;

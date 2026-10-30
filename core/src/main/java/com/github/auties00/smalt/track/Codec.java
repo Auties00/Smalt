@@ -70,6 +70,18 @@ public enum Codec {
     MPEG2_VIDEO(TrackKind.VIDEO, "mpeg2video"),
 
     /**
+     * SMPTE ST 421 VC-1 video in all three profiles: the simple and main profiles (Windows Media Video 9, FourCC
+     * {@code WMV3}) and the advanced profile ({@code WVC1}, {@code WMVA}, {@code stream_type 0xEA} of MPEG
+     * transport streams, the {@code vc-1} sample entry of MP4).
+     *
+     * <p>A simple or main profile packet is one frame (a packet of at most one byte is a skipped frame), decoded with
+     * the 4-byte STRUCT_C of SMPTE ST 421 Annex J in {@link Track#codecConfig()} and the track's picture size. An
+     * advanced profile packet holds the bitstream data units of one or more pictures with their start codes; the
+     * configuration, when present, holds the sequence header and entry point the same way.
+     */
+    VC1(TrackKind.VIDEO, "vc1"),
+
+    /**
      * Motion JPEG: every frame is an independent JPEG.
      */
     MJPEG(TrackKind.VIDEO, "mjpeg"),

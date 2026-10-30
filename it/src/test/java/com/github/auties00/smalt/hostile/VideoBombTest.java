@@ -40,6 +40,14 @@ class VideoBombTest {
 
     private static final int LARGE = 1104;
 
+    /**
+     * A 16x16 VC-1 advanced profile stream: a sequence header, an entry point and an I picture.
+     */
+    private static final byte[] VC1_STREAM = {
+            0x00, 0x00, 0x01, 0x0F, (byte) 0xD2, 0x00, 0x00, 0x70, 0x07, 0x08, (byte) 0x80, 0x00, 0x00, 0x01, 0x0E,
+            0x40, 0x00, (byte) 0x80, 0x00, 0x00, 0x01, 0x0D, (byte) 0xC3, 0x00, 0x21, 0x2D, (byte) 0xCE
+    };
+
     record Forged(Codec codec, byte[] config, List<byte[]> packets) {
     }
 
@@ -78,6 +86,14 @@ class VideoBombTest {
                 new Bomb(Codec.MPEG2_VIDEO, (width, height) -> {
                     var stream = ForgedHeaders.mpeg2(width, height);
                     return new Forged(Codec.MPEG2_VIDEO, stream.config(), List.of(stream.packet()));
+                }),
+                // the MAX_CODED_WIDTH and MAX_CODED_HEIGHT of an advanced profile sequence header, before an
+                // entry point and an I picture of DC-only intra blocks
+                new Bomb(Codec.VC1, (width, height) -> {
+                    var stream = VC1_STREAM.clone();
+                    patchBits(stream, 48, 12, width / 2 - 1);
+                    patchBits(stream, 60, 12, height / 2 - 1);
+                    return new Forged(Codec.VC1, null, List.of(stream));
                 }),
                 new Bomb(Codec.VP8, (width, height) -> patched(Codec.VP8, (packet) -> {
                     Hostile.le16(packet, 6, width & 0x3FFF);

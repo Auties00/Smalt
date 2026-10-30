@@ -409,6 +409,16 @@ final class BoxTypes {
     static final int AV1C = 0x61763143;
 
     /**
+     * The VC-1 visual sample entry ({@code vc-1}, SMPTE RP 2025).
+     */
+    static final int VC_1 = 0x76632D31;
+
+    /**
+     * The VC-1 decoder specific information box ({@code dvc1}, SMPTE RP 2025).
+     */
+    static final int DVC1 = 0x64766331;
+
+    /**
      * The MPEG-4 visual sample entry ({@code mp4v}).
      */
     static final int MP4V = 0x6D703476;

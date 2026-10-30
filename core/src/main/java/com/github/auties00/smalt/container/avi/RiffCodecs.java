@@ -34,6 +34,7 @@ final class RiffCodecs {
             case "VP90" -> Codec.VP9;
             case "AV01" -> Codec.AV1;
             case "FFV1" -> Codec.FFV1;
+            case "WMV3", "WVC1", "WMVA" -> Codec.VC1;
             case "MPG1", "PIM1", "MPEG" -> Codec.MPEG1_VIDEO;
             case "MPG2", "PIM2", "MMES", "LMP2", "SLIF", "HDV1", "HDV2", "HDV3", "MX3N", "MX3P", "MX4N", "MX4P",
                  "MX5N", "MX5P", "XDV1", "XDV2", "XDV3", "XDV4", "XDV5", "XDV6", "XDV7", "XDV8", "XDV9", "XDVA",

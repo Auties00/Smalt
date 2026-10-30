@@ -63,6 +63,7 @@ import com.github.auties00.smalt.video.mpeg4.Mpeg4Decoder;
 import com.github.auties00.smalt.video.mpeg4.Mpeg4Encoder;
 import com.github.auties00.smalt.video.mpeg4.Mpeg4EncoderOptions;
 import com.github.auties00.smalt.video.mpeg4.Mpeg4Profile;
+import com.github.auties00.smalt.video.vc1.Vc1Decoder;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
@@ -162,6 +163,7 @@ final class MpegWorkloads {
                 file("h263-decode", MpegWorkloads::h263Decode),
                 file("mpeg2-decode-t1", () -> mpegVideoDecode(1)),
                 file("mpeg2-decode-t2", () -> mpegVideoDecode(2)),
+                file("vc1-decode", MpegWorkloads::vc1Decode),
                 file("hevc-encode-fast-b-t2", () -> hevcEncode("hevc-encode-fast-b-t2",
                         hevcFileOptions(HevcEncoderSpeed.FAST, 2).toBuilder().bFrames(3).build())),
                 file("hevc-encode-balanced-t1", () -> hevcEncode("hevc-encode-balanced-t1",
@@ -693,6 +695,50 @@ final class MpegWorkloads {
                     VideoDecoderOptions.builder().threads(threads).build())));
         }
         return TrainingWorkload.of("mpeg2-decode-t" + threads, () -> rounds.forEach(Runnable::run));
+    }
+
+    /**
+     * Returns a workload that decodes a VC-1 advanced profile stream of I, P and B pictures with the in-loop filter,
+     * written bit by bit by the decoder's tests ({@code Vc1Synthetic}), one frame per packet.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload vc1Decode() {
+        byte[] stream;
+        try (var input = MpegWorkloads.class.getResourceAsStream("vc1/synthetic-ipb.vc1")) {
+            stream = input.readAllBytes();
+        } catch (java.io.IOException | NullPointerException exception) {
+            throw new IllegalStateException("missing training stream synthetic-ipb.vc1", exception);
+        }
+        var packets = new ArrayList<Packet>();
+        var from = 0;
+        var frameSeen = false;
+        for (var index = 0; index + 3 < stream.length; index++) {
+            if (stream[index] == 0 && stream[index + 1] == 0 && stream[index + 2] == 1 && stream[index + 3] == 0x0D) {
+                if (frameSeen) {
+                    packets.add(packet(stream, from, index, packets.isEmpty()));
+                    from = index;
+                }
+                frameSeen = true;
+            }
+        }
+        packets.add(packet(stream, from, stream.length, packets.isEmpty()));
+        var round = VideoStreams.decodeRound(packets, new Vc1Decoder(VideoStreams.track(Codec.VC1, 128, 96, null)));
+        return TrainingWorkload.of("vc1-decode", round);
+    }
+
+    /**
+     * Returns a packet of a range of a stream.
+     *
+     * @param stream the whole VC-1 stream
+     * @param from the first index
+     * @param to the index after the last
+     * @param key whether the packet starts a key frame
+     * @return the packet
+     */
+    private static Packet packet(byte[] stream, int from, int to, boolean key) {
+        return new Packet(1, java.util.Arrays.copyOfRange(stream, from, to), Packet.NO_TIMESTAMP, Packet.NO_TIMESTAMP,
+                0, key);
     }
 
     /**

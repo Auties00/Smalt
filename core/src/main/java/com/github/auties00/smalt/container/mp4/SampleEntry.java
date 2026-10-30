@@ -358,7 +358,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         var indexed = depth == 1 || depth == 2 || depth == 4 || depth == 8;
         var colorTable = colorTableId == 0 && indexed ? parseColorTable(payload) : null;
         var sinfs = new ArrayList<BoxCursor>();
-        byte[] avcC = null, hvcC = null, lhvC = null, vpcC = null, av1C = null, jp2h = null, glbl = null;
+        byte[] avcC = null, hvcC = null, lhvC = null, vpcC = null, av1C = null, jp2h = null, glbl = null, dvc1 = null;
         var layerConfigs = new ArrayList<byte[]>();
         EsDescriptor esds = null;
         ColorInfo color = null;
@@ -385,6 +385,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                 }
                 case BoxTypes.AV1C -> av1C = body.rest();
                 case BoxTypes.GLBL -> glbl = body.rest();
+                case BoxTypes.DVC1 -> dvc1 = body.rest();
                 case BoxTypes.JP2H -> jp2h = withHeader(BoxTypes.JP2H, body.rest());
                 case BoxTypes.ESDS -> esds = parseEsds(body);
                 case BoxTypes.COLR -> {
@@ -472,6 +473,10 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                 };
                 config = esds == null ? null : esds.specificInfo();
             }
+            case BoxTypes.VC_1 -> {
+                codec = Codec.VC1;
+                config = vc1Config(dvc1);
+            }
             case BoxTypes.S263, BoxTypes.H263 -> codec = Codec.H263;
             case BoxTypes.JPEG, BoxTypes.MJPA, BoxTypes.MJPB -> codec = Codec.MJPEG;
             case BoxTypes.MJP2 -> {
@@ -513,6 +518,31 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         return new SampleEntry(format, codec, config, width, height, color, sampleAspect, interlacing, spherical,
                 stereoMode, codec == Codec.HEVC || codec == Codec.H264 || codec == Codec.AV1 ? dolbyVision : null, 0,
                 0, null, 0, 0, protection);
+    }
+
+    /**
+     * Returns the VC-1 configuration a {@code dvc1} box carries (SMPTE RP 2025 section 8): after the byte of profile
+     * and level, the {@code STRUCT_C} of the simple and main profiles (profile 0 and 4), or, for the advanced profile
+     * (12), the sequence header and entry point that follow the 6 bytes of flags and frame rate, from their first
+     * start code.
+     *
+     * @param dvc1 the box payload, or {@code null}
+     * @return the configuration, or {@code null} when there is none
+     */
+    static byte[] vc1Config(byte[] dvc1) {
+        if (dvc1 == null || dvc1.length == 0) {
+            return null;
+        }
+        var profile = (dvc1[0] & 0xFF) >>> 4;
+        if (profile == 0 || profile == 4) {
+            return dvc1.length >= 5 ? Arrays.copyOfRange(dvc1, 1, 5) : null;
+        }
+        for (var index = 1; index + 3 < dvc1.length; index++) {
+            if (dvc1[index] == 0 && dvc1[index + 1] == 0 && dvc1[index + 2] == 1 && (dvc1[index + 3] & 0xFF) == 0x0F) {
+                return Arrays.copyOfRange(dvc1, index, dvc1.length);
+            }
+        }
+        return null;
     }
 
     /**

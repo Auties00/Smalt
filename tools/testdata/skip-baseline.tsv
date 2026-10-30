@@ -836,3 +836,8 @@ windows-x64-vector-smoke	video	com.github.auties00.smalt.image.avif.AvifConforma
 windows-x64-vector-smoke	video	com.github.auties00.smalt.video.av1.Av1RobustnessTest	data:vector	2
 windows-x64-vector-smoke	video	com.github.auties00.smalt.video.dnxhd.DnxhdAlphaTest	data:vector	2
 windows-x64-vector-smoke	video	com.github.auties00.smalt.video.dnxhd.DnxhdAvidAlphaTest	data:vector	2
+linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.vc1.Vc1ConformanceTest	data:vector	1
+linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.video.vc1.Vc1ConformanceTest	data:vector	1
+linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.vc1.Vc1ConformanceTest	data:vector	1
+macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.vc1.Vc1ConformanceTest	data:vector	1
+windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.vc1.Vc1ConformanceTest	data:vector	1

@@ -1045,6 +1045,14 @@ class FuzzSeedWriter {
     }
 
     @Test
+    @DisplayName("VC-1 behavior samples: the advanced profile transport stream and the simple profile AVI")
+    void vc1() throws IOException {
+        var samples = Path.of("src", "test", "resources", "samples");
+        copy(DemuxerFuzzTest.class, "mpegTs", "valid-vc1.ts", samples.resolve("ts/vc1.ts"));
+        copy(DemuxerFuzzTest.class, "avi", "valid-wmv3.avi", samples.resolve("avi/wmv3.avi"));
+    }
+
+    @Test
     @DisplayName("Dolby Vision behavior samples and the first RPU of each, unescaped, for the RPU target")
     void dolbyVision() throws IOException {
         var samples = Path.of("src", "test", "resources", "samples");

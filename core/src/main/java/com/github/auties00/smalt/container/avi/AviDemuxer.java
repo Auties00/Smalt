@@ -47,7 +47,9 @@ import java.util.Objects;
  * {@code WAVEFORMATEXTENSIBLE}, whose Dolby GUIDs announce AC-3 and E-AC-3) and extra data of a
  * {@code WAVEFORMATEX}. Streams of other types (text, MIDI, interleaved DV) are skipped. The extra data
  * becomes {@link Track#codecConfig()}:
- * the video object layer headers of MPEG-4 Part 2, the sequence header of MPEG-1 and MPEG-2 video, an
+ * the video object layer headers of MPEG-4 Part 2, the sequence header of MPEG-1 and MPEG-2 video, the
+ * {@code STRUCT_C} of VC-1 simple and main profile ({@code WMV3}) or the sequence header and entry point of the
+ * advanced profile ({@code WVC1}, {@code WMVA}), an
  * {@code AVCDecoderConfigurationRecord} or
  * {@code HEVCDecoderConfigurationRecord} when the extra data is one, the {@code AudioSpecificConfig} of
  * AAC. H.264 and HEVC stored as an Annex B byte stream, the usual form in AVI, get a configuration record

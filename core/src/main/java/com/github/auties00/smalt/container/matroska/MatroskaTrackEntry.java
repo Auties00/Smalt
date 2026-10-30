@@ -1080,6 +1080,7 @@ final class MatroskaTrackEntry {
             case "VP80" -> Codec.VP8;
             case "VP90" -> Codec.VP9;
             case "AV01" -> Codec.AV1;
+            case "WMV3", "WVC1", "WMVA" -> Codec.VC1;
             case "AVDN", "AVDH" -> Codec.DNXHD;
             case "FFV1" -> Codec.FFV1;
             default -> Codec.UNKNOWN_VIDEO;

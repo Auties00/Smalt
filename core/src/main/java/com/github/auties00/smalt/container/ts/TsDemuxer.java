@@ -63,6 +63,9 @@ import java.util.function.Function;
  *       visual object and video object layer headers of the first key frame as the
  *       configuration, and the picture size, frame rate and sample aspect ratio of the video
  *       object layer;</li>
+ *   <li>VC-1 advanced profile ({@code 0xEA}, the Blu-ray VC-1 stream type): one packet per frame, with the
+ *       sequence header and entry point of the first key frame as the configuration, and the picture size,
+ *       frame rate and sample aspect ratio of the sequence header;</li>
  *   <li>AAC in ADTS ({@code 0x0F}) and in LOAS/LATM ({@code 0x11}): raw data blocks with an
  *       {@code AudioSpecificConfig}; a LATM stream may declare several programs and layers (the
  *       first is exposed), chunked payloads, fixed frame lengths and a program config element;</li>
@@ -1337,7 +1340,7 @@ public final class TsDemuxer implements Demuxer {
                     : new PesParser(stream, limits, Codec.DATA, "private");
             case 0x86 -> hdmv ? new DtsParser(stream, limits) : new Scte35Parser(stream, limits);
             case 0x90 -> new PesParser(stream, limits, Codec.PGS, null);
-            case 0xEA -> new PesParser(stream, limits, Codec.UNKNOWN_VIDEO, null);
+            case 0xEA -> new Vc1Parser(stream, limits);
             case 0x06 -> privateParser(stream, limits);
             default -> stream.streamType() >= 0x80 ? new PesParser(stream, limits, Codec.DATA, "private") : null;
         };
