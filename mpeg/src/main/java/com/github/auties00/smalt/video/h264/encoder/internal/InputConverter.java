@@ -1,5 +1,7 @@
 package com.github.auties00.smalt.video.h264.encoder.internal;
 
+import com.github.auties00.smalt.image.ChannelPicture;
+import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.Picture;
@@ -8,10 +10,12 @@ import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.ops.ImageOps;
+import com.github.auties00.smalt.image.ops.YuvConverter;
 import com.github.auties00.smalt.internal.color.LumaWeights;
 import com.github.auties00.smalt.internal.plane.Planes;
 
 import java.util.Arrays;
+import java.util.Optional;
 
 /**
  * Copies an input picture into the coded area of a source {@link Frame} as 4:2:0 Y'CbCr, padding
@@ -20,14 +24,22 @@ import java.util.Arrays;
  * <p>4:2:0 input is copied unchanged. Other Y'CbCr layouts keep their samples and only resample
  * chroma: 4:2:2 averages vertical pairs, 4:4:4 averages 2x2 blocks, and monochrome pictures get
  * neutral chroma. RGBA input is converted with the matrix and range of the stream's
- * {@link ColorInfo}, chroma taken from the average of each 2x2 block of RGB; alpha is ignored.
- * Y'CbCr input is assumed to already use the stream's color description.
+ * {@link ColorInfo}, chroma taken from the average of each 2x2 block of RGB; alpha is ignored. A matrix
+ * that weighted luma does not define converts as {@link ImageOps#toYuv(Picture, ChromaFormat, ColorInfo)}
+ * does. Y'CbCr input is assumed to already use the stream's color description.
  */
 final class InputConverter {
     /**
      * The stream color description.
      */
     private final ColorInfo color;
+
+    /**
+     * The converter of RGBA input in a matrix that weighted luma does not define, which converts as
+     * {@link ImageOps#toYuv(Picture, ChromaFormat, ColorInfo)} into a picture it reuses, or {@code null} for a
+     * weighted matrix.
+     */
+    private final YuvConverter exact;
 
     /**
      * The fixed-point (16 fractional bits) coefficients of R, G and B in luma, and the luma
@@ -83,12 +95,17 @@ final class InputConverter {
     /**
      * Constructs a converter.
      *
-     * @param color the stream color description; a matrix that two luma weights do not define is
-     * converted as BT.709
+     * @param color the stream color description; an unspecified matrix is converted as BT.709
      */
     InputConverter(ColorInfo color) {
         this.color = color;
-        var weights = LumaWeights.of(color.matrix()).orElse(LumaWeights.BT709);
+        var direct = switch (color.matrix()) {
+            case UNSPECIFIED -> Optional.of(LumaWeights.BT709);
+            case CHROMA_DERIVED_NCL -> LumaWeights.of(color.matrix(), color.primaries());
+            default -> LumaWeights.of(color.matrix());
+        };
+        this.exact = direct.isEmpty() ? YuvConverter.create(ChromaFormat.YUV420, color) : null;
+        var weights = direct.orElse(LumaWeights.BT709);
         var kr = weights.kr();
         var kb = weights.kb();
         var kg = 1 - kr - kb;
@@ -121,9 +138,12 @@ final class InputConverter {
     void convert(Picture picture, int width, int height, Frame frame) {
         switch (picture) {
             case YuvPicture yuv -> convertYuv(yuv, width, height, frame);
+            case RgbaPicture rgba when exact != null -> convertYuv(exact.convert(rgba), width, height, frame);
+            case Rgba16Picture high when exact != null -> convertYuv(exact.convert(high), width, height, frame);
             case RgbaPicture rgba -> convertRgba(rgba, width, height, frame);
             case Yuv16Picture high -> convertYuv(ImageOps.toEightBit(high), width, height, frame);
             case Rgba16Picture high -> convertRgba(ImageOps.toEightBit(high), width, height, frame);
+            case ChannelPicture channels -> convertRgba(ImageOps.toRgba(channels), width, height, frame);
         }
         extend(frame.y, frame.lumaOrigin, frame.lumaStride, width, height, frame.width, frame.height);
         var chromaWidth = (width + 1) >> 1;
@@ -162,6 +182,18 @@ final class InputConverter {
                     for (var x = 0; x < chromaWidth; x++) {
                         frame.u[d + x] = (byte) (((yuv.u()[row0 + x] & 0xFF) + (yuv.u()[row1 + x] & 0xFF) + 1) >> 1);
                         frame.v[d + x] = (byte) (((yuv.v()[row0 + x] & 0xFF) + (yuv.v()[row1 + x] & 0xFF) + 1) >> 1);
+                    }
+                }
+            }
+            case YUV440 -> {
+                for (var y = 0; y < chromaHeight; y++) {
+                    var row = y * yuv.uvStride();
+                    var d = frame.chromaOrigin + y * frame.chromaStride;
+                    for (var x = 0; x < chromaWidth; x++) {
+                        var x0 = row + 2 * x;
+                        var x1 = row + Math.min(2 * x + 1, width - 1);
+                        frame.u[d + x] = (byte) (((yuv.u()[x0] & 0xFF) + (yuv.u()[x1] & 0xFF) + 1) >> 1);
+                        frame.v[d + x] = (byte) (((yuv.v()[x0] & 0xFF) + (yuv.v()[x1] & 0xFF) + 1) >> 1);
                     }
                 }
             }
