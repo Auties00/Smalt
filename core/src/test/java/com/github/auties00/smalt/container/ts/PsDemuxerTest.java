@@ -701,6 +701,16 @@ class PsDemuxerTest {
             for (var index = 0; index < 6; index++) {
                 extension[4 + index] = (byte) (bits >>> (40 - 8 * index));
             }
+            // the header CRC-16 (CCITT, initial 0xFFFF) covers the header from byte 5 and ends it, bytes 14 and 15
+            var crc = 0xFFFF;
+            for (var index = 5; index < 14; index++) {
+                crc ^= (extension[index] & 0xFF) << 8;
+                for (var bit = 0; bit < 8; bit++) {
+                    crc = (crc & 0x8000) != 0 ? (crc << 1 ^ 0x1021) & 0xFFFF : crc << 1 & 0xFFFF;
+                }
+            }
+            extension[14] = (byte) (crc >>> 8);
+            extension[15] = (byte) crc;
             var writer = new PsWriter();
             var stream = new ByteArrayOutputStream();
             for (var core : cores) {
