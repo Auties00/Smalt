@@ -173,6 +173,11 @@ public final class RawFile {
     String model;
 
     /**
+     * The DNG {@code UniqueCameraModel}, or {@code null}.
+     */
+    String uniqueCameraModel;
+
+    /**
      * The DNG version, such as {@code 1.4.0.0}, or {@code null}.
      */
     String dngVersion;
@@ -259,6 +264,17 @@ public final class RawFile {
      * interpretation {@code LinearRaw}), in file order.
      */
     final List<Sensor> proxies = new ArrayList<>();
+
+    /**
+     * The entries of a DNG file's first directory that a DNG file converted from it carries over.
+     */
+    final List<DngTag> firstTags = new ArrayList<>();
+
+    /**
+     * The entries of a DNG file's first directory that describe its primary camera profile and that a DNG file
+     * converted from it carries over with that profile.
+     */
+    final List<DngTag> profileTags = new ArrayList<>();
 
     /**
      * The semantic masks of a DNG file.

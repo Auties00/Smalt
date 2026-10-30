@@ -4,6 +4,9 @@ import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.raw.CfaLayout;
 import com.github.auties00.smalt.image.raw.CfaPattern;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Describes the sensor image of a raw file the way DNG does, whatever the file's format: its
  * stored size and layout, the color filter array, the areas that hold image data, the levels that
@@ -201,6 +204,11 @@ final class Sensor {
      * Describes the compression, for {@link com.github.auties00.smalt.image.raw.RawInfo}.
      */
     String compression = "uncompressed";
+
+    /**
+     * The entries of a DNG image's directory that a DNG file converted from it carries over.
+     */
+    final List<DngTag> tags = new ArrayList<>();
 
     /**
      * Reads the samples.

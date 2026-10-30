@@ -67,7 +67,7 @@ The README's Install table is the single source of these descriptions; the pom `
 | `smalt-video` | `...smalt.video` | VP9, AV1, AVIF, ProRes, DNxHD/DNxHR, Theora and FFV1 |
 | `smalt-mpeg` | `...smalt.mpeg` | H.264, HEVC, HEIC, MPEG-1 and MPEG-2 video, AAC, AMR, MPEG-4 Part 2, H.263, AC-3 and E-AC-3, the codecs licensed through patent pools or by Dolby |
 | `smalt-capture` | `...smalt.capture` | Camera, screen and microphone capture, and speaker playback |
-| `smalt-raw` | `...smalt.raw` | DNG and camera raw decoding: Canon, Nikon, Sony, Fujifilm, Olympus, Panasonic, Pentax, Minolta and Sigma raw files, demosaicing and camera color rendering |
+| `smalt-raw` | `...smalt.raw` | DNG and camera raw decoding: Canon, Nikon, Sony, Fujifilm, Olympus, Panasonic, Pentax, Minolta and Sigma raw files, demosaicing and camera color rendering; DNG writing and raw to DNG conversion |
 | `smalt-desktop` | `...smalt.desktop` | ImageIO readers and writers and Java Sound providers for the formats the other artifacts handle |
 | `smalt-aot` | `...smalt.aot` | Training workloads for JDK ahead-of-time caches, used only in the training run (`SmaltTraining`, `TrainingOptions`, `TrainingFamily`, `TrainingMode`, `TrainingWorkload`, `TrainingReport`, `TrainingMedia`) |
 

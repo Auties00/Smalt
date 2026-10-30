@@ -11,6 +11,7 @@ import com.github.auties00.smalt.internal.io.ByteArrays;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Parses a DNG file (Adobe DNG specification 1.7.1): the main raw image among the directories, its
@@ -90,6 +91,7 @@ final class DngParser {
             file.dngVersion = version[0] + "." + version[1] + "." + version[2] + "." + version[3];
         }
         var unique = first.string(50708);
+        file.uniqueCameraModel = unique;
         if (file.model == null) {
             file.model = unique;
         }
@@ -160,6 +162,9 @@ final class DngParser {
         }
         var userCrop = raw.doubles(51125);
         sensor.userCrop = userCrop(userCrop != null ? userCrop : first.doubles(51125));
+        copyTags(raw, DngTag.RAW, sensor.tags);
+        copyTags(first, DngTag.FIRST, file.firstTags);
+        copyTags(first, DngTag.PROFILE, file.profileTags);
         file.sensor = sensor;
         if (enhanced != null) {
             enhanced(enhanced, sensor, file);
@@ -281,6 +286,7 @@ final class DngParser {
             return;
         }
         levels(ifd, sensor);
+        copyTags(ifd, DngTag.RAW, sensor.tags);
         var area = raw.active();
         var own = sensor.active();
         var factorX = (double) (own[3] - own[1]) / (area[3] - area[1]);
@@ -333,6 +339,22 @@ final class DngParser {
         sensor.frame = new double[]{crop[0] / width, crop[1] / height, crop[2] / width, crop[3] / height};
         sensor.userCrop = raw.userCrop;
         file.proxies.add(sensor);
+    }
+
+    /**
+     * Collects the entries of a directory that a converted DNG file carries over.
+     *
+     * @param ifd the directory
+     * @param tags the tags to collect
+     * @param into the list to add the entries to
+     */
+    private static void copyTags(Ifd ifd, int[] tags, List<DngTag> into) {
+        for (var tag : tags) {
+            var entry = DngTag.of(ifd, tag);
+            if (entry != null) {
+                into.add(entry);
+            }
+        }
     }
 
     /**
@@ -548,7 +570,10 @@ final class DngParser {
         }
         if (color.gainTableMap == null) {
             var map = raw != null ? raw.bytes(52525) : null;
-            color.gainTableMap = GainTableMap.parse(map != null ? map : first.bytes(52525), false);
+            var data = map != null ? map : first.bytes(52525);
+            color.gainTableMap = GainTableMap.parse(data, false);
+            color.gainTableMapData = color.gainTableMap != null ? data : null;
+            color.gainTableMapSecond = false;
         }
     }
 
@@ -580,8 +605,13 @@ final class DngParser {
         }
         color.exposureOffset = first.doubleValue(51109, 0);
         color.blackRender = first.intValue(51110, 0) == 1 ? 1 : 0;
-        color.gainTableMap = GainTableMap.parse(first.bytes(52544), true);
-        color.rgbTables = RgbTables.parse(first.bytes(52543));
+        var gains = first.bytes(52544);
+        color.gainTableMap = GainTableMap.parse(gains, true);
+        color.gainTableMapData = color.gainTableMap != null ? gains : null;
+        color.gainTableMapSecond = color.gainTableMap != null;
+        var tables = first.bytes(52543);
+        color.rgbTables = RgbTables.parse(tables);
+        color.rgbTablesData = color.rgbTables != null ? tables : null;
         // TODO: read ProfileDynamicRange (52551) and render high-dynamic-range profiles over their extended
         // range; their tables and curves apply as those of a standard-range profile
         var hueSatDims = first.longs(50937);

@@ -12,6 +12,7 @@ import com.github.auties00.smalt.image.jpeg.JpegDecoder;
 import com.github.auties00.smalt.image.jxl.JxlDecoder;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.ops.ResizeFilter;
+import com.github.auties00.smalt.image.raw.CfaColor;
 import com.github.auties00.smalt.image.raw.CfaLayout;
 import com.github.auties00.smalt.image.raw.CfaPattern;
 import com.github.auties00.smalt.image.raw.RawDecoderOptions;
@@ -42,6 +43,11 @@ public final class RawDecoding {
      * The input, named in failure messages.
      */
     private static final String WHAT = "raw file";
+
+    /**
+     * The color planes of a three-color image.
+     */
+    private static final List<CfaColor> RGB_PLANES = List.of(CfaColor.RED, CfaColor.GREEN, CfaColor.BLUE);
 
     /**
      * Prevents instantiation.
@@ -115,9 +121,11 @@ public final class RawDecoding {
      * @param balancedToXyz the white-balanced camera to XYZ matrix, or an empty array for a four-color
      * camera of unknown colors
      * @param layout the spatial layout of the color filter array
+     * @param planes the color of each component of the neutral
+     * @param window the left, top, width and height of the image in the sensor's active area
      */
     public record SensorImage(int width, int height, int channels, short[] samples, CfaPattern cfa, double[] neutral,
-                              double[] balancedToXyz, CfaLayout layout) {
+                              double[] balancedToXyz, CfaLayout layout, List<CfaColor> planes, int[] window) {
     }
 
     /**
@@ -498,6 +506,19 @@ public final class RawDecoding {
      * @return the sensor image
      */
     public static SensorImage sensorImage(RawFile file, RawDecoderOptions options) {
+        return sensorImage(file, options, false);
+    }
+
+    /**
+     * Extracts the sensor image, before demosaicing and color rendering.
+     *
+     * @param file the parsed file
+     * @param options the decoding options
+     * @param whole whether the image covers the whole active area, whatever the crop choices and the
+     * bounds of the opcode lists
+     * @return the sensor image
+     */
+    public static SensorImage sensorImage(RawFile file, RawDecoderOptions options, boolean whole) {
         return Guards.malformed(WHAT, () -> {
             var sensor = file.sensor(options);
             var problem = Renderer.fourColorPlanesProblem(sensor);
@@ -505,8 +526,8 @@ public final class RawDecoding {
                 throw new MediaException.Unsupported(file.format.extension(), problem);
             }
             var image = Renderer.linearize(file, sensor, options.opcodes());
-            var window = Renderer.window(sensor, image.width, image.height, options.defaultCrop(), options.opcodes(),
-                    options.userCrop());
+            var window = whole ? new int[]{0, 0, image.width, image.height} : Renderer.window(sensor, image.width,
+                    image.height, options.defaultCrop(), options.opcodes(), options.userCrop());
             if (sensor == file.sensor) {
                 PreviewBalance.apply(file, image, Renderer.window(sensor, image, true));
             }
@@ -529,16 +550,45 @@ public final class RawDecoding {
             });
             var cfa = image.cfa != null ? image.cfa.shifted(window[1], window[0]) : null;
             var layout = image.cfa != null ? sensor.layout.shifted(window[1], window[0]) : CfaLayout.RECTANGULAR;
+            var planes = planes(sensor, cfa);
             var calibration = file.color(options);
             var colors = image.cfa != null && !image.cfa.isRgb() ? 4 : 3;
             var matrix = options.colorMatrix().orElse(null);
             if (colors == 4 && matrix == null && calibration.channels() != 4) {
                 return new SensorImage(window[2], window[3], spp, samples, cfa, uncalibratedNeutral(file, calibration,
-                        options.whiteBalance()), new double[0], layout);
+                        options.whiteBalance()), new double[0], layout, planes, window);
             }
             var color = CameraColor.of(calibration, options.whiteBalance(), matrix, colors);
-            return new SensorImage(window[2], window[3], spp, samples, cfa, color.neutral, color.balancedToPcs, layout);
+            return new SensorImage(window[2], window[3], spp, samples, cfa, color.neutral, color.balancedToPcs, layout,
+                    planes, window);
         });
+    }
+
+    /**
+     * Returns the color of each color plane of a sensor image: red, green and blue, or the four colors of a
+     * four-color filter array in the order of its color planes.
+     *
+     * @param sensor the sensor description
+     * @param cfa the color filter array of the image, or {@code null}
+     * @return the colors
+     */
+    private static List<CfaColor> planes(Sensor sensor, CfaPattern cfa) {
+        if (cfa == null || cfa.isRgb()) {
+            return RGB_PLANES;
+        }
+        var planes = new CfaColor[4];
+        for (var color : cfa.colors()) {
+            var plane = sensor.planeOfColor[color.code()];
+            if (plane >= 0 && plane < 4) {
+                planes[plane] = color;
+            }
+        }
+        for (var plane : planes) {
+            if (plane == null) {
+                return RGB_PLANES;
+            }
+        }
+        return List.of(planes);
     }
 
     /**

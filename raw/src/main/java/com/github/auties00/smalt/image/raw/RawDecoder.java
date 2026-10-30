@@ -234,7 +234,7 @@ public final class RawDecoder {
             var file = RawDecoding.open(source, options.limits());
             var image = RawDecoding.sensorImage(file, options);
             return new RawImage(image.width(), image.height(), image.channels(), image.samples(), image.cfa(),
-                    image.neutral(), image.balancedToXyz(), image.layout());
+                    image.neutral(), image.balancedToXyz(), image.layout(), image.planes());
         }
     }
 

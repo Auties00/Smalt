@@ -169,7 +169,10 @@ public final class Oracle {
         HEIF_CONVERT("heif-convert"),
 
         /** libheif's HEIF structure dump CLI. */
-        HEIF_INFO("heif-info");
+        HEIF_INFO("heif-info"),
+
+        /** The validator of Adobe's DNG SDK (tools/testdata/dng-validate). */
+        DNG_VALIDATE("dng_validate");
 
         /** The executable name without extension. */
         private final String executable;

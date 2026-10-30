@@ -151,6 +151,21 @@ final class ColorCalibration {
     RgbTables rgbTables;
 
     /**
+     * The bytes of the tag {@link #gainTableMap} was read from, or {@code null}.
+     */
+    byte[] gainTableMapData;
+
+    /**
+     * Whether {@link #gainTableMapData} is a {@code ProfileGainTableMap2} rather than a {@code ProfileGainTableMap}.
+     */
+    boolean gainTableMapSecond;
+
+    /**
+     * The bytes of the tag {@link #rgbTables} was read from, or {@code null}.
+     */
+    byte[] rgbTablesData;
+
+    /**
      * Returns the description of the shot rendered with another camera profile: this
      * description's white balance, analog balance and baseline exposure with the profile's
      * matrices, tables, tone curve, exposure offset and hints, the camera calibration kept when the
@@ -187,8 +202,13 @@ final class ColorCalibration {
         result.toneCurve = profile.toneCurve;
         result.profileName = profile.profileName;
         result.blackRender = profile.blackRender;
-        result.gainTableMap = profile.gainTableMap != null ? profile.gainTableMap : gainTableMap;
-        result.rgbTables = profile.rgbTables != null ? profile.rgbTables : rgbTables;
+        var source = profile.gainTableMap != null ? profile : this;
+        result.gainTableMap = source.gainTableMap;
+        result.gainTableMapData = source.gainTableMapData;
+        result.gainTableMapSecond = source.gainTableMapSecond;
+        var tables = profile.rgbTables != null ? profile : this;
+        result.rgbTables = tables.rgbTables;
+        result.rgbTablesData = tables.rgbTablesData;
         return result;
     }
 

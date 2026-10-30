@@ -359,8 +359,8 @@ sample, and the JPEG 2000 encoder a CMYK one with its alpha.
 
 ### Camera raw
 
-`smalt-raw` (JPMS `com.github.auties00.smalt.raw`, package `image.raw`, entry point `RawDecoder`) decodes
-DNG and the vendor raw formats. Detection: `ImageFormat.DNG` (a TIFF whose first directory holds
+`smalt-raw` (JPMS `com.github.auties00.smalt.raw`, package `image.raw`, entry points `RawDecoder` and
+`DngEncoder`) decodes DNG and the vendor raw formats and writes DNG. Detection: `ImageFormat.DNG` (a TIFF whose first directory holds
 `DNGVersion`) and `ImageFormat.RAW` (every other raw format; `RawInfo.format()` names it).
 `ImageFormat.detect(byte[], int)` tells the TIFF-structured raw files from TIFF only when their
 directories lie within the bytes it is given; `Images.detect(MediaSource)` follows them through the
@@ -408,6 +408,30 @@ chroma than with the generic matrix (mean distance 5.9 against 7.5; Adobe DNG Co
 measured the same way only for comparison, give 5.4). Other files are rendered with a generic matrix (the
 median of seven CC0 camera DNG matrices), so their colors are approximate; `RawDecoderOptions.Builder.colorMatrix`
 accepts the model's DNG `ColorMatrix` (for example from an Adobe DNG Converter file).
+
+Writing: `DngEncoder` writes DNG files (DNG 1.7.1, backward compatible to 1.1 unless a CFA layout of 6 to 9 or the
+source's opcode list 3 or calibration illuminant needs a later version). `DngEncoder.encode` writes a `RawImage`
+(from `RawDecoder.decodeRaw`, or built with `RawImage.ofCfa`, `ofLinear` and `ofMonochrome`): CFA images of any
+pattern, layout and one or two samples per photosite, four-color filter arrays, linear raw and monochrome images, as
+16-bit linear reference values (black 0, white 65535) in tiles, uncompressed or lossless JPEG (two components per
+CFA tile row, Huffman tables optimized per tile, tiles coded in parallel); the color description is the image's
+neutral as `AsShotNeutral`, its white-balanced camera to XYZ matrix as `ForwardMatrix1` and the color matrix that
+maps the D50 white to the neutral, so `decodeRaw` of the file returns the image's samples, neutral and matrix (to
+the precision of the rationals, 1e-9). DNG requires the forward matrix to map a white-balanced neutral to the D50
+white: the `RawImage` factories reject a matrix that maps it more than 0.01 away, and the encoder scales the rows
+of such a matrix (which only a decoded file can carry) to D50. `DngEncoder.convert` converts any file the decoder reads: the whole active
+area of the sensor image, linearized and with opcode lists 1 and 2 applied, with the source's default crop, user
+crop, default scale and opcode list 3, its color matrices, illuminants, forward matrices, camera calibration,
+analog balance, baseline exposure and camera profile (hue, saturation and value maps, look table, tone curve, gain
+table maps, unmasked RGB tables), the rendering hints of a DNG source (`ShadowScale`, `BaselineNoise`,
+`BayerGreenSplit`, `NoiseProfile` and the others the decoder does not interpret), the camera, orientation and EXIF
+metadata with the shot's settings, the decoding options' white balance and profile choices, and the
+`NewRawImageDigest` of the stored image (computed as the DNG SDK computes it). A CFA image whose
+default crop leaves fewer than two photosites on a side gains a margin of same-color photosites, so that a
+converter demosaics the crop's edges from real neighbors. By default the file holds a baseline JPEG preview of 1024
+pixels on its longest side and a 256-pixel thumbnail, both sRGB renderings of the written image. Every file passes
+the DNG SDK's `dng_validate` without a warning (other than those its DNG source has), the SDK reads back its
+samples, and it renders a file converted from a DNG source as it renders the source (`DngValidateTest`).
 
 Provenance of the vendor codings. The NEF Huffman tables, the Olympus ORF compression and layouts, the
 Panasonic RW2 versions 4, 5, 6 and 8, the Pentax PEF tables, Canon's sRAW and mRAW, Canon's CRW compression
@@ -1885,8 +1909,10 @@ checks a FLAC source's MD5 signature on the way.
   correction Adobe DNG Converter applies to the PowerShot compacts' CR3 files (as a WarpRectilinear opcode) is not
   applied, so their renderings keep the lens's barrel distortion; the Nikon E5700 and the PowerShot G1 carry no color matrices, so they render only with a twelve-value
   `RawDecoderOptions.colorMatrix` (for example from an Adobe DNG Converter file of the model); RW2 version 8 gain and offset tags
-  other than the identity are ignored. Cameras outside the 52 profiled models (Minolta's and the CRW bodies
-  among them) use a generic color matrix, and Sony white balance, and that of the CRW files without white
+  other than the identity are ignored. `DngEncoder` cannot write a four-color image without color matrices (DNG
+  requires them), drops the maker note (DNG's `DNGPrivateData`), the source's extra camera profiles other than the
+  one chosen, and its semantic masks and the RGB tables that apply to them. Cameras outside the 52 profiled
+  models (Minolta's and the CRW bodies among them) use a generic color matrix, and Sony white balance, and that of the CRW files without white
   balance levels, is estimated from the embedded preview. The uncompressed and Polaroid x530 variants of the older
   X3F coding are verified only on synthetic files (no CC0 sample shows them), Sigma's noise reduction is not
   reproduced, and Merrill files render darker and greener than the camera's own preview, which Sigma's
@@ -1936,7 +1962,7 @@ Smalt targets **Java 26**. Import the BOM, then depend on the artifacts you need
 | `smalt-video` | VP9, AV1, AVIF, ProRes, DNxHD/DNxHR, Theora and FFV1 (see the [licensing note](#licensing-of-prores-and-dnxhd)) |
 | `smalt-mpeg` | H.264, HEVC, HEIC, MPEG-1 and MPEG-2 video, VC-1, AAC, AMR, MPEG-4 Part 2, H.263, AC-3 and E-AC-3, the codecs licensed through patent pools or by Dolby |
 | `smalt-capture` | Camera, screen and microphone capture, and speaker playback |
-| `smalt-raw` | DNG and camera raw decoding: Canon, Nikon, Sony, Fujifilm, Olympus, Panasonic, Pentax, Minolta and Sigma raw files, demosaicing and camera color rendering |
+| `smalt-raw` | DNG and camera raw decoding: Canon, Nikon, Sony, Fujifilm, Olympus, Panasonic, Pentax, Minolta and Sigma raw files, demosaicing and camera color rendering; DNG writing and raw to DNG conversion |
 | `smalt-desktop` | ImageIO readers and writers and Java Sound providers for the formats the other artifacts handle |
 | `smalt-aot` | Training workloads for JDK ahead-of-time caches, used only in the training run (see [Start fast with an AOT cache](#start-fast-with-an-aot-cache)) |
 

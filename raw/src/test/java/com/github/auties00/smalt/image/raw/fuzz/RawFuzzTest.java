@@ -1,9 +1,13 @@
 package com.github.auties00.smalt.image.raw.fuzz;
 
 import com.code_intelligence.jazzer.junit.FuzzTest;
+import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.Images;
 import com.github.auties00.smalt.image.ops.ImageOps;
+import com.github.auties00.smalt.image.raw.DngCompression;
+import com.github.auties00.smalt.image.raw.DngEncoder;
+import com.github.auties00.smalt.image.raw.DngEncoderOptions;
 import com.github.auties00.smalt.image.raw.RawColorSpace;
 import com.github.auties00.smalt.image.raw.RawDecoder;
 import com.github.auties00.smalt.image.raw.RawDecoderOptions;
@@ -15,13 +19,16 @@ import com.github.auties00.smalt.image.raw.RawWhiteBalance;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.fuzz.Fuzz;
 
+import java.util.Arrays;
+
 /**
  * Fuzz targets of the raw decoders, one per raw format. Each input is described, decoded to its sensor image,
  * rendered with the default options, with every option off its default and as a thumbnail (one of the three
  * while fuzzing, see {@code FuzzRun.sampled}), and its embedded preview is extracted and decoded.
  *
  * <p>An input that {@link RawDecoder#info} describes as another format is skipped; one it cannot describe is
- * still decoded, so that damaged headers reach the decoders.
+ * still decoded, so that damaged headers reach the decoders. A further target converts inputs of every format
+ * into DNG files with {@link DngEncoder}.
  */
 class RawFuzzTest {
     /** The rendering that differs most from the default: every option off its default. */
@@ -146,6 +153,36 @@ class RawFuzzTest {
     @FuzzTest
     void x3f(byte[] data) {
         decode(RawFormat.X3F, data);
+    }
+
+    /**
+     * Converts an input of any raw format into a DNG file, which must decode to the photosites, layout and colors
+     * of the input's own sensor image.
+     */
+    @FuzzTest
+    void convert(byte[] data) {
+        var run = Fuzz.start("DNG conversion");
+        var plain = RawDecoderOptions.builder().limits(Fuzz.LIMITS).build();
+        var options = DngEncoderOptions.builder()
+                .compression(run.sampled(data, 0, 2) ? DngCompression.LOSSLESS_JPEG : DngCompression.UNCOMPRESSED)
+                .tileSize(32)
+                .preview(run.sampled(data, 1, 2))
+                .previewSize(256)
+                .build();
+        run.value("convert", () -> DngEncoder.convert(MediaSource.of(data), plain, options)).ifPresent(dng -> {
+            run.output();
+            var source = RawDecoder.decodeRaw(MediaSource.of(data), plain);
+            var unlimited = plain.toBuilder().limits(MediaLimits.DEFAULT).build();
+            var written = RawDecoder.decodeRaw(MediaSource.of(dng), unlimited);
+            if (written.width() != source.width() || written.height() != source.height()
+                    || written.channels() != source.channels()
+                    || !Arrays.equals(written.samples(), source.samples())
+                    || !written.cfaPattern().equals(source.cfaPattern())
+                    || written.cfaLayout() != source.cfaLayout()
+                    || !written.colorPlanes().equals(source.colorPlanes())) {
+                throw new AssertionError("the DNG file does not decode to the sensor image of its source");
+            }
+        });
     }
 
     private static void decode(RawFormat format, byte[] data) {

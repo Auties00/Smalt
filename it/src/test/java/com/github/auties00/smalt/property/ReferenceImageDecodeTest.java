@@ -10,7 +10,14 @@ import com.github.auties00.smalt.image.Images;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.YuvPicture;
+import com.github.auties00.smalt.image.ImageDecoderOptions;
+import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.metadata.ImageMetadataEdit;
+import com.github.auties00.smalt.image.raw.CfaPattern;
+import com.github.auties00.smalt.image.raw.DngCompression;
+import com.github.auties00.smalt.image.raw.DngEncoder;
+import com.github.auties00.smalt.image.raw.DngEncoderOptions;
+import com.github.auties00.smalt.image.raw.RawImage;
 import com.github.auties00.smalt.image.metadata.ImageMetadataEditor;
 import com.github.auties00.smalt.internal.heif.HeifFile;
 import com.github.auties00.smalt.internal.heif.HeifProperty;
@@ -435,6 +442,43 @@ class ReferenceImageDecodeTest {
             if (format != ImageFormat.GIF) {
                 EXACT.assertWithin(extension + " source", rgba(source), smalt(read(file)));
             }
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @EnumSource(DngCompression.class)
+        @DisplayName("DNG passes the DNG SDK's validator, which reads back the stored samples exactly")
+        void dng(DngCompression compression) {
+            var source = source(false);
+            var cfa = CfaPattern.bayer("RGGB");
+            var samples = new short[WIDTH * HEIGHT];
+            for (var y = 0; y < HEIGHT; y++) {
+                for (var x = 0; x < WIDTH; x++) {
+                    var channel = cfa.color(y % 2, x % 2).code();
+                    samples[y * WIDTH + x] = (short) ((source.pixels()[(y * WIDTH + x) * 4 + channel] & 0xFF) * 257);
+                }
+            }
+            var image = RawImage.ofCfa(WIDTH, HEIGHT, samples, cfa, new double[]{0.5, 1, 0.7},
+                    new double[]{0.4361, 0.3851, 0.1431, 0.2225, 0.7169, 0.0606, 0.0139, 0.0971, 0.7142});
+            var file = save("dng-" + compression + ".dng", DngEncoder.encode(image, DngEncoderOptions.builder()
+                    .compression(compression).build()));
+            var stage1 = file.resolveSibling(file.getFileName() + "-stage1");
+            var result = Oracle.execute(Oracle.Tool.DNG_VALIDATE, Duration.ofMinutes(2), null, List.of("-1",
+                    stage1.toString(), file.toString()));
+            var output = new String(result.stdout(), StandardCharsets.UTF_8) + result.stderr();
+            assertEquals(0, result.exitCode(), output);
+            assertTrue(output.contains("Validation complete"), output);
+            assertFalse(output.contains("*** Warning") || output.contains("*** Error"), output);
+            // the stored image has a margin of two photosites around the default crop, the source
+            var stored = (Rgba16Picture) Images.decode(MediaSource.of(read(stage1.resolveSibling(
+                    stage1.getFileName() + ".tif"))), ImageDecoderOptions.builder().highBitDepth(true).build())
+                    .picture();
+            var cropped = new short[WIDTH * HEIGHT];
+            for (var y = 0; y < HEIGHT; y++) {
+                for (var x = 0; x < WIDTH; x++) {
+                    cropped[y * WIDTH + x] = stored.pixels()[(y + 2) * stored.stride() + (x + 2) * 4];
+                }
+            }
+            EXACT.assertWithin("dng_validate stage 1", samples, cropped, 16);
         }
 
         @Test

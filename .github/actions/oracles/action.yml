@@ -23,7 +23,7 @@ runs:
       uses: actions/cache/restore@v4
       with:
         path: ~/.smalt/oracles
-        key: oracles-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/testdata/oracles.tsv', 'tools/testdata/oracles.py', 'tools/testdata/png-oracle/*.c', 'tools/testdata/icc-hdr/*.c', 'tools/testdata/mpeg4-oracle/build.py', 'tools/testdata/gif-oracle/*.c') }}
+        key: oracles-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/testdata/oracles.tsv', 'tools/testdata/oracles.py', 'tools/testdata/png-oracle/*.c', 'tools/testdata/icc-hdr/*.c', 'tools/testdata/mpeg4-oracle/build.py', 'tools/testdata/gif-oracle/*.c', 'tools/testdata/dng-validate/build.py') }}
 
     - name: Restore the ffmpeg build
       id: ffmpeg

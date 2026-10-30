@@ -2,6 +2,9 @@ package com.github.auties00.smalt.aot.internal;
 
 import com.github.auties00.smalt.aot.TrainingFamily;
 import com.github.auties00.smalt.aot.TrainingWorkload;
+import com.github.auties00.smalt.image.raw.DngCompression;
+import com.github.auties00.smalt.image.raw.DngEncoder;
+import com.github.auties00.smalt.image.raw.DngEncoderOptions;
 import com.github.auties00.smalt.image.raw.RawDecoder;
 import com.github.auties00.smalt.image.raw.RawDecoderOptions;
 import com.github.auties00.smalt.image.raw.RawHighlights;
@@ -12,7 +15,7 @@ import java.util.List;
 import static com.github.auties00.smalt.aot.internal.WorkloadFactory.file;
 
 /**
- * Creates the workloads of {@link TrainingFamily#RAW}, the camera raw decoder of
+ * Creates the workloads of {@link TrainingFamily#RAW}, the camera raw decoder and the DNG encoder of
  * {@code smalt-raw}, on synthetic DNG (Bayer, linear raw, a staggered mosaic with profile
  * tables, and VC-5 sensor data as GoPro's GPR files store it), Minolta MRW, Canon CRW, Canon CR3,
  * Sigma X3F and Fujifilm RAF files.
@@ -40,7 +43,8 @@ final class RawWorkloads {
                 file("raw-decode-crw", RawWorkloads::crw),
                 file("raw-decode-cr3", RawWorkloads::cr3),
                 file("raw-decode-x3f", RawWorkloads::x3f),
-                file("raw-decode-raf", RawWorkloads::raf));
+                file("raw-decode-raf", RawWorkloads::raf),
+                file("raw-encode-dng", RawWorkloads::dng));
     }
 
     /**
@@ -168,6 +172,28 @@ final class RawWorkloads {
         return vendor("raw-decode-raf", List.of(SyntheticRaf.compressed(picture, false, false),
                 SyntheticRaf.compressed(picture, true, false), SyntheticRaf.compressed(picture, false, true),
                 SyntheticRaf.compressed(picture, true, true), SyntheticRaf.superCcd(small)));
+    }
+
+    /**
+     * Returns a workload that writes DNG files: the sensor image of a 1024x768 Bayer DNG with lossless JPEG tiles
+     * and a preview and uncompressed without one, the linear raw image of a 640x480 DNG, and the conversion of a
+     * 1024x768 MRW file.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload dng() {
+        var picture = SyntheticImages.rgba(SyntheticVideo.natural(1024, 768, 1).getFirst(), false);
+        var bayer = RawDecoder.decodeRaw(MediaSource.of(SyntheticRaw.bayer(picture)));
+        var linear = RawDecoder.decodeRaw(MediaSource.of(SyntheticRaw.linearRaw(
+                SyntheticImages.rgba(SyntheticVideo.natural(640, 480, 1).getFirst(), false))));
+        var mrw = SyntheticVendorRaw.mrw(picture, true);
+        var uncompressed = DngEncoderOptions.builder().compression(DngCompression.UNCOMPRESSED).preview(false).build();
+        return TrainingWorkload.of("raw-encode-dng", () -> {
+            Blackhole.consume(DngEncoder.encode(bayer).length);
+            Blackhole.consume(DngEncoder.encode(bayer, uncompressed).length);
+            Blackhole.consume(DngEncoder.encode(linear).length);
+            Blackhole.consume(DngEncoder.convert(MediaSource.of(mrw)).length);
+        });
     }
 
     /**
