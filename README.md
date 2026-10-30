@@ -818,6 +818,31 @@ decrypts the SAMPLE-AES playlists to the clear packets; the SAMPLE-AES slices an
 Packager's bit for bit. ffmpeg plays every layout; it cannot read DASH `SegmentList` media ranges, which dash.js
 and Shaka Player do.
 
+### RTP payload formats
+
+`smalt-core` package `rtp` carries the packets of realtime codecs in RTP: `RtpPacketizer` turns an elementary
+stream's packets (as the demuxers and encoders give them) into RTP packets, and `RtpDepacketizer` reassembles
+them, putting reordered packets back in sequence within a window, dropping duplicates, reporting lost, late and
+unparsable packets, and flagging each unit a loss can have damaged. `RtpPacket` reads and writes the RFC 3550 packet
+(contributing sources, header extension with the RFC 8285 elements, padding), and `RtpPayloadFormat` the SDP
+`rtpmap` and `fmtp` of a format, derived from a track or parsed from a session description. The package opens no
+socket and sends no RTCP; transport, SRTP, retransmission and FEC are the application's.
+
+| Format | Packetizer | Depacketizer | Source |
+|---|---|---|---|
+| H.264 (`H264`) | packetization modes 0, 1 (single NAL unit, STAP-A, FU-A with fragments of equal size) and 2 (STAP-B, FU-B, FU-A with decoding order numbers); Annex B or length-prefixed input; the `sprop-parameter-sets` before IDR pictures that lack them | every packet type of the three modes, MTAP16 and MTAP24 included; de-interleaving by decoding order number (`sprop-interleaving-depth`, `sprop-max-don-diff`); access units with 4-byte lengths, a new `avcC` as side data when in-band parameter sets change | RFC 6184 |
+| VP8 (`VP8`) | payload descriptor with a 7- or 15-bit picture identifier or none | every descriptor extension (picture identifier, `TL0PICIDX`, `TID`, `KEYIDX`) | RFC 7741 |
+| VP9 (`VP9`) | non-flexible mode, one spatial layer, superframes split into pictures, the scalability structure with the frame size on key frames | flexible and non-flexible modes, layer indices, reference indices, scalability structures; the frames of a picture (and a hidden frame with the following shown one) joined into a superframe | RFC 9628 |
+| AV1 (`AV1`) | aggregation header, OBUs without size fields, aggregation and fragmentation, OBUs of other layers in other packets, the temporal delimiter and tile lists dropped, `N` on key temporal units | every element layout (`W` 0 to 3, fragments over any number of packets, empty elements); temporal units of OBUs with size fields; `Av1DependencyDescriptor` reads and writes the dependency descriptor header extension (templates, decode targets, chains, resolutions, custom fields), which the packetizer attaches on request | AOMedia RTP Payload Format for AV1 |
+| Opus (`opus`) | one Opus packet per RTP packet | the same, with the duration from the table of contents | RFC 7587 |
+| AMR and AMR-WB (`AMR`, `AMR-WB`) | bandwidth-efficient and octet-aligned modes, any channel count, frame CRCs, robust sorting, frame-block interleaving, several frame-blocks per packet | the same; the quality bit cleared on a CRC mismatch, redundant blocks dropped | RFC 4867 |
+| MPEG-4 generic (`mpeg4-generic`) | `AAC-hbr`, `AAC-lbr` and `generic` AU header sections (sizes, indices, CTS and DTS flags, random access flags, stream states, auxiliary section), aggregation and fragmentation | the same; CTS deltas, de-interleaving by AU index (`constantDuration`, `maxDisplacement`) | RFC 3640 |
+
+ffmpeg's RTP muxer and demuxer are the black-box peer of the tests over loopback UDP: H.264, VP8, VP9, Opus,
+AMR, AMR-WB and AAC go both ways, packets bit for bit; the depacketizers also pass the payload vectors of libwebrtc's unit
+tests (H.264, VP8, VP9, AV1), and Smalt's decoders decode what went through a reordering network exactly as they
+decode the encoders' own packets.
+
 ### Subtitles
 
 Text subtitle tracks are `DataTrack`s with the codecs `SUBRIP`, `WEBVTT`, `MOV_TEXT` and `ASS`
@@ -1077,6 +1102,13 @@ checks a FLAC source's MD5 signature on the way.
 | Microphones and speakers | `smalt-capture` | `capture.audio` | Windows: WASAPI (shared mode with the engine's PCM converter and `IAudioClient3` short periods, exclusive mode, loopback of an output, endpoint notifications). macOS: CoreAudio HAL output unit (shared mode; no exclusive mode, no loopback). Linux: ALSA, whose `default` device reaches PulseAudio or PipeWire (shared mode; exclusive mode opens a device without software resampling; no loopback; changes found by polling). Float or 16-bit samples, any rate and channel count in the shared mode, capture and playback delays for echo cancellation. Run on the CI runners of all three systems against loopback devices. |
 
 ### Known limits
+
+- RTP payload formats: the AV1 packetizer writes the dependency descriptor of a single-layer stream only (one
+  frame per temporal unit), and the depacketizer does not use the descriptor, whose structures
+  `Av1DependencyDescriptor` reads for any scalability mode; the VP9 packetizer writes only the non-flexible mode
+  with one spatial layer, and the H.264 interleaved packetizer sends NAL units in decoding order. ffmpeg has no AV1 RTP payload format, so AV1 is tested against the libwebrtc
+  vectors and round trips only, and no AMR implementation with frame CRCs, robust sorting or interleaving was
+  available to interoperate with.
 
 - Region decoding (`ImageDecoderOptions.region`): a progressive or 12-bit JPEG frame keeps the coefficients of the
   whole frame, since its scans refine every block, so the limits bound the whole frame, and it transforms only the
@@ -3152,7 +3184,9 @@ follow), the ISO/IEC 23003-3 reference software of MPEG-D USAC (with the MPEG Su
 AAC decoders it includes, which Smalt's follow) and the ISO/IEC 23003-4 reference software of MPEG-D DRC; the [Alliance for Open Media](https://aomedia.org/)'s AV1 and AVIF specifications and its carriage of AV1 in MPEG-2 TS; the VP8
 (RFC 6386) and VP9 bitstream specifications; Google's [Spatial Audio RFC](https://github.com/google/spatial-media)
 (the `SA3D` box and its ambisonic conventions) and Chromium's reading of Opus mapping family 3 in MP4; the IETF's
-Opus, Ogg and AMR payload RFCs (RFC 8486 for ambisonics), and its CELLAR
+Opus, Ogg and AMR payload RFCs (RFC 8486 for ambisonics), its RTP payload formats of H.264, VP8, VP9, Opus,
+AMR and MPEG-4 elementary streams (RFC 6184, 7741, 9628, 7587, 4867 and 3640) and the Alliance for Open Media's
+RTP payload format of AV1, and its CELLAR
 working group's Matroska and FFV1 (RFC 9043) specifications; 3GPP's AMR and AMR-WB reference code; ITU-T G.722 and G.726 and ETSI EN
 300 961 (GSM 06.10) with their digital test sequences (the G.726 ones as the ITU-T Software Tools Library
 distributes them), the IMA ADPCM recommendation, Microsoft's ADPCM formats and Apple's `ima4`; ATSC A/52 and ETSI TS 102 366
@@ -3200,7 +3234,8 @@ pbmtojbg and jbgtopbm, [tifffile](https://github.com/cgohlke/tifffile) and [imag
 ExifTool, Adobe DNG Converter, Sandflow's [imscJS](https://github.com/sandflow/imscJS), the IMSC reference
 implementation, the Fraunhofer [FDK AAC](https://github.com/mstorsjo/fdk-aac) library, and the Dolby Digital
 Plus decoder of Windows Media Foundation, and the BBC's [bmx](https://github.com/bbc/bmx), whose raw2bmx writes
-MXF test files and whose mxf2raw reads Smalt's. Code Intelligence's [Jazzer](https://github.com/CodeIntelligenceTesting/jazzer),
+MXF test files and whose mxf2raw reads Smalt's; the payload vectors of [libwebrtc](https://webrtc.googlesource.com/src)'s RTP
+depacketizer unit tests check Smalt's H.264, VP8, VP9 and AV1 depacketizers. Code Intelligence's [Jazzer](https://github.com/CodeIntelligenceTesting/jazzer),
 on LLVM's libFuzzer, fuzzes every parser and decoder, and Google's
 [ClusterFuzzLite](https://google.github.io/clusterfuzzlite/) runs it in CI. The test
 vectors and samples they run on come from the ITU-T and ISO conformance suites, the WebM project, the

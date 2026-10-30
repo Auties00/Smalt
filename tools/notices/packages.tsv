@@ -19,6 +19,8 @@ audio.amr.internal.nb	mpeg
 audio.amr.internal.wb	mpeg
 audio.amr.internal.wbcommon	mpeg
 audio.amr.internal.wbenc	mpeg
+audio.dts	mpeg
+audio.dts.internal	mpeg
 audio.flac	audio
 audio.g722	audio
 audio.g726	audio
@@ -60,6 +62,7 @@ container.au	core
 container.avi	core
 container.caf	core
 container.dash	core
+container.dts	core
 container.flac	core
 container.flv	core
 container.hls	core
@@ -170,6 +173,7 @@ io	core
 metadata	core
 preview	core
 probe	core
+rtp	core
 spi	core
 subtitle	core
 track	core

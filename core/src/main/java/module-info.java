@@ -30,7 +30,8 @@
  * The {@code metadata} package reads and writes the tags, cover art and chapters of audio and video
  * files without touching their streams, and models XMP packets. The {@code subtitle} package reads,
  * writes and converts text subtitles, and {@code audio.loudness} measures loudness (EBU R128),
- * detects silence and computes normalization gains.
+ * detects silence and computes normalization gains. The {@code rtp} package carries the packets of H.264, VP8,
+ * VP9, AV1, Opus, AMR and AAC streams in RTP payloads and reassembles them.
  *
  * <p>Smalt's exceptions are serializable, but their serialized forms are not compatible across
  * releases.
@@ -120,6 +121,9 @@ module com.github.auties00.smalt {
 
     // Remuxing and transcoding over the registries
     exports com.github.auties00.smalt.transcode;
+
+    // RTP payload formats of the realtime codecs
+    exports com.github.auties00.smalt.rtp;
 
     // Internals shared with the other Smalt modules
     exports com.github.auties00.smalt.internal.anim to
