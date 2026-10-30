@@ -66,7 +66,8 @@ class MpegDecoderBehaviorTest {
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"mp4/moov-last.mp4", "adts/aac.aac", "ts/h264-ac3.m2ts", "ac3/ac3.ac3", "ac3/eac3.eac3",
             "amr/nb.amr", "amr/wb.awb", "amr/nb-stereo.amr", "amr/wb-3ch.awb", "mp4/h263-amr.3gp", "wav/loas.wav",
-            "wav/aac-raw.wav", "wav/ac3.wav", "wav/iec61937-ac3.wav", "wav/iec61937-aac.wav", "wav/amr.wav"})
+            "wav/aac-raw.wav", "wav/ac3.wav", "wav/iec61937-ac3.wav", "wav/iec61937-aac.wav", "wav/amr.wav",
+            "dts/dts.dts", "ts/h264-dts.m2ts", "wav/dts.wav"})
     @DisplayName("audio samples: identical samples under every source behavior and clean faults")
     void audio(String sample) throws IOException {
         ReaderAsserts.audio(sample, Files.readAllBytes(SAMPLES.resolve(sample))).run();
@@ -81,7 +82,8 @@ class MpegDecoderBehaviorTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @ValueSource(strings = {"mpegff-male_amr122.3gp", "mpeg4audio-al00_08.mp4", "eac3-csi_miami_5.1_256_spx_small.eac3"})
+    @ValueSource(strings = {"mpegff-male_amr122.3gp", "mpeg4audio-al00_08.mp4", "eac3-csi_miami_5.1_256_spx_small.eac3",
+            "dts-xll_51_24_48_none.dtshd", "dts-xxch_71_24_48_2046.dtshd", "dts-x96_51_24_96_1509.dtshd"})
     @DisplayName("audio smoke vectors: identical samples under every source behavior and clean faults")
     void audioVector(String name) throws IOException {
         ReaderAsserts.audio("vectors/" + name, Files.readAllBytes(Conformance.fetchListed(name))).run();

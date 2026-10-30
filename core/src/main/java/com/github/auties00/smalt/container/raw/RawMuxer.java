@@ -281,10 +281,10 @@ public final class RawMuxer implements Muxer {
      *
      * <p>{@link ContainerFormat#MPEG_AUDIO} carries MP3 and MP2, {@link ContainerFormat#FLAC} FLAC,
      * {@link ContainerFormat#AMR} AMR-NB and AMR-WB, {@link ContainerFormat#AC3} AC-3 and E-AC-3,
-     * {@link ContainerFormat#H264}, {@link ContainerFormat#HEVC}, {@link ContainerFormat#AV1},
-     * {@link ContainerFormat#AV1_ANNEX_B}, {@link ContainerFormat#MPEG4_VIDEO}, {@link ContainerFormat#H263} and
-     * {@link ContainerFormat#WAVPACK} their codec, and {@link ContainerFormat#PCM} every PCM codec; every other
-     * format is not an elementary stream this muxer writes.
+     * {@link ContainerFormat#DTS} DTS, {@link ContainerFormat#H264}, {@link ContainerFormat#HEVC},
+     * {@link ContainerFormat#AV1}, {@link ContainerFormat#AV1_ANNEX_B}, {@link ContainerFormat#MPEG4_VIDEO},
+     * {@link ContainerFormat#H263} and {@link ContainerFormat#WAVPACK} their codec, and {@link ContainerFormat#PCM}
+     * every PCM codec; every other format is not an elementary stream this muxer writes.
      *
      * @param format the file format
      * @param codec the codec of the track
@@ -298,6 +298,7 @@ public final class RawMuxer implements Muxer {
             case FLAC -> codec == Codec.FLAC;
             case AMR -> codec == Codec.AMR_NB || codec == Codec.AMR_WB;
             case AC3 -> codec == Codec.AC3 || codec == Codec.EAC3;
+            case DTS -> codec == Codec.DTS;
             case H264 -> codec == Codec.H264;
             case HEVC -> codec == Codec.HEVC;
             case AV1, AV1_ANNEX_B -> codec == Codec.AV1;

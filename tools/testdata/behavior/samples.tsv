@@ -27,6 +27,7 @@ core/src/test/resources/samples/caf/alac.caf	46380	43616f94df3600f9a0e3804616a24
 core/src/test/resources/samples/caf/ima4.caf	14205	27ec48c5fb9fe33e39dbaab3cef4baccba6fc5316e7d69c45395413408dce01c	make-audio-container-samples.py
 core/src/test/resources/samples/caf/opus.caf	2534	76e61e028f2aaa1ca91b304a60272c0484670591bebb5b1003c0f3a8a1d76d19	make-audio-container-samples.py
 core/src/test/resources/samples/caf/s16.caf	53049	7142b32d44cddd530e27ad914d454139d6dce6a8f4e59168e0d1b4ef8763296a	make-audio-container-samples.py
+core/src/test/resources/samples/dts/dts.dts	80964	00131c2a2fceab37d185f689d3451fcacc55bb26326bd265076df91ef0bfa144	make-samples.sh
 core/src/test/resources/samples/elementary/av1-annexb.obu	15637	b5e670c82b8d929fbf930383ba83b5cb1eaed75974afde393a72266e7551ebfc	make-samples.sh
 core/src/test/resources/samples/elementary/av1.obu	15577	c2b46137baf88f641c5a1e81ce48578c2a8df0a0e652ad43440d04c5801809b7	make-samples.sh
 core/src/test/resources/samples/elementary/h263.263	31736	1bbd3e459ac6c382583220c98331ac2bce55d933c828c4d1228b0e104abedeba	make-samples.sh
@@ -126,6 +127,7 @@ core/src/test/resources/samples/ts/dvb-subtitles.ts	3196	21c3536a8c4afef49fa1b56
 core/src/test/resources/samples/ts/h264-aac.ts	56024	1d1be5df58c4e151117773533d98c3de47efa31ec059d491622a1be7870fefe9	make-samples.sh
 core/src/test/resources/samples/ts/h264-ac3.m2ts	73728	1ffeb7b1c6cd63f72ac245496308111bc78ff60d802ecbcc8bb167dbd9b58dc0	make-samples.sh
 core/src/test/resources/samples/ts/h264-captions.ts	32148	351b7f5fd0594443cb46796f6509f8a41d86d8918a9c3e75046f555c2e1cf24e	make-samples.sh, make-bitmap-caption-samples.py
+core/src/test/resources/samples/ts/h264-dts.m2ts	147456	1656914a3118f68c610d3ccb0c729cc52cf3ffffe21c0303cdebdcf9126e5ad2	make-samples.sh
 core/src/test/resources/samples/ts/mpeg2.ts	38540	c6bfbd8c682e1ad9ad5f5f15e287c968862e7b0eed9c05fd0318b738a7f3dcc7	make-samples.sh
 core/src/test/resources/samples/ts/mpeg4-lpcm.m2ts	159744	72de59960c421f590a8dcb65cc8c9655b91734722ea7225f35473cbf8dc1b18d	make-samples.sh
 core/src/test/resources/samples/ts/pmt-change.ts	68244	d2b5e4852700e5cae87b28157f1513484d6808ada4fef97cac2a87ec3b582db9	make-samples.sh

@@ -138,6 +138,11 @@ class DemuxerFuzzTest {
     }
 
     @FuzzTest
+    void dts(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.DTS, data);
+    }
+
+    @FuzzTest
     void subRip(byte[] data) {
         FuzzMedia.demuxer(ContainerFormat.SUBRIP, data);
     }

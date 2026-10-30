@@ -15,6 +15,7 @@ import com.github.auties00.smalt.audio.ac3.Ac3Encoder;
 import com.github.auties00.smalt.audio.ac3.Ac3EncoderOptions;
 import com.github.auties00.smalt.audio.ac3.Eac3Encoder;
 import com.github.auties00.smalt.audio.ac3.Eac3EncoderOptions;
+import com.github.auties00.smalt.audio.dts.DtsDecoder;
 import com.github.auties00.smalt.audio.amr.AmrDecoder;
 import com.github.auties00.smalt.audio.amr.AmrEncoder;
 import com.github.auties00.smalt.audio.amr.AmrEncoderOptions;
@@ -196,6 +197,7 @@ final class MpegWorkloads {
                 file("aac-surround-decode", () -> aacSurroundDecode(4)),
                 file("ac3", () -> ac3(6)),
                 file("eac3", () -> eac3("eac3", Eac3EncoderOptions.defaults(), 6)),
+                file("dts-decode", MpegWorkloads::dtsDecode),
                 file("iec61937-wav", () -> iec61937(4)),
                 file("aac-wav", () -> aacWave(4)),
                 file("amr-nb-encode", () -> amrEncode("amr-nb-encode", Codec.AMR_NB, 4)),
@@ -642,6 +644,33 @@ final class MpegWorkloads {
      */
     private static final List<String> MPEG_VIDEO_STREAMS = List.of("frame-bframes.m2v", "field-dualprime.m2v",
             "field-422-bframes.m2v", "mpeg1-bframes.m1v");
+
+    /**
+     * Returns a workload that decodes the DTS training stream: synthetic 5.1 core frames coded with every tool of
+     * the core (Huffman, block and plain codes, ADPCM, high frequency vectors, transients, joint intensity, the LFE
+     * channel) and both synthesis filter banks, written by smalt-mpeg's {@code DtsTrainingStreamTest}.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload dtsDecode() {
+        byte[] stream;
+        try (var input = MpegWorkloads.class.getResourceAsStream("dts/training.dts")) {
+            stream = input.readAllBytes();
+        } catch (java.io.IOException | NullPointerException exception) {
+            throw new IllegalStateException("missing training stream dts/training.dts", exception);
+        }
+        var packets = new ArrayList<Packet>();
+        var position = 0;
+        while (position + 8 <= stream.length) {
+            var size = ((stream[position + 5] & 0x03) << 12 | (stream[position + 6] & 0xFF) << 4
+                    | (stream[position + 7] & 0xF0) >> 4) + 1;
+            packets.add(new Packet(1, Arrays.copyOfRange(stream, position, position + size), Packet.NO_TIMESTAMP,
+                    Packet.NO_TIMESTAMP, 0, true));
+            position += size;
+        }
+        return AudioStreams.decode("dts-decode", packets, new DtsDecoder(AudioStreams.track(Codec.DTS, 48000,
+                ChannelLayout.SURROUND_5_1, null)));
+    }
 
     /**
      * Returns a workload that decodes the MPEG-1 and MPEG-2 video streams, each in one packet.

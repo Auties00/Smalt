@@ -16,6 +16,7 @@ import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.container.internal.SphericalBoxes;
 import com.github.auties00.smalt.internal.codec.Ac3Configs;
+import com.github.auties00.smalt.internal.codec.DtsConfigs;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
@@ -813,6 +814,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                         case EsDescriptor.MPEG2_AUDIO, EsDescriptor.MPEG1_AUDIO -> Codec.MP3;
                         case 0xA5 -> Codec.AC3;
                         case 0xA6 -> Codec.EAC3;
+                        case 0xA9, 0xAA, 0xAB, 0xAC -> Codec.DTS;
                         case 0xAD -> Codec.OPUS;
                         case 0xDD -> Codec.VORBIS;
                         default -> Codec.UNKNOWN_AUDIO;
@@ -902,6 +904,23 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                     }
                     if (audio.layout == null) {
                         audio.layout = stream.layout();
+                    }
+                }
+            }
+            case BoxTypes.DTSC, BoxTypes.DTSH, BoxTypes.DTSL, BoxTypes.DTSE -> {
+                codec = Codec.DTS;
+                if (audio.ddts != null && audio.ddts.length >= 20) {
+                    var rate = (audio.ddts[0] & 0xFF) << 24 | (audio.ddts[1] & 0xFF) << 16 | (audio.ddts[2] & 0xFF) << 8
+                            | audio.ddts[3] & 0xFF;
+                    if (rate > 0) {
+                        sampleRate = rate;
+                    }
+                    var layout = DtsConfigs.layoutOfMask((audio.ddts[17] & 0xFF) << 8 | audio.ddts[18] & 0xFF);
+                    if (layout != null) {
+                        channels = layout.channels();
+                        if (audio.layout == null) {
+                            audio.layout = layout;
+                        }
                     }
                 }
             }
@@ -1141,6 +1160,11 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         private byte[] dec3;
 
         /**
+         * The {@code ddts} payload, or {@code null}.
+         */
+        private byte[] ddts;
+
+        /**
          * The {@code ALACSpecificConfig}, or {@code null}.
          */
         private byte[] alac;
@@ -1202,6 +1226,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                         case BoxTypes.DOPS -> dops = body.rest();
                         case BoxTypes.DAC3 -> dac3 = body.rest();
                         case BoxTypes.DEC3 -> dec3 = body.rest();
+                        case BoxTypes.DDTS -> ddts = body.rest();
                         case BoxTypes.DFLA -> {
                             body.fullBoxHeader();
                             dfla = body.rest();

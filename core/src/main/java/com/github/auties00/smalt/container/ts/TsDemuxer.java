@@ -71,6 +71,12 @@ import java.util.function.Function;
  *       with a DVB AC-3 or enhanced AC-3 descriptor or the {@code "AC-3"} or {@code "EAC3"}
  *       registration): one packet per access unit (a sync frame with its dependent substreams),
  *       as MP4 and Matroska store them;</li>
+ *   <li>DTS and DTS-HD (the Blu-ray {@code 0x82}, {@code 0x85}, {@code 0x86} and {@code 0xA2} in a program with
+ *       the {@code "HDMV"} registration, {@code 0x06} with the {@code "DTS1"}, {@code "DTS2"} or {@code "DTS3"}
+ *       registration or a DVB DTS or DTS-HD descriptor, and {@code 0x82} or {@code 0x06} without a descriptor
+ *       whose first payload starts with a DTS sync word, as ffmpeg writes it) as {@link Codec#DTS}: one packet per
+ *       access unit (a core frame with the extension substream frames that follow it, or an extension substream
+ *       frame of a stream without core);</li>
  *   <li>Opus ({@code 0x06} with the {@code "Opus"} registration): Opus packets with an
  *       {@code OpusHead} built from the DVB extension descriptor;</li>
  *   <li>uncompressed audio: Blu-ray linear PCM ({@code 0x80} in a program with the
@@ -98,7 +104,7 @@ import java.util.function.Function;
  *       are dropped;</li>
  *   <li>other PES streams: private data ({@code 0x06}, user private types from {@code 0x80})
  *       become data tracks with the handler {@code "private"}, except that a {@code 0x06} stream without a
- *       descriptor whose first payload starts with an ADTS, LOAS, AC-3 or MPEG audio header or an MPEG-4 Part 2
+ *       descriptor whose first payload starts with an ADTS, LOAS, AC-3, DTS or MPEG audio header or an MPEG-4 Part 2
  *       start code is that audio or video (M2TS writers declare AAC and MPEG-4 Part 2 that way); the other
  *       Blu-ray audio types are passed through one PES packet per packet.</li>
  * </ul>
@@ -1324,9 +1330,12 @@ public final class TsDemuxer implements Demuxer {
             case 0x80 -> hdmv ? new PcmParser(stream, limits, false) : new PesParser(stream, limits, Codec.DATA, "private");
             case 0x81, 0x87 -> new Ac3Parser(stream, limits);
             case 0x84 -> hdmv ? new Ac3Parser(stream, limits) : new PesParser(stream, limits, Codec.DATA, "private");
-            case 0x82, 0x83, 0x85, 0xA1, 0xA2 -> hdmv ? new PesParser(stream, limits, Codec.UNKNOWN_AUDIO, null)
+            case 0x82 -> hdmv ? new DtsParser(stream, limits) : new SniffingParser(stream, limits);
+            case 0x85, 0xA2 -> hdmv ? new DtsParser(stream, limits)
                     : new PesParser(stream, limits, Codec.DATA, "private");
-            case 0x86 -> hdmv ? new PesParser(stream, limits, Codec.UNKNOWN_AUDIO, null) : new Scte35Parser(stream, limits);
+            case 0x83, 0xA1 -> hdmv ? new PesParser(stream, limits, Codec.UNKNOWN_AUDIO, null)
+                    : new PesParser(stream, limits, Codec.DATA, "private");
+            case 0x86 -> hdmv ? new DtsParser(stream, limits) : new Scte35Parser(stream, limits);
             case 0x90 -> new PesParser(stream, limits, Codec.PGS, null);
             case 0xEA -> new PesParser(stream, limits, Codec.UNKNOWN_VIDEO, null);
             case 0x06 -> privateParser(stream, limits);
@@ -1357,6 +1366,10 @@ public final class TsDemuxer implements Demuxer {
         }
         if (stream.registered(Psi.HEVC)) {
             return new NalParser(stream, limits, true);
+        }
+        if (stream.dtsDescriptor() || stream.registered(Psi.DTS1) || stream.registered(Psi.DTS2)
+                || stream.registered(Psi.DTS3)) {
+            return new DtsParser(stream, limits);
         }
         if (stream.registered(Psi.ID3) || stream.id3Metadata()) {
             return new PesParser(stream, limits, Codec.DATA, PesParser.ID3_HANDLER);

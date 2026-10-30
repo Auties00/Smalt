@@ -234,6 +234,8 @@ class FuzzSeedWriter {
                 "-b:a", "64k"));
         copy(DemuxerFuzzTest.class, "ac3", "valid-eac3.eac3", ffmpeg("eac3", tone(48000, 0.1), "-c:a", "eac3",
                 "-b:a", "64k"));
+        copy(DemuxerFuzzTest.class, "dts", "valid-dts.dts", ffmpeg("dts", tone(48000, 0.1), "-c:a", "dca",
+                "-strict", "-2", "-b:a", "320k"));
 
         write(DemuxerFuzzTest.class, "subRip", "valid-cues.srt", SRT.getBytes(StandardCharsets.UTF_8));
         write(DemuxerFuzzTest.class, "webVtt", "valid-cues.vtt", VTT.getBytes(StandardCharsets.UTF_8));

@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.container.wav;
 
+import com.github.auties00.smalt.container.internal.DtsFramesDemuxer;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.audio.Ambisonics;
 import com.github.auties00.smalt.audio.ChannelLayout;

@@ -2,6 +2,7 @@ package com.github.auties00.smalt.internal.codec;
 
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.Speaker;
+import com.github.auties00.smalt.internal.bits.MsbBitReader;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -153,6 +154,18 @@ public final class DtsConfigs {
     }
 
     /**
+     * Returns whether the core frame whose header starts at an offset signals the X96 extension ({@code EXT_AUDIO}
+     * set with {@code EXT_AUDIO_ID} 2), which doubles its sampling rate.
+     *
+     * @param data the bytes
+     * @param offset the index of the sync word, with at least {@value #HEADER_SIZE} bytes after it
+     * @return whether the frame carries X96
+     */
+    public static boolean hasX96(byte[] data, int offset) {
+        return bits(data, offset, 80, 3) == 2 && bits(data, offset, 83, 1) == 1;
+    }
+
+    /**
      * Returns the channel layout of the core frame whose header starts at an offset: the speakers of its
      * {@code AMODE} arrangement followed by the low frequency effects channel when {@code LFF} signals one.
      *
@@ -186,13 +199,95 @@ public final class DtsConfigs {
     public static final int EXTENSION_HEADER_SIZE = 10;
 
     /**
-     * Returns whether a DTS-HD extension substream starts at an offset.
+     * The speakers of each bit of the DTS-HD loudspeaker mask (ETSI TS 102 114 Table 7-10), a bit standing for a
+     * speaker or a pair.
+     */
+    private static final Speaker[][] MASK_SPEAKERS = {
+            {Speaker.FRONT_CENTER},
+            {Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT},
+            {Speaker.SIDE_LEFT, Speaker.SIDE_RIGHT},
+            {Speaker.LOW_FREQUENCY},
+            {Speaker.BACK_CENTER},
+            {Speaker.TOP_FRONT_LEFT, Speaker.TOP_FRONT_RIGHT},
+            {Speaker.BACK_LEFT, Speaker.BACK_RIGHT},
+            {Speaker.TOP_FRONT_CENTER},
+            {Speaker.TOP_CENTER},
+            {Speaker.FRONT_LEFT_OF_CENTER, Speaker.FRONT_RIGHT_OF_CENTER},
+            {Speaker.WIDE_LEFT, Speaker.WIDE_RIGHT},
+            {Speaker.SURROUND_DIRECT_LEFT, Speaker.SURROUND_DIRECT_RIGHT},
+            {Speaker.LOW_FREQUENCY_2},
+            {Speaker.TOP_SIDE_LEFT, Speaker.TOP_SIDE_RIGHT},
+            {Speaker.TOP_BACK_CENTER},
+            {Speaker.TOP_BACK_LEFT, Speaker.TOP_BACK_RIGHT}
+    };
+
+    /**
+     * Returns the channel layout of a DTS-HD loudspeaker mask (ETSI TS 102 114 Table 7-10), as the {@code ddts} box
+     * of MP4 and the asset descriptors carry it: the speakers of its bits in WAVE order. The side surround pair
+     * ({@code 0x0800}) is reported as {@link Speaker#SIDE_LEFT} and {@link Speaker#SIDE_RIGHT} when the mask has no
+     * surround pair ({@code 0x0004}).
+     *
+     * @param mask the 16-bit mask
+     * @return the layout, or {@code null} for an empty mask
+     */
+    public static ChannelLayout layoutOfMask(int mask) {
+        var speakers = new ArrayList<Speaker>();
+        for (var bit = 0; bit < 16; bit++) {
+            if ((mask >> bit & 1) == 0) {
+                continue;
+            }
+            for (var speaker : MASK_SPEAKERS[bit]) {
+                if (bit == 11 && (mask & 0x0004) == 0) {
+                    speaker = speaker == Speaker.SURROUND_DIRECT_LEFT ? Speaker.SIDE_LEFT : Speaker.SIDE_RIGHT;
+                }
+                speakers.add(speaker);
+            }
+        }
+        if (speakers.isEmpty()) {
+            return null;
+        }
+        speakers.sort(null);
+        return new ChannelLayout(speakers);
+    }
+
+    /**
+     * The extension substream sync word.
+     */
+    public static final int SUBSTREAM_SYNC = 0x64582025;
+
+    /**
+     * The sample rates of the asset descriptor ({@code nuMaxSampleRate}, ETSI TS 102 114 Table 7-9).
+     */
+    private static final int[] ASSET_RATES = {8000, 16000, 32000, 64000, 128000, 22050, 44100, 88200, 176400, 352800,
+            12000, 24000, 48000, 96000, 192000, 384000};
+
+    /**
+     * The reference clock rates of the extension substream header ({@code nuRefClockCode}).
+     */
+    private static final int[] CLOCK_RATES = {32000, 44100, 48000, 0};
+
+    /**
+     * What the header and first asset descriptor of a DTS-HD extension substream frame tell about the stream.
+     *
+     * @param clockRate the reference clock rate in hertz
+     * @param frameDuration the frame duration in reference clock periods
+     * @param sampleRate the largest sample rate of the asset in hertz
+     * @param speakerMask the loudspeaker mask of the asset (ETSI TS 102 114 Table 7-10), or 0
+     * @param channels the channel count of the asset
+     * @param bits the bit resolution of the asset
+     */
+    public record Substream(int clockRate, int frameDuration, int sampleRate, int speakerMask, int channels,
+                            int bits) {
+    }
+
+    /**
+     * Returns whether an extension substream sync word starts at an offset.
      *
      * @param data the bytes
      * @param offset the index of the first byte, with at least 4 bytes after it
-     * @return {@code true} for the sync word {@code 0x64582025}
+     * @return {@code true} for {@code 0x64582025}
      */
-    public static boolean isExtensionSync(byte[] data, int offset) {
+    public static boolean isSubstreamSync(byte[] data, int offset) {
         return data[offset] == 0x64 && data[offset + 1] == 0x58 && data[offset + 2] == 0x20 && data[offset + 3] == 0x25;
     }
 
@@ -209,6 +304,115 @@ public final class DtsConfigs {
         // the substream size, 8 and 16 bits or 12 and 20 bits, each coded minus one
         var wide = bits(data, offset, 42, 1) != 0;
         return wide ? (int) bits(data, offset, 55, 20) + 1 : (int) bits(data, offset, 51, 16) + 1;
+    }
+
+    /**
+     * Returns the size of the extension substream frame whose header starts at an offset, after checking the
+     * header CRC.
+     *
+     * @param data the bytes
+     * @param offset the index of the sync word
+     * @param available the number of bytes from the offset
+     * @return the frame size in bytes; {@code 0} when more bytes are needed to check the header, {@code -1} when
+     * the header is invalid
+     */
+    public static int substreamSize(byte[] data, int offset, int available) {
+        if (available < 12) {
+            return 0;
+        }
+        if (!isSubstreamSync(data, offset)) {
+            return -1;
+        }
+        var wide = (data[offset + 5] & 0x20) != 0;
+        var header = wide ? (int) bits(data, offset, 43, 12) + 1 : (int) bits(data, offset, 43, 8) + 1;
+        var size = wide ? (int) bits(data, offset, 55, 20) + 1 : (int) bits(data, offset, 51, 16) + 1;
+        if (header < 16 || size < header) {
+            return -1;
+        }
+        if (available < header) {
+            return 0;
+        }
+        var crc = 0xFFFF;
+        for (var i = offset + 5; i < offset + header; i++) {
+            crc ^= (data[i] & 0xFF) << 8;
+            for (var bit = 0; bit < 8; bit++) {
+                crc = (crc & 0x8000) != 0 ? (crc << 1 ^ 0x1021) & 0xFFFF : crc << 1 & 0xFFFF;
+            }
+        }
+        return crc == 0 ? size : -1;
+    }
+
+    /**
+     * Describes an extension substream frame from its header and its first asset descriptor.
+     *
+     * @param data the bytes
+     * @param offset the index of the sync word
+     * @param length the frame size
+     * @return the description, or {@code null} when the frame carries no static fields
+     */
+    public static Substream describeSubstream(byte[] data, int offset, int length) {
+        var reader = new MsbBitReader(data, offset, length);
+        reader.skip(32 + 8);
+        var index = reader.read(2);
+        var wide = reader.readFlag();
+        reader.skip(wide ? 12 + 20 : 8 + 16);
+        if (!reader.readFlag()) {
+            return null;
+        }
+        var clock = CLOCK_RATES[reader.read(2)];
+        var duration = 512 * (reader.read(3) + 1);
+        if (reader.readFlag()) {
+            reader.skip(36);
+        }
+        var presentations = reader.read(3) + 1;
+        var assets = reader.read(3) + 1;
+        var active = new int[presentations];
+        for (var p = 0; p < presentations; p++) {
+            active[p] = reader.read(index + 1);
+        }
+        for (var p = 0; p < presentations; p++) {
+            for (var s = 0; s <= index; s++) {
+                if ((active[p] >> s & 1) != 0) {
+                    reader.skip(8);
+                }
+            }
+        }
+        if (reader.readFlag()) {
+            reader.skip(2);
+            var maskBits = (reader.read(2) + 1) << 2;
+            var configs = reader.read(2) + 1;
+            reader.skip((long) maskBits * configs);
+        }
+        reader.skip((long) assets * (wide ? 20 : 16));
+        reader.skip(9 + 3);
+        if (reader.readFlag()) {
+            reader.skip(4);
+        }
+        if (reader.readFlag()) {
+            reader.skip(24);
+        }
+        if (reader.readFlag()) {
+            reader.skip((reader.read(10) + 1) * 8L);
+        }
+        var bits = reader.read(5) + 1;
+        var rate = ASSET_RATES[reader.read(4)];
+        var channels = reader.read(8) + 1;
+        var mask = 0;
+        if (reader.readFlag()) {
+            if (channels > 2) {
+                reader.skip(1);
+            }
+            if (channels > 6) {
+                reader.skip(1);
+            }
+            if (reader.readFlag()) {
+                mask = reader.read((reader.read(2) + 1) << 2);
+            }
+        }
+        if (reader.overrun() || clock == 0) {
+            return null;
+        }
+        return new Substream(clock, duration, rate, mask, channels, bits);
     }
 
     /**

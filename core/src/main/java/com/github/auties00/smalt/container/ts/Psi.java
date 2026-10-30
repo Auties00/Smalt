@@ -63,6 +63,21 @@ final class Psi {
     static final int OPUS = fourCc("Opus");
 
     /**
+     * The registration {@code format_identifier} of DTS with 512-sample frames ({@code "DTS1"}).
+     */
+    static final int DTS1 = 0x44545331;
+
+    /**
+     * The registration {@code format_identifier} of DTS with 1024-sample frames ({@code "DTS2"}).
+     */
+    static final int DTS2 = 0x44545332;
+
+    /**
+     * The registration {@code format_identifier} of DTS with 2048-sample frames ({@code "DTS3"}).
+     */
+    static final int DTS3 = 0x44545333;
+
+    /**
      * The registration {@code format_identifier} of HEVC ({@code "HEVC"}).
      */
     static final int HEVC = fourCc("HEVC");
@@ -124,6 +139,8 @@ final class Psi {
      * @param language the ISO 639-2 language code, or {@code null}
      * @param ac3Descriptor whether a DVB AC-3 descriptor (tag {@code 0x6A}) is present
      * @param eac3Descriptor whether a DVB enhanced AC-3 descriptor (tag {@code 0x7A}) is present
+     * @param dtsDescriptor whether a DVB DTS descriptor (tag {@code 0x7B}) or DTS-HD descriptor (extension tag
+     * {@code 0x0E}) is present
      * @param opusChannels the {@code channel_config_code} of a DVB Opus extension descriptor, or
      * {@code -1}
      * @param id3Metadata whether a metadata descriptor (tag {@code 0x26}) announces ID3
@@ -136,7 +153,8 @@ final class Psi {
      */
     record StreamEntry(int pid, int trackId, int streamType, List<Integer> registrations,
                        List<Integer> programRegistrations, String language, boolean ac3Descriptor,
-                       boolean eac3Descriptor, int opusChannels, boolean id3Metadata, byte[] subtitling,
+                       boolean eac3Descriptor, boolean dtsDescriptor, int opusChannels, boolean id3Metadata,
+                       byte[] subtitling,
                        byte[] teletextPages, int audioType, String name, DolbyVision dolbyVision) {
         /**
          * Returns whether a DVB subtitling descriptor is present.
@@ -184,7 +202,8 @@ final class Psi {
          */
         StreamEntry withTrackId(int id) {
             return new StreamEntry(pid, id, streamType, registrations, programRegistrations, language, ac3Descriptor,
-                    eac3Descriptor, opusChannels, id3Metadata, subtitling, teletextPages, audioType, name, dolbyVision);
+                    eac3Descriptor, dtsDescriptor, opusChannels, id3Metadata, subtitling, teletextPages, audioType, name,
+                    dolbyVision);
         }
 
         /**
@@ -198,7 +217,8 @@ final class Psi {
             return streamType == other.streamType && registrations.equals(other.registrations)
                     && programRegistrations.equals(other.programRegistrations)
                     && Objects.equals(language, other.language) && ac3Descriptor == other.ac3Descriptor
-                    && eac3Descriptor == other.eac3Descriptor && opusChannels == other.opusChannels
+                    && eac3Descriptor == other.eac3Descriptor && dtsDescriptor == other.dtsDescriptor
+                    && opusChannels == other.opusChannels
                     && id3Metadata == other.id3Metadata && Arrays.equals(subtitling, other.subtitling)
                     && Arrays.equals(teletextPages, other.teletextPages)
                     && Objects.equals(dolbyVision, other.dolbyVision);
@@ -296,7 +316,7 @@ final class Psi {
             position += length;
             streams.add(new StreamEntry(pid, pid, type, List.copyOf(descriptors.registrations),
                     List.copyOf(programDescriptors.registrations), descriptors.language, descriptors.ac3,
-                    descriptors.eac3, descriptors.opusChannels, descriptors.id3, descriptors.subtitles,
+                    descriptors.eac3, descriptors.dts, descriptors.opusChannels, descriptors.id3, descriptors.subtitles,
                     descriptors.teletext, descriptors.audioType, descriptors.name, descriptors.dolbyVision));
         }
         return new PmtSection(number, version, pcrPid, streams);
@@ -312,8 +332,8 @@ final class Psi {
      * @return the entry
      */
     static StreamEntry plainEntry(int trackId, int streamType, String language) {
-        return new StreamEntry(trackId, trackId, streamType, List.of(), List.of(), language, false, false, -1, false,
-                null, null, -1, null, null);
+        return new StreamEntry(trackId, trackId, streamType, List.of(), List.of(), language, false, false, false, -1,
+                false, null, null, -1, null, null);
     }
 
     /**
@@ -356,8 +376,8 @@ final class Psi {
             position += length;
             streams.add(new StreamEntry(id, id, type, List.copyOf(descriptors.registrations),
                     List.copyOf(programDescriptors.registrations), descriptors.language, descriptors.ac3,
-                    descriptors.eac3, descriptors.opusChannels, descriptors.id3, descriptors.subtitles,
-                    descriptors.teletext, descriptors.audioType, descriptors.name, descriptors.dolbyVision));
+                    descriptors.eac3, descriptors.dts, descriptors.opusChannels, descriptors.id3,
+                    descriptors.subtitles, descriptors.teletext, descriptors.audioType, descriptors.name, descriptors.dolbyVision));
         }
         return streams;
     }
@@ -386,6 +406,11 @@ final class Psi {
          * Whether an enhanced AC-3 descriptor is present.
          */
         boolean eac3;
+
+        /**
+         * Whether a DTS or DTS-HD descriptor is present.
+         */
+        boolean dts;
 
         /**
          * The Opus {@code channel_config_code}, or {@code -1}.
@@ -460,6 +485,7 @@ final class Psi {
                     case 0x59 -> subtitles = Arrays.copyOfRange(data, body, body + size);
                     case 0x6A -> ac3 = true;
                     case 0x7A -> eac3 = true;
+                    case 0x7B -> dts = true;
                     case DolbyVisionConfigs.DESCRIPTOR_TAG -> {
                         if (dolbyVision == null) {
                             dolbyVision = DolbyVisionConfigs.parseDescriptor(data, body, size);
@@ -468,6 +494,9 @@ final class Psi {
                     case 0x7F -> {
                         if (size >= 2 && (data[body] & 0xFF) == 0x80) {
                             opusChannels = data[body + 1] & 0xFF;
+                        }
+                        if (size >= 1 && (data[body] & 0xFF) == 0x0E) {
+                            dts = true;
                         }
                     }
                     default -> {

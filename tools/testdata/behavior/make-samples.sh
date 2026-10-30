@@ -8,7 +8,7 @@
 set -euo pipefail
 
 out="${1:-core/src/test/resources/samples}"
-mkdir -p "$out"/{mp4,matroska,ogg,ts,ps,avi,wav,aiff,mp3,adts,amr,ac3,ivf,flac,subtitle,elementary,y4m,rawvideo}
+mkdir -p "$out"/{mp4,matroska,ogg,ts,ps,avi,wav,aiff,mp3,adts,amr,ac3,dts,ivf,flac,subtitle,elementary,y4m,rawvideo}
 
 ff() {
     ffmpeg -hide_banner -loglevel error -y -bitexact "$@"
@@ -111,6 +111,9 @@ ff -f lavfi -i "sine=frequency=440:sample_rate=16000:duration=2" -c:a libvo_amrw
 
 ff -f lavfi -i "$noise" -c:a ac3 -b:a 128k -ac 2 "$out/ac3/ac3.ac3"
 ff -f lavfi -i "$noise" -c:a eac3 -b:a 96k -ac 2 -f eac3 "$out/ac3/eac3.eac3"
+ff -f lavfi -i "$noise" -c:a dca -strict -2 -b:a 320k -ac 2 -f dts "$out/dts/dts.dts"
+ff -f lavfi -i "$video" -f lavfi -i "$tone" "${x264[@]}" -c:a dca -strict -2 -b:a 384k -ac 2 -shortest -f mpegts \
+    -mpegts_m2ts_mode 1 "$out/ts/h264-dts.m2ts"
 
 ff -f lavfi -i "$video" -c:v libvpx -deadline realtime -cpu-used 8 -b:v 100k -g 10 -threads 1 "$out/ivf/vp8.ivf"
 ff -f lavfi -i "testsrc2=size=160x120:rate=15:duration=1" -c:v libaom-av1 -cpu-used 8 -usage realtime -b:v 100k \

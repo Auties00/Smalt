@@ -370,6 +370,11 @@ class MpegFuzzTest {
     }
 
     @FuzzTest
+    void dts(byte[] data) {
+        FuzzMedia.audio(Codec.DTS, data);
+    }
+
+    @FuzzTest
     void heic(byte[] data) {
         FuzzMedia.image(ImageFormat.HEIC, data);
     }

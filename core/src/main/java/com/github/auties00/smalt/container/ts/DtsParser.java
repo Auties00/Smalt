@@ -10,20 +10,20 @@ import com.github.auties00.smalt.track.Rational;
 import java.util.Arrays;
 
 /**
- * Splits a DTS Coherent Acoustics stream (ETSI TS 102 114) in the 16-bit big-endian form into frames, for
- * pass-through: the DTS audio substreams of DVD-Video ({@code sub_stream_id 0x88} to {@code 0x8F} of private
- * stream 1).
+ * Splits a DTS stream (ETSI TS 102 114 Annex F) into access units, for pass-through and decoding.
  *
- * <p>Every packet is one core frame together with the DTS-HD extension substreams (sync word {@code 0x64582025})
- * that follow it, as {@link Codec#DTS} defines a packet. The track declares the sampling rate and channel layout of
- * the first core frame, and timestamps count samples at that rate ({@code (NBLKS + 1) * 32} per frame). The track
- * carries no configuration. Instances are not thread-safe.
+ * <p>Every packet is one access unit: a core frame together with the DTS-HD extension substream frames that follow
+ * it, or, in a stream without core (DTS-HD Master Audio without core, DTS Express), one extension substream frame.
+ * The track declares {@link Codec#DTS}, the sample rate and layout of the richest presentation it can read from the
+ * first unit (the extension substream's asset when there is one), and timestamps count core samples, or reference
+ * clock periods of the extension substream in a stream without core. The track carries no configuration: the
+ * frames describe themselves.
  */
 final class DtsParser extends FrameParser {
     /**
      * Constructs a parser.
      *
-     * @param entry the stream entry
+     * @param entry the program map entry of the stream
      * @param limits the resource bounds
      */
     DtsParser(Psi.StreamEntry entry, MediaLimits limits) {
@@ -37,13 +37,16 @@ final class DtsParser extends FrameParser {
 
     @Override
     boolean isSyncByte(byte value) {
-        return value == 0x7F;
+        return value == 0x7F || value == 0x64;
     }
 
     @Override
     int frameLength(byte[] data, int offset, int available) {
-        if (available < DtsConfigs.HEADER_SIZE) {
+        if (available < DtsConfigs.HEADER_SIZE + 1) {
             return 0;
+        }
+        if (DtsConfigs.isSubstreamSync(data, offset)) {
+            return DtsConfigs.substreamSize(data, offset, available);
         }
         if (!DtsConfigs.isSync(data, offset)) {
             return -1;
@@ -53,32 +56,78 @@ final class DtsParser extends FrameParser {
             return -1;
         }
         while (true) {
-            if (available - length < DtsConfigs.EXTENSION_HEADER_SIZE) {
-                return flushing() || available < length ? length : 0;
+            if (available - length < 12) {
+                return flushing() || available - length < 0 ? length : 0;
             }
-            if (!DtsConfigs.isExtensionSync(data, offset + length)) {
+            var next = offset + length;
+            if (!DtsConfigs.isSubstreamSync(data, next)) {
                 return length;
             }
-            length += DtsConfigs.extensionSize(data, offset + length);
+            var size = DtsConfigs.substreamSize(data, next, available - length);
+            if (size == 0) {
+                return flushing() ? length : 0;
+            }
+            if (size < 0) {
+                return length;
+            }
+            length += size;
         }
     }
 
     @Override
     void frame(byte[] data, int offset, int length, boolean first, FrameOutput output) {
-        var rate = DtsConfigs.sampleRate(data, offset);
-        if (track == null) {
-            var layout = DtsConfigs.layout(data, offset);
-            timestampRate = rate;
-            track = AudioTrack.builder()
-                    .id(trackId())
-                    .codec(Codec.DTS)
-                    .timeBase(Rational.timeBaseOf(rate))
-                    .language(entry.language())
-                    .sampleRate(rate)
-                    .layout(layout != null ? layout : ChannelLayout.STEREO)
-                    .build();
+        int samples;
+        if (DtsConfigs.isSync(data, offset)) {
+            samples = DtsConfigs.samples(data, offset);
+            if (track == null) {
+                var rate = DtsConfigs.sampleRate(data, offset);
+                var layout = DtsConfigs.layout(data, offset);
+                var core = DtsConfigs.frameSize(data, offset);
+                var outputRate = rate;
+                if (core + 4 <= length && DtsConfigs.isSubstreamSync(data, offset + core)) {
+                    var substream = DtsConfigs.describeSubstream(data, offset + core, length - core);
+                    if (substream != null) {
+                        outputRate = Math.max(rate, substream.sampleRate());
+                        var assetLayout = DtsConfigs.layoutOfMask(substream.speakerMask());
+                        if (assetLayout != null) {
+                            layout = assetLayout;
+                        }
+                    }
+                }
+                describe(rate, outputRate, layout);
+            }
+        } else {
+            var substream = DtsConfigs.describeSubstream(data, offset, length);
+            if (track == null) {
+                if (substream == null) {
+                    return;
+                }
+                describe(substream.clockRate(), substream.sampleRate(),
+                        DtsConfigs.layoutOfMask(substream.speakerMask()));
+            }
+            samples = substream != null ? substream.frameDuration() : 512;
         }
-        var samples = toTimestampRate(DtsConfigs.samples(data, offset), rate);
         output.emit(Arrays.copyOfRange(data, offset, offset + length), samples, samples);
+    }
+
+    /**
+     * Creates the track.
+     *
+     * @param clockRate the rate the timestamps count
+     * @param sampleRate the output sample rate
+     * @param layout the output layout, or {@code null} if unknown
+     */
+    private void describe(int clockRate, int sampleRate, ChannelLayout layout) {
+        timestampRate = clockRate;
+        var builder = AudioTrack.builder()
+                .id(trackId())
+                .codec(Codec.DTS)
+                .timeBase(Rational.timeBaseOf(clockRate))
+                .language(entry.language())
+                .sampleRate(sampleRate);
+        if (layout != null) {
+            builder.layout(layout);
+        }
+        track = builder.build();
     }
 }

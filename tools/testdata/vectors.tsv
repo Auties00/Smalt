@@ -7392,3 +7392,37 @@ smoke	g726-stl-ri40fa.o	32768	c9f5e0f35f31c122900f6ef172e77d16df06c931d38f1e9a51
 smoke	g726-stl-ri40fm.o	32768	89e4d0aa346b841ecd38a93ec2cd644f57a768d403a161b0ae8ffb76fe24eee6	https://raw.githubusercontent.com/openitu/STL/cbacae95828179f1238967608e1b91cd515a0261/src/g726/test_data/ri40fm.o
 smoke	g722-appII.zip	325098	b1691633a13e134e59b703059ec55d2935e5053f07a60032cd3b23834d228731	https://www.itu.int/rec/dologin_pub.asp?lang=e&id=T-REC-G.722-198703-S!AppII!ZPF-E&type=items
 smoke	gsm-en300961-v080101.zip	4792003	9b22c6e4136568cefd8eab87245b646084eec9a466ffc2d06e8a272a0512e2af	https://www.etsi.org/deliver/etsi_en/300900_300999/300961/08.01.01_60/en_300961v080101p0.zip
+# The dcadec test suite of the FFmpeg FATE samples (no licence stated, fetched for testing only): DTS core, XCh,
+# XXCH, X96, XBR and XLL streams in the DTS-HD file format with dcadec float references, for smalt-mpeg's DTS tests.
+smoke	dts-core_51_24_48_768_0.dtshd	7368	95653e7d94307a9d467c28ae10883440dcc39f06ac79d7401b27eb422cd99009	https://fate-suite.ffmpeg.org/dts/dcadec-suite/core_51_24_48_768_0.dtshd
+smoke	dts-core_51_24_48_768_1.dtshd	7368	3b85a3bd2723c93e4c341403a45c111bc6777cfc6de890108938580f59886cc4	https://fate-suite.ffmpeg.org/dts/dcadec-suite/core_51_24_48_768_1.dtshd
+smoke	dts-x96_51_24_96_1509.dtshd	14284	d4d4df6d83042799df124fe48d3465381c57f4f3b2483cb0fe8aa52ea403a9f5	https://fate-suite.ffmpeg.org/dts/dcadec-suite/x96_51_24_96_1509.dtshd
+smoke	dts-x96_xch_61_24_96_3840.dtshd	36064	3c68b08ca9809a589f6d5ad10cd75f1f6458bcef9ce5bbf97d9b0e2c3f9d4e7e	https://fate-suite.ffmpeg.org/dts/dcadec-suite/x96_xch_61_24_96_3840.dtshd
+smoke	dts-x96_xxch_71_24_96_3840.dtshd	36064	c8c1ddabb3850f4ff3d25bbed94259a2b53c0336ce0f2b0185a65761f82346a2	https://fate-suite.ffmpeg.org/dts/dcadec-suite/x96_xxch_71_24_96_3840.dtshd
+smoke	dts-xbr_51_24_48_3840.dtshd	36064	72af29c81314deeab71cd798f38fde136a01f72a1d6c57d981278c82fe1d3f27	https://fate-suite.ffmpeg.org/dts/dcadec-suite/xbr_51_24_48_3840.dtshd
+smoke	dts-xbr_xch_61_24_48_3840.dtshd	36064	0ce33593cdf6914131f8b3eba664b215a6ce09ba66c444d6ce342301b214153e	https://fate-suite.ffmpeg.org/dts/dcadec-suite/xbr_xch_61_24_48_3840.dtshd
+smoke	dts-xbr_xxch_71_24_48_3840.dtshd	36064	b24e66db937a45b7ce522b773388d29492a88e83fc8680930be00c5987ac93a1	https://fate-suite.ffmpeg.org/dts/dcadec-suite/xbr_xxch_71_24_48_3840.dtshd
+smoke	dts-xch_61_24_48_768.dtshd	7368	db7c44e47b3c01c57829ac9947a0e77aa93798475773e1f2fd74f99a607c48b7	https://fate-suite.ffmpeg.org/dts/dcadec-suite/xch_61_24_48_768.dtshd
+smoke	dts-xll_51_16_192_768_0.dtshd	44608	34441a4f2df89e086f67a7b0f72aa871e1cbb3b04b301470a7727038bb91b618	https://fate-suite.ffmpeg.org/dts/dcadec-suite/xll_51_16_192_768_0.dtshd
+smoke	dts-xll_51_16_192_768_1.dtshd	48140	ff9067cf5685d38f6d20d607559b69f14b43d6c5a20fa8438bd8862ab98f375d	https://fate-suite.ffmpeg.org/dts/dcadec-suite/xll_51_16_192_768_1.dtshd
+smoke	dts-xll_51_24_48_768.dtshd	25692	c0830af121ec78a8271d008999cc54b99843f17b9b33203bb9adbcbc3271d0a9	https://fate-suite.ffmpeg.org/dts/dcadec-suite/xll_51_24_48_768.dtshd
+smoke	dts-xll_51_24_48_none.dtshd	34460	c445bb746c6afc920761b55b00932053d64a96d3d08cd9cad4c759a892fae4cd	https://fate-suite.ffmpeg.org/dts/dcadec-suite/xll_51_24_48_none.dtshd
+smoke	dts-xll_71_24_48_768_0.dtshd	32888	8d380d1323a6fff90a8885d65697217b1bbc4f2c027e30af870fa0dfa50f8eb3	https://fate-suite.ffmpeg.org/dts/dcadec-suite/xll_71_24_48_768_0.dtshd
+smoke	dts-xll_71_24_48_768_1.dtshd	33520	267828d7db493d16a43d238a7e94c0c20ecd35426f11143683079e67bb2dab2b	https://fate-suite.ffmpeg.org/dts/dcadec-suite/xll_71_24_48_768_1.dtshd
+smoke	dts-xll_71_24_96_768.dtshd	54184	d2911b34183f7379359cf914ee93228796894e0b0f0055e6ee5baefa4fd6a923	https://fate-suite.ffmpeg.org/dts/dcadec-suite/xll_71_24_96_768.dtshd
+smoke	dts-xll_x96_51_24_96_1509.dtshd	45408	ac8de7e1f2875145aff90db2953f62fb4910e301d7fb48007eb3db0a36d09e90	https://fate-suite.ffmpeg.org/dts/dcadec-suite/xll_x96_51_24_96_1509.dtshd
+smoke	dts-xll_xch_61_24_48_768.dtshd	32352	ab29359bd0fbb958ce730496243aa082f4e8cdbd4cf058fe59867db130d755ad	https://fate-suite.ffmpeg.org/dts/dcadec-suite/xll_xch_61_24_48_768.dtshd
+smoke	dts-xxch_71_24_48_2046.dtshd	19320	aa9055e58c50a055ed730b280b48c29ee447ae46af71f7c1ba71c621c0e742a1	https://fate-suite.ffmpeg.org/dts/dcadec-suite/xxch_71_24_48_2046.dtshd
+smoke	dts-core_51_24_48_768_0.f32	73728	30ecc717c6bb85605e5773c3f182ab5749002ab5f62f5e102d6bbd06b4d32433	https://fate-suite.ffmpeg.org/dts/dcadec-suite/core_51_24_48_768_0.f32
+smoke	dts-core_51_24_48_768_1-dmix_2.f32	24576	1faafb2429f82056e29f6e9d1634821d61d944745f3bc3fdf0698faf2c0e1a7a	https://fate-suite.ffmpeg.org/dts/dcadec-suite/core_51_24_48_768_1-dmix_2.f32
+smoke	dts-core_51_24_48_768_1.f32	73728	3c39203d0ec6aa9b7b171c9fb6842cc3737eba99b6c30e9af8342f07292dee78	https://fate-suite.ffmpeg.org/dts/dcadec-suite/core_51_24_48_768_1.f32
+smoke	dts-x96_51_24_96_1509.f32	147456	1bd91206d40bb89b23400770d800ff0126ab183848b6edc7f0b15029ea5ef4ac	https://fate-suite.ffmpeg.org/dts/dcadec-suite/x96_51_24_96_1509.f32
+smoke	dts-x96_xch_61_24_96_3840.f32	172032	9efb8deeaab791e8ea02fd89f1a7129461baa5d5541846258aa1d10ad5253fd3	https://fate-suite.ffmpeg.org/dts/dcadec-suite/x96_xch_61_24_96_3840.f32
+smoke	dts-x96_xxch_71_24_96_3840-dmix_6.f32	147456	d51f640eb082cea087bff7e43c1a0fadaa3871385ba4caa44689e6b03d4553d8	https://fate-suite.ffmpeg.org/dts/dcadec-suite/x96_xxch_71_24_96_3840-dmix_6.f32
+smoke	dts-x96_xxch_71_24_96_3840.f32	196608	9f27925bd8f119e850325b71c406f41a7a986cb7d669d77af1721a88ded9529b	https://fate-suite.ffmpeg.org/dts/dcadec-suite/x96_xxch_71_24_96_3840.f32
+smoke	dts-xbr_51_24_48_3840.f32	73728	b5ffeb3e9f23833e115cf855a9923d9807123db8b7dd46e34bda4bb9d98b0232	https://fate-suite.ffmpeg.org/dts/dcadec-suite/xbr_51_24_48_3840.f32
+smoke	dts-xbr_xch_61_24_48_3840.f32	86016	77be0daed1ba2ba0555f1841b3b31230fde5229212b7f9285b205f0e727f7233	https://fate-suite.ffmpeg.org/dts/dcadec-suite/xbr_xch_61_24_48_3840.f32
+smoke	dts-xbr_xxch_71_24_48_3840.f32	98304	e9690b6cfc141ea7e2099f6d4037bc36f87b03ba8bb83912ba3c8b6775186648	https://fate-suite.ffmpeg.org/dts/dcadec-suite/xbr_xxch_71_24_48_3840.f32
+smoke	dts-xch_61_24_48_768-dmix_6.f32	73728	688a442230c99b6c8b5f3bba9e913780707e754d2962bddb83ce21de7c18c164	https://fate-suite.ffmpeg.org/dts/dcadec-suite/xch_61_24_48_768-dmix_6.f32
+smoke	dts-xch_61_24_48_768.f32	86016	21a9dd66642f5cff10bc943a9aa49627e7515d7eae7fc045469791a8a6f73574	https://fate-suite.ffmpeg.org/dts/dcadec-suite/xch_61_24_48_768.f32
+smoke	dts-xxch_71_24_48_2046.f32	98304	370527a062928e55bfdd3c707c23084f52985e93de56bf31d35888e42b7cded1	https://fate-suite.ffmpeg.org/dts/dcadec-suite/xxch_71_24_48_2046.f32

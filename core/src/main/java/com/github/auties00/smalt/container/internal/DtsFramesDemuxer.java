@@ -1,10 +1,9 @@
-package com.github.auties00.smalt.container.wav;
+package com.github.auties00.smalt.container.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Demuxer;
-import com.github.auties00.smalt.container.internal.SeekIndex;
 import com.github.auties00.smalt.internal.codec.DtsConfigs;
 import com.github.auties00.smalt.internal.io.ForwardOnlySource;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
@@ -23,8 +22,9 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Reads DTS frames back to back: the payload of a WAVE {@code data} chunk of format tag {@code 0x2001}, or the 16-bit
- * stereo samples of a DTS audio CD image, which carry the frames instead of PCM.
+ * Reads DTS frames back to back: the payload of a WAVE {@code data} chunk of format tag {@code 0x2001}, the 16-bit
+ * stereo samples of a DTS audio CD image, which carry the frames instead of PCM, or a raw DTS stream stored in one of
+ * the forms of DTS audio CDs.
  *
  * <p>Frames may be stored in any of the four forms of ETSI TS 102 114: 16-bit words, big-endian (sync word
  * {@code 0x7FFE8001}) or little-endian, or 14 bits of the bitstream in each 16-bit word (sync words
@@ -38,7 +38,7 @@ import java.util.Set;
  *
  * <p>Instances are not thread-safe.
  */
-final class DtsFramesDemuxer implements Demuxer {
+public final class DtsFramesDemuxer implements Demuxer {
     /**
      * The largest stored frame, core and extension substreams included, in bytes.
      */
@@ -47,7 +47,7 @@ final class DtsFramesDemuxer implements Demuxer {
     /**
      * The largest data walked at construction for an exact duration and seek index.
      */
-    static final long MAX_WALK = 64L << 20;
+    public static final long MAX_WALK = 64L << 20;
 
     /**
      * The largest number of bytes searched for the first frame.
@@ -109,6 +109,11 @@ final class DtsFramesDemuxer implements Demuxer {
             this.packed = packed;
         }
     }
+
+    /**
+     * The container format {@link #format()} reports.
+     */
+    private final ContainerFormat format;
 
     private final MediaSource source;
     private final long dataStart;
@@ -193,10 +198,13 @@ final class DtsFramesDemuxer implements Demuxer {
      * @param dataStart the offset of the first byte of the data
      * @param dataEnd the offset of the end of the data, or {@code -1} when unknown
      * @param limits the resource bounds
+     * @param format the container format {@link #format()} reports
      * @throws MediaException.Malformed if no valid core frame starts within the first bytes of the data
      * @throws MediaException.LimitExceeded if the channel count exceeds the limits
      */
-    DtsFramesDemuxer(MediaSource source, long dataStart, long dataEnd, MediaLimits limits) {
+    public DtsFramesDemuxer(MediaSource source, long dataStart, long dataEnd, MediaLimits limits,
+                            ContainerFormat format) {
+        this.format = format;
         this.source = source;
         this.dataStart = dataStart;
         this.dataEnd = dataEnd < 0 ? Long.MAX_VALUE : dataEnd;
@@ -249,7 +257,7 @@ final class DtsFramesDemuxer implements Demuxer {
      * @param dataEnd the offset of the end of the samples, or {@code -1} when unknown
      * @return {@code true} when the samples are DTS frames
      */
-    static boolean startsWithFrames(MediaSource source, long dataStart, long dataEnd) {
+    public static boolean startsWithFrames(MediaSource source, long dataStart, long dataEnd) {
         var limit = dataEnd < 0 ? MAX_FRAME : (int) Math.min(MAX_FRAME, dataEnd - dataStart);
         var lead = new byte[limit];
         var read = readFully(source, dataStart, lead, 0, limit);
@@ -270,6 +278,35 @@ final class DtsFramesDemuxer implements Demuxer {
         var bytes = DtsConfigs.frameSize(header, 0);
         var next = form.packed ? DtsConfigs.packedSize(bytes) : bytes;
         return bytes >= DtsConfigs.MIN_FRAME_SIZE && next + PACKED_HEADER <= read && formAt(lead, next) == form;
+    }
+
+    /**
+     * Returns whether bytes start with a core frame stored in one of the forms of DTS audio CDs (16-bit
+     * little-endian words, or 14 bits in each 16-bit word of either byte order) whose header is valid.
+     *
+     * @param data the leading bytes of the input
+     * @return {@code true} when such a frame starts the bytes
+     */
+    public static boolean startsWithRepackedFrame(byte[] data) {
+        if (data.length < PACKED_HEADER) {
+            return false;
+        }
+        var form = formAt(data, 0);
+        if (form == null || form == Form.BIG_16) {
+            return false;
+        }
+        var stored = Arrays.copyOf(data, PACKED_HEADER);
+        if (form.swapped) {
+            swapWords(stored, 0, stored.length);
+        }
+        var header = new byte[DtsConfigs.HEADER_SIZE + 1];
+        if (form.packed) {
+            DtsConfigs.unpack(stored, 0, header, 0, header.length);
+        } else {
+            System.arraycopy(stored, 0, header, 0, header.length);
+        }
+        return DtsConfigs.frameSize(header, 0) >= DtsConfigs.MIN_FRAME_SIZE && DtsConfigs.sampleRate(header, 0) > 0
+                && DtsConfigs.layout(header, 0) != null;
     }
 
     /**
@@ -441,7 +478,8 @@ final class DtsFramesDemuxer implements Demuxer {
             }
             var length = form.packed ? DtsConfigs.packedSize(frameBytes) : frameBytes;
             if (!form.packed) {
-                while (length + DtsConfigs.EXTENSION_HEADER_SIZE <= available && DtsConfigs.isExtensionSync(buffer, at + length)) {
+                while (length + DtsConfigs.EXTENSION_HEADER_SIZE <= available
+                        && DtsConfigs.isSubstreamSync(buffer, at + length)) {
                     length += DtsConfigs.extensionSize(buffer, at + length);
                 }
                 frameBytes = length;
@@ -489,7 +527,7 @@ final class DtsFramesDemuxer implements Demuxer {
 
     @Override
     public ContainerFormat format() {
-        return ContainerFormat.WAV;
+        return format;
     }
 
     @Override

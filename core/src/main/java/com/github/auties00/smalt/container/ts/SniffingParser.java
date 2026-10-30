@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.container.ts;
 
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.internal.codec.DtsConfigs;
 import com.github.auties00.smalt.internal.header.MpegAudioHeader;
 import com.github.auties00.smalt.track.Codec;
 
@@ -10,7 +11,8 @@ import com.github.auties00.smalt.track.Codec;
  *
  * <p>Some writers (M2TS writers among them) declare AAC or AC-3 audio and MPEG-4 Part 2 video as
  * private data without a descriptor. The first PES payload that starts with an ADTS header makes the
- * stream AAC, a LOAS sync word AAC in LATM, an AC-3 sync word AC-3 or E-AC-3, a valid MPEG audio
+ * stream AAC, a LOAS sync word AAC in LATM, an AC-3 sync word AC-3 or E-AC-3, a DTS core or extension
+ * substream sync word DTS (ffmpeg declares DTS as {@code 0x82} without a registration), a valid MPEG audio
  * header MPEG audio, and an MPEG-4 Part 2 start code (visual object sequence, visual object, video
  * object layer, group of video object planes or video object plane) in a payload that holds a video
  * object plane MPEG-4 Part 2 video; any other payload (H.264, HEVC and MPEG-2 video among them) makes it a data
@@ -91,6 +93,9 @@ final class SniffingParser extends ElementaryParser {
         }
         if (b0 == 0x0B && b1 == 0x77) {
             return new Ac3Parser(entry, limits);
+        }
+        if (DtsConfigs.isSync(data, offset) || DtsConfigs.isSubstreamSync(data, offset)) {
+            return new DtsParser(entry, limits);
         }
         if (b0 == 0xFF && MpegAudioHeader.isValid(MpegAudioHeader.read(data, offset))) {
             return new MpegAudioParser(entry, limits);

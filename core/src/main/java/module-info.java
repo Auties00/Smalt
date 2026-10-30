@@ -88,6 +88,7 @@ module com.github.auties00.smalt {
     // Containers
     exports com.github.auties00.smalt.container.aac;
     exports com.github.auties00.smalt.container.ac3;
+    exports com.github.auties00.smalt.container.dts;
     exports com.github.auties00.smalt.container.adts;
     exports com.github.auties00.smalt.container.aiff;
     exports com.github.auties00.smalt.container.amr;

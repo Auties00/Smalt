@@ -124,6 +124,10 @@ class FuzzSeedWriter {
                 "-b:a", "192k"));
         seed("eac3", "valid-stereo.bin", Codec.EAC3, ffmpeg("eac3", tone(48000, 0.1), "-ac", "2", "-c:a", "eac3",
                 "-b:a", "96k"));
+        seed("dts", "valid-core-stereo.bin", Codec.DTS, ffmpeg("dts", tone(44100, 0.1), "-ac", "2", "-c:a", "dca",
+                "-strict", "-2", "-b:a", "320k"));
+        seed("dts", "valid-core-surround-adpcm.bin", Codec.DTS, ffmpeg("dts", tone(48000, 0.06), "-ac", "6",
+                "-c:a", "dca", "-strict", "-2", "-dca_adpcm", "1", "-b:a", "1509k"));
     }
 
     @Test

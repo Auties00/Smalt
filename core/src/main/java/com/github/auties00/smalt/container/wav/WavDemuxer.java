@@ -13,6 +13,7 @@ import com.github.auties00.smalt.container.ac3.Ac3Demuxer;
 import com.github.auties00.smalt.container.adts.AdtsDemuxer;
 import com.github.auties00.smalt.container.amr.AmrDemuxer;
 import com.github.auties00.smalt.container.flac.FlacDemuxer;
+import com.github.auties00.smalt.container.internal.DtsFramesDemuxer;
 import com.github.auties00.smalt.container.internal.AdpcmBlocks;
 import com.github.auties00.smalt.container.internal.LoasPayloadDemuxer;
 import com.github.auties00.smalt.container.internal.RawAacPayloadDemuxer;
@@ -1111,7 +1112,7 @@ public final class WavDemuxer implements Demuxer {
                 yield new AmrDemuxer(stored ? new SlicedSource(source, start, length)
                         : new PrefixedSource(magic, source, start, length), options);
             }
-            case DTS -> new DtsFramesDemuxer(source, start, header.dataEnd, limits);
+            case DTS -> new DtsFramesDemuxer(source, start, header.dataEnd, limits, ContainerFormat.WAV);
             case OPUS -> new SelfDelimitedOpusDemuxer(source, start, header.dataEnd, format.channels(),
                     format.sampleRate(), format.extra(), limits);
             case IEC61937 -> {
@@ -1123,7 +1124,7 @@ public final class WavDemuxer implements Demuxer {
                 if (burst == null && format.tag() == WaveFormat.DTS_SPDIF
                         && format.subFormat() != WaveFormat.SubFormat.IEC61937
                         && DtsFramesDemuxer.startsWithFrames(source, start, header.dataEnd)) {
-                    yield new DtsFramesDemuxer(source, start, header.dataEnd, limits);
+                    yield new DtsFramesDemuxer(source, start, header.dataEnd, limits, ContainerFormat.WAV);
                 }
                 if (burst == null) {
                     throw new MediaException.Malformed("IEC 61937 WAVE data without a burst of a supported data type");

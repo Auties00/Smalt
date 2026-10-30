@@ -2,6 +2,7 @@ package com.github.auties00.smalt.container;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.ac3.Ac3Demuxer;
+import com.github.auties00.smalt.container.dts.DtsDemuxer;
 import com.github.auties00.smalt.container.aac.AdifDemuxer;
 import com.github.auties00.smalt.container.aac.AdifMuxer;
 import com.github.auties00.smalt.container.aac.LoasDemuxer;
@@ -437,6 +438,7 @@ public final class Containers {
             case MXF -> new MxfDemuxer(source, options);
             case AC3 -> new Ac3Demuxer(source, options);
             case WAVPACK -> new WavPackDemuxer(source, options);
+            case DTS -> new DtsDemuxer(source, options);
             case SUBRIP -> new SubRipDemuxer(source, options);
             case WEBVTT -> new WebVttDemuxer(source, options);
             case ASS -> new AssDemuxer(source, options);
@@ -510,7 +512,7 @@ public final class Containers {
             case MPEG_TS -> TsMuxer.supports(codec);
             case MPEG_PS -> PsMuxer.supports(codec);
             case MXF -> MxfMuxer.supports(codec);
-            case MPEG_AUDIO, FLAC, AMR, AC3, H264, HEVC, AV1, AV1_ANNEX_B, MPEG4_VIDEO, H263, PCM, WAVPACK ->
+            case MPEG_AUDIO, FLAC, AMR, AC3, DTS, H264, HEVC, AV1, AV1_ANNEX_B, MPEG4_VIDEO, H263, PCM, WAVPACK ->
                     RawMuxer.supports(format, codec);
             case SUBRIP -> SubRipMuxer.supports(codec);
             case WEBVTT -> WebVttMuxer.supports(codec);
@@ -600,7 +602,7 @@ public final class Containers {
             case LOAS -> new LoasMuxer(output);
             case ADIF -> new AdifMuxer(output);
             case IVF -> new IvfMuxer(output);
-            case MPEG_AUDIO, FLAC, AMR, AC3, H264, HEVC, AV1, MPEG4_VIDEO, H263, PCM, WAVPACK ->
+            case MPEG_AUDIO, FLAC, AMR, AC3, DTS, H264, HEVC, AV1, MPEG4_VIDEO, H263, PCM, WAVPACK ->
                     new FormatMuxer(format, new RawMuxer(output));
             case AV1_ANNEX_B -> new FormatMuxer(format, new RawMuxer(output,
                     RawMuxerOptions.builder().av1AnnexB(true).build()));
@@ -882,6 +884,9 @@ public final class Containers {
         }
         if (Ac3Demuxer.matches(header)) {
             return ContainerFormat.AC3;
+        }
+        if (DtsDemuxer.matches(header)) {
+            return ContainerFormat.DTS;
         }
         return null;
     }

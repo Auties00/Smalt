@@ -710,6 +710,31 @@ final class BoxTypes {
     static final int DEC3 = 0x64656333;
 
     /**
+     * The DTS core sample entry ({@code dtsc}).
+     */
+    static final int DTSC = 0x64747363;
+
+    /**
+     * The DTS-HD sample entry, with or without a core ({@code dtsh}).
+     */
+    static final int DTSH = 0x64747368;
+
+    /**
+     * The DTS-HD Master Audio sample entry, lossless without a core ({@code dtsl}).
+     */
+    static final int DTSL = 0x6474736C;
+
+    /**
+     * The DTS Express sample entry, LBR coding ({@code dtse}).
+     */
+    static final int DTSE = 0x64747365;
+
+    /**
+     * The DTS specific box of the DTS sample entries ({@code ddts}, ETSI TS 102 114 Annex E).
+     */
+    static final int DDTS = 0x64647473;
+
+    /**
      * The MP3 sample entry ({@code .mp3}).
      */
     static final int MP3 = 0x2E6D7033;

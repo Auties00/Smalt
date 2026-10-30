@@ -128,6 +128,12 @@ public enum ContainerFormat {
     WAVPACK,
 
     /**
+     * A raw DTS elementary stream ({@code .dts}) or a DTS-HD file ({@code .dtshd}, magic {@code DTSHDHDR}) of DTS
+     * and DTS-HD frames.
+     */
+    DTS,
+
+    /**
      * A SubRip ({@code .srt}) text subtitle file.
      */
     SUBRIP,
