@@ -4,6 +4,7 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.container.DecryptionKeys;
+import com.github.auties00.smalt.container.internal.DvTags;
 import com.github.auties00.smalt.container.internal.AdpcmBlocks;
 import com.github.auties00.smalt.container.internal.BitmapTrackConfigs;
 import com.github.auties00.smalt.container.internal.Languages;
@@ -855,7 +856,7 @@ final class MatroskaTrackEntry {
                         : codec == Codec.VVC ? vvcFromImageDescription() : null;
             } else if (codecId.equals("V_MS/VFW/FOURCC")) {
                 config = codec == Codec.DNXHD ? Arrays.copyOfRange(codecPrivate, 16, 20)
-                        : codecPrivate != null && codecPrivate.length > 40 ? Arrays.copyOfRange(codecPrivate, 40, codecPrivate.length) : null;
+                        : codec == Codec.DV ? null : codecPrivate != null && codecPrivate.length > 40 ? Arrays.copyOfRange(codecPrivate, 40, codecPrivate.length) : null;
             }
             if (codec == Codec.VVC && config != null) {
                 config = NalRecords.withoutVvcBoxHeader(config);
@@ -1083,6 +1084,9 @@ final class MatroskaTrackEntry {
             return Codec.UNKNOWN_VIDEO;
         }
         var fourCc = new String(codecPrivate, 16, 4, java.nio.charset.StandardCharsets.ISO_8859_1).toUpperCase(java.util.Locale.ROOT);
+        if (DvTags.riff(fourCc)) {
+            return Codec.DV;
+        }
         return switch (fourCc) {
             case "H264", "X264", "AVC1", "DAVC" -> Codec.H264;
             case "HEVC", "H265", "HVC1" -> Codec.HEVC;
@@ -1126,7 +1130,11 @@ final class MatroskaTrackEntry {
         if (codecPrivate == null || codecPrivate.length < 8) {
             return Codec.UNKNOWN_VIDEO;
         }
-        return switch (new String(codecPrivate, 4, 4, java.nio.charset.StandardCharsets.ISO_8859_1)) {
+        var type = new String(codecPrivate, 4, 4, java.nio.charset.StandardCharsets.ISO_8859_1);
+        if (DvTags.quickTime(type)) {
+            return Codec.DV;
+        }
+        return switch (type) {
             case "apco", "apcs", "apcn", "apch", "ap4h", "ap4x" -> Codec.PRORES;
             case "AVdn", "AVdh" -> Codec.DNXHD;
             case "mjp2" -> Codec.JPEG2000;

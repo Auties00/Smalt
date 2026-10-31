@@ -133,6 +133,17 @@ public enum Codec {
     DNXHD(TrackKind.VIDEO, "dnxhd"),
 
     /**
+     * DV video: the 25 Mb/s DV of IEC 61834-2 (MiniDV, DVCAM), the DV-based 25 and 50 Mb/s formats of SMPTE ST 314
+     * (DVCPRO, DVCPRO50) and the 100 Mb/s DVCPRO HD of SMPTE ST 370.
+     *
+     * <p>A packet is one frame as its DIF (digital interface) blocks carry it: DIF sequences of 150 blocks of 80
+     * bytes, holding the video and also the frame's audio, subcode and auxiliary data, 120000 bytes for 525/60 DV
+     * and 144000 for 625/50 DV, twice and four times that at 50 and 100 Mb/s. A 720-line DVCPRO HD packet is one
+     * video frame, two DIF channels. Every frame is a key frame and the codec carries no configuration.
+     */
+    DV(TrackKind.VIDEO, "dv"),
+
+    /**
      * Xiph.Org Theora.
      *
      * <p>A packet is one frame; an empty packet repeats the previous frame, and a frame whose frame type bit (bit 6

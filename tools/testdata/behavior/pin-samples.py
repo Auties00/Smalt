@@ -25,6 +25,8 @@ def generator(root, relative):
         return "make-avif-samples.py"
     if relative == "elementary/vvc.266":
         return "tools/testdata/vvc-vectors/make-vectors.py (the ra-420-10bit vector)"
+    if relative in ("dv/dv25-audio.dv", "avi/dv-type1.avi"):
+        return "make-dv-samples.py"
     if relative == "mp4/motion.mj2":
         return "make-mj2-sample.py"
     if relative in ("amr/nb-stereo.amr", "amr/wb-3ch.awb"):

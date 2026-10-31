@@ -7,16 +7,19 @@ import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.container.internal.AdpcmBlocks;
+import com.github.auties00.smalt.container.internal.DifAudioTracks;
 import com.github.auties00.smalt.container.internal.RawVideoTags;
 import com.github.auties00.smalt.container.internal.SeekTimes;
 import com.github.auties00.smalt.container.internal.WaveFormat;
 import com.github.auties00.smalt.internal.codec.NalConfigs;
+import com.github.auties00.smalt.internal.header.DifProfile;
 import com.github.auties00.smalt.internal.header.MpegAudioHeader;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.io.ForwardOnlySource;
 import com.github.auties00.smalt.internal.io.SourceReader;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.nal.NalUnits;
+import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -45,7 +48,10 @@ import java.util.Objects;
  * format ({@code strf}) the codec: the compression FourCC and extra data of a
  * {@code BITMAPINFOHEADER}, or the format tag (with the sub-format of
  * {@code WAVEFORMATEXTENSIBLE}, whose Dolby GUIDs announce AC-3 and E-AC-3) and extra data of a
- * {@code WAVEFORMATEX}. Streams of other types (text, MIDI, interleaved DV) are skipped. The extra data
+ * {@code WAVEFORMATEX}. An interleaved DV stream ({@code iavs}, a type-1 DV file), whose chunks are whole DIF
+ * frames, becomes a {@link Codec#DV} video track described by its first frame, followed by one
+ * {@link Codec#PCM_S16LE} stereo track for each audio pair its frames carry; each video packet is followed by the
+ * audio packets of its frame. Streams of other types (text, MIDI) are skipped. The extra data
  * becomes {@link Track#codecConfig()}:
  * the video object layer headers of MPEG-4 Part 2, the sequence header of MPEG-1 and MPEG-2 video, the
  * {@code STRUCT_C} of VC-1 simple and main profile ({@code WMV3}) or the sequence header and entry point of the
@@ -198,6 +204,16 @@ public final class AviDemuxer implements Demuxer {
     private final ArrayDeque<Packet> pending = new ArrayDeque<>();
 
     /**
+     * The offset below which a source read once was told the demuxer reads nothing again.
+     */
+    private long released;
+
+    /**
+     * The offset just past the last chunk read, the end of what a seek over a source read once may read again.
+     */
+    private long readEnd;
+
+    /**
      * Constructs a demuxer over {@code source} with {@link DemuxerOptions#defaults()}.
      *
      * @param source the input, not closed by this demuxer
@@ -233,12 +249,19 @@ public final class AviDemuxer implements Demuxer {
             }
             buildIndex();
             var list = new ArrayList<Track>();
+            var nextId = streams.size() + 1;
             for (var stream : streams) {
                 if (stream != null) {
                     if (stream.annexB) {
                         configure(stream);
                     }
+                    if (stream.interleavedDv) {
+                        nextId += configureDv(stream, nextId);
+                    }
                     list.add(stream.track);
+                    if (stream.dvAudio != null) {
+                        list.addAll(stream.dvAudio.tracks());
+                    }
                 }
             }
             this.tracks = Collections.unmodifiableList(list);
@@ -469,6 +492,11 @@ public final class AviDemuxer implements Demuxer {
             stream = videoStream(number, handler, format, properties, timeBase, first, length);
         } else if (type == fourCc("auds")) {
             stream = audioStream(number, format, timeBase, scale, rate, first, length, sampleSize);
+        } else if (type == fourCc("iavs")) {
+            stream = new Stream(number, VideoTrack.builder().id(number + 1).codec(Codec.DV).timeBase(timeBase)
+                    .duration(length > 0 ? first + length : -1).frameRate(timeBase.invert()).build(), true);
+            stream.first = first;
+            stream.interleavedDv = true;
         } else {
             return null;
         }
@@ -937,7 +965,7 @@ public final class AviDemuxer implements Demuxer {
      */
     private static boolean startsIntra(Codec codec, byte[] data, int length) {
         switch (codec) {
-            case MJPEG, JPEG2000 -> {
+            case MJPEG, JPEG2000, DV -> {
                 return true;
             }
             case MPEG4_PART2 -> {
@@ -1089,8 +1117,11 @@ public final class AviDemuxer implements Demuxer {
                 var data = new byte[size];
                 reader.seek(offset);
                 reader.readFully(data, 0, size);
-                ForwardOnlySource.release(reader.source(), cursor < orderCount
-                        ? streams.get(orderStream[cursor]).offsets[orderEntry[cursor]] : Long.MAX_VALUE);
+                var next = cursor < orderCount ? streams.get(orderStream[cursor]).offsets[orderEntry[cursor]]
+                        : Long.MAX_VALUE;
+                ForwardOnlySource.release(reader.source(), next);
+                released = Math.max(released, next);
+                readEnd = Math.max(readEnd, offset + size);
                 if (stream.mpegAudio) {
                     stream.frame(data, entry, pending);
                     continue;
@@ -1101,6 +1132,10 @@ public final class AviDemuxer implements Demuxer {
                 }
                 if (stream.lengthPrefixed && NalUnits.looksLikeAnnexB(data)) {
                     data = NalUnits.toLengthPrefixed(data);
+                }
+                if (stream.dvAudio != null && DifProfile.detect(data, 0, data.length) == stream.dvProfile
+                        && data.length >= stream.dvProfile.frameSize()) {
+                    stream.dvAudio.split(data, 0, pending::add);
                 }
                 var time = stream.times[entry];
                 var duration = Math.max(0, stream.times[entry + 1] - time);
@@ -1129,9 +1164,26 @@ public final class AviDemuxer implements Demuxer {
      * <p>Every video stream restarts at its last key frame at or before the target and every
      * audio stream at its last chunk starting at or before it; reading resumes at the first of
      * these chunks in file order, skipping the earlier chunks of the other streams.
+     *
+     * @throws MediaException.Unsupported if the source reads its input once and one of these chunks lies before the
+     * bytes it was told are no longer needed and those bytes are gone; the demuxer stays where it was
      */
     @Override
     public void seek(long micros) {
+        if (reader.source() instanceof ForwardOnlySource && released > 0) {
+            var first = Long.MAX_VALUE;
+            for (var stream : streams) {
+                if (stream != null && stream.count > 0) {
+                    first = Math.min(first, stream.offsets[Math.min(seekEntry(stream, micros), stream.count - 1)]);
+                }
+            }
+            var end = Math.max(first, readEnd);
+            if (first < released && !reader.buffers(first, end)
+                    && !ForwardOnlySource.keeps(reader.source(), first, end)) {
+                throw new MediaException.Unsupported("seek", "the AVI stream is read once and its data before "
+                        + released + " is gone");
+            }
+        }
         pending.clear();
         var earliest = Integer.MAX_VALUE;
         var anyLeft = false;
@@ -1140,21 +1192,7 @@ public final class AviDemuxer implements Demuxer {
                 continue;
             }
             var target = SeekTimes.floor(micros, stream.track.timeBase());
-            var chosen = -1;
-            for (var i = 0; i < stream.count; i++) {
-                if (stream.times[i] > target) {
-                    break;
-                }
-                if (stream.keys[i]) {
-                    chosen = i;
-                }
-            }
-            if (chosen < 0) {
-                chosen = 0;
-                while (chosen < stream.count && !stream.keys[chosen]) {
-                    chosen++;
-                }
-            }
+            var chosen = seekEntry(stream, micros);
             var end = stream.endTime();
             if (end >= 0 && target >= end || chosen >= stream.count) {
                 stream.skipBefore = stream.count;
@@ -1163,6 +1201,9 @@ public final class AviDemuxer implements Demuxer {
             anyLeft = true;
             stream.skipBefore = chosen;
             stream.resetFraming();
+            if (stream.dvAudio != null) {
+                stream.dvAudio.restart(chosen, micros);
+            }
             for (var k = 0; k < orderCount; k++) {
                 if (orderStream[k] == stream.number && orderEntry[k] == chosen) {
                     earliest = Math.min(earliest, k);
@@ -1171,6 +1212,86 @@ public final class AviDemuxer implements Demuxer {
             }
         }
         cursor = anyLeft && earliest != Integer.MAX_VALUE ? earliest : orderCount;
+    }
+
+    /**
+     * Returns the chunk a stream restarts at for a seek: its last key frame (audio: its last chunk) starting at or
+     * before the target, or its first key frame when none does.
+     *
+     * @param stream the stream whose chunks are searched
+     * @param micros the target in microseconds
+     * @return the chunk index, {@code stream.count} when the stream has no key frame
+     */
+    private static int seekEntry(Stream stream, long micros) {
+        var target = SeekTimes.floor(micros, stream.track.timeBase());
+        var chosen = -1;
+        for (var i = 0; i < stream.count; i++) {
+            if (stream.times[i] > target) {
+                break;
+            }
+            if (stream.keys[i]) {
+                chosen = i;
+            }
+        }
+        if (chosen < 0) {
+            chosen = 0;
+            while (chosen < stream.count && !stream.keys[chosen]) {
+                chosen++;
+            }
+        }
+        return chosen;
+    }
+
+    /**
+     * Describes an interleaved DV stream ({@code iavs}, a type-1 DV AVI) from its first frame: the format, picture
+     * size, aspect ratio and scan of the video track, and the PCM tracks of the audio its DIF frames carry.
+     *
+     * @param stream the stream, its index built
+     * @param firstId the track ID of its first audio track
+     * @return the number of audio tracks found
+     */
+    private int configureDv(Stream stream, int firstId) {
+        if (stream.count == 0) {
+            return 0;
+        }
+        var length = 0;
+        var chunks = Math.min(2, stream.count);
+        for (var i = 0; i < chunks; i++) {
+            length += stream.sizes[i];
+        }
+        var size = (int) Math.min(length, 2L * DifProfile.DVCPRO_HD_1080I50.frameSize());
+        LimitChecks.checkAllocation(limits, size);
+        var head = new byte[size];
+        var at = 0;
+        for (var i = 0; i < chunks && at < size; i++) {
+            var part = (int) Math.min(stream.sizes[i], size - at);
+            reader.seek(stream.offsets[i]);
+            part = (int) Math.min(part, reader.remaining(part));
+            reader.readFully(head, at, part);
+            at += part;
+        }
+        var profile = DifProfile.detect(head, 0, Math.min(at, stream.sizes[0]));
+        if (profile == null) {
+            return 0;
+        }
+        var video = (VideoTrack) stream.track;
+        var wide = profile.wide(head, 0, Math.min(at, profile.frameSize()));
+        stream.track = video.toBuilder()
+                .width(profile.width())
+                .height(profile.height())
+                .sampleAspectRatio(profile.sampleAspectRatio(wide))
+                .color(profile.highDefinition() ? ColorInfo.BT709_LIMITED : ColorInfo.BT601_LIMITED)
+                .interlacing(profile.progressive() ? Interlacing.PROGRESSIVE
+                        : profile.highDefinition() ? Interlacing.TOP_FIELD_FIRST : Interlacing.BOTTOM_FIELD_FIRST)
+                .build();
+        if (at < profile.frameSize()) {
+            return 0;
+        }
+        stream.dvProfile = profile;
+        var available = profile.progressive() && stream.count > 1 && stream.sizes[0] == profile.frameSize()
+                ? Math.min(at, 2 * profile.frameSize()) : profile.frameSize();
+        stream.dvAudio = DifAudioTracks.of(profile, head, 0, available, firstId);
+        return stream.dvAudio.tracks().size();
     }
 
     /**
@@ -1320,6 +1441,21 @@ public final class AviDemuxer implements Demuxer {
          * Whether the Annex B packets of the stream are converted to length-prefixed NAL units.
          */
         boolean lengthPrefixed;
+
+        /**
+         * Whether the stream is interleaved DV ({@code iavs}), whose chunks are DIF frames carrying the audio too.
+         */
+        boolean interleavedDv;
+
+        /**
+         * The format of the first frame of an interleaved DV stream, or {@code null}.
+         */
+        DifProfile dvProfile;
+
+        /**
+         * The audio tracks an interleaved DV stream carries, or {@code null}.
+         */
+        DifAudioTracks dvAudio;
 
         /**
          * The time base of the stream header.

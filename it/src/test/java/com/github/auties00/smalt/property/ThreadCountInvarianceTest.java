@@ -51,12 +51,12 @@ class ThreadCountInvarianceTest {
 
     static Stream<Codec> encoders() {
         return Stream.of(Codec.H264, Codec.HEVC, Codec.VP8, Codec.VP9, Codec.AV1, Codec.MJPEG, Codec.JPEG2000,
-                Codec.PRORES, Codec.DNXHD, Codec.MPEG4_PART2, Codec.H263, Codec.FFV1);
+                Codec.PRORES, Codec.DNXHD, Codec.DV, Codec.MPEG4_PART2, Codec.H263, Codec.FFV1);
     }
 
     static Stream<Codec> decoders() {
         return Stream.of(Codec.H264, Codec.VP8, Codec.VP9, Codec.AV1, Codec.MJPEG, Codec.JPEG2000, Codec.PRORES,
-                Codec.DNXHD, Codec.HEVC, Codec.MPEG4_PART2, Codec.H263, Codec.MPEG2_VIDEO, Codec.FFV1);
+                Codec.DNXHD, Codec.DV, Codec.HEVC, Codec.MPEG4_PART2, Codec.H263, Codec.MPEG2_VIDEO, Codec.FFV1);
     }
 
     @Nested
@@ -69,7 +69,10 @@ class ThreadCountInvarianceTest {
             for (var realtime : new boolean[]{true, false}) {
                 String reference = null;
                 for (var threads : THREADS) {
-                    var stream = Streams.video(codec, 640, 360, 10, builder -> builder.realtime(realtime).threads(threads));
+                    // DV codes only the picture sizes of its formats
+                    var stream = codec == Codec.DV
+                            ? Streams.video(codec, 720, 576, 4, builder -> builder.realtime(realtime).threads(threads))
+                            : Streams.video(codec, 640, 360, 10, builder -> builder.realtime(realtime).threads(threads));
                     var digest = ThreadDigest.sha256Packets(stream);
                     if (reference == null) {
                         reference = digest;
@@ -88,7 +91,7 @@ class ThreadCountInvarianceTest {
         @MethodSource("com.github.auties00.smalt.property.ThreadCountInvarianceTest#decoders")
         @DisplayName("returns the same frames for every thread count")
         void frames(Codec codec) {
-            var stream = codec == Codec.HEVC || codec == Codec.MPEG2_VIDEO
+            var stream = codec == Codec.HEVC || codec == Codec.MPEG2_VIDEO || codec == Codec.DV
                     ? Catalog.stream(codec)
                     : Streams.video(codec, 640, 360, 10, builder -> builder.realtime(codec != Codec.H264));
             String reference = null;

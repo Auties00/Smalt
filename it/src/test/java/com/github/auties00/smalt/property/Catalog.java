@@ -81,6 +81,10 @@ public final class Catalog {
     }
 
     private static Streams.Encoded make(Codec codec) {
+        if (codec == Codec.DV) {
+            // DV codes only the picture sizes of its formats: 625/50 DV
+            return Streams.video(codec, 720, 576, 4, builder -> builder.threads(1));
+        }
         if (VideoEncoders.isSupported(codec)) {
             // H.264 and HEVC in file mode: length-prefixed packets with an avcC or hvcC record, and B-frames.
             var realtime = codec != Codec.H264 && codec != Codec.HEVC;

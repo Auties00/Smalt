@@ -4,6 +4,7 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.Speaker;
+import com.github.auties00.smalt.container.internal.DvTags;
 import com.github.auties00.smalt.container.internal.RawVideoTags;
 import com.github.auties00.smalt.container.internal.WaveFormat;
 import com.github.auties00.smalt.image.Chromaticity;
@@ -510,7 +511,9 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
             default -> {
                 var raw = RawVideoTags.sampleEntry(FourCc.printable(format), depth, colorTable);
                 var mpegVideo = mpegVideo(format);
-                if (mpegVideo != null) {
+                if (DvTags.quickTime(FourCc.printable(format))) {
+                    codec = Codec.DV;
+                } else if (mpegVideo != null) {
                     codec = mpegVideo;
                     config = esds == null ? null : esds.specificInfo();
                 } else if (raw != null) {

@@ -30,6 +30,10 @@ import com.github.auties00.smalt.video.dnxhd.DnxhdDecoderOptions;
 import com.github.auties00.smalt.video.dnxhd.DnxhdEncoder;
 import com.github.auties00.smalt.video.dnxhd.DnxhdEncoderOptions;
 import com.github.auties00.smalt.video.dnxhd.DnxhdProfile;
+import com.github.auties00.smalt.video.dv.DvDecoder;
+import com.github.auties00.smalt.video.dv.DvEncoder;
+import com.github.auties00.smalt.video.dv.DvEncoderOptions;
+import com.github.auties00.smalt.video.dv.DvProfile;
 import com.github.auties00.smalt.video.ffv1.Ffv1Coder;
 import com.github.auties00.smalt.video.ffv1.Ffv1Decoder;
 import com.github.auties00.smalt.video.ffv1.Ffv1Encoder;
@@ -133,6 +137,8 @@ final class VideoWorkloads {
                 file("prores-decode", VideoWorkloads::proresDecode),
                 file("dnxhd-encode", VideoWorkloads::dnxhdEncode),
                 file("dnxhd-decode", VideoWorkloads::dnxhdDecode),
+                file("dv-encode", VideoWorkloads::dvEncode),
+                file("dv-decode", VideoWorkloads::dvDecode),
                 file("theora-encode", VideoWorkloads::theoraEncode),
                 file("theora-decode", VideoWorkloads::theoraDecode),
                 file("ffv1-encode", VideoWorkloads::ffv1Encode),
@@ -512,6 +518,56 @@ final class VideoWorkloads {
         var single = new DnxhdDecoder(DnxhdDecoderOptions.builder().threads(1).build());
         var parallel = new DnxhdDecoder(DnxhdDecoderOptions.builder().threads(2).build());
         return intraDecode("dnxhd-decode", frames,
+                frame -> single.decodeFrame(frame, 0, frame.length).width()
+                        + parallel.decodeFrame(frame, 0, frame.length).width());
+    }
+
+    /**
+     * The DV formats of {@link #dvEncode()} and {@link #dvDecode()}: 4:1:1 with adaptive DCT modes, 4:2:2 at 50 Mb/s
+     * and a progressive DVCPRO HD format, which select the three macroblock layouts, the 2-4-8 DCT and the DVCPRO HD
+     * quantizer.
+     */
+    private static final List<DvProfile> DV_PROFILES = List.of(DvProfile.DV_525, DvProfile.DVCPRO50_625,
+            DvProfile.DVCPRO_HD_720P60);
+
+    /**
+     * Returns a workload that encodes one frame in each of {@link #DV_PROFILES}, on the calling thread.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload dvEncode() {
+        var encoders = new ArrayList<DvEncoder>();
+        var pictures = new ArrayList<com.github.auties00.smalt.image.Picture>();
+        for (var profile : DV_PROFILES) {
+            encoders.add(new DvEncoder(DvEncoderOptions.of(profile).toBuilder().threads(1).build()));
+            pictures.add(SyntheticVideo.natural(profile.width(), profile.height(), 1).getFirst());
+        }
+        long[] pts = {0};
+        java.util.function.Consumer<Packet> output = packet -> Blackhole.consume(packet.size());
+        return TrainingWorkload.of("dv-encode", () -> {
+            for (var i = 0; i < encoders.size(); i++) {
+                encoders.get(i).encode(new VideoFrame(pictures.get(i), pts[0]++, 1, true), output);
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that decodes one frame of each of {@link #DV_PROFILES} on the calling thread and on two
+     * threads.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload dvDecode() {
+        var frames = new ArrayList<byte[]>();
+        for (var profile : DV_PROFILES) {
+            var picture = SyntheticVideo.natural(profile.width(), profile.height(), 1).getFirst();
+            try (var encoder = new DvEncoder(DvEncoderOptions.of(profile).toBuilder().threads(1).build())) {
+                encoder.encode(new VideoFrame(picture, 0, 1, true), packet -> frames.add(packet.data()));
+            }
+        }
+        var single = new DvDecoder(VideoDecoderOptions.builder().threads(1).build());
+        var parallel = new DvDecoder(VideoDecoderOptions.builder().threads(2).build());
+        return intraDecode("dv-decode", frames,
                 frame -> single.decodeFrame(frame, 0, frame.length).width()
                         + parallel.decodeFrame(frame, 0, frame.length).width());
     }

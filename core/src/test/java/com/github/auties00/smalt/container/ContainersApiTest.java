@@ -266,8 +266,9 @@ class ContainersApiTest {
             if (mp4) {
                 assertTrue(quickTime);
             }
-            // ISO files have no sample entry for ProRes, DNxHD, 8-bit PCM, G.711, ima4, GSM 06.10 and MACE
-            assertEquals(codec == Codec.PRORES || codec == Codec.DNXHD || codec == Codec.PCM_U8 || codec == Codec.PCM_S8
+            // ISO files have no sample entry for ProRes, DNxHD, DV, 8-bit PCM, G.711, ima4, GSM 06.10 and MACE
+            assertEquals(codec == Codec.PRORES || codec == Codec.DNXHD || codec == Codec.DV || codec == Codec.PCM_U8
+                    || codec == Codec.PCM_S8
                     || codec == Codec.PCM_ALAW || codec == Codec.PCM_MULAW || codec == Codec.ADPCM_IMA_QT
                     || codec == Codec.GSM || codec == Codec.MACE3 || codec == Codec.MACE6, quickTime && !mp4);
         }

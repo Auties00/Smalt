@@ -122,6 +122,13 @@ public enum ContainerFormat {
     MXF,
 
     /**
+     * A raw DV stream ({@code .dv}, {@code .dif}): the DIF frames of IEC 61834-2 DV, SMPTE ST 314 DVCPRO and
+     * DVCPRO50 and SMPTE ST 370 DVCPRO HD, one after the other, each starting with a header block of DIF
+     * sequence 0.
+     */
+    DV,
+
+    /**
      * A raw Dolby Digital (AC-3, {@code .ac3}) or Dolby Digital Plus (E-AC-3, {@code .ec3})
      * elementary stream of sync frames.
      */

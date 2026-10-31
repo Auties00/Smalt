@@ -17,7 +17,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
- * Runs the VP9, AV1, ProRes and DNxHR decoders ({@link ReaderAsserts}) and the AVIF image decoder
+ * Runs the VP9, AV1, ProRes, DNxHR and DV decoders ({@link ReaderAsserts}) and the AVIF image decoder
  * ({@link ImageDecoderAsserts}) of this artifact through the I/O behavior harness over the container samples
  * (core's {@code src/test/resources/samples}), the AVIF samples of derived images and sample transforms (this
  * module's {@code src/test/resources/samples}, made by {@code tools/testdata/behavior/make-avif-samples.py}) and
@@ -32,7 +32,7 @@ class VideoDecoderBehaviorTest {
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"flv/vp9.flv", "flv/av1.flv", "matroska/vp9-vorbis.webm", "matroska/vp9-alpha.webm",
             "ivf/av1.ivf", "mp4/prores.mov", "mp4/dnxhr.mov",
-            "matroska/ffv1.mkv", "avi/ffv1.avi", "ogg/theora.ogv"})
+            "matroska/ffv1.mkv", "avi/ffv1.avi", "ogg/theora.ogv", "dv/dv25-audio.dv", "avi/dv-type1.avi"})
     @DisplayName("video samples: identical frames under every source behavior and clean faults")
     void sample(String sample) throws IOException {
         ReaderAsserts.video(sample, Files.readAllBytes(SAMPLES.resolve(sample))).run();

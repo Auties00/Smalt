@@ -69,6 +69,7 @@ import java.util.TreeMap;
  * <tr><td>MPEG-1, MPEG-2 and MPEG-4 Part 2 video (SMPTE ST 381-1)</td><td>{@link Codec#MPEG1_VIDEO},
  * {@link Codec#MPEG2_VIDEO}, {@link Codec#MPEG4_PART2}</td><td>one picture each</td></tr>
  * <tr><td>JPEG 2000 (SMPTE ST 422)</td><td>{@link Codec#JPEG2000}</td><td>one codestream each</td></tr>
+ * <tr><td>DV-DIF (SMPTE ST 383)</td><td>{@link Codec#DV}</td><td>one DIF frame each</td></tr>
  * <tr><td>Broadcast Wave and AES3 audio (SMPTE ST 382)</td><td>{@link Codec#PCM_S16LE}, {@link Codec#PCM_S24LE},
  * {@link Codec#PCM_S32LE}, {@link Codec#PCM_U8}, and the big-endian codecs for AIFF coded sound</td><td>the samples of
  * one edit unit (frame wrapped) or of at most 100 ms (clip wrapped)</td></tr>
@@ -774,6 +775,9 @@ public final class MxfDemuxer implements Demuxer {
             if (scheme == 0x02 && coding[12] == 0x71) {
                 return Codec.DNXHD;
             }
+            if (scheme == 0x02 && coding[12] == 0x02) {
+                return Codec.DV;
+            }
             if (scheme == 0x02 && coding[12] == 0x03 && coding[13] == 0x06) {
                 return Codec.PRORES;
             }
@@ -798,6 +802,7 @@ public final class MxfDemuxer implements Demuxer {
         }
         return switch (family) {
             case 0x11 -> Codec.DNXHD;
+            case 0x02 -> Codec.DV;
             case 0x1C -> Codec.PRORES;
             case 0x10, 0x0F -> Codec.H264;
             case 0x04 -> Codec.MPEG2_VIDEO;
@@ -2051,7 +2056,7 @@ public final class MxfDemuxer implements Demuxer {
      * @param codec the coding format asked about
      */
     private static boolean isAlwaysKey(Codec codec) {
-        return codec == Codec.DNXHD || codec == Codec.PRORES || codec == Codec.JPEG2000;
+        return codec == Codec.DNXHD || codec == Codec.PRORES || codec == Codec.JPEG2000 || codec == Codec.DV;
     }
 
     /**

@@ -63,6 +63,7 @@ container.avi	core
 container.caf	core
 container.dash	core
 container.dts	core
+container.dv	core
 container.flac	core
 container.flv	core
 container.hls	core
@@ -198,6 +199,8 @@ video.av1.internal	video
 video.av1.internal.encoder	video
 video.dnxhd	video
 video.dnxhd.internal	video
+video.dv	video
+video.dv.internal	video
 video.ffv1	video
 video.ffv1.internal	video
 video.h263	mpeg

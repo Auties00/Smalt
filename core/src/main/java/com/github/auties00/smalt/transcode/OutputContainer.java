@@ -170,6 +170,9 @@ public enum OutputContainer {
      */
     Y4M(ContainerFormat.Y4M, "y4m", "video/x-yuv4mpeg", List.of(Codec.RAW_VIDEO), List.of()),
 
+    // TODO: a raw DV output (DvMuxer), which needs the transcode to scale and retime the video to the raster and frame
+    //  rate of a DV format and to resample the audio to 48 kHz
+
     /**
      * An MPEG audio elementary stream (MP3 or MP2).
      */

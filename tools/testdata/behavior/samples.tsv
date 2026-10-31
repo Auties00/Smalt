@@ -16,6 +16,7 @@ core/src/test/resources/samples/au/g721.au	2432	9815aca448ce0fa3fd35f4a371a3c023
 core/src/test/resources/samples/au/g723-3.au	1832	5acf199f0a4b7ff9f3dc89317cb68a9165bedd2305e5f93294ec7f228dcfab58	make-audio-container-samples.py
 core/src/test/resources/samples/au/mulaw.au	4832	080f519b23bd334a3e370483e6bb5c1311a16d87f0c287179b493f8f0886043c	make-audio-container-samples.py
 core/src/test/resources/samples/au/s16.au	52960	f3ed3a56907ad07bb3a3f6a240975f631ad1883f134c9a212e5d9ca73b3e9c26	make-audio-container-samples.py
+core/src/test/resources/samples/avi/dv-type1.avi	240272	e34e6e1c456d3c21cebb825d57e793cef2fadcca40de503c3d16250dd0b63843	make-dv-samples.py
 core/src/test/resources/samples/avi/ffv1.avi	30098	368719406055613df6a8e43d1f9fca775243b7e2fa74e94b13547c46d81edc96	make-xiph-lossless-samples.py
 core/src/test/resources/samples/avi/g726.avi	7512	16c5c828da4ec4aeb740c46d442aaaf6c9a5e90150744ec2cf9c4ed14453f25a	make-adpcm-samples.py
 core/src/test/resources/samples/avi/ima-adpcm.avi	10906	73b35d6fb60171f670e03ad644a7d8ebeaec5411da9b6865529423240a198f5f	make-adpcm-samples.py
@@ -29,6 +30,7 @@ core/src/test/resources/samples/caf/ima4.caf	14205	27ec48c5fb9fe33e39dbaab3cef4b
 core/src/test/resources/samples/caf/opus.caf	2534	76e61e028f2aaa1ca91b304a60272c0484670591bebb5b1003c0f3a8a1d76d19	make-audio-container-samples.py
 core/src/test/resources/samples/caf/s16.caf	53049	7142b32d44cddd530e27ad914d454139d6dce6a8f4e59168e0d1b4ef8763296a	make-audio-container-samples.py
 core/src/test/resources/samples/dts/dts.dts	80964	00131c2a2fceab37d185f689d3451fcacc55bb26326bd265076df91ef0bfa144	make-samples.sh
+core/src/test/resources/samples/dv/dv25-audio.dv	240000	8dec1f3f42d3c92ea9dfe4f97b92e8fa96d35cce774d7aed8dffbd3cd42cb778	make-dv-samples.py
 core/src/test/resources/samples/elementary/av1-annexb.obu	15637	b5e670c82b8d929fbf930383ba83b5cb1eaed75974afde393a72266e7551ebfc	make-samples.sh
 core/src/test/resources/samples/elementary/av1.obu	15577	c2b46137baf88f641c5a1e81ce48578c2a8df0a0e652ad43440d04c5801809b7	make-samples.sh
 core/src/test/resources/samples/elementary/h263.263	31736	1bbd3e459ac6c382583220c98331ac2bce55d933c828c4d1228b0e104abedeba	make-samples.sh

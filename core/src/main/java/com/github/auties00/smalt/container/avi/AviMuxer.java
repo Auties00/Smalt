@@ -36,7 +36,8 @@ import java.util.Objects;
  * Writes AVI files with the OpenDML 1.02 extensions.
  *
  * <p>Video tracks of Motion-JPEG, Motion JPEG 2000, MPEG-1 and MPEG-2 video ({@code mpg1}, {@code mpg2}), MPEG-4
- * Part 2, H.264, HEVC, H.263, Sorenson Spark ({@code FLV1}), VP8, VP9 and FFV1, and audio tracks of PCM (8-bit
+ * Part 2, H.264, HEVC, H.263, Sorenson Spark ({@code FLV1}), VP8, VP9, FFV1 and DV (a type-2 DV file: {@code dvsd},
+ * {@code dvh1} for DVCPRO HD, one DIF frame per chunk), and audio tracks of PCM (8-bit
  * unsigned, 16, 24, 32 and 64-bit signed
  * and 32 and 64-bit float little-endian, A-law, mu-law), MP3, MP2, AAC, AC-3, IMA ADPCM, Microsoft ADPCM, GSM 06.10
  * in Microsoft's packing, G.722 and G.726 are accepted, at most 99 tracks in all. Video is stored at a constant
@@ -1188,7 +1189,7 @@ public final class AviMuxer implements Muxer {
                 out.u32le(videoTrack.height());
                 out.u16le(1);
                 out.u16le(24);
-                out.fourCc(RiffCodecs.videoFourCc(track.codec()));
+                out.fourCc(RiffCodecs.videoFourCc(videoTrack));
                 out.u32le((long) videoTrack.width() * videoTrack.height() * 3);
                 out.zeros(16);
                 out.bytes(extra);
@@ -1271,7 +1272,7 @@ public final class AviMuxer implements Muxer {
         ByteWriter header() {
             var out = new ByteWriter(STRH_SIZE);
             out.fourCc(video ? "vids" : "auds");
-            out.fourCc(video ? RiffCodecs.videoFourCc(track.codec()) : "\0\0\0\0");
+            out.fourCc(video ? RiffCodecs.videoFourCc((VideoTrack) track) : "\0\0\0\0");
             out.u32le(0);
             out.u16le(0);
             out.u16le(0);

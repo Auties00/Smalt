@@ -506,7 +506,7 @@ public final class Mp4Remuxer {
             var output = copy.output;
             var plannable = switch (output.codec()) {
                 case MP3, MP2 -> output instanceof AudioTrack audio && audio.sampleRate() > 0 && audio.layout().isPresent();
-                case AC3, EAC3, AMR_NB, AMR_WB, PRORES, DNXHD -> false;
+                case AC3, EAC3, AMR_NB, AMR_WB, PRORES, DNXHD, DV -> false;
                 case VP8, VP9, AV1, MPEG4_PART2, MPEG1_VIDEO, MPEG2_VIDEO ->
                         output.codecConfig().filter(config -> config.length > 0).isPresent();
                 case MJPEG -> brand != Mp4MuxerOptions.Brand.QUICKTIME;

@@ -972,6 +972,13 @@ class FuzzSeedWriter {
                 "mpeg4", "-bf", "1", "-q:v", "20", "-f", "m4v"));
         copy(DemuxerFuzzTest.class, "h263", "valid-h263.263", ffmpeg("h263", video(128, 96, 3), "-c:v", "h263",
                 "-q:v", "20"));
+        // one 525/60 frame with its audio
+        var dv = ffmpeg("dv", List.of("-f", "lavfi", "-i", "testsrc2=size=720x480:rate=30000/1001", "-f", "lavfi",
+                "-i", "sine=frequency=440:sample_rate=48000"), "-frames:v", "1", "-c:v", "dvvideo", "-pix_fmt",
+                "yuv411p", "-c:a", "pcm_s16le", "-ac", "2", "-shortest", "-f", "dv");
+        copy(DemuxerFuzzTest.class, "dv", "valid-dv25-audio.dv", dv);
+        write(DemuxerFuzzTest.class, "avi", "valid-dv-type1.avi",
+                com.github.auties00.smalt.container.dv.DvTestFiles.typeOneAvi(com.github.auties00.smalt.testkit.Fixtures.read(dv), 120000, 1001, 30000));
         copy(DemuxerFuzzTest.class, "y4m", "valid-yuv420.y4m", ffmpeg("y4m", video(16, 16, 3), "-pix_fmt",
                 "yuv420p"));
         var pcm = new byte[3 + 64];

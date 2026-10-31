@@ -2,6 +2,7 @@ package com.github.auties00.smalt.container.matroska;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.Muxer;
+import com.github.auties00.smalt.container.internal.DvTags;
 import com.github.auties00.smalt.container.internal.AdpcmBlocks;
 import com.github.auties00.smalt.container.internal.AdpcmFormat;
 import com.github.auties00.smalt.container.internal.BitmapTrackConfigs;
@@ -80,7 +81,9 @@ import java.util.Set;
  *       ({@code V_MJPEG}, none), Motion JPEG 2000 ({@code V_JPEG2000}, none: a frame that relies on the track's JP2
  *       Header box is made to carry it, a raw codestream or a single {@code jp2c} box written as a JP2 file and the
  *       two {@code jp2c} boxes of an interlaced frame after a copy of the header box), H.263
- *       ({@code V_MS/VFW/FOURCC}, a {@code BITMAPINFOHEADER} with the FourCC {@code H263}), ProRes
+ *       ({@code V_MS/VFW/FOURCC}, a {@code BITMAPINFOHEADER} with the FourCC {@code H263}), DV
+ *       ({@code V_MS/VFW/FOURCC}, a {@code BITMAPINFOHEADER} with the FourCC {@code dvsd}, {@code dvh1} for DVCPRO
+ *       HD; one DIF frame per block), ProRes
  *       ({@code V_PRORES}, the four-character sample entry type of the track's configuration), Theora
  *       ({@code V_THEORA}, the Xiph-laced headers), FFV1 ({@code V_FFV1}, the configuration record of a version 3
  *       stream, none for versions 0 and 1), DNxHD and DNxHR ({@code V_QUICKTIME}, a
@@ -588,7 +591,7 @@ public final class MatroskaMuxer implements Muxer {
             case MPEG2_VIDEO -> "V_MPEG2";
             case MJPEG -> "V_MJPEG";
             case JPEG2000 -> "V_JPEG2000";
-            case H263 -> "V_MS/VFW/FOURCC";
+            case H263, DV -> "V_MS/VFW/FOURCC";
             case PRORES -> "V_PRORES";
             case THEORA -> "V_THEORA";
             case FFV1 -> "V_FFV1";
@@ -1805,7 +1808,8 @@ public final class MatroskaMuxer implements Muxer {
                     case DNXHD -> codecPrivate = imageDescription(require(config), videoTrack);
                     case AV1, MPEG4_PART2, MPEG1_VIDEO, MPEG2_VIDEO, FFV1 -> codecPrivate = config;
                     case VP9 -> codecPrivate = config == null ? null : vp9Features(config);
-                    case H263 -> codecPrivate = bitmapInfo(videoTrack, config);
+                    case H263 -> codecPrivate = bitmapInfo(videoTrack, "H263", config);
+                    case DV -> codecPrivate = bitmapInfo(videoTrack, DvTags.riffFourCc(videoTrack.width()), null);
                     default -> {
                     }
                 }
@@ -1997,17 +2001,18 @@ public final class MatroskaMuxer implements Muxer {
 
         /**
          * Builds the {@code CodecPrivate} of a {@code V_MS/VFW/FOURCC} track: a 40-byte
-         * {@code BITMAPINFOHEADER} with the track's FourCC, followed by the track's configuration.
+         * {@code BITMAPINFOHEADER} with a FourCC, followed by the track's configuration.
          *
          * @param video the track
+         * @param fourCc the FourCC of the codec
          * @param config the configuration, or {@code null}
          * @return the structure
          */
-        private static byte[] bitmapInfo(VideoTrack video, byte[] config) {
+        private static byte[] bitmapInfo(VideoTrack video, String fourCc, byte[] config) {
             var extra = config == null ? new byte[0] : config;
             var buffer = ByteBuffer.allocate(40 + extra.length).order(ByteOrder.LITTLE_ENDIAN);
             buffer.putInt(40 + extra.length).putInt(video.width()).putInt(video.height());
-            buffer.putShort((short) 1).putShort((short) 24).put("H263".getBytes(StandardCharsets.US_ASCII));
+            buffer.putShort((short) 1).putShort((short) 24).put(fourCc.getBytes(StandardCharsets.US_ASCII));
             buffer.putInt((int) Math.min(3L * video.width() * video.height(), 0xFFFFFFFFL));
             buffer.putInt(0).putInt(0).putInt(0).putInt(0).put(extra);
             return buffer.array();

@@ -101,6 +101,10 @@ class ReferenceDecodeTest {
             entry(Codec.DNXHD, new Reference("mov", sink -> new Mp4Muxer(sink, Mp4MuxerOptions.builder()
                     .brand(Mp4MuxerOptions.Brand.QUICKTIME).build()), "dnxhd", Tolerance.maxAbs(4)
                     .and(Tolerance.psnr(50)), List.of())),
+            // SMPTE ST 314 and IEC 61834 leave the inverse DCT to the decoder; ffmpeg's is fixed point
+            entry(Codec.DV, new Reference("mov", sink -> new Mp4Muxer(sink, Mp4MuxerOptions.builder()
+                    .brand(Mp4MuxerOptions.Brand.QUICKTIME).build()), "dvvideo", Tolerance.maxAbs(2)
+                    .and(Tolerance.rms(0.4)), List.of())),
             // T.81 leaves the inverse DCT's rounding to the decoder; ffmpeg's is not libjpeg's
             entry(Codec.MJPEG, new Reference("mkv", MatroskaMuxer::new, "mjpeg", Tolerance.offByOne()
                     .and(Tolerance.psnr(55)), List.of())),

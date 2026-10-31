@@ -693,9 +693,12 @@ final class MuxTrack {
      * @param codec the codec of the track
      * @return the whole sample, up to 64 KiB, for AC-3 and E-AC-3, whose configuration boxes
      * describe every substream of the first access unit, and for Motion JPEG 2000, whose JP2 header and main
-     * codestream header describe the frames; 64 bytes otherwise
+     * codestream header describe the frames; the six blocks of DV that name its format; 64 bytes otherwise
      */
     static int firstBytesLength(Codec codec) {
+        if (codec == Codec.DV) {
+            return 6 * 80;
+        }
         return codec == Codec.AC3 || codec == Codec.EAC3 || codec == Codec.JPEG2000 ? 64 << 10 : 64;
     }
 }

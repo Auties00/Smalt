@@ -193,6 +193,11 @@ class DemuxerFuzzTest {
     }
 
     @FuzzTest
+    void dv(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.DV, data);
+    }
+
+    @FuzzTest
     void y4m(byte[] data) {
         FuzzMedia.demuxer(ContainerFormat.Y4M, data);
     }

@@ -3,7 +3,10 @@ package com.github.auties00.smalt.container.mp4;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.Speaker;
+import com.github.auties00.smalt.container.internal.DvTags;
 import com.github.auties00.smalt.container.internal.SphericalBoxes;
+import com.github.auties00.smalt.internal.header.DifProfile;
+import com.github.auties00.smalt.internal.io.FourCc;
 import com.github.auties00.smalt.image.Chromaticity;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorRange;
@@ -153,6 +156,7 @@ final class SampleEntryWriter {
             case H263 -> writeH263(writer, track, (VideoTrack) described);
             case JPEG2000 -> writeMotionJpeg2000(writer, track, (VideoTrack) described, config);
             case PRORES, DNXHD -> writeQuickTimeVisual(writer, track, (VideoTrack) described, config);
+            case DV -> writeDv(writer, track, (VideoTrack) described);
             case MOV_TEXT, WEBVTT -> writeText(writer, track.track);
             case TTML -> writeTtml(writer, track.track);
             case DVD_SUBTITLE -> {
@@ -970,6 +974,31 @@ final class SampleEntryWriter {
         writeFields(writer, video.interlacing().orElse(scan));
         writeAspect(writer, video.sampleAspectRatio().orElse(SQUARE));
         writer.end();
+    }
+
+    /**
+     * Writes a QuickTime DV sample entry: its type ({@code dvc }, {@code dvcp}, {@code dvpp}, {@code dv5n},
+     * {@code dv5p}, {@code dvh6}, {@code dvh5}, {@code dvhp} or {@code dvhq}) and compressor name name the format of
+     * the first frame, or of the track's picture size and frame rate when no frame was written.
+     *
+     * @param writer the destination
+     * @param track the track state, with the first bytes of the first frame
+     * @param video the track
+     */
+    private static void writeDv(BoxWriter writer, MuxTrack track, VideoTrack video) {
+        var first = track.firstBytes;
+        var profile = first == null ? null : DifProfile.detect(first, 0, first.length);
+        if (profile == null) {
+            var fifty = video.frameRate().map(rate -> rate.denominator() != 1001).orElse(video.height() == 576);
+            profile = switch (video.height()) {
+                case 576 -> DifProfile.DV_625;
+                case 1080 -> video.width() == 1440 ? DifProfile.DVCPRO_HD_1080I50 : DifProfile.DVCPRO_HD_1080I60;
+                case 720 -> fifty ? DifProfile.DVCPRO_HD_720P50 : DifProfile.DVCPRO_HD_720P60;
+                default -> DifProfile.DV_525;
+            };
+        }
+        writeVisualHeader(writer, FourCc.of(DvTags.quickTimeType(profile)), video, DvTags.compressorName(profile));
+        writeVisualTrailer(writer, video);
     }
 
     /**

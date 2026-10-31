@@ -98,6 +98,11 @@ public final class PrefixedSource implements MediaSource, LocalSource, ForwardOn
     }
 
     @Override
+    public boolean keeps(long from, long to) {
+        return to <= prefix.length || range.keeps(Math.max(0, from - prefix.length), to - prefix.length);
+    }
+
+    @Override
     public void close() {
     }
 }

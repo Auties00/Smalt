@@ -24,6 +24,8 @@ import com.github.auties00.smalt.container.dash.DashDemuxer;
 import com.github.auties00.smalt.container.flac.FlacDemuxer;
 import com.github.auties00.smalt.container.hls.HlsDemuxer;
 import com.github.auties00.smalt.container.internal.Latm;
+import com.github.auties00.smalt.container.dv.DvDemuxer;
+import com.github.auties00.smalt.container.dv.DvMuxer;
 import com.github.auties00.smalt.container.ivf.IvfDemuxer;
 import com.github.auties00.smalt.container.ivf.IvfMuxer;
 import com.github.auties00.smalt.container.matroska.MatroskaDemuxer;
@@ -112,7 +114,8 @@ import java.util.function.Predicate;
  * skipping an ID3v2 tag first because MP3, AAC, AC-3, AMR and FLAC files often start with one. Formats with a
  * magic number (MP4 family, Matroska, Ogg, RIFF WAVE, Sony Wave64, RIFF AVI, FLV, AIFF, CAF, Sun AU, ADIF, FLAC, AMR,
  * WavPack, MXF, YUV4MPEG2, the {@code "PG"} segments of a {@code .sup} file, the signature line of a VobSub index)
- * are recognized exactly, a VobSub {@code .sub} file by a pack header followed by a subpicture PES packet, other
+ * are recognized exactly, a raw DV stream by the block IDs of the first blocks of its first DIF sequence, a VobSub
+ * {@code .sub} file by a pack header followed by a subpicture PES packet, other
  * MPEG program streams by their first pack header, MPEG transport streams by
  * the sync bytes of their first packets, and raw AC-3 and E-AC-3 streams
  * by two consecutive sync frames;
@@ -132,9 +135,9 @@ import java.util.function.Predicate;
  * <p>{@link #openMuxer(ContainerFormat, MediaSink)} creates muxers with each format's default options: a
  * fast-start {@link Mp4Muxer}, a Matroska (not WebM) {@link MatroskaMuxer}, an {@link OggMuxer}, and the
  * {@link WavMuxer}, {@link Wave64Muxer}, {@link AiffMuxer}, {@link CafMuxer}, {@link AuMuxer}, {@link AdtsMuxer},
- * {@link LoasMuxer}, {@link AdifMuxer}, {@link IvfMuxer}, {@link TsMuxer}, {@link PsMuxer}, {@link MxfMuxer},
- * {@link AviMuxer}, {@link FlvMuxer} and {@link Y4mMuxer}; MPEG audio, FLAC, AMR, AC-3, H.264, HEVC, VVC, AV1
- * (low-overhead and Annex B),
+ * {@link LoasMuxer}, {@link AdifMuxer}, {@link IvfMuxer}, {@link DvMuxer}, {@link TsMuxer}, {@link PsMuxer},
+ * {@link MxfMuxer}, {@link AviMuxer}, {@link FlvMuxer} and {@link Y4mMuxer}; MPEG audio, FLAC, AMR, AC-3, H.264, HEVC,
+ * VVC, AV1 (low-overhead and Annex B),
  * MPEG-4 Part 2, H.263 and PCM files are the elementary streams a {@link RawMuxer} writes.
  * {@link #openMuxer(OutputContainer, MediaSink)} also writes WebM, M4A, QuickTime and fragmented MP4
  * ({@link FragmentedMp4Muxer}). A caller that needs other options (RF64 policies, fragment durations)
@@ -436,6 +439,7 @@ public final class Containers {
             case CAF -> new CafDemuxer(source, options);
             case AU -> new AuDemuxer(source, options);
             case IVF -> new IvfDemuxer(source, options);
+            case DV -> new DvDemuxer(source, options);
             case MPEG_TS -> new TsDemuxer(source, options);
             case MPEG_PS -> new PsDemuxer(source, options);
             case MXF -> new MxfDemuxer(source, options);
@@ -513,6 +517,7 @@ public final class Containers {
             case LOAS -> LoasMuxer.supports(codec);
             case ADIF -> AdifMuxer.supports(codec);
             case IVF -> IvfMuxer.supports(codec);
+            case DV -> DvMuxer.supports(codec);
             case MPEG_TS -> TsMuxer.supports(codec);
             case MPEG_PS -> PsMuxer.supports(codec);
             case MXF -> MxfMuxer.supports(codec);
@@ -607,6 +612,7 @@ public final class Containers {
             case LOAS -> new LoasMuxer(output);
             case ADIF -> new AdifMuxer(output);
             case IVF -> new IvfMuxer(output);
+            case DV -> new DvMuxer(output);
             case MPEG_AUDIO, FLAC, AMR, AC3, DTS, H264, HEVC, VVC, AV1, MPEG4_VIDEO, H263, PCM, WAVPACK ->
                     new FormatMuxer(format, new RawMuxer(output));
             case AV1_ANNEX_B -> new FormatMuxer(format, new RawMuxer(output,
@@ -852,6 +858,9 @@ public final class Containers {
         }
         if (Y4mDemuxer.matches(header)) {
             return ContainerFormat.Y4M;
+        }
+        if (DvDemuxer.matches(header)) {
+            return ContainerFormat.DV;
         }
         if (matches(header, 0, "RIFF") || matches(header, 0, "RIFX") || matches(header, 0, "RF64") || matches(header, 0, "BW64")) {
             if (matches(header, 8, "WAVE")) {

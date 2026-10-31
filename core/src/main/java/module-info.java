@@ -101,6 +101,7 @@ module com.github.auties00.smalt {
     exports com.github.auties00.smalt.container.avi;
     exports com.github.auties00.smalt.container.caf;
     exports com.github.auties00.smalt.container.dash;
+    exports com.github.auties00.smalt.container.dv;
     exports com.github.auties00.smalt.container.flac;
     exports com.github.auties00.smalt.container.flv;
     exports com.github.auties00.smalt.container.hls;

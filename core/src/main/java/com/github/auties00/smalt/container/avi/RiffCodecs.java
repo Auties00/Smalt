@@ -1,6 +1,8 @@
 package com.github.auties00.smalt.container.avi;
 
+import com.github.auties00.smalt.container.internal.DvTags;
 import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.track.VideoTrack;
 
 import java.util.Locale;
 
@@ -20,6 +22,9 @@ final class RiffCodecs {
      * @return the codec, {@link Codec#UNKNOWN_VIDEO} when unrecognized
      */
     static Codec video(String fourCc) {
+        if (DvTags.riff(fourCc)) {
+            return Codec.DV;
+        }
         return switch (fourCc.toUpperCase(Locale.ROOT)) {
             case "H264", "X264", "AVC1", "DAVC", "SMV2", "VSSH" -> Codec.H264;
             case "HEVC", "H265", "HVC1", "HEV1", "X265" -> Codec.HEVC;
@@ -65,7 +70,19 @@ final class RiffCodecs {
             case FFV1 -> "FFV1";
             case MPEG1_VIDEO -> "mpg1";
             case MPEG2_VIDEO -> "mpg2";
+            case DV -> "dvsd";
             default -> null;
         };
+    }
+
+    /**
+     * Returns the FourCC AVI stores for a video track: that of {@link #videoFourCc(Codec)}, except {@code dvh1} for
+     * DVCPRO HD.
+     *
+     * @param track the video track
+     * @return the FourCC, or {@code null} when AVI cannot carry it
+     */
+    static String videoFourCc(VideoTrack track) {
+        return track.codec() == Codec.DV ? DvTags.riffFourCc(track.width()) : videoFourCc(track.codec());
     }
 }
