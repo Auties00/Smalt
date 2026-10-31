@@ -85,10 +85,10 @@ public final class Dct4 {
         this.postSin = new float[half];
         for (var k = 0; k < half; k++) {
             var angle = Math.PI * (k + 0.125) / size;
-            preCos[k] = (float) (Math.cos(angle) * scale);
-            preSin[k] = (float) (Math.sin(angle) * scale);
-            postCos[k] = (float) Math.cos(angle);
-            postSin[k] = (float) Math.sin(angle);
+            preCos[k] = (float) (StrictMath.cos(angle) * scale);
+            preSin[k] = (float) (StrictMath.sin(angle) * scale);
+            postCos[k] = (float) StrictMath.cos(angle);
+            postSin[k] = (float) StrictMath.sin(angle);
         }
         this.positions = fft.positions();
         this.re = new float[half];

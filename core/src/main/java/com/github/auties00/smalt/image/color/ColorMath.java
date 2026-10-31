@@ -226,9 +226,9 @@ final class ColorMath {
      * @param t a white-relative tristimulus ratio
      * @return the companded value
      */
-    private static double labForward(double t) {
+    static double labForward(double t) {
         var limit = (24.0 / 116.0) * (24.0 / 116.0) * (24.0 / 116.0);
-        return t <= limit ? (841.0 / 108.0) * t + (16.0 / 116.0) : Math.pow(t, 1.0 / 3.0);
+        return t <= limit ? (841.0 / 108.0) * t + (16.0 / 116.0) : StrictMath.pow(t, 1.0 / 3.0);
     }
 
     /**
@@ -237,7 +237,7 @@ final class ColorMath {
      * @param t a companded value
      * @return the white-relative tristimulus ratio
      */
-    private static double labInverse(double t) {
+    static double labInverse(double t) {
         return t <= 24.0 / 116.0 ? (108.0 / 841.0) * (t - (16.0 / 116.0)) : t * t * t;
     }
 

@@ -1,0 +1,30 @@
+# demux dump of ogg/flac.oga; regenerate with -Dsmalt.test.updateDumps=true
+format OGG
+duration 600000
+seekable true
+metadata encoder="Lavc61.19.100 flac"
+track 0 AUDIO FLAC timebase=1/22050 duration=13230 config=96:47548ead
+  audio rate=22050 bits=24 skip=0 layout=[FRONT_CENTER]
+  metadata encoder="Lavc61.19.100 flac"
+packets 6
+0 t0 pts=0 dts=0 dur=2304 flags=KEY size=5867 crc=be5bfdd8
+1 t0 pts=2304 dts=2304 dur=2304 flags=KEY size=5874 crc=cc7225b7
+2 t0 pts=4608 dts=4608 dur=2304 flags=KEY size=5872 crc=8cec924f
+3 t0 pts=6912 dts=6912 dur=2304 flags=KEY size=5859 crc=7c0b2f7b
+4 t0 pts=9216 dts=9216 dur=2304 flags=KEY size=5857 crc=d01cfab9
+5 t0 pts=11520 dts=11520 dur=1710 flags=KEY size=4361 crc=35a886f3
+seek 0: t0@0
+seek 200000: t0@1
+seek 400000: t0@3
+seek 600000: end
+seek -1000000: t0@0
+header over READ_ONCE_UNKNOWN_LENGTH:
+  format OGG
+  duration -1
+  seekable false
+  metadata encoder="Lavc61.19.100 flac"
+  track 0 AUDIO FLAC timebase=1/22050 duration=? config=96:47548ead
+    audio rate=22050 bits=24 skip=0 layout=[FRONT_CENTER]
+    metadata encoder="Lavc61.19.100 flac"
+not seekable over READ_ONCE_UNKNOWN_LENGTH
+seeks forward only over READ_ONCE_UNKNOWN_LENGTH
