@@ -181,6 +181,18 @@ public final class SourceReader {
     }
 
     /**
+     * Returns whether the buffer holds every byte of a range, so that reading the range takes nothing from the
+     * source; a parser over a source that reads its input once can still seek back into such a range.
+     *
+     * @param from the offset of the first byte of the range
+     * @param to the offset just past its last byte
+     * @return {@code true} when the buffer holds the range
+     */
+    public boolean buffers(long from, long to) {
+        return from >= bufferStart && to <= bufferStart + bufferLength;
+    }
+
+    /**
      * Moves to an absolute offset; moving past the end is allowed and makes the next read fail.
      *
      * @param position the new absolute position; non-negative
