@@ -29,6 +29,16 @@ public final class TranscodeOptions {
      */
     private static final TranscodeOptions DEFAULTS = new Builder().build();
 
+    /**
+     * The slowest playback speed, {@link #speed()}.
+     */
+    public static final double MIN_SPEED = 0.1;
+
+    /**
+     * The fastest playback speed, {@link #speed()}.
+     */
+    public static final double MAX_SPEED = 10;
+
     private final OutputContainer container;
     private final VideoTranscodeOptions video;
     private final AudioTranscodeOptions audio;
@@ -61,6 +71,13 @@ public final class TranscodeOptions {
      */
     private final MediaTags tags;
 
+    private final double speed;
+
+    /**
+     * The silence trimming, or {@code null}.
+     */
+    private final SilenceTrim silenceTrim;
+
     private TranscodeOptions(Builder builder, long startMicros, long endMicros, long maxDurationMicros) {
         this.container = builder.container;
         this.video = builder.video;
@@ -75,6 +92,9 @@ public final class TranscodeOptions {
         this.dataReferences = builder.dataReferences;
         this.tagMode = builder.tagMode;
         this.tags = builder.tags;
+        // the timestamps are divided by the speed as a fraction of thousandths, exactly
+        this.speed = Math.round(builder.speed * 1000) / 1000.0;
+        this.silenceTrim = builder.silenceTrim;
     }
 
     /**
@@ -246,6 +266,29 @@ public final class TranscodeOptions {
     }
 
     /**
+     * {@return the playback speed of the output, from {@value #MIN_SPEED} to {@value #MAX_SPEED}, rounded to the
+     * nearest thousandth; 1 by default}
+     *
+     * <p>A speed {@code s} plays the kept range {@code s} times as fast: video timestamps are divided by {@code s}
+     * (the frames are kept, so the frame rate is multiplied by {@code s} unless
+     * {@link VideoTranscodeOptions#frameRate()} sets one), audio is time-scaled so that it keeps its pitch unless
+     * {@link AudioTranscodeOptions#preservePitch()} is off, and subtitle cues are moved and shortened. The kept
+     * range is on the input's timeline; the output lasts the range divided by {@code s}. A speed other than 1
+     * encodes the audio and video streams.
+     */
+    public double speed() {
+        return speed;
+    }
+
+    /**
+     * {@return the trimming of the silence at the ends of the audio and of the pauses inside it, or empty to keep
+     * every silence; empty by default}
+     */
+    public Optional<SilenceTrim> silenceTrim() {
+        return Optional.ofNullable(silenceTrim);
+    }
+
+    /**
      * Returns the end of the kept range after the duration limit.
      *
      * @return the presentation time in microseconds, or {@code -1} for the end of the input
@@ -266,7 +309,7 @@ public final class TranscodeOptions {
      */
     private Object[] state() {
         return new Object[]{container, video, audio, subtitles, startMicros, endMicros, maxDurationMicros, seeking, listener,
-                limits, dataReferences, tagMode, tags};
+                limits, dataReferences, tagMode, tags, speed, silenceTrim};
     }
 
     @Override
@@ -286,7 +329,8 @@ public final class TranscodeOptions {
                 + startMicros + ", endMicros=" + endMicros() + ", maxDurationMicros=" + maxDurationMicros()
                 + ", seeking=" + seeking + ", listener=" + listener + ", limits=" + limits + ", dataReferences="
                 + dataReferences + ", tagMode=" + tagMode
-                + (tags == null ? "" : ", tags=" + tags) + "]";
+                + (tags == null ? "" : ", tags=" + tags) + ", speed=" + speed
+                + (silenceTrim == null ? "" : ", silenceTrim=" + silenceTrim) + "]";
     }
 
     /**
@@ -321,6 +365,8 @@ public final class TranscodeOptions {
         private DataReferenceResolver dataReferences = DataReferenceResolver.none();
         private TagMode tagMode = TagMode.COPY;
         private MediaTags tags;
+        private double speed = 1;
+        private SilenceTrim silenceTrim;
 
         private Builder() {
         }
@@ -341,6 +387,8 @@ public final class TranscodeOptions {
             this.dataReferences = options.dataReferences;
             this.tagMode = options.tagMode;
             this.tags = options.tags;
+            this.speed = options.speed;
+            this.silenceTrim = options.silenceTrim;
         }
 
         /**
@@ -575,14 +623,49 @@ public final class TranscodeOptions {
         }
 
         /**
+         * Sets the playback speed; see {@link TranscodeOptions#speed()}.
+         *
+         * @param speed the value
+         * @return this builder
+         */
+        public Builder speed(double speed) {
+            this.speed = speed;
+            return this;
+        }
+
+        /**
+         * Trims silence; see {@link TranscodeOptions#silenceTrim()}.
+         *
+         * @param silenceTrim the value
+         * @return this builder
+         */
+        public Builder silenceTrim(SilenceTrim silenceTrim) {
+            this.silenceTrim = Objects.requireNonNull(silenceTrim, "silenceTrim");
+            return this;
+        }
+
+        /**
+         * Keeps every silence; see {@link TranscodeOptions#silenceTrim()}.
+         *
+         * @return this builder
+         */
+        public Builder noSilenceTrim() {
+            this.silenceTrim = null;
+            return this;
+        }
+
+        /**
          * Builds the options.
          *
          * @return the options
          * @throws IllegalArgumentException if the start of the range is negative, the end of the range
-         * is not after its start, or the duration limit is not positive
+         * is not after its start, the duration limit is not positive, or the speed is out of range
          */
         public TranscodeOptions build() {
             Checks.nonNegative("range start", startMicros);
+            if (!(speed >= MIN_SPEED && speed <= MAX_SPEED)) {
+                throw new IllegalArgumentException("speed " + speed + " is outside " + MIN_SPEED + " to " + MAX_SPEED);
+            }
             if (bounded && endMicros <= startMicros) {
                 throw new IllegalArgumentException("range end " + endMicros + " is not after the start " + startMicros);
             }

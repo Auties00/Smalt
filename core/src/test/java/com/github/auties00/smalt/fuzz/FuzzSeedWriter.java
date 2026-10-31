@@ -1108,4 +1108,47 @@ class FuzzSeedWriter {
         }
         return bytes;
     }
+
+    @Test
+    @DisplayName("transcode seeds: 16-bit PCM WAV tones (one with silent spans) and a SubRip file, joined by FUZZ-TAG")
+    void transcodes() {
+        var marker = FuzzPackets.MARKER;
+        var srt = "1\n00:00:00,050 --> 00:00:00,150\nHello\n".getBytes(StandardCharsets.US_ASCII);
+        write(TranscodeFuzzTest.class, "concat", "valid-two-wavs",
+                join(toneWav(8_000, 1, 0.25, 440), marker, toneWav(8_000, 1, 0.2, 660)));
+        write(TranscodeFuzzTest.class, "concat", "valid-rates", join(toneWav(8_000, 1, 0.2, 440), marker,
+                toneWav(11_025, 2, 0.1, 330), marker, toneWav(8_000, 1, 0.1, 550)));
+        write(TranscodeFuzzTest.class, "combine", "valid-wav-srt", join(toneWav(8_000, 1, 0.25, 440), marker, srt));
+        write(TranscodeFuzzTest.class, "combine", "valid-two-wavs",
+                join(toneWav(8_000, 1, 0.2, 440), marker, toneWav(16_000, 2, 0.2, 880)));
+        write(TranscodeFuzzTest.class, "effects", "valid-wav",
+                toneWav(8_000, 1, 0.3, 440, 0.0, 0.05, 0.12, 0.2, 0.28, 0.3));
+        write(TranscodeFuzzTest.class, "effects", "valid-stereo", toneWav(16_000, 2, 0.25, 300));
+    }
+
+    /**
+     * Returns a 16-bit PCM WAV file of a cosine per channel, 110 Hz apart, silent in the given start and end pairs
+     * of seconds.
+     */
+    private static byte[] toneWav(int rate, int channels, double seconds, double frequency, double... silences) {
+        var frames = (int) (rate * seconds);
+        var samples = ByteBuffer.allocate(frames * channels * 2).order(ByteOrder.LITTLE_ENDIAN);
+        for (var index = 0; index < frames; index++) {
+            var t = (double) index / rate;
+            var quiet = false;
+            for (var span = 0; span + 1 < silences.length; span += 2) {
+                quiet |= silences[span] <= t && t < silences[span + 1];
+            }
+            for (var channel = 0; channel < channels; channel++) {
+                samples.putShort((short) (quiet ? 0
+                        : (int) (12_000 * Math.cos(2 * Math.PI * (frequency + 110 * channel) * t))));
+            }
+        }
+        var header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN);
+        header.put("RIFF".getBytes(StandardCharsets.US_ASCII)).putInt(36 + samples.capacity())
+                .put("WAVEfmt ".getBytes(StandardCharsets.US_ASCII)).putInt(16).putShort((short) 1)
+                .putShort((short) channels).putInt(rate).putInt(rate * channels * 2).putShort((short) (channels * 2))
+                .putShort((short) 16).put("data".getBytes(StandardCharsets.US_ASCII)).putInt(samples.capacity());
+        return join(header.array(), samples.array());
+    }
 }

@@ -58,9 +58,28 @@ import java.util.List;
  * The encoder is created on the first output frame, when the output size and color are known, and
  * the output track is declared with its configuration.
  *
+ * <p>A speed other than 1 divides the times on the output timeline before the steps, which therefore see the
+ * output's timing; the fades ({@link FadeStep}) run after the overlays. At the start of a later file of a
+ * concatenation the decoder is drained and replaced by one of the file's track. A stage created without a decoder
+ * receives frames through {@link #acceptFrame(VideoFrame)}, from an animation or from a decoder another stage
+ * shares, which first passes each packet to {@link #notePacket(Packet)}.
+ *
  * <p>An instance is not thread-safe.
  */
 final class VideoEncodeStage implements Stage {
+    /**
+     * Describes the timing changes of an encoded stream.
+     *
+     * @param speed the playback speed as a fraction, {@code 1/1} for none
+     * @param outputMicros the output duration in microseconds, or {@code -1} when unknown
+     */
+    record Timing(Rational speed, long outputMicros) {
+        /**
+         * The timing of a stream without changes.
+         */
+        static final Timing NONE = new Timing(new Rational(1, 1), -1);
+    }
+
     /**
      * The frame rate assumed for a track that declares none.
      */
@@ -109,7 +128,14 @@ final class VideoEncodeStage implements Stage {
      * The presentation timestamps restored for decoding-order stamped packets, or {@code null} when
      * the codec does not reorder frames.
      */
-    private final DecodeOrderTimestamps reordered;
+    private DecodeOrderTimestamps reordered;
+
+    private final Timing timing;
+
+    /**
+     * The start of the kept range in microseconds.
+     */
+    private final long startMicros;
 
     private final Codec codec;
 
@@ -141,7 +167,17 @@ final class VideoEncodeStage implements Stage {
 
     private final Cancellation cancellation;
 
+    /**
+     * The time base of the times on the output timeline: the input time base divided by the speed and by
+     * {@link #scale}, so that the input's tick counts times {@code scale} give output times.
+     */
     private final Rational timeBase;
+
+    /**
+     * The number of output time units per input tick: {@code 1} at speed 1, else enough for a resolution of at least
+     * 1/90000 of a second, so that rate conversions place their ticks.
+     */
+    private final long scale;
 
     /**
      * The start of the kept range in the input time base.
@@ -265,12 +301,15 @@ final class VideoEncodeStage implements Stage {
      * @param burnMarkup the markup of the burned-in cues
      * @param burnTrack the subtitle track whose packets {@link #acceptSubtitle(Packet)} receives, or
      * {@code null}
+     * @param timing the timing changes
      */
     VideoEncodeStage(VideoTrack source, VideoDecoder decoder, VideoDecoderOptions decoderOptions, Codec codec,
                      VideoTranscodeOptions options, boolean applyOrientation, boolean applyAspect, Rational frameRate,
                      boolean keepAlpha, int outputId, OutputMuxer output, long startMicros, long endMicros,
-                     Cancellation cancellation, List<SubtitleCue> burnCues, SubtitleMarkup burnMarkup, Track burnTrack) {
+                     Cancellation cancellation, List<SubtitleCue> burnCues, SubtitleMarkup burnMarkup, Track burnTrack,
+                     Timing timing) {
         this.source = source;
+        this.timing = timing;
         this.decoder = decoder;
         this.decoderOptions = decoderOptions;
         this.config = source.codecConfig().orElse(null);
@@ -283,13 +322,27 @@ final class VideoEncodeStage implements Stage {
         this.outputId = outputId;
         this.output = output;
         this.cancellation = cancellation;
-        this.timeBase = source.timeBase();
-        this.start = Rational.MICROSECONDS.rescale(startMicros, timeBase);
-        this.end = endMicros < 0 ? -1 : Rational.MICROSECONDS.rescale(endMicros, timeBase);
+        var inputBase = source.timeBase();
+        var speed = timing.speed();
+        if (speed.numerator() == speed.denominator()) {
+            this.scale = 1;
+            this.timeBase = inputBase;
+        } else {
+            var tickSeconds = inputBase.toDouble() * speed.denominator() / speed.numerator();
+            this.scale = Math.max(1, Math.round(tickSeconds * 90_000));
+            this.timeBase = new Rational(Math.multiplyExact(inputBase.numerator(), speed.denominator()),
+                    Math.multiplyExact(Math.multiplyExact(inputBase.denominator(), speed.numerator()), scale)).reduce();
+        }
+        this.start = Rational.MICROSECONDS.rescale(startMicros, inputBase);
+        this.end = endMicros < 0 ? -1 : Rational.MICROSECONDS.rescale(endMicros, inputBase);
         var rate = source.frameRate().orElse(DEFAULT_FRAME_RATE);
-        this.nominalDuration = Math.max(1, rate.invert().rescale(1, timeBase));
+        this.nominalDuration = Math.max(1, rate.invert().rescale(1, inputBase));
         this.reordered = DecodeOrderTimestamps.of(source.codec());
+        this.startMicros = startMicros;
         this.burnCues = burnCues;
+        if (burnCues != null) {
+            burnCues.replaceAll(this::scaledCue);
+        }
         this.burnMarkup = burnMarkup;
         this.burnDecoder = burnTrack == null ? null : new SubtitleDecoder(burnTrack);
     }
@@ -312,11 +365,68 @@ final class VideoEncodeStage implements Stage {
             decoder = replacement;
             config = newConfig;
         }
+        notePacket(packet);
+        decoder.decode(packet, this::acceptFrame);
+    }
+
+    /**
+     * Records the timing of a packet whose frames {@link #acceptFrame(VideoFrame)} receives later.
+     *
+     * @param packet the packet, in decoding order
+     */
+    void notePacket(Packet packet) {
         discarded.note(packet);
         if (reordered != null) {
             reordered.note(packet);
         }
-        decoder.decode(packet, this::acceptFrame);
+    }
+
+    @Override
+    public void startSegment(Track track, long startMicros) {
+        if (done || decoder == null) {
+            return;
+        }
+        decoder.flush(this::acceptFrame);
+        var replacement = VideoDecoders.create((VideoTrack) track, decoderOptions);
+        decoder.close();
+        decoder = replacement;
+        config = track.codecConfig().orElse(null);
+        restartTimestamps(track.codec());
+    }
+
+    /**
+     * Forgets the decoding-order timestamps of the previous file, for a decoder of another file.
+     *
+     * @param codec the codec of the next file
+     */
+    void restartTimestamps(Codec codec) {
+        reordered = DecodeOrderTimestamps.of(codec);
+    }
+
+    /**
+     * {@return a cue on the input timeline moved to the times the overlays compare it with: every time divided by
+     * the speed, as {@link #timeBase} divides the frames'}
+     *
+     * @param cue the cue to move
+     */
+    private SubtitleCue scaledCue(SubtitleCue cue) {
+        var speed = timing.speed();
+        if (speed.numerator() == speed.denominator()) {
+            return cue;
+        }
+        return cue.withTiming(scaled(cue.startMicros()), cue.endMicros() == Long.MAX_VALUE ? Long.MAX_VALUE
+                : scaled(cue.endMicros()));
+    }
+
+    /**
+     * {@return a time divided by the speed, rounded to nearest}
+     *
+     * @param micros the time in microseconds
+     */
+    private long scaled(long micros) {
+        var speed = timing.speed();
+        return Math.floorDiv(Math.multiplyExact(micros, speed.denominator()) * 2 + speed.numerator(),
+                2 * speed.numerator());
     }
 
     /**
@@ -329,7 +439,7 @@ final class VideoEncodeStage implements Stage {
         if (burnDecoder == null || done) {
             return;
         }
-        var cue = burnDecoder.decode(packet);
+        var cue = scaledCue(burnDecoder.decode(packet));
         if (overlays != null) {
             overlays.addCue(cue);
         } else {
@@ -412,11 +522,11 @@ final class VideoEncodeStage implements Stage {
      * @param scan the scan of the frame
      */
     private void show(Picture picture, long pts, long duration, FieldOrder scan) {
-        var time = pts - start;
         if (end >= 0) {
             duration = Math.min(duration, end - pts);
         }
-        duration = Math.max(duration, 1);
+        var time = (pts - start) * scale;
+        duration = Math.max(duration, 1) * scale;
         if (head == null) {
             build(scan);
         }
@@ -431,7 +541,8 @@ final class VideoEncodeStage implements Stage {
      * @param scan the scan of the first kept frame
      */
     private void build(FieldOrder scan) {
-        var sourceRate = source.frameRate().orElse(DEFAULT_FRAME_RATE);
+        var speed = timing.speed();
+        var sourceRate = scale(source.frameRate().orElse(DEFAULT_FRAME_RATE), speed.numerator(), speed.denominator());
         var pulldown = options.pulldown();
         var inverse = pulldown == Pulldown.INVERSE_TELECINE;
         var deinterlacer = options.deinterlacer().orElse(null);
@@ -457,11 +568,14 @@ final class VideoEncodeStage implements Stage {
         if (pulldown == Pulldown.TELECINE) {
             sink = new TelecineStep(sink, encodedRate, timeBase);
         }
+        if (!options.fades().isEmpty()) {
+            sink = new FadeStep(sink, options.fades(), options.fadeColor(), timeBase, timing.outputMicros());
+        }
         var burnIn = options.subtitleBurnIn().orElse(null);
         if (burnIn != null || options.watermarkPicture() != null) {
             overlays = new OverlayStep(sink, burnIn == null ? null : burnCues, burnMarkup,
                     burnIn == null ? null : burnIn.style(), options.watermarkPicture(), options.watermarkOptions(),
-                    options.colorConversion(), timeBase, start);
+                    options.colorConversion(), timeBase, start * scale);
             sink = overlays;
         }
         if (constant != null) {
@@ -541,7 +655,7 @@ final class VideoEncodeStage implements Stage {
         if (!emitted) {
             throw new MediaException.Malformed("the video track has no decodable frame in the kept range");
         }
-        head.finish(end >= 0 ? end - start : outputEnd);
+        head.finish(end >= 0 ? (end - start) * scale : outputEnd);
         done = true;
     }
 
@@ -675,7 +789,7 @@ final class VideoEncodeStage implements Stage {
                 options.keyframeInterval().ifPresent(encoderBuilder::keyframeInterval);
             }
             encoder = VideoEncoders.create(codec, encoderBuilder.build());
-            var duration = end >= 0 ? timeBase.rescale(end - start, encoder.timeBase()) : -1;
+            var duration = end >= 0 ? timeBase.rescale((end - start) * scale, encoder.timeBase()) : -1;
             var declaredColor = pictureColor != null && (options.color().isPresent() || source.color().isPresent()
                     || pictureColor.transfer().isHdr()) ? pictureColor : null;
             var builder = VideoTrack.builder()

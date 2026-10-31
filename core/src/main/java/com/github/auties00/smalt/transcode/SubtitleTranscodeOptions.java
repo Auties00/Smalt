@@ -44,14 +44,20 @@ public final class SubtitleTranscodeOptions {
      */
     private final CaptionService captionService;
 
+    /**
+     * The index of the input the tracks come from, or {@code -1} for any input.
+     */
+    private final int input;
+
     private SubtitleTranscodeOptions(StreamMode mode, int trackId, boolean allTracks, Codec codec,
-                                     boolean closedCaptions, CaptionService captionService) {
+                                     boolean closedCaptions, CaptionService captionService, int input) {
         this.mode = mode;
         this.trackId = trackId;
         this.allTracks = allTracks;
         this.codec = codec;
         this.closedCaptions = closedCaptions;
         this.captionService = captionService;
+        this.input = input;
     }
 
     /**
@@ -147,6 +153,17 @@ public final class SubtitleTranscodeOptions {
     }
 
     /**
+     * {@return the index of the input the subtitle tracks are selected from, in the list the transcode was given, or
+     * empty for any input; empty by default}
+     *
+     * <p>With any input, the subtitle tracks of every input are candidates, in input order. {@link #trackId()} names
+     * a track of this input, or of the first input when this is empty.
+     */
+    public OptionalInt input() {
+        return input < 0 ? OptionalInt.empty() : OptionalInt.of(input);
+    }
+
+    /**
      * {@return whether every text subtitle track is selected, each becoming one output stream, rather
      * than the first one; {@code true} by default}
      */
@@ -194,7 +211,7 @@ public final class SubtitleTranscodeOptions {
      * @return the field values
      */
     private Object[] state() {
-        return new Object[]{mode, trackId, allTracks, codec, closedCaptions, captionService};
+        return new Object[]{mode, trackId, allTracks, codec, closedCaptions, captionService, input};
     }
 
     @Override
@@ -211,7 +228,7 @@ public final class SubtitleTranscodeOptions {
     public String toString() {
         return "SubtitleTranscodeOptions[mode=" + mode + ", trackId=" + trackId() + ", allTracks=" + allTracks
                 + ", codec=" + codec() + ", closedCaptions=" + closedCaptions + ", captionService="
-                + captionService() + "]";
+                + captionService() + ", input=" + input() + "]";
     }
 
     /**
@@ -235,6 +252,7 @@ public final class SubtitleTranscodeOptions {
         private Codec codec;
         private boolean closedCaptions;
         private CaptionService captionService;
+        private int input = -1;
 
         private Builder() {
         }
@@ -247,6 +265,29 @@ public final class SubtitleTranscodeOptions {
             this.codec = options.codec;
             this.closedCaptions = options.closedCaptions;
             this.captionService = options.captionService;
+            this.input = options.input;
+        }
+
+        /**
+         * Selects the tracks from one input; see {@link SubtitleTranscodeOptions#input()}.
+         *
+         * @param input the value, zero or more
+         * @return this builder
+         * @throws IllegalArgumentException if the index is negative
+         */
+        public Builder input(int input) {
+            this.input = Checks.nonNegative("input index", input);
+            return this;
+        }
+
+        /**
+         * Selects the tracks from any input; see {@link SubtitleTranscodeOptions#input()}.
+         *
+         * @return this builder
+         */
+        public Builder anyInput() {
+            this.input = -1;
+            return this;
         }
 
         /**
@@ -361,7 +402,7 @@ public final class SubtitleTranscodeOptions {
                 throw new IllegalArgumentException("codec " + codec.displayName() + " is not a text subtitle codec");
             }
             var id = byId ? Checks.nonNegative("track identifier", trackId) : -1;
-            return new SubtitleTranscodeOptions(mode, id, allTracks, codec, closedCaptions, captionService);
+            return new SubtitleTranscodeOptions(mode, id, allTracks, codec, closedCaptions, captionService, input);
         }
     }
 }

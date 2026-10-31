@@ -16,6 +16,6 @@ class FuzzRegressionTest {
                 SubtitleFuzzTest.class, ColorFuzzTest.class, PcmFuzzTest.class, RemuxFuzzTest.class,
                 GainMapFuzzTest.class, CompressionFuzzTest.class, ElementaryFuzzTest.class,
                 FontFuzzTest.class, EncryptionFuzzTest.class, DolbyVisionFuzzTest.class, RtpFuzzTest.class,
-                HttpSourceFuzzTest.class);
+                HttpSourceFuzzTest.class, TranscodeFuzzTest.class);
     }
 }

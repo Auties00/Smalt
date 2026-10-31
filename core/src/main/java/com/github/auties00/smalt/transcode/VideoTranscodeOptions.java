@@ -18,6 +18,7 @@ import com.github.auties00.smalt.track.TrackKind;
 import com.github.auties00.smalt.video.FieldOrder;
 
 import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -49,8 +50,11 @@ import java.util.OptionalInt;
  *       repeating or by blending frames ({@link #frameRateConversion()});</li>
  *   <li>overlays, at the time each output frame is shown: the burned-in subtitles
  *       ({@link #subtitleBurnIn()}), then the watermark ({@link #watermark()});</li>
+ *   <li>fades ({@link #fades()}) to and from {@link #fadeColor()};</li>
  *   <li>telecine ({@link #pulldown()}).</li>
  * </ol>
+ * The speed of {@link TranscodeOptions#speed()} divides every timestamp before these steps, so the steps that
+ * look at time (frame-rate conversion, overlays, fades) work on the output timeline.
  * The encoder is the one {@link com.github.auties00.smalt.video.VideoEncoders} finds for
  * {@link #codec()}, configured through {@link com.github.auties00.smalt.video.VideoEncoderOptions}
  * with {@link #bitrate()}, {@link #threads()}, {@link #keyframeInterval()} and
@@ -164,6 +168,14 @@ public final class VideoTranscodeOptions {
 
     private final WatermarkOptions watermarkOptions;
 
+    /**
+     * The index of the input the track comes from, or {@code -1} for any input.
+     */
+    private final int input;
+
+    private final List<Fade> fades;
+    private final int fadeColor;
+
     private VideoTranscodeOptions(Builder builder, int trackId, int bitrate, int keyframeInterval,
                                   ResizeSettings resize) {
         this.mode = builder.mode;
@@ -193,6 +205,9 @@ public final class VideoTranscodeOptions {
         this.subtitleBurnIn = builder.subtitleBurnIn;
         this.watermark = builder.watermark;
         this.watermarkOptions = builder.watermarkOptions;
+        this.input = builder.input;
+        this.fades = builder.fades;
+        this.fadeColor = builder.fadeColor;
     }
 
     /**
@@ -265,6 +280,35 @@ public final class VideoTranscodeOptions {
      */
     public OptionalInt trackId() {
         return trackId < 0 ? OptionalInt.empty() : OptionalInt.of(trackId);
+    }
+
+    /**
+     * {@return the index of the input the video track is selected from, in the list the transcode was given, or
+     * empty for any input; empty by default}
+     *
+     * <p>With any input, the first video track is the first one of the first input that has video.
+     * {@link #trackId()} names a track of this input, or of the first input when this is empty.
+     */
+    public OptionalInt input() {
+        return input < 0 ? OptionalInt.empty() : OptionalInt.of(input);
+    }
+
+    /**
+     * {@return the fades of an encoded stream; empty by default}
+     *
+     * <p>Each output picture is blended toward {@link #fadeColor()} by one minus the product of the fades' gains at
+     * the time it is shown: a gain of 0 gives a picture of the color, 1 the picture unchanged. Transparent pictures
+     * keep their alpha. Fades encode the stream.
+     */
+    public List<Fade> fades() {
+        return fades;
+    }
+
+    /**
+     * {@return the color video fades to and from, as {@code 0xRRGGBB}; {@code 0x000000}, black, by default}
+     */
+    public int fadeColor() {
+        return fadeColor;
     }
 
     /**
@@ -597,7 +641,8 @@ public final class VideoTranscodeOptions {
      * @return {@code true} when the stream has to be decoded
      */
     boolean changesPicture(int displayWidth, int displayHeight, Rational sourceRate) {
-        if (bitDepth != 0 || pulldown != Pulldown.NONE || subtitleBurnIn != null || watermark != null) {
+        if (bitDepth != 0 || pulldown != Pulldown.NONE || subtitleBurnIn != null || watermark != null
+                || !fades.isEmpty()) {
             return true;
         }
         if (resize.crop() != null || chromaFormat != null || color != null || effectiveFrameRate(sourceRate) != null) {
@@ -614,7 +659,7 @@ public final class VideoTranscodeOptions {
     boolean hasPictureOps() {
         return resize.resizes() || frameRate != null || maxFrameRate != null || chromaFormat != null || color != null
                 || bitDepth != 0 || pulldown != Pulldown.NONE || subtitleBurnIn != null || watermark != null
-                || deinterlacer != null;
+                || deinterlacer != null || !fades.isEmpty();
     }
 
     /**
@@ -664,7 +709,7 @@ public final class VideoTranscodeOptions {
         return new Object[]{mode, trackId, codec, bitrate, threads, keyframeInterval, periodicKeyframes, resize,
                 evenDimensions, orientation, sampleAspect, frameRate, maxFrameRate, chromaFormat, color, background,
                 flatten, colorConversion, bitDepth, deinterlacer, fieldRate, fieldOrder, frameRateConversion, pulldown,
-                subtitleBurnIn, watermark, watermarkOptions};
+                subtitleBurnIn, watermark, watermarkOptions, input, fades, fadeColor};
     }
 
     @Override
@@ -690,7 +735,8 @@ public final class VideoTranscodeOptions {
                 + colorConversion + ", bitDepth=" + bitDepth() + ", deinterlacer=" + deinterlacer() + ", fieldRate="
                 + fieldRate + ", fieldOrder=" + fieldOrder() + ", frameRateConversion=" + frameRateConversion
                 + ", pulldown=" + pulldown + ", subtitleBurnIn=" + subtitleBurnIn() + ", watermark="
-                + (watermark != null) + ", watermarkOptions=" + watermarkOptions + "]";
+                + (watermark != null) + ", watermarkOptions=" + watermarkOptions + ", input=" + input() + ", fades="
+                + fades + ", fadeColor=0x" + Integer.toHexString(fadeColor) + "]";
     }
 
     /**
@@ -770,6 +816,9 @@ public final class VideoTranscodeOptions {
         private SubtitleBurnIn subtitleBurnIn;
         private Picture watermark;
         private WatermarkOptions watermarkOptions = WatermarkOptions.defaults();
+        private int input = -1;
+        private List<Fade> fades = List.of();
+        private int fadeColor;
 
         private Builder() {
         }
@@ -816,6 +865,64 @@ public final class VideoTranscodeOptions {
             this.subtitleBurnIn = options.subtitleBurnIn;
             this.watermark = options.watermark;
             this.watermarkOptions = options.watermarkOptions;
+            this.input = options.input;
+            this.fades = options.fades;
+            this.fadeColor = options.fadeColor;
+        }
+
+        /**
+         * Selects the track from one input; see {@link VideoTranscodeOptions#input()}.
+         *
+         * @param input the value, zero or more
+         * @return this builder
+         * @throws IllegalArgumentException if the index is negative
+         */
+        public Builder input(int input) {
+            this.input = Checks.nonNegative("input index", input);
+            return this;
+        }
+
+        /**
+         * Selects the track from any input; see {@link VideoTranscodeOptions#input()}.
+         *
+         * @return this builder
+         */
+        public Builder anyInput() {
+            this.input = -1;
+            return this;
+        }
+
+        /**
+         * Sets the fades; see {@link VideoTranscodeOptions#fades()}.
+         *
+         * @param fades the value
+         * @return this builder
+         * @throws NullPointerException if a fade is {@code null}
+         */
+        public Builder fades(List<Fade> fades) {
+            this.fades = List.copyOf(fades);
+            return this;
+        }
+
+        /**
+         * Removes the fades; see {@link VideoTranscodeOptions#fades()}.
+         *
+         * @return this builder
+         */
+        public Builder noFades() {
+            this.fades = List.of();
+            return this;
+        }
+
+        /**
+         * Sets the color of the fades; see {@link VideoTranscodeOptions#fadeColor()}.
+         *
+         * @param rgb the value, as {@code 0xRRGGBB}; the top byte is ignored
+         * @return this builder
+         */
+        public Builder fadeColor(int rgb) {
+            this.fadeColor = rgb & 0xFFFFFF;
+            return this;
         }
 
         /**

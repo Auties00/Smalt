@@ -2,12 +2,15 @@ package com.github.auties00.smalt.transcode;
 
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.loudness.LoudnessNormalization;
+import com.github.auties00.smalt.audio.process.Biquad;
 import com.github.auties00.smalt.audio.process.ChannelMixerOptions;
+import com.github.auties00.smalt.audio.process.TimeStretcher;
 import com.github.auties00.smalt.internal.check.Checks;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.TrackKind;
 
 import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -29,6 +32,11 @@ import java.util.OptionalInt;
  * one (FLAC, PCM), skips the floats: its integers reach the encoder bit for bit, so a FLAC or ALAC
  * source of any sample size up to 32 bits re-encodes to FLAC losslessly. Such a stream encoded to
  * PCM from another source travels as 64-bit floats, so 64-bit float PCM re-encodes exactly.
+ *
+ * <p>The samples of an encoded stream go through, in this order: the removal of the pauses
+ * {@link TranscodeOptions#silenceTrim()} shortens, the tempo change of {@link TranscodeOptions#speed()} and the
+ * pitch change of {@link #pitch()} ({@link TimeStretcher}), the {@link #filters()}, the {@link #fades()}, the
+ * gain and the loudness normalization, which measures the samples after the other steps.
  */
 public final class AudioTranscodeOptions {
     /**
@@ -81,6 +89,16 @@ public final class AudioTranscodeOptions {
     private final ChannelMixerOptions mixing;
     private final boolean verifyIntegrity;
 
+    /**
+     * The index of the input the tracks come from, or {@code -1} for any input.
+     */
+    private final int input;
+
+    private final List<Biquad> filters;
+    private final List<Fade> fades;
+    private final double pitch;
+    private final boolean preservePitch;
+
     private AudioTranscodeOptions(Builder builder, int trackId, int bitrate, int sampleRate, int maxChannels) {
         this.mode = builder.mode;
         this.trackId = trackId;
@@ -95,6 +113,11 @@ public final class AudioTranscodeOptions {
         this.singlePassNormalization = builder.singlePassNormalization;
         this.mixing = builder.mixing;
         this.verifyIntegrity = builder.verifyIntegrity;
+        this.input = builder.input;
+        this.filters = builder.filters;
+        this.fades = builder.fades;
+        this.pitch = builder.pitch;
+        this.preservePitch = builder.preservePitch;
     }
 
     /**
@@ -168,6 +191,62 @@ public final class AudioTranscodeOptions {
      */
     public OptionalInt trackId() {
         return trackId < 0 ? OptionalInt.empty() : OptionalInt.of(trackId);
+    }
+
+    /**
+     * {@return the index of the input the audio tracks are selected from, in the list the transcode was given, or
+     * empty for any input; empty by default}
+     *
+     * <p>With any input, the first audio track is the first one of the first input that has audio, and
+     * {@link #allTracks()} selects the audio tracks of every input, in input order. {@link #trackId()} names a track
+     * of this input, or of the first input when this is empty.
+     */
+    public OptionalInt input() {
+        return input < 0 ? OptionalInt.empty() : OptionalInt.of(input);
+    }
+
+    /**
+     * {@return the filters an encoded stream goes through, in order, each channel filtered alike; empty by default}
+     *
+     * <p>A {@link Biquad#peaking(double, double, double) peaking} section is one band of an equalizer; the
+     * {@link Biquad#lowPass(double) low-pass} and {@link Biquad#highPass(double) high-pass} sections cut what lies
+     * outside a band. The filters run at the output sampling rate, so each section's frequency must be below half of
+     * it. Filters encode the stream.
+     */
+    public List<Biquad> filters() {
+        return filters;
+    }
+
+    /**
+     * {@return the fades of an encoded stream; empty by default}
+     *
+     * <p>Each sample is multiplied by the gain of every fade at its output time. Fades encode the stream.
+     */
+    public List<Fade> fades() {
+        return fades;
+    }
+
+    /**
+     * {@return the factor every frequency of an encoded stream is multiplied by, keeping its duration, from
+     * {@value TimeStretcher#MIN_FACTOR} to {@value TimeStretcher#MAX_FACTOR}; 1 by default}
+     *
+     * <p>A factor of 2 raises the pitch by an octave, and {@code 2^(n / 12)} by {@code n} semitones. A factor other
+     * than 1 encodes the stream.
+     */
+    public double pitch() {
+        return pitch;
+    }
+
+    /**
+     * {@return whether a speed change keeps the pitch of the audio; {@code true} by default}
+     *
+     * <p>When {@code false}, a {@link TranscodeOptions#speed()} of {@code s} resamples the audio instead, which
+     * multiplies its pitch by {@code s} as playing a tape faster does; {@link #pitch()} still applies on top, and a
+     * transcode whose product of the two falls outside {@value TimeStretcher#MIN_FACTOR} to
+     * {@value TimeStretcher#MAX_FACTOR} is rejected with an {@link IllegalArgumentException}.
+     */
+    public boolean preservePitch() {
+        return preservePitch;
     }
 
     /**
@@ -321,7 +400,7 @@ public final class AudioTranscodeOptions {
      */
     boolean changesSamples(int sourceRate, ChannelLayout sourceLayout) {
         if (gainDb != 0 || loudnessNormalization != null || (sampleRate != 0 && sampleRate != sourceRate)
-                || mixing.matrix().isPresent()) {
+                || mixing.matrix().isPresent() || !filters.isEmpty() || !fades.isEmpty() || pitch != 1) {
             return true;
         }
         if (sourceLayout == null) {
@@ -337,7 +416,8 @@ public final class AudioTranscodeOptions {
      */
     private Object[] state() {
         return new Object[]{mode, trackId, allTracks, codec, bitrate, sampleRate, layout, maxChannels, gainDb,
-                loudnessNormalization, singlePassNormalization, mixing, verifyIntegrity};
+                loudnessNormalization, singlePassNormalization, mixing, verifyIntegrity, input, filters, fades, pitch,
+                preservePitch};
     }
 
     @Override
@@ -356,7 +436,8 @@ public final class AudioTranscodeOptions {
                 + codec() + ", bitrate=" + bitrate() + ", sampleRate=" + sampleRate() + ", layout=" + layout()
                 + ", maxChannels=" + maxChannels() + ", gainDb=" + gainDb + ", loudnessNormalization="
                 + loudnessNormalization() + ", singlePassNormalization=" + singlePassNormalization + ", mixing="
-                + mixing + ", verifyIntegrity=" + verifyIntegrity + "]";
+                + mixing + ", verifyIntegrity=" + verifyIntegrity + ", input=" + input() + ", filters=" + filters
+                + ", fades=" + fades + ", pitch=" + pitch + ", preservePitch=" + preservePitch + "]";
     }
 
     /**
@@ -405,6 +486,11 @@ public final class AudioTranscodeOptions {
         private boolean singlePassNormalization;
         private ChannelMixerOptions mixing = ChannelMixerOptions.defaults();
         private boolean verifyIntegrity;
+        private int input = -1;
+        private List<Biquad> filters = List.of();
+        private List<Fade> fades = List.of();
+        private double pitch = 1;
+        private boolean preservePitch = true;
 
         private Builder() {
         }
@@ -427,6 +513,99 @@ public final class AudioTranscodeOptions {
             this.singlePassNormalization = options.singlePassNormalization;
             this.mixing = options.mixing;
             this.verifyIntegrity = options.verifyIntegrity;
+            this.input = options.input;
+            this.filters = options.filters;
+            this.fades = options.fades;
+            this.pitch = options.pitch;
+            this.preservePitch = options.preservePitch;
+        }
+
+        /**
+         * Selects the tracks from one input; see {@link AudioTranscodeOptions#input()}.
+         *
+         * @param input the value, zero or more
+         * @return this builder
+         * @throws IllegalArgumentException if the index is negative
+         */
+        public Builder input(int input) {
+            this.input = Checks.nonNegative("input index", input);
+            return this;
+        }
+
+        /**
+         * Selects the tracks from any input; see {@link AudioTranscodeOptions#input()}.
+         *
+         * @return this builder
+         */
+        public Builder anyInput() {
+            this.input = -1;
+            return this;
+        }
+
+        /**
+         * Sets the filters; see {@link AudioTranscodeOptions#filters()}.
+         *
+         * @param filters the value
+         * @return this builder
+         * @throws NullPointerException if a filter is {@code null}
+         */
+        public Builder filters(List<Biquad> filters) {
+            this.filters = List.copyOf(filters);
+            return this;
+        }
+
+        /**
+         * Removes the filters; see {@link AudioTranscodeOptions#filters()}.
+         *
+         * @return this builder
+         */
+        public Builder noFilters() {
+            this.filters = List.of();
+            return this;
+        }
+
+        /**
+         * Sets the fades; see {@link AudioTranscodeOptions#fades()}.
+         *
+         * @param fades the value
+         * @return this builder
+         * @throws NullPointerException if a fade is {@code null}
+         */
+        public Builder fades(List<Fade> fades) {
+            this.fades = List.copyOf(fades);
+            return this;
+        }
+
+        /**
+         * Removes the fades; see {@link AudioTranscodeOptions#fades()}.
+         *
+         * @return this builder
+         */
+        public Builder noFades() {
+            this.fades = List.of();
+            return this;
+        }
+
+        /**
+         * Sets the pitch factor; see {@link AudioTranscodeOptions#pitch()}.
+         *
+         * @param pitch the value
+         * @return this builder
+         */
+        public Builder pitch(double pitch) {
+            this.pitch = pitch;
+            return this;
+        }
+
+        /**
+         * Sets whether a speed change keeps the pitch; see {@link AudioTranscodeOptions#preservePitch()}.
+         *
+         * @param preservePitch the value
+         * @return this builder
+         */
+        public Builder preservePitch(boolean preservePitch) {
+            this.preservePitch = preservePitch;
+            return this;
         }
 
         /**
@@ -655,10 +834,14 @@ public final class AudioTranscodeOptions {
          *
          * @return the options
          * @throws IllegalArgumentException if the track identifier is negative, the codec is not an
-         * audio codec, the bitrate, sampling rate or channel limit is not positive, or the gain is not
-         * finite
+         * audio codec, the bitrate, sampling rate or channel limit is not positive, the gain is not
+         * finite, or the pitch factor is out of range
          */
         public AudioTranscodeOptions build() {
+            if (!(pitch >= TimeStretcher.MIN_FACTOR && pitch <= TimeStretcher.MAX_FACTOR)) {
+                throw new IllegalArgumentException("pitch " + pitch + " is outside " + TimeStretcher.MIN_FACTOR + " to "
+                        + TimeStretcher.MAX_FACTOR);
+            }
             if (codec != null && codec.kind() != TrackKind.AUDIO) {
                 throw new IllegalArgumentException("codec " + codec.displayName() + " is not an audio codec");
             }

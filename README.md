@@ -999,6 +999,7 @@ them in each stream's `tags()` and `disposition()`.
 | Color management: ICC v2/v4 profiles (matrix/TRC, `lut8`, `lut16`, `lutAtoB`/`lutBtoA`, floating-point `multiProcessElement` `D2Bn`/`B2Dn` tables with segmented curves, matrices and float lookup tables, gray, RGB, CMYK, n-color, L*a*b* and XYZ connection spaces), device link, abstract and named color (`ncl2`) profiles, chains of profiles, transforms of 8-bit, 16-bit and 32-bit floating-point samples (unclamped through matrix/TRC profiles) with the four intents and black point compensation, the black-only and black-plane preserving CMYK intents, soft-proofing transforms with a gamut check alarm, profiles built from primaries and parametric or sampled curves, L*a*b* and XYZ identities, linearization, ink limiting and transform device links, L*a*b* adjustment (brightness, contrast, hue, saturation, white balance) abstract profiles, and description and copyright edits, built-in sRGB, Display P3, Adobe RGB, ProPhoto, BT.709, BT.2020 and gray profiles, CICP mapping of every H.273 primaries set (CIE XYZ included) and transfer (the logarithmic, BT.1361 and SMPTE ST 428-1 ones included), PQ and HLG profiles read from and written as ICC v4.4 `cicp`-tagged profiles, PQ/HLG to SDR tone mapping (BT.2390 EETF), SDR to PQ/HLG with the BT.2408 reference white, PQ to and from HLG through display light (BT.2390), HDR gamut conversion and tone mapping to a target's peak | `smalt-core` | `image.color` | Little CMS 2.17 (MIT); ITU-R BT.2100, BT.2390, BT.2408, SMPTE ST 2084, ARIB STD-B67, ICC.1:2022 |
 | HDR gain maps: ISO 21496-1 metadata (binary and Adobe `hdrgm` XMP), rendering of an image for a display headroom to 16-bit PQ or HLG with its content light level, computation of a gain map from two renditions (`GainMaps`) | `smalt-core` | `image.gainmap` | ISO 21496-1 as libavif and libultrahdr implement it, the Adobe gain map specification; libultrahdr (fraction search), libavif (gain range without outliers) |
 | Audio resampling (also with a variable ratio for clock drift, `Resampler.setRatio`), channel mixing (ITU-R BS.775 rules, AC-3 center, surround and LFE mix levels, ATSC A/52 Lo/Ro and Lt/Rt downmixes, a caller's matrix, `ChannelMixerOptions`; ambisonics up to order 14 in ACN order with SN3D, N3D or Furse-Malham scaling: exact conversion between orders, normalizations and channel orders, speakers encoded as plane waves, and rendering to loudspeakers by first-order cardioids, to stereo and mono as RFC 8486 section 4 does), FIFO | `smalt-core` | `audio.process` | textbook Kaiser-windowed sinc design; ATSC A/52 section 7.8; RFC 8486; Google Spatial Audio RFC (ambisonic conventions) |
+| Audio filters: second-order sections of every Audio EQ Cookbook shape (low-pass, high-pass, band-pass, notch, all-pass, peaking equalizer band, low and high shelf, `Biquad`) run in cascades with 64-bit state (`BiquadFilter`); tempo change keeping the pitch (WSOLA) and pitch change keeping the tempo (WSOLA and resampling, `TimeStretcher`) | `smalt-core` | `audio.process` | Robert Bristow-Johnson's Audio EQ Cookbook; Verhelst and Roelands (1993), WSOLA |
 | Voice processing at 8, 16, 32 and 48 kHz with up to 8 capture and render channels (band splitting and three-band filter bank, multichannel AEC3): echo cancellation (AEC3 and the mobile echo canceller), noise suppression, high-pass filter, the legacy gain controller in its digital and analog modes, the analog gain controller with clipping prediction, and the AGC2 level controller (adaptive digital gain with the RNN voice activity detector, saturation protector, limiter, input volume controller) | `smalt-audio` | `audio.voice` | WebRTC audio processing module, bit-exact with its scalar build; PFFFT; RNNoise weights; Ooura FFT; musl and fdlibm math (royalty-free WebRTC grant in `PATENTS`) |
 | Loudness: momentary, short-term and integrated loudness, loudness range, sample and true peak (ITU-R BS.1770-4, EBU R128, Tech 3341 and 3342 minimum requirements), any channel layout, bounded memory; silence detection; loudness normalization gains, single-pass normalization (`LoudnessNormalizer`) and a look-ahead true-peak limiter (`TruePeakLimiter`); ReplayGain 2.0 track and album gains, written as `REPLAYGAIN_*` tags or Opus `R128_*` tags (RFC 7845) and applied by `AudioReader` (`AudioReaderOptions.replayGain`) | `smalt-core` | `audio.loudness` | libebur128 (MIT); ReplayGain 2.0 specification, RFC 7845 |
 
@@ -1106,6 +1107,13 @@ checks a FLAC source's MD5 signature on the way.
 | Key frame interval, or no periodic key frames (`VideoTranscodeOptions.keyframeInterval`, `VideoEncoderOptions.keyframeInterval`) | yes (H.264, HEVC, VP8, VP9, AV1, FFV1; ProRes, DNxHD, Motion-JPEG and Theora are all key frames) | - |
 | Resample, remix (mix levels, Lt/Rt, a caller's matrix: `AudioTranscodeOptions.mixing`), gain, sample format (PCM codec) | yes | - |
 | Loudness normalization (two passes: measure the kept range, then apply the gain under a true-peak ceiling, or reach the target and keep the ceiling with a true-peak limiter; or one pass that follows the loudness as it encodes, `singlePassNormalization`) | yes | - |
+| Audio filters and equalizer (`AudioTranscodeOptions.filters`: `Biquad` high-pass, low-pass, peaking bands, shelves, notch, band-pass, all-pass) | yes | - |
+| Fades in and out (`Fade`, `FadeCurve`: linear, quarter and half sine, quadratic, cubic, exponential; audio to silence, video to `VideoTranscodeOptions.fadeColor`, at a time or at the end of the output) | yes | - |
+| Speed change (`TranscodeOptions.speed`, 0.1 to 10: video timestamps divided, audio time-scaled keeping its pitch or, with `preservePitch(false)`, resampled) and pitch change (`AudioTranscodeOptions.pitch`) | yes, the output exactly the range over the speed | - |
+| Silence trimming (`TranscodeOptions.silenceTrim`, `SilenceTrim`: a first pass finds the silences of the first audio stream; the leading and trailing ones move the range of every stream, the longer pauses are shortened in audio-only outputs) | yes | trimmed to the moved range, as a trim is |
+| Concatenation (`TranscodeInput.concat`, `Transcoder.concat`: each file starts where the previous one ends, timestamps continuous; chapters joined) | each file decoded with its own decoder (another codec, rate or layout allowed), the audio padded with silence or cut at each join to stay in step with the video | when every file has the same codec and codec configuration |
+| Several inputs (`Transcoder.transcode(List<TranscodeInput>, ...)`, `input(int)` on the stream options: the video of one file, the audio of another, the subtitles of a third), interleaved by time | yes | yes |
+| Several outputs from one read (`TranscodeOutput`, `Transcoder.transcode(MediaSource, List<TranscodeOutput>)`: the renditions of a ladder for `Packager`) | the encodes of a video track share one decoder | yes |
 | Subtitles: SubRip, WebVTT, 3GPP timed text, ASS, TTML | converted to what the container carries (also to `.srt`, `.vtt`, `.ass`, `.ssa`, `.ttml`, `.smi`, `.lrc` and `.sub` files), cut to the kept range; a cue still shown at a trimmed start is kept however early it began | copied, retimed and cut to the kept range, likewise |
 | Bitmap subtitles (PGS, DVB, VobSub), teletext, closed captions | teletext and caption tracks, and with `SubtitleTranscodeOptions.closedCaptions` the captions inside video, converted to a text subtitle track; captions kept in re-encoded H.264 video | bitmap and teletext tracks copied where the container carries them, retimed and cut to the kept range |
 | Image convert, scale, crop, flatten, byte budget | yes (first frame of animations; animated output needs an animation encoder; an animation fits the budget by quality, then size, then dropped frames) | byte-identical pass-through when nothing changes |
@@ -1229,6 +1237,13 @@ checks a FLAC source's MD5 signature on the way.
   itself, and the edited table must fit their payload (a table usually fills a fraction of its packet; 204-byte
   packets whose Reed-Solomon parity is a code rather than filler are not edited). AVI stores no pictures or chapters (`TagEditor`
   rejects them) and of the other tags only those `INFO` has an identifier for, the first value of each.
+- Several inputs and outputs in transcodes: a concatenation cannot seek, so a trimmed start decodes and drops the
+  media before it; a copied stream of a concatenation keeps each file's encoder priming (an AAC file's first 1024
+  samples play at the join) and needs the same codec configuration in every file; the chapters of a concatenation
+  are placed by the durations the files declare. The outputs of one job share their range, duration limit, speed,
+  silence trim, seeking, limits and data references; their video encodes of one track share its decoder, but each
+  encoded audio stream decodes its track itself. Shortening pauses applies to outputs of audio alone, and a
+  fade-out without a start needs an output of known duration (a range, or an input that declares its duration).
 - Tags in transcodes: the tags of an input that is not local (`MediaSource.of(InputStream, long)`, `MediaSource.of(URI)`
   over the network) are taken from its demuxer, which keeps one value per name, rather than read again from its tag
   structure.
@@ -2381,6 +2396,38 @@ The output keeps the color profile of the input (or holds its pixels converted t
 `color(ColorMode.CONVERT_TO_SRGB)`) and its EXIF block and XMP packet, unless `metadata(MetadataMode.STRIP)`
 removes them.
 
+### Join, combine, speed up and fade
+
+```java
+// ffmpeg -f concat -i parts.txt -c copy joined.mkv
+Transcoder.concatFiles(List.of(Path.of("part1.mkv"), Path.of("part2.mkv")), Path.of("joined.mkv"),
+        TranscodeOptions.remux(OutputContainer.MATROSKA));
+
+// ffmpeg -i video.mp4 -i voice.wav -i subs.srt -map 0:v -map 1:a -map 2:s dubbed.mkv
+try (var video = MediaSource.of(Path.of("video.mp4"));
+     var voice = MediaSource.of(Path.of("voice.wav"));
+     var subs = MediaSource.of(Path.of("subs.srt"));
+     var output = MediaSink.of(Path.of("dubbed.mkv"))) {
+    Transcoder.transcode(List.of(TranscodeInput.of(video), TranscodeInput.of(voice), TranscodeInput.of(subs)), output,
+            TranscodeOptions.of(OutputContainer.MATROSKA).toBuilder()
+                    .audio(AudioTranscodeOptions.builder().input(1).build())
+                    .build());
+}
+
+// ffmpeg -i talk.mp4 -af "silenceremove,atempo=1.25,highpass=f=80,afade=t=out:d=2" -vf setpts=PTS/1.25 talk.m4a
+Transcoder.transcode(Path.of("talk.mp4"), Path.of("talk.m4a"), TranscodeOptions.of(OutputContainer.M4A).toBuilder()
+        .speed(1.25)
+        .silenceTrim(SilenceTrim.shorteningPauses(700_000))
+        .audio(AudioTranscodeOptions.builder()
+                .filters(List.of(Biquad.highPass(80), Biquad.peaking(3_000, 1, 3)))
+                .fades(List.of(Fade.in(500_000), Fade.out(2_000_000)))
+                .build())
+        .build());
+```
+
+Several `TranscodeOutput`s written from one read of the input give the renditions of an adaptive streaming
+ladder, decoding the video once; `Packager` then packages them.
+
 ### Measure loudness and normalize
 
 ```java
@@ -3253,7 +3300,8 @@ image format and Apple's description of its HDR gain map, CIPA DC-007, and EBU R
 with EBU Tech 3341 and 3342, EBU Tech 3306 (RF64), ATSC A/65 and the MPEG-DASH role scheme for track metadata, and
 the tag mapping of [MusicBrainz Picard](https://picard-docs.musicbrainz.org/)'s documentation for the native names of
 the tag vocabulary; the CIE TC1-34 report on CIECAM97s, with its worked examples, as Mark Fairchild
-publishes it, for the CIECAM97s J*a*b* of JPX files.
+publishes it, for the CIECAM97s J*a*b* of JPX files; Robert Bristow-Johnson's Audio EQ Cookbook, for the
+biquad filters, and Werner Verhelst and Marc Roelands's waveform-similarity overlap-add (WSOLA), for time stretching.
 For the camera raw formats, Canon's CIFF specification, Sigma's FOVb (X3F) specification, Laurent Clevy's
 CR2 and CR3 write-ups, Canon's patent application US 2016/0323602 A1 on the CRX wavelet coding, Bill Claff's notes,
 Henry Dietz's description of Sony's cRAW,
