@@ -1,0 +1,21 @@
+# demux dump of mp4/gif.mov; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 500000
+seekable true
+metadata compatible_brands="qt  "
+metadata encoder="Lavf61.7.100"
+metadata major_brand="qt  "
+metadata minor_version="512"
+track 1 VIDEO GIF timebase=1/10240 duration=5120 config=none
+  video 64x48 orientation=NORMAL rate=10/1 sar=1/1 interlacing=PROGRESSIVE
+packets 5
+0 t1 pts=0 dts=0 dur=1024 flags=KEY size=1945 crc=05b9c965
+1 t1 pts=1024 dts=1024 dur=1024 flags=- size=55 crc=5cd0822d
+2 t1 pts=2048 dts=2048 dur=1024 flags=- size=60 crc=8661393e
+3 t1 pts=3072 dts=3072 dur=1024 flags=- size=72 crc=19fa5851
+4 t1 pts=4096 dts=4096 dur=1024 flags=- size=54 crc=0adfde79
+seek 0: t1@0
+seek 166666: t1@0
+seek 333333: t1@0
+seek 500000: end
+seek -1000000: t1@0

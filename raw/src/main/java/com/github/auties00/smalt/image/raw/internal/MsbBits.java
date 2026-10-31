@@ -1,5 +1,7 @@
 package com.github.auties00.smalt.image.raw.internal;
 
+import com.github.auties00.smalt.MediaException;
+
 import java.util.Arrays;
 
 /**
@@ -184,6 +186,7 @@ final class MsbBits {
          * given are left unassigned.
          *
          * @param spec the counts and values
+         * @throws MediaException.Malformed if the counts give more codes of a length than the length has
          */
         Table(int[] spec) {
             values = Arrays.copyOfRange(spec, 16, spec.length);
@@ -193,6 +196,10 @@ final class MsbBits {
                 var count = spec[length - 1];
                 offset[length] = index - code;
                 var assigned = 0;
+                if (code + count > 1 << length) {
+                    throw new MediaException.Malformed("Huffman table of more codes of " + length
+                            + " bits than there are");
+                }
                 for (var k = 0; k < count; k++) {
                     if (index < values.length) {
                         if (length <= LOOKUP_BITS) {

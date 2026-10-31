@@ -1,0 +1,27 @@
+# demux dump of dsd/dsd.dsf; regenerate with -Dsmalt.test.updateDumps=true
+format DSF
+duration 60000
+seekable true
+metadata TIT2="Behavior"
+track 0 AUDIO DSD_LSBF_PLANAR timebase=1/2822400 duration=169344 config=none
+  audio rate=2822400 bits=1 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 6
+0 t0 pts=0 dts=0 dur=32768 flags=KEY size=8192 crc=ebf10c56
+1 t0 pts=32768 dts=32768 dur=32768 flags=KEY size=8192 crc=0bea09f6
+2 t0 pts=65536 dts=65536 dur=32768 flags=KEY size=8192 crc=f184c51a
+3 t0 pts=98304 dts=98304 dur=32768 flags=KEY size=8192 crc=90dc7fc8
+4 t0 pts=131072 dts=131072 dur=32768 flags=KEY size=8192 crc=0b8c1d18
+5 t0 pts=163840 dts=163840 dur=5504 flags=KEY size=8192 crc=61ed83c7
+seek 0: t0@0
+seek 20000: t0@1
+seek 40000: t0@3
+seek 60000: end
+seek -1000000: t0@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format DSF
+  duration 60000
+  seekable false
+  track 0 AUDIO DSD_LSBF_PLANAR timebase=1/2822400 duration=169344 config=none
+    audio rate=2822400 bits=1 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH

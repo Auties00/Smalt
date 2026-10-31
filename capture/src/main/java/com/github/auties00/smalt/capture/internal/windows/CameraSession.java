@@ -2,10 +2,12 @@ package com.github.auties00.smalt.capture.internal.windows;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.capture.CameraCaptureSession;
+import com.github.auties00.smalt.capture.CameraControls;
 import com.github.auties00.smalt.capture.CaptureDevice;
 import com.github.auties00.smalt.capture.CaptureMode;
-import com.github.auties00.smalt.capture.VideoCaptureSession;
 import com.github.auties00.smalt.capture.internal.FrameExchange;
+import com.github.auties00.smalt.capture.internal.Pictures;
 import com.github.auties00.smalt.capture.internal.PumpThread;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
@@ -38,7 +40,7 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
  * fail to convert (a corrupt Motion-JPEG frame, a buffer smaller than its media type) are
  * skipped; after {@value #MAX_BAD_FRAMES} consecutive failures the session fails.
  */
-final class CameraSession implements VideoCaptureSession {
+final class CameraSession implements CameraCaptureSession {
     /**
      * The longest wait for the capture thread to open the camera.
      */
@@ -102,7 +104,7 @@ final class CameraSession implements VideoCaptureSession {
      * @throws MediaException.Unsupported if Media Foundation is missing or the camera cannot
      * capture in {@code mode}
      */
-    static VideoCaptureSession open(CaptureDevice.Camera camera, CaptureMode mode) {
+    static CameraCaptureSession open(CaptureDevice.Camera camera, CaptureMode mode) {
         if (!MediaFoundation.available()) {
             throw new MediaException.Unsupported("media foundation", "Media Foundation is not installed on this system");
         }
@@ -114,7 +116,7 @@ final class CameraSession implements VideoCaptureSession {
     }
 
     @Override
-    public CaptureDevice device() {
+    public CaptureDevice.Camera device() {
         return device;
     }
 
@@ -131,6 +133,11 @@ final class CameraSession implements VideoCaptureSession {
     @Override
     public Frame read() throws InterruptedException {
         return worker.exchange.take();
+    }
+
+    @Override
+    public CameraControls controls() {
+        return worker.controls;
     }
 
     @Override
@@ -172,6 +179,11 @@ final class CameraSession implements VideoCaptureSession {
          * it is open.
          */
         private volatile boolean abandoned;
+
+        /**
+         * The controls of the camera, set before the pump is told the camera is open.
+         */
+        private volatile DirectShowControls controls;
 
         /**
          * The exchange of the session's pictures, set before the pump is told the camera is open.
@@ -303,6 +315,7 @@ final class CameraSession implements VideoCaptureSession {
          */
         private void openCamera(Arena arena) {
             source = CameraDevices.openSource(camera.id(), arena);
+            controls = DirectShowControls.open(source);
             var created = MediaFoundation.createSourceReader(source, MemorySegment.NULL, arena.allocate(ADDRESS));
             synchronized (readerLock) {
                 reader = created;
@@ -441,6 +454,10 @@ final class CameraSession implements VideoCaptureSession {
          * Releases the reader and the media source.
          */
         private void releaseCamera() {
+            var opened = controls;
+            if (opened != null) {
+                opened.close();
+            }
             synchronized (readerLock) {
                 Com.release(reader);
                 reader = MemorySegment.NULL;

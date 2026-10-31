@@ -6,6 +6,7 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.audio.opus.internal.OpusDefines;
 import com.github.auties00.smalt.audio.opus.internal.OpusPacket;
 import com.github.auties00.smalt.audio.opus.internal.Repacketizer;
+import com.github.auties00.smalt.audio.opus.internal.dnn.Dred;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -18,9 +19,10 @@ import java.util.Objects;
  * <p>The table-of-contents byte that starts every packet names the coding mode, the audio bandwidth,
  * the frame duration and the coded channel count; the frame count follows from its code bits and,
  * for code 3, from the second byte. {@link #hasInbandFec(byte[], int, int)} reads the in-band forward
- * error correction flag of the first SILK frame. {@link #merge(List)} joins the frames of several
- * packets that share a configuration into one packet and {@link #split(byte[], int, int)} undoes it;
- * neither keeps the padding of its input, nor the padding extensions that padding carries.
+ * error correction flag of the first SILK frame and {@link #hasDred(byte[], int, int)} looks for Deep REDundancy.
+ * {@link #merge(List)} joins the frames of several packets that share a configuration into one packet and
+ * {@link #split(byte[], int, int)} undoes it; neither keeps the padding bytes of its input, but both keep the padding
+ * extensions (DRED among them), renumbered to the frames they belong to in the output.
  */
 public final class OpusPackets {
     private OpusPackets() {
@@ -144,6 +146,27 @@ public final class OpusPackets {
     }
 
     /**
+     * Returns whether a packet carries Deep REDundancy that {@link OpusDred#parse} can decode: a DRED extension of
+     * the experimental version libopus 1.5.2 writes (id 126, version 10) in its padding.
+     *
+     * @param packet the buffer holding the packet
+     * @param offset the index of the table-of-contents byte
+     * @param length the packet length, at least 1
+     * @return {@code true} when the packet carries DRED
+     * @throws IllegalArgumentException if {@code length} is zero
+     * @throws IndexOutOfBoundsException if the packet lies outside {@code packet}
+     * @throws MediaException.Malformed if the packet framing is invalid
+     */
+    public static boolean hasDred(byte[] packet, int offset, int length) {
+        checkPacket(packet, offset, length);
+        var result = Dred.findPayload(packet, offset, length, new OpusPacket.Layout(), new int[3]);
+        if (result < 0) {
+            throw new MediaException.Malformed("invalid Opus packet: " + OpusDefines.strerror(result));
+        }
+        return result == 1;
+    }
+
+    /**
      * Joins the frames of several packets into one packet.
      *
      * <p>Every packet must share the mode, bandwidth, frame duration and channel count of the first,
@@ -172,13 +195,44 @@ public final class OpusPackets {
             }
             total += packet.length;
         }
-        var capacity = total + 2 + 2 * repacketizer.nbFrames();
-        var out = new byte[capacity];
-        var length = repacketizer.outRange(0, repacketizer.nbFrames(), out, 0, capacity, false);
-        if (length < 0) {
-            throw new MediaException.Malformed("cannot merge Opus packets: " + OpusDefines.strerror(length));
+        var out = new int[1];
+        var packet = write(repacketizer, 0, repacketizer.nbFrames(), total + 2 + 4 * repacketizer.nbFrames() + 64,
+                total, out);
+        if (packet == null) {
+            throw new MediaException.Malformed("cannot merge Opus packets: " + OpusDefines.strerror(out[0]));
         }
-        return Arrays.copyOf(out, length);
+        return packet;
+    }
+
+    /**
+     * Writes frames {@code [begin, end)} of a repacketizer as one packet, growing the output buffer while the
+     * regenerated padding extensions do not fit: they may need frame separators and length bytes that the input
+     * packets did not.
+     *
+     * @param repacketizer the frames
+     * @param begin the first frame
+     * @param end one past the last frame
+     * @param capacity the first buffer size to try
+     * @param input the total size of the input packets, which bounds the output
+     * @param error receives the error code when the packet cannot be written
+     * @return the packet, or {@code null} on an error other than a full buffer
+     */
+    private static byte[] write(Repacketizer repacketizer, int begin, int end, int capacity, int input, int[] error) {
+        // Every extension grows by at most a header, a 2-byte separator and its length bytes, so 4 times the input
+        // plus some slack always fits.
+        var limit = 4L * input + 1024;
+        while (true) {
+            var out = new byte[capacity];
+            var length = repacketizer.outRange(begin, end, out, 0, capacity, false);
+            if (length >= 0) {
+                return Arrays.copyOf(out, length);
+            }
+            if (length != OpusDefines.OPUS_BUFFER_TOO_SMALL || capacity >= limit) {
+                error[0] = length;
+                return null;
+            }
+            capacity = (int) Math.min(limit, 2L * capacity);
+        }
     }
 
     /**
@@ -204,13 +258,13 @@ public final class OpusPackets {
         }
         var count = repacketizer.nbFrames();
         var frames = new ArrayList<byte[]>(count);
-        var out = new byte[length + 1];
+        var error = new int[1];
         for (var i = 0; i < count; i++) {
-            var written = repacketizer.outRange(i, i + 1, out, 0, out.length, false);
-            if (written < 0) {
-                throw new MediaException.Malformed("cannot split Opus packet: " + OpusDefines.strerror(written));
+            var frame = write(repacketizer, i, i + 1, length + 64, length, error);
+            if (frame == null) {
+                throw new MediaException.Malformed("cannot split Opus packet: " + OpusDefines.strerror(error[0]));
             }
-            frames.add(Arrays.copyOf(out, written));
+            frames.add(frame);
         }
         return frames;
     }

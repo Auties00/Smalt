@@ -1,0 +1,15 @@
+# image dump of tinydng/lossless-jpeg-two-components; regenerate with -Dsmalt.test.updateDumps=true
+format DNG
+info ImageInfo[format=DNG, width=64, height=48, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 64x48 rgba8 alpha=false crc=56846925
+  format=DNG orientation=NORMAL source=64x48
+  icc=520:86132914 exif=62:4ad6e252 xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+scaled 16x12
+picture 32x24 rgba8 alpha=false crc=31f197ca
+  format=DNG orientation=NORMAL source=64x48
+  icc=520:86132914 exif=62:4ad6e252 xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+decoder raw sensor data
+sensor 64x48 channels=1 cfa=RGGB neutral=[1.0, 1.0, 1.0] crc=cdf5e092
