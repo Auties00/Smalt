@@ -4,34 +4,76 @@ import com.github.auties00.smalt.aot.TrainingFamily;
 import com.github.auties00.smalt.aot.TrainingWorkload;
 import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.audio.aac.AacCompression;
 import com.github.auties00.smalt.audio.aac.AacDecoder;
+import com.github.auties00.smalt.audio.aac.AacDecoderOptions;
 import com.github.auties00.smalt.audio.aac.AacEncoder;
 import com.github.auties00.smalt.audio.aac.AacEncoderOptions;
+import com.github.auties00.smalt.audio.aac.AacProfile;
 import com.github.auties00.smalt.audio.ac3.Ac3Decoder;
 import com.github.auties00.smalt.audio.ac3.Ac3Encoder;
 import com.github.auties00.smalt.audio.ac3.Ac3EncoderOptions;
 import com.github.auties00.smalt.audio.ac3.Eac3Encoder;
 import com.github.auties00.smalt.audio.ac3.Eac3EncoderOptions;
+import com.github.auties00.smalt.audio.dts.DtsDecoder;
 import com.github.auties00.smalt.audio.amr.AmrDecoder;
 import com.github.auties00.smalt.audio.amr.AmrEncoder;
 import com.github.auties00.smalt.audio.amr.AmrEncoderOptions;
 import com.github.auties00.smalt.audio.amr.AmrMode;
+import com.github.auties00.smalt.audio.amr.AmrVad;
+import com.github.auties00.smalt.container.wav.WavDemuxer;
+import com.github.auties00.smalt.image.ChromaFormat;
+import com.github.auties00.smalt.image.ImageDecoderOptions;
+import com.github.auties00.smalt.image.heic.HeicDecoder;
+import com.github.auties00.smalt.image.heic.HeicEncoder;
+import com.github.auties00.smalt.image.heic.HeicEncoderOptions;
+import com.github.auties00.smalt.io.MediaSink;
+import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
+import com.github.auties00.smalt.video.FieldOrder;
+import com.github.auties00.smalt.video.VideoFrame;
+import com.github.auties00.smalt.video.VideoDecoderOptions;
 import com.github.auties00.smalt.video.h264.H264Decoder;
 import com.github.auties00.smalt.video.h264.H264DecoderOptions;
+import com.github.auties00.smalt.video.h264.encoder.H264AdaptiveQuantization;
 import com.github.auties00.smalt.video.h264.encoder.H264Encoder;
 import com.github.auties00.smalt.video.h264.encoder.H264EncoderOptions;
 import com.github.auties00.smalt.video.h264.encoder.H264EncoderSpeed;
+import com.github.auties00.smalt.video.h264.encoder.H264FieldCoding;
+import com.github.auties00.smalt.video.h264.encoder.H264FirstPass;
+import com.github.auties00.smalt.video.h264.encoder.H264FirstPassStats;
+import com.github.auties00.smalt.video.h264.encoder.H264PacketFormat;
 import com.github.auties00.smalt.video.h264.encoder.H264Profile;
+import com.github.auties00.smalt.video.h264.encoder.H264RateControl;
+import com.github.auties00.smalt.video.h263.H263Decoder;
+import com.github.auties00.smalt.video.h263.H263Encoder;
+import com.github.auties00.smalt.video.h263.H263EncoderOptions;
+import com.github.auties00.smalt.video.hevc.HevcDecoder;
+import com.github.auties00.smalt.video.hevc.HevcDecoderOptions;
+import com.github.auties00.smalt.video.hevc.encoder.HevcEncoder;
+import com.github.auties00.smalt.video.hevc.encoder.HevcEncoderOptions;
+import com.github.auties00.smalt.video.hevc.encoder.HevcEncoderSpeed;
+import com.github.auties00.smalt.video.hevc.encoder.HevcPictureHash;
+import com.github.auties00.smalt.video.hevc.encoder.HevcProfile;
+import com.github.auties00.smalt.video.mpeg2.Mpeg2Decoder;
+import com.github.auties00.smalt.video.mpeg4.Mpeg4Decoder;
+import com.github.auties00.smalt.video.mpeg4.Mpeg4Encoder;
+import com.github.auties00.smalt.video.mpeg4.Mpeg4EncoderOptions;
+import com.github.auties00.smalt.video.mpeg4.Mpeg4Profile;
+import com.github.auties00.smalt.video.vc1.Vc1Decoder;
 
+import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import static com.github.auties00.smalt.aot.internal.VideoStreams.HEIGHT;
 import static com.github.auties00.smalt.aot.internal.VideoStreams.TIME_BASE;
@@ -40,9 +82,9 @@ import static com.github.auties00.smalt.aot.internal.WorkloadFactory.file;
 import static com.github.auties00.smalt.aot.internal.WorkloadFactory.realtime;
 
 /**
- * Creates the workloads of {@link TrainingFamily#MPEG}, the codecs of {@code smalt-mpeg}: H.264,
- * AAC, AC-3 and E-AC-3, and AMR, each keeping its codecs across rounds as a long-running
- * application does.
+ * Creates the workloads of {@link TrainingFamily#MPEG}, the codecs of {@code smalt-mpeg}: H.264, HEVC, HEIC,
+ * MPEG-1 and MPEG-2 video, MPEG-4 Part 2, H.263, AAC, AC-3 and E-AC-3, and AMR, each keeping its codecs across
+ * rounds as a long-running application does.
  */
 final class MpegWorkloads {
     /**
@@ -63,32 +105,107 @@ final class MpegWorkloads {
      * @return the factories, in order
      */
     static List<WorkloadFactory> factories() {
-        // TODO: train the HEVC, HEIC, MPEG-4 Part 2 and H.263 decoders, which need streams that no Smalt
-        //  encoder produces
+        // TODO: train the USAC decoder, the H.263 decoder of the modes the H.263 encoder does not code (PB-frames,
+        //  B-pictures, scalability and the optional modes beyond Annexes D, F, I, J, K and T), and the separate color
+        //  plane path of the H.264 decoder, which need streams that no Smalt encoder produces
         return List.of(
                 realtime("h264-encode-rt-t1", () -> h264Encode(1, null, null)),
+                realtime("h264-encode-rt-tools", MpegWorkloads::h264RealtimeTools),
                 realtime("h264-encode-rt-t2", () -> h264Encode(2, null, null)),
                 realtime("h264-decode-rt-t1", () -> h264Decode(1, true)),
                 realtime("h264-session-t2", () -> VideoStreams.session("h264-session-t2", Codec.H264,
                         () -> new H264Encoder(WIDTH, HEIGHT, H264EncoderOptions.forRealtime().toBuilder()
                                 .timeBase(TIME_BASE).bitrate(BITRATE).threads(2).build()),
                         track -> new H264Decoder(track, H264DecoderOptions.forRealtime()))),
+                realtime("hevc-encode-rt-t1", () -> hevcEncode("hevc-encode-rt-t1",
+                        HevcEncoderOptions.forRealtime().toBuilder().timeBase(TIME_BASE).bitrate(BITRATE).build())),
+                realtime("hevc-encode-rt-t2", () -> hevcEncode("hevc-encode-rt-t2",
+                        HevcEncoderOptions.forRealtime().toBuilder().timeBase(TIME_BASE).bitrate(BITRATE).threads(2)
+                                .build())),
+                realtime("hevc-decode-rt-t1", () -> hevcDecode(1, true)),
+                realtime("mpeg4-session-t1", () -> VideoStreams.session("mpeg4-session-t1", Codec.MPEG4_PART2,
+                        () -> new Mpeg4Encoder(WIDTH, HEIGHT, Mpeg4EncoderOptions.forRealtime().toBuilder()
+                                .timeBase(TIME_BASE).frameRate(new Rational(30, 1)).bitrate(BITRATE).threads(1)
+                                .build()),
+                        track -> new Mpeg4Decoder(track, VideoDecoderOptions.builder().threads(1).build()))),
+                realtime("h263-session-t1", () -> VideoStreams.session("h263-session-t1", Codec.H263,
+                        () -> new H263Encoder(WIDTH, HEIGHT, H263EncoderOptions.forRealtime().toBuilder()
+                                .timeBase(TIME_BASE).frameRate(new Rational(30, 1)).bitrate(BITRATE)
+                                .deblockingFilter(true).threads(1).build()),
+                        track -> new H263Decoder(track, VideoDecoderOptions.builder().threads(1).build()))),
                 realtime("ac3-encode-rt", () -> ac3Realtime(6)),
                 realtime("eac3-rt", () -> eac3("eac3-rt", Eac3EncoderOptions.forRealtime(), 6)),
+                realtime("aac-encode-retarget", () -> aacRetarget(6)),
+                realtime("aac-eld-encode", () -> aacLowDelayEncode("aac-eld-encode", AacProfile.ELD, 4)),
+                realtime("aac-decode-loss", () -> aacLossyDecode("aac-decode-loss", false, 4)),
+                realtime("heaac-decode-loss", () -> aacLossyDecode("heaac-decode-loss", true, 4)),
+                realtime("amr-nb-decode-loss", () -> amrLossyDecode(2)),
+                realtime("ac3-decode-loss", () -> ac3LossyDecode(4)),
                 file("h264-encode-balanced-main-t2", () -> h264Encode(2, H264EncoderSpeed.BALANCED, H264Profile.MAIN)),
                 file("h264-encode-fast-high-t1", () -> h264Encode(1, H264EncoderSpeed.FAST, H264Profile.HIGH)),
                 file("h264-encode-fastest-baseline-t1",
                         () -> h264Encode(1, H264EncoderSpeed.FASTEST, H264Profile.CONSTRAINED_BASELINE)),
+                file("h264-encode-extended", MpegWorkloads::h264ExtendedEncode),
+                file("h264-encode-tuning", MpegWorkloads::h264TuningEncode),
+                file("h264-decode-extended", MpegWorkloads::h264ExtendedDecode),
                 file("h264-decode-t1", () -> h264Decode(1, false)),
                 file("h264-decode-t2", () -> h264Decode(2, false)),
+                file("h264-decode-film-grain-t2", () -> h264FilmGrainDecode(2)),
+                file("h264-svc-decode", MpegWorkloads::h264ScalableDecode),
+                file("mpeg4-encode-asp-t2", () -> VideoStreams.encode("mpeg4-encode-asp-t2",
+                        new Mpeg4Encoder(WIDTH, HEIGHT, mpeg4Options(true, 2)))),
+                file("mpeg4-encode-simple-t1", () -> VideoStreams.encode("mpeg4-encode-simple-t1",
+                        new Mpeg4Encoder(WIDTH, HEIGHT, mpeg4Options(false, 1)))),
+                file("mpeg4-decode-t1", () -> mpeg4Decode(1)),
+                file("mpeg4-decode-t2", () -> mpeg4Decode(2)),
+                file("h263-encode-baseline", () -> h263Encode("h263-encode-baseline", false)),
+                file("h263-encode-annexes", () -> h263Encode("h263-encode-annexes", true)),
+                file("h263-decode", MpegWorkloads::h263Decode),
+                file("flv1-decode", MpegWorkloads::sorensonDecode),
+                file("mpeg2-decode-t1", () -> mpegVideoDecode(1)),
+                file("mpeg2-decode-t2", () -> mpegVideoDecode(2)),
+                file("vc1-decode", MpegWorkloads::vc1Decode),
+                file("hevc-encode-fast-b-t2", () -> hevcEncode("hevc-encode-fast-b-t2",
+                        hevcFileOptions(HevcEncoderSpeed.FAST, 2).toBuilder().bFrames(3).build())),
+                file("hevc-encode-balanced-t1", () -> hevcEncode("hevc-encode-balanced-t1",
+                        hevcFileOptions(HevcEncoderSpeed.BALANCED, 1))),
+                file("hevc-encode-slow-main10-t2", () -> hevcEncode("hevc-encode-slow-main10-t2",
+                        hevcFileOptions(HevcEncoderSpeed.SLOW, 2).toBuilder().profile(HevcProfile.MAIN_10)
+                                .bitDepth(10).pictureHash(HevcPictureHash.MD5).build())),
+                file("hevc-encode-still", MpegWorkloads::hevcStillEncode),
+                file("heic-encode", MpegWorkloads::heicEncode),
+                file("heic-decode", MpegWorkloads::heicDecode),
+                file("hevc-decode-t1", () -> hevcDecode(1, false)),
+                file("hevc-decode-t2", () -> hevcDecode(2, false)),
                 file("aac-encode", () -> aacEncode(6)),
+                file("aac-960-surround-encode", () -> aacShortFrameSurroundEncode(3)),
+                file("heaac-encode", () -> aacHighEfficiencyEncode("heaac-encode", AacProfile.HE, 6)),
+                file("heaacv2-encode", () -> aacHighEfficiencyEncode("heaacv2-encode", AacProfile.HE_V2, 6)),
+                file("aac-ld-encode", () -> aacLowDelayEncode("aac-ld-encode", AacProfile.LD, 4)),
                 file("aac-decode", () -> aacDecode("aac-decode", false, false, 6)),
                 file("heaac-decode", () -> aacDecode("heaac-decode", true, false, 6)),
                 file("heaacv2-decode", () -> aacDecode("heaacv2-decode", true, true, 6)),
+                file("aac-drc-decode", () -> aacDynamicRangeDecode("aac-drc-decode", false, AacCompression.LIGHT, 4)),
+                file("heaac-drc-decode", () -> aacDynamicRangeDecode("heaac-drc-decode", true, AacCompression.HEAVY, 4)),
+                file("aac-main-decode", () -> aacObjectTypeDecode("aac-main-decode", 1, 4)),
+                file("aac-ssr-decode", () -> aacObjectTypeDecode("aac-ssr-decode", 3, 4)),
+                file("aac-ltp-decode", () -> aacLtpDecode("aac-ltp-decode", false, 4)),
+                file("aac-er-ltp-decode", () -> aacLtpDecode("aac-er-ltp-decode", true, 4)),
+                file("aac-er-lc-tools-decode", () -> aacResilienceToolsDecode(4)),
+                file("aac-ld-decode", () -> aacLowDelayDecode(4)),
+                file("aac-eld-decode", () -> aacEnhancedLowDelayDecode("aac-eld-decode", false, 4)),
+                file("aac-eld-sbr-decode", () -> aacEnhancedLowDelayDecode("aac-eld-sbr-decode", true, 4)),
+                file("aac-er-bsac-decode", () -> aacBsacDecode(2)),
+                file("aac-scalable-decode", () -> aacScalableDecode(2)),
+                file("aac-surround-decode", () -> aacSurroundDecode(4)),
                 file("ac3", () -> ac3(6)),
                 file("eac3", () -> eac3("eac3", Eac3EncoderOptions.defaults(), 6)),
+                file("dts-decode", MpegWorkloads::dtsDecode),
+                file("iec61937-wav", () -> iec61937(4)),
+                file("aac-wav", () -> aacWave(4)),
                 file("amr-nb-encode", () -> amrEncode("amr-nb-encode", Codec.AMR_NB, 4)),
                 file("amr-nb-decode", () -> amrDecode("amr-nb-decode", Codec.AMR_NB, 1)),
+                file("amr-nb-dtx-encode", () -> amrDtxEncode(4)),
                 file("amr-wb-encode", () -> amrEncode("amr-wb-encode", Codec.AMR_WB, 4)),
                 file("amr-wb-decode", () -> amrDecode("amr-wb-decode", Codec.AMR_WB, 1)));
     }
@@ -114,6 +231,246 @@ final class MpegWorkloads {
     }
 
     /**
+     * Returns the options of the HEVC file workloads: the file preset at a speed and thread count, with the
+     * training time base and bitrate.
+     *
+     * @param speed the encoder speed
+     * @param threads the encoder threads
+     * @return the options
+     */
+    private static HevcEncoderOptions hevcFileOptions(HevcEncoderSpeed speed, int threads) {
+        return HevcEncoderOptions.forFile().toBuilder().timeBase(TIME_BASE).bitrate(BITRATE).speed(speed)
+                .threads(threads).build();
+    }
+
+    /**
+     * Returns a workload that encodes with the HEVC encoder.
+     *
+     * @param name the workload name
+     * @param options the encoder options
+     * @return the workload
+     */
+    private static TrainingWorkload hevcEncode(String name, HevcEncoderOptions options) {
+        return VideoStreams.encode(name, new HevcEncoder(WIDTH, HEIGHT, options));
+    }
+
+    /**
+     * Returns a workload that codes single pictures with the Main Still Picture profile, as HEIC images are coded.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload hevcStillEncode() {
+        var pictures = SyntheticVideo.natural(WIDTH, HEIGHT, 2);
+        return TrainingWorkload.of("hevc-encode-still", () -> {
+            for (var picture : pictures) {
+                try (var encoder = new HevcEncoder(WIDTH, HEIGHT, HevcEncoderOptions.forStillPicture())) {
+                    encoder.encode(new VideoFrame(picture, 0, 1, true),
+                            packet -> {
+                            });
+                    encoder.flush(packet -> {
+                    });
+                }
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that encodes HEIC images: a 384x256 picture with alpha, the same picture as a 10-bit
+     * grid of 128-sample images on two threads, and an animation with alpha and predicted frames.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload heicEncode() {
+        var alpha = SyntheticImages.rgba(SyntheticVideo.natural(384, 256, 1).getFirst(), true);
+        var frames = SyntheticVideo.natural(128, 96, 4);
+        var grid = HeicEncoderOptions.ofQuality(70).toBuilder().bitDepth(10).gridTileSize(128).threads(2).build();
+        var animation = HeicEncoderOptions.ofQuality(60).toBuilder().speed(HevcEncoderSpeed.FAST).threads(1).build();
+        return TrainingWorkload.of("heic-encode", () -> {
+            Blackhole.consume(HeicEncoder.encode(alpha, HeicEncoderOptions.defaults()).length);
+            Blackhole.consume(HeicEncoder.encode(alpha, grid).length);
+            var sink = MediaSink.memory();
+            try (var writer = HeicEncoder.openAnimationWriter(128, 96, animation, sink)) {
+                for (var frame : frames) {
+                    writer.write(SyntheticImages.rgba(frame, true), 40_000);
+                }
+                writer.finish();
+            }
+            Blackhole.consume(sink.toByteArray().length);
+        });
+    }
+
+    /**
+     * Returns a workload that probes and decodes HEIC files of the HEIC encoder: a picture with alpha, a region of
+     * a grid, a 10-bit picture at its full depth, and an animation with alpha and reordered samples played and
+     * sought back.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload heicDecode() {
+        var picture = SyntheticImages.rgba(SyntheticVideo.natural(384, 256, 1).getFirst(), true);
+        var still = HeicEncoder.encode(picture, HeicEncoderOptions.defaults());
+        var grid = HeicEncoder.encode(picture, HeicEncoderOptions.ofQuality(60).toBuilder().gridTileSize(64)
+                .speed(HevcEncoderSpeed.FASTEST).build());
+        var deep = HeicEncoder.encode(picture, HeicEncoderOptions.forArchive().toBuilder()
+                .speed(HevcEncoderSpeed.FASTEST).build());
+        var sink = MediaSink.memory();
+        try (var writer = HeicEncoder.openAnimationWriter(128, 96, HeicEncoderOptions.ofQuality(60).toBuilder()
+                .speed(HevcEncoderSpeed.FASTEST).build(), sink)) {
+            for (var frame : SyntheticVideo.natural(128, 96, 5)) {
+                writer.write(SyntheticImages.rgba(frame, true), 40_000);
+            }
+            writer.finish();
+        }
+        var animated = sink.toByteArray();
+        var region = ImageDecoderOptions.builder().region(100, 70, 120, 90).build();
+        var highBitDepth = ImageDecoderOptions.builder().highBitDepth(true).build();
+        return TrainingWorkload.of("heic-decode", () -> {
+            Blackhole.consume(HeicDecoder.probe(MediaSource.of(still)).hashCode());
+            Blackhole.consume(HeicDecoder.decode(MediaSource.of(still)).picture().width());
+            Blackhole.consume(HeicDecoder.decode(MediaSource.of(grid), region).picture().width());
+            Blackhole.consume(HeicDecoder.decode(MediaSource.of(deep), highBitDepth).picture().width());
+            try (var reader = HeicDecoder.openAnimation(MediaSource.of(animated))) {
+                for (var frame = reader.read(); frame != null; frame = reader.read()) {
+                    Blackhole.consume(frame.picture().width());
+                }
+                reader.seek(40_000);
+                Blackhole.consume(reader.read().picture().width());
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that decodes an HEVC stream of the HEVC encoder, with B pictures, wavefront substreams,
+     * the sample adaptive offset and decoded picture hashes, which the decoder verifies.
+     *
+     * @param threads the decoder threads
+     * @param realtime whether the stream is coded without B pictures, as real-time streams are
+     * @return the workload
+     */
+    private static TrainingWorkload hevcDecode(int threads, boolean realtime) {
+        var encoder = new HevcEncoder(WIDTH, HEIGHT, hevcFileOptions(HevcEncoderSpeed.FASTEST, 2).toBuilder()
+                .bFrames(realtime ? 0 : 3).pictureHash(HevcPictureHash.MD5).build());
+        var codecConfig = encoder.codecConfig();
+        var packets = VideoStreams.encodeAll(encoder, SyntheticVideo.natural(WIDTH, HEIGHT,
+                VideoStreams.DECODED_FRAMES / 2));
+        var decoder = new HevcDecoder(VideoStreams.track(Codec.HEVC, codecConfig.orElse(null)),
+                HevcDecoderOptions.builder().threads(threads).hashVerification(true).build());
+        return VideoStreams.decode((realtime ? "hevc-decode-rt-t" : "hevc-decode-t") + threads, packets, decoder);
+    }
+
+    /**
+     * Returns a workload that encodes with the real-time H.264 stream tools: a slice size limit with fixed
+     * slices, periodic intra refresh, and three temporal layers.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload h264RealtimeTools() {
+        var base = H264EncoderOptions.forRealtime().toBuilder().timeBase(TIME_BASE).bitrate(BITRATE);
+        var encoders = List.of(new H264Encoder(WIDTH, HEIGHT, base.slices(2).maxSliceBytes(1200).build()),
+                new H264Encoder(WIDTH, HEIGHT, base.slices(1).noMaxSliceBytes().intraRefresh(8).build()),
+                new H264Encoder(WIDTH, HEIGHT, base.noIntraRefresh().temporalLayers(3).build()));
+        var rounds = new ArrayList<Runnable>();
+        for (var encoder : encoders) {
+            rounds.add(VideoStreams.encodeRound(encoder));
+        }
+        return TrainingWorkload.of("h264-encode-rt-tools", () -> rounds.forEach(Runnable::run));
+    }
+
+    /**
+     * Returns a workload that encodes with the tuning options of the H.264 encoder: a two-pass encode, its first
+     * pass included, constant bitrate streams that signal a hypothetical reference decoder in both engines, and
+     * the adaptive quantization modes with texture retention in mode decision.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload h264TuningEncode() {
+        var pictures = SyntheticVideo.natural(WIDTH, HEIGHT, VideoStreams.ENCODED_FRAMES);
+        var file = fileOptions(H264Profile.MAIN, H264EncoderSpeed.FAST, 1);
+        Supplier<H264FirstPassStats> firstPass = () -> {
+            var pass = new H264FirstPass(WIDTH, HEIGHT, file);
+            for (var i = 0; i < pictures.size(); i++) {
+                pass.add(new VideoFrame(pictures.get(i), i, 1, false));
+            }
+            return pass.finish();
+        };
+        var hrd = file.toBuilder().rateControl(H264RateControl.CONSTANT_BITRATE).packetFormat(H264PacketFormat.ANNEX_B)
+                .hrd(true);
+        var encoders = List.of(
+                new H264Encoder(WIDTH, HEIGHT, file.toBuilder().firstPassStats(firstPass.get()).build()),
+                new H264Encoder(WIDTH, HEIGHT, hrd.build()),
+                new H264Encoder(WIDTH, HEIGHT, hrd.profile(H264Profile.HIGH_10).bitDepth(10)
+                        .adaptiveQuantization(H264AdaptiveQuantization.AUTO_VARIANCE_DARK).build()),
+                new H264Encoder(WIDTH, HEIGHT, file.toBuilder().speed(H264EncoderSpeed.BALANCED)
+                        .adaptiveQuantization(H264AdaptiveQuantization.AUTO_VARIANCE).psychovisualStrength(1).build()));
+        var rounds = new ArrayList<Runnable>();
+        for (var encoder : encoders) {
+            rounds.add(VideoStreams.encodeRound(encoder));
+        }
+        return TrainingWorkload.of("h264-encode-tuning", () -> {
+            Blackhole.consume(firstPass.get().frameCount());
+            rounds.forEach(Runnable::run);
+        });
+    }
+
+    /**
+     * The options of the streams of the H.264 extended engine the extended workloads code and decode: 10-bit
+     * 4:2:0, 10-bit 4:2:2 macroblock pairs, lossless 4:4:4, 4:0:0, and field pictures with CAVLC.
+     *
+     * @return the options
+     */
+    private static List<H264EncoderOptions> extendedOptions() {
+        var base = H264EncoderOptions.forFile().toBuilder().timeBase(TIME_BASE).bitrate(BITRATE)
+                .speed(H264EncoderSpeed.FAST);
+        return List.of(
+                base.profile(H264Profile.HIGH_10).bitDepth(10).build(),
+                base.profile(H264Profile.HIGH_422).chromaFormat(ChromaFormat.YUV422)
+                        .fieldOrder(FieldOrder.TOP_FIRST).build(),
+                base.profile(H264Profile.HIGH_444_PREDICTIVE).bitDepth(8)
+                        .chromaFormat(ChromaFormat.YUV444)
+                        .fieldOrder(FieldOrder.PROGRESSIVE).lossless(true).build(),
+                base.lossless(false).profile(H264Profile.HIGH)
+                        .chromaFormat(ChromaFormat.MONOCHROME).build(),
+                base.chromaFormat(ChromaFormat.YUV420)
+                        .fieldOrder(FieldOrder.BOTTOM_FIRST)
+                        .fieldCoding(H264FieldCoding.FIELD_PICTURES)
+                        .cavlc(true).build());
+    }
+
+    /**
+     * Returns a workload that encodes with the H.264 extended engine: high bit depths, 4:2:2, 4:4:4, 4:0:0,
+     * lossless coding, macroblock pairs, field pictures and CAVLC.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload h264ExtendedEncode() {
+        var rounds = new ArrayList<Runnable>();
+        var options = extendedOptions();
+        for (var option : options) {
+            rounds.add(VideoStreams.encodeRound(new H264Encoder(WIDTH, HEIGHT, option)));
+        }
+        return TrainingWorkload.of("h264-encode-extended", () -> rounds.forEach(Runnable::run));
+    }
+
+    /**
+     * Returns a workload that decodes the streams of the H.264 extended engine, which select the decoder's high bit
+     * depth, 4:2:2, 4:4:4, lossless, macroblock pair and field picture paths.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload h264ExtendedDecode() {
+        var rounds = new ArrayList<Runnable>();
+        for (var options : extendedOptions()) {
+            var encoder = new H264Encoder(WIDTH, HEIGHT, options);
+            var codecConfig = encoder.codecConfig().orElse(null);
+            var packets = VideoStreams.encodeAll(encoder, SyntheticVideo.natural(WIDTH, HEIGHT,
+                    VideoStreams.DECODED_FRAMES / 8));
+            rounds.add(VideoStreams.decodeRound(packets, new H264Decoder(VideoStreams.track(Codec.H264, codecConfig),
+                    H264DecoderOptions.builder().highBitDepth(true).build())));
+        }
+        return TrainingWorkload.of("h264-decode-extended", () -> rounds.forEach(Runnable::run));
+    }
+
+    /**
      * Returns a workload that decodes a High profile H.264 stream of the file encoder.
      *
      * @param threads  the decoder threads
@@ -128,6 +485,377 @@ final class MpegWorkloads {
         var decoder = new H264Decoder(VideoStreams.track(Codec.H264, codecConfig.orElse(null)),
                 options.toBuilder().threads(threads).build());
         return VideoStreams.decode((realtime ? "h264-decode-rt-t" : "h264-decode-t") + threads, packets, decoder);
+    }
+
+    /**
+     * The scalable H.264 streams decoded by {@link #h264ScalableDecode()}: coarse-grain quality layers over
+     * temporal layers of hierarchical P pictures, medium-grain quality layers with hierarchical B pictures, CABAC
+     * and key pictures, dyadic and non-dyadic spatial layers, and spatial layers of macroblock-adaptive frames
+     * over interlaced and progressive base layers, each of synthetic scenes coded by the JSVM reference encoder
+     * ({@code tools/testdata/h264-svc/make-vectors.py}).
+     */
+    private static final List<String> SCALABLE_STREAMS = List.of("svc-cgs-temporal", "svc-mgs-keys", "svc-spatial",
+            "svc-mbaff-spatial", "svc-progressive-mbaff");
+
+    /**
+     * Returns a workload that decodes scalable H.264 streams at their highest layer and at their base and
+     * intermediate layers, which select the inter-layer intra, motion and residual prediction of the scalable
+     * decoder and its resampling.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload h264ScalableDecode() {
+        var rounds = new ArrayList<Runnable>();
+        for (var name : SCALABLE_STREAMS) {
+            byte[] stream;
+            try (var input = MpegWorkloads.class.getResourceAsStream("svc/" + name + ".264")) {
+                stream = input.readAllBytes();
+            } catch (java.io.IOException | NullPointerException exception) {
+                throw new IllegalStateException("missing training stream " + name, exception);
+            }
+            var packets = List.of(new Packet(1, stream, Packet.NO_TIMESTAMP, Packet.NO_TIMESTAMP, 0, true));
+            for (var layer : new int[]{-1, 16, 1}) {
+                var options = H264DecoderOptions.builder();
+                if (layer < 0) {
+                    options.highestLayer();
+                } else {
+                    options.targetLayer(layer >> 4, layer & 15);
+                }
+                rounds.add(VideoStreams.decodeRound(packets, new H264Decoder(VideoStreams.track(Codec.H264, null),
+                        options.build())));
+            }
+        }
+        return TrainingWorkload.of("h264-svc-decode", () -> rounds.forEach(Runnable::run));
+    }
+
+    /**
+     * The size of the baseline H.263 pictures of the H.263 workloads, CIF.
+     */
+    private static final int CIF_WIDTH = 352;
+
+    /**
+     * The height of the baseline H.263 pictures.
+     */
+    private static final int CIF_HEIGHT = 288;
+
+    /**
+     * The macroblocks of a slice of the custom-format H.263 pictures, which make slices end inside macroblock rows.
+     */
+    private static final int H263_SLICE_MACROBLOCKS = 17;
+
+    /**
+     * Returns the settings of the MPEG-4 Part 2 file workloads.
+     *
+     * @param advanced whether the stream is of the Advanced Simple profile with B-VOPs, quarter-sample vectors and
+     * the MPEG quantization method, rather than of the Simple profile with video packets
+     * @param threads the encoder threads
+     * @return the settings
+     */
+    private static Mpeg4EncoderOptions mpeg4Options(boolean advanced, int threads) {
+        var builder = Mpeg4EncoderOptions.builder().timeBase(TIME_BASE).frameRate(new Rational(30, 1))
+                .bitrate(BITRATE).keyframeInterval(12).threads(threads);
+        if (advanced) {
+            builder.profile(Mpeg4Profile.ADVANCED_SIMPLE).bFrames(2).quarterSample(true).mpegQuantization(true);
+        } else {
+            builder.videoPacketSize(600);
+        }
+        return builder.build();
+    }
+
+    /**
+     * Returns a workload that decodes the streams of the MPEG-4 Part 2 encoder in both profiles: I-, P- and B-VOPs
+     * with one and four vectors, AC prediction, half and quarter samples, both quantization methods and video
+     * packets.
+     *
+     * @param threads the decoder threads
+     * @return the workload
+     */
+    private static TrainingWorkload mpeg4Decode(int threads) {
+        var rounds = new ArrayList<Runnable>();
+        for (var advanced : new boolean[]{true, false}) {
+            var encoder = new Mpeg4Encoder(WIDTH, HEIGHT, mpeg4Options(advanced, 2));
+            var codecConfig = encoder.codecConfig().orElseThrow();
+            var packets = VideoStreams.encodeAll(encoder, SyntheticVideo.natural(WIDTH, HEIGHT,
+                    VideoStreams.DECODED_FRAMES / 2));
+            rounds.add(VideoStreams.decodeRound(packets, new Mpeg4Decoder(VideoStreams.track(Codec.MPEG4_PART2,
+                    codecConfig), VideoDecoderOptions.builder().threads(threads).build())));
+        }
+        return TrainingWorkload.of("mpeg4-decode-t" + threads, () -> rounds.forEach(Runnable::run));
+    }
+
+    /**
+     * Returns the H.263 encoder of the H.263 workloads.
+     *
+     * @param annexes whether the encoder codes custom-format pictures with the Unrestricted Motion Vector,
+     * Advanced Prediction, Advanced INTRA Coding, Deblocking Filter, Slice Structured and Modified Quantization
+     * modes, rather than baseline CIF pictures with group of blocks headers
+     * @return the encoder
+     */
+    private static H263Encoder h263Encoder(boolean annexes) {
+        var builder = H263EncoderOptions.builder().timeBase(TIME_BASE).frameRate(new Rational(30, 1))
+                .bitrate(BITRATE).keyframeInterval(12).threads(2);
+        if (annexes) {
+            builder.unrestrictedVectors(true).advancedPrediction(true).advancedIntraCoding(true)
+                    .deblockingFilter(true).modifiedQuantization(true).sliceSize(H263_SLICE_MACROBLOCKS);
+            return new H263Encoder(WIDTH, HEIGHT, builder.build());
+        }
+        return new H263Encoder(CIF_WIDTH, CIF_HEIGHT, builder.groupOfBlocksHeaders(true).build());
+    }
+
+    /**
+     * Returns a workload that encodes with the H.263 encoder.
+     *
+     * @param name the name of the workload
+     * @param annexes whether the encoder codes the optional modes, as {@link #h263Encoder(boolean)} describes
+     * @return the workload
+     */
+    private static TrainingWorkload h263Encode(String name, boolean annexes) {
+        var encoder = h263Encoder(annexes);
+        var pictures = SyntheticVideo.natural(encoder.width(), encoder.height(), VideoStreams.ENCODED_FRAMES);
+        long[] pts = {0};
+        Consumer<Packet> output = packet -> Blackhole.consume(packet.size());
+        return TrainingWorkload.of(name, () -> {
+            for (var picture : pictures) {
+                encoder.encode(new VideoFrame(picture, pts[0]++, 1, false), output);
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that decodes the streams of the H.263 encoder: baseline CIF pictures with group of blocks
+     * headers, and custom-format pictures in slices with the optional modes the encoder codes.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload h263Decode() {
+        var rounds = new ArrayList<Runnable>();
+        for (var annexes : new boolean[]{false, true}) {
+            var encoder = h263Encoder(annexes);
+            var packets = VideoStreams.encodeAll(encoder, SyntheticVideo.natural(encoder.width(), encoder.height(),
+                    VideoStreams.DECODED_FRAMES / 2));
+            rounds.add(VideoStreams.decodeRound(packets, new H263Decoder(VideoStreams.track(Codec.H263,
+                    encoder.width(), encoder.height(), null), VideoDecoderOptions.defaults())));
+        }
+        return TrainingWorkload.of("h263-decode", () -> rounds.forEach(Runnable::run));
+    }
+
+    /**
+     * Returns a workload that decodes Sorenson Spark, which no encoder here writes: the baseline CIF pictures of the
+     * H.263 encoder, without group of blocks headers, with their picture headers rewritten as Sorenson H.263
+     * version 0 headers, whose macroblock layer is the baseline one.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload sorensonDecode() {
+        var encoder = new H263Encoder(CIF_WIDTH, CIF_HEIGHT, H263EncoderOptions.builder().timeBase(TIME_BASE)
+                .frameRate(new Rational(30, 1)).bitrate(BITRATE).keyframeInterval(12).threads(2).build());
+        var packets = new ArrayList<Packet>();
+        for (var packet : VideoStreams.encodeAll(encoder, SyntheticVideo.natural(CIF_WIDTH, CIF_HEIGHT,
+                VideoStreams.DECODED_FRAMES / 2))) {
+            packets.add(packet.withData(sorensonPicture(packet.data())));
+        }
+        var round = VideoStreams.decodeRound(packets, new H263Decoder(VideoStreams.track(Codec.FLV1, CIF_WIDTH,
+                CIF_HEIGHT, null), VideoDecoderOptions.defaults()));
+        return TrainingWorkload.of("flv1-decode", round);
+    }
+
+    /**
+     * Rewrites a baseline H.263 picture (a standard source format, no optional mode, no continuous presence
+     * multipoint) into a Sorenson H.263 version 0 picture of the same macroblocks.
+     *
+     * @param picture the H.263 picture, from its picture start code
+     * @return the Sorenson picture
+     */
+    static byte[] sorensonPicture(byte[] picture) {
+        var reference = bits(picture, 22, 8);
+        var format = bits(picture, 35, 3);
+        var inter = bits(picture, 38, 1);
+        var quant = bits(picture, 43, 5);
+        var position = 49;
+        while (bits(picture, position, 1) == 1) {
+            position += 9;
+        }
+        position++;
+        var size = format == 1 ? 4 : format == 2 ? 3 : 2;
+        var header = (1L << 25) | ((long) reference << 12) | ((long) size << 9) | ((long) inter << 7)
+                | ((long) quant << 1);
+        var total = 42 + (long) picture.length * 8 - position;
+        var out = new byte[(int) ((total + 7) >>> 3)];
+        for (var bit = 0; bit < 42; bit++) {
+            if ((header >>> (41 - bit) & 1) != 0) {
+                out[bit >>> 3] |= (byte) (0x80 >>> (bit & 7));
+            }
+        }
+        for (var bit = 42; bit < total; bit++) {
+            if (bits(picture, (int) (position + bit - 42), 1) != 0) {
+                out[bit >>> 3] |= (byte) (0x80 >>> (bit & 7));
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Reads bits of a byte array, most significant first.
+     *
+     * @param data the bytes
+     * @param position the bit position of the first bit
+     * @param count the number of bits, from 1 to 31
+     * @return the bits
+     */
+    private static int bits(byte[] data, int position, int count) {
+        var value = 0;
+        for (var bit = position; bit < position + count; bit++) {
+            value = value << 1 | ((data[bit >>> 3] >> (7 - (bit & 7))) & 1);
+        }
+        return value;
+    }
+
+    /**
+     * The MPEG-1 and MPEG-2 video streams decoded by {@link #mpegVideoDecode(int)}: frame pictures with B-pictures
+     * and field and frame prediction, field pictures with dual-prime prediction, 4:2:2 field pictures with
+     * B-pictures, the alternate scan and the intra VLC table, and MPEG-1 with B-pictures, each of a synthetic scene
+     * coded by the ISO/IEC 13818-5 reference encoder ({@code tools/testdata/mpeg2-oracle/make-training.py}).
+     */
+    private static final List<String> MPEG_VIDEO_STREAMS = List.of("frame-bframes.m2v", "field-dualprime.m2v",
+            "field-422-bframes.m2v", "mpeg1-bframes.m1v");
+
+    /**
+     * Returns a workload that decodes the DTS training stream: synthetic 5.1 core frames coded with every tool of
+     * the core (Huffman, block and plain codes, ADPCM, high frequency vectors, transients, joint intensity, the LFE
+     * channel) and both synthesis filter banks, written by smalt-mpeg's {@code DtsTrainingStreamTest}.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload dtsDecode() {
+        byte[] stream;
+        try (var input = MpegWorkloads.class.getResourceAsStream("dts/training.dts")) {
+            stream = input.readAllBytes();
+        } catch (java.io.IOException | NullPointerException exception) {
+            throw new IllegalStateException("missing training stream dts/training.dts", exception);
+        }
+        var packets = new ArrayList<Packet>();
+        var position = 0;
+        while (position + 8 <= stream.length) {
+            var size = ((stream[position + 5] & 0x03) << 12 | (stream[position + 6] & 0xFF) << 4
+                    | (stream[position + 7] & 0xF0) >> 4) + 1;
+            packets.add(new Packet(1, Arrays.copyOfRange(stream, position, position + size), Packet.NO_TIMESTAMP,
+                    Packet.NO_TIMESTAMP, 0, true));
+            position += size;
+        }
+        return AudioStreams.decode("dts-decode", packets, new DtsDecoder(AudioStreams.track(Codec.DTS, 48000,
+                ChannelLayout.SURROUND_5_1, null)));
+    }
+
+    /**
+     * Returns a workload that decodes the MPEG-1 and MPEG-2 video streams, each in one packet.
+     *
+     * @param threads the decoder threads; above 1 the rows of the MPEG-2 pictures are decoded in parallel
+     * @return the workload
+     */
+    private static TrainingWorkload mpegVideoDecode(int threads) {
+        var rounds = new ArrayList<Runnable>();
+        for (var name : MPEG_VIDEO_STREAMS) {
+            byte[] stream;
+            try (var input = MpegWorkloads.class.getResourceAsStream("mpeg2/" + name)) {
+                stream = input.readAllBytes();
+            } catch (java.io.IOException | NullPointerException exception) {
+                throw new IllegalStateException("missing training stream " + name, exception);
+            }
+            var codec = name.endsWith(".m1v") ? Codec.MPEG1_VIDEO : Codec.MPEG2_VIDEO;
+            var packets = List.of(new Packet(1, stream, Packet.NO_TIMESTAMP, Packet.NO_TIMESTAMP, 0, true));
+            rounds.add(VideoStreams.decodeRound(packets, new Mpeg2Decoder(VideoStreams.track(codec, 128, 96, null),
+                    VideoDecoderOptions.builder().threads(threads).build())));
+        }
+        return TrainingWorkload.of("mpeg2-decode-t" + threads, () -> rounds.forEach(Runnable::run));
+    }
+
+    /**
+     * Returns a workload that decodes a VC-1 advanced profile stream of I, P and B pictures with the in-loop filter,
+     * written bit by bit by the decoder's tests ({@code Vc1Synthetic}), one frame per packet.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload vc1Decode() {
+        byte[] stream;
+        try (var input = MpegWorkloads.class.getResourceAsStream("vc1/synthetic-ipb.vc1")) {
+            stream = input.readAllBytes();
+        } catch (java.io.IOException | NullPointerException exception) {
+            throw new IllegalStateException("missing training stream synthetic-ipb.vc1", exception);
+        }
+        var packets = new ArrayList<Packet>();
+        var from = 0;
+        var frameSeen = false;
+        for (var index = 0; index + 3 < stream.length; index++) {
+            if (stream[index] == 0 && stream[index + 1] == 0 && stream[index + 2] == 1 && stream[index + 3] == 0x0D) {
+                if (frameSeen) {
+                    packets.add(packet(stream, from, index, packets.isEmpty()));
+                    from = index;
+                }
+                frameSeen = true;
+            }
+        }
+        packets.add(packet(stream, from, stream.length, packets.isEmpty()));
+        var round = VideoStreams.decodeRound(packets, new Vc1Decoder(VideoStreams.track(Codec.VC1, 128, 96, null)));
+        return TrainingWorkload.of("vc1-decode", round);
+    }
+
+    /**
+     * Returns a packet of a range of a stream.
+     *
+     * @param stream the whole VC-1 stream
+     * @param from the first index
+     * @param to the index after the last
+     * @param key whether the packet starts a key frame
+     * @return the packet
+     */
+    private static Packet packet(byte[] stream, int from, int to, boolean key) {
+        return new Packet(1, java.util.Arrays.copyOfRange(stream, from, to), Packet.NO_TIMESTAMP, Packet.NO_TIMESTAMP,
+                0, key);
+    }
+
+    /**
+     * An H.264 SEI NAL unit (without start code) holding a film grain characteristics message for the
+     * current picture: frequency filtering with additive blending, {@code log2_scale_factor} 3, two
+     * intensity intervals per component with different cut frequencies.
+     */
+    private static final byte[] FILM_GRAIN_SEI = {
+            0x06, 0x13, 0x28, 0x00, (byte) 0xF8, 0x0A, 0x00, 0x78, 0x03, (byte) 0xC0, 0x40, 0x63, (byte) 0xCF,
+            (byte) 0xF8, 0x0C, (byte) 0x81, 0x01, 0x40, 0x14, 0x00, (byte) 0xFE, 0x05, 0x01, (byte) 0x83, 0x20,
+            0x3F, (byte) 0xC0, 0x5A, 0x06, 0x0C, 0x02, (byte) 0x80, 0x1F, (byte) 0xC0, 0x50, 0x18, 0x31, 0x01,
+            (byte) 0xFE, 0x0F, 0x02, (byte) 0x81, 0x48, (byte) 0x80
+    };
+
+    /**
+     * Returns a workload that decodes a High profile H.264 stream of the file encoder whose pictures
+     * carry a film grain characteristics SEI message, so the decoder renders the grain.
+     *
+     * @param threads the decoder threads
+     * @return the workload
+     */
+    private static TrainingWorkload h264FilmGrainDecode(int threads) {
+        var encoder = new H264Encoder(WIDTH, HEIGHT, fileOptions(H264Profile.HIGH, H264EncoderSpeed.FASTEST, 2));
+        var codecConfig = encoder.codecConfig().orElse(null);
+        // an avcC record means length-prefixed NAL units of its length size, otherwise Annex B
+        var lengthSize = codecConfig != null && codecConfig.length > 4 ? (codecConfig[4] & 3) + 1 : 0;
+        var packets = new ArrayList<Packet>();
+        for (var packet : VideoStreams.encodeAll(encoder, SyntheticVideo.natural(WIDTH, HEIGHT,
+                VideoStreams.DECODED_FRAMES / 4))) {
+            var prefix = new byte[(lengthSize == 0 ? 4 : lengthSize) + FILM_GRAIN_SEI.length];
+            if (lengthSize == 0) {
+                prefix[3] = 1;
+            } else {
+                for (var i = 0; i < lengthSize; i++) {
+                    prefix[i] = (byte) (FILM_GRAIN_SEI.length >>> (8 * (lengthSize - 1 - i)));
+                }
+            }
+            System.arraycopy(FILM_GRAIN_SEI, 0, prefix, prefix.length - FILM_GRAIN_SEI.length, FILM_GRAIN_SEI.length);
+            var data = Arrays.copyOf(prefix, prefix.length + packet.data().length);
+            System.arraycopy(packet.data(), 0, data, prefix.length, packet.data().length);
+            packets.add(packet.withData(data));
+        }
+        var decoder = new H264Decoder(VideoStreams.track(Codec.H264, codecConfig),
+                H264DecoderOptions.defaults().toBuilder().threads(threads).build());
+        return VideoStreams.decode("h264-decode-film-grain-t" + threads, packets, decoder);
     }
 
     /**
@@ -161,10 +889,59 @@ final class MpegWorkloads {
     }
 
     /**
+     * Returns a workload that encodes 7.1 music (channel configuration 12, its LFE element included) as
+     * 48 kHz AAC-LC with 960-sample frames, whose transforms and band tables differ from those of
+     * 1024-sample frames, one encoder across rounds.
+     *
+     * @param seconds the music encoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacShortFrameSurroundEncode(double seconds) {
+        var layout = ChannelLayout.SURROUND_7_1;
+        var encoder = new AacEncoder(AacEncoderOptions.of(48000, layout, 512000).toBuilder().frameLength(960).build());
+        var stereo = SyntheticAudio.music(48000, seconds);
+        var planes = new float[layout.channels()][];
+        for (var c = 0; c < planes.length; c++) {
+            planes[c] = stereo[c % stereo.length];
+        }
+        return AudioStreams.encode("aac-960-surround-encode", planes, layout, 48000, encoder);
+    }
+
+    /**
+     * Returns a workload that encodes 44.1 kHz stereo music as HE-AAC at 48 kbit/s or as HE-AAC v2 at 32 kbit/s, which
+     * runs the encoder's QMF banks, spectral band replication and, for HE-AAC v2, parametric stereo, one encoder
+     * across rounds.
+     *
+     * @param name the name of the workload
+     * @param profile {@link AacProfile#HE} or {@link AacProfile#HE_V2}
+     * @param seconds the music encoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacHighEfficiencyEncode(String name, AacProfile profile, double seconds) {
+        var encoder = new AacEncoder(AacEncoderOptions.builder().format(44100, ChannelLayout.STEREO)
+                .bitrate(profile == AacProfile.HE ? 48000 : 32000).profile(profile).build());
+        return AudioStreams.encode(name, SyntheticAudio.music(44100, seconds), ChannelLayout.STEREO, 44100, encoder);
+    }
+
+    /**
+     * Returns a workload that encodes 48 kHz stereo music as AAC-LD or AAC-ELD with 512-sample frames at 128 kbit/s,
+     * one encoder across rounds.
+     *
+     * @param name the name of the workload
+     * @param profile {@link AacProfile#LD} or {@link AacProfile#ELD}
+     * @param seconds the music encoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacLowDelayEncode(String name, AacProfile profile, double seconds) {
+        var encoder = new AacEncoder(AacEncoderOptions.builder().format(48000, ChannelLayout.STEREO).bitrate(128000)
+                .profile(profile).build());
+        return AudioStreams.encode(name, SyntheticAudio.music(48000, seconds), ChannelLayout.STEREO, 48000, encoder);
+    }
+
+    /**
      * Returns a workload that decodes AAC: Low Complexity music at 44.1 kHz, or, when
-     * {@code sbr} is set, a 22.05 kHz core announced as HE-AAC (and, with {@code ps}, as HE-AACv2
-     * with a mono core), which runs the decoder's spectral band replication and parametric stereo
-     * stages on the packets of the Low Complexity encoder.
+     * {@code sbr} is set, HE-AAC (and, with {@code ps}, HE-AAC v2) of the same music at 44.1 kHz, which runs the
+     * decoder's spectral band replication and parametric stereo stages.
      *
      * @param name    the name of the workload
      * @param sbr     whether the configuration announces spectral band replication
@@ -173,17 +950,584 @@ final class MpegWorkloads {
      * @return the workload
      */
     private static TrainingWorkload aacDecode(String name, boolean sbr, boolean ps, double seconds) {
-        var rate = sbr ? 22050 : 44100;
-        var layout = ps ? ChannelLayout.MONO : ChannelLayout.STEREO;
-        var encoder = new AacEncoder(AacEncoderOptions.of(rate, layout, sbr ? 48000 : 128000));
-        var music = SyntheticAudio.music(rate, seconds);
-        var planes = ps ? new float[][]{music[0]} : music;
-        var packets = AudioStreams.encodeAll(encoder, planes, layout, rate);
-        var config = !sbr ? encoder.codecConfig().orElseThrow()
-                : ps ? new byte[]{(byte) 0xEB, (byte) 0x8A, 0x08, 0x00} : new byte[]{0x2B, (byte) 0x92, 0x08, 0x00};
+        var rate = 44100;
+        var layout = ChannelLayout.STEREO;
+        var options = !sbr ? AacEncoderOptions.of(rate, layout, 128000) : AacEncoderOptions.builder()
+                .format(rate, layout).bitrate(ps ? 32000 : 48000).profile(ps ? AacProfile.HE_V2 : AacProfile.HE)
+                .build();
+        var encoder = new AacEncoder(options);
+        var packets = AudioStreams.encodeAll(encoder, SyntheticAudio.music(rate, seconds), layout, rate);
         var track = AudioTrack.builder().id(1).codec(Codec.AAC).timeBase(new Rational(1, rate)).sampleRate(rate)
-                .layout(layout).codecConfig(config).build();
+                .layout(layout).codecConfig(encoder.codecConfig().orElseThrow()).build();
         return AudioStreams.decode(name, packets, new AacDecoder(track));
+    }
+
+    /**
+     * Returns a workload that encodes 48 kHz stereo music as AAC at a constant bitrate whose target changes every
+     * second, one encoder across rounds.
+     *
+     * @param seconds the music encoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacRetarget(double seconds) {
+        var encoder = new AacEncoder(AacEncoderOptions.of(48000, ChannelLayout.STEREO, 128_000));
+        return AudioStreams.encodeRetargeted("aac-encode-retarget", SyntheticAudio.music(48000, seconds),
+                ChannelLayout.STEREO, 48000, encoder, 64_000, 160_000, 32_000, 128_000);
+    }
+
+    /**
+     * Returns a workload that decodes the packets of {@link #aacDecode}, concealing every seventh as a lost one,
+     * one decoder across rounds.
+     *
+     * @param name the name of the workload
+     * @param sbr whether the configuration announces spectral band replication
+     * @param seconds the music decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacLossyDecode(String name, boolean sbr, double seconds) {
+        var rate = sbr ? 22050 : 44100;
+        var encoder = new AacEncoder(AacEncoderOptions.of(rate, ChannelLayout.STEREO, sbr ? 48000 : 128000));
+        var packets = AudioStreams.encodeAll(encoder, SyntheticAudio.music(rate, seconds), ChannelLayout.STEREO, rate);
+        var config = sbr ? new byte[]{0x2B, (byte) 0x92, 0x08, 0x00} : encoder.codecConfig().orElseThrow();
+        var track = AudioTrack.builder().id(1).codec(Codec.AAC).timeBase(new Rational(1, rate)).sampleRate(rate)
+                .layout(ChannelLayout.STEREO).codecConfig(config).build();
+        var lossy = new ArrayList<Packet>();
+        for (var packet : packets) {
+            lossy.add(packet.withTiming(packet.pts(), packet.dts(), sbr ? 2 * packet.duration() : packet.duration()));
+        }
+        return AudioStreams.decodeLossy(name, lossy, new AacDecoder(track));
+    }
+
+    /**
+     * Returns a workload that decodes AMR-NB speech in every mode, concealing every seventh frame as a lost one,
+     * one decoder across rounds.
+     *
+     * @param seconds the speech coded per mode, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload amrLossyDecode(double seconds) {
+        var speech = SyntheticAudio.speech(8000, seconds);
+        var block = new AudioBuffer(ChannelLayout.MONO, 8000, 160);
+        var encoder = new AmrEncoder(AmrEncoderOptions.narrowband());
+        var packets = new ArrayList<Packet>();
+        for (var mode : Arrays.stream(AmrMode.values()).filter(mode -> mode.codec() == Codec.AMR_NB).toList()) {
+            encoder.setMode(mode);
+            SyntheticAudio.feed(new float[][]{speech}, block, buffer -> encoder.encode(buffer, packets::add));
+        }
+        encoder.flush(packets::add);
+        var track = AudioTrack.builder().id(1).codec(Codec.AMR_NB).timeBase(new Rational(1, 8000)).sampleRate(8000)
+                .layout(ChannelLayout.MONO).build();
+        return AudioStreams.decodeLossy("amr-nb-decode-loss", packets, new AmrDecoder(track));
+    }
+
+    /**
+     * Returns a workload that decodes 48 kHz stereo AC-3, concealing every seventh access unit as a lost one, one
+     * decoder across rounds.
+     *
+     * @param seconds the music decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload ac3LossyDecode(double seconds) {
+        var encoder = new Ac3Encoder(Ac3EncoderOptions.of(48000, ChannelLayout.STEREO));
+        var packets = AudioStreams.encodeAll(encoder, SyntheticAudio.music(48000, seconds), ChannelLayout.STEREO, 48000);
+        encoder.close();
+        var track = AudioTrack.builder().id(1).codec(Codec.AC3).timeBase(new Rational(1, 48000)).sampleRate(48000)
+                .layout(ChannelLayout.STEREO).build();
+        return AudioStreams.decodeLossy("ac3-decode-loss", packets, new Ac3Decoder(track));
+    }
+
+    /**
+     * Returns a workload that decodes AAC carrying dynamic range control: the stereo packets of
+     * {@link #aacDecode} (announced as HE-AAC when {@code sbr} is set, so the gains apply in the QMF
+     * domain) with a fill element of two-band {@code dynamic_range_info} before each end marker, its
+     * gains, interpolation scheme and program reference level changing from packet to packet, and,
+     * in every other packet, a data stream element of ETSI TS 101 154 ancillary data whose heavy
+     * compression is switched on in half of them.
+     *
+     * @param name the name of the workload
+     * @param sbr whether the configuration announces spectral band replication
+     * @param compression the compression the decoder applies, with scaled gains and a target level
+     * @param seconds the music decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacDynamicRangeDecode(String name, boolean sbr, AacCompression compression,
+                                                          double seconds) {
+        var rate = sbr ? 22050 : 44100;
+        var encoder = new AacEncoder(AacEncoderOptions.of(rate, ChannelLayout.STEREO, sbr ? 48000 : 128000));
+        var packets = AudioStreams.encodeAll(encoder, SyntheticAudio.music(rate, seconds), ChannelLayout.STEREO, rate);
+        var withGains = new ArrayList<Packet>(packets.size());
+        for (var i = 0; i < packets.size(); i++) {
+            withGains.add(packets.get(i).withData(withDynamicRange(packets.get(i).data(), i)));
+        }
+        var config = sbr ? new byte[]{0x2B, (byte) 0x92, 0x08, 0x00} : encoder.codecConfig().orElseThrow();
+        var track = AudioTrack.builder().id(1).codec(Codec.AAC).timeBase(new Rational(1, rate)).sampleRate(rate)
+                .layout(ChannelLayout.STEREO).codecConfig(config).build();
+        var options = AacDecoderOptions.builder().compression(compression).cutScale(0.5f).boostScale(0.75f)
+                .targetLevel(96).build();
+        return AudioStreams.decode(name, withGains, new AacDecoder(track, options));
+    }
+
+    /**
+     * Inserts dynamic range control elements before the end marker of a raw data block.
+     *
+     * @param block the raw data block, ending with its end marker and zero padding
+     * @param index the index of the block in the stream, which varies the gains
+     * @return the block with the elements
+     */
+    private static byte[] withDynamicRange(byte[] block, int index) {
+        var last = block.length - 1;
+        while (block[last] == 0) {
+            last--;
+        }
+        var end = 8 * last + 7 - Integer.numberOfTrailingZeros(block[last] & 0xFF) - 2;
+        var bits = new PacketBits();
+        for (var i = 0; i < end; i++) {
+            bits.write(block[i >> 3] >> (7 - (i & 7)) & 1, 1);
+        }
+        bits.write(6, 3);
+        bits.write(7, 4);
+        bits.write(11, 4);
+        bits.write(0b0011, 4);
+        bits.write(1, 4);
+        bits.write(index % 9, 4);
+        bits.write(40, 8);
+        bits.write(255, 8);
+        bits.write(80 + index % 40, 7);
+        bits.write(0, 1);
+        bits.write(1, 1);
+        bits.write(index % 48, 7);
+        bits.write(0, 1);
+        bits.write(index * 7 % 30, 7);
+        if (index % 2 == 0) {
+            bits.write(4, 3);
+            bits.write(0, 4);
+            bits.write(0, 1);
+            bits.write(5, 8);
+            bits.write(0xBC, 8);
+            bits.write(0xC0, 8);
+            bits.write(0x04, 8);
+            bits.write(index % 4 == 0 ? 1 : 0, 8);
+            bits.write(index % 4 == 0 ? 0x80 + index % 16 : 0, 8);
+        }
+        bits.write(7, 3);
+        return bits.toByteArray();
+    }
+
+    /**
+     * Returns a workload that decodes the packets of the Low Complexity encoder (stereo music at
+     * 44.1 kHz) announced as another AAC object type, whose syntax they satisfy: AAC Main runs the
+     * predictor banks and AAC SSR the PQF filterbank.
+     *
+     * @param name       the name of the workload
+     * @param objectType the announced audio object type: 1 (Main) or 3 (SSR)
+     * @param seconds    the music decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacObjectTypeDecode(String name, int objectType, double seconds) {
+        var encoder = new AacEncoder(AacEncoderOptions.of(44100, ChannelLayout.STEREO, 128000));
+        var packets = AudioStreams.encodeAll(encoder, SyntheticAudio.music(44100, seconds), ChannelLayout.STEREO, 44100);
+        // the two-byte configuration: the object type, sampling frequency index 4 (44.1 kHz), stereo
+        var config = new byte[]{(byte) (objectType << 3 | 4 >> 1), (byte) ((4 & 1) << 7 | 2 << 3)};
+        var track = AudioTrack.builder().id(1).codec(Codec.AAC).timeBase(new Rational(1, 44100)).sampleRate(44100)
+                .layout(ChannelLayout.STEREO).codecConfig(config).build();
+        return AudioStreams.decode(name, packets, new AacDecoder(track));
+    }
+
+    /**
+     * Returns a workload that decodes synthetic mono AAC LTP (or ER AAC LTP) packets at 44.1 kHz
+     * whose long term prediction is on in the 40 bands it covers: the noise-substituted band 39
+     * keeps the history alive, and every frame runs the prediction, its forward transform and an
+     * order 4 TNS analysis filter, alternating the window shapes and sweeping lag and coefficient.
+     *
+     * @param name           the name of the workload
+     * @param errorResilient whether the packets are ER AAC LTP {@code er_raw_data_block}s
+     * @param seconds        the audio decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacLtpDecode(String name, boolean errorResilient, double seconds) {
+        var frames = (int) Math.ceil(seconds * 44100 / 1024);
+        var packets = new ArrayList<Packet>(frames);
+        for (var frame = 0; frame < frames; frame++) {
+            var bits = new PacketBits();
+            if (!errorResilient) {
+                bits.write(0, 3);
+            }
+            bits.write(0, 4);
+            bits.write(100, 8);
+            bits.write(0, 3);
+            bits.write(frame & 1, 1);
+            bits.write(40, 6);
+            bits.write(1, 1);
+            bits.write(1, 1);
+            bits.write(256 + frame * 37 % 1792, 11);
+            // coefficients below 1 keep the prediction loop stable
+            bits.write(frame & 3, 3);
+            bits.write(-1, 40);
+            bits.write(0, 4);
+            bits.write(31, 5);
+            bits.write(8, 5);
+            bits.write(13, 4);
+            bits.write(1, 5);
+            bits.write(256 + 40, 9);
+            bits.write(0, 1);
+            bits.write(1, 1);
+            if (!errorResilient) {
+                aacTnsData(bits);
+            }
+            bits.write(0, 1);
+            if (errorResilient) {
+                aacTnsData(bits);
+            } else {
+                bits.write(7, 3);
+            }
+            packets.add(new Packet(1, bits.toByteArray(), frame * 1024L, frame * 1024L, 1024, true));
+        }
+        // object type 4 or 19, sampling frequency index 4 (44.1 kHz), mono; ER adds the extension
+        // flag, no resilience tools and epConfig 0
+        var config = errorResilient ? new byte[]{(byte) 0x9A, 0x09, 0x00} : new byte[]{0x22, 0x08};
+        var track = AudioTrack.builder().id(1).codec(Codec.AAC).timeBase(new Rational(1, 44100)).sampleRate(44100)
+                .layout(ChannelLayout.MONO).codecConfig(config).build();
+        return AudioStreams.decode(name, packets, new AacDecoder(track));
+    }
+
+    /**
+     * Returns a workload that decodes synthetic mono ER AAC LC packets at 44.1 kHz coded with every
+     * error resilience tool: virtual codebook sections, RVLC scalefactors and Huffman codeword
+     * reordering, around one noise-substituted band and an order 4 TNS filter.
+     *
+     * @param seconds the audio decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacResilienceToolsDecode(double seconds) {
+        var frames = (int) Math.ceil(seconds * 44100 / 1024);
+        var packets = new ArrayList<Packet>(frames);
+        for (var frame = 0; frame < frames; frame++) {
+            var bits = new PacketBits();
+            bits.write(0, 4);
+            bits.write(100, 8);
+            bits.write(0, 3);
+            bits.write(frame & 1, 1);
+            bits.write(40, 6);
+            bits.write(0, 1);
+            // five-bit codebooks: 39 zero bands, then one noise band
+            bits.write(0, 5);
+            bits.write(31, 5);
+            bits.write(8, 5);
+            bits.write(13, 5);
+            bits.write(1, 5);
+            // RVLC side information: no concealment, the reverse global gain, nine codeword bits taken
+            // by the noise position, the first noise energy, no escapes, and the last noise energy
+            // (equal to the first, so the forward and reverse decodes agree)
+            var noise = 256 + 40 + (frame & 7);
+            bits.write(0, 1);
+            bits.write(100, 8);
+            bits.write(9, 9);
+            bits.write(noise, 9);
+            bits.write(0, 1);
+            bits.write(noise, 9);
+            bits.write(0, 1);
+            bits.write(1, 1);
+            bits.write(0, 1);
+            // codeword reordering of an empty spectrum
+            bits.write(0, 14);
+            bits.write(0, 6);
+            aacTnsData(bits);
+            packets.add(new Packet(1, bits.toByteArray(), frame * 1024L, frame * 1024L, 1024, true));
+        }
+        // object type 17, sampling frequency index 4 (44.1 kHz), mono, the extension flag, all three
+        // resilience flags and epConfig 0
+        var config = new byte[]{(byte) 0x8A, 0x09, (byte) 0xE0};
+        var track = AudioTrack.builder().id(1).codec(Codec.AAC).timeBase(new Rational(1, 44100)).sampleRate(44100)
+                .layout(ChannelLayout.MONO).codecConfig(config).build();
+        return AudioStreams.decode("aac-er-lc-tools-decode", packets, new AacDecoder(track));
+    }
+
+    /**
+     * Returns a workload that decodes synthetic mono AAC-LD packets of 512 samples at 44.1 kHz
+     * whose long term prediction, with the low delay lag, is on in the 30 bands it covers,
+     * alternating the sine and the low overlap windows, with a noise-substituted band and an
+     * order 4 TNS filter.
+     *
+     * @param seconds the audio decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacLowDelayDecode(double seconds) {
+        var frames = (int) Math.ceil(seconds * 44100 / 512);
+        var packets = new ArrayList<Packet>(frames);
+        for (var frame = 0; frame < frames; frame++) {
+            var bits = new PacketBits();
+            bits.write(0, 4);
+            bits.write(100, 8);
+            bits.write(0, 3);
+            bits.write(frame & 1, 1);
+            bits.write(30, 6);
+            bits.write(1, 1);
+            bits.write(1, 1);
+            // a new lag every other frame, the previous one otherwise
+            var update = (frame & 1) == 0;
+            bits.write(update ? 1 : 0, 1);
+            if (update) {
+                bits.write(128 + frame * 37 % 768, 10);
+            }
+            bits.write(frame & 3, 3);
+            bits.write(-1, 30);
+            bits.write(0, 4);
+            bits.write(29, 5);
+            bits.write(13, 4);
+            bits.write(1, 5);
+            bits.write(256 + 40, 9);
+            bits.write(0, 1);
+            bits.write(1, 1);
+            bits.write(0, 1);
+            aacTnsData(bits);
+            packets.add(new Packet(1, bits.toByteArray(), frame * 512L, frame * 512L, 512, true));
+        }
+        // object type 23, sampling frequency index 4 (44.1 kHz), mono, 512-sample frames, the
+        // extension flag, no resilience tools and epConfig 0
+        var config = new byte[]{(byte) 0xBA, 0x09, 0x00};
+        var track = AudioTrack.builder().id(1).codec(Codec.AAC).timeBase(new Rational(1, 44100)).sampleRate(44100)
+                .layout(ChannelLayout.MONO).codecConfig(config).build();
+        return AudioStreams.decode("aac-ld-decode", packets, new AacDecoder(track));
+    }
+
+    /**
+     * Returns a workload that decodes synthetic ER BSAC frames: a mono stream at 48 kHz, and a stereo stream at
+     * 24 kHz with center and surround extension elements and spectral band replication to 48 kHz, every layer of
+     * both decoded.
+     *
+     * @param seconds the audio decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacBsacDecode(double seconds) {
+        var monoFrames = (int) Math.ceil(seconds * 48000 / 1024);
+        var surroundFrames = (int) Math.ceil(seconds * 24000 / 1024);
+        var mono = new ArrayList<Packet>(monoFrames);
+        for (var frame = 0; frame < monoFrames; frame++) {
+            mono.add(new Packet(1, SyntheticAac.bsacFrame(frame, 1, false, false), frame * 1024L, frame * 1024L,
+                    1024, true));
+        }
+        var surround = new ArrayList<Packet>(surroundFrames);
+        for (var frame = 0; frame < surroundFrames; frame++) {
+            surround.add(new Packet(1, SyntheticAac.bsacFrame(frame, 2, frame % 2 == 0, true), frame * 2048L,
+                    frame * 2048L, 2048, true));
+        }
+        var monoDecoder = new AacDecoder(AudioStreams.track(Codec.AAC, 48000, ChannelLayout.MONO,
+                SyntheticAac.bsacConfig(3, 1, false)));
+        var surroundDecoder = new AacDecoder(AudioStreams.track(Codec.AAC, 48000, ChannelLayout.STEREO,
+                SyntheticAac.bsacConfig(6, 2, true)));
+        Consumer<AudioBuffer> output = AudioStreams::consume;
+        return TrainingWorkload.of("aac-er-bsac-decode", () -> {
+            for (var packet : mono) {
+                monoDecoder.decode(packet, output);
+            }
+            for (var packet : surround) {
+                surroundDecoder.decode(packet, output);
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that decodes synthetic scalable AAC of object types 6 and 20 at 48 kHz: two mono layers
+     * under two stereo layers, each in an access unit of its own, with long term prediction, TNS, M/S, intensity
+     * stereo, noise substitution and the frequency selective switch.
+     *
+     * @param seconds the audio decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacScalableDecode(double seconds) {
+        var frames = (int) Math.ceil(seconds * 48000 / 1024);
+        var decoders = new ArrayList<AacDecoder>(2);
+        var streams = new ArrayList<List<List<Packet>>>(2);
+        for (var errorResilient : new boolean[]{false, true}) {
+            var tracks = new ArrayList<AudioTrack>(4);
+            for (var config : SyntheticAac.scalableConfigs(errorResilient)) {
+                tracks.add(AudioTrack.builder().id(tracks.size() + 1).codec(Codec.AAC).timeBase(new Rational(1, 48000))
+                        .sampleRate(48000).codecConfig(config).build());
+            }
+            decoders.add(new AacDecoder(tracks));
+            var units = new ArrayList<List<Packet>>(frames);
+            for (var frame = 0; frame < frames; frame++) {
+                var layers = new ArrayList<Packet>(4);
+                for (var unit : SyntheticAac.scalableFrame(frame, errorResilient)) {
+                    layers.add(new Packet(layers.size() + 1, unit, frame * 1024L, frame * 1024L, 1024, true));
+                }
+                units.add(layers);
+            }
+            streams.add(units);
+        }
+        Consumer<AudioBuffer> output = AudioStreams::consume;
+        return TrainingWorkload.of("aac-scalable-decode", () -> {
+            for (var i = 0; i < decoders.size(); i++) {
+                var decoder = decoders.get(i);
+                for (var units : streams.get(i)) {
+                    decoder.decode(units, output);
+                }
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that upmixes a 48 kHz mono AAC-LC downmix of synthetic speech to 5.1 with MPEG Surround,
+     * from the spatial frames of a separate elementary stream: the 5-1-5 tree with its decorrelators and the
+     * subband domain temporal processing.
+     *
+     * @param seconds the audio decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacSurroundDecode(double seconds) {
+        var encoder = new AacEncoder(AacEncoderOptions.of(48000, ChannelLayout.MONO, 64000));
+        var core = AudioStreams.encodeAll(encoder, new float[][]{SyntheticAudio.speech(48000, seconds)},
+                ChannelLayout.MONO, 48000);
+        var coreTrack = AudioStreams.track(Codec.AAC, 48000, ChannelLayout.MONO, encoder.codecConfig().orElseThrow());
+        var surroundTrack = AudioTrack.builder().id(2).codec(Codec.AAC).timeBase(new Rational(1, 48000))
+                .sampleRate(48000).codecConfig(SyntheticAac.surroundConfig()).build();
+        var decoder = new AacDecoder(List.of(coreTrack, surroundTrack));
+        var blocks = new ArrayList<List<Packet>>(core.size());
+        for (var block = 0; block < core.size(); block++) {
+            var spatial = new Packet(2, SyntheticAac.surroundFrame(block), core.get(block).pts(), core.get(block).dts(),
+                    1024, true);
+            blocks.add(List.of(core.get(block), spatial));
+        }
+        Consumer<AudioBuffer> output = AudioStreams::consume;
+        return TrainingWorkload.of("aac-surround-decode", () -> {
+            for (var units : blocks) {
+                decoder.decode(units, output);
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that decodes synthetic mono AAC-ELD packets through the low delay
+     * filterbank: 480-sample frames at 48 kHz, or, with {@code sbr}, 512-sample frames of a 24 kHz
+     * core with low delay spectral band replication at dual rate. Each core frame holds a
+     * noise-substituted band and an order 4 TNS filter; the SBR payload codes one envelope and
+     * one noise floor of zero deltas, which runs the low delay QMF banks, the HF generator and
+     * the envelope adjustment.
+     *
+     * @param name the name of the workload
+     * @param sbr whether the stream carries low delay spectral band replication
+     * @param seconds the audio decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacEnhancedLowDelayDecode(String name, boolean sbr, double seconds) {
+        var rate = sbr ? 24000 : 48000;
+        var frameLength = sbr ? 512 : 480;
+        var frames = (int) Math.ceil(seconds * rate / frameLength);
+        var packets = new ArrayList<Packet>(frames);
+        for (var frame = 0; frame < frames; frame++) {
+            var bits = new PacketBits();
+            bits.write(100, 8);
+            bits.write(30, 6);
+            bits.write(0, 4);
+            bits.write(29, 5);
+            bits.write(13, 4);
+            bits.write(1, 5);
+            bits.write(256 + 40 + (frame & 7), 9);
+            bits.write(1, 1);
+            aacTnsData(bits);
+            if (sbr) {
+                // no header, no extra data, then a FIXFIX grid of one envelope and zero codes; the
+                // padding keeps every field of the payload inside the packet
+                bits.write(0, 2);
+                bits.write(0, 40);
+                bits.write(0, 40);
+                bits.write(0, 40);
+                bits.write(0, 40);
+                bits.write(0, 40);
+            }
+            packets.add(new Packet(1, bits.toByteArray(), (long) frame * frameLength, (long) frame * frameLength,
+                    frameLength, true));
+        }
+        var config = new PacketBits();
+        config.write(31, 5);
+        config.write(39 - 32, 6);
+        config.write(sbr ? 6 : 3, 4);
+        config.write(1, 4);
+        config.write(sbr ? 0 : 1, 1);
+        config.write(0, 3);
+        config.write(sbr ? 1 : 0, 1);
+        if (sbr) {
+            // dual rate without CRC; sbr_header: 3 dB amplitude resolution, start frequency 12, stop
+            // frequency 9, crossover band 0, then the first extra header (frequency scale 1, alter
+            // scale on, two noise bands)
+            config.write(1, 1);
+            config.write(0, 1);
+            config.write(1, 1);
+            config.write(12, 4);
+            config.write(9, 4);
+            config.write(0, 3);
+            config.write(0, 2);
+            config.write(1, 1);
+            config.write(0, 1);
+            config.write(1, 2);
+            config.write(1, 1);
+            config.write(2, 2);
+        }
+        config.write(0, 4);
+        config.write(0, 2);
+        var track = AudioTrack.builder().id(1).codec(Codec.AAC).timeBase(new Rational(1, sbr ? 2 * rate : rate))
+                .sampleRate(sbr ? 2 * rate : rate).layout(ChannelLayout.MONO).codecConfig(config.toByteArray())
+                .build();
+        return AudioStreams.decode(name, packets, new AacDecoder(track));
+    }
+
+    /**
+     * Writes the TNS data of a long window: one order 4 filter over the lowest 40 bands.
+     *
+     * @param bits the packet being written
+     */
+    private static void aacTnsData(PacketBits bits) {
+        bits.write(1, 2);
+        bits.write(1, 1);
+        bits.write(40, 6);
+        bits.write(4, 5);
+        bits.write(0, 2);
+        bits.write(0x5C39, 16);
+    }
+
+    /**
+     * Collects the bits of a synthetic packet, most significant bit first.
+     */
+    private static final class PacketBits {
+        /**
+         * The bytes written so far.
+         */
+        private final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+
+        /**
+         * The pending bits, in the low {@link #count} bits.
+         */
+        private long pending;
+
+        /**
+         * The number of pending bits, below 8 between calls.
+         */
+        private int count;
+
+        /**
+         * Appends the low bits of a value.
+         *
+         * @param value the value, of which only the low {@code width} bits are written
+         * @param width the number of bits, from 1 to 48
+         */
+        void write(long value, int width) {
+            pending = pending << width | value & ((1L << width) - 1);
+            count += width;
+            while (count >= 8) {
+                count -= 8;
+                bytes.write((int) (pending >>> count));
+            }
+        }
+
+        /**
+         * {@return the bytes written, the last one padded with zero bits}
+         */
+        byte[] toByteArray() {
+            if (count > 0) {
+                write(0, 8 - count);
+            }
+            return bytes.toByteArray();
+        }
     }
 
     /**
@@ -238,6 +1582,131 @@ final class MpegWorkloads {
     }
 
     /**
+     * Returns a workload that reads the AC-3 and E-AC-3 IEC 61937 bursts of two WAVE files, every
+     * access unit and then those after a seek to the middle, from frames the encoders code once.
+     *
+     * @param seconds the music coded in each file, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload iec61937(double seconds) {
+        var music = SyntheticAudio.music(48000, seconds);
+        var ac3 = new ArrayList<Packet>();
+        var ac3Encoder = new Ac3Encoder(Ac3EncoderOptions.of(48000, ChannelLayout.STEREO).toBuilder().bitrate(192000)
+                .build());
+        SyntheticAudio.feed(music, new AudioBuffer(ChannelLayout.STEREO, 48000, AudioStreams.BLOCK_FRAMES),
+                buffer -> ac3Encoder.encode(buffer, ac3::add));
+        ac3Encoder.flush(ac3::add);
+        var eac3 = new ArrayList<Packet>();
+        var eac3Encoder = new Eac3Encoder(Eac3EncoderOptions.defaults().toBuilder().bitrate(128000).build());
+        SyntheticAudio.feed(music, new AudioBuffer(ChannelLayout.STEREO, 48000, AudioStreams.BLOCK_FRAMES),
+                buffer -> eac3Encoder.encode(buffer, eac3::add));
+        eac3Encoder.flush(eac3::add);
+        var files = List.of(burstWave(ac3, 1, 6144, 48000), burstWave(eac3, 21, 24576, 192000));
+        var middle = (long) (seconds * 500_000);
+        return TrainingWorkload.of("iec61937-wav", () -> {
+            for (var file : files) {
+                try (var demuxer = new WavDemuxer(MediaSource.of(file))) {
+                    for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                        Blackhole.consume(packet.size());
+                    }
+                    demuxer.seek(middle);
+                    for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                        Blackhole.consume(packet.pts());
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that reads the raw data blocks of AAC in two WAVE files, unframed (each block's end
+     * found by walking its syntax) and in IEC 61937 bursts of ADTS frames, every block and then those after a
+     * seek to the middle, from blocks the encoder codes once.
+     *
+     * @param seconds the music coded in each file, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacWave(double seconds) {
+        var encoder = new AacEncoder(AacEncoderOptions.of(48000, ChannelLayout.STEREO, 128000));
+        var packets = AudioStreams.encodeAll(encoder, SyntheticAudio.music(48000, seconds), ChannelLayout.STEREO, 48000);
+        var config = encoder.codecConfig().orElseThrow();
+        var raw = new ByteArrayOutputStream();
+        var adts = new ArrayList<Packet>();
+        for (var packet : packets) {
+            raw.writeBytes(packet.data());
+            var length = packet.size() + 7;
+            var frame = new byte[length];
+            // an ADTS header of MPEG-4 AAC LC, 48 kHz, stereo, without CRC
+            frame[0] = (byte) 0xFF;
+            frame[1] = (byte) 0xF1;
+            frame[2] = 0x4C;
+            frame[3] = (byte) (0x80 | length >> 11);
+            frame[4] = (byte) (length >> 3);
+            frame[5] = (byte) ((length & 7) << 5 | 0x1F);
+            frame[6] = (byte) 0xFC;
+            System.arraycopy(packet.data(), 0, frame, 7, packet.size());
+            adts.add(new Packet(packet.trackId(), frame, packet.pts(), packet.dts(), packet.duration(), true));
+        }
+        var data = raw.toByteArray();
+        var format = ByteBuffer.allocate(18 + config.length).order(ByteOrder.LITTLE_ENDIAN).putShort((short) 0x00FF)
+                .putShort((short) 2).putInt(48000).putInt(16000).putShort((short) 1).putShort((short) 16)
+                .putShort((short) config.length).put(config).array();
+        var header = ByteBuffer.allocate(20 + format.length + 8).order(ByteOrder.LITTLE_ENDIAN);
+        header.put(new byte[]{'R', 'I', 'F', 'F'}).putInt(12 + format.length + 8 + data.length)
+                .put(new byte[]{'W', 'A', 'V', 'E'}).put(new byte[]{'f', 'm', 't', ' '}).putInt(format.length).put(format)
+                .put(new byte[]{'d', 'a', 't', 'a'}).putInt(data.length);
+        var unframed = new ByteArrayOutputStream();
+        unframed.writeBytes(header.array());
+        unframed.writeBytes(data);
+        var files = List.of(unframed.toByteArray(), burstWave(adts, 7, 4096, 48000));
+        var middle = (long) (seconds * 500_000);
+        return TrainingWorkload.of("aac-wav", () -> {
+            for (var file : files) {
+                try (var demuxer = new WavDemuxer(MediaSource.of(file))) {
+                    for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                        Blackhole.consume(packet.size());
+                    }
+                    demuxer.seek(middle);
+                    for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                        Blackhole.consume(packet.pts());
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * Returns a 16-bit stereo WAVE file whose samples carry one IEC 61937 burst per frame.
+     *
+     * @param frames the AC-3, E-AC-3 or ADTS frames
+     * @param type the IEC 61937 data type, 1 for AC-3, 7 for AAC and 21 for E-AC-3
+     * @param period the repetition period, in bytes
+     * @param rate the sampling rate of the samples
+     * @return the file
+     */
+    private static byte[] burstWave(List<Packet> frames, int type, int period, int rate) {
+        var data = ByteBuffer.allocate(frames.size() * period).order(ByteOrder.LITTLE_ENDIAN);
+        for (var index = 0; index < frames.size(); index++) {
+            var frame = frames.get(index).data();
+            data.position(index * period);
+            data.putShort((short) 0xF872).putShort((short) 0x4E1F).putShort((short) type)
+                    .putShort((short) (type == 21 ? frame.length : frame.length * 8));
+            for (var offset = 0; offset < frame.length; offset += 2) {
+                data.put(offset + 1 < frame.length ? frame[offset + 1] : 0).put(frame[offset]);
+            }
+        }
+        var header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN);
+        header.put(new byte[]{'R', 'I', 'F', 'F'}).putInt(36 + data.capacity()).put(new byte[]{'W', 'A', 'V', 'E'})
+                .put(new byte[]{'f', 'm', 't', ' '}).putInt(16).putShort((short) 1).putShort((short) 2).putInt(rate)
+                .putInt(rate * 4).putShort((short) 4).putShort((short) 16)
+                .put(new byte[]{'d', 'a', 't', 'a'}).putInt(data.capacity());
+        var file = new ByteArrayOutputStream(44 + data.capacity());
+        file.writeBytes(header.array());
+        file.writeBytes(data.array());
+        return file.toByteArray();
+    }
+
+    /**
      * Returns a workload that encodes speech as AMR, switching the mode every round through the
      * codec's modes in turn.
      *
@@ -257,6 +1726,30 @@ final class MpegWorkloads {
         Consumer<Packet> output = packet -> Blackhole.consume(packet.size());
         return TrainingWorkload.of(name, () -> {
             encoder.setMode(modes.get(modes.size() - 1 - round[0]++ % modes.size()));
+            SyntheticAudio.feed(speech, block, buffer -> encoder.encode(buffer, output));
+        });
+    }
+
+    /**
+     * Returns a workload that encodes speech as AMR-NB with discontinuous transmission, alternating
+     * the two voice activity detectors between rounds and switching the mode every second round.
+     *
+     * @param seconds the speech encoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload amrDtxEncode(double seconds) {
+        var speech = new float[][]{SyntheticAudio.speech(8000, seconds)};
+        var block = new AudioBuffer(ChannelLayout.MONO, 8000, 160);
+        var encoders = new AmrEncoder[2];
+        for (var vad : AmrVad.values()) {
+            encoders[vad.ordinal()] = new AmrEncoder(AmrEncoderOptions.builder().dtx(true).vad(vad).build());
+        }
+        var modes = Arrays.stream(AmrMode.values()).filter(mode -> mode.codec() == Codec.AMR_NB).toList();
+        int[] round = {0};
+        Consumer<Packet> output = packet -> Blackhole.consume(packet.size());
+        return TrainingWorkload.of("amr-nb-dtx-encode", () -> {
+            var encoder = encoders[round[0] % encoders.length];
+            encoder.setMode(modes.get(round[0]++ / encoders.length % modes.size()));
             SyntheticAudio.feed(speech, block, buffer -> encoder.encode(buffer, output));
         });
     }

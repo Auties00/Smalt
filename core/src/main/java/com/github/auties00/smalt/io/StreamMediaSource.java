@@ -559,6 +559,24 @@ final class StreamMediaSource implements MediaSource, LocalSource, ForwardOnlySo
         return end <= frontier || end - watermark <= options.memoryBudget();
     }
 
+    @Override
+    public boolean keeps(long from, long to) {
+        if (from >= to) {
+            return true;
+        }
+        if (from < 0 || to > frontier || strict && from < watermark) {
+            return false;
+        }
+        var directory = this.directory;
+        for (var chunk = from >>> chunkShift; chunk <= (to - 1) >>> chunkShift; chunk++) {
+            var index = chunk - directory.base();
+            if (index < 0 || index >= directory.entries().length || directory.entries()[(int) index] == null) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /**
      * Returns {@code false}: the bytes past the frontier come from the stream.
      *

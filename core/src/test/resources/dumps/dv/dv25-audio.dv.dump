@@ -1,0 +1,36 @@
+# demux dump of dv/dv25-audio.dv; regenerate with -Dsmalt.test.updateDumps=true
+format DV
+duration 66733
+seekable true
+timecode 00:00:00:00 fps=30
+track 1 VIDEO DV timebase=1001/30000 duration=2 config=none
+  video 720x480 orientation=NORMAL rate=30000/1001 sar=8/9 interlacing=BOTTOM_FIELD_FIRST
+  color ColorInfo[matrix=BT601, range=LIMITED, primaries=SMPTE170M, transfer=SMPTE170M, chromaSiting=UNSPECIFIED, masteringDisplay=Optional.empty, contentLightLevel=Optional.empty]
+track 2 AUDIO PCM_S16LE timebase=1/48000 duration=? config=none
+  audio rate=48000 bits=16 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 4
+0 t1 pts=0 dts=0 dur=1 flags=KEY size=120000 crc=212315f0
+1 t2 pts=0 dts=0 dur=1600 flags=KEY size=6400 crc=fd7cacf3
+2 t1 pts=1 dts=1 dur=1 flags=KEY size=120000 crc=05b78d06
+3 t2 pts=1600 dts=1600 dur=1602 flags=KEY size=6408 crc=1617e0a3
+seek 0: t1@0 t2@0
+seek 22244: t1@0 t2@0
+seek 44488: t1@1 t2@1
+seek 66734: end
+seek 66733: t1@1 t2@end
+seek -1000000: t1@0 t2@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format DV
+  duration -1
+  seekable false
+  timecode 00:00:00:00 fps=30
+  track 1 VIDEO DV timebase=1001/30000 duration=? config=none
+    video 720x480 orientation=NORMAL rate=30000/1001 sar=8/9 interlacing=BOTTOM_FIELD_FIRST
+    color ColorInfo[matrix=BT601, range=LIMITED, primaries=SMPTE170M, transfer=SMPTE170M, chromaSiting=UNSPECIFIED, masteringDisplay=Optional.empty, contentLightLevel=Optional.empty]
+  track 2 AUDIO PCM_S16LE timebase=1/48000 duration=? config=none
+    audio rate=48000 bits=16 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+not seekable over UNKNOWN_LENGTH
+seek refused over READ_ONCE: 0
+seek refused over READ_ONCE: 22244
+seek refused over READ_ONCE: -1000000
+not seekable over READ_ONCE_UNKNOWN_LENGTH

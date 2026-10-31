@@ -1,0 +1,23 @@
+# demux dump of matroska/wavpack.mka; regenerate with -Dsmalt.test.updateDumps=true
+format MATROSKA
+duration 600000
+seekable true
+metadata ENCODER="Lavf61.7.100"
+track 1 AUDIO WAVPACK timebase=1/44100 duration=26460 config=2:0c76c4b7
+  audio rate=44100 bits=16 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+  metadata DURATION="00:00:00.600000000"
+  metadata ENCODER="Lavc61.19.100 wavpack"
+packets 7
+0 t1 pts=0 dts=0 dur=? flags=KEY size=4130 crc=7b0621ed
+1 t1 pts=4101 dts=4101 dur=? flags=KEY size=3966 crc=119b183a
+2 t1 pts=8203 dts=8203 dur=? flags=KEY size=3938 crc=dd3c0526
+3 t1 pts=12304 dts=12304 dur=? flags=KEY size=3956 crc=5719864a
+4 t1 pts=16405 dts=16405 dur=? flags=KEY size=3942 crc=9b6097fd
+5 t1 pts=20462 dts=20462 dur=? flags=KEY size=3938 crc=0c105374
+6 t1 pts=24564 dts=24564 dur=? flags=KEY size=1842 crc=18c47b39
+seek 0: t1@0
+seek 200000: t1@2
+seek 400000: t1@4
+seek 650023: end
+seek 600000: t1@6
+seek -1000000: t1@0
