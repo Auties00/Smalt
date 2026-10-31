@@ -49,7 +49,7 @@ class WebpAnimationTest {
         var frames = new ArrayList<byte[]>();
         try (var reader = WebpDecoder.openAnimation(MediaSource.of(file), ImageDecoderOptions.defaults())) {
             for (var current = reader.read(); current != null; current = reader.read()) {
-                frames.add(WebpTestSupport.tightRgba(current.picture()));
+                frames.add(WebpTestSupport.tightRgba((RgbaPicture) current.picture()));
             }
         }
         return frames;

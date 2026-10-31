@@ -9,8 +9,10 @@ import com.github.auties00.smalt.image.raw.RawDecoderOptions;
 import com.github.auties00.smalt.image.raw.RawFormat;
 import com.github.auties00.smalt.image.raw.RawSamples;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.testkit.fuzz.FuzzSeeds;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
@@ -40,6 +42,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * unsupported files, random damage), and the metadata and previews of three sample files.
  */
 class CrwParserTest {
+    /** The fuzz test class whose seeds the synthetic files feed. */
+    private static final String FUZZ_TARGET = "com.github.auties00.smalt.image.raw.fuzz.RawFuzzTest";
+
     // a synthetic CRW file: the sensor data and a JPEG preview in the root heap, the records in sub-heaps
     private static final class Crw {
         int width = 80;
@@ -403,7 +408,7 @@ class CrwParserTest {
     }
 
     @Test
-    @DisplayName("knows the white level of the EOS bodies that saturate at 4000 and the PowerShot G1's colors")
+    @DisplayName("knows the white level of the EOS bodies that saturate at 4000 and the PowerShot G1's colors and matrix")
     void models() {
         var eos = new Crw();
         eos.model = "Canon EOS 10D";
@@ -416,9 +421,27 @@ class CrwParserTest {
         assertEquals("GMYC", file.sensor.cfa.toString());
         assertArrayEquals(new double[]{1023}, file.sensor.white);
         assertArrayEquals(g1.samples, decode(file));
+        assertArrayEquals(FourColorMatrices.find("Canon", "PowerShot G1").d65(), file.color.colorMatrix[0]);
+        assertFalse(file.color.generic);
+        assertNull(file.color.asShotNeutral);
+        assertTrue(file.sensor.estimateBalance);
         var info = RawDecoder.info(MediaSource.of(bytes));
-        assertFalse(info.isDecodable());
-        assertThrows(MediaException.Unsupported.class, () -> RawDecoder.decode(MediaSource.of(bytes)));
+        assertTrue(info.isDecodable(), info.unsupportedFeature().orElse(""));
+        assertTrue(info.isColorCalibrated());
+        assertEquals(4, RawDecoder.decodeRaw(MediaSource.of(bytes)).cameraNeutral().length);
+        assertTrue(RawDecoder.decode(MediaSource.of(bytes)).picture().width() > 0);
+    }
+
+    @Test
+    @DisplayName("reads a file without a model name as an RGGB sensor")
+    void noModel() {
+        var crw = new Crw();
+        crw.model = "";
+        var file = parse(crw.samples(5, 3).write());
+        assertNull(file.model);
+        assertEquals("RGGB", file.sensor.cfa.toString());
+        assertArrayEquals(new double[]{4095}, file.sensor.white);
+        assertArrayEquals(crw.samples, decode(file));
     }
 
     @Test
@@ -605,5 +628,18 @@ class CrwParserTest {
             assertEquals(com.github.auties00.smalt.image.Orientation.ofExif(8), info.orientation());
             assertEquals("Canon EOS 300D DIGITAL", info.model().orElseThrow());
         }
+    }
+
+    @Test
+    @EnabledIfSystemProperty(named = "smalt.fuzz.writeSeeds", matches = "true",
+            disabledReason = "[opt-in:fuzz-seeds] runs only with -Dsmalt.fuzz.writeSeeds=true")
+    @DisplayName("writes the seeds of the CRW fuzz target")
+    void fuzzSeeds() {
+        var plain = new Crw().samples(1, 3);
+        FuzzSeeds.write(FUZZ_TARGET, "crw", "valid-set2-12bit.crw", plain.write());
+        var older = new Crw();
+        older.set = 0;
+        older.bits = 10;
+        FuzzSeeds.write(FUZZ_TARGET, "crw", "valid-set0-10bit.crw", older.samples(10, 3).write());
     }
 }

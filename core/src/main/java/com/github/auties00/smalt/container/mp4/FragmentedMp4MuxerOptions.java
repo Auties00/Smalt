@@ -20,19 +20,19 @@ public final class FragmentedMp4MuxerOptions {
      * The options of {@link #defaults()}.
      */
     private static final FragmentedMp4MuxerOptions DEFAULTS = new FragmentedMp4MuxerOptions(Brand.MP4, DEFAULT_FRAGMENT_MICROS,
-            true, SegmentIndex.NONE, false, null);
+            true, SegmentIndex.NONE, false, null, null);
 
     /**
      * The options of {@link #cmaf()}.
      */
     private static final FragmentedMp4MuxerOptions CMAF = new FragmentedMp4MuxerOptions(Brand.CMAF, DEFAULT_FRAGMENT_MICROS,
-            true, SegmentIndex.NONE, false, null);
+            true, SegmentIndex.NONE, false, null, null);
 
     /**
      * The options of {@link #dashOnDemand()}.
      */
     private static final FragmentedMp4MuxerOptions DASH_ON_DEMAND = new FragmentedMp4MuxerOptions(Brand.CMAF,
-            DEFAULT_FRAGMENT_MICROS, true, SegmentIndex.SINGLE, false, null);
+            DEFAULT_FRAGMENT_MICROS, true, SegmentIndex.SINGLE, false, null, null);
 
     /**
      * Enumerates the file types the muxer can declare.
@@ -87,14 +87,20 @@ public final class FragmentedMp4MuxerOptions {
     private final boolean randomAccessIndex;
     private final Path temporaryDirectory;
 
+    /**
+     * The encryption of the samples, or {@code null} for clear samples.
+     */
+    private final CommonEncryption encryption;
+
     private FragmentedMp4MuxerOptions(Brand brand, long fragmentMicros, boolean keyframeAligned, SegmentIndex segmentIndex,
-                                      boolean randomAccessIndex, Path temporaryDirectory) {
+                                      boolean randomAccessIndex, Path temporaryDirectory, CommonEncryption encryption) {
         this.brand = brand;
         this.fragmentMicros = fragmentMicros;
         this.keyframeAligned = keyframeAligned;
         this.segmentIndex = segmentIndex;
         this.randomAccessIndex = randomAccessIndex;
         this.temporaryDirectory = temporaryDirectory;
+        this.encryption = encryption;
     }
 
     /**
@@ -199,6 +205,18 @@ public final class FragmentedMp4MuxerOptions {
         return Optional.ofNullable(temporaryDirectory);
     }
 
+    /**
+     * {@return the Common Encryption of the samples of the audio and video tracks, or empty for clear samples; empty
+     * by default}
+     *
+     * <p>{@link CommonEncryption} describes what is encrypted and how the file signals it. Encrypting a video track
+     * of a codec other than H.264 and HEVC raises {@link com.github.auties00.smalt.MediaException.Unsupported} when
+     * the track is added.
+     */
+    public Optional<CommonEncryption> encryption() {
+        return Optional.ofNullable(encryption);
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof FragmentedMp4MuxerOptions that
@@ -207,19 +225,21 @@ public final class FragmentedMp4MuxerOptions {
                 && keyframeAligned == that.keyframeAligned
                 && segmentIndex == that.segmentIndex
                 && randomAccessIndex == that.randomAccessIndex
-                && Objects.equals(temporaryDirectory, that.temporaryDirectory);
+                && Objects.equals(temporaryDirectory, that.temporaryDirectory)
+                && Objects.equals(encryption, that.encryption);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(brand, fragmentMicros, keyframeAligned, segmentIndex, randomAccessIndex, temporaryDirectory);
+        return Objects.hash(brand, fragmentMicros, keyframeAligned, segmentIndex, randomAccessIndex, temporaryDirectory,
+                encryption);
     }
 
     @Override
     public String toString() {
         return "FragmentedMp4MuxerOptions[brand=" + brand + ", fragmentMicros=" + fragmentMicros + ", keyframeAligned="
                 + keyframeAligned + ", segmentIndex=" + segmentIndex + ", randomAccessIndex=" + randomAccessIndex
-                + ", temporaryDirectory=" + temporaryDirectory + "]";
+                + ", temporaryDirectory=" + temporaryDirectory + ", encryption=" + encryption + "]";
     }
 
     /**
@@ -235,6 +255,7 @@ public final class FragmentedMp4MuxerOptions {
         private SegmentIndex segmentIndex;
         private boolean randomAccessIndex;
         private Path temporaryDirectory;
+        private CommonEncryption encryption;
 
         private Builder(FragmentedMp4MuxerOptions options) {
             this.brand = options.brand;
@@ -243,6 +264,7 @@ public final class FragmentedMp4MuxerOptions {
             this.segmentIndex = options.segmentIndex;
             this.randomAccessIndex = options.randomAccessIndex;
             this.temporaryDirectory = options.temporaryDirectory;
+            this.encryption = options.encryption;
         }
 
         /**
@@ -313,6 +335,27 @@ public final class FragmentedMp4MuxerOptions {
         }
 
         /**
+         * Sets the encryption of the samples; see {@link FragmentedMp4MuxerOptions#encryption()}.
+         *
+         * @param encryption the value
+         * @return this builder
+         */
+        public Builder encryption(CommonEncryption encryption) {
+            this.encryption = Objects.requireNonNull(encryption, "encryption");
+            return this;
+        }
+
+        /**
+         * Writes clear samples, the default; see {@link FragmentedMp4MuxerOptions#encryption()}.
+         *
+         * @return this builder
+         */
+        public Builder noEncryption() {
+            this.encryption = null;
+            return this;
+        }
+
+        /**
          * Builds the options.
          *
          * @return the options
@@ -320,7 +363,7 @@ public final class FragmentedMp4MuxerOptions {
          */
         public FragmentedMp4MuxerOptions build() {
             return new FragmentedMp4MuxerOptions(brand, Checks.positive("fragment duration", fragmentMicros),
-                    keyframeAligned, segmentIndex, randomAccessIndex, temporaryDirectory);
+                    keyframeAligned, segmentIndex, randomAccessIndex, temporaryDirectory, encryption);
         }
     }
 }
