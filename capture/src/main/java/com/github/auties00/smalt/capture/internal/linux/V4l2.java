@@ -7,6 +7,7 @@ import static java.lang.foreign.MemoryLayout.PathElement.groupElement;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
+import static java.lang.foreign.ValueLayout.JAVA_SHORT;
 
 /**
  * Declares the Video4Linux2 user-space ABI this backend speaks: request numbers, structure
@@ -60,6 +61,16 @@ final class V4l2 {
     static final int BUF_TYPE_VIDEO_CAPTURE = 1;
 
     /**
+     * The {@code V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE} buffer type of multi-planar capture.
+     */
+    static final int BUF_TYPE_VIDEO_CAPTURE_MPLANE = 9;
+
+    /**
+     * The {@code VIDEO_MAX_PLANES} bound on the memory planes of a buffer.
+     */
+    static final int MAX_PLANES = 8;
+
+    /**
      * The {@code V4L2_MEMORY_MMAP} memory type.
      */
     static final int MEMORY_MMAP = 1;
@@ -78,6 +89,31 @@ final class V4l2 {
      * The {@code V4L2_FIELD_INTERLACED} field order: both fields interleaved in one frame.
      */
     static final int FIELD_INTERLACED = 4;
+
+    /**
+     * The {@code V4L2_FIELD_TOP} field order: every buffer holds the top field only.
+     */
+    static final int FIELD_TOP = 2;
+
+    /**
+     * The {@code V4L2_FIELD_BOTTOM} field order: every buffer holds the bottom field only.
+     */
+    static final int FIELD_BOTTOM = 3;
+
+    /**
+     * The {@code V4L2_FIELD_SEQ_TB} field order: the top field's rows, then the bottom field's.
+     */
+    static final int FIELD_SEQ_TB = 5;
+
+    /**
+     * The {@code V4L2_FIELD_SEQ_BT} field order: the bottom field's rows, then the top field's.
+     */
+    static final int FIELD_SEQ_BT = 6;
+
+    /**
+     * The {@code V4L2_FIELD_ALTERNATE} field order: each buffer holds one field, in turn.
+     */
+    static final int FIELD_ALTERNATE = 7;
 
     /**
      * The {@code V4L2_FIELD_INTERLACED_TB} field order: interleaved, top field first.
@@ -342,6 +378,72 @@ final class V4l2 {
             JAVA_INT.withName("xfer_func")).withName("v4l2_pix_format");
 
     /**
+     * The layout of {@code struct v4l2_plane_pix_format}.
+     */
+    static final StructLayout PLANE_PIX_FORMAT = MemoryLayout.structLayout(
+            JAVA_INT.withName("sizeimage"),
+            JAVA_INT.withName("bytesperline"),
+            MemoryLayout.sequenceLayout(6, JAVA_SHORT).withName("reserved")).withName("v4l2_plane_pix_format");
+
+    /**
+     * The layout of the packed {@code struct v4l2_pix_format_mplane}; its anonymous union
+     * ({@code ycbcr_enc}/{@code hsv_enc}) is the field {@code ycbcr_enc}.
+     */
+    static final StructLayout PIX_FORMAT_MPLANE = MemoryLayout.structLayout(
+            JAVA_INT.withName("width"),
+            JAVA_INT.withName("height"),
+            JAVA_INT.withName("pixelformat"),
+            JAVA_INT.withName("field"),
+            JAVA_INT.withName("colorspace"),
+            MemoryLayout.sequenceLayout(MAX_PLANES, PLANE_PIX_FORMAT).withName("plane_fmt"),
+            JAVA_BYTE.withName("num_planes"),
+            JAVA_BYTE.withName("flags"),
+            JAVA_BYTE.withName("ycbcr_enc"),
+            JAVA_BYTE.withName("quantization"),
+            JAVA_BYTE.withName("xfer_func"),
+            MemoryLayout.sequenceLayout(7, JAVA_BYTE).withName("reserved")).withName("v4l2_pix_format_mplane");
+
+    /**
+     * The offset of {@code v4l2_pix_format_mplane.colorspace}.
+     */
+    static final long MP_COLORSPACE = PIX_FORMAT_MPLANE.byteOffset(groupElement("colorspace"));
+
+    /**
+     * The offset of {@code v4l2_pix_format_mplane.plane_fmt}.
+     */
+    static final long MP_PLANE_FMT = PIX_FORMAT_MPLANE.byteOffset(groupElement("plane_fmt"));
+
+    /**
+     * The offset of {@code v4l2_plane_pix_format.sizeimage}.
+     */
+    static final long PLANE_FMT_SIZEIMAGE = PLANE_PIX_FORMAT.byteOffset(groupElement("sizeimage"));
+
+    /**
+     * The offset of {@code v4l2_plane_pix_format.bytesperline}.
+     */
+    static final long PLANE_FMT_BYTESPERLINE = PLANE_PIX_FORMAT.byteOffset(groupElement("bytesperline"));
+
+    /**
+     * The offset of {@code v4l2_pix_format_mplane.num_planes}.
+     */
+    static final long MP_NUM_PLANES = PIX_FORMAT_MPLANE.byteOffset(groupElement("num_planes"));
+
+    /**
+     * The offset of {@code v4l2_pix_format_mplane.ycbcr_enc}.
+     */
+    static final long MP_YCBCR_ENC = PIX_FORMAT_MPLANE.byteOffset(groupElement("ycbcr_enc"));
+
+    /**
+     * The offset of {@code v4l2_pix_format_mplane.quantization}.
+     */
+    static final long MP_QUANTIZATION = PIX_FORMAT_MPLANE.byteOffset(groupElement("quantization"));
+
+    /**
+     * The offset of {@code v4l2_pix_format_mplane.xfer_func}.
+     */
+    static final long MP_XFER_FUNC = PIX_FORMAT_MPLANE.byteOffset(groupElement("xfer_func"));
+
+    /**
      * The layout of {@code struct v4l2_window}, a member of the {@code v4l2_format} union whose
      * pointers give the union its 8-byte alignment; the pointers are modeled as {@code long}.
      */
@@ -365,6 +467,7 @@ final class V4l2 {
             MemoryLayout.paddingLayout(4),
             MemoryLayout.unionLayout(
                     PIX_FORMAT.withName("pix"),
+                    PIX_FORMAT_MPLANE.withName("pix_mp"),
                     WINDOW.withName("win"),
                     MemoryLayout.sequenceLayout(200, JAVA_BYTE).withName("raw_data")).withName("fmt")).withName("v4l2_format");
 
@@ -581,6 +684,55 @@ final class V4l2 {
      * The offset of {@code v4l2_buffer.length}.
      */
     static final long BUFFER_LENGTH = BUFFER.byteOffset(groupElement("length"));
+
+    /**
+     * The offset of {@code v4l2_buffer.field}.
+     */
+    static final long BUFFER_FIELD = BUFFER.byteOffset(groupElement("field"));
+
+    /**
+     * The offset of {@code v4l2_buffer.sequence}.
+     */
+    static final long BUFFER_SEQUENCE = BUFFER.byteOffset(groupElement("sequence"));
+
+    /**
+     * The offset of {@code v4l2_buffer.m.planes}, the address of the {@code v4l2_plane} array of a
+     * multi-planar buffer, whose length is {@code v4l2_buffer.length}.
+     */
+    static final long BUFFER_PLANES = BUFFER.byteOffset(groupElement("m"), groupElement("planes"));
+
+    /**
+     * The layout of {@code struct v4l2_plane}: the {@code m} union holds an {@code unsigned long}.
+     */
+    static final StructLayout PLANE = MemoryLayout.structLayout(
+            JAVA_INT.withName("bytesused"),
+            JAVA_INT.withName("length"),
+            MemoryLayout.unionLayout(
+                    JAVA_INT.withName("mem_offset"),
+                    JAVA_LONG.withName("userptr"),
+                    JAVA_INT.withName("fd")).withName("m"),
+            JAVA_INT.withName("data_offset"),
+            MemoryLayout.sequenceLayout(11, JAVA_INT).withName("reserved")).withName("v4l2_plane");
+
+    /**
+     * The offset of {@code v4l2_plane.bytesused}.
+     */
+    static final long PLANE_BYTESUSED = PLANE.byteOffset(groupElement("bytesused"));
+
+    /**
+     * The offset of {@code v4l2_plane.length}.
+     */
+    static final long PLANE_LENGTH = PLANE.byteOffset(groupElement("length"));
+
+    /**
+     * The offset of {@code v4l2_plane.m.mem_offset}.
+     */
+    static final long PLANE_MEM_OFFSET = PLANE.byteOffset(groupElement("m"), groupElement("mem_offset"));
+
+    /**
+     * The offset of {@code v4l2_plane.data_offset}.
+     */
+    static final long PLANE_DATA_OFFSET = PLANE.byteOffset(groupElement("data_offset"));
 
     /**
      * The layout of {@code struct v4l2_queryctrl}.

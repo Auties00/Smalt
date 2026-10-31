@@ -88,6 +88,17 @@ final class X11WindowGrabber implements ScreenGrabber {
     private byte[] pixels = new byte[0];
 
     /**
+     * The grabbed pixels expanded to 4 bytes when their format is not converted in place, grown as
+     * needed.
+     */
+    private byte[] expanded = new byte[0];
+
+    /**
+     * The format of the last grabbed image, reused while the images keep it, or {@code null}.
+     */
+    private X11PixelFormat lastFormat;
+
+    /**
      * The named pixmap of the window, or {@code 0}.
      */
     private long pixmap;
@@ -269,15 +280,16 @@ final class X11WindowGrabber implements ScreenGrabber {
             return grabbed ? target : blank();
         }
         int bytesPerLine;
-        RgbLayout layout;
+        X11PixelFormat format;
         try {
             var header = image.reinterpret(X11.IMAGE.byteSize());
             bytesPerLine = header.get(JAVA_INT, X11.IMAGE_BYTES_PER_LINE);
-            layout = layout(header);
-            if (layout == null) {
-                throw new MediaException.Unsupported("x11 visual", "the window's pixel format is not a 32-bit TrueColor format");
+            format = format(header);
+            if (format == null) {
+                throw new MediaException.Unsupported("x11 visual", "the window's pixel format is not a TrueColor format of 16,"
+                        + " 24 or 32 bits per pixel");
             }
-            if (bytesPerLine < 4 * areaWidth) {
+            if (bytesPerLine < (long) format.bytesPerPixel() * areaWidth) {
                 throw new MediaException.Io("the X server returned a malformed image",
                         new IOException("bytes_per_line " + bytesPerLine + " for " + areaWidth + " pixels"));
             }
@@ -291,11 +303,24 @@ final class X11WindowGrabber implements ScreenGrabber {
         } finally {
             x11.destroyImage(image);
         }
+        var source = pixels;
+        var layout = format.direct();
+        if (layout == null) {
+            var size = Math.multiplyExact(4 * areaWidth, areaHeight);
+            if (expanded.length < size) {
+                LimitChecks.checkAllocation(MediaLimits.DEFAULT, size);
+                expanded = new byte[size];
+            }
+            format.expand(pixels, bytesPerLine, areaWidth, areaHeight, expanded);
+            source = expanded;
+            bytesPerLine = 4 * areaWidth;
+            layout = RgbLayout.BGRX;
+        }
         if (cursor != null) {
             var translated = windowing.origin(display, window, root, translation);
             X11ErrorTrap.takeError(display);
             if (translated) {
-                cursor.draw(pixels, bytesPerLine, layout, translation.get(JAVA_INT, 0) + left,
+                cursor.draw(source, bytesPerLine, layout, translation.get(JAVA_INT, 0) + left,
                         translation.get(JAVA_INT, 4) + top, areaWidth, areaHeight);
             }
         }
@@ -304,7 +329,7 @@ final class X11WindowGrabber implements ScreenGrabber {
             scratch = Pictures.reuse(scratch, areaWidth, areaHeight, target.color());
             out = scratch;
         }
-        convert(pixels, bytesPerLine, layout, out);
+        convert(source, bytesPerLine, layout, out);
         if (out != target) {
             Pictures.fit(out, target);
         }
@@ -323,10 +348,10 @@ final class X11WindowGrabber implements ScreenGrabber {
     }
 
     /**
-     * Derives the layout of a grabbed image, taking the masks from the window's visual when the image has
-     * none, as an image of a pixmap does.
+     * Derives the pixel format of a grabbed image, taking the masks from the window's visual when the
+     * image has none, as an image of a pixmap does.
      */
-    private RgbLayout layout(MemorySegment header) {
+    private X11PixelFormat format(MemorySegment header) {
         var red = header.get(JAVA_LONG, X11.IMAGE_RED_MASK);
         var green = header.get(JAVA_LONG, X11.IMAGE_GREEN_MASK);
         var blue = header.get(JAVA_LONG, X11.IMAGE_BLUE_MASK);
@@ -339,8 +364,15 @@ final class X11WindowGrabber implements ScreenGrabber {
             green = masks[1];
             blue = masks[2];
         }
-        return X11ScreenGrabber.layoutOf(header.get(JAVA_INT, X11.IMAGE_BITS_PER_PIXEL),
-                header.get(JAVA_INT, X11.IMAGE_BYTE_ORDER), red, green, blue);
+        var bitsPerPixel = header.get(JAVA_INT, X11.IMAGE_BITS_PER_PIXEL);
+        var byteOrder = header.get(JAVA_INT, X11.IMAGE_BYTE_ORDER);
+        var last = lastFormat;
+        if (last != null && last.describes(bitsPerPixel, byteOrder, red, green, blue)) {
+            return last;
+        }
+        var format = X11PixelFormat.of(bitsPerPixel, byteOrder, red, green, blue);
+        lastFormat = format;
+        return format;
     }
 
     /**

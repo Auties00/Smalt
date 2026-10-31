@@ -21,7 +21,7 @@ import java.util.regex.Pattern;
  * Finds the Video4Linux2 cameras of the system.
  *
  * <p>Every {@code /dev/videoN} node is opened and kept when {@code VIDIOC_QUERYCAP} reports a
- * single-planar streaming capture node (using {@code device_caps}, so the metadata nodes USB
+ * single-planar or multi-planar streaming capture node (using {@code device_caps}, so the metadata nodes USB
  * Video Class cameras create next to their capture node are skipped) that offers at least one
  * pixel format this backend converts. Nodes that cannot be opened, typically for lack of
  * permission (membership of the {@code video} group), or that fail while being queried are
@@ -173,8 +173,8 @@ final class V4l2Cameras {
             return Optional.empty();
         }
         try {
-            V4l2Device device = (request, argument) -> posix.ioctl(fd, request, argument);
-            var capability = V4l2Formats.query(device);
+            var capability = V4l2Formats.query((request, argument) -> posix.ioctl(fd, request, argument));
+            var device = capability.device((request, argument) -> posix.ioctl(fd, request, argument));
             if (!capability.canCapture() || V4l2Formats.pixelFormats(device).isEmpty()) {
                 return Optional.empty();
             }

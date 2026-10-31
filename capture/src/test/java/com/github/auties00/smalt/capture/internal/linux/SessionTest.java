@@ -376,7 +376,7 @@ class SessionTest {
         }
 
         @Test
-        @DisplayName("16-bit, 10-bit and inconsistent formats are unsupported")
+        @DisplayName("16-bit, 10-bit and inconsistent formats have no in-place layout")
         void unsupported() {
             assertNull(X11ScreenGrabber.layoutOf(16, X11ScreenGrabber.LSB_FIRST, 0xF800, 0x7E0, 0x1F));
             assertNull(X11ScreenGrabber.layoutOf(32, X11ScreenGrabber.LSB_FIRST, 0x3FF00000, 0xFFC00, 0x3FF));

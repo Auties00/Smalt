@@ -16,7 +16,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * linux/videodev2.h, asm-generic/ioctl.h, X11/Xlib.h, X11/extensions/XShm.h and
  * X11/extensions/Xrandr.h, and cross-checked by compiling the real kernel header with
  * _Static_assert(sizeof/offsetof/VIDIOC_*) under libclang for the x86_64, aarch64 and riscv64
- * linux-gnu targets.
+ * linux-gnu targets. The multi-planar V4L2 values (v4l2_pix_format_mplane, v4l2_plane and their
+ * uses in v4l2_buffer) were derived by hand and are confirmed by the multi-planar vivid captures of
+ * V4l2FormatsLiveTest; the PulseAudio values were derived the same way from pulse/sample.h,
+ * pulse/channelmap.h, pulse/volume.h, pulse/def.h and pulse/introspect.h, and PulseLiveTest reads
+ * them back from a running server.
  */
 @DisplayName("Linux ABI")
 class AbiTest {
@@ -62,6 +66,13 @@ class AbiTest {
                 Arguments.of("v4l2_requestbuffers", V4l2.REQUESTBUFFERS.byteSize(), 20L),
                 Arguments.of("v4l2_timecode", V4l2.TIMECODE.byteSize(), 16L),
                 Arguments.of("v4l2_buffer", V4l2.BUFFER.byteSize(), 88L),
+                Arguments.of("v4l2_plane_pix_format", V4l2.PLANE_PIX_FORMAT.byteSize(), 20L),
+                Arguments.of("v4l2_pix_format_mplane", V4l2.PIX_FORMAT_MPLANE.byteSize(), 192L),
+                Arguments.of("v4l2_plane", V4l2.PLANE.byteSize(), 64L),
+                Arguments.of("pa_sample_spec", Pulse.SAMPLE_SPEC.byteSize(), 12L),
+                Arguments.of("pa_buffer_attr", Pulse.BUFFER_ATTR.byteSize(), 20L),
+                Arguments.of("pa_channel_map", Pulse.CHANNEL_MAP.byteSize(), 132L),
+                Arguments.of("pa_cvolume", Pulse.CVOLUME.byteSize(), 132L),
                 Arguments.of("pollfd", Posix.POLLFD.byteSize(), 8L),
                 Arguments.of("timespec", Posix.TIMESPEC.byteSize(), 16L),
                 Arguments.of("XImage", X11.IMAGE.byteSize(), 136L),
@@ -123,6 +134,29 @@ class AbiTest {
                 Arguments.of("v4l2_buffer.memory", V4l2.BUFFER_MEMORY, 60L),
                 Arguments.of("v4l2_buffer.m.offset", V4l2.BUFFER_OFFSET, 64L),
                 Arguments.of("v4l2_buffer.length", V4l2.BUFFER_LENGTH, 72L),
+                Arguments.of("v4l2_buffer.field", V4l2.BUFFER_FIELD, 16L),
+                Arguments.of("v4l2_buffer.sequence", V4l2.BUFFER_SEQUENCE, 56L),
+                Arguments.of("v4l2_buffer.m.planes", V4l2.BUFFER_PLANES, 64L),
+                Arguments.of("v4l2_pix_format_mplane.colorspace", V4l2.MP_COLORSPACE, 16L),
+                Arguments.of("v4l2_pix_format_mplane.plane_fmt", V4l2.MP_PLANE_FMT, 20L),
+                Arguments.of("v4l2_pix_format_mplane.num_planes", V4l2.MP_NUM_PLANES, 180L),
+                Arguments.of("v4l2_pix_format_mplane.ycbcr_enc", V4l2.MP_YCBCR_ENC, 182L),
+                Arguments.of("v4l2_pix_format_mplane.quantization", V4l2.MP_QUANTIZATION, 183L),
+                Arguments.of("v4l2_pix_format_mplane.xfer_func", V4l2.MP_XFER_FUNC, 184L),
+                Arguments.of("v4l2_plane_pix_format.sizeimage", V4l2.PLANE_FMT_SIZEIMAGE, 0L),
+                Arguments.of("v4l2_plane_pix_format.bytesperline", V4l2.PLANE_FMT_BYTESPERLINE, 4L),
+                Arguments.of("v4l2_plane.length", V4l2.PLANE_LENGTH, 4L),
+                Arguments.of("v4l2_plane.m.mem_offset", V4l2.PLANE_MEM_OFFSET, 8L),
+                Arguments.of("v4l2_plane.data_offset", V4l2.PLANE_DATA_OFFSET, 16L),
+                Arguments.of("pa_sink_info.name", Pulse.INFO_NAME, 0L),
+                Arguments.of("pa_sink_info.description", Pulse.INFO_DESCRIPTION, 16L),
+                Arguments.of("pa_sink_info.sample_spec.rate", Pulse.INFO_RATE, 28L),
+                Arguments.of("pa_sink_info.sample_spec.channels", Pulse.INFO_CHANNELS, 32L),
+                Arguments.of("pa_sink_info.monitor_source_name", Pulse.INFO_MONITOR_NAME, 312L),
+                Arguments.of("pa_sink_info.proplist", Pulse.INFO_PROPLIST, 344L),
+                Arguments.of("pa_server_info.server_name", Pulse.SERVER_NAME, 24L),
+                Arguments.of("pa_server_info.default_sink_name", Pulse.SERVER_DEFAULT_SINK, 48L),
+                Arguments.of("pa_server_info.default_source_name", Pulse.SERVER_DEFAULT_SOURCE, 56L),
                 Arguments.of("pollfd.events", Posix.POLLFD_EVENTS, 4L),
                 Arguments.of("pollfd.revents", Posix.POLLFD_REVENTS, 6L),
                 Arguments.of("XImage.data", X11.IMAGE_DATA, 16L),

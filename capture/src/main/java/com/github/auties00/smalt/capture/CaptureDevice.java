@@ -56,7 +56,8 @@ public sealed interface CaptureDevice permits CaptureDevice.Camera, CaptureDevic
      * @param y the top edge on the virtual desktop, in pixels
      * @param width the width in pixels, positive
      * @param height the height in pixels, positive
-     * @param primary whether the screen is the one the operating system designates as its main display
+     * @param primary whether the screen is the one the operating system designates as its main display;
+     * on Wayland, which designates none, the first output
      */
     record Screen(String id, String name, int x, int y, int width, int height, boolean primary) implements CaptureDevice {
         /**

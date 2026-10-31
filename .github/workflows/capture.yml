@@ -4,11 +4,13 @@
 # through environment variables (SMALT_TEST_AUDIO_LOOPBACK, SMALT_TEST_SCREEN_COLOR, SMALT_CAPTURE_LIVE,
 # SMALT_CAPTURE_REQUIRE_DEVICES), which the forked test JVMs inherit.
 #   Linux:   an Xvfb display with a solid red root window (X11 screen capture, MIT-SHM, Composite and XFixes window
-#            and pointer capture, AWT for the fixture windows), a PulseAudio null sink whose monitor is the default
-#            source (ALSA through the pulse plugin), a v4l2loopback camera fed by ffmpeg (the module built from its
-#            pinned release against the running kernel's headers), a vivid test camera for the camera controls
-#            (checked against v4l2-ctl), and a script that adds and removes a v4l2loopback camera for the hotplug
-#            test (SMALT_TEST_CAMERA_HOTPLUG).
+#            and pointer capture, AWT for the fixture windows) and three more of depth 16, 15 and 30 for the pixel
+#            formats (SMALT_TEST_X11_DEPTHS), a PulseAudio null sink whose monitor is the default source (ALSA through
+#            the pulse plugin, the sound-server devices, loopback and change events), a v4l2loopback camera fed by
+#            ffmpeg (the module built from its pinned release against the running kernel's headers), vivid test
+#            cameras for the camera controls (checked against v4l2-ctl) and for every pixel format and field order,
+#            single-planar and multi-planar, a script that adds and removes a v4l2loopback camera for the hotplug
+#            test (SMALT_TEST_CAMERA_HOTPLUG), and a headless sway session with a screen cast portal and PipeWire.
 #   Windows: VB-Audio Virtual Cable (WASAPI loopback pair) and microphone access; the runner's desktop session
 #            (DXGI desktop duplication, GDI, Windows Graphics Capture and PrintWindow of the fixture windows).
 #   macOS:   BlackHole (CoreAudio loopback pair, made the default devices); the runner's display, which the image
@@ -19,6 +21,13 @@ name: Capture
 on:
   workflow_call:
   workflow_dispatch:
+    inputs:
+      os:
+        description: JSON list of runners
+        default: '["ubuntu-latest", "windows-latest", "macos-latest"]'
+      tests:
+        description: Optional surefire -Dtest filter of the capture tests
+        default: ''
 
 permissions:
   contents: read
@@ -35,7 +44,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: ${{ fromJSON(inputs.os || '["ubuntu-latest", "windows-latest", "macos-latest"]') }}
     steps:
       - uses: actions/checkout@v4
 
@@ -58,12 +67,25 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends xvfb x11-xserver-utils pulseaudio pulseaudio-utils \
+          sudo apt-get install -y -q --no-install-recommends xvfb x11-xserver-utils x11-utils pulseaudio pulseaudio-utils \
             libasound2-plugins alsa-utils ffmpeg libxcomposite1 libxfixes3 libxtst6 libxi6 libxrender1 fontconfig \
             v4l-utils
           Xvfb :99 -screen 0 1280x720x24 +extension MIT-SHM -nolisten tcp -noreset &
           for _ in $(seq 1 50); do xdpyinfo -display :99 > /dev/null 2>&1 && break; sleep 0.2; done
           xsetroot -display :99 -solid '#ff0000'
+          # servers of depth 16, 15 (both 16 bits per pixel) and 30 (10-bit channels) for the X11 pixel format test;
+          # no current X server offers the packed 24-bit pixmap format, which X.Org removed in 1.20
+          Xvfb :98 -screen 0 320x240x16 +extension MIT-SHM -nolisten tcp -noreset &
+          Xvfb :97 -screen 0 320x240x15 +extension MIT-SHM -nolisten tcp -noreset &
+          Xvfb :96 -screen 0 320x240x30 +extension MIT-SHM -nolisten tcp -noreset &
+          for display in :98 :97 :96; do
+            for _ in $(seq 1 50); do xdpyinfo -display "$display" > /dev/null 2>&1 && break; sleep 0.2; done
+            xdpyinfo -display "$display" | grep -i -E "depth of root|bits_per_pixel" || true
+          done
+          xsetroot -display :98 -solid '#0000ff'
+          xsetroot -display :97 -solid '#00ff00'
+          xsetroot -display :96 -solid '#ff00ff'
+          echo "SMALT_TEST_X11_DEPTHS=:98=16=0000ff,:97=16=00ff00,:96=32=ff00ff" >> "$GITHUB_ENV"
           # the fixture itself: ffmpeg's x11grab must see the red root window the tests compare with
           root=$(ffmpeg -v error -f x11grab -video_size 16x16 -i :99 -frames:v 1 -f rawvideo -pix_fmt rgb24 - | od -An -tx1 -N3 | tr -d ' \n')
           echo "root window pixel: $root"
@@ -77,7 +99,7 @@ jobs:
           aplay -L | head -n 20
           echo "SMALT_TEST_SCREEN_COLOR=ff0000" >> "$GITHUB_ENV"
           echo "SMALT_TEST_AUDIO_LOOPBACK=default|default" >> "$GITHUB_ENV"
-          echo "SMALT_CAPTURE_REQUIRE_DEVICES=screen,window,x11-composite,cursor,audio-loopback,audio-input,audio-output" >> "$GITHUB_ENV"
+          echo "SMALT_CAPTURE_REQUIRE_DEVICES=screen,window,x11-composite,cursor,x11-depths,audio-loopback,audio-input,audio-output,sound-server" >> "$GITHUB_ENV"
 
       # The distribution's v4l2loopback-dkms (0.12) no longer builds against the runners' kernels, so the module is
       # built from its pinned release. videodev ships in linux-modules on the newer Azure kernels and in
@@ -153,8 +175,9 @@ jobs:
           echo "SMALT_TEST_CAMERA_HOTPLUG=$script" >> "$GITHUB_ENV"
           echo "SMALT_CAPTURE_REQUIRE_DEVICES=$SMALT_CAPTURE_REQUIRE_DEVICES,camera-hotplug" >> "$GITHUB_ENV"
 
-      # vivid ships in linux-modules-extra; its controls are the reference of the camera controls test.
-      - name: Provision a vivid camera
+      # vivid ships in linux-modules-extra; its controls are the reference of the camera controls test, and two more
+      # instances, single-planar and multi-planar, are the cameras of the pixel format and field order tests.
+      - name: Provision the vivid cameras
         if: runner.os == 'Linux'
         shell: bash
         run: |
@@ -162,13 +185,70 @@ jobs:
           if ! modinfo vivid > /dev/null 2>&1; then
             sudo apt-get install -y -q --no-install-recommends "linux-modules-extra-$kernel" || true
           fi
-          sudo modprobe vivid n_devs=1 node_types=0x1 vid_cap_nr=30
-          for _ in $(seq 1 50); do test -c /dev/video30 && break; sleep 0.2; done
+          sudo modprobe vivid n_devs=3 node_types=0x1,0x1,0x1 multiplanar=1,1,2 vid_cap_nr=30,31,32
+          for node in 30 31 32; do
+            for _ in $(seq 1 50); do test -c /dev/video$node && break; sleep 0.2; done
+          done
           sudo udevadm settle
-          sudo chmod a+rw /dev/video30
+          sudo chmod a+rw /dev/video30 /dev/video31 /dev/video32
           v4l2-ctl -d /dev/video30 --list-ctrls
+          v4l2-ctl -d /dev/video31 --list-formats
+          v4l2-ctl -d /dev/video32 --list-formats
+          v4l2-ctl -d /dev/video31 --list-inputs
           echo "SMALT_TEST_CAMERA_CONTROLS=/dev/video30" >> "$GITHUB_ENV"
-          echo "SMALT_CAPTURE_REQUIRE_DEVICES=$SMALT_CAPTURE_REQUIRE_DEVICES,camera-controls" >> "$GITHUB_ENV"
+          echo "SMALT_TEST_VIVID=/dev/video31" >> "$GITHUB_ENV"
+          echo "SMALT_TEST_VIVID_MPLANE=/dev/video32" >> "$GITHUB_ENV"
+          echo "SMALT_CAPTURE_REQUIRE_DEVICES=$SMALT_CAPTURE_REQUIRE_DEVICES,camera-controls,camera-formats,camera-multiplanar,camera-fields" >> "$GITHUB_ENV"
+
+      # A headless sway session with a solid green background, whose outputs the Wayland screen test lists, and a
+      # screen cast portal sharing a PipeWire video source of the same green: PipeWire, WirePlumber, a GStreamer test
+      # source and the scripted portal of .github/scripts/screencast-portal.py, since xdg-desktop-portal-wlr 0.7 does
+      # not share the output of a compositor without a GPU (it needs a DMA-BUF format). The session's runtime directory
+      # and bus are its own, so that the PulseAudio daemon above keeps its socket; only the bus address and the
+      # compositor's socket path are exported.
+      - name: Provision a Wayland session with a screen cast portal
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get install -y -q --no-install-recommends sway swaybg pipewire pipewire-bin wireplumber dbus dbus-bin \
+            libpipewire-0.3-0 gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-pipewire python3-dbus python3-gi
+          runtime="$RUNNER_TEMP/xdg-runtime"
+          mkdir -p "$runtime" "$HOME/.config/sway"
+          chmod 700 "$runtime"
+          printf 'output * resolution 1280x720 position 0 0 bg #00ff00 solid_color\ndefault_border none\n' > "$HOME/.config/sway/config"
+          export XDG_RUNTIME_DIR="$runtime" XDG_CURRENT_DESKTOP=sway XDG_SESSION_TYPE=wayland
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus"
+          dbus-daemon --session --address="$DBUS_SESSION_BUS_ADDRESS" --fork --print-address
+          WLR_BACKENDS=headless WLR_RENDERER=pixman WLR_LIBINPUT_NO_DEVICES=1 nohup sway -c "$HOME/.config/sway/config" \
+            > "$RUNNER_TEMP/sway.log" 2>&1 &
+          for _ in $(seq 1 50); do ls "$runtime"/wayland-* > /dev/null 2>&1 && break; sleep 0.2; done
+          display=$(basename "$(ls "$runtime"/wayland-* | grep -v lock | head -n 1)")
+          nohup pipewire > "$RUNNER_TEMP/pipewire.log" 2>&1 &
+          for _ in $(seq 1 50); do test -S "$runtime/pipewire-0" && break; sleep 0.2; done
+          nohup wireplumber > "$RUNNER_TEMP/wireplumber.log" 2>&1 &
+          sleep 2
+          nohup gst-launch-1.0 -q videotestsrc is-live=true pattern=solid-color foreground-color=0xff00ff00 \
+            ! video/x-raw,format=BGRx,width=1280,height=720,framerate=30/1 \
+            ! pipewiresink mode=provide client-name=smalt-test stream-properties="props,node.name=smalt-test" \
+            > "$RUNNER_TEMP/gst.log" 2>&1 &
+          node=""
+          for _ in $(seq 1 50); do
+            node=$(pw-dump 2>/dev/null | /usr/bin/python3 -c "import json, sys; print(next((o['id'] for o in json.load(sys.stdin) if o.get('type') == 'PipeWire:Interface:Node' and o.get('info', {}).get('props', {}).get('node.name') == 'smalt-test'), ''))")
+            test -n "$node" && break
+            sleep 0.2
+          done
+          test -n "$node"
+          echo "test source node: $node"
+          nohup /usr/bin/python3 .github/scripts/screencast-portal.py "$node" "$runtime/pipewire-0" 1280 720 \
+            > "$RUNNER_TEMP/portal.log" 2>&1 &
+          sleep 1
+          # the fixture itself: the portal must offer monitors to share
+          dbus-send --session --print-reply --dest=org.freedesktop.portal.Desktop /org/freedesktop/portal/desktop \
+            org.freedesktop.DBus.Properties.Get string:org.freedesktop.portal.ScreenCast string:AvailableSourceTypes
+          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
+          echo "SMALT_TEST_WAYLAND_DISPLAY=$runtime/$display" >> "$GITHUB_ENV"
+          echo "SMALT_TEST_WAYLAND_COLOR=00ff00" >> "$GITHUB_ENV"
+          echo "SMALT_CAPTURE_REQUIRE_DEVICES=$SMALT_CAPTURE_REQUIRE_DEVICES,wayland-screen" >> "$GITHUB_ENV"
 
       - name: Provision the Windows devices
         if: runner.os == 'Windows'
@@ -205,7 +285,7 @@ jobs:
         shell: bash
         run: >
           mvn -B -ntp -fae -pl capture,desktop -am verify
-          -Dtest='com/github/auties00/smalt/capture/**/*,com/github/auties00/smalt/desktop/sound/JavaSoundReadTest'
+          -Dtest='${{ inputs.tests || 'com/github/auties00/smalt/capture/**/*,com/github/auties00/smalt/desktop/sound/JavaSoundReadTest' }}'
           -Dsurefire.failIfNoSpecifiedTests=false
 
       - name: Check the skips against the baseline
@@ -235,4 +315,9 @@ jobs:
             target/skips-*.tsv
             ffmpeg-v4l2.log
             ${{ runner.temp }}/hotplug-ffmpeg.log
+            ${{ runner.temp }}/sway.log
+            ${{ runner.temp }}/pipewire.log
+            ${{ runner.temp }}/wireplumber.log
+            ${{ runner.temp }}/gst.log
+            ${{ runner.temp }}/portal.log
           retention-days: 14

@@ -11,29 +11,37 @@ import com.github.auties00.smalt.capture.internal.CaptureBackend;
 import com.github.auties00.smalt.capture.internal.FramePacing;
 import com.github.auties00.smalt.capture.internal.VideoDeviceWatch;
 
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
 
 /**
- * Captures cameras with Video4Linux2 and screens and windows with X11 on 64-bit Linux.
+ * Captures cameras with Video4Linux2, screens with the Wayland screen cast portal or X11, and windows
+ * with X11 on 64-bit Linux.
  *
- * <p>Cameras are the {@code /dev/videoN} capture nodes ({@link V4l2Cameras}), captured with
- * memory-mapped streaming I/O and converted to 4:2:0 from planar or semi-planar 4:2:0, packed
- * 4:2:2 or Motion-JPEG ({@link V4l2CameraSession}), with their controls read and written through
- * {@link V4l2Controls}. Screens are the RandR monitors of the display named by {@code DISPLAY}
- * ({@link X11Screens}), grabbed through MIT-SHM or {@code XGetImage} ({@link X11ScreenGrabber}); windows
- * are listed by {@link X11Windows} and grabbed through the Composite extension ({@link X11WindowGrabber});
- * both are paced to the requested rate ({@link PacedCaptureSession}) with the pointer drawn through
- * XFixes. Device changes are watched through the {@code /dev} directory ({@link DevWatch}) and a listing
- * every second. Everything is called through the Foreign Function and Memory API: the C library from the
- * process's default lookup, {@code libX11.so.6}, {@code libXext.so.6}, {@code libXrandr.so.2},
- * {@code libXcomposite.so.1} and {@code libXfixes.so.3} by name; no library is bundled.
+ * <p>Cameras are the {@code /dev/videoN} single-planar and multi-planar capture nodes
+ * ({@link V4l2Cameras}), captured with memory-mapped streaming I/O in any field order and converted to
+ * 4:2:0 from planar, semi-planar and packed Y'CbCr, R'G'B', luma-only or Motion-JPEG frames
+ * ({@link V4l2CameraSession}, {@link V4l2FrameLayout}, {@link FrameConverter}), with their controls
+ * read and written through {@link V4l2Controls}. In a Wayland session ({@code WAYLAND_DISPLAY} set)
+ * screens are the compositor's outputs ({@link WaylandOutputs}), captured through the
+ * {@code xdg-desktop-portal} screen cast portal and PipeWire ({@link PortalScreenSession}); otherwise
+ * they are the RandR monitors of the display named by {@code DISPLAY} ({@link X11Screens}), grabbed
+ * through MIT-SHM or {@code XGetImage} ({@link X11ScreenGrabber}) from TrueColor visuals of 16, 24 or 32
+ * bits per pixel. Windows are listed by {@link X11Windows} and grabbed through the Composite extension
+ * ({@link X11WindowGrabber}); X11 screens and windows are paced to the requested rate
+ * ({@link PacedCaptureSession}) with the pointer drawn through XFixes. Device changes are watched through
+ * the {@code /dev} directory ({@link DevWatch}) and a listing every second. Everything is called through
+ * the Foreign Function and Memory API: the C library from the process's default lookup,
+ * {@code libX11.so.6}, {@code libXext.so.6}, {@code libXrandr.so.2}, {@code libXcomposite.so.1},
+ * {@code libXfixes.so.3} and {@code libpipewire-0.3.so.0} by name; the D-Bus and Wayland protocols are
+ * spoken directly over their sockets. No library is bundled.
  *
- * <p>Not supported: multi-planar capture devices ({@code V4L2_CAP_VIDEO_CAPTURE_MPLANE} only),
- * the formats this backend does not convert (Bayer, H.264, RGB), and screen and window capture of a pure
- * Wayland session, which requires the {@code xdg-desktop-portal} screen cast portal and PipeWire.
+ * <p>Not supported: the V4L2 formats this backend does not convert (Bayer, H.264 and other compressed
+ * formats besides JPEG), and window capture of Wayland clients, which the portal offers only through
+ * the desktop's own picker; X11 clients of a Wayland session (XWayland) are captured as X11 windows.
  *
  * @implNote This implementation calls restricted methods of the Foreign Function and Memory API,
  * so the JVM warns once unless the module is granted native access
@@ -87,8 +95,30 @@ public final class LinuxCaptureBackend implements CaptureBackend {
         return V4l2Cameras.ids();
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * @implNote This implementation lists the outputs of the Wayland compositor in a Wayland
+     * session ({@code WAYLAND_DISPLAY} set), else the RandR monitors of the X11 display.
+     */
     @Override
     public List<CaptureDevice.Screen> screens() {
+        return screens(WaylandOutputs.socket());
+    }
+
+    /**
+     * Lists the screens of a Wayland compositor, or of the X11 display when there is none.
+     *
+     * @param wayland the compositor's socket, or {@code null} outside a Wayland session
+     * @return the compositor's outputs when it answers with at least one, else the RandR monitors
+     */
+    List<CaptureDevice.Screen> screens(Path wayland) {
+        if (wayland != null) {
+            var outputs = WaylandOutputs.list(wayland);
+            if (!outputs.isEmpty()) {
+                return outputs;
+            }
+        }
         return X11Screens.list();
     }
 
@@ -125,8 +155,18 @@ public final class LinuxCaptureBackend implements CaptureBackend {
         return V4l2CameraSession.open(camera, mode);
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * @implNote This implementation captures a Wayland output through the screen cast portal,
+     * where the desktop may ask the user which monitor to share, and an X11 monitor through
+     * MIT-SHM or {@code XGetImage}.
+     */
     @Override
     public VideoCaptureSession open(CaptureDevice.Screen screen, ScreenCaptureOptions options) {
+        if (screen.id().startsWith(WaylandOutputs.PREFIX)) {
+            return PortalScreenSession.open(screen, ScreenCastPortal.SOURCE_MONITOR, options);
+        }
         var x11 = requireDisplay("screen capture");
         return new PacedCaptureSession(screen, X11ScreenGrabber.open(x11, screen, options),
                 FramePacing.atMost(options.frameRate(), MAX_RATE));
@@ -153,8 +193,7 @@ public final class LinuxCaptureBackend implements CaptureBackend {
         var display = System.getenv("DISPLAY");
         var x11 = X11.instance();
         if (display == null || display.isEmpty() || x11 == null) {
-            throw new MediaException.Unsupported(what, what + " needs an X11 display;"
-                    + " Wayland capture through PipeWire is not implemented");
+            throw new MediaException.Unsupported(what, what + " needs an X11 display");
         }
         return x11;
     }

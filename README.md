@@ -1161,8 +1161,8 @@ checks a FLAC source's MD5 signature on the way.
 
 | Feature | Artifact | Package | Backends |
 |---|---|---|---|
-| Cameras, screens and windows | `smalt-capture` | `capture` | Windows: Media Foundation (camera controls through the source's `IAMCameraControl` and `IAMVideoProcAmp`), DXGI desktop duplication or GDI (screens), Windows Graphics Capture or `PrintWindow` (windows), configuration manager notifications of cameras and monitors. macOS: AVFoundation (focus, exposure and white balance modes, zoom), ScreenCaptureKit (screens and windows; `CGDisplayCreateImage` screens before 12.3). Linux: V4L2 (with its controls; `/dev` watched for cameras), X11 with MIT-SHM, Composite and XFixes (screens, windows, pointer). Screen and window regions, the pointer drawn or left out (`ScreenCaptureOptions`), exposure, focus, zoom, white balance, power-line frequency and the picture controls of a camera (`CameraControls`), and a listener of cameras and screens plugged in, removed or rearranged (`VideoDevices.addListener`). Called with FFM, so it needs `--enable-native-access=com.github.auties00.smalt.capture`. |
-| Microphones and speakers | `smalt-capture` | `capture.audio` | Windows: WASAPI (shared mode with the engine's PCM converter and `IAudioClient3` short periods, exclusive mode, loopback of an output, endpoint notifications). macOS: CoreAudio HAL output unit (shared mode; no exclusive mode, no loopback). Linux: ALSA, whose `default` device reaches PulseAudio or PipeWire (shared mode; exclusive mode opens a device without software resampling; no loopback; changes found by polling). Float or 16-bit samples, any rate and channel count in the shared mode, capture and playback delays for echo cancellation. Run on the CI runners of all three systems against loopback devices. |
+| Cameras, screens and windows | `smalt-capture` | `capture` | Windows: Media Foundation (camera controls through the source's `IAMCameraControl` and `IAMVideoProcAmp`), DXGI desktop duplication or GDI (screens), Windows Graphics Capture or `PrintWindow` (windows), configuration manager notifications of cameras and monitors. macOS: AVFoundation (focus, exposure and white balance modes, zoom), ScreenCaptureKit (screens and windows; `CGDisplayCreateImage` screens before 12.3). Linux: V4L2 single-planar and multi-planar cameras (with their controls; `/dev` watched for cameras) in every field order (interlaced, sequential and alternating fields woven, single fields line-doubled) and in planar, semi-planar and packed 4:2:0, 4:2:2 and 4:4:4 Y'CbCr, 16-, 24- and 32-bit R'G'B', 8- to 16-bit luma and Motion-JPEG; in a Wayland session, screens (the compositor's outputs) through the `xdg-desktop-portal` screen cast portal and PipeWire; X11 with MIT-SHM, Composite and XFixes (screens and windows of TrueColor visuals of 16, 24 or 32 bits per pixel, pointer). Screen and window regions, the pointer drawn or left out (`ScreenCaptureOptions`), exposure, focus, zoom, white balance, power-line frequency and the picture controls of a camera (`CameraControls`), and a listener of cameras and screens plugged in, removed or rearranged (`VideoDevices.addListener`). Called with FFM, so it needs `--enable-native-access=com.github.auties00.smalt.capture`. |
+| Microphones and speakers | `smalt-capture` | `capture.audio` | Windows: WASAPI (shared mode with the engine's PCM converter and `IAudioClient3` short periods, exclusive mode, loopback of an output, endpoint notifications). macOS: CoreAudio HAL output unit (shared mode; no exclusive mode, no loopback). Linux: ALSA, whose `default` device reaches PulseAudio or PipeWire (shared mode; exclusive mode opens a device without software resampling), plus the sinks and sources of a PulseAudio or PipeWire (`pipewire-pulse`) sound server, whose defaults are then the default devices; loopback of an output through the monitor source of the sink it plays to; changes reported as they happen through the server's subscription and `/dev/snd`. Float or 16-bit samples, any rate and channel count in the shared mode, capture and playback delays for echo cancellation. Run on the CI runners of all three systems against loopback devices. |
 
 ### Known limits
 
@@ -2135,8 +2135,16 @@ checks a FLAC source's MD5 signature on the way.
   runners, where cameras plugged in or removed are not tested either.
 - Window capture on X11 without the Composite extension reads the window itself, so the parts other windows
   cover hold whatever the X server returns; window capture on macOS needs ScreenCaptureKit (macOS 12.3), and the
-  screen snapshots of older macOS versions never show the pointer. Screen and window capture of a Wayland session
-  is not implemented (it needs the screen cast portal and PipeWire).
+  screen snapshots of older macOS versions never show the pointer. On Wayland a screen is captured through the
+  screen cast portal, so the desktop may ask the user which monitor to share, and its choice is what the session
+  captures; the pointer is drawn only where the portal can embed it in the frames, and a compositor that offers only
+  DMA-BUF buffers is not captured. Wayland windows are not listed (Wayland has no protocol to list other clients'
+  windows; the portal shares one only through the desktop's own picker); the X11 windows of a Wayland session
+  (XWayland) are captured as X11 windows. Packed 24-bit X11 pixmaps are converted but tested only against synthetic
+  images, since no current X server offers that format (X.Org removed it in 1.20).
+- Linux loopback capture needs a PulseAudio or PipeWire sound server (bare ALSA has none); an ALSA device naming a
+  card maps to the server's sink of that card through its `alsa.card` property, which the CI runners, without an
+  ALSA card, test only against simulated server listings.
 - Container providers: the transcoder writes only the `OutputContainer` profiles, so a container a provider adds
   that `ContainerFormat` does not name (`ContainerFormat.OTHER`) is a transcode input but not a transcode output;
   `Containers.openMuxer(String, MediaSink)` writes it.
@@ -3150,7 +3158,7 @@ try (var microphone = AudioDevices.openCapture(AudioDevices.defaultInput().orEls
 ```
 
 `AudioDevices` lists inputs and outputs (id, name, default flag, native formats), opens them in the shared
-or exclusive mode at any rate and channel count, captures what an output plays (`openLoopback`, Windows), and
+or exclusive mode at any rate and channel count, captures what an output plays (`openLoopback`, Windows and Linux), and
 reports new default devices and devices plugged in or removed to an `AudioDeviceListener`. Each session runs
 its own high-priority device thread; `read` and `write` move float or 16-bit samples through a bounded queue,
 and `delayMicros()` on both sides gives the stream delay of an echo canceller such as `VoiceProcessor`. An
@@ -3439,6 +3447,12 @@ Felzenszwalb and Huttenlocher's distance transform draws its outlines, ITU-R BT.
 color conversion of transcodes, and Doyle and Looymans' edge-based line average deinterlaces.
 libopusfile's page search and link bisection, libvips' entropy crop and Microsoft's Desktop Duplication sample showed the way
 for smaller pieces.
+On Linux the capture module speaks the protocols of others' documents: the Linux kernel's Video4Linux2 API, the
+X Window System protocol and its MIT-SHM, Composite and XFixes extensions, the D-Bus specification, the
+[XDG Desktop Portal](https://flatpak.github.io/xdg-desktop-portal/) screen cast interface, the Wayland protocol with
+xdg-output, PipeWire's stream and SPA pod API, and the PulseAudio client API, which PipeWire serves too; the
+kernel's vivid driver, Xvfb, sway with xdg-desktop-portal-wlr, WirePlumber and the PulseAudio server are the devices
+its tests run against.
 
 **Tools that verify Smalt.** Smalt's tests and benchmarks hold it to the output of other software, run as
 black boxes: [FFmpeg](https://ffmpeg.org/) and ffprobe above all, the reference decoders and encoders of the

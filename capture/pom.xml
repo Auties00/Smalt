@@ -42,6 +42,11 @@
             <type>test-jar</type>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>com.code-intelligence</groupId>
+            <artifactId>jazzer-junit</artifactId>
+            <scope>test</scope>
+        </dependency>
         <!-- The kernel JIT guard runs the equivalence tests in its child JVMs through the launcher -->
         <dependency>
             <groupId>org.junit.platform</groupId>

@@ -12,7 +12,8 @@ import java.time.Duration;
 import java.util.regex.Pattern;
 
 /**
- * Calls a callback whenever a {@code videoN} node appears in or disappears from {@code /dev}.
+ * Calls a callback whenever a device node appears in or disappears from a directory: a
+ * {@code videoN} node of {@code /dev} by default.
  *
  * <p>The directory is watched with the file system's {@link WatchService}, which inotify backs on Linux;
  * a thread of the watch ({@value #THREAD_NAME}) takes its events. udev creates and removes the nodes as
@@ -24,15 +25,18 @@ final class DevWatch implements AutoCloseable {
      */
     static final String THREAD_NAME = "smalt-dev-watch";
 
-    private static final Pattern NODE = Pattern.compile("video\\d+");
+    /**
+     * The name of a camera node.
+     */
+    private static final Pattern VIDEO_NODE = Pattern.compile("video\\d+");
 
     private final WatchService service;
 
     private final Thread thread;
 
-    private DevWatch(WatchService service, Runnable callback) {
+    private DevWatch(WatchService service, Pattern nodes, Runnable callback) {
         this.service = service;
-        this.thread = Thread.ofPlatform().name(THREAD_NAME).daemon().unstarted(() -> run(callback));
+        this.thread = Thread.ofPlatform().name(THREAD_NAME).daemon().unstarted(() -> run(nodes, callback));
         this.thread.start();
     }
 
@@ -54,11 +58,23 @@ final class DevWatch implements AutoCloseable {
      * @return the watch, or {@code null} when the directory cannot be watched
      */
     static DevWatch start(Path directory, Runnable callback) {
+        return start(directory, VIDEO_NODE, callback);
+    }
+
+    /**
+     * Starts watching the nodes of a directory whose names match a pattern.
+     *
+     * @param directory the directory holding the nodes
+     * @param nodes the names of the nodes that matter
+     * @param callback called on the watch thread after a node changed
+     * @return the watch, or {@code null} when the directory cannot be watched
+     */
+    static DevWatch start(Path directory, Pattern nodes, Runnable callback) {
         WatchService service = null;
         try {
             service = FileSystems.getDefault().newWatchService();
             directory.register(service, StandardWatchEventKinds.ENTRY_CREATE, StandardWatchEventKinds.ENTRY_DELETE);
-            return new DevWatch(service, callback);
+            return new DevWatch(service, nodes, callback);
         } catch (IOException | RuntimeException exception) {
             if (service != null) {
                 try {
@@ -74,7 +90,7 @@ final class DevWatch implements AutoCloseable {
     /**
      * Takes events until the service is closed.
      */
-    private void run(Runnable callback) {
+    private void run(Pattern nodes, Runnable callback) {
         while (true) {
             try {
                 var key = service.take();
@@ -82,7 +98,7 @@ final class DevWatch implements AutoCloseable {
                 for (var event : key.pollEvents()) {
                     if (event.kind() == StandardWatchEventKinds.OVERFLOW) {
                         relevant = true;
-                    } else if (event.context() instanceof Path name && NODE.matcher(name.toString()).matches()) {
+                    } else if (event.context() instanceof Path name && nodes.matcher(name.toString()).matches()) {
                         relevant = true;
                     }
                 }

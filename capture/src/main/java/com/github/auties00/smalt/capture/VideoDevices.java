@@ -16,8 +16,9 @@ import java.util.Optional;
  *
  * <p>Video capture talks to the operating system's own APIs through the Foreign Function and Memory API
  * and loads no bundled native library: Media Foundation, DXGI desktop duplication and Windows Graphics
- * Capture on Windows, AVFoundation, ScreenCaptureKit and CoreGraphics on macOS, Video4Linux2 and X11
- * (with the Composite and XFixes extensions) on Linux. On a platform without a backend the lists are
+ * Capture on Windows, AVFoundation, ScreenCaptureKit and CoreGraphics on macOS, Video4Linux2, X11
+ * (with the Composite and XFixes extensions) and, in a Wayland session, the {@code xdg-desktop-portal}
+ * screen cast portal with PipeWire on Linux. On a platform without a backend the lists are
  * empty and opening a device raises {@link MediaException.Unsupported}. This class is thread-safe.
  *
  * <p>Listing the cameras asks every camera for its modes, which on Windows activates each camera's media
@@ -219,11 +220,14 @@ public final class VideoDevices {
      * <p>The pictures have the size of the captured area: the screen, or the part of the region that lies
      * on it, cropped to even dimensions.
      *
+     * <p>In a Wayland session the screen cast portal decides what is captured: the desktop may ask the
+     * user which monitor to share, and the session captures the monitor chosen there, at its size.
+     *
      * @param screen the screen to capture
      * @param options the frame rate, region and pointer settings
      * @return the session, which the caller closes
      * @throws IllegalArgumentException if the region of {@code options} lies outside the screen
-     * @throws MediaException.Io if the screen cannot be captured
+     * @throws MediaException.Io if the screen cannot be captured, or the user declines to share it
      * @throws MediaException.Unsupported if capture is unavailable on this platform, or the captured area
      * is smaller than 2x2 pixels
      */
