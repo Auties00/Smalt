@@ -2019,8 +2019,7 @@ checks a FLAC source's MD5 signature on the way.
 - Over HTTP (`MediaSource.of(URI)`), a demuxer that jumps between distant parts of a file, such as fragmented MP4
   read fragment by fragment or Matroska with its `Tags` at the end, costs a request per jump. A server that ignores
   range requests or sends no length gives a forward-only source, which cannot seek back past what was released and
-  is not resumed when its response breaks off. The request timeout bounds the wait for response headers only, so
-  a server that stops sending a body without closing the connection stalls the read until the connection fails.
+  is not resumed when its response breaks off.
   `AudioReader.seek` on Matroska Vorbis or AAC, and on AAC Main, LTP, LD and ELD with SBR in any
   container, restarts from the start of the track (exact, but slower), and AAC seeks are bit-identical only
   without perceptual noise substitution.
@@ -2789,8 +2788,8 @@ when seeking matters.
 
 `MediaSource.of(URI)` reads an HTTP or HTTPS resource with range requests: it fetches blocks of 64 KiB, keeps
 16 MiB of them, reads up to 2 MiB ahead of reads that follow one another (one request per window, not per block),
-retries failed requests and resumes a response that ends early, and fails a read with `MediaException.Io` when the
-resource changes underneath it (`If-Range`). A server that ignores ranges or states no length is read front to back
+retries failed requests, resumes a response that ends early or stalls past the request timeout, and fails a read
+with `MediaException.Io` when the resource changes underneath it (`If-Range`). A server that ignores ranges or states no length is read front to back
 as a stream is. `HttpSourceOptions` sets the client (proxy, authentication, TLS), request headers, block, cache and
 read-ahead sizes and retries, and `DataReferenceResolver.http(playlistUri, options)` serves the segments, keys and
 playlists of an HLS or DASH presentation from the playlist's origin.

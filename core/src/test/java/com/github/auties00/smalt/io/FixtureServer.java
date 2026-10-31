@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * A local HTTP/1.1 server of in-memory resources for the HTTP source tests, which counts every request and the body
  * bytes it sends, honors single byte ranges and {@code If-Range} unless told not to, and injects transient statuses,
- * truncated bodies, redirects and header checks on demand.
+ * truncated and stalled bodies, capped parts, redirects and header checks on demand.
  */
 final class FixtureServer implements AutoCloseable {
     /** One resource and how the server misbehaves when serving it. */
@@ -40,8 +40,10 @@ final class FixtureServer implements AutoCloseable {
         volatile boolean encodeRanges;
         volatile boolean overDeliver;
         volatile long rangeShift;
+        volatile int maxPart = Integer.MAX_VALUE;
         final Deque<Integer> failures = new ArrayDeque<>();
         final AtomicInteger truncations = new AtomicInteger();
+        final AtomicInteger stalls = new AtomicInteger();
 
         Resource(byte[] data) {
             this.data = data;
@@ -184,6 +186,7 @@ final class FixtureServer implements AutoCloseable {
                     return;
                 }
                 last = resource.overDeliver ? data.length - 1 : Math.min(last, data.length - 1);
+                last = Math.min(last, first + resource.maxPart - 1);
                 first += resource.rangeShift;
                 var length = (int) (last - first + 1);
                 headers.set("Content-Range", "bytes " + first + "-" + last + "/"
@@ -192,11 +195,16 @@ final class FixtureServer implements AutoCloseable {
                     headers.set("Content-Encoding", "gzip");
                 }
                 exchange.sendResponseHeaders(206, length);
+                if (stall(resource, exchange, data, (int) first, length)) {
+                    return;
+                }
                 var sent = length;
                 if (resource.truncations.getAndUpdate(count -> Math.max(0, count - 1)) > 0) {
                     sent = length / 2;
                 }
                 exchange.getResponseBody().write(data, (int) first, sent);
+                // a cut body is flushed, since closing a short fixed-length body drops what is buffered
+                exchange.getResponseBody().flush();
                 bodyBytes.addAndGet(sent);
                 return;
             }
@@ -217,11 +225,33 @@ final class FixtureServer implements AutoCloseable {
                 }
             }
             exchange.sendResponseHeaders(200, resource.chunked ? 0 : data.length == 0 ? -1 : data.length);
+            if (stall(resource, exchange, data, 0, data.length)) {
+                return;
+            }
             exchange.getResponseBody().write(data);
             bodyBytes.addAndGet(data.length);
         } catch (IOException exception) {
             // the client closed the connection before the body was sent: expected for dropped responses
         }
+    }
+
+    /**
+     * Sends the first half of a body and then nothing for three seconds, while the resource has stalls left.
+     */
+    private boolean stall(Resource resource, HttpExchange exchange, byte[] data, int offset, int length)
+            throws IOException {
+        if (resource.stalls.getAndUpdate(count -> Math.max(0, count - 1)) <= 0) {
+            return false;
+        }
+        exchange.getResponseBody().write(data, offset, length / 2);
+        exchange.getResponseBody().flush();
+        bodyBytes.addAndGet(length / 2);
+        try {
+            Thread.sleep(3000);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+        }
+        return true;
     }
 
     @Override

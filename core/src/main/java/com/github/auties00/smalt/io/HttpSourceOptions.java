@@ -61,7 +61,8 @@ public final class HttpSourceOptions {
     public static final Duration DEFAULT_RETRY_DELAY = Duration.ofMillis(500);
 
     /**
-     * The default time a request may take until its response headers arrive: 30 seconds.
+     * The default time a request may wait for its response headers, and for each further part of its body: 30
+     * seconds.
      */
     public static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofSeconds(30);
 
@@ -184,7 +185,9 @@ public final class HttpSourceOptions {
      * {@return the most bytes of fetched blocks the source keeps in memory, the least recently read dropped first,
      * at least {@link #blockSize()}; {@link #DEFAULT_CACHE_SIZE} by default}
      *
-     * <p>One request never fetches more than half the cache, read-ahead included.
+     * <p>One request never fetches more than half the cache, read-ahead included. Besides the cache, the source
+     * holds the blocks of the requests in flight and keeps up to half the cache of dropped blocks for the next
+     * request to fill, so a source read from one thread holds at most one and a half times this size.
      */
     public long cacheSize() {
         return cacheSize;
@@ -213,8 +216,11 @@ public final class HttpSourceOptions {
     }
 
     /**
-     * {@return the time each request may take until its response headers arrive, positive;
-     * {@link #DEFAULT_REQUEST_TIMEOUT} by default}
+     * {@return the time each request may wait for its response headers, and for each further part of its body,
+     * positive; {@link #DEFAULT_REQUEST_TIMEOUT} by default}
+     *
+     * <p>A request that waits longer fails as an I/O error does: it is retried, and a response whose body stalls
+     * is resumed from where it stopped.
      */
     public Duration requestTimeout() {
         return requestTimeout;
@@ -404,7 +410,7 @@ public final class HttpSourceOptions {
         }
 
         /**
-         * Sets the time each request may take until its response headers arrive; see
+         * Sets the time each request may wait for its response headers and each part of its body; see
          * {@link HttpSourceOptions#requestTimeout()}.
          *
          * @param requestTimeout the value

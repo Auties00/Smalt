@@ -121,8 +121,14 @@ class HttpSourceFuzzTest {
         for (var index = 1; index < lines.length; index++) {
             var colon = lines[index].indexOf(':');
             if (colon > 0) {
-                headers.computeIfAbsent(lines[index].substring(0, colon).strip(), ignored -> new ArrayList<>())
-                        .add(lines[index].substring(colon + 1).strip());
+                var name = lines[index].substring(0, colon).strip();
+                var value = lines[index].substring(colon + 1).strip();
+                // a Retry-After the source waits for would stall the fuzzer, so the short delays become zero
+                if (name.equalsIgnoreCase("Retry-After") && value.matches("[0-9]{1,18}")
+                        && Long.parseLong(value) <= 60) {
+                    value = "0";
+                }
+                headers.computeIfAbsent(name, ignored -> new ArrayList<>()).add(value);
             }
         }
         return new Scripted(status, headers, body);

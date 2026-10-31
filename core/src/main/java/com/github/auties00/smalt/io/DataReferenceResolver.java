@@ -81,8 +81,10 @@ public interface DataReferenceResolver {
      * {@link MediaSource#of(URI, HttpSourceOptions)} opens it. It resolves only when the result is an
      * {@code http} or {@code https} URI of the same origin as {@code base}, that is the same scheme, host and
      * port (RFC 6454), so a media file cannot make the application fetch from another server; other references
-     * resolve to nothing. A resource the server fails to deliver fails with {@link MediaException.Io}. Resolvers
-     * with the same base and options are equal.
+     * resolve to nothing. The redirects the {@linkplain HttpSourceOptions#httpClient() client} follows are the
+     * server's choice and are not checked, so a server that redirects to other origins should be read with a
+     * client that does not follow redirects. A resource the server fails to deliver fails with
+     * {@link MediaException.Io}. Resolvers with the same base and options are equal.
      *
      * @param base the absolute {@code http} or {@code https} URI relative locations resolve against
      * @param options the options of the sources

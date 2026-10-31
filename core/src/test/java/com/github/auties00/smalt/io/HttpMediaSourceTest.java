@@ -256,6 +256,39 @@ class HttpMediaSourceTest {
         }
 
         @Test
+        @DisplayName("serves reads of cached blocks without allocating")
+        void cachedReadsAllocateNothing() throws ReflectiveOperationException {
+            var data = random(1 << 20, 24);
+            server.put("/hits.bin", data);
+            // the management modules are not read by the patched test module at run time, hence reflection
+            var threads = Class.forName("java.lang.management.ManagementFactory").getMethod("getThreadMXBean")
+                    .invoke(null);
+            var allocatedBytes = Class.forName("com.sun.management.ThreadMXBean")
+                    .getMethod("getCurrentThreadAllocatedBytes");
+            var buffer = new byte[64];
+            // small blocks, so that most block indices lie beyond the boxed values the JDK caches
+            var options = FAST.toBuilder().blockSize(4096).cacheSize(4L << 20).build();
+            try (var source = MediaSource.of(server.uri("/hits.bin"), options)) {
+                source.readFully(0, new byte[data.length], 0, data.length);
+                var requests = server.requests();
+                var checksum = 0L;
+                for (var pass = 0; pass < 2; pass++) {
+                    var before = (long) allocatedBytes.invoke(threads);
+                    for (var index = 0; index < 20_000; index++) {
+                        var position = (index * 7919L * 64) % (data.length - buffer.length);
+                        checksum += source.read(position, buffer, 0, buffer.length);
+                    }
+                    var allocated = (long) allocatedBytes.invoke(threads) - before;
+                    if (pass == 1) {
+                        assertTrue(allocated < 4096, allocated + " bytes allocated by 20000 cached reads");
+                    }
+                }
+                assertEquals(2 * 20_000L * buffer.length, checksum);
+                assertEquals(requests, server.requests());
+            }
+        }
+
+        @Test
         @DisplayName("reports the cached ranges as local and the others as not")
         void local() {
             var data = random(200_000, 5);
@@ -496,6 +529,65 @@ class HttpMediaSourceTest {
                 always.truncations.set(Integer.MAX_VALUE);
                 assertThrows(MediaException.Io.class, () -> source.readFully(100_000, new byte[10], 0, 10));
             }
+        }
+
+        @Test
+        @DisplayName("continues a response that ends inside a block from where it stopped")
+        void resumedInsideBlock() {
+            var data = random(200_000, 21);
+            var resource = server.put("/half.bin", data);
+            var options = FAST.toBuilder().blockSize(4096).readAhead(0).build();
+            try (var source = MediaSource.of(server.uri("/half.bin"), options)) {
+                resource.truncations.set(1);
+                var read = new byte[10];
+                source.readFully(100_000, read, 0, read.length);
+                assertArrayEquals(Arrays.copyOfRange(data, 100_000, 100_010), read);
+            }
+            // block 24 starts at 98304; the cut response delivers half of it, the next request asks for the rest
+            assertEquals(List.of("/half.bin bytes=0-4095", "/half.bin bytes=98304-102399",
+                    "/half.bin bytes=100352-102399"), server.ranges());
+        }
+
+        @Test
+        @DisplayName("reads a server that sends shorter parts than a block")
+        void cappedParts() {
+            var data = random(150_000, 22);
+            server.put("/capped.bin", data).maxPart = 1000;
+            var read = new byte[data.length];
+            try (var source = MediaSource.of(server.uri("/capped.bin"), FAST.toBuilder().blockSize(4096).build())) {
+                assertEquals(data.length, source.size());
+                source.readFully(0, read, 0, read.length);
+            }
+            assertArrayEquals(data, read);
+            assertTrue(server.bodyBytes() <= data.length + 1000, server.bodyBytes() + " bytes sent");
+        }
+
+        @Test
+        @DisplayName("times out a stalled body and resumes it, or fails a forward-only read")
+        void stalled() {
+            var data = random(200_000, 23);
+            var resource = server.put("/stall.bin", data);
+            var options = FAST.toBuilder().blockSize(4096).readAhead(0).requestTimeout(Duration.ofMillis(300)).build();
+            var start = System.nanoTime();
+            try (var source = MediaSource.of(server.uri("/stall.bin"), options)) {
+                resource.stalls.set(1);
+                var read = new byte[10];
+                source.readFully(100_000, read, 0, read.length);
+                assertArrayEquals(Arrays.copyOfRange(data, 100_000, 100_010), read);
+            }
+            // the server holds each stalled response for three seconds
+            assertTrue(System.nanoTime() - start < 2_500_000_000L, "the stalled body was not timed out");
+            assertEquals(List.of("/stall.bin bytes=0-4095", "/stall.bin bytes=98304-102399",
+                    "/stall.bin bytes=100352-102399"), server.ranges());
+            var whole = server.put("/stall-whole.bin", data);
+            whole.ranges = false;
+            whole.stalls.set(1);
+            var forward = System.nanoTime();
+            try (var source = MediaSource.of(server.uri("/stall-whole.bin"), options)) {
+                assertThrows(MediaException.Io.class, () -> source.readFully(0, new byte[data.length], 0,
+                        data.length));
+            }
+            assertTrue(System.nanoTime() - forward < 2_500_000_000L, "the stalled body was not timed out");
         }
 
         @Test

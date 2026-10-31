@@ -11,16 +11,26 @@ import java.net.http.HttpClient;
 import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
+import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
 import java.time.Duration;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayDeque;
+import java.util.Arrays;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
+import java.util.Iterator;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.Flow;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.InflaterInputStream;
 
@@ -36,8 +46,9 @@ import java.util.zip.InflaterInputStream;
  * tag and the date is strong), and every response must keep the length, entity tag and modification date of the
  * first, so a resource that changes while it is read fails the read instead of mixing two versions.
  *
- * <p>The request timeout bounds the wait for the headers of a response only: a server that stops sending a body
- * without closing the connection blocks the read until the connection fails.
+ * <p>The request timeout bounds the wait for the headers of a response and every wait for more of its body, so a
+ * server that stops sending a body without closing the connection fails the request, which is then retried or
+ * resumed.
  *
  * <p>The cached ranges are {@linkplain LocalSource#isLocal(long, long) local}; the others are not.
  */
@@ -145,6 +156,43 @@ final class HttpMediaSource implements MediaSource, LocalSource {
         }
     }
 
+    /**
+     * A cached block, linked into the recency list of the cache.
+     */
+    private static final class Block {
+        /**
+         * The index of the block in the resource.
+         */
+        final long index;
+
+        /**
+         * The bytes of the block, {@link #blockSize} long; the last block of the resource uses only its leading
+         * bytes.
+         */
+        final byte[] data;
+
+        /**
+         * The block read just after this one, or {@code null} when this is the newest.
+         */
+        Block newer;
+
+        /**
+         * The block read just before this one, or {@code null} when this is the oldest.
+         */
+        Block older;
+
+        /**
+         * Constructs a block.
+         *
+         * @param index the index of the block in the resource
+         * @param data the bytes of the block
+         */
+        Block(long index, byte[] data) {
+            this.index = index;
+            this.data = data;
+        }
+    }
+
     private final HttpClient client;
     private final HttpSourceOptions options;
 
@@ -201,9 +249,25 @@ final class HttpMediaSource implements MediaSource, LocalSource {
     private final Object lock;
 
     /**
-     * The cached blocks by index, in access order; each array is {@link #blockSize} bytes long.
+     * The cached blocks by index, in an open-addressed table probed linearly; its length is a power of two at least
+     * twice {@link #cached}.
      */
-    private final LinkedHashMap<Long, byte[]> cache;
+    private Block[] table;
+
+    /**
+     * The number of cached blocks.
+     */
+    private int cached;
+
+    /**
+     * The most recently read cached block, or {@code null} when the cache is empty.
+     */
+    private Block newest;
+
+    /**
+     * The least recently read cached block, or {@code null} when the cache is empty.
+     */
+    private Block oldest;
 
     /**
      * The blocks being fetched.
@@ -253,7 +317,7 @@ final class HttpMediaSource implements MediaSource, LocalSource {
         this.fetchBlocks = Math.max(1, cacheBlocks / 2);
         this.readAheadBlocks = (int) Math.min(fetchBlocks, (options.readAhead() + blockSize - 1) / blockSize);
         this.lock = new Object();
-        this.cache = new LinkedHashMap<>(16, 0.75f, true);
+        this.table = new Block[16];
         this.fetching = new HashSet<>();
         this.spare = new ArrayDeque<>();
         this.lastEnd = -1;
@@ -467,6 +531,216 @@ final class HttpMediaSource implements MediaSource, LocalSource {
     }
 
     /**
+     * Receives a response body and reads it as a stream whose every read fails with an {@link HttpTimeoutException}
+     * when no byte arrives within the idle timeout, so that a server that stops sending a body without closing the
+     * connection does not block a read for ever.
+     *
+     * <p>The body is requested one list of buffers at a time, so at most one list waits to be read. A timeout or
+     * {@link #close()} cancels the subscription, which drops the connection. Reads come from one thread at a time.
+     */
+    static final class TimedBody extends InputStream implements HttpResponse.BodySubscriber<InputStream> {
+        /**
+         * The item queued when the body is complete.
+         */
+        private static final Object END = new Object();
+
+        /**
+         * The longest wait for more of the body, in nanoseconds.
+         */
+        private final long timeoutNanos;
+
+        /**
+         * The lists of buffers received and not yet read, then {@link #END} or the failure of the body.
+         */
+        private final LinkedBlockingQueue<Object> queue;
+
+        /**
+         * The body, this stream, completed at once so that the response is delivered with its headers.
+         */
+        private final CompletableFuture<InputStream> self;
+
+        /**
+         * The subscription to the body, or {@code null} before it starts.
+         */
+        private volatile Flow.Subscription subscription;
+
+        /**
+         * Whether the stream is closed.
+         */
+        private volatile boolean closed;
+
+        /**
+         * The buffers of the list being read.
+         */
+        private Iterator<ByteBuffer> buffers;
+
+        /**
+         * The buffer being read, or {@code null}.
+         */
+        private ByteBuffer buffer;
+
+        /**
+         * Whether the end of the body was read.
+         */
+        private boolean ended;
+
+        /**
+         * The failure of the body, thrown by every later read, or {@code null}.
+         */
+        private IOException failed;
+
+        /**
+         * Constructs the stream.
+         *
+         * @param timeout the longest wait for more of the body
+         */
+        TimedBody(Duration timeout) {
+            this.timeoutNanos = saturatedNanos(timeout);
+            this.queue = new LinkedBlockingQueue<>();
+            this.self = CompletableFuture.completedFuture(this);
+        }
+
+        /**
+         * Converts a duration to nanoseconds, saturating at {@link Long#MAX_VALUE}.
+         *
+         * @param duration a positive duration
+         * @return the nanoseconds
+         */
+        private static long saturatedNanos(Duration duration) {
+            try {
+                return duration.toNanos();
+            } catch (ArithmeticException exception) {
+                return Long.MAX_VALUE;
+            }
+        }
+
+        @Override
+        public CompletionStage<InputStream> getBody() {
+            return self;
+        }
+
+        @Override
+        public void onSubscribe(Flow.Subscription subscription) {
+            this.subscription = subscription;
+            if (closed) {
+                subscription.cancel();
+            } else {
+                subscription.request(1);
+            }
+        }
+
+        @Override
+        public void onNext(List<ByteBuffer> item) {
+            queue.add(item);
+        }
+
+        @Override
+        public void onError(Throwable throwable) {
+            queue.add(throwable);
+        }
+
+        @Override
+        public void onComplete() {
+            queue.add(END);
+        }
+
+        @Override
+        public int read() throws IOException {
+            if (!fill()) {
+                return -1;
+            }
+            return buffer.get() & 0xFF;
+        }
+
+        @Override
+        public int read(byte[] destination, int offset, int length) throws IOException {
+            Objects.checkFromIndexSize(offset, length, destination.length);
+            if (length == 0) {
+                return 0;
+            }
+            if (!fill()) {
+                return -1;
+            }
+            var count = Math.min(length, buffer.remaining());
+            buffer.get(destination, offset, count);
+            return count;
+        }
+
+        /**
+         * Waits until a buffer with bytes left is at hand.
+         *
+         * @return {@code false} at the end of the body
+         * @throws IOException if the stream is closed, the body failed, or no byte arrives within the timeout
+         */
+        private boolean fill() throws IOException {
+            while (buffer == null || !buffer.hasRemaining()) {
+                if (buffers != null && buffers.hasNext()) {
+                    buffer = buffers.next();
+                    continue;
+                }
+                if (failed != null) {
+                    throw failed;
+                }
+                if (ended) {
+                    return false;
+                }
+                if (closed) {
+                    throw new IOException("the response body is closed");
+                }
+                Object item;
+                try {
+                    item = queue.poll(timeoutNanos, TimeUnit.NANOSECONDS);
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    cancel();
+                    var failure = new InterruptedIOException("interrupted while reading the response body");
+                    failure.initCause(exception);
+                    throw failure;
+                }
+                if (item == null) {
+                    cancel();
+                    throw new HttpTimeoutException("no byte of the response body arrived within "
+                            + Duration.ofNanos(timeoutNanos));
+                }
+                if (item == END) {
+                    ended = true;
+                    return false;
+                }
+                if (item instanceof Throwable throwable) {
+                    failed = throwable instanceof IOException exception ? exception
+                            : new IOException("the response body failed", throwable);
+                    throw failed;
+                }
+                @SuppressWarnings("unchecked")
+                var list = (List<ByteBuffer>) item;
+                buffers = list.iterator();
+                var current = subscription;
+                if (current != null) {
+                    current.request(1);
+                }
+            }
+            return true;
+        }
+
+        /**
+         * Cancels the subscription, which drops the connection.
+         */
+        private void cancel() {
+            closed = true;
+            var current = subscription;
+            if (current != null) {
+                current.cancel();
+            }
+        }
+
+        @Override
+        public void close() {
+            cancel();
+            queue.clear();
+        }
+    }
+
+    /**
      * Parses a {@code Content-Length} value.
      *
      * @param value the header value
@@ -484,15 +758,197 @@ final class HttpMediaSource implements MediaSource, LocalSource {
      * @param range the range the body holds, starting at zero
      */
     private void storeFirst(InputStream body, ContentRange range) {
-        var blocks = new byte[(int) Math.min(fetchBlocks, blockCount)][];
+        var end = Math.min(range.last() + 1, (long) Math.min(fetchBlocks, blockCount) * blockSize);
+        var blocks = new byte[(int) ((end + blockSize - 1) / blockSize)][];
+        for (var index = 0; index < blocks.length; index++) {
+            blocks[index] = new byte[blockSize];
+        }
         // a truncated first body leaves the blocks it holds; reads fetch the rest
-        var filled = readBlocks(body, 0, range.last() + 1, blocks, new IOException[1]);
+        var reached = readBlocks(body, 0, 0, end, blocks, new IOException[1]);
+        var filled = complete(0, reached, blocks.length);
         synchronized (lock) {
             for (var index = 0; index < filled; index++) {
-                cache.put((long) index, blocks[index]);
+                insert(index, blocks[index]);
+            }
+            for (var index = filled; index < blocks.length; index++) {
+                recycle(blocks[index]);
             }
             evict();
         }
+    }
+
+    /**
+     * Returns the number of leading blocks a read has completed.
+     *
+     * @param from the offset of the first of the blocks
+     * @param reached the offset just past the last byte read
+     * @param count the number of blocks
+     * @return the number of blocks whose every byte up to the end of the resource is read
+     */
+    private int complete(long from, long reached, int count) {
+        return reached >= Math.min(size, from + (long) count * blockSize) ? count : (int) ((reached - from) / blockSize);
+    }
+
+    /**
+     * Returns the slot of the table where the search for a block starts.
+     *
+     * @param index the index of the block
+     * @param mask the length of the table minus one
+     * @return the slot
+     */
+    private static int home(long index, int mask) {
+        var hash = index * 0x9E3779B97F4A7C15L;
+        return (int) (hash ^ (hash >>> 32)) & mask;
+    }
+
+    /**
+     * Returns the slot of a cached block.
+     *
+     * @param index the index of the block
+     * @return the slot, or {@code -1} when the block is not cached
+     */
+    private int slot(long index) {
+        var mask = table.length - 1;
+        for (var slot = home(index, mask); ; slot = (slot + 1) & mask) {
+            var block = table[slot];
+            if (block == null) {
+                return -1;
+            }
+            if (block.index == index) {
+                return slot;
+            }
+        }
+    }
+
+    /**
+     * Returns whether a block is cached, without changing its recency.
+     *
+     * @param index the index of the block
+     * @return {@code true} when the block is cached
+     */
+    private boolean isCached(long index) {
+        return slot(index) >= 0;
+    }
+
+    /**
+     * Returns the bytes of a cached block and makes it the most recently read.
+     *
+     * @param index the index of the block
+     * @return the bytes, or {@code null} when the block is not cached
+     */
+    private byte[] touch(long index) {
+        var slot = slot(index);
+        if (slot < 0) {
+            return null;
+        }
+        var block = table[slot];
+        if (block != newest) {
+            unlink(block);
+            link(block);
+        }
+        return block.data;
+    }
+
+    /**
+     * Caches a block as the most recently read, replacing the bytes it was cached with.
+     *
+     * @param index the index of the block
+     * @param data the bytes of the block
+     */
+    private void insert(long index, byte[] data) {
+        var existing = slot(index);
+        if (existing >= 0) {
+            var old = table[existing];
+            unlink(old);
+            removeSlot(existing);
+            cached--;
+            recycle(old.data);
+        }
+        if ((cached + 1) * 2L > table.length) {
+            grow();
+        }
+        var block = new Block(index, data);
+        var mask = table.length - 1;
+        var slot = home(index, mask);
+        while (table[slot] != null) {
+            slot = (slot + 1) & mask;
+        }
+        table[slot] = block;
+        cached++;
+        link(block);
+    }
+
+    /**
+     * Doubles the table.
+     */
+    private void grow() {
+        var old = table;
+        table = new Block[old.length * 2];
+        var mask = table.length - 1;
+        for (var block : old) {
+            if (block != null) {
+                var slot = home(block.index, mask);
+                while (table[slot] != null) {
+                    slot = (slot + 1) & mask;
+                }
+                table[slot] = block;
+            }
+        }
+    }
+
+    /**
+     * Empties a slot of the table, moving the blocks probed after it back so that every block stays reachable from
+     * its home slot.
+     *
+     * @param slot the slot to empty
+     */
+    private void removeSlot(int slot) {
+        var mask = table.length - 1;
+        table[slot] = null;
+        for (var next = (slot + 1) & mask; table[next] != null; next = (next + 1) & mask) {
+            var home = home(table[next].index, mask);
+            if (((next - home) & mask) >= ((next - slot) & mask)) {
+                table[slot] = table[next];
+                table[next] = null;
+                slot = next;
+            }
+        }
+    }
+
+    /**
+     * Appends a block to the recency list as the newest.
+     *
+     * @param block the block, in no list
+     */
+    private void link(Block block) {
+        block.older = newest;
+        block.newer = null;
+        if (newest != null) {
+            newest.newer = block;
+        } else {
+            oldest = block;
+        }
+        newest = block;
+    }
+
+    /**
+     * Removes a block from the recency list.
+     *
+     * @param block the block, in the list
+     */
+    private void unlink(Block block) {
+        if (block.older != null) {
+            block.older.newer = block.newer;
+        } else {
+            oldest = block.newer;
+        }
+        if (block.newer != null) {
+            block.newer.older = block.older;
+        } else {
+            newest = block.older;
+        }
+        block.newer = null;
+        block.older = null;
     }
 
     @Override
@@ -551,7 +1007,7 @@ final class HttpMediaSource implements MediaSource, LocalSource {
                     }
                     if (!closed) {
                         for (var index = 0; index < filled; index++) {
-                            cache.put(first + index, blocks[index]);
+                            insert(first + index, blocks[index]);
                         }
                         copied = copyCached(position, end, buffer, offset);
                         if (copied > 0) {
@@ -591,7 +1047,7 @@ final class HttpMediaSource implements MediaSource, LocalSource {
         }
         var limit = Math.min(blockCount, Math.min(last + 1 + window, first + fetchBlocks));
         var count = 1;
-        while (first + count < limit && !cache.containsKey(first + count) && !fetching.contains(first + count)) {
+        while (first + count < limit && !isCached(first + count) && !fetching.contains(first + count)) {
             count++;
         }
         return count;
@@ -610,7 +1066,7 @@ final class HttpMediaSource implements MediaSource, LocalSource {
         var at = position;
         while (at < end) {
             var index = at / blockSize;
-            var block = cache.get(index);
+            var block = touch(index);
             if (block == null) {
                 break;
             }
@@ -626,10 +1082,12 @@ final class HttpMediaSource implements MediaSource, LocalSource {
      * Drops the least recently read blocks beyond the cache size.
      */
     private void evict() {
-        var iterator = cache.values().iterator();
-        while (cache.size() > cacheBlocks) {
-            recycle(iterator.next());
-            iterator.remove();
+        while (cached > cacheBlocks) {
+            var block = oldest;
+            unlink(block);
+            removeSlot(slot(block.index));
+            cached--;
+            recycle(block.data);
         }
     }
 
@@ -639,13 +1097,17 @@ final class HttpMediaSource implements MediaSource, LocalSource {
      * @param block the array, of {@link #blockSize} bytes
      */
     private void recycle(byte[] block) {
-        if (spare.size() < fetchBlocks) {
+        if (!closed && spare.size() < fetchBlocks) {
             spare.push(block);
         }
     }
 
     /**
      * Fetches consecutive blocks, retrying failed requests.
+     *
+     * <p>A response that ends before the last byte asked for, because it broke off or because the server sent a
+     * shorter part than asked, is continued by a request for the rest; only a response that adds nothing counts as
+     * a failed attempt, and once the attempts are spent the blocks completed so far are kept.
      *
      * @param first the index of the first block
      * @param blocks receives the blocks; its length is the number of blocks wanted
@@ -655,33 +1117,40 @@ final class HttpMediaSource implements MediaSource, LocalSource {
     private int fetch(long first, byte[][] blocks) {
         var from = first * blockSize;
         var to = Math.min(size, (first + blocks.length) * blockSize);
+        synchronized (lock) {
+            for (var index = 0; index < blocks.length; index++) {
+                var reused = spare.poll();
+                blocks[index] = reused != null ? reused : new byte[blockSize];
+            }
+        }
         var failure = new IOException[1];
-        for (var attempt = 0; ; attempt++) {
+        var at = from;
+        for (var attempt = 0; ; ) {
             HttpResponse<InputStream> response;
             try {
-                response = sendWithRetries(client, options, uri, "bytes=" + from + "-" + (to - 1), ifRange);
+                response = sendWithRetries(client, options, uri, "bytes=" + at + "-" + (to - 1), ifRange);
             } catch (FinalFailure exception) {
                 throw io(exception.getMessage());
             }
-            int filled;
+            var reached = at;
             try {
                 var status = response.statusCode();
                 if (status == 200) {
                     throw io("the resource " + uri + " changed or no longer honors range requests");
                 }
                 if (status == 416) {
-                    throw io("the resource " + uri + " changed: the server rejected bytes " + from + " to " + (to - 1));
+                    throw io("the resource " + uri + " changed: the server rejected bytes " + at + " to " + (to - 1));
                 }
                 if (status != 206) {
-                    throw io("HTTP status " + status + " for bytes " + from + " to " + (to - 1) + " of " + uri);
+                    throw io("HTTP status " + status + " for bytes " + at + " to " + (to - 1) + " of " + uri);
                 }
                 var headers = response.headers();
                 if (!encoding(headers).equals("identity")) {
                     throw io("the server sent a part of " + uri + " with the content coding " + encoding(headers));
                 }
                 var range = ContentRange.parse(headers.firstValue("content-range").orElse(null));
-                if (range == null || range.first() != from || range.total() != size) {
-                    throw io("the resource " + uri + " changed or answered bytes " + from + " to " + (to - 1)
+                if (range == null || range.first() != at || range.total() != size) {
+                    throw io("the resource " + uri + " changed or answered bytes " + at + " to " + (to - 1)
                             + " with Content-Range " + headers.firstValue("content-range").orElse("(none)"));
                 }
                 var tag = headers.firstValue("etag").orElse(null);
@@ -693,74 +1162,67 @@ final class HttpMediaSource implements MediaSource, LocalSource {
                     throw io("the resource " + uri + " changed: it was modified " + modified + ", not "
                             + lastModified);
                 }
-                synchronized (lock) {
-                    for (var index = 0; index < blocks.length; index++) {
-                        if (blocks[index] == null) {
-                            var reused = spare.poll();
-                            blocks[index] = reused != null ? reused : new byte[blockSize];
-                        }
-                    }
-                }
                 failure[0] = null;
                 // a server sending more than asked for is read up to the blocks wanted
-                filled = readBlocks(response.body(), from, Math.min(to, range.last() + 1), blocks, failure);
+                reached = readBlocks(response.body(), from, at, Math.min(to, range.last() + 1), blocks, failure);
             } finally {
                 close(response);
             }
+            if (reached >= to) {
+                return blocks.length;
+            }
+            if (reached > at) {
+                at = reached;
+                continue;
+            }
+            var filled = complete(from, reached, blocks.length);
             if (filled > 0) {
                 return filled;
             }
             if (attempt >= options.retries()) {
-                var message = "the response for bytes " + from + " to " + (to - 1) + " of " + uri
-                        + " held no whole block";
+                var message = "the response for bytes " + at + " to " + (to - 1) + " of " + uri
+                        + " held no byte of them";
                 throw new MediaException.Io(message, failure[0] != null ? failure[0] : new IOException(message));
             }
             pause(options, attempt, null);
+            attempt++;
         }
     }
 
     /**
      * Reads a response body into consecutive blocks.
      *
-     * <p>The bytes of a block the body ends inside are dropped, unless that block is the last of the resource.
-     *
      * @param body the response body
-     * @param start the offset of the first byte of the body, the start of block zero of {@code blocks}
-     * @param end the offset just past the last byte of the body
-     * @param blocks the blocks, each allocated on demand when {@code null}
+     * @param from the offset of the start of block zero of {@code blocks}
+     * @param start the offset of the first byte of the body, at least {@code from}
+     * @param end the offset just past the last byte to read, at most the end of the last of {@code blocks}
+     * @param blocks the blocks, each {@link #blockSize} bytes long
      * @param failure receives the failure that stopped the read before {@code end}, if any
-     * @return the number of leading blocks complete
+     * @return the offset just past the last byte read
+     * @throws MediaException.Io if the thread is interrupted while waiting for the body
      */
-    private int readBlocks(InputStream body, long start, long end, byte[][] blocks, IOException[] failure) {
+    private long readBlocks(InputStream body, long from, long start, long end, byte[][] blocks, IOException[] failure) {
         var at = start;
-        var index = 0;
         try {
-            while (at < end && index < blocks.length) {
-                var blockEnd = Math.min(size, at + blockSize);
-                if (end < blockEnd) {
-                    break;
+            while (at < end) {
+                var index = (int) ((at - from) / blockSize);
+                var blockStart = from + (long) index * blockSize;
+                var stop = Math.min(end, Math.min(size, blockStart + blockSize));
+                var read = body.read(blocks[index], (int) (at - blockStart), (int) (stop - at));
+                if (read < 0) {
+                    throw new IOException("the response body ended " + (end - at) + " bytes early");
                 }
-                if (blocks[index] == null) {
-                    blocks[index] = new byte[blockSize];
-                }
-                var block = blocks[index];
-                var want = (int) (blockEnd - at);
-                var done = 0;
-                while (done < want) {
-                    // TODO: bound a stalled body by the request timeout, which HttpClient applies to the headers only
-                    var read = body.read(block, done, want - done);
-                    if (read < 0) {
-                        throw new IOException("the response body ended " + (end - at - done) + " bytes early");
-                    }
-                    done += read;
-                }
-                at = blockEnd;
-                index++;
+                at += read;
             }
+        } catch (InterruptedIOException exception) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new MediaException.Io("interrupted while fetching", exception);
+            }
+            failure[0] = exception;
         } catch (IOException exception) {
             failure[0] = exception;
         }
-        return index;
+        return at;
     }
 
     /**
@@ -787,10 +1249,12 @@ final class HttpMediaSource implements MediaSource, LocalSource {
             }
         }
         var request = builder.build();
+        var idleTimeout = options.requestTimeout();
+        HttpResponse.BodyHandler<InputStream> handler = info -> new TimedBody(idleTimeout);
         for (var attempt = 0; ; attempt++) {
             HttpResponse<InputStream> response;
             try {
-                response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+                response = client.send(request, handler);
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
                 throw interrupted(exception);
@@ -863,7 +1327,12 @@ final class HttpMediaSource implements MediaSource, LocalSource {
      * @param retryAfter the server's delay, or {@code null}
      */
     private static void pause(HttpSourceOptions options, int attempt, Duration retryAfter) {
-        var delay = options.retryDelay().multipliedBy(1L << Math.min(attempt, 20));
+        Duration delay;
+        try {
+            delay = options.retryDelay().multipliedBy(1L << Math.min(attempt, 20));
+        } catch (ArithmeticException exception) {
+            delay = ChronoUnit.FOREVER.getDuration();
+        }
         if (retryAfter != null && retryAfter.compareTo(delay) > 0) {
             delay = retryAfter;
         }
@@ -939,7 +1408,7 @@ final class HttpMediaSource implements MediaSource, LocalSource {
         }
         synchronized (lock) {
             for (var index = from / blockSize; index <= (to - 1) / blockSize; index++) {
-                if (!cache.containsKey(index)) {
+                if (!isCached(index)) {
                     return false;
                 }
             }
@@ -951,7 +1420,10 @@ final class HttpMediaSource implements MediaSource, LocalSource {
     public void close() {
         synchronized (lock) {
             closed = true;
-            cache.clear();
+            Arrays.fill(table, null);
+            cached = 0;
+            newest = null;
+            oldest = null;
             spare.clear();
             lock.notifyAll();
         }

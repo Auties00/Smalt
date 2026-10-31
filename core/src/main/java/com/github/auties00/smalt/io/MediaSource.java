@@ -318,7 +318,8 @@ public interface MediaSource extends AutoCloseable {
      * {@code deflate} are decoded), and it cannot seek back past what the parsers released. An empty resource
      * gives an empty source.
      *
-     * <p>A failed request is {@linkplain HttpSourceOptions#retries() retried}, and a response that ends early is
+     * <p>A failed request is {@linkplain HttpSourceOptions#retries() retried}, and a response that ends early, or
+     * whose body stalls for longer than the {@linkplain HttpSourceOptions#requestTimeout() request timeout}, is
      * resumed by a request for what it did not deliver; a response that cannot be fixed by a retry (a status
      * other than 200, 206 and the transient ones, a {@code Content-Range} not starting where asked) fails at
      * once. The source is safe for concurrent reads; reads of a block another read is fetching wait for it.
