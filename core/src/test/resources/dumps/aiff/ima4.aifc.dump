@@ -1,0 +1,14 @@
+# demux dump of aiff/ima4.aifc; regenerate with -Dsmalt.test.updateDumps=true
+format AIFF
+duration 600000
+seekable true
+track 0 AUDIO ADPCM_IMA_QT timebase=1/8000 duration=4800 config=none
+  audio rate=8000 bits=4 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 2
+0 t0 pts=0 dts=0 dur=3840 flags=KEY size=4080 crc=26fb1065
+1 t0 pts=3840 dts=3840 dur=960 flags=KEY size=1020 crc=3cdf49f3
+seek 0: t0@0
+seek 200000: t0@0
+seek 400000: t0@0
+seek 600000: end
+seek -1000000: t0@0

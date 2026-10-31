@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.image.raw.internal;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.image.raw.RawSamples;
 import com.github.auties00.smalt.testkit.Conformance;
 import org.junit.jupiter.api.DisplayName;
@@ -21,7 +22,6 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Checks the Huffman tables of {@link NikonTables}: their structure and, against Adobe DNG
@@ -38,7 +38,7 @@ class NikonTablesTest {
     private static Path oracle(RawSamples sample) {
         var name = sample.fileName();
         var path = ORACLE.resolve(name.substring(0, name.length() - 4) + ".dng");
-        assumeTrue(Files.isRegularFile(path), "no oracle file " + path + "; run tools/testdata/nef-oracle.py");
+        Skip.unless(Files.isRegularFile(path), "data:nef-oracle", "no oracle file " + path + "; run tools/testdata/nef-oracle.py");
         return path;
     }
 

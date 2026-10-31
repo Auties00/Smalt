@@ -1,0 +1,13 @@
+# video decode dump of mp4/dnxhr.mov; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 200000
+seekable true
+track 1 DNXHD 256x128 timebase=1/15360
+0 pts=0 dur=1024 key=true 256x128 yuv8 YUV422 color=BT709/LIMITED/BT709/BT709 y=c3bc7942 u=2f8f4b55 v=e5799396
+1 pts=1024 dur=1024 key=true 256x128 yuv8 YUV422 color=BT709/LIMITED/BT709/BT709 y=3e0b0a3c u=57209cce v=a0fde793
+2 pts=2048 dur=1024 key=true 256x128 yuv8 YUV422 color=BT709/LIMITED/BT709/BT709 y=13dfb4d8 u=2f5946ed v=4bad293e
+seek 0: @0
+seek 66666: @0
+seek 133333: @1
+seek 200000: end
+seek -1000000: @0
