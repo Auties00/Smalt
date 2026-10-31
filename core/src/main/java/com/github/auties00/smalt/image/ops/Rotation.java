@@ -113,14 +113,31 @@ final class Rotation {
      */
     static Picture warp(Picture packed, AffineTransform inverse, int width, int height, Interpolation interpolation,
                         int argbBackground, boolean hasAlpha) {
+        return warp(packed, SourceMap.affine(inverse), width, height, interpolation, argbBackground, hasAlpha);
+    }
+
+    /**
+     * Resamples a packed picture through a source map.
+     *
+     * @param packed the packed picture, 8 or 16-bit
+     * @param map the map from output pixel centers to picture points
+     * @param width the output width
+     * @param height the output height
+     * @param interpolation how to sample between pixels
+     * @param argbBackground the background as {@code 0xAARRGGBB}
+     * @param hasAlpha whether the result reports alpha
+     * @return the resampled picture, at the input's depth
+     */
+    static Picture warp(Picture packed, SourceMap map, int width, int height, Interpolation interpolation,
+                        int argbBackground, boolean hasAlpha) {
         return switch (packed) {
             case RgbaPicture rgba -> {
                 OpChecks.checkArray(4L * width * height);
-                yield Warp.rgba(rgba, inverse, width, height, interpolation, argbBackground, hasAlpha);
+                yield Warp.rgba(rgba, map, width, height, interpolation, argbBackground, hasAlpha);
             }
             case Rgba16Picture rgba -> {
                 OpChecks.checkArray(4L * width * height);
-                yield Warp.rgba16(rgba, inverse, width, height, interpolation, argbBackground, hasAlpha);
+                yield Warp.rgba16(rgba, map, width, height, interpolation, argbBackground, hasAlpha);
             }
             default -> throw new IllegalArgumentException("not a packed picture: " + packed);
         };

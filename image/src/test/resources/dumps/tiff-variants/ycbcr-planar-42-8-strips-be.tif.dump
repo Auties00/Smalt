@@ -1,0 +1,19 @@
+# image dump of tiff-variants/ycbcr-planar-42-8-strips-be.tif; regenerate with -Dsmalt.test.updateDumps=true
+format TIFF
+info ImageInfo[format=TIFF, width=21, height=11, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 21x11 rgba8 alpha=false crc=a9f5a31d
+  format=TIFF orientation=NORMAL source=21x11
+  icc=none exif=none xmp=none
+  profile=none
+scaled 5x2
+picture 21x11 rgba8 alpha=false crc=a9f5a31d
+  format=TIFF orientation=NORMAL source=21x11
+  icc=none exif=none xmp=none
+  profile=none
+pages 1
+page 0 ImageInfo[format=TIFF, width=21, height=11, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+picture 21x11 rgba8 alpha=false crc=a9f5a31d
+  format=TIFF orientation=NORMAL source=21x11
+  icc=none exif=none xmp=none
+  profile=none

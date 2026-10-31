@@ -1,0 +1,30 @@
+# demux dump of flv/av1.flv; regenerate with -Dsmalt.test.updateDumps=true
+format FLV
+duration 600000
+seekable true
+metadata duration="0.6"
+metadata encoder="Lavf61.7.100"
+metadata filesize="1712"
+metadata framerate="15"
+metadata height="48"
+metadata videocodecid="1635135537"
+metadata videodatarate="0"
+metadata width="64"
+track 1 VIDEO AV1 timebase=1/1000 duration=? config=16:65be994e
+  video 64x48 orientation=NORMAL rate=15/1
+  color ColorInfo[matrix=UNSPECIFIED, range=LIMITED, primaries=UNSPECIFIED, transfer=UNSPECIFIED, chromaSiting=UNSPECIFIED, masteringDisplay=Optional.empty, contentLightLevel=Optional.empty]
+packets 9
+0 t1 pts=0 dts=0 dur=67 flags=KEY size=362 crc=2bd4e3ec
+1 t1 pts=67 dts=67 dur=67 flags=- size=22 crc=683965ab
+2 t1 pts=133 dts=133 dur=67 flags=- size=51 crc=227f4d7f
+3 t1 pts=200 dts=200 dur=67 flags=- size=23 crc=99ea54b7
+4 t1 pts=267 dts=267 dur=67 flags=KEY size=360 crc=c1f8912e
+5 t1 pts=333 dts=333 dur=67 flags=- size=22 crc=ad1debee
+6 t1 pts=400 dts=400 dur=67 flags=- size=22 crc=b7490310
+7 t1 pts=467 dts=467 dur=67 flags=- size=22 crc=bad2b703
+8 t1 pts=533 dts=533 dur=67 flags=KEY size=328 crc=458349fc
+seek 0: t1@0
+seek 200000: t1@0
+seek 400000: t1@4
+seek 600000: end
+seek -1000000: t1@0

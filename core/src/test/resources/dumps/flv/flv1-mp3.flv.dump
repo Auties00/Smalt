@@ -1,0 +1,137 @@
+# demux dump of flv/flv1-mp3.flv; regenerate with -Dsmalt.test.updateDumps=true
+format FLV
+duration 2050000
+seekable true
+metadata audiocodecid="2"
+metadata audiodatarate="31.25"
+metadata audiosamplerate="22050"
+metadata audiosamplesize="16"
+metadata duration="2.05"
+metadata encoder="Lavf61.7.100"
+metadata filesize="72032"
+metadata framerate="15"
+metadata height="120"
+metadata stereo="false"
+metadata videocodecid="2"
+metadata videodatarate="195.3125"
+metadata width="160"
+track 1 AUDIO MP3 timebase=1/1000 duration=? config=none
+  audio rate=22050 bits=0 skip=0 layout=[FRONT_CENTER]
+track 2 VIDEO FLV1 timebase=1/1000 duration=? config=none
+  video 160x120 orientation=NORMAL rate=15/1
+packets 109
+0 t1 pts=0 dts=0 dur=? flags=KEY size=104 crc=ab91b060
+1 t1 pts=26 dts=26 dur=? flags=KEY size=105 crc=bf02eeef
+2 t2 pts=50 dts=50 dur=67 flags=KEY size=4968 crc=0d746068
+3 t1 pts=52 dts=52 dur=? flags=KEY size=104 crc=a8c0dfcc
+4 t1 pts=78 dts=78 dur=? flags=KEY size=105 crc=cdb4068d
+5 t1 pts=104 dts=104 dur=? flags=KEY size=104 crc=b4db5b63
+6 t2 pts=117 dts=117 dur=67 flags=- size=1683 crc=b0d83014
+7 t1 pts=130 dts=130 dur=? flags=KEY size=105 crc=3cd2d755
+8 t1 pts=157 dts=157 dur=? flags=KEY size=104 crc=8f1ccb0a
+9 t2 pts=183 dts=183 dur=67 flags=- size=1581 crc=742f056f
+10 t1 pts=183 dts=183 dur=? flags=KEY size=105 crc=bfdfd795
+11 t1 pts=209 dts=209 dur=? flags=KEY size=104 crc=cfa2cce0
+12 t1 pts=235 dts=235 dur=? flags=KEY size=105 crc=560f30e1
+13 t2 pts=250 dts=250 dur=67 flags=- size=1745 crc=33ccbb97
+14 t1 pts=261 dts=261 dur=? flags=KEY size=104 crc=f9f9b3bb
+15 t1 pts=287 dts=287 dur=? flags=KEY size=105 crc=f9866dd0
+16 t1 pts=313 dts=313 dur=? flags=KEY size=104 crc=0e0ebe4e
+17 t2 pts=317 dts=317 dur=67 flags=- size=1610 crc=076ea39e
+18 t1 pts=339 dts=339 dur=? flags=KEY size=105 crc=7d23c3c3
+19 t1 pts=366 dts=366 dur=? flags=KEY size=104 crc=b160f543
+20 t2 pts=383 dts=383 dur=67 flags=- size=1890 crc=2c0cd6ab
+21 t1 pts=392 dts=392 dur=? flags=KEY size=105 crc=3a9abab5
+22 t1 pts=418 dts=418 dur=? flags=KEY size=104 crc=b39195a0
+23 t1 pts=444 dts=444 dur=? flags=KEY size=105 crc=df6cab36
+24 t2 pts=450 dts=450 dur=67 flags=- size=1637 crc=0e3834f1
+25 t1 pts=470 dts=470 dur=? flags=KEY size=104 crc=a419eb48
+26 t1 pts=496 dts=496 dur=? flags=KEY size=105 crc=ac26a558
+27 t2 pts=517 dts=517 dur=67 flags=- size=1764 crc=8b74e384
+28 t1 pts=522 dts=522 dur=? flags=KEY size=104 crc=9669389c
+29 t1 pts=548 dts=548 dur=? flags=KEY size=105 crc=d478fb6f
+30 t1 pts=575 dts=575 dur=? flags=KEY size=104 crc=214424d2
+31 t2 pts=583 dts=583 dur=67 flags=- size=1421 crc=309fe413
+32 t1 pts=601 dts=601 dur=? flags=KEY size=105 crc=67e86c67
+33 t1 pts=627 dts=627 dur=? flags=KEY size=104 crc=ba4d7c46
+34 t2 pts=650 dts=650 dur=67 flags=- size=1938 crc=5c1cd5a9
+35 t1 pts=653 dts=653 dur=? flags=KEY size=105 crc=ef5b3cb7
+36 t1 pts=679 dts=679 dur=? flags=KEY size=104 crc=6e3201b4
+37 t1 pts=705 dts=705 dur=? flags=KEY size=105 crc=944516ac
+38 t2 pts=717 dts=717 dur=67 flags=KEY size=5530 crc=9a3861e4
+39 t1 pts=731 dts=731 dur=? flags=KEY size=104 crc=60a287fb
+40 t1 pts=757 dts=757 dur=? flags=KEY size=105 crc=121335b4
+41 t2 pts=783 dts=783 dur=67 flags=- size=2097 crc=9ffc7564
+42 t1 pts=784 dts=784 dur=? flags=KEY size=104 crc=fe143eaa
+43 t1 pts=810 dts=810 dur=? flags=KEY size=105 crc=31d697ac
+44 t1 pts=836 dts=836 dur=? flags=KEY size=104 crc=0bc509b6
+45 t2 pts=850 dts=850 dur=67 flags=- size=1634 crc=5845d102
+46 t1 pts=862 dts=862 dur=? flags=KEY size=105 crc=21fd3e45
+47 t1 pts=888 dts=888 dur=? flags=KEY size=104 crc=6b472f6d
+48 t1 pts=914 dts=914 dur=? flags=KEY size=105 crc=44cd087d
+49 t2 pts=917 dts=917 dur=67 flags=- size=1918 crc=70c661bd
+50 t1 pts=940 dts=940 dur=? flags=KEY size=104 crc=1a077e54
+51 t1 pts=966 dts=966 dur=? flags=KEY size=105 crc=d7ccea3f
+52 t2 pts=983 dts=983 dur=67 flags=- size=1626 crc=638d18e3
+53 t1 pts=993 dts=993 dur=? flags=KEY size=104 crc=f83f969b
+54 t1 pts=1019 dts=1019 dur=? flags=KEY size=105 crc=fd6d49f8
+55 t1 pts=1045 dts=1045 dur=? flags=KEY size=104 crc=b9732c32
+56 t2 pts=1050 dts=1050 dur=67 flags=- size=2096 crc=8ee93acf
+57 t1 pts=1071 dts=1071 dur=? flags=KEY size=105 crc=663c4281
+58 t1 pts=1097 dts=1097 dur=? flags=KEY size=104 crc=f429b82e
+59 t2 pts=1117 dts=1117 dur=67 flags=- size=1706 crc=55c7f52f
+60 t1 pts=1123 dts=1123 dur=? flags=KEY size=105 crc=7359973e
+61 t1 pts=1149 dts=1149 dur=? flags=KEY size=104 crc=f9590bb3
+62 t1 pts=1175 dts=1175 dur=? flags=KEY size=105 crc=43da1c07
+63 t2 pts=1183 dts=1183 dur=67 flags=- size=1316 crc=6d070f2e
+64 t1 pts=1202 dts=1202 dur=? flags=KEY size=104 crc=d268acd6
+65 t1 pts=1228 dts=1228 dur=? flags=KEY size=105 crc=84500ac5
+66 t2 pts=1250 dts=1250 dur=67 flags=- size=1816 crc=b5ce4244
+67 t1 pts=1254 dts=1254 dur=? flags=KEY size=104 crc=ee32fb36
+68 t1 pts=1280 dts=1280 dur=? flags=KEY size=104 crc=4e006cf4
+69 t1 pts=1306 dts=1306 dur=? flags=KEY size=105 crc=da6320e5
+70 t2 pts=1317 dts=1317 dur=67 flags=- size=1329 crc=006e7242
+71 t1 pts=1332 dts=1332 dur=? flags=KEY size=104 crc=0484cb44
+72 t1 pts=1358 dts=1358 dur=? flags=KEY size=105 crc=1ced0392
+73 t2 pts=1383 dts=1383 dur=67 flags=KEY size=5543 crc=465b4bce
+74 t1 pts=1384 dts=1384 dur=? flags=KEY size=104 crc=0ead57b1
+75 t1 pts=1410 dts=1410 dur=? flags=KEY size=105 crc=d22a04f5
+76 t1 pts=1437 dts=1437 dur=? flags=KEY size=104 crc=fad9695f
+77 t2 pts=1450 dts=1450 dur=67 flags=- size=1295 crc=004d8b9d
+78 t1 pts=1463 dts=1463 dur=? flags=KEY size=105 crc=cd8e2133
+79 t1 pts=1489 dts=1489 dur=? flags=KEY size=104 crc=07527384
+80 t1 pts=1515 dts=1515 dur=? flags=KEY size=105 crc=89efd8d7
+81 t2 pts=1517 dts=1517 dur=67 flags=- size=1881 crc=b22e80b5
+82 t1 pts=1541 dts=1541 dur=? flags=KEY size=104 crc=c26a3c27
+83 t1 pts=1567 dts=1567 dur=? flags=KEY size=105 crc=252d36b5
+84 t2 pts=1583 dts=1583 dur=67 flags=- size=1547 crc=0d1344d0
+85 t1 pts=1593 dts=1593 dur=? flags=KEY size=104 crc=1f6eb89d
+86 t1 pts=1619 dts=1619 dur=? flags=KEY size=105 crc=0a0c70bc
+87 t1 pts=1646 dts=1646 dur=? flags=KEY size=104 crc=e3f09764
+88 t2 pts=1650 dts=1650 dur=67 flags=- size=2041 crc=0a301a04
+89 t1 pts=1672 dts=1672 dur=? flags=KEY size=105 crc=bdea4a6a
+90 t1 pts=1698 dts=1698 dur=? flags=KEY size=104 crc=2d7673be
+91 t2 pts=1717 dts=1717 dur=67 flags=- size=1375 crc=b9e43044
+92 t1 pts=1724 dts=1724 dur=? flags=KEY size=105 crc=4e0d8a69
+93 t1 pts=1750 dts=1750 dur=? flags=KEY size=104 crc=d00cfd07
+94 t1 pts=1776 dts=1776 dur=? flags=KEY size=105 crc=0a118357
+95 t2 pts=1783 dts=1783 dur=67 flags=- size=1858 crc=a1598de0
+96 t1 pts=1802 dts=1802 dur=? flags=KEY size=104 crc=ac403d17
+97 t1 pts=1828 dts=1828 dur=? flags=KEY size=105 crc=a916e826
+98 t2 pts=1850 dts=1850 dur=67 flags=- size=1458 crc=9006313f
+99 t1 pts=1855 dts=1855 dur=? flags=KEY size=104 crc=32f2d291
+100 t1 pts=1881 dts=1881 dur=? flags=KEY size=105 crc=5209df68
+101 t1 pts=1907 dts=1907 dur=? flags=KEY size=104 crc=f1837518
+102 t2 pts=1917 dts=1917 dur=67 flags=- size=1738 crc=8241e5a1
+103 t1 pts=1933 dts=1933 dur=? flags=KEY size=105 crc=2743cc7d
+104 t1 pts=1959 dts=1959 dur=? flags=KEY size=104 crc=d2434051
+105 t2 pts=1983 dts=1983 dur=67 flags=- size=1672 crc=abae518b
+106 t1 pts=1985 dts=1985 dur=? flags=KEY size=105 crc=fc14a723
+107 t1 pts=2011 dts=2011 dur=? flags=KEY size=104 crc=e71344fb
+108 t1 pts=2037 dts=2037 dur=? flags=KEY size=105 crc=27058803
+seek 0: t1@0 t2@0
+seek 683333: t1@26 t2@0
+seek 1366666: t1@52 t2@10
+seek 2063000: end
+seek 2050000: t1@78 t2@end
+seek -1000000: t1@0 t2@0

@@ -142,6 +142,28 @@ class ExifWriterTest {
         }
 
         @Test
+        @DisplayName("moves a value that overlaps the header instead of writing the old header back over the new one")
+        void valueOverHeader() {
+            var original = java.nio.ByteBuffer.allocate(56)
+                    .put(new byte[]{'M', 'M', 0, 42}).putInt(8)
+                    .putShort((short) 2)
+                    .putShort((short) ExifData.GPS_IFD_POINTER).putShort((short) 4).putInt(1).putInt(38)
+                    // a private entry whose 38 bytes are the header and IFD0 themselves
+                    .putShort((short) 0xC000).putShort((short) 1).putInt(38).putInt(0)
+                    .putInt(0)
+                    .putShort((short) 1)
+                    .putShort((short) 1).putShort((short) 2).putInt(2).put(new byte[]{'N', 0, 0, 0})
+                    .putInt(0)
+                    .array();
+            var parsed = ExifReader.parse(original);
+            assertTrue(parsed.hasLocation());
+            var read = ExifReader.parse(ExifWriter.rewrite(original, parsed.withoutGps()));
+            assertFalse(read.hasLocation());
+            assertFalse(read.ifd0().containsKey(ExifData.GPS_IFD_POINTER));
+            assertEquals(parsed.ifd0().get(0xC000), read.ifd0().get(0xC000));
+        }
+
+        @Test
         @DisplayName("removes and replaces the thumbnail")
         void thumbnail() {
             var original = ExifWriter.write(sample());
