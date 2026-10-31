@@ -68,6 +68,10 @@ import java.util.Objects;
  *       back there. The descriptive chunks below are read into their keys and rewritten from them;
  *       the ID3v2 chapters take precedence over the cue points and markers;</li>
  *   <li>AVI: the {@code LIST INFO} chunk, which stores no pictures or chapters;</li>
+ *   <li>ASF (WMA, WMV): the Content Description, Extended Content Description, Metadata and Metadata Library
+ *       Objects of the header, under the {@linkplain StandardTag#asfName() ASF attribute names}, pictures in
+ *       {@code WM/Picture} attributes and chapters in the Marker Object (one level, without nesting); a rewrite
+ *       pads the header to its old size when the new tags fit, and otherwise moves the data after it;</li>
  *   <li>MPEG-TS: track tags only (the program map table of the program {@code TsDemuxer} exposes),
  *       so a write holding tags, pictures or chapters for the whole file is rejected; every copy of
  *       the table is rewritten in its own transport packets, and an edit that outgrows them is
@@ -155,8 +159,8 @@ public final class TagEditor {
      * @return {@code true} for {@link ContainerFormat#MPEG_AUDIO}, {@link ContainerFormat#ADTS},
      * {@link ContainerFormat#AC3}, {@link ContainerFormat#AMR}, {@link ContainerFormat#FLAC},
      * {@link ContainerFormat#OGG}, {@link ContainerFormat#MP4}, {@link ContainerFormat#MATROSKA},
-     * {@link ContainerFormat#WAV}, {@link ContainerFormat#AIFF}, {@link ContainerFormat#AVI} and
-     * {@link ContainerFormat#MPEG_TS}, and for a format whose
+     * {@link ContainerFormat#WAV}, {@link ContainerFormat#AIFF}, {@link ContainerFormat#AVI},
+     * {@link ContainerFormat#ASF} and {@link ContainerFormat#MPEG_TS}, and for a format whose
      * {@link com.github.auties00.smalt.spi.ContainerProvider ContainerProvider} edits its tags; {@code false} for
      * {@link ContainerFormat#OTHER}, which names no single container
      */

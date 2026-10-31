@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.metadata;
 
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -15,7 +16,8 @@ import java.util.Set;
  * {@code _} ({@code title}, {@code album_artist}, {@code replaygain_track_gain}, ...), and the native name every
  * tag format stores it under: an ID3v2 frame (or the description of a {@code TXXX} user text frame), a Vorbis
  * comment field, an MP4 {@code ilst} atom (or the name of a free-form {@code ----} item of mean
- * {@code com.apple.iTunes}), a Matroska {@code SimpleTag} name and a RIFF {@code INFO} identifier.
+ * {@code com.apple.iTunes}), a Matroska {@code SimpleTag} name, a RIFF {@code INFO} identifier and an ASF attribute
+ * name.
  * {@link #fromName(String)} recognizes the normalized key and the common native spellings of every format, in any
  * case, so that {@code TIT2}, {@code TITLE}, {@code INAM} and {@code title} all name {@link #TITLE}.
  *
@@ -299,6 +301,11 @@ public enum StandardTag {
     private static final Set<String> SHARED = Set.of("REPLAYGAIN_GAIN", "REPLAYGAIN_PEAK");
 
     /**
+     * The ASF attribute names of the constants that have one.
+     */
+    private static final Map<StandardTag, String> ASF_NAMES = asfNames();
+
+    /**
      * Every constant, keyed by every recognized spelling in upper case.
      */
     private static final Map<String, StandardTag> BY_NAME = byName();
@@ -404,7 +411,59 @@ public enum StandardTag {
                 result.putIfAbsent(alias.toUpperCase(Locale.ROOT), tag);
             }
         }
+        // the ASF names come last: "Title", "Copyright", "Description" and "Rating" already name other constants
+        for (var entry : ASF_NAMES.entrySet()) {
+            result.putIfAbsent(entry.getValue().toUpperCase(Locale.ROOT), entry.getKey());
+        }
+        result.putIfAbsent("WM/TOOLNAME", ENCODER);
         return Map.copyOf(result);
+    }
+
+    /**
+     * Builds the table of ASF attribute names.
+     *
+     * @return the names by constant
+     */
+    private static Map<StandardTag, String> asfNames() {
+        var names = new EnumMap<StandardTag, String>(StandardTag.class);
+        names.put(TITLE, "Title");
+        names.put(ARTIST, "Author");
+        names.put(ALBUM, "WM/AlbumTitle");
+        names.put(ALBUM_ARTIST, "WM/AlbumArtist");
+        names.put(COMPOSER, "WM/Composer");
+        names.put(CONDUCTOR, "WM/Conductor");
+        names.put(LYRICIST, "WM/Writer");
+        names.put(GENRE, "WM/Genre");
+        names.put(DATE, "WM/Year");
+        names.put(TRACK, "WM/TrackNumber");
+        names.put(DISC, "WM/PartOfSet");
+        names.put(COMMENT, "Description");
+        names.put(DESCRIPTION, "WM/SubTitleDescription");
+        names.put(LYRICS, "WM/Lyrics");
+        names.put(COPYRIGHT, "Copyright");
+        names.put(ENCODER, "WM/EncodingSettings");
+        names.put(ENCODED_BY, "WM/EncodedBy");
+        names.put(PUBLISHER, "WM/Publisher");
+        names.put(LANGUAGE, "WM/Language");
+        names.put(GROUPING, "WM/ContentGroupDescription");
+        names.put(COMPILATION, "WM/IsCompilation");
+        names.put(BPM, "WM/BeatsPerMinute");
+        names.put(ISRC, "WM/ISRC");
+        names.put(TITLE_SORT, "WM/TitleSortOrder");
+        names.put(ARTIST_SORT, "WM/ArtistSortOrder");
+        names.put(ALBUM_SORT, "WM/AlbumSortOrder");
+        names.put(ALBUM_ARTIST_SORT, "WM/AlbumArtistSortOrder");
+        names.put(COMPOSER_SORT, "WM/ComposerSortOrder");
+        names.put(MUSICBRAINZ_RECORDING_ID, "MusicBrainz/Track Id");
+        names.put(MUSICBRAINZ_RELEASE_TRACK_ID, "MusicBrainz/Release Track Id");
+        names.put(MUSICBRAINZ_ALBUM_ID, "MusicBrainz/Album Id");
+        names.put(MUSICBRAINZ_ARTIST_ID, "MusicBrainz/Artist Id");
+        names.put(MUSICBRAINZ_ALBUM_ARTIST_ID, "MusicBrainz/Album Artist Id");
+        names.put(MUSICBRAINZ_RELEASE_GROUP_ID, "MusicBrainz/Release Group Id");
+        names.put(MUSICBRAINZ_WORK_ID, "MusicBrainz/Work Id");
+        names.put(MUSICBRAINZ_DISC_ID, "MusicBrainz/Disc Id");
+        names.put(RATING, "Rating");
+        return names;
     }
 
     /**
@@ -484,6 +543,18 @@ public enum StandardTag {
      */
     public Optional<String> riffInfo() {
         return Optional.ofNullable(riffInfo);
+    }
+
+    /**
+     * Returns the ASF attribute name that stores this tag in WMA, WMV and ASF files: a field of the Content
+     * Description Object ({@code Title}, {@code Author}, {@code Copyright}, {@code Description} for
+     * {@link #COMMENT}, {@code Rating}) or the name of a descriptor or metadata record ({@code WM/AlbumTitle},
+     * {@code MusicBrainz/Album Id}, ...).
+     *
+     * @return the attribute name; for a tag ASF names no attribute for, the normalized key
+     */
+    public String asfName() {
+        return ASF_NAMES.getOrDefault(this, key);
     }
 
     /**

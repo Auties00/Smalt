@@ -58,6 +58,7 @@ container.ac3	core
 container.adts	core
 container.aiff	core
 container.amr	core
+container.asf	core
 container.au	core
 container.avi	core
 container.caf	core
@@ -151,6 +152,7 @@ image.webp.internal.color	image
 image.webp.internal.lossless	image
 image.webp.internal.riff	image
 internal.anim	core
+internal.asf	core
 internal.bits	core
 internal.caption	core
 internal.cenc	core

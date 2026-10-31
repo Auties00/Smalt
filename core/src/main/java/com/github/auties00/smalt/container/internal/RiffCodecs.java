@@ -1,16 +1,15 @@
-package com.github.auties00.smalt.container.avi;
+package com.github.auties00.smalt.container.internal;
 
-import com.github.auties00.smalt.container.internal.DvTags;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.VideoTrack;
 
 import java.util.Locale;
 
 /**
- * Maps the video FourCCs of AVI streams to {@link Codec}s and back: the compression FourCC of a
- * {@code BITMAPINFOHEADER}, or the handler FourCC of the stream header.
+ * Maps the video FourCCs of AVI and ASF streams to {@link Codec}s and back: the compression FourCC of a
+ * {@code BITMAPINFOHEADER}, or the handler FourCC of an AVI stream header.
  */
-final class RiffCodecs {
+public final class RiffCodecs {
     private RiffCodecs() {
         throw new AssertionError();
     }
@@ -21,7 +20,7 @@ final class RiffCodecs {
      * @param fourCc the FourCC, any case
      * @return the codec, {@link Codec#UNKNOWN_VIDEO} when unrecognized
      */
-    static Codec video(String fourCc) {
+    public static Codec video(String fourCc) {
         if (DvTags.riff(fourCc)) {
             return Codec.DV;
         }
@@ -60,7 +59,7 @@ final class RiffCodecs {
      * @param codec the video codec
      * @return the FourCC, or {@code null} when AVI cannot carry it
      */
-    static String videoFourCc(Codec codec) {
+    public static String videoFourCc(Codec codec) {
         return switch (codec) {
             case MJPEG -> "MJPG";
             case JPEG2000 -> "MJ2C";
@@ -89,7 +88,7 @@ final class RiffCodecs {
      * @param track the video track
      * @return the FourCC, or {@code null} when AVI cannot carry it
      */
-    static String videoFourCc(VideoTrack track) {
+    public static String videoFourCc(VideoTrack track) {
         return track.codec() == Codec.DV ? DvTags.riffFourCc(track.width()) : videoFourCc(track.codec());
     }
 }

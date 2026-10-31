@@ -118,6 +118,11 @@ class DemuxerFuzzTest {
     }
 
     @FuzzTest
+    void asf(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.ASF, data);
+    }
+
+    @FuzzTest
     void flv(byte[] data) {
         FuzzMedia.demuxer(ContainerFormat.FLV, data);
     }

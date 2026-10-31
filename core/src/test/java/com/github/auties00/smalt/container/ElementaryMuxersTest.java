@@ -323,7 +323,7 @@ class ElementaryMuxersTest {
         void createMuxer() {
             for (var format : ContainerFormat.values()) {
                 if (format != ContainerFormat.VOBSUB && format != ContainerFormat.HLS && format != ContainerFormat.DASH
-                        && format != ContainerFormat.OTHER) {
+                        && format != ContainerFormat.OTHER && format != ContainerFormat.ASF) {
                     assertInstanceOf(Muxer.class, Containers.openMuxer(format, MediaSink.memory()));
                 }
             }

@@ -231,6 +231,9 @@ class FuzzSeedWriter {
                 tone(8000, 0.2)), "-c:v", "mjpeg", "-q:v", "20", "-c:a", "pcm_u8"));
         copy(DemuxerFuzzTest.class, "avi", "valid-mpeg4-mp3.avi", ffmpeg("avi", args(video(32, 32, 2),
                 tone(8000, 0.2)), "-c:v", "mpeg4", "-q:v", "20", "-c:a", "libmp3lame", "-b:a", "8k"));
+        for (var name : List.of("h264-mp3.asf", "mjpeg-pcm.wmv", "wmv3.wmv", "vc1.wmv")) {
+            copy(DemuxerFuzzTest.class, "asf", "valid-" + name, audioSamples.resolve("asf/" + name));
+        }
 
         var ts = ffmpeg("ts", av, "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-b:a", "16k", "-ac", "1");
         copy(DemuxerFuzzTest.class, "mpegTs", "valid-h264-aac.ts", ts);
@@ -269,6 +272,8 @@ class FuzzSeedWriter {
         copy(TagFuzzTest.class, "tags", "valid-vp9-opus-srt.mkv", mkv);
         copy(TagFuzzTest.class, "tags", "valid-mpeg4-mp3.avi", ffmpeg("avi", args(video(32, 32, 2),
                 tone(8000, 0.2)), "-c:v", "mpeg4", "-q:v", "20", "-c:a", "libmp3lame", "-b:a", "8k"));
+        copy(TagFuzzTest.class, "tags", "valid-mjpeg-pcm.wmv", Path.of("src", "test", "resources", "samples", "asf",
+                "mjpeg-pcm.wmv"));
         var taggedAmr = withTags(Files.readAllBytes(ffmpeg("amr", tone(8000, 0.2), "-c:a", "libopencore_amrnb",
                 "-ar", "8000")));
         write(TagFuzzTest.class, "tags", "valid-nb-id3.amr", taggedAmr);

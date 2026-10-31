@@ -14,7 +14,7 @@ set -euo pipefail
 
 here="$(dirname "$0")"
 out="${1:-core/src/test/resources/samples}"
-mkdir -p "$out"/{mp4,matroska,ts,avi}
+mkdir -p "$out"/{mp4,matroska,ts,avi,asf}
 
 ff() {
     ffmpeg -hide_banner -loglevel error -y -bitexact "$@"
@@ -24,3 +24,5 @@ ff -f vc1 -r 25 -i "$here/vc1/advanced.vc1" -c copy -f mpegts "$out/ts/vc1.ts"
 ff -f vc1 -r 25 -i "$here/vc1/advanced.vc1" -c copy "$out/mp4/vc1.mp4"
 ff -i "$here/vc1/simple.rcv" -c copy "$out/avi/wmv3.avi"
 ff -i "$here/vc1/simple.rcv" -c copy "$out/matroska/wmv3.mkv"
+ff -i "$here/vc1/simple.rcv" -c copy -f asf "$out/asf/wmv3.wmv"
+ff -f vc1 -r 25 -i "$here/vc1/advanced.vc1" -c copy -f asf "$out/asf/vc1.wmv"

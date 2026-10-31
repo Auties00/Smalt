@@ -12,6 +12,10 @@ core/src/test/resources/samples/amr/nb-tags.amr	3496	f988b6243a86c13a5cb39cb622b
 core/src/test/resources/samples/amr/nb.amr	3238	5230e69f4b53d1e3508f7833241f30688da4703c9452aa576c2f636ade80fd3d	make-samples.sh
 core/src/test/resources/samples/amr/wb-3ch.awb	18319	d4ba98ff4315a67df08b4ff23e2555941bcb9d358df89aa75c826c237aa75ad6	make-amr-mc-samples.py
 core/src/test/resources/samples/amr/wb.awb	6109	ccfea779b46271014282f1f88f9342071ec30b4088977745a6a347b797219f9e	make-samples.sh
+core/src/test/resources/samples/asf/h264-mp3.asf	45702	58c95e224a232124c8a152dad5f50f103f221016fa236306704f69f10ea9e1fc	make-samples.sh
+core/src/test/resources/samples/asf/mjpeg-pcm.wmv	23437	871a84d12ea761cd5492d44294a646b849418c53aa0399532e0cded8c8fb530e	make-samples.sh
+core/src/test/resources/samples/asf/vc1.wmv	3825	c89f24422169ca59424214f7582fb2823f0f99cf7b1dc5a0d33740a0616d5452	make-vc1-samples.sh
+core/src/test/resources/samples/asf/wmv3.wmv	3873	68cf425374d3575aca9e07f6fa9e2b4ea0cefa54c071851b5ee499a2bb06adbf	make-vc1-samples.sh
 core/src/test/resources/samples/au/g721.au	2432	9815aca448ce0fa3fd35f4a371a3c0233a769ce69f70968a9fc984ccce43602d	make-audio-container-samples.py
 core/src/test/resources/samples/au/g723-3.au	1832	5acf199f0a4b7ff9f3dc89317cb68a9165bedd2305e5f93294ec7f228dcfab58	make-audio-container-samples.py
 core/src/test/resources/samples/au/mulaw.au	4832	080f519b23bd334a3e370483e6bb5c1311a16d87f0c287179b493f8f0886043c	make-audio-container-samples.py

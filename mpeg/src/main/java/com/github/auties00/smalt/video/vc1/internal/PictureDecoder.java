@@ -1045,7 +1045,7 @@ final class PictureDecoder {
         var aAvailable = aIndex >= 0 && (intraPicture || state.intra[aIndex]);
         var cAvailable = cIndex >= 0 && (intraPicture || state.intra[cIndex]);
         var bAvailable = bIndex >= 0 && (intraPicture || state.intra[bIndex]);
-        var scale = advanced;
+        var scale = advanced || !intraPicture;
         var dcA = aAvailable ? scaledDc(state, aIndex, dcStep, scale) : 0;
         var dcC = cAvailable ? scaledDc(state, cIndex, dcStep, scale) : 0;
         var dcB = bAvailable ? scaledDc(state, bIndex, dcStep, scale) : 0;
@@ -1147,7 +1147,7 @@ final class PictureDecoder {
 
     /**
      * Returns the quantized DC of a predictor block, scaled to the step of the current block in the advanced profile
-     * (section 8.1.3.9).
+     * and in the P and B pictures of every profile (sections 8.1.3.9 and 8.3.6.1).
      *
      * @param state the plane
      * @param index the predictor block

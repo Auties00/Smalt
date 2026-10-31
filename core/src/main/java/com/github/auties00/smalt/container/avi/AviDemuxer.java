@@ -9,6 +9,7 @@ import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.container.internal.AdpcmBlocks;
 import com.github.auties00.smalt.container.internal.DifAudioTracks;
 import com.github.auties00.smalt.container.internal.RawVideoTags;
+import com.github.auties00.smalt.container.internal.RiffCodecs;
 import com.github.auties00.smalt.container.internal.SeekTimes;
 import com.github.auties00.smalt.container.internal.WaveFormat;
 import com.github.auties00.smalt.internal.codec.IntermediateFrames;

@@ -14,6 +14,7 @@ import com.github.auties00.smalt.container.aiff.AiffMuxer;
 import com.github.auties00.smalt.container.au.AuDemuxer;
 import com.github.auties00.smalt.container.au.AuMuxer;
 import com.github.auties00.smalt.container.amr.AmrDemuxer;
+import com.github.auties00.smalt.container.asf.AsfDemuxer;
 import com.github.auties00.smalt.container.avi.AviDemuxer;
 import com.github.auties00.smalt.container.avi.AviMuxer;
 import com.github.auties00.smalt.container.flv.FlvDemuxer;
@@ -112,8 +113,8 @@ import java.util.function.Predicate;
  *
  * <p>Recognition never trusts a file name or a declared mimetype: it inspects the leading bytes,
  * skipping an ID3v2 tag first because MP3, AAC, AC-3, AMR and FLAC files often start with one. Formats with a
- * magic number (MP4 family, Matroska, Ogg, RIFF WAVE, Sony Wave64, RIFF AVI, FLV, AIFF, CAF, Sun AU, ADIF, FLAC, AMR,
- * WavPack, MXF, YUV4MPEG2, the {@code "PG"} segments of a {@code .sup} file, the signature line of a VobSub index)
+ * magic number (MP4 family, Matroska, Ogg, RIFF WAVE, Sony Wave64, RIFF AVI, ASF, FLV, AIFF, CAF, Sun AU, ADIF, FLAC,
+ * AMR, WavPack, MXF, YUV4MPEG2, the {@code "PG"} segments of a {@code .sup} file, the signature line of a VobSub index)
  * are recognized exactly, a raw DV stream by the block IDs of the first blocks of its first DIF sequence, a VobSub
  * {@code .sub} file by a pack header followed by a subpicture PES packet, other
  * MPEG program streams by their first pack header, MPEG transport streams by
@@ -463,6 +464,7 @@ public final class Containers {
                 yield new VobSubDemuxer(source, options);
             }
             case AVI -> new AviDemuxer(source, options);
+            case ASF -> new AsfDemuxer(source, options);
             case FLV -> new FlvDemuxer(source, options);
             case HLS -> new HlsDemuxer(source, options);
             case DASH -> new DashDemuxer(source, options);
@@ -840,6 +842,9 @@ public final class Containers {
         }
         if (FlvDemuxer.matches(header)) {
             return ContainerFormat.FLV;
+        }
+        if (AsfDemuxer.matches(header)) {
+            return ContainerFormat.ASF;
         }
         if (SupDemuxer.matches(header)) {
             return ContainerFormat.SUP;

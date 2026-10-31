@@ -30,8 +30,8 @@ public final class TagFiles {
      * Returns whether tags of a container format can be read and written.
      *
      * @param format the container format
-     * @return {@code true} for MP3, ADTS, raw AC-3 and E-AC-3, AMR, FLAC, Ogg, MP4, Matroska, WAV, AIFF, AVI and
-     * MPEG-TS, and for a format a provider edits the tags of; {@code false} for {@link ContainerFormat#OTHER}
+     * @return {@code true} for MP3, ADTS, raw AC-3 and E-AC-3, AMR, FLAC, Ogg, MP4, Matroska, WAV, AIFF, AVI, ASF
+     * and MPEG-TS, and for a format a provider edits the tags of; {@code false} for {@link ContainerFormat#OTHER}
      */
     public static boolean isSupported(ContainerFormat format) {
         return OPENERS.containsKey(format)
@@ -142,6 +142,7 @@ public final class TagFiles {
         openers.put(ContainerFormat.WAV, RiffTagFile::new);
         openers.put(ContainerFormat.AIFF, RiffTagFile::new);
         openers.put(ContainerFormat.AVI, AviTagFile::new);
+        openers.put(ContainerFormat.ASF, AsfTagFile::new);
         openers.put(ContainerFormat.MPEG_TS, TsTagFile::new);
         return Collections.unmodifiableMap(openers);
     }

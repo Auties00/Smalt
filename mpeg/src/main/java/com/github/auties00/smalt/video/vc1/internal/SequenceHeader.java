@@ -211,7 +211,7 @@ final class SequenceHeader {
      *
      * @param bits the reader, at the structure
      * @throws MediaException.Unsupported if the profile is 2, the Windows Media Video 9 complex profile that SMPTE ST
-     * 421 reserves
+     * 421 reserves, or Reserved6 is 0, which marks the bitstream of a pre-release Windows Media Video 9 encoder
      * @throws MediaException.Malformed if a field takes a reserved value
      */
     void parseStructC(Bits bits) {
@@ -241,6 +241,11 @@ final class SequenceHeader {
         maxBFrames = bits.read(3);
         quantizer = bits.read(2);
         frameInterpolationFlag = bits.readFlag();
+        if (!bits.readFlag()) {
+            // TODO: decode the syntax of pre-release Windows Media Video 9 encoders, which no specification describes
+            throw new MediaException.Unsupported("vc-1 pre-release bitstream", "Windows Media Video 9 bitstream of a"
+                    + " pre-release encoder (STRUCT_C Reserved6 is 0, which SMPTE ST 421 Annex J forbids)");
+        }
         if (dquant > 2) {
             throw new MediaException.Malformed("reserved VC-1 DQUANT value " + dquant);
         }

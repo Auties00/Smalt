@@ -8,7 +8,7 @@
 set -euo pipefail
 
 out="${1:-core/src/test/resources/samples}"
-mkdir -p "$out"/{mp4,matroska,ogg,ts,ps,avi,wav,aiff,mp3,adts,amr,ac3,dts,ivf,flac,subtitle,elementary,y4m,rawvideo}
+mkdir -p "$out"/{mp4,matroska,ogg,ts,ps,avi,asf,wav,aiff,mp3,adts,amr,ac3,dts,ivf,flac,subtitle,elementary,y4m,rawvideo}
 
 ff() {
     ffmpeg -hide_banner -loglevel error -y -bitexact "$@"
@@ -91,6 +91,11 @@ ff -f lavfi -i "$video" -f lavfi -i "$tone" -c:v mpeg4 -q:v 8 -g 10 -bf 0 -c:a l
     "$out/avi/mpeg4-mp3.avi"
 ff -f lavfi -i "$video" -f lavfi -i "$tone" -c:v mjpeg -q:v 10 -c:a pcm_s16le -ac 1 -ar 8000 -shortest \
     "$out/avi/mjpeg-pcm.avi"
+ff -f lavfi -i "$video" -f lavfi -i "$tone" "${x264[@]}" -c:a libmp3lame -b:a 32k -ac 1 -shortest -f asf \
+    "$out/asf/h264-mp3.asf"
+ff -f lavfi -i "testsrc2=size=64x48:rate=15:duration=1" -f lavfi -i "$short" -c:v mjpeg -q:v 10 -c:a pcm_s16le \
+    -ac 1 -ar 8000 -shortest -metadata title=Behavior -metadata artist=Smalt -metadata album=Samples -f asf \
+    "$out/asf/mjpeg-pcm.wmv"
 
 ff -f lavfi -i "$short" -c:a pcm_s16le -ac 2 "$out/wav/s16.wav"
 ff -f lavfi -i "$tone" -c:a pcm_f32le -ac 1 -ar 8000 "$out/wav/f32.wav"

@@ -61,7 +61,8 @@ def generator(root, relative):
         return "make-samples.sh, make-bitmap-caption-samples.py"
     if relative.startswith("mxf/"):
         return "make-mxf-samples.sh"
-    if relative in ("ts/vc1.ts", "mp4/vc1.mp4", "avi/wmv3.avi", "matroska/wmv3.mkv"):
+    if relative in ("ts/vc1.ts", "mp4/vc1.mp4", "avi/wmv3.avi", "matroska/wmv3.mkv", "asf/wmv3.wmv",
+                    "asf/vc1.wmv"):
         return "make-vc1-samples.sh"
     if relative in ("mp4/png-rgba.mov", "mp4/tiff.mov", "mp4/gif.mov", "mp4/qtrle-argb.mov", "mp4/cfhd.mov",
                     "mp4/hap-alpha.mov", "avi/png.avi", "avi/cfhd.avi", "avi/hap-q.avi", "matroska/png.mkv",

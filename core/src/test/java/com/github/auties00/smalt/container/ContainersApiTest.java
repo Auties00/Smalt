@@ -166,6 +166,14 @@ class ContainersApiTest {
                 assertThrows(IllegalArgumentException.class, () -> Containers.openMuxer(format, MediaSink.memory()));
                 return;
             }
+            if (format == ContainerFormat.ASF) {
+                // core reads ASF files and writes none; a provider may add a muxer
+                var failure = assertThrows(MediaException.Unsupported.class,
+                        () -> Containers.openMuxer(format, MediaSink.memory()));
+                assertEquals("asf", failure.format());
+                assertFalse(Containers.isMuxable(format, Codec.VC1));
+                return;
+            }
             try (var muxer = Containers.openMuxer(format, MediaSink.memory())) {
                 assertNotNull(muxer);
             }

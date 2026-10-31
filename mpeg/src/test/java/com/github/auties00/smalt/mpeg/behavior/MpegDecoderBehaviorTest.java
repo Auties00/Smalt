@@ -46,7 +46,8 @@ class MpegDecoderBehaviorTest {
             "mp4/h264-444.mp4", "ts/h264-aac.ts", "avi/mpeg4-mp3.avi", "mp4/h263-amr.3gp", "mp4/quicktime.mov",
             "mp4/dolby-vision-p84.mp4", "matroska/dolby-vision-p84.mkv", "ts/dolby-vision-p84.ts", "ts/mpeg2.ts",
             "mp4/mpeg2.mp4", "matroska/mpeg1.mkv", "avi/mpeg2-422.avi", "ts/vc1.ts", "mp4/vc1.mp4", "avi/wmv3.avi",
-            "matroska/wmv3.mkv", "flv/flv1-mp3.flv", "flv/h264-aac.flv", "flv/hevc.flv"})
+            "matroska/wmv3.mkv", "asf/wmv3.wmv", "asf/vc1.wmv", "asf/h264-mp3.asf", "flv/flv1-mp3.flv",
+            "flv/h264-aac.flv", "flv/hevc.flv"})
     @DisplayName("video samples: identical frames under every source behavior and clean faults")
     void video(String sample) throws IOException {
         ReaderAsserts.video(sample, Files.readAllBytes(SAMPLES.resolve(sample))).run();

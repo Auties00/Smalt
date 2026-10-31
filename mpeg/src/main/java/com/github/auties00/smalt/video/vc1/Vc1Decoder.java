@@ -53,10 +53,12 @@ import java.util.function.Consumer;
  *
  * <p>Interlaced frames are output as frames whose two fields are interleaved, the top field on the even rows; the
  * field order is in {@link FrameSideData}. A sequence header declaring a color-difference format other than 4:2:0,
- * and a STRUCT_C of the Windows Media Video 9 complex profile (profile 2, which SMPTE ST 421 reserves), raise
- * {@link MediaException.Unsupported}. A corrupt picture raises {@link MediaException.Malformed} after the
- * frames due were handed out, and its frame is still output with the macroblocks decoded until the error; P pictures
- * without a reference frame, and B pictures without both anchors or after a broken link, produce no frame.
+ * a STRUCT_C of the Windows Media Video 9 complex profile (profile 2, which SMPTE ST 421 reserves), and a STRUCT_C
+ * whose Reserved6 bit is 0 (written by pre-release Windows Media Video 9 encoders, which SMPTE ST 421 Annex J
+ * forbids) raise {@link MediaException.Unsupported}. A corrupt picture raises {@link MediaException.Malformed}
+ * after the frames due were handed out, and its frame is still output with the macroblocks decoded until the error;
+ * P pictures without a reference frame, and B pictures without both anchors or after a broken link, produce no
+ * frame.
  *
  * <p>Instances are not thread-safe.
  *
@@ -93,8 +95,8 @@ public final class Vc1Decoder implements VideoDecoder {
      * @param track the track to decode
      * @throws IllegalArgumentException if the track is not a VC-1 track
      * @throws MediaException.Malformed if the track's configuration is corrupt
-     * @throws MediaException.Unsupported if the configuration declares a color-difference format other than 4:2:0, or
-     * the Windows Media Video 9 complex profile
+     * @throws MediaException.Unsupported if the configuration declares a color-difference format other than 4:2:0,
+     * the Windows Media Video 9 complex profile, or the bitstream of a pre-release Windows Media Video 9 encoder
      * @throws MediaException.LimitExceeded if the picture size exceeds the default limits
      */
     public Vc1Decoder(VideoTrack track) {
@@ -111,8 +113,8 @@ public final class Vc1Decoder implements VideoDecoder {
      * @param options the decoder settings
      * @throws IllegalArgumentException if the track is not a VC-1 track
      * @throws MediaException.Malformed if the track's configuration is corrupt
-     * @throws MediaException.Unsupported if the configuration declares a color-difference format other than 4:2:0, or
-     * the Windows Media Video 9 complex profile
+     * @throws MediaException.Unsupported if the configuration declares a color-difference format other than 4:2:0,
+     * the Windows Media Video 9 complex profile, or the bitstream of a pre-release Windows Media Video 9 encoder
      * @throws MediaException.LimitExceeded if the picture size exceeds the limits
      */
     public Vc1Decoder(VideoTrack track, VideoDecoderOptions options) {

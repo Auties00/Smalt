@@ -99,6 +99,12 @@ public enum ContainerFormat {
     AVI,
 
     /**
+     * Advanced Systems Format ({@code .asf}, {@code .wmv}, {@code .wma}), the container of Windows Media: a Header
+     * Object, magic {@code 30 26 B2 75 8E 66 CF 11 A6 D9 00 AA 00 62 CE 6C}.
+     */
+    ASF,
+
+    /**
      * Flash Video ({@code .flv}), magic {@code FLV}, with the Enhanced RTMP extensions (FourCC codecs, multitrack).
      */
     FLV,

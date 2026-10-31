@@ -117,6 +117,15 @@ class ContainerBombTest {
                     le16(data, strf + 12, 200);
                     return data;
                 }),
+                new Input("ASF", () -> {
+                    var data = asf();
+                    // the WAVEFORMATEX follows the 54 fixed bytes of the audio stream properties body
+                    var format = indexOf(data, ASF_AUDIO_MEDIA, 30) + 54;
+                    le16(data, format + 2, 100);
+                    le32(data, format + 8, SAMPLE_RATE * 200L);
+                    le16(data, format + 12, 200);
+                    return data;
+                }),
                 new Input("MP4", () -> {
                     var data = pcm(ContainerFormat.MP4, Codec.PCM_S16LE);
                     var entry = sampleEntry(data);
@@ -265,6 +274,27 @@ class ContainerBombTest {
                     le32(data, index + 4, 0x7FFF_FFF0L);
                     return data;
                 })),
+                Arguments.of(new Input("ASF header object of 2^40 bytes", () -> {
+                    var data = asf();
+                    le32(data, 16, 0);
+                    le32(data, 20, 0x100);
+                    return data;
+                })),
+                Arguments.of(new Input("ASF data packets of 16 MB", () -> {
+                    var data = asf();
+                    var properties = indexOf(data, ASF_FILE_PROPERTIES, 30) + 24;
+                    le32(data, properties + 68, 16L << 20);
+                    le32(data, properties + 72, 16L << 20);
+                    return data;
+                })),
+                Arguments.of(new Input("ASF descriptor of 64 KB in a short header", () -> {
+                    var data = asf();
+                    var descriptors = indexOf(data, ASF_EXTENDED_CONTENT, 30) + 24;
+                    // the first descriptor's name length, then a value length past the object
+                    var name = (data[descriptors + 2] & 0xFF) | (data[descriptors + 3] & 0xFF) << 8;
+                    le16(data, descriptors + 4 + name + 2, 0xFFFF);
+                    return data;
+                })),
                 Arguments.of(new Input("Ogg packet continued over 100 pages", ContainerBombTest::endlessOgg)),
                 Arguments.of(new Input("MPEG-TS PES of unbounded length over 40000 packets",
                         ContainerBombTest::endlessTs)),
@@ -387,6 +417,28 @@ class ContainerBombTest {
         if (allocated > MAX_ALLOCATION + 3 * inputLength) {
             throw new AssertionError(what + " allocated " + (allocated >> 20) + " MiB"
                     + (failure[0] != null ? " before throwing " + failure[0] : ""));
+        }
+    }
+
+    /** The GUID of the ASF audio media stream type, as a file stores it. */
+    private static final byte[] ASF_AUDIO_MEDIA = {0x40, (byte) 0x9E, 0x69, (byte) 0xF8, 0x4D, 0x5B, (byte) 0xCF, 0x11,
+            (byte) 0xA8, (byte) 0xFD, 0x00, (byte) 0x80, 0x5F, 0x5C, 0x44, 0x2B};
+
+    /** The GUID of the ASF File Properties Object, as a file stores it. */
+    private static final byte[] ASF_FILE_PROPERTIES = {(byte) 0xA1, (byte) 0xDC, (byte) 0xAB, (byte) 0x8C, 0x47,
+            (byte) 0xA9, (byte) 0xCF, 0x11, (byte) 0x8E, (byte) 0xE4, 0x00, (byte) 0xC0, 0x0C, 0x20, 0x53, 0x65};
+
+    /** The GUID of the ASF Extended Content Description Object, as a file stores it. */
+    private static final byte[] ASF_EXTENDED_CONTENT = {0x40, (byte) 0xA4, (byte) 0xD0, (byte) 0xD2, 0x07, (byte) 0xE3,
+            (byte) 0xD2, 0x11, (byte) 0x97, (byte) 0xF0, 0x00, (byte) 0xA0, (byte) 0xC9, 0x5E, (byte) 0xA8, 0x50};
+
+    /** Returns the ASF behavior sample of core: Motion JPEG and PCM written by ffmpeg, with tags. */
+    static byte[] asf() {
+        try {
+            return java.nio.file.Files.readAllBytes(java.nio.file.Path.of("..", "core", "src", "test", "resources",
+                    "samples", "asf", "mjpeg-pcm.wmv"));
+        } catch (java.io.IOException exception) {
+            throw new java.io.UncheckedIOException(exception);
         }
     }
 
