@@ -30,10 +30,10 @@ public abstract class CdefDsp {
     static final CdefDsp SCALAR = new ScalarCdefDsp();
 
     /**
-     * The implementation every frame uses: {@link VectorCdefDsp} when
-     * {@link Simd#ENABLED}, {@link #SCALAR} otherwise.
+     * The implementation every frame uses: {@link VectorCdefDsp}, written for 256-bit vectors, when
+     * {@link Simd#WIDE}, {@link #SCALAR} otherwise.
      */
-    private static final CdefDsp FIXED = Simd.ENABLED ? VectorCdefDsp.create() : SCALAR;
+    private static final CdefDsp FIXED = Simd.WIDE ? VectorCdefDsp.create() : SCALAR;
 
     /**
      * The edge flag telling that the two columns left of the block exist ({@code CDEF_HAVE_LEFT}).

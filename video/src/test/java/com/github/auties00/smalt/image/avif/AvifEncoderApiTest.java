@@ -4,9 +4,12 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.io.MediaSink;
+import com.github.auties00.smalt.io.MediaSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
@@ -122,6 +125,17 @@ class AvifEncoderApiTest {
             assertArrayEquals(encode(options), encode(options.toBuilder().threads(0).build()));
         }
 
+        @ParameterizedTest(name = "{0} plays")
+        @ValueSource(ints = {0, 1, 2, 5})
+        @DisplayName("keeps the loop count, which the decoder reads back")
+        void loops(int loops) throws Exception {
+            var file = encode(AvifEncoderOptions.lossy(50).toBuilder().speed(10).threads(1).loopCount(loops).build());
+            try (var reader = AvifDecoder.openAnimation(MediaSource.of(file))) {
+                assertEquals(loops, reader.loopCount());
+                assertEquals(3, reader.frameCount());
+            }
+        }
+
         @Test
         @DisplayName("rejects an empty canvas and a canvas over the limits")
         void rejects() {
@@ -132,5 +146,25 @@ class AvifEncoderApiTest {
                     () -> AvifEncoder.openAnimationWriter(MediaLimits.DEFAULT.maxDimension() + 1, 48,
                             AvifEncoderOptions.defaults(), sink));
         }
+    }
+
+    @Test
+    @DisplayName("channel pictures are coded as their RGBA conversion of their own depth")
+    void channelPictures() {
+        var cmyk = com.github.auties00.smalt.image.Channel8Picture.allocate(24, 16,
+                com.github.auties00.smalt.image.PixelLayout.CMYK);
+        var deep = com.github.auties00.smalt.image.Channel16Picture.allocate(24, 16,
+                com.github.auties00.smalt.image.PixelLayout.CMYKA);
+        for (var i = 0; i < cmyk.pixels().length; i++) {
+            cmyk.pixels()[i] = (byte) (i * 7);
+        }
+        for (var i = 0; i < deep.pixels().length; i++) {
+            deep.pixels()[i] = (short) (i * 977);
+        }
+        var options = AvifEncoderOptions.lossless();
+        assertArrayEquals(AvifEncoder.encode(com.github.auties00.smalt.image.ops.ImageOps.toRgba(cmyk), options),
+                AvifEncoder.encode(cmyk, options));
+        assertArrayEquals(AvifEncoder.encode(com.github.auties00.smalt.image.ops.ImageOps.toRgba16(deep), options),
+                AvifEncoder.encode(deep, options));
     }
 }

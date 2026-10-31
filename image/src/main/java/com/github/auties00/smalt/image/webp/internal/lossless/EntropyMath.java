@@ -190,7 +190,7 @@ public final class EntropyMath {
             }
             return log2;
         }
-        return (int) (LOG_2_RECIPROCAL_FIXED_DOUBLE * Math.log(v & 0xFFFFFFFFL) + 0.5);
+        return (int) (LOG_2_RECIPROCAL_FIXED_DOUBLE * StrictMath.log(v & 0xFFFFFFFFL) + 0.5);
     }
 
     /**
@@ -212,7 +212,7 @@ public final class EntropyMath {
             return origV * (LOG2[v] + ((long) logCnt << LOG_2_PRECISION_BITS)) + correction;
         }
         var value = v & 0xFFFFFFFFL;
-        return (long) (LOG_2_RECIPROCAL_FIXED_DOUBLE * value * Math.log(value) + 0.5);
+        return (long) (LOG_2_RECIPROCAL_FIXED_DOUBLE * value * StrictMath.log(value) + 0.5);
     }
 
     /**
