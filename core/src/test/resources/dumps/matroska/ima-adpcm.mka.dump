@@ -1,0 +1,19 @@
+# demux dump of matroska/ima-adpcm.mka; regenerate with -Dsmalt.test.updateDumps=true
+format MATROSKA
+duration 600000
+seekable true
+metadata ENCODER="Lavf61.7.100"
+track 1 AUDIO ADPCM_IMA_WAV timebase=1/8000 duration=4800 config=none
+  audio rate=8000 bits=4 skip=0 layout=[FRONT_CENTER]
+  metadata DURATION="00:00:00.600000000"
+  metadata ENCODER="Lavc61.19.100 adpcm_ima_wav"
+packets 3
+0 t1 pts=0 dts=0 dur=? flags=KEY size=1024 crc=226a10aa
+1 t1 pts=2040 dts=2040 dur=? flags=KEY size=1024 crc=a85d89bf
+2 t1 pts=4080 dts=4080 dur=? flags=KEY size=1024 crc=bb67e06c
+seek 0: t1@0
+seek 200000: t1@0
+seek 400000: t1@1
+seek 765000: end
+seek 600000: t1@2
+seek -1000000: t1@0

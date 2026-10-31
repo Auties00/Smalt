@@ -1,0 +1,16 @@
+# video decode dump of avi/ffv1.avi; regenerate with -Dsmalt.test.updateDumps=true
+format AVI
+duration 600000
+seekable true
+track 1 FFV1 96x64 timebase=1/10
+0 pts=0 dur=1 key=true 96x64 yuv8 YUV444 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=7ab55dd2 u=818f4ac9 v=5b8980db
+1 pts=1 dur=1 key=false 96x64 yuv8 YUV444 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=7dcd2b07 u=78dff642 v=1c36f21b
+2 pts=2 dur=1 key=false 96x64 yuv8 YUV444 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=45fc2247 u=c2dd9369 v=6551b5da
+3 pts=3 dur=1 key=true 96x64 yuv8 YUV444 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=59fc8ec9 u=65c9457b v=627138d5
+4 pts=4 dur=1 key=false 96x64 yuv8 YUV444 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=b65a379a u=3100fa03 v=ee81b64d
+5 pts=5 dur=1 key=false 96x64 yuv8 YUV444 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=cc2174ee u=36a5f72c v=389cd078
+seek 0: @0
+seek 200000: @2
+seek 400000: @4
+seek 600000: end
+seek -1000000: @0

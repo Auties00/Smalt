@@ -3,14 +3,22 @@ package com.github.auties00.smalt.container.amr;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.container.DemuxerOptions;
-import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.container.ContainerFormat;
+import com.github.auties00.smalt.container.AttachedPicture;
+import com.github.auties00.smalt.container.Chapter;
 import com.github.auties00.smalt.container.Demuxer;
+import com.github.auties00.smalt.container.internal.Annotations;
+import com.github.auties00.smalt.container.mpeg.internal.Id3v2;
+import com.github.auties00.smalt.container.mpeg.internal.TrailingTags;
+import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.container.internal.SeekIndex;
 import com.github.auties00.smalt.internal.codec.AmrConfigs;
 import com.github.auties00.smalt.internal.io.ForwardOnlySource;
 import com.github.auties00.smalt.internal.io.SegmentBacked;
+import com.github.auties00.smalt.internal.io.SlicedSource;
 import com.github.auties00.smalt.internal.io.SourceReader;
+import com.github.auties00.smalt.internal.tags.Id3v2Tag;
+import com.github.auties00.smalt.internal.tags.TagIo;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -19,21 +27,53 @@ import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
 
 import java.util.ArrayDeque;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
 /**
  * Reads AMR storage files as defined by RFC 4867 section 5: the magic {@code "#!AMR\n"}
- * (AMR-NB, 8 kHz) or {@code "#!AMR-WB\n"} (AMR-WB, 16 kHz) followed by speech frames.
+ * (AMR-NB, 8 kHz) or {@code "#!AMR-WB\n"} (AMR-WB, 16 kHz) followed by speech frames, or the
+ * multichannel magic {@code "#!AMR_MC1.0\n"} or {@code "#!AMR-WB_MC1.0\n"} and a 32-bit channel
+ * description followed by frame-blocks.
  *
  * <p>Every frame is a one-byte header ({@code P FT(4) Q P(2)}) followed by the frame's class
  * A/B/C bits packed into the number of bytes 3GPP TS 26.101 (AMR-NB) and TS 26.201 (AMR-WB)
- * assign to its frame type. Each packet carries exactly one frame, header byte included, lasts
- * 20 ms (160 samples at 8 kHz or 320 at 16 kHz), and is timestamped in samples. The multichannel
- * variants ({@code "#!AMR_MC1.0\n"}, {@code "#!AMR-WB_MC1.0\n"}) raise
- * {@link MediaException.Unsupported}. Frames of a reserved type carry no speech bits and are
- * returned as their bare header byte; a frame cut short by the end of the file is dropped.
+ * assign to its frame type. Each packet carries exactly one frame of a single-channel file, or one
+ * frame-block of a multichannel file (one frame per channel, channel 1 first), header bytes
+ * included; it lasts 20 ms (160 samples at 8 kHz or 320 at 16 kHz) and is timestamped in samples.
+ * Frames of a reserved type carry no speech bits and are returned as their bare header byte; a
+ * frame or frame-block cut short by the end of the file is dropped.
+ *
+ * <p>The channel count of a multichannel file is the low 4 bits of its channel description, from
+ * 1 to 15 (0 is malformed); the reserved bits are ignored. The track layout follows the channel
+ * order of RFC 3551 section 4.1:
+ * <table class="striped">
+ * <caption>Channel layouts of multichannel files</caption>
+ * <thead><tr><th scope="col">Channels</th><th scope="col">Speakers, in channel order</th></tr></thead>
+ * <tbody>
+ * <tr><td>1</td><td>front center</td></tr>
+ * <tr><td>2</td><td>front left, front right</td></tr>
+ * <tr><td>3</td><td>front left, front right, front center</td></tr>
+ * <tr><td>4</td><td>front left, front center, front right, back center</td></tr>
+ * <tr><td>5</td><td>front left, front right, front center, back left, back right</td></tr>
+ * <tr><td>6</td><td>front left, front left of center, front center, front right, front right of
+ * center, back center</td></tr>
+ * <tr><td>7 to 15</td><td>{@link com.github.auties00.smalt.audio.Speaker#UNKNOWN unknown}</td></tr>
+ * </tbody>
+ * </table>
+ *
+ * <p>The file may start with ID3v2 tags and end with ID3v1, APE, Lyrics3 or appended ID3v2 tags,
+ * which are excluded from the audio. The text frames of the ID3v2 tags become {@link #metadata()}
+ * and their pictures and chapters {@link #attachedPictures()} and {@link #chapters()}; an ID3v2.4
+ * tag appended after the audio or located by a {@code SEEK} frame replaces what the tags before it
+ * gave, or only what it holds when flagged as an update (ID3v2.4 section 5). The APE tag and then
+ * the ID3v1 tag add the fields still missing, APE cover art counting only when no ID3v2 tag holds
+ * a picture. When the end of the input cannot be read ahead of the frames (an unknown size, or a
+ * source that is not cheap to reach there), the trailing tags are not read and the frames end at
+ * the first frame boundary that starts one of them.
  *
  * <p>The duration is computed exactly by walking the frame headers once at construction. When
  * the source is not in memory, the walk also keeps the packets of the frames it passes, up to
@@ -73,9 +113,39 @@ public final class AmrDemuxer implements Demuxer {
     private static final int MAX_EXPECTED_KEPT = 1 << 14;
 
     /**
-     * The source read.
+     * The bytes that recognize the start of a trailing tag: {@code LYRICSBEGIN}, the longest signature.
+     */
+    private static final int TAG_PROBE = 11;
+
+    /**
+     * The source read: the input, or the range of it between the leading and the trailing tags.
      */
     private final MediaSource source;
+
+    /**
+     * The tags of the ID3v2, APE and ID3v1 tags.
+     */
+    private final Map<String, String> metadata;
+
+    /**
+     * The pictures of the tags.
+     */
+    private final List<AttachedPicture> pictures;
+
+    /**
+     * The chapters of the ID3v2 tags.
+     */
+    private final List<Chapter> chapters;
+
+    /**
+     * Whether the trailing tags were located, so that the source ends with the frames.
+     */
+    private final boolean tailScanned;
+
+    /**
+     * The bytes read at a frame boundary to recognize a trailing tag.
+     */
+    private final byte[] probe = new byte[TAG_PROBE];
 
     /**
      * Whether the file is AMR-WB.
@@ -125,9 +195,14 @@ public final class AmrDemuxer implements Demuxer {
     private final ArrayDeque<Packet> kept;
 
     /**
-     * The size of the storage file magic, where the first frame starts.
+     * The size of the storage file header, where the first frame starts.
      */
     private int headerSize;
+
+    /**
+     * The number of frames of a frame-block, 1 for a single-channel file.
+     */
+    private final int channels;
 
     /**
      * The index of every sixteenth frame, built on the first seek, or {@code null}.
@@ -143,8 +218,8 @@ public final class AmrDemuxer implements Demuxer {
      * Constructs a demuxer over {@code source} with {@link DemuxerOptions#defaults()}.
      *
      * @param source the input, not closed by this demuxer
-     * @throws MediaException.Malformed if the file does not start with an AMR magic
-     * @throws MediaException.Unsupported if the file is a multichannel AMR file
+     * @throws MediaException.Malformed if the file does not start with an AMR magic, or a
+     * multichannel file declares no channels
      * @throws MediaException.Io if reading fails
      */
     public AmrDemuxer(MediaSource source) {
@@ -156,19 +231,39 @@ public final class AmrDemuxer implements Demuxer {
      *
      * @param source the input, not closed by this demuxer
      * @param options the demuxing options
-     * @throws MediaException.Malformed if the file does not start with an AMR magic
-     * @throws MediaException.Unsupported if the file is a multichannel AMR file
+     * @throws MediaException.Malformed if the file does not start with an AMR magic, or a
+     * multichannel file declares no channels
+     * @throws MediaException.LimitExceeded if the channel count exceeds the limits of {@code options}
      * @throws MediaException.Io if reading fails
      */
     public AmrDemuxer(MediaSource source, DemuxerOptions options) {
         this(source, options.limits());
     }
 
-    private AmrDemuxer(MediaSource source, MediaLimits limits) {
-        this.source = Objects.requireNonNull(source, "source");
+    private AmrDemuxer(MediaSource input, MediaLimits limits) {
+        Objects.requireNonNull(input, "source");
         Objects.requireNonNull(limits, "limits");
         try {
-            var magic = new byte[15];
+            var inputSize = input.size();
+            var tags = new LinkedHashMap<String, String>();
+            var annotations = new Annotations();
+            var id3 = Id3v2.read(input, 0, inputSize < 0 ? Long.MAX_VALUE : inputSize, tags, annotations);
+            var leading = id3.end();
+            var audioEnd = inputSize;
+            this.tailScanned = inputSize >= 0 && ForwardOnlySource.isCheapToReach(input, inputSize);
+            if (tailScanned) {
+                var tail = new TrailingTags.Tail(input, leading);
+                tail.load(inputSize);
+                var trailing = TrailingTags.regions(tail, leading, inputSize);
+                audioEnd = trailing.isEmpty() ? inputSize : trailing.getFirst().offset();
+                var located = TrailingTags.seekRegions(tail, id3.seekTarget(), leading, audioEnd);
+                TrailingTags.readMetadata(tail, located, trailing, tags, annotations, Id3v2.Merge.REPLACE);
+            }
+            this.source = leading == 0 && audioEnd == inputSize ? input
+                    : new SlicedSource(input, leading, audioEnd < 0 ? -1 : audioEnd - leading);
+            this.metadata = Collections.unmodifiableMap(tags);
+            this.pictures = annotations.pictures();
+            var magic = new byte[19];
             var read = 0;
             while (read < magic.length) {
                 var count = source.read(read, magic, read, magic.length - read);
@@ -178,16 +273,35 @@ public final class AmrDemuxer implements Demuxer {
                 read += count;
             }
             int headerSize;
-            if (startsWith(magic, read, "#!AMR-WB_MC1.0\n") || startsWith(magic, read, "#!AMR_MC1.0\n")) {
-                throw new MediaException.Unsupported("amr multichannel", "multichannel AMR storage files are not supported");
+            var multichannel = true;
+            if (startsWith(magic, read, "#!AMR-WB_MC1.0\n")) {
+                wideband = true;
+                headerSize = 15 + 4;
+            } else if (startsWith(magic, read, "#!AMR_MC1.0\n")) {
+                wideband = false;
+                headerSize = 12 + 4;
             } else if (startsWith(magic, read, "#!AMR-WB\n")) {
                 wideband = true;
                 headerSize = 9;
+                multichannel = false;
             } else if (startsWith(magic, read, "#!AMR\n")) {
                 wideband = false;
                 headerSize = 6;
+                multichannel = false;
             } else {
                 throw new MediaException.Malformed("not an AMR storage file");
+            }
+            if (multichannel) {
+                if (read < headerSize) {
+                    throw new MediaException.Malformed("truncated multichannel AMR header");
+                }
+                this.channels = magic[headerSize - 1] & 0x0F;
+                if (channels == 0) {
+                    throw new MediaException.Malformed("multichannel AMR file without channels");
+                }
+                LimitChecks.checkChannels(limits, channels);
+            } else {
+                this.channels = 1;
             }
             this.headerSize = headerSize;
             var sampleRate = wideband ? 16000 : 8000;
@@ -200,9 +314,10 @@ public final class AmrDemuxer implements Demuxer {
                     .timeBase(Rational.timeBaseOf(sampleRate))
                     .duration(frames < 0 ? -1 : frames * frameSamples)
                     .sampleRate(sampleRate)
-                    .layout(ChannelLayout.MONO)
+                    .layout(AmrConfigs.storageLayout(channels))
                     .build();
             this.tracks = List.of(track);
+            this.chapters = annotations.chapters(frames < 0 ? -1 : track.timeBase().toMicros(track.duration()));
         } catch (MediaException exception) {
             throw exception;
         } catch (RuntimeException exception) {
@@ -234,7 +349,8 @@ public final class AmrDemuxer implements Demuxer {
      * Estimates how many packets the construction-time walk keeps, so that the queue holding them
      * is allocated once at about the right size instead of growing step by step.
      *
-     * <p>The estimate assumes every frame has the type of the first, adds an eighth for frames of
+     * <p>The estimate assumes every frame has the type of the first (which a multichannel file
+     * stores after its header only when it has room in {@code magic}), adds an eighth for frames of
      * other types, and is capped at {@value #MAX_EXPECTED_KEPT}.
      *
      * @param magic the leading bytes of the file
@@ -248,23 +364,23 @@ public final class AmrDemuxer implements Demuxer {
         if (budget <= 0 || size < 0 || read <= headerSize) {
             return 0;
         }
-        var frameBytes = 1 + payloadSize(magic[headerSize] & 0xFF);
+        var frameBytes = channels * (1 + payloadSize(magic[headerSize] & 0xFF));
         var frames = Math.min(budget / (frameBytes + PACKET_OVERHEAD), (size - headerSize) / frameBytes + 1);
         return (int) Math.min(MAX_EXPECTED_KEPT, frames + frames / 8);
     }
 
     /**
-     * Counts the complete frames after the magic, keeping the packets of the frames visited
-     * first, and positions {@link #reader} at the first frame not kept.
+     * Counts the complete frame-blocks after the header, keeping the packets of the blocks
+     * visited first, and positions {@link #reader} at the first block not kept.
      *
-     * <p>A frame is kept, with exactly the packet {@link #read()} would return for it, while
-     * the packets fit {@code budget} and every byte of the frame can be read; keeping stops at
-     * the first frame that fails either test. When every frame up to the end is kept, the
+     * <p>A block is kept, with exactly the packet {@link #read()} would return for it, while
+     * the packets fit {@code budget} and every byte of the block can be read; keeping stops at
+     * the first block that fails either test. When every block up to the end is kept, the
      * demuxer is marked finished, since {@link #read()} would meet the same end.
      *
-     * @param headerSize the size of the magic
+     * @param headerSize the size of the header
      * @param budget the bytes of packets that may be kept, {@code 0} to keep none
-     * @return the frame count, or {@code -1} when the source size is unknown
+     * @return the frame-block count, or {@code -1} when the source size is unknown
      */
     private long countFrames(int headerSize, long budget) {
         var resume = (long) headerSize;
@@ -276,20 +392,19 @@ public final class AmrDemuxer implements Demuxer {
         scan.seek(headerSize);
         var frames = 0L;
         var used = budget > 0 ? 0L : -1L;
-        while (!scan.atEnd()) {
-            var header = scan.u8();
-            var size = payloadSize(header);
-            if (scan.remaining(size) < size) {
+        while (true) {
+            var start = scan.position();
+            var length = blockLength(scan);
+            if (length < 0) {
                 break;
             }
-            var start = scan.position();
             if (used >= 0) {
-                used = keep(scan, header, size, used, budget);
+                used = keep(scan, length, used, budget);
                 if (used >= 0) {
-                    resume = start + size;
+                    resume = start + length;
                 }
             }
-            scan.seek(start + size);
+            scan.seek(start + length);
             frames++;
         }
         finished = used >= 0;
@@ -299,31 +414,81 @@ public final class AmrDemuxer implements Demuxer {
     }
 
     /**
-     * Reads the frame the walk stands in and queues its packet, unless it does not fit the
+     * Reads the frame-block the walk stands at and queues its packet, unless it does not fit the
      * budget or cannot be read whole.
      *
-     * @param scan the walk's reader, positioned after the frame header
-     * @param header the frame header
-     * @param size the payload size
+     * @param scan the walk's reader, positioned at the block
+     * @param length the block size, header bytes included
      * @param used the bytes of the budget already used
      * @param budget the bytes of packets that may be kept
-     * @return the bytes of the budget used after keeping the frame, or {@code -1} when keeping stops
+     * @return the bytes of the budget used after keeping the block, or {@code -1} when keeping stops
      */
-    private long keep(SourceReader scan, int header, int size, long used, long budget) {
-        var cost = used + 1 + size + PACKET_OVERHEAD;
+    private long keep(SourceReader scan, int length, long used, long budget) {
+        var cost = used + length + PACKET_OVERHEAD;
         if (cost > budget) {
             return -1;
         }
-        var data = new byte[1 + size];
-        data[0] = (byte) header;
+        var data = new byte[length];
         try {
-            scan.readFully(data, 1, size);
+            scan.readFully(data, 0, length);
         } catch (MediaException.Malformed truncated) {
             return -1;
         }
         kept.add(new Packet(0, data, timestamp, timestamp, frameSamples, true));
         timestamp += frameSamples;
         return cost;
+    }
+
+    /**
+     * Returns the size of the frame-block a reader stands at, header bytes included, leaving the
+     * reader where it was.
+     *
+     * @param reader the reader, positioned at the first frame header of the block
+     * @return the block size, or {@code -1} when the end of the source cuts the block short
+     */
+    private int blockLength(SourceReader reader) {
+        var start = reader.position();
+        if (!tailScanned && atTrailingTag(reader)) {
+            return -1;
+        }
+        var end = start;
+        for (var channel = 0; channel < channels; channel++) {
+            if (channel > 0) {
+                reader.seek(end);
+            }
+            if (reader.atEnd()) {
+                reader.seek(start);
+                return -1;
+            }
+            end += 1 + payloadSize(reader.u8());
+        }
+        reader.seek(start);
+        var length = end - start;
+        return reader.remaining(length) < length ? -1 : (int) length;
+    }
+
+    /**
+     * Returns whether a trailing tag starts where a reader stands: an ID3v1 or enhanced ID3v1 tag, an APE tag, a
+     * Lyrics3 block or an appended ID3v2 tag, none of which starts with a frame of a speech or comfort noise type
+     * followed by these bytes in a valid file.
+     *
+     * @param reader the reader, positioned at a frame boundary, where it is left
+     * @return {@code true} when the bytes there are a tag signature
+     */
+    private boolean atTrailingTag(SourceReader reader) {
+        var start = reader.position();
+        var available = (int) reader.remaining(TAG_PROBE);
+        if (available < 3) {
+            return false;
+        }
+        reader.readFully(probe, 0, available);
+        reader.seek(start);
+        if (TagIo.matches(probe, 0, "TAG")) {
+            return true;
+        }
+        return available >= 8 && TagIo.matches(probe, 0, "APETAGEX")
+                || available >= 10 && Id3v2Tag.size(probe, 0) >= 0
+                || available >= TAG_PROBE && TagIo.matches(probe, 0, "LYRICSBEGIN");
     }
 
     /**
@@ -348,7 +513,17 @@ public final class AmrDemuxer implements Demuxer {
 
     @Override
     public Map<String, String> metadata() {
-        return Map.of();
+        return metadata;
+    }
+
+    @Override
+    public List<Chapter> chapters() {
+        return chapters;
+    }
+
+    @Override
+    public List<AttachedPicture> attachedPictures() {
+        return pictures;
     }
 
     @Override
@@ -369,9 +544,9 @@ public final class AmrDemuxer implements Demuxer {
     /**
      * {@inheritDoc}
      *
-     * <p>Every frame is a key frame lasting 20 milliseconds; the file is indexed on the first
-     * seek by walking its frame headers, so the next packet is exactly the frame holding the
-     * target sample.
+     * <p>Every frame or frame-block is a key frame lasting 20 milliseconds; the file is indexed on
+     * the first seek by walking its frame headers, so the next packet is exactly the frame holding
+     * the target sample.
      *
      * @throws MediaException.Unsupported if the size of the source is unknown
      */
@@ -386,16 +561,16 @@ public final class AmrDemuxer implements Demuxer {
                 var scan = new SourceReader(source, 16 * 1024);
                 scan.seek(headerSize);
                 var frames = 0L;
-                while (!scan.atEnd()) {
+                while (true) {
                     var start = scan.position();
-                    var size = payloadSize(scan.u8());
-                    if (scan.remaining(size) < size) {
+                    var length = blockLength(scan);
+                    if (length < 0) {
                         break;
                     }
                     if (frames % 16 == 0) {
                         built.add(frames, start, 0, 0);
                     }
-                    scan.seek(start + 1 + size);
+                    scan.seek(start + length);
                     frames++;
                 }
                 indexFrames = frames;
@@ -413,7 +588,7 @@ public final class AmrDemuxer implements Demuxer {
             var position = index.offset(entry);
             while (frame < target) {
                 reader.seek(position);
-                position += 1 + payloadSize(reader.u8());
+                position += blockLength(reader);
                 frame++;
             }
             reader.seek(position);
@@ -436,20 +611,17 @@ public final class AmrDemuxer implements Demuxer {
                 }
                 replaying = false;
             }
-            if (finished || reader.atEnd()) {
+            if (finished) {
+                return null;
+            }
+            var length = blockLength(reader);
+            if (length < 0) {
                 finished = true;
                 return null;
             }
-            var header = reader.u8();
-            var size = payloadSize(header);
-            if (reader.remaining(size) < size) {
-                finished = true;
-                return null;
-            }
-            var data = new byte[1 + size];
-            data[0] = (byte) header;
+            var data = new byte[length];
             try {
-                reader.readFully(data, 1, size);
+                reader.readFully(data, 0, length);
             } catch (MediaException.Malformed truncated) {
                 finished = true;
                 return null;

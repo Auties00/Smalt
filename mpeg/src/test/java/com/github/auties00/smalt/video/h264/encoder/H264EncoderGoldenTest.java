@@ -1,10 +1,12 @@
 package com.github.auties00.smalt.video.h264.encoder;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
+import com.github.auties00.smalt.video.FieldOrder;
 import com.github.auties00.smalt.video.VideoFrame;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -26,7 +28,6 @@ import java.util.function.IntFunction;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Pins the H.264 encoder's bitstream: each configuration encodes a fixed input and the SHA-256 of
@@ -76,6 +77,32 @@ class H264EncoderGoldenTest {
                                 H264RateControl.AVERAGE_BITRATE, 800_000, 26, 4), 12, "2cb10fb326809561fb96a32c3beac517146ec73e811c5992f2450f4c89f470fe"));
     }
 
+    static Stream<Arguments> tools() {
+        var realtime = H264EncoderOptions.forRealtime().toBuilder().bitrate(400_000);
+        var quality = H264EncoderOptions.builder().rateControl(H264RateControl.CONSTANT_QUALITY).quality(26)
+                .lookahead(0).bFrames(0).keyframeInterval(10);
+        return Stream.of(
+                Arguments.of("real time, three slices", new H264Setup(320, 240, realtime.slices(3).build()), 12,
+                        "2bf329f7b34aa772d3719d24c6d978ff28f5272ce28e26932ca15138ce14222b"),
+                Arguments.of("real time, 500-byte slices",
+                        new H264Setup(320, 240, realtime.slices(1).maxSliceBytes(500).build()), 12, "e89230134d463a6d82dd95a8ecdc314375c088aa4211e1f6445054686071729a"),
+                Arguments.of("real time, intra refresh",
+                        new H264Setup(320, 240, realtime.noMaxSliceBytes().intraRefresh(6).build()), 14, "1e378239fd77939abe1776c8d294c1831e29ec79cee3dc79cc46fb6b674784e1"),
+                Arguments.of("real time, three temporal layers",
+                        new H264Setup(320, 240, realtime.noIntraRefresh().temporalLayers(3).build()), 12, "6d6e15b6560aa9a3798e8674daf30d29883323b02a7cb74a6492d931a6bfcafc"),
+                Arguments.of("high 10, 4:2:0, 10-bit", new H264Setup(176, 144, quality.profile(H264Profile.HIGH_10)
+                        .bitDepth(10).build()), 8, "6fdabaa41c5b24e15c217e4d2d7baa1c226bf1d0d8d56dfc663434e76f812742"),
+                Arguments.of("high 4:2:2, MBAFF, CAVLC", new H264Setup(176, 144, quality.profile(H264Profile.HIGH_422)
+                        .chromaFormat(ChromaFormat.YUV422).fieldOrder(FieldOrder.TOP_FIRST).cavlc(true).build()), 8,
+                        "647c14e5ac58151570f554d764d294643dd568e5060dfb82b9a75d8898c1ee94"),
+                Arguments.of("high 4:4:4, lossless, field pictures", new H264Setup(176, 144, quality
+                        .profile(H264Profile.HIGH_444_PREDICTIVE).chromaFormat(ChromaFormat.YUV444).cavlc(false)
+                        .fieldCoding(H264FieldCoding.FIELD_PICTURES).lossless(true).build()), 6, "eb08657f03a65d66288b76a03b33ab696359b87177f11081add7ac5e4a842379"),
+                Arguments.of("high, 4:0:0", new H264Setup(176, 144, quality.profile(H264Profile.HIGH).bitDepth(8)
+                        .chromaFormat(ChromaFormat.MONOCHROME).fieldOrder(FieldOrder.PROGRESSIVE).lossless(false).build()),
+                        8, "fcd2154de9ec11d8f57ee71c6e2eec989b85b4f702eb6c719accc2ba09991b38"));
+    }
+
     static Stream<Arguments> natural() {
         return Stream.of(
                 Arguments.of("johnny480, real time, one thread", "johnny480.yuv", 640, 480,
@@ -107,6 +134,18 @@ class H264EncoderGoldenTest {
         void unchanged(String name, H264Setup setup, int frames, String expected) {
             assertEquals(expected, digest(setup, frames,
                     i -> EncoderHarness.synthetic(setup.width(), setup.height(), i, 11, 2.0), List.of()), name);
+        }
+    }
+
+    @Nested
+    @DisplayName("stream tools and extended formats")
+    class Tools {
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("com.github.auties00.smalt.video.h264.encoder.H264EncoderGoldenTest#tools")
+        @DisplayName("produce exactly the recorded stream")
+        void unchanged(String name, H264Setup setup, int frames, String expected) {
+            assertEquals(expected, digest(setup, frames,
+                    i -> EncoderHarness.synthetic(setup.width(), setup.height(), i, 17, 2.0), List.of()), name);
         }
     }
 
@@ -163,7 +202,7 @@ class H264EncoderGoldenTest {
         var root = Path.of(System.getProperty("smalt.test.clips",
                 Path.of(System.getProperty("user.home"), ".smalt", "cache", "clips").toString()));
         var file = root.resolve(clip);
-        assumeTrue(Files.isRegularFile(file), "clip " + clip + " is not cached");
+        Skip.unless(Files.isRegularFile(file), "data:clip", "clip " + clip + " is not cached");
         var luma = width * height;
         var frameSize = luma * 3 / 2;
         var pictures = new ArrayList<YuvPicture>(frames);
@@ -180,7 +219,7 @@ class H264EncoderGoldenTest {
                         .build());
             }
         }
-        assumeTrue(pictures.size() == frames, "clip " + clip + " is shorter than " + frames + " frames");
+        Skip.unless(pictures.size() == frames, "data:clip", "clip " + clip + " is shorter than " + frames + " frames");
         return pictures;
     }
 }

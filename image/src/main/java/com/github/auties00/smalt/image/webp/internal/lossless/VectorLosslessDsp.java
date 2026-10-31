@@ -680,10 +680,9 @@ final class VectorLosslessDsp implements LosslessDsp {
 
     @Override
     public void collectColorRedTransforms(int[] argb, int pos, int stride, int tileWidth, int tileHeight, int greenToRed,
-                                          int[] histo) {
+                                          int[] histo, int[] scratch) {
         var bound = SPECIES.loopBound(tileWidth);
         var lanes = SPECIES.length();
-        var indices = new int[lanes];
         var g2r = (int) (byte) greenToRed;
         for (var y = 0; y < tileHeight; y++) {
             var row = pos + y * stride;
@@ -694,21 +693,20 @@ final class VectorLosslessDsp implements LosslessDsp {
                 pixel.lanewise(VectorOperators.LSHR, 16)
                         .lanewise(VectorOperators.SUB, green.lanewise(VectorOperators.MUL, IntVector.broadcast(SPECIES, g2r)).lanewise(VectorOperators.ASHR, 5))
                         .lanewise(VectorOperators.AND, LOW_BYTE)
-                        .intoArray(indices, 0);
+                        .intoArray(scratch, 0);
                 for (var k = 0; k < lanes; k++) {
-                    ++histo[indices[k]];
+                    ++histo[scratch[k]];
                 }
             }
-            scalar.collectColorRedTransforms(argb, row + x, stride, tileWidth - x, 1, greenToRed, histo);
+            scalar.collectColorRedTransforms(argb, row + x, stride, tileWidth - x, 1, greenToRed, histo, scratch);
         }
     }
 
     @Override
     public void collectColorBlueTransforms(int[] argb, int pos, int stride, int tileWidth, int tileHeight, int greenToBlue,
-                                           int redToBlue, int[] histo) {
+                                           int redToBlue, int[] histo, int[] scratch) {
         var bound = SPECIES.loopBound(tileWidth);
         var lanes = SPECIES.length();
-        var indices = new int[lanes];
         var g2b = (int) (byte) greenToBlue;
         var r2b = (int) (byte) redToBlue;
         for (var y = 0; y < tileHeight; y++) {
@@ -721,12 +719,13 @@ final class VectorLosslessDsp implements LosslessDsp {
                 pixel.lanewise(VectorOperators.SUB, green.lanewise(VectorOperators.MUL, IntVector.broadcast(SPECIES, g2b)).lanewise(VectorOperators.ASHR, 5))
                         .lanewise(VectorOperators.SUB, red.lanewise(VectorOperators.MUL, IntVector.broadcast(SPECIES, r2b)).lanewise(VectorOperators.ASHR, 5))
                         .lanewise(VectorOperators.AND, LOW_BYTE)
-                        .intoArray(indices, 0);
+                        .intoArray(scratch, 0);
                 for (var k = 0; k < lanes; k++) {
-                    ++histo[indices[k]];
+                    ++histo[scratch[k]];
                 }
             }
-            scalar.collectColorBlueTransforms(argb, row + x, stride, tileWidth - x, 1, greenToBlue, redToBlue, histo);
+            scalar.collectColorBlueTransforms(argb, row + x, stride, tileWidth - x, 1, greenToBlue, redToBlue, histo,
+                    scratch);
         }
     }
 }

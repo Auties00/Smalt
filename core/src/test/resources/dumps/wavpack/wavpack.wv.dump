@@ -1,0 +1,27 @@
+# demux dump of wavpack/wavpack.wv; regenerate with -Dsmalt.test.updateDumps=true
+format WAVPACK
+duration 600000
+seekable true
+metadata title="Behavior"
+track 0 AUDIO WAVPACK timebase=1/44100 duration=26460 config=none
+  audio rate=44100 bits=16 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 6
+0 t0 pts=0 dts=0 dur=4410 flags=KEY size=4624 crc=af06e3ac
+1 t0 pts=4410 dts=4410 dur=4410 flags=KEY size=4530 crc=328c1761
+2 t0 pts=8820 dts=8820 dur=4410 flags=KEY size=4536 crc=53601233
+3 t0 pts=13230 dts=13230 dur=4410 flags=KEY size=4520 crc=51501399
+4 t0 pts=17640 dts=17640 dur=4410 flags=KEY size=4522 crc=991c7220
+5 t0 pts=22050 dts=22050 dur=4410 flags=KEY size=4522 crc=94532277
+seek 0: t0@0
+seek 200000: t0@2
+seek 400000: t0@4
+seek 600000: end
+seek -1000000: t0@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format WAVPACK
+  duration 600000
+  seekable false
+  track 0 AUDIO WAVPACK timebase=1/44100 duration=26460 config=none
+    audio rate=44100 bits=16 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH
