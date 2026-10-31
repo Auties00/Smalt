@@ -1,0 +1,10 @@
+# image dump of vectors/rawpixls-kodak-dcs760c-12bit-3-2.dcr; regenerate with -Dsmalt.test.updateDumps=true
+format RAW
+info ImageInfo[format=RAW, width=3032, height=2008, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 3032x2008 rgba8 alpha=false crc=a5519d5e
+  format=RAW orientation=NORMAL source=3032x2008
+  icc=520:86132914 exif=972:695645de xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+decoder raw sensor data
+sensor 3032x2008 channels=1 cfa=GRBG neutral=[0.8809904153354633, 1.0, 0.5363418530351438] crc=7139e66a

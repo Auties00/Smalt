@@ -31,6 +31,14 @@ Contents
   16. Ooura FFT
   17. musl libc math
   26. Apple Lossless Audio Codec (ALAC)
+  41. opusfile
+  48. ISO/IEC 13818-5 MPEG-2 audio reference software (dist10)
+  49. PFFFT
+  50. RNNoise
+  59. libgsm
+  60. WavPack
+  61. libspeex
+  69. LibAtrac9
 
 
 ===============================================================================
@@ -51,14 +59,18 @@ Derived Smalt packages:
   audio.opus.internal.silk
 
 Derivation: a port of the float build of libopus 1.5.2 (CELT, SILK, the
-Opus framing, multistream and repacketizer layers, the tonality analysis and
-its MLP), including tables copied from the C sources.
+Opus framing, multistream, projection and repacketizer layers, the
+ambisonic mixing and demixing matrices, the tonality analysis and its MLP),
+including tables copied from the C sources.
 
 Copyright:
   Copyright 2001-2023 Xiph.Org, Skype Limited, Octasic,
                       Jean-Marc Valin, Timothy B. Terriberry,
                       CSIRO, Gregory Maxwell, Mark Borgerding,
                       Erik de Castro Lopo, Mozilla, Amazon
+  Copyright (c) 2017 Google Inc. (src/mapping_matrix.c,
+                      src/opus_projection_encoder.c,
+                      src/opus_projection_decoder.c)
 
 -------------------------------------------------------------------------------
 libopus license (COPYING)
@@ -108,6 +120,37 @@ https://datatracker.ietf.org/ipr/1914/
 
 Broadcom Corporation:
 https://datatracker.ietf.org/ipr/1526/
+
+-------------------------------------------------------------------------------
+License of the projection files (header of src/mapping_matrix.c)
+-------------------------------------------------------------------------------
+
+/* Copyright (c) 2017 Google Inc.
+   Written by Andrew Allen */
+/*
+   Redistribution and use in source and binary forms, with or without
+   modification, are permitted provided that the following conditions
+   are met:
+
+   - Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+
+   - Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+   ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER
+   OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+   EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+   PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+   PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+   LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+   NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*/
 
 
 ===============================================================================
@@ -185,9 +228,10 @@ and double precision; residue partition bounds follow
 vorbis_book_decodev_add.
 
 The Vorbis encoder is a port of the libvorbis 1.3.7 encoder in its quality
-mode (lib/vorbisenc.c, block.c, envelope.c, psy.c, floor1.c, res0.c,
-mapping0.c, mdct.c, smallft.c, lpc.c, window.c, sharedbook.c, codebook.c and
-info.c, including the aoTuV tuning merged into libvorbis), translated to Java
+and bitrate managed modes (lib/vorbisenc.c, block.c, envelope.c, psy.c,
+floor1.c, res0.c, mapping0.c, mdct.c, smallft.c, lpc.c, window.c,
+sharedbook.c, codebook.c, info.c and bitrate.c, including the aoTuV tuning
+merged into libvorbis), translated to Java
 with libvorbis's single and double precision arithmetic kept. The setup
 templates, static codebooks, psychoacoustic tables and window tables of
 libvorbis 1.3.7 are copied, serialized by tools/codegen/vorbis/dump.c, into the
@@ -371,9 +415,9 @@ is preserved.
 ===============================================================================
 
 Project:      WebRTC, the audio processing module (AEC3 echo canceller, mobile
-              echo canceller, noise suppression, gain controller, high-pass
-              filter) and its signal processing library, as packaged by
-              webrtc-audio-processing 2.1
+              echo canceller, noise suppression, gain controllers, band
+              splitting, resampling, high-pass filter) and its signal
+              processing library, as packaged by webrtc-audio-processing 2.1
 Source:       https://webrtc.googlesource.com/src
               https://gitlab.freedesktop.org/pulseaudio/webrtc-audio-processing
               (tag v2.1)
@@ -384,10 +428,17 @@ License:      BSD 3-Clause License, plus Google's additional IP rights grant
 Derived Smalt packages:
   audio.voice, audio.voice.internal, audio.voice.internal.aec3,
   audio.voice.internal.aecm, audio.voice.internal.agc,
-  audio.voice.internal.ns (VoiceProcessor: the capture path of
-  modules/audio_processing: aec3, aecm, agc/legacy with gain_control_impl,
-  ns, the capture high-pass filter, utility/delay_estimator and the
-  fixed-point routines of common_audio/signal_processing it uses)
+  audio.voice.internal.agc2, audio.voice.internal.ns (VoiceProcessor: both
+  signal paths of modules/audio_processing: aec3 with its multichannel
+  support, aecm, agc/legacy with gain_control_impl, the analog
+  gain controller of agc (agc_manager_direct, its voice activity detector
+  in vad and the iSAC pitch analysis of modules/audio_coding/codecs/isac),
+  agc2 (gain_controller2, the RNN voice activity detector, the adaptive
+  digital gain, the limiter, the input volume controller and the clipping
+  predictor), ns, the splitting filter and three-band filter bank, the push
+  sinc resampler, the capture high-pass filter, utility/delay_estimator,
+  common_audio/vad and the fixed-point routines of
+  common_audio/signal_processing it uses)
 
 Derivation: C++ code translated to Java, restructured, and in places
 vectorized with the Java Vector API.
@@ -477,7 +528,8 @@ License:      Ooura permissive notice (use, copy, modification and
 
 Derived Smalt packages:
   audio.voice.internal (OouraRealFft: the 128-point real FFT of the noise
-  suppressor)
+  suppressor and the 512-point one of the analog gain controller's voice
+  activity detector)
   audio.voice.internal.aec3 (Aec3Fft: the 128-point split-radix FFT of the
   echo canceller)
 
@@ -511,7 +563,9 @@ License:      MIT License; powf and its tables come from Arm's optimized
 
 Derived Smalt packages:
   audio.voice.internal (FloatMath: powf with __powf_log2_data and
-  __exp2f_data, tanhf, expm1f, cosf and sinf, rounded exactly as musl)
+  __exp2f_data, tanhf, expm1f, cosf, sinf and log10f; DoubleMath: exp, log
+  and pow with __exp_data, __log_data and __pow_log_data, log10, and sin
+  with __sin, __cos and __rem_pio2; all rounded exactly as musl)
 
 Derivation: C code and tables translated to Java.
 
@@ -730,13 +784,20 @@ License text: https://raw.githubusercontent.com/macosforge/alac/master/LICENSE
 License:      Apache License, Version 2.0
 
 Derived Smalt packages:
-  audio.alac (AlacDecoder, AlacResidual, AlacPredictor, AlacBitReader)
+  audio.alac (AlacDecoder, AlacResidual, AlacPredictor, AlacBitReader,
+  AlacEncoder, AlacElementEncoder, AlacResidualEncoder)
 
 Derivation: the decoder follows codec/ALACDecoder.cpp (element parsing,
 shifted-off bytes, partial frames, uncompressed elements), codec/ag_dec.c
 (the adaptive Golomb residual decoder with its zero runs), codec/dp_dec.c
 (the adaptive predictor unpc_block) and codec/matrix_dec.c (the matrixed
 stereo unmix), and the channel orders of ALACMagicCookieDescription.txt.
+The encoder follows codec/ALACEncoder.cpp (the element layout of each
+channel count, the stereo matrixing and predictor order searches, fast
+mode, escaped and partial elements, the magic cookie), codec/ag_enc.c
+(the adaptive Golomb residual coder dyn_comp), codec/dp_enc.c (the
+adaptive predictor pc_block and its initial coefficients) and
+codec/matrix_enc.c (the stereo mix).
 
 Copyright:
   Copyright (c) 2011 Apple Inc. All rights reserved.
@@ -798,3 +859,493 @@ If the Work includes a "NOTICE" text file as part of its distribution, then any 
 8. Limitation of Liability. In no event and under no legal theory, whether in tort (including negligence), contract, or otherwise, unless required by applicable law (such as deliberate and grossly negligent acts) or agreed to in writing, shall any Contributor be liable to You for damages, including any direct, indirect, special, incidental, or consequential damages of any character arising as a result of this License or out of the use or inability to use the Work (including but not limited to damages for loss of goodwill, work stoppage, computer failure or malfunction, or any and all other commercial damages or losses), even if such Contributor has been advised of the possibility of such damages.
 
 9. Accepting Warranty or Additional Liability. While redistributing the Work or Derivative Works thereof, You may choose to offer, and charge a fee for, acceptance of support, warranty, indemnity, or other liability obligations and/or rights consistent with this License. However, in accepting such obligations, You may act only on Your own behalf and on Your sole responsibility, not on behalf of any other Contributor, and only if You agree to indemnify, defend, and hold each Contributor harmless for any liability incurred by, or claims asserted against, such Contributor by reason of your accepting any such warranty or additional liability.
+
+
+===============================================================================
+41. opusfile
+===============================================================================
+
+Project:      opusfile, the Xiph.Org library for decoding Ogg Opus files,
+              version 0.12
+Home:         https://opus-codec.org/
+Source:       https://gitlab.xiph.org/xiph/opusfile
+License text: https://gitlab.xiph.org/xiph/opusfile/-/raw/v0.12/COPYING
+License:      BSD 3-Clause
+
+Derived Smalt packages:
+  audio.opus (OpusDownmix)
+
+Derivation: the stereo downmix matrices of three to eight channels in the
+Vorbis order (OP_STEREO_DOWNMIX in src/opusfile.c) are copied.
+
+Copyright:
+  Copyright (c) 1994-2013 Xiph.Org Foundation and contributors
+
+-------------------------------------------------------------------------------
+opusfile license (COPYING)
+-------------------------------------------------------------------------------
+
+Copyright (c) 1994-2013 Xiph.Org Foundation and contributors
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+- Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+- Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+- Neither the name of the Xiph.Org Foundation nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION
+OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+===============================================================================
+48. ISO/IEC 13818-5 MPEG-2 audio reference software (dist10)
+===============================================================================
+
+Project:      the MPEG-2 audio reference software of ISO/IEC 13818-5, the ISO
+              MPEG Audio Subgroup Software Simulation Group's distribution 10
+Source:       c039486_ISO_IEC_13818-5_2005_Reference_Software.zip (mpeg2audio)
+              of ISO's Publicly Available Standards
+License text: the disclaimer of doc/readme.dp.01.txt and the notices of the
+              source files
+License:      free of license fee or royalty, as is; use in products
+              conforming to ISO/IEC 11172-3 and 13818-3
+
+Derived Smalt packages:
+  audio.mp3 (Mp2FrameEncoder: the Layer I and II scalefactors, scalefactor
+  selection, bit allocation, quantization and bitstream formatting of
+  lsf/encoder/encode.c; Mp2Psychoacoustics: psychoacoustic model 1 of
+  lsf/encoder/tonal.c; Mp2PsychoTables: the critical band and threshold
+  tables of lsf/encoder/tables; Mp2Multichannel: the multichannel extension
+  decoding of mc/decoder/decode.c and common.c)
+
+Derivation: C code translated to Java and tables transcribed.
+
+Copyright:
+  ISO MPEG Audio Subgroup Software Simulation Group (1995, 1996)
+
+-------------------------------------------------------------------------------
+Disclaimer and notices (doc/readme.dp.01.txt, source files)
+-------------------------------------------------------------------------------
+
+ISO/IEC 13818-5 MPEG-2 audio reference software (dist10), doc/readme.dp.01.txt:
+
+Disclaimer of Warranty
+        These software programs are available to the user without any
+license fee or royalty on an "as is" basis.  ISO disclaims any and all
+warranties,  whether express, implied, or statuary, including any
+implied warranties or merchantability or of fitness for a particular
+purpose.  In no event shall ISO be liable for any incidental, punitive,
+or consequential damages of any kind whatsoever arising from the
+use of these programs.
+
+        This disclaimer of warranty extends to the user of these
+programs and user's customers, employees, agents, transferees,
+successors, and assigns,
+
+        ISO does not represent or warrant that the programs furnished
+hereunder are free of infringement or any third-party patents,
+copyrights or trade secrets.
+
+        The purpose of this software is to provide a tool to help in the
+learning and understanding of the MPEG/audio compression and
+decompression algorithm.  It is not an efficient implementation.
+
+The source files carry the notice (mc/decoder/decode.c):
+
+/**********************************************************************
+ * ISO MPEG Audio Subgroup Software Simulation Group (1996)
+ * ISO 13818-3 MPEG-2 Audio Multichannel Decoder
+
+and the makefiles (mc/decoder/makefile):
+
+## Copyright (c) 1995 MPEG/audio software simulation group
+## All Rights Reserved
+
+
+===============================================================================
+49. PFFFT
+===============================================================================
+
+Project:      PFFFT, Julien Pommier's FFT based on FFTPACKv4, as included in
+              WebRTC (third_party/pffft) and webrtc-audio-processing 2.1
+Source:       https://bitbucket.org/jpommier/pffft
+              https://webrtc.googlesource.com/src (third_party/pffft)
+License text: third_party/pffft/LICENSE of webrtc-audio-processing 2.1
+License:      FFTPACK license (BSD-style)
+
+Derived Smalt packages:
+  audio.voice.internal.agc2 (Pffft: the scalar real FFT of the RNN voice
+  activity detector, with the radix-2, 3, 4 and 5 butterflies, the
+  unordered and ordered layouts and the accumulating spectral product)
+
+Derivation: C code translated to Java.
+
+Copyright:
+  Copyright (c) 2013 Julien Pommier
+  Copyright (c) 2004 the University Corporation for Atmospheric Research
+
+-------------------------------------------------------------------------------
+PFFFT license (LICENSE)
+-------------------------------------------------------------------------------
+
+Copyright (c) 2013  Julien Pommier ( pommier@modartt.com )
+
+Based on original fortran 77 code from FFTPACKv4 from NETLIB,
+authored by Dr Paul Swarztrauber of NCAR, in 1985.
+
+As confirmed by the NCAR fftpack software curators, the following
+FFTPACKv5 license applies to FFTPACKv4 sources. My changes are
+released under the same terms.
+
+FFTPACK license:
+
+http://www.cisl.ucar.edu/css/software/fftpack5/ftpk.html
+
+Copyright (c) 2004 the University Corporation for Atmospheric
+Research ("UCAR"). All rights reserved. Developed by NCAR's
+Computational and Information Systems Laboratory, UCAR,
+www.cisl.ucar.edu.
+
+Redistribution and use of the Software in source and binary forms,
+with or without modification, is permitted provided that the
+following conditions are met:
+
+- Neither the names of NCAR's Computational and Information Systems
+Laboratory, the University Corporation for Atmospheric Research,
+nor the names of its sponsors or contributors may be used to
+endorse or promote products derived from this Software without
+specific prior written permission.
+
+- Redistributions of source code must retain the above copyright
+notices, this list of conditions, and the disclaimer below.
+
+- Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions, and the disclaimer below in the
+documentation and/or other materials provided with the
+distribution.
+
+THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING, BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE CONTRIBUTORS OR COPYRIGHT
+HOLDERS BE LIABLE FOR ANY CLAIM, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE
+SOFTWARE.
+
+
+===============================================================================
+50. RNNoise
+===============================================================================
+
+Project:      RNNoise, as included in WebRTC (third_party/rnnoise) and
+              webrtc-audio-processing 2.1
+Source:       https://gitlab.xiph.org/xiph/rnnoise
+              https://webrtc.googlesource.com/src (third_party/rnnoise)
+License text: third_party/rnnoise/COPYING of webrtc-audio-processing 2.1
+License:      BSD 3-Clause License
+
+Derived Smalt packages:
+  audio.voice.internal.agc2 (RnnVadWeights: the weights of the RNN voice
+  activity detector; RnnVad: the activation functions of rnn_activations.h)
+
+Derivation: tables copied and C code translated to Java.
+
+Copyright:
+  Copyright (c) 2017, Mozilla
+  Copyright (c) 2007-2017, Jean-Marc Valin
+  Copyright (c) 2005-2017, Xiph.Org Foundation
+  Copyright (c) 2003-2004, Mark Borgerding
+
+-------------------------------------------------------------------------------
+RNNoise license (COPYING)
+-------------------------------------------------------------------------------
+
+Copyright (c) 2017, Mozilla
+Copyright (c) 2007-2017, Jean-Marc Valin
+Copyright (c) 2005-2017, Xiph.Org Foundation
+Copyright (c) 2003-2004, Mark Borgerding
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+- Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+- Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+- Neither the name of the Xiph.Org Foundation nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION
+OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+===============================================================================
+59. libgsm
+===============================================================================
+
+Project:      libgsm 1.0.22, the GSM 06.10 full-rate speech codec of the
+              Technische Universitaet Berlin
+Source:       https://www.quut.com/gsm/gsm-1.0.22.tar.gz
+License text: COPYRIGHT at the root of the distribution
+License:      libgsm license (permissive; the notice must not be removed)
+
+Derived Smalt packages:
+  audio.gsm (Gsm0610: the RPE-LTP encoder and decoder of add.c, code.c,
+  decode.c, long_term.c, lpc.c, preprocess.c, rpe.c, short_term.c and the
+  tables of table.c)
+
+Derivation: C code translated to Java and tables transcribed.
+
+Copyright:
+  Copyright 1992, 1993, 1994 by Jutta Degener and Carsten Bormann,
+  Technische Universitaet Berlin
+
+-------------------------------------------------------------------------------
+libgsm license (COPYRIGHT)
+-------------------------------------------------------------------------------
+
+Copyright 1992, 1993, 1994 by Jutta Degener and Carsten Bormann,
+Technische Universitaet Berlin
+
+Any use of this software is permitted provided that this notice is not
+removed and that neither the authors nor the Technische Universitaet Berlin
+are deemed to have made any representations as to the suitability of this
+software for any purpose nor are held responsible for any defects of
+this software.  THERE IS ABSOLUTELY NO WARRANTY FOR THIS SOFTWARE.
+
+As a matter of courtesy, the authors request to be informed about uses
+this software has found, about bugs in this software, and about any
+improvements that may be of general interest.
+
+Berlin, 28.11.1994
+Jutta Degener
+Carsten Bormann
+
+                                 oOo
+
+Since the original terms of 15 years ago maybe do not make our
+intentions completely clear given today's refined usage of the legal
+terms, we append this additional permission:
+
+      Permission to use, copy, modify, and distribute this software
+      for any purpose with or without fee is hereby granted,
+      provided that this notice is not removed and that neither
+      the authors nor the Technische Universitaet Berlin are
+      deemed to have made any representations as to the suitability
+      of this software for any purpose nor are held responsible
+      for any defects of this software.  THERE IS ABSOLUTELY NO
+      WARRANTY FOR THIS SOFTWARE.
+
+Berkeley/Bremen, 05.04.2009
+Jutta Degener
+Carsten Bormann
+
+
+===============================================================================
+60. WavPack
+===============================================================================
+
+Project:      WavPack 5.8.1, the hybrid lossless audio compressor of David Bryant
+Home:         https://www.wavpack.com/
+Source:       https://github.com/dbry/WavPack/releases/download/5.8.1/wavpack-5.8.1.tar.xz
+License text: COPYING at the root of the distribution
+License:      BSD 3-Clause
+
+Derived Smalt packages:
+  audio.wavpack (WavPackDecoder, WavPackStream, WavPackBitReader, WavPackTables,
+  WavPackDsd, WavPackDecimator: the decoder of src/unpack.c, read_words.c,
+  entropy_utils.c, decorr_utils.c, unpack_floats.c, unpack_dsd.c,
+  open_utils.c and unpack_utils.c, and the tables of entropy_utils.c and
+  common_utils.c)
+
+Derivation: C code translated to Java and tables transcribed.
+
+Copyright:
+  Copyright (c) 1998 - 2025 David Bryant
+  Copyright (c) 1998 - 2013 Conifer Software
+
+-------------------------------------------------------------------------------
+BSD 3-Clause License (COPYING)
+-------------------------------------------------------------------------------
+
+                  Copyright (c) 1998 - 2025 David Bryant
+                          All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+    * Redistributions of source code must retain the above copyright notice,
+      this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above copyright notice,
+      this list of conditions and the following disclaimer in the
+      documentation and/or other materials provided with the distribution.
+    * Neither the name of the copyright holder nor the names of its
+      contributors may be used to endorse or promote products derived from
+      this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+===============================================================================
+61. libspeex
+===============================================================================
+
+Project:      libspeex 1.2.1, the reference implementation of the Speex speech
+              codec
+Home:         https://www.speex.org/
+Source:       https://downloads.xiph.org/releases/speex/speex-1.2.1.tar.gz
+License text: COPYING at the root of the distribution
+License:      BSD 3-Clause
+
+Derived Smalt packages:
+  audio.speex (the fixed-point decoder of libspeex/nb_celp.c, sb_celp.c,
+  filters.c, lsp.c, ltp.c, cb_search.c, quant_lsp.c, bits.c, stereo.c,
+  speex_callbacks.c, modes.c, modes_wb.c, fixed_generic.h and math_approx.h,
+  and the codebooks of gain_table.c, gain_table_lbr.c, exc_*_table.c,
+  hexc_table.c, hexc_10_32_table.c, lsp_tables_nb.c and high_lsp_tables.c)
+
+Derivation: C code translated to Java and tables transcribed.
+
+Copyright:
+  Copyright 2002-2008 Xiph.org Foundation
+  Copyright 2002-2008 Jean-Marc Valin
+  Copyright 2005-2007 Analog Devices Inc.
+  Copyright 2005-2008 Commonwealth Scientific and Industrial Research
+                      Organisation (CSIRO)
+  Copyright 1993, 2002, 2006 David Rowe
+  Copyright 2003 EpicGames
+  Copyright 1992-1994 Jutta Degener, Carsten Bormann
+
+-------------------------------------------------------------------------------
+BSD 3-Clause License (COPYING)
+-------------------------------------------------------------------------------
+
+Copyright 2002-2008 	Xiph.org Foundation
+Copyright 2002-2008 	Jean-Marc Valin
+Copyright 2005-2007	Analog Devices Inc.
+Copyright 2005-2008	Commonwealth Scientific and Industrial Research
+                        Organisation (CSIRO)
+Copyright 1993, 2002, 2006 David Rowe
+Copyright 2003 		EpicGames
+Copyright 1992-1994	Jutta Degener, Carsten Bormann
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+- Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+- Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+- Neither the name of the Xiph.org Foundation nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+===============================================================================
+69. LibAtrac9
+===============================================================================
+
+Project:      LibAtrac9, an ATRAC9 decoder reverse engineered from Sony's, at
+              commit efca2e3af35562a09a9bb6deed90e45b4b824dc4
+Home:         https://github.com/Thealexbarney/LibAtrac9
+Source:       https://codeload.github.com/Thealexbarney/LibAtrac9/tar.gz/efca2e3af35562a09a9bb6deed90e45b4b824dc4
+License text: LICENSE at the root of the distribution
+License:      MIT
+
+Derived Smalt packages:
+  audio.atrac9 (Atrac9Decoder, Atrac9FrameDecoder, Atrac9Unpacker,
+  Atrac9Synthesis, Atrac9Config, Atrac9Block, Atrac9Channel, Atrac9BitReader,
+  Atrac9Codebook, Atrac9Codebooks, Atrac9Tables: the decoder of C/src/decoder.c,
+  decinit.c, unpack.c, scale_factors.c, bit_allocation.c, quantization.c,
+  band_extension.c, imdct.c, bit_reader.c and utility.c, and the tables of
+  tables.c and huffCodes.c)
+
+Derivation: C code translated to Java and tables transcribed.
+
+Copyright:
+  Copyright (c) 2018 Alex Barney
+
+-------------------------------------------------------------------------------
+MIT License (LICENSE)
+-------------------------------------------------------------------------------
+
+MIT License
+
+Copyright (c) 2018 Alex Barney
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

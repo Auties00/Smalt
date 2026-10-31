@@ -1,0 +1,50 @@
+# demux dump of mxf/op1a-prores.mxf; regenerate with -Dsmalt.test.updateDumps=true
+format MXF
+duration 240000
+seekable true
+metadata application_platform="Lavf (mingw32)"
+metadata company_name="FFmpeg"
+metadata material_package_umid="060a2b340101010501010d00131f2fa152947134611f2fa10052947134611f00"
+metadata operational_pattern="OP1a"
+metadata product_name="OP1a Muxer"
+metadata product_version="61.7.100"
+timecode 00:00:00:00 fps=25
+track 2 VIDEO PRORES timebase=1/25 duration=6 config=4:12f55311
+  video 64x48 orientation=NORMAL rate=25/1 interlacing=PROGRESSIVE
+track 3 AUDIO PCM_S16LE timebase=1/48000 duration=11520 config=none
+  audio rate=48000 bits=16 skip=0 layout=[FRONT_CENTER]
+packets 12
+0 t2 pts=0 dts=0 dur=1 flags=KEY size=1728 crc=80bd0ce1
+1 t3 pts=0 dts=0 dur=1920 flags=KEY size=3840 crc=7947b0f4
+2 t2 pts=1 dts=1 dur=1 flags=KEY size=1728 crc=80bd0ce1
+3 t3 pts=1920 dts=1920 dur=1920 flags=KEY size=3840 crc=a358284a
+4 t2 pts=2 dts=2 dur=1 flags=KEY size=1728 crc=80bd0ce1
+5 t3 pts=3840 dts=3840 dur=1920 flags=KEY size=3840 crc=7744db6f
+6 t2 pts=3 dts=3 dur=1 flags=KEY size=1727 crc=5fe670e9
+7 t3 pts=5760 dts=5760 dur=1920 flags=KEY size=3840 crc=559a940a
+8 t2 pts=4 dts=4 dur=1 flags=KEY size=1727 crc=5fe670e9
+9 t3 pts=7680 dts=7680 dur=1920 flags=KEY size=3840 crc=7767111a
+10 t2 pts=5 dts=5 dur=1 flags=KEY size=1727 crc=5fe670e9
+11 t3 pts=9600 dts=9600 dur=1920 flags=KEY size=3840 crc=ccda617c
+seek 0: t2@0 t3@0
+seek 80000: t2@2 t3@2
+seek 160000: t2@4 t3@4
+seek 240000: end
+seek -1000000: t2@0 t3@0
+header over READ_ONCE, READ_ONCE_UNKNOWN_LENGTH:
+  format MXF
+  duration 240000
+  seekable false
+  metadata application_platform="Lavf (mingw32)"
+  metadata company_name="FFmpeg"
+  metadata material_package_umid="060a2b340101010501010d00131f2fa152947134611f2fa10052947134611f00"
+  metadata operational_pattern="OP1a"
+  metadata product_name="OP1a Muxer"
+  metadata product_version="61.7.100"
+  timecode 00:00:00:00 fps=25
+  track 2 VIDEO PRORES timebase=1/25 duration=6 config=4:12f55311
+    video 64x48 orientation=NORMAL rate=25/1 interlacing=PROGRESSIVE
+  track 3 AUDIO PCM_S16LE timebase=1/48000 duration=11520 config=none
+    audio rate=48000 bits=16 skip=0 layout=[FRONT_CENTER]
+not seekable over READ_ONCE
+not seekable over READ_ONCE_UNKNOWN_LENGTH

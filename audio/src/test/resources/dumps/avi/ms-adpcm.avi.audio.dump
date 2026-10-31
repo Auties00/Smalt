@@ -1,0 +1,12 @@
+# audio decode dump of avi/ms-adpcm.avi; regenerate with -Dsmalt.test.updateDumps=true
+format AVI
+duration 763500
+seekable true
+track 1 ADPCM_MS rate=8000 layout=[FRONT_CENTER]
+0 frames=4096 crc16=29d55ddc
+1 frames=2012 crc16=4f3a04c3
+seek 0: @sample 0
+seek 254500: @sample 2036
+seek 509000: @sample 4072
+seek 763500: end
+seek -1000000: @sample 0
