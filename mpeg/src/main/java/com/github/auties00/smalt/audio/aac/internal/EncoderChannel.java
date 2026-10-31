@@ -38,7 +38,7 @@ public final class EncoderChannel {
      * The masking ratio of tonal bands and of short windows: thresholds sit 29 dB below band
      * energies.
      */
-    private static final float MASKING_RATIO = (float) Math.pow(10, -2.9);
+    private static final float MASKING_RATIO = (float) StrictMath.pow(10, -2.9);
 
     /**
      * The signal-to-mask ratio of a tonal band, in decibels.
@@ -72,11 +72,6 @@ public final class EncoderChannel {
     private static final float PRE_ECHO_FLOOR = 0.01f;
 
     /**
-     * The number of spectral lines of a frame.
-     */
-    private static final int LENGTH = 1024;
-
-    /**
      * The window grouping used for each attack position (3GPP TS 26.403).
      */
     private static final int[][] GROUPING = {
@@ -89,34 +84,55 @@ public final class EncoderChannel {
     private final AacKernel kernel;
 
     /**
+     * The number of spectral lines of a frame, 1024 or 960.
+     */
+    private final int length;
+
+    /**
+     * The number of spectral lines of a short window.
+     */
+    private final int shortLength;
+
+    /**
      * The signal-to-mask ratio of a noise-like band at this channel's bitrate, in decibels.
      */
-    private final float noiseSmr;
+    private float noiseSmr;
 
     /**
      * The long-window band layout.
      */
-    private final BandLayout longLayout;
+    private BandLayout longLayout;
 
     /**
      * The short-window band layout.
      */
-    private final BandLayout shortLayout;
+    private BandLayout shortLayout;
 
     /**
      * The long-window TNS encoder, or {@code null} when TNS is disabled.
      */
-    private final TnsEncoder longTns;
+    private TnsEncoder longTns;
 
     /**
      * The short-window TNS encoder, or {@code null} when TNS is disabled.
      */
-    private final TnsEncoder shortTns;
+    private TnsEncoder shortTns;
 
     /**
      * The forward transform.
      */
     private final ForwardMdct mdct;
+
+    /**
+     * The audio object type coded: {@link AudioSpecificConfig#AOT_LC}, {@link AudioSpecificConfig#AOT_ER_LD} or
+     * {@link AudioSpecificConfig#AOT_ER_ELD}.
+     */
+    private final int objectType;
+
+    /**
+     * The AAC-ELD analysis filterbank, or {@code null} for the other object types.
+     */
+    private final LowDelayAnalysis lowDelayAnalysis;
 
     /**
      * The attack detector.
@@ -156,32 +172,32 @@ public final class EncoderChannel {
     /**
      * The spectrum in window order.
      */
-    private final float[] spectrum = new float[LENGTH];
+    private final float[] spectrum;
 
     /**
      * The spectrum in grouped order.
      */
-    private final float[] grouped = new float[LENGTH];
+    private final float[] grouped;
 
     /**
      * The magnitudes of the grouped spectrum.
      */
-    private final float[] magnitude = new float[LENGTH];
+    private final float[] magnitude;
 
     /**
      * The 3/4 powers of the magnitudes.
      */
-    private final float[] power34 = new float[LENGTH];
+    private final float[] power34;
 
     /**
      * The quantized magnitudes, then the signed quantized values.
      */
-    private final int[] quant = new int[LENGTH];
+    private final int[] quant;
 
     /**
      * The scratch quantized magnitudes of distortion measurements.
      */
-    private final int[] scratch = new int[LENGTH];
+    private final int[] scratch;
 
     /**
      * The first grouped line of each band.
@@ -374,21 +390,88 @@ public final class EncoderChannel {
      * Creates a channel encoder.
      *
      * @param sampleRate the sampling rate in hertz
+     * @param frameLength the frame length, 1024 or 960
      * @param bandwidth the audio bandwidth in hertz
      * @param channelBitrate the bitrate per channel in bits per second
      * @param tns whether temporal noise shaping may be used
      * @param kernel the DSP kernel
      */
-    public EncoderChannel(int sampleRate, int bandwidth, int channelBitrate, boolean tns, AacKernel kernel) {
+    public EncoderChannel(int sampleRate, int frameLength, int bandwidth, int channelBitrate, boolean tns,
+                          AacKernel kernel) {
+        this(sampleRate, frameLength, bandwidth, channelBitrate, tns, AudioSpecificConfig.AOT_LC, kernel);
+    }
+
+    /**
+     * Creates a channel encoder of an object type.
+     *
+     * <p>AAC-LD and AAC-ELD code long windows only, AAC-LD with the sine window, AAC-ELD with the low delay
+     * filterbank.
+     *
+     * @param sampleRate the sampling rate in hertz
+     * @param frameLength the frame length: 1024 or 960, or 512 or 480 for AAC-LD and AAC-ELD
+     * @param bandwidth the audio bandwidth in hertz
+     * @param channelBitrate the bitrate per channel in bits per second
+     * @param tns whether temporal noise shaping may be used
+     * @param objectType {@link AudioSpecificConfig#AOT_LC}, {@link AudioSpecificConfig#AOT_ER_LD} or
+     * {@link AudioSpecificConfig#AOT_ER_ELD}
+     * @param kernel the DSP kernel
+     */
+    public EncoderChannel(int sampleRate, int frameLength, int bandwidth, int channelBitrate, boolean tns,
+                          int objectType, AacKernel kernel) {
+        this.objectType = objectType;
         this.kernel = kernel;
+        this.length = frameLength;
+        this.shortLength = frameLength / 8;
+        this.spectrum = new float[frameLength];
+        this.grouped = new float[frameLength];
+        this.magnitude = new float[frameLength];
+        this.power34 = new float[frameLength];
+        this.quant = new int[frameLength];
+        this.scratch = new int[frameLength];
         this.noiseSmr = TONAL_SMR - NOISE_RELIEF * Math.clamp((128000 - channelBitrate) / 64000f, 0, 1);
-        this.longLayout = new BandLayout(sampleRate, false, bandwidth, channelBitrate);
-        this.shortLayout = new BandLayout(sampleRate, true, bandwidth, channelBitrate);
+        var longOnly = objectType != AudioSpecificConfig.AOT_LC;
+        this.longLayout = new BandLayout(sampleRate, frameLength, false, bandwidth, channelBitrate);
+        this.shortLayout = longOnly ? longLayout : new BandLayout(sampleRate, frameLength, true, bandwidth,
+                channelBitrate);
         this.longTns = tns ? new TnsEncoder(longLayout, sampleRate, false, kernel) : null;
-        this.shortTns = tns ? new TnsEncoder(shortLayout, sampleRate, true, kernel) : null;
-        this.mdct = new ForwardMdct(kernel);
-        this.detector = new TransientDetector(channelBitrate);
+        this.shortTns = tns && !longOnly ? new TnsEncoder(shortLayout, sampleRate, true, kernel) : null;
+        this.mdct = objectType == AudioSpecificConfig.AOT_ER_ELD ? null : new ForwardMdct(frameLength, kernel);
+        this.lowDelayAnalysis = objectType == AudioSpecificConfig.AOT_ER_ELD
+                ? new LowDelayAnalysis(frameLength, kernel) : null;
+        this.detector = new TransientDetector(channelBitrate, frameLength);
         this.layout = longLayout;
+    }
+
+    /**
+     * Adapts the channel to a new bandwidth and bitrate from the next frame on, keeping the transform overlap and
+     * the attack detector's history; the previous frame's thresholds stop limiting pre-echo when the number of
+     * bands changes, since they do not cover the new bands.
+     *
+     * @param sampleRate the sampling rate in hertz
+     * @param bandwidth the audio bandwidth in hertz
+     * @param channelBitrate the bitrate per channel in bits per second
+     */
+    public void retune(int sampleRate, int bandwidth, int channelBitrate) {
+        this.noiseSmr = TONAL_SMR - NOISE_RELIEF * Math.clamp((128000 - channelBitrate) / 64000f, 0, 1);
+        var longBands = longLayout.count();
+        var shortBands = shortLayout.count();
+        this.longLayout = new BandLayout(sampleRate, length, false, bandwidth, channelBitrate);
+        this.shortLayout = objectType != AudioSpecificConfig.AOT_LC ? longLayout
+                : new BandLayout(sampleRate, length, true, bandwidth, channelBitrate);
+        if (longLayout.count() != longBands) {
+            previousLongValid = false;
+        }
+        if (shortLayout.count() != shortBands) {
+            previousShortValid = false;
+        }
+        if (longTns != null) {
+            this.longTns = new TnsEncoder(longLayout, sampleRate, false, kernel);
+            if (shortTns != null) {
+                this.shortTns = new TnsEncoder(shortLayout, sampleRate, true, kernel);
+            }
+        }
+        this.layout = longLayout;
+        detector.retune(channelBitrate);
     }
 
     /**
@@ -403,13 +486,30 @@ public final class EncoderChannel {
     /**
      * Transforms and analyzes one frame.
      *
+     * <p>AAC-LD and AAC-ELD frames ignore the sequence and the attack and code a long window; the AAC-ELD
+     * filterbank reads only the frame's last {@code frameLength} samples, its new ones.
+     *
      * @param input the input samples
-     * @param offset the index of the first of the frame's 2048 samples
+     * @param offset the index of the first of the frame's {@code 2 * frameLength} samples
      * @param sequence the window sequence
      * @param attackIndex the short window holding the attack, or {@code -1} when the frame has
      * none
      */
     public void analyze(float[] input, int offset, int sequence, int attackIndex) {
+        if (objectType != AudioSpecificConfig.AOT_LC) {
+            this.sequence = ChannelStream.ONLY_LONG_SEQUENCE;
+            this.shape = Windows.SINE;
+            if (lowDelayAnalysis != null) {
+                lowDelayAnalysis.analyze(input, offset + length, spectrum);
+            } else {
+                mdct.transform(input, offset, ChannelStream.ONLY_LONG_SEQUENCE, Windows.SINE, Windows.SINE, spectrum);
+            }
+            previousShape = Windows.SINE;
+            tnsActive = false;
+            Arrays.fill(tnsOrders, 0);
+            analyzeLong();
+            return;
+        }
         this.sequence = sequence;
         this.shape = sequence == ChannelStream.EIGHT_SHORT_SEQUENCE || sequence == ChannelStream.LONG_START_SEQUENCE
                 ? Windows.SINE : Windows.KBD;
@@ -433,7 +533,7 @@ public final class EncoderChannel {
         groupLengths[0] = 1;
         var offsets = layout.offsets();
         var count = layout.count();
-        Arrays.fill(spectrum, layout.lowpassLine(), LENGTH, 0);
+        Arrays.fill(spectrum, layout.lowpassLine(), length, 0);
         for (var band = 0; band < count; band++) {
             energy[band] = kernel.energy(spectrum, offsets[band], offsets[band + 1]);
             threshold[band] = energy[band] * maskingRatio(offsets[band], offsets[band + 1], layout.lowpassLine());
@@ -469,7 +569,7 @@ public final class EncoderChannel {
             bandEnd[band] = offsets[band + 1];
             minSnr[band] = layout.minSnr(band);
         }
-        System.arraycopy(spectrum, 0, grouped, 0, LENGTH);
+        System.arraycopy(spectrum, 0, grouped, 0, length);
     }
 
     /**
@@ -490,8 +590,8 @@ public final class EncoderChannel {
             groupLengths[1] = 4;
         }
         for (var window = 0; window < 8; window++) {
-            var base = window * 128;
-            Arrays.fill(spectrum, base + layout.lowpassLine(), base + 128, 0);
+            var base = window * shortLength;
+            Arrays.fill(spectrum, base + layout.lowpassLine(), base + shortLength, 0);
             var row = window * 16;
             for (var band = 0; band < count; band++) {
                 windowEnergy[row + band] = kernel.energy(spectrum, base + offsets[band], base + offsets[band + 1]);
@@ -526,14 +626,14 @@ public final class EncoderChannel {
         var line = 0;
         var firstWindow = 0;
         for (var group = 0; group < groupCount; group++) {
-            var length = groupLengths[group];
+            var windows = groupLengths[group];
             for (var band = 0; band < count; band++) {
                 var index = group * MAX_BANDS + band;
                 bandStart[index] = line;
                 var groupEnergy = 0.0f;
                 var groupThreshold = 0.0f;
-                for (var window = firstWindow; window < firstWindow + length; window++) {
-                    var base = window * 128;
+                for (var window = firstWindow; window < firstWindow + windows; window++) {
+                    var base = window * shortLength;
                     for (var k = offsets[band]; k < offsets[band + 1]; k++) {
                         grouped[line++] = spectrum[base + k];
                     }
@@ -545,7 +645,7 @@ public final class EncoderChannel {
                 threshold[index] = groupThreshold;
                 minSnr[index] = layout.minSnr(band);
             }
-            firstWindow += length;
+            firstWindow += windows;
         }
     }
 
@@ -572,7 +672,7 @@ public final class EncoderChannel {
         if (width < FLATNESS_LINES) {
             var pad = (FLATNESS_LINES - width) / 2;
             start = Math.max(0, start - pad);
-            end = Math.min(LENGTH, start + FLATNESS_LINES);
+            end = Math.min(length, start + FLATNESS_LINES);
         }
         end = Math.min(end, limit);
         if (end - start < 2) {
@@ -589,7 +689,7 @@ public final class EncoderChannel {
         var flatness = 3.0103f * (logSum / lines - fastLog2(sum / lines));
         var tonality = Math.clamp(flatness / TONAL_FLATNESS, 0, 1);
         var smr = noiseSmr + tonality * (TONAL_SMR - noiseSmr);
-        return (float) Math.pow(10, -smr / 10);
+        return (float) StrictMath.pow(10, -smr / 10);
     }
 
     /**
@@ -723,7 +823,7 @@ public final class EncoderChannel {
      */
     public void prepare() {
         frameStamp++;
-        kernel.powerLaw(grouped, magnitude, power34, 0, LENGTH);
+        kernel.powerLaw(grouped, magnitude, power34, 0, length);
         var count = layout.count();
         for (var group = 0; group < groupCount; group++) {
             for (var band = 0; band < count; band++) {
@@ -836,7 +936,7 @@ public final class EncoderChannel {
         var count = layout.count();
         var lowest = Integer.MAX_VALUE;
         var highestBound = 0;
-        var lowering = parameter < 0 ? (float) Math.pow(10, 3 * parameter) : 1;
+        var lowering = parameter < 0 ? (float) StrictMath.pow(10, 3 * parameter) : 1;
         for (var group = 0; group < groupCount; group++) {
             for (var band = 0; band < count; band++) {
                 var index = group * MAX_BANDS + band;
@@ -1116,7 +1216,7 @@ public final class EncoderChannel {
      * @return the bits
      */
     public int sideBits(boolean commonWindow) {
-        var bits = 8 + 3 + tnsBits();
+        var bits = 8 + (objectType == AudioSpecificConfig.AOT_ER_ELD ? 1 : 3) + tnsBits();
         if (!commonWindow) {
             bits += infoBits();
         }
@@ -1129,6 +1229,9 @@ public final class EncoderChannel {
      * @return the bits
      */
     public int infoBits() {
+        if (objectType == AudioSpecificConfig.AOT_ER_ELD) {
+            return 6;
+        }
         return sequence == ChannelStream.EIGHT_SHORT_SEQUENCE ? 1 + 2 + 1 + 4 + 7 : 1 + 2 + 1 + 6 + 1;
     }
 
@@ -1181,6 +1284,10 @@ public final class EncoderChannel {
      * @param writer the bit sink
      */
     public void writeInfo(MsbBitWriter writer) {
+        if (objectType == AudioSpecificConfig.AOT_ER_ELD) {
+            writer.write(maxBands, 6);
+            return;
+        }
         writer.write(0, 1);
         writer.write(sequence, 2);
         writer.write(shape, 1);
@@ -1232,12 +1339,26 @@ public final class EncoderChannel {
                 previous = scalefactors[index];
             }
         }
-        writer.write(0, 1);
-        writer.write(tnsActive ? 1 : 0, 1);
-        if (tnsActive) {
-            writeTns(writer);
+        if (objectType == AudioSpecificConfig.AOT_LC) {
+            writer.write(0, 1);
+            writer.write(tnsActive ? 1 : 0, 1);
+            if (tnsActive) {
+                writeTns(writer);
+            }
+            writer.write(0, 1);
+        } else {
+            // error resilient syntax: the TNS data follow the side information
+            if (objectType == AudioSpecificConfig.AOT_ER_LD) {
+                writer.write(0, 1);
+            }
+            writer.write(tnsActive ? 1 : 0, 1);
+            if (objectType == AudioSpecificConfig.AOT_ER_LD) {
+                writer.write(0, 1);
+            }
+            if (tnsActive) {
+                writeTns(writer);
+            }
         }
-        writer.write(0, 1);
         for (var group = 0; group < groupCount; group++) {
             for (var band = 0; band < maxBands; band++) {
                 var index = group * MAX_BANDS + band;

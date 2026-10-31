@@ -6,7 +6,9 @@ package com.github.auties00.smalt.image.jpeg.internal;
  *
  * <p>Plane {@code i} belongs to frame component {@code i}. It is MCU-padded: its stride and row
  * count cover whole blocks, and only the top-left {@link #componentWidth(int)} by
- * {@link #componentHeight(int)} samples are meaningful.
+ * {@link #componentHeight(int)} samples are meaningful. The planes hold either 8-bit samples
+ * ({@link #plane(int)}) or, for the planes of a 12-bit frame kept at their precision, 12-bit
+ * samples ({@link #widePlane(int)}); {@link #wide()} tells which.
  */
 public final class JpegPlanes {
     /**
@@ -15,9 +17,14 @@ public final class JpegPlanes {
     private final JpegFrame frame;
 
     /**
-     * The sample plane of each component.
+     * The 8-bit sample plane of each component, or {@code null} when the planes are wide.
      */
     private final byte[][] planes;
+
+    /**
+     * The 12-bit sample plane of each component, or {@code null} when the planes are 8-bit.
+     */
+    private final short[][] widePlanes;
 
     /**
      * The row stride of each plane.
@@ -40,8 +47,32 @@ public final class JpegPlanes {
     JpegPlanes(JpegFrame frame, byte[][] planes, int[] strides, int scaleShift) {
         this.frame = frame;
         this.planes = planes;
+        this.widePlanes = null;
         this.strides = strides;
         this.scaleShift = scaleShift;
+    }
+
+    /**
+     * Constructs the result of a 12-bit frame kept at its precision.
+     *
+     * @param frame the decoded frame
+     * @param widePlanes the 12-bit sample plane of each component
+     * @param strides the row stride of each plane
+     * @param scaleShift the binary logarithm of the size reduction
+     */
+    JpegPlanes(JpegFrame frame, short[][] widePlanes, int[] strides, int scaleShift) {
+        this.frame = frame;
+        this.planes = null;
+        this.widePlanes = widePlanes;
+        this.strides = strides;
+        this.scaleShift = scaleShift;
+    }
+
+    /**
+     * {@return whether the planes hold 12-bit samples, read through {@link #widePlane(int)}}
+     */
+    public boolean wide() {
+        return widePlanes != null;
     }
 
     /**
@@ -54,13 +85,31 @@ public final class JpegPlanes {
     }
 
     /**
-     * Returns the plane of one component, not a copy.
+     * Returns the 8-bit plane of one component, not a copy.
      *
      * @param component the frame component index
      * @return the samples
+     * @throws IllegalStateException if the planes are {@linkplain #wide() wide}
      */
     public byte[] plane(int component) {
+        if (planes == null) {
+            throw new IllegalStateException("the planes hold 12-bit samples");
+        }
         return planes[component];
+    }
+
+    /**
+     * Returns the 12-bit plane of one component, not a copy.
+     *
+     * @param component the frame component index
+     * @return the samples, from 0 to 4095
+     * @throws IllegalStateException if the planes are not {@linkplain #wide() wide}
+     */
+    public short[] widePlane(int component) {
+        if (widePlanes == null) {
+            throw new IllegalStateException("the planes hold 8-bit samples");
+        }
+        return widePlanes[component];
     }
 
     /**

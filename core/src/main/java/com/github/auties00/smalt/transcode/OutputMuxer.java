@@ -2,6 +2,9 @@ package com.github.auties00.smalt.transcode;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.Muxer;
+import com.github.auties00.smalt.internal.tags.TagCarry;
+import com.github.auties00.smalt.metadata.MediaTags;
+import com.github.auties00.smalt.metadata.TagMode;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Track;
@@ -20,7 +23,8 @@ import java.util.function.Supplier;
  * order; each stream declares its track when it knows it, and once every reserved track is
  * declared the muxer is created, the tracks are added to it in identifier order and the held
  * packets are written. Nothing reaches the output before that, so a transcode that fails while it
- * prepares its streams leaves the output untouched.
+ * prepares its streams leaves the output untouched. The tags set by {@link #tags} are given to the muxer
+ * once its tracks are added, before the held packets.
  *
  * <p>An instance is not thread-safe.
  */
@@ -62,6 +66,21 @@ final class OutputMuxer implements AutoCloseable {
      * Whether the tracks were added to the muxer.
      */
     private boolean started;
+
+    /**
+     * The tags of the output, on its terms, or {@code null} to set none.
+     */
+    private MediaTags tags;
+
+    /**
+     * What the output carries, set with {@link #tags}.
+     */
+    private TagMode tagMode;
+
+    /**
+     * The tags of the options, or {@code null}.
+     */
+    private MediaTags givenTags;
 
     /**
      * Constructs an instance.
@@ -108,13 +127,33 @@ final class OutputMuxer implements AutoCloseable {
     }
 
     /**
-     * Creates the muxer, adds every declared track to it and writes the held packets.
+     * Sets the tags the muxer receives, as {@link TagCarry#apply} gives them.
+     *
+     * @param tags the tags on the output's terms
+     * @param mode what the output carries
+     * @param given the tags of the options, or {@code null}
+     * @throws IllegalStateException if the muxer was already created
+     */
+    void tags(MediaTags tags, TagMode mode, MediaTags given) {
+        if (started) {
+            throw new IllegalStateException("the tags must be set before the muxer is created");
+        }
+        this.tags = tags;
+        this.tagMode = mode;
+        this.givenTags = given;
+    }
+
+    /**
+     * Creates the muxer, adds every declared track to it, sets the tags and writes the held packets.
      */
     private void start() {
         muxer = factory.get();
         started = true;
         for (var index = 0; index < reserved; index++) {
             muxer.addTrack(tracks[index]);
+        }
+        if (tags != null) {
+            TagCarry.apply(muxer, tags, tagMode, givenTags);
         }
         while (!held.isEmpty()) {
             muxer.writePacket(held.removeFirst());

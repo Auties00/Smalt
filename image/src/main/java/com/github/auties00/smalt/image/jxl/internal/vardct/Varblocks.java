@@ -17,7 +17,7 @@ public final class Varblocks {
     /**
      * The 16 basis functions of the AFV 4x4 corner (ISO/IEC 18181-1 table I.8), 16 samples each.
      */
-    private static final float[][] AFV_BASIS = {
+    static final float[][] AFV_BASIS = {
             {0.25f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f,
                     0.25f, 0.25f},
             {0.876902929799142f, 0.2206518106944235f, -0.10140050393753763f, -0.1014005039375375f,

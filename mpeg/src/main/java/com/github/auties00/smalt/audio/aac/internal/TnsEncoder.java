@@ -134,7 +134,11 @@ public final class TnsEncoder {
         this.maxOrder = shortWindow ? SHORT_ORDER : LONG_ORDER;
         this.resolution = shortWindow ? 3 : 4;
         var tableIndex = SamplingTables.tableIndexFor(sampleRate);
-        var limit = Math.min(SamplingTables.tnsMaxBands(tableIndex, shortWindow), layout.active());
+        var windowLength = layout.windowLength();
+        var maxBands = !shortWindow && (windowLength == 512 || windowLength == 480)
+                ? SamplingTables.tnsMaxBandsLowDelay(tableIndex, windowLength)
+                : SamplingTables.tnsMaxBands(tableIndex, shortWindow);
+        var limit = Math.min(maxBands, layout.active());
         var startFrequency = shortWindow ? 2750 : 1275;
         var startLine = (int) Math.round(startFrequency * 2.0 * layout.windowLength() / sampleRate);
         var band = 0;
@@ -222,7 +226,7 @@ public final class TnsEncoder {
             var best = 0;
             var bestError = Double.MAX_VALUE;
             for (var index = low; index <= high; index++) {
-                var reconstructed = Math.sin(index / (index >= 0 ? positive : negative));
+                var reconstructed = StrictMath.sin(index / (index >= 0 ? positive : negative));
                 var error = Math.abs(reconstructed - value);
                 if (error < bestError) {
                     bestError = error;
@@ -230,7 +234,7 @@ public final class TnsEncoder {
                 }
             }
             indexes[i] = best;
-            parcor[i] = (float) Math.sin(best / (best >= 0 ? positive : negative));
+            parcor[i] = (float) StrictMath.sin(best / (best >= 0 ? positive : negative));
         }
         stepUp(order);
         filter(spectrum, offset + start, end - start, order);
