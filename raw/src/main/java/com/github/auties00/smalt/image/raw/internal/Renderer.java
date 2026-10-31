@@ -88,7 +88,8 @@ public final class Renderer {
             if (sensor.pairedOpcodes2) {
                 Opcodes.applyToPairs(image, sensor.opcodes2);
             } else {
-                Opcodes.applyToLinear(image, sensor.opcodes2, Opcodes.bounds(sensor, image.width, image.height, 1));
+                Opcodes.applyToLinear(image, sensor.opcodes2, Opcodes.bounds(sensor, image.width, image.height, 1),
+                        aspect(sensor));
             }
         }
         return image;
@@ -246,7 +247,8 @@ public final class Renderer {
                         : "color filter arrays of other colors than red, green and blue need four color planes");
             }
         }
-        var color = CameraColor.of(calibration, options.whiteBalance(), options.colorMatrix().orElse(null),
+        var balance = AutoBalance.resolve(options.whiteBalance(), linear, window(sensor, linear, true));
+        var color = CameraColor.of(calibration, balance, options.colorMatrix().orElse(null),
                 fourColors ? 4 : 3);
         var four = fourColors ? fourColor(color) : null;
         var blend = options.highlights() == RawHighlights.BLEND;
@@ -268,10 +270,11 @@ public final class Renderer {
         var target = high ? Rgba16Picture.allocate(outWidth, outHeight, false)
                 : (Picture) RgbaPicture.allocate(outWidth, outHeight, false);
         float[][] rgb = null;
-        if (options.opcodes() && sensor.opcodes3 != null && !half) {
+        var third = thirdList(sensor, options, image.width, image.height);
+        if (third != null && !half) {
             rgb = demosaicAll(image, new int[]{0, 0, image.width, image.height}, options.demosaic(), four, blend);
-            Opcodes.applyToRgb(rgb, image.width, image.height, sensor.opcodes3,
-                    Opcodes.bounds(sensor, image.width, image.height, 2));
+            Opcodes.applyToRgb(rgb, image.width, image.height, third, Opcodes.bounds(sensor, image.width, image.height, 2),
+                    aspect(sensor));
         }
         var full = rgb;
         var step = half ? 2 : 1;
@@ -310,6 +313,32 @@ public final class Renderer {
             picture = ImageOps.resize(picture, size[0], size[1], ResizeFilter.BICUBIC);
         }
         return picture;
+    }
+
+    /**
+     * {@return the width of a pixel of a sensor's image relative to its height, from its default scale}
+     *
+     * @param sensor the sensor description
+     */
+    static double aspect(Sensor sensor) {
+        return sensor.scaleH > 0 && sensor.scaleV > 0 ? sensor.scaleH / sensor.scaleV : 1;
+    }
+
+    /**
+     * Returns the opcode list applied to the demosaiced image: the file's DNG opcode list 3, or, for a file
+     * without one, the opcode list of the lens corrections its vendor data records.
+     *
+     * @param sensor the sensor description
+     * @param options the rendering options
+     * @param width the width of the active area
+     * @param height the height of the active area
+     * @return the list, or {@code null} when the options apply none
+     */
+    static byte[] thirdList(Sensor sensor, RawDecoderOptions options, int width, int height) {
+        if (sensor.opcodes3 != null) {
+            return options.opcodes() ? sensor.opcodes3 : null;
+        }
+        return options.lensCorrections() && sensor.lens != null ? sensor.lens.opcodes(width, height) : null;
     }
 
     /**

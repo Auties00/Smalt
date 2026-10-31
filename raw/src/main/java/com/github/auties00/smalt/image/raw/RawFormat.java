@@ -40,7 +40,7 @@ public enum RawFormat {
     NEF("nef"),
 
     /**
-     * Sony ARW, SR2 and SRF.
+     * Sony ARW, ARQ, SR2 and SRF.
      */
     ARW("arw"),
 

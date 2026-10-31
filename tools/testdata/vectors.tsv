@@ -7696,3 +7696,7 @@ smoke	vc1-fate-SMM0015.rcv	437157	67baabd762ed35f70cd70c492e83e8744d068a5a567d9b
 smoke	vc1-fate-ilaced_twomv.vc1	2386818	8052c6f2514d7b9e0e6322b4cde440a590cbf6c7e97487336eafa4145ba74d30	https://fate-suite.ffmpeg.org/vc1/ilaced_twomv.vc1
 smoke	vc1-samples-glitch-ffvc1.avi	6288040	9de31ffd7d674bf5856fededc9dd0c0e511ff21bf860c42fef7813dc05d5b37e	https://samples.ffmpeg.org/V-codecs/WVC1/glitch-ffvc1.avi
 full	vc1-samples-interlaced-bframes.m2ts	52998144	bddf2fb926e55b9b147be4471f5d696c49c07210e29ae6e8a9d77866ab7e2456	https://samples.ffmpeg.org/V-codecs/WVC1/vc1-interlaced-bframes.m2ts
+full	rawpixls-pentax-k-1-14bit-3-2-pixel-shift.pef	175828391	aea857a6bd9f2cdf02b3370b0a597f89dd31f567af84b7bc0a770f547d0a0d85	https://raw.pixls.us/getfile.php/2471/nice/Pentax%20-%20K-1%20-%2014bit%20(3%3A2).PEF
+full	rawpixls-pentax-k-3-mark-iii-14bit-3-2-pixel-shift.pef	121040554	dbcbd2848c0635c3bc035034b9860ef72c1de855b78e03749c65fd31e77e227e	https://raw.pixls.us/getfile.php/5833/nice/Pentax%20-%20K-3%20Mark%20III%20-%2014bit%20(3%3A2).PEF
+full	rawpixls-pentax-k-70-14bit-3-2-pixel-shift.dng	116873685	748f46710b05faadb61a31a7e791df47e5a6618a9a39d9b299ce2d0432434d59	https://raw.pixls.us/getfile.php/1753/nice/Pentax%20-%20K-70%20-%2014bit%20(3%3A2).DNG
+full	rawpixls-sony-ilce-7rm3-14bit-14bit-uncompressed-3-2.arq	340873216	67af1f9f4cff82bd182f3fc48e95d39ae7d8352595e3c72f3386c9dee114f27d	https://raw.pixls.us/getfile.php/3255/nice/Sony%20-%20ILCE-7RM3%20-%2014bit%2014bit%20uncompressed%20(3%3A2).ARQ

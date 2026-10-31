@@ -83,12 +83,14 @@ public final class RawDecoding {
      * @param layout the spatial layout of the color filter array of the rendered area
      * @param profiles the names of the camera profiles, the primary one first
      * @param enhanced whether the file holds an enhanced image that decodes
+     * @param frames the frames of a pixel-shift file, 1 for a file of one shot
      */
     public record Facts(RawFormat format, String make, String model, int width, int height, int sensorWidth,
                         int sensorHeight, Orientation orientation, int bitsPerSample, CfaPattern cfa,
                         String compression, String unsupported, boolean calibrated, long iso, double exposureTime,
                         double fNumber, double focalLength, String lens, String captureTime, String dngVersion,
-                        List<RawPreview> previews, CfaLayout layout, List<String> profiles, boolean enhanced) {
+                        List<RawPreview> previews, CfaLayout layout, List<String> profiles, boolean enhanced,
+                        int frames) {
         /**
          * {@return whether the sensor image decodes: no feature is missing and the rendering has a
          * size}
@@ -180,7 +182,8 @@ public final class RawDecoding {
                 sensor != null ? sensor.bitsPerSample : 0, cfa,
                 sensor != null ? sensor.compression : null, unsupported, calibrated, file.iso, file.exposureTime,
                 file.fNumber, file.focalLength, file.lens, file.captureTime, file.dngVersion, previews, layout,
-                file.profileNames(), file.enhanced != null);
+                file.profileNames(), file.enhanced != null,
+                sensor != null && sensor.frames != null ? sensor.frames.size() : 1);
     }
 
     /**
@@ -554,11 +557,12 @@ public final class RawDecoding {
             var calibration = file.color(options);
             var colors = image.cfa != null && !image.cfa.isRgb() ? 4 : 3;
             var matrix = options.colorMatrix().orElse(null);
+            var balance = AutoBalance.resolve(options.whiteBalance(), image, Renderer.window(sensor, image, true));
             if (colors == 4 && matrix == null && calibration.channels() != 4) {
                 return new SensorImage(window[2], window[3], spp, samples, cfa, uncalibratedNeutral(file, calibration,
-                        options.whiteBalance()), new double[0], layout, planes, window);
+                        balance), new double[0], layout, planes, window);
             }
-            var color = CameraColor.of(calibration, options.whiteBalance(), matrix, colors);
+            var color = CameraColor.of(calibration, balance, matrix, colors);
             return new SensorImage(window[2], window[3], spp, samples, cfa, color.neutral, color.balancedToPcs, layout,
                     planes, window);
         });
@@ -615,6 +619,8 @@ public final class RawDecoding {
                 }
                 yield CameraColor.normalize(neutral, 4);
             }
+            case RawWhiteBalance.Automatic _ -> throw new IllegalStateException(
+                    "an automatic white balance is resolved to multipliers before the color mapping");
             case RawWhiteBalance.Temperature _ -> throw new MediaException.Unsupported(file.format.extension(),
                     "a color temperature cannot white balance a four-color camera without color matrices");
             case RawWhiteBalance.AsShot _ -> {

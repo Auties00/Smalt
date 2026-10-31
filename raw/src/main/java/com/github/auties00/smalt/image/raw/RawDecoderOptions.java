@@ -7,6 +7,7 @@ import com.github.auties00.smalt.internal.check.Checks;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalInt;
 
 /**
  * Holds the settings of a {@link RawDecoder}. Instances are immutable and thread-safe; create them with
@@ -33,6 +34,8 @@ public final class RawDecoderOptions {
     private final boolean userCrop;
     private final boolean autoBlack;
     private final String cameraProfile;
+    private final boolean lensCorrections;
+    private final int frame;
 
     private RawDecoderOptions(Builder builder) {
         this.limits = builder.limits;
@@ -53,6 +56,8 @@ public final class RawDecoderOptions {
         this.userCrop = builder.userCrop;
         this.autoBlack = builder.autoBlack;
         this.cameraProfile = builder.cameraProfile;
+        this.lensCorrections = builder.lensCorrections;
+        this.frame = builder.allFrames ? -1 : builder.frame;
     }
 
     /**
@@ -148,6 +153,9 @@ public final class RawDecoderOptions {
         builder.userCrop = userCrop;
         builder.autoBlack = autoBlack;
         builder.cameraProfile = cameraProfile;
+        builder.lensCorrections = lensCorrections;
+        builder.frame = Math.max(frame, 0);
+        builder.allFrames = frame < 0;
         return builder;
     }
 
@@ -322,6 +330,32 @@ public final class RawDecoderOptions {
         return Optional.ofNullable(cameraProfile);
     }
 
+    /**
+     * {@return whether the lens corrections a camera raw file records for its shot (radial distortion, lateral
+     * chromatic aberration and vignetting, from the maker note of Fujifilm, Olympus, Panasonic and Sony files) are
+     * applied to the rendering; {@code true} by default}
+     *
+     * <p>The corrections apply to the rendering of files that hold no DNG opcode list 3 of their own, after
+     * demosaicing, as DNG {@code FixVignetteRadial} and {@code WarpRectilinear} opcodes would; a DNG file
+     * converted with them on carries them as its opcode list 3. {@link RawDecoder#decodeRaw} returns the sensor
+     * values either way. A half-size rendering (see {@link #minWidth()}) does not apply them.
+     */
+    public boolean lensCorrections() {
+        return lensCorrections;
+    }
+
+    /**
+     * {@return the frame of a multi-frame pixel-shift file that is decoded alone, from 0; empty (all the frames,
+     * merged into one image of red, green and blue at every pixel) by default}
+     *
+     * <p>{@link RawInfo#frameCount()} gives a file's frames. Frame 0 of a file of one frame is its image; decoding
+     * a frame the file does not hold throws {@link com.github.auties00.smalt.MediaException.Unsupported}. A
+     * single frame is a color filter array image, which renders like the file of a single shot.
+     */
+    public OptionalInt frame() {
+        return frame < 0 ? OptionalInt.empty() : OptionalInt.of(frame);
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof RawDecoderOptions that && limits.equals(that.limits) && minWidth == that.minWidth
@@ -331,14 +365,15 @@ public final class RawDecoderOptions {
                 && colorSpace == that.colorSpace && highBitDepth == that.highBitDepth && opcodes == that.opcodes
                 && defaultCrop == that.defaultCrop && Arrays.equals(colorMatrix, that.colorMatrix)
                 && enhancedImage == that.enhancedImage && userCrop == that.userCrop && autoBlack == that.autoBlack
-                && Objects.equals(cameraProfile, that.cameraProfile);
+                && Objects.equals(cameraProfile, that.cameraProfile) && lensCorrections == that.lensCorrections
+                && frame == that.frame;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(limits, minWidth, minHeight, embeddedPreview, demosaic, whiteBalance, highlights,
                 toneCurve, exposure, colorSpace, highBitDepth, opcodes, defaultCrop, Arrays.hashCode(colorMatrix),
-                enhancedImage, userCrop, autoBlack, cameraProfile);
+                enhancedImage, userCrop, autoBlack, cameraProfile, lensCorrections, frame);
     }
 
     @Override
@@ -350,6 +385,7 @@ public final class RawDecoderOptions {
                 + ", defaultCrop=" + defaultCrop + (colorMatrix != null ? ", colorMatrix=" + Arrays.toString(colorMatrix) : "")
                 + ", enhancedImage=" + enhancedImage + ", userCrop=" + userCrop + ", autoBlack=" + autoBlack
                 + (cameraProfile != null ? ", cameraProfile=" + cameraProfile : "")
+                + ", lensCorrections=" + lensCorrections + (frame >= 0 ? ", frame=" + frame : "")
                 + "]";
     }
 
@@ -378,6 +414,9 @@ public final class RawDecoderOptions {
         private boolean userCrop;
         private boolean autoBlack;
         private String cameraProfile;
+        private boolean lensCorrections = true;
+        private int frame;
+        private boolean allFrames = true;
 
         private Builder() {
         }
@@ -610,15 +649,53 @@ public final class RawDecoderOptions {
         }
 
         /**
+         * Sets whether a camera raw file's own lens corrections are applied; see
+         * {@link RawDecoderOptions#lensCorrections()}.
+         *
+         * @param lensCorrections the value
+         * @return this builder
+         */
+        public Builder lensCorrections(boolean lensCorrections) {
+            this.lensCorrections = lensCorrections;
+            return this;
+        }
+
+        /**
+         * Sets the frame of a pixel-shift file that is decoded alone; see {@link RawDecoderOptions#frame()}.
+         *
+         * @param index the frame, from 0
+         * @return this builder
+         */
+        public Builder frame(int index) {
+            this.frame = index;
+            this.allFrames = false;
+            return this;
+        }
+
+        /**
+         * Decodes every frame of a pixel-shift file, merged; see {@link RawDecoderOptions#frame()}.
+         *
+         * @return this builder
+         */
+        public Builder allFrames() {
+            this.frame = 0;
+            this.allFrames = true;
+            return this;
+        }
+
+        /**
          * Returns options holding the settings of this builder.
          *
          * @return the options
          * @throws IllegalArgumentException if the minimum width or height is negative, the exposure is
-         * outside -10 to 10 stops, or the color matrix does not hold nine or twelve finite values or
-         * lacks full column rank
+         * outside -10 to 10 stops, the frame is negative, or the color matrix does not hold nine or twelve
+         * finite values or lacks full column rank
          */
         public RawDecoderOptions build() {
             Checks.nonNegative("minimum width", minWidth);
+            if (!allFrames && frame < 0) {
+                throw new IllegalArgumentException("frame " + frame + " is negative");
+            }
             Checks.nonNegative("minimum height", minHeight);
             Checks.inRange("exposure", exposure, -10, 10);
             if (colorMatrix != null) {

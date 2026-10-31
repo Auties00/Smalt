@@ -54,7 +54,9 @@ class ImageIoProvidersTest {
     void readerFormats() {
         var provider = new SmaltImageReaderSpi();
         assertEquals(List.of(ImageFormat.PNG, ImageFormat.WEBP, ImageFormat.HEIC, ImageFormat.AVIF, ImageFormat.ICO,
-                ImageFormat.ANI, ImageFormat.JP2, ImageFormat.JXL, ImageFormat.DNG, ImageFormat.RAW), provider.formats());
+                ImageFormat.ANI, ImageFormat.JP2, ImageFormat.JXL, ImageFormat.DNG, ImageFormat.RAW, ImageFormat.PNM,
+                ImageFormat.TGA, ImageFormat.QOI, ImageFormat.HDR, ImageFormat.ICNS, ImageFormat.PSD, ImageFormat.EXR,
+                ImageFormat.JXR, ImageFormat.DDS), provider.formats());
         var names = Arrays.asList(provider.getFormatNames());
         assertTrue(names.contains("webp"));
         assertTrue(names.contains("avif"));
@@ -69,7 +71,7 @@ class ImageIoProvidersTest {
         assertTrue(Arrays.asList(provider.getMIMETypes()).containsAll(List.of("image/jph", "image/jphc")));
         assertTrue(names.contains("dng"));
         assertTrue(names.contains("raw"));
-        assertTrue(Arrays.asList(provider.getFileSuffixes()).contains("nef"));
+        assertTrue(Arrays.asList(provider.getFileSuffixes()).containsAll(List.of("nef", "arq")));
         assertFalse(names.contains("tiff"));
         assertFalse(names.contains("png"));
         assertFalse(names.contains("jpeg"));

@@ -25,7 +25,9 @@ import java.util.List;
  * @implNote This implementation skips opcodes of later specifications whether or not they are
  * flagged optional, so a file that needs one still renders, uncorrected. Gain map
  * positions are the pixel coordinates divided by the image size, and warps resample with a
- * Catmull-Rom cubic.
+ * Catmull-Rom cubic. The radial opcodes of lists 2 and 3 measure distances in units of a pixel's height: in an
+ * image whose default scale makes its pixels wider or narrower than high, horizontal offsets count the pixel aspect
+ * ratio times their pixels, so the corrections stay circular in the scaled image.
  */
 final class Opcodes {
     /**
@@ -87,6 +89,16 @@ final class Opcodes {
          * @return 65535 for stored samples, 1 otherwise
          */
         float maximum();
+
+        /**
+         * Returns the width of a pixel relative to its height, by which the radial opcodes scale horizontal
+         * offsets.
+         *
+         * @return the pixel aspect ratio, 1 for square pixels
+         */
+        default double aspect() {
+            return 1;
+        }
     }
 
     /**
@@ -187,8 +199,9 @@ final class Opcodes {
      * @param list the opcode list
      * @param start the rectangle earlier lists trimmed the image to, as left, top, right and
      * bottom, or {@code null}
+     * @param aspect the width of a pixel relative to its height
      */
-    static void applyToLinear(LinearImage image, byte[] list, int[] start) {
+    static void applyToLinear(LinearImage image, byte[] list, int[] start, double aspect) {
         var spp = image.samplesPerPixel;
         apply(start(start, new Surface() {
             @Override
@@ -220,6 +233,11 @@ final class Opcodes {
             public float maximum() {
                 return 1;
             }
+
+            @Override
+            public double aspect() {
+                return aspect;
+            }
         }), list);
     }
 
@@ -232,8 +250,9 @@ final class Opcodes {
      * @param list the opcode list
      * @param start the rectangle earlier lists trimmed the image to, as left, top, right and
      * bottom, or {@code null}
+     * @param aspect the width of a pixel relative to its height
      */
-    static void applyToRgb(float[][] planes, int width, int height, byte[] list, int[] start) {
+    static void applyToRgb(float[][] planes, int width, int height, byte[] list, int[] start, double aspect) {
         apply(start(start, new Surface() {
             @Override
             public int width() {
@@ -263,6 +282,11 @@ final class Opcodes {
             @Override
             public float maximum() {
                 return 1;
+            }
+
+            @Override
+            public double aspect() {
+                return aspect;
             }
         }), list);
     }
@@ -589,6 +613,11 @@ final class Opcodes {
             public float maximum() {
                 return surface.maximum();
             }
+
+            @Override
+            public double aspect() {
+                return surface.aspect();
+            }
         };
     }
 
@@ -759,7 +788,8 @@ final class Opcodes {
         var height = surface.height();
         var xc = cx * (width - 1);
         var yc = cy * (height - 1);
-        var mx = Math.max(Math.abs(xc), Math.abs(width - 1 - xc));
+        var aspect = surface.aspect();
+        var mx = aspect * Math.max(Math.abs(xc), Math.abs(width - 1 - xc));
         var my = Math.max(Math.abs(yc), Math.abs(height - 1 - yc));
         var m = Math.sqrt(mx * mx + my * my);
         if (!(m > 0)) {
@@ -768,7 +798,7 @@ final class Opcodes {
         for (var row = 0; row < height; row++) {
             var dy = (row - yc) / m;
             for (var column = 0; column < width; column++) {
-                var dx = (column - xc) / m;
+                var dx = aspect * (column - xc) / m;
                 var r2 = dx * dx + dy * dy;
                 var gain = (float) (1 + r2 * (k[0] + r2 * (k[1] + r2 * (k[2] + r2 * (k[3] + r2 * k[4])))));
                 for (var plane = 0; plane < surface.planes(); plane++) {
@@ -802,7 +832,8 @@ final class Opcodes {
         var height = surface.height();
         var xc = cx * (width - 1);
         var yc = cy * (height - 1);
-        var mx = Math.max(Math.abs(xc), Math.abs(width - 1 - xc));
+        var aspect = surface.aspect();
+        var mx = aspect * Math.max(Math.abs(xc), Math.abs(width - 1 - xc));
         var my = Math.max(Math.abs(yc), Math.abs(height - 1 - yc));
         var m = Math.sqrt(mx * mx + my * my);
         if (!(m > 0)) {
@@ -819,12 +850,12 @@ final class Opcodes {
             for (var row = 0; row < height; row++) {
                 var dy = (row - yc) / m;
                 for (var column = 0; column < width; column++) {
-                    var dx = (column - xc) / m;
+                    var dx = aspect * (column - xc) / m;
                     var r2 = dx * dx + dy * dy;
                     var f = c[0] + r2 * (c[1] + r2 * (c[2] + r2 * c[3]));
                     var tx = c[4] * 2 * dx * dy + c[5] * (r2 + 2 * dx * dx);
                     var ty = c[5] * 2 * dx * dy + c[4] * (r2 + 2 * dy * dy);
-                    var sx = xc + m * (f * dx + tx);
+                    var sx = xc + m * (f * dx + tx) / aspect;
                     var sy = yc + m * (f * dy + ty);
                     surface.set(row, column, plane, cubic(source, width, height, sx, sy));
                 }
@@ -941,7 +972,8 @@ final class Opcodes {
         var height = surface.height();
         var xc = cx * (width - 1);
         var yc = cy * (height - 1);
-        var mx = Math.max(Math.abs(xc), Math.abs(width - 1 - xc));
+        var aspect = surface.aspect();
+        var mx = aspect * Math.max(Math.abs(xc), Math.abs(width - 1 - xc));
         var my = Math.max(Math.abs(yc), Math.abs(height - 1 - yc));
         var m = Math.sqrt(mx * mx + my * my);
         if (!(m > 0)) {
@@ -958,8 +990,9 @@ final class Opcodes {
             for (var row = 0; row < height; row++) {
                 var dy = (row - yc) / m;
                 for (var column = 0; column < width; column++) {
-                    warp.map(plane, (column - xc) / m, dy, offset);
-                    surface.set(row, column, plane, cubic(source, width, height, xc + m * offset[0], yc + m * offset[1]));
+                    warp.map(plane, aspect * (column - xc) / m, dy, offset);
+                    surface.set(row, column, plane, cubic(source, width, height, xc + m * offset[0] / aspect,
+                            yc + m * offset[1]));
                 }
             }
         }

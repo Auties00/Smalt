@@ -112,7 +112,7 @@ public final class RawDecoder {
                 facts.sensorWidth(), facts.sensorHeight(), facts.orientation(), facts.bitsPerSample(), facts.cfa(),
                 facts.compression(), facts.unsupported(), facts.calibrated(), facts.iso(), facts.exposureTime(),
                 facts.fNumber(), facts.focalLength(), facts.lens(), facts.captureTime(), facts.dngVersion(),
-                facts.previews(), facts.layout(), facts.profiles(), facts.enhanced());
+                facts.previews(), facts.layout(), facts.profiles(), facts.enhanced(), facts.frames());
     }
 
     /**

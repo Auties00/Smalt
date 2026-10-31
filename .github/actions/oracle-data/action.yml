@@ -20,6 +20,14 @@ runs:
         key: oracle-data-raw-${{ hashFiles('tools/testdata/raw-oracle.py') }}
         enableCrossOsArchive: true
 
+    - name: Restore the raw lens and pixel-shift oracle files
+      id: lens
+      uses: actions/cache/restore@v4
+      with:
+        path: .oracle-data/raw-lens-oracle
+        key: oracle-data-raw-lens-${{ hashFiles('tools/testdata/raw-lens-oracle.py') }}
+        enableCrossOsArchive: true
+
     - name: Restore the NEF oracle files
       id: nef
       uses: actions/cache/restore@v4
@@ -56,7 +64,8 @@ runs:
 
     - name: Download the oracle data files of this run
       if: >-
-        inputs.artifact == 'true' && (steps.raw.outputs.cache-hit != 'true' || steps.nef.outputs.cache-hit != 'true'
+        inputs.artifact == 'true' && (steps.raw.outputs.cache-hit != 'true' || steps.lens.outputs.cache-hit != 'true'
+        || steps.nef.outputs.cache-hit != 'true'
         || steps.eld.outputs.cache-hit != 'true' || steps.mps.outputs.cache-hit != 'true'
         || steps.svs.outputs.cache-hit != 'true')
       continue-on-error: true

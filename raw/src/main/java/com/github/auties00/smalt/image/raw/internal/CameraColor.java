@@ -129,7 +129,7 @@ final class CameraColor {
         double[] xy;
         switch (balance) {
             case RawWhiteBalance.Temperature temperature -> {
-                xy = ColorMath.chromaticity(temperature.kelvin());
+                xy = ColorMath.chromaticity(temperature.kelvin(), temperature.tint());
                 neutral = model.neutralOf(xy);
             }
             case RawWhiteBalance.Multipliers multipliers -> {
@@ -140,6 +140,8 @@ final class CameraColor {
                 neutral = inverse(channels(multipliers));
                 xy = model.whiteOf(neutral);
             }
+            case RawWhiteBalance.Automatic _ -> throw new IllegalStateException(
+                    "an automatic white balance is resolved to multipliers before the color mapping");
             case RawWhiteBalance.AsShot _ -> {
                 if (valid(color.asShotNeutral, n)) {
                     neutral = normalize(color.asShotNeutral, n);

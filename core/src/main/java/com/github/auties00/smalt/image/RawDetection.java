@@ -15,10 +15,10 @@ import java.util.Arrays;
  * {@code DNGVersion} tag, a {@link ImageFormat#RAW} when it is a Canon CR2 file ({@code CR} at
  * offset 8) or a Phase One IIQ file ({@code IIIICwaR} at offset 8), when its first directory carries a
  * tag only camera raw files carry, or when one of its directories (the main chain and the
- * {@code SubIFDs} they point to) describes a color filter array or linear raw image or uses a vendor
- * raw compression, and a {@link ImageFormat#TIFF} otherwise. The walk is bounded in the directories
- * and entries it reads, so it terminates on every input; a directory it cannot read ends the walk,
- * and the file is then classified from what was read so far.
+ * {@code SubIFDs} they point to) describes a color filter array, linear raw or sequential color
+ * filter (Sony ARQ) image or uses a vendor raw compression, and a {@link ImageFormat#TIFF} otherwise.
+ * The walk is bounded in the directories and entries it reads, so it terminates on every input; a
+ * directory it cannot read ends the walk, and the file is then classified from what was read so far.
  */
 final class RawDetection {
     /**
@@ -50,6 +50,11 @@ final class RawDetection {
      * The photometric interpretation of a linear raw image (DNG).
      */
     private static final int PHOTOMETRIC_LINEAR_RAW = 34892;
+
+    /**
+     * The photometric interpretation of the four samples per pixel of a Sony ARQ file (sequential color filter).
+     */
+    private static final int PHOTOMETRIC_SEQUENTIAL = 32892;
 
     /**
      * The compression codes only camera raw images use: Nikon NEF (34713), Sony ARW (32767),
@@ -222,7 +227,8 @@ final class RawDetection {
                             return ImageFormat.DNG;
                         }
                     }
-                    case PHOTOMETRIC -> raw |= value == PHOTOMETRIC_CFA || value == PHOTOMETRIC_LINEAR_RAW;
+                    case PHOTOMETRIC -> raw |= value == PHOTOMETRIC_CFA || value == PHOTOMETRIC_LINEAR_RAW
+                            || value == PHOTOMETRIC_SEQUENTIAL;
                     case COMPRESSION -> raw |= Arrays.binarySearch(RAW_COMPRESSIONS, (int) value) >= 0;
                     case SUB_IFDS -> {
                         if (type == 4 || type == 13) {

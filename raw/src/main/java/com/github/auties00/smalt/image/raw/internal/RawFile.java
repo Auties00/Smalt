@@ -335,13 +335,24 @@ public final class RawFile {
     }
 
     /**
-     * Returns the image the options render: the enhanced image when they ask for it and the file
-     * holds one that decodes, the sensor image otherwise.
+     * Returns the image the options render: the frame they ask for of a pixel-shift file, the enhanced
+     * image when they ask for it and the file holds one that decodes, the sensor image otherwise.
      *
      * @param options the decoding options
      * @return the sensor description, or {@code null} when the file holds no sensor image
+     * @throws MediaException.Unsupported if the options ask for a frame the file does not hold
      */
     Sensor sensor(RawDecoderOptions options) {
+        var frame = options.frame();
+        if (frame.isPresent() && sensor != null) {
+            var index = frame.getAsInt();
+            var frames = sensor.frames != null ? sensor.frames.size() : 1;
+            if (index >= frames) {
+                throw new MediaException.Unsupported(format.extension(), "frame " + index + " of a file of " + frames
+                        + (frames == 1 ? " frame" : " frames"));
+            }
+            return sensor.frames != null ? sensor.frames.get(index) : sensor;
+        }
         return options.enhancedImage() && enhanced != null ? enhanced : sensor;
     }
 

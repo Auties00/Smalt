@@ -189,10 +189,22 @@ final class Sensor {
     byte[] opcodes3;
 
     /**
+     * The lens corrections the file's vendor data records, applied when rendering like an opcode list 3 of
+     * their own, or {@code null} for none.
+     */
+    LensCorrection lens;
+
+    /**
      * Whether {@link #opcodes2} applies to the image of two samples per pixel this staggered image interleaves (the
      * diagonal pairs of a two-sample DNG image), two adjacent columns holding the samples of one of its pixels.
      */
     boolean pairedOpcodes2;
+
+    /**
+     * The frames a pixel-shift image merges, each a sensor image of one sample per photosite in the order
+     * the file stores them, or {@code null} for an image of one exposure.
+     */
+    List<Sensor> frames;
 
     /**
      * Whether the as-shot white balance, which the file does not record readably, is estimated

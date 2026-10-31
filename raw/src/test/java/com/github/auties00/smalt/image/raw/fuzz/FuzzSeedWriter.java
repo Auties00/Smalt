@@ -2,6 +2,7 @@ package com.github.auties00.smalt.image.raw.fuzz;
 
 import com.github.auties00.smalt.image.raw.Cr3Writer;
 import com.github.auties00.smalt.image.raw.DngSpecSamples;
+import com.github.auties00.smalt.image.raw.PixelShiftFiles;
 import com.github.auties00.smalt.image.raw.RafWriter;
 import com.github.auties00.smalt.image.raw.TinyDng;
 import org.junit.jupiter.api.DisplayName;
@@ -25,7 +26,8 @@ import static com.github.auties00.smalt.testkit.fuzz.FuzzSeeds.write;
  * Writes the committed seeds of the raw fuzz targets (tools/fuzz/README.md): DNG files built with
  * {@link TinyDng} and {@link DngSpecSamples}, CC0 samples from raw.pixls.us (listed in {@code tools/testdata/vectors.tsv}) reduced by
  * {@link RawSeedReducer} to their first {@value #ROWS} sensor rows and tiny previews, and the first {@value #HEAD}
- * bytes of a compressed RAF sample, RAF files written by {@link RafWriter} and CR3 files written by {@link Cr3Writer}. The
+ * bytes of a compressed RAF sample, RAF files written by {@link RafWriter}, CR3 files written by {@link Cr3Writer} and
+ * pixel-shift PEF, DNG and ARQ files written by {@link PixelShiftFiles}. The
  * CRW, MRW and X3F seeds are written by the synthetic-file builders of their parser tests. Runs only with {@code -Dsmalt.fuzz.writeSeeds=true}.
  */
 @EnabledIfSystemProperty(named = "smalt.fuzz.writeSeeds", matches = "true",
@@ -186,6 +188,15 @@ class FuzzSeedWriter {
         outputs.stripes = 8;
         write(RawFuzzTest.class, "raf", "valid-legacy-output-stripes.raf",
                 outputs.legacy(words, 24, 32, false, 0x01, new int[]{0, 0, 24, 32}, null));
+    }
+
+    @Test
+    @DisplayName("writes the multi-frame seeds: Pentax pixel-shift PEF and DNG files and a Sony ARQ file")
+    void pixelShift() {
+        var files = new PixelShiftFiles(12, 8, 3);
+        write(RawFuzzTest.class, "pef", "valid-pixel-shift.pef", files.pef());
+        write(RawFuzzTest.class, "dng", "valid-pixel-shift.dng", files.dng());
+        write(RawFuzzTest.class, "arw", "valid-arq.arq", files.arq());
     }
 
     @Test

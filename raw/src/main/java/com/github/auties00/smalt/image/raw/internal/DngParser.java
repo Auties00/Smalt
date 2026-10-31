@@ -12,6 +12,7 @@ import com.github.auties00.smalt.internal.io.ByteArrays;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Parses a DNG file (Adobe DNG specification 1.7.1): the main raw image among the directories, its
@@ -166,12 +167,58 @@ final class DngParser {
         copyTags(first, DngTag.FIRST, file.firstTags);
         copyTags(first, DngTag.PROFILE, file.profileTags);
         file.sensor = sensor;
+        var merged = pixelShift(tree, raw, sensor, file);
+        if (merged != null) {
+            file.sensor = merged;
+        }
         if (enhanced != null) {
             enhanced(enhanced, sensor, file);
         }
         for (var proxy : proxies) {
             proxy(proxy, sensor, file);
         }
+    }
+
+    /**
+     * Returns the merged image of a Pentax pixel-shift DNG file: four main raw images (each the raw image of
+     * one of the file's chained directories) of one Bayer pattern and size, the first the raw image already
+     * described.
+     *
+     * @param tree the directories
+     * @param raw the first raw image's directory
+     * @param sensor the first raw image
+     * @param file the file, whose make tells a Pentax file
+     * @return the merged image, or {@code null} when the file is not a pixel-shift file or its frames cannot
+     * be merged
+     */
+    private static Sensor pixelShift(TiffTree tree, Ifd raw, Sensor sensor, RawFile file) {
+        var make = file.make == null ? "" : file.make.strip().toUpperCase(Locale.ROOT);
+        if (!(make.startsWith("PENTAX") || make.startsWith("RICOH")) || sensor.cfa == null || !sensor.cfa.isBayer()
+                || sensor.samplesPerPixel != 1 || sensor.layout != CfaLayout.RECTANGULAR) {
+            return null;
+        }
+        var frames = new ArrayList<Sensor>();
+        frames.add(sensor);
+        for (var ifd : tree.directories) {
+            if (ifd == raw || ifd.longValue(TiffTree.NEW_SUBFILE_TYPE, 0) != 0
+                    || ifd.intValue(TiffSamples.PHOTOMETRIC, 0) != PHOTOMETRIC_CFA) {
+                continue;
+            }
+            var frame = new Sensor();
+            try {
+                frame.reader = TiffSamples.describe(ifd, frame);
+                frame.cfa = pattern(ifd);
+            } catch (MediaException.Unsupported | MediaException.Malformed exception) {
+                return null;
+            }
+            if (ifd.intValue(50711, 1) != 1) {
+                return null;
+            }
+            levels(ifd, frame);
+            frames.add(frame);
+        }
+        return frames.size() == PixelShift.PENTAX_DX.length
+                ? PixelShift.merge(frames, PixelShift.PENTAX_DX, PixelShift.PENTAX_DY) : null;
     }
 
     /**

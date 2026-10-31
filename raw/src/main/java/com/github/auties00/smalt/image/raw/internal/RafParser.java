@@ -504,6 +504,7 @@ final class RafParser {
             if (fits) {
                 sensor.defaultCrop = new double[]{crop[1], crop[0], crop[3], crop[2]};
             }
+            sensor.lens = lens(block, sensor);
             file.sensor = sensor;
             return;
         }
@@ -534,6 +535,10 @@ final class RafParser {
             if (fits) {
                 sensor.defaultCrop = new double[]{2.0 * crop[1], crop[0], 2.0 * crop[3], crop[2]};
             }
+            var aspect = sensor.scaleH / sensor.scaleV;
+            var square = VendorLens.fujifilm(block.doubles(0xF00B), block.doubles(0xF00F), block.doubles(0xF010),
+                    fits ? new double[]{crop[1], crop[0], crop[3], crop[2]} : null, width, height);
+            sensor.lens = square != null ? square.withAspect(aspect) : null;
         } else {
             sensor.samplesPerPixel = 2;
             sensor.blackRows = patterned ? 2 : 1;
@@ -548,8 +553,22 @@ final class RafParser {
             if (fits) {
                 sensor.defaultCrop = new double[]{crop[1], crop[0], crop[3], crop[2]};
             }
+            sensor.lens = lens(block, sensor);
         }
         file.sensor = sensor;
+    }
+
+    /**
+     * Returns the lens corrections of a sensor block's private directory: tags {@code 0xF00B} (distortion),
+     * {@code 0xF00F} (chromatic aberration) and {@code 0xF010} (vignetting), described in {@link VendorLens}.
+     *
+     * @param block the private directory of the block
+     * @param sensor the sensor description, its crop set
+     * @return the corrections, or {@code null} for none
+     */
+    private static LensCorrection lens(Ifd block, Sensor sensor) {
+        return VendorLens.fujifilm(block.doubles(0xF00B), block.doubles(0xF00F), block.doubles(0xF010),
+                sensor.defaultCrop, sensor.width, sensor.height);
     }
 
     /**

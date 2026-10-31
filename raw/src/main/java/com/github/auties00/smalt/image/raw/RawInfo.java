@@ -85,6 +85,8 @@ public final class RawInfo {
      */
     private final boolean enhanced;
 
+    private final int frames;
+
     /**
      * Constructs a description; {@link RawDecoder} creates instances.
      *
@@ -112,12 +114,13 @@ public final class RawInfo {
      * @param layout the spatial layout of the color filter array
      * @param profiles the names of the camera profiles, the primary one first
      * @param enhanced whether the file holds an enhanced image that decodes
+     * @param frames the frames of a pixel-shift file, 1 for a file of one shot
      */
     RawInfo(RawFormat format, String make, String model, int width, int height, int sensorWidth, int sensorHeight,
             Orientation orientation, int bitsPerSample, CfaPattern cfa, String compression, String unsupported,
             boolean calibrated, long iso, double exposureTime, double fNumber, double focalLength, String lens,
             String captureTime, String dngVersion, List<RawPreview> previews, CfaLayout layout, List<String> profiles,
-            boolean enhanced) {
+            boolean enhanced, int frames) {
         this.format = Objects.requireNonNull(format, "format");
         this.make = make;
         this.model = model;
@@ -142,6 +145,7 @@ public final class RawInfo {
         this.layout = Objects.requireNonNull(layout, "layout");
         this.profiles = List.copyOf(profiles);
         this.enhanced = enhanced;
+        this.frames = frames;
     }
 
     /**
@@ -271,6 +275,19 @@ public final class RawInfo {
     }
 
     /**
+     * {@return the frames the file holds: 4 for a Pentax pixel-shift file (PEF, or the DNG file the camera
+     * writes), whose frames the sensor took one photosite apart, 1 for a file of one shot}
+     *
+     * <p>The size, color filter array and compression this object reports are those of the merged image the
+     * default rendering decodes: red, green and blue at every pixel, with no color filter array.
+     * {@link RawDecoderOptions#frame()} decodes one frame alone. A Sony ARQ file, which Sony's software merges
+     * from four or sixteen frames, holds one.
+     */
+    public int frameCount() {
+        return frames;
+    }
+
+    /**
      * {@return a description of the compression of the sensor data, such as {@code "lossless JPEG"},
      * or empty when unknown}
      */
@@ -385,6 +402,6 @@ public final class RawInfo {
                 + ", sensor=" + sensorWidth + "x" + sensorHeight + ", orientation=" + orientation + ", bits="
                 + bitsPerSample + ", cfa=" + cfa + ", compression=" + compression
                 + (unsupported != null ? ", unsupported=" + unsupported : "") + ", calibrated=" + calibrated
-                + ", previews=" + previews.size() + "]";
+                + (frames > 1 ? ", frames=" + frames : "") + ", previews=" + previews.size() + "]";
     }
 }

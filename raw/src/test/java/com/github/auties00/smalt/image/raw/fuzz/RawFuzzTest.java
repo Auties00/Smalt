@@ -35,7 +35,7 @@ class RawFuzzTest {
     private static final RawDecoderOptions RENDERED = RawDecoderOptions.builder()
             .limits(Fuzz.LIMITS)
             .demosaic(RawDemosaic.MENON)
-            .whiteBalance(RawWhiteBalance.temperature(4000))
+            .whiteBalance(RawWhiteBalance.temperature(4000, 25))
             .highlights(RawHighlights.BLEND)
             .toneCurve(RawToneCurve.LINEAR)
             .colorSpace(RawColorSpace.PROPHOTO_RGB)
@@ -46,6 +46,7 @@ class RawFuzzTest {
             .enhancedImage(true)
             .userCrop(true)
             .autoBlack(true)
+            .lensCorrections(false)
             .build();
 
     /**
@@ -54,6 +55,7 @@ class RawFuzzTest {
      */
     private static final RawDecoderOptions PROFILED = RawDecoderOptions.builder()
             .limits(Fuzz.LIMITS)
+            .whiteBalance(RawWhiteBalance.automatic(RawWhiteBalance.Automatic.Method.WHITE_PATCH))
             .highlights(RawHighlights.BLEND)
             .enhancedImage(true)
             .userCrop(true)

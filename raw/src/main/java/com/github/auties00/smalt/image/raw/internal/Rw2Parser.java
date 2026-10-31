@@ -283,6 +283,7 @@ final class Rw2Parser {
         if (red > 0 && green > 0 && blue > 0) {
             file.color.asShotNeutral = new double[]{(double) green / red, 1, (double) green / blue};
         }
+        sensor.lens = VendorLens.panasonic(first.bytes(0x119), first.bytes(0x11B), sensor.defaultCrop, sensor.width, sensor.height);
     }
 
     /**

@@ -6,12 +6,12 @@ import java.util.Objects;
 
 /**
  * A white balance a raw image is rendered with: the one recorded with the shot, a correlated color
- * temperature, or explicit camera channel multipliers.
+ * temperature and tint, explicit camera channel multipliers, or one estimated from the image.
  *
  * <p>Instances are immutable and thread-safe.
  */
 public sealed interface RawWhiteBalance permits RawWhiteBalance.AsShot, RawWhiteBalance.Temperature,
-        RawWhiteBalance.Multipliers {
+        RawWhiteBalance.Multipliers, RawWhiteBalance.Automatic {
     /**
      * Returns the white balance recorded with the shot.
      *
@@ -40,6 +40,40 @@ public sealed interface RawWhiteBalance permits RawWhiteBalance.AsShot, RawWhite
      */
     static Temperature temperature(double kelvin) {
         return new Temperature(kelvin);
+    }
+
+    /**
+     * Returns the white balance of a light of a correlated color temperature, offset from the locus by a tint.
+     *
+     * @param kelvin the temperature, from 2000 to 25000 kelvin
+     * @param tint the tint, from -150 to 150; see {@link Temperature}
+     * @return the white balance
+     * @throws IllegalArgumentException if the temperature or the tint is out of range
+     * @see Temperature
+     */
+    static Temperature temperature(double kelvin, double tint) {
+        return new Temperature(kelvin, tint);
+    }
+
+    /**
+     * Returns the white balance estimated from the image by the gray world method.
+     *
+     * @return the automatic white balance
+     * @see Automatic
+     */
+    static Automatic automatic() {
+        return new Automatic(Automatic.Method.GRAY_WORLD);
+    }
+
+    /**
+     * Returns the white balance estimated from the image by a method.
+     *
+     * @param method the estimation method
+     * @return the automatic white balance
+     * @see Automatic
+     */
+    static Automatic automatic(Automatic.Method method) {
+        return new Automatic(method);
     }
 
     /**
@@ -84,24 +118,87 @@ public sealed interface RawWhiteBalance permits RawWhiteBalance.AsShot, RawWhite
     }
 
     /**
-     * The white balance of a light of a correlated color temperature: on the CIE daylight locus from
-     * 4000 K, on the Planckian locus below.
+     * The white balance of a light of a correlated color temperature and tint.
+     *
+     * <p>A tint of 0 is the light on the CIE daylight locus from 4000 K, on the Planckian locus below. Another
+     * tint moves the light's chromaticity, in the CIE 1960 UCS {@code (u, v)} diagram, from that point along
+     * the normal to the Planckian locus at the temperature, by {@code tint / 3000}: positive values describe a
+     * greener light (toward larger {@code v}), which renders the image more magenta, as the tint controls of raw
+     * converters do, negative values a more magenta light.
+     * {@snippet :
+     * (u, v) = (u0, v0) + tint / 3000 * (nu, nv)   // (nu, nv) unit normal to the Planckian locus at T, nv > 0
+     * }
      *
      * <p>Rendering it needs the file's color matrices (or the generic fallback); a file that only embeds a
      * camera to sRGB matrix renders it as shot.
      *
      * @param kelvin the temperature, from 2000 to 25000 kelvin
+     * @param tint the tint, from -150 to 150
      */
-    record Temperature(double kelvin) implements RawWhiteBalance {
+    record Temperature(double kelvin, double tint) implements RawWhiteBalance {
         /**
-         * Validates the temperature.
+         * Validates the temperature and the tint.
          *
-         * @throws IllegalArgumentException if the temperature is out of range
+         * @throws IllegalArgumentException if the temperature or the tint is out of range
          */
         public Temperature {
             if (!(kelvin >= 2000 && kelvin <= 25000)) {
                 throw new IllegalArgumentException("temperature " + kelvin + " K is outside 2000..25000");
             }
+            if (!(tint >= -150 && tint <= 150)) {
+                throw new IllegalArgumentException("tint " + tint + " is outside -150..150");
+            }
+        }
+
+        /**
+         * Constructs the white balance of a light on the locus, of tint 0.
+         *
+         * @param kelvin the temperature, from 2000 to 25000 kelvin
+         * @throws IllegalArgumentException if the temperature is out of range
+         */
+        public Temperature(double kelvin) {
+            this(kelvin, 0);
+        }
+    }
+
+    /**
+     * The white balance estimated from the image: camera channel multipliers that make a reference of the
+     * image neutral.
+     *
+     * <p>The estimate is computed on the camera values of the default crop (the whole image area of a file
+     * without one), before demosaicing, from the blocks of one repeat of the color filter array (2x2 photosites
+     * for a Bayer array, 6x6 for an X-Trans array; the pixels of a linear image) none of whose values is at or
+     * above 98% of the white level or below 0.1% of it; an image without such blocks renders as shot. The
+     * estimate depends only on the image and the method: rendering, {@link RawDecoder#decodeRaw} and DNG
+     * conversion find the same one.
+     *
+     * @param method the estimation method
+     */
+    record Automatic(Method method) implements RawWhiteBalance {
+        /**
+         * Validates the method.
+         *
+         * @throws NullPointerException if the method is {@code null}
+         */
+        public Automatic {
+            Objects.requireNonNull(method, "method");
+        }
+
+        /**
+         * A method of estimating the white balance from the image.
+         */
+        public enum Method {
+            /**
+             * Gray world: the mean of each color over the blocks is taken as the neutral, which assumes that the
+             * scene averages to gray.
+             */
+            GRAY_WORLD,
+
+            /**
+             * White patch: the mean of each color over the brightest 1% of the blocks (by the sum of their
+             * colors) is taken as the neutral, which assumes that the brightest unclipped areas are white.
+             */
+            WHITE_PATCH
         }
     }
 

@@ -66,6 +66,13 @@ class RawDetectionTest {
         assertEquals(Optional.of(ImageFormat.TIFF), Images.detect(MediaSource.of(plain)));
     }
 
+    @Test
+    @DisplayName("a TIFF with a directory of sequential color filter samples, as a Sony ARQ file has, is a camera raw file")
+    void arq() {
+        var arq = tiff(8, false, 256, 160, 262, 32892);
+        assertEquals(Optional.of(ImageFormat.RAW), Images.detect(MediaSource.of(arq)));
+    }
+
     @ParameterizedTest(name = "tag {0}")
     @ValueSource(ints = {33424, 34310, 65024})
     @DisplayName("a TIFF whose first directory carries Kodak's or Leaf's raw tags is a camera raw file")

@@ -4,6 +4,8 @@ package com.github.auties00.smalt.image.raw.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.internal.io.ByteArrays;
+import com.github.auties00.smalt.internal.io.SourceBytes;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 
@@ -76,6 +78,16 @@ final class ArwParser {
     private static final int PACKED_WHITE = 4095;
 
     /**
+     * The photometric interpretation (sequential color filter) of the raw directory of an ARQ file.
+     */
+    private static final int PHOTOMETRIC_SEQUENTIAL = 32892;
+
+    /**
+     * The samples of each pixel of an ARQ file.
+     */
+    private static final int ARQ_SAMPLES = 4;
+
+    /**
      * The models without the black level tag whose black level is 800.
      */
     private static final Set<String> BLACK_800 = Set.of("DSC-RX0", "DSC-RX10", "DSC-RX10M3", "DSC-RX100",
@@ -123,7 +135,9 @@ final class ArwParser {
         tree.describe(file);
         var raw = TiffEpParser.rawDirectory(tree);
         if (raw == null) {
-            file.unsupported = "the ARW file holds no raw image";
+            if (!arq(reader, tree, file)) {
+                file.unsupported = "the ARW file holds no raw image";
+            }
             return;
         }
         var sensor = new Sensor();
@@ -221,7 +235,112 @@ final class ArwParser {
         var crop = CROP_OF_MODEL.get(file.model == null ? "" : file.model.strip());
         sensor.defaultCrop = crop != null && crop[0] + crop[2] <= sensor.width && crop[1] + crop[3] <= sensor.height
                 ? crop.clone() : centeredCrop(tree.exif, sensor);
+        sensor.lens = VendorLens.sony(raw, file.model, sensor.width, sensor.height);
         file.sensor = sensor;
+    }
+
+    /**
+     * Describes the image of a Sony ARQ file, the merged pixel-shift capture of four frames that Sony's software
+     * writes: a directory of photometric interpretation 32892 holding, as uncompressed 16-bit words, four samples
+     * per pixel whose colors {@code CFAPlaneColor} gives as red, green, green and blue. The image is merged to
+     * red, the mean of the two greens rounded half up, and blue; the levels are those of the directory's
+     * {@code BlackLevel} (tag {@code 0x7310}), {@code WhiteLevel} and {@code WB_RGGBLevels} (tag {@code 0x7313})
+     * tags, and the crop that of its {@code DefaultCropOrigin} and {@code DefaultCropSize}.
+     *
+     * @param reader the TIFF structure
+     * @param tree the directories
+     * @param file the description to fill
+     * @return whether the file is an ARQ file
+     */
+    private static boolean arq(TiffReader reader, TiffTree tree, RawFile file) {
+        Ifd raw = null;
+        for (var ifd : tree.directories) {
+            if (ifd.intValue(TiffSamples.PHOTOMETRIC, 0) == PHOTOMETRIC_SEQUENTIAL
+                    && ifd.intValue(TiffSamples.SAMPLES_PER_PIXEL, 1) == ARQ_SAMPLES) {
+                raw = ifd;
+                break;
+            }
+        }
+        if (raw == null) {
+            return false;
+        }
+        var colors = raw.longs(50710);
+        if (colors == null || colors.length != ARQ_SAMPLES || colors[0] != 0 || colors[1] != 1 || colors[2] != 1
+                || colors[3] != 2) {
+            file.unsupported = "ARQ files of other sample colors than red, green, green and blue are not supported";
+            return true;
+        }
+        if (raw.intValue(TiffSamples.COMPRESSION, 1) != 1) {
+            file.unsupported = "compressed ARQ files are not supported";
+            return true;
+        }
+        var width = raw.intValue(TiffSamples.IMAGE_WIDTH, 0);
+        var height = raw.intValue(TiffSamples.IMAGE_LENGTH, 0);
+        if (width <= 0 || height <= 0) {
+            throw new MediaException.Malformed("invalid ARQ raw image of " + width + "x" + height);
+        }
+        var blocks = TiffSamples.blocks(raw, width, height);
+        var source = reader.source();
+        var little = reader.little();
+        var sensor = new Sensor();
+        sensor.width = width;
+        sensor.height = height;
+        sensor.samplesPerPixel = 3;
+        sensor.bitsPerSample = 14;
+        sensor.compression = "uncompressed";
+        sensor.reader = (plane, limits) -> {
+            var stride = (long) width * ARQ_SAMPLES * 2;
+            LimitChecks.checkAllocation(limits, stride);
+            var row = new byte[(int) stride];
+            var out = plane.integers;
+            for (var block : blocks) {
+                var rows = Math.min(block.height(), plane.height - block.y());
+                for (var line = 0; line < rows; line++) {
+                    var start = (long) line * stride;
+                    if (start >= block.length()) {
+                        break;
+                    }
+                    var count = (int) Math.min(stride, block.length() - start);
+                    var read = SourceBytes.readAvailable(source, block.offset() + start, row, 0, count);
+                    var pixels = Math.max(read, 0) / (ARQ_SAMPLES * 2);
+                    var target = (block.y() + line) * width * 3;
+                    for (var x = 0; x < pixels; x++) {
+                        var at = x * ARQ_SAMPLES * 2;
+                        var red = ByteArrays.u16(row, at, little);
+                        var green = ByteArrays.u16(row, at + 2, little) + ByteArrays.u16(row, at + 4, little);
+                        var blue = ByteArrays.u16(row, at + 6, little);
+                        out[target + x * 3] = (short) red;
+                        out[target + x * 3 + 1] = (short) ((green + 1) >>> 1);
+                        out[target + x * 3 + 2] = (short) blue;
+                    }
+                }
+            }
+        };
+        var black = raw.longs(0x7310);
+        if (black != null && black.length >= 4) {
+            sensor.black = new double[]{black[0], (black[1] + black[2]) / 2.0, black[3]};
+        } else {
+            sensor.black = new double[]{BLACK, BLACK, BLACK};
+        }
+        var white = raw.longValue(50717, 0);
+        var level = white > 0 && white < 1 << 16 ? white : WHITE;
+        sensor.white = new double[]{level, level, level};
+        var balance = raw.longs(0x7313);
+        if (balance != null && balance.length >= 4 && balance[0] > 0 && balance[1] > 0 && balance[2] > 0
+                && balance[3] > 0) {
+            var green = (balance[1] + balance[2]) / 2.0;
+            file.color.asShotNeutral = new double[]{green / balance[0], 1, green / balance[3]};
+        }
+        var origin = raw.doubles(50719);
+        var size = raw.doubles(50720);
+        if (origin != null && size != null && origin.length == 2 && size.length == 2 && size[0] > 0 && size[1] > 0
+                && origin[0] >= 0 && origin[1] >= 0 && origin[0] + size[0] <= width
+                && origin[1] + size[1] <= height) {
+            sensor.defaultCrop = new double[]{origin[0], origin[1], size[0], size[1]};
+        }
+        sensor.lens = VendorLens.sony(raw, file.model, width, height);
+        file.sensor = sensor;
+        return true;
     }
 
     /**

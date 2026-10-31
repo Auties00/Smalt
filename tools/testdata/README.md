@@ -193,6 +193,15 @@ skipped. With `--coverage` the script converts every ORF sample and every RW2 or
 in `vectors.tsv` (about 6 GB of DNG files) into `<conformance cache>/raw-oracle-coverage` for
 `RawOracleCoverageTest` (`-Dsmalt.test.rawCoverage`).
 
+`python tools/testdata/raw-lens-oracle.py` (Windows, same converter) writes the oracle files of
+`LensCorrectionOracleTest` and `PixelShiftOracleTest` into `<conformance cache>/raw-lens-oracle`
+(`-Dsmalt.test.rawLensOracle`): for Sony, Panasonic, Olympus and Fujifilm samples a `<stem>.lens` file with the active
+area, the default crop and the opcode lists 2 and 3 of the converter's DNG file (the `WarpRectilinear` and
+`FixVignetteRadial` opcodes it derives from the maker note's lens corrections), keeping the DNG files of two samples
+for a rendering comparison; and for the pixel-shift Pentax PEF and DNG samples and the Sony ARQ sample a
+`<stem>.merged` summary (size, and per sample the SHA-256 and first row) of the linear DNG file the converter merges
+their frames into.
+
 ## PNG oracles
 
 The PNG encoder tests (`PngEncoderFormatsTest`, `PngEncoderChunksTest`, `ApngColorProfileTest`) read Smalt's

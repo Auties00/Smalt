@@ -174,7 +174,7 @@ public final class DngWriting {
                 }
                 result.userCrop = sensor.userCrop;
             }
-            result.opcodes3 = decoding.opcodes() ? sensor.opcodes3 : null;
+            result.opcodes3 = Renderer.thirdList(sensor, decoding, image.width(), image.height());
             result.scaleH = sensor.scaleH;
             result.scaleV = sensor.scaleV;
             var calibration = file.color(decoding);

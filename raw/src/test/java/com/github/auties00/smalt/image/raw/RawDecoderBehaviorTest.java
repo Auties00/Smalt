@@ -17,7 +17,7 @@ import java.util.zip.CRC32;
  * Runs the DNG and camera raw decoders through the I/O behavior harness ({@link ImageDecoderAsserts}), with
  * the sensor data of {@link RawDecoder#decodeRaw} as an extra decode, over DNG files made by
  * {@link TinyDng} in every sample layout and by {@link DngSpecSamples} in the layouts and profile features of DNG
- * 1.2 to 1.7, a smoke-tier GoPro GPR file of VC-5 sensor data, synthetic Sigma X3F files ({@link X3fWriter}) and Canon CR3 files ({@link Cr3Writer}), a smoke-tier DNG
+ * 1.2 to 1.7, synthetic Pentax pixel-shift and Sony ARQ files ({@link PixelShiftFiles}), a smoke-tier GoPro GPR file of VC-5 sensor data, synthetic Sigma X3F files ({@link X3fWriter}) and Canon CR3 files ({@link Cr3Writer}), a smoke-tier DNG
  * and full-tier files of every camera raw format (three for CR3: a lossless file, a version 2 C-RAW file and a
  * version 1 C-RAW file of two tiles),
  * comparing each with its golden dump under {@code src/test/resources/dumps}.
@@ -104,6 +104,20 @@ class RawDecoderBehaviorTest {
             + "behavior and clean faults")
     void spec(String name) {
         harness("dngspec/" + name, DngSpecSamples.of(name)).run();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"pef", "dng", "arq"})
+    @DisplayName("synthetic multi-frame files (Pentax pixel-shift PEF and DNG, Sony ARQ): identical pictures and "
+            + "merged sensor data under every source behavior and clean faults")
+    void pixelShift(String name) {
+        var files = new PixelShiftFiles(24, 18, 11);
+        var data = switch (name) {
+            case "pef" -> files.pef();
+            case "dng" -> files.dng();
+            default -> files.arq();
+        };
+        harness("pixelshift/" + name, data).run();
     }
 
     static X3fWriter x3fFile(String name) {
