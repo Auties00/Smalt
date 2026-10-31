@@ -39,6 +39,16 @@ public final class SilkDecControl {
     public int prevPitchLag;
 
     /**
+     * Whether the deep PLC conceals lost 16 kHz frames on its own, without queued DRED features (input).
+     */
+    public boolean enable_deep_plc;
+
+    /**
+     * The OSCE method of the decoder, one of the {@code Osce.METHOD_*} constants (input).
+     */
+    public int osce_method;
+
+    /**
      * Creates zeroed controls.
      */
     public SilkDecControl() {

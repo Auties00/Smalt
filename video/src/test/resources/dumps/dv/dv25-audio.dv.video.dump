@@ -1,0 +1,17 @@
+# video decode dump of dv/dv25-audio.dv; regenerate with -Dsmalt.test.updateDumps=true
+format DV
+duration 66733
+seekable true
+track 1 DV 720x480 timebase=1001/30000
+0 pts=0 dur=1 key=true 720x480 yuv8 YUV422 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=87049b0a u=bcec0063 v=cd7564d6
+1 pts=1 dur=1 key=true 720x480 yuv8 YUV422 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=fe65880e u=aad31833 v=b0df49b8
+seek 0: @0
+seek 22244: @0
+seek 44488: @1
+seek 66733: @1
+seek -1000000: @0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format DV
+  duration -1
+  seekable false
+  track 1 DV 720x480 timebase=1001/30000

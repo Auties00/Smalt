@@ -7,6 +7,7 @@ import com.github.auties00.smalt.internal.check.Checks;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalInt;
 
 /**
  * Holds the settings of a {@link RawDecoder}. Instances are immutable and thread-safe; create them with
@@ -29,6 +30,12 @@ public final class RawDecoderOptions {
     private final boolean opcodes;
     private final boolean defaultCrop;
     private final double[] colorMatrix;
+    private final boolean enhancedImage;
+    private final boolean userCrop;
+    private final boolean autoBlack;
+    private final String cameraProfile;
+    private final boolean lensCorrections;
+    private final int frame;
 
     private RawDecoderOptions(Builder builder) {
         this.limits = builder.limits;
@@ -45,6 +52,12 @@ public final class RawDecoderOptions {
         this.opcodes = builder.opcodes;
         this.defaultCrop = builder.defaultCrop;
         this.colorMatrix = builder.colorMatrix == null ? null : builder.colorMatrix.clone();
+        this.enhancedImage = builder.enhancedImage;
+        this.userCrop = builder.userCrop;
+        this.autoBlack = builder.autoBlack;
+        this.cameraProfile = builder.cameraProfile;
+        this.lensCorrections = builder.lensCorrections;
+        this.frame = builder.allFrames ? -1 : builder.frame;
     }
 
     /**
@@ -136,6 +149,13 @@ public final class RawDecoderOptions {
         builder.opcodes = opcodes;
         builder.defaultCrop = defaultCrop;
         builder.colorMatrix = colorMatrix;
+        builder.enhancedImage = enhancedImage;
+        builder.userCrop = userCrop;
+        builder.autoBlack = autoBlack;
+        builder.cameraProfile = cameraProfile;
+        builder.lensCorrections = lensCorrections;
+        builder.frame = Math.max(frame, 0);
+        builder.allFrames = frame < 0;
         return builder;
     }
 
@@ -231,7 +251,8 @@ public final class RawDecoderOptions {
 
     /**
      * {@return whether the opcode lists of a DNG file (lens shading gain maps, vignetting and distortion
-     * corrections, bad pixel fixes) are applied; {@code true} by default}
+     * corrections, bad pixel fixes) and the lens shading and bad pixel corrections of a Sigma X3F file
+     * are applied; {@code true} by default}
      */
     public boolean opcodes() {
         return opcodes;
@@ -249,14 +270,90 @@ public final class RawDecoderOptions {
      * {@return a copy of the XYZ to camera matrix that replaces the file's own color matrices; empty (the
      * file's matrices, or the generic fallback) by default}
      *
-     * <p>The nine values, row by row, map CIE XYZ under D65 to the camera's red, green and blue
-     * channels as a DNG {@code ColorMatrix} does, for example from an Adobe DNG Converter file of the
-     * same camera model. They are finite and form an invertible matrix. A matrix cannot replace those
-     * of a four-color sensor: decoding such a file with one throws
-     * {@link com.github.auties00.smalt.MediaException.Unsupported}.
+     * <p>The values, row by row, map CIE XYZ under D65 to the camera's channels as a DNG
+     * {@code ColorMatrix} does, for example from an Adobe DNG Converter file of the same camera model:
+     * nine values (three rows) for a sensor of red, green and blue, twelve (four rows, in the order of
+     * the file's color planes) for a four-color sensor. They are finite, and the matrix has full column
+     * rank. A matrix whose rows differ in number from the sensor's colors cannot replace its
+     * matrices: decoding with one throws {@link com.github.auties00.smalt.MediaException.Unsupported}.
      */
     public Optional<double[]> colorMatrix() {
         return colorMatrix == null ? Optional.empty() : Optional.of(colorMatrix.clone());
+    }
+
+    /**
+     * {@return whether a DNG file's enhanced image (DNG 1.5, {@code NewSubFileType} 16: a demosaiced,
+     * typically denoised or upscaled version of the raw image that software stored with it) is
+     * rendered and returned instead of the raw image; {@code false} by default}
+     *
+     * <p>The enhanced image is rendered with the file's camera profile, crop and scale (scaled to its
+     * size when its resolution differs). A file without one, or whose enhanced image cannot be decoded,
+     * is decoded from its raw image. {@link RawDecoder#decodeRaw} then returns the enhanced image's
+     * three linear channels.
+     */
+    public boolean enhancedImage() {
+        return enhancedImage;
+    }
+
+    /**
+     * {@return whether the image is cropped further to the file's default user crop (DNG
+     * {@code DefaultUserCrop}, the crop the photographer chose, such as an aspect ratio set in the
+     * camera); {@code false} by default}
+     *
+     * <p>The user crop lies within the default crop and applies only when {@link #defaultCrop()} does.
+     */
+    public boolean userCrop() {
+        return userCrop;
+    }
+
+    /**
+     * {@return whether the rendering subtracts an automatically determined black point (flare) from
+     * the image, as a raw converter does by default; {@code false} by default}
+     *
+     * <p>The black point is measured on the image: the luminance below which its darkest 0.01% of
+     * pixels lie, at most 2% of white. A camera profile whose {@code DefaultBlackRender} is None turns
+     * the subtraction off, since its tables or tone curve already set the black level. It applies only
+     * under {@link RawToneCurve#STANDARD}.
+     */
+    public boolean autoBlack() {
+        return autoBlack;
+    }
+
+    /**
+     * {@return the name of the DNG camera profile the file is rendered with; empty (the as-shot
+     * profile the file names, or else its primary profile) by default}
+     *
+     * <p>{@link RawInfo#cameraProfiles()} lists the profiles a file holds. Decoding a file that holds
+     * no profile of this name throws {@link com.github.auties00.smalt.MediaException.Unsupported}.
+     */
+    public Optional<String> cameraProfile() {
+        return Optional.ofNullable(cameraProfile);
+    }
+
+    /**
+     * {@return whether the lens corrections a camera raw file records for its shot (radial distortion, lateral
+     * chromatic aberration and vignetting, from the maker note of Fujifilm, Olympus, Panasonic and Sony files) are
+     * applied to the rendering; {@code true} by default}
+     *
+     * <p>The corrections apply to the rendering of files that hold no DNG opcode list 3 of their own, after
+     * demosaicing, as DNG {@code FixVignetteRadial} and {@code WarpRectilinear} opcodes would; a DNG file
+     * converted with them on carries them as its opcode list 3. {@link RawDecoder#decodeRaw} returns the sensor
+     * values either way. A half-size rendering (see {@link #minWidth()}) does not apply them.
+     */
+    public boolean lensCorrections() {
+        return lensCorrections;
+    }
+
+    /**
+     * {@return the frame of a multi-frame pixel-shift file that is decoded alone, from 0; empty (all the frames,
+     * merged into one image of red, green and blue at every pixel) by default}
+     *
+     * <p>{@link RawInfo#frameCount()} gives a file's frames. Frame 0 of a file of one frame is its image; decoding
+     * a frame the file does not hold throws {@link com.github.auties00.smalt.MediaException.Unsupported}. A
+     * single frame is a color filter array image, which renders like the file of a single shot.
+     */
+    public OptionalInt frame() {
+        return frame < 0 ? OptionalInt.empty() : OptionalInt.of(frame);
     }
 
     @Override
@@ -266,13 +363,17 @@ public final class RawDecoderOptions {
                 && whiteBalance.equals(that.whiteBalance) && highlights == that.highlights
                 && toneCurve == that.toneCurve && Double.compare(exposure, that.exposure) == 0
                 && colorSpace == that.colorSpace && highBitDepth == that.highBitDepth && opcodes == that.opcodes
-                && defaultCrop == that.defaultCrop && Arrays.equals(colorMatrix, that.colorMatrix);
+                && defaultCrop == that.defaultCrop && Arrays.equals(colorMatrix, that.colorMatrix)
+                && enhancedImage == that.enhancedImage && userCrop == that.userCrop && autoBlack == that.autoBlack
+                && Objects.equals(cameraProfile, that.cameraProfile) && lensCorrections == that.lensCorrections
+                && frame == that.frame;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(limits, minWidth, minHeight, embeddedPreview, demosaic, whiteBalance, highlights,
-                toneCurve, exposure, colorSpace, highBitDepth, opcodes, defaultCrop, Arrays.hashCode(colorMatrix));
+                toneCurve, exposure, colorSpace, highBitDepth, opcodes, defaultCrop, Arrays.hashCode(colorMatrix),
+                enhancedImage, userCrop, autoBlack, cameraProfile, lensCorrections, frame);
     }
 
     @Override
@@ -282,6 +383,9 @@ public final class RawDecoderOptions {
                 + ", highlights=" + highlights + ", toneCurve=" + toneCurve + ", exposure=" + exposure
                 + ", colorSpace=" + colorSpace + ", highBitDepth=" + highBitDepth + ", opcodes=" + opcodes
                 + ", defaultCrop=" + defaultCrop + (colorMatrix != null ? ", colorMatrix=" + Arrays.toString(colorMatrix) : "")
+                + ", enhancedImage=" + enhancedImage + ", userCrop=" + userCrop + ", autoBlack=" + autoBlack
+                + (cameraProfile != null ? ", cameraProfile=" + cameraProfile : "")
+                + ", lensCorrections=" + lensCorrections + (frame >= 0 ? ", frame=" + frame : "")
                 + "]";
     }
 
@@ -306,6 +410,13 @@ public final class RawDecoderOptions {
         private boolean opcodes = true;
         private boolean defaultCrop = true;
         private double[] colorMatrix;
+        private boolean enhancedImage;
+        private boolean userCrop;
+        private boolean autoBlack;
+        private String cameraProfile;
+        private boolean lensCorrections = true;
+        private int frame;
+        private boolean allFrames = true;
 
         private Builder() {
         }
@@ -436,7 +547,8 @@ public final class RawDecoderOptions {
         }
 
         /**
-         * Sets whether the DNG opcode lists are applied; see {@link RawDecoderOptions#opcodes()}.
+         * Sets whether the DNG opcode lists and the X3F corrections are applied; see
+         * {@link RawDecoderOptions#opcodes()}.
          *
          * @param opcodes the value
          * @return this builder
@@ -461,11 +573,113 @@ public final class RawDecoderOptions {
          * Sets the XYZ to camera matrix that replaces the file's color matrices; see
          * {@link RawDecoderOptions#colorMatrix()}. The array is copied.
          *
-         * @param colorMatrix the nine values, row by row, or {@code null} for the file's own matrices
+         * @param colorMatrix the nine or twelve values, row by row
          * @return this builder
          */
         public Builder colorMatrix(double[] colorMatrix) {
-            this.colorMatrix = colorMatrix == null ? null : colorMatrix.clone();
+            this.colorMatrix = Objects.requireNonNull(colorMatrix, "colorMatrix").clone();
+            return this;
+        }
+
+        /**
+         * Renders with the file's own color matrices, or the generic fallback; see
+         * {@link RawDecoderOptions#colorMatrix()}.
+         *
+         * @return this builder
+         */
+        public Builder fileColorMatrix() {
+            this.colorMatrix = null;
+            return this;
+        }
+
+        /**
+         * Sets whether a DNG file's enhanced image is rendered instead of its raw image; see
+         * {@link RawDecoderOptions#enhancedImage()}.
+         *
+         * @param enhancedImage the value
+         * @return this builder
+         */
+        public Builder enhancedImage(boolean enhancedImage) {
+            this.enhancedImage = enhancedImage;
+            return this;
+        }
+
+        /**
+         * Sets whether the default user crop is applied; see {@link RawDecoderOptions#userCrop()}.
+         *
+         * @param userCrop the value
+         * @return this builder
+         */
+        public Builder userCrop(boolean userCrop) {
+            this.userCrop = userCrop;
+            return this;
+        }
+
+        /**
+         * Sets whether an automatic black point is subtracted; see {@link RawDecoderOptions#autoBlack()}.
+         *
+         * @param autoBlack the value
+         * @return this builder
+         */
+        public Builder autoBlack(boolean autoBlack) {
+            this.autoBlack = autoBlack;
+            return this;
+        }
+
+        /**
+         * Sets the camera profile the file is rendered with; see {@link RawDecoderOptions#cameraProfile()}.
+         *
+         * @param name the profile's name, as {@link RawInfo#cameraProfiles()} lists it
+         * @return this builder
+         */
+        public Builder cameraProfile(String name) {
+            this.cameraProfile = Objects.requireNonNull(name, "name");
+            return this;
+        }
+
+        /**
+         * Renders with the as-shot camera profile, or else the primary one; see
+         * {@link RawDecoderOptions#cameraProfile()}.
+         *
+         * @return this builder
+         */
+        public Builder asShotProfile() {
+            this.cameraProfile = null;
+            return this;
+        }
+
+        /**
+         * Sets whether a camera raw file's own lens corrections are applied; see
+         * {@link RawDecoderOptions#lensCorrections()}.
+         *
+         * @param lensCorrections the value
+         * @return this builder
+         */
+        public Builder lensCorrections(boolean lensCorrections) {
+            this.lensCorrections = lensCorrections;
+            return this;
+        }
+
+        /**
+         * Sets the frame of a pixel-shift file that is decoded alone; see {@link RawDecoderOptions#frame()}.
+         *
+         * @param index the frame, from 0
+         * @return this builder
+         */
+        public Builder frame(int index) {
+            this.frame = index;
+            this.allFrames = false;
+            return this;
+        }
+
+        /**
+         * Decodes every frame of a pixel-shift file, merged; see {@link RawDecoderOptions#frame()}.
+         *
+         * @return this builder
+         */
+        public Builder allFrames() {
+            this.frame = 0;
+            this.allFrames = true;
             return this;
         }
 
@@ -474,10 +688,14 @@ public final class RawDecoderOptions {
          *
          * @return the options
          * @throws IllegalArgumentException if the minimum width or height is negative, the exposure is
-         * outside -10 to 10 stops, or the color matrix does not hold nine finite values or is singular
+         * outside -10 to 10 stops, the frame is negative, or the color matrix does not hold nine or twelve
+         * finite values or lacks full column rank
          */
         public RawDecoderOptions build() {
             Checks.nonNegative("minimum width", minWidth);
+            if (!allFrames && frame < 0) {
+                throw new IllegalArgumentException("frame " + frame + " is negative");
+            }
             Checks.nonNegative("minimum height", minHeight);
             Checks.inRange("exposure", exposure, -10, 10);
             if (colorMatrix != null) {
@@ -487,23 +705,33 @@ public final class RawDecoderOptions {
         }
 
         /**
-         * Checks that a color matrix holds nine finite values and is invertible.
+         * Checks that a color matrix holds nine or twelve finite values and has full column rank.
          *
          * @param m the matrix, row by row
-         * @throws IllegalArgumentException if it is not
+         * @throws IllegalArgumentException if it does not
          */
         private static void checkColorMatrix(double[] m) {
-            if (m.length != 9) {
-                throw new IllegalArgumentException("a color matrix has nine values, not " + m.length);
+            if (m.length != 9 && m.length != 12) {
+                throw new IllegalArgumentException("a color matrix has nine or twelve values, not " + m.length);
             }
             for (var value : m) {
                 if (!Double.isFinite(value)) {
                     throw new IllegalArgumentException("non-finite color matrix value " + value);
                 }
             }
-            var determinant = m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6])
-                    + m[2] * (m[3] * m[7] - m[4] * m[6]);
-            if (Math.abs(determinant) < 1e-9) {
+            // the Gram matrix of the columns, whose determinant is 0 exactly when the rank is below 3
+            var rows = m.length / 3;
+            var g = new double[9];
+            for (var i = 0; i < 3; i++) {
+                for (var j = 0; j < 3; j++) {
+                    for (var row = 0; row < rows; row++) {
+                        g[i * 3 + j] += m[row * 3 + i] * m[row * 3 + j];
+                    }
+                }
+            }
+            var determinant = g[0] * (g[4] * g[8] - g[5] * g[7]) - g[1] * (g[3] * g[8] - g[5] * g[6])
+                    + g[2] * (g[3] * g[7] - g[4] * g[6]);
+            if (Math.abs(determinant) < 1e-18) {
                 throw new IllegalArgumentException("singular color matrix");
             }
         }

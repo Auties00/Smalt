@@ -322,16 +322,16 @@ public final class VectorVp8EncDsp extends Vp8EncDsp {
 
     @Override
     public void fTransform(byte[] src, int srcOff, byte[] ref, int refOff, short[] out, int outOff) {
-        var s01 = INTS_8.cast(BYTES_8.cast(IntVector.broadcast(I64, (int) INT.get(src, srcOff))
+        var s01 = INTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.broadcast(I64, (int) INT.get(src, srcOff)))
                 .withLane(1, (int) INT.get(src, srcOff + BPS)).reinterpretShape(B64, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2I, I256, 0));
-        var p01 = INTS_8.cast(BYTES_8.cast(IntVector.broadcast(I64, (int) INT.get(ref, refOff))
+        var p01 = INTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.broadcast(I64, (int) INT.get(ref, refOff)))
                 .withLane(1, (int) INT.get(ref, refOff + BPS)).reinterpretShape(B64, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2I, I256, 0));
-        var s23 = INTS_8.cast(BYTES_8.cast(IntVector.broadcast(I64, (int) INT.get(src, srcOff + 2 * BPS))
+        var s23 = INTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.broadcast(I64, (int) INT.get(src, srcOff + 2 * BPS)))
                 .withLane(1, (int) INT.get(src, srcOff + 3 * BPS)).reinterpretShape(B64, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2I, I256, 0));
-        var p23 = INTS_8.cast(BYTES_8.cast(IntVector.broadcast(I64, (int) INT.get(ref, refOff + 2 * BPS))
+        var p23 = INTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.broadcast(I64, (int) INT.get(ref, refOff + 2 * BPS)))
                 .withLane(1, (int) INT.get(ref, refOff + 3 * BPS)).reinterpretShape(B64, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2I, I256, 0));
         var k1 = INTS_8.cast(IntVector.fromArray(I256, F_K1, 0));
@@ -393,7 +393,7 @@ public final class VectorVp8EncDsp extends Vp8EncDsp {
                 .blend(e1.lanewise(VectorOperators.MUL, I256_8A8C).lanewise(VectorOperators.ASHR, 16)
                         .lanewise(VectorOperators.SUB, e3.lanewise(VectorOperators.MUL, I256_4E7B).lanewise(VectorOperators.ASHR, 16).lanewise(VectorOperators.ADD, e3)), MIDDLE);
         var res01 = ab01.lanewise(VectorOperators.ADD, dc01).blend(ab01.lanewise(VectorOperators.SUB, dc01), UPPER_PAIR).lanewise(VectorOperators.ADD, I256_4).lanewise(VectorOperators.ASHR, 3)
-                .lanewise(VectorOperators.ADD, INTS_8.cast(BYTES_8.cast(IntVector.broadcast(I64, (int) INT.get(ref, refOff))
+                .lanewise(VectorOperators.ADD, INTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.broadcast(I64, (int) INT.get(ref, refOff)))
                         .withLane(1, (int) INT.get(ref, refOff + BPS)).reinterpretShape(B64, 0))
                         .convertShape(VectorOperators.ZERO_EXTEND_B2I, I256, 0)))
                 .lanewise(VectorOperators.MAX, ZERO_I256).lanewise(VectorOperators.MIN, I256_255);
@@ -411,7 +411,7 @@ public final class VectorVp8EncDsp extends Vp8EncDsp {
                 .blend(g1.lanewise(VectorOperators.MUL, I256_8A8C).lanewise(VectorOperators.ASHR, 16)
                         .lanewise(VectorOperators.SUB, g3.lanewise(VectorOperators.MUL, I256_4E7B).lanewise(VectorOperators.ASHR, 16).lanewise(VectorOperators.ADD, g3)), MIDDLE);
         var res23 = ab23.lanewise(VectorOperators.ADD, dc23).blend(ab23.lanewise(VectorOperators.SUB, dc23), UPPER_PAIR).lanewise(VectorOperators.ADD, I256_4).lanewise(VectorOperators.ASHR, 3)
-                .lanewise(VectorOperators.ADD, INTS_8.cast(BYTES_8.cast(IntVector.broadcast(I64, (int) INT.get(ref, refOff + 2 * BPS))
+                .lanewise(VectorOperators.ADD, INTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.broadcast(I64, (int) INT.get(ref, refOff + 2 * BPS)))
                         .withLane(1, (int) INT.get(ref, refOff + 3 * BPS)).reinterpretShape(B64, 0))
                         .convertShape(VectorOperators.ZERO_EXTEND_B2I, I256, 0)))
                 .lanewise(VectorOperators.MAX, ZERO_I256).lanewise(VectorOperators.MIN, I256_255);
@@ -441,16 +441,16 @@ public final class VectorVp8EncDsp extends Vp8EncDsp {
 
     @Override
     public int tDisto4x4(byte[] a, int aOff, byte[] b, int bOff, int[] weights) {
-        var r0 = INTS_8.cast(BYTES_8.cast(IntVector.broadcast(I64, (int) INT.get(a, aOff))
+        var r0 = INTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.broadcast(I64, (int) INT.get(a, aOff)))
                 .withLane(1, (int) INT.get(b, bOff)).reinterpretShape(B64, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2I, I256, 0));
-        var r1 = INTS_8.cast(BYTES_8.cast(IntVector.broadcast(I64, (int) INT.get(a, aOff + BPS))
+        var r1 = INTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.broadcast(I64, (int) INT.get(a, aOff + BPS)))
                 .withLane(1, (int) INT.get(b, bOff + BPS)).reinterpretShape(B64, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2I, I256, 0));
-        var r2 = INTS_8.cast(BYTES_8.cast(IntVector.broadcast(I64, (int) INT.get(a, aOff + 2 * BPS))
+        var r2 = INTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.broadcast(I64, (int) INT.get(a, aOff + 2 * BPS)))
                 .withLane(1, (int) INT.get(b, bOff + 2 * BPS)).reinterpretShape(B64, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2I, I256, 0));
-        var r3 = INTS_8.cast(BYTES_8.cast(IntVector.broadcast(I64, (int) INT.get(a, aOff + 3 * BPS))
+        var r3 = INTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.broadcast(I64, (int) INT.get(a, aOff + 3 * BPS)))
                 .withLane(1, (int) INT.get(b, bOff + 3 * BPS)).reinterpretShape(B64, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2I, I256, 0));
         var a0 = r0.lanewise(VectorOperators.ADD, r2);
@@ -494,10 +494,10 @@ public final class VectorVp8EncDsp extends Vp8EncDsp {
 
     @Override
     public int spectralSum(byte[] a, int aOff, int[] weights) {
-        var v01 = INTS_8.cast(BYTES_8.cast(IntVector.broadcast(I64, (int) INT.get(a, aOff))
+        var v01 = INTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.broadcast(I64, (int) INT.get(a, aOff)))
                 .withLane(1, (int) INT.get(a, aOff + BPS)).reinterpretShape(B64, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2I, I256, 0));
-        var v23 = INTS_8.cast(BYTES_8.cast(IntVector.broadcast(I64, (int) INT.get(a, aOff + 2 * BPS))
+        var v23 = INTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.broadcast(I64, (int) INT.get(a, aOff + 2 * BPS)))
                 .withLane(1, (int) INT.get(a, aOff + 3 * BPS)).reinterpretShape(B64, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2I, I256, 0));
         var sum = v01.lanewise(VectorOperators.ADD, v23);
@@ -551,16 +551,16 @@ public final class VectorVp8EncDsp extends Vp8EncDsp {
      */
     private static long quantizeCandidate(byte[] src, int srcOff, byte[] pred, int predOff, QuantMatrix m,
                                           short[] levels, int levelsOff, short[] scratch) {
-        var s01 = INTS_8.cast(BYTES_8.cast(IntVector.broadcast(I64, (int) INT.get(src, srcOff))
+        var s01 = INTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.broadcast(I64, (int) INT.get(src, srcOff)))
                 .withLane(1, (int) INT.get(src, srcOff + BPS)).reinterpretShape(B64, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2I, I256, 0));
-        var p01 = INTS_8.cast(BYTES_8.cast(IntVector.broadcast(I64, (int) INT.get(pred, predOff))
+        var p01 = INTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.broadcast(I64, (int) INT.get(pred, predOff)))
                 .withLane(1, (int) INT.get(pred, predOff + BPS)).reinterpretShape(B64, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2I, I256, 0));
-        var s23 = INTS_8.cast(BYTES_8.cast(IntVector.broadcast(I64, (int) INT.get(src, srcOff + 2 * BPS))
+        var s23 = INTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.broadcast(I64, (int) INT.get(src, srcOff + 2 * BPS)))
                 .withLane(1, (int) INT.get(src, srcOff + 3 * BPS)).reinterpretShape(B64, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2I, I256, 0));
-        var p23 = INTS_8.cast(BYTES_8.cast(IntVector.broadcast(I64, (int) INT.get(pred, predOff + 2 * BPS))
+        var p23 = INTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.broadcast(I64, (int) INT.get(pred, predOff + 2 * BPS)))
                 .withLane(1, (int) INT.get(pred, predOff + 3 * BPS)).reinterpretShape(B64, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2I, I256, 0));
 
@@ -632,16 +632,16 @@ public final class VectorVp8EncDsp extends Vp8EncDsp {
      */
     private static long reconstructCandidate(byte[] src, int srcOff, byte[] pred, int predOff, byte[] recon,
                                              int reconOff, int[] weights, short[] scratch) {
-        var s01 = INTS_8.cast(BYTES_8.cast(IntVector.broadcast(I64, (int) INT.get(src, srcOff))
+        var s01 = INTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.broadcast(I64, (int) INT.get(src, srcOff)))
                 .withLane(1, (int) INT.get(src, srcOff + BPS)).reinterpretShape(B64, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2I, I256, 0));
-        var p01 = INTS_8.cast(BYTES_8.cast(IntVector.broadcast(I64, (int) INT.get(pred, predOff))
+        var p01 = INTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.broadcast(I64, (int) INT.get(pred, predOff)))
                 .withLane(1, (int) INT.get(pred, predOff + BPS)).reinterpretShape(B64, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2I, I256, 0));
-        var s23 = INTS_8.cast(BYTES_8.cast(IntVector.broadcast(I64, (int) INT.get(src, srcOff + 2 * BPS))
+        var s23 = INTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.broadcast(I64, (int) INT.get(src, srcOff + 2 * BPS)))
                 .withLane(1, (int) INT.get(src, srcOff + 3 * BPS)).reinterpretShape(B64, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2I, I256, 0));
-        var p23 = INTS_8.cast(BYTES_8.cast(IntVector.broadcast(I64, (int) INT.get(pred, predOff + 2 * BPS))
+        var p23 = INTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.broadcast(I64, (int) INT.get(pred, predOff + 2 * BPS)))
                 .withLane(1, (int) INT.get(pred, predOff + 3 * BPS)).reinterpretShape(B64, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2I, I256, 0));
         var v01 = INTS_8.cast(SHORTS_8.cast(ShortVector.fromArray(S128, scratch, 0)).convertShape(VectorOperators.S2I, I256, 0));

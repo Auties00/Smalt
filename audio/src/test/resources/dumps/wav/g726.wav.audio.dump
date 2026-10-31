@@ -1,0 +1,11 @@
+# audio decode dump of wav/g726.wav; regenerate with -Dsmalt.test.updateDumps=true
+format WAV
+duration 500000
+seekable true
+track 0 ADPCM_G726 rate=8000 layout=[FRONT_CENTER]
+0 frames=4000 crc16=99fb12cb
+seek 0: @sample 0
+seek 166666: @sample 1333
+seek 333333: @sample 2667
+seek 500000: end
+seek -1000000: @sample 0
