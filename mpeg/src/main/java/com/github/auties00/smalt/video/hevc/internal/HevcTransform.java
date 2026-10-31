@@ -26,7 +26,7 @@ public final class HevcTransform {
      * The 32-point DCT basis {@code transMatrix} of equations 8-319 to 8-321, indexed
      * {@code [frequency * 32 + sample]}.
      */
-    static final int[] DCT32 = {
+    public static final int[] DCT32 = {
             64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
             90, 90, 88, 85, 82, 78, 73, 67, 61, 54, 46, 38, 31, 22, 13, 4, -4, -13, -22, -31, -38, -46, -54, -61, -67, -73, -78, -82, -85, -88, -90, -90,
             90, 87, 80, 70, 57, 43, 25, 9, -9, -25, -43, -57, -70, -80, -87, -90, -90, -87, -80, -70, -57, -43, -25, -9, 9, 25, 43, 57, 70, 80, 87, 90,
@@ -64,7 +64,7 @@ public final class HevcTransform {
     /**
      * The 4-point DST basis of equation 8-317, indexed {@code [frequency * 4 + sample]}.
      */
-    static final int[] DST4 = {
+    public static final int[] DST4 = {
             29, 55, 74, 84,
             74, 74, 0, -74,
             84, -29, -74, 55,

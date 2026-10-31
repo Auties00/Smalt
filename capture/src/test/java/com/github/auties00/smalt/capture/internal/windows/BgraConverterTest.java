@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.capture.internal.windows;
 
+import com.github.auties00.smalt.capture.internal.CaptureArea;
 import com.github.auties00.smalt.capture.internal.convert.YuvCoefficients;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.RgbaPicture;
@@ -80,7 +81,7 @@ class BgraConverterTest {
                 MemorySegment.copy(tight, 4 * y * width, memory, JAVA_BYTE, (long) y * pitch, 4 * width);
             }
             var out = picture(width & ~1, height & ~1);
-            assertTrue(new BgraConverter().convert(memory, 0, pitch, width, height, 1, null, out));
+            assertTrue(new BgraConverter().convert(memory, 0, pitch, width, height, 1, null, null, out));
             assertSame(reference(tight, width, height), out);
         }
     }
@@ -98,7 +99,7 @@ class BgraConverterTest {
                 MemorySegment.copy(tight, 4 * y * width, memory, JAVA_BYTE, 4L * (height - 1 - y) * width, 4 * width);
             }
             var out = picture(width, height);
-            new BgraConverter().convert(memory, 4L * (height - 1) * width, -4L * width, width, height, 0, null, out);
+            new BgraConverter().convert(memory, 4L * (height - 1) * width, -4L * width, width, height, 0, null, null, out);
             assertSame(reference(tight, width, height), out);
         }
     }
@@ -109,7 +110,7 @@ class BgraConverterTest {
         try (var arena = Arena.ofConfined()) {
             var memory = arena.allocate(4L * 16 * 15);
             var out = picture(16, 16);
-            assertThrows(IndexOutOfBoundsException.class, () -> new BgraConverter().convert(memory, 0, 64, 16, 16, 0, null, out));
+            assertThrows(IndexOutOfBoundsException.class, () -> new BgraConverter().convert(memory, 0, 64, 16, 16, 0, null, null, out));
         }
     }
 
@@ -117,7 +118,7 @@ class BgraConverterTest {
     @DisplayName("converts nothing from an image without an even part")
     void tooSmall() {
         var memory = MemorySegment.ofArray(new byte[4]);
-        assertFalse(new BgraConverter().convert(memory, 0, 4, 1, 1, 0, null, picture(2, 2)));
+        assertFalse(new BgraConverter().convert(memory, 0, 4, 1, 1, 0, null, null, picture(2, 2)));
     }
 
     @Test
@@ -126,10 +127,85 @@ class BgraConverterTest {
         var random = new SplittableRandom(4);
         var tight = image(random, 64, 48);
         var out = picture(32, 24);
-        new BgraConverter().convert(MemorySegment.ofArray(tight), 0, 256, 64, 48, 0, null, out);
+        new BgraConverter().convert(MemorySegment.ofArray(tight), 0, 256, 64, 48, 0, null, null, out);
         var expected = (YuvPicture) ImageOps.resize(reference(tight, 64, 48), 32, 24,
                 ResizeFilter.BILINEAR);
         assertSame(expected, out);
+    }
+
+    /** Copies a rectangle of a tightly packed BGRX image into a tightly packed image of its size. */
+    private static byte[] crop(byte[] bgra, int width, int x, int y, int cropWidth, int cropHeight) {
+        var result = new byte[4 * cropWidth * cropHeight];
+        for (var row = 0; row < cropHeight; row++) {
+            System.arraycopy(bgra, 4 * ((y + row) * width + x), result, 4 * row * cropWidth, 4 * cropWidth);
+        }
+        return result;
+    }
+
+    @Nested
+    @DisplayName("captured areas")
+    class Areas {
+        @Test
+        @DisplayName("converts only the area of the image, like ImageOps on the cropped image")
+        void inside() {
+            var random = new SplittableRandom(11);
+            var tight = image(random, 40, 30);
+            var out = picture(18, 12);
+            assertTrue(new BgraConverter().convert(MemorySegment.ofArray(tight), 0, 160, 40, 30, 0, null,
+                    new CaptureArea(7, 5, 18, 12), out));
+            assertSame(reference(crop(tight, 40, 7, 5, 18, 12), 18, 12), out);
+        }
+
+        @Test
+        @DisplayName("clips an area that reaches past the image and converts nothing of one beside it")
+        void clipped() {
+            var random = new SplittableRandom(12);
+            var tight = image(random, 40, 30);
+            var out = picture(10, 10);
+            assertTrue(new BgraConverter().convert(MemorySegment.ofArray(tight), 0, 160, 40, 30, 0, null,
+                    new CaptureArea(30, 20, 20, 20), out));
+            assertSame(reference(crop(tight, 40, 30, 20, 10, 10), 10, 10), out);
+            assertFalse(new BgraConverter().convert(MemorySegment.ofArray(tight), 0, 160, 40, 30, 0, null,
+                    new CaptureArea(40, 0, 2, 2), picture(2, 2)));
+            assertFalse(new BgraConverter().convert(MemorySegment.ofArray(tight), 0, 160, 40, 30, 0, null,
+                    new CaptureArea(39, 0, 2, 2), picture(2, 2)));
+        }
+
+        @Test
+        @DisplayName("crops a rotated image after turning it upright")
+        void rotated() {
+            var random = new SplittableRandom(13);
+            var stored = image(random, 20, 12);
+            var ints = new int[20 * 12];
+            MemorySegment.ofArray(ints).copyFrom(MemorySegment.ofArray(stored));
+            var converter = new BgraConverter();
+            var upright = Arrays.copyOf(converter.rotate(MemorySegment.ofArray(stored), 0, 80, 20, 12, Dxgi.ROTATE_270), 20 * 12);
+            var uprightBytes = new byte[stored.length];
+            MemorySegment.ofArray(uprightBytes).copyFrom(MemorySegment.ofArray(upright));
+            var out = picture(6, 8);
+            assertTrue(new BgraConverter().convert(MemorySegment.ofArray(stored), 0, 80, 20, 12, Dxgi.ROTATE_270, null,
+                    new CaptureArea(4, 10, 6, 8), out));
+            assertSame(reference(crop(uprightBytes, 12, 4, 10, 6, 8), 6, 8), out);
+        }
+
+        @Test
+        @DisplayName("draws the pointer at its place on the whole image, shifted into the area")
+        void pointer() {
+            var random = new SplittableRandom(14);
+            var tight = image(random, 40, 30);
+            var overlay = new PointerOverlay();
+            overlay.shape(MemorySegment.ofArray(new byte[]{0, 0, (byte) 255, (byte) 255}), Dxgi.POINTER_COLOR, 1, 1, 4);
+            overlay.position(13, 9, true);
+            var out = picture(8, 6);
+            assertTrue(new BgraConverter().convert(MemorySegment.ofArray(tight), 0, 160, 40, 30, 0, overlay,
+                    new CaptureArea(10, 6, 8, 6), out));
+            var expected = tight.clone();
+            var offset = 4 * (9 * 40 + 13);
+            expected[offset] = 0;
+            expected[offset + 1] = 0;
+            expected[offset + 2] = (byte) 255;
+            assertSame(reference(crop(expected, 40, 10, 6, 8, 6), 8, 6), out);
+        }
     }
 
     @Nested
@@ -173,7 +249,7 @@ class BgraConverterTest {
             var height = 12;
             var stored = image(random, width, height);
             var out = picture(height, width);
-            new BgraConverter().convert(MemorySegment.ofArray(stored), 0, 4L * width, width, height, Dxgi.ROTATE_90, null, out);
+            new BgraConverter().convert(MemorySegment.ofArray(stored), 0, 4L * width, width, height, Dxgi.ROTATE_90, null, null, out);
             var ints = new int[width * height];
             MemorySegment.ofArray(ints).copyFrom(MemorySegment.ofArray(stored));
             var upright = rotate(ints, width, height, Dxgi.ROTATE_90);
@@ -212,14 +288,14 @@ class BgraConverterTest {
             overlay.shape(MemorySegment.ofArray(shape), Dxgi.POINTER_COLOR, 3, 1, 12);
             overlay.position(-1, 5, true);
             var row = row(4, 100, 100, 100);
-            overlay.apply(row, 0, 5, 4);
+            overlay.apply(row, 0, 5, 0, 4);
             assertEquals(0x646464, pixel(row, 0));
             var red = (255 * 128 + 100 * 127 + 127) / 255;
             var other = (100 * 127 + 127) / 255;
             assertEquals(red << 16 | other << 8 | other, pixel(row, 1));
             assertEquals(0x646464, pixel(row, 2));
             var below = row(4, 100, 100, 100);
-            overlay.apply(below, 0, 6, 4);
+            overlay.apply(below, 0, 6, 0, 4);
             assertEquals(0x646464, pixel(below, 1));
         }
 
@@ -234,7 +310,7 @@ class BgraConverterTest {
             overlay.shape(MemorySegment.ofArray(shape), Dxgi.POINTER_MASKED_COLOR, 2, 1, 8);
             overlay.position(0, 0, true);
             var row = row(2, 0x0F, 0x0F, 0x0F);
-            overlay.apply(row, 0, 0, 2);
+            overlay.apply(row, 0, 0, 0, 2);
             assertEquals(0x302010, pixel(row, 0));
             assertEquals(0xF0F0F0, pixel(row, 1));
         }
@@ -248,7 +324,7 @@ class BgraConverterTest {
             overlay.shape(MemorySegment.ofArray(shape), Dxgi.POINTER_MONOCHROME, 4, 2, 1);
             overlay.position(0, 3, true);
             var row = row(4, 0x12, 0x34, 0x56);
-            overlay.apply(row, 0, 3, 4);
+            overlay.apply(row, 0, 3, 0, 4);
             assertEquals(0x563412, pixel(row, 0));
             assertEquals(0xA9CBED, pixel(row, 1));
             assertEquals(0x000000, pixel(row, 2));
@@ -262,14 +338,14 @@ class BgraConverterTest {
             overlay.shape(MemorySegment.ofArray(new byte[8]), Dxgi.POINTER_COLOR, 2, 1, 8);
             overlay.position(0, 0, false);
             var row = row(2, 1, 2, 3);
-            overlay.apply(row, 0, 0, 2);
+            overlay.apply(row, 0, 0, 0, 2);
             assertEquals(0x030201, pixel(row, 0));
             overlay.position(0, 0, true);
             overlay.shape(MemorySegment.ofArray(new byte[8]), Dxgi.POINTER_COLOR, 2, 2, 8);
-            overlay.apply(row, 0, 0, 2);
+            overlay.apply(row, 0, 0, 0, 2);
             assertEquals(0x030201, pixel(row, 0));
             overlay.shape(MemorySegment.ofArray(new byte[8]), 3, 2, 1, 8);
-            overlay.apply(row, 0, 0, 2);
+            overlay.apply(row, 0, 0, 0, 2);
             assertEquals(0x030201, pixel(row, 0));
         }
     }

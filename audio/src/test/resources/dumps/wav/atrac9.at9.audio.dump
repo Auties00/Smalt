@@ -1,0 +1,12 @@
+# audio decode dump of wav/atrac9.at9; regenerate with -Dsmalt.test.updateDumps=true
+format WAV
+duration 241667
+seekable true
+track 0 ATRAC9 rate=24000 layout=[FRONT_LEFT, FRONT_RIGHT]
+0 frames=4096 crc16=f9ef38f1
+1 frames=1704 crc16=4e93388a
+seek 0: @sample 0
+seek 80555: @sample 1933
+seek 161111: @sample 3867
+seek 241667: end
+seek -1000000: @sample 0

@@ -116,8 +116,8 @@ public record AffineTransform(double m00, double m01, double m02, double m10, do
             sin = -1;
         } else {
             var radians = Math.toRadians(normalized);
-            cos = Math.cos(radians);
-            sin = Math.sin(radians);
+            cos = StrictMath.cos(radians);
+            sin = StrictMath.sin(radians);
         }
         return new AffineTransform(cos, -sin, 0, sin, cos, 0);
     }
