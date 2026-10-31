@@ -614,6 +614,10 @@ them, so files exchanged with ffmpeg differ in these known ways:
 | ALAC (Apple Lossless) | yes: 16/20/24/32-bit, 1-8 channels, from MP4 and Matroska, also as their integers bit for bit (32-bit streams of Apple's reference encoder included) or exact doubles | yes: 16, 20, 24 and 32-bit integer or float input, 1-8 channels, adaptive stereo matrixing and predictor search (or Apple's fast mode), escaped and partial frames, any frame length from 16 to 65536; packets byte-identical to Apple's reference encoder | `smalt-audio` | `audio.alac` | Apple's ALAC (Apache-2.0) | none (royalty-free) |
 | Speex | yes: narrowband, wideband and ultra-wideband, every sub-mode, variable bit rate, discontinuous transmission, intensity stereo and packet loss concealment (`conceal`), the perceptual enhancer on; bit-exact with the fixed-point libspeex 1.2.1; from Ogg, and headerless (FLV) tracks | no | `smalt-audio` | `audio.speex` | libspeex | none (royalty-free) |
 | WavPack | yes: WavPack 4 and 5 (stream versions 0x402 to 0x410) lossless, hybrid lossy, and hybrid lossless with the correction file (`.wvc`, or the Matroska `BlockAdditional` 1), 1 to 32-bit integers (as their integers bit for bit or exact doubles), 32-bit floats, DSD (as the reference's 8x decimated 24-bit PCM), any channel count and mask; block checksums checked, the MD5 signature on request (`AudioDecoderOptions.verifyIntegrity`); bit-exact with WavPack 5.8.1; from `.wv` and Matroska (`A_WAVPACK4`) | no | `smalt-audio` | `audio.wavpack` | WavPack | none |
+| Monkey's Audio | yes: file versions 3.80 to 3.99 and 3.990 onward (every version but 3.891 to 3.899 and 3.921 to 3.929, which Monkey's Audio itself no longer reads), every compression level (fast to insane), 8, 16, 24 and 32-bit integers (as their integers bit for bit or exact doubles) and 32-bit floats, 1 to 32 channels; every frame checked against its CRC; bit-exact with Monkey's Audio 13.45; from `.ape` | no | `smalt-audio` | `audio.ape` | Monkey's Audio SDK 13.45 | none |
+| Musepack | yes: stream versions 7 (`MP+`) and 8 (`MPCK`), every profile, mono and stereo, mid/side stereo, noise substitution; the decoder's 481-sample delay and SV8 leading silence removed; bit-exact (as floats) with libmpcdec r475's floating-point build; from `.mpc` | no | `smalt-audio` | `audio.musepack` | libmpcdec r475 | none |
+| DSD (1-bit, DSF, DSDIFF, DoP) | yes: converted to PCM by a linear-phase decimation filter (flat to 40% of the output rate, 120 dB from half of it) at the DSD rate divided by 8 to 512 (16 by default: 176.4 kHz for DSD64, or the ratio `AudioDecoderOptions.preferredSampleRate` selects), any DSD rate and channel count, as floats or doubles (the double output matches a direct convolution to within rounding); both bit orders and the interleaved and planar layouts of DSDIFF and DSF; DSD over PCM (DoP 1.1) in 24 and 32-bit PCM decoded to the DSD it carries with `AudioDecoderOptions.dsdOverPcm` | no | `smalt-core` | `audio.pcm` | spec (DSF 1.01, DSDIFF 1.5, DoP 1.1) | none |
+| DST (Direct Stream Transfer, ISO/IEC 14496-3 subpart 10) | yes: every DSD rate and channel count, to its DSD bit-exact with the MPEG-4 Audio reference decoder (`DstDecoder.decodeDsd`) and to PCM as the DSD decoder converts it; DSDIFF frame CRCs checked on request (`AudioDecoderOptions.verifyIntegrity`); from DSDIFF (`DST `) and MP4 (`mp4a`, audio object type 35); checked against the ISO/IEC 14496-26 DST conformance streams | no | `smalt-audio` | `audio.dst` | MPEG-4 Audio reference software (DST module) | none |
 | PCM (integer and float, any layout) | yes; integer formats up to 32 bits and G.711 also as their integers bit for bit, every format as doubles (64-bit floats unchanged) | 8 to 64-bit, integer and float, either byte order, G.711 A-law and mu-law, through the containers that carry it, from float, integer or double samples; triangular, high-pass triangular or noise-shaped dither for 8, 16 and 24-bit output (`PcmEncoderOptions.dither`) | `smalt-core` | `audio.pcm` | spec; Lipshitz, Vanderkooy and Wannamaker (dither, E-weighted noise shaping) | none |
 | AMR-NB, AMR-WB | yes, bit-exact with the 3GPP fixed-point decoders (TS 26.073, TS 26.173): every mode, mode changes on any frame, comfort noise (SID) and DTX, bad and lost frame concealment, homing; storage-format frames from `.amr`, MP4/3GP `samr`/`sawb` and Matroska (`A_AMR/NB`, `A_AMR/WB`, `A_MS/ACM`), and the frame-blocks of multichannel `.amr` files (one decoder state per channel); the TS 26.074 sequences pass in linear PCM and through G.711 A-law and mu-law | yes, bit-exact with the 3GPP encoders: AMR-NB in every mode with DTX and VAD option 1 or 2, AMR-WB in every mode with VAD and DTX; mode changes on any frame | `smalt-mpeg` | `audio.amr` | AMR-NB decoder and encoder and AMR-WB decoder: opencore-amr (PacketVideo, Apache-2.0); AMR-WB encoder: vo-amrwbenc (VisualOn, Apache-2.0), its arithmetic aligned with TS 26.173 (passes TS 26.174, so its frames differ from `libvo_amrwbenc` on loud or unusual input); both derived from the 3GPP reference code | **patent pool** (VoiceAge, AMR-WB); AMR-NB patents are held by its developers; not covered by the MIT license |
 | IMA ADPCM (WAVE `0x0011` blocks, Apple `ima4`) | yes: 4-bit, any channel count, from WAV, AVI, Matroska `A_MS/ACM` and QuickTime (`ms\0\x11`), and `ima4` from AIFF-C and QuickTime (`ima4`, classic and per-packet tables); bit-exact with Microsoft's `imaadp32.acm` (the recommendation's shift-and-add quantizer) and with ffmpeg's `adpcm_ima_qt`; also as 16-bit integers or doubles | yes: both layouts, 1-8 channels, any rate, WAVE blocks of any valid size and at most 65535 samples (256 bytes per channel per 11.025 kHz by default), each sample coded to the nearest code; the WAVE blocks byte-identical to Microsoft's `imaadp32.acm` | `smalt-audio` | `audio.adpcm` | spec (IMA Digital Audio Focus recommendation, Microsoft RIFF, Apple TN1081) | none |
@@ -676,6 +680,10 @@ container below; each muxer that has the fields writes them from the track.
 | FLAC | yes | `SEEKTABLE`, then frame-header bisection and stepping | Vorbis comments, `PICTURE`, `CHAPTERxxx`, else the tracks of a `CUESHEET` block as chapters; ID3v2, APE and ID3v1 tags around the stream | native FLAC stream through `RawMuxer` (final `STREAMINFO` and seek table on a seekable output; chapters also as a `CUESHEET`) | `container.flac` | spec |
 | AMR | yes, single-channel and multichannel (`#!AMR_MC1.0`, `#!AMR-WB_MC1.0`, 1 to 15 channels in the RFC 3551 channel order) | exact through a frame index | ID3v2, APE and ID3v1 tags around the frames | yes (raw muxer: `#!AMR` or `#!AMR-WB` magic, then the frames; the multichannel magic and channel count for a track of 2 to 15 channels, then its frame-blocks; MP4 and Matroska carry single-channel AMR only, so the transcoder re-encodes a multichannel stream for them) | `container.amr`, `container.raw` | spec (RFC 4867, RFC 3551) |
 | WavPack (`.wv`) | yes, with the hybrid stream's correction file (`WavPackDemuxer(source, correction, options)`): the blocks of a frame as one packet, blocks without audio (wrapper, MD5 signature) with the frames around them | exact: a frame index built from the block headers | APEv2 and ID3v1 tags at the end | `RawMuxer` (`Containers.openMuxer(ContainerFormat.WAVPACK, ...)`): the blocks of `.wv` and Matroska (`A_WAVPACK4`, headers rebuilt) tracks, without the correction data; Matroska `A_WAVPACK4` too | `container.wavpack`, `container.raw` | WavPack file format |
+| Monkey's Audio (`.ape`) | yes, file versions 3.80 onward, also after an ID3v2 tag: one frame per packet | exact: the frame seek table | APEv2, ID3v1 and leading ID3v2 tags | no | `container.ape` | Monkey's Audio SDK |
+| Musepack (`.mpc`) | yes, stream versions 7 and 8 | a frame (version 7, whose decode converges after a few frames) or packet (version 8) index built on the first seek | APEv2, ID3v1 and leading ID3v2 tags; replay gain and encoder fields are not read | no | `container.musepack` | libmpcdec |
+| DSF (`.dsf`) | yes: one block of every channel per packet, 1 and 8-bit sample layouts, the channel types 1 to 7 as speakers | exact: block arithmetic | the ID3v2 tag at the end (text, pictures, chapters) | no | `container.dsd` | DSF 1.01 specification |
+| DSDIFF (`.dff`) | yes: uncompressed (4096 bytes of every channel per packet) and DST-coded (one `DSTF` frame per packet, with the `DSTC` CRC as side data) sound, the `CHNL` speakers, the absolute start time | exact: the `DSTI` index, or a walk of the frames | `DIAR` artist, `DITI` title, `COMT` comments, the `ID3 ` chunk, `TrackStart` markers as chapters | no | `container.dsd` | DSDIFF 1.5 specification |
 | AC-3, E-AC-3 (`.ac3`, `.ec3`) | yes: sync frames grouped into access units (an independent frame of substream 0 with its dependent substreams), resynchronization on damaged data | exact through a frame index up to 64 MiB; bitrate estimate beyond | channels with dependent substreams, bit rate, dialogue level, Dolby Atmos flag (from the first access unit); ID3v2, APE and ID3v1 tags | yes (raw muxer: the frames back to back) | `container.ac3`, `container.raw` | spec (ATSC A/52) |
 | DTS, DTS-HD (`.dts`, `.dtshd`) | yes: core frames with the DTS-HD extension substream frames that follow them, extension substream frames of streams without core (DTS-HD Master Audio without core), the chunks of the DTS-HD file format (`DTSHDHDR`, frames from `STRMDATA`), raw streams in the 16-bit little-endian and 14-bit forms of DTS audio CDs, resynchronization on damaged data | exact through a unit index up to 64 MiB; bitrate estimate beyond | sample rate and speaker layout of the extension substream's asset | yes (raw muxer: the frames back to back) | `container.dts`, `container.raw` | spec (ETSI TS 102 114) |
 | IVF | yes | key frames through a frame index | duration from the header frame count | yes | `container.ivf` | spec |
@@ -1221,14 +1229,23 @@ checks a FLAC source's MD5 signature on the way.
   when that picture has an alpha plane (an animated image decoded with alpha, or video that carries alpha), and
   otherwise flattens every picture.
 
-- Xiph and lossless codecs: Speex and WavPack decode only (no encoders). The Theora encoder codes every frame as an
-  intra frame with one static Huffman code and no rate control, so its streams are larger than libtheora's
-  inter-coded ones at the same quality; the Theora decoder applies no post-processing (libtheora's
-  optional deblocking and deringing levels, off by default), and the Speex decoder
-  always runs the perceptual enhancer, as speexdec does by default. FFV1 decodes and encodes versions 0, 1 and 3:
-  version 2 was never released and the version 4 draft is not final; 4:1:1 and 4:1:0 Y'CbCr decodes as 4:2:2 and
-  4:2:0, each chroma sample repeated, and is not encoded. A WavPack floating-point stream has no integer output
-  (`decodeIntegers` raises `MediaException.Unsupported`); its doubles are exact.
+- Xiph and lossless codecs: Speex, WavPack, Monkey's Audio, Musepack and DST decode only (no encoders). The Theora
+  encoder codes every frame as an intra frame with one static Huffman code and no rate control, so its streams are
+  larger than libtheora's inter-coded ones at the same quality; the Theora decoder applies no post-processing
+  (libtheora's optional deblocking and deringing levels, off by default), and the Speex decoder always runs the
+  perceptual enhancer, as speexdec does by default. FFV1 decodes and encodes versions 0, 1 and 3: version 2 was never
+  released and the version 4 draft is not final; 4:1:1 and 4:1:0 Y'CbCr decodes as 4:2:2 and 4:2:0, each chroma sample
+  repeated, and is not encoded. A WavPack floating-point stream has no integer output (`decodeIntegers` raises
+  `MediaException.Unsupported`); its doubles are exact. Monkey's Audio files of versions 3.891 to 3.899 and 3.921 to
+  3.929 (alpha builds) raise `MediaException.Unsupported`, as Monkey's Audio 13.45 does. A Musepack version 7 stream
+  ends where its last frame does, as with libmpcdec, so samples the header counts past it are not output; a seek into
+  one restarts the decoder a few frames early (32 frames of preroll) and its output converges on the continuous decode
+  within them. Musepack version 8 chapter packets (`CT`) are not read.
+- DSD: DSD decodes only to PCM (or, through `DstDecoder.decodeDsd`, DST to its DSD), with one fixed filter design;
+  there is no DSD output, no DSD or DST encoder and no DoP writer, and DSF, DSDIFF and Monkey's Audio files are not
+  written. DSD over PCM is recognized only in 24-bit or wider integer PCM whose first block carries the DoP
+  markers in every frame; the decision is made once, so a stream that switches between DoP and PCM mid-way is
+  decoded as what it started with.
 - Uncompressed video: the ISO/IEC 23001-17 `uncv` sample entry (with its `uncC` and `cmpd` boxes) is not read, so such
   tracks stay `Codec.UNKNOWN_VIDEO`: the specification is not freely available and no permissively licensed
   implementation or sample files were found.
@@ -3319,7 +3336,9 @@ Buethe and their colleagues at Amazon and Mozilla) and its modified [KISS FFT](h
 [libvorbis](https://xiph.org/vorbis/) (with its aoTuV tuning), [libogg](https://xiph.org/ogg/) and
 [libFLAC](https://xiph.org/flac/) of the Xiph.Org Foundation, [libspeex](https://www.speex.org/) of the Xiph.Org
 Foundation and Jean-Marc Valin, [libtheora](https://www.theora.org/) of the Xiph.Org Foundation,
-[WavPack](https://www.wavpack.com/) of David Bryant, [OpenEXR](https://openexr.com/) of the Academy Software
+[WavPack](https://www.wavpack.com/) of David Bryant, the [Monkey's Audio](https://www.monkeysaudio.com/) SDK of
+Matthew T. Ashland, libmpcdec of the [Musepack](https://www.musepack.net/) Development Team,
+[OpenEXR](https://openexr.com/) of the Academy Software
 Foundation, [jxrlib](https://github.com/4creators/jxrlib) of Microsoft, [bcdec](https://github.com/iOrange/bcdec)
 of Sergii Kudlai, [libgsm](https://www.quut.com/gsm/) of Jutta
 Degener and Carsten Bormann (Technische Universitaet Berlin), the stereo downmix matrices of
@@ -3361,7 +3380,8 @@ gain map and bad-pixel opcodes the Hasselblad CCD calibration follows, the camer
 and SAMPLE-AES details Smalt's Common Encryption follows (Chromium's encrypted test media and the MPEG file
 format conformance suite's protected files check its decryption), the Microsoft MPEG-4 Visual reference
 software of ISO/IEC 14496-5, whose decoder of the shape, sprite, N-bit and scalability tools Smalt's
-MPEG-4 object decoder is a port of, and quietvoid's
+MPEG-4 object decoder is a port of, the DST module of the MPEG-4 Audio reference software (Philips, with the
+edits of Maxim Anisiutkin, as XLD carries it), which Smalt's DST decoder is a port of, and quietvoid's
 [dovi_tool](https://github.com/quietvoid/dovi_tool), whose dolby_vision crate Smalt's Dolby Vision RPU parser
 follows and whose test RPUs check it. The same
 thanks go to the projects whose code Smalt
@@ -3391,7 +3411,8 @@ AMR and MPEG-4 elementary streams (RFC 6184, 7741, 9628, 7587, 4867 and 3640) an
 RTP payload format of AV1, and its CELLAR
 working group's Matroska and FFV1 (RFC 9043) specifications; 3GPP's AMR and AMR-WB reference code; ITU-T G.722 and G.726 and ETSI EN
 300 961 (GSM 06.10) with their digital test sequences (the G.726 ones as the ITU-T Software Tools Library
-distributes them), the IMA ADPCM recommendation, Microsoft's ADPCM formats and Apple's `ima4`; ATSC A/52 and ETSI TS 102 366
+distributes them), Sony's DSF and Philips' DSDIFF file format specifications with the MPEG-4 DST conformance
+streams of ISO/IEC 14496-26, the IMA ADPCM recommendation, Microsoft's ADPCM formats and Apple's `ima4`; ATSC A/52 and ETSI TS 102 366
 for AC-3 and E-AC-3; Dolby's carriage of Dolby Vision in the ISO base media file format and in MPEG-2 TS, with the
 Matroska block addition mappings; SMPTE RDD 5 (film grain), RDD 36 (ProRes), ST 2019-1 (VC-3) and ST 302 (AES3 audio in MPEG-2 TS); ANSI/SCTE 35 (splice information); ITU-T T.82 (JBIG); RFC 8878 and the
 [Zstandard](https://github.com/facebook/zstd) format documentation with its golden test files; the .xz file

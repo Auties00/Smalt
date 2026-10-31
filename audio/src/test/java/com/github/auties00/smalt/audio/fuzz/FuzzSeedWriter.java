@@ -57,6 +57,25 @@ class FuzzSeedWriter {
     }
 
     @Test
+    @DisplayName("writes the seeds of the Monkey's Audio, Musepack and DST decoder targets")
+    void losslessAndDst() {
+        // committed vectors (tools/testdata/ape, tools/testdata/musepack) and FATE samples of the conformance cache
+        var resources = Path.of("src/test/resources/com/github/auties00/smalt/audio");
+        write(AudioFuzzTest.class, "ape", "valid-s16-stereo.bin", FuzzSeeds.packets(
+                resources.resolve("ape/s16-stereo-short-c4000.ape"), Codec.APE, 0, 4));
+        write(AudioFuzzTest.class, "ape", "valid-s8-mono.bin", FuzzSeeds.packets(
+                resources.resolve("ape/s8-mono-c3000.ape"), Codec.APE, 2, 2));
+        write(AudioFuzzTest.class, "ape", "valid-s16-stereo-tagged.bin", FuzzSeeds.packets(
+                resources.resolve("ape/s16-stereo-tagged-c2000.ape"), Codec.APE, 2, 2));
+        write(AudioFuzzTest.class, "musepack8", "valid-stereo.bin", FuzzSeeds.packets(
+                resources.resolve("musepack/stereo-short.mpc"), Codec.MUSEPACK8, 0, 8));
+        write(AudioFuzzTest.class, "musepack7", "valid-stereo.bin", FuzzSeeds.packets(
+                com.github.auties00.smalt.testkit.Conformance.fetchListed("fate-inside-mp7.mpc"), Codec.MUSEPACK7, 0, 6));
+        write(AudioFuzzTest.class, "dst", "valid-64fs-stereo.bin", FuzzSeeds.packets(
+                com.github.auties00.smalt.testkit.Conformance.fetchListed("fate-dst-64fs44-2ch.dff"), Codec.DST, 0, 2));
+    }
+
+    @Test
     @DisplayName("writes the seeds of the ADPCM and telephony decoder targets")
     void telephony() throws java.io.IOException {
         var resources = Path.of("src/test/resources/com/github/auties00/smalt/audio");

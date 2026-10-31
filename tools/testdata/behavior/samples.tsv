@@ -12,6 +12,7 @@ core/src/test/resources/samples/amr/nb-tags.amr	3496	f988b6243a86c13a5cb39cb622b
 core/src/test/resources/samples/amr/nb.amr	3238	5230e69f4b53d1e3508f7833241f30688da4703c9452aa576c2f636ade80fd3d	make-samples.sh
 core/src/test/resources/samples/amr/wb-3ch.awb	18319	d4ba98ff4315a67df08b4ff23e2555941bcb9d358df89aa75c826c237aa75ad6	make-amr-mc-samples.py
 core/src/test/resources/samples/amr/wb.awb	6109	ccfea779b46271014282f1f88f9342071ec30b4088977745a6a347b797219f9e	make-samples.sh
+core/src/test/resources/samples/ape/ape.ape	16874	f6671f474739c44b07dfdd144338de5217aa0b5a18fa45e38323a9b5f78767d1	make-lossless-dsd-samples.py
 core/src/test/resources/samples/asf/h264-mp3.asf	45702	58c95e224a232124c8a152dad5f50f103f221016fa236306704f69f10ea9e1fc	make-samples.sh
 core/src/test/resources/samples/asf/mjpeg-pcm.wmv	23437	871a84d12ea761cd5492d44294a646b849418c53aa0399532e0cded8c8fb530e	make-samples.sh
 core/src/test/resources/samples/asf/vc1.wmv	3825	c89f24422169ca59424214f7582fb2823f0f99cf7b1dc5a0d33740a0616d5452	make-vc1-samples.sh
@@ -36,6 +37,8 @@ core/src/test/resources/samples/caf/alac.caf	46380	43616f94df3600f9a0e3804616a24
 core/src/test/resources/samples/caf/ima4.caf	14205	27ec48c5fb9fe33e39dbaab3cef4baccba6fc5316e7d69c45395413408dce01c	make-audio-container-samples.py
 core/src/test/resources/samples/caf/opus.caf	2534	76e61e028f2aaa1ca91b304a60272c0484670591bebb5b1003c0f3a8a1d76d19	make-audio-container-samples.py
 core/src/test/resources/samples/caf/s16.caf	53049	7142b32d44cddd530e27ad914d454139d6dce6a8f4e59168e0d1b4ef8763296a	make-audio-container-samples.py
+core/src/test/resources/samples/dsd/dsd.dff	42622	ee81960df82c13c312809229a84b829aa4baa2b140cdc6d2ec329adb5ad2b585	make-lossless-dsd-samples.py
+core/src/test/resources/samples/dsd/dsd.dsf	49273	83f3b7409c4533cef17ff328d896c5884ee01c9109d179accf289e9741d25856	make-lossless-dsd-samples.py
 core/src/test/resources/samples/dts/dts.dts	80964	00131c2a2fceab37d185f689d3451fcacc55bb26326bd265076df91ef0bfa144	make-samples.sh
 core/src/test/resources/samples/dv/dv25-audio.dv	240000	8dec1f3f42d3c92ea9dfe4f97b92e8fa96d35cce774d7aed8dffbd3cd42cb778	make-dv-samples.py
 core/src/test/resources/samples/elementary/av1-annexb.obu	15637	b5e670c82b8d929fbf930383ba83b5cb1eaed75974afde393a72266e7551ebfc	make-samples.sh
@@ -110,6 +113,7 @@ core/src/test/resources/samples/mp4/tiff.mov	48261	e6bed083327a70c45d9dd6bb1ad09
 core/src/test/resources/samples/mp4/timecode-spherical.mov	16384	45ecc9d0b26f2948bcbf18aee14ad74dfec237c399b63bb258c5b571cdeda227	make-descriptive-samples.py
 core/src/test/resources/samples/mp4/vc1.mp4	1571	e3645e28abf6b0526fbeec6f4f9e3362d6bb02b77832c9515f76f1924e9b9e70	make-vc1-samples.sh
 core/src/test/resources/samples/mp4/vobsub.mp4	6344	764945832252bf06f3b6819a9cadcda14147a18adba3f0c9c3d897a10f4d7ded	make-samples.sh, make-bitmap-caption-samples.py
+core/src/test/resources/samples/musepack/musepack.mpc	8457	911b9ac94f5512d4ff83baa982b266c29121a7f3c1076ad992961626fa8d777e	make-lossless-dsd-samples.py
 core/src/test/resources/samples/mxf/bmx-op1a-avci50-headerless.mxf	165075	aa3f61e1c55b312ae13d54a1fcb6fe0766c94bcfbc64a813e7aaa059600dfa23	make-mxf-samples.sh
 core/src/test/resources/samples/mxf/bmx-op1a-clip-pcm.mxf	77898	a1a07c43b9bdb845e1e26cf1fd4b89a2a568321b65292f72a67951b8576206ee	make-mxf-samples.sh
 core/src/test/resources/samples/mxf/bmx-op1a-prores.mxf	89052	81b597f2b7d10771652a0c922683cdec5c3fed1943b2cdd0f8766ce3e5d47e51	make-mxf-samples.sh

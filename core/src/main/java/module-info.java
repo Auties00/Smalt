@@ -97,11 +97,13 @@ module com.github.auties00.smalt {
     exports com.github.auties00.smalt.container.adts;
     exports com.github.auties00.smalt.container.aiff;
     exports com.github.auties00.smalt.container.amr;
+    exports com.github.auties00.smalt.container.ape;
     exports com.github.auties00.smalt.container.asf;
     exports com.github.auties00.smalt.container.au;
     exports com.github.auties00.smalt.container.avi;
     exports com.github.auties00.smalt.container.caf;
     exports com.github.auties00.smalt.container.dash;
+    exports com.github.auties00.smalt.container.dsd;
     exports com.github.auties00.smalt.container.dv;
     exports com.github.auties00.smalt.container.flac;
     exports com.github.auties00.smalt.container.flv;
@@ -110,6 +112,7 @@ module com.github.auties00.smalt {
     exports com.github.auties00.smalt.container.matroska;
     exports com.github.auties00.smalt.container.mp4;
     exports com.github.auties00.smalt.container.mpeg;
+    exports com.github.auties00.smalt.container.musepack;
     exports com.github.auties00.smalt.container.mxf;
     exports com.github.auties00.smalt.container.ogg;
     exports com.github.auties00.smalt.container.packaging;
@@ -163,6 +166,7 @@ module com.github.auties00.smalt {
             com.github.auties00.smalt.audio,
             com.github.auties00.smalt.mpeg,
             com.github.auties00.smalt.video;
+    exports com.github.auties00.smalt.internal.dsd to com.github.auties00.smalt.audio;
     exports com.github.auties00.smalt.internal.edit to com.github.auties00.smalt.image;
     exports com.github.auties00.smalt.internal.gainmap to
             com.github.auties00.smalt.image,

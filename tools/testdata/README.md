@@ -929,16 +929,20 @@ writes the magic cookie and the packets, the oracle of `AlacEncoderOracleTest`'s
 
 ## Speex, Theora and WavPack reference decodes
 
-The Speex, Theora and WavPack vectors are self-generated and committed with the MD5s of their reference decodes:
+The Speex, Theora, WavPack, Monkey's Audio and Musepack vectors are self-generated and committed with the MD5s of their reference decodes:
 `speex-oracle/make-vectors.py` (ffmpeg's libspeex encodes, decoded by `smalt-speexdec.c`, the fixed-point libspeex
 1.2.1 decoder), `theora-oracle/make-vectors.py` (ffmpeg's libtheora encodes, decoded picture by picture by
 `smalt-theoradec.c`, libtheora 1.2.0's decoder without post-processing) and `wavpack/make-vectors.py` (synthesized
-WAVE and DSF inputs encoded and decoded by the WavPack 5.8.1 command line tools). Each script's docstring gives the
+WAVE and DSF inputs encoded and decoded by the WavPack 5.8.1 command line tools), `ape/make-vectors.py`
+(synthesized WAVE inputs encoded and decoded by the Monkey's Audio 13.45 command line tool, the FATE files of older
+versions decoded by `ape-oracle/smalt-apedec.cpp`) and `musepack/make-vectors.py` (synthesized WAVE inputs encoded by
+mpcenc 1.30.1 and decoded by `musepack-oracle/smalt-mpcdec.c`, libmpcdec r475's floating-point decoder). Each script's docstring gives the
 build of its oracle (BSD 3-Clause sources, compiled by hand; `oracles.py` does not install them, since CI only
 compares with the committed MD5s), and the `README.md` and `.sha256` file next to each vector directory describe
 and pin the files. `theora-oracle/make-fuzz-seeds.py` and `ffv1/make-fuzz-seeds.py` write the `valid-*` seeds of
 `VideoFuzzTest.theora` and `VideoFuzzTest.ffv1` (the FFV1 ones from ffmpeg 7.1's FFV1 encoder in AVI). A few of the
-vectors are also the training streams of `smalt-aot` (`aot/src/main/resources/.../aot/internal/{theora,speex,wavpack}`).
+vectors are also the training streams of `smalt-aot` (`aot/src/main/resources/.../aot/internal/{theora,speex,wavpack,ape,musepack}`; its `dsd` streams are the DSD
+behavior samples of `behavior/make-lossless-dsd-samples.py`).
 
 ## Adding a vector
 

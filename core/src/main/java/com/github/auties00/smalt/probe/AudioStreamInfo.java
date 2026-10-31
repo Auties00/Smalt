@@ -172,7 +172,7 @@ public final class AudioStreamInfo implements StreamInfo {
 
     /**
      * Returns the number of bits of every sample: the sample size of uncompressed audio, or the
-     * coded resolution of lossless audio (FLAC, ALAC, WavPack).
+     * coded resolution of lossless audio (FLAC, ALAC, WavPack, Monkey's Audio), 1 for DSD and DST.
      *
      * @return the bits per sample, or empty for lossy codecs and when unknown
      */

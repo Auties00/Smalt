@@ -303,6 +303,90 @@ public enum Codec {
     WAVPACK(TrackKind.AUDIO, "wavpack"),
 
     /**
+     * Monkey's Audio lossless audio ({@code .ape}), file versions 3.80 to 3.99 and 3.990 onward, integer samples of
+     * 8, 16, 24 and 32 bits and 32-bit floating-point samples.
+     *
+     * <p>A packet is one frame: the number of samples per channel the frame codes and the number of bits (0 to 31)
+     * that precede the frame's first bit in the data that follows, as two 32-bit little-endian integers, then the
+     * frame data (read as little-endian 32-bit words). For versions after 3.80 the data starts at the 32-bit
+     * word, counted from the start of the audio data, that holds the frame's first byte; for 3.80 and earlier it
+     * starts at the frame's seek byte and the bit count comes from the file's seek bit table. The data runs to the
+     * next frame's start plus a few bytes, which the decoder may read past the frame. The configuration is the
+     * file's header from its {@code "MAC "} magic: the descriptor and header of version 3.98 and later, or the
+     * header of earlier versions.
+     */
+    APE(TrackKind.AUDIO, "ape"),
+
+    /**
+     * Musepack stream version 7 ({@code .mpc}, magic {@code "MP+"}).
+     *
+     * <p>A packet is one frame of 1152 samples per channel: one byte giving the position (0 to 31, from the most
+     * significant bit) of the frame's first bit in its first 32-bit word, then the little-endian 32-bit words that
+     * hold the frame from its 20-bit length field on, and, for the stream's last frame, the 11-bit count of its
+     * samples that follows it. The configuration is the 28-byte stream header from the {@code "MP+"} magic. A frame
+     * depends on the frames before it, so decoding from a later frame converges after a few frames. Packet timestamps
+     * count output samples: the decoder drops the first 481 samples, the delay of its synthesis filter bank.
+     */
+    MUSEPACK7(TrackKind.AUDIO, "musepack7"),
+
+    /**
+     * Musepack stream version 8 ({@code .mpc}, magic {@code "MPCK"}).
+     *
+     * <p>A packet is the payload of one audio packet ({@code "AP"}) of the stream: its frames of 1152 samples per
+     * channel, the first coded without reference to earlier frames. The configuration is the payload of the stream
+     * header packet ({@code "SH"}). Packet timestamps count output samples: the decoder drops the first 481 samples,
+     * the delay of its synthesis filter bank, and the stream's leading silence the header declares.
+     */
+    MUSEPACK8(TrackKind.AUDIO, "musepack8"),
+
+    /**
+     * Uncompressed 1-bit DSD (Direct Stream Digital) audio, eight samples per byte with the oldest in the least
+     * significant bit, the bytes of every channel interleaved one by one.
+     *
+     * <p>The track's sample rate is the DSD rate (2822400 Hz for DSD64), its time base counts DSD samples and a
+     * packet's duration is the number of DSD samples per channel it holds, which may be fewer than its bytes hold
+     * when the stream's last bytes are padding. The track has no configuration.
+     */
+    DSD_LSBF(TrackKind.AUDIO, "dsd_lsbf"),
+
+    /**
+     * Uncompressed 1-bit DSD audio, eight samples per byte with the oldest in the most significant bit, the bytes of
+     * every channel interleaved one by one: the sound data of a DSDIFF ({@code .dff}) file.
+     *
+     * <p>Packets and the track are as for {@link #DSD_LSBF}.
+     */
+    DSD_MSBF(TrackKind.AUDIO, "dsd_msbf"),
+
+    /**
+     * Uncompressed 1-bit DSD audio, eight samples per byte with the oldest in the least significant bit, each packet
+     * holding an equal block of bytes of every channel, one channel after the other: the sound data of a DSF
+     * ({@code .dsf}) file of 1 bit per sample.
+     *
+     * <p>Packets and the track are otherwise as for {@link #DSD_LSBF}.
+     */
+    DSD_LSBF_PLANAR(TrackKind.AUDIO, "dsd_lsbf_planar"),
+
+    /**
+     * Uncompressed 1-bit DSD audio, eight samples per byte with the oldest in the most significant bit, each packet
+     * holding an equal block of bytes of every channel, one channel after the other: the sound data of a DSF
+     * ({@code .dsf}) file of 8 bits per sample.
+     *
+     * <p>Packets and the track are otherwise as for {@link #DSD_LSBF}.
+     */
+    DSD_MSBF_PLANAR(TrackKind.AUDIO, "dsd_msbf_planar"),
+
+    /**
+     * DST (Direct Stream Transfer), the lossless coding of DSD of ISO/IEC 14496-3 subpart 10 and of Super Audio CD.
+     *
+     * <p>A packet is one DST frame, 1/75 s of every channel ({@code sampleRate / 75} DSD samples per channel), which
+     * may also be a frame of plain DSD (interleaved, most significant bit first) as the coding allows. The track's
+     * sample rate is the DSD rate and its time base counts DSD samples. The configuration is the MPEG-4
+     * {@code AudioSpecificConfig} (audio object type 35) of an MP4 track, whose {@code DSDDST_Coded} flag, when
+     * clear, makes every packet plain DSD; DSDIFF tracks carry none.
+     */
+    DST(TrackKind.AUDIO, "dst"),
+
+    /**
      * Dolby Digital (AC-3).
      */
     AC3(TrackKind.AUDIO, "ac3"),
@@ -719,6 +803,16 @@ public enum Codec {
      */
     public boolean isPcm() {
         return name().startsWith("PCM_");
+    }
+
+    /**
+     * Returns whether this codec is uncompressed 1-bit DSD audio.
+     *
+     * @return {@code true} for {@link #DSD_LSBF}, {@link #DSD_MSBF}, {@link #DSD_LSBF_PLANAR} and
+     * {@link #DSD_MSBF_PLANAR}
+     */
+    public boolean isDsd() {
+        return this == DSD_LSBF || this == DSD_MSBF || this == DSD_LSBF_PLANAR || this == DSD_MSBF_PLANAR;
     }
 
     /**

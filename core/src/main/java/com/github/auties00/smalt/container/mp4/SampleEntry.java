@@ -907,6 +907,15 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                     if (codec == Codec.AAC || codec == Codec.VORBIS) {
                         config = audio.esds.specificInfo();
                     }
+                    if (codec == Codec.AAC && config != null && dstChannels(config) > 0) {
+                        codec = Codec.DST;
+                        channels = dstChannels(config);
+                        bits = 1;
+                        var rate = dstSampleRate(config);
+                        if (rate > 0) {
+                            sampleRate = rate;
+                        }
+                    }
                 }
                 if (codec == Codec.AAC && config != null) {
                     try {
@@ -1478,5 +1487,66 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
             }
         }
         return speakers.isEmpty() ? null : new ChannelLayout(speakers);
+    }
+
+    /**
+     * Returns the channel count of a DST {@code AudioSpecificConfig} (audio object type 35), or 0 for any other
+     * configuration.
+     */
+    private static int dstChannels(byte[] config) {
+        var fields = dstFields(config);
+        return fields == null ? 0 : Math.max(fields[1], 1);
+    }
+
+    /**
+     * Returns the sampling frequency a DST {@code AudioSpecificConfig} states explicitly, or 0.
+     */
+    private static int dstSampleRate(byte[] config) {
+        var fields = dstFields(config);
+        return fields == null ? 0 : fields[0];
+    }
+
+    /**
+     * Parses the leading fields of a DST {@code AudioSpecificConfig}: the explicit sampling frequency (0 when coded
+     * by index) and {@code N_Channels}, or returns {@code null} for another audio object type.
+     */
+    private static int[] dstFields(byte[] config) {
+        var bit = 0;
+        if (config.length < 4) {
+            return null;
+        }
+        var type = bitsOf(config, bit, 5);
+        bit += 5;
+        if (type == 31) {
+            type = 32 + bitsOf(config, bit, 6);
+            bit += 6;
+        }
+        if (type != 35) {
+            return null;
+        }
+        var index = bitsOf(config, bit, 4);
+        bit += 4;
+        var frequency = 0;
+        if (index == 15) {
+            frequency = bitsOf(config, bit, 24);
+            bit += 24;
+        }
+        bit += 4 + 1;
+        if (bit + 14 > config.length * 8) {
+            return null;
+        }
+        return new int[]{frequency, bitsOf(config, bit, 14)};
+    }
+
+    private static int bitsOf(byte[] data, int start, int count) {
+        var value = 0;
+        for (var i = 0; i < count; i++) {
+            var at = start + i;
+            if (at >>> 3 >= data.length) {
+                return 0;
+            }
+            value = value << 1 | ((data[at >>> 3] >>> (7 - (at & 7))) & 1);
+        }
+        return value;
     }
 }

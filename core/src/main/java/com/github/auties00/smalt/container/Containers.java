@@ -57,6 +57,10 @@ import com.github.auties00.smalt.container.subtitle.SamiMuxer;
 import com.github.auties00.smalt.container.raw.RawMuxerOptions;
 import com.github.auties00.smalt.container.subtitle.SubRipDemuxer;
 import com.github.auties00.smalt.container.wavpack.WavPackDemuxer;
+import com.github.auties00.smalt.container.ape.ApeDemuxer;
+import com.github.auties00.smalt.container.dsd.DsdiffDemuxer;
+import com.github.auties00.smalt.container.dsd.DsfDemuxer;
+import com.github.auties00.smalt.container.musepack.MusepackDemuxer;
 import com.github.auties00.smalt.container.subtitle.SubRipMuxer;
 import com.github.auties00.smalt.container.subtitle.SupDemuxer;
 import com.github.auties00.smalt.container.subtitle.SupMuxer;
@@ -112,11 +116,12 @@ import java.util.function.Predicate;
  * creates the muxer that writes a container.
  *
  * <p>Recognition never trusts a file name or a declared mimetype: it inspects the leading bytes,
- * skipping an ID3v2 tag first because MP3, AAC, AC-3, AMR and FLAC files often start with one. Formats with a
- * magic number (MP4 family, Matroska, Ogg, RIFF WAVE, Sony Wave64, RIFF AVI, ASF, FLV, AIFF, CAF, Sun AU, ADIF, FLAC,
- * AMR, WavPack, MXF, YUV4MPEG2, the {@code "PG"} segments of a {@code .sup} file, the signature line of a VobSub index)
- * are recognized exactly, a raw DV stream by the block IDs of the first blocks of its first DIF sequence, a VobSub
- * {@code .sub} file by a pack header followed by a subpicture PES packet, other
+ * skipping an ID3v2 tag first because MP3, AAC, AC-3, AMR, FLAC, Monkey's Audio and Musepack files often start with
+ * one. Formats with a magic number (MP4 family, Matroska, Ogg, RIFF WAVE, Sony Wave64, RIFF AVI, ASF, FLV, AIFF, CAF,
+ * Sun AU, ADIF, FLAC, AMR, WavPack, Monkey's Audio, Musepack, DSF, DSDIFF, MXF, YUV4MPEG2, the {@code "PG"} segments
+ * of a {@code .sup} file, the signature line of a VobSub index) are recognized exactly, a raw DV stream by the block
+ * IDs of the first blocks of its first DIF sequence, a VobSub {@code .sub} file by a pack header followed by a
+ * subpicture PES packet, other
  * MPEG program streams by their first pack header, MPEG transport streams by
  * the sync bytes of their first packets, and raw AC-3 and E-AC-3 streams
  * by two consecutive sync frames;
@@ -267,6 +272,12 @@ public final class Containers {
             }
             if (matches(header, 0, "ADIF")) {
                 return new Detection(ContainerFormat.ADIF, null);
+            }
+            if (ApeDemuxer.matches(header)) {
+                return new Detection(ContainerFormat.APE, null);
+            }
+            if (MusepackDemuxer.matches(header)) {
+                return new Detection(ContainerFormat.MUSEPACK, null);
             }
             provided = detectProvided(providers, source, offset, header);
             if (provided != null) {
@@ -446,6 +457,10 @@ public final class Containers {
             case MXF -> new MxfDemuxer(source, options);
             case AC3 -> new Ac3Demuxer(source, options);
             case WAVPACK -> new WavPackDemuxer(source, options);
+            case APE -> new ApeDemuxer(source, options);
+            case MUSEPACK -> new MusepackDemuxer(source, options);
+            case DSF -> new DsfDemuxer(source, options);
+            case DSDIFF -> new DsdiffDemuxer(source, options);
             case DTS -> new DtsDemuxer(source, options);
             case SUBRIP -> new SubRipDemuxer(source, options);
             case WEBVTT -> new WebVttDemuxer(source, options);
@@ -595,7 +610,9 @@ public final class Containers {
      * ({@code VobSubMuxer}), {@link ContainerFormat#HLS} or {@link ContainerFormat#DASH}, presentations of many
      * files that {@link com.github.auties00.smalt.container.packaging.Packager} writes, or
      * {@link ContainerFormat#OTHER}, which names no single container
-     * @throws MediaException.Unsupported if no muxer of a format core does not write is on the module or class path
+     * @throws MediaException.Unsupported if no muxer of a format core does not write (among them the read-only
+     * {@link ContainerFormat#ASF}, {@link ContainerFormat#APE}, {@link ContainerFormat#MUSEPACK},
+     * {@link ContainerFormat#DSF} and {@link ContainerFormat#DSDIFF}) is on the module or class path
      * @throws MediaException.Io if the sink position cannot be read
      */
     public static Muxer openMuxer(ContainerFormat format, MediaSink output) {
@@ -860,6 +877,18 @@ public final class Containers {
         }
         if (WavPackDemuxer.matches(header)) {
             return ContainerFormat.WAVPACK;
+        }
+        if (ApeDemuxer.matches(header)) {
+            return ContainerFormat.APE;
+        }
+        if (MusepackDemuxer.matches(header)) {
+            return ContainerFormat.MUSEPACK;
+        }
+        if (DsfDemuxer.matches(header)) {
+            return ContainerFormat.DSF;
+        }
+        if (DsdiffDemuxer.matches(header)) {
+            return ContainerFormat.DSDIFF;
         }
         if (Y4mDemuxer.matches(header)) {
             return ContainerFormat.Y4M;

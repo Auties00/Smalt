@@ -146,6 +146,29 @@ public enum ContainerFormat {
     WAVPACK,
 
     /**
+     * A Monkey's Audio file ({@code .ape}): a header and seek table followed by frames, magic {@code "MAC "} (or
+     * {@code "MACF"} for floating-point samples).
+     */
+    APE,
+
+    /**
+     * A Musepack file ({@code .mpc}): stream version 7 (magic {@code "MP+"}) or the packets of stream version 8
+     * (magic {@code "MPCK"}).
+     */
+    MUSEPACK,
+
+    /**
+     * A Sony DSD Stream File ({@code .dsf}) of uncompressed DSD audio, magic {@code "DSD "}.
+     */
+    DSF,
+
+    /**
+     * A Philips DSD Interchange File Format file ({@code .dff}) of uncompressed or DST-coded DSD audio, magic
+     * {@code "FRM8"} with the form type {@code "DSD "}.
+     */
+    DSDIFF,
+
+    /**
      * A raw DTS elementary stream ({@code .dts}) or a DTS-HD file ({@code .dtshd}, magic {@code DTSHDHDR}) of DTS
      * and DTS-HD frames.
      */

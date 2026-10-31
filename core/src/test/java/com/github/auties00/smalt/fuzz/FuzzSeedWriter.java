@@ -8,6 +8,7 @@ import com.github.auties00.smalt.container.Chapter;
 import com.github.auties00.smalt.container.ChapterEdition;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.container.aiff.AiffMuxer;
+import com.github.auties00.smalt.container.dsd.DsdSamples;
 import com.github.auties00.smalt.container.matroska.MatroskaMuxer;
 import com.github.auties00.smalt.container.mp4.Mp4Muxer;
 import com.github.auties00.smalt.container.mp4.Mp4MuxerOptions;
@@ -22,6 +23,7 @@ import com.github.auties00.smalt.metadata.StandardTag;
 import com.github.auties00.smalt.metadata.TagEditor;
 import com.github.auties00.smalt.metadata.TagWriteOptions;
 import com.github.auties00.smalt.metadata.TrackTags;
+import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Oracle;
 import com.github.auties00.smalt.testkit.container.PresentationSamples;
 import com.github.auties00.smalt.testkit.fuzz.FuzzPackets;
@@ -1129,6 +1131,42 @@ class FuzzSeedWriter {
             bytes[index] = (byte) ('a' + index % 26);
         }
         return bytes;
+    }
+
+    @Test
+    @DisplayName("writes the Monkey's Audio, Musepack, DSF and DSDIFF demuxer seeds and the DSD decoder seeds")
+    void losslessAndDsd() throws IOException {
+        // the APE and SV8 files are committed vectors of the audio module (tools/testdata/ape, tools/testdata/musepack)
+        var audio = Path.of("..", "audio", "src", "test", "resources", "com", "github", "auties00", "smalt", "audio");
+        copy(DemuxerFuzzTest.class, "ape", "valid-s16-stereo-short.ape", audio.resolve("ape/s16-stereo-short-c4000.ape"));
+        copy(DemuxerFuzzTest.class, "ape", "valid-s8-mono-tagged.ape", audio.resolve("ape/s8-mono-c3000.ape"));
+        copy(DemuxerFuzzTest.class, "musepack", "valid-sv8-stereo.mpc", audio.resolve("musepack/stereo-short.mpc"));
+        // the first frames of a Musepack SV7 file, its header announcing more
+        var sv7 = Files.readAllBytes(Conformance.fetchListed("fate-inside-mp7.mpc"));
+        write(DemuxerFuzzTest.class, "musepack", "valid-sv7-head.mpc", Arrays.copyOf(sv7, 6000));
+        var tone = DsdSamples.modulate(2_822_400, 2048, 0.5, 1000);
+        var stereo = DsdSamples.modulate(2_822_400, 1024, 0.4, 1000, 1500);
+        write(DemuxerFuzzTest.class, "dsf", "valid-mono-id3.dsf", DsdSamples.dsf(2_822_400, 1, tone, true,
+                DsdSamples.id3("TIT2", "Seed")));
+        write(DemuxerFuzzTest.class, "dsf", "valid-stereo-msb.dsf", DsdSamples.dsf(2_822_400, 2, stereo, false, null));
+        write(DemuxerFuzzTest.class, "dsdiff", "valid-stereo-markers.dff", DsdSamples.dsdiff(2_822_400,
+                new String[]{"SLFT", "SRGT"}, stereo, 0, 4096));
+        copy(DemuxerFuzzTest.class, "dsdiff", "valid-dst.dff", Conformance.fetchListed("fate-dst-64fs44-2ch.dff"));
+        var codecs = Arrays.stream(Codec.values()).filter(Codec::isDsd).toList();
+        var dsf = Files.createTempFile("smalt-seed", ".dsf");
+        var dff = Files.createTempFile("smalt-seed", ".dff");
+        try {
+            Files.write(dsf, DsdSamples.dsf(2_822_400, 1, DsdSamples.modulate(2_822_400, 12288, 0.5, 1000), true,
+                    null));
+            write(PcmFuzzTest.class, "dsd", "valid-lsbf-planar.bin", FuzzSeeds.packets(dsf, Codec.DSD_LSBF_PLANAR,
+                    codecs.indexOf(Codec.DSD_LSBF_PLANAR) << 1, 3));
+            Files.write(dff, DsdSamples.dsdiff(2_822_400, new String[]{"SLFT", "SRGT"}, stereo));
+            write(PcmFuzzTest.class, "dsd", "valid-msbf.bin", FuzzSeeds.packets(dff, Codec.DSD_MSBF,
+                    codecs.indexOf(Codec.DSD_MSBF) << 1, 4));
+        } finally {
+            Files.deleteIfExists(dsf);
+            Files.deleteIfExists(dff);
+        }
     }
 
     @Test

@@ -123,6 +123,9 @@ Contents
   66. jxrlib
   67. VVdeC
   68. cineform-sdk (GoPro CineForm)
+  69. Monkey's Audio
+  70. libmpcdec (Musepack)
+  71. ISO/IEC 14496-5 MPEG-4 Audio reference software, DST module
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -2369,6 +2372,84 @@ Copyright:
 EOF
 license_start "MIT License (LICENSE-MIT)"
 cat "$LIC/cineform-sdk-LICENSE-MIT"
+
+section "69. Monkey's Audio"
+cat <<'EOF'
+Project:      the Monkey's Audio SDK 13.45, the lossless audio compressor of
+              Matthew T. Ashland
+Home:         https://www.monkeysaudio.com/
+Source:       https://monkeysaudio.com/files/MAC_1345_SDK.zip
+License text: License.txt at the root of the SDK
+License:      BSD 3-Clause
+
+Derived Smalt packages:
+  audio.ape (ApeDecoder, ApeBits, ApeNnFilter, ApeNnFilter64, ApePredictor,
+  ApeAntiPredictors: the decoder of Source/MACLib/APEDecompressCore.cpp,
+  UnBitArrayBase.cpp, UnBitArray.cpp, NewPredictor.cpp, NNFilter.cpp,
+  NNFilterGeneric.cpp, Interim.cpp, Prepare.cpp and FloatTransform.cpp, and
+  the decoders of the versions before 3.93 in Source/MACLib/Old:
+  UnMACOld.cpp, APEDecompressCoreOld.cpp, UnBitArrayOld.cpp,
+  NewPredictorOld.cpp and the AntiPredictor*Old.cpp files)
+  container.ape (ApeDemuxer: the descriptor, header and seek table parsing
+  of Source/MACLib/APEHeader.cpp)
+
+Derivation: C++ code translated to Java.
+
+Copyright:
+  Copyright 2000-2026 Matthew T. Ashland
+EOF
+license_start "Monkey's Audio License Agreement (License.txt)"
+cat "$LIC/monkeys-audio-License.txt"
+
+section "70. libmpcdec (Musepack)"
+cat <<'EOF'
+Project:      libmpcdec of the Musepack sources, revision 475, the decoder of
+              Musepack stream versions 7 and 8
+Home:         https://www.musepack.net/
+Source:       https://files.musepack.net/source/musepack_src_r475.tar.gz
+License text: libmpcdec/COPYING of the distribution
+License:      BSD 3-Clause
+
+Derived Smalt packages:
+  audio.musepack (MusepackDecoder, MusepackFrameDecoder, MusepackTables: the
+  decoder of libmpcdec/mpc_decoder.c, mpc_bits_reader.c, requant.c and
+  synth_filter.c, and the tables of huffman.c, mpc_bits_reader.c, requant.c
+  and synth_filter.c)
+  container.musepack (MusepackDemuxer: the stream header and packet parsing
+  of libmpcdec/mpc_demux.c and streaminfo.c)
+
+Derivation: C code translated to Java and tables transcribed.
+
+Copyright:
+  Copyright (c) 2005-2009, The Musepack Development Team
+EOF
+license_start "BSD 3-Clause License (libmpcdec/COPYING)"
+cat "$LIC/libmpcdec-COPYING"
+
+section "71. ISO/IEC 14496-5 MPEG-4 Audio reference software, DST module"
+cat <<'EOF'
+Project:      the DST (Direct Stream Transfer, lossless coding of 1-bit
+              oversampled audio) module of the MPEG-4 Audio reference software
+              of ISO/IEC 14496-5, as copied with the edits of Maxim Anisiutkin
+              in XLD (XLDDSDDecoder/DST)
+Source:       https://github.com/gmw/xld (XLDDSDDecoder/DST)
+License text: the notices of the source files
+License:      free license to the software module or modifications thereof
+              for use in products claiming conformance to the MPEG-4 Audio
+              standards
+
+Derived Smalt packages:
+  audio.dst (DstFrameDecoder: the frame decoder of dst_fram.c, unpack_dst.c,
+  dst_data.c, dst_ac.c, ccp_calc.c and dst_init.c)
+
+Derivation: C code translated to Java.
+
+Copyright:
+  Philips Digital Systems Laboratories Eindhoven, Philips Research
+  Laboratories Eindhoven, ICT Group and ISO/IEC (2004)
+EOF
+license_start "Notices of the source files"
+cat "$LIC/iso14496-5-dst-notice.txt"
 } > "$OUT"
 
 echo "wrote $OUT"

@@ -53,7 +53,10 @@ class DemuxerBehaviorTest {
             "flac-cellar-subset-60.flac",
             "flac-cellar-subset-38.flac",
             "eac3-csi_miami_5.1_256_spx_small.eac3",
-            "mpeg4audio-al00_08.wav");
+            "mpeg4audio-al00_08.wav",
+            "fate-luckynight-mac388-c2000.ape",
+            "fate-inside-mp7.mpc",
+            "fate-dst-64fs44-2ch.dff");
 
     /**
      * The seek precision of the samples whose index is coarser than their packets, by sample path.

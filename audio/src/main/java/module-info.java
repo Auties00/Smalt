@@ -25,11 +25,14 @@ module com.github.auties00.smalt.audio {
     // Audio codecs and processing
     exports com.github.auties00.smalt.audio.adpcm;
     exports com.github.auties00.smalt.audio.alac;
+    exports com.github.auties00.smalt.audio.ape;
+    exports com.github.auties00.smalt.audio.dst;
     exports com.github.auties00.smalt.audio.flac;
     exports com.github.auties00.smalt.audio.g722;
     exports com.github.auties00.smalt.audio.g726;
     exports com.github.auties00.smalt.audio.gsm;
     exports com.github.auties00.smalt.audio.mp3;
+    exports com.github.auties00.smalt.audio.musepack;
     exports com.github.auties00.smalt.audio.opus;
     exports com.github.auties00.smalt.audio.speex;
     exports com.github.auties00.smalt.audio.voice;
@@ -40,8 +43,11 @@ module com.github.auties00.smalt.audio {
     provides com.github.auties00.smalt.spi.AudioCodecProvider with
             com.github.auties00.smalt.internal.provider.audio.AdpcmCodecProvider,
             com.github.auties00.smalt.internal.provider.audio.AlacCodecProvider,
+            com.github.auties00.smalt.internal.provider.audio.ApeCodecProvider,
+            com.github.auties00.smalt.internal.provider.audio.DstCodecProvider,
             com.github.auties00.smalt.internal.provider.audio.FlacCodecProvider,
             com.github.auties00.smalt.internal.provider.audio.Mp3CodecProvider,
+            com.github.auties00.smalt.internal.provider.audio.MusepackCodecProvider,
             com.github.auties00.smalt.internal.provider.audio.OpusCodecProvider,
             com.github.auties00.smalt.internal.provider.audio.SpeexCodecProvider,
             com.github.auties00.smalt.internal.provider.audio.VorbisCodecProvider,

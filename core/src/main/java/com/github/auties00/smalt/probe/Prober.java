@@ -534,12 +534,14 @@ final class Prober {
     }
 
     /**
-     * {@return whether a codec stores samples at a fixed resolution: PCM, FLAC, ALAC and WavPack}
+     * {@return whether a codec stores samples at a fixed resolution: PCM, FLAC, ALAC, WavPack, Monkey's Audio, DSD
+     * and DST}
      *
      * @param codec an audio codec
      */
     private static boolean lossless(Codec codec) {
-        return codec == Codec.FLAC || codec == Codec.ALAC || codec == Codec.WAVPACK || codec.isPcm();
+        return codec == Codec.FLAC || codec == Codec.ALAC || codec == Codec.WAVPACK || codec == Codec.APE
+                || codec == Codec.DST || codec.isPcm() || codec.isDsd();
     }
 
     /**

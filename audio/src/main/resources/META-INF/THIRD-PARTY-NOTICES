@@ -38,6 +38,9 @@ Contents
   59. libgsm
   60. WavPack
   61. libspeex
+  69. Monkey's Audio
+  70. libmpcdec (Musepack)
+  71. ISO/IEC 14496-5 MPEG-4 Audio reference software, DST module
 
 
 ===============================================================================
@@ -1306,3 +1309,188 @@ PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
 LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
 NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+===============================================================================
+69. Monkey's Audio
+===============================================================================
+
+Project:      the Monkey's Audio SDK 13.45, the lossless audio compressor of
+              Matthew T. Ashland
+Home:         https://www.monkeysaudio.com/
+Source:       https://monkeysaudio.com/files/MAC_1345_SDK.zip
+License text: License.txt at the root of the SDK
+License:      BSD 3-Clause
+
+Derived Smalt packages:
+  audio.ape (ApeDecoder, ApeBits, ApeNnFilter, ApeNnFilter64, ApePredictor,
+  ApeAntiPredictors: the decoder of Source/MACLib/APEDecompressCore.cpp,
+  UnBitArrayBase.cpp, UnBitArray.cpp, NewPredictor.cpp, NNFilter.cpp,
+  NNFilterGeneric.cpp, Interim.cpp, Prepare.cpp and FloatTransform.cpp, and
+  the decoders of the versions before 3.93 in Source/MACLib/Old:
+  UnMACOld.cpp, APEDecompressCoreOld.cpp, UnBitArrayOld.cpp,
+  NewPredictorOld.cpp and the AntiPredictor*Old.cpp files)
+  container.ape (ApeDemuxer: the descriptor, header and seek table parsing
+  of Source/MACLib/APEHeader.cpp)
+
+Derivation: C++ code translated to Java.
+
+Copyright:
+  Copyright 2000-2026 Matthew T. Ashland
+
+-------------------------------------------------------------------------------
+Monkey's Audio License Agreement (License.txt)
+-------------------------------------------------------------------------------
+
+Monkey's Audio License Agreement (3 clause BSD)
+
+Copyright 2000-2026 Matthew T. Ashland. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+
+1) Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+2) Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+3) Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+===============================================================================
+70. libmpcdec (Musepack)
+===============================================================================
+
+Project:      libmpcdec of the Musepack sources, revision 475, the decoder of
+              Musepack stream versions 7 and 8
+Home:         https://www.musepack.net/
+Source:       https://files.musepack.net/source/musepack_src_r475.tar.gz
+License text: libmpcdec/COPYING of the distribution
+License:      BSD 3-Clause
+
+Derived Smalt packages:
+  audio.musepack (MusepackDecoder, MusepackFrameDecoder, MusepackTables: the
+  decoder of libmpcdec/mpc_decoder.c, mpc_bits_reader.c, requant.c and
+  synth_filter.c, and the tables of huffman.c, mpc_bits_reader.c, requant.c
+  and synth_filter.c)
+  container.musepack (MusepackDemuxer: the stream header and packet parsing
+  of libmpcdec/mpc_demux.c and streaminfo.c)
+
+Derivation: C code translated to Java and tables transcribed.
+
+Copyright:
+  Copyright (c) 2005-2009, The Musepack Development Team
+
+-------------------------------------------------------------------------------
+BSD 3-Clause License (libmpcdec/COPYING)
+-------------------------------------------------------------------------------
+
+Copyright (c) 2005, The Musepack Development Team
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+
+    * Redistributions in binary form must reproduce the above
+      copyright notice, this list of conditions and the following
+      disclaimer in the documentation and/or other materials provided
+      with the distribution.
+
+    * Neither the name of the The Musepack Development Team nor the
+      names of its contributors may be used to endorse or promote
+      products derived from this software without specific prior
+      written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+===============================================================================
+71. ISO/IEC 14496-5 MPEG-4 Audio reference software, DST module
+===============================================================================
+
+Project:      the DST (Direct Stream Transfer, lossless coding of 1-bit
+              oversampled audio) module of the MPEG-4 Audio reference software
+              of ISO/IEC 14496-5, as copied with the edits of Maxim Anisiutkin
+              in XLD (XLDDSDDecoder/DST)
+Source:       https://github.com/gmw/xld (XLDDSDDecoder/DST)
+License text: the notices of the source files
+License:      free license to the software module or modifications thereof
+              for use in products claiming conformance to the MPEG-4 Audio
+              standards
+
+Derived Smalt packages:
+  audio.dst (DstFrameDecoder: the frame decoder of dst_fram.c, unpack_dst.c,
+  dst_data.c, dst_ac.c, ccp_calc.c and dst_init.c)
+
+Derivation: C code translated to Java.
+
+Copyright:
+  Philips Digital Systems Laboratories Eindhoven, Philips Research
+  Laboratories Eindhoven, ICT Group and ISO/IEC (2004)
+
+-------------------------------------------------------------------------------
+Notices of the source files
+-------------------------------------------------------------------------------
+
+The DST module of the MPEG-4 Audio reference software (ISO/IEC 14496-5, Lossless coding of 1-bit
+oversampled audio) carries this notice in its source files (dst_decoder.c; the other files differ only
+in their source file name, description and change history):
+
+/***********************************************************************
+MPEG-4 Audio RM Module
+Lossless coding of 1-bit oversampled audio - DST (Direct Stream Transfer)
+
+This software was originally developed by:
+
+* Aad Rijnberg 
+  Philips Digital Systems Laboratories Eindhoven 
+  <aad.rijnberg@philips.com>
+
+* Fons Bruekers
+  Philips Research Laboratories Eindhoven
+  <fons.bruekers@philips.com>
+   
+* Eric Knapen
+  Philips Digital Systems Laboratories Eindhoven
+  <h.w.m.knapen@philips.com> 
+
+And edited by:
+
+* Richard Theelen
+  Philips Digital Systems Laboratories Eindhoven
+  <r.h.m.theelen@philips.com>
+
+* Maxim Anisiutkin
+  ICT Group
+  <maxim.anisiutkin@gmail.com>
+
+in the course of development of the MPEG-4 Audio standard ISO-14496-1, 2 and 3.
+This software module is an implementation of a part of one or more MPEG-4 Audio
+tools as specified by the MPEG-4 Audio standard. ISO/IEC gives users of the
+MPEG-4 Audio standards free licence to this software module or modifications
+thereof for use in hardware or software products claiming conformance to the
+MPEG-4 Audio standards. Those intending to use this software module in hardware
+or software products are advised that this use may infringe existing patents.
+The original developers of this software of this module and their company,
+the subsequent editors and their companies, and ISO/EIC have no liability for
+use of this software module or modifications thereof in an implementation.
+Copyright is not released for non MPEG-4 Audio conforming products. The
+original developer retains full right to use this code for his/her own purpose,
+assign or donate the code to a third party and to inhibit third party from
+using the code for non MPEG-4 Audio conforming products. This copyright notice
+must be included in all copies of derivative works.
+
+Copyright  2004.
+
+************************************************************************/

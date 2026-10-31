@@ -55,6 +55,26 @@ class AudioFuzzTest {
     }
 
     @FuzzTest
+    void ape(byte[] data) {
+        FuzzMedia.audio(Codec.APE, data);
+    }
+
+    @FuzzTest
+    void musepack7(byte[] data) {
+        FuzzMedia.audio(Codec.MUSEPACK7, data);
+    }
+
+    @FuzzTest
+    void musepack8(byte[] data) {
+        FuzzMedia.audio(Codec.MUSEPACK8, data);
+    }
+
+    @FuzzTest
+    void dst(byte[] data) {
+        FuzzMedia.audio(Codec.DST, data);
+    }
+
+    @FuzzTest
     void speex(byte[] data) {
         FuzzMedia.audio(Codec.SPEEX, data);
     }

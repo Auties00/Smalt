@@ -60,7 +60,7 @@ public final class Artifacts {
             case VP9, AV1, PRORES, DNXHD, QTRLE, CFHD -> VIDEO;
             case VP8, MJPEG, JPEG2000, PNG, TIFF, GIF, HAP -> IMAGE;
             case OPUS, VORBIS, FLAC, MP3, MP2, ALAC, ADPCM_IMA_WAV, ADPCM_IMA_QT, ADPCM_MS, ADPCM_G722, ADPCM_G726, GSM,
-                 GSM_MS -> AUDIO;
+                 GSM_MS, SPEEX, WAVPACK, APE, MUSEPACK7, MUSEPACK8, DST -> AUDIO;
             default -> null;
         };
     }

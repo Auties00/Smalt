@@ -157,7 +157,7 @@ class ContainersApiTest {
     class OpenMuxer {
         @ParameterizedTest(name = "{0}")
         @EnumSource(ContainerFormat.class)
-        @DisplayName("creates a muxer for every format")
+        @DisplayName("creates a muxer for every format that is not read-only")
         void format(ContainerFormat format) {
             if (format == ContainerFormat.VOBSUB || format == ContainerFormat.HLS || format == ContainerFormat.DASH
                     || format == ContainerFormat.OTHER) {
@@ -172,6 +172,12 @@ class ContainersApiTest {
                         () -> Containers.openMuxer(format, MediaSink.memory()));
                 assertEquals("asf", failure.format());
                 assertFalse(Containers.isMuxable(format, Codec.VC1));
+                return;
+            }
+            if (format == ContainerFormat.APE || format == ContainerFormat.MUSEPACK || format == ContainerFormat.DSF
+                    || format == ContainerFormat.DSDIFF) {
+                // read-only formats: no muxer in core, and no provider on the test path writes them
+                assertThrows(MediaException.Unsupported.class, () -> Containers.openMuxer(format, MediaSink.memory()));
                 return;
             }
             try (var muxer = Containers.openMuxer(format, MediaSink.memory())) {

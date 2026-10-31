@@ -99,6 +99,10 @@ SEED_EXTENSIONS = {
     'core:DemuxerFuzzTest.wav': ['.wav'],
     'core:DemuxerFuzzTest.flac': ['.flac'],
     'core:DemuxerFuzzTest.wavpack': ['.wv'],
+    'core:DemuxerFuzzTest.ape': ['.ape'],
+    'core:DemuxerFuzzTest.musepack': ['.mpc'],
+    'core:DemuxerFuzzTest.dsf': ['.dsf'],
+    'core:DemuxerFuzzTest.dsdiff': ['.dff'],
     'core:DemuxerFuzzTest.amr': ['.amr', '.awb'],
     'core:DemuxerFuzzTest.aiff': ['.aif', '.aiff', '.aifc'],
     'core:DemuxerFuzzTest.caf': ['.caf'],
@@ -123,6 +127,8 @@ SEED_CODECS = {
     'audio:AudioFuzzTest.flac': ['flac'], 'audio:AudioFuzzTest.alac': ['alac'],
     'audio:AudioFuzzTest.mp3': ['mp3'], 'audio:AudioFuzzTest.mp2': ['mp2'],
     'audio:AudioFuzzTest.speex': ['speex'], 'audio:AudioFuzzTest.wavpack': ['wavpack'],
+    'audio:AudioFuzzTest.ape': ['ape'], 'audio:AudioFuzzTest.musepack7': ['musepack7'],
+    'audio:AudioFuzzTest.musepack8': ['musepack8'], 'audio:AudioFuzzTest.dst': ['dst'],
     'video:VideoFuzzTest.vp9': ['vp9'], 'video:VideoFuzzTest.av1': ['av1'],
     'video:VideoFuzzTest.proRes': ['prores'], 'video:VideoFuzzTest.dnxhd': ['dnxhd'],
     'video:VideoFuzzTest.theora': ['theora'], 'video:VideoFuzzTest.ffv1': ['ffv1'],
@@ -135,7 +141,8 @@ SEED_CODECS = {
     'mpeg:MpegFuzzTest.ac3': ['ac3'], 'mpeg:MpegFuzzTest.eac3': ['eac3'],
 }
 CONTAINER_EXTENSIONS = ['.ivf', '.webm', '.mkv', '.mp4', '.mov', '.ogg', '.opus', '.flac', '.mp3', '.m4a',
-                        '.ac3', '.eac3', '.aac', '.amr', '.avi', '.ts', '.3gp', '.ogv', '.spx', '.wv', '.mka']
+                        '.ac3', '.eac3', '.aac', '.amr', '.avi', '.ts', '.3gp', '.ogv', '.spx', '.wv', '.mka', '.ape', '.mpc',
+                        '.dsf', '.dff']
 
 
 class Target:

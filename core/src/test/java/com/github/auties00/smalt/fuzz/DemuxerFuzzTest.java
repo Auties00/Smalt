@@ -78,6 +78,26 @@ class DemuxerFuzzTest {
     }
 
     @FuzzTest
+    void ape(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.APE, data);
+    }
+
+    @FuzzTest
+    void musepack(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.MUSEPACK, data);
+    }
+
+    @FuzzTest
+    void dsf(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.DSF, data);
+    }
+
+    @FuzzTest
+    void dsdiff(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.DSDIFF, data);
+    }
+
+    @FuzzTest
     void aiff(byte[] data) {
         FuzzMedia.demuxer(ContainerFormat.AIFF, data);
     }

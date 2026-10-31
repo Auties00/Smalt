@@ -53,6 +53,8 @@ def generator(root, relative):
     if relative in ("wavpack/wavpack.wv", "matroska/wavpack.mka", "ogg/speex.spx", "matroska/ffv1.mkv",
                     "avi/ffv1.avi", "ogg/theora.ogv"):
         return "make-xiph-lossless-samples.py"
+    if relative.split("/")[0] in ("ape", "musepack", "dsd"):
+        return "make-lossless-dsd-samples.py"
     if relative.startswith("wav/") and relative not in ("wav/s16.wav", "wav/f32.wav"):
         return "make-wav-samples.py"
     if relative in ("subtitle/pgs.sup", "subtitle/vobsub.sub", "ts/dvb-subtitles.ts", "ts/teletext.ts"):

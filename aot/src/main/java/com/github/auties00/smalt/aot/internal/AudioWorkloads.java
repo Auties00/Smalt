@@ -12,6 +12,7 @@ import com.github.auties00.smalt.audio.IntegerAudioBuffer;
 import com.github.auties00.smalt.audio.adpcm.AdpcmDecoder;
 import com.github.auties00.smalt.audio.adpcm.AdpcmEncoder;
 import com.github.auties00.smalt.audio.adpcm.AdpcmEncoderOptions;
+import com.github.auties00.smalt.audio.ape.ApeDecoder;
 import com.github.auties00.smalt.audio.alac.AlacDecoder;
 import com.github.auties00.smalt.audio.alac.AlacEncoder;
 import com.github.auties00.smalt.audio.alac.AlacEncoderOptions;
@@ -46,6 +47,8 @@ import com.github.auties00.smalt.audio.voice.ClippingPrediction;
 import com.github.auties00.smalt.audio.voice.EchoCancellation;
 import com.github.auties00.smalt.audio.voice.GainControl;
 import com.github.auties00.smalt.audio.voice.LevelControlOptions;
+import com.github.auties00.smalt.audio.musepack.MusepackDecoder;
+import com.github.auties00.smalt.audio.pcm.DsdDecoder;
 import com.github.auties00.smalt.audio.voice.VoiceProcessor;
 import com.github.auties00.smalt.audio.voice.VoiceProcessorOptions;
 import com.github.auties00.smalt.audio.vorbis.VorbisDecoder;
@@ -72,8 +75,9 @@ import static com.github.auties00.smalt.aot.internal.WorkloadFactory.realtime;
 
 /**
  * Creates the workloads of {@link TrainingFamily#AUDIO}, the codecs of {@code smalt-audio}: Opus,
- * Vorbis, FLAC, ALAC, MP3, MP2, IMA and Microsoft ADPCM, G.722, G.726 and GSM 06.10 encoding and decoding, Speex and
- * WavPack decoding, and the voice processor, each on synthetic speech or
+ * Vorbis, FLAC, ALAC, MP3, MP2, IMA and Microsoft ADPCM, G.722, G.726 and GSM 06.10 encoding and decoding, Speex,
+ * WavPack, Monkey's Audio and Musepack decoding, the DSD to PCM conversion of {@code smalt-core}, and the voice
+ * processor, each on synthetic speech or
  * music and keeping its codecs across rounds as a long-running application does.
  */
 final class AudioWorkloads {
@@ -148,7 +152,10 @@ final class AudioWorkloads {
                 file("adpcm-ima-decode", () -> adpcmDecode("adpcm-ima-decode", Codec.ADPCM_IMA_WAV, 6)),
                 file("adpcm-ima4-decode", () -> adpcmDecode("adpcm-ima4-decode", Codec.ADPCM_IMA_QT, 6)),
                 file("adpcm-ms-decode", () -> adpcmDecode("adpcm-ms-decode", Codec.ADPCM_MS, 6)),
-                file("wavpack-decode", AudioWorkloads::wavpackDecode));
+                file("wavpack-decode", AudioWorkloads::wavpackDecode),
+                file("ape-decode", AudioWorkloads::apeDecode),
+                file("musepack-decode", AudioWorkloads::musepackDecode),
+                file("dsd-decode", AudioWorkloads::dsdDecode));
     }
 
     /**
@@ -172,6 +179,74 @@ final class AudioWorkloads {
             rounds.add(AudioStreams.decodeLossy(name, stream.packets(), new SpeexDecoder((AudioTrack) stream.track())));
         }
         return sequence("speex-decode-loss", rounds);
+    }
+
+    /**
+     * The Monkey's Audio streams decoded by {@link #apeDecode()}: 16-bit stereo at the normal level, 24-bit stereo
+     * at the extra high level and 32-bit floats at the extra high level, test vectors of
+     * {@code tools/testdata/ape/make-vectors.py} (synthetic tones, chirps and noise coded by Monkey's Audio 13.45).
+     */
+    private static final List<String> APE_STREAMS = List.of("s16-stereo-c2000", "s24-stereo-c4000", "f32-mono-c4000");
+
+    /**
+     * Returns a workload that decodes the bundled Monkey's Audio streams, one decoder per stream across rounds.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload apeDecode() {
+        var rounds = new ArrayList<TrainingWorkload>();
+        for (var name : APE_STREAMS) {
+            var stream = TrainingStreams.demux("ape/" + name + ".ape");
+            rounds.add(AudioStreams.decode(name, stream.packets(), new ApeDecoder((AudioTrack) stream.track())));
+        }
+        return sequence("ape-decode", rounds);
+    }
+
+    /**
+     * The Musepack streams decoded by {@link #musepackDecode()}: stream version 8 stereo at the telephone profile
+     * and mono at 48 kHz at the extreme profile, test vectors of {@code tools/testdata/musepack/make-vectors.py}
+     * (synthetic tones and chirps coded by mpcenc 1.30.1).
+     */
+    private static final List<String> MUSEPACK_STREAMS = List.of("stereo-telephone", "mono-48k");
+
+    /**
+     * Returns a workload that decodes the bundled Musepack streams, one decoder per stream across rounds.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload musepackDecode() {
+        var rounds = new ArrayList<TrainingWorkload>();
+        for (var name : MUSEPACK_STREAMS) {
+            var stream = TrainingStreams.demux("musepack/" + name + ".mpc");
+            rounds.add(AudioStreams.decode(name, stream.packets(),
+                    new MusepackDecoder((AudioTrack) stream.track())));
+        }
+        return sequence("musepack-decode", rounds);
+    }
+
+    /**
+     * The DSD streams converted by {@link #dsdDecode()}: DSD64 stereo in DSF (planar, least significant bit first)
+     * and in DSDIFF (interleaved, most significant bit first), the DSD behavior samples of
+     * {@code tools/testdata/behavior/make-lossless-dsd-samples.py} (two sines through a sigma-delta modulator).
+     */
+    private static final List<String> DSD_STREAMS = List.of("dsd.dsf", "dsd.dff");
+
+    /**
+     * Returns a workload that converts the bundled DSD streams to PCM at the default and at the highest output rate,
+     * one decoder per stream and rate across rounds.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload dsdDecode() {
+        var rounds = new ArrayList<TrainingWorkload>();
+        for (var name : DSD_STREAMS) {
+            var stream = TrainingStreams.demux("dsd/" + name);
+            var track = (AudioTrack) stream.track();
+            rounds.add(AudioStreams.decode(name, stream.packets(), new DsdDecoder(track)));
+            rounds.add(AudioStreams.decode(name + "-high", stream.packets(), new DsdDecoder(track,
+                    AudioDecoderOptions.builder().preferredSampleRate(400_000).build())));
+        }
+        return sequence("dsd-decode", rounds);
     }
 
     /**
