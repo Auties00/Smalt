@@ -3,7 +3,7 @@ package com.github.auties00.smalt.video.hevc.internal;
 /**
  * Holds the CABAC tables of ITU-T H.265 9.3: the arithmetic decoder's range and state transition
  * tables (Tables 9-52 and 9-53) and the context variable layout with the initialization values of
- * Tables 9-5 to 9-31.
+ * Tables 9-5 to 9-42.
  *
  * <p>All context variables of a slice live in one array; each syntax element owns a contiguous run
  * of it starting at its offset constant ({@link #SAO_MERGE} and the following ones), and
@@ -13,7 +13,7 @@ public final class CabacTables {
     /**
      * {@code rangeTabLps}, indexed {@code pStateIdx * 4 + qRangeIdx} (Table 9-52).
      */
-    static final int[] LPS_RANGE = {
+    public static final int[] LPS_RANGE = {
             128, 176, 208, 240, 128, 167, 197, 227, 128, 158, 187, 216, 123, 150, 178, 205,
             116, 142, 169, 195, 111, 135, 160, 185, 105, 128, 152, 175, 100, 122, 144, 166,
             95, 116, 137, 158, 90, 110, 130, 150, 85, 104, 123, 142, 81, 99, 117, 135,
@@ -35,7 +35,7 @@ public final class CabacTables {
     /**
      * {@code transIdxLps} (Table 9-53).
      */
-    static final int[] TRANS_LPS = {
+    public static final int[] TRANS_LPS = {
             0, 0, 1, 2, 2, 4, 4, 5, 6, 7, 8, 9, 9, 11, 11, 12,
             13, 13, 15, 15, 16, 16, 18, 18, 19, 19, 21, 21, 22, 22, 23, 24,
             24, 25, 26, 26, 27, 27, 28, 29, 29, 30, 30, 30, 31, 32, 32, 33,
@@ -216,9 +216,35 @@ public final class CabacTables {
     public static final int CU_CHROMA_QP_OFFSET_IDX = CU_CHROMA_QP_OFFSET_FLAG + 1;
 
     /**
+     * The context of {@code palette_mode_flag} (Table 9-38).
+     */
+    public static final int PALETTE_MODE = CU_CHROMA_QP_OFFSET_IDX + 1;
+
+    /**
+     * The context of {@code tu_residual_act_flag} (Table 9-39).
+     */
+    public static final int ACT_FLAG = PALETTE_MODE + 1;
+
+    /**
+     * The context of {@code copy_above_palette_indices_flag} and
+     * {@code copy_above_indices_for_final_run_flag} (Table 9-41).
+     */
+    public static final int PALETTE_COPY_ABOVE = ACT_FLAG + 1;
+
+    /**
+     * The context of {@code palette_transpose_flag} (Table 9-42).
+     */
+    public static final int PALETTE_TRANSPOSE = PALETTE_COPY_ABOVE + 1;
+
+    /**
+     * The first of the 8 contexts of {@code palette_run_prefix} (Table 9-40, 9.3.4.2.8).
+     */
+    public static final int PALETTE_RUN = PALETTE_TRANSPOSE + 1;
+
+    /**
      * The number of context variables.
      */
-    public static final int COUNT = CU_CHROMA_QP_OFFSET_IDX + 1;
+    public static final int COUNT = PALETTE_RUN + 8;
 
     /**
      * The initialization values, indexed {@code [initType][ctxIdx]}.

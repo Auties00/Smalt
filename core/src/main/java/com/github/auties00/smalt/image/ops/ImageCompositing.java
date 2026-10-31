@@ -48,7 +48,6 @@ public final class ImageCompositing {
      * @param x the backdrop column of the overlay's left edge; may be negative
      * @param y the backdrop row of the overlay's top edge; may be negative
      * @return the composited picture, as {@link #composite(Picture, Picture, int, int, CompositeOptions)} describes
-     * @throws MediaException.Unsupported if a picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of a picture does not fit one Java array
      */
     public static Picture composite(Picture base, Picture overlay, int x, int y) {
@@ -69,7 +68,6 @@ public final class ImageCompositing {
      * @param y the backdrop row of the overlay's top edge; may be negative
      * @param options the blend mode, opacity and linear-light option
      * @return a new picture with the size of the backdrop
-     * @throws MediaException.Unsupported if a picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of a picture does not fit one Java array
      */
     public static Picture composite(Picture base, Picture overlay, int x, int y, CompositeOptions options) {
@@ -90,8 +88,8 @@ public final class ImageCompositing {
      *
      * <p>When the options give a {@link WatermarkOptions#scale() scale}, the mark is first resized
      * so that its width is that fraction of the picture's width (rounded, at least 1 pixel),
-     * keeping its aspect ratio, with the options' filter; a mark with transparency is resized in
-     * premultiplied alpha. It is then anchored as {@link Anchor} describes, keeping the margins
+     * keeping its aspect ratio, with the options' filter, at its depth; a mark with transparency is
+     * resized in premultiplied alpha. It is then anchored as {@link Anchor} describes, keeping the margins
      * from the anchored edges, and composited as {@link #composite(Picture, Picture, int, int, CompositeOptions)}
      * does with the options' blending and opacity. A mark larger than the picture is clipped.
      *
@@ -99,7 +97,6 @@ public final class ImageCompositing {
      * @param mark the watermark, typically with transparency
      * @param options the placement, size and blending
      * @return a new picture with the size of {@code picture}
-     * @throws MediaException.Unsupported if a picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the resized mark is larger than the mark and exceeds the default
      * limits, or the RGBA form of a picture does not fit one Java array
      */
@@ -113,8 +110,7 @@ public final class ImageCompositing {
                 if (options.scale() > 0) {
                     var width = (int) Math.max(1, Math.round(picture.width() * options.scale()));
                     var height = (int) Math.max(1, Math.round((double) width * overlay.height() / overlay.width()));
-                    overlay = ImageOps.resize(overlay instanceof Rgba16Picture deep ? ImageOps.toEightBit(deep) : overlay,
-                            width, height, options.filter());
+                    overlay = ImageOps.resize(overlay, width, height, options.filter());
                 }
                 var x = options.anchor().x(picture.width(), overlay.width(), options.marginX());
                 var y = options.anchor().y(picture.height(), overlay.height(), options.marginY());

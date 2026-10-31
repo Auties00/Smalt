@@ -1,0 +1,19 @@
+# image dump of gainmap/valid-ultrahdr-gray.jpg; regenerate with -Dsmalt.test.updateDumps=true
+format JPEG
+info ImageInfo[format=JPEG, width=24, height=24, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 24x24 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=2e7a9d47 u=dc5e979e v=2096639b
+  format=JPEG orientation=NORMAL source=24x24
+  icc=none exif=none xmp=750:8c8a0f62
+  profile=none
+  density=ASPECT_RATIO 1.0x1.0
+scaled 6x6
+picture 6x6 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=217328b3 u=b74d812f v=12db074b
+  format=JPEG orientation=NORMAL source=24x24
+  icc=none exif=none xmp=750:8c8a0f62
+  profile=none
+  density=ASPECT_RATIO 1.0x1.0
+decoder gain map
+picture 24x24 yuv8 MONOCHROME color=BT601/FULL/BT709/SRGB y=393a86d9
+decoder auxiliary images
+[AuxiliaryImage[index=0, type=GAIN_MAP, identifier=mpf:000000/GainMap, width=24, height=24]]

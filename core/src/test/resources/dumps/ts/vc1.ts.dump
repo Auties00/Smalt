@@ -1,0 +1,41 @@
+# demux dump of ts/vc1.ts; regenerate with -Dsmalt.test.updateDumps=true
+format MPEG_TS
+duration 840000
+seekable true
+track 256 VIDEO VC1 timebase=1/90000 duration=? config=18:3e8bb64b
+  video 128x96 orientation=NORMAL
+packets 21
+0 t256 pts=0 dts=0 dur=3600 flags=KEY size=168 crc=f2fd6043
+1 t256 pts=3600 dts=3600 dur=3600 flags=- size=8 crc=7c795b58
+2 t256 pts=7200 dts=7200 dur=3600 flags=- size=8 crc=e76d0365
+3 t256 pts=10800 dts=10800 dur=3600 flags=- size=8 crc=7c795b58
+4 t256 pts=14400 dts=14400 dur=3600 flags=- size=8 crc=e76d0365
+5 t256 pts=18000 dts=18000 dur=3600 flags=- size=8 crc=7c795b58
+6 t256 pts=21600 dts=21600 dur=3600 flags=- size=8 crc=e76d0365
+7 t256 pts=25200 dts=25200 dur=3600 flags=- size=8 crc=7c795b58
+8 t256 pts=28800 dts=28800 dur=3600 flags=KEY size=171 crc=8d14dcd1
+9 t256 pts=32400 dts=32400 dur=3600 flags=- size=8 crc=7c795b58
+10 t256 pts=36000 dts=36000 dur=3600 flags=- size=8 crc=e76d0365
+11 t256 pts=39600 dts=39600 dur=3600 flags=- size=8 crc=7c795b58
+12 t256 pts=43200 dts=43200 dur=3600 flags=- size=8 crc=e76d0365
+13 t256 pts=46800 dts=46800 dur=3600 flags=- size=8 crc=7c795b58
+14 t256 pts=50400 dts=50400 dur=3600 flags=- size=8 crc=e76d0365
+15 t256 pts=54000 dts=54000 dur=3600 flags=- size=8 crc=7c795b58
+16 t256 pts=57600 dts=57600 dur=3600 flags=KEY size=169 crc=4accf611
+17 t256 pts=61200 dts=61200 dur=3600 flags=- size=8 crc=7c795b58
+18 t256 pts=64800 dts=64800 dur=3600 flags=- size=8 crc=e76d0365
+19 t256 pts=68400 dts=68400 dur=3600 flags=- size=8 crc=7c795b58
+20 t256 pts=72000 dts=72000 dur=3600 flags=- size=8 crc=e76d0365
+seek 0: t256@0
+seek 280000: t256@0
+seek 560000: t256@8
+seek 840000: end
+seek -1000000: t256@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format MPEG_TS
+  duration -1
+  seekable false
+  track 256 VIDEO VC1 timebase=1/90000 duration=? config=18:3e8bb64b
+    video 128x96 orientation=NORMAL
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH

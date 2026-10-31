@@ -12,10 +12,13 @@ import java.util.List;
  *
  * <p>The first profile of a chain is used in the input direction (device values to the
  * connection space); every later profile is used in the output direction when the chain is in a
- * connection space at that point, otherwise in the input direction. Between a connection space and
- * an output profile the linker inserts the conversion its intent asks for: the media white scaling
- * of absolute colorimetric, or the black point compensation scaling, and the XYZ and L*a*b*
- * conversions when the two connection spaces differ.
+ * connection space at that point, otherwise in the input direction. Device link and abstract
+ * profiles are applied wherever they stand, from their data color space to the space their
+ * connection space field names. A named color profile may only start a chain: it maps color
+ * indexes to its connection space, or, alone, to its device coordinates. Between a connection space
+ * and an output or abstract profile the linker inserts the conversion its intent asks for: the media
+ * white scaling of absolute colorimetric, or the black point compensation scaling, and the XYZ and
+ * L*a*b* conversions when the two connection spaces differ.
  *
  * @implNote This implementation follows Little CMS 2.17: {@code DefaultICCintents}, {@code ComputeConversion},
  * {@code AddConversion}, {@code ComputeAbsoluteIntent} (for an observer fully adapted, the default),
@@ -46,6 +49,22 @@ final class Linker {
     static final int ABSOLUTE = 3;
 
     /**
+     * The black preservation code of an ICC intent.
+     */
+    static final int NO_PRESERVATION = 0;
+
+    /**
+     * The black preservation code of the intents that keep black-only colors black only
+     * ({@code INTENT_PRESERVE_K_ONLY_*}).
+     */
+    static final int K_ONLY = 1;
+
+    /**
+     * The black preservation code of the intents that keep the black plane ({@code INTENT_PRESERVE_K_PLANE_*}).
+     */
+    static final int K_PLANE = 2;
+
+    /**
      * The version 4 perceptual reference medium black.
      */
     private static final double[] PERCEPTUAL_BLACK = {0.00336, 0.0034731, 0.00287};
@@ -58,8 +77,10 @@ final class Linker {
      * @param labVersion the version of the L*a*b* identity, {@code 2} or {@code 4}
      * @param intent the intent code, {@code 0..3}
      * @param bpc whether black point compensation applies
+     * @param preservation how black is preserved: {@link #NO_PRESERVATION}, {@link #K_ONLY} or {@link #K_PLANE}, the
+     * intent then being the ICC intent the black-preserving intent is based on
      */
-    record Node(IccReader profile, int labVersion, int intent, boolean bpc) {
+    record Node(IccReader profile, int labVersion, int intent, boolean bpc, int preservation) {
         /**
          * Creates a node for a profile.
          *
@@ -69,7 +90,20 @@ final class Linker {
          * @return the node
          */
         static Node of(IccReader profile, int intent, boolean bpc) {
-            return new Node(profile, 0, intent, bpc);
+            return new Node(profile, 0, intent, bpc, NO_PRESERVATION);
+        }
+
+        /**
+         * Creates a node for a profile with a black-preserving intent.
+         *
+         * @param profile the parsed ICC profile the node applies
+         * @param intent the ICC intent code the black-preserving intent is based on, {@code 0..2}
+         * @param bpc whether black point compensation applies
+         * @param preservation {@link #NO_PRESERVATION}, {@link #K_ONLY} or {@link #K_PLANE}
+         * @return the node
+         */
+        static Node of(IccReader profile, int intent, boolean bpc, int preservation) {
+            return new Node(profile, 0, intent, bpc, preservation);
         }
 
         /**
@@ -80,7 +114,18 @@ final class Linker {
          * @return the node
          */
         static Node lab(int version, int intent) {
-            return new Node(null, version, intent, false);
+            return new Node(null, version, intent, false, NO_PRESERVATION);
+        }
+
+        /**
+         * Returns this node with an ICC intent and a black point compensation flag in place of its own, black
+         * preservation dropped.
+         *
+         * @param bpc whether black point compensation applies
+         * @return the node
+         */
+        Node plain(boolean bpc) {
+            return new Node(profile, labVersion, intent, bpc, NO_PRESERVATION);
         }
 
         /**
@@ -128,11 +173,18 @@ final class Linker {
     }
 
     /**
-     * Links a chain of profiles.
+     * Links a chain of profiles ({@code _cmsLinkProfiles}).
+     *
+     * <p>Black point compensation never applies to the absolute colorimetric intent and always applies to the
+     * perceptual and saturation intents of version 4 profiles, except at nodes with a black-preserving intent. The
+     * black preservation of the first node decides how the chain links: with the ICC intents, or with
+     * {@link BlackPreservingIntents}.
      *
      * @param chain the nodes, at least one
-     * @return the pipeline from the first node's device values to the last node's
-     * @throws MediaException.Unsupported if consecutive color spaces do not match
+     * @return the pipeline from the first node's device values (a named color index for a named color profile) to
+     * the values of the space the chain ends in
+     * @throws MediaException.Unsupported if consecutive color spaces do not match, or a named color profile does not
+     * start the chain
      * @throws MediaException.Malformed if a profile lacks the tags its role needs
      */
     static Pipeline link(List<Node> chain) {
@@ -140,6 +192,9 @@ final class Linker {
         var bpc = new boolean[nodes.length];
         for (var i = 0; i < nodes.length; i++) {
             bpc[i] = nodes[i].bpc();
+            if (nodes[i].preservation() != NO_PRESERVATION) {
+                continue;
+            }
             if (nodes[i].intent() == ABSOLUTE) {
                 bpc[i] = false;
             }
@@ -147,18 +202,52 @@ final class Linker {
                 bpc[i] = true;
             }
         }
+        var plain = new Node[nodes.length];
+        for (var i = 0; i < nodes.length; i++) {
+            plain[i] = nodes[i].plain(bpc[i]);
+        }
+        return switch (nodes[0].preservation()) {
+            case K_ONLY -> BlackPreservingIntents.kOnly(plain);
+            case K_PLANE -> BlackPreservingIntents.kPlane(plain);
+            default -> link(plain);
+        };
+    }
+
+    /**
+     * Links a chain of profiles with the ICC intents, without adjusting black point compensation
+     * ({@code DefaultICCintents}).
+     *
+     * @param nodes the nodes, at least one, each with the black point compensation that applies to it
+     * @return the pipeline, as {@link #link(List)} describes it
+     * @throws MediaException.Unsupported if consecutive color spaces do not match, or a named color profile does not
+     * start the chain
+     * @throws MediaException.Malformed if a profile lacks the tags its role needs
+     */
+    static Pipeline link(Node[] nodes) {
+        var bpc = new boolean[nodes.length];
+        for (var i = 0; i < nodes.length; i++) {
+            bpc[i] = nodes[i].bpc();
+        }
         var lab = IccReader.signature("Lab ");
         var xyz = IccReader.signature("XYZ ");
+        var abstractClass = IccReader.signature("abst");
+        var namedClass = IccReader.signature("nmcl");
         var current = nodes[0].colorSpace();
-        var result = new Pipeline(IccReader.channels(current), IccReader.channels(nodes[nodes.length - 1].colorSpace()));
+        var result = new Pipeline(1, 1);
         for (var i = 0; i < nodes.length; i++) {
             var node = nodes[i];
-            var input = i == 0 && !node.isLab() || (current != xyz && current != lab);
+            var deviceClass = node.isLab() ? abstractClass : node.profile().deviceClass;
+            var deviceLink = deviceClass == abstractClass || deviceClass == IccReader.signature("link");
+            var alone = deviceClass == namedClass && nodes.length == 1;
+            if (deviceClass == namedClass && i > 0) {
+                throw new MediaException.Unsupported("icc", "a named color profile can only start a chain");
+            }
+            var input = i == 0 && !deviceLink || (current != xyz && current != lab);
             int spaceIn;
             int spaceOut;
-            if (input || node.isLab()) {
+            if (input || deviceLink) {
                 spaceIn = node.colorSpace();
-                spaceOut = node.pcs();
+                spaceOut = alone ? node.colorSpace() : node.pcs();
             } else {
                 spaceIn = node.pcs();
                 spaceOut = node.colorSpace();
@@ -167,9 +256,14 @@ final class Linker {
                 throw new MediaException.Unsupported("icc", "cannot link color space " + IccReader.name(current)
                         + " to " + IccReader.name(spaceIn));
             }
-            if (node.isLab()) {
-                double[][] conversion = i > 0 ? conversion(nodes, i, bpc[i]) : new double[][]{ColorMath.identity(), new double[3]};
+            if (deviceLink || alone) {
+                var lut = node.isLab() ? null : ProfileLuts.deviceLink(node.profile(), node.intent());
+                var conversion = deviceClass == abstractClass && i > 0 ? conversion(nodes, i, bpc[i])
+                        : new double[][]{ColorMath.identity(), new double[3]};
                 addConversion(result, current, spaceIn, conversion[0], conversion[1]);
+                if (lut != null) {
+                    result.append(lut);
+                }
             } else if (input) {
                 result.append(ProfileLuts.input(node.profile(), node.intent()));
             } else {
@@ -180,7 +274,38 @@ final class Linker {
             }
             current = spaceOut;
         }
-        return result;
+        var inputs = nodes[0].isLab() || nodes[0].profile().deviceClass != namedClass
+                ? IccReader.channels(nodes[0].colorSpace()) : 1;
+        var outputs = IccReader.channels(current);
+        if (outputs == 0) {
+            throw new MediaException.Malformed("ICC profile chain ends in unknown color space " + IccReader.name(current));
+        }
+        return result.copy(inputs, outputs);
+    }
+
+    /**
+     * Returns the color space a chain of profiles ends in, as {@link #link} tracks it.
+     *
+     * @param profiles the parsed profiles of the chain, at least one
+     * @return the signature of the last color space
+     */
+    static int exitSpace(List<IccReader> profiles) {
+        var lab = IccReader.signature("Lab ");
+        var xyz = IccReader.signature("XYZ ");
+        var current = profiles.getFirst().colorSpace;
+        for (var i = 0; i < profiles.size(); i++) {
+            var profile = profiles.get(i);
+            var deviceClass = profile.deviceClass;
+            var deviceLink = deviceClass == IccReader.signature("abst") || deviceClass == IccReader.signature("link");
+            if (deviceClass == IccReader.signature("nmcl")) {
+                current = profiles.size() == 1 ? profile.colorSpace : profile.pcs;
+            } else if (deviceLink || i == 0 || (current != xyz && current != lab)) {
+                current = profile.pcs;
+            } else {
+                current = profile.colorSpace;
+            }
+        }
+        return current;
     }
 
     /**
