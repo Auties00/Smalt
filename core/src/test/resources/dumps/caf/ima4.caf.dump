@@ -1,0 +1,21 @@
+# demux dump of caf/ima4.caf; regenerate with -Dsmalt.test.updateDumps=true
+format CAF
+duration 600816
+seekable true
+metadata encoder="Lavf61.7.100"
+track 0 AUDIO ADPCM_IMA_QT timebase=1/22050 duration=13248 config=none
+  audio rate=22050 bits=4 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 7
+0 t0 pts=0 dts=0 dur=2048 flags=KEY size=2176 crc=a890d07d
+1 t0 pts=2048 dts=2048 dur=2048 flags=KEY size=2176 crc=5f6c932c
+2 t0 pts=4096 dts=4096 dur=2048 flags=KEY size=2176 crc=d82078b0
+3 t0 pts=6144 dts=6144 dur=2048 flags=KEY size=2176 crc=3f7164e8
+4 t0 pts=8192 dts=8192 dur=2048 flags=KEY size=2176 crc=889b4286
+5 t0 pts=10240 dts=10240 dur=2048 flags=KEY size=2176 crc=1f9241e8
+6 t0 pts=12288 dts=12288 dur=960 flags=KEY size=1020 crc=60bfff57
+seek 0: t0@0
+seek 200272: t0@2
+seek 400544: t0@4
+seek 600817: end
+seek 600816: t0@6
+seek -1000000: t0@0

@@ -1,0 +1,26 @@
+# demux dump of y4m/yuv422p10.y4m; regenerate with -Dsmalt.test.updateDumps=true
+format Y4M
+duration 400000
+seekable true
+track 1 VIDEO RAW_VIDEO timebase=1/15 duration=6 config=19:2890a29b
+  video 64x48 orientation=NORMAL rate=15/1 sar=1/1 interlacing=PROGRESSIVE
+  color ColorInfo[matrix=BT601, range=LIMITED, primaries=SMPTE170M, transfer=SMPTE170M, chromaSiting=UNSPECIFIED, masteringDisplay=Optional.empty, contentLightLevel=Optional.empty]
+packets 6
+0 t1 pts=0 dts=0 dur=1 flags=KEY size=12288 crc=eb15cc92
+1 t1 pts=1 dts=1 dur=1 flags=KEY size=12288 crc=eb15cc92
+2 t1 pts=2 dts=2 dur=1 flags=KEY size=12288 crc=647703f5
+3 t1 pts=3 dts=3 dur=1 flags=KEY size=12288 crc=647703f5
+4 t1 pts=4 dts=4 dur=1 flags=KEY size=12288 crc=1942d869
+5 t1 pts=5 dts=5 dur=1 flags=KEY size=12288 crc=1942d869
+seek 0: t1@0
+seek 133333: t1@1
+seek 266666: t1@3
+seek 400000: end
+seek -1000000: t1@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format Y4M
+  duration -1
+  seekable true
+  track 1 VIDEO RAW_VIDEO timebase=1/15 duration=? config=19:2890a29b
+    video 64x48 orientation=NORMAL rate=15/1 sar=1/1 interlacing=PROGRESSIVE
+    color ColorInfo[matrix=BT601, range=LIMITED, primaries=SMPTE170M, transfer=SMPTE170M, chromaSiting=UNSPECIFIED, masteringDisplay=Optional.empty, contentLightLevel=Optional.empty]

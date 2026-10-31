@@ -11,8 +11,11 @@ import com.github.auties00.smalt.internal.heif.HeifGrid;
 import com.github.auties00.smalt.internal.heif.HeifItem;
 import com.github.auties00.smalt.internal.heif.HeifMovie;
 import com.github.auties00.smalt.internal.heif.HeifProperty;
+import com.github.auties00.smalt.internal.heif.HeifSampleTransform;
+import com.github.auties00.smalt.internal.heif.HeifUncompressed;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.io.FourCc;
+import com.github.auties00.smalt.internal.io.SlicedSource;
 import com.github.auties00.smalt.internal.io.SourceReader;
 import com.github.auties00.smalt.internal.limits.Guards;
 import com.github.auties00.smalt.internal.tiff.Ifd;
@@ -28,16 +31,20 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Describes an image file from its headers, without decoding pixels.
  *
  * <p>Each format is walked as far as its headers go: PNG chunks up to the image data
  * ({@code IHDR}, {@code tRNS}, {@code acTL}, {@code eXIf}), JPEG markers up to the frame header
- * (the EXIF {@code APP1} and the {@code SOFn}), every GIF block (its frames are counted, their
- * LZW data skipped), the WebP chunks ({@code VP8X}, {@code VP8}, {@code VP8L}, {@code ALPH},
- * {@code ANIM}, {@code ANMF}, {@code EXIF}), the BMP information header, every TIFF image file
- * directory (the first one describes the picture), and the HEIF {@code meta} box of HEIC and
+ * (the EXIF {@code APP1} and the {@code SOFn}, JPEG-LS {@code SOF55} or hierarchical {@code DHP}), every GIF
+ * block (its frames are counted, their LZW data skipped), the WebP chunks ({@code VP8X}, {@code VP8},
+ * {@code VP8L}, {@code ALPH}, {@code ANIM}, {@code ANMF}, {@code EXIF}), the BMP information header, every TIFF
+ * image file
+ * directory (the first one describes the picture), the icon directory of an ICO file and the
+ * {@code anih}, {@code rate}, {@code seq } chunks and frame directories of an ANI file, the HEIF
+ * {@code meta} box of HEIC and
  * AVIF files (the primary item, its {@code ispe}, {@code pixi}, {@code av1C}/{@code hvcC},
  * {@code irot} and {@code imir} properties and any alpha auxiliary image), the boxes and
  * {@code SIZ} segment of a JPEG 2000 file ({@link Jp2Headers}), the JPEG XL image header
@@ -58,6 +65,16 @@ final class ImageHeaders {
      * The most pages of a TIFF file counted.
      */
     private static final int MAX_PAGES = 10_000;
+
+    /**
+     * The types of HEIF image items that hold coded pixels.
+     */
+    private static final Set<String> CODED_ITEMS = Set.of("av01", "hvc1", "avc1", "jpeg", "j2k1", "unci");
+
+    /**
+     * The sample entries of the HEIF image sequence tracks the decoders play.
+     */
+    private static final Set<String> SEQUENCE_ENTRIES = Set.of("av01", "hvc1", "hev1", "avc1", "avc3");
 
     /**
      * Prevents instantiation.
@@ -86,10 +103,20 @@ final class ImageHeaders {
                 case BMP -> bmp(source);
                 case TIFF -> tiff(source);
                 case ICO -> ico(source);
+                case ANI -> ani(source);
                 case HEIC, AVIF -> heif(source);
                 case JP2 -> Jp2Headers.read(source);
                 case JXL -> JxlHeaders.read(source);
                 case DNG, RAW -> RawHeaders.read(source);
+                case PNM -> RasterHeaders.pnm(source);
+                case TGA -> RasterHeaders.tga(source);
+                case QOI -> RasterHeaders.qoi(source);
+                case HDR -> RasterHeaders.hdr(source);
+                case ICNS -> RasterHeaders.icns(source);
+                case PSD -> RasterHeaders.psd(source);
+                case EXR -> RasterHeaders.exr(source);
+                case JXR -> RasterHeaders.jxr(source);
+                case DDS -> RasterHeaders.dds(source);
             };
             if (header.width <= 0 || header.height <= 0) {
                 throw new MediaException.Malformed("the " + format.name().toLowerCase(Locale.ROOT)
@@ -205,7 +232,8 @@ final class ImageHeaders {
     }
 
     /**
-     * Walks the markers of a JPEG file up to the frame header.
+     * Walks the markers of a JPEG file up to the frame header: the {@code DHP} segment of a hierarchical image,
+     * which describes the completed image, or the first {@code SOFn}, {@code SOF55} (JPEG-LS) included.
      *
      * @param source the input
      * @return the header
@@ -231,7 +259,8 @@ final class ImageHeaders {
             }
             var length = reader.u16be();
             var body = reader.position();
-            if (marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC) {
+            if ((marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC)
+                    || marker == 0xDE || marker == 0xF7) {
                 result.bitDepth = reader.u8();
                 result.height = reader.u16be();
                 result.width = reader.u16be();
@@ -419,15 +448,53 @@ final class ImageHeaders {
     }
 
     /**
-     * Reads the information header of a BMP file.
+     * Reads the information header of a BMP file, or of the bitmap an OS/2 bitmap array decodes to:
+     * its bitmap entry of the largest area, the first among equal ones.
      *
      * @param source the input
-     * @return the header
+     * @return the header, whose frame count is the number of bitmap entries of an array
      */
     private static Header bmp(MediaSource source) {
-        var result = new Header();
         var reader = new SourceReader(source, 256);
-        reader.seek(14);
+        if (reader.u16le() != ('A' << 8 | 'B')) {
+            return bmpEntry(reader, 0);
+        }
+        Header best = null;
+        var count = 0;
+        var position = 0L;
+        for (var step = 0; step < MAX_STEPS; step++) {
+            reader.seek(position + 14);
+            if (reader.u16le() == ('M' << 8 | 'B')) {
+                var entry = bmpEntry(reader, position + 14);
+                count++;
+                if (best == null || (long) entry.width * entry.height > (long) best.width * best.height) {
+                    best = entry;
+                }
+            }
+            reader.seek(position + 6);
+            var next = reader.u32le();
+            if (next == 0 || next <= position) {
+                break;
+            }
+            position = next;
+        }
+        if (best == null) {
+            throw new MediaException.Malformed("the OS/2 bitmap array holds no bitmap");
+        }
+        best.frames = count;
+        return best;
+    }
+
+    /**
+     * Reads the information header of one bitmap.
+     *
+     * @param reader the input
+     * @param start the offset of the bitmap's file header
+     * @return the header
+     */
+    private static Header bmpEntry(SourceReader reader, long start) {
+        var result = new Header();
+        reader.seek(start + 14);
         var headerSize = reader.u32le();
         if (headerSize == 12) {
             result.width = reader.u16le();
@@ -441,11 +508,12 @@ final class ImageHeaders {
         result.height = Math.abs(reader.s32le());
         reader.u16le();
         var bits = reader.u16le();
-        result.bitDepth = bits == 16 ? 5 : 8;
+        result.bitDepth = bits == 16 ? 5 : bits == 64 ? 16 : 8;
         if (bits == 32 && headerSize >= 56) {
-            reader.seek(14 + 40 + 12);
+            reader.seek(start + 14 + 40 + 12);
             result.alpha = reader.u32le() != 0;
         }
+        result.alpha |= bits == 64;
         return result;
     }
 
@@ -563,12 +631,122 @@ final class ImageHeaders {
     }
 
     /**
+     * Reads the chunks of an animated cursor: its steps from the {@code anih}, {@code rate} and
+     * {@code seq } chunks, and its canvas from the directory of every frame.
+     *
+     * <p>The canvas is as wide and as tall as the largest entries of the frames, as the ANI decoder
+     * draws it; the frame count is the number of steps, the animation plays forever, and its duration
+     * is the sum of the steps' display times, in jiffies (sixtieths of a second) converted to
+     * microseconds and rounded down. The steps are counted as the decoder counts them.
+     *
+     * @param source the input
+     * @return the header
+     */
+    private static Header ani(MediaSource source) {
+        var result = new Header();
+        var reader = new SourceReader(source, 4096);
+        var size = reader.size();
+        reader.seek(4);
+        var end = 8 + reader.u32le();
+        if (size >= 0) {
+            end = Math.min(end, size);
+        }
+        var declaredSteps = 0L;
+        var displayRate = 0L;
+        var headed = false;
+        long[] rates = null;
+        long[] sequence = null;
+        var frames = 0;
+        var position = 12L;
+        for (var step = 0; step < MAX_STEPS && position + 8 <= end; step++) {
+            reader.seek(position);
+            var id = FourCc.toString(reader.fourCc());
+            var length = reader.u32le();
+            var body = position + 8;
+            var available = Math.min(length, end - body);
+            switch (id) {
+                case "anih" -> {
+                    if (!headed && available >= 36) {
+                        headed = true;
+                        reader.skip(8);
+                        declaredSteps = reader.u32le();
+                        reader.skip(16);
+                        displayRate = reader.u32le();
+                    }
+                }
+                case "rate" -> rates = rates != null ? rates : dwords(reader, available);
+                case "seq " -> sequence = sequence != null ? sequence : dwords(reader, available);
+                case "LIST" -> {
+                    if (available >= 4 && FourCc.toString(reader.fourCc()).equals("fram") && frames == 0) {
+                        var sub = body + 4;
+                        var listEnd = body + available;
+                        for (var count = 0; count < MAX_STEPS && sub + 8 <= listEnd; count++) {
+                            reader.seek(sub);
+                            var subId = FourCc.toString(reader.fourCc());
+                            var subLength = reader.u32le();
+                            if (subId.equals("icon") && sub + 8 < listEnd) {
+                                var icon = ico(new SlicedSource(source, sub + 8, Math.min(subLength, listEnd - sub - 8)));
+                                result.width = Math.max(result.width, icon.width);
+                                result.height = Math.max(result.height, icon.height);
+                                result.alpha |= icon.alpha;
+                                frames++;
+                            }
+                            sub += 8 + subLength + (subLength & 1);
+                        }
+                    }
+                }
+                default -> {
+                }
+            }
+            position = body + length + (length & 1);
+        }
+        if (!headed || frames == 0) {
+            throw new MediaException.Malformed("the animated cursor has no anih chunk or no frames");
+        }
+        long steps;
+        if (sequence != null) {
+            steps = declaredSteps == 0 ? sequence.length : Math.min(declaredSteps, sequence.length);
+        } else {
+            steps = declaredSteps == 0 ? frames : Math.min(declaredSteps, frames);
+        }
+        var jiffies = 0L;
+        for (var i = 0; i < steps; i++) {
+            jiffies += rates != null && i < rates.length ? rates[i] : displayRate;
+        }
+        result.bitDepth = 8;
+        result.frames = steps;
+        result.animated = steps > 1;
+        result.loops = 0;
+        var whole = jiffies / 60;
+        result.durationMicros = whole > Long.MAX_VALUE / 1_000_000 - 1 ? Long.MAX_VALUE
+                : whole * 1_000_000 + jiffies % 60 * 1_000_000 / 60;
+        return result;
+    }
+
+    /**
+     * Reads a chunk of little-endian 32-bit values, at most {@link #MAX_STEPS} of them.
+     *
+     * @param reader the reader, at the chunk data
+     * @param length the size of the chunk data present
+     * @return the values
+     */
+    private static long[] dwords(SourceReader reader, long length) {
+        var values = new long[(int) Math.min(MAX_STEPS, Math.max(0, length) / 4)];
+        for (var i = 0; i < values.length; i++) {
+            values[i] = reader.u32le();
+        }
+        return values;
+    }
+
+    /**
      * Reads the structure of a HEIF file (AVIF or HEIC): the primary item, its properties and its
      * alpha auxiliary images, or the image sequence a file without a primary item (or an AVIF file
      * whose major brand is {@code avis}) shows.
      *
      * <p>The size is that of the image the AVIF and HEIC decoders return: after the clean aperture
-     * and before the orientation the rotation and mirroring properties compose to.
+     * and before the orientation the rotation and mirroring properties compose to. The bit depth is
+     * that of the sample transform ({@code sato}) the alternatives group of the primary item prefers
+     * to it, when there is one, and an image overlay always has alpha.
      *
      * @param source the input
      * @return the header
@@ -621,12 +799,19 @@ final class ImageHeaders {
         result.width = geometry.width();
         result.height = geometry.height();
         result.orientation = geometry.orientation();
-        result.alpha = hasAlpha(file, primary);
+        result.alpha = hasAlpha(file, primary) || primary.type().equals("iovl");
         var coded = primary;
-        for (var depth = 0; coded != null && depth < 8 && !coded.type().equals("av01") && !coded.type().equals("hvc1");
-             depth++) {
+        for (var depth = 0; coded != null && depth < 8 && !CODED_ITEMS.contains(coded.type()); depth++) {
             var inputs = coded.references("dimg");
             coded = inputs.length == 0 ? null : file.item(inputs[0]);
+        }
+        if (coded != null && coded.type().equals("av01")) {
+            for (var alternative : file.preferredAlternatives(primary.id())) {
+                if (isShownTransform(source, file, alternative, limits)) {
+                    result.bitDepth = depthOf(alternative.properties());
+                    return result;
+                }
+            }
         }
         result.bitDepth = depthOf(primary.properties());
         if (result.bitDepth == 0 && coded != null) {
@@ -636,15 +821,39 @@ final class ImageHeaders {
     }
 
     /**
+     * Returns whether the AVIF decoder may show an alternative of the primary item in its place: a
+     * sample transform that is not a thumbnail, declares its depth and whose expression has a
+     * version and tokens the decoder knows.
+     *
+     * @param source the input
+     * @param file the parsed file
+     * @param item the alternative
+     * @param limits the bounds of the payload read
+     * @return {@code true} for such a sample transform item
+     */
+    private static boolean isShownTransform(MediaSource source, HeifFile file, HeifItem item, MediaLimits limits) {
+        if (!item.type().equals("sato") || item.references("thmb").length > 0 || depthOf(item.properties()) == 0
+                || !item.isLocated() || item.size() == 0 || item.size() > HeifSampleTransform.MAX_PAYLOAD) {
+            return false;
+        }
+        try {
+            HeifSampleTransform.parse(file.readItem(source, item, limits), item.references("dimg").length);
+            return true;
+        } catch (MediaException.Unsupported | MediaException.Malformed exception) {
+            return false;
+        }
+    }
+
+    /**
      * Returns whether a track of a HEIF image sequence is the color track a decoder shows.
      *
      * @param track a track of the image sequence
-     * @return {@code true} for an AV1 or HEVC track with samples and a size that is neither an
+     * @return {@code true} for an AV1, HEVC or AVC track with samples and a size that is neither an
      * auxiliary nor a thumbnail track
      */
     private static boolean isSequenceTrack(HeifMovie.Track track) {
         var entry = track.sampleEntry();
-        return (entry.equals("av01") || entry.equals("hvc1") || entry.equals("hev1")) && track.sampleCount() > 0
+        return SEQUENCE_ENTRIES.contains(entry) && track.sampleCount() > 0
                 && track.width() > 0 && track.height() > 0 && !track.references().containsKey("auxl")
                 && !track.references().containsKey("thmb");
     }
@@ -675,13 +884,19 @@ final class ImageHeaders {
     }
 
     /**
-     * Returns whether an auxiliary item with the alpha URN references an item.
+     * Returns whether an item has alpha of its own or an auxiliary item with the alpha URN references it.
      *
      * @param file the parsed file
      * @param item the auxiliary item to check
-     * @return {@code true} when such an item exists
+     * @return {@code true} when such an item exists, or the item is an uncompressed image with an
+     * alpha component
      */
     private static boolean hasAlphaItem(HeifFile file, HeifItem item) {
+        var header = item.property(HeifProperty.Jpeg2000Header.class);
+        if (HeifUncompressed.hasAlpha(item)
+                || (header != null && header.opacity() != HeifProperty.Jpeg2000Header.NO_OPACITY)) {
+            return true;
+        }
         for (var auxiliary : file.auxiliariesOf(item.id())) {
             var type = auxiliary.property(HeifProperty.AuxiliaryType.class);
             if (type != null && type.isAlpha()) {
@@ -695,8 +910,8 @@ final class ImageHeaders {
      * Returns the bit depth that a list of HEIF properties declares.
      *
      * @param properties the properties of an item or a sample entry
-     * @return the first {@code pixi} depth, or the depth of the AV1 or HEVC configuration, or
-     * {@code 0} when neither tells
+     * @return the first {@code pixi} depth, or the depth of the AV1, HEVC or AVC configuration or of the
+     * deepest color component of an uncompressed layout, or {@code 0} when none tells
      */
     private static int depthOf(List<HeifProperty> properties) {
         for (var property : properties) {
@@ -708,12 +923,44 @@ final class ImageHeaders {
             var info = switch (property) {
                 case HeifProperty.Av1Configuration config -> VideoConfigs.describe(Codec.AV1, config.record());
                 case HeifProperty.HevcConfiguration config -> VideoConfigs.describe(Codec.HEVC, config.record());
+                case HeifProperty.AvcConfiguration config -> VideoConfigs.describe(Codec.H264, config.record());
                 default -> null;
             };
             if (info != null) {
                 return info.bitDepth();
             }
+            if (property instanceof HeifProperty.UncompressedConfiguration config && !config.components().isEmpty()) {
+                return uncompressedDepth(config, properties);
+            }
         }
         return 0;
+    }
+
+    /**
+     * Returns the bit depth of an uncompressed image.
+     *
+     * @param config the layout of the image
+     * @param properties the properties of the item, with its component definition
+     * @return the largest depth of its color components (monochrome, Y'CbCr or RGB), or the depth
+     * of its first component when none is a color component
+     */
+    private static int uncompressedDepth(HeifProperty.UncompressedConfiguration config, List<HeifProperty> properties) {
+        HeifProperty.ComponentDefinition definition = null;
+        for (var property : properties) {
+            if (property instanceof HeifProperty.ComponentDefinition found) {
+                definition = found;
+                break;
+            }
+        }
+        var depth = 0;
+        for (var component : config.components()) {
+            var type = config.shorthand() ? component.index()
+                    : definition != null && component.index() < definition.types().length
+                    ? definition.types()[component.index()] : -1;
+            if (type >= 0 && type <= 6) {
+                depth = Math.max(depth, component.bitDepth());
+            }
+        }
+        return depth != 0 ? depth : config.components().getFirst().bitDepth();
     }
 }

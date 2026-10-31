@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
+import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.SeekableByteChannel;
@@ -21,8 +22,8 @@ import java.util.function.Supplier;
  * never moves a shared cursor, so several parsers may read the same source concurrently. Every
  * demuxer and image decoder in this module reads through this interface, which lets callers
  * back an input with a byte array, a {@link ByteBuffer}, a {@link MemorySegment}, a file, an
- * arbitrary {@link SeekableByteChannel}, an {@link InputStream} read once, or their own
- * implementation (for example an HTTP resource fetched with range requests).
+ * arbitrary {@link SeekableByteChannel}, an {@link InputStream} read once, an HTTP or HTTPS
+ * resource fetched with range requests ({@link #of(URI)}), or their own implementation.
  *
  * <p>Implementations must be safe for concurrent calls to {@link #read(long, byte[], int, int)},
  * must report the total length through {@link #size()} or {@code -1} when it is unknown, and must
@@ -276,6 +277,68 @@ public interface MediaSource extends AutoCloseable {
      */
     static MediaSource of(SeekableByteChannel channel) {
         return new ChannelMediaSource(channel, false);
+    }
+
+    /**
+     * Creates a source over an HTTP or HTTPS resource with {@link HttpSourceOptions#defaults() the default
+     * options}.
+     *
+     * <p>The source behaves as {@link #of(URI, HttpSourceOptions)} describes.
+     *
+     * @param uri the resource, an absolute {@code http} or {@code https} URI
+     * @return a source over the resource
+     * @throws IllegalArgumentException if {@code uri} is not an absolute {@code http} or {@code https} URI with
+     * a host
+     * @throws MediaException.Io if the first request fails, or its response is neither the resource nor a part
+     * of it
+     */
+    static MediaSource of(URI uri) {
+        return of(uri, HttpSourceOptions.defaults());
+    }
+
+    /**
+     * Creates a source over an HTTP or HTTPS resource, fetched with range requests (RFC 9110 section 14) when the
+     * server honors them.
+     *
+     * <p>This method sends the first request, which asks for the first {@linkplain HttpSourceOptions#blockSize()
+     * block}, before it returns. When the server answers with that part and the length of the resource, the
+     * source has random access: {@link #size()} is that length, and reads fetch the blocks they need, keep them in
+     * a {@linkplain HttpSourceOptions#cacheSize() cache} and {@linkplain HttpSourceOptions#readAhead() read ahead}
+     * of reads that follow one another, so a demuxer can seek in a remote file. Every later request carries a
+     * validator of the first response ({@code If-Range} with its strong entity tag, or with its modification date
+     * when it has no entity tag and the date is strong) and every response must keep the length, entity tag and
+     * modification date of the first, so a resource that changes while it is read fails the read with
+     * {@link MediaException.Io} rather than mixing two versions. Requests follow the redirects the client
+     * follows, and go to the final URI of the first one.
+     *
+     * <p>When the server ignores the range and sends the whole resource, or does not state its length, the
+     * source reads that response front to back as {@link #of(InputStream, long, StreamSourceOptions)} does,
+     * under the {@linkplain HttpSourceOptions#streamOptions() stream options}: its size is the
+     * {@code Content-Length}, or {@code -1} when the response states none or is compressed ({@code gzip} and
+     * {@code deflate} are decoded), and it cannot seek back past what the parsers released. An empty resource
+     * gives an empty source.
+     *
+     * <p>A failed request is {@linkplain HttpSourceOptions#retries() retried}, and a response that ends early is
+     * resumed by a request for what it did not deliver; a response that cannot be fixed by a retry (a status
+     * other than 200, 206 and the transient ones, a {@code Content-Range} not starting where asked) fails at
+     * once. The source is safe for concurrent reads; reads of a block another read is fetching wait for it.
+     * {@link #close()} drops the cache and closes the response a forward-only source reads; a source given its
+     * own client in the options does not close it.
+     *
+     * @apiNote Applications that read untrusted media should fetch only resources they mean to expose: a
+     * {@link DataReferenceResolver#http(URI, HttpSourceOptions) resolver} limits the resources a playlist can
+     * name.
+     *
+     * @param uri the resource, an absolute {@code http} or {@code https} URI
+     * @param options the client, the headers, the cache and the retries
+     * @return a source over the resource
+     * @throws IllegalArgumentException if {@code uri} is not an absolute {@code http} or {@code https} URI with
+     * a host
+     * @throws MediaException.Io if the first request fails, or its response is neither the resource nor a part
+     * of it
+     */
+    static MediaSource of(URI uri, HttpSourceOptions options) {
+        return HttpMediaSource.open(uri, options);
     }
 
     /**
