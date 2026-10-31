@@ -14,8 +14,10 @@ import static com.github.auties00.smalt.audio.amr.internal.nb.Constants.M;
  * analysis filter {@code A(z)}, bandwidth expansion of {@code A(z)}, and the fractional pitch
  * interpolation that builds the adaptive codebook excitation.
  *
- * <p>The filters accumulate with plain wrapping {@code int} arithmetic, as the reference does,
- * and saturate only the final 16-bit outputs.
+ * <p>The synthesis and analysis filters follow the saturating arithmetic of TS 26.073: every
+ * accumulation step saturates to 32 bits and the outputs to 16 bits, and a saturation raises the
+ * codec's overflow flag. They take a plain {@code int} path when the coefficients are too small
+ * for any step to saturate, which computes the same results.
  *
  * @implNote This implementation reads the synthesis filter memory in place and the pitch interpolation coefficients
  * straight from the table instead of copying them first, which computes the same sums.
@@ -79,7 +81,8 @@ final class Filters {
      * Filters a signal through the 10th order synthesis filter {@code 1/A(z)} ({@code Syn_filt}).
      *
      * <p>The output is {@code y[n] = sat((x[n] * a[0] + 0x800 - sum(a[k] * y[n - k])) >> 12)},
-     * where {@code y[-k]} is {@code mem[M - k]}. Like the reference, the filter produces
+     * where {@code y[-k]} is {@code mem[M - k]}, accumulated with the saturations of the reference;
+     * a saturation raises {@code overflow}. Like the reference, the filter produces
      * {@code M + 2 * ((lg - M) / 2)} outputs, so {@code lg} must be at least {@link Constants#M}.
      * {@code x} and {@code y} may be the same region; {@code mem} must not overlap the first
      * {@link Constants#M} outputs.
@@ -94,21 +97,29 @@ final class Filters {
      * @param mem the 10 past outputs, oldest first
      * @param memOffset the index of the oldest past output
      * @param update whether the last 10 outputs are copied into {@code mem}
+     * @param overflow the saturation flag
      */
     static void synFilt(short[] a, int aOffset, short[] x, int xOffset, short[] y, int yOffset, int lg,
-                        short[] mem, int memOffset, boolean update) {
+                        short[] mem, int memOffset, boolean update, Flag overflow) {
         var count = M + 2 * ((lg - M) >> 1);
         var a0 = a[aOffset];
+        var exact = !fitsPlain(a, aOffset);
         var head = Math.min(M, count);
         for (var n = 0; n < head; n++) {
-            var s = BasicOps.fxpMac(x[xOffset + n], a0, 0x800);
-            for (var k = 1; k <= n; k++) {
-                s -= a[aOffset + k] * y[yOffset + n - k];
+            short value;
+            if (exact) {
+                value = synSample(a, aOffset, x[xOffset + n], y, yOffset + n, n, mem, memOffset, overflow);
+            } else {
+                var s = BasicOps.fxpMac(x[xOffset + n], a0, 0x800);
+                for (var k = 1; k <= n; k++) {
+                    s -= a[aOffset + k] * y[yOffset + n - k];
+                }
+                for (var k = n + 1; k <= M; k++) {
+                    s -= a[aOffset + k] * mem[memOffset + M + n - k];
+                }
+                value = saturate12(s, overflow);
             }
-            for (var k = n + 1; k <= M; k++) {
-                s -= a[aOffset + k] * mem[memOffset + M + n - k];
-            }
-            y[yOffset + n] = saturate12(s);
+            y[yOffset + n] = value;
         }
         var a1 = a[aOffset + 1];
         var a2 = a[aOffset + 2];
@@ -122,6 +133,10 @@ final class Filters {
         var a10 = a[aOffset + 10];
         for (var n = M; n < count; n++) {
             var base = yOffset + n;
+            if (exact) {
+                y[base] = synSample(a, aOffset, x[xOffset + n], y, base, n, mem, memOffset, overflow);
+                continue;
+            }
             var s = BasicOps.fxpMac(x[xOffset + n], a0, 0x800);
             s -= a1 * y[base - 1];
             s -= a2 * y[base - 2];
@@ -133,7 +148,7 @@ final class Filters {
             s -= a8 * y[base - 8];
             s -= a9 * y[base - 9];
             s -= a10 * y[base - 10];
-            y[base] = saturate12(s);
+            y[base] = saturate12(s, overflow);
         }
         if (update) {
             System.arraycopy(y, yOffset + lg - M, mem, memOffset, M);
@@ -141,26 +156,95 @@ final class Filters {
     }
 
     /**
-     * Shifts a synthesis filter accumulator right by 12 bits and saturates it the way the
-     * reference does, including its mapping of {@code 0x07ffffff} to {@link BasicOps#MIN_16}.
+     * Returns whether no accumulation step of a 10th order filter with these coefficients can
+     * saturate on 16-bit samples, so that plain {@code int} arithmetic gives the saturating result.
+     *
+     * @param a the 11 filter coefficients
+     * @param aOffset the index of the first coefficient
+     * @return {@code true} when the sum of the absolute coefficients is below 32768
+     */
+    private static boolean fitsPlain(short[] a, int aOffset) {
+        var sum = 0;
+        for (var k = 0; k <= M; k++) {
+            sum += Math.abs(a[aOffset + k]);
+        }
+        return sum < 32768;
+    }
+
+    /**
+     * Computes one output of {@link #synFilt} with the saturating steps of the reference.
+     *
+     * @param a the 11 filter coefficients
+     * @param aOffset the index of the first coefficient
+     * @param x the input sample
+     * @param y the output signal, holding the outputs before {@code index}
+     * @param index the index of the output in {@code y}
+     * @param n the position of the output in the call, which selects the past outputs held in {@code mem}
+     * @param mem the past outputs
+     * @param memOffset the index of the oldest past output
+     * @param overflow the saturation flag
+     * @return the output sample
+     */
+    private static short synSample(short[] a, int aOffset, short x, short[] y, int index, int n, short[] mem,
+                                   int memOffset, Flag overflow) {
+        var sum = (long) x * a[aOffset];
+        var magnitude = Math.abs(sum);
+        for (var k = 1; k <= M; k++) {
+            var past = k <= n ? y[index - k] : mem[memOffset + M + n - k];
+            var product = a[aOffset + k] * past;
+            sum -= product;
+            magnitude += Math.abs(product);
+        }
+        if (magnitude <= 0x3FFFFFFFL) {
+            return saturate12((int) sum + 0x800, overflow);
+        }
+        var s = BasicOps.lMult(x, a[aOffset], overflow);
+        for (var k = 1; k <= M; k++) {
+            var past = k <= n ? y[index - k] : mem[memOffset + M + n - k];
+            s = BasicOps.lMsu(s, a[aOffset + k], past, overflow);
+        }
+        return BasicOps.round(shiftLeft3(s, overflow), overflow);
+    }
+
+    /**
+     * Shifts a 32-bit value left by 3 bits with saturation, raising {@code overflow} on saturation
+     * ({@code L_shl(s, 3)}).
+     *
+     * @param s the value
+     * @param overflow the saturation flag
+     * @return the shifted value
+     */
+    private static int shiftLeft3(int s, Flag overflow) {
+        var shifted = BasicOps.lShl(s, (short) 3);
+        if (shifted >> 3 != s) {
+            overflow.value = true;
+        }
+        return shifted;
+    }
+
+    /**
+     * Shifts a filter accumulator, which holds the undoubled sum plus the rounding constant
+     * {@code 0x800}, right by 12 bits and saturates it as {@code round(L_shl(2 * sum, 3))} does,
+     * raising {@code overflow} where that saturates.
      *
      * @param s the accumulator
+     * @param overflow the saturation flag
      * @return the saturated output sample
      */
-    private static short saturate12(int s) {
-        if (Integer.compareUnsigned(s + 134217728, 0x0fffffff) < 0) {
-            return (short) (s >> 12);
+    private static short saturate12(int s, Flag overflow) {
+        if (s >= 0x08000000 || s < -0x07FFF800) {
+            overflow.value = true;
         }
-        return s > 0x07ffffff ? MAX_16 : MIN_16;
+        return (short) Math.clamp(s >> 12, MIN_16, MAX_16);
     }
 
     /**
      * Filters a signal through the 10th order analysis filter {@code A(z)} ({@code Residu}).
      *
-     * <p>The output is {@code y[n] = (0x800 + sum(a[j] * x[n - j], j = 0..10)) >> 12}, truncated
-     * to 16 bits; {@code x} must hold the 10 samples before the first input. Like the reference,
-     * only the last {@code 4 * (lg / 4)} outputs are computed, so {@code lg} is normally a
-     * multiple of 4. {@code x} and {@code y} may be the same region.
+     * <p>The output is {@code y[n] = sat((0x800 + sum(a[j] * x[n - j], j = 0..10)) >> 12)},
+     * accumulated with the saturations of the reference; {@code x} must hold the 10 samples before
+     * the first input. Like the reference, only the last {@code 4 * (lg / 4)} outputs are computed,
+     * so {@code lg} is normally a multiple of 4. {@code x} and {@code y} may be the same region.
      *
      * @param a the 11 filter coefficients, Q12
      * @param aOffset the index of the first coefficient
@@ -170,16 +254,43 @@ final class Filters {
      * @param yOffset the index of the first residual sample
      * @param lg the number of samples
      * @param work scratch of {@code 16 + lg} integers
+     * @param overflow the saturation flag
      */
-    static void residu(short[] a, int aOffset, short[] x, int xOffset, short[] y, int yOffset, int lg, int[] work) {
+    static void residu(short[] a, int aOffset, short[] x, int xOffset, short[] y, int yOffset, int lg, int[] work,
+                       Flag overflow) {
         var last = lg - 4 * (lg >> 2);
         var count = lg - last;
-        for (var j = 0; j <= M; j++) {
-            work[j] = a[aOffset + j];
+        if (fitsPlain(a, aOffset)) {
+            for (var j = 0; j <= M; j++) {
+                work[j] = a[aOffset + j];
+            }
+            KERNEL.firReverse(x, xOffset + last, work, M + 1, count, work, 16);
+            for (var n = 0; n < count; n++) {
+                y[yOffset + last + n] = saturate12(work[16 + n] + 0x800, overflow);
+            }
+            return;
         }
-        KERNEL.firReverse(x, xOffset + last, work, M + 1, count, work, 16);
-        for (var n = 0; n < count; n++) {
-            y[yOffset + last + n] = (short) ((work[16 + n] + 0x800) >> 12);
+        // computed backwards so that an in-place filter reads only inputs it has not overwritten
+        for (var n = count - 1; n >= 0; n--) {
+            var position = xOffset + last + n;
+            var sum = 0L;
+            var magnitude = 0L;
+            for (var j = 0; j <= M; j++) {
+                var product = a[aOffset + j] * x[position - j];
+                sum += product;
+                magnitude += Math.abs(product);
+            }
+            short value;
+            if (magnitude <= 0x3FFFFFFFL) {
+                value = saturate12((int) sum + 0x800, overflow);
+            } else {
+                var s = BasicOps.lMult(x[position], a[aOffset], overflow);
+                for (var j = 1; j <= M; j++) {
+                    s = BasicOps.lMac(s, a[aOffset + j], x[position - j], overflow);
+                }
+                value = BasicOps.round(shiftLeft3(s, overflow), overflow);
+            }
+            y[yOffset + last + n] = value;
         }
     }
 

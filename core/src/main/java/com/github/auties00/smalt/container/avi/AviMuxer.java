@@ -2,20 +2,31 @@ package com.github.auties00.smalt.container.avi;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.Muxer;
+import com.github.auties00.smalt.container.internal.AdpcmBlocks;
+import com.github.auties00.smalt.container.internal.AdpcmFormat;
+import com.github.auties00.smalt.container.internal.ConfigChanges;
+import com.github.auties00.smalt.container.internal.RiffCodecs;
 import com.github.auties00.smalt.container.internal.WaveFormat;
 import com.github.auties00.smalt.internal.io.ByteWriter;
+import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.codec.NalConfigs;
+import com.github.auties00.smalt.internal.nal.NalRecords;
 import com.github.auties00.smalt.internal.nal.NalUnits;
+import com.github.auties00.smalt.internal.tags.MuxerTags;
 import com.github.auties00.smalt.io.MediaSink;
+import com.github.auties00.smalt.metadata.MediaTags;
+import com.github.auties00.smalt.metadata.StandardTag;
+import com.github.auties00.smalt.metadata.TrackTags;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.track.Interlacing;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.TrackKind;
 import com.github.auties00.smalt.track.VideoTrack;
 
-import java.io.ByteArrayOutputStream;
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -25,17 +36,37 @@ import java.util.Objects;
 /**
  * Writes AVI files with the OpenDML 1.02 extensions.
  *
- * <p>Video tracks of Motion-JPEG, MPEG-4 Part 2, H.264, HEVC, H.263, VP8 and VP9, and audio tracks
- * of PCM (8-bit unsigned, 16, 24 and 32-bit signed and 32 and 64-bit float little-endian, A-law,
- * mu-law), MP3, MP2, AAC and AC-3 are accepted, at most 99 tracks in all. Video is stored at a
- * constant frame rate, the track's frame rate (or the inverse of its time base when that is a
- * plausible frame period, 25 frames per second otherwise); a gap in the timestamps is filled with
+ * <p>Video tracks of Motion-JPEG, Motion JPEG 2000, MPEG-1 and MPEG-2 video ({@code mpg1}, {@code mpg2}), MPEG-4
+ * Part 2, H.264, HEVC, H.263, Sorenson Spark ({@code FLV1}), VP8, VP9 and FFV1, and audio tracks of PCM (8-bit
+ * unsigned, 16, 24, 32 and 64-bit signed
+ * and 32 and 64-bit float little-endian, A-law, mu-law), MP3, MP2, AAC, AC-3, IMA ADPCM, Microsoft ADPCM, GSM 06.10
+ * in Microsoft's packing, G.722 and G.726 are accepted, at most 99 tracks in all. Video is stored at a constant
+ * frame rate, the track's frame rate (or the inverse of its time base when that is a plausible frame period, 25
+ * frames per second otherwise); a gap in the timestamps is filled with
  * empty chunks, which players treat as dropped frames, so presentation times survive. H.264 and
  * HEVC packets, length-prefixed in Smalt, are written as Annex B byte streams with the parameter
- * sets of the track's configuration record in front of every key frame. The decoder configuration
- * of MPEG-4 Part 2 and AAC tracks is stored as the extra data of the stream format. PCM audio is a
+ * sets of the track's configuration record in front of every key frame that carries none of its own.
+ * The decoder configuration of MPEG-1 video, MPEG-2 video, MPEG-4 Part 2, FFV1 and AAC tracks is stored as the extra
+ * data of the stream format. Motion JPEG 2000 is stored with the FourCC {@code MJ2C}, and a frame that relies on its
+ * track's JP2 Header box is made to carry that header, since the stream format has no place for it: a raw
+ * codestream or a single {@code jp2c} box is written as a JP2 file, the two {@code jp2c} boxes of an
+ * interlaced frame after a copy of the header box. PCM audio is a
  * constant bitrate stream of sample blocks; compressed audio is a variable bitrate stream of one
- * frame per chunk.
+ * frame per chunk. The ADPCM and telephony codecs are constant bitrate streams of their blocks or code units (as
+ * {@link Codec#ADPCM_IMA_WAV} and the other constants define their packets), one packet per chunk, under the
+ * {@code WAVEFORMATEX} a WAVE file stores for them: {@code dwScale} is the samples of a block or unit, {@code dwRate}
+ * the sampling rate and {@code dwSampleSize} the block alignment. The block size of IMA and Microsoft ADPCM is the size
+ * of the track's first packet, which every later packet but the last must have, and is written into the stream format
+ * when the muxer finishes. A video track that declares its
+ * {@link VideoTrack#sampleAspectRatio() sample aspect ratio} or its
+ * {@link VideoTrack#interlacing() scan} gets an OpenDML video properties header ({@code vprp})
+ * with the frame aspect ratio (in 16-bit terms, the closest such ratio when the exact one does
+ * not fit) and one field per frame, or two when the track is interlaced.
+ *
+ * <p>The tags of {@link #setTags(MediaTags)} become the {@code LIST INFO} chunk after the header
+ * list, the {@code ISFT} software entry naming Smalt unless the tags hold an
+ * {@link com.github.auties00.smalt.metadata.StandardTag#ENCODER encoder}, and the name of each
+ * track's {@link MediaTags#tracks() track tags} becomes the {@code strn} chunk of its stream.
  *
  * <p>Packets of the tracks are interleaved by decoding time: the muxer holds each packet until
  * every track has one waiting, or until it holds two seconds or 512 packets, then writes the
@@ -47,6 +78,11 @@ import java.util.Objects;
  * <p>Instances are not thread-safe.
  */
 public final class AviMuxer implements Muxer {
+    /**
+     * The software the {@code ISFT} entry names when the tags hold no encoder.
+     */
+    private static final String SOFTWARE = "Smalt";
+
     /**
      * The number of super index entries reserved per stream.
      */
@@ -83,6 +119,11 @@ public final class AviMuxer implements Muxer {
     private static final long MAX_GAP_FRAMES = 1 << 16;
 
     /**
+     * The largest value of a 16-bit term of {@code dwFrameAspectRatio}.
+     */
+    private static final BigInteger U16_LIMIT = BigInteger.valueOf(0xFFFF);
+
+    /**
      * The output.
      */
     private final MediaSink output;
@@ -111,6 +152,11 @@ public final class AviMuxer implements Muxer {
      * Whether the headers were written.
      */
     private boolean started;
+
+    /**
+     * The tags of {@link #setTags(MediaTags)}.
+     */
+    private MediaTags tags = MediaTags.empty();
 
     /**
      * Whether {@link #finish()} ran.
@@ -215,6 +261,44 @@ public final class AviMuxer implements Muxer {
         streams.add(new Stream(streams.size(), track));
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * @return {@code true}
+     */
+    @Override
+    public boolean supportsTags() {
+        return true;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The entries {@code INFO} has an identifier for become the {@code LIST INFO} chunk, the first value of each;
+     * the name of a track becomes its {@code strn} chunk. Pictures, chapters, other entries and track dispositions
+     * are not stored.
+     */
+    @Override
+    public void setTags(MediaTags tags) {
+        Objects.requireNonNull(tags, "tags");
+        if (started || finished) {
+            throw new IllegalStateException("tags must be set before the first packet");
+        }
+        this.tags = tags;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>A packet that changes the codec configuration of an H.264 or HEVC stream replaces the
+     * parameter sets written before its key frames from then on.
+     *
+     * @throws IllegalArgumentException if the packet's track was not declared or a new H.264 or
+     * HEVC configuration cannot be parsed
+     * @throws IllegalStateException if no track was declared or the muxer is finished
+     * @throws MediaException.Unsupported if the packet changes the codec configuration of a stream
+     * that is not H.264 or HEVC
+     */
     @Override
     public void writePacket(Packet packet) {
         Objects.requireNonNull(packet, "packet");
@@ -224,6 +308,20 @@ public final class AviMuxer implements Muxer {
         var stream = find(packet.trackId());
         if (stream == null) {
             throw new IllegalArgumentException("packet of undeclared track " + packet.trackId());
+        }
+        var newConfig = ConfigChanges.changed(packet, stream.acceptedConfig);
+        if (newConfig != null) {
+            if (stream.lengthSize == 0) {
+                throw ConfigChanges.unsupported("AVI", packet.trackId());
+            }
+            if (parse(stream.track, newConfig) == null) {
+                throw new IllegalArgumentException("the new " + stream.track.codec().displayName()
+                        + " configuration of track " + packet.trackId() + " cannot be parsed");
+            }
+            stream.acceptedConfig = newConfig;
+        }
+        if (stream.adpcm != null) {
+            stream.adpcm.accept(packet.size());
         }
         if (!started) {
             if (streams.isEmpty()) {
@@ -339,14 +437,32 @@ public final class AviMuxer implements Muxer {
             var format = stream.format();
             header.fourCc("strf");
             header.u32le(format.length);
+            stream.strfOffset = header.size();
             header.bytes(format);
             if ((format.length & 1) != 0) {
                 header.u8(0);
+            }
+            var name = tags.track(stream.track.id()).flatMap(TrackTags::name).orElse("");
+            if (!name.isEmpty()) {
+                var text = name.getBytes(StandardCharsets.UTF_8);
+                header.fourCc("strn");
+                header.u32le(text.length + 1L);
+                header.bytes(text);
+                header.u8(0);
+                if (((text.length + 1) & 1) != 0) {
+                    header.u8(0);
+                }
             }
             header.fourCc("indx");
             header.u32le(24 + 16 * SUPER_ENTRIES);
             stream.indxOffset = header.size();
             header.zeros(24 + 16 * SUPER_ENTRIES);
+            var properties = stream.properties();
+            if (properties != null) {
+                header.fourCc("vprp");
+                header.u32le(properties.length);
+                header.bytes(properties);
+            }
             header.patch32le(strlSize, header.size() - strlSize - 4);
         }
         header.fourCc("LIST");
@@ -357,13 +473,9 @@ public final class AviMuxer implements Muxer {
         var dmlh = header.size();
         header.zeros(DMLH_SIZE);
         header.patch32le(hdrlSize, header.size() - hdrlSize - 4);
-        header.fourCc("LIST");
-        header.u32le(4 + 8 + 6);
-        header.fourCc("INFO");
-        header.fourCc("ISFT");
-        header.u32le(6);
-        header.bytes("Smalt".getBytes(StandardCharsets.US_ASCII));
-        header.u8(0);
+        var info = tags.get(StandardTag.ENCODER).isPresent() ? tags
+                : tags.toBuilder().add(StandardTag.ENCODER, SOFTWARE).build();
+        header.bytes(MuxerTags.riffInfo(info));
         header.fourCc("LIST");
         header.u32le(0);
         var moviFourCc = header.size();
@@ -373,6 +485,7 @@ public final class AviMuxer implements Muxer {
         dmlhPosition = base + dmlh;
         for (var stream : streams) {
             stream.strhPosition = base + stream.strhOffset;
+            stream.strfPosition = base + stream.strfOffset;
             stream.indxPosition = base + stream.indxOffset;
         }
         riffStart = base;
@@ -509,6 +622,13 @@ public final class AviMuxer implements Muxer {
         avih.zeros(16);
         write(avihPosition, avih);
         for (var stream : streams) {
+            if (stream.adpcm != null) {
+                stream.updateAdpcm();
+                var format = stream.format();
+                var out = new ByteWriter(format.length);
+                out.bytes(format);
+                write(stream.strfPosition, out);
+            }
             write(stream.strhPosition, stream.header());
             write(stream.indxPosition, stream.superIndex());
         }
@@ -567,6 +687,126 @@ public final class AviMuxer implements Muxer {
     }
 
     /**
+     * Parses the configuration record of an H.264 or HEVC track.
+     *
+     * @param track the track whose codec selects the record syntax
+     * @param config the record, or {@code null}
+     * @return the parameter sets and NAL unit length size, or {@code null} for another codec or an
+     * unparsable record
+     */
+    private static NalRecords.Parsed parse(Track track, byte[] config) {
+        return track.codec() == Codec.H264 ? NalConfigs.parseAvc(config)
+                : track.codec() == Codec.HEVC ? NalConfigs.parseHevc(config) : null;
+    }
+
+    /**
+     * Returns the {@code dwFrameAspectRatio} of a picture: its display aspect ratio in lowest terms,
+     * the horizontal term in the high 16 bits, or the closest ratio whose terms fit in 16 bits when
+     * the exact one does not.
+     *
+     * @param width the coded width
+     * @param height the coded height
+     * @param aspect the sample aspect ratio
+     * @return the field value, or {@code 0} for an empty picture
+     */
+    static long frameAspect(int width, int height, Rational aspect) {
+        if (width <= 0 || height <= 0) {
+            return 0;
+        }
+        var numerator = BigInteger.valueOf(width).multiply(BigInteger.valueOf(aspect.numerator()));
+        var denominator = BigInteger.valueOf(height).multiply(BigInteger.valueOf(aspect.denominator()));
+        var gcd = numerator.gcd(denominator);
+        numerator = numerator.divide(gcd);
+        denominator = denominator.divide(gcd);
+        if (numerator.compareTo(U16_LIMIT) <= 0 && denominator.compareTo(U16_LIMIT) <= 0) {
+            return numerator.longValue() << 16 | denominator.longValue();
+        }
+        var best = closest(numerator, denominator);
+        return best[0] << 16 | best[1];
+    }
+
+    /**
+     * Returns the fraction with both terms from 1 to 65535 closest to a positive fraction: the
+     * last convergent of its continued fraction within the bound, or the semiconvergent after it
+     * when that one is closer.
+     *
+     * @param numerator the numerator, positive
+     * @param denominator the denominator, positive
+     * @return the numerator and the denominator of the approximation
+     */
+    static long[] closest(BigInteger numerator, BigInteger denominator) {
+        long previousNumerator = 0;
+        long previousDenominator = 1;
+        long currentNumerator = 1;
+        long currentDenominator = 0;
+        var top = numerator;
+        var bottom = denominator;
+        while (bottom.signum() != 0) {
+            var division = top.divideAndRemainder(bottom);
+            var term = division[0];
+            var limit = term;
+            if (currentDenominator != 0) {
+                limit = limit.min(BigInteger.valueOf((0xFFFF - previousDenominator) / currentDenominator));
+            }
+            if (currentNumerator != 0) {
+                limit = limit.min(BigInteger.valueOf((0xFFFF - previousNumerator) / currentNumerator));
+            }
+            if (limit.compareTo(term) < 0) {
+                var step = limit.longValue();
+                var semiconvergent = new long[]{step * currentNumerator + previousNumerator,
+                        step * currentDenominator + previousDenominator};
+                return closer(numerator, denominator, semiconvergent, new long[]{currentNumerator, currentDenominator});
+            }
+            var step = term.longValue();
+            var nextNumerator = step * currentNumerator + previousNumerator;
+            var nextDenominator = step * currentDenominator + previousDenominator;
+            previousNumerator = currentNumerator;
+            previousDenominator = currentDenominator;
+            currentNumerator = nextNumerator;
+            currentDenominator = nextDenominator;
+            top = bottom;
+            bottom = division[1];
+        }
+        return new long[]{currentNumerator, currentDenominator};
+    }
+
+    /**
+     * Returns whichever of two candidate fractions is closer to a target fraction, the first on a
+     * tie; a candidate with a term outside 1 to 65535 is never chosen over one inside.
+     *
+     * @param numerator the target numerator
+     * @param denominator the target denominator
+     * @param first a candidate as numerator and denominator
+     * @param second a candidate as numerator and denominator
+     * @return the closer candidate
+     */
+    private static long[] closer(BigInteger numerator, BigInteger denominator, long[] first, long[] second) {
+        if (!fits(second)) {
+            return fits(first) ? first : numerator.compareTo(denominator) > 0 ? new long[]{0xFFFF, 1}
+                    : new long[]{1, 0xFFFF};
+        }
+        if (!fits(first)) {
+            return second;
+        }
+        var firstError = numerator.multiply(BigInteger.valueOf(first[1]))
+                .subtract(denominator.multiply(BigInteger.valueOf(first[0]))).abs()
+                .multiply(BigInteger.valueOf(second[1]));
+        var secondError = numerator.multiply(BigInteger.valueOf(second[1]))
+                .subtract(denominator.multiply(BigInteger.valueOf(second[0]))).abs()
+                .multiply(BigInteger.valueOf(first[1]));
+        return secondError.compareTo(firstError) < 0 ? second : first;
+    }
+
+    /**
+     * {@return whether both terms of a fraction are from 1 to 65535}
+     *
+     * @param fraction the numerator and the denominator
+     */
+    private static boolean fits(long[] fraction) {
+        return fraction[0] >= 1 && fraction[0] <= 0xFFFF && fraction[1] >= 1 && fraction[1] <= 0xFFFF;
+    }
+
+    /**
      * Holds the state of one stream.
      */
     private final class Stream {
@@ -606,9 +846,14 @@ public final class AviMuxer implements Muxer {
         int sampleSize;
 
         /**
-         * The block alignment of PCM audio.
+         * The block alignment of PCM, ADPCM and telephony audio.
          */
         int blockAlign;
+
+        /**
+         * The format of an ADPCM or telephony stream, or {@code null}.
+         */
+        final AdpcmFormat adpcm;
 
         /**
          * The stream's length in frames, chunks or sample blocks.
@@ -639,6 +884,16 @@ public final class AviMuxer implements Muxer {
          * The position of the stream header body.
          */
         long strhPosition;
+
+        /**
+         * The offset of the stream format body in the header block.
+         */
+        int strfOffset;
+
+        /**
+         * The position of the stream format body.
+         */
+        long strfPosition;
 
         /**
          * The position of the super index body.
@@ -688,6 +943,16 @@ public final class AviMuxer implements Muxer {
         byte[] parameterSets = new byte[0];
 
         /**
+         * The codec configuration of the last packet the muxer accepted, initially the track's.
+         */
+        byte[] acceptedConfig;
+
+        /**
+         * The codec configuration of the packets being written, initially the track's.
+         */
+        byte[] appliedConfig;
+
+        /**
          * The NAL unit length prefix size of H.264 or HEVC packets, or 0.
          */
         int lengthSize;
@@ -702,7 +967,11 @@ public final class AviMuxer implements Muxer {
             this.number = number;
             this.track = track;
             this.video = track instanceof VideoTrack;
-            if (video) {
+            this.adpcm = !video && AdpcmBlocks.supports(track.codec()) ? new AdpcmFormat((AudioTrack) track, "AVI")
+                    : null;
+            if (adpcm != null) {
+                updateAdpcm();
+            } else if (video) {
                 var frameRate = ((VideoTrack) track).frameRate().orElse(null);
                 if (frameRate == null || frameRate.numerator() <= 0 || frameRate.denominator() <= 0) {
                     var inverse = track.timeBase().invert();
@@ -716,8 +985,9 @@ public final class AviMuxer implements Muxer {
                 scale = frameRate.denominator();
                 rate = frameRate.numerator();
                 var config = track.codecConfig().orElse(null);
-                var parsed = track.codec() == Codec.H264 ? NalConfigs.parseAvc(config)
-                        : track.codec() == Codec.HEVC ? NalConfigs.parseHevc(config) : null;
+                acceptedConfig = config;
+                appliedConfig = config;
+                var parsed = parse(track, config);
                 if (parsed != null) {
                     lengthSize = parsed.lengthSize();
                     parameterSets = NalUnits.annexBParameterSets(parsed.parameterSets());
@@ -746,6 +1016,31 @@ public final class AviMuxer implements Muxer {
         }
 
         /**
+         * Sets the block alignment, {@code dwScale}, {@code dwRate} and {@code dwSampleSize} of an ADPCM or telephony
+         * stream from the block size of its format.
+         */
+        void updateAdpcm() {
+            blockAlign = adpcm.blockAlign();
+            sampleSize = blockAlign;
+            scale = adpcm.blockSamples();
+            rate = ((AudioTrack) track).sampleRate();
+        }
+
+        /**
+         * Returns the stream units a chunk occupies.
+         *
+         * @param size the chunk size
+         * @return the sample blocks of PCM, the blocks or code units of ADPCM (a partial one counted whole), one
+         * frame or packet otherwise
+         */
+        long units(int size) {
+            if (adpcm != null) {
+                return adpcm.units(size);
+            }
+            return sampleSize > 0 ? size / sampleSize : 1;
+        }
+
+        /**
          * {@return the chunk identifier of the stream's data chunks}
          */
         String chunkId() {
@@ -770,7 +1065,17 @@ public final class AviMuxer implements Muxer {
          * @param packet a packet of this stream
          */
         void write(Packet packet) {
+            var newConfig = ConfigChanges.changed(packet, appliedConfig);
+            if (newConfig != null) {
+                var parsed = parse(track, newConfig);
+                lengthSize = parsed.lengthSize();
+                parameterSets = NalUnits.annexBParameterSets(parsed.parameterSets());
+                appliedConfig = newConfig;
+            }
             var data = packet.data();
+            if (track.codec() == Codec.JPEG2000) {
+                data = Jp2Frames.selfContained(data, track.codecConfig().orElse(null));
+            }
             if (video) {
                 var time = packet.dts() != Packet.NO_TIMESTAMP ? packet.dts() : packet.pts();
                 if (time != Packet.NO_TIMESTAMP) {
@@ -791,36 +1096,22 @@ public final class AviMuxer implements Muxer {
                 length++;
             } else {
                 writeChunk(this, data, 0, data.length, true);
-                length += sampleSize > 0 ? data.length / sampleSize : 1;
+                length += units(data.length);
             }
             largest = Math.max(largest, data.length);
         }
 
         /**
          * Converts a length-prefixed H.264 or HEVC packet into an Annex B byte stream, with the
-         * configuration's parameter sets in front of key frames.
+         * configuration's parameter sets in front of a key frame that carries none of its own.
          *
          * @param data the packet
          * @param keyframe whether the packet is a key frame
          * @return the byte stream
          */
         private byte[] annexB(byte[] data, boolean keyframe) {
-            var out = new ByteArrayOutputStream(data.length + parameterSets.length + 16);
-            if (keyframe) {
-                out.writeBytes(parameterSets);
-            }
-            var end = NalUnits.forEachLengthPrefixed(data, lengthSize, (unit, offset, length) -> {
-                out.write(0);
-                out.write(0);
-                out.write(0);
-                out.write(1);
-                out.write(unit, offset, length);
-            });
-            if (end + lengthSize <= data.length) {
-                throw new IllegalArgumentException("NAL unit length " + NalUnits.readLength(data, end, lengthSize)
-                        + " exceeds the packet");
-            }
-            return out.toByteArray();
+            return NalUnits.toAnnexB(data, lengthSize, track.codec() == Codec.HEVC,
+                    keyframe && parameterSets.length > 0 ? parameterSets : null, null);
         }
 
         /**
@@ -835,9 +1126,9 @@ public final class AviMuxer implements Muxer {
             formIndex.u32le((size & 0x7FFFFFFFL) | (key ? 0 : 0x80000000L));
             formEntries++;
             formChunks++;
-            formDuration += sampleSize > 0 ? size / sampleSize : 1;
+            formDuration += units(size);
             if (forms == 1) {
-                firstFormLength += sampleSize > 0 ? size / sampleSize : 1;
+                firstFormLength += units(size);
             }
         }
 
@@ -888,7 +1179,7 @@ public final class AviMuxer implements Muxer {
             if (video) {
                 var videoTrack = (VideoTrack) track;
                 var extra = switch (track.codec()) {
-                    case MPEG4_PART2 -> config;
+                    case MPEG1_VIDEO, MPEG2_VIDEO, MPEG4_PART2, FFV1 -> config;
                     case H264, HEVC -> parameterSets;
                     default -> new byte[0];
                 };
@@ -904,6 +1195,9 @@ public final class AviMuxer implements Muxer {
                 out.bytes(extra);
                 return out.toByteArray();
             }
+            if (adpcm != null) {
+                return adpcm.waveFormatBytes();
+            }
             var audio = (AudioTrack) track;
             var channels = audio.layout().map(layout -> layout.channels()).orElse(2);
             var bits = track.codec().pcmBitsPerSample().orElse(0);
@@ -913,10 +1207,49 @@ public final class AviMuxer implements Muxer {
                 default -> new byte[0];
             };
             var wave = new WaveFormat(WaveFormat.tagOf(track.codec()), channels, audio.sampleRate(),
-                    bits > 0 ? (long) audio.sampleRate() * blockAlign : 0, bits > 0 ? blockAlign : 1, bits, bits, 0, false,
-                    true, extra);
+                    bits > 0 ? (long) audio.sampleRate() * blockAlign : 0, bits > 0 ? blockAlign : 1, bits, bits, 0,
+                    WaveFormat.SubFormat.NONE, extra);
             var out = new ByteWriter(wave.size(true));
             wave.write(out, true);
+            return out.toByteArray();
+        }
+
+        /**
+         * Returns the OpenDML video properties header ({@code vprp}) body of a video track that
+         * declares its sample aspect ratio or its scan: the frame aspect ratio (zero when the
+         * sample aspect ratio is undeclared), the frame size, and one or two field descriptions.
+         *
+         * @return the body, or {@code null} for an audio track or a video track that declares
+         * neither
+         */
+        byte[] properties() {
+            if (!(track instanceof VideoTrack videoTrack)
+                    || (videoTrack.sampleAspectRatio().isEmpty() && videoTrack.interlacing().isEmpty())) {
+                return null;
+            }
+            var width = videoTrack.width();
+            var height = videoTrack.height();
+            var fields = videoTrack.interlacing().filter(Interlacing::isInterlaced).isPresent() ? 2 : 1;
+            var ratio = videoTrack.sampleAspectRatio()
+                    .map(aspect -> frameAspect(width, height, aspect))
+                    .orElse(0L);
+            var out = new ByteWriter(36 + 32 * fields);
+            out.u32le(0);
+            out.u32le(0);
+            out.u32le(rate == 0 || scale == 0 ? 0 : Math.round((double) rate / scale));
+            out.u32le(width);
+            out.u32le(height);
+            out.u32le(ratio);
+            out.u32le(width);
+            out.u32le(height);
+            out.u32le(fields);
+            for (var field = 0; field < fields; field++) {
+                out.u32le(height / fields);
+                out.u32le(width);
+                out.u32le(height / fields);
+                out.u32le(width);
+                out.zeros(16);
+            }
             return out.toByteArray();
         }
 
