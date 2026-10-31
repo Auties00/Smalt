@@ -23,6 +23,7 @@ import com.github.auties00.smalt.image.webp.internal.riff.WebpParser;
 import com.github.auties00.smalt.internal.anim.SeekableAnimationReader;
 import com.github.auties00.smalt.internal.io.SourceReader;
 import com.github.auties00.smalt.internal.limits.Guards;
+import com.github.auties00.smalt.internal.region.ImageRegions;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.tiff.TiffExif;
 import com.github.auties00.smalt.internal.task.ParallelBands;
@@ -53,6 +54,11 @@ import java.util.Optional;
  * byte-identical to libwebp's {@code dwebp} and animation decoder. This class is thread-safe.
  */
 public final class WebpDecoder {
+    /**
+     * The largest side of a still image, of a {@code VP8L} bitstream, in pixels.
+     */
+    private static final int MAX_SIDE = 16384;
+
     /**
      * Prevents instantiation.
      */
@@ -109,9 +115,18 @@ public final class WebpDecoder {
     /**
      * Decodes a still image, or the first frame of an animation composited on its canvas.
      *
+     * <p>A still image decodes a {@linkplain ImageDecoderOptions#region() region} from the rows of the bitstream
+     * and of its alpha down to the last one the region needs, with a margin for the loop filter and the chroma
+     * conversion, and the limits bound those rows rather than the canvas; the data below them is not decoded, so
+     * damage there goes undetected. The picture of a region of a lossless image whose header does not hint alpha
+     * declares alpha when a pixel of the decoded rows is not opaque. An animation decodes its first frame whole and
+     * crops it.
+     *
      * @param source the file
-     * @param options the limits; the reduced-size hint is ignored
-     * @return the decoded image with its orientation, ICC profile and EXIF block
+     * @param options the limits, the region and the color conversion; the reduced-size hint is ignored
+     * @return the decoded image with its orientation, ICC profile, EXIF block and XMP packet (the
+     * first {@code ICCP}, {@code EXIF} and {@code XMP } chunks)
+     * @throws IllegalArgumentException if the region does not lie inside the image
      * @throws MediaException.Malformed if the file is invalid, corrupt or truncated
      * @throws MediaException.LimitExceeded if a declared size exceeds the limits, or decoding runs
      * out of memory
@@ -124,7 +139,17 @@ public final class WebpDecoder {
         try (var _ = ParallelBands.operation()) {
             return Guards.malformed("WebP file", () -> {
                 var limits = options.limits();
-                var layout = WebpParser.parse(source, limits);
+                var region = options.region().orElse(null);
+                // the limits of a region bound the rows it decodes, which the decoders check, not the canvas
+                var layout = WebpParser.parse(source, region == null ? limits : limits.toBuilder()
+                        .maxDimension(Math.max(limits.maxDimension(), MAX_SIDE))
+                        .maxPixels(Math.max(limits.maxPixels(), (long) MAX_SIDE * MAX_SIDE)).build());
+                var rows = Integer.MAX_VALUE;
+                if (region != null) {
+                    ImageRegions.check(region, layout.canvasWidth, layout.canvasHeight);
+                    var grown = ImageRegions.expand(region, layout.canvasWidth, layout.canvasHeight);
+                    rows = grown.y() + grown.height();
+                }
                 var in = new SourceReader(source, 16 * 1024);
                 Picture picture;
                 if (layout.animated) {
@@ -135,18 +160,25 @@ public final class WebpDecoder {
                     }
                     picture = first.picture();
                 } else if (layout.lossless) {
-                    picture = decodeLossless(in, layout, limits);
+                    picture = decodeLossless(in, layout, limits, rows);
                 } else {
                     var vp8 = FrameDecoder.read(in, layout.image, limits);
                     var alph = layout.alpha == null ? null : FrameDecoder.read(in, layout.alpha, limits);
-                    picture = FrameDecoder.decodeLossy(vp8, alph, layout.imageWidth, layout.imageHeight, limits);
+                    picture = rows == Integer.MAX_VALUE
+                            ? FrameDecoder.decodeLossy(vp8, alph, layout.imageWidth, layout.imageHeight, limits)
+                            : FrameDecoder.decodeLossyRows(vp8, alph, layout.imageWidth, layout.imageHeight, limits,
+                            rows);
                 }
                 var icc = layout.iccp == null ? null : FrameDecoder.read(in, layout.iccp, limits);
                 var exif = layout.exif == null ? null : TiffExif.stripExifPrefix(FrameDecoder.read(in, layout.exif, limits));
                 var orientation = exif == null ? Orientation.NORMAL : ExifReader.orientation(exif);
+                var xmp = layout.xmp == null ? null : FrameDecoder.read(in, layout.xmp, limits);
                 var image = new DecodedImage(picture, ImageFormat.WEBP, orientation, layout.canvasWidth,
-                        layout.canvasHeight, Optional.ofNullable(icc), Optional.ofNullable(exif));
-                return options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
+                        layout.canvasHeight, Optional.ofNullable(icc), Optional.ofNullable(exif))
+                        .withXmp(Optional.ofNullable(xmp));
+                var converted = options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
+                return region == null ? converted
+                        : ImageRegions.withPicture(converted, ImageOps.crop(converted.picture(), region));
             });
         }
     }
@@ -201,8 +233,23 @@ public final class WebpDecoder {
      * @return the RGBA picture, declaring alpha when the header hints it or a pixel is not opaque
      */
     private static RgbaPicture decodeLossless(SourceReader in, WebpParser.Layout layout, MediaLimits limits) {
+        return decodeLossless(in, layout, limits, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Decodes the top rows of a lossless still image.
+     *
+     * @param in the reader over the file
+     * @param layout the parsed structure
+     * @param limits the resource bounds
+     * @param rows the number of rows to decode, positive
+     * @return the RGBA picture of the rows, declaring alpha when the header hints it or a pixel of the rows is not
+     * opaque
+     */
+    private static RgbaPicture decodeLossless(SourceReader in, WebpParser.Layout layout, MediaLimits limits,
+                                              int rows) {
         var payload = FrameDecoder.read(in, layout.image, limits);
-        var result = Vp8lDecoder.decodeRgba(payload, 0, payload.length, limits);
+        var result = Vp8lDecoder.decodeRgba(payload, 0, payload.length, limits, rows);
         var hasAlpha = result.alphaHint() || YuvConverter.hasTransparency(result.rgba(), result.width() * 4,
                 result.width(), result.height());
         return RgbaPicture.of(result.width(), result.height(), result.width() * 4, result.rgba(), hasAlpha);

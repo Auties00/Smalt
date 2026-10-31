@@ -1,0 +1,22 @@
+# demux dump of au/g723-3.au; regenerate with -Dsmalt.test.updateDumps=true
+format AU
+duration 600000
+seekable true
+track 0 AUDIO ADPCM_G726 timebase=1/8000 duration=4800 config=none
+  audio rate=8000 bits=3 skip=0 layout=[FRONT_CENTER]
+packets 10
+0 t0 pts=0 dts=0 dur=512 flags=KEY size=192 crc=5eb67523
+1 t0 pts=512 dts=512 dur=512 flags=KEY size=192 crc=e55a3544
+2 t0 pts=1024 dts=1024 dur=512 flags=KEY size=192 crc=d02abe02
+3 t0 pts=1536 dts=1536 dur=512 flags=KEY size=192 crc=9be640c0
+4 t0 pts=2048 dts=2048 dur=512 flags=KEY size=192 crc=6a849a35
+5 t0 pts=2560 dts=2560 dur=512 flags=KEY size=192 crc=7b0c721e
+6 t0 pts=3072 dts=3072 dur=512 flags=KEY size=192 crc=7d4b33b5
+7 t0 pts=3584 dts=3584 dur=512 flags=KEY size=192 crc=1ed4d4bd
+8 t0 pts=4096 dts=4096 dur=512 flags=KEY size=192 crc=1d3b2539
+9 t0 pts=4608 dts=4608 dur=192 flags=KEY size=72 crc=fdfebade
+seek 0: t0@0
+seek 200000: t0@3
+seek 400000: t0@6
+seek 600000: end
+seek -1000000: t0@0

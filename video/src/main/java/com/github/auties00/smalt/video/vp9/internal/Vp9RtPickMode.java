@@ -290,7 +290,7 @@ final class Vp9RtPickMode {
     /**
      * The motion vector candidate list being built.
      */
-    private final int[] mvList = new int[2];
+    final int[] mvList = new int[2];
 
     /**
      * The number of candidates in {@link #mvList}.
@@ -636,7 +636,7 @@ final class Vp9RtPickMode {
                         predUvComputed[plane - 1] = true;
                     }
                 }
-                var uv = modelRdForSbUv(Vp9Constants.SS_SIZE[bsize * 4 + 3]);
+                var uv = modelRdForSbUv(enc.uvBsize(bsize));
                 rate += uv >> 40;
                 dist += uv & 0xFFFFFFFFFFL;
             }
@@ -989,7 +989,29 @@ final class Vp9RtPickMode {
      * frame's vectors
      * @return whether the shortcut found the neighbors moving alike ({@code const_motion})
      */
-    private boolean findMvRefs(int refFrame, int bsize, boolean rt) {
+    boolean findMvRefs(int refFrame, int bsize, boolean rt) {
+        return findMvRefs(refFrame, bsize, rt, -1);
+    }
+
+    /**
+     * The sub-block of a sub-8x8 neighbor whose vector a sub-block's candidate list takes, by the
+     * sub-block and whether the neighbor lies above, libvpx's {@code idx_n_column_to_subblock}.
+     */
+    private static final int[] COLUMN_TO_SUBBLOCK = {1, 2, 1, 3, 3, 2, 3, 3};
+
+    /**
+     * Finds the candidate motion vectors of a reference like {@link #findMvRefs(int, int,
+     * boolean)}, for one sub-block of a sub-8x8 block or for the whole block
+     * ({@code find_mv_refs_idx}): the two nearest neighbors of a sub-block contribute the vectors
+     * of their adjacent sub-blocks when they are smaller than 8x8.
+     *
+     * @param refFrame the reference
+     * @param bsize the block size
+     * @param rt whether to use the real-time shortcut
+     * @param block the sub-block, from 0 to 3, or {@code -1} for the whole block
+     * @return whether the shortcut found the neighbors moving alike
+     */
+    boolean findMvRefs(int refFrame, int bsize, boolean rt, int block) {
         var c = coder;
         var enc = c.enc;
         mvList[0] = 0;
@@ -1012,10 +1034,12 @@ final class Vp9RtPickMode {
                 var candidate = grid[(miRow + row) * miCols + miCol + col];
                 counter += Vp9Constants.MODE_2_COUNTER[candidate.mode];
                 differentRefFound = true;
+                var sub = block >= 0 && candidate.sbType < Vp9Constants.BLOCK_8X8
+                        ? COLUMN_TO_SUBBLOCK[block * 2 + (col == 0 ? 1 : 0)] : -1;
                 if (candidate.ref0 == refFrame) {
-                    done = add(candidate.mv0);
+                    done = add(sub >= 0 ? candidate.subMv0[sub] : candidate.mv0);
                 } else if (candidate.ref1 == refFrame) {
-                    done = add(candidate.mv1);
+                    done = add(sub >= 0 ? candidate.subMv1[sub] : candidate.mv1);
                 }
             }
         }
@@ -1058,11 +1082,11 @@ final class Vp9RtPickMode {
                     var candidate = grid[(miRow + row) * miCols + miCol + col];
                     if (candidate.isInter()) {
                         if (candidate.ref0 != refFrame) {
-                            done = add(candidate.mv0);
+                            done = add(scaleMv(candidate.mv0, candidate.ref0, refFrame));
                         }
                         if (!done && candidate.hasSecondRef() && candidate.ref1 != refFrame
                                 && candidate.mv1 != candidate.mv0) {
-                            done = add(candidate.mv1);
+                            done = add(scaleMv(candidate.mv1, candidate.ref1, refFrame));
                         }
                     }
                 }
@@ -1072,11 +1096,11 @@ final class Vp9RtPickMode {
             var prevRef0 = prevMvs[prevIndex];
             var prevRef1 = prevMvs[prevIndex + 1];
             if (prevRef0 != refFrame && prevRef0 > INTRA_FRAME) {
-                done = add(prevMvs[prevIndex + 2]);
+                done = add(scaleMv(prevMvs[prevIndex + 2], prevRef0, refFrame));
             }
             if (!done && prevRef1 > INTRA_FRAME && prevRef1 != refFrame
                     && prevMvs[prevIndex + 3] != prevMvs[prevIndex + 2]) {
-                add(prevMvs[prevIndex + 3]);
+                add(scaleMv(prevMvs[prevIndex + 3], prevRef1, refFrame));
             }
         }
         c.modeContext[refFrame] = Vp9Constants.COUNTER_TO_CONTEXT[counter];
@@ -1089,6 +1113,88 @@ final class Vp9RtPickMode {
             mvList[k] = ModeInfo.packMv(Math.clamp(mv >> 16, minRow, maxRow), Math.clamp((short) mv, minCol, maxCol));
         }
         return constMotion;
+    }
+
+    /**
+     * Finds the nearest and near vectors of one sub-block of the current sub-8x8 block from its
+     * candidate list and the vectors already chosen for the block's earlier sub-blocks
+     * ({@code vp9_append_sub8x8_mvs_for_idx}), leaving them in {@link #subNearest} and
+     * {@link #subNear}.
+     *
+     * @param refFrame the reference
+     * @param which 0 for the block's first reference, 1 for its second
+     * @param bsize the block size, smaller than 8x8
+     * @param block the sub-block, from 0 to 3
+     */
+    void appendSub8x8Mvs(int refFrame, int which, int bsize, int block) {
+        findMvRefs(refFrame, bsize, false, block);
+        var m = coder.mi;
+        var mvs = which == 0 ? m.subMv0 : m.subMv1;
+        var near = 0;
+        int nearest;
+        switch (block) {
+            case 0 -> {
+                nearest = mvList[0];
+                near = mvList[1];
+            }
+            case 1, 2 -> {
+                nearest = mvs[0];
+                for (var n = 0; n < 2; n++) {
+                    if (nearest != mvList[n]) {
+                        near = mvList[n];
+                        break;
+                    }
+                }
+            }
+            default -> {
+                nearest = mvs[2];
+                var candidates = subCandidates;
+                candidates[0] = mvs[1];
+                candidates[1] = mvs[0];
+                candidates[2] = mvList[0];
+                candidates[3] = mvList[1];
+                for (var n = 0; n < 4; n++) {
+                    if (nearest != candidates[n]) {
+                        near = candidates[n];
+                        break;
+                    }
+                }
+            }
+        }
+        subNearest = nearest;
+        subNear = near;
+    }
+
+    /**
+     * The nearest vector of the last {@link #appendSub8x8Mvs}.
+     */
+    int subNearest;
+
+    /**
+     * The near vector of the last {@link #appendSub8x8Mvs}.
+     */
+    int subNear;
+
+    /**
+     * The candidates of the last sub-block of {@link #appendSub8x8Mvs}.
+     */
+    private final int[] subCandidates = new int[4];
+
+    /**
+     * Returns a candidate vector of another reference, negated when that reference lies on the
+     * other side of the current frame in display order ({@code scale_mv}).
+     *
+     * @param mv the packed vector
+     * @param candidateRef the candidate's reference
+     * @param refFrame the reference the list is built for
+     * @return the packed vector
+     */
+    private int scaleMv(int mv, int candidateRef, int refFrame) {
+        var bias = coder.enc.signBias;
+        if (bias[candidateRef] != bias[refFrame]) {
+            return ModeInfo.packMv(-(mv >> 16), -(short) mv);
+        }
+        return mv;
     }
 
     /**
@@ -1115,7 +1221,7 @@ final class Vp9RtPickMode {
      * @param ref the reference
      * @param bsize the block size
      */
-    private void mvPred(Vp9EncPicture picture, int ref, int bsize) {
+    void mvPred(Vp9EncPicture picture, int ref, int bsize) {
         var c = coder;
         var src = c.enc.source;
         var numMvRefs = 2 + (bsize < BLOCK_64X64 ? 1 : 0);
@@ -1625,9 +1731,9 @@ final class Vp9RtPickMode {
             var skipUv0 = false;
             var skipUv1 = false;
             for (var i = 1; i <= 2; i++) {
-                var uvTx = Vp9RtCoder.uvTxSize(c.mi);
+                var uvTx = enc.uvTxSize(c.mi);
                 var unit = Vp9RtCoder.TXSIZE_TO_BSIZE[uvTx];
-                var uvBsize = Vp9Constants.SS_SIZE[bsize * 4 + 3];
+                var uvBsize = enc.uvBsize(bsize);
                 var uvBw = Vp9RtCoder.B_WIDTH_LOG2[uvBsize];
                 var uvBh = Vp9RtCoder.B_HEIGHT_LOG2[uvBsize];
                 var sfac = (uvBw - Vp9RtCoder.B_WIDTH_LOG2[unit]) + (uvBh - Vp9RtCoder.B_HEIGHT_LOG2[unit]);
@@ -1982,7 +2088,7 @@ final class Vp9RtPickMode {
             }
             var src = enc.source;
             var recon = enc.recon;
-            var uvBsize = Vp9Constants.SS_SIZE[bsize * 4 + 3];
+            var uvBsize = enc.uvBsize(bsize);
             var w = Vp9RtCoder.NUM_4X4_WIDE[uvBsize] * 4;
             var h = Vp9RtCoder.NUM_4X4_HIGH[uvBsize] * 4;
             var n = log2(w * h);

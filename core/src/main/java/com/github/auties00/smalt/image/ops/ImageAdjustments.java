@@ -14,8 +14,9 @@ import java.util.Objects;
 
 /**
  * Adjusts the tones and colors of pictures pixel by pixel: brightness, contrast, saturation,
- * gamma, levels, curves, automatic levels and contrast, grayscale, sepia, colorizing, tinting,
- * inversion and thresholding.
+ * gamma, levels, curves, automatic levels and contrast, histogram equalization, grayscale, sepia,
+ * colorizing, tinting, inversion, thresholding, posterizing, solarizing, hue rotation, vignetting
+ * and white balance.
  *
  * <p>Every method works on packed RGBA: a {@link YuvPicture} is converted with
  * {@link ImageOps#toRgba(Picture)} first and a {@link Yuv16Picture} to 16-bit RGBA with its matrix
@@ -30,9 +31,10 @@ import java.util.Objects;
  * {@code 65535} in place of {@code 255} (and 8-bit parameters scaled by 257).
  *
  * @implNote This implementation reproduces Pillow's {@code ImageEnhance} ({@code Brightness}, {@code Contrast},
- * {@code Color}) and {@code ImageOps} ({@code autocontrast}, {@code colorize}, {@code invert}) and its {@code L}
- * conversion exactly on 8-bit pictures, including their single-precision blending and truncation. Lookup tables
- * are applied by scalar code, and channel mixing runs in a kernel with identical scalar and Vector API twins.
+ * {@code Color}) and {@code ImageOps} ({@code autocontrast}, {@code colorize}, {@code equalize}, {@code invert},
+ * {@code posterize}, {@code solarize}) and its {@code L} conversion exactly on 8-bit pictures, including their
+ * single-precision blending and truncation. Lookup tables are applied by scalar code, and channel mixing runs in a
+ * kernel with identical scalar and Vector API twins.
  */
 public final class ImageAdjustments {
     /**
@@ -61,7 +63,6 @@ public final class ImageAdjustments {
      * @param factor the factor: {@code 0} gives black, {@code 1} the original; from {@code 0} to {@code 100}
      * @return the adjusted picture
      * @throws IllegalArgumentException if {@code factor} is out of range
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture brightness(Picture picture, double factor) {
@@ -85,7 +86,6 @@ public final class ImageAdjustments {
      * @param factor the factor: {@code 0} gives a uniform gray, {@code 1} the original; from {@code 0} to {@code 100}
      * @return the adjusted picture
      * @throws IllegalArgumentException if {@code factor} is out of range
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture contrast(Picture picture, double factor) {
@@ -117,7 +117,6 @@ public final class ImageAdjustments {
      * @param factor the factor: {@code 0} gives grayscale, {@code 1} the original; from {@code 0} to {@code 100}
      * @return the adjusted picture
      * @throws IllegalArgumentException if {@code factor} is out of range
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture saturation(Picture picture, double factor) {
@@ -144,7 +143,6 @@ public final class ImageAdjustments {
      * @param gamma the gamma: above 1 brightens the mid-tones, below 1 darkens them; positive and finite
      * @return the adjusted picture
      * @throws IllegalArgumentException if {@code gamma} is not positive and finite
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture gamma(Picture picture, double gamma) {
@@ -167,7 +165,6 @@ public final class ImageAdjustments {
      * @param outWhite the output level of white, {@code 0..255}; may be below {@code outBlack}, which inverts
      * @return the adjusted picture
      * @throws IllegalArgumentException if a level is out of range or the gamma is invalid
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture levels(Picture picture, int inBlack, int inWhite, double gamma, int outBlack, int outWhite) {
@@ -185,7 +182,7 @@ public final class ImageAdjustments {
         var white = outWhite / 255.0;
         return curves(picture, ToneCurve.of(x -> {
             var t = (Math.clamp(x, low, high) - low) / (high - low);
-            return black + (white - black) * Math.pow(t, exponent);
+            return black + (white - black) * StrictMath.pow(t, exponent);
         }));
     }
 
@@ -195,7 +192,6 @@ public final class ImageAdjustments {
      * @param picture the picture to adjust
      * @param curve the curve applied to red, green and blue
      * @return the adjusted picture
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture curves(Picture picture, ToneCurve curve) {
@@ -212,7 +208,6 @@ public final class ImageAdjustments {
      * @param green the curve of the green channel
      * @param blue the curve of the blue channel
      * @return the adjusted picture
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture curves(Picture picture, ToneCurve red, ToneCurve green, ToneCurve blue) {
@@ -244,7 +239,6 @@ public final class ImageAdjustments {
      * @param cutoff the percentage of samples to ignore at each end, {@code 0} to {@code 50}
      * @return the adjusted picture
      * @throws IllegalArgumentException if {@code cutoff} is out of range
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture autoLevels(Picture picture, double cutoff) {
@@ -270,7 +264,6 @@ public final class ImageAdjustments {
      * @param cutoff the percentage of pixels to ignore at each end, {@code 0} to {@code 50}
      * @return the adjusted picture
      * @throws IllegalArgumentException if {@code cutoff} is out of range
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture autoContrast(Picture picture, double cutoff) {
@@ -289,7 +282,6 @@ public final class ImageAdjustments {
      * @param picture the picture to convert
      * @param mode the weighting of the color channels
      * @return the gray picture
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture grayscale(Picture picture, GrayscaleMode mode) {
@@ -329,7 +321,6 @@ public final class ImageAdjustments {
      *
      * @param picture the picture to tone
      * @return the toned picture
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture sepia(Picture picture) {
@@ -349,7 +340,6 @@ public final class ImageAdjustments {
      * @param rgbBlack the color of black as {@code 0xRRGGBB}; the top byte is ignored
      * @param rgbWhite the color of white as {@code 0xRRGGBB}; the top byte is ignored
      * @return the colorized picture
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture colorize(Picture picture, int rgbBlack, int rgbWhite) {
@@ -391,7 +381,6 @@ public final class ImageAdjustments {
      * @param amount the strength, from {@code 0} to {@code 1}
      * @return the tinted picture
      * @throws IllegalArgumentException if {@code amount} is out of range
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture tint(Picture picture, int rgbTint, double amount) {
@@ -407,7 +396,6 @@ public final class ImageAdjustments {
      *
      * @param picture the picture to invert
      * @return the inverted picture
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture invert(Picture picture) {
@@ -432,7 +420,6 @@ public final class ImageAdjustments {
      * pixel black); scaled by 257 for 16-bit pictures
      * @return the black and white picture
      * @throws IllegalArgumentException if {@code level} is out of range
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture threshold(Picture picture, int level) {
@@ -451,6 +438,325 @@ public final class ImageAdjustments {
                 });
             });
         }
+    }
+
+    /**
+     * Equalizes the histogram of each color channel, spreading the values a picture uses over the
+     * full range.
+     *
+     * <p>Equivalent to {@link #equalize(Picture, Picture) equalize(picture, null)}: every pixel is
+     * counted.
+     *
+     * @param picture the picture to equalize
+     * @return the equalized picture
+     * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
+     */
+    public static Picture equalize(Picture picture) {
+        return equalize(picture, null);
+    }
+
+    /**
+     * Equalizes the histogram of each color channel, counting only the pixels a mask selects, and
+     * maps every pixel through the result.
+     *
+     * <p>For each channel, with {@code h} the histogram of the selected pixels, {@code c(v)} the
+     * number of selected samples below {@code v} and {@code n} the number of selected samples less
+     * the count of the largest value present, each sample {@code v} of an 8-bit picture becomes
+     * {@code min(255, (c(v) + s / 2) / s)} in integer arithmetic, with {@code s = n / 255}; this is
+     * Pillow's {@code ImageOps.equalize(image, mask)}. A 16-bit picture uses the exact step
+     * {@code n / 65535}: {@code v} becomes {@code min(65535, floor(c(v) * 65535 / n + 1 / 2))}. A
+     * channel with fewer than two values present, or whose step {@code s} is zero, is left unchanged.
+     *
+     * @param picture the picture to equalize
+     * @param mask the pixels whose histogram is equalized, the picture's size, a pixel counting where any
+     * color channel of the mask is not zero (alpha is ignored); or {@code null} to count every pixel
+     * @return the equalized picture
+     * @throws IllegalArgumentException if the mask's size differs from the picture's
+     * @throws MediaException.Unsupported if the mask is a channel picture of ink separations
+     * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
+     */
+    public static Picture equalize(Picture picture, Picture mask) {
+        try (var _ = ParallelBands.operation()) {
+            return run(picture, packed -> {
+                var selected = mask == null ? null : Tone.selection(mask, packed.width(), packed.height());
+                var histograms = Tone.histograms(packed, selected);
+                var max = Tone.max(packed);
+                return Tone.lookup(packed, equalized(histograms[0], max), equalized(histograms[1], max),
+                        equalized(histograms[2], max));
+            });
+        }
+    }
+
+    /**
+     * Reduces the number of levels of each color channel by keeping only the most significant bits
+     * of its samples, as Pillow's {@code ImageOps.posterize(image, bits)} does.
+     *
+     * <p>Each color sample {@code v} becomes {@code v & ~(2^(8 - bits) - 1)} on an 8-bit picture and
+     * {@code v & ~(2^(16 - bits) - 1)} on a 16-bit one, so a 16-bit picture keeps {@code bits} of
+     * its 16 bits.
+     *
+     * @param picture the picture to posterize
+     * @param bits the number of bits to keep, from {@code 1} to {@code 8} for an 8-bit picture and to
+     * {@code 16} for a 16-bit one
+     * @return the posterized picture
+     * @throws IllegalArgumentException if {@code bits} is out of range for the picture's depth
+     * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
+     */
+    public static Picture posterize(Picture picture, int bits) {
+        if (bits < 1 || bits > 16) {
+            throw new IllegalArgumentException("posterize bits " + bits + " is outside 1..16");
+        }
+        try (var _ = ParallelBands.operation()) {
+            return run(picture, packed -> {
+                var max = Tone.max(packed);
+                var depth = max == 255 ? 8 : 16;
+                if (bits > depth) {
+                    throw new IllegalArgumentException("posterize bits " + bits + " is outside 1.." + depth
+                            + " for a " + depth + "-bit picture");
+                }
+                var keep = ~((1 << (depth - bits)) - 1);
+                var table = new int[max + 1];
+                for (var v = 0; v <= max; v++) {
+                    table[v] = v & keep;
+                }
+                return Tone.lookup(packed, table, table, table);
+            });
+        }
+    }
+
+    /**
+     * Inverts the color samples at or above a threshold, as Pillow's
+     * {@code ImageOps.solarize(image, threshold)} does: each color sample {@code v} at least
+     * {@code threshold} becomes {@code 255 - v}.
+     *
+     * @param picture the picture to solarize
+     * @param threshold the level from which samples are inverted, in 8-bit units, {@code 0..256}
+     * ({@code 0} inverts every sample, {@code 256} none); scaled by 257 for 16-bit pictures
+     * @return the solarized picture
+     * @throws IllegalArgumentException if {@code threshold} is out of range
+     * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
+     */
+    public static Picture solarize(Picture picture, int threshold) {
+        if (threshold < 0 || threshold > 256) {
+            throw new IllegalArgumentException("solarize threshold " + threshold + " is outside 0..256");
+        }
+        try (var _ = ParallelBands.operation()) {
+            return run(picture, packed -> {
+                var max = Tone.max(packed);
+                var limit = threshold * (max / 255);
+                var table = new int[max + 1];
+                for (var v = 0; v <= max; v++) {
+                    table[v] = v < limit ? v : max - v;
+                }
+                return Tone.lookup(packed, table, table, table);
+            });
+        }
+    }
+
+    /**
+     * Rotates the hue of every pixel around the HSV color wheel, keeping its HSV saturation and
+     * value.
+     *
+     * <p>With {@code M} and {@code m} the largest and smallest color samples of a pixel and
+     * {@code d = M - m}, a gray pixel ({@code d = 0}) is unchanged. Otherwise the hue
+     * {@code h} in {@code [0, 6)} is {@code (g - b) / d} (plus 6 when negative) when red is the
+     * largest sample, {@code 2 + (b - r) / d} when green is and {@code 4 + (r - g) / d} otherwise,
+     * in double precision. The new hue {@code h' = (h + degrees / 60) mod 6} is split into its
+     * sector {@code k = floor(h')} and fraction {@code f = h' - k}; with {@code u = m + d * f} and
+     * {@code w = m + d * (1 - f)} each rounded half up, sector 0 gives {@code (M, u, m)}, 1
+     * {@code (w, M, m)}, 2 {@code (m, M, u)}, 3 {@code (m, w, M)}, 4 {@code (u, m, M)} and 5
+     * {@code (M, m, w)}. The largest and smallest samples of every pixel therefore stay exact.
+     *
+     * @param picture the picture to adjust
+     * @param degrees the rotation in degrees, any finite value: 120 turns red into green, green into blue and blue
+     * into red
+     * @return the adjusted picture
+     * @throws IllegalArgumentException if {@code degrees} is not finite
+     * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
+     */
+    public static Picture rotateHue(Picture picture, double degrees) {
+        if (!Double.isFinite(degrees)) {
+            throw new IllegalArgumentException("hue rotation " + degrees + " is not finite");
+        }
+        var turn = degrees % 360;
+        var shift = (turn < 0 ? turn + 360 : turn) / 60;
+        try (var _ = ParallelBands.operation()) {
+            return run(picture, packed -> Tone.map(packed, rgba -> rotateHue(rgba, shift)));
+        }
+    }
+
+    /**
+     * Darkens or lightens a picture toward its corners, in linear light, as a lens vignette does.
+     *
+     * <p>With {@code (x + 0.5, y + 0.5)} the center of a pixel of a {@code W} by {@code H} picture,
+     * its normalized distance from the center of the picture is
+     * {@snippet :
+     * dx = (x + 0.5 - W / 2) / (W / 2)
+     * dy = (y + 0.5 - H / 2) / (H / 2)
+     * d = sqrt((dx * dx + dy * dy) / 2)          // 0 at the center, 1 at the corners
+     * t = clamp((d - radius) / (1 - radius), 0, 1)
+     * factor = 1 - amount * t * t * (3 - 2 * t)  // smoothstep falloff
+     * }
+     * and each color sample is decoded with the sRGB transfer function, multiplied by
+     * {@code factor}, encoded back and rounded to the nearest sample, clamped. Pixels within
+     * {@code radius} of the center are unchanged.
+     *
+     * @param picture the picture to adjust
+     * @param amount the strength at the corners, from {@code -1} to {@code 1}: {@code 1} makes the corners black,
+     * a negative amount lightens them
+     * @param radius the normalized distance at which the falloff starts, from {@code 0} (inclusive) to {@code 1}
+     * (exclusive)
+     * @return the adjusted picture
+     * @throws IllegalArgumentException if {@code amount} or {@code radius} is out of range
+     * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
+     */
+    public static Picture vignette(Picture picture, double amount, double radius) {
+        if (!(amount >= -1 && amount <= 1)) {
+            throw new IllegalArgumentException("vignette amount " + amount + " is outside -1..1");
+        }
+        if (!(radius >= 0 && radius < 1)) {
+            throw new IllegalArgumentException("vignette radius " + radius + " is outside [0, 1)");
+        }
+        try (var _ = ParallelBands.operation()) {
+            return run(picture, packed -> Lighting.vignette(packed, amount, radius));
+        }
+    }
+
+    /**
+     * Corrects the white balance of a picture taken under a light of a given color temperature and
+     * tint, adapting its colors in linear light to a neutral reference light.
+     *
+     * <p>The source white is the point of the Planckian locus at {@code kelvin} in the CIE 1960
+     * {@code (u, v)} diagram (Krystek's 1985 rational approximation), moved by {@code tint} along
+     * the locus normal, positive toward green (higher {@code v}); the reference white is the same
+     * construction at 6504 K with no tint, so {@code whiteBalance(picture, 6504, 0)} returns the
+     * picture unchanged. Colors are decoded with the sRGB transfer function, converted to CIE XYZ
+     * with the sRGB (D65) matrix, adapted from the source white to the reference white with the
+     * Bradford transform, converted back, encoded and rounded to the nearest sample, clamped. A
+     * temperature below 6504 K (warm light) therefore makes the picture bluer, one above it
+     * yellower, and a positive tint makes it more magenta.
+     *
+     * @param picture the picture to correct
+     * @param kelvin the correlated color temperature of the light, from {@code 1000} to {@code 15000}
+     * @param tint the distance of the light from the Planckian locus in the {@code (u, v)} diagram (its
+     * {@code Duv}), from {@code -0.05} to {@code 0.05}
+     * @return the corrected picture
+     * @throws IllegalArgumentException if {@code kelvin} or {@code tint} is out of range
+     * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
+     */
+    public static Picture whiteBalance(Picture picture, double kelvin, double tint) {
+        if (!(kelvin >= 1000 && kelvin <= 15000)) {
+            throw new IllegalArgumentException("color temperature " + kelvin + " K is outside 1000..15000");
+        }
+        if (!(tint >= -0.05 && tint <= 0.05)) {
+            throw new IllegalArgumentException("tint " + tint + " is outside -0.05..0.05");
+        }
+        try (var _ = ParallelBands.operation()) {
+            return run(picture, packed -> Lighting.whiteBalance(packed, Lighting.adaptation(kelvin, tint)));
+        }
+    }
+
+    /**
+     * Rotates the hue of one pixel in place.
+     *
+     * @param rgba the samples of the pixel; the first three are replaced
+     * @param shift the rotation in sixths of a turn, {@code [0, 6)}
+     */
+    private static void rotateHue(int[] rgba, double shift) {
+        var r = rgba[0];
+        var g = rgba[1];
+        var b = rgba[2];
+        var high = Math.max(r, Math.max(g, b));
+        var low = Math.min(r, Math.min(g, b));
+        var d = high - low;
+        if (d == 0) {
+            return;
+        }
+        double h;
+        if (high == r) {
+            h = (double) (g - b) / d;
+            if (h < 0) {
+                h += 6;
+            }
+        } else if (high == g) {
+            h = 2 + (double) (b - r) / d;
+        } else {
+            h = 4 + (double) (r - g) / d;
+        }
+        h += shift;
+        if (h >= 6) {
+            h -= 6;
+        }
+        var sector = (int) h;
+        var f = h - sector;
+        var rising = (int) Math.floor(low + d * f + 0.5);
+        var falling = (int) Math.floor(low + d * (1 - f) + 0.5);
+        switch (sector) {
+            case 0 -> set(rgba, high, rising, low);
+            case 1 -> set(rgba, falling, high, low);
+            case 2 -> set(rgba, low, high, rising);
+            case 3 -> set(rgba, low, falling, high);
+            case 4 -> set(rgba, rising, low, high);
+            default -> set(rgba, high, low, falling);
+        }
+    }
+
+    /**
+     * Writes the color samples of a pixel.
+     *
+     * @param rgba the samples of the pixel
+     * @param r the red sample
+     * @param g the green sample
+     * @param b the blue sample
+     */
+    private static void set(int[] rgba, int r, int g, int b) {
+        rgba[0] = r;
+        rgba[1] = g;
+        rgba[2] = b;
+    }
+
+    /**
+     * Computes the lookup table of a histogram equalization.
+     *
+     * @param histogram the histogram of the selected samples, {@code max + 1} bins
+     * @param max the largest sample value, 255 or 65535
+     * @return the table
+     */
+    private static int[] equalized(long[] histogram, int max) {
+        var table = new int[max + 1];
+        long total = 0;
+        long lastCount = 0;
+        var present = 0;
+        for (var count : histogram) {
+            if (count != 0) {
+                total += count;
+                lastCount = count;
+                present++;
+            }
+        }
+        var n = total - lastCount;
+        var identity = present <= 1 || (max == 255 ? n / 255 == 0 : n == 0);
+        if (identity) {
+            for (var v = 0; v <= max; v++) {
+                table[v] = v;
+            }
+            return table;
+        }
+        long below = 0;
+        if (max == 255) {
+            var step = n / 255;
+            var offset = step / 2;
+            for (var v = 0; v <= max; v++) {
+                table[v] = (int) Math.min(max, (offset + below) / step);
+                below += histogram[v];
+            }
+        } else {
+            for (var v = 0; v <= max; v++) {
+                table[v] = (int) Math.min(max, (2 * below * max + n) / (2 * n));
+                below += histogram[v];
+            }
+        }
+        return table;
     }
 
     /**
