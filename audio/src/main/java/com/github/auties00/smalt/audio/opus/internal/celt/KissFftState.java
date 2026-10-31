@@ -64,6 +64,20 @@ public final class KissFftState {
     final float[][] stageConstants;
 
     /**
+     * Returns a configuration that owns its twiddle table.
+     *
+     * @param nfft the transform size
+     * @param scale the forward input scale
+     * @param factors the radix factorization
+     * @param bitrev the bit-reversal permutation
+     * @param twiddles the twiddle table, interleaved real, imaginary
+     * @return the configuration
+     */
+    public static KissFftState of(int nfft, float scale, short[] factors, short[] bitrev, float[] twiddles) {
+        return new KissFftState(nfft, scale, -1, factors, bitrev, twiddles);
+    }
+
+    /**
      * Creates a configuration.
      *
      * @param nfft     the transform size

@@ -112,12 +112,17 @@ Derived Smalt packages:
   audio.opus
   audio.opus.internal
   audio.opus.internal.celt
+  audio.opus.internal.dnn
   audio.opus.internal.silk
 
 Derivation: a port of the float build of libopus 1.5.2 (CELT, SILK, the
 Opus framing, multistream, projection and repacketizer layers, the
-ambisonic mixing and demixing matrices, the tonality analysis and its MLP),
-including tables copied from the C sources.
+ambisonic mixing and demixing matrices, the tonality analysis and its MLP,
+the packet extensions, and the neural extensions of dnn/: the network
+layers, the LPCNet feature analysis, the deep PLC and FARGAN vocoder, the
+DRED encoder and decoder and the LACE and NoLACE enhancers), including tables
+copied from the C sources and the model weights of the dnn/*_data.c files,
+shipped as weight blobs.
 
 Copyright:
   Copyright 2001-2023 Xiph.Org, Skype Limited, Octasic,
@@ -127,6 +132,10 @@ Copyright:
   Copyright (c) 2017 Google Inc. (src/mapping_matrix.c,
                       src/opus_projection_encoder.c,
                       src/opus_projection_decoder.c)
+  Copyright (c) 2017-2019 Mozilla (dnn/: LPCNet analysis and network code)
+  Copyright (c) 2021-2023 Amazon (dnn/: deep PLC, FARGAN, DRED, OSCE;
+                      src/extensions.c)
+  Copyright (c) 2006-2011 Skype Limited (dnn/burg.c)
 
 -------------------------------------------------------------------------------
 libopus license (COPYING)

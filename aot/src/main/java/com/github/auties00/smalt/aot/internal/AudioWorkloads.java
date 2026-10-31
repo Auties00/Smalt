@@ -36,6 +36,7 @@ import com.github.auties00.smalt.audio.opus.OpusApplication;
 import com.github.auties00.smalt.audio.opus.OpusChannelMapping;
 import com.github.auties00.smalt.audio.opus.OpusDecoder;
 import com.github.auties00.smalt.audio.opus.OpusDecoderOptions;
+import com.github.auties00.smalt.audio.opus.OpusDred;
 import com.github.auties00.smalt.audio.opus.OpusEncoder;
 import com.github.auties00.smalt.audio.opus.OpusEncoderOptions;
 import com.github.auties00.smalt.audio.opus.OpusSignal;
@@ -96,6 +97,8 @@ final class AudioWorkloads {
                 realtime("opus-rt-48000-20", () -> opusRealtime("opus-rt-48000-20", 6, 48000, 20)),
                 realtime("opus-rt-48000-10", () -> opusRealtime("opus-rt-48000-10", 6, 48000, 10)),
                 realtime("opus-rt-16000-10", () -> opusRealtime("opus-rt-16000-10", 6, 16000, 10)),
+                realtime("opus-dnn-16000", () -> opusNeural("opus-dnn-16000", 3, 16000)),
+                realtime("opus-dnn-48000", () -> opusNeural("opus-dnn-48000", 2, 48000)),
                 realtime("mp3-encode-rt", () -> mp3Encode("mp3-encode-rt", Mp3EncoderOptions.forRealtime(), 6)),
                 realtime("alac-encode-rt", () -> alacEncode("alac-encode-rt", AlacEncoderOptions.forSpeed(), 4)),
                 realtime("mp3-encode-retarget", () -> mp3Retarget(6)),
@@ -583,6 +586,52 @@ final class AudioWorkloads {
                     samples = decoder.decode(packets[i], 0, lengths[i], pcm, 0, frame);
                 }
                 Blackhole.consume(samples + Float.floatToRawIntBits(pcm[17]));
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that runs the neural extensions of Opus on real-time speech: an encoder adding Deep
+     * REDundancy, and decoders of complexity 5 (deep PLC), 6 (LACE) and 7 (NoLACE) that conceal bursts of lost
+     * packets with the deep PLC or rebuild them from the redundancy of the next packet.
+     *
+     * @param name the workload name
+     * @param seconds the speech coded per round, in seconds
+     * @param rate the sampling rate
+     * @return the workload
+     */
+    private static TrainingWorkload opusNeural(String name, double seconds, int rate) {
+        var speech = SyntheticAudio.speech(rate, seconds);
+        var frame = rate / 50;
+        var count = speech.length / frame;
+        var packets = new byte[count][1500];
+        var lengths = new int[count];
+        var pcm = new float[frame];
+        var options = OpusEncoderOptions.forRealtime().toBuilder().format(rate, 1).application(OpusApplication.VOIP)
+                .packetLossPercent(20).dredDurationMillis(500).build();
+        var encoder = new OpusEncoder(options);
+        var dred = new OpusDred();
+        int[] round = {0};
+        return TrainingWorkload.of(name, () -> {
+            for (var i = 0; i < count; i++) {
+                lengths[i] = encoder.encode(speech, i * frame, frame, packets[i], 0, packets[i].length);
+            }
+            var complexity = 5 + round[0]++ % 3;
+            var decoder = new OpusDecoder(OpusDecoderOptions.of(rate, 1).toBuilder().complexity(complexity).build());
+            for (var i = 0; i < count; i++) {
+                if (i % 11 == 4 && i + 2 < count) {
+                    var available = dred.parse(packets[i + 2], 0, lengths[i + 2], 2 * frame, rate);
+                    for (var lost = 2; lost >= 1; lost--) {
+                        Blackhole.consume(available > 0 ? decoder.recover(dred, lost * frame, pcm, 0, frame)
+                                : decoder.conceal(pcm, 0, frame));
+                    }
+                    i++;
+                } else if (i % 13 == 7) {
+                    Blackhole.consume(decoder.conceal(pcm, 0, frame));
+                } else {
+                    Blackhole.consume(decoder.decode(packets[i], 0, lengths[i], pcm, 0, frame));
+                }
+                Blackhole.consume(Float.floatToRawIntBits(pcm[17]));
             }
         });
     }

@@ -7,6 +7,9 @@ import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.audio.alac.AlacDecoder;
 import com.github.auties00.smalt.audio.alac.AlacEncoder;
 import com.github.auties00.smalt.audio.alac.AlacEncoderOptions;
+import com.github.auties00.smalt.audio.opus.OpusDecoder;
+import com.github.auties00.smalt.audio.opus.OpusDecoderOptions;
+import com.github.auties00.smalt.audio.opus.OpusDred;
 import com.github.auties00.smalt.audio.opus.OpusPackets;
 import com.github.auties00.smalt.testkit.fuzz.Fuzz;
 import com.github.auties00.smalt.testkit.fuzz.FuzzMedia;
@@ -201,6 +204,36 @@ class AudioFuzzTest {
                 throw new AssertionError("the merged frames split differently");
             }
             run.output();
+        });
+    }
+
+    @FuzzTest
+    void opusDred(byte[] data) {
+        var run = Fuzz.start("opusDred");
+        if (data.length == 0) {
+            run.skip("an Opus packet has at least its table of contents");
+            return;
+        }
+        var dred = new OpusDred();
+        run.value("parse", () -> dred.parse(data, 0, data.length, 48_000, 48_000)).ifPresent(available -> {
+            if (available < 0 || available != dred.availableSamples() || (available > 0 && dred.isEmpty())) {
+                throw new AssertionError("parse made " + available + " samples available");
+            }
+            if (dred.isEmpty()) {
+                return;
+            }
+            var decoder = new OpusDecoder(OpusDecoderOptions.builder().sampleRate(48_000).channels(1).complexity(5)
+                    .build());
+            var pcm = new float[960];
+            var offset = Math.max(960, Math.min(available, 48_000) / 120 * 120);
+            run.value("recover", () -> decoder.recover(dred, offset, pcm, 0, 960)).ifPresent(samples -> {
+                for (var sample : pcm) {
+                    if (!Float.isFinite(sample)) {
+                        throw new AssertionError("non-finite DRED output");
+                    }
+                }
+                run.output();
+            });
         });
     }
 }

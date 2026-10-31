@@ -721,6 +721,19 @@ in-band FEC: `python -I tools/testdata/opus-oracle/traces.py <conformance cache>
 SHA-256), compiles `ofdown.c`, which muxes libopus packets into Ogg with libogg and decodes them with
 opusfile's `op_read_float_stereo`, and prints the goldens of `OpusDownmixTest`.
 
+The neural extensions of libopus 1.5 (deep PLC, DRED, OSCE) have their own build: `build.py` compiles libopus a second
+time with `ENABLE_DEEP_PLC`, `ENABLE_DRED` and `ENABLE_OSCE` and the sources of `lpcnet_sources.mk`, its `dnn/` files
+without the x86 SIMD macros so that `vec.h` selects the generic C code Smalt ports, and links it with `dnn.c` and
+`dnnunit.c`. `dnn.c enc` encodes with a DRED duration (the controls of `msenc.c` plus the DRED frames) and `dnn.c dec`
+decodes at a complexity while dropping packets by `msdec.c`'s rule, concealing them, rebuilding the last one from
+in-band FEC, or rebuilding them from the DRED of the next packet as `opus_demo` does (`opus_dred_parse`,
+`opus_decoder_dred_decode`); `python -I tools/testdata/opus-oracle/dnn_goldens.py
+<conformance cache>/opus_testvectors-rfc8251 <dir> <dir>/dnn` prints the goldens of `OpusDnnGoldenTest` (traces below
+complexity 5 come from `msdec.c`, the build without the extensions). `dnnunit.c` runs each neural block (the
+activations, the LPCNet features, the Burg cepstrum, FARGAN, the deep PLC, the RDOVAE decoder, LACE and NoLACE) on
+deterministic inputs and writes `dnnunit <file>`, the self-generated `dnn-units.bin` of `OpusDnnUnitTest`
+(`audio/src/test/resources/.../opus/internal/dnn`, pinned by its `.sha256` file there).
+
 ## Vorbis oracle
 
 `VorbisEncoderTest` and `VorbisBitrateManagementTest` compare the SHA-256 of the Vorbis encoder's

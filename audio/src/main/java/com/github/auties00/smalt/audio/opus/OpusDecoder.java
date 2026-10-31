@@ -73,11 +73,18 @@ import java.util.function.Consumer;
  * instead; each stream of a multistream packet is rebuilt or concealed on its own. The 16-bit methods
  * soft-clip every stream before rounding.
  *
+ * <p>At a {@linkplain OpusDecoderOptions#complexity() complexity} of 5 or more the decoder conceals lost speech
+ * with the deep PLC of libopus 1.5, rebuilds lost packets from the Deep REDundancy of a later one with
+ * {@link #recover(OpusDred, int, float[], int, int)}, and at 6 and 7 or more enhances wideband SILK speech with
+ * LACE and NoLACE.
+ *
  * <p>The decoder runs natively at the {@linkplain OpusDecoderOptions#sampleRate() output rate},
  * which need not match the rate the stream was encoded at. Decoded samples are bit-identical to
  * those of the float build of libopus 1.5.2 without SIMD ({@code opus_decode}, {@code opus_multistream_decode}
  * and {@code opus_projection_decode} with their float variants), reordered to {@link #layout()}, for every
- * span of at most 120 ms. Instances are not thread-safe.
+ * span of at most 120 ms: below complexity 5, to the build without the neural extensions; from 5 on, to the build
+ * with {@code --enable-dred --enable-osce} whose neural networks run the generic C code ({@code vec.h} without
+ * SSE, AVX or NEON). Instances are not thread-safe.
  *
  * @implNote This implementation decodes natively at the requested output rate rather than
  * resampling a 48 kHz decode: at 8, 12 or 16 kHz the SILK layer skips its upsampler and CELT
@@ -261,6 +268,9 @@ public final class OpusDecoder implements AudioDecoder {
         }
         if (head.outputGain() != 0) {
             decoder.setGain(head.outputGain());
+        }
+        for (var s = 0; s < decoder.streamCount(); s++) {
+            decoder.stream(s).setComplexity(options.complexity());
         }
         var max = decoder.maxFrameSize();
         this.channels = target;
@@ -806,6 +816,107 @@ public final class OpusDecoder implements AudioDecoder {
     }
 
     /**
+     * Rebuilds a lost span into interleaved 16-bit samples from the Deep REDundancy of a later packet,
+     * soft-clipped into range.
+     *
+     * <p>The call produces exactly {@code frameSize} samples per channel, as
+     * {@link #recover(OpusDred, int, float[], int, int)} does, then rounds them to 16 bits.
+     *
+     * @param dred the redundancy, parsed at this decoder's output rate
+     * @param offset the start of the lost span, in samples before the start of the packet that carried
+     * {@code dred}
+     * @param pcm receives the interleaved samples; it must hold {@code frameSize} samples per channel from
+     * {@code pcmOffset}
+     * @param pcmOffset the index of the first output sample
+     * @param frameSize the number of samples per channel to produce, a multiple of 2.5 ms
+     * @return {@code frameSize}
+     * @throws IllegalArgumentException if {@code frameSize} is not a positive multiple of 2.5 ms, or {@code dred}
+     * was parsed at another rate
+     * @throws IllegalStateException if the decoder was closed, its complexity is below 5, or it decodes more than
+     * one stream
+     * @throws IndexOutOfBoundsException if the output span lies outside {@code pcm}
+     */
+    public int recover(OpusDred dred, int offset, short[] pcm, int pcmOffset, int frameSize) {
+        Objects.requireNonNull(pcm, "pcm");
+        var out = dredBuffer(frameSize);
+        Objects.checkFromIndexSize(pcmOffset, frameSize * channels, pcm.length);
+        var result = recover(dred, offset, out, 0, frameSize);
+        for (var i = 0; i < result * channels; i++) {
+            pcm[pcmOffset + i] = MathOps.float2int16(out[i]);
+        }
+        return result;
+    }
+
+    /**
+     * Rebuilds a lost span into interleaved float samples from the Deep REDundancy of a later packet, without
+     * clipping.
+     *
+     * <p>The deep PLC conceals the span, taking the features of each 10 ms from the redundancy where it covers
+     * them and predicting the rest, so the span may start before or end after the covered part. {@code offset}
+     * counts back from the start of the packet that carried the redundancy: to rebuild the packets lost just
+     * before it, call this method for each lost packet in playback order, with the offset of its first sample.
+     * The decoder's history moves on as if the span had been decoded. An empty {@code dred} conceals the span with
+     * the deep PLC alone. Samples are bit-identical to those of {@code opus_decoder_dred_decode_float} of
+     * libopus 1.5.2 built with DRED.
+     *
+     * @param dred the redundancy, parsed at this decoder's output rate
+     * @param offset the start of the lost span, in samples before the start of the packet that carried
+     * {@code dred}
+     * @param pcm receives the interleaved samples; it must hold {@code frameSize} samples per channel from
+     * {@code pcmOffset}
+     * @param pcmOffset the index of the first output sample
+     * @param frameSize the number of samples per channel to produce, a multiple of 2.5 ms
+     * @return {@code frameSize}
+     * @throws IllegalArgumentException if {@code frameSize} is not a positive multiple of 2.5 ms, or {@code dred}
+     * was parsed at another rate
+     * @throws IllegalStateException if the decoder was closed, its complexity is below 5, or it decodes more than
+     * one stream
+     * @throws IndexOutOfBoundsException if the output span lies outside {@code pcm}
+     */
+    public int recover(OpusDred dred, int offset, float[] pcm, int pcmOffset, int frameSize) {
+        Objects.requireNonNull(dred, "dred");
+        Objects.requireNonNull(pcm, "pcm");
+        checkOpen();
+        if (stream == null) {
+            throw new IllegalStateException("DRED recovery needs a decoder of a single stream without mixing");
+        }
+        if (!stream.deepPlc()) {
+            throw new IllegalStateException("DRED recovery needs a decoder complexity of at least 5");
+        }
+        if (!dred.isEmpty() && dred.sampleRate() != sampleRate) {
+            throw new IllegalArgumentException("DRED parsed at " + dred.sampleRate() + " Hz, decoder runs at "
+                    + sampleRate + " Hz");
+        }
+        checkSpan(null, 0, 0, pcm.length, pcmOffset, frameSize);
+        int result;
+        try {
+            result = stream.decodeDred(dred.internal(), offset, pcm, pcmOffset, frameSize);
+        } catch (RuntimeException exception) {
+            throw new MediaException.Malformed("corrupt Opus DRED", exception);
+        }
+        return decoded(result, frameSize);
+    }
+
+    /**
+     * Returns the float buffer of a 16-bit DRED recovery, grown to hold {@code frameSize} samples per channel.
+     */
+    private float[] dredBuffer(int frameSize) {
+        if (frameSize <= 0 || frameSize > Integer.MAX_VALUE / channels) {
+            throw new IllegalArgumentException("invalid DRED span: " + frameSize);
+        }
+        var need = frameSize * channels;
+        if (dredFloats == null || dredFloats.length < need) {
+            dredFloats = new float[need];
+        }
+        return dredFloats;
+    }
+
+    /**
+     * The float output of a 16-bit DRED recovery, or {@code null} before the first.
+     */
+    private float[] dredFloats;
+
+    /**
      * Checks the packet span of a call that needs a packet.
      *
      * @throws IllegalArgumentException if {@code length} is zero
@@ -952,10 +1063,12 @@ public final class OpusDecoder implements AudioDecoder {
     }
 
     /**
-     * Resets the decoding state to that of a new decoder, keeping the gain.
+     * Resets the decoding state to that of a new decoder, keeping the gain and the complexity.
      *
      * <p>Concealment after a reset produces silence until a packet is decoded. Pre-skip samples
-     * already discarded are not discarded again.
+     * already discarded are not discarded again. From complexity 5 on, the recurrent state of the deep PLC's
+     * vocoder survives the reset, as it does in libopus ({@code OPUS_RESET_STATE}), so the first concealment
+     * after a reset may differ slightly from that of a new decoder.
      */
     public void reset() {
         decoder.reset();

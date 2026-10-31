@@ -9,6 +9,8 @@ import com.github.auties00.smalt.audio.opus.internal.celt.MathOps;
 import com.github.auties00.smalt.audio.opus.internal.celt.Pitch;
 import com.github.auties00.smalt.audio.opus.internal.celt.RangeEncoder;
 import com.github.auties00.smalt.audio.opus.internal.celt.SilkInfo;
+import com.github.auties00.smalt.audio.opus.internal.dnn.Dred;
+import com.github.auties00.smalt.audio.opus.internal.dnn.DredEncoder;
 import com.github.auties00.smalt.audio.opus.internal.silk.Define;
 import com.github.auties00.smalt.audio.opus.internal.silk.LinLog;
 import com.github.auties00.smalt.audio.opus.internal.silk.SigProcFix;
@@ -27,8 +29,13 @@ import static com.github.auties00.smalt.audio.opus.internal.OpusDefines.*;
  * <p>Input is interleaved float PCM nominally in {@code [-1, 1]} at 8, 12, 16, 24 or 48 kHz with
  * one or two channels; each call encodes one frame of 2.5 to 120 ms into one packet.
  *
- * @implNote This implementation omits the DRED, OSCE-training and fixed-point code and holds the stack buffers of the
- * reference. As in the float build, the tonality analysis runs for complexity 7 and above.
+ * <p>With a DRED duration ({@link #setDredDuration}), the first non-DTX frame of every packet carries the Deep
+ * REDundancy extension, and part of the bitrate goes to it, as libopus 1.5.2 built with DRED does; without one the
+ * packets equal those of the build without DRED.
+ *
+ * @implNote This implementation omits the OSCE-training and fixed-point code and holds the stack buffers of the
+ * reference. As in the float build, the tonality analysis runs for complexity 7 and above. {@link #reset()} keeps the
+ * DRED duration, which {@code OPUS_RESET_STATE} of libopus 1.5.2 clears with the rest of the state.
  */
 public final class OpusStreamEncoder {
     /**
@@ -408,6 +415,58 @@ public final class OpusStreamEncoder {
     private final Repacketizer rp = new Repacketizer();
 
     /**
+     * The DRED duration in 10 ms frames, 0 when DRED is off ({@code dred_duration}).
+     */
+    private int dred_duration;
+
+    /**
+     * The quantizer of the newest DRED latent ({@code dred_q0}).
+     */
+    private int dred_q0;
+
+    /**
+     * The DRED quantizer step index ({@code dred_dQ}).
+     */
+    private int dred_dQ;
+
+    /**
+     * The largest DRED quantizer ({@code dred_qmax}).
+     */
+    private int dred_qmax;
+
+    /**
+     * The number of DRED latent pairs the bitrate affords ({@code dred_target_chunks}).
+     */
+    private int dred_target_chunks;
+
+    /**
+     * The voice activity of the last 2.5 ms units, newest first ({@code activity_mem}).
+     */
+    private final byte[] activity_mem = new byte[DredEncoder.MAX_FRAMES * 4];
+
+    /**
+     * The DRED encoder, or {@code null} until a DRED duration is first set.
+     */
+    private DredEncoder dred_encoder;
+
+    /**
+     * The activity that {@code dred_encode_silk_frame} reads: {@link #activity_mem} followed by the bytes of
+     * {@code nonfinal_frame} and {@code rangeFinal}, which libopus reads past the end of {@code activity_mem} when
+     * no latent is active.
+     */
+    private final byte[] dredActivity = new byte[DredEncoder.MAX_FRAMES * 4 + 8];
+
+    /**
+     * The DRED extension payload of a frame, its marker included.
+     */
+    private final byte[] dredBuffer = new byte[DredEncoder.MAX_DATA_SIZE];
+
+    /**
+     * The bitrate of DRED in the packet being encoded, in bits per second.
+     */
+    private int dred_bitrate_bps;
+
+    /**
      * The repacketizer padding constant-bitrate packets, apart from {@link #rp}, which may hold the
      * frames of a multi-frame packet while one of them is padded.
      */
@@ -660,6 +719,31 @@ public final class OpusStreamEncoder {
     }
 
     /**
+     * Sets how much speech the Deep REDundancy of each packet covers ({@code OPUS_SET_DRED_DURATION}); the first
+     * non-zero value loads the DRED encoder's networks.
+     *
+     * @param value the duration in 10 ms frames, 0 (off) to {@value DredEncoder#MAX_FRAMES}
+     * @throws IllegalArgumentException if the value is out of range
+     * @throws IllegalStateException if a neural model cannot be loaded
+     */
+    public void setDredDuration(int value) {
+        if (value < 0 || value > DredEncoder.MAX_FRAMES) {
+            throw new IllegalArgumentException("invalid DRED duration " + value);
+        }
+        if (value > 0 && dred_encoder == null) {
+            dred_encoder = new DredEncoder(Fs, channels);
+        }
+        dred_duration = value;
+    }
+
+    /**
+     * {@return the DRED duration in 10 ms frames ({@code OPUS_GET_DRED_DURATION})}
+     */
+    public int dredDuration() {
+        return dred_duration;
+    }
+
+    /**
      * Sets the effective bit depth of the input ({@code OPUS_SET_LSB_DEPTH}).
      *
      * @param value the depth, 8 to 24
@@ -807,7 +891,95 @@ public final class OpusStreamEncoder {
         celt_enc.resetState();
         silk_enc.initEncoder(new SilkEncControl());
         variable_HP_smth2_Q15 = LinLog.lin2log(TuningParameters.VARIABLE_HP_MIN_CUTOFF_HZ) << 8;
+        dred_q0 = dred_dQ = dred_qmax = dred_target_chunks = 0;
+        java.util.Arrays.fill(activity_mem, (byte) 0);
+        if (dred_encoder != null) {
+            dred_encoder.reset();
+        }
     }
+
+    /**
+     * The approximate cost in bits of a DRED latent pair at each quantizer ({@code dred_bits_table}).
+     */
+    private static final float[] DRED_BITS_TABLE = {73.2f, 68.1f, 62.5f, 57.0f, 51.5f, 45.7f, 39.9f, 32.4f, 26.4f,
+        20.4f, 16.3f, 13.f, 9.3f, 8.2f, 7.2f, 6.4f};
+
+    /**
+     * Estimates the size of the DRED of a packet and the number of latent pairs within a budget
+     * ({@code estimate_dred_bitrate}).
+     *
+     * @param targetBits the budget in bits
+     * @param targetChunks receives at index 0 the number of latent pairs within the budget
+     * @return the estimated size in bits
+     */
+    private static int estimateDredBitrate(int q0, int dQ, int qmax, int duration, int targetBits,
+                                           int[] targetChunks) {
+        float bits = 8 * (3 + Dred.EXPERIMENTAL_BYTES);
+        bits += 50.f + DRED_BITS_TABLE[q0];
+        var dredChunks = Math.min((duration + 5) / 4, Dred.MAX_LATENTS);
+        targetChunks[0] = 0;
+        for (var i = 0; i < dredChunks; i++) {
+            var q = Dred.quantizer(q0, dQ, qmax, i);
+            bits += DRED_BITS_TABLE[q];
+            if (bits < targetBits) {
+                targetChunks[0] = i + 1;
+            }
+        }
+        return (int) StrictMath.floor(.5f + bits);
+    }
+
+    /**
+     * Returns the share of the bitrate DRED takes and chooses its quantizers ({@code compute_dred_bitrate}).
+     *
+     * @param bitrate the packet bitrate in bits per second
+     * @param frameSize the packet duration in samples
+     * @return the DRED bitrate in bits per second
+     */
+    private int computeDredBitrate(int bitrate, int frameSize) {
+        float dredFrac;
+        int bitrateOffset;
+        var loss = silk_mode.packetLossPercentage;
+        if (silk_mode.useInBandFEC != 0) {
+            dredFrac = MathOps.min(.7f, 3.f * loss / 100.f);
+            bitrateOffset = 20000;
+        } else {
+            if (loss > 5) {
+                dredFrac = MathOps.min(.8f, .55f + loss / 100.f);
+            } else {
+                dredFrac = 12 * loss / 100.f;
+            }
+            bitrateOffset = 12000;
+        }
+        dredFrac = dredFrac / (dredFrac + (1 - dredFrac) * (frameSize * 50.f) / Fs);
+        var room = Math.max(1, bitrate - bitrateOffset);
+        var q0 = Math.min(15, Math.max(4, 51 - 3 * (32 - Integer.numberOfLeadingZeros(room))));
+        var dQ = bitrate - bitrateOffset > 36000 ? 3 : 5;
+        var qmax = 15;
+        var targetDredBitrate = Math.max(0, (int) (dredFrac * (bitrate - bitrateOffset)));
+        int maxDredBits;
+        var targetChunks = dredChunks;
+        if (dred_duration > 0) {
+            var targetBits = targetDredBitrate * frameSize / Fs;
+            maxDredBits = estimateDredBitrate(q0, dQ, qmax, dred_duration, targetBits, targetChunks);
+        } else {
+            maxDredBits = 0;
+            targetChunks[0] = 0;
+        }
+        var dredBitrate = Math.min(targetDredBitrate, maxDredBits * Fs / frameSize);
+        if (targetChunks[0] < 2) {
+            dredBitrate = 0;
+        }
+        dred_q0 = q0;
+        dred_dQ = dQ;
+        dred_qmax = qmax;
+        dred_target_chunks = targetChunks[0];
+        return dredBitrate;
+    }
+
+    /**
+     * Receives the number of affordable DRED latent pairs.
+     */
+    private final int[] dredChunks = new int[1];
 
     /**
      * Builds the table-of-contents byte of a packet ({@code gen_toc}).
@@ -1495,6 +1667,8 @@ public final class OpusStreamEncoder {
             bitrate_bps = cbr_bytes * frame_rate12 * 8 / 12;
             max_data_bytes = Math.max(1, cbr_bytes);
         }
+        dred_bitrate_bps = computeDredBitrate(bitrate_bps, frame_size);
+        bitrate_bps -= dred_bitrate_bps;
         if (max_data_bytes < 3 || bitrate_bps < 3 * frame_rate * 8
                 || (frame_rate < 50 && (max_data_bytes * frame_rate < 300 || bitrate_bps < 2400))) {
             var tocmode = mode;
@@ -1778,19 +1952,26 @@ public final class OpusStreamEncoder {
             var tot_size = 0;
             var dtx_count = 0;
             for (var i = 0; i < nb_frames; i++) {
+                // Attempt DRED encoding until a frame is not DTX, so that a DTX refresh may carry it later.
+                var first_frame = i == 0 || i == dtx_count;
                 silk_mode.toMono = 0;
                 nonfinal_frame = i < nb_frames - 1;
                 var frame_to_celt = to_celt != 0 && i == nb_frames - 1 ? 1 : 0;
                 var frame_redundancy = redundancy != 0 && (frame_to_celt != 0 || (to_celt == 0 && i == 0)) ? 1 : 0;
                 var curr_max = Math.min(3 * bitrate_bps / (3 * 8 * Fs / enc_frame_size), max_len_sum / nb_frames);
+                var dred_bytes = 3 * dred_bitrate_bps / (3 * 8 * Fs / frame_size);
+                curr_max = Math.min(curr_max, (max_len_sum - dred_bytes) / nb_frames);
+                if (first_frame) {
+                    curr_max += dred_bytes;
+                }
                 curr_max = Math.min(max_len_sum - tot_size, curr_max);
                 if (analysis_read_pos_bak != -1) {
                     is_silence = isDigitalSilence(pcm, pcmOff, frame_size, channels, lsb_depth);
                     analysis.tonalityGetInfo(analysis_info, enc_frame_size);
                 }
                 var tmp_len = encodeFrameNative(pcm, pcmOff + i * (channels * enc_frame_size), enc_frame_size,
-                        tmp_data, curr_data, curr_max, is_silence, frame_redundancy, celt_to_silk, prefill,
-                        equiv_rate, frame_to_celt);
+                        tmp_data, curr_data, curr_max, first_frame, is_silence, frame_redundancy, celt_to_silk,
+                        prefill, equiv_rate, frame_to_celt);
                 if (tmp_len < 0) {
                     return OPUS_INTERNAL_ERROR;
                 } else if (tmp_len == 1) {
@@ -1810,7 +1991,7 @@ public final class OpusStreamEncoder {
             silk_mode.toMono = bak_to_mono;
             return ret;
         } else {
-            return encodeFrameNative(pcm, pcmOff, frame_size, data, dataOff, max_data_bytes, is_silence,
+            return encodeFrameNative(pcm, pcmOff, frame_size, data, dataOff, max_data_bytes, true, is_silence,
                     redundancy, celt_to_silk, prefill, equiv_rate, to_celt);
         }
     }
@@ -1871,8 +2052,8 @@ public final class OpusStreamEncoder {
      * @return the packet length, or a negative error code
      */
     private int encodeFrameNative(float[] pcm, int pcmOff, int frame_size, byte[] data, int dataOff, int max_data_bytes,
-                                  boolean is_silence, int redundancy, int celt_to_silk, int prefill, int equiv_rate,
-                                  int to_celt) {
+                                  boolean first_frame, boolean is_silence, int redundancy, int celt_to_silk,
+                                  int prefill, int equiv_rate, int to_celt) {
         var ret = 0;
         int bytes_target;
         var start_band = 0;
@@ -1947,6 +2128,19 @@ public final class OpusStreamEncoder {
                 hp_mem[0] = hp_mem[1] = hp_mem[2] = hp_mem[3] = 0;
             }
         }
+        if (dred_duration > 0) {
+            dred_encoder.computeLatents(pcm_buf, total_buffer * channels, frame_size, total_buffer);
+            var frame_size_400Hz = frame_size * 400 / Fs;
+            System.arraycopy(activity_mem, 0, activity_mem, frame_size_400Hz, activity_mem.length - frame_size_400Hz);
+            for (var i = 0; i < frame_size_400Hz; i++) {
+                activity_mem[i] = (byte) activity;
+            }
+        } else {
+            if (dred_encoder != null) {
+                dred_encoder.clearLatents();
+            }
+            java.util.Arrays.fill(activity_mem, 0, DredEncoder.MAX_FRAMES, (byte) 0);
+        }
         HB_gain = 1.0f;
         if (mode != MODE_CELT_ONLY) {
             int total_bitRate;
@@ -2004,7 +2198,7 @@ public final class OpusStreamEncoder {
                 }
             }
             if (silk_mode.useCBR != 0) {
-                if (mode == MODE_HYBRID) {
+                if (mode == MODE_HYBRID || dred_bitrate_bps > 0) {
                     var other_bits = (short) Math.max(0, silk_mode.maxBits - silk_mode.bitRate * frame_size / Fs);
                     silk_mode.maxBits = Math.max(0, silk_mode.maxBits - other_bits * 3 / 4);
                     silk_mode.useCBR = 0;
@@ -2147,6 +2341,14 @@ public final class OpusStreamEncoder {
             nb_compr_bytes = ret;
         } else {
             nb_compr_bytes = (max_data_bytes - 1) - redundancy_bytes;
+            if (dred_duration > 0) {
+                var dred_bytes = dred_bitrate_bps / (frame_rate * 8);
+                // CELT may take up to 25% of the bits left, and gets at least 5 bytes against a mismatch with
+                // the redundancy signaling.
+                var max_celt_bytes = nb_compr_bytes - dred_bytes * 3 / 4;
+                max_celt_bytes = Math.max((enc.tell() + 7) / 8 + 5, max_celt_bytes);
+                nb_compr_bytes = Math.min(nb_compr_bytes, max_celt_bytes);
+            }
             enc.encShrink(nb_compr_bytes);
         }
         if (redundancy != 0 || mode != MODE_SILK_ONLY) {
@@ -2252,6 +2454,37 @@ public final class OpusStreamEncoder {
         }
         ret += 1 + redundancy_bytes;
         apply_padding = use_vbr == 0;
+        if (dred_duration > 0 && first_frame) {
+            var dred_chunks = Math.min((dred_duration + 5) / 4, Dred.MAX_LATENTS);
+            if (use_vbr != 0) {
+                dred_chunks = Math.min(dred_chunks, dred_target_chunks);
+            }
+            // The extension costs up to 3 bytes: code 3, padding length and extension header.
+            var dred_bytes_left = Math.min(DredEncoder.MAX_DATA_SIZE, max_data_bytes - ret - 3);
+            dred_bytes_left -= (dred_bytes_left + 1 + Dred.EXPERIMENTAL_BYTES) / 255;
+            if (dred_chunks >= 1 && dred_bytes_left >= DredEncoder.MIN_BYTES + Dred.EXPERIMENTAL_BYTES) {
+                dredBuffer[0] = 'D';
+                dredBuffer[1] = Dred.EXPERIMENTAL_VERSION;
+                System.arraycopy(activity_mem, 0, dredActivity, 0, activity_mem.length);
+                var tail = activity_mem.length;
+                dredActivity[tail] = (byte) (nonfinal_frame ? 1 : 0);
+                dredActivity[tail + 1] = dredActivity[tail + 2] = dredActivity[tail + 3] = 0;
+                for (var b = 0; b < 4; b++) {
+                    dredActivity[tail + 4 + b] = (byte) (rangeFinal >>> (8 * b));
+                }
+                var dred_bytes = dred_encoder.encode(dredBuffer, Dred.EXPERIMENTAL_BYTES, dred_chunks,
+                        dred_bytes_left - Dred.EXPERIMENTAL_BYTES, dred_q0, dred_dQ, dred_qmax, dredActivity);
+                if (dred_bytes > 0) {
+                    dred_bytes += Dred.EXPERIMENTAL_BYTES;
+                    ret = padder.padWith(data, dataOff, ret, max_data_bytes, use_vbr == 0, dredBuffer,
+                            Dred.EXTENSION_ID, dred_bytes);
+                    if (ret < 0) {
+                        return OPUS_INTERNAL_ERROR;
+                    }
+                    apply_padding = false;
+                }
+            }
+        }
         if (apply_padding) {
             if (padder.pad(data, dataOff, ret, max_data_bytes) != OPUS_OK) {
                 return OPUS_INTERNAL_ERROR;

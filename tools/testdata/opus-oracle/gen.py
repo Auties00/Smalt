@@ -72,6 +72,18 @@ def build(name):
         return take(vector(7), 1, 2, 10)
     if name == "speech16k":
         return take(vector(3), 3, 1, 10)
+    if name == "speech8k":
+        return take(vector(3), 6, 1, 10)
+    if name == "speech12k":
+        return take(vector(3), 4, 1, 10)
+    if name == "speech24k":
+        return take(vector(3), 2, 1, 10)
+    if name == "speech48k":
+        return take(vector(3), 1, 1, 10)
+    if name == "speech16k_stereo":
+        return take(vector(3), 3, 2, 10)
+    if name == "music48k_mono":
+        return take(vector(7), 1, 1, 10)
     if name.startswith("quiet"):
         # quiet<channels>_<seconds>: the surround input 48 dB down (floor division by 256)
         parts = name[len("quiet"):].split("_")

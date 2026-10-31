@@ -6,6 +6,7 @@ import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.opus.internal.OpusDefines;
 import com.github.auties00.smalt.audio.opus.internal.OpusMultistreamEncoder;
 import com.github.auties00.smalt.audio.opus.internal.OpusStreamEncoder;
+import com.github.auties00.smalt.internal.check.Checks;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -190,6 +191,9 @@ public final class OpusEncoder implements AudioEncoder {
      * Constructs an encoder.
      *
      * @param options the settings
+     * @throws IllegalArgumentException if the options ask for DRED with a channel mapping that codes more than one
+     * stream
+     * @throws IllegalStateException if the DRED encoder's neural model cannot be loaded
      */
     public OpusEncoder(OpusEncoderOptions options) {
         this.options = Objects.requireNonNull(options, "options");
@@ -231,6 +235,13 @@ public final class OpusEncoder implements AudioEncoder {
         }
         if (options.dtx()) {
             setDtx(true);
+        }
+        if (options.dredDurationMillis() > 0) {
+            if (encoder == null) {
+                throw new IllegalArgumentException("DRED needs a single-stream encoder, not channel mapping family "
+                        + family);
+            }
+            encoder.setDredDuration(options.dredDurationMillis() / 10);
         }
         this.frameSize = options.frameSize();
         this.delay = encoder != null ? encoder.lookahead() : multistream.lookahead();
@@ -787,6 +798,37 @@ public final class OpusEncoder implements AudioEncoder {
         } else {
             multistream.setPacketLossPerc(percent);
         }
+    }
+
+    /**
+     * Sets how much speech the Deep REDundancy of each packet covers, from the next packet on; see
+     * {@link OpusEncoderOptions#dredDurationMillis()}.
+     *
+     * @param millis the duration in milliseconds, a multiple of 10 from 0 (off) to 1040
+     * @throws IllegalArgumentException if the value is out of range, or is positive for an encoder of more than one
+     * stream
+     * @throws IllegalStateException if the DRED encoder's neural model cannot be loaded
+     */
+    public void setDredDurationMillis(int millis) {
+        Checks.inRange("DRED duration", millis, 0, 1040);
+        if (millis % 10 != 0) {
+            throw new IllegalArgumentException("DRED duration " + millis + " ms is not a multiple of 10 ms");
+        }
+        if (encoder == null) {
+            if (millis > 0) {
+                throw new IllegalArgumentException("DRED needs a single-stream encoder");
+            }
+            return;
+        }
+        encoder.setDredDuration(millis / 10);
+    }
+
+    /**
+     * {@return the duration of speech the Deep REDundancy of each packet covers, in milliseconds; 0 when DRED is
+     * off}
+     */
+    public int dredDurationMillis() {
+        return encoder != null ? encoder.dredDuration() * 10 : 0;
     }
 
     /**

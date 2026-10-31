@@ -76,6 +76,8 @@ public final class OpusEncoderOptions {
 
     private final boolean dtx;
 
+    private final int dredDurationMillis;
+
     private OpusEncoderOptions(Builder builder, ChannelLayout layout) {
         this.sampleRate = builder.sampleRate;
         this.layout = layout;
@@ -90,6 +92,7 @@ public final class OpusEncoderOptions {
         this.inbandFec = builder.inbandFec;
         this.packetLossPercent = builder.packetLossPercent;
         this.dtx = builder.dtx;
+        this.dredDurationMillis = builder.dredDurationMillis;
     }
 
     /**
@@ -371,6 +374,22 @@ public final class OpusEncoderOptions {
         return dtx;
     }
 
+    /**
+     * {@return how much speech before each packet its Deep REDundancy (DRED) covers, in milliseconds from 0 to
+     * 1040 in steps of 10; 0, no DRED, by default}
+     *
+     * <p>DRED adds to the first non-DTX frame of each packet a padding extension that describes up to this much of
+     * the preceding speech with a neural codec at a very low bitrate, so that a receiver that lost packets can
+     * rebuild them from a later one ({@link OpusDred}, {@link OpusDecoder#recover(OpusDred, int, float[], int,
+     * int)}). The bits come out of the packet's budget, more as the {@linkplain #packetLossPercent() expected loss}
+     * rises: with VBR and no expected loss no DRED is sent, and with in-band FEC DRED takes a smaller share. Only a
+     * mono or stereo encoder of a single stream codes it; the DRED encoder's networks load when the encoder is
+     * created and cost processing time on every frame.
+     */
+    public int dredDurationMillis() {
+        return dredDurationMillis;
+    }
+
     @Override
     public boolean equals(Object object) {
         return object instanceof OpusEncoderOptions that
@@ -386,13 +405,14 @@ public final class OpusEncoderOptions {
                 && maxBandwidth == that.maxBandwidth
                 && inbandFec == that.inbandFec
                 && packetLossPercent == that.packetLossPercent
-                && dtx == that.dtx;
+                && dtx == that.dtx
+                && dredDurationMillis == that.dredDurationMillis;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(sampleRate, layout, channelMapping, application, bitrate, bitrateMode, complexity, frameDurationMicros,
-                signal, maxBandwidth, inbandFec, packetLossPercent, dtx);
+                signal, maxBandwidth, inbandFec, packetLossPercent, dtx, dredDurationMillis);
     }
 
     @Override
@@ -409,7 +429,8 @@ public final class OpusEncoderOptions {
                 + ", maxBandwidth=" + maxBandwidth
                 + ", inbandFec=" + inbandFec
                 + ", packetLossPercent=" + packetLossPercent
-                + ", dtx=" + dtx + "]";
+                + ", dtx=" + dtx
+                + ", dredDurationMillis=" + dredDurationMillis + "]";
     }
 
     /**
@@ -460,6 +481,8 @@ public final class OpusEncoderOptions {
 
         private boolean dtx;
 
+        private int dredDurationMillis;
+
         private Builder() {
             this.sampleRate = 48_000;
             this.layout = ChannelLayout.STEREO;
@@ -485,6 +508,7 @@ public final class OpusEncoderOptions {
             this.inbandFec = options.inbandFec;
             this.packetLossPercent = options.packetLossPercent;
             this.dtx = options.dtx;
+            this.dredDurationMillis = options.dredDurationMillis;
         }
 
         /**
@@ -664,6 +688,28 @@ public final class OpusEncoderOptions {
         }
 
         /**
+         * Sets how much speech the Deep REDundancy of each packet covers; see
+         * {@link OpusEncoderOptions#dredDurationMillis()}.
+         *
+         * @param dredDurationMillis the value
+         * @return this builder
+         */
+        public Builder dredDurationMillis(int dredDurationMillis) {
+            this.dredDurationMillis = dredDurationMillis;
+            return this;
+        }
+
+        /**
+         * Turns Deep REDundancy off; see {@link OpusEncoderOptions#dredDurationMillis()}.
+         *
+         * @return this builder
+         */
+        public Builder noDred() {
+            this.dredDurationMillis = 0;
+            return this;
+        }
+
+        /**
          * Returns the options holding the settings of this builder.
          *
          * @return the options
@@ -676,7 +722,8 @@ public final class OpusEncoderOptions {
          * two, the {@link OpusChannelMapping#AMBISONIC_PROJECTION} mapping is set for a channel count
          * that is not the square of an order from 1 to 5, optionally plus two, an explicit bitrate is
          * outside 500 to {@code 300000} per channel, the complexity is outside 0 to 10, the packet
-         * duration is not an Opus packet duration or the expected loss is outside 0 to 100
+         * duration is not an Opus packet duration, the expected loss is outside 0 to 100, or the DRED duration is
+         * not a multiple of 10 from 0 to 1040 or is set for more than two channels
          */
         public OpusEncoderOptions build() {
             OpusDecoderOptions.checkSampleRate("sample rate", sampleRate);
@@ -716,6 +763,14 @@ public final class OpusEncoderOptions {
                         + " us is not one of 2500, 5000, 10000, 20000, 40000, 60000, 80000, 100000, 120000");
             }
             Checks.inRange("packet loss percent", packetLossPercent, 0, 100);
+            Checks.inRange("DRED duration", dredDurationMillis, 0, 1040);
+            if (dredDurationMillis % 10 != 0) {
+                throw new IllegalArgumentException("DRED duration " + dredDurationMillis
+                        + " ms is not a multiple of 10 ms");
+            }
+            if (dredDurationMillis > 0 && count > 2) {
+                throw new IllegalArgumentException("DRED needs a mono or stereo encoder, not " + count + " channels");
+            }
             return new OpusEncoderOptions(this, resolved);
         }
     }

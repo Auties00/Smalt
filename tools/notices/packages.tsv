@@ -30,6 +30,7 @@ audio.mp3	audio
 audio.opus	audio
 audio.opus.internal	audio
 audio.opus.internal.celt	audio
+audio.opus.internal.dnn	audio
 audio.opus.internal.silk	audio
 audio.pcm	core
 audio.process	core
