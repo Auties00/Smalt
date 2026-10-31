@@ -1,0 +1,25 @@
+# demux dump of matroska/atrac9.mka; regenerate with -Dsmalt.test.updateDumps=true
+format MATROSKA
+duration 256000
+seekable true
+track 1 AUDIO ATRAC9 timebase=1/24000 duration=6144 config=4:ec3c281a
+  audio rate=24000 bits=0 skip=128 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 12
+0 t1 pts=0 dts=0 dur=? flags=KEY size=640 crc=45a8f111
+1 t1 pts=504 dts=504 dur=? flags=KEY size=640 crc=3795b4a2
+2 t1 pts=1032 dts=1032 dur=? flags=KEY size=640 crc=36608fdf
+3 t1 pts=1536 dts=1536 dur=? flags=KEY size=640 crc=eb6b97c5
+4 t1 pts=2040 dts=2040 dur=? flags=KEY size=640 crc=469dfef3
+5 t1 pts=2568 dts=2568 dur=? flags=KEY size=640 crc=43287e78
+6 t1 pts=3072 dts=3072 dur=? flags=KEY size=640 crc=d5cbad40
+7 t1 pts=3576 dts=3576 dur=? flags=KEY size=640 crc=e1cd3834
+8 t1 pts=4104 dts=4104 dur=? flags=KEY size=640 crc=f6b9ae02
+9 t1 pts=4608 dts=4608 dur=? flags=KEY size=640 crc=1812e401
+10 t1 pts=5112 dts=5112 dur=? flags=KEY size=640 crc=79631e18
+11 t1 pts=5640 dts=5640 dur=? flags=KEY size=640 crc=7b1e805f
+seek 0: t1@0
+seek 85333: t1@4
+seek 170666: t1@7
+seek 257000: end
+seek 256000: t1@11
+seek -1000000: t1@0

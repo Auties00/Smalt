@@ -5,6 +5,9 @@ package com.github.auties00.smalt.audio.opus.internal;
 import com.github.auties00.smalt.audio.opus.internal.celt.CeltDecoder;
 import com.github.auties00.smalt.audio.opus.internal.celt.MathOps;
 import com.github.auties00.smalt.audio.opus.internal.celt.RangeDecoder;
+import com.github.auties00.smalt.audio.opus.internal.dnn.Dred;
+import com.github.auties00.smalt.audio.opus.internal.dnn.LpcnetPlc;
+import com.github.auties00.smalt.audio.opus.internal.dnn.Osce;
 import com.github.auties00.smalt.audio.opus.internal.silk.SilkDecControl;
 import com.github.auties00.smalt.audio.opus.internal.silk.SilkDecoder;
 
@@ -18,9 +21,13 @@ import static com.github.auties00.smalt.audio.opus.internal.OpusDefines.*;
  * produces interleaved float samples nominally in {@code [-1, 1]}. It never throws on packet
  * content: an invalid packet yields a negative {@code OPUS_*} error code.
  *
- * @implNote This implementation omits the deep PLC, DRED and OSCE extensions and allocates the stack buffers of
- * {@code opus_decode_frame} once per decoder; the single level of recursion {@code opus_decode_frame} performs for mode
- * transitions never uses a buffer its caller holds.
+ * <p>A complexity of at least 5 ({@link #setComplexity}) puts the decoder in deep PLC mode for good: from then on it
+ * behaves as libopus 1.5.2 built with {@code --enable-dred --enable-osce}, concealing with the deep PLC, decoding
+ * DRED ({@link #decodeDred}) and, at complexity 6 and 7 or more, enhancing 16 kHz SILK speech with LACE and NoLACE.
+ * Below it the decoder behaves as the build without them.
+ *
+ * @implNote This implementation allocates the stack buffers of {@code opus_decode_frame} once per decoder; the single
+ * level of recursion {@code opus_decode_frame} performs for mode transitions never uses a buffer its caller holds.
  */
 public final class OpusStreamDecoder {
     /**
@@ -124,6 +131,16 @@ public final class OpusStreamDecoder {
     private final int[] silk_frame_size = new int[1];
 
     /**
+     * The decoder complexity, from 0 to 10.
+     */
+    private int complexity;
+
+    /**
+     * The deep PLC, or {@code null} until the decoder enters deep PLC mode.
+     */
+    private LpcnetPlc lpcnet;
+
+    /**
      * Creates a decoder ({@code opus_decoder_init}).
      *
      * @param Fs       the output sampling rate: 8000, 12000, 16000, 24000 or 48000
@@ -213,6 +230,40 @@ public final class OpusStreamDecoder {
     }
 
     /**
+     * Sets the decoder complexity ({@code OPUS_SET_COMPLEXITY}); a value of at least 5 puts the decoder in deep
+     * PLC mode for the rest of its life.
+     *
+     * @param value the complexity, from 0 to 10: 5 enables the deep PLC, 6 the LACE enhancer and 7 or more NoLACE
+     * @throws IllegalArgumentException if the value is out of range
+     * @throws IllegalStateException if a neural model cannot be loaded
+     */
+    public void setComplexity(int value) {
+        if (value < 0 || value > 10) {
+            throw new IllegalArgumentException("complexity out of range: " + value);
+        }
+        complexity = value;
+        if (value >= 5 && lpcnet == null) {
+            lpcnet = new LpcnetPlc();
+            silk_dec.enableDnn();
+        }
+        celt_dec.setDeepPlc(lpcnet != null, value);
+    }
+
+    /**
+     * {@return the decoder complexity ({@code OPUS_GET_COMPLEXITY})}
+     */
+    public int complexity() {
+        return complexity;
+    }
+
+    /**
+     * {@return whether the decoder is in deep PLC mode}
+     */
+    public boolean deepPlc() {
+        return lpcnet != null;
+    }
+
+    /**
      * Resets the decoder to its freshly created state, keeping the configuration
      * ({@code OPUS_RESET_STATE}).
      */
@@ -229,6 +280,9 @@ public final class OpusStreamDecoder {
         rangeFinal = 0;
         celt_dec.resetState();
         silk_dec.resetDecoder();
+        if (lpcnet != null) {
+            lpcnet.reset();
+        }
     }
 
     /**
@@ -358,12 +412,16 @@ public final class OpusStreamDecoder {
                     DecControl.internalSampleRate = 16000;
                 }
             }
+            DecControl.enable_deep_plc = complexity >= 5;
+            DecControl.osce_method = complexity >= 7 ? Osce.METHOD_NOLACE
+                    : complexity >= 6 ? Osce.METHOD_LACE : Osce.METHOD_NONE;
             var lost_flag = data == null ? 1 : 2 * (decodeFec ? 1 : 0);
             var decoded_samples = 0;
             var pcmPtr = 0;
             do {
                 var first_frame = decoded_samples == 0 ? 1 : 0;
-                silk_ret = silk_dec.decode(DecControl, lost_flag, first_frame, dec, pcm_silk, pcmPtr, silk_frame_size);
+                silk_ret = silk_dec.decode(DecControl, lost_flag, first_frame, dec, pcm_silk, pcmPtr, silk_frame_size,
+                        lpcnet);
                 if (silk_ret != 0) {
                     if (lost_flag != 0) {
                         silk_frame_size[0] = frameSize;
@@ -430,7 +488,8 @@ public final class OpusStreamDecoder {
             if (mode != prev_mode && prev_mode > 0 && !prev_redundancy) {
                 celt_dec.resetState();
             }
-            celt_ret = celt_dec.decodeWithEc(decodeFec ? null : data, dataOff, len, pcm, pcmOff, celt_frame_size, dec, 0);
+            celt_ret = celt_dec.decodeWithEc(decodeFec ? null : data, dataOff, len, pcm, pcmOff, celt_frame_size, dec, 0,
+                    lpcnet);
         } else {
             for (var i = 0; i < frameSize * channels; i++) {
                 pcm[pcmOff + i] = 0;
@@ -516,8 +575,39 @@ public final class OpusStreamDecoder {
      */
     public int decodeNative(byte[] data, int dataOff, int len, float[] pcm, int pcmOff, int frameSize,
                             boolean decodeFec, boolean selfDelimited, int[] packetOffset, boolean softClip) {
+        return decodeNative(data, dataOff, len, pcm, pcmOff, frameSize, decodeFec, selfDelimited, packetOffset,
+                softClip, null, 0);
+    }
+
+    /**
+     * Decodes one packet, or conceals {@code frameSize} samples when {@code len} is zero, optionally from DRED
+     * features ({@code opus_decode_native}).
+     *
+     * @param data          the buffer holding the packet, or {@code null} to conceal
+     * @param dataOff       the index of the table-of-contents byte
+     * @param len           the packet length, or {@code 0} to conceal
+     * @param pcm           receives the interleaved samples
+     * @param pcmOff        the index of the first output sample
+     * @param frameSize     the number of samples per channel available in {@code pcm}; when
+     *                      concealing, the number to produce, a multiple of 2.5 ms
+     * @param decodeFec     whether to decode the in-band FEC data instead of the packet
+     * @param selfDelimited whether the packet uses self-delimited framing
+     * @param packetOffset  receives the number of bytes the packet occupies at index 0, or
+     *                      {@code null}
+     * @param softClip      whether to soft-clip the output
+     * @param dred          processed redundancy to conceal from, or {@code null}; requires deep PLC mode
+     * @param dredOffset    the position of the concealed span before the packet that carried {@code dred}, in
+     *                      samples
+     * @return the number of samples per channel produced, or a negative error code
+     */
+    public int decodeNative(byte[] data, int dataOff, int len, float[] pcm, int pcmOff, int frameSize,
+                            boolean decodeFec, boolean selfDelimited, int[] packetOffset, boolean softClip,
+                            Dred dred, int dredOffset) {
         if ((decodeFec || len == 0 || data == null) && frameSize % (Fs / 400) != 0) {
             return OPUS_BAD_ARG;
+        }
+        if (dred != null && dred.isProcessed() && lpcnet != null) {
+            dred.queueFeatures(lpcnet, dredOffset, frameSize, Fs);
         }
         if (len == 0 || data == null) {
             var pcm_count = 0;
@@ -641,6 +731,23 @@ public final class OpusStreamDecoder {
             }
         }
         return ret;
+    }
+
+    /**
+     * Conceals {@code frameSize} samples from DRED features ({@code opus_decoder_dred_decode_float}).
+     *
+     * @param dred the processed redundancy of a later packet
+     * @param dredOffset the position of the concealed span before that packet, in samples
+     * @param pcm receives the interleaved samples
+     * @param pcmOff the index of the first output sample
+     * @param frameSize the number of samples per channel, a multiple of 2.5 ms
+     * @return the number of samples per channel produced, or a negative error code
+     */
+    public int decodeDred(Dred dred, int dredOffset, float[] pcm, int pcmOff, int frameSize) {
+        if (frameSize <= 0) {
+            return OPUS_BAD_ARG;
+        }
+        return decodeNative(null, 0, 0, pcm, pcmOff, frameSize, false, false, null, false, dred, dredOffset);
     }
 
     /**

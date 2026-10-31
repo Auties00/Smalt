@@ -434,8 +434,19 @@ final class X11 {
      * @return the display, or {@link MemorySegment#NULL} when the connection fails
      */
     MemorySegment openDisplay() {
-        try {
-            return (MemorySegment) openDisplay.invokeExact(MemorySegment.NULL);
+        return openDisplay(null);
+    }
+
+    /**
+     * Connects to a named display.
+     *
+     * @param name the display name, such as {@code :1}, or {@code null} for the one {@code DISPLAY} names
+     * @return the display, or {@link MemorySegment#NULL} when the connection fails
+     */
+    MemorySegment openDisplay(String name) {
+        try (var arena = Arena.ofConfined()) {
+            var argument = name == null ? MemorySegment.NULL : arena.allocateFrom(name);
+            return (MemorySegment) openDisplay.invokeExact(argument);
         } catch (Throwable throwable) {
             throw Native.rethrow(throwable);
         }

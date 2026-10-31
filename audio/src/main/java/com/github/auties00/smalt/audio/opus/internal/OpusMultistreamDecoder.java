@@ -268,22 +268,29 @@ public final class OpusMultistreamDecoder {
     }
 
     /**
-     * Decodes one multistream packet, or conceals {@code frameSize} samples when {@code len} is
-     * zero, into planar output ({@code opus_multistream_decode_native} with a float channel
-     * copier).
+     * Decodes one multistream packet, conceals {@code frameSize} samples when {@code len} is zero,
+     * or rebuilds {@code frameSize} samples from the forward error correction data of the packet
+     * that follows a lost one, into planar output ({@code opus_multistream_decode_native} with a
+     * float channel copier).
      *
+     * @implNote This implementation conceals the whole span when it rebuilds from a packet longer
+     * than {@code frameSize}, where libopus 1.5.2 fails with {@link OpusDefines#OPUS_BUFFER_TOO_SMALL},
+     * so that it behaves as a single stream does.
      * @param data      the buffer holding the packet
      * @param off       the index of the first byte
      * @param len       the packet length, or {@code 0} to conceal
      * @param out       the output planes, indexed by {@code route}
      * @param outOff    the index of the first output sample in every plane
      * @param route     maps each output channel of the stream layout to a plane of {@code out}
-     * @param frameSize the number of samples per channel available; when concealing, the number
-     *                  to produce, a multiple of 2.5 ms
+     * @param frameSize the number of samples per channel available; when concealing or rebuilding,
+     *                  the number to produce, a multiple of 2.5 ms; limited to 120 ms
+     * @param decodeFec whether to rebuild the previous packet from the in-band copy each stream of
+     *                  this packet carries, instead of decoding it
      * @param softClip  whether to soft-clip the output of each stream
      * @return the number of samples per channel produced, or a negative error code
      */
-    public int decode(byte[] data, int off, int len, float[][] out, int outOff, int[] route, int frameSize, boolean softClip) {
+    public int decode(byte[] data, int off, int len, float[][] out, int outOff, int[] route, int frameSize,
+                      boolean decodeFec, boolean softClip) {
         if (frameSize <= 0) {
             return OPUS_BAD_ARG;
         }
@@ -300,7 +307,10 @@ public final class OpusMultistreamDecoder {
             if (ret < 0) {
                 return ret;
             } else if (ret > frameSize) {
-                return OPUS_BUFFER_TOO_SMALL;
+                if (!decodeFec) {
+                    return OPUS_BUFFER_TOO_SMALL;
+                }
+                do_plc = true;
             }
         }
         for (var s = 0; s < nb_streams; s++) {
@@ -309,8 +319,8 @@ public final class OpusMultistreamDecoder {
                 return OPUS_INTERNAL_ERROR;
             }
             packetOffset[0] = 0;
-            var ret = dec.decodeNative(do_plc ? null : data, off, len, buf, 0, frameSize, false,
-                    s != nb_streams - 1, packetOffset, softClip);
+            var ret = dec.decodeNative(do_plc ? null : data, off, do_plc ? 0 : len, buf, 0, frameSize,
+                    decodeFec && !do_plc, s != nb_streams - 1, packetOffset, softClip);
             if (!do_plc) {
                 off += packetOffset[0];
                 len -= packetOffset[0];

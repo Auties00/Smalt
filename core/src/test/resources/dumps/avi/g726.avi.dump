@@ -1,0 +1,15 @@
+# demux dump of avi/g726.avi; regenerate with -Dsmalt.test.updateDumps=true
+format AVI
+duration 600000
+seekable true
+metadata ISFT="Lavf61.7.100"
+track 1 AUDIO ADPCM_G726 timebase=1/8000 duration=5472 config=none
+  audio rate=8000 bits=3 skip=0 layout=[FRONT_CENTER]
+packets 2
+0 t1 pts=0 dts=0 dur=2736 flags=KEY size=1026 crc=d27fbe93
+1 t1 pts=2736 dts=2736 dur=2064 flags=KEY size=774 crc=bab9bb01
+seek 0: t1@0
+seek 200000: t1@0
+seek 400000: t1@1
+seek 600000: end
+seek -1000000: t1@0

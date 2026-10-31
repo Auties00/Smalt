@@ -1,0 +1,21 @@
+# demux dump of ape/ape.ape; regenerate with -Dsmalt.test.updateDumps=true
+format APE
+duration 600000
+seekable true
+track 0 AUDIO APE timebase=1/44100 duration=26460 config=76:362fcfa7
+  audio rate=44100 bits=16 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 1
+0 t0 pts=0 dts=0 dur=26460 flags=KEY size=16724 crc=086d0a7e
+seek 0: t0@0
+seek 200000: t0@0
+seek 400000: t0@0
+seek 600000: end
+seek -1000000: t0@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format APE
+  duration 600000
+  seekable false
+  track 0 AUDIO APE timebase=1/44100 duration=26460 config=76:362fcfa7
+    audio rate=44100 bits=16 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH

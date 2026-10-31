@@ -78,6 +78,11 @@ public final class PlcState {
     public int subfr_length;
 
     /**
+     * Whether the deep PLC conceals lost frames on its own.
+     */
+    public boolean enable_deep_plc;
+
+    /**
      * Creates a zeroed state.
      */
     public PlcState() {
@@ -100,5 +105,6 @@ public final class PlcState {
         fs_kHz = 0;
         nb_subfr = 0;
         subfr_length = 0;
+        enable_deep_plc = false;
     }
 }

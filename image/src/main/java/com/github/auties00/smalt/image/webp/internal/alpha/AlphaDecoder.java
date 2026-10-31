@@ -51,6 +51,27 @@ public final class AlphaDecoder {
      * @throws MediaException.LimitExceeded if the plane exceeds {@code limits}
      */
     public static byte[] decode(byte[] data, int offset, int length, int width, int height, MediaLimits limits) {
+        return decode(data, offset, length, width, height, limits, height);
+    }
+
+    /**
+     * Decodes the top rows of an {@code ALPH} payload, as {@link #decode(byte[], int, int, int, int, MediaLimits)}
+     * decodes all of them; the coded data below the rows is not decoded.
+     *
+     * @param data   the array holding the payload
+     * @param offset the index of the header byte
+     * @param length the payload size in bytes
+     * @param width  the image width
+     * @param height the image height
+     * @param limits the resource bounds
+     * @param rows   the number of rows to decode, from 1 to {@code height}
+     * @return the alpha plane of {@code width * rows} bytes
+     * @throws MediaException.Malformed     if the header is invalid or the data is corrupt or
+     *                                      truncated
+     * @throws MediaException.LimitExceeded if the plane exceeds {@code limits}
+     */
+    public static byte[] decode(byte[] data, int offset, int length, int width, int height, MediaLimits limits,
+                                int rows) {
         if (length <= 1) {
             throw new MediaException.Malformed("ALPH chunk of " + length + " bytes has no data");
         }
@@ -63,19 +84,20 @@ public final class AlphaDecoder {
             throw new MediaException.Malformed("invalid ALPH header 0x" + Integer.toHexString(header));
         }
         var size = (long) width * height;
-        LimitChecks.checkAllocation(limits, size);
-        var plane = new byte[(int) size];
+        var shown = Math.min(rows, height);
+        LimitChecks.checkAllocation(limits, (long) width * shown);
+        var plane = new byte[width * shown];
         if (method == METHOD_RAW) {
             if (length - 1 < size) {
                 throw new MediaException.Malformed("raw ALPH data of " + (length - 1) + " bytes is shorter than " + size);
             }
             var src = offset + 1;
-            for (var y = 0; y < height; y++) {
+            for (var y = 0; y < shown; y++) {
                 var line = y * width;
                 AlphaFilters.unfilter(filter, y == 0 ? null : plane, line - width, data, src + line, plane, line, width);
             }
         } else {
-            Vp8lDecoder.decodeAlpha(data, offset + 1, length - 1, width, height, filter, plane, limits);
+            Vp8lDecoder.decodeAlpha(data, offset + 1, length - 1, width, height, filter, plane, limits, shown);
         }
         return plane;
     }
