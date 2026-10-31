@@ -40,6 +40,10 @@ final class RiffCodecs {
             case "VP90" -> Codec.VP9;
             case "AV01" -> Codec.AV1;
             case "FFV1" -> Codec.FFV1;
+            case "MPNG", "PNG1", "PNG " -> Codec.PNG;
+            case "TIFF" -> Codec.TIFF;
+            case "CFHD" -> Codec.CFHD;
+            case "HAP1", "HAP5", "HAPY", "HAPM", "HAPA", "HAP7", "HAPH" -> Codec.HAP;
             case "WMV3", "WVC1", "WMVA" -> Codec.VC1;
             case "MPG1", "PIM1", "MPEG" -> Codec.MPEG1_VIDEO;
             case "MPG2", "PIM2", "MMES", "LMP2", "SLIF", "HDV1", "HDV2", "HDV3", "MX3N", "MX3P", "MX4N", "MX4P",
@@ -68,6 +72,9 @@ final class RiffCodecs {
             case VP8 -> "VP80";
             case VP9 -> "VP90";
             case FFV1 -> "FFV1";
+            case PNG -> "MPNG";
+            case CFHD -> "CFHD";
+            case HAP -> "Hap1";
             case MPEG1_VIDEO -> "mpg1";
             case MPEG2_VIDEO -> "mpg2";
             case DV -> "dvsd";

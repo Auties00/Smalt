@@ -26,6 +26,7 @@ import com.github.auties00.smalt.internal.cenc.CencScheme;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
+import com.github.auties00.smalt.internal.codec.IntermediateFrames;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.header.OpusHeader;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
@@ -851,12 +852,14 @@ final class MatroskaTrackEntry {
             if (codec == Codec.VP8 || codec == Codec.VP9) {
                 config = null;
             } else if (codecId.equals("V_QUICKTIME")) {
-                config = codec == Codec.PRORES ? Arrays.copyOfRange(codecPrivate, 4, 8)
+                config = codec == Codec.PRORES || codec == Codec.HAP ? Arrays.copyOfRange(codecPrivate, 4, 8)
                         : codec == Codec.DNXHD ? dnxhdConfig(codecPrivate)
+                        : codec == Codec.QTRLE ? qtrleConfig(codecPrivate)
                         : codec == Codec.VVC ? vvcFromImageDescription() : null;
             } else if (codecId.equals("V_MS/VFW/FOURCC")) {
-                config = codec == Codec.DNXHD ? Arrays.copyOfRange(codecPrivate, 16, 20)
-                        : codec == Codec.DV ? null : codecPrivate != null && codecPrivate.length > 40 ? Arrays.copyOfRange(codecPrivate, 40, codecPrivate.length) : null;
+                config = codec == Codec.DNXHD || codec == Codec.HAP ? hapOrDnxhdFourCc(codec, codecPrivate)
+                        : codec == Codec.DV || codec == Codec.PNG || codec == Codec.TIFF || codec == Codec.CFHD ? null
+                        : codecPrivate != null && codecPrivate.length > 40 ? Arrays.copyOfRange(codecPrivate, 40, codecPrivate.length) : null;
             }
             if (codec == Codec.VVC && config != null) {
                 config = NalRecords.withoutVvcBoxHeader(config);
@@ -1101,6 +1104,10 @@ final class MatroskaTrackEntry {
             case "WMV3", "WVC1", "WMVA" -> Codec.VC1;
             case "AVDN", "AVDH" -> Codec.DNXHD;
             case "FFV1" -> Codec.FFV1;
+            case "MPNG", "PNG1", "PNG " -> Codec.PNG;
+            case "TIFF" -> Codec.TIFF;
+            case "CFHD" -> Codec.CFHD;
+            case "HAP1", "HAP5", "HAPY", "HAPM", "HAPA", "HAP7", "HAPH" -> Codec.HAP;
             default -> Codec.UNKNOWN_VIDEO;
         };
     }
@@ -1121,8 +1128,55 @@ final class MatroskaTrackEntry {
     }
 
     /**
+     * Returns the configuration of a DNxHD or HAP track from a {@code BITMAPINFOHEADER} codec private: its
+     * compression FourCC, with the case of the HAP sample entry types for HAP.
+     *
+     * @param codec {@link Codec#DNXHD} or {@link Codec#HAP}
+     * @param header the codec private, at least 40 bytes
+     * @return the configuration
+     */
+    private static byte[] hapOrDnxhdFourCc(Codec codec, byte[] header) {
+        var fourCc = Arrays.copyOfRange(header, 16, 20);
+        if (codec == Codec.HAP) {
+            fourCc[0] = 'H';
+            fourCc[1] = 'a';
+            fourCc[2] = 'p';
+            if (fourCc[3] >= 'a' && fourCc[3] <= 'z') {
+                fourCc[3] = (byte) (fourCc[3] - 'a' + 'A');
+            }
+        }
+        return fourCc;
+    }
+
+    /**
+     * Returns the configuration of a QuickTime Animation track from a QuickTime image description codec private:
+     * its depth and, when the color table identifier is 0, the color table after the 86 fixed bytes.
+     *
+     * @param description the image description, at least 8 bytes
+     * @return the configuration
+     */
+    private static byte[] qtrleConfig(byte[] description) {
+        if (description.length < 86) {
+            return IntermediateFrames.qtrleConfig(24, null);
+        }
+        var depth = (description[82] & 0xFF) << 8 | description[83] & 0xFF;
+        var tableId = (short) ((description[84] & 0xFF) << 8 | description[85] & 0xFF);
+        var indexed = depth == 1 || depth == 2 || depth == 4 || depth == 8;
+        byte[] table = null;
+        if (tableId == 0 && indexed && description.length >= 94) {
+            var entries = ((description[92] & 0xFF) << 8 | description[93] & 0xFF) + 1;
+            var end = 94 + 8L * entries;
+            if (entries <= 256 && end <= description.length) {
+                table = Arrays.copyOfRange(description, 86, (int) end);
+            }
+        }
+        return IntermediateFrames.qtrleConfig(depth, table);
+    }
+
+    /**
      * Maps the sample entry type of a QuickTime image description codec private
-     * ({@code V_QUICKTIME}): ProRes, DNxHD and Motion JPEG 2000.
+     * ({@code V_QUICKTIME}): ProRes, DNxHD, Motion JPEG 2000, PNG, TIFF, GIF, QuickTime Animation, CineForm and
+     * HAP.
      *
      * @return the codec
      */
@@ -1139,6 +1193,12 @@ final class MatroskaTrackEntry {
             case "AVdn", "AVdh" -> Codec.DNXHD;
             case "mjp2" -> Codec.JPEG2000;
             case "vvc1", "vvi1" -> Codec.VVC;
+            case "png " -> Codec.PNG;
+            case "tiff" -> Codec.TIFF;
+            case "gif " -> Codec.GIF;
+            case "rle " -> Codec.QTRLE;
+            case "CFHD" -> Codec.CFHD;
+            case "Hap1", "Hap5", "HapY", "HapM", "HapA", "Hap7", "HapH" -> Codec.HAP;
             default -> Codec.UNKNOWN_VIDEO;
         };
     }

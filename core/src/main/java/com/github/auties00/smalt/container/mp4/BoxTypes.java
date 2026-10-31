@@ -996,6 +996,31 @@ final class BoxTypes {
     static final int GLBL = 0x676C626C;
 
     /**
+     * The QuickTime PNG sample entry ({@code png }).
+     */
+    static final int PNG = 0x706E6720;
+
+    /**
+     * The QuickTime TIFF sample entry ({@code tiff}).
+     */
+    static final int TIFF = 0x74696666;
+
+    /**
+     * The QuickTime GIF sample entry ({@code gif }).
+     */
+    static final int GIF = 0x67696620;
+
+    /**
+     * The QuickTime Animation sample entry ({@code rle }).
+     */
+    static final int RLE = 0x726C6520;
+
+    /**
+     * The GoPro CineForm sample entry ({@code CFHD}).
+     */
+    static final int CFHD = 0x43464844;
+
+    /**
      * The Avid DNxHD sample entry ({@code AVdn}).
      */
     static final int AVDN = 0x4156646E;

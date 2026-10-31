@@ -27,6 +27,7 @@ Contents
   19. libaom
   20. libavif
   62. libtheora
+  68. cineform-sdk (GoPro CineForm)
 
 
 ===============================================================================
@@ -810,3 +811,52 @@ DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
 THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+===============================================================================
+68. cineform-sdk (GoPro CineForm)
+===============================================================================
+
+Project:      cineform-sdk, GoPro's CineForm encoder and decoder SDK (master)
+Home:         https://github.com/gopro/cineform-sdk
+Source:       https://github.com/gopro/cineform-sdk/archive/refs/heads/master.zip
+License text: LICENSE-MIT at the root of the distribution
+License:      Apache License 2.0 or MIT, at the licensee's option; Smalt uses it
+              under the MIT license
+
+Derived Smalt packages:
+  video.cfhd (CfhdDecoder)
+  video.cfhd.internal (CfhdBands, CfhdCodebooks, CfhdWavelets)
+
+Derivation: C code translated to Java and tables copied: the sample layout
+and reconstruction of Codec/decoder.c, the inverse wavelets of
+Codec/spatial.c, Codec/InvertHorizontalStrip16s.c and Codec/temporal.c, the
+run-length decoding and companding of Codec/vlc.c and Codec/codebooks.c, and
+the codebooks of Common/table9.inc, table17.inc and table18.inc.
+
+Copyright:
+  (C) Copyright 2017 GoPro Inc (http://gopro.com/).
+
+-------------------------------------------------------------------------------
+MIT License (LICENSE-MIT)
+-------------------------------------------------------------------------------
+
+Copyright 2017 GoPro, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a 
+copy of this software and associated documentation files (the "Software"), 
+to deal in the Software without restriction, including without limitation 
+the rights to use, copy, modify, merge, publish, distribute, sublicense, 
+and/or sell copies of the Software, and to permit persons to whom the 
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included 
+in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS 
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL 
+THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING 
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER 
+DEALINGS IN THE SOFTWARE.

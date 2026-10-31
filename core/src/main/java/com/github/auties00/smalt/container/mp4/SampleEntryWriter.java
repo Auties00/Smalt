@@ -15,6 +15,7 @@ import com.github.auties00.smalt.internal.codec.AmrConfigs;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
+import com.github.auties00.smalt.internal.codec.IntermediateFrames;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.codec.MpegVideoHeaders;
 import com.github.auties00.smalt.internal.codec.VideoConfigs;
@@ -157,6 +158,7 @@ final class SampleEntryWriter {
             case JPEG2000 -> writeMotionJpeg2000(writer, track, (VideoTrack) described, config);
             case PRORES, DNXHD -> writeQuickTimeVisual(writer, track, (VideoTrack) described, config);
             case DV -> writeDv(writer, track, (VideoTrack) described);
+            case PNG, TIFF, GIF, QTRLE, CFHD, HAP -> writeIntermediate(writer, track, (VideoTrack) described, config);
             case MOV_TEXT, WEBVTT -> writeText(writer, track.track);
             case TTML -> writeTtml(writer, track.track);
             case DVD_SUBTITLE -> {
@@ -370,6 +372,21 @@ final class SampleEntryWriter {
      * @param compressor the compressor name, at most 31 ASCII characters, or {@code null} for none
      */
     private static void writeVisualHeader(BoxWriter writer, int format, VideoTrack video, String compressor) {
+        writeVisualHeader(writer, format, video, compressor, 0x0018, -1);
+    }
+
+    /**
+     * Writes the header of a visual sample entry with its depth and color table identifier, leaving the box open.
+     *
+     * @param writer the destination
+     * @param format the sample entry type
+     * @param video the track
+     * @param compressor the compressor name, at most 31 ASCII characters, or {@code null}
+     * @param depth the bits per pixel the entry declares
+     * @param colorTableId the color table identifier: {@code 0} when a color table follows, {@code -1} for none
+     */
+    private static void writeVisualHeader(BoxWriter writer, int format, VideoTrack video, String compressor,
+            int depth, int colorTableId) {
         writer.begin(format);
         writer.zeros(6);
         writer.u16(1);
@@ -384,8 +401,46 @@ final class SampleEntryWriter {
         writer.u8(name.length);
         writer.bytes(name);
         writer.zeros(31 - name.length);
-        writer.u16(0x0018);
-        writer.u16(0xFFFF);
+        writer.u16(depth);
+        writer.u16(colorTableId & 0xFFFF);
+    }
+
+    /**
+     * Writes the QuickTime sample entry of a PNG, TIFF, GIF, QuickTime Animation, CineForm or HAP track: {@code png }
+     * (depth 32 when the track or its first frame has alpha), {@code tiff}, {@code gif }, {@code rle } with the
+     * depth and color table of the configuration, {@code CFHD}, or the HAP type of the configuration or the first
+     * frame.
+     *
+     * @param writer the destination
+     * @param track the track being written
+     * @param video the track description
+     * @param config the configuration, or {@code null}
+     */
+    private static void writeIntermediate(BoxWriter writer, MuxTrack track, VideoTrack video, byte[] config) {
+        var first = track.firstBytes;
+        switch (video.codec()) {
+            case PNG -> {
+                var alpha = video.hasAlpha() || first != null && first.length > 25 && first[12] == 'I'
+                        && first[13] == 'H' && ((first[25] & 0xFF) == 4 || (first[25] & 0xFF) == 6);
+                writeVisualHeader(writer, BoxTypes.PNG, video, "PNG", alpha ? 32 : 24, -1);
+            }
+            case TIFF -> writeVisualHeader(writer, BoxTypes.TIFF, video, "TIFF", 24, -1);
+            case GIF -> writeVisualHeader(writer, BoxTypes.GIF, video, "GIF", 8, -1);
+            case QTRLE -> {
+                var table = IntermediateFrames.qtrleColorTable(config);
+                writeVisualHeader(writer, BoxTypes.RLE, video, "Animation", IntermediateFrames.qtrleDepth(config),
+                        table == null ? -1 : 0);
+                if (table != null) {
+                    writer.bytes(table);
+                }
+            }
+            case CFHD -> writeVisualHeader(writer, BoxTypes.CFHD, video, "GoPro CineForm", 24, -1);
+            default -> {
+                var type = IntermediateFrames.hapType(config, first);
+                writeVisualHeader(writer, type, video, "Hap", IntermediateFrames.hapDepth(type), -1);
+            }
+        }
+        writeVisualTrailer(writer, video);
     }
 
     /**

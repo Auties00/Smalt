@@ -49,6 +49,13 @@ class FuzzSeedWriter {
     @Test
     @DisplayName("writes the seeds of the video decoder targets")
     void seeds() {
+        seed("qtrle", "valid-rgb24-inter.bin", Codec.QTRLE, 0, ffmpeg("mov", video(64, 32, 4), "-c:v", "qtrle", "-g",
+                "3"));
+        seed("qtrle", "valid-argb.bin", Codec.QTRLE, 0, ffmpeg("mov", video(64, 32, 2), "-c:v", "qtrle", "-pix_fmt",
+                "argb"));
+        seed("cfhd", "valid-yuv422p10.bin", Codec.CFHD, 0, ffmpeg("mov", video(64, 32, 2), "-c:v", "cfhd"));
+        seed("cfhd", "valid-gbrap12.bin", Codec.CFHD, 0, ffmpeg("mov", video(64, 32, 1), "-c:v", "cfhd", "-pix_fmt",
+                "gbrap12le"));
         seed("vp9", "valid-profile0.bin", Codec.VP9, 0, ffmpeg("ivf", video(32, 32, 3), "-c:v", "libvpx-vp9",
                 "-deadline", "realtime", "-b:v", "50k"));
         seed("vp9", "valid-profile2-10bit.bin", Codec.VP9, 1, ffmpeg("ivf", video(32, 32, 2), "-c:v", "libvpx-vp9",

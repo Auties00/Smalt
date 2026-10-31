@@ -212,6 +212,8 @@ public final class DdsFormat {
         var picture = Channel8Picture.allocate(width, height, PixelLayout.RGBA);
         var pixels = picture.pixels();
         var texels = new int[16];
+        var blocks = new BcnBlocks();
+        var alpha = new int[16];
         var blockBytes = kind == Kind.BC1 ? 8 : 16;
         var columns = (width + 3) / 4;
         var rows = (height + 3) / 4;
@@ -219,20 +221,19 @@ public final class DdsFormat {
             for (var bx = 0; bx < columns; bx++) {
                 var at = start + (by * columns + bx) * blockBytes;
                 switch (kind) {
-                    case BC1 -> BcnBlocks.color(data, at, texels, false);
+                    case BC1 -> blocks.color(data, at, texels, false);
                     case BC2 -> {
-                        BcnBlocks.color(data, at + 8, texels, true);
-                        BcnBlocks.sharpAlpha(data, at, texels);
+                        blocks.color(data, at + 8, texels, true);
+                        blocks.sharpAlpha(data, at, texels);
                     }
                     case BC3 -> {
-                        BcnBlocks.color(data, at + 8, texels, true);
-                        var alpha = new int[16];
-                        BcnBlocks.smooth(data, at, alpha, false, false);
+                        blocks.color(data, at + 8, texels, true);
+                        blocks.smooth(data, at, alpha, false, false);
                         for (var texel = 0; texel < 16; texel++) {
                             texels[texel] = (texels[texel] & 0x00FFFFFF) | alpha[texel] << 24;
                         }
                     }
-                    default -> BcnBlocks.bc7(data, at, texels);
+                    default -> blocks.bc7(data, at, texels);
                 }
                 for (var texel = 0; texel < 16; texel++) {
                     var x = bx * 4 + (texel & 3);
@@ -266,6 +267,7 @@ public final class DdsFormat {
         var picture = Channel8Picture.allocate(width, height, layout());
         var pixels = picture.pixels();
         var values = new int[16];
+        var blocks = new BcnBlocks();
         var blockBytes = kind == Kind.BC4 ? 8 : 16;
         var swapped = name.equals("ATI2");
         var columns = (width + 3) / 4;
@@ -274,7 +276,7 @@ public final class DdsFormat {
             for (var bx = 0; bx < columns; bx++) {
                 var at = start + (by * columns + bx) * blockBytes;
                 for (var channel = 0; channel < (kind == Kind.BC4 ? 1 : 2); channel++) {
-                    BcnBlocks.smooth(data, at + channel * 8, values, signed, true);
+                    blocks.smooth(data, at + channel * 8, values, signed, true);
                     for (var texel = 0; texel < 16; texel++) {
                         var x = bx * 4 + (texel & 3);
                         var y = by * 4 + (texel >>> 2);
@@ -294,11 +296,12 @@ public final class DdsFormat {
         var picture = ChannelFloatPicture.allocate(width, height, PixelLayout.RGB);
         var pixels = picture.pixels();
         var halves = new short[48];
+        var blocks = new BcnBlocks();
         var columns = (width + 3) / 4;
         var rows = (height + 3) / 4;
         for (var by = 0; by < rows; by++) {
             for (var bx = 0; bx < columns; bx++) {
-                BcnBlocks.bc6h(data, start + (by * columns + bx) * 16, halves, signed);
+                blocks.bc6h(data, start + (by * columns + bx) * 16, halves, signed);
                 for (var texel = 0; texel < 16; texel++) {
                     var x = bx * 4 + (texel & 3);
                     var y = by * 4 + (texel >>> 2);

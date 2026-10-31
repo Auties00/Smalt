@@ -24,3 +24,5 @@ core/src/test/resources/com/github/auties00/smalt/image/color/proofing/*.x16 -te
 core/src/test/resources/com/github/auties00/smalt/image/color/proofing/*.g8 -text -diff
 core/src/test/resources/com/github/auties00/smalt/image/color/proofing/*.g16 -text -diff
 core/src/test/resources/com/github/auties00/smalt/image/color/proofing/*.kt -text -diff
+# CineForm vectors are raw samples and decodes, byte-exact.
+**/src/test/resources/**/*.cfhd -text -diff

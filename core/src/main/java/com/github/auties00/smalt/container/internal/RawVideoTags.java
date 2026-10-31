@@ -222,7 +222,7 @@ public final class RawVideoTags {
      * @param entries the number of levels, 2 to 256
      * @return the palette
      */
-    private static int[] invertedGray(int entries) {
+    public static int[] invertedGray(int entries) {
         var palette = new int[entries];
         for (var i = 0; i < entries; i++) {
             var level = 255 - 255 * i / (entries - 1);
@@ -241,7 +241,7 @@ public final class RawVideoTags {
      * @param depth 1, 2, 4 or 8
      * @return the opaque palette of {@code 2^depth} entries
      */
-    private static int[] macintoshPalette(int depth) {
+    public static int[] macintoshPalette(int depth) {
         return switch (depth) {
             case 1 -> new int[]{0xFFFFFFFF, 0xFF000000};
             case 2 -> new int[]{0xFFFFFFFF, 0xFFACACAC, 0xFF555555, 0xFF000000};

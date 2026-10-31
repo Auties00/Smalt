@@ -6,7 +6,8 @@ package com.github.auties00.smalt.image.dds.internal;
  * BC7), as the Direct3D 11 functional specification defines them.
  *
  * <p>Each method decodes one block from {@code data} at {@code offset} into a caller array of 16 texels in row-major
- * order. Arguments are not checked; values outside the documented ranges give unspecified results.
+ * order, without allocating: an instance holds the working arrays its calls share. Arguments are not checked; values
+ * outside the documented ranges give unspecified results. Instances are not thread-safe.
  */
 public final class BcnBlocks {
     /**
@@ -211,8 +212,60 @@ public final class BcnBlocks {
      */
     private static final int BC7_PBITS = 0b11001011;
 
-    private BcnBlocks() {
-        throw new AssertionError();
+    /**
+     * The interpolation weights of the six-value mode of BC4 and BC5, in 1/65536.
+     */
+    private static final int[] SMOOTH_WEIGHTS6 = {9363, 18724, 28086, 37450, 46812, 56173};
+
+    /**
+     * The interpolation weights of the four-value mode of BC4 and BC5, in 1/65536.
+     */
+    private static final int[] SMOOTH_WEIGHTS4 = {13107, 26215, 39321, 52429};
+
+    /**
+     * The reader of the block being decoded.
+     */
+    private final Bits bits = new Bits();
+
+    /**
+     * The four colors of a BC1 block.
+     */
+    private final int[] colors = new int[4];
+
+    /**
+     * The eight values of an interpolated single-channel block.
+     */
+    private final int[] values = new int[8];
+
+    /**
+     * The red endpoints of a BC6H block.
+     */
+    private final int[] red = new int[4];
+
+    /**
+     * The green endpoints of a BC6H block.
+     */
+    private final int[] green = new int[4];
+
+    /**
+     * The blue endpoints of a BC6H block.
+     */
+    private final int[] blue = new int[4];
+
+    /**
+     * The six RGBA endpoints of a BC7 block.
+     */
+    private final int[][] endpoints = new int[6][4];
+
+    /**
+     * The primary indices of a BC7 block.
+     */
+    private final int[] indices = new int[16];
+
+    /**
+     * Constructs a decoder of blocks with its own working arrays.
+     */
+    public BcnBlocks() {
     }
 
     private static byte[] bytes(int[] values) {
@@ -243,7 +296,7 @@ public final class BcnBlocks {
      * @param out the 16 texels, packed as {@code 0xAABBGGRR}
      * @param opaqueOnly whether the block always uses the four-color mode, as in BC2 and BC3
      */
-    public static void color(byte[] data, int offset, int[] out, boolean opaqueOnly) {
+    public void color(byte[] data, int offset, int[] out, boolean opaqueOnly) {
         var c0 = u16(data, offset);
         var c1 = u16(data, offset + 2);
         var r0 = (c0 >>> 11) & 0x1F;
@@ -252,7 +305,7 @@ public final class BcnBlocks {
         var r1 = (c1 >>> 11) & 0x1F;
         var g1 = (c1 >>> 5) & 0x3F;
         var b1 = c1 & 0x1F;
-        var colors = new int[4];
+        var colors = this.colors;
         colors[0] = 0xFF000000 | ((b0 * 527 + 23) >>> 6) << 16 | ((g0 * 259 + 33) >>> 6) << 8 | ((r0 * 527 + 23) >>> 6);
         colors[1] = 0xFF000000 | ((b1 * 527 + 23) >>> 6) << 16 | ((g1 * 259 + 33) >>> 6) << 8 | ((r1 * 527 + 23) >>> 6);
         if (c0 > c1 || opaqueOnly) {
@@ -279,7 +332,7 @@ public final class BcnBlocks {
      * @param offset the offset of the 8-byte alpha block
      * @param out the 16 texels, whose alpha byte is replaced
      */
-    public static void sharpAlpha(byte[] data, int offset, int[] out) {
+    public void sharpAlpha(byte[] data, int offset, int[] out) {
         for (var texel = 0; texel < 16; texel++) {
             var alpha = ((data[offset + texel / 2] & 0xFF) >>> (4 * (texel & 1))) & 0x0F;
             out[texel] = (out[texel] & 0x00FFFFFF) | (alpha * 17) << 24;
@@ -299,9 +352,9 @@ public final class BcnBlocks {
      * @param precise whether the six and four intermediate values are rounded from fixed-point weights, as the BC4
      * and BC5 formats have them, rather than truncated, as the BC3 alpha block has them
      */
-    public static void smooth(byte[] data, int offset, int[] out, boolean signed, boolean precise) {
+    public void smooth(byte[] data, int offset, int[] out, boolean signed, boolean precise) {
         var block = u64(data, offset);
-        var values = new int[8];
+        var values = this.values;
         if (signed) {
             values[0] = Math.max(-127, (byte) block);
             values[1] = Math.max(-127, (byte) (block >>> 8));
@@ -313,12 +366,12 @@ public final class BcnBlocks {
         var a1 = values[1];
         if (precise) {
             if (a0 > a1) {
-                int[] weights = {9363, 18724, 28086, 37450, 46812, 56173};
+                var weights = SMOOTH_WEIGHTS6;
                 for (var index = 0; index < 6; index++) {
                     values[2 + index] = (weights[5 - index] * a0 + weights[index] * a1 + 32768) >> 16;
                 }
             } else {
-                int[] weights = {13107, 26215, 39321, 52429};
+                var weights = SMOOTH_WEIGHTS4;
                 for (var index = 0; index < 4; index++) {
                     values[2 + index] = (weights[3 - index] * a0 + weights[index] * a1 + 32768) >> 16;
                 }
@@ -343,13 +396,30 @@ public final class BcnBlocks {
     }
 
     /**
+     * Decodes an interpolated single-channel block into the alpha byte of RGBA texels, as {@link #smooth} decodes
+     * unsigned values.
+     *
+     * @param data the compressed data
+     * @param offset the offset of the 8-byte block
+     * @param out the 16 texels, packed as {@code 0xAABBGGRR}, whose alpha byte is replaced
+     * @param precise whether the intermediate values are rounded, as for BC4, or truncated, as for BC3 alpha
+     */
+    public void alpha(byte[] data, int offset, int[] out, boolean precise) {
+        var alpha = this.indices;
+        smooth(data, offset, alpha, false, precise);
+        for (var texel = 0; texel < 16; texel++) {
+            out[texel] = (out[texel] & 0x00FFFFFF) | alpha[texel] << 24;
+        }
+    }
+
+    /**
      * Reads the bits of a 128-bit block from its least significant end.
      */
     private static final class Bits {
         long low;
         long high;
 
-        Bits(byte[] data, int offset) {
+        void reset(byte[] data, int offset) {
             low = u64(data, offset);
             high = u64(data, offset + 8);
         }
@@ -433,11 +503,15 @@ public final class BcnBlocks {
      * @param out the 48 IEEE 754 binary16 values, three per texel
      * @param signed whether the block is of the signed format ({@code BC6H_SF16})
      */
-    public static void bc6h(byte[] data, int offset, short[] out, boolean signed) {
-        var bits = new Bits(data, offset);
-        var r = new int[4];
-        var g = new int[4];
-        var b = new int[4];
+    public void bc6h(byte[] data, int offset, short[] out, boolean signed) {
+        var bits = this.bits;
+        bits.reset(data, offset);
+        var r = red;
+        var g = green;
+        var b = blue;
+        java.util.Arrays.fill(r, 0);
+        java.util.Arrays.fill(g, 0);
+        java.util.Arrays.fill(b, 0);
         var mode = bits.read(2);
         if (mode > 1) {
             mode |= bits.read(3) << 2;
@@ -791,8 +865,9 @@ public final class BcnBlocks {
      * @param offset the offset of the 16-byte block
      * @param out the 16 texels, packed as {@code 0xAABBGGRR}
      */
-    public static void bc7(byte[] data, int offset, int[] out) {
-        var bits = new Bits(data, offset);
+    public void bc7(byte[] data, int offset, int[] out) {
+        var bits = this.bits;
+        bits.reset(data, offset);
         var mode = 0;
         while (mode < 8 && bits.read(1) == 0) {
             mode++;
@@ -816,7 +891,10 @@ public final class BcnBlocks {
                 selection = bits.read(1);
             }
         }
-        var endpoints = new int[6][4];
+        var endpoints = this.endpoints;
+        for (var row : endpoints) {
+            java.util.Arrays.fill(row, 0);
+        }
         for (var channel = 0; channel < 3; channel++) {
             for (var endpoint = 0; endpoint < endpointCount; endpoint++) {
                 endpoints[endpoint][channel] = bits.read(BC7_BITS[0][mode]);
@@ -870,7 +948,7 @@ public final class BcnBlocks {
         var secondBits = mode == 4 ? 3 : mode == 5 ? 2 : 0;
         var weights = indexBits == 2 ? WEIGHTS2 : indexBits == 3 ? WEIGHTS3 : WEIGHTS4;
         var weights2 = secondBits == 2 ? WEIGHTS2 : WEIGHTS3;
-        var indices = new int[16];
+        var indices = this.indices;
         for (var texel = 0; texel < 16; texel++) {
             var set = partitions == 1 ? (texel == 0 ? 0x80 : 0)
                     : BC7_PARTITIONS[(partitions - 2) * 1024 + partition * 16 + texel] & 0xFF;

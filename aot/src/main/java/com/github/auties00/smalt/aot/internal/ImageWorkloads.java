@@ -31,6 +31,10 @@ import com.github.auties00.smalt.image.gainmap.GainMapComputeOptions;
 import com.github.auties00.smalt.image.gainmap.GainMapOptions;
 import com.github.auties00.smalt.image.gainmap.GainMaps;
 import com.github.auties00.smalt.image.gif.GifAnimationEncoder;
+import com.github.auties00.smalt.image.hap.HapDecoder;
+import com.github.auties00.smalt.image.hap.HapEncoder;
+import com.github.auties00.smalt.image.hap.HapEncoderOptions;
+import com.github.auties00.smalt.image.hap.HapFormat;
 import com.github.auties00.smalt.image.gif.GifDecoder;
 import com.github.auties00.smalt.image.gif.GifEncoder;
 import com.github.auties00.smalt.image.gif.GifEncoderOptions;
@@ -184,6 +188,8 @@ final class ImageWorkloads {
                 file("jpeg-gainmap", ImageWorkloads::jpegGainMap),
                 file("mjpeg-decode", ImageWorkloads::mjpegDecode),
                 file("mjpeg-encode", ImageWorkloads::mjpegEncode),
+                file("hap-encode", ImageWorkloads::hapEncode),
+                file("hap-decode", ImageWorkloads::hapDecode),
                 file("png-decode", () -> pngDecode(2)),
                 file("png-encode", ImageWorkloads::pngEncode),
                 file("apng", ImageWorkloads::apng),
@@ -700,6 +706,47 @@ final class ImageWorkloads {
                     Blackhole.consume(encoder.encodeFrame(new VideoFrame(picture, Packet.NO_TIMESTAMP,
                             Packet.UNKNOWN_DURATION, true)).data().length);
                 }
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that encodes frames in every HAP texture format, in Snappy-compressed chunks.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload hapEncode() {
+        var pictures = SyntheticVideo.natural(WIDTH, HEIGHT, 1);
+        var encoders = new ArrayList<HapEncoder>();
+        for (var format : HapFormat.values()) {
+            encoders.add(new HapEncoder(WIDTH, HEIGHT, HapEncoderOptions.builder().format(format).chunks(4).build()));
+        }
+        long[] pts = {0};
+        return TrainingWorkload.of("hap-encode", () -> {
+            for (var encoder : encoders) {
+                for (var picture : pictures) {
+                    Blackhole.consume(encoder.encodeFrame(new VideoFrame(picture, pts[0]++, 1, true)).size());
+                }
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that decodes frames of every HAP texture format, chunked and Snappy-compressed.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload hapDecode() {
+        var picture = SyntheticVideo.natural(WIDTH, HEIGHT, 1).getFirst();
+        var frames = new ArrayList<byte[]>();
+        for (var format : HapFormat.values()) {
+            var encoder = new HapEncoder(WIDTH, HEIGHT, HapEncoderOptions.builder().format(format).chunks(4).build());
+            frames.add(encoder.encodeFrame(new VideoFrame(picture, 0, 1, true)).data());
+        }
+        var decoder = new HapDecoder();
+        return TrainingWorkload.of("hap-decode", () -> {
+            for (var frame : frames) {
+                Blackhole.consume(decoder.decodeFrame(frame, 0, frame.length, WIDTH, HEIGHT).width());
             }
         });
     }

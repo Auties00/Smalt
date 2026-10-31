@@ -122,6 +122,7 @@ Contents
   65. OpenEXR
   66. jxrlib
   67. VVdeC
+  68. cineform-sdk (GoPro CineForm)
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -2335,6 +2336,30 @@ Copyright:
 EOF
 license_start "VVdeC license (LICENSE.txt)"
 cat "$LIC/vvdec-LICENSE.txt"
+section "68. cineform-sdk (GoPro CineForm)"
+cat <<'EOF'
+Project:      cineform-sdk, GoPro's CineForm encoder and decoder SDK (master)
+Home:         https://github.com/gopro/cineform-sdk
+Source:       https://github.com/gopro/cineform-sdk/archive/refs/heads/master.zip
+License text: LICENSE-MIT at the root of the distribution
+License:      Apache License 2.0 or MIT, at the licensee's option; Smalt uses it
+              under the MIT license
+
+Derived Smalt packages:
+  video.cfhd (CfhdDecoder)
+  video.cfhd.internal (CfhdBands, CfhdCodebooks, CfhdWavelets)
+
+Derivation: C code translated to Java and tables copied: the sample layout
+and reconstruction of Codec/decoder.c, the inverse wavelets of
+Codec/spatial.c, Codec/InvertHorizontalStrip16s.c and Codec/temporal.c, the
+run-length decoding and companding of Codec/vlc.c and Codec/codebooks.c, and
+the codebooks of Common/table9.inc, table17.inc and table18.inc.
+
+Copyright:
+  (C) Copyright 2017 GoPro Inc (http://gopro.com/).
+EOF
+license_start "MIT License (LICENSE-MIT)"
+cat "$LIC/cineform-sdk-LICENSE-MIT"
 } > "$OUT"
 
 echo "wrote $OUT"

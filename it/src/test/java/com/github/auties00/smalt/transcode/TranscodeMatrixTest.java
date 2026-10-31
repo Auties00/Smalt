@@ -40,8 +40,10 @@ class TranscodeMatrixTest {
      * @param audio   the audio codec, or {@code null}
      * @param frames  the number of video frames
      * @param seconds the presentation duration
+     * @param animated whether the fixture is an animated image, whose frames are coded again in every output
      */
-    record Input(String name, Supplier<Path> file, Codec video, Codec audio, int frames, double seconds) {
+    record Input(String name, Supplier<Path> file, Codec video, Codec audio, int frames, double seconds,
+            boolean animated) {
         @Override
         public String toString() {
             return name;
@@ -136,8 +138,10 @@ class TranscodeMatrixTest {
         assertEquals(expectAudio ? 1 : 0, probe.of("audio").size(), "audio streams");
         if (expectVideo) {
             var video = probe.video();
+            // an animated image is decoded and coded again; a video track is copied when the container carries it
             var codec = target.video() != null ? target.video()
-                    : container.supports(input.video()) ? input.video() : container.videoCodecs().getFirst();
+                    : !input.animated() && container.supports(input.video()) ? input.video()
+                    : container.videoCodecs().getFirst();
             assertEquals(ffmpegName(codec), video.codec(), "video codec");
             assertEquals(input.frames(), video.decoded(), 1, "decoded video frames");
         }
@@ -162,17 +166,17 @@ class TranscodeMatrixTest {
         var arguments = new ArrayList<>(List.of(options));
         arguments.add("-shortest");
         return new Input(name, () -> Fixtures.testVideo(extension, 320, 240, SECONDS, arguments), video, audio,
-                (int) (SECONDS * 30), SECONDS);
+                (int) (SECONDS * 30), SECONDS, false);
     }
 
     private static Input audio(String name, String extension, Codec codec, String... options) {
         return new Input(name, () -> Fixtures.tone(extension, 440, 48_000, 2, SECONDS, List.of(options)), null, codec, 0,
-                SECONDS);
+                SECONDS, false);
     }
 
     private static Input animation(String name, String extension, List<String> options) {
         return new Input(name, () -> Fixtures.ffmpeg(extension, List.of("-f", "lavfi", "-i",
-                "testsrc2=size=160x120:rate=10:duration=1"), options), Codec.GIF, null, 10, 1.0);
+                "testsrc2=size=160x120:rate=10:duration=1"), options), Codec.GIF, null, 10, 1.0, true);
     }
 
     private static String ffmpegName(Codec codec) {

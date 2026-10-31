@@ -57,8 +57,8 @@ public final class Artifacts {
     public static String decoderOf(Codec codec) {
         return switch (codec) {
             case H264, HEVC, AAC, AMR_NB, AMR_WB, MPEG4_PART2, H263, FLV1, AC3, EAC3 -> MPEG;
-            case VP9, AV1, PRORES, DNXHD -> VIDEO;
-            case VP8, MJPEG, JPEG2000 -> IMAGE;
+            case VP9, AV1, PRORES, DNXHD, QTRLE, CFHD -> VIDEO;
+            case VP8, MJPEG, JPEG2000, PNG, TIFF, GIF, HAP -> IMAGE;
             case OPUS, VORBIS, FLAC, MP3, MP2, ALAC, ADPCM_IMA_WAV, ADPCM_IMA_QT, ADPCM_MS, ADPCM_G722, ADPCM_G726, GSM,
                  GSM_MS -> AUDIO;
             default -> null;
@@ -74,8 +74,8 @@ public final class Artifacts {
     public static String encoderOf(Codec codec) {
         return switch (codec) {
             case H264, AAC, AMR_NB, AMR_WB, AC3, EAC3 -> MPEG;
-            case VP9, AV1, PRORES, DNXHD -> VIDEO;
-            case VP8, MJPEG, JPEG2000 -> IMAGE;
+            case VP9, AV1, PRORES, DNXHD, QTRLE -> VIDEO;
+            case VP8, MJPEG, JPEG2000, PNG, TIFF, HAP -> IMAGE;
             case OPUS, FLAC, MP3, VORBIS, ADPCM_IMA_WAV, ADPCM_IMA_QT, ADPCM_MS, ADPCM_G722, ADPCM_G726, GSM,
                  GSM_MS -> AUDIO;
             default -> null;

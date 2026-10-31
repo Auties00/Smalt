@@ -573,6 +573,17 @@ class FuzzSeedWriter {
         // the transparent behavior sample of core, made by tools/testdata/behavior/make-samples.sh
         write(ImageVideoFuzzTest.class, "vp8Alpha", "valid-webm-alpha.bin", FuzzSeeds.alphaPackets(Path.of("..",
                 "core", "src", "test", "resources", "samples", "matroska", "vp8-alpha.webm"), 4));
+        write(ImageVideoFuzzTest.class, "pngVideo", "valid-rgba.bin", FuzzSeeds.packets(ffmpeg("mov", video(64, 32, 3),
+                "-c:v", "png", "-pix_fmt", "rgba"), Codec.PNG, 0, 3));
+        write(ImageVideoFuzzTest.class, "tiffVideo", "valid-lzw.bin", FuzzSeeds.packets(ffmpeg("mov",
+                video(64, 32, 3), "-c:v", "tiff", "-compression_algo", "lzw"), Codec.TIFF, 0, 3));
+        write(ImageVideoFuzzTest.class, "gifVideo", "valid-bgr8.bin", FuzzSeeds.packets(ffmpeg("mov", video(64, 32, 4),
+                "-c:v", "gif", "-pix_fmt", "bgr8"), Codec.GIF, 0, 4));
+        // HAP vectors of tools/testdata/hap/make-vectors.sh: DXT1 in Snappy chunks and scaled YCoCg uncompressed
+        write(ImageVideoFuzzTest.class, "hap", "valid-snappy-chunks.bin", FuzzSeeds.packets(
+                VECTORS.resolve("hap/ffmpeg/hap-snappy-4.mov"), Codec.HAP, 0, 2));
+        write(ImageVideoFuzzTest.class, "hap", "valid-ycocg.bin", FuzzSeeds.packets(
+                VECTORS.resolve("hap/ffmpeg/hap_q-none-2.mov"), Codec.HAP, 0, 1));
     }
 
     @Test

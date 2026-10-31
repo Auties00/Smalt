@@ -162,7 +162,61 @@ public enum Codec {
     FFV1(TrackKind.VIDEO, "ffv1"),
 
     /**
-     * An animated GIF treated as a video stream.
+     * PNG video, every frame an independent PNG file: the QuickTime {@code png } sample entry, the AVI and Matroska
+     * {@code MPNG} and {@code PNG1} FourCCs, and MP4's {@code mp4v} entry of object type {@code 0x6D}.
+     *
+     * <p>A packet is one PNG file, signature included; the codec carries no configuration.
+     */
+    PNG(TrackKind.VIDEO, "png"),
+
+    /**
+     * TIFF video, every frame an independent TIFF file: the QuickTime {@code tiff} sample entry and the AVI and
+     * Matroska {@code TIFF} FourCC.
+     *
+     * <p>A packet is one TIFF file whose first image is the frame; the codec carries no configuration.
+     */
+    TIFF(TrackKind.VIDEO, "tiff"),
+
+    /**
+     * QuickTime Animation, the run-length codec of the QuickTime {@code rle } sample entry.
+     *
+     * <p>A packet is one frame: a key frame codes every row, and a later frame only the pixels that changed, so
+     * a packet of fewer than 8 bytes repeats the previous frame. The configuration is the sample description's
+     * depth as a big-endian 16-bit number (1, 2, 4 or 8 for palette indices, 16 for 5-5-5 RGB, 24 for RGB, 32 for
+     * ARGB, and 33, 34, 36 or 40 for gray indices of 1, 2, 4 or 8 bits), followed, when the description carries
+     * a color table, by that table as QuickTime stores it (seed, flags, size and the 8-byte entries). Indices
+     * without a color table take the default Macintosh table of their depth.
+     */
+    QTRLE(TrackKind.VIDEO, "qtrle"),
+
+    /**
+     * GoPro CineForm, the wavelet intermediate codec of SMPTE ST 2073 (VC-5) lineage: the QuickTime and Matroska
+     * {@code CFHD} sample entry and the AVI {@code CFHD} FourCC.
+     *
+     * <p>A packet is one coded sample: an intra frame, or the two frames of a group coded together with a temporal
+     * wavelet (the first packet of the group holds both, the second is a short marker). The codec carries no
+     * configuration.
+     */
+    CFHD(TrackKind.VIDEO, "cfhd"),
+
+    /**
+     * Vidvox HAP, the GPU texture codec: HAP ({@code Hap1}, DXT1), HAP Alpha ({@code Hap5}, DXT5), HAP Q
+     * ({@code HapY}, scaled YCoCg in DXT5), HAP Q Alpha ({@code HapM}, HAP Q plus an RGTC1 alpha texture), HAP Alpha
+     * Only ({@code HapA}, RGTC1), HAP R ({@code Hap7}, BPTC) and HAP HDR ({@code HapH}, unsigned BPTC float), as
+     * QuickTime sample entries and AVI and Matroska FourCCs.
+     *
+     * <p>A packet is one frame: its sections declare the texture format and the second-stage compression (none,
+     * Snappy, or chunks of either). The configuration, when present, is the sample entry type in ASCII.
+     */
+    HAP(TrackKind.VIDEO, "hap"),
+
+    /**
+     * GIF video, the QuickTime {@code gif } sample entry and an animated GIF treated as a video stream.
+     *
+     * <p>A packet holds the blocks of one frame of a GIF data stream: the first packet starts with the GIF header,
+     * logical screen descriptor and global color table, a later packet may start with them too or carry only its
+     * graphic control extension and image. A frame is composed over the previous one as the GIF disposal methods
+     * say, so a packet that does not start with a header is not a key frame. The codec carries no configuration.
      */
     GIF(TrackKind.VIDEO, "gif"),
 

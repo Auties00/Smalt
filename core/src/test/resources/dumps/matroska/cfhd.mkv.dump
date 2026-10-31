@@ -1,0 +1,21 @@
+# demux dump of matroska/cfhd.mkv; regenerate with -Dsmalt.test.updateDumps=true
+format MATROSKA
+duration 500000
+seekable true
+metadata ENCODER="Lavf61.7.100"
+track 1 VIDEO CFHD timebase=1/1000 duration=500 config=none
+  video 64x48 orientation=NORMAL rate=10/1 interlacing=PROGRESSIVE
+  color ColorInfo[matrix=UNSPECIFIED, range=LIMITED, primaries=UNSPECIFIED, transfer=UNSPECIFIED, chromaSiting=UNSPECIFIED, masteringDisplay=Optional.empty, contentLightLevel=Optional.empty]
+  metadata DURATION="00:00:00.500000000"
+  metadata ENCODER="Lavc61.19.100 cfhd"
+packets 5
+0 t1 pts=0 dts=0 dur=100 flags=KEY size=5444 crc=cdafa857
+1 t1 pts=100 dts=100 dur=100 flags=KEY size=5472 crc=0f20de8d
+2 t1 pts=200 dts=200 dur=100 flags=KEY size=5460 crc=d78bed6d
+3 t1 pts=300 dts=300 dur=100 flags=KEY size=5452 crc=61a32a08
+4 t1 pts=400 dts=400 dur=100 flags=KEY size=5456 crc=4a127324
+seek 0: t1@0
+seek 166666: t1@1
+seek 333333: t1@3
+seek 500000: end
+seek -1000000: t1@0

@@ -15,6 +15,7 @@ import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
+import com.github.auties00.smalt.internal.codec.IntermediateFrames;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.codec.NalConfigs;
 import com.github.auties00.smalt.internal.io.ByteArrays;
@@ -88,7 +89,11 @@ import java.util.Set;
  *       ({@code V_THEORA}, the Xiph-laced headers), FFV1 ({@code V_FFV1}, the configuration record of a version 3
  *       stream, none for versions 0 and 1), DNxHD and DNxHR ({@code V_QUICKTIME}, a
  *       QuickTime video sample description of the four-character sample entry type of the
- *       track's configuration, {@code AVdn} or {@code AVdh}), AAC ({@code A_AAC}, the
+ *       track's configuration, {@code AVdn} or {@code AVdh}), PNG and CineForm ({@code V_MS/VFW/FOURCC}, a
+ *       {@code BITMAPINFOHEADER} with the FourCC {@code MPNG} or {@code CFHD}), TIFF, GIF, QuickTime Animation and HAP
+ *       ({@code V_QUICKTIME}, a QuickTime video sample description of type {@code tiff}, {@code gif }, {@code rle }
+ *       with the depth and color table of the track's configuration, or the HAP type of the track's
+ *       configuration, {@code Hap1} without one), AAC ({@code A_AAC}, the
  *       {@code AudioSpecificConfig}), FLAC ({@code A_FLAC}, the {@code fLaC} marker and metadata
  *       blocks), ALAC ({@code A_ALAC}, the 24-byte {@code ALACSpecificConfig}), WavPack ({@code A_WAVPACK4}, the
  *       two-byte stream version, taken from the first packet when the track has no configuration; packets of
@@ -595,7 +600,8 @@ public final class MatroskaMuxer implements Muxer {
             case PRORES -> "V_PRORES";
             case THEORA -> "V_THEORA";
             case FFV1 -> "V_FFV1";
-            case DNXHD -> "V_QUICKTIME";
+            case DNXHD, TIFF, GIF, QTRLE, HAP -> "V_QUICKTIME";
+            case PNG, CFHD -> "V_MS/VFW/FOURCC";
             case OPUS -> "A_OPUS";
             case VORBIS -> "A_VORBIS";
             case AAC -> "A_AAC";
@@ -1808,8 +1814,19 @@ public final class MatroskaMuxer implements Muxer {
                     case DNXHD -> codecPrivate = imageDescription(require(config), videoTrack);
                     case AV1, MPEG4_PART2, MPEG1_VIDEO, MPEG2_VIDEO, FFV1 -> codecPrivate = config;
                     case VP9 -> codecPrivate = config == null ? null : vp9Features(config);
-                    case H263 -> codecPrivate = bitmapInfo(videoTrack, "H263", config);
-                    case DV -> codecPrivate = bitmapInfo(videoTrack, DvTags.riffFourCc(videoTrack.width()), null);
+                    case H263 -> codecPrivate = bitmapInfo(videoTrack, "H263", 24, config);
+                    case DV -> codecPrivate = bitmapInfo(videoTrack, DvTags.riffFourCc(videoTrack.width()), 24, null);
+                    case PNG -> codecPrivate = bitmapInfo(videoTrack, "MPNG", videoTrack.hasAlpha() ? 32 : 24, null);
+                    case CFHD -> codecPrivate = bitmapInfo(videoTrack, "CFHD", 24, null);
+                    case TIFF -> codecPrivate = quickTimeDescription(videoTrack, 0x74696666, "TIFF", 24, null);
+                    case GIF -> codecPrivate = quickTimeDescription(videoTrack, 0x67696620, "GIF", 8, null);
+                    case QTRLE -> codecPrivate = quickTimeDescription(videoTrack, 0x726C6520, "Animation",
+                            IntermediateFrames.qtrleDepth(config), IntermediateFrames.qtrleColorTable(config));
+                    case HAP -> {
+                        var type = IntermediateFrames.hapType(config, null);
+                        codecPrivate = quickTimeDescription(videoTrack, type, "Hap",
+                                IntermediateFrames.hapDepth(type), null);
+                    }
                     default -> {
                     }
                 }
@@ -1980,6 +1997,33 @@ public final class MatroskaMuxer implements Muxer {
         }
 
         /**
+         * Builds the {@code CodecPrivate} of a {@code V_QUICKTIME} track of a codec without sample description
+         * extensions: a QuickTime video sample description of 86 bytes, followed by a color table when there is
+         * one.
+         *
+         * @param video the track
+         * @param type the sample entry type
+         * @param name the compressor name
+         * @param depth the bits per pixel the description declares
+         * @param colorTable the color table as QuickTime stores it, or {@code null} for none
+         * @return the sample description
+         */
+        private static byte[] quickTimeDescription(VideoTrack video, int type, String name, int depth,
+                byte[] colorTable) {
+            var table = colorTable == null ? new byte[0] : colorTable;
+            var buffer = ByteBuffer.allocate(86 + table.length);
+            buffer.putInt(86 + table.length).putInt(type).put(new byte[6]).putShort((short) 1);
+            buffer.putShort((short) 0).putShort((short) 0).putInt(0).putInt(0x200).putInt(0x200);
+            buffer.putShort((short) video.width()).putShort((short) video.height());
+            buffer.putInt(0x00480000).putInt(0x00480000).putInt(0).putShort((short) 1);
+            var compressor = new byte[32];
+            compressor[0] = (byte) name.length();
+            System.arraycopy(name.getBytes(StandardCharsets.US_ASCII), 0, compressor, 1, name.length());
+            buffer.put(compressor).putShort((short) depth).putShort((short) (table.length > 0 ? 0 : -1)).put(table);
+            return buffer.array();
+        }
+
+        /**
          * Builds the {@code CodecPrivate} of an {@code A_MS/ACM} track: an 18-byte
          * {@code WAVEFORMATEX} without extra bytes.
          *
@@ -2004,15 +2048,16 @@ public final class MatroskaMuxer implements Muxer {
          * {@code BITMAPINFOHEADER} with a FourCC, followed by the track's configuration.
          *
          * @param video the track
-         * @param fourCc the FourCC of the codec
+         * @param fourCc the compression FourCC
+         * @param bitCount the bits per pixel the header declares
          * @param config the configuration, or {@code null}
          * @return the structure
          */
-        private static byte[] bitmapInfo(VideoTrack video, String fourCc, byte[] config) {
+        private static byte[] bitmapInfo(VideoTrack video, String fourCc, int bitCount, byte[] config) {
             var extra = config == null ? new byte[0] : config;
             var buffer = ByteBuffer.allocate(40 + extra.length).order(ByteOrder.LITTLE_ENDIAN);
             buffer.putInt(40 + extra.length).putInt(video.width()).putInt(video.height());
-            buffer.putShort((short) 1).putShort((short) 24).put(fourCc.getBytes(StandardCharsets.US_ASCII));
+            buffer.putShort((short) 1).putShort((short) bitCount).put(fourCc.getBytes(StandardCharsets.US_ASCII));
             buffer.putInt((int) Math.min(3L * video.width() * video.height(), 0xFFFFFFFFL));
             buffer.putInt(0).putInt(0).putInt(0).putInt(0).put(extra);
             return buffer.array();

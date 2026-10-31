@@ -151,6 +151,16 @@ class VideoFuzzTest {
     }
 
     @FuzzTest
+    void qtrle(byte[] data) {
+        FuzzMedia.video(Codec.QTRLE, data);
+    }
+
+    @FuzzTest
+    void cfhd(byte[] data) {
+        FuzzMedia.video(Codec.CFHD, data);
+    }
+
+    @FuzzTest
     void avif(byte[] data) {
         FuzzMedia.image(ImageFormat.AVIF, data);
     }

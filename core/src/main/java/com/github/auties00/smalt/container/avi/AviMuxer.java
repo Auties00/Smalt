@@ -7,6 +7,7 @@ import com.github.auties00.smalt.container.internal.AdpcmFormat;
 import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.container.internal.WaveFormat;
 import com.github.auties00.smalt.internal.io.ByteWriter;
+import com.github.auties00.smalt.internal.codec.IntermediateFrames;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.codec.NalConfigs;
 import com.github.auties00.smalt.internal.nal.NalRecords;
@@ -36,8 +37,9 @@ import java.util.Objects;
  * Writes AVI files with the OpenDML 1.02 extensions.
  *
  * <p>Video tracks of Motion-JPEG, Motion JPEG 2000, MPEG-1 and MPEG-2 video ({@code mpg1}, {@code mpg2}), MPEG-4
- * Part 2, H.264, HEVC, H.263, Sorenson Spark ({@code FLV1}), VP8, VP9, FFV1 and DV (a type-2 DV file: {@code dvsd},
- * {@code dvh1} for DVCPRO HD, one DIF frame per chunk), and audio tracks of PCM (8-bit
+ * Part 2, H.264, HEVC, H.263, Sorenson Spark ({@code FLV1}), VP8, VP9, FFV1, DV (a type-2 DV file: {@code dvsd},
+ * {@code dvh1} for DVCPRO HD, one DIF frame per chunk), PNG ({@code MPNG}), CineForm ({@code CFHD}) and HAP
+ * (the HAP type of the track's configuration, {@code Hap1} without one), and audio tracks of PCM (8-bit
  * unsigned, 16, 24, 32 and 64-bit signed
  * and 32 and 64-bit float little-endian, A-law, mu-law), MP3, MP2, AAC, AC-3, IMA ADPCM, Microsoft ADPCM, GSM 06.10
  * in Microsoft's packing, G.722 and G.726 are accepted, at most 99 tracks in all. Video is stored at a constant
@@ -1188,8 +1190,9 @@ public final class AviMuxer implements Muxer {
                 out.u32le(videoTrack.width());
                 out.u32le(videoTrack.height());
                 out.u16le(1);
-                out.u16le(24);
-                out.fourCc(RiffCodecs.videoFourCc(videoTrack));
+                out.u16le(videoTrack.hasAlpha() || track.codec() == Codec.HAP && IntermediateFrames.hapDepth(
+                        IntermediateFrames.hapType(config, null)) == 32 ? 32 : 24);
+                out.fourCc(videoFourCc());
                 out.u32le((long) videoTrack.width() * videoTrack.height() * 3);
                 out.zeros(16);
                 out.bytes(extra);
@@ -1267,12 +1270,25 @@ public final class AviMuxer implements Muxer {
         }
 
         /**
+         * {@return the FourCC of a video stream: the HAP type of the track's configuration for HAP, that of
+         * {@link RiffCodecs#videoFourCc(VideoTrack)} otherwise}
+         */
+        String videoFourCc() {
+            if (track.codec() == Codec.HAP) {
+                var type = IntermediateFrames.hapType(track.codecConfig().orElse(null), null);
+                return new String(new byte[]{(byte) (type >>> 24), (byte) (type >>> 16), (byte) (type >>> 8),
+                        (byte) type}, java.nio.charset.StandardCharsets.US_ASCII);
+            }
+            return RiffCodecs.videoFourCc((VideoTrack) track);
+        }
+
+        /**
          * {@return the stream header ({@code strh}) body with the final lengths}
          */
         ByteWriter header() {
             var out = new ByteWriter(STRH_SIZE);
             out.fourCc(video ? "vids" : "auds");
-            out.fourCc(video ? RiffCodecs.videoFourCc((VideoTrack) track) : "\0\0\0\0");
+            out.fourCc(video ? videoFourCc() : "\0\0\0\0");
             out.u32le(0);
             out.u16le(0);
             out.u16le(0);

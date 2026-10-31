@@ -9,6 +9,7 @@ import com.github.auties00.smalt.container.mp4.Mp4Muxer;
 import com.github.auties00.smalt.container.mp4.Mp4MuxerOptions;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.io.MediaSink;
@@ -98,6 +99,12 @@ class ReferenceDecodeTest {
             // lossless, and Theora's reconstruction (the loop filter included) is normative
             entry(Codec.FFV1, new Reference("mkv", MatroskaMuxer::new, "ffv1", NORMATIVE, List.of())),
             entry(Codec.THEORA, new Reference("mkv", MatroskaMuxer::new, "theora", NORMATIVE, List.of())),
+            // PNG, TIFF and QuickTime Animation are lossless; S3TC leaves the widening of 5 and 6-bit endpoints to the
+            // decoder, which ffmpeg does by repeating their high bits
+            entry(Codec.PNG, of(OutputContainer.MOV, "png", NORMATIVE)),
+            entry(Codec.TIFF, of(OutputContainer.MOV, "tiff", NORMATIVE)),
+            entry(Codec.QTRLE, of(OutputContainer.MOV, "qtrle", NORMATIVE)),
+            entry(Codec.HAP, of(OutputContainer.MOV, "hap", Tolerance.maxAbs(4))),
             entry(Codec.DNXHD, new Reference("mov", sink -> new Mp4Muxer(sink, Mp4MuxerOptions.builder()
                     .brand(Mp4MuxerOptions.Brand.QUICKTIME).build()), "dnxhd", Tolerance.maxAbs(4)
                     .and(Tolerance.psnr(50)), List.of())),
@@ -322,6 +329,7 @@ class ReferenceDecodeTest {
                 }
                 yield name + yuv.bitDepth() + "le";
             }
+            case RgbaPicture ignored -> "rgba";
             default -> throw new AssertionError("no raw layout for " + picture.getClass().getSimpleName());
         };
     }
@@ -349,6 +357,7 @@ class ReferenceDecodeTest {
                     plane(out, yuv.alpha(), yuv.alphaStride(), yuv.width(), yuv.height());
                 }
             }
+            case RgbaPicture rgba -> plane(out, rgba.pixels(), rgba.stride(), 4 * rgba.width(), rgba.height());
             default -> throw new AssertionError("no raw layout for " + picture.getClass().getSimpleName());
         }
         return out.toByteArray();

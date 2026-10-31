@@ -38,11 +38,15 @@ import com.github.auties00.smalt.video.ffv1.Ffv1Coder;
 import com.github.auties00.smalt.video.ffv1.Ffv1Decoder;
 import com.github.auties00.smalt.video.ffv1.Ffv1Encoder;
 import com.github.auties00.smalt.video.ffv1.Ffv1EncoderOptions;
+import com.github.auties00.smalt.video.cfhd.CfhdDecoder;
 import com.github.auties00.smalt.video.prores.ProResDecoder;
 import com.github.auties00.smalt.video.prores.ProResDecoderOptions;
 import com.github.auties00.smalt.video.prores.ProResEncoder;
 import com.github.auties00.smalt.video.prores.ProResEncoderOptions;
 import com.github.auties00.smalt.video.prores.ProResProfile;
+import com.github.auties00.smalt.video.qtrle.QtrleDecoder;
+import com.github.auties00.smalt.video.qtrle.QtrleEncoder;
+import com.github.auties00.smalt.video.qtrle.QtrleEncoderOptions;
 import com.github.auties00.smalt.video.theora.TheoraDecoder;
 import com.github.auties00.smalt.video.theora.TheoraEncoder;
 import com.github.auties00.smalt.video.theora.TheoraEncoderOptions;
@@ -142,7 +146,10 @@ final class VideoWorkloads {
                 file("theora-encode", VideoWorkloads::theoraEncode),
                 file("theora-decode", VideoWorkloads::theoraDecode),
                 file("ffv1-encode", VideoWorkloads::ffv1Encode),
-                file("ffv1-decode", VideoWorkloads::ffv1Decode));
+                file("ffv1-decode", VideoWorkloads::ffv1Decode),
+                file("qtrle-encode", VideoWorkloads::qtrleEncode),
+                file("qtrle-decode", VideoWorkloads::qtrleDecode),
+                file("cfhd-decode", VideoWorkloads::cfhdDecode));
     }
 
     /**
@@ -635,6 +642,63 @@ final class VideoWorkloads {
             });
         }
         return TrainingWorkload.of("ffv1-encode", () -> rounds.forEach(Runnable::run));
+    }
+
+    /**
+     * Returns a workload that encodes frames with the QuickTime Animation encoder at 16, 24 and 32 bits, a key frame
+     * every other frame, so that both key and inter frames are coded.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload qtrleEncode() {
+        var rounds = new ArrayList<Runnable>();
+        for (var depth : new int[]{16, 24, 32}) {
+            var encoder = new QtrleEncoder(SMALL_WIDTH, SMALL_HEIGHT, QtrleEncoderOptions.builder().depth(depth)
+                    .keyframeInterval(2).build());
+            var pictures = SyntheticVideo.natural(SMALL_WIDTH, SMALL_HEIGHT, 2);
+            long[] pts = {0};
+            rounds.add(() -> {
+                for (var picture : pictures) {
+                    Blackhole.consume(encoder.encodeFrame(new VideoFrame(picture, pts[0]++, 1, false)).size());
+                }
+            });
+        }
+        return TrainingWorkload.of("qtrle-encode", () -> rounds.forEach(Runnable::run));
+    }
+
+    /**
+     * Returns a workload that decodes QuickTime Animation streams of key and inter frames at 16, 24 and 32 bits.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload qtrleDecode() {
+        var rounds = new ArrayList<Runnable>();
+        for (var depth : new int[]{16, 24, 32}) {
+            var encoder = new QtrleEncoder(SMALL_WIDTH, SMALL_HEIGHT, QtrleEncoderOptions.builder().depth(depth)
+                    .keyframeInterval(2).build());
+            var packets = VideoStreams.encodeAll(encoder, SyntheticVideo.natural(SMALL_WIDTH, SMALL_HEIGHT, 4));
+            var decoder = new QtrleDecoder(VideoStreams.track(Codec.QTRLE, SMALL_WIDTH, SMALL_HEIGHT,
+                    encoder.codecConfig().orElse(null)), VideoDecoderOptions.defaults());
+            rounds.add(VideoStreams.decodeRound(packets, decoder));
+        }
+        return TrainingWorkload.of("qtrle-decode", () -> rounds.forEach(Runnable::run));
+    }
+
+    /**
+     * Returns a workload that decodes synthetic CineForm intra frames of 4:2:2 Y'CbCr at 10 bits: a lowpass band
+     * and empty highpass bands, so that the sample parser, the band decoder and every inverse wavelet run.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload cfhdDecode() {
+        var sample = SyntheticCfhd.intra422(SMALL_WIDTH, 176);
+        var decoder = new CfhdDecoder(VideoStreams.track(Codec.CFHD, SMALL_WIDTH, 176, null),
+                VideoDecoderOptions.defaults());
+        return TrainingWorkload.of("cfhd-decode", () -> {
+            for (var i = 0; i < 4; i++) {
+                Blackhole.consume(decoder.decodeFrame(sample, 0, sample.length).width());
+            }
+        });
     }
 
     /**

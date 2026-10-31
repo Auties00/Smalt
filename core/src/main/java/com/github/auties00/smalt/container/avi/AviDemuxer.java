@@ -11,6 +11,7 @@ import com.github.auties00.smalt.container.internal.DifAudioTracks;
 import com.github.auties00.smalt.container.internal.RawVideoTags;
 import com.github.auties00.smalt.container.internal.SeekTimes;
 import com.github.auties00.smalt.container.internal.WaveFormat;
+import com.github.auties00.smalt.internal.codec.IntermediateFrames;
 import com.github.auties00.smalt.internal.codec.NalConfigs;
 import com.github.auties00.smalt.internal.header.DifProfile;
 import com.github.auties00.smalt.internal.header.MpegAudioHeader;
@@ -58,7 +59,8 @@ import java.util.Objects;
  * advanced profile ({@code WVC1}, {@code WMVA}), an
  * {@code AVCDecoderConfigurationRecord} or
  * {@code HEVCDecoderConfigurationRecord} when the extra data is one, the {@code AudioSpecificConfig} of
- * AAC. H.264 and HEVC stored as an Annex B byte stream, the usual form in AVI, get a configuration record
+ * AAC, and the HAP sample entry type of HAP ({@code Hap1} for a {@code HAP1} FourCC). H.264 and HEVC stored
+ * as an Annex B byte stream, the usual form in AVI, get a configuration record
  * built from the parameter sets of the extra data and of the first key frame, and their packets are
  * returned as four-byte length-prefixed NAL units, the parameter sets they carry left in band; when no
  * sequence parameter set is found the track has no configuration and its packets stay Annex B. The
@@ -510,6 +512,26 @@ public final class AviDemuxer implements Demuxer {
     }
 
     /**
+     * Returns the configuration of a HAP stream: its HAP sample entry type, from the compression FourCC or the
+     * stream handler, in the case the HAP specification gives it.
+     *
+     * @param format the stream format, or {@code null}
+     * @param handler the stream handler FourCC, or 0
+     * @return the type in ASCII
+     */
+    private static byte[] hapType(byte[] format, int handler) {
+        var type = format != null && format.length >= 20 ? Arrays.copyOfRange(format, 16, 20)
+                : new byte[]{(byte) (handler >>> 24), (byte) (handler >>> 16), (byte) (handler >>> 8), (byte) handler};
+        type[0] = 'H';
+        type[1] = 'a';
+        type[2] = 'p';
+        if (type[3] >= 'a' && type[3] <= 'z') {
+            type[3] = (byte) (type[3] - 'a' + 'A');
+        }
+        return type;
+    }
+
+    /**
      * Builds a video stream from its stream format.
      *
      * @param number the stream number
@@ -554,6 +576,9 @@ public final class AviDemuxer implements Demuxer {
             }
         } else if (handler != 0) {
             codec = RiffCodecs.video(fourCcString(handler));
+        }
+        if (codec == Codec.HAP) {
+            config = hapType(format, handler);
         }
         byte[] annexBExtra = null;
         var annexB = false;
@@ -965,8 +990,11 @@ public final class AviDemuxer implements Demuxer {
      */
     private static boolean startsIntra(Codec codec, byte[] data, int length) {
         switch (codec) {
-            case MJPEG, JPEG2000, DV -> {
+            case MJPEG, JPEG2000, DV, PNG, TIFF, HAP -> {
                 return true;
+            }
+            case CFHD -> {
+                return IntermediateFrames.isCineFormKey(data, 0, length);
             }
             case MPEG4_PART2 -> {
                 for (var i = 0; i + 4 < length; i++) {

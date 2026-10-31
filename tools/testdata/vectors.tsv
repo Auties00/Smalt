@@ -3211,6 +3211,9 @@ full	rawpixls-nikon-z-6-2-12bit-12bit-compressed-lossy-type-2-3-2.nef	28905934	8
 full	rawpixls-canon-eos-7d-mark-ii-16bit-3-2.dng	38265824	090e01f9a7a860b2f2f0ead770b8a9ba3b17ea98dc1997835c6bda2fc0a2ae54	https://raw.pixls.us/getfile.php/7023/nice/Canon%20-%20EOS%207D%20Mark%20II%20-%2016bit%20%283%3A2%29.dng
 full	rawtoaces-data-e9b8503cf8a0641f40e5345d9757bde60c15f423.tar.gz	218575	583eb822932be044a38c9c19bc950a4db1bab409c979bcfd1419afde9029ffa6	https://codeload.github.com/AcademySoftwareFoundation/rawtoaces-data/tar.gz/e9b8503cf8a0641f40e5345d9757bde60c15f423
 smoke	fate-dnxhd-dnxhr444_cid1270.mov	1430841	f7c2eebab156ebae99be97e0752aca34ab4bce81ce0c776767b814ea014b0856	https://fate-suite.ffmpeg.org/dnxhd/dnxhr444_cid1270.mov
+smoke	fate-qtrle-Animation-Monochrome.mov	396125	4ce298d2c8bed12d773520c9cfac6d0c15615c8bac791494462bc6abbce6b60f	https://fate-suite.ffmpeg.org/qtrle/Animation-Monochrome.mov
+smoke	fate-qtrle-Animation-4Greys.mov	740070	5737915f98e101d2190af819f32a7bf7bb5e6bdf96735c92d9b4d816c041df5d	https://fate-suite.ffmpeg.org/qtrle/Animation-4Greys.mov
+smoke	fate-qtrle-Animation-16Greys.mov	1269625	ff988ed52e1d13f2c92eb47711bfd36ef2ee551eb7fcd2d3b2ead136f566da84	https://fate-suite.ffmpeg.org/qtrle/Animation-16Greys.mov
 smoke	ffmpeg-trac-8427-dnxhd_with_alpha_straight.mov	1880920	10d46a0f07ac9ec5093dc7deac30446b5c42d86685e6bbc475ff05c570fb71a4	https://trac.ffmpeg.org/raw-attachment/ticket/8427/dnxhd_with_alpha_straight.mov
 full	ffmpeg-trac-3707-untitled_dnhd.mov	108799452	ff237238ca50fe68bae53876e98d69507b07439b9323bd5271f305e52cbb8092	https://samples.ffmpeg.org/ffmpeg-bugs/trac/ticket3707/Untitled_dnhd.mov
 full	ffmpeg-trac-3707-dnxhd_alpha.mov	185337601	e52d761169e71fab3c413fec66543a61cfafa4472c1c7860444ba2058600b2c6	https://samples.ffmpeg.org/ffmpeg-bugs/trac/ticket3707/DNxHD%20Alpha.mov

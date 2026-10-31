@@ -4,21 +4,23 @@
  * encoders (still, animated and multi-page), lossless JPEG transforms (rotation, flips, cropping, grayscale
  * and progressive transcoding without decoding pixels), EXIF reading and writing, image metadata
  * (EXIF, XMP, IPTC and ICC read from every image format and edited in JPEG, PNG, WebP, GIF, HEIC,
- * AVIF, TIFF and BMP files without re-encoding them), the Motion-JPEG and Motion JPEG 2000 codecs, and the VP8
- * codec, since a lossy WebP image is a VP8 key frame.
+ * AVIF, TIFF and BMP files without re-encoding them), the Motion-JPEG and Motion JPEG 2000 codecs, the PNG, TIFF
+ * and GIF video codecs (every frame an image file), the Vidvox HAP texture codec, and the VP8 codec, since a lossy
+ * WebP image is a VP8 key frame.
  *
  * <p>The codecs register with the core registries through the core's service-provider interfaces,
- * so {@code Images} and {@code VideoDecoders} decode these formats (Motion-JPEG, Motion JPEG 2000 and VP8
- * video included), and {@code Images} and {@code VideoEncoders} encode JPEG, PNG, GIF, WebP, BMP, TIFF, ICO,
- * ANI, JPEG 2000, animated WebP, GIF, APNG and ANI, Motion-JPEG, Motion JPEG 2000 and VP8, whenever this module is
- * present.
+ * so {@code Images} and {@code VideoDecoders} decode these formats (Motion-JPEG, Motion JPEG 2000, PNG, TIFF,
+ * GIF, HAP and VP8 video included), and {@code Images} and {@code VideoEncoders} encode JPEG, PNG, GIF, WebP, BMP,
+ * TIFF, ICO, ANI, JPEG 2000, animated WebP, GIF, APNG and ANI, Motion-JPEG, Motion JPEG 2000, PNG, TIFF and HAP video
+ * and VP8, whenever this module is present.
  *
  * <p>The launch requirements (the optional {@code --add-modules jdk.incubator.vector}) and the threading
  * model are those of the core module ({@code com.github.auties00.smalt}).
  *
  * @provides com.github.auties00.smalt.spi.ImageCodecProvider ANI, BMP, GIF, ICO and CUR, JPEG 2000, JPEG,
  * JPEG XL, PNG and APNG, TIFF and WebP
- * @provides com.github.auties00.smalt.spi.VideoCodecProvider Motion-JPEG, Motion JPEG 2000 and VP8
+ * @provides com.github.auties00.smalt.spi.VideoCodecProvider Motion-JPEG, Motion JPEG 2000, PNG, TIFF, GIF and HAP
+ * video, and VP8
  */
 module com.github.auties00.smalt.image {
     // Smalt core: the model and the codec service-provider interfaces
@@ -33,6 +35,7 @@ module com.github.auties00.smalt.image {
     exports com.github.auties00.smalt.image.exif;
     exports com.github.auties00.smalt.image.exr;
     exports com.github.auties00.smalt.image.gif;
+    exports com.github.auties00.smalt.image.hap;
     exports com.github.auties00.smalt.image.hdr;
     exports com.github.auties00.smalt.image.icns;
     exports com.github.auties00.smalt.image.ico;
@@ -85,5 +88,9 @@ module com.github.auties00.smalt.image {
     provides com.github.auties00.smalt.spi.VideoCodecProvider with
             com.github.auties00.smalt.internal.provider.image.Mj2CodecProvider,
             com.github.auties00.smalt.internal.provider.image.MjpegCodecProvider,
-            com.github.auties00.smalt.internal.provider.image.Vp8CodecProvider;
+            com.github.auties00.smalt.internal.provider.image.Vp8CodecProvider,
+            com.github.auties00.smalt.internal.provider.image.GifVideoCodecProvider,
+            com.github.auties00.smalt.internal.provider.image.HapCodecProvider,
+            com.github.auties00.smalt.internal.provider.image.PngVideoCodecProvider,
+            com.github.auties00.smalt.internal.provider.image.TiffVideoCodecProvider;
 }

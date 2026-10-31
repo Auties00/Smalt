@@ -21,6 +21,7 @@ import com.github.auties00.smalt.internal.codec.DtsConfigs;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
+import com.github.auties00.smalt.internal.codec.IntermediateFrames;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.header.OpusHeader;
 import com.github.auties00.smalt.internal.heif.BoxCursor;
@@ -477,6 +478,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                     case 0x21 -> Codec.H264;
                     case 0x6C -> Codec.MJPEG;
                     case 0x6E -> Codec.JPEG2000;
+                    case 0x6D -> Codec.PNG;
                     case 0x20 -> Codec.MPEG4_PART2;
                     case 0x60, 0x61, 0x62, 0x63, 0x64, 0x65 -> Codec.MPEG2_VIDEO;
                     case 0x6A -> Codec.MPEG1_VIDEO;
@@ -501,6 +503,19 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
             case BoxTypes.FFV1 -> {
                 codec = Codec.FFV1;
                 config = glbl;
+            }
+            case BoxTypes.PNG -> codec = Codec.PNG;
+            case BoxTypes.TIFF -> codec = Codec.TIFF;
+            case BoxTypes.GIF -> codec = Codec.GIF;
+            case BoxTypes.CFHD -> codec = Codec.CFHD;
+            case BoxTypes.RLE -> {
+                codec = Codec.QTRLE;
+                config = IntermediateFrames.qtrleConfig(depth, colorTable(colorTable));
+            }
+            case IntermediateFrames.HAP1, IntermediateFrames.HAP5, IntermediateFrames.HAPY, IntermediateFrames.HAPM,
+                 IntermediateFrames.HAPA, IntermediateFrames.HAP7, IntermediateFrames.HAPH -> {
+                codec = Codec.HAP;
+                config = fourCc(format);
             }
             case BoxTypes.AVDN, BoxTypes.AVDH -> {
                 codec = Codec.DNXHD;
@@ -657,6 +672,33 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
             palette[i] = 0xFF000000 | red << 16 | green << 8 | blue;
         }
         return palette;
+    }
+
+    /**
+     * Rebuilds a QuickTime color table from its palette: seed and flags zero, the entries numbered in order with
+     * every component's byte repeated into 16 bits.
+     *
+     * @param palette the palette as {@code 0xAARRGGBB} entries, or {@code null}
+     * @return the table, or {@code null} for no palette
+     */
+    private static byte[] colorTable(int[] palette) {
+        if (palette == null || palette.length == 0) {
+            return null;
+        }
+        var table = new byte[8 + 8 * palette.length];
+        table[6] = (byte) ((palette.length - 1) >>> 8);
+        table[7] = (byte) (palette.length - 1);
+        for (var i = 0; i < palette.length; i++) {
+            var at = 8 + 8 * i;
+            table[at] = (byte) (i >>> 8);
+            table[at + 1] = (byte) i;
+            for (var component = 0; component < 3; component++) {
+                var value = (byte) (palette[i] >>> (16 - 8 * component));
+                table[at + 2 + 2 * component] = value;
+                table[at + 3 + 2 * component] = value;
+            }
+        }
+        return table;
     }
 
     /**

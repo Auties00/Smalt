@@ -17,8 +17,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
- * Runs the VP9, AV1, ProRes, DNxHR and DV decoders ({@link ReaderAsserts}) and the AVIF image decoder
- * ({@link ImageDecoderAsserts}) of this artifact through the I/O behavior harness over the container samples
+ * Runs the VP9, AV1, ProRes, DNxHR, DV, FFV1, Theora, QuickTime Animation and CineForm decoders
+ * ({@link ReaderAsserts}) and the AVIF image decoder ({@link ImageDecoderAsserts}) of this artifact through the I/O behavior harness over the container samples
  * (core's {@code src/test/resources/samples}), the AVIF samples of derived images and sample transforms (this
  * module's {@code src/test/resources/samples}, made by {@code tools/testdata/behavior/make-avif-samples.py}) and
  * smoke-tier vectors, comparing each with its golden dump under {@code src/test/resources/dumps}.
@@ -32,7 +32,8 @@ class VideoDecoderBehaviorTest {
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"flv/vp9.flv", "flv/av1.flv", "matroska/vp9-vorbis.webm", "matroska/vp9-alpha.webm",
             "ivf/av1.ivf", "mp4/prores.mov", "mp4/dnxhr.mov",
-            "matroska/ffv1.mkv", "avi/ffv1.avi", "ogg/theora.ogv", "dv/dv25-audio.dv", "avi/dv-type1.avi"})
+            "matroska/ffv1.mkv", "avi/ffv1.avi", "ogg/theora.ogv", "dv/dv25-audio.dv", "avi/dv-type1.avi",
+            "mp4/qtrle-argb.mov", "mp4/cfhd.mov", "avi/cfhd.avi", "matroska/cfhd.mkv"})
     @DisplayName("video samples: identical frames under every source behavior and clean faults")
     void sample(String sample) throws IOException {
         ReaderAsserts.video(sample, Files.readAllBytes(SAMPLES.resolve(sample))).run();

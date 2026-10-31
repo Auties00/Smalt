@@ -98,6 +98,8 @@ image.exr.internal	image
 image.gainmap	core
 image.gif	image
 image.gif.internal	image
+image.hap	image
+image.hap.internal	image
 image.hdr	image
 image.heic	mpeg
 image.heic.internal	mpeg
@@ -107,6 +109,7 @@ image.internal.density	image
 image.internal.jbig	image
 image.internal.lerc	image
 image.internal.raster	image
+image.internal.snappy	image
 image.internal.xz	image
 image.internal.zlib	image
 image.internal.zstd	image
@@ -197,6 +200,8 @@ video	core
 video.av1	video
 video.av1.internal	video
 video.av1.internal.encoder	video
+video.cfhd	video
+video.cfhd.internal	video
 video.dnxhd	video
 video.dnxhd.internal	video
 video.dv	video
@@ -222,6 +227,7 @@ video.mpeg4.internal.encoder	mpeg
 video.mpeg4.internal.object	mpeg
 video.prores	video
 video.prores.internal	video
+video.qtrle	video
 video.theora	video
 video.theora.internal	video
 video.vc1	mpeg
