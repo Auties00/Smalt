@@ -10,8 +10,16 @@ final class HeAacCompare {
 
     /** Low-passes below a third of the core band and decimates by {@code ratio}. */
     static float[] lowBand(float[] signal, int ratio) {
+        return filter(signal, 0.3 / ratio, ratio);
+    }
+
+    /** Low-passes at {@code cutoff}, a fraction of the sampling rate, without decimating. */
+    static float[] lowPass(float[] signal, double cutoff) {
+        return filter(signal, cutoff, 1);
+    }
+
+    private static float[] filter(float[] signal, double cutoff, int ratio) {
         var taps = 255;
-        var cutoff = 0.3 / ratio;
         var kernel = new double[taps];
         var sum = 0.0;
         for (var i = 0; i < taps; i++) {
@@ -51,6 +59,36 @@ final class HeAacCompare {
             double noise = 0;
             var start = Math.max(0, -lag) + 4096;
             var end = Math.min(expected.length, actual.length - lag) - 4096;
+            for (var i = start; i < end; i += 4) {
+                var e = expected[i];
+                var d = e - actual[i + lag];
+                signal += e * e;
+                noise += d * d;
+            }
+            var snr = 10 * Math.log10(signal / Math.max(noise, 1e-30));
+            if (snr > best) {
+                best = snr;
+                bestLag = lag;
+            }
+        }
+        return new double[]{best, bestLag};
+    }
+
+    /**
+     * Returns {best SNR, lag} of {@code actual} against {@code expected}, both already filtered, over
+     * lags -{@code maxLag}..{@code maxLag}, skipping {@code margin} samples at each end of the overlap.
+     */
+    static double[] align(float[] expected, float[] actual, int maxLag, int margin) {
+        var best = Double.NEGATIVE_INFINITY;
+        var bestLag = 0;
+        for (var lag = -maxLag; lag <= maxLag; lag++) {
+            var start = Math.max(0, -lag) + margin;
+            var end = Math.min(expected.length, actual.length - lag) - margin;
+            if (end - start < 4096) {
+                continue;
+            }
+            double signal = 0;
+            double noise = 0;
             for (var i = start; i < end; i += 4) {
                 var e = expected[i];
                 var d = e - actual[i + lag];

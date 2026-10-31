@@ -1,0 +1,25 @@
+# audio decode dump of vectors/mpeg4audio-al00_08.mp4; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 7552000
+seekable true
+track 1 AAC rate=8000 layout=[FRONT_CENTER]
+0 frames=4096 crc16=2cd2700f
+1 frames=4096 crc16=f74f3688
+2 frames=4096 crc16=b7f046ae
+3 frames=4096 crc16=6c844223
+4 frames=4096 crc16=ffc1ba27
+5 frames=4096 crc16=e683bb5b
+6 frames=4096 crc16=a5f98997
+7 frames=4096 crc16=775d6e89
+8 frames=4096 crc16=57460d1f
+9 frames=4096 crc16=d9315830
+10 frames=4096 crc16=2879996e
+11 frames=4096 crc16=8e2e0e33
+12 frames=4096 crc16=b9580bf9
+13 frames=4096 crc16=0806f6bf
+14 frames=3072 crc16=fb11885f
+seek 0: @sample 0
+seek 2517333: @sample 20139
+seek 5034666: @sample 40277
+seek 7552000: end
+seek -1000000: @sample 0

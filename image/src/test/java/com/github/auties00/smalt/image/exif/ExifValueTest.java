@@ -69,8 +69,8 @@ class ExifValueTest {
         }
 
         @ParameterizedTest
-        @ValueSource(ints = {0, 13, -1})
-        @DisplayName("of rejects a code that is not a TIFF 6.0 type")
+        @ValueSource(ints = {0, 14, 128, 130, -1})
+        @DisplayName("of rejects a code that is not a TIFF, TIFF Technical Note 1 or EXIF 3.0 type")
         void unknown(int code) {
             assertThrows(IllegalArgumentException.class, () -> ExifValue.Type.of(code));
         }
