@@ -1,0 +1,33 @@
+# demux dump of avi/mpeg2-422.avi; regenerate with -Dsmalt.test.updateDumps=true
+format AVI
+duration 800000
+seekable true
+metadata ISFT="Lavf61.7.100"
+track 1 VIDEO MPEG2_VIDEO timebase=1/25 duration=20 config=none
+  video 160x120 orientation=NORMAL rate=25/1 sar=1/1 interlacing=PROGRESSIVE
+packets 20
+0 t1 pts=0 dts=0 dur=1 flags=KEY size=4232 crc=20973dd7
+1 t1 pts=1 dts=1 dur=1 flags=- size=1687 crc=96a4c4de
+2 t1 pts=2 dts=2 dur=1 flags=- size=1173 crc=4a372fda
+3 t1 pts=3 dts=3 dur=1 flags=- size=1669 crc=47ca60a9
+4 t1 pts=4 dts=4 dur=1 flags=- size=1067 crc=71700539
+5 t1 pts=5 dts=5 dur=1 flags=- size=1835 crc=9a1babdb
+6 t1 pts=6 dts=6 dur=1 flags=- size=1046 crc=fcd53025
+7 t1 pts=7 dts=7 dur=1 flags=- size=1985 crc=3489ccb4
+8 t1 pts=8 dts=8 dur=1 flags=- size=1175 crc=faf8dc2a
+9 t1 pts=9 dts=9 dur=1 flags=KEY size=4519 crc=9a8deff0
+10 t1 pts=10 dts=10 dur=1 flags=- size=993 crc=67522d11
+11 t1 pts=11 dts=11 dur=1 flags=- size=1614 crc=6b5bffa0
+12 t1 pts=12 dts=12 dur=1 flags=- size=1122 crc=2a18d912
+13 t1 pts=13 dts=13 dur=1 flags=- size=1757 crc=cbc73da6
+14 t1 pts=14 dts=14 dur=1 flags=- size=936 crc=33b7a282
+15 t1 pts=15 dts=15 dur=1 flags=- size=1359 crc=ae0f712c
+16 t1 pts=16 dts=16 dur=1 flags=- size=850 crc=1dcb3e23
+17 t1 pts=17 dts=17 dur=1 flags=- size=1535 crc=ae0135cf
+18 t1 pts=18 dts=18 dur=1 flags=- size=1074 crc=8f85f82f
+19 t1 pts=19 dts=19 dur=1 flags=KEY size=4477 crc=fdecb467
+seek 0: t1@0
+seek 266666: t1@0
+seek 533333: t1@9
+seek 800000: end
+seek -1000000: t1@0

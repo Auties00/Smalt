@@ -8,24 +8,67 @@ import javax.sound.sampled.AudioSystem;
 import java.util.Objects;
 
 /**
- * Converts between Smalt's planar float samples ({@link AudioBuffer}) and the interleaved PCM
+ * Converts between Smalt's planar float samples ({@link AudioBuffer}) and the interleaved sample
  * bytes of a Java Sound {@link AudioFormat}.
  *
- * <p>The supported formats are {@link AudioFormat.Encoding#PCM_SIGNED} and
- * {@link AudioFormat.Encoding#PCM_UNSIGNED} at 8, 16, 24 or 32 bits and
- * {@link AudioFormat.Encoding#PCM_FLOAT} at 32 or 64 bits, in either byte order, with any channel
- * count and a frame size of {@code channels * bits / 8} bytes.
+ * <p>The supported formats, in either byte order, with any channel count and a frame size of
+ * {@code channels * ceil(bits / 8)} bytes, are:
+ * <ul>
+ * <li>{@link AudioFormat.Encoding#PCM_SIGNED} and {@link AudioFormat.Encoding#PCM_UNSIGNED} at 8 to 32
+ * bits;</li>
+ * <li>{@link AudioFormat.Encoding#PCM_FLOAT} at 16 (IEEE 754 half precision), 32 or 64 bits;</li>
+ * <li>{@link AudioFormat.Encoding#ULAW} and {@link AudioFormat.Encoding#ALAW} at 8 bits, the
+ * companded codes of ITU-T G.711.</li>
+ * </ul>
  *
  * <p>Integer samples scale as Smalt's PCM decoder scales them: a {@code b}-bit sample {@code v}
  * is the float {@code v / 2^(b - 1)}, and a float {@code x} is the sample
- * {@code round(x * 2^(b - 1))}, clamped to the sample range, with NaN as {@code 0}. Converting
- * integer samples of up to 24 bits to floats and back is therefore lossless; 32-bit samples keep
- * the 24 significant bits of a {@code float}. Float samples are copied as they are (64-bit samples
- * are rounded to {@code float}).
+ * {@code round(x * 2^(b - 1))}, clamped to the sample range, with NaN as {@code 0}. A sample whose
+ * size is not a multiple of 8 bits fills the most significant bits of its {@code ceil(b / 8)}
+ * bytes, as WAVE and AIFF files store it: the low bits are ignored when reading and written as
+ * zero. Converting integer samples of up to 24 bits to floats and back is therefore lossless;
+ * samples of more bits keep the 24 significant bits of a {@code float}. Float samples are copied
+ * as they are, 64-bit samples rounded to {@code float} and half-precision samples rounded to
+ * nearest even, out-of-range values becoming infinities.
+ *
+ * <p>A G.711 code decodes to the linear value of the G.711 tables, a 14-bit (mu-law) or 13-bit
+ * (A-law) value read as a 16-bit sample, and a float encodes as the code of its 16-bit sample
+ * {@code round(x * 32768)} reduced to its 14 or 13 most significant bits, a negative sample {@code v}
+ * coded as the magnitude {@code -v - 1} as the ITU-T G.191 tools code it. Decoding a code and encoding
+ * the sample again gives the same code,
+ * except that the mu-law negative zero {@code 0x7F} encodes again as the positive zero
+ * {@code 0xFF}.
  *
  * <p>This class is thread-safe.
  */
 public final class SampledAudio {
+    /**
+     * The linear value of each mu-law code, as a 16-bit sample.
+     */
+    private static final short[] MU_LAW = new short[256];
+
+    /**
+     * The linear value of each A-law code, as a 16-bit sample.
+     */
+    private static final short[] A_LAW = new short[256];
+
+    /**
+     * The value added to the magnitude of a 16-bit sample before mu-law segmentation ({@code 33 << 2}).
+     */
+    private static final int MU_LAW_BIAS = 0x84;
+
+    /**
+     * The largest magnitude mu-law codes, {@code 8159 << 2} less the bias.
+     */
+    private static final int MU_LAW_CLIP = 32635;
+
+    static {
+        for (var code = 0; code < 256; code++) {
+            MU_LAW[code] = (short) decodeMuLaw(code);
+            A_LAW[code] = (short) decodeALaw(code);
+        }
+    }
+
     /**
      * Prevents instantiation.
      */
@@ -46,15 +89,17 @@ public final class SampledAudio {
         var encoding = format.getEncoding();
         boolean sizeSupported;
         if (AudioFormat.Encoding.PCM_SIGNED.equals(encoding) || AudioFormat.Encoding.PCM_UNSIGNED.equals(encoding)) {
-            sizeSupported = bits == 8 || bits == 16 || bits == 24 || bits == 32;
+            sizeSupported = bits >= 8 && bits <= 32;
         } else if (AudioFormat.Encoding.PCM_FLOAT.equals(encoding)) {
-            sizeSupported = bits == 32 || bits == 64;
+            sizeSupported = bits == 16 || bits == 32 || bits == 64;
+        } else if (AudioFormat.Encoding.ULAW.equals(encoding) || AudioFormat.Encoding.ALAW.equals(encoding)) {
+            sizeSupported = bits == 8;
         } else {
             return false;
         }
         var channels = format.getChannels();
-        return sizeSupported && channels > 0
-                && (format.getFrameSize() == AudioSystem.NOT_SPECIFIED || format.getFrameSize() == channels * bits / 8);
+        return sizeSupported && channels > 0 && (format.getFrameSize() == AudioSystem.NOT_SPECIFIED
+                || format.getFrameSize() == channels * containerBytes(bits));
     }
 
     /**
@@ -71,11 +116,10 @@ public final class SampledAudio {
     }
 
     /**
-     * Returns a PCM format.
+     * Returns a supported format of an encoding, sample rate, sample size and channel layout, with a
+     * frame of {@code channels * ceil(bits / 8)} bytes.
      *
-     * @param encoding {@link AudioFormat.Encoding#PCM_SIGNED},
-     * {@link AudioFormat.Encoding#PCM_UNSIGNED} or
-     * {@link AudioFormat.Encoding#PCM_FLOAT}
+     * @param encoding one of the encodings the class documents
      * @param sampleRate the sampling rate in hertz
      * @param bits the sample size in bits
      * @param layout the channel layout
@@ -91,8 +135,12 @@ public final class SampledAudio {
         if (sampleRate <= 0) {
             throw new IllegalArgumentException("invalid sample rate " + sampleRate);
         }
+        if (bits <= 0) {
+            throw new IllegalArgumentException("unsupported sample size " + bits);
+        }
         var channels = layout.channels();
-        var format = new AudioFormat(encoding, sampleRate, bits, channels, channels * bits / 8, sampleRate, bigEndian);
+        var format = new AudioFormat(encoding, sampleRate, bits, channels, channels * containerBytes(bits), sampleRate,
+                bigEndian);
         if (!isSupported(format)) {
             throw new IllegalArgumentException("unsupported PCM format " + format);
         }
@@ -114,16 +162,16 @@ public final class SampledAudio {
      * Returns the size of one frame of a supported format.
      *
      * @param format a supported Java Sound format
-     * @return {@code channels * bits / 8}
+     * @return {@code channels * ceil(bits / 8)}
      * @throws IllegalArgumentException if the format is not supported
      */
     public static int frameSize(AudioFormat format) {
         checkSupported(format);
-        return format.getChannels() * format.getSampleSizeInBits() / 8;
+        return format.getChannels() * containerBytes(format.getSampleSizeInBits());
     }
 
     /**
-     * Writes the frames of a buffer as interleaved PCM bytes.
+     * Writes the frames of a buffer as interleaved sample bytes.
      *
      * @param buffer the samples; its channel count must match the format's
      * @param format the format of the bytes
@@ -141,7 +189,7 @@ public final class SampledAudio {
     }
 
     /**
-     * Writes planar float samples as interleaved PCM bytes.
+     * Writes planar float samples as interleaved sample bytes.
      *
      * @param planes the samples, one plane per channel; the plane count must match the format's
      * channel count
@@ -163,39 +211,47 @@ public final class SampledAudio {
         if (planes.length != channels) {
             throw new IllegalArgumentException(planes.length + " planes for a " + channels + "-channel format");
         }
-        var bytes = format.getSampleSizeInBits() / 8;
+        var bits = format.getSampleSizeInBits();
+        var bytes = containerBytes(bits);
         var frameSize = channels * bytes;
         Objects.checkFromIndexSize(offset, frames * frameSize, target.length);
         for (var plane : planes) {
             Objects.checkFromIndexSize(fromFrame, frames, plane.length);
         }
-        var encoding = format.getEncoding();
+        var encoding = encodingOf(format);
         var bigEndian = format.isBigEndian();
-        var floating = AudioFormat.Encoding.PCM_FLOAT.equals(encoding);
-        var unsigned = AudioFormat.Encoding.PCM_UNSIGNED.equals(encoding);
-        var bits = bytes * 8;
+        var padding = bytes * 8 - bits;
         for (var c = 0; c < channels; c++) {
             var plane = planes[c];
             var at = offset + c * bytes;
             for (var i = 0; i < frames; i++, at += frameSize) {
                 var sample = plane[fromFrame + i];
-                long raw;
-                if (floating) {
-                    raw = bits == 32 ? Float.floatToRawIntBits(sample) & 0xFFFFFFFFL : Double.doubleToRawLongBits(sample);
-                } else {
-                    raw = quantize(sample, bits);
-                    if (unsigned) {
-                        raw += 1L << (bits - 1);
+                switch (encoding) {
+                    case FLOAT -> {
+                        long raw = switch (bits) {
+                            case 16 -> Float.floatToFloat16(sample) & 0xFFFFL;
+                            case 32 -> Float.floatToRawIntBits(sample) & 0xFFFFFFFFL;
+                            default -> Double.doubleToRawLongBits(sample);
+                        };
+                        store(raw, target, at, bytes, bigEndian);
+                    }
+                    case MU_LAW -> target[at] = (byte) encodeMuLaw((int) quantize(sample, 16));
+                    case A_LAW -> target[at] = (byte) encodeALaw((int) quantize(sample, 16));
+                    case SIGNED, UNSIGNED -> {
+                        var raw = quantize(sample, bits);
+                        if (encoding == Kind.UNSIGNED) {
+                            raw += 1L << (bits - 1);
+                        }
+                        store(raw << padding, target, at, bytes, bigEndian);
                     }
                 }
-                store(raw, target, at, bytes, bigEndian);
             }
         }
         return frames * frameSize;
     }
 
     /**
-     * Reads interleaved PCM bytes into a new buffer.
+     * Reads interleaved sample bytes into a new buffer.
      *
      * @param data the bytes
      * @param offset the index of the first byte
@@ -222,7 +278,7 @@ public final class SampledAudio {
     }
 
     /**
-     * Reads interleaved PCM bytes into planar float samples.
+     * Reads interleaved sample bytes into planar float samples.
      *
      * @param data the bytes
      * @param offset the index of the first byte
@@ -243,31 +299,73 @@ public final class SampledAudio {
         if (planes.length != channels) {
             throw new IllegalArgumentException(planes.length + " planes for a " + channels + "-channel format");
         }
-        var bytes = format.getSampleSizeInBits() / 8;
+        var bits = format.getSampleSizeInBits();
+        var bytes = containerBytes(bits);
         var frameSize = channels * bytes;
         Objects.checkFromIndexSize(offset, frames * frameSize, data.length);
         for (var plane : planes) {
             Objects.checkFromIndexSize(planeOffset, frames, plane.length);
         }
-        var encoding = format.getEncoding();
+        var encoding = encodingOf(format);
         var bigEndian = format.isBigEndian();
-        var floating = AudioFormat.Encoding.PCM_FLOAT.equals(encoding);
-        var unsigned = AudioFormat.Encoding.PCM_UNSIGNED.equals(encoding);
-        var bits = bytes * 8;
+        var padding = bytes * 8 - bits;
         var scale = (float) Math.scalb(1.0, -(bits - 1));
         for (var c = 0; c < channels; c++) {
             var plane = planes[c];
             var at = offset + c * bytes;
             for (var i = 0; i < frames; i++, at += frameSize) {
-                var raw = load(data, at, bytes, bigEndian);
-                float sample;
-                if (floating) {
-                    sample = bits == 32 ? Float.intBitsToFloat((int) raw) : (float) Double.longBitsToDouble(raw);
-                } else {
-                    var value = unsigned ? raw - (1L << (bits - 1)) : (raw << (64 - bits)) >> (64 - bits);
-                    sample = value * scale;
-                }
-                plane[planeOffset + i] = sample;
+                plane[planeOffset + i] = switch (encoding) {
+                    case FLOAT -> {
+                        var raw = load(data, at, bytes, bigEndian);
+                        yield switch (bits) {
+                            case 16 -> Float.float16ToFloat((short) raw);
+                            case 32 -> Float.intBitsToFloat((int) raw);
+                            default -> (float) Double.longBitsToDouble(raw);
+                        };
+                    }
+                    case MU_LAW -> MU_LAW[data[at] & 0xFF] * 0x1p-15f;
+                    case A_LAW -> A_LAW[data[at] & 0xFF] * 0x1p-15f;
+                    case SIGNED -> {
+                        var raw = load(data, at, bytes, bigEndian) >>> padding;
+                        yield ((raw << (64 - bits)) >> (64 - bits)) * scale;
+                    }
+                    case UNSIGNED -> {
+                        var raw = load(data, at, bytes, bigEndian) >>> padding;
+                        yield (raw - (1L << (bits - 1))) * scale;
+                    }
+                };
+            }
+        }
+    }
+
+    /**
+     * Reads interleaved integer PCM bytes into planar signed integers of the format's sample size,
+     * unsigned samples offset to signed ones.
+     *
+     * @param data the bytes
+     * @param offset the index of the first byte
+     * @param frames the number of frames to read
+     * @param format a supported {@link AudioFormat.Encoding#PCM_SIGNED} or
+     * {@link AudioFormat.Encoding#PCM_UNSIGNED} format
+     * @param planes the destination, one plane per channel
+     * @param planeOffset the index in each plane of the first frame written
+     */
+    static void readIntegers(byte[] data, int offset, int frames, AudioFormat format, int[][] planes,
+                             int planeOffset) {
+        var channels = format.getChannels();
+        var bits = format.getSampleSizeInBits();
+        var bytes = containerBytes(bits);
+        var frameSize = channels * bytes;
+        Objects.checkFromIndexSize(offset, frames * frameSize, data.length);
+        var unsigned = AudioFormat.Encoding.PCM_UNSIGNED.equals(format.getEncoding());
+        var bigEndian = format.isBigEndian();
+        var padding = bytes * 8 - bits;
+        for (var c = 0; c < channels; c++) {
+            var plane = planes[c];
+            var at = offset + c * bytes;
+            for (var i = 0; i < frames; i++, at += frameSize) {
+                var raw = load(data, at, bytes, bigEndian) >>> padding;
+                plane[planeOffset + i] = (int) (unsigned ? raw - (1L << (bits - 1)) : (raw << (64 - bits)) >> (64 - bits));
             }
         }
     }
@@ -283,6 +381,109 @@ public final class SampledAudio {
         var limit = 1L << (bits - 1);
         var scaled = Math.round((double) sample * limit);
         return Math.clamp(scaled, -limit, limit - 1);
+    }
+
+    /**
+     * Returns the G.711 mu-law code of a 16-bit sample.
+     *
+     * @param sample the sample, from {@code -32768} to {@code 32767}
+     * @return the code, from 0 to 255
+     */
+    static int encodeMuLaw(int sample) {
+        var sign = sample < 0 ? 0x80 : 0;
+        // A negative sample codes its ones' complement, as ITU-T G.191 does for both laws
+        var magnitude = Math.min(sample < 0 ? ~sample : sample, MU_LAW_CLIP) + MU_LAW_BIAS;
+        // The segment is the position of the highest set bit above bit 7 (the bias makes bit 7 the lowest)
+        var segment = 31 - Integer.numberOfLeadingZeros(magnitude >> 7);
+        var mantissa = (magnitude >> (segment + 3)) & 0x0F;
+        return ~(sign | segment << 4 | mantissa) & 0xFF;
+    }
+
+    /**
+     * Returns the 16-bit sample of a G.711 mu-law code.
+     *
+     * @param code the code, from 0 to 255
+     * @return the sample, from {@code -32124} to {@code 32124}
+     */
+    static int decodeMuLaw(int code) {
+        var complement = ~code & 0xFF;
+        var magnitude = (((complement & 0x0F) << 3) + MU_LAW_BIAS) << ((complement & 0x70) >> 4);
+        return (complement & 0x80) != 0 ? MU_LAW_BIAS - magnitude : magnitude - MU_LAW_BIAS;
+    }
+
+    /**
+     * Returns the G.711 A-law code of a 16-bit sample, coded from its 13 most significant bits.
+     *
+     * @param sample the sample, from {@code -32768} to {@code 32767}
+     * @return the code, from 0 to 255, with the even bits inverted as G.711 transmits them
+     */
+    static int encodeALaw(int sample) {
+        var value = sample >> 3;
+        int mask;
+        if (value >= 0) {
+            mask = 0xD5;
+        } else {
+            mask = 0x55;
+            value = -value - 1;
+        }
+        // Segment s holds the magnitudes below 32 << s; segments 0 and 1 share a step of 2
+        var segment = Math.max(0, 31 - Integer.numberOfLeadingZeros(value >> 4));
+        if (segment >= 8) {
+            return 0x7F ^ mask;
+        }
+        var mantissa = segment < 2 ? (value >> 1) & 0x0F : (value >> segment) & 0x0F;
+        return (segment << 4 | mantissa) ^ mask;
+    }
+
+    /**
+     * Returns the 16-bit sample of a G.711 A-law code.
+     *
+     * @param code the code, from 0 to 255
+     * @return the sample, from {@code -32256} to {@code 32256}
+     */
+    static int decodeALaw(int code) {
+        var value = code ^ 0x55;
+        var magnitude = (value & 0x0F) << 4;
+        var segment = (value & 0x70) >> 4;
+        magnitude = switch (segment) {
+            case 0 -> magnitude + 8;
+            case 1 -> magnitude + 0x108;
+            default -> (magnitude + 0x108) << (segment - 1);
+        };
+        return (value & 0x80) != 0 ? magnitude : -magnitude;
+    }
+
+    /**
+     * Returns the number of bytes a sample of a size occupies.
+     *
+     * @param bits the sample size in bits, positive
+     * @return {@code ceil(bits / 8)}
+     */
+    static int containerBytes(int bits) {
+        return (bits + 7) / 8;
+    }
+
+    /**
+     * Returns the sample kind of a supported format.
+     *
+     * @param format a supported format
+     * @return the kind of its samples
+     */
+    private static Kind encodingOf(AudioFormat format) {
+        var encoding = format.getEncoding();
+        if (AudioFormat.Encoding.PCM_FLOAT.equals(encoding)) {
+            return Kind.FLOAT;
+        }
+        if (AudioFormat.Encoding.PCM_UNSIGNED.equals(encoding)) {
+            return Kind.UNSIGNED;
+        }
+        if (AudioFormat.Encoding.ULAW.equals(encoding)) {
+            return Kind.MU_LAW;
+        }
+        if (AudioFormat.Encoding.ALAW.equals(encoding)) {
+            return Kind.A_LAW;
+        }
+        return Kind.SIGNED;
     }
 
     /**
@@ -329,5 +530,31 @@ public final class SampledAudio {
         if (!isSupported(format)) {
             throw new IllegalArgumentException("unsupported PCM format " + format);
         }
+    }
+
+    /**
+     * The kinds of samples the supported formats hold.
+     */
+    private enum Kind {
+        /**
+         * Two's complement integers.
+         */
+        SIGNED,
+        /**
+         * Offset binary integers.
+         */
+        UNSIGNED,
+        /**
+         * IEEE 754 floats.
+         */
+        FLOAT,
+        /**
+         * G.711 mu-law codes.
+         */
+        MU_LAW,
+        /**
+         * G.711 A-law codes.
+         */
+        A_LAW
     }
 }

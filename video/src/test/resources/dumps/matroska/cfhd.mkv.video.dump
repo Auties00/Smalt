@@ -1,0 +1,15 @@
+# video decode dump of matroska/cfhd.mkv; regenerate with -Dsmalt.test.updateDumps=true
+format MATROSKA
+duration 500000
+seekable true
+track 1 CFHD 64x48 timebase=1/1000
+0 pts=0 dur=100 key=true 64x48 yuv16 depth=10 YUV422 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=55bf1a27 u=ee96132d v=da925dfa
+1 pts=100 dur=100 key=true 64x48 yuv16 depth=10 YUV422 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=9ace94b2 u=99ff42f7 v=a284db26
+2 pts=200 dur=100 key=true 64x48 yuv16 depth=10 YUV422 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=77597391 u=e12ca06d v=d2c009e7
+3 pts=300 dur=100 key=true 64x48 yuv16 depth=10 YUV422 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=826f980e u=bcef4b42 v=43d6e257
+4 pts=400 dur=100 key=true 64x48 yuv16 depth=10 YUV422 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=e0a6235d u=2d91b414 v=725f4c99
+seek 0: @0
+seek 166666: @1
+seek 333333: @3
+seek 500000: end
+seek -1000000: @0

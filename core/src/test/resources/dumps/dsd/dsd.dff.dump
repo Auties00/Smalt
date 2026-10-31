@@ -1,0 +1,34 @@
+# demux dump of dsd/dsd.dff; regenerate with -Dsmalt.test.updateDumps=true
+format DSDIFF
+duration 60000
+seekable true
+metadata COMT="Behavior sample"
+metadata DIAR="Smalt Behavior"
+metadata DITI="Sigma Delta"
+chapter 20000 60000 "Part two"
+track 0 AUDIO DSD_MSBF timebase=1/2822400 duration=169344 config=none
+  audio rate=2822400 bits=1 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 6
+0 t0 pts=0 dts=0 dur=32768 flags=KEY size=8192 crc=cde6032c
+1 t0 pts=32768 dts=32768 dur=32768 flags=KEY size=8192 crc=eb5ac5e7
+2 t0 pts=65536 dts=65536 dur=32768 flags=KEY size=8192 crc=5e272a43
+3 t0 pts=98304 dts=98304 dur=32768 flags=KEY size=8192 crc=6ac1bde7
+4 t0 pts=131072 dts=131072 dur=32768 flags=KEY size=8192 crc=4289e466
+5 t0 pts=163840 dts=163840 dur=5504 flags=KEY size=1376 crc=8cfe2b88
+seek 0: t0@0
+seek 20000: t0@1
+seek 40000: t0@3
+seek 60000: end
+seek -1000000: t0@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format DSDIFF
+  duration 60000
+  seekable false
+  metadata COMT="Behavior sample"
+  metadata DIAR="Smalt Behavior"
+  metadata DITI="Sigma Delta"
+  chapter 20000 60000 "Part two"
+  track 0 AUDIO DSD_MSBF timebase=1/2822400 duration=169344 config=none
+    audio rate=2822400 bits=1 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH

@@ -8,7 +8,9 @@ import com.github.auties00.smalt.image.ImageFormat;
  * the MIME types {@code image/vnd.microsoft.icon} and {@code image/x-icon}.
  *
  * <p>An image becomes a one-entry icon of its own size, or a 256-pixel square entry it is scaled
- * into when it is larger than 256 pixels on a side. The provider deregisters itself unless a codec
+ * into when it is larger than 256 pixels on a side; a sequence
+ * ({@link SmaltImageWriter#prepareWriteSequence(javax.imageio.metadata.IIOMetadata)}) writes one entry per
+ * image. The provider deregisters itself unless a codec
  * artifact present at run time ({@code smalt-image}) encodes ICO.
  */
 public final class IcoImageWriterSpi extends SmaltImageWriterSpi {

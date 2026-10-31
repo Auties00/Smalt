@@ -13,8 +13,8 @@ import com.github.auties00.smalt.metadata.TagWriteOptions;
  * the new tags fit the space the old ones occupied, and must never change a byte of the audio or
  * video data. Instances are not thread-safe.
  */
-public sealed interface TagFile permits FlacTagFile, Id3StreamTagFile, MatroskaTagFile, Mp4TagFile, OggTagFile,
-        RiffTagFile {
+public sealed interface TagFile permits AsfTagFile, AviTagFile, FlacTagFile, Id3StreamTagFile, MatroskaTagFile,
+        Mp4TagFile, OggTagFile, ProvidedTagFile, RiffTagFile, TsTagFile {
     /**
      * Returns the tags, pictures and chapters of the file.
      *

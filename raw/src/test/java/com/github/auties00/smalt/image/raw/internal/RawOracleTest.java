@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.image.raw.internal;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.raw.RawDecoder;
 import com.github.auties00.smalt.image.raw.RawDecoderOptions;
@@ -17,7 +18,6 @@ import java.util.Arrays;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Checks, against Adobe DNG Converter as a black-box oracle, that the decoder reproduces exactly the
@@ -54,7 +54,7 @@ class RawOracleTest {
     void decoding(RawSamples sample) {
         var name = sample.fileName();
         var dng = ORACLE.resolve(name.substring(0, name.lastIndexOf('.')) + ".dng");
-        assumeTrue(Files.isRegularFile(dng), "no oracle file " + dng + "; run tools/testdata/raw-oracle.py");
+        Skip.unless(Files.isRegularFile(dng), "data:raw-oracle", "no oracle file " + dng + "; run tools/testdata/raw-oracle.py");
         var oracle = NikonTableDerivation.oracle(dng);
         SensorPlane decoded;
         try (var source = MediaSource.of(sample.fetch())) {
@@ -76,7 +76,7 @@ class RawOracleTest {
     void linear(RawSamples sample) {
         var name = sample.fileName();
         var dng = ORACLE.resolve(name.substring(0, name.lastIndexOf('.')) + ".dng");
-        assumeTrue(Files.isRegularFile(dng), "no oracle file " + dng + "; run tools/testdata/raw-oracle.py");
+        Skip.unless(Files.isRegularFile(dng), "data:raw-oracle", "no oracle file " + dng + "; run tools/testdata/raw-oracle.py");
         try (var source = MediaSource.of(sample.fetch()); var oracle = MediaSource.of(dng)) {
             var ours = RawDecoder.decodeRaw(source);
             var theirs = RawDecoder.decodeRaw(oracle);
@@ -95,7 +95,7 @@ class RawOracleTest {
     void crwLevels(RawSamples sample) {
         var name = sample.fileName();
         var dng = ORACLE.resolve(name.substring(0, name.lastIndexOf('.')) + ".dng");
-        assumeTrue(Files.isRegularFile(dng), "no oracle file " + dng + "; run tools/testdata/raw-oracle.py");
+        Skip.unless(Files.isRegularFile(dng), "data:raw-oracle", "no oracle file " + dng + "; run tools/testdata/raw-oracle.py");
         try (var source = MediaSource.of(sample.fetch()); var oracle = MediaSource.of(dng)) {
             var ours = RawParser.parse(source, MediaLimits.DEFAULT);
             var theirs = RawParser.parse(oracle, MediaLimits.DEFAULT);
@@ -140,7 +140,7 @@ class RawOracleTest {
     void rendering(RawSamples sample) {
         var name = sample.fileName();
         var dng = ORACLE.resolve(name.substring(0, name.lastIndexOf('.')) + ".dng");
-        assumeTrue(Files.isRegularFile(dng), "no oracle file " + dng + "; run tools/testdata/raw-oracle.py");
+        Skip.unless(Files.isRegularFile(dng), "data:raw-oracle", "no oracle file " + dng + "; run tools/testdata/raw-oracle.py");
         try (var source = MediaSource.of(sample.fetch()); var oracle = MediaSource.of(dng)) {
             var converter = grid(com.github.auties00.smalt.image.Images.decode(MediaSource.of(
                     RawDecoder.extractPreview(oracle).orElseThrow())).picture());
@@ -168,7 +168,7 @@ class RawOracleTest {
     void x3fArea(RawSamples sample) {
         var name = sample.fileName();
         var dng = ORACLE.resolve(name.substring(0, name.lastIndexOf('.')) + ".dng");
-        assumeTrue(Files.isRegularFile(dng), "no oracle file " + dng + "; run tools/testdata/raw-oracle.py");
+        Skip.unless(Files.isRegularFile(dng), "data:raw-oracle", "no oracle file " + dng + "; run tools/testdata/raw-oracle.py");
         try (var source = MediaSource.of(sample.fetch()); var oracle = MediaSource.of(dng)) {
             var ours = RawDecoder.decodeRaw(source);
             var theirs = RawDecoder.decodeRaw(oracle);
@@ -193,7 +193,7 @@ class RawOracleTest {
     void x3fRendering(RawSamples sample) {
         var name = sample.fileName();
         var dng = ORACLE.resolve(name.substring(0, name.lastIndexOf('.')) + ".dng");
-        assumeTrue(Files.isRegularFile(dng), "no oracle file " + dng + "; run tools/testdata/raw-oracle.py");
+        Skip.unless(Files.isRegularFile(dng), "data:raw-oracle", "no oracle file " + dng + "; run tools/testdata/raw-oracle.py");
         try (var source = MediaSource.of(sample.fetch()); var oracle = MediaSource.of(dng)) {
             var converter = grid(com.github.auties00.smalt.image.Images.decode(MediaSource.of(
                     RawDecoder.extractPreview(oracle).orElseThrow())).picture());
@@ -277,7 +277,7 @@ class RawOracleTest {
     void fourColors(RawSamples sample) {
         var name = sample.fileName();
         var dng = ORACLE.resolve(name.substring(0, name.lastIndexOf('.')) + ".dng");
-        assumeTrue(Files.isRegularFile(dng), "no oracle file " + dng + "; run tools/testdata/raw-oracle.py");
+        Skip.unless(Files.isRegularFile(dng), "data:raw-oracle", "no oracle file " + dng + "; run tools/testdata/raw-oracle.py");
         try (var source = MediaSource.of(dng)) {
             var rendered = grid(com.github.auties00.smalt.image.raw.RawDecoder.decode(source).picture());
             var preview = grid(com.github.auties00.smalt.image.Images.decode(MediaSource.of(

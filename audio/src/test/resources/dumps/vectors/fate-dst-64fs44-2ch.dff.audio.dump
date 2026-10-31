@@ -1,0 +1,21 @@
+# audio decode dump of vectors/fate-dst-64fs44-2ch.dff; regenerate with -Dsmalt.test.updateDumps=true
+format DSDIFF
+duration 133333
+seekable true
+track 0 DST rate=176400 layout=[FRONT_LEFT, FRONT_RIGHT]
+0 frames=4096 crc16=faef7f01
+1 frames=4096 crc16=e4e17eb6
+2 frames=4096 crc16=22d94fcd
+3 frames=4096 crc16=535db379
+4 frames=4096 crc16=77b02454
+5 frames=3040 crc16=691d82f1
+seek 0: @sample 0
+seek 44444: @sample 7840
+seek 88888: @sample 15680
+seek 133333: end
+seek -1000000: @sample 0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format DSDIFF
+  duration 133333
+  seekable false
+  track 0 DST rate=176400 layout=[FRONT_LEFT, FRONT_RIGHT]

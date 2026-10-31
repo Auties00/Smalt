@@ -31,12 +31,18 @@ import java.util.Set;
  * Reads compressed audio files for Java Sound through Smalt's containers and the codec artifacts
  * present at run time.
  *
- * <p>The container is recognized from the content, never from a file name: Ogg (Opus, Vorbis,
- * FLAC), native FLAC, MPEG audio (MP3, MP2), ADTS (AAC), MPEG-4 (M4A, MP4), Matroska/WebM and AMR,
- * whenever the codec of the first audio track is decodable ({@code smalt-audio} for Opus, Vorbis,
- * FLAC and MP3, {@code smalt-mpeg} for AAC). WAV and AIFF files are declined and left to the
- * JDK's readers. The {@link AudioFileFormat} reports the decoded sample rate and channel count and
- * the {@code "duration"} property in microseconds when the container declares it.
+ * <p>The container is recognized from the content, never from a file name: every container
+ * {@link SmaltAudioFormats#fileTypeOf} names a type for (Ogg, FLAC, MPEG audio, ADTS, LOAS and ADIF,
+ * MPEG-4, Matroska/WebM, AMR, AC-3 and E-AC-3, DTS, CAF, Wave64, AVI, MPEG transport and program
+ * streams, ASF, FLV, MXF, DV, WavPack, Monkey's Audio, Musepack, DSF and DSDIFF), whenever the codec of
+ * its first audio track is decodable ({@code smalt-audio} for Opus, Vorbis, FLAC, MP3 and the lossless
+ * codecs, {@code smalt-mpeg} for AAC, AMR, AC-3 and E-AC-3), so a video file is read for its audio. Of
+ * the WAVE, AIFF and AU files, only the variants the JDK's readers decline are read, and the others are
+ * left to them: RF64 and BW64 files, WAVE files of compressed codings (ADPCM, MP3, GSM and the others the
+ * codec artifacts decode), AIFF-C files of a compression type other than {@code NONE} and {@code ulaw}
+ * (such as {@code sowt}, {@code twos}, {@code fl32}, {@code fl64}, {@code alaw} and {@code ima4}), and AU
+ * files of other encodings. The {@link AudioFileFormat} reports the decoded sample rate and channel count
+ * and the {@code "duration"} property in microseconds when the container declares it.
  *
  * <p>{@link #getAudioInputStream(File)} returns a stream in the codec's encoding
  * ({@link SmaltAudioFormats#encodingOf(Codec)}); convert it to PCM with
@@ -48,7 +54,9 @@ import java.util.Set;
  *     // pcm is 16-bit little-endian PCM at the file's rate and channel count
  * }
  * }
- * A track whose codec is PCM (in MPEG-4 or Matroska) is returned as PCM directly.
+ * A track whose codec is PCM is returned as PCM directly: integer samples at their stored size (8-bit
+ * unsigned samples as {@link AudioFormat.Encoding#PCM_UNSIGNED}, 64-bit ones at 32 bits), float samples at
+ * 32 bits, and G.711 samples as {@link AudioFormat.Encoding#ULAW} or {@link AudioFormat.Encoding#ALAW}.
  *
  * <p>This class is thread-safe.
  *
@@ -115,11 +123,22 @@ public final class SmaltAudioFileReader extends AudioFileReader {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>A stream this reader declines after reading it is reset to the position it was given at.
+     */
     @Override
     public AudioInputStream getAudioInputStream(InputStream stream) throws UnsupportedAudioFileException, IOException {
         Objects.requireNonNull(stream, "stream");
         recognize(stream);
-        return stream(MediaSource.of(stream.readAllBytes()));
+        stream.mark(Integer.MAX_VALUE);
+        try {
+            return stream(MediaSource.of(stream.readAllBytes()));
+        } catch (UnsupportedAudioFileException exception) {
+            stream.reset();
+            throw exception;
+        }
     }
 
     @Override
@@ -166,7 +185,7 @@ public final class SmaltAudioFileReader extends AudioFileReader {
      */
     private static AudioFileFormat describe(MediaSource source) throws UnsupportedAudioFileException, IOException {
         try (var reader = openReader(source)) {
-            return fileFormat(reader);
+            return fileFormat(source, reader);
         }
     }
 
@@ -182,7 +201,7 @@ public final class SmaltAudioFileReader extends AudioFileReader {
         AudioReader reader = null;
         try {
             reader = openReader(source);
-            var fileFormat = fileFormat(reader);
+            var fileFormat = fileFormat(source, reader);
             var format = fileFormat.getFormat();
             if (reader.track().codec().isPcm()) {
                 var decoded = new DecodingInputStream(reader, format, source::close);
@@ -206,14 +225,18 @@ public final class SmaltAudioFileReader extends AudioFileReader {
      *
      * @param source the file; not closed
      * @return the reader, positioned at the start
-     * @throws UnsupportedAudioFileException if the container is not one this reader handles, or its
-     * audio is missing, not decodable or corrupt
+     * @throws UnsupportedAudioFileException if the container is not one this reader handles, the file is
+     * one the JDK's readers read, or its audio is missing, not decodable or corrupt
      * @throws IOException if reading fails
      */
     private static AudioReader openReader(MediaSource source) throws UnsupportedAudioFileException, IOException {
         try {
-            if (Containers.detect(source).filter(SmaltAudioFileReader::handles).isEmpty()) {
+            var container = Containers.detect(source).filter(SmaltAudioFileReader::handles);
+            if (container.isEmpty()) {
                 throw new UnsupportedAudioFileException("not a file the Smalt audio reader handles");
+            }
+            if (JdkSampledFiles.readsNatively(source, container.get())) {
+                throw new UnsupportedAudioFileException("a file the JDK's readers read");
             }
             return AudioReader.open(source);
         } catch (MediaException.Io exception) {
@@ -229,8 +252,7 @@ public final class SmaltAudioFileReader extends AudioFileReader {
      * Returns whether this reader handles a container.
      *
      * @param container the detected container format
-     * @return {@code true} unless the container is WAV or AIFF (the JDK reads them) or holds no
-     * audio
+     * @return {@code true} unless the container holds no audio
      */
     private static boolean handles(ContainerFormat container) {
         return SmaltAudioFormats.fileTypeOf(container, Codec.UNKNOWN_AUDIO).isPresent();
@@ -239,28 +261,35 @@ public final class SmaltAudioFileReader extends AudioFileReader {
     /**
      * Describes the file an open reader reads.
      *
+     * @param source the file
      * @param reader the open reader, positioned at the start
      * @return the file format, whose audio format is the codec's encoding at the decoded rate and
-     * channel count, or 16-bit PCM for a PCM track
+     * channel count, or the PCM format of a PCM track
      */
-    private static AudioFileFormat fileFormat(AudioReader reader) {
+    private static AudioFileFormat fileFormat(MediaSource source, AudioReader reader) {
         var codec = reader.track().codec();
         var rate = reader.sampleRate();
         var layout = reader.layout();
         AudioFormat format;
         if (codec.isPcm()) {
-            var floating = FLOAT_PCM.contains(codec);
-            var bits = floating ? 32 : switch (reader.track().bitsPerSample()) {
-                case 8, 16, 24, 32 -> reader.track().bitsPerSample();
-                default -> 16;
+            format = switch (codec) {
+                case PCM_MULAW -> SampledAudio.format(AudioFormat.Encoding.ULAW, rate, 8, layout, false);
+                case PCM_ALAW -> SampledAudio.format(AudioFormat.Encoding.ALAW, rate, 8, layout, false);
+                case PCM_U8 -> SampledAudio.format(AudioFormat.Encoding.PCM_UNSIGNED, rate, 8, layout, false);
+                default -> {
+                    var floating = FLOAT_PCM.contains(codec);
+                    var stored = reader.track().bitsPerSample();
+                    var bits = floating ? 32 : stored >= 8 && stored <= 32 ? stored : stored > 32 ? 32 : 16;
+                    yield SampledAudio.format(floating ? AudioFormat.Encoding.PCM_FLOAT
+                            : AudioFormat.Encoding.PCM_SIGNED, rate, bits, layout, false);
+                }
             };
-            format = SampledAudio.format(floating ? AudioFormat.Encoding.PCM_FLOAT : AudioFormat.Encoding.PCM_SIGNED,
-                    rate, bits, layout, false);
         } else {
             format = new AudioFormat(SmaltAudioFormats.encodingOf(codec), rate, AudioSystem.NOT_SPECIFIED,
                     layout.channels(), AudioSystem.NOT_SPECIFIED, AudioSystem.NOT_SPECIFIED, false);
         }
-        var type = SmaltAudioFormats.fileTypeOf(reader.format(), codec).orElseThrow();
+        var type = reader.format() == ContainerFormat.AIFF ? JdkSampledFiles.aiffType(source)
+                : SmaltAudioFormats.fileTypeOf(reader.format(), codec).orElseThrow();
         var duration = reader.durationMicros();
         var properties = duration > 0 ? Map.<String, Object>of("duration", duration) : Map.<String, Object>of();
         return new AudioFileFormat(type, format, AudioSystem.NOT_SPECIFIED, properties);
@@ -302,7 +331,9 @@ public final class SmaltAudioFileReader extends AudioFileReader {
         }
         boolean handled;
         try {
-            handled = Containers.detect(MediaSource.of(header)).filter(SmaltAudioFileReader::handles).isPresent();
+            var leading = MediaSource.of(header);
+            var container = Containers.detect(leading).filter(SmaltAudioFileReader::handles);
+            handled = container.isPresent() && !JdkSampledFiles.readsNatively(leading, container.get());
         } catch (MediaException exception) {
             handled = false;
         }

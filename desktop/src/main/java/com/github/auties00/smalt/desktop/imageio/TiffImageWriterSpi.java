@@ -13,7 +13,8 @@ import java.util.List;
  * {@code tif} and {@code tiff} suffixes and {@code image/tiff} stay with the JDK's writer, and which
  * writer ImageIO picks for them never depends on the class path. A caller selects this one by
  * name, for example with {@code ImageIO.write(image, "smalt-tiff", file)}. It writes LZW with the
- * horizontal predictor, gray or RGB with or without alpha, at 8 or 16 bits as the image holds them.
+ * horizontal predictor, gray or RGB with or without alpha, at 8 or 16 bits as the image holds them,
+ * and a sequence writes one page per image.
  * The provider deregisters itself unless a codec artifact present at run time ({@code smalt-image})
  * encodes TIFF.
  *

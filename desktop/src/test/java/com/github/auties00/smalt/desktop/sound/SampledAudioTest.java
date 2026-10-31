@@ -83,11 +83,16 @@ class SampledAudioTest {
     }
 
     @Test
-    @DisplayName("compressed and odd-sized formats are not supported")
+    @DisplayName("compressed formats and sizes outside the documented ones are not supported")
     void unsupported() {
-        assertFalse(SampledAudio.isSupported(new AudioFormat(AudioFormat.Encoding.ULAW, 8000, 8, 1, 1, 8000, false)));
-        assertFalse(SampledAudio.isSupported(new AudioFormat(AudioFormat.Encoding.PCM_SIGNED, 8000, 12, 1, 2, 8000, false)));
-        assertFalse(SampledAudio.isSupported(new AudioFormat(AudioFormat.Encoding.PCM_FLOAT, 8000, 16, 1, 2, 8000, false)));
+        assertTrue(SampledAudio.isSupported(new AudioFormat(AudioFormat.Encoding.ULAW, 8000, 8, 1, 1, 8000, false)));
+        assertFalse(SampledAudio.isSupported(new AudioFormat(AudioFormat.Encoding.ULAW, 8000, 16, 1, 2, 8000, false)));
+        assertTrue(SampledAudio.isSupported(new AudioFormat(AudioFormat.Encoding.PCM_SIGNED, 8000, 12, 1, 2, 8000, false)));
+        assertFalse(SampledAudio.isSupported(new AudioFormat(AudioFormat.Encoding.PCM_SIGNED, 8000, 12, 1, 3, 8000, false)));
+        assertFalse(SampledAudio.isSupported(new AudioFormat(AudioFormat.Encoding.PCM_SIGNED, 8000, 4, 1, 1, 8000, false)));
+        assertTrue(SampledAudio.isSupported(new AudioFormat(AudioFormat.Encoding.PCM_FLOAT, 8000, 16, 1, 2, 8000, false)));
+        assertFalse(SampledAudio.isSupported(new AudioFormat(AudioFormat.Encoding.PCM_FLOAT, 8000, 24, 1, 3, 8000, false)));
+        assertFalse(SampledAudio.isSupported(new AudioFormat(new AudioFormat.Encoding("OPUS"), 8000, 16, 1, 2, 8000, false)));
         assertTrue(SampledAudio.isSupported(new AudioFormat(44_100, 16, 2, true, false)));
         assertThrows(IllegalArgumentException.class,
                 () -> SampledAudio.write(new float[1][4], 0, 4, SampledAudio.pcm16(8000, ChannelLayout.STEREO), new byte[16], 0));
