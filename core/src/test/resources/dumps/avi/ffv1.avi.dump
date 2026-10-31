@@ -1,0 +1,19 @@
+# demux dump of avi/ffv1.avi; regenerate with -Dsmalt.test.updateDumps=true
+format AVI
+duration 600000
+seekable true
+metadata ISFT="Lavf61.7.100"
+track 1 VIDEO FFV1 timebase=1/10 duration=6 config=none
+  video 96x64 orientation=NORMAL rate=10/1 sar=1/1 interlacing=PROGRESSIVE
+packets 6
+0 t1 pts=0 dts=0 dur=1 flags=KEY size=4254 crc=8455b6b3
+1 t1 pts=1 dts=1 dur=1 flags=- size=3695 crc=1de7e0cf
+2 t1 pts=2 dts=2 dur=1 flags=- size=3843 crc=f47cd545
+3 t1 pts=3 dts=3 dur=1 flags=KEY size=4460 crc=8a6430fa
+4 t1 pts=4 dts=4 dur=1 flags=- size=3996 crc=f9422962
+5 t1 pts=5 dts=5 dur=1 flags=- size=3941 crc=2a7701af
+seek 0: t1@0
+seek 200000: t1@0
+seek 400000: t1@3
+seek 600000: end
+seek -1000000: t1@0

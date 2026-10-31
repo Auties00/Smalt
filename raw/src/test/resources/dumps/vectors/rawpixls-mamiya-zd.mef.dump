@@ -1,0 +1,10 @@
+# image dump of vectors/rawpixls-mamiya-zd.mef; regenerate with -Dsmalt.test.updateDumps=true
+format RAW
+info ImageInfo[format=RAW, width=4008, height=5336, hasAlpha=false, animated=false, frameCount=1, orientation=ROTATE_90]
+decode
+picture 4008x5336 rgba8 alpha=false crc=cde29b86
+  format=RAW orientation=ROTATE_90 source=4008x5336
+  icc=520:86132914 exif=554:3e4c4c8b xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+decoder raw sensor data
+sensor 4008x5336 channels=1 cfa=RGGB neutral=[0.925904203323558, 1.0, 0.656995640110979] crc=6d1ad83a

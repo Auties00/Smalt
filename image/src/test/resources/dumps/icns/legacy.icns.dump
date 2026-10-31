@@ -1,0 +1,59 @@
+# image dump of icns/legacy.icns; regenerate with -Dsmalt.test.updateDumps=true
+format ICNS
+info ImageInfo[format=ICNS, width=128, height=128, hasAlpha=true, animated=false, frameCount=9, orientation=NORMAL]
+decode
+picture 128x128 rgba8 alpha=true crc=e4b9eddb
+  format=ICNS orientation=NORMAL source=128x128
+  icc=none exif=none xmp=none
+  profile=none
+scaled 32x32
+picture 32x32 rgba8 alpha=true crc=69b98412
+  format=ICNS orientation=NORMAL source=32x32
+  icc=none exif=none xmp=none
+  profile=none
+pages 9
+page 0 ImageInfo[format=ICNS, width=16, height=16, hasAlpha=true, animated=false, frameCount=9, orientation=NORMAL]
+picture 16x16 rgba8 alpha=true crc=b6771355
+  format=ICNS orientation=NORMAL source=16x16
+  icc=none exif=none xmp=none
+  profile=none
+page 1 ImageInfo[format=ICNS, width=16, height=16, hasAlpha=true, animated=false, frameCount=9, orientation=NORMAL]
+picture 16x16 rgba8 alpha=true crc=f5b7049f
+  format=ICNS orientation=NORMAL source=16x16
+  icc=none exif=none xmp=none
+  profile=none
+page 2 ImageInfo[format=ICNS, width=16, height=16, hasAlpha=true, animated=false, frameCount=9, orientation=NORMAL]
+picture 16x16 rgba8 alpha=true crc=238a01f6
+  format=ICNS orientation=NORMAL source=16x16
+  icc=none exif=none xmp=none
+  profile=none
+page 3 ImageInfo[format=ICNS, width=16, height=16, hasAlpha=true, animated=false, frameCount=9, orientation=NORMAL]
+picture 16x16 rgba8 alpha=true crc=511a388c
+  format=ICNS orientation=NORMAL source=16x16
+  icc=none exif=none xmp=none
+  profile=none
+page 4 ImageInfo[format=ICNS, width=32, height=32, hasAlpha=true, animated=false, frameCount=9, orientation=NORMAL]
+picture 32x32 rgba8 alpha=true crc=bfbee941
+  format=ICNS orientation=NORMAL source=32x32
+  icc=none exif=none xmp=none
+  profile=none
+page 5 ImageInfo[format=ICNS, width=32, height=32, hasAlpha=true, animated=false, frameCount=9, orientation=NORMAL]
+picture 32x32 rgba8 alpha=true crc=22d12341
+  format=ICNS orientation=NORMAL source=32x32
+  icc=none exif=none xmp=none
+  profile=none
+page 6 ImageInfo[format=ICNS, width=32, height=32, hasAlpha=true, animated=false, frameCount=9, orientation=NORMAL]
+picture 32x32 rgba8 alpha=true crc=69b98412
+  format=ICNS orientation=NORMAL source=32x32
+  icc=none exif=none xmp=none
+  profile=none
+page 7 ImageInfo[format=ICNS, width=48, height=48, hasAlpha=false, animated=false, frameCount=9, orientation=NORMAL]
+picture 48x48 rgba8 alpha=false crc=a4e59681
+  format=ICNS orientation=NORMAL source=48x48
+  icc=none exif=none xmp=none
+  profile=none
+page 8 ImageInfo[format=ICNS, width=128, height=128, hasAlpha=true, animated=false, frameCount=9, orientation=NORMAL]
+picture 128x128 rgba8 alpha=true crc=e4b9eddb
+  format=ICNS orientation=NORMAL source=128x128
+  icc=none exif=none xmp=none
+  profile=none

@@ -190,6 +190,22 @@ final class StreamMediaSource implements MediaSource, LocalSource, ForwardOnlySo
      */
     StreamMediaSource(InputStream stream, Supplier<? extends InputStream> supplier, long length,
                       StreamSourceOptions options, boolean strict) {
+        this(stream, supplier, stream == null, length, options, strict);
+    }
+
+    /**
+     * Constructs a source over a stream or a stream supplier, stating whether {@link #close()} closes the stream.
+     *
+     * @param stream the stream, or {@code null} when {@code supplier} opens it
+     * @param supplier the supplier of the stream, or {@code null} when {@code stream} is given
+     * @param ownsStream whether {@link #close()} closes the stream
+     * @param length the declared length, or {@code -1} when unknown
+     * @param options the memory budget and spill directory
+     * @param strict whether a read below the watermark always fails
+     * @throws IllegalArgumentException if {@code length} is below {@code -1}
+     */
+    StreamMediaSource(InputStream stream, Supplier<? extends InputStream> supplier, boolean ownsStream, long length,
+                      StreamSourceOptions options, boolean strict) {
         if (stream == null) {
             Objects.requireNonNull(supplier, "supplier");
         }
@@ -198,7 +214,7 @@ final class StreamMediaSource implements MediaSource, LocalSource, ForwardOnlySo
         }
         this.stream = stream;
         this.supplier = supplier;
-        this.ownsStream = stream == null;
+        this.ownsStream = ownsStream;
         this.length = length;
         this.options = Objects.requireNonNull(options, "options");
         this.strict = strict;

@@ -1,0 +1,24 @@
+# demux dump of mp4/dolby-vision-p5.mp4; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 250000
+seekable true
+metadata compatible_brands="isomiso2mp41"
+metadata encoder="Lavf61.7.100"
+metadata major_brand="isom"
+metadata minor_version="512"
+track 1 VIDEO HEVC timebase=1/12288 duration=3072 config=112:6e986e2a
+  video 160x96 orientation=NORMAL rate=24/1 sar=1/1
+  color ColorInfo[matrix=BT2020_NCL, range=LIMITED, primaries=BT2020, transfer=HLG, chromaSiting=UNSPECIFIED, masteringDisplay=Optional.empty, contentLightLevel=Optional.empty]
+  dolbyVision DolbyVision[versionMajor=1, versionMinor=0, profile=5, level=1, rpuPresent=true, enhancementLayerPresent=false, baseLayerPresent=true, baseLayerCompatibility=0, metadataCompression=0]
+packets 6
+0 t1 pts=0 dts=0 dur=512 flags=KEY size=3762 crc=2bff9e13
+1 t1 pts=512 dts=512 dur=512 flags=- size=457 crc=f743c26d
+2 t1 pts=1024 dts=1024 dur=512 flags=- size=293 crc=a2aaa798
+3 t1 pts=1536 dts=1536 dur=512 flags=KEY size=3915 crc=eae28855
+4 t1 pts=2048 dts=2048 dur=512 flags=- size=372 crc=66703ca9
+5 t1 pts=2560 dts=2560 dur=512 flags=- size=331 crc=102e5ff5
+seek 0: t1@0
+seek 83333: t1@0
+seek 166666: t1@3
+seek 250000: end
+seek -1000000: t1@0
