@@ -1,17 +1,18 @@
 package com.github.auties00.smalt.internal.provider;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.track.Codec;
 
 import java.util.Locale;
 
 /**
- * Names the Smalt artifact that implements each codec and image format, so the registries can
+ * Names the Smalt artifact that implements each codec, image format and container format, so the registries can
  * tell a caller which artifact to add when no provider handles an input.
  *
  * <p>The table is metadata only: it names artifact ids, never a codec class, so core still finds
- * every codec through the service-provider interfaces. A codec or format that no Smalt artifact
+ * every codec and container through the service-provider interfaces. A codec or format that no Smalt artifact
  * implements has no artifact.
  */
 public final class Artifacts {
@@ -55,10 +56,11 @@ public final class Artifacts {
      */
     public static String decoderOf(Codec codec) {
         return switch (codec) {
-            case H264, HEVC, AAC, AMR_NB, AMR_WB, MPEG4_PART2, H263, AC3, EAC3 -> MPEG;
+            case H264, HEVC, AAC, AMR_NB, AMR_WB, MPEG4_PART2, H263, FLV1, AC3, EAC3, JPEG_XS -> MPEG;
             case VP9, AV1, PRORES, DNXHD -> VIDEO;
-            case VP8, MJPEG -> IMAGE;
-            case OPUS, VORBIS, FLAC, MP3, MP2, ALAC -> AUDIO;
+            case VP8, MJPEG, JPEG2000 -> IMAGE;
+            case OPUS, VORBIS, FLAC, MP3, MP2, ALAC, ADPCM_IMA_WAV, ADPCM_IMA_QT, ADPCM_MS, ADPCM_G722, ADPCM_G726, GSM,
+                 GSM_MS -> AUDIO;
             default -> null;
         };
     }
@@ -71,10 +73,11 @@ public final class Artifacts {
      */
     public static String encoderOf(Codec codec) {
         return switch (codec) {
-            case H264, AAC, AMR_NB, AMR_WB, AC3 -> MPEG;
+            case H264, AAC, AMR_NB, AMR_WB, AC3, EAC3, JPEG_XS -> MPEG;
             case VP9, AV1, PRORES, DNXHD -> VIDEO;
-            case VP8 -> IMAGE;
-            case OPUS, FLAC, MP3, VORBIS -> AUDIO;
+            case VP8, MJPEG, JPEG2000 -> IMAGE;
+            case OPUS, FLAC, MP3, VORBIS, ADPCM_IMA_WAV, ADPCM_IMA_QT, ADPCM_MS, ADPCM_G722, ADPCM_G726, GSM,
+                 GSM_MS -> AUDIO;
             default -> null;
         };
     }
@@ -87,9 +90,9 @@ public final class Artifacts {
      */
     public static String imageDecoderOf(ImageFormat format) {
         return switch (format) {
-            case JPEG, PNG, GIF, WEBP, BMP, TIFF, ICO, JP2, JXL -> IMAGE;
+            case JPEG, PNG, GIF, WEBP, BMP, TIFF, ICO, ANI, JP2, JXL, PNM, TGA, QOI, HDR, ICNS, PSD, EXR, DDS, JXR -> IMAGE;
             case AVIF -> VIDEO;
-            case HEIC -> MPEG;
+            case HEIC, JPEG_XS -> MPEG;
             case DNG, RAW -> CAMERA_RAW;
             default -> null;
         };
@@ -103,8 +106,9 @@ public final class Artifacts {
      */
     public static String imageEncoderOf(ImageFormat format) {
         return switch (format) {
-            case JPEG, PNG, GIF, WEBP, TIFF, ICO, JP2 -> IMAGE;
+            case JPEG, PNG, GIF, WEBP, TIFF, ICO, ANI, JP2, PNM, TGA, QOI, HDR, ICNS -> IMAGE;
             case AVIF -> VIDEO;
+            case JPEG_XS -> MPEG;
             default -> null;
         };
     }
@@ -117,10 +121,52 @@ public final class Artifacts {
      */
     public static String imageAnimationEncoderOf(ImageFormat format) {
         return switch (format) {
-            case PNG, GIF, WEBP -> IMAGE;
+            case PNG, GIF, WEBP, ANI -> IMAGE;
             case AVIF -> VIDEO;
             default -> null;
         };
+    }
+
+    /**
+     * Returns the Smalt artifact that encodes multi-page images of an image format.
+     *
+     * @param format the image format of the pages
+     * @return the artifact id, or {@code null} when no Smalt artifact encodes its pages
+     */
+    public static String imagePageEncoderOf(ImageFormat format) {
+        return switch (format) {
+            case TIFF, ICO -> IMAGE;
+            default -> null;
+        };
+    }
+
+    /**
+     * Returns the artifact that reads and writes a container format core names but does not implement.
+     *
+     * @param format the container format
+     * @return the artifact id, or {@code null} for a format core implements or no Smalt artifact implements
+     */
+    public static String containerOf(ContainerFormat format) {
+        // TODO: name the artifact of each ContainerFormat constant that core recognizes but another artifact
+        //  implements, as such containers are added; every format named today is implemented in core.
+        return switch (format) {
+            default -> null;
+        };
+    }
+
+    /**
+     * Builds the failure raised when no provider handles a container format, naming the missing artifact when one
+     * implements it.
+     *
+     * @param format the short name of the container format
+     * @param what what was attempted, completing the sentence "the format is not ..." (for example
+     * {@code "demuxable"})
+     * @param artifact the artifact id that implements the format, or {@code null}
+     * @return the exception to throw, of kind {@link MediaException.Unsupported.Kind#FORMAT}
+     */
+    public static MediaException.Unsupported unsupportedContainer(String format, String what, String artifact) {
+        return new MediaException.Unsupported(MediaException.Unsupported.Kind.FORMAT, format,
+                message(format, what, artifact), artifact);
     }
 
     /**
@@ -134,11 +180,22 @@ public final class Artifacts {
      * @return the exception to throw
      */
     public static MediaException.Unsupported unsupported(String format, String what, String artifact) {
-        var message = artifact == null
+        return new MediaException.Unsupported(format, message(format, what, artifact), artifact);
+    }
+
+    /**
+     * Builds the message of a failure raised when no provider handles a format.
+     *
+     * @param format the short name of the format
+     * @param what what was attempted
+     * @param artifact the artifact id that implements the format, or {@code null}
+     * @return the message
+     */
+    private static String message(String format, String what, String artifact) {
+        return artifact == null
                 ? format + " is not " + what + " by Smalt"
                 : format + " is not " + what + " without " + artifact + " (add com.github.auties00:" + artifact
                 + " to the module or class path)";
-        return new MediaException.Unsupported(format, message, artifact);
     }
 
     /**

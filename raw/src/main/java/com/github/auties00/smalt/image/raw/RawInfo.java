@@ -76,6 +76,15 @@ public final class RawInfo {
 
     private final List<RawPreview> previews;
 
+    private final CfaLayout layout;
+
+    private final List<String> profiles;
+
+    /**
+     * Whether the file holds an enhanced image that decodes.
+     */
+    private final boolean enhanced;
+
     /**
      * Constructs a description; {@link RawDecoder} creates instances.
      *
@@ -100,11 +109,15 @@ public final class RawInfo {
      * @param captureTime the capture time, or {@code null}
      * @param dngVersion the DNG version, or {@code null}
      * @param previews the previews, largest first
+     * @param layout the spatial layout of the color filter array
+     * @param profiles the names of the camera profiles, the primary one first
+     * @param enhanced whether the file holds an enhanced image that decodes
      */
     RawInfo(RawFormat format, String make, String model, int width, int height, int sensorWidth, int sensorHeight,
             Orientation orientation, int bitsPerSample, CfaPattern cfa, String compression, String unsupported,
             boolean calibrated, long iso, double exposureTime, double fNumber, double focalLength, String lens,
-            String captureTime, String dngVersion, List<RawPreview> previews) {
+            String captureTime, String dngVersion, List<RawPreview> previews, CfaLayout layout, List<String> profiles,
+            boolean enhanced) {
         this.format = Objects.requireNonNull(format, "format");
         this.make = make;
         this.model = model;
@@ -126,6 +139,9 @@ public final class RawInfo {
         this.captureTime = captureTime;
         this.dngVersion = dngVersion;
         this.previews = List.copyOf(previews);
+        this.layout = Objects.requireNonNull(layout, "layout");
+        this.profiles = List.copyOf(profiles);
+        this.enhanced = enhanced;
     }
 
     /**
@@ -161,6 +177,12 @@ public final class RawInfo {
 
     /**
      * {@return the feature the decoder lacks to decode the sensor data, or empty when it decodes}
+     *
+     * <p>A four-color sensor whose file carries color matrices of three colors is reported here,
+     * since the default rendering cannot render it; it still renders with a twelve-value
+     * {@link RawDecoderOptions#colorMatrix()}, and {@link RawDecoder#decodeRaw} returns its samples.
+     * A four-color sensor whose file carries no color matrices renders with a matrix the decoder
+     * supplies (see {@link #isColorCalibrated()}).
      */
     public Optional<String> unsupportedFeature() {
         return Optional.ofNullable(unsupported);
@@ -221,6 +243,34 @@ public final class RawInfo {
     }
 
     /**
+     * {@return the spatial layout of the photosites of the color filter array of the default
+     * rendering's area, aligned as {@link #cfaPattern()} is; {@link CfaLayout#RECTANGULAR} for most
+     * sensors and for linear raw, monochrome or undecodable images}
+     */
+    public CfaLayout cfaLayout() {
+        return layout;
+    }
+
+    /**
+     * {@return the names of the camera profiles a DNG file holds, the primary one first, then those of
+     * {@code ExtraCameraProfiles} in file order, an unnamed profile as an empty string; unmodifiable}
+     *
+     * <p>Every DNG file has a primary profile; other files list one unnamed profile.
+     * {@link RawDecoderOptions.Builder#cameraProfile(String)} selects one by name.
+     */
+    public List<String> cameraProfiles() {
+        return profiles;
+    }
+
+    /**
+     * {@return whether the file is a DNG file holding an enhanced image (DNG 1.5) that decodes, which
+     * {@link RawDecoderOptions#enhancedImage()} renders instead of the raw image}
+     */
+    public boolean hasEnhancedImage() {
+        return enhanced;
+    }
+
+    /**
      * {@return a description of the compression of the sensor data, such as {@code "lossless JPEG"},
      * or empty when unknown}
      */
@@ -233,8 +283,10 @@ public final class RawInfo {
      *
      * <p>The colors come from the file (DNG color matrices, or a camera to RGB matrix a vendor
      * format embeds) or, for some camera models whose files carry none, from matrices the decoder
-     * derives from the model's measured spectral sensitivities. Other files are rendered with a
-     * generic camera matrix, so their colors are approximate unless a matrix is supplied with
+     * derives from the model's measured spectral sensitivities or, for the four-color Canon PowerShot
+     * G1 and Nikon E5700, fits against the camera's own JPEG previews. Other files are rendered with a
+     * generic camera matrix (for a four-color sensor, one built from the colors of its filters), so
+     * their colors are approximate unless a matrix is supplied with
      * {@link RawDecoderOptions.Builder#colorMatrix(double[])}.
      */
     public boolean isColorCalibrated() {
@@ -321,7 +373,7 @@ public final class RawInfo {
     }
 
     /**
-     * {@return the JPEG previews the file embeds, largest first; unmodifiable}
+     * {@return the previews the file embeds, largest first; unmodifiable}
      */
     public List<RawPreview> previews() {
         return previews;

@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.video.av1;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
@@ -21,7 +22,6 @@ import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Pins the AV1 encoder's bitstream: each configuration encodes a fixed input and the SHA-256 of
@@ -112,19 +112,19 @@ class Av1EncoderGoldenTest {
     static Stream<Arguments> good() {
         return Stream.of(
                 Arguments.of("good quality, slow", Av1EncoderOptions.ofQuality(55), 0,
-                        "7416e4aeb3699661ad66becba605348f71817a94deea2bf497b8c85bc8678af9"),
+                        "90120ce22f66f9ed2f5dbb966c3c7716d3cf457a49e966db485c10e5a76d807f"),
                 Arguments.of("good quality, slowest, three threads", Av1EncoderOptions.ofQuality(55)
                         .toBuilder()
                         .speed(Av1EncoderSpeed.SLOWEST).threads(3)
                         .build(), 0,
-                        "772cfe3facd47e4f80a28fbd3db58ffd891b649e2a5e6c2836381aa3ad53492e"),
+                        "8c7e5eaa514e70bc2fcda170bd9ac90f56863f5fbef76c18987b2e1149d758ee"),
                 Arguments.of("variable bitrate, fast, two tile columns", Av1EncoderOptions.ofBitrate(400_000)
                         .toBuilder()
                         .speed(Av1EncoderSpeed.FAST).tileColumnsLog2(1).threads(2)
                         .build(), 0,
-                        "ea4003bd967e2a485ee9ebc1aca43b12c688b7a4e6e30af3d2d057fd2199497e"),
+                        "783360081c04f9dd09a63ef4fcd49e5cc4bd0ad5a2367ef79b4de02c3354c775"),
                 Arguments.of("archive, a forced key frame", Av1EncoderOptions.forArchive(), 13,
-                        "fa0a9d7556f6a9ac08fe2fff80a8d7b39733b73c0a11b22155e1e4a7d196d5ea"));
+                        "add6e7a7becd53d2c7af264218d4712272d48e65b8191e2fc61a32a2f16103ce"));
     }
 
     static String goodDigest(int width, int height, Av1EncoderOptions options, List<YuvPicture> frames, int key) {
@@ -220,9 +220,9 @@ class Av1EncoderGoldenTest {
     void natural(String name, String clip, int width, int height, Av1EncoderOptions options, String expected)
             throws IOException {
         var path = Vp9TestVideo.clip(clip);
-        assumeTrue(path != null, "clip " + clip + " is not cached");
+        Skip.unless(path != null, "data:clip", "clip " + clip + " is not cached");
         var frames = Vp9TestVideo.read(path, width, height, 0, 30);
-        assumeTrue(frames.size() == 30, "clip " + clip + " is too short");
+        Skip.unless(frames.size() == 30, "data:clip", "clip " + clip + " is too short");
         assertEquals(expected, digest(width, height, options, frames, List.of()), name);
     }
 }

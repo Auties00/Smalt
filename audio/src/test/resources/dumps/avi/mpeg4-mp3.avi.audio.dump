@@ -1,0 +1,34 @@
+# audio decode dump of avi/mpeg4-mp3.avi; regenerate with -Dsmalt.test.updateDumps=true
+format AVI
+duration 2040000
+seekable true
+track 2 MP3 rate=48000 layout=[FRONT_CENTER]
+0 frames=4096 crc16=6d7bf97e
+1 frames=4096 crc16=e549f630
+2 frames=4096 crc16=c0442c8f
+3 frames=4096 crc16=1cc5bd65
+4 frames=4096 crc16=cac5b75a
+5 frames=4096 crc16=0b3b1511
+6 frames=4096 crc16=fdede692
+7 frames=4096 crc16=4b46a0e4
+8 frames=4096 crc16=cdf46ee4
+9 frames=4096 crc16=1d3d35f6
+10 frames=4096 crc16=d0200233
+11 frames=4096 crc16=26630863
+12 frames=4096 crc16=50d68ea6
+13 frames=4096 crc16=54d47315
+14 frames=4096 crc16=73f4d31c
+15 frames=4096 crc16=81d0613c
+16 frames=4096 crc16=226d761c
+17 frames=4096 crc16=c9f71158
+18 frames=4096 crc16=9074a642
+19 frames=4096 crc16=f2169b97
+20 frames=4096 crc16=8b016397
+21 frames=4096 crc16=b8a2d94a
+22 frames=4096 crc16=d92764e2
+23 frames=3712 crc16=408369f2
+seek 0: @sample 0
+seek 680000: @sample 32640
+seek 1360000: @sample 65280
+seek 2040000: end
+seek -1000000: @sample 0

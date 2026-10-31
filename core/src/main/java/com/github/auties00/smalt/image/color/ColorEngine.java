@@ -10,10 +10,11 @@ package com.github.auties00.smalt.image.color;
  * same array at the same offset only when the strides are equal and the target has no more
  * channels than the source.
  *
- * <p>Implementations are immutable and thread-safe; each call allocates its own scratch space.
+ * <p>Implementations are immutable and thread-safe; each call works in scratch space no other thread uses, allocated
+ * per call or kept per thread, never per pixel.
  */
 sealed interface ColorEngine permits IdentityEngine, CurvesEngine, MatShaperEngine, PrelinEngine, ClutEngine,
-        FloatShaperEngine, HdrEngine {
+        FloatShaperEngine, HdrEngine, HdrTargetEngine, NamedColorEngine, GamutAlarmEngine {
     /**
      * Transforms 8-bit pixels.
      *

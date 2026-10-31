@@ -17,8 +17,10 @@ import java.util.function.Consumer;
  *
  * <p>Every packet is one sync frame of 1536 samples per channel, at the constant bit rate of the
  * options; at 44.1 kHz the frame size alternates between the two sizes of the rate so that the
- * average is exact. The frames carry no out-of-band configuration: MP4 derives its {@code dac3}
- * box from them, and Matroska, MPEG-TS and raw {@code .ac3} files store them as they are. The
+ * average is exact. The frames carry the dialogue level and the metadata of
+ * {@link Ac3EncoderOptions#metadata()}, in the alternate bit stream syntax of ATSC A/52 Annex D
+ * when it needs it, and no out-of-band configuration: MP4 derives its {@code dac3} box from them,
+ * and Matroska, MPEG-TS and raw {@code .ac3} files store them as they are. The
  * decoder output lags the input by the {@link #delay()} of 256 samples; {@link #flush(Consumer)}
  * pads the input with silence until every input sample is covered.
  *
@@ -58,7 +60,7 @@ public final class Ac3Encoder implements AudioEncoder {
         this.options = Objects.requireNonNull(options, "options");
         this.session = new EncoderSession(options.sampleRate(), options.layout(), options.effectiveBitrate(),
                 options.dialogueLevel(), options.blockSwitching(), options.channelCoupling(), false, 6,
-                EncoderTools.NONE, options.fastSearch());
+                EncoderTools.NONE, options.fastSearch(), options.metadata());
     }
 
     /**

@@ -1,0 +1,13 @@
+# image dump of jpeg-xs/valid-bayer.jxc; regenerate with -Dsmalt.test.updateDumps=true
+format JPEG_XS
+info ImageInfo[format=JPEG_XS, width=48, height=32, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 48x32 yuv8 MONOCHROME color=UNSPECIFIED/FULL/UNSPECIFIED/LINEAR y=4f5588d1
+  format=JPEG_XS orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=none
+scaled 12x8
+picture 48x32 yuv8 MONOCHROME color=UNSPECIFIED/FULL/UNSPECIFIED/LINEAR y=4f5588d1
+  format=JPEG_XS orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=none

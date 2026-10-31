@@ -42,7 +42,8 @@ public enum ImageFormat {
     WEBP("image/webp"),
 
     /**
-     * Windows bitmap, magic {@code BM}.
+     * Windows and OS/2 bitmap, magic {@code BM}, or an OS/2 bitmap array, magic {@code BA}, whose first
+     * entry is a bitmap.
      */
     BMP("image/bmp"),
 
@@ -50,13 +51,22 @@ public enum ImageFormat {
      * HEIF with an HEVC-coded primary image (HEIC), an ISO-BMFF file whose {@code ftyp} brands
      * include {@code heic}, {@code heix}, {@code heim}, {@code heis}, {@code hevc} or {@code hevx};
      * a file with only the generic HEIF brands ({@code mif1}, {@code mif2}, {@code msf1} or
-     * {@code miaf}) and no AVIF brand is taken as HEIC too, the codec HEIF files use most.
+     * {@code miaf}) and no AVIF brand is taken as HEIC too, the codec HEIF files use most, and so is
+     * HEIF with AVC, JPEG or JPEG 2000 images (brands {@code avci}, {@code avcs}, {@code jpeg},
+     * {@code jpgs}, {@code j2ki} and {@code j2is}), which the same decoder reads.
+     *
+     * <p>{@link #detect(byte[], int)} reads only the brands;
+     * {@link Images#detect(com.github.auties00.smalt.io.MediaSource)} reads the items and tells a HEIF file by the
+     * coding of the image it shows, so that a file with only the generic brands whose image is AV1-coded is
+     * recognized as {@link #AVIF}.
      */
     HEIC("image/heic"),
 
     /**
      * HEIF with an AV1-coded primary image (AVIF), an ISO-BMFF file whose {@code ftyp} brands
-     * include {@code avif} or {@code avis}.
+     * include {@code avif} or {@code avis}, or, as
+     * {@link Images#detect(com.github.auties00.smalt.io.MediaSource)} recognizes it, any HEIF file whose primary
+     * image, or whose image sequence without a primary image, is AV1-coded.
      */
     AVIF("image/avif"),
 
@@ -71,6 +81,12 @@ public enum ImageFormat {
      * or {@code 00 00 02 00} (cursor) whose first entry is consistent.
      */
     ICO("image/vnd.microsoft.icon"),
+
+    /**
+     * Windows animated cursor (ANI), a RIFF container with form type {@code ACON} whose frames are
+     * icons or cursors.
+     */
+    ANI("application/x-navi-animation"),
 
     /**
      * JPEG 2000: a JP2 or JPX file, starting with the 12-byte signature box
@@ -110,7 +126,64 @@ public enum ImageFormat {
      * {@link Images#detect(com.github.auties00.smalt.io.MediaSource)} follows the directories
      * through the source. Which vendor format a file uses is reported by the raw decoder.
      */
-    RAW("image/x-dcraw");
+    RAW("image/x-dcraw"),
+
+    /**
+     * A Netpbm image or a portable float map: PBM, PGM and PPM in their plain (magic {@code P1}, {@code P2},
+     * {@code P3}) and raw (magic {@code P4}, {@code P5}, {@code P6}) forms, PAM (magic {@code P7}), PFM (magic
+     * {@code PF} or {@code Pf}) and PHM (magic {@code PH} or {@code Ph}), the magic followed by white space.
+     */
+    PNM("image/x-portable-anymap"),
+
+    /**
+     * Truevision TGA (Targa), which has no magic number: recognized by a header whose color map type, image type,
+     * color map specification, pixel depth and descriptor are consistent and whose dimensions are positive.
+     *
+     * <p>The test is a heuristic, made after every other format has been ruled out.
+     */
+    TGA("image/x-tga"),
+
+    /**
+     * The Quite OK Image format (QOI), magic {@code qoif}.
+     */
+    QOI("image/qoi"),
+
+    /**
+     * Radiance RGBE (HDR), magic {@code #?} followed by a program name such as {@code RADIANCE} or {@code RGBE}.
+     */
+    HDR("image/vnd.radiance"),
+
+    /**
+     * Apple icon image (ICNS), magic {@code icns}.
+     */
+    ICNS("image/icns"),
+
+    /**
+     * Adobe Photoshop document, magic {@code 8BPS} followed by version 1 (PSD) or 2 (PSB, the large document
+     * format).
+     */
+    PSD("image/vnd.adobe.photoshop"),
+
+    /**
+     * OpenEXR, magic {@code 76 2F 31 01}.
+     */
+    EXR("image/x-exr"),
+
+    /**
+     * JPEG XR (ITU-T T.832, HD Photo), a TIFF-like container with magic {@code 49 49 BC} followed by version 0 or 1.
+     */
+    JXR("image/jxr"),
+
+    /**
+     * DirectDraw Surface (DDS), magic {@code DDS } followed by the header size 124.
+     */
+    DDS("image/vnd-ms.dds"),
+
+    /**
+     * JPEG XS (ISO/IEC 21122): a JXS file, starting with the 12-byte signature box
+     * {@code 00 00 00 0C 4A 58 53 20 0D 0A 87 0A}, or a raw codestream, magic {@code FF 10 FF 50}.
+     */
+    JPEG_XS("image/jxs");
 
     /**
      * The number of leading bytes {@link #detect(byte[], int)} needs to recognize every format
@@ -120,21 +193,22 @@ public enum ImageFormat {
     public static final int DETECTION_LENGTH = 64;
 
     /**
-     * The IANA media type of the format.
+     * The media type of the format: the IANA one where registered, the customary one otherwise.
      */
     private final String mimeType;
 
     /**
      * Constructs a constant.
      *
-     * @param mimeType the IANA media type
+     * @param mimeType the media type
      */
     ImageFormat(String mimeType) {
         this.mimeType = mimeType;
     }
 
     /**
-     * Returns the IANA media type of the format.
+     * Returns the media type of the format: the IANA one where registered, the customary one
+     * otherwise.
      *
      * @return the media type, for example {@code image/jpeg}
      */
@@ -184,7 +258,14 @@ public enum ImageFormat {
                 && header[8] == 'W' && header[9] == 'E' && header[10] == 'B' && header[11] == 'P') {
             return WEBP;
         }
+        if (length >= 12 && header[0] == 'R' && header[1] == 'I' && header[2] == 'F' && header[3] == 'F'
+                && header[8] == 'A' && header[9] == 'C' && header[10] == 'O' && header[11] == 'N') {
+            return ANI;
+        }
         if (length >= 14 && header[0] == 'B' && header[1] == 'M') {
+            return BMP;
+        }
+        if (length >= 28 && header[0] == 'B' && header[1] == 'A' && header[14] == 'B' && header[15] == 'M') {
             return BMP;
         }
         if (length >= 4 && ((header[0] == 'I' && header[1] == 'I' && (header[2] == 42 || header[2] == 43) && header[3] == 0)
@@ -203,7 +284,125 @@ public enum ImageFormat {
         if (isJp2(header, length)) {
             return JP2;
         }
-        return detectHeif(header, length);
+        if (isJpegXs(header, length)) {
+            return JPEG_XS;
+        }
+        var magic = detectMagic(header, length);
+        if (magic != null) {
+            return magic;
+        }
+        var heif = detectHeif(header, length);
+        if (heif != null) {
+            return heif;
+        }
+        return isTga(header, length) ? TGA : null;
+    }
+
+    /**
+     * Recognizes the formats with a plain magic number that the other tests have not claimed: Netpbm and the float
+     * maps, QOI, Radiance RGBE, ICNS, Photoshop, OpenEXR, JPEG XR and DDS.
+     *
+     * @param header the leading bytes of the input
+     * @param length the number of valid bytes in {@code header}
+     * @return the format, or {@code null} when none matches
+     */
+    private static ImageFormat detectMagic(byte[] header, int length) {
+        if (length >= 3 && header[0] == 'P' && isPnmSpace(header[2])) {
+            switch (header[1]) {
+                case '1', '2', '3', '4', '5', '6', '7', 'F', 'f', 'H', 'h' -> {
+                    return PNM;
+                }
+                default -> {
+                }
+            }
+        }
+        if (length >= 14 && header[0] == 'q' && header[1] == 'o' && header[2] == 'i' && header[3] == 'f') {
+            return QOI;
+        }
+        if (length >= 3 && header[0] == '#' && header[1] == '?' && header[2] >= 'A' && header[2] <= 'Z') {
+            return HDR;
+        }
+        if (length >= 8 && header[0] == 'i' && header[1] == 'c' && header[2] == 'n' && header[3] == 's'
+                && ByteArrays.u32be(header, 4) >= 8) {
+            return ICNS;
+        }
+        if (length >= 6 && header[0] == '8' && header[1] == 'B' && header[2] == 'P' && header[3] == 'S'
+                && header[4] == 0 && (header[5] == 1 || header[5] == 2)) {
+            return PSD;
+        }
+        if (length >= 4 && u8(header, 0) == 0x76 && u8(header, 1) == 0x2F && u8(header, 2) == 0x31
+                && u8(header, 3) == 0x01) {
+            return EXR;
+        }
+        if (length >= 4 && header[0] == 'I' && header[1] == 'I' && u8(header, 2) == 0xBC
+                && (header[3] == 0 || header[3] == 1)) {
+            return JXR;
+        }
+        if (length >= 8 && header[0] == 'D' && header[1] == 'D' && header[2] == 'S' && header[3] == ' '
+                && ByteArrays.u32le(header, 4) == 124) {
+            return DDS;
+        }
+        return null;
+    }
+
+    /**
+     * Returns whether a byte is Netpbm white space: space, tab, line feed, vertical tab, form feed or carriage
+     * return.
+     *
+     * @param value the byte
+     * @return whether it separates Netpbm header fields
+     */
+    private static boolean isPnmSpace(byte value) {
+        return value == ' ' || (value >= 9 && value <= 13);
+    }
+
+    /**
+     * Recognizes a Truevision TGA header from the consistency of its fields, the format having no magic number.
+     *
+     * <p>The color map type must be 0 or 1, the image type a color-mapped, true-color or gray one, raw or
+     * run-length coded, consistent with the color map type; an absent color map must have a zero length, a present
+     * one a positive length and a 15, 16, 24 or 32-bit entry size; the dimensions must be positive, the pixel depth
+     * one the image type allows, the descriptor's two high bits (the obsolete interleaving) zero and its attribute
+     * bit count at most 8 and below the pixel depth.
+     *
+     * @param header the leading bytes of the input
+     * @param length the number of valid bytes in {@code header}
+     * @return whether the bytes start a TGA file
+     */
+    private static boolean isTga(byte[] header, int length) {
+        if (length < 18) {
+            return false;
+        }
+        var mapType = u8(header, 1);
+        var imageType = u8(header, 2);
+        var mapLength = ByteArrays.u16le(header, 5);
+        var entryBits = u8(header, 7);
+        var width = ByteArrays.u16le(header, 12);
+        var height = ByteArrays.u16le(header, 14);
+        var depth = u8(header, 16);
+        var descriptor = u8(header, 17);
+        if (width == 0 || height == 0 || (descriptor & 0xC0) != 0 || (descriptor & 0x0F) > 8
+                || (descriptor & 0x0F) >= depth) {
+            return false;
+        }
+        if (mapType == 0) {
+            if (mapLength != 0 || ByteArrays.u16le(header, 3) != 0 || (entryBits != 0 && entryBits != 15
+                    && entryBits != 16 && entryBits != 24 && entryBits != 32)) {
+                return false;
+            }
+        } else if (mapType == 1) {
+            if (mapLength == 0 || (entryBits != 15 && entryBits != 16 && entryBits != 24 && entryBits != 32)) {
+                return false;
+            }
+        } else {
+            return false;
+        }
+        return switch (imageType) {
+            case 1, 9 -> mapType == 1 && (depth == 8 || depth == 16);
+            case 2, 10 -> depth == 15 || depth == 16 || depth == 24 || depth == 32;
+            case 3, 11 -> mapType == 0 && (depth == 8 || depth == 16);
+            default -> false;
+        };
     }
 
     /**
@@ -247,6 +446,19 @@ public enum ImageFormat {
     }
 
     /**
+     * Returns whether the bytes start a JXS file or a raw JPEG XS codestream.
+     */
+    private static boolean isJpegXs(byte[] header, int length) {
+        if (length >= 4 && u8(header, 0) == 0xFF && u8(header, 1) == 0x10 && u8(header, 2) == 0xFF
+                && u8(header, 3) == 0x50) {
+            return true;
+        }
+        return length >= 12 && header[0] == 0 && header[1] == 0 && header[2] == 0 && header[3] == 12
+                && header[4] == 'J' && header[5] == 'X' && header[6] == 'S' && header[7] == ' '
+                && header[8] == 0x0D && header[9] == 0x0A && u8(header, 10) == 0x87 && header[11] == 0x0A;
+    }
+
+    /**
      * Recognizes a JPEG 2000 file from its signature box, or a raw codestream from its
      * {@code SOC} and {@code SIZ} markers.
      *
@@ -259,9 +471,14 @@ public enum ImageFormat {
                 && u8(header, 3) == 0x51) {
             return true;
         }
-        return length >= 12 && header[0] == 0 && header[1] == 0 && header[2] == 0 && header[3] == 0x0C
+        var signature = length >= 12 && header[0] == 0 && header[1] == 0 && header[2] == 0 && header[3] == 0x0C
                 && header[4] == 'j' && header[5] == 'P' && header[6] == ' ' && header[7] == ' '
                 && header[8] == 0x0D && header[9] == 0x0A && u8(header, 10) == 0x87 && header[11] == 0x0A;
+        // a Motion JPEG 2000 file shares the signature box; its ftyp brand makes it a video container
+        var motion = length >= 24 && header[16] == 'f' && header[17] == 't' && header[18] == 'y' && header[19] == 'p'
+                && header[20] == 'm' && header[21] == 'j' && ((header[22] == 'p' && header[23] == '2')
+                || (header[22] == '2' && header[23] == 's'));
+        return signature && !motion;
     }
 
     /**
@@ -292,7 +509,8 @@ public enum ImageFormat {
                 case "avif", "avis" -> {
                     return AVIF;
                 }
-                case "heic", "heix", "heim", "heis", "hevc", "hevx", "mif1", "mif2", "msf1", "miaf" -> match = HEIC;
+                case "heic", "heix", "heim", "heis", "hevc", "hevx", "mif1", "mif2", "msf1", "miaf", "avci", "avcs", "jpeg",
+                     "jpgs", "j2ki", "j2is" -> match = HEIC;
                 default -> {
                 }
             }
