@@ -25,8 +25,10 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -124,6 +126,46 @@ class Ac3ContainersTest {
     static AudioTrack firstTrack(MediaSource source) {
         try (var demuxer = Containers.openDemuxer(source)) {
             return (AudioTrack) demuxer.tracks().getFirst();
+        }
+    }
+
+    static float[][] decodeAll(AudioTrack track, List<Packet> packets) {
+        var planes = new ArrayList<ByteArrayOutputStream>();
+        try (var decoder = AudioDecoders.create(track)) {
+            for (var packet : packets) {
+                decoder.decode(packet, buffer -> {
+                    while (planes.size() < buffer.channels()) {
+                        planes.add(new ByteArrayOutputStream());
+                    }
+                    for (var channel = 0; channel < buffer.channels(); channel++) {
+                        var plane = buffer.plane(channel);
+                        var bytes = ByteBuffer.allocate(buffer.frames() * Float.BYTES);
+                        bytes.asFloatBuffer().put(plane, 0, buffer.frames());
+                        planes.get(channel).writeBytes(bytes.array());
+                    }
+                });
+            }
+        }
+        var result = new float[planes.size()][];
+        for (var channel = 0; channel < result.length; channel++) {
+            var bytes = ByteBuffer.wrap(planes.get(channel).toByteArray()).asFloatBuffer();
+            result[channel] = new float[bytes.remaining()];
+            bytes.get(result[channel]);
+        }
+        return result;
+    }
+
+    static void assertSameDecode(float[][] expected, float[][] actual, int channels, int samples) {
+        assertEquals(channels, expected.length);
+        assertEquals(channels, actual.length);
+        for (var channel = 0; channel < channels; channel++) {
+            assertEquals(samples, expected[channel].length, "channel " + channel);
+            assertArrayEquals(expected[channel], actual[channel], "channel " + channel);
+            var energy = 0.0;
+            for (var sample : actual[channel]) {
+                energy += sample * sample;
+            }
+            assertTrue(energy > 0, "channel " + channel + " is silent");
         }
     }
 
@@ -416,6 +458,38 @@ class Ac3ContainersTest {
             if (Oracle.find(Oracle.Tool.FFMPEG).isPresent()) {
                 Oracle.assertDecodesCleanly(write("out." + extension, file));
             }
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"AC3", "EAC3"})
+        @DisplayName("decode the track a transport stream demuxes through AudioDecoders as its source packets decode")
+        void transportStreamDecodes(String name) {
+            var codec = Codec.valueOf(name);
+            var layout = ChannelLayout.SURROUND_5_1;
+            var packets = codec == Codec.AC3 ? encoded(layout) : enhanced(layout, 6);
+            var file = mux(track(codec, 48000, layout), packets, TsMuxer::new);
+            assertEquals(ContainerFormat.MPEG_TS, Containers.detect(MediaSource.of(file)).orElseThrow());
+            var demuxed = firstTrack(MediaSource.of(file));
+            assertEquals(codec, demuxed.codec());
+            var expected = decodeAll(track(codec, 48000, layout), packets);
+            var actual = decodeAll(demuxed, readAll(MediaSource.of(file)));
+            // Six blocks of 256 samples per AC-3 and per six-block E-AC-3 frame.
+            assertSameDecode(expected, actual, 6, packets.size() * 1536);
+        }
+
+        @Test
+        @DisplayName("decode the 7.1 E-AC-3 access units a transport stream carries to all eight channels")
+        void transportStreamDecodes71() {
+            var stream = read(Ac3TestSupport.SAMPLES.get(7).fetch());
+            var packets = units(stream);
+            var file = mux(track(Codec.EAC3, 48000, ChannelLayout.SURROUND_7_1), packets, TsMuxer::new);
+            var demuxed = firstTrack(MediaSource.of(file));
+            var expected = decodeAll(track(Codec.EAC3, 48000, ChannelLayout.SURROUND_7_1), packets);
+            var actual = decodeAll(demuxed, readAll(MediaSource.of(file)));
+            assertEquals(Codec.EAC3, demuxed.codec());
+            assertEquals(ChannelLayout.SURROUND_7_1, demuxed.layout().orElseThrow());
+            assertTrue(expected.length > 0 && expected[0].length > 0, "the source packets decode to nothing");
+            assertSameDecode(expected, actual, 8, expected[0].length);
         }
 
         @ParameterizedTest(name = "{0}")
