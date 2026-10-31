@@ -1,0 +1,20 @@
+diff --git a/source/Lib/EncoderLib/EncGOP.cpp b/source/Lib/EncoderLib/EncGOP.cpp
+index c8abae7..14c9226 100644
+--- a/source/Lib/EncoderLib/EncGOP.cpp
++++ b/source/Lib/EncoderLib/EncGOP.cpp
+@@ -46,6 +46,7 @@ POSSIBILITY OF SUCH DAMAGE.
+ */
+ 
+ #include "EncGOP.h"
++#include <cstdlib>
+ #include "CommonLib/SEI.h"
+ #include "CommonLib/UnitTools.h"
+ #include "CommonLib/dtrace_codingstruct.h"
+@@ -2112,6 +2113,7 @@ void EncGOP::xInitFirstSlice( Picture& pic, const PicList& picList, bool isEncod
+   slice->picHeader->disProfFlag = false;
+ 
+   slice->picHeader->gdrOrIrapPic = slice->picHeader->gdrPic || slice->isIRAP();
++  slice->picHeader->noOutputOfPriorPics = std::getenv( "VVENC_NO_OUTPUT_OF_PRIOR_PICS" ) != nullptr && slice->isIDRorBLA();
+   slice->picHeader->picInterSliceAllowed = sliceType != VVENC_I_SLICE;
+   slice->picHeader->picIntraSliceAllowed = sliceType == VVENC_I_SLICE;
+ 

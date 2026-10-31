@@ -248,6 +248,43 @@ final class Vp9RtMotion {
     final int[] costList = new int[5];
 
     /**
+     * The four-tap kernels of libvpx's accurate sub-pixel search at the good-quality speed 1,
+     * {@code sub_pel_filters_4}, eight taps per sixteenth-pixel phase.
+     */
+    private static final short[] FOURTAP_KERNELS = {
+            0, 0, 0, 128, 0, 0, 0, 0, 0, 0, -4, 126, 8, -2, 0, 0,
+            0, 0, -6, 120, 18, -4, 0, 0, 0, 0, -8, 114, 28, -6, 0, 0,
+            0, 0, -10, 108, 36, -6, 0, 0, 0, 0, -12, 102, 46, -8, 0, 0,
+            0, 0, -12, 94, 56, -10, 0, 0, 0, 0, -12, 84, 66, -10, 0, 0,
+            0, 0, -12, 76, 76, -12, 0, 0, 0, 0, -10, 66, 84, -12, 0, 0,
+            0, 0, -10, 56, 94, -12, 0, 0, 0, 0, -8, 46, 102, -12, 0, 0,
+            0, 0, -6, 36, 108, -10, 0, 0, 0, 0, -6, 28, 114, -8, 0, 0,
+            0, 0, -4, 18, 120, -6, 0, 0, 0, 0, -2, 8, 126, -4, 0, 0
+    };
+
+    /**
+     * The kernels the sub-pixel search predicts with, or {@code null} for the bilinear filters of
+     * the variance kernels ({@code use_accurate_subpel_search}).
+     */
+    private short[] subpelKernels;
+
+    /**
+     * The prediction a compound search averages each candidate with, {@link #bw} samples per
+     * row, or {@code null} for a single reference search.
+     */
+    private byte[] secondPred;
+
+    /**
+     * The prediction of one candidate vector.
+     */
+    private final byte[] candidatePred = new byte[64 * 64];
+
+    /**
+     * Scratch memory of the predictions of the accurate sub-pixel search.
+     */
+    private final byte[] convolveScratch = new byte[Vp9Dsp.CONVOLVE_SCRATCH];
+
+    /**
      * Creates a search.
      *
      * @param coder the superblock coder whose block the search serves
@@ -309,6 +346,172 @@ final class Vp9RtMotion {
         colMax = c.mvColMax;
         rowMin = c.mvRowMin;
         rowMax = c.mvRowMax;
+        subpelKernels = null;
+        secondPred = null;
+    }
+
+    /**
+     * Moves the search to a sub-block of the current block, after {@link #setup} with the
+     * sub-block's size ({@code mi_buf_shift}); the vector limits stay those of the block.
+     *
+     * @param dx the sub-block's column offset in the block, in samples
+     * @param dy the sub-block's row offset
+     */
+    void shiftBlock(int dx, int dy) {
+        srcOff += dy * srcStride + dx;
+        refBase += dy * refStride + dx;
+    }
+
+    /**
+     * Selects the filters the sub-pixel search of the current block predicts its candidates with,
+     * after {@link #setup}: libvpx's accurate search with the regular eight-tap or the four-tap
+     * kernels, or the bilinear filters.
+     *
+     * @param taps 8 or 4 for the accurate search, any other value for the bilinear filters
+     */
+    void setSubpelFilter(int taps) {
+        subpelKernels = taps == 8 ? Vp9Constants.FILTER_KERNELS : taps == 4 ? FOURTAP_KERNELS : null;
+    }
+
+    /**
+     * Makes the searches of the current block compound, after {@link #setup}: every candidate's
+     * prediction is averaged with a second prediction before it is compared with the source.
+     *
+     * @param pred the second prediction, the block's width per row
+     */
+    void setSecondPrediction(byte[] pred) {
+        secondPred = pred;
+    }
+
+    /**
+     * Averages {@link #candidatePred} with the second prediction, rounding up
+     * ({@code vpx_comp_avg_pred}).
+     */
+    private void averageWithSecond() {
+        var p = candidatePred;
+        var s = secondPred;
+        var n = bw * bh;
+        for (var i = 0; i < n; i++) {
+            p[i] = (byte) (((p[i] & 0xFF) + (s[i] & 0xFF) + 1) >> 1);
+        }
+    }
+
+    /**
+     * Copies the reference block at a full-pixel vector into {@link #candidatePred}.
+     *
+     * @param row the vector row
+     * @param col the vector column
+     */
+    private void copyCandidate(int row, int col) {
+        var off = refBase + row * refStride + col;
+        for (var y = 0; y < bh; y++) {
+            System.arraycopy(ref, off + y * refStride, candidatePred, y * bw, bw);
+        }
+    }
+
+    /**
+     * Returns the sum of absolute differences of the average of the block at a full-pixel vector
+     * and the second prediction ({@code sdaf}).
+     *
+     * @param row the vector row
+     * @param col the vector column
+     * @return the sum
+     */
+    private int sadAvgAt(int row, int col) {
+        copyCandidate(row, col);
+        averageWithSecond();
+        return coder.edsp.sad(src, srcOff, srcStride, candidatePred, 0, bw, bw, bh);
+    }
+
+    /**
+     * Returns the packed sums of squares and differences of the block at a full-pixel vector, or
+     * of its average with the second prediction in a compound search.
+     *
+     * @param row the vector row
+     * @param col the vector column
+     * @return the packed sums
+     */
+    private long centerVariance(int row, int col) {
+        if (secondPred == null) {
+            return coder.edsp.variance(ref, refBase + row * refStride + col, refStride, src, srcOff, srcStride, bw,
+                    bh);
+        }
+        copyCandidate(row, col);
+        averageWithSecond();
+        return coder.edsp.variance(candidatePred, 0, bw, src, srcOff, srcStride, bw, bh);
+    }
+
+    /**
+     * Refines a full-pixel vector of a compound search with the 8-neighbor search, each candidate
+     * averaged with the second prediction ({@code vp9_refining_search_8p_c}), leaving the vector
+     * in {@link #bestRow} and {@link #bestCol}.
+     *
+     * @param row the start row, clamped to the limits
+     * @param col the start column
+     * @param sadPerBit the vector cost weight
+     * @param searchRange the most steps
+     * @param centerRow the eighth-pixel center row of the vector costs
+     * @param centerCol the eighth-pixel center column
+     * @return the best cost
+     */
+    long refiningSearchCompound(int row, int col, int sadPerBit, int searchRange, int centerRow, int centerCol) {
+        row = Math.clamp(row, rowMin, rowMax);
+        col = Math.clamp(col, colMin, colMax);
+        var fRow = centerRow >> 3;
+        var fCol = centerCol >> 3;
+        long bestSad = (long) sadAvgAt(row, col) + mvsadErrCost(row, col, fRow, fCol, sadPerBit);
+        for (var i = 0; i < searchRange; i++) {
+            var bestSite = -1;
+            for (var j = 0; j < 8; j++) {
+                var r = row + EIGHT_ROWS[j];
+                var c = col + EIGHT_COLS[j];
+                if (!inside(r, c)) {
+                    continue;
+                }
+                long sad = sadAvgAt(r, c);
+                if (sad < bestSad) {
+                    sad += mvsadErrCost(r, c, fRow, fCol, sadPerBit);
+                    if (sad < bestSad) {
+                        bestSad = sad;
+                        bestSite = j;
+                    }
+                }
+            }
+            if (bestSite == -1) {
+                break;
+            }
+            row += EIGHT_ROWS[bestSite];
+            col += EIGHT_COLS[bestSite];
+        }
+        bestRow = row;
+        bestCol = col;
+        return bestSad;
+    }
+
+    /**
+     * The row steps of the 8-neighbor search, libvpx's {@code neighbors} of
+     * {@code vp9_refining_search_8p_c}.
+     */
+    private static final int[] EIGHT_ROWS = {-1, 0, 0, 1, -1, 1, -1, 1};
+
+    /**
+     * The column steps of the 8-neighbor search.
+     */
+    private static final int[] EIGHT_COLS = {0, -1, 1, 0, -1, -1, 1, 1};
+
+    /**
+     * Returns the variance of the average of the block at a full-pixel vector and the second
+     * prediction plus the vector's error cost ({@code vp9_get_mvpred_av_var}).
+     *
+     * @param row the full-pixel row
+     * @param col the column
+     * @param centerRow the eighth-pixel center row
+     * @param centerCol the eighth-pixel center column
+     * @return the cost
+     */
+    long mvpredAvVar(int row, int col, int centerRow, int centerCol) {
+        var variance = Vp9EncDsp.variance(centerVariance(row, col), log2(bw * bh));
+        return variance + mvErrCost(row * 8, col * 8, centerRow, centerCol);
     }
 
     /**
@@ -369,7 +572,22 @@ final class Vp9RtMotion {
      * @return the rate
      */
     int mvBitCost(int row, int col, int refRow, int refCol) {
-        return (mvCost(row - refRow, col - refCol) * MV_COST_WEIGHT + 64) >> 7;
+        return mvBitCost(row, col, refRow, refCol, MV_COST_WEIGHT);
+    }
+
+    /**
+     * Returns the rate of coding a vector against a reference vector with a weight
+     * ({@code vp9_mv_bit_cost}).
+     *
+     * @param row the vector row
+     * @param col the vector column
+     * @param refRow the reference vector row
+     * @param refCol the reference vector column
+     * @param weight the weight, in 1/128
+     * @return the rate
+     */
+    int mvBitCost(int row, int col, int refRow, int refCol, int weight) {
+        return (mvCost(row - refRow, col - refCol) * weight + 64) >> 7;
     }
 
     /**
@@ -559,11 +777,15 @@ final class Vp9RtMotion {
         }
         if (method == Vp9RtSpeed.FAST_DIAMOND) {
             return patternSearch(mvpRow, mvpCol, Math.max(MAX_MVSEARCH_STEPS - 2, stepParam), sadPerBit, withCosts,
-                    centerRow, centerCol, DIA_COUNTS, DIA, true);
+                    centerRow, centerCol, DIA_COUNTS, DIA, true, false);
+        }
+        if (method == Vp9RtSpeed.BIGDIA) {
+            return patternSearch(mvpRow, mvpCol, stepParam, sadPerBit, withCosts, centerRow, centerCol, DIA_COUNTS, DIA,
+                    true, true);
         }
         if (method == Vp9RtSpeed.FAST_HEX) {
             return patternSearch(mvpRow, mvpCol, Math.max(MAX_MVSEARCH_STEPS - 2, stepParam), sadPerBit, withCosts,
-                    centerRow, centerCol, HEX_COUNTS, HEX, false);
+                    centerRow, centerCol, HEX_COUNTS, HEX, false, false);
         }
         return fullPixelDiamond(mvpRow, mvpCol, stepParam, sadPerBit, MAX_MVSEARCH_STEPS - 1 - stepParam, withCosts,
                 centerRow, centerCol);
@@ -862,7 +1084,9 @@ final class Vp9RtMotion {
 
     /**
      * Runs a multi-scale pattern search, the hexagon search ({@code vp9_pattern_search}) or the
-     * big diamond search ({@code vp9_pattern_search_sad}), without the initial scale scan.
+     * big diamond search ({@code vp9_pattern_search_sad}), optionally starting from the scale
+     * whose candidates beat the start point when every scale is scanned first
+     * ({@code do_init_search}).
      *
      * @param startRow the start row
      * @param startCol the start column
@@ -875,10 +1099,13 @@ final class Vp9RtMotion {
      * @param candidates the candidates of each scale
      * @param sadVariant whether this is the big diamond variant, which builds the cost list from
      * the sums of differences of its last scale
+     * @param initSearch whether every scale up to the first is scanned around the start point
+     * before the search, which then starts from the best one's scale
      * @return the best cost
      */
     private int patternSearch(int startRow, int startCol, int searchParam, int sadPerBit, boolean withCosts,
-                              int centerRow, int centerCol, int[] counts, int[][] candidates, boolean sadVariant) {
+                              int centerRow, int centerCol, int[] counts, int[][] candidates, boolean sadVariant,
+                              boolean initSearch) {
         var fRow = centerRow >> 3;
         var fCol = centerCol >> 3;
         var br = Math.clamp(startRow, rowMin, rowMax);
@@ -886,45 +1113,79 @@ final class Vp9RtMotion {
         var bestSad = sadAt(br, bc) + mvsadErrCost(br, bc, fRow, fCol, sadPerBit);
         var bestInitS = MAX_MVSEARCH_STEPS - 1 - searchParam;
         var k = -1;
+        if (initSearch) {
+            var top = bestInitS;
+            bestInitS = -1;
+            for (var t = 0; t <= top; t++) {
+                var cand = candidates[t];
+                var site = -1;
+                var all = inBounds(br, bc, 1 << t);
+                for (var i = 0; i < counts[t]; i++) {
+                    var r = br + cand[2 * i];
+                    var c = bc + cand[2 * i + 1];
+                    if (!all && !inside(r, c)) {
+                        continue;
+                    }
+                    var sad = sadAt(r, c);
+                    if (sad < bestSad) {
+                        sad += mvsadErrCost(r, c, fRow, fCol, sadPerBit);
+                        if (sad < bestSad) {
+                            bestSad = sad;
+                            site = i;
+                        }
+                    }
+                }
+                if (site != -1) {
+                    bestInitS = t;
+                    k = site;
+                }
+            }
+            if (bestInitS != -1) {
+                br += candidates[bestInitS][2 * k];
+                bc += candidates[bestInitS][2 * k + 1];
+            }
+        }
         var doSad = sadVariant && withCosts;
         var s = bestInitS;
         var bestSite = -1;
-        for (; s >= (doSad ? 1 : 0); s--) {
+        for (; bestInitS != -1 && s >= (doSad ? 1 : 0); s--) {
             var cand = candidates[s];
             var num = counts[s];
-            bestSite = -1;
-            var all = inBounds(br, bc, 1 << s);
-            for (var i = 0; i < num; i++) {
-                var r = br + cand[2 * i];
-                var c = bc + cand[2 * i + 1];
-                if (!all && !inside(r, c)) {
-                    continue;
-                }
-                var sad = sadAt(r, c);
-                if (sad < bestSad) {
-                    sad += mvsadErrCost(r, c, fRow, fCol, sadPerBit);
+            if (!initSearch || s != bestInitS) {
+                bestSite = -1;
+                var all = inBounds(br, bc, 1 << s);
+                for (var i = 0; i < num; i++) {
+                    var r = br + cand[2 * i];
+                    var c = bc + cand[2 * i + 1];
+                    if (!all && !inside(r, c)) {
+                        continue;
+                    }
+                    var sad = sadAt(r, c);
                     if (sad < bestSad) {
-                        bestSad = sad;
-                        bestSite = i;
+                        sad += mvsadErrCost(r, c, fRow, fCol, sadPerBit);
+                        if (sad < bestSad) {
+                            bestSad = sad;
+                            bestSite = i;
+                        }
                     }
                 }
+                if (bestSite == -1) {
+                    continue;
+                }
+                br += cand[2 * bestSite];
+                bc += cand[2 * bestSite + 1];
+                k = bestSite;
             }
-            if (bestSite == -1) {
-                continue;
-            }
-            br += cand[2 * bestSite];
-            bc += cand[2 * bestSite + 1];
-            k = bestSite;
             do {
                 bestSite = -1;
                 var prev = k == 0 ? num - 1 : k - 1;
                 var next = k == num - 1 ? 0 : k + 1;
-                all = inBounds(br, bc, 1 << s);
+                var inner = inBounds(br, bc, 1 << s);
                 for (var i = 0; i < 3; i++) {
                     var index = i == 0 ? prev : (i == 1 ? k : next);
                     var r = br + cand[2 * index];
                     var c = bc + cand[2 * index + 1];
-                    if (!all && !inside(r, c)) {
+                    if (!inner && !inside(r, c)) {
                         continue;
                     }
                     var sad = sadAt(r, c);
@@ -943,10 +1204,14 @@ final class Vp9RtMotion {
                 }
             } while (bestSite != -1);
         }
-        if (doSad && s == 0) {
-            bestSad = lastScaleWithCosts(br, bc, bestSad, sadPerBit, fRow, fCol, candidates[0], counts[0]);
-            br = searchRow;
-            bc = searchCol;
+        if (bestInitS != -1 && doSad && s == 0) {
+            if (!initSearch || s != bestInitS) {
+                bestSad = lastScaleWithCosts(br, bc, bestSad, sadPerBit, fRow, fCol, candidates[0], counts[0]);
+                br = searchRow;
+                bc = searchCol;
+            } else {
+                costList[0] = bestSad;
+            }
         }
         if (withCosts) {
             if (!sadVariant) {
@@ -1062,8 +1327,22 @@ final class Vp9RtMotion {
      * @return the packed sums of squares and differences
      */
     private long subpelVariance(int row, int col) {
-        return coder.edsp.subPixelVariance(ref, refBase + (row >> 3) * refStride + (col >> 3), refStride, col & 7,
-                row & 7, src, srcOff, srcStride, bw, bh, coder.subpelScratch);
+        var off = refBase + (row >> 3) * refStride + (col >> 3);
+        if (subpelKernels == null && secondPred == null) {
+            return coder.edsp.subPixelVariance(ref, off, refStride, col & 7, row & 7, src, srcOff, srcStride, bw, bh,
+                    coder.subpelScratch);
+        }
+        if (subpelKernels != null) {
+            coder.dsp.convolve(ref, off, refStride, candidatePred, 0, bw, subpelKernels, 0, (col & 7) << 1, 16,
+                    (row & 7) << 1, 16, bw, bh, false, convolveScratch);
+        } else {
+            Vp9EncDsp.bilinearPredict(ref, off, refStride, col & 7, row & 7, candidatePred, bw, bh,
+                    coder.subpelScratch);
+        }
+        if (secondPred != null) {
+            averageWithSecond();
+        }
+        return coder.edsp.variance(candidatePred, 0, bw, src, srcOff, srcStride, bw, bh);
     }
 
     /**
@@ -1092,8 +1371,7 @@ final class Vp9RtMotion {
         }
         var br = row * 8;
         var bc = col * 8;
-        var packed = coder.edsp.variance(ref, refBase + row * refStride + col, refStride, src, srcOff, srcStride, bw,
-                bh);
+        var packed = centerVariance(row, col);
         var dist = Vp9EncDsp.variance(packed, n);
         distortion = (int) dist;
         sse1 = Vp9EncDsp.sse(packed);
@@ -1292,6 +1570,144 @@ final class Vp9RtMotion {
             hstep >>= 1;
             var tr = checkRow;
             var tc = checkCol;
+            bestErr = firstLevelChecks(tr, tc, hstep, refRow, refCol, rMin, rMax, cMin, cMax, bestErr, n);
+            if (itersPerStep > 1) {
+                bestErr = secondLevelChecks(tr, tc, hstep, refRow, refCol, rMin, rMax, cMin, cMax, bestErr, n);
+            }
+        }
+        bestRow = checkRow;
+        bestCol = checkCol;
+        return bestErr;
+    }
+
+    /**
+     * Refines a full-pixel vector with the pruned sub-pixel tree search, which takes the first
+     * half-sample step from the direction of the integer cost list when it is complete
+     * ({@code vp9_find_best_sub_pixel_tree_pruned}), leaving the vector in {@link #bestRow} and
+     * {@link #bestCol}.
+     *
+     * @param row the full-pixel row
+     * @param col the full-pixel column
+     * @param refRow the eighth-pixel reference row
+     * @param refCol the eighth-pixel reference column
+     * @param allowHp whether the frame allows eighth-pixel vectors
+     * @param forcedStop the coarsest precision to stop at
+     * @param itersPerStep the number of extra checks per step
+     * @return the best cost
+     */
+    long subpelPruned(int row, int col, int refRow, int refCol, boolean allowHp, int forcedStop, int itersPerStep) {
+        var n = log2(bw * bh);
+        var cMin = Math.max(Math.max(colMin * 8, refCol - MAX_FULL_PEL_VAL * 8), MV_LOW + 1);
+        var cMax = Math.min(Math.min(colMax * 8, refCol + MAX_FULL_PEL_VAL * 8), MV_UPP - 1);
+        var rMin = Math.max(Math.max(rowMin * 8, refRow - MAX_FULL_PEL_VAL * 8), MV_LOW + 1);
+        var rMax = Math.min(Math.min(rowMax * 8, refRow + MAX_FULL_PEL_VAL * 8), MV_UPP - 1);
+        var tr = row * 8;
+        var tc = col * 8;
+        var packed = centerVariance(row, col);
+        var dist = Vp9EncDsp.variance(packed, n);
+        distortion = (int) dist;
+        sse1 = Vp9EncDsp.sse(packed);
+        var bestErr = dist + mvErrCost(tr, tc, refRow, refCol);
+        var cl = costList;
+        checkRow = tr;
+        checkCol = tc;
+        var hstep = 4;
+        if (cl[0] != INT_MAX && cl[1] != INT_MAX && cl[2] != INT_MAX && cl[3] != INT_MAX && cl[4] != INT_MAX) {
+            var dir = (cl[1] < cl[3] ? 0 : 1) + (cl[2] < cl[4] ? 0 : 2);
+            var dc = (dir & 1) == 0 ? -hstep : hstep;
+            var dr = (dir & 2) == 0 ? hstep : -hstep;
+            bestErr = checkBetter(tr, tc + dc, refRow, refCol, rMin, rMax, cMin, cMax, bestErr, n);
+            bestErr = checkBetter(tr + dr, tc, refRow, refCol, rMin, rMax, cMin, cMax, bestErr, n);
+            bestErr = checkBetter(tr + dr, tc + dc, refRow, refCol, rMin, rMax, cMin, cMax, bestErr, n);
+        } else {
+            bestErr = firstLevelChecks(tr, tc, hstep, refRow, refCol, rMin, rMax, cMin, cMax, bestErr, n);
+            if (itersPerStep > 1) {
+                bestErr = secondLevelChecks(tr, tc, hstep, refRow, refCol, rMin, rMax, cMin, cMax, bestErr, n);
+            }
+        }
+        if (forcedStop != 2) {
+            hstep >>= 1;
+            tr = checkRow;
+            tc = checkCol;
+            bestErr = firstLevelChecks(tr, tc, hstep, refRow, refCol, rMin, rMax, cMin, cMax, bestErr, n);
+            if (itersPerStep > 1) {
+                bestErr = secondLevelChecks(tr, tc, hstep, refRow, refCol, rMin, rMax, cMin, cMax, bestErr, n);
+            }
+        }
+        if (allowHp && Vp9EncMv.useHp(ModeInfo.packMv(refRow, refCol)) && forcedStop == 0) {
+            hstep >>= 1;
+            tr = checkRow;
+            tc = checkCol;
+            bestErr = firstLevelChecks(tr, tc, hstep, refRow, refCol, rMin, rMax, cMin, cMax, bestErr, n);
+            if (itersPerStep > 1) {
+                bestErr = secondLevelChecks(tr, tc, hstep, refRow, refCol, rMin, rMax, cMin, cMax, bestErr, n);
+            }
+        }
+        bestRow = checkRow;
+        bestCol = checkCol;
+        return bestErr;
+    }
+
+    /**
+     * Refines a full-pixel vector with the more pruned sub-pixel tree search, which takes the
+     * first half-sample step at the minimum of the cost surface the integer cost list models when
+     * it is well behaved ({@code vp9_find_best_sub_pixel_tree_pruned_more}), leaving the vector
+     * in {@link #bestRow} and {@link #bestCol}.
+     *
+     * @param row the full-pixel row
+     * @param col the full-pixel column
+     * @param refRow the eighth-pixel reference row
+     * @param refCol the eighth-pixel reference column
+     * @param allowHp whether the frame allows eighth-pixel vectors
+     * @param forcedStop the coarsest precision to stop at
+     * @param itersPerStep the number of extra checks per step
+     * @return the best cost
+     */
+    long subpelPrunedMore(int row, int col, int refRow, int refCol, boolean allowHp, int forcedStop,
+                          int itersPerStep) {
+        var n = log2(bw * bh);
+        var cMin = Math.max(Math.max(colMin * 8, refCol - MAX_FULL_PEL_VAL * 8), MV_LOW + 1);
+        var cMax = Math.min(Math.min(colMax * 8, refCol + MAX_FULL_PEL_VAL * 8), MV_UPP - 1);
+        var rMin = Math.max(Math.max(rowMin * 8, refRow - MAX_FULL_PEL_VAL * 8), MV_LOW + 1);
+        var rMax = Math.min(Math.min(rowMax * 8, refRow + MAX_FULL_PEL_VAL * 8), MV_UPP - 1);
+        var tr = row * 8;
+        var tc = col * 8;
+        var packed = centerVariance(row, col);
+        var dist = Vp9EncDsp.variance(packed, n);
+        distortion = (int) dist;
+        sse1 = Vp9EncDsp.sse(packed);
+        var bestErr = dist + mvErrCost(tr, tc, refRow, refCol);
+        var cl = costList;
+        checkRow = tr;
+        checkCol = tc;
+        var hstep = 4;
+        if (cl[0] != INT_MAX && cl[1] != INT_MAX && cl[2] != INT_MAX && cl[3] != INT_MAX && cl[4] != INT_MAX
+                && cl[0] < cl[1] && cl[0] < cl[2] && cl[0] < cl[3] && cl[0] < cl[4]) {
+            var ic = (int) divideAndRound((long) cl[1] - cl[3], cl[1] - 2L * cl[0] + cl[3]);
+            var ir = (int) divideAndRound((long) cl[4] - cl[2], cl[4] - 2L * cl[0] + cl[2]);
+            if (ir != 0 || ic != 0) {
+                bestErr = checkBetter(tr + ir * hstep, tc + ic * hstep, refRow, refCol, rMin, rMax, cMin, cMax,
+                        bestErr, n);
+            }
+        } else {
+            bestErr = firstLevelChecks(tr, tc, hstep, refRow, refCol, rMin, rMax, cMin, cMax, bestErr, n);
+            if (itersPerStep > 1) {
+                bestErr = secondLevelChecks(tr, tc, hstep, refRow, refCol, rMin, rMax, cMin, cMax, bestErr, n);
+            }
+        }
+        if (forcedStop != 2) {
+            tr = checkRow;
+            tc = checkCol;
+            hstep >>= 1;
+            bestErr = firstLevelChecks(tr, tc, hstep, refRow, refCol, rMin, rMax, cMin, cMax, bestErr, n);
+            if (itersPerStep > 1) {
+                bestErr = secondLevelChecks(tr, tc, hstep, refRow, refCol, rMin, rMax, cMin, cMax, bestErr, n);
+            }
+        }
+        if (allowHp && Vp9EncMv.useHp(ModeInfo.packMv(refRow, refCol)) && forcedStop == 0) {
+            tr = checkRow;
+            tc = checkCol;
+            hstep >>= 1;
             bestErr = firstLevelChecks(tr, tc, hstep, refRow, refCol, rMin, rMax, cMin, cMax, bestErr, n);
             if (itersPerStep > 1) {
                 bestErr = secondLevelChecks(tr, tc, hstep, refRow, refCol, rMin, rMax, cMin, cMax, bestErr, n);

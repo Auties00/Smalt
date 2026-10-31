@@ -1,23 +1,27 @@
 package com.github.auties00.smalt.probe;
 
+import com.github.auties00.smalt.track.TrackDisposition;
+
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.Set;
 
 /**
  * Holds the fields every {@link StreamInfo} shares.
  *
- * @param index          the position of the stream
- * @param trackId        the container track identifier, or {@code -1} for an image
- * @param language       the language, or {@code null}
+ * @param index the position of the stream
+ * @param trackId the container track identifier, or {@code -1} for an image
+ * @param language the language, or {@code null}
  * @param durationMicros the duration in microseconds, or {@code -1}
- * @param bitRate        the bit rate in bits per second, or {@code -1}
- * @param frameCount     the frame or packet count, or {@code -1}
- * @param tags           the normalized tags, unmodifiable
+ * @param bitRate the bit rate in bits per second, or {@code -1}
+ * @param frameCount the frame or packet count, or {@code -1}
+ * @param tags the normalized tags, unmodifiable
+ * @param disposition the dispositions, unmodifiable
  */
 record StreamFields(int index, int trackId, String language, long durationMicros, long bitRate, long frameCount,
-                    Map<String, String> tags) {
+                    Map<String, String> tags, Set<TrackDisposition> disposition) {
     /**
      * Returns the track identifier.
      *
@@ -71,6 +75,7 @@ record StreamFields(int index, int trackId, String language, long durationMicros
     String describe() {
         return "index=" + index + (trackId >= 0 ? ", trackId=" + trackId : "") + (language != null ? ", language=" + language : "")
                 + (durationMicros >= 0 ? ", durationMicros=" + durationMicros : "") + (bitRate >= 0 ? ", bitRate=" + bitRate : "")
-                + (frameCount >= 0 ? ", frameCount=" + frameCount : "") + (tags.isEmpty() ? "" : ", tags=" + tags);
+                + (frameCount >= 0 ? ", frameCount=" + frameCount : "") + (tags.isEmpty() ? "" : ", tags=" + tags)
+                + (disposition.isEmpty() ? "" : ", disposition=" + disposition);
     }
 }

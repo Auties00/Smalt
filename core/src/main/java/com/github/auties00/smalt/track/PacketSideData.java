@@ -24,6 +24,9 @@ import java.util.TreeMap;
  *   <li>{@link #hdr10Plus()}: dynamic HDR10+ metadata for this frame, as the ITU-T T.35 message
  *       ({@code itu_t_t35_country_code} 0xB5 and the SMPTE ST 2094-40 payload) a container
  *       carries next to the frame.</li>
+ *   <li>{@link #alphaFrame()}: the coded alpha frame of a track that
+ *       {@linkplain VideoTrack#hasAlpha() carries alpha}, as the Matroska {@code BlockAdditional} of
+ *       {@code BlockAddID} 1 stores it in a transparent WebM file.</li>
  * </ul>
  * Any other payload goes into {@link #extra()} under a key of the form
  * {@code "<origin>:<name>"}, for example {@code "matroska:BlockAdditional:1"}.
@@ -35,7 +38,7 @@ public final class PacketSideData {
     /**
      * The side data of a packet that carries none.
      */
-    public static final PacketSideData NONE = new PacketSideData(0, 0, null, null, Map.of());
+    public static final PacketSideData NONE = new PacketSideData(0, 0, null, null, null, Map.of());
 
     /**
      * The decoded output to drop from the start of the packet, in track time-base units.
@@ -58,6 +61,11 @@ public final class PacketSideData {
     private final byte[] hdr10Plus;
 
     /**
+     * The coded alpha frame, or {@code null}.
+     */
+    private final byte[] alphaFrame;
+
+    /**
      * The other payloads by key, unmodifiable.
      */
     private final Map<String, byte[]> extra;
@@ -65,18 +73,20 @@ public final class PacketSideData {
     /**
      * Constructs side data from validated components.
      *
-     * @param discardStart   the output to drop from the start
-     * @param discardEnd     the output to drop from the end
+     * @param discardStart the output to drop from the start
+     * @param discardEnd the output to drop from the end
      * @param newCodecConfig the replacement configuration, or {@code null}
-     * @param hdr10Plus      the HDR10+ message, or {@code null}
-     * @param extra          the other payloads, unmodifiable
+     * @param hdr10Plus the HDR10+ message, or {@code null}
+     * @param alphaFrame the coded alpha frame, or {@code null}
+     * @param extra the other payloads, unmodifiable
      */
     private PacketSideData(long discardStart, long discardEnd, byte[] newCodecConfig, byte[] hdr10Plus,
-                           Map<String, byte[]> extra) {
+                           byte[] alphaFrame, Map<String, byte[]> extra) {
         this.discardStart = discardStart;
         this.discardEnd = discardEnd;
         this.newCodecConfig = newCodecConfig;
         this.hdr10Plus = hdr10Plus;
+        this.alphaFrame = alphaFrame;
         this.extra = extra;
     }
 
@@ -100,6 +110,7 @@ public final class PacketSideData {
         builder.discardEnd = discardEnd;
         builder.newCodecConfig = newCodecConfig;
         builder.hdr10Plus = hdr10Plus;
+        builder.alphaFrame = alphaFrame;
         builder.extra.putAll(extra);
         return builder;
     }
@@ -141,6 +152,19 @@ public final class PacketSideData {
     }
 
     /**
+     * Returns the coded alpha frame paired with this packet's frame.
+     *
+     * <p>The payload is one packet of the track's own codec whose decoded luma plane is the
+     * straight alpha plane of this packet's frame, at the frame's size; it is meaningful only on a
+     * track that {@linkplain VideoTrack#hasAlpha() carries alpha}.
+     *
+     * @return the coded alpha frame, not a copy, or empty when the packet has none
+     */
+    public Optional<byte[]> alphaFrame() {
+        return Optional.ofNullable(alphaFrame);
+    }
+
+    /**
      * Returns the payload stored under a key of {@link #extra()}.
      *
      * @param key the name the payload is stored under
@@ -167,7 +191,8 @@ public final class PacketSideData {
      * @return whether every entry is absent or zero
      */
     public boolean isEmpty() {
-        return discardStart == 0 && discardEnd == 0 && newCodecConfig == null && hdr10Plus == null && extra.isEmpty();
+        return discardStart == 0 && discardEnd == 0 && newCodecConfig == null && hdr10Plus == null
+                && alphaFrame == null && extra.isEmpty();
     }
 
     /**
@@ -186,7 +211,7 @@ public final class PacketSideData {
         }
         if (discardStart != that.discardStart || discardEnd != that.discardEnd
                 || !Arrays.equals(newCodecConfig, that.newCodecConfig) || !Arrays.equals(hdr10Plus, that.hdr10Plus)
-                || !extra.keySet().equals(that.extra.keySet())) {
+                || !Arrays.equals(alphaFrame, that.alphaFrame) || !extra.keySet().equals(that.extra.keySet())) {
             return false;
         }
         for (var entry : extra.entrySet()) {
@@ -207,6 +232,7 @@ public final class PacketSideData {
         var hash = Long.hashCode(discardStart) * 31 + Long.hashCode(discardEnd);
         hash = hash * 31 + Arrays.hashCode(newCodecConfig);
         hash = hash * 31 + Arrays.hashCode(hdr10Plus);
+        hash = hash * 31 + Arrays.hashCode(alphaFrame);
         for (var entry : extra.entrySet()) {
             hash += entry.getKey().hashCode() ^ Arrays.hashCode(entry.getValue());
         }
@@ -227,6 +253,9 @@ public final class PacketSideData {
         }
         if (hdr10Plus != null) {
             text.append(", hdr10Plus=").append(hdr10Plus.length).append(" bytes");
+        }
+        if (alphaFrame != null) {
+            text.append(", alphaFrame=").append(alphaFrame.length).append(" bytes");
         }
         for (var entry : extra.entrySet()) {
             text.append(", ").append(entry.getKey()).append('=').append(entry.getValue().length).append(" bytes");
@@ -259,6 +288,11 @@ public final class PacketSideData {
          * The HDR10+ message, or {@code null}.
          */
         private byte[] hdr10Plus;
+
+        /**
+         * The coded alpha frame, or {@code null}.
+         */
+        private byte[] alphaFrame;
 
         /**
          * The other payloads by key.
@@ -313,6 +347,18 @@ public final class PacketSideData {
         }
 
         /**
+         * Sets the coded alpha frame paired with the packet's frame; see
+         * {@link PacketSideData#alphaFrame()}.
+         *
+         * @param alphaFrame the coded alpha frame, shared and not copied, or {@code null} for none
+         * @return this builder
+         */
+        public Builder alphaFrame(byte[] alphaFrame) {
+            this.alphaFrame = alphaFrame;
+            return this;
+        }
+
+        /**
          * Stores a payload without a typed accessor under a key.
          *
          * @param key   the key, of the form {@code "<origin>:<name>"}
@@ -336,11 +382,12 @@ public final class PacketSideData {
          * @return {@link #NONE} when nothing was set, otherwise new side data
          */
         public PacketSideData build() {
-            if (discardStart == 0 && discardEnd == 0 && newCodecConfig == null && hdr10Plus == null && extra.isEmpty()) {
+            if (discardStart == 0 && discardEnd == 0 && newCodecConfig == null && hdr10Plus == null && alphaFrame == null
+                    && extra.isEmpty()) {
                 return NONE;
             }
             var entries = extra.isEmpty() ? Map.<String, byte[]>of() : Collections.unmodifiableMap(new TreeMap<>(extra));
-            return new PacketSideData(discardStart, discardEnd, newCodecConfig, hdr10Plus, entries);
+            return new PacketSideData(discardStart, discardEnd, newCodecConfig, hdr10Plus, alphaFrame, entries);
         }
     }
 }

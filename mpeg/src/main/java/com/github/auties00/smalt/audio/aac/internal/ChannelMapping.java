@@ -38,7 +38,9 @@ public final class ChannelMapping {
             null, null, null,
             {ElementId.SCE, ElementId.CPE, ElementId.CPE, ElementId.SCE, ElementId.LFE},
             {ElementId.SCE, ElementId.CPE, ElementId.CPE, ElementId.CPE, ElementId.LFE},
-            null,
+            {ElementId.SCE, ElementId.CPE, ElementId.CPE, ElementId.CPE, ElementId.CPE, ElementId.SCE, ElementId.LFE,
+                    ElementId.LFE, ElementId.SCE, ElementId.CPE, ElementId.CPE, ElementId.SCE, ElementId.CPE,
+                    ElementId.SCE, ElementId.SCE, ElementId.CPE},
             {ElementId.SCE, ElementId.CPE, ElementId.CPE, ElementId.LFE, ElementId.CPE}
     };
 
@@ -61,7 +63,12 @@ public final class ChannelMapping {
                     Speaker.BACK_CENTER, Speaker.LOW_FREQUENCY},
             {Speaker.FRONT_CENTER, Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.SIDE_LEFT, Speaker.SIDE_RIGHT,
                     Speaker.BACK_LEFT, Speaker.BACK_RIGHT, Speaker.LOW_FREQUENCY},
-            null,
+            {Speaker.FRONT_CENTER, Speaker.FRONT_LEFT_OF_CENTER, Speaker.FRONT_RIGHT_OF_CENTER, Speaker.FRONT_LEFT,
+                    Speaker.FRONT_RIGHT, Speaker.SIDE_LEFT, Speaker.SIDE_RIGHT, Speaker.BACK_LEFT, Speaker.BACK_RIGHT,
+                    Speaker.BACK_CENTER, Speaker.LOW_FREQUENCY, Speaker.LOW_FREQUENCY_2, Speaker.TOP_FRONT_CENTER,
+                    Speaker.TOP_FRONT_LEFT, Speaker.TOP_FRONT_RIGHT, Speaker.TOP_SIDE_LEFT, Speaker.TOP_SIDE_RIGHT,
+                    Speaker.TOP_CENTER, Speaker.TOP_BACK_LEFT, Speaker.TOP_BACK_RIGHT, Speaker.TOP_BACK_CENTER,
+                    Speaker.BOTTOM_FRONT_CENTER, Speaker.BOTTOM_FRONT_LEFT, Speaker.BOTTOM_FRONT_RIGHT},
             {Speaker.FRONT_CENTER, Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.BACK_LEFT, Speaker.BACK_RIGHT,
                     Speaker.LOW_FREQUENCY, Speaker.TOP_FRONT_LEFT, Speaker.TOP_FRONT_RIGHT}
     };
@@ -233,6 +240,37 @@ public final class ChannelMapping {
     }
 
     /**
+     * Returns the mapping of an element sequence whose elements name their loudspeakers, as the elements of
+     * ER BSAC do.
+     *
+     * <p>A loudspeaker that an earlier element took already is replaced by {@link Speaker#UNKNOWN}, a pair as a
+     * whole.
+     *
+     * @param types the element types in coding order
+     * @param speakers the preferred loudspeaker of each coded channel, two per pair element
+     * @param limits the resource limits
+     * @return the mapping
+     * @throws MediaException.LimitExceeded if the channel count exceeds the limits
+     */
+    public static ChannelMapping ofSpeakers(int[] types, Speaker[] speakers, MediaLimits limits) {
+        LimitChecks.checkChannels(limits, Math.max(speakers.length, 1));
+        var assigned = new ArrayList<Speaker>(speakers.length);
+        var used = new boolean[Speaker.values().length];
+        var channel = 0;
+        for (var type : types) {
+            if (type == ElementId.CPE) {
+                addPair(assigned, used, speakers[channel], speakers[channel + 1]);
+                channel += 2;
+            } else {
+                addSingle(assigned, used, speakers[channel++]);
+            }
+        }
+        var tags = new int[types.length];
+        Arrays.fill(tags, -1);
+        return new ChannelMapping(types.clone(), tags, assigned.toArray(Speaker[]::new), limits);
+    }
+
+    /**
      * Returns a mapping for an element sequence no configuration announced.
      *
      * <p>A sequence equal to that of a channel configuration takes that configuration's mapping
@@ -297,6 +335,25 @@ public final class ChannelMapping {
      */
     public int outputIndex(int codedChannel) {
         return outputIndex[codedChannel];
+    }
+
+    /**
+     * Returns the loudspeaker a coded channel feeds.
+     *
+     * @param codedChannel the coded channel index
+     * @return the speaker
+     */
+    public Speaker speaker(int codedChannel) {
+        return layout.speakers().get(outputIndex[codedChannel]);
+    }
+
+    /**
+     * Returns the element type of each slot, in coding order.
+     *
+     * @return a new array of {@link ElementId} values
+     */
+    public int[] elementTypes() {
+        return slotTypes.clone();
     }
 
     /**

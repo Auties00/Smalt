@@ -1,0 +1,10 @@
+# image dump of vectors/rawpixls-leaf-aptus-22-16bit-4-3-3196.mos; regenerate with -Dsmalt.test.updateDumps=true
+format RAW
+info ImageInfo[format=RAW, width=4008, height=5344, hasAlpha=false, animated=false, frameCount=1, orientation=ROTATE_90]
+decode
+picture 4008x5344 rgba8 alpha=false crc=d158a85d
+  format=RAW orientation=ROTATE_90 source=4008x5344
+  icc=520:86132914 exif=94:1d2926e1 xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+decoder raw sensor data
+sensor 4008x5344 channels=1 cfa=RGGB neutral=[0.826605504587156, 1.0, 0.6825688073394496] crc=3057ea7f

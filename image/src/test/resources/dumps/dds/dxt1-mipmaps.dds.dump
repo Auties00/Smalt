@@ -1,0 +1,44 @@
+# image dump of dds/dxt1-mipmaps.dds; regenerate with -Dsmalt.test.updateDumps=true
+format DDS
+info ImageInfo[format=DDS, width=48, height=32, hasAlpha=true, animated=false, frameCount=6, orientation=NORMAL]
+decode
+picture 48x32 rgba8 alpha=true crc=c54042cf
+  format=DDS orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=none
+scaled 12x8
+picture 12x8 rgba8 alpha=true crc=0c23077c
+  format=DDS orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=none
+pages 6
+page 0 ImageInfo[format=DDS, width=48, height=32, hasAlpha=true, animated=false, frameCount=6, orientation=NORMAL]
+picture 48x32 rgba8 alpha=true crc=c54042cf
+  format=DDS orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=none
+page 1 ImageInfo[format=DDS, width=24, height=16, hasAlpha=true, animated=false, frameCount=6, orientation=NORMAL]
+picture 24x16 rgba8 alpha=true crc=b1e1f18a
+  format=DDS orientation=NORMAL source=24x16
+  icc=none exif=none xmp=none
+  profile=none
+page 2 ImageInfo[format=DDS, width=12, height=8, hasAlpha=true, animated=false, frameCount=6, orientation=NORMAL]
+picture 12x8 rgba8 alpha=true crc=0c23077c
+  format=DDS orientation=NORMAL source=12x8
+  icc=none exif=none xmp=none
+  profile=none
+page 3 ImageInfo[format=DDS, width=6, height=4, hasAlpha=true, animated=false, frameCount=6, orientation=NORMAL]
+picture 6x4 rgba8 alpha=true crc=a48d0c5d
+  format=DDS orientation=NORMAL source=6x4
+  icc=none exif=none xmp=none
+  profile=none
+page 4 ImageInfo[format=DDS, width=3, height=2, hasAlpha=true, animated=false, frameCount=6, orientation=NORMAL]
+picture 3x2 rgba8 alpha=true crc=56537632
+  format=DDS orientation=NORMAL source=3x2
+  icc=none exif=none xmp=none
+  profile=none
+page 5 ImageInfo[format=DDS, width=1, height=1, hasAlpha=true, animated=false, frameCount=6, orientation=NORMAL]
+picture 1x1 rgba8 alpha=true crc=2144df1c
+  format=DDS orientation=NORMAL source=1x1
+  icc=none exif=none xmp=none
+  profile=none

@@ -1,0 +1,13 @@
+# name	MD5 of the raw float decode	samples	channels
+stereo-standard	bc2eba00f8626996f165c0a6a506d692	132300	2
+stereo-telephone	a6de2919fd2daef6c2fdff7aeeeea0f3	132300	2
+stereo-braindead	70a0111d84bdfda2ec9e9b46f65a0e56	88200	2
+stereo-thumb-ms0	871766feb0d3240063a77dbdd29d70a2	88200	2
+stereo-radio-ms3	b925c9cd203c235310e1ad9650e5a482	88200	2
+stereo-pns	0056e67b4ac14edf6ccdb74b8a2efe1e	88200	2
+mono-standard	bcd562f2999e57e6319712b72ac1d0bc	132300	1
+mono-48k	360fd97bc3678723210ab8e396f61141	96000	1
+stereo-32k	886a995f5a5861441d15a923d1514410	64000	2
+stereo-silence	9df204fbc98bb8965081cb30a89715fc	44100	2
+stereo-short	f2ab951500d08d2fd0dd7e75197d5c79	441	2
+stereo-tagged	b0175f0d53f01ae30039ee19d310b46f	44100	2
