@@ -27,6 +27,7 @@ import com.github.auties00.smalt.internal.io.SlicedSource;
 import com.github.auties00.smalt.internal.io.SourceBytes;
 import com.github.auties00.smalt.internal.io.SourceReader;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
+import com.github.auties00.smalt.internal.codec.Atrac9Configs;
 import com.github.auties00.smalt.internal.tags.RiffMetadataChunks;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.metadata.MediaTags;
@@ -41,6 +42,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -86,6 +88,15 @@ import java.util.Objects;
  * refers to the sample count of the {@code ds64} chunk. The G.726 code size is the format's bits
  * per sample, or, when that is not between 2 and 5, its bit rate over its sampling rate. ADPCM in
  * a big-endian RIFX file raises {@link MediaException.Unsupported}.
+ *
+ * <p>An {@code .at9} file, of the ATRAC9 {@code WAVEFORMATEXTENSIBLE} sub-format, is read as {@link Codec#ATRAC9}:
+ * the track's configuration is the configuration word of the format's extra bytes, whose sampling rate and channel
+ * count the track takes over the format's (and its block-order layout when the counts differ), each packet is one
+ * superframe of the size that word gives (the format's block alignment is not used), the last possibly shorter,
+ * timestamped in samples from zero and lasting a superframe; the {@code fact} chunk's sample count is the track's
+ * duration and its encoder delay (its third field) the track's {@link AudioTrack#skipSamples()}, and without the
+ * chunk the duration is the superframes' samples. A format without the configuration word, or with an invalid one,
+ * raises {@link MediaException.Malformed}.
  *
  * <p>A {@code data} chunk of coded audio is handed to the demuxer of its elementary stream, whose
  * track, packets, timestamps, duration and seeking this demuxer exposes unchanged, and whose tags
@@ -221,7 +232,7 @@ public final class WavDemuxer implements Demuxer {
      * The kinds of data chunk payload.
      */
     private enum Payload {
-        PCM, ADPCM, MPEG, AC3, AAC, FLAC, AMR, OPUS, DTS, IEC61937
+        PCM, ADPCM, ATRAC9, MPEG, AC3, AAC, FLAC, AMR, OPUS, DTS, IEC61937
     }
 
     /**
@@ -376,7 +387,7 @@ public final class WavDemuxer implements Demuxer {
                     && (header.codec == Codec.PCM_S16LE || header.codec == Codec.PCM_S16BE)) {
                 detectBursts(header);
             }
-            if (header.payload != Payload.PCM && header.payload != Payload.ADPCM) {
+            if (header.payload != Payload.PCM && header.payload != Payload.ADPCM && header.payload != Payload.ATRAC9) {
                 this.coded = openPayload(header);
                 for (var entry : coded.metadata().entrySet()) {
                     header.metadata.putIfAbsent(entry.getKey(), entry.getValue());
@@ -410,7 +421,16 @@ public final class WavDemuxer implements Demuxer {
             this.position = dataStart;
             this.data = new ReadAheadCache(source, READ_BLOCK, 0, dataEnd < 0 ? Long.MAX_VALUE : dataEnd);
             long frames;
-            if (header.payload == Payload.ADPCM) {
+            var skip = 0L;
+            if (header.payload == Payload.ATRAC9) {
+                this.unitSamples = header.unitSamples;
+                this.codeSize = 0;
+                this.packetFrames = 1;
+                this.sampleLimit = -1;
+                skip = Math.max(0, header.factDelay);
+                var coded = dataEnd < 0 ? -1 : (dataEnd - dataStart + frameSize - 1) / frameSize * unitSamples;
+                frames = header.sampleCount() >= 0 ? header.sampleCount() : coded < 0 ? -1 : Math.max(0, coded - skip);
+            } else if (header.payload == Payload.ADPCM) {
                 this.unitSamples = header.unitSamples;
                 this.codeSize = header.codeSize;
                 this.packetFrames = adpcmPacketUnits(header);
@@ -436,6 +456,7 @@ public final class WavDemuxer implements Demuxer {
                     .sampleRate(header.sampleRate)
                     .layout(header.layout)
                     .bitsPerSample(header.validBits)
+                    .skipSamples(skip)
                     .build();
             this.tracks = List.of(track);
             this.cueChapters = cueChapters(header, track.durationMicros().orElse(-1));
@@ -504,6 +525,11 @@ public final class WavDemuxer implements Demuxer {
          * The sample count of the {@code fact} chunk, or {@code -1}.
          */
         private long factSamples = -1;
+
+        /**
+         * The encoder delay of the {@code fact} chunk of an ATRAC9 file, its third field, or {@code -1}.
+         */
+        private long factDelay = -1;
 
         /**
          * Returns the sample count of the file: the {@code fact} count, or the {@code ds64} one of an RF64 file whose
@@ -654,6 +680,10 @@ public final class WavDemuxer implements Demuxer {
                 case 0x66616374 -> {
                     if (chunkSize >= 4 && reader.remaining() >= 4) {
                         header.factSamples = header.bigEndian ? reader.u32be() : reader.u32le();
+                    }
+                    if (chunkSize >= 12 && reader.remaining() >= 8) {
+                        reader.skip(4);
+                        header.factDelay = header.bigEndian ? reader.u32be() : reader.u32le();
                     }
                 }
                 case 0x69643320, 0x49443320 -> {
@@ -883,6 +913,11 @@ public final class WavDemuxer implements Demuxer {
             }
             payload = Payload.DTS;
         }
+        if (payload == Payload.ATRAC9) {
+            header.payload = payload;
+            parseAtrac9(format, header);
+            return;
+        }
         if (payload == Payload.ADPCM) {
             if (header.bigEndian) {
                 throw new MediaException.Unsupported(String.format("rifx format 0x%04x", tag),
@@ -904,6 +939,35 @@ public final class WavDemuxer implements Demuxer {
         header.blockAlign = containerBytes * channels;
         header.validBits = header.codec == Codec.PCM_ALAW || header.codec == Codec.PCM_MULAW ? 8 : Math.max(format.validBits(), 1);
         LimitChecks.checkAllocation(limits, Math.min(MAX_PACKET_BYTES, (long) header.blockAlign * Integer.highestOneBit(Math.max(1, header.sampleRate / 10))));
+    }
+
+    /**
+     * Reads the format of ATRAC9: the configuration word of the format's extra bytes, which gives the sampling rate,
+     * the channel count, the superframe size and its samples, whatever the format's own fields say.
+     *
+     * @param format the parsed {@code fmt } chunk, of the ATRAC9 sub-format
+     * @param header receives the codec, the rate, the channels, the superframe layout and the configuration
+     * @throws MediaException.Malformed if the format lacks the configuration word or holds an invalid one
+     */
+    private static void parseAtrac9(WaveFormat format, Header header) {
+        var word = WaveFormat.atrac9Config(format.extra());
+        if (word == null) {
+            throw new MediaException.Malformed("ATRAC9 format without its configuration word");
+        }
+        var config = Atrac9Configs.parse(word);
+        if (config == null) {
+            throw new MediaException.Malformed("invalid ATRAC9 configuration " + HexFormat.of().formatHex(word));
+        }
+        header.codec = Codec.ATRAC9;
+        header.config = word;
+        header.blockAlign = config.superframeBytes();
+        header.unitSamples = config.superframeSamples();
+        header.validBits = 0;
+        header.sampleRate = config.sampleRate();
+        if (config.channels() != header.channels) {
+            header.channels = config.channels();
+            header.layout = config.layout();
+        }
     }
 
     /**
@@ -1033,6 +1097,7 @@ public final class WavDemuxer implements Demuxer {
             case UNKNOWN -> throw new MediaException.Unsupported("wav subformat",
                     "unsupported WAVE_FORMAT_EXTENSIBLE sub-format GUID");
             case DOLBY_AC3, DOLBY_DIGITAL_PLUS -> Payload.AC3;
+            case ATRAC9 -> Payload.ATRAC9;
             case AMBISONIC -> Payload.PCM;
             case IEC61937 -> switch (tag) {
                 // AC-3, MPEG-1 Layer I and II, MP3, MPEG-2, AAC, DTS, E-AC-3 (and with Atmos), DTS-HD (and DTS:X
@@ -1131,7 +1196,8 @@ public final class WavDemuxer implements Demuxer {
                 }
                 yield new Iec61937Demuxer(source, start, header.dataEnd, limits, burst);
             }
-            case PCM, ADPCM -> throw new IllegalStateException("PCM and ADPCM are not handed to another demuxer");
+            case PCM, ADPCM, ATRAC9 -> throw new IllegalStateException(
+                    "PCM, ADPCM and ATRAC9 are not handed to another demuxer");
         };
     }
 
@@ -1590,6 +1656,9 @@ public final class WavDemuxer implements Demuxer {
      * @return the packet, or {@code null} at the end of the samples
      */
     private Packet nextAdpcmPacket() {
+        if (track.codec() == Codec.ATRAC9) {
+            return nextSuperframe();
+        }
         var wanted = (long) packetFrames * frameSize;
         if (dataEnd >= 0) {
             wanted = Math.min(wanted, dataEnd - position);
@@ -1620,6 +1689,33 @@ public final class WavDemuxer implements Demuxer {
         var packet = new Packet(track.id(), data, frameIndex, frameIndex, duration, true);
         position += size;
         frameIndex += samples;
+        ForwardOnlySource.release(source, position);
+        return packet;
+    }
+
+    /**
+     * Reads the next ATRAC9 superframe; at the end of the data, the bytes left of a truncated one.
+     *
+     * @return the packet, or {@code null} at the end of the samples
+     */
+    private Packet nextSuperframe() {
+        var wanted = dataEnd >= 0 ? Math.min(frameSize, dataEnd - position) : frameSize;
+        if (wanted <= 0) {
+            finished = true;
+            return null;
+        }
+        var data = new byte[(int) wanted];
+        var done = this.data.readUpTo(position, data, 0, data.length);
+        if (done < frameSize) {
+            finished = true;
+            if (done == 0) {
+                return null;
+            }
+            data = Arrays.copyOf(data, done);
+        }
+        var packet = new Packet(track.id(), data, frameIndex, frameIndex, unitSamples, true);
+        position += done;
+        frameIndex += unitSamples;
         ForwardOnlySource.release(source, position);
         return packet;
     }

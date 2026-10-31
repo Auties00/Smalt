@@ -16,6 +16,7 @@ import com.github.auties00.smalt.audio.ape.ApeDecoder;
 import com.github.auties00.smalt.audio.alac.AlacDecoder;
 import com.github.auties00.smalt.audio.alac.AlacEncoder;
 import com.github.auties00.smalt.audio.alac.AlacEncoderOptions;
+import com.github.auties00.smalt.audio.atrac9.Atrac9Decoder;
 import com.github.auties00.smalt.audio.flac.FlacDecoder;
 import com.github.auties00.smalt.audio.flac.FlacEncoder;
 import com.github.auties00.smalt.audio.flac.FlacEncoderOptions;
@@ -76,8 +77,8 @@ import static com.github.auties00.smalt.aot.internal.WorkloadFactory.realtime;
 /**
  * Creates the workloads of {@link TrainingFamily#AUDIO}, the codecs of {@code smalt-audio}: Opus,
  * Vorbis, FLAC, ALAC, MP3, MP2, IMA and Microsoft ADPCM, G.722, G.726 and GSM 06.10 encoding and decoding, Speex,
- * WavPack, Monkey's Audio and Musepack decoding, the DSD to PCM conversion of {@code smalt-core}, and the voice
- * processor, each on synthetic speech or
+ * WavPack, Monkey's Audio, Musepack and ATRAC9 decoding, the DSD to PCM conversion of {@code smalt-core}, and the
+ * voice processor, each on synthetic speech or
  * music and keeping its codecs across rounds as a long-running application does.
  */
 final class AudioWorkloads {
@@ -155,7 +156,8 @@ final class AudioWorkloads {
                 file("wavpack-decode", AudioWorkloads::wavpackDecode),
                 file("ape-decode", AudioWorkloads::apeDecode),
                 file("musepack-decode", AudioWorkloads::musepackDecode),
-                file("dsd-decode", AudioWorkloads::dsdDecode));
+                file("dsd-decode", AudioWorkloads::dsdDecode),
+                file("atrac9-decode", AudioWorkloads::atrac9Decode));
     }
 
     /**
@@ -276,6 +278,28 @@ final class AudioWorkloads {
             rounds.add(AudioStreams.decode(name, stream.packets(), new WavPackDecoder((AudioTrack) stream.track())));
         }
         return sequence("wavpack-decode", rounds);
+    }
+
+    /**
+     * The ATRAC9 files decoded by {@link #atrac9Decode()}: 24 kHz stereo and 44.1 kHz 5.1 audio of synthetic tones,
+     * and a 96 kHz stereo stream whose frames code every element of the bitstream with random legal values, written
+     * by smalt-audio's test {@code Atrac9VectorWriter} (no ATRAC9 encoder exists outside Sony's tools).
+     */
+    private static final List<String> ATRAC9_STREAMS = List.of("stereo-24k.at9", "surround-44k.at9",
+            "random-96k.at9");
+
+    /**
+     * Returns a workload that decodes the bundled ATRAC9 files, one decoder per file across rounds.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload atrac9Decode() {
+        var rounds = new ArrayList<TrainingWorkload>();
+        for (var name : ATRAC9_STREAMS) {
+            var stream = TrainingStreams.demux("atrac9/" + name);
+            rounds.add(AudioStreams.decode(name, stream.packets(), new Atrac9Decoder((AudioTrack) stream.track())));
+        }
+        return sequence("atrac9-decode", rounds);
     }
 
     /**

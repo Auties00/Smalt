@@ -12,6 +12,7 @@ import com.github.auties00.smalt.container.internal.WaveFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.TransferCharacteristics;
+import com.github.auties00.smalt.internal.codec.Atrac9Configs;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
@@ -106,7 +107,9 @@ import java.util.Set;
  *       ({@code A_MS/ACM}, the {@code WAVEFORMATEX} a WAVE file stores for them, of format tag {@code 0x0011},
  *       {@code 0x0002}, {@code 0x0031}, {@code 0x028F} or {@code 0x0045}; one packet per block, the block size of
  *       IMA and Microsoft ADPCM the size of the track's first packet, or 256 bytes per channel when the header is
- *       written before it, which every later packet but the last must have), and PCM
+ *       written before it, which every later packet but the last must have), ATRAC9 ({@code A_MS/ACM}, the
+ *       {@code WAVEFORMATEXTENSIBLE} of an {@code .at9} file; one or more superframes per packet), ATRAC1
+ *       ({@code A_ATRAC/AT1}, without a configuration), and PCM
  *       ({@code A_PCM/INT/LIT} for 8-bit and little-endian integers up to 32 bits, {@code A_PCM/INT/BIG}
  *       for big-endian integers up to 32 bits, {@code A_MS/ACM} with a {@code WAVEFORMATEXTENSIBLE} for
  *       64-bit integers, of the Ambisonic B-format sub-format for the Furse-Malham layouts of
@@ -613,7 +616,8 @@ public final class MatroskaMuxer implements Muxer {
             case AC3 -> "A_AC3";
             case EAC3 -> "A_EAC3";
             case AMR_NB, AMR_WB, PCM_ALAW, PCM_MULAW, PCM_S64LE, PCM_S64BE, ADPCM_IMA_WAV, ADPCM_MS, GSM_MS, ADPCM_G722,
-                 ADPCM_G726 -> "A_MS/ACM";
+                 ADPCM_G726, ATRAC9 -> "A_MS/ACM";
+            case ATRAC1 -> "A_ATRAC/AT1";
             case PCM_U8, PCM_S8, PCM_S16LE, PCM_S24LE, PCM_S32LE -> "A_PCM/INT/LIT";
             case PCM_S16BE, PCM_S24BE, PCM_S32BE -> "A_PCM/INT/BIG";
             case PCM_F32LE, PCM_F64LE, PCM_F32BE, PCM_F64BE -> "A_PCM/FLOAT/IEEE";
@@ -1923,6 +1927,25 @@ public final class MatroskaMuxer implements Muxer {
                         codecPrivate = waveFormat(WaveFormat.tagOf(codec), channels, sampleRate,
                                 (long) sampleRate * channels, 8);
                     }
+                }
+                case ATRAC9 -> {
+                    var atrac9 = audio.codecConfig().map(Atrac9Configs::parse).orElse(null);
+                    if (atrac9 == null) {
+                        throw new IllegalArgumentException("ATRAC9 track " + track.id()
+                                + " needs its configuration word");
+                    }
+                    sampleRate = atrac9.sampleRate();
+                    channels = atrac9.channels();
+                    var mask = audio.layout().filter(layout -> layout.channels() == atrac9.channels())
+                            .map(WaveFormat::channelMask).orElse(0L);
+                    var wave = new WaveFormat(0, channels, sampleRate,
+                            (long) atrac9.superframeBytes() * sampleRate / atrac9.superframeSamples(),
+                            atrac9.superframeBytes(), 0, atrac9.superframeSamples(), mask, WaveFormat.SubFormat.ATRAC9,
+                            audio.codecConfig().get().length == WaveFormat.ATRAC9_EXTRA_SIZE
+                                    ? audio.codecConfig().get() : WaveFormat.atrac9Extra(atrac9.bytes()));
+                    var out = new ByteWriter(wave.size(true));
+                    wave.write(out, true);
+                    codecPrivate = out.toByteArray();
                 }
                 case PCM_S64LE, PCM_S64BE -> {
                     if (sampleRate > 0 && channels > 0) {

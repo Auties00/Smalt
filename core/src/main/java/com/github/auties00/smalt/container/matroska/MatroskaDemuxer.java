@@ -67,7 +67,9 @@ import java.util.Set;
  * timestamp plus the frame duration ({@code DefaultDuration}, or the {@code BlockDuration} divided
  * among the frames), or no timestamp when neither is known. A frame of an IMA or Microsoft ADPCM
  * {@code A_MS/ACM} track that holds several blocks of its format's block alignment becomes one packet per
- * block, timed in samples from the frame's timestamp. Opus frames without a declared
+ * block, timed in samples from the frame's timestamp. An {@code A_MS/ACM} track of the ATRAC9
+ * {@code WAVEFORMATEXTENSIBLE} sub-format is an ATRAC9 track configured with the configuration word of its extra
+ * bytes, and {@code A_ATRAC/AT1} an ATRAC1 track. Opus frames without a declared
  * duration get the duration of their TOC, and a positive {@code DiscardPadding} shortens the
  * duration of the frame it trims and is reported as its {@link PacketSideData#discardEnd()}, a
  * negative one as its {@link PacketSideData#discardStart()}. The {@code SimpleBlock} discardable

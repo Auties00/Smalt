@@ -34,7 +34,8 @@ public enum TrainingFamily {
      * the decoders of all five, IMA ADPCM (WAVE and {@code ima4} layouts) and Microsoft ADPCM files, G.722, G.726
      * and GSM 06.10 in real time (encoders and decoders), the Speex decoder with loss concealment, the WavPack
      * decoder (lossless, floating-point, DSD and hybrid with correction data), the Monkey's Audio and Musepack
-     * decoders, the DSD to PCM conversion of DSF and DSDIFF streams, and the voice
+     * decoders, the ATRAC9 decoder (stereo, 5.1 and high-rate files), the DSD to PCM conversion of DSF and
+     * DSDIFF streams, and the voice
      * processor (echo cancellation, noise suppression) in 10 ms frames over several echo paths and
      * talk patterns.
      */

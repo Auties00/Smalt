@@ -23,6 +23,7 @@ import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.internal.cenc.CencCipher;
 import com.github.auties00.smalt.internal.cenc.CencScheme;
+import com.github.auties00.smalt.internal.codec.Atrac9Configs;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
@@ -928,6 +929,7 @@ final class MatroskaTrackEntry {
                 case "A_WAVPACK4" -> Codec.WAVPACK;
                 case "A_AMR/NB" -> Codec.AMR_NB;
                 case "A_AMR/WB" -> Codec.AMR_WB;
+                case "A_ATRAC/AT1" -> Codec.ATRAC1;
                 case "A_MS/ACM" -> audioFromWaveFormat();
                 default -> codecId.startsWith("A_AAC/") ? Codec.AAC : Codec.UNKNOWN_AUDIO;
             };
@@ -955,14 +957,25 @@ final class MatroskaTrackEntry {
                     config = WaveFormat.msAdpcmConfig(WaveFormat.parse(codecPrivate, codecPrivate.length, false)
                             .extra());
                 }
+                if (codec == Codec.ATRAC9) {
+                    config = WaveFormat.atrac9Config(WaveFormat.parse(codecPrivate, codecPrivate.length, false)
+                            .extra());
+                    if (config == null) {
+                        codec = Codec.UNKNOWN_AUDIO;
+                    }
+                }
             }
             if (bits == 0) {
                 bits = codec.pcmBitsPerSample().orElse(0);
             }
             var amr = codec == Codec.AMR_NB || codec == Codec.AMR_WB;
-            var channelCount = amr ? 1 : (int) Math.min(channels, Integer.MAX_VALUE);
+            // the ATRAC9 configuration word, not the track's elements, gives the rate and channels the decoder outputs
+            var atrac9 = codec == Codec.ATRAC9 ? Atrac9Configs.parse(config) : null;
+            var channelCount = amr ? 1
+                    : atrac9 != null ? atrac9.channels() : (int) Math.min(channels, Integer.MAX_VALUE);
             LimitChecks.checkChannels(limits, channelCount);
-            var sampleRate = codec == Codec.AMR_WB ? 16_000 : codec == Codec.AMR_NB ? 8_000 : sampleRate();
+            var sampleRate = codec == Codec.AMR_WB ? 16_000 : codec == Codec.AMR_NB ? 8_000
+                    : atrac9 != null ? atrac9.sampleRate() : sampleRate();
             var skip = codec == Codec.OPUS || sampleRate == 0 ? 0 : NANOSECONDS.rescale(codecDelay,
                     Rational.timeBaseOf(sampleRate));
             var packetRate = codec == Codec.OPUS ? 48_000 : sampleRate;

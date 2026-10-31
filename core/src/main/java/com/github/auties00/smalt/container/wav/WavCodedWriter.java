@@ -7,6 +7,7 @@ import com.github.auties00.smalt.container.internal.AdpcmFormat;
 import com.github.auties00.smalt.container.internal.WaveFormat;
 import com.github.auties00.smalt.internal.codec.Ac3Configs;
 import com.github.auties00.smalt.internal.codec.AmrConfigs;
+import com.github.auties00.smalt.internal.codec.Atrac9Configs;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.DtsConfigs;
 import com.github.auties00.smalt.internal.header.AdtsHeader;
@@ -138,6 +139,26 @@ final class WavCodedWriter {
     private final byte[] coefficients;
 
     /**
+     * The size of an ATRAC9 superframe in bytes, or 0 for the other codecs.
+     */
+    private final int superframeBytes;
+
+    /**
+     * The samples per channel of an ATRAC9 superframe, or 0 for the other codecs.
+     */
+    private final int superframeSamples;
+
+    /**
+     * The encoder delay of an ATRAC9 track, in samples, which its {@code fact} chunk declares.
+     */
+    private final long encoderDelay;
+
+    /**
+     * The samples per channel the track's duration gives, or {@code -1} when it has none.
+     */
+    private final long trackSamples;
+
+    /**
      * The statistics of every packet written.
      */
     private final Stats stats = new Stats();
@@ -170,7 +191,7 @@ final class WavCodedWriter {
         var layout = track.layout().orElseThrow();
         var channels = layout.channels();
         var sampleRate = track.sampleRate();
-        this.channelMask = codec == Codec.EAC3 ? WaveFormat.channelMask(layout) : 0;
+        this.channelMask = codec == Codec.EAC3 || codec == Codec.ATRAC9 ? WaveFormat.channelMask(layout) : 0;
         this.timeBase = track.timeBase();
         var config = track.codecConfig().orElse(null);
         var rate = sampleRate;
@@ -182,6 +203,8 @@ final class WavCodedWriter {
         var codecDelay = 0;
         var codeSize = 0;
         byte[] coefficients = null;
+        var superframeBytes = 0;
+        var superframeSamples = 0;
         if (AdpcmBlocks.supports(codec) && !AdpcmBlocks.hasBlocks(codec) && channels != 1) {
             throw new IllegalArgumentException("a WAV " + codec.displayName() + " track must have one channel");
         }
@@ -274,6 +297,20 @@ final class WavCodedWriter {
                 }
             }
             case ADPCM_G722 -> bits = 4;
+            case ATRAC9 -> {
+                var atrac9 = config == null ? null : Atrac9Configs.parse(config);
+                if (atrac9 == null) {
+                    throw new IllegalArgumentException("a WAV ATRAC9 track needs its configuration word");
+                }
+                if (atrac9.channels() != channels) {
+                    throw new IllegalArgumentException("an ATRAC9 configuration of " + atrac9.channels()
+                            + " channels in a track of " + channels);
+                }
+                superframeBytes = atrac9.superframeBytes();
+                superframeSamples = atrac9.superframeSamples();
+                extra = config.length == WaveFormat.ATRAC9_EXTRA_SIZE ? config.clone()
+                        : WaveFormat.atrac9Extra(atrac9.bytes());
+            }
             default -> {
             }
         }
@@ -289,17 +326,22 @@ final class WavCodedWriter {
         this.codecDelay = codecDelay;
         this.codeSize = codeSize;
         this.coefficients = coefficients;
+        this.superframeBytes = superframeBytes;
+        this.superframeSamples = superframeSamples;
+        this.encoderDelay = codec == Codec.ATRAC9 ? Math.min(Math.max(0, track.skipSamples()), 0xFFFFFFFFL) : 0;
+        this.trackSamples = track.duration() < 0 ? -1 : timeBase.rescale(track.duration(), sampleBase);
     }
 
     /**
      * Returns whether this writer handles a codec.
      *
      * @param codec the codec of a track
-     * @return {@code true} for MPEG audio, AC-3, E-AC-3, AAC, FLAC, Opus, AMR, DTS and the ADPCM and telephony codecs
+     * @return {@code true} for MPEG audio, AC-3, E-AC-3, AAC, FLAC, Opus, AMR, DTS, ATRAC9 and the ADPCM and telephony
+     * codecs
      */
     static boolean supports(Codec codec) {
         return switch (codec) {
-            case MP2, MP3, AC3, EAC3, AAC, FLAC, OPUS, AMR_NB, AMR_WB, DTS -> true;
+            case MP2, MP3, AC3, EAC3, AAC, FLAC, OPUS, AMR_NB, AMR_WB, DTS, ATRAC9 -> true;
             default -> AdpcmBlocks.supports(codec);
         };
     }
@@ -309,6 +351,15 @@ final class WavCodedWriter {
      */
     boolean hasExtension() {
         return codec == Codec.MP2;
+    }
+
+    /**
+     * Returns the encoder delay the {@code fact} chunk of an ATRAC9 file declares after its sample count.
+     *
+     * @return the delay in samples, or {@code -1} for the other codecs, whose {@code fact} chunk holds only the count
+     */
+    long factDelay() {
+        return codec == Codec.ATRAC9 ? encoderDelay : -1;
     }
 
     /**
@@ -336,12 +387,20 @@ final class WavCodedWriter {
      * @return the stored size, in bytes
      * @throws IllegalArgumentException if the packet does not start with a frame of the codec, or is not a whole number
      * of frames where the codec's frames carry their own size; for ADPCM, if it is not a block, not a whole number of
-     * units of a code stream, or follows the last packet
+     * units of a code stream, or follows the last packet; for ATRAC9, if it is empty, not whole superframes except in
+     * the last packet, or follows the last packet
      */
     int prepare(Packet packet) {
         var data = packet.data();
         var size = data.length;
         return switch (codec) {
+            case ATRAC9 -> {
+                if (size == 0 || ended) {
+                    throw new IllegalArgumentException(size == 0 ? "an empty ATRAC9 packet"
+                            : "an ATRAC9 packet after one that ended inside a superframe");
+                }
+                yield size;
+            }
             case ADPCM_IMA_WAV, ADPCM_MS, GSM_MS, ADPCM_G722, ADPCM_G726 -> {
                 checkAdpcm(size);
                 yield size;
@@ -401,6 +460,9 @@ final class WavCodedWriter {
      */
     void write(Packet packet, int stored, MediaSink sink) {
         var data = packet.data();
+        if (codec == Codec.ATRAC9) {
+            ended |= stored % superframeBytes != 0;
+        }
         if (AdpcmBlocks.supports(codec)) {
             ended |= AdpcmBlocks.hasBlocks(codec) ? stats.units > 0 && stored < stats.first
                     : stored % AdpcmBlocks.unitBytes(codec, codeSize) != 0;
@@ -425,6 +487,10 @@ final class WavCodedWriter {
      * @return the samples per channel, at the format's sampling rate
      */
     long samples() {
+        if (codec == Codec.ATRAC9) {
+            var samples = Math.max(0, stats.samples - encoderDelay);
+            return trackSamples >= 0 ? Math.min(samples, trackSamples) : samples;
+        }
         return countRate == sampleRate ? stats.samples : Math.multiplyExact(stats.samples, (long) sampleRate) / countRate;
     }
 
@@ -539,6 +605,15 @@ final class WavCodedWriter {
             case AMR_NB -> tag = WaveFormat.AMR_NB;
             case AMR_WB -> tag = WaveFormat.AMR_WB;
             case DTS -> tag = WaveFormat.DTS;
+            case ATRAC9 -> {
+                // the block alignment is the superframe size, and the valid-bits field holds the samples per block
+                var byteRate9 = (long) superframeBytes * sampleRate / superframeSamples;
+                var format = new WaveFormat(0, channels, sampleRate, byteRate9, superframeBytes, 0, superframeSamples,
+                        channelMask, WaveFormat.SubFormat.ATRAC9, extra);
+                var out = new ByteWriter(format.size(true));
+                format.write(out, true);
+                return out.toByteArray();
+            }
             case ADPCM_IMA_WAV, ADPCM_MS, GSM_MS, ADPCM_G722, ADPCM_G726 -> {
                 // a stream without packets declares blocks of 256 bytes per channel, a size both formats allow, or
                 // blocks of only the headers when those do not fit the 16-bit field
@@ -918,6 +993,13 @@ final class WavCodedWriter {
                 case FLAC -> samples += AudioConfigs.flacFrameSamples(data);
                 case OPUS -> samples += AudioConfigs.opusPacketSamples(data);
                 case AAC -> samples += aacFrameLength;
+                case ATRAC9 -> {
+                    var coded = (long) (stored + superframeBytes - 1) / superframeBytes * superframeSamples;
+                    if (duration != Packet.UNKNOWN_DURATION && duration < sampleBase.rescale(coded, timeBase)) {
+                        coded = Math.min(coded, timeBase.rescale(duration, sampleBase));
+                    }
+                    samples += coded;
+                }
                 default -> {
                 }
             }

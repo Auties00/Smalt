@@ -387,6 +387,31 @@ public enum Codec {
     DST(TrackKind.AUDIO, "dst"),
 
     /**
+     * Sony ATRAC9, the audio of the PlayStation Vita and PlayStation 4 ({@code .at9} files): a WAVE
+     * {@code WAVEFORMATEXTENSIBLE} sub-format, GUID {@code 47E142D2-36BA-4D8D-88FC-61654F8C836C}.
+     *
+     * <p>A packet holds one or more whole superframes, each of the size the configuration gives and of one, two, four
+     * or eight frames of 64, 128 or 256 samples. The configuration is the 4-byte ATRAC9 configuration word, which
+     * starts with {@code 0xFE} and gives the sampling rate, the channel configuration, the frame size and the frames
+     * per superframe.
+     */
+    ATRAC9(TrackKind.AUDIO, "atrac9"),
+
+    // TODO: ATRAC1 decoding: the only public description of ATRAC, Tsutsui et al., "ATRAC: Adaptive Transform
+    // Acoustic Coding for MiniDisc" (AES 93rd Convention, 1992), describes the QMF split, block switching and bit
+    // allocation but specifies none of the bitstream: the sound unit layout, the block floating unit boundaries,
+    // the scale factor and word length tables, the QMF taps and the MDCT windows. The MiniDisc Rainbow Book that
+    // defines them is licensed by Sony, and the only decoders (FFmpeg, atracdenc) are LGPL, so no bit-exact decoder
+    // can be written from a permitted source.
+    /**
+     * Sony ATRAC (ATRAC1), the audio of the MiniDisc: the Matroska {@code A_ATRAC/AT1} codec, which has no
+     * configuration.
+     *
+     * <p>The containers read and write the stream, but no Smalt artifact decodes it.
+     */
+    ATRAC1(TrackKind.AUDIO, "atrac1"),
+
+    /**
      * Dolby Digital (AC-3).
      */
     AC3(TrackKind.AUDIO, "ac3"),

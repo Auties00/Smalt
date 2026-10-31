@@ -80,6 +80,11 @@ class AudioFuzzTest {
     }
 
     @FuzzTest
+    void atrac9(byte[] data) {
+        FuzzMedia.audio(Codec.ATRAC9, data);
+    }
+
+    @FuzzTest
     void adpcmImaWav(byte[] data) {
         FuzzMedia.audio(Codec.ADPCM_IMA_WAV, data);
     }

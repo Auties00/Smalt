@@ -27,6 +27,8 @@ def generator(root, relative):
         return "tools/testdata/vvc-vectors/make-vectors.py (the ra-420-10bit vector)"
     if relative in ("dv/dv25-audio.dv", "avi/dv-type1.avi"):
         return "make-dv-samples.py"
+    if relative in ("wav/atrac9.at9", "matroska/atrac9.mka"):
+        return "audio Atrac9VectorWriter (-Dsmalt.atrac9.writeVectors=true)"
     if relative == "mp4/motion.mj2":
         return "make-mj2-sample.py"
     if relative in ("amr/nb-stereo.amr", "amr/wb-3ch.awb"):

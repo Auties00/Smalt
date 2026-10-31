@@ -41,6 +41,7 @@ Contents
   69. Monkey's Audio
   70. libmpcdec (Musepack)
   71. ISO/IEC 14496-5 MPEG-4 Audio reference software, DST module
+  72. LibAtrac9
 
 
 ===============================================================================
@@ -1494,3 +1495,54 @@ must be included in all copies of derivative works.
 Copyright  2004.
 
 ************************************************************************/
+
+
+===============================================================================
+72. LibAtrac9
+===============================================================================
+
+Project:      LibAtrac9, an ATRAC9 decoder reverse engineered from Sony's, at
+              commit efca2e3af35562a09a9bb6deed90e45b4b824dc4
+Home:         https://github.com/Thealexbarney/LibAtrac9
+Source:       https://codeload.github.com/Thealexbarney/LibAtrac9/tar.gz/efca2e3af35562a09a9bb6deed90e45b4b824dc4
+License text: LICENSE at the root of the distribution
+License:      MIT
+
+Derived Smalt packages:
+  audio.atrac9 (Atrac9Decoder, Atrac9FrameDecoder, Atrac9Unpacker,
+  Atrac9Synthesis, Atrac9Config, Atrac9Block, Atrac9Channel, Atrac9BitReader,
+  Atrac9Codebook, Atrac9Codebooks, Atrac9Tables: the decoder of C/src/decoder.c,
+  decinit.c, unpack.c, scale_factors.c, bit_allocation.c, quantization.c,
+  band_extension.c, imdct.c, bit_reader.c and utility.c, and the tables of
+  tables.c and huffCodes.c)
+
+Derivation: C code translated to Java and tables transcribed.
+
+Copyright:
+  Copyright (c) 2018 Alex Barney
+
+-------------------------------------------------------------------------------
+MIT License (LICENSE)
+-------------------------------------------------------------------------------
+
+MIT License
+
+Copyright (c) 2018 Alex Barney
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

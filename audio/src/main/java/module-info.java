@@ -1,6 +1,6 @@
 /**
- * Audio codecs of Smalt: the Opus, Vorbis, FLAC, ALAC, MP3 (and MP2), Speex and WavPack decoders, the Opus, FLAC,
- * ALAC, MP3, MP2 and Vorbis encoders, the ADPCM and telephony codecs (IMA and Microsoft ADPCM, G.722, G.726 and
+ * Audio codecs of Smalt: the Opus, Vorbis, FLAC, ALAC, MP3 (and MP2), Speex, WavPack and ATRAC9 decoders, the Opus,
+ * FLAC, ALAC, MP3, MP2 and Vorbis encoders, the ADPCM and telephony codecs (IMA and Microsoft ADPCM, G.722, G.726 and
  * GSM 06.10, decoders and encoders), and voice processing (echo cancellation, noise suppression, automatic gain
  * control and the capture high-pass filter).
  *
@@ -13,7 +13,7 @@
  * model are those of the core module ({@code com.github.auties00.smalt}).
  *
  * @provides com.github.auties00.smalt.spi.AudioCodecProvider ALAC, FLAC, MP3 (and MP2), Opus, Vorbis, IMA and
- * Microsoft ADPCM, G.722, G.726, GSM 06.10, Speex and WavPack
+ * Microsoft ADPCM, G.722, G.726, GSM 06.10, Speex, WavPack and ATRAC9
  */
 module com.github.auties00.smalt.audio {
     // Smalt core: the model and the codec service-provider interfaces
@@ -27,6 +27,7 @@ module com.github.auties00.smalt.audio {
     exports com.github.auties00.smalt.audio.alac;
     exports com.github.auties00.smalt.audio.ape;
     exports com.github.auties00.smalt.audio.dst;
+    exports com.github.auties00.smalt.audio.atrac9;
     exports com.github.auties00.smalt.audio.flac;
     exports com.github.auties00.smalt.audio.g722;
     exports com.github.auties00.smalt.audio.g726;
@@ -45,6 +46,7 @@ module com.github.auties00.smalt.audio {
             com.github.auties00.smalt.internal.provider.audio.AlacCodecProvider,
             com.github.auties00.smalt.internal.provider.audio.ApeCodecProvider,
             com.github.auties00.smalt.internal.provider.audio.DstCodecProvider,
+            com.github.auties00.smalt.internal.provider.audio.Atrac9CodecProvider,
             com.github.auties00.smalt.internal.provider.audio.FlacCodecProvider,
             com.github.auties00.smalt.internal.provider.audio.Mp3CodecProvider,
             com.github.auties00.smalt.internal.provider.audio.MusepackCodecProvider,

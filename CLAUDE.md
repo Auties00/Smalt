@@ -63,7 +63,7 @@ The README's Install table is the single source of these descriptions; the pom `
 |---|---|---|
 | `smalt-core` | `com.github.auties00.smalt` | The media model, the codec registries, every container, image and audio processing, loudness, subtitles, PCM, tag editing and XMP (`MediaSource`/`MediaSink`, the codec SPI in `spi`, `MediaRuntime`, `metadata`, `audio.loudness`, `subtitle`) |
 | `smalt-image` | `...smalt.image` | JPEG (and its lossless transforms), JPEG-LS, JPEG 2000, PNG, GIF, WebP, BMP, TIFF, ICO, ANI, JPEG XL, EXIF and image metadata editing, Motion-JPEG, Motion JPEG 2000, PNG, TIFF and GIF video, HAP, and VP8 (lossy WebP is VP8) |
-| `smalt-audio` | `...smalt.audio` | Opus, Vorbis, FLAC, ALAC, MP3, Speex, WavPack, and voice processing |
+| `smalt-audio` | `...smalt.audio` | Opus, Vorbis, FLAC, ALAC, MP3, Speex, WavPack, ATRAC9, and voice processing |
 | `smalt-video` | `...smalt.video` | VP9, AV1, AVIF, ProRes, DNxHD/DNxHR, DV, Theora, FFV1, QuickTime Animation and CineForm |
 | `smalt-mpeg` | `...smalt.mpeg` | H.264, HEVC, HEIC, MPEG-1 and MPEG-2 video, AAC, AMR, MPEG-4 Part 2, H.263, AC-3 and E-AC-3, the codecs licensed through patent pools or by Dolby |
 | `smalt-capture` | `...smalt.capture` | Camera, screen and microphone capture, and speaker playback |

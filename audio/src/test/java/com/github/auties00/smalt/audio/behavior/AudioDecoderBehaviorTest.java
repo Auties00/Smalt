@@ -11,8 +11,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
- * Decodes the Opus, Vorbis, FLAC, ALAC, MP3, MP2, ADPCM, telephony, lossless and DSD inputs of the container samples (core's
- * {@code src/test/resources/samples}) and of the smoke tier through the I/O behavior harness
+ * Decodes the Opus, Vorbis, FLAC, ALAC, MP3, MP2, ADPCM, telephony, lossless, DSD and ATRAC9 inputs of the container
+ * samples (core's {@code src/test/resources/samples}) and of the smoke tier through the I/O behavior harness
  * ({@link ReaderAsserts}), comparing each with its per-block CRC dump under {@code src/test/resources/dumps}.
  */
 @DisplayName("audio decoder I/O behaviors")
@@ -28,7 +28,7 @@ class AudioDecoderBehaviorTest {
             "wav/g722.wav", "wav/g726.wav", "aiff/ima4.aifc", "mp4/ima4.mov", "mp4/gsm.mov", "mp4/ms-adpcm.mov",
             "avi/ima-adpcm.avi", "avi/ms-adpcm.avi", "avi/g726.avi", "matroska/ms-adpcm.mka", "matroska/g722.mka",
             "matroska/ima-adpcm.mka", "wavpack/wavpack.wv", "matroska/wavpack.mka", "ogg/speex.spx", "ape/ape.ape",
-            "musepack/musepack.mpc", "dsd/dsd.dsf", "dsd/dsd.dff"})
+            "musepack/musepack.mpc", "dsd/dsd.dsf", "dsd/dsd.dff", "wav/atrac9.at9", "matroska/atrac9.mka"})
     @DisplayName("samples: identical samples under every source behavior and clean faults")
     void sample(String sample) throws IOException {
         ReaderAsserts.audio(sample, Files.readAllBytes(SAMPLES.resolve(sample))).run();

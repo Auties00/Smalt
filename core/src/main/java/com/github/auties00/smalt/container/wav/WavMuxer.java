@@ -76,6 +76,11 @@ import java.util.Objects;
  * <tr><td>{@link Codec#ADPCM_G722}</td><td>{@code 0x028F}</td><td>the codes</td></tr>
  * <tr><td>{@link Codec#ADPCM_G726}</td><td>{@code 0x0045}, the code size as the bits per sample</td>
  * <td>the codes</td></tr>
+ * <tr><td>{@link Codec#ATRAC9}</td><td>the ATRAC9 {@code WAVEFORMATEXTENSIBLE} sub-format, the superframe size as
+ * the block alignment and its samples in the valid-bits field, version 1, the configuration word and a reserved
+ * field as extra bytes (or the 12 bytes of a track configured with them), and a {@code fact} chunk of the sample
+ * count after the track's {@link AudioTrack#skipSamples()} and that delay, twice</td><td>the superframes, of which
+ * only the last may be shorter</td></tr>
  * </tbody>
  * </table>
  * A coded file carries a {@code fact} chunk with the number of samples per channel its packets
@@ -681,10 +686,16 @@ public final class WavMuxer implements Muxer {
         }
         if (coded != null || storedCodec == Codec.PCM_F32LE || storedCodec == Codec.PCM_F64LE
                 || storedCodec == Codec.PCM_ALAW || storedCodec == Codec.PCM_MULAW) {
+            var delay = coded != null ? coded.factDelay() : -1;
             header.fourCc("fact");
-            header.u32le(4);
+            header.u32le(delay >= 0 ? 12 : 4);
             factOffset = header.size();
             header.u32le(0);
+            if (delay >= 0) {
+                // ATRAC9: the encoder delay, twice
+                header.u32le(delay);
+                header.u32le(delay);
+            }
         }
         if (coded != null && coded.hasExtension()) {
             header.fourCc("mext");

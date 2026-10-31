@@ -217,6 +217,18 @@ public record WaveFormat(int tag, int channels, long sampleRate, long byteRate, 
             (byte) 0xFB, 0x42, (byte) 0xA4, (byte) 0xD4, 0x05, (byte) 0xCD, (byte) 0x93, (byte) 0x84, 0x3B, (byte) 0xDD};
 
     /**
+     * The Sony ATRAC9 GUID ({@code 47e142d2-36ba-4d8d-88fc-61654f8c836c}) of {@code .at9} files.
+     */
+    private static final byte[] ATRAC9_GUID = {(byte) 0xD2, 0x42, (byte) 0xE1, 0x47, (byte) 0xBA, 0x36, (byte) 0x8D,
+            0x4D, (byte) 0x88, (byte) 0xFC, 0x61, 0x65, 0x4F, (byte) 0x8C, (byte) 0x83, 0x6C};
+
+    /**
+     * The size of the ATRAC9 fields after a {@code WAVEFORMATEXTENSIBLE} structure: a version, the configuration word
+     * and a reserved field.
+     */
+    public static final int ATRAC9_EXTRA_SIZE = 12;
+
+    /**
      * Families of the sub-format GUID of a {@code WAVEFORMATEXTENSIBLE} structure.
      */
     public enum SubFormat {
@@ -250,6 +262,12 @@ public record WaveFormat(int tag, int channels, long sampleRate, long byteRate, 
          * The E-AC-3 GUID; the data is E-AC-3 sync frames.
          */
         DOLBY_DIGITAL_PLUS,
+
+        /**
+         * The Sony ATRAC9 GUID; the extra bytes hold a 32-bit little-endian version, the ATRAC9 configuration word
+         * and a reserved field, and the data is ATRAC9 superframes.
+         */
+        ATRAC9,
 
         /**
          * Any other GUID.
@@ -345,6 +363,9 @@ public record WaveFormat(int tag, int channels, long sampleRate, long byteRate, 
         }
         if (Arrays.equals(data, offset, offset + 16, DOLBY_DDPLUS_GUID, 0, 16)) {
             return SubFormat.DOLBY_DIGITAL_PLUS;
+        }
+        if (Arrays.equals(data, offset, offset + 16, ATRAC9_GUID, 0, 16)) {
+            return SubFormat.ATRAC9;
         }
         return SubFormat.UNKNOWN;
     }
@@ -468,6 +489,7 @@ public record WaveFormat(int tag, int channels, long sampleRate, long byteRate, 
                 }
                 case DOLBY_AC3 -> out.bytes(DOLBY_AC3_GUID);
                 case DOLBY_DIGITAL_PLUS -> out.bytes(DOLBY_DDPLUS_GUID);
+                case ATRAC9 -> out.bytes(ATRAC9_GUID);
                 default -> {
                     out.u16le(tag);
                     out.bytes(SUBTYPE_SUFFIX);
@@ -485,13 +507,14 @@ public record WaveFormat(int tag, int channels, long sampleRate, long byteRate, 
      *
      * @return the codec of the tag for a plain structure and the {@link SubFormat#STANDARD} and
      * {@link SubFormat#AMBISONIC} families, {@link Codec#AC3} and {@link Codec#EAC3} for the Dolby GUIDs,
-     * {@link Codec#UNKNOWN_AUDIO} for IEC 61937 bursts and unknown GUIDs
+     * {@link Codec#ATRAC9} for the ATRAC9 GUID, {@link Codec#UNKNOWN_AUDIO} for IEC 61937 bursts and unknown GUIDs
      */
     public Codec codec() {
         return switch (subFormat) {
             case NONE, STANDARD, AMBISONIC -> codec(tag, bitsPerSample);
             case DOLBY_AC3 -> Codec.AC3;
             case DOLBY_DIGITAL_PLUS -> Codec.EAC3;
+            case ATRAC9 -> Codec.ATRAC9;
             case IEC61937, UNKNOWN -> Codec.UNKNOWN_AUDIO;
         };
     }
@@ -533,6 +556,30 @@ public record WaveFormat(int tag, int channels, long sampleRate, long byteRate, 
             case G726 -> Codec.ADPCM_G726;
             default -> Codec.UNKNOWN_AUDIO;
         };
+    }
+
+    /**
+     * Returns the ATRAC9 configuration word of the extra bytes of an {@link SubFormat#ATRAC9} format.
+     *
+     * @param extra the bytes after the {@code WAVEFORMATEXTENSIBLE} fields
+     * @return the 4-byte word, or {@code null} when the extra bytes are shorter than the version and the word
+     */
+    public static byte[] atrac9Config(byte[] extra) {
+        return extra.length < 8 ? null : Arrays.copyOfRange(extra, 4, 8);
+    }
+
+    /**
+     * Returns the extra bytes of an {@link SubFormat#ATRAC9} format for a configuration word: version 1, the word and
+     * a zero reserved field.
+     *
+     * @param config the 4-byte configuration word
+     * @return the {@value #ATRAC9_EXTRA_SIZE} bytes
+     */
+    public static byte[] atrac9Extra(byte[] config) {
+        var extra = new byte[ATRAC9_EXTRA_SIZE];
+        extra[0] = 1;
+        System.arraycopy(config, 0, extra, 4, 4);
+        return extra;
     }
 
     /**

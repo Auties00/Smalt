@@ -126,6 +126,7 @@ Contents
   69. Monkey's Audio
   70. libmpcdec (Musepack)
   71. ISO/IEC 14496-5 MPEG-4 Audio reference software, DST module
+  72. LibAtrac9
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -2450,6 +2451,31 @@ Copyright:
 EOF
 license_start "Notices of the source files"
 cat "$LIC/iso14496-5-dst-notice.txt"
+
+section "72. LibAtrac9"
+cat <<'EOF'
+Project:      LibAtrac9, an ATRAC9 decoder reverse engineered from Sony's, at
+              commit efca2e3af35562a09a9bb6deed90e45b4b824dc4
+Home:         https://github.com/Thealexbarney/LibAtrac9
+Source:       https://codeload.github.com/Thealexbarney/LibAtrac9/tar.gz/efca2e3af35562a09a9bb6deed90e45b4b824dc4
+License text: LICENSE at the root of the distribution
+License:      MIT
+
+Derived Smalt packages:
+  audio.atrac9 (Atrac9Decoder, Atrac9FrameDecoder, Atrac9Unpacker,
+  Atrac9Synthesis, Atrac9Config, Atrac9Block, Atrac9Channel, Atrac9BitReader,
+  Atrac9Codebook, Atrac9Codebooks, Atrac9Tables: the decoder of C/src/decoder.c,
+  decinit.c, unpack.c, scale_factors.c, bit_allocation.c, quantization.c,
+  band_extension.c, imdct.c, bit_reader.c and utility.c, and the tables of
+  tables.c and huffCodes.c)
+
+Derivation: C code translated to Java and tables transcribed.
+
+Copyright:
+  Copyright (c) 2018 Alex Barney
+EOF
+license_start "MIT License (LICENSE)"
+cat "$LIC/libatrac9-LICENSE"
 } > "$OUT"
 
 echo "wrote $OUT"

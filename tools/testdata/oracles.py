@@ -66,7 +66,7 @@ VERSION_ARGS = {
     'tiffcp': [], 'tiffinfo': ['-v'], 'tiffdump': [], 'tiff2rgba': [], 'MP4Box': ['-version'],
     'mkvmerge': ['--version'], 'mkvinfo': ['--version'], 'mkvalidator': ['--version'], 'tsp': ['--version'],
     'sox': ['--version'], 'smalt-pngdump': [], 'smalt-lcmsdump': [], 'smalt-mpeg4ref': [], 'smalt-gifenc': [], 'smalt-bcdec': [],
-    'smalt-alacenc': [], 'smalt-mpeg2dec': [], 'smalt-mpeg2enc': [],
+    'smalt-alacenc': [], 'smalt-at9dec': [], 'smalt-mpeg2dec': [], 'smalt-mpeg2enc': [],
     'ultrahdr_app': [], 'avifgainmaputil': ['--version'], 'avifdec': ['--version'], 'dng_validate': [],
 }
 VERSION_MARKERS = ('version', 'libtiff', 'opj_', 'usage', 'exiftool', ' v', 'copyright')
@@ -536,6 +536,15 @@ def build(row, target):
             signed = [] if target.startswith('windows') else ['-fsigned-char']
             run(compiler(target) + ['-O2'] + signed + ['-I' + os.path.dirname(header), '-o', executable,
                                     os.path.join(HERE, 'bcn-oracle', 'smalt-bcdec.c')], env=env)
+        elif name == 'smalt-at9dec':
+            # LibAtrac9's C decoder compiled into the driver. Its transforms are double arithmetic, which Smalt's
+            # port reproduces only without fused multiply-adds (the arm64 compilers contract by default).
+            tree = source_tree(row, work)
+            library = os.path.join(tree, 'C', 'src')
+            sources = sorted(os.path.join(library, file) for file in os.listdir(library) if file.endswith('.c'))
+            command = compiler(target) + ['-O2', '-ffp-contract=off', '-I' + library, '-o', executable,
+                                          os.path.join(HERE, 'atrac9-oracle', 'smalt-at9dec.c')] + sources + ['-lm']
+            run(command + (['-static'] if target.startswith('windows') else []), env=env)
         elif name == 'smalt-alacenc':
             # The library's encoder compiled into the program with g++, as its own makefile builds every file. Its
             # byte-order helpers recognize only x86 as little-endian, so the macro is given for every runner, all

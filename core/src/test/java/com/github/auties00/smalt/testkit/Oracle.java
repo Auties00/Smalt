@@ -153,6 +153,9 @@ public final class Oracle {
         /** {@code tools/testdata/alac-oracle}'s driver of the encoder of Apple's ALAC library. */
         ALACENC("smalt-alacenc"),
 
+        /** {@code tools/testdata/atrac9-oracle}'s driver of the LibAtrac9 decoder. */
+        AT9DEC("smalt-at9dec"),
+
         /** libultrahdr's Ultra HDR encoder and decoder CLI. */
         ULTRAHDR_APP("ultrahdr_app"),
 

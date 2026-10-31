@@ -11,7 +11,7 @@
     <artifactId>smalt-audio</artifactId>
     <packaging>jar</packaging>
     <name>${project.groupId}:${project.artifactId}</name>
-    <description>Smalt audio codecs: Opus, Vorbis, FLAC, ALAC, MP3, Speex, WavPack, and voice processing</description>
+    <description>Smalt audio codecs: Opus, Vorbis, FLAC, ALAC, MP3, Speex, WavPack, ATRAC9, and voice processing</description>
 
     <dependencies>
         <dependency>
