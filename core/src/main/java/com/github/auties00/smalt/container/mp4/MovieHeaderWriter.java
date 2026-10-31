@@ -41,7 +41,7 @@ final class MovieHeaderWriter {
      * entries of 3GPP TS 26.244 carry a single channel and a multichannel track holds frame-blocks.
      *
      * @param track the track to check
-     * @throws IllegalArgumentException if an H.264, HEVC, AAC, Opus, ALAC or FLAC track has no
+     * @throws IllegalArgumentException if an H.264, HEVC, VVC, AAC, Opus, ALAC or FLAC track has no
      * configuration, a TTML configuration is malformed, a DNxHD configuration carries bytes
      * after its sample entry type that are not Avid sample description extensions, or an AMR track
      * has more than one channel
@@ -51,7 +51,7 @@ final class MovieHeaderWriter {
     static void validateConfig(Track track) {
         var codec = track.codec();
         switch (codec) {
-            case H264, HEVC, AAC, OPUS, ALAC, FLAC -> {
+            case H264, HEVC, VVC, AAC, OPUS, ALAC, FLAC -> {
                 if (track.codecConfig().isEmpty() || track.codecConfig().get().length == 0) {
                     throw new IllegalArgumentException(codec.displayName() + " track " + track.id()
                             + " needs its codec configuration");

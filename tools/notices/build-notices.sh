@@ -121,6 +121,7 @@ Contents
   64. Adobe DNG SDK
   65. OpenEXR
   66. jxrlib
+  67. VVdeC
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -2300,6 +2301,40 @@ Copyright:
 EOF
 license_start "BSD 2-Clause License (LICENSE)"
 cat "$LIC/jxrlib-LICENSE"
+
+section "67. VVdeC"
+cat <<'EOF'
+Project:      VVdeC, the Fraunhofer Versatile Video Decoder (H.266/VVC)
+Source:       https://github.com/fraunhoferhhi/vvdec
+License text: LICENSE.txt at the root of the repository
+License:      The Clear BSD License
+
+Derived Smalt packages:
+  video.vvc.internal (the VVC Main 10 decoder: the parameter set, picture
+  header and slice header parsing of source/Lib/DecoderLib/HLSyntaxReader.cpp,
+  the CABAC engine and coding tree parsing of BinDecoder.cpp and
+  CABACReader.cpp, the context tables of source/Lib/CommonLib/Contexts.cpp,
+  intra prediction of IntraPrediction.cpp and MatrixIntraPrediction.cpp with
+  the MIP matrices of MipData.h, motion vector prediction of UnitTools.cpp,
+  inter prediction of InterPrediction.cpp, InterpolationFilter.cpp and
+  WeightPrediction.cpp, the inverse transforms and dequantization of
+  TrQuant.cpp, TrQuant_EMT.cpp, Quant.cpp and DepQuant.cpp with the tables of
+  RomTr.cpp and RomLFNST.cpp, luma mapping with chroma scaling of Reshape.cpp,
+  the loop filters of LoopFilter.cpp, SampleAdaptiveOffset.cpp and
+  AdaptiveLoopFilter.cpp, coding unit reconstruction of
+  source/Lib/DecoderLib/DecCu.cpp, the decoded picture buffer of DecLib.cpp
+  and the picture hash of SEIread.cpp)
+
+Derivation: C++ code translated to Java and tables copied, following the
+ITU-T H.266 specification; VVdeC also served as the reference decoder its
+output is compared with.
+
+Copyright:
+  Copyright (c) 2018-2026, Fraunhofer-Gesellschaft zur Foerderung der
+  angewandten Forschung e.V. & The VVdeC Authors
+EOF
+license_start "VVdeC license (LICENSE.txt)"
+cat "$LIC/vvdec-LICENSE.txt"
 } > "$OUT"
 
 echo "wrote $OUT"

@@ -2,6 +2,7 @@ package com.github.auties00.smalt.container.packaging;
 
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.internal.codec.MpegVideoHeaders;
+import com.github.auties00.smalt.internal.nal.NalRecords;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.VideoTrack;
@@ -52,6 +53,7 @@ final class CodecStrings {
                     ? String.format(Locale.ROOT, "avc1.%02x%02x%02x", config[1] & 0xFF, config[2] & 0xFF, config[3] & 0xFF)
                     : "avc1";
             case HEVC -> hevc(config);
+            case VVC -> vvc(config);
             case AV1 -> av1(config != null ? config : keyFrame != null ? CodecConfigs.av1Config(keyFrame) : null);
             case VP9 -> vp("vp09", config != null ? config : keyFrame != null && track instanceof VideoTrack video
                     ? CodecConfigs.vp9Config(keyFrame, video.width(), video.height(), video.color().orElse(null)) : null);
@@ -148,6 +150,29 @@ final class CodecStrings {
     private static String fourCc(int code) {
         return new String(new char[]{(char) (code >>> 24), (char) ((code >>> 16) & 0xFF), (char) ((code >>> 8) & 0xFF),
                 (char) (code & 0xFF)});
+    }
+
+    /**
+     * Returns the codec string of a VVC track from the profile, tier and level record of its {@code vvcC} record
+     * (ISO/IEC 14496-15 clause E.6): the sample entry, {@code general_profile_idc}, and {@code L} or {@code H} for
+     * the tier followed by {@code general_level_idc}; the optional constraint and sub-profile elements are left
+     * out.
+     *
+     * @param config the record, with or without its full box header, or {@code null}
+     * @return the codec string, {@code vvc1} alone when the record carries no profile, tier and level
+     */
+    private static String vvc(byte[] config) {
+        if (config == null) {
+            return "vvc1";
+        }
+        var record = NalRecords.withoutVvcBoxHeader(config);
+        // the length size and ptl_present_flag byte, ols_idx to bit_depth_minus8, then the VvcPTLRecord
+        if (record.length < 7 || (record[0] & 1) == 0) {
+            return "vvc1";
+        }
+        var profile = (record[5] & 0xFF) >> 1;
+        var tier = (record[5] & 1) != 0 ? 'H' : 'L';
+        return String.format(Locale.ROOT, "vvc1.%d.%c%d", profile, tier, record[6] & 0xFF);
     }
 
     /**

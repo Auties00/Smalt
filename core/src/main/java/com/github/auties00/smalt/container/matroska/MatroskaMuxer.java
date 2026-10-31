@@ -18,6 +18,7 @@ import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.codec.NalConfigs;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.io.ByteWriter;
+import com.github.auties00.smalt.internal.nal.NalRecords;
 import com.github.auties00.smalt.internal.nal.NalUnits;
 import com.github.auties00.smalt.internal.subtitle.AssScript;
 import com.github.auties00.smalt.internal.subtitle.TextFiles;
@@ -71,7 +72,8 @@ import java.util.Set;
  *       {@code OpusHead}, synthesized for at most two channels when absent) and Vorbis
  *       ({@code A_VORBIS}, the Xiph-laced headers);</li>
  *   <li>Matroska only: H.264 ({@code V_MPEG4/ISO/AVC}, {@code avcC}), HEVC
- *       ({@code V_MPEGH/ISO/HEVC}, {@code hvcC}), MPEG-4 Part 2 ({@code V_MPEG4/ISO/ASP}, the
+ *       ({@code V_MPEGH/ISO/HEVC}, {@code hvcC}), VVC ({@code V_MPEGI/ISO/VVC}, {@code vvcC} without its full box
+ *       header), MPEG-4 Part 2 ({@code V_MPEG4/ISO/ASP}, the
  *       decoder specific information of the track's configuration, when it has one), MPEG-1 and MPEG-2 video
  *       ({@code V_MPEG1}, {@code V_MPEG2}, the sequence header of the track's configuration, when it has one),
  *       Motion-JPEG
@@ -580,6 +582,7 @@ public final class MatroskaMuxer implements Muxer {
             case AV1 -> "V_AV1";
             case H264 -> "V_MPEG4/ISO/AVC";
             case HEVC -> "V_MPEGH/ISO/HEVC";
+            case VVC -> "V_MPEGI/ISO/VVC";
             case MPEG4_PART2 -> "V_MPEG4/ISO/ASP";
             case MPEG1_VIDEO -> "V_MPEG1";
             case MPEG2_VIDEO -> "V_MPEG2";
@@ -851,9 +854,9 @@ public final class MatroskaMuxer implements Muxer {
      * {@inheritDoc}
      *
      * @throws IllegalArgumentException if the track was not declared, a timestamp cannot be represented in
-     * microseconds, or a new H.264 or HEVC configuration cannot be parsed
+     * microseconds, or a new H.264, HEVC or VVC configuration cannot be parsed
      * @throws MediaException.Unsupported if the packet changes the codec configuration of a track
-     * that is not H.264, HEVC, VP8, VP9 or AV1
+     * that is not H.264, HEVC, VVC, VP8, VP9 or AV1
      */
     @Override
     public void writePacket(Packet packet) {
@@ -898,8 +901,8 @@ public final class MatroskaMuxer implements Muxer {
      * @param state the packet's track
      * @param packet the packet about to be queued
      * @return the packet to write
-     * @throws IllegalArgumentException if a new H.264 or HEVC record cannot be parsed or a packet
-     * is not made of length-prefixed NAL units
+     * @throws IllegalArgumentException if a new H.264, HEVC or VVC record cannot be parsed or a
+     * packet is not made of length-prefixed NAL units
      * @throws MediaException.Unsupported if the packet changes the configuration of a track whose
      * codec cannot carry it in band
      */
@@ -908,10 +911,9 @@ public final class MatroskaMuxer implements Muxer {
         var newConfig = ConfigChanges.changed(packet, state.latestConfig);
         if (newConfig != null) {
             switch (codec) {
-                case H264, HEVC -> {
-                    var hevc = codec == Codec.HEVC;
-                    var parsed = hevc ? NalConfigs.parseHevc(newConfig) : NalConfigs.parseAvc(newConfig);
-                    var declared = hevc ? NalConfigs.parseHevc(state.codecPrivate) : NalConfigs.parseAvc(state.codecPrivate);
+                case H264, HEVC, VVC -> {
+                    var parsed = parseNalConfig(codec, newConfig);
+                    var declared = parseNalConfig(codec, state.codecPrivate);
                     if (parsed == null || declared == null) {
                         throw new IllegalArgumentException("the new " + codec.displayName() + " configuration of track "
                                 + packet.trackId() + " cannot be parsed");
@@ -930,8 +932,23 @@ public final class MatroskaMuxer implements Muxer {
             return packet;
         }
         var rewritten = NalUnits.relength(packet.data(), state.inBandLengthSize, state.trackLengthSize,
-                codec == Codec.HEVC, packet.keyframe() ? state.inBandSets : null);
+                codec, packet.keyframe() ? state.inBandSets : null);
         return packet.withData(rewritten);
+    }
+
+    /**
+     * Takes apart the configuration record of an H.264, HEVC or VVC track.
+     *
+     * @param codec the codec of the track
+     * @param config the {@code avcC}, {@code hvcC} or {@code vvcC} record, or {@code null}
+     * @return the length prefix size and parameter sets, or {@code null} when the record is missing or truncated
+     */
+    private static NalRecords.Parsed parseNalConfig(Codec codec, byte[] config) {
+        return switch (codec) {
+            case HEVC -> NalConfigs.parseHevc(config);
+            case VVC -> NalConfigs.parseVvc(config);
+            default -> NalConfigs.parseAvc(config);
+        };
     }
 
     /**
@@ -1784,6 +1801,7 @@ public final class MatroskaMuxer implements Muxer {
                 }
                 switch (codec) {
                     case H264, HEVC, PRORES, THEORA -> codecPrivate = require(config);
+                    case VVC -> codecPrivate = NalRecords.withoutVvcBoxHeader(require(config));
                     case DNXHD -> codecPrivate = imageDescription(require(config), videoTrack);
                     case AV1, MPEG4_PART2, MPEG1_VIDEO, MPEG2_VIDEO, FFV1 -> codecPrivate = config;
                     case VP9 -> codecPrivate = config == null ? null : vp9Features(config);

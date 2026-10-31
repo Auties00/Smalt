@@ -73,7 +73,8 @@ import java.util.Set;
  * (the order they are stored in), each track's samples in decoding order.
  *
  * <p>Tracks are identified from their sample descriptions: H.264 ({@code avc1}, {@code avc3}, Dolby Vision
- * {@code dva1}/{@code dvav}), HEVC ({@code hvc1}, {@code hev1}, Dolby Vision {@code dvh1}/{@code dvhe}), VP8/VP9
+ * {@code dva1}/{@code dvav}), HEVC ({@code hvc1}, {@code hev1}, Dolby Vision {@code dvh1}/{@code dvhe}), VVC
+ * ({@code vvc1}, {@code vvi1}), VP8/VP9
  * ({@code vp08}/{@code vp09}), AV1 ({@code av01}, Dolby Vision {@code dav1}), MPEG-4 Part 2 ({@code mp4v}), H.263
  * ({@code s263}), Motion JPEG and ProRes for video; AAC, MP3 and MP2 ({@code mp4a} with the
  * matching object type, {@code .mp3}), Opus, FLAC, ALAC, AMR-NB/WB, AC-3/E-AC-3 and every PCM
@@ -92,7 +93,8 @@ import java.util.Set;
  * other sample is one packet. Codec
  * configurations follow {@link Track#codecConfig()}: the {@code avcC}, {@code hvcC} and {@code av1C} payloads (an
  * {@code hvcC} followed by the arrays of the {@code lhvC} record of a multi-layer HEVC entry, which carries the
- * parameter sets of the layers above the base layer), the {@code vpcC} record without its full box header, the
+ * parameter sets of the layers above the base layer), the {@code vvcC} and {@code vpcC} records without their full
+ * box headers, the
  * AAC {@code AudioSpecificConfig} and the
  * MPEG-4 Part 2 decoder specific info from {@code esds}, an {@code OpusHead} synthesized from
  * {@code dOps}, {@code fLaC} followed by the metadata blocks of {@code dfLa}, the 24-byte

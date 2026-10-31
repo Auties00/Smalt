@@ -384,6 +384,21 @@ final class BoxTypes {
     static final int LHVC = 0x6C687643;
 
     /**
+     * The VVC sample entry with out-of-band parameter sets ({@code vvc1}, ISO/IEC 14496-15 clause 11.2).
+     */
+    static final int VVC1 = 0x76766331;
+
+    /**
+     * The VVC sample entry with in-band parameter sets ({@code vvi1}).
+     */
+    static final int VVI1 = 0x76766931;
+
+    /**
+     * The VVC decoder configuration box ({@code vvcC}), a full box holding a {@code VvcDecoderConfigurationRecord}.
+     */
+    static final int VVCC = 0x76766343;
+
+    /**
      * The VP8 sample entry ({@code vp08}).
      */
     static final int VP08 = 0x76703038;

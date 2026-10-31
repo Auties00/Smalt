@@ -11,7 +11,7 @@ import java.util.Arrays;
  *
  * <p>A container without reordering information stamps every packet with its position in decoding
  * order, presentation and decoding timestamp alike, so the frames a decoder of a reordering codec
- * (H.264, HEVC, MPEG-4 Part 2) returns in presentation order carry timestamps out of order. Since the
+ * (H.264, HEVC, VVC, MPEG-4 Part 2) returns in presentation order carry timestamps out of order. Since the
  * frames come out in presentation order and the packets' timestamps are the frames' times, each frame
  * takes the smallest timestamp of the packets fed and not yet given to a frame. The restoration is
  * active while every packet of the stream has equal presentation and decoding timestamps, which a
@@ -41,7 +41,7 @@ public final class DecodeOrderTimestamps {
      * @return the restoration, or {@code null} when the codec does not reorder frames
      */
     public static DecodeOrderTimestamps of(Codec codec) {
-        return codec == Codec.H264 || codec == Codec.HEVC || codec == Codec.MPEG4_PART2
+        return codec == Codec.H264 || codec == Codec.HEVC || codec == Codec.VVC || codec == Codec.MPEG4_PART2
                 ? new DecodeOrderTimestamps() : null;
     }
 

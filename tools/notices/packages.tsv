@@ -227,3 +227,5 @@ video.vp8	image
 video.vp8.internal	image
 video.vp9	video
 video.vp9.internal	video
+video.vvc	mpeg
+video.vvc.internal	mpeg

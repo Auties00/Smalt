@@ -42,7 +42,7 @@ import java.util.Objects;
  *       channel order of RFC 3551 section 4.1;</li>
  *   <li>AC-3 and E-AC-3: the sync frames, back to back (an {@code .ac3} or {@code .ec3}
  *       file);</li>
- *   <li>H.264 and HEVC: an Annex B byte stream; length-prefixed NAL units become start-code
+ *   <li>H.264, HEVC and VVC: an Annex B byte stream; length-prefixed NAL units become start-code
  *       prefixed, and the parameter sets of the track configuration are repeated before every
  *       key frame that does not carry its own, so decoding can start at any key frame;</li>
  *   <li>AV1: a low-overhead OBU stream (AV1 specification section 5): a temporal delimiter
@@ -168,12 +168,12 @@ public final class RawMuxer implements Muxer {
     private Track track;
 
     /**
-     * The NAL unit length size of an H.264 or HEVC track.
+     * The NAL unit length size of an H.264, HEVC or VVC track.
      */
     private int lengthSize;
 
     /**
-     * The parameter sets of an H.264 or HEVC track, start-code prefixed, or the sequence header
+     * The parameter sets of an H.264, HEVC or VVC track, start-code prefixed, or the sequence header
      * OBUs of an AV1 track; empty when the configuration has none.
      */
     private byte[] parameterSets = new byte[0];
@@ -266,12 +266,12 @@ public final class RawMuxer implements Muxer {
      * Returns whether a codec has a raw elementary-stream form this muxer writes.
      *
      * @param codec the codec of the track
-     * @return {@code true} for PCM, MP3, MP2, FLAC, AMR-NB, AMR-WB, AC-3, E-AC-3, H.264, HEVC, AV1, MPEG-4 Part 2,
-     * H.263 and WavPack
+     * @return {@code true} for PCM, MP3, MP2, FLAC, AMR-NB, AMR-WB, AC-3, E-AC-3, H.264, HEVC, VVC, AV1, MPEG-4
+     * Part 2, H.263 and WavPack
      */
     public static boolean supports(Codec codec) {
         return switch (Objects.requireNonNull(codec, "codec")) {
-            case MP3, MP2, FLAC, AMR_NB, AMR_WB, AC3, EAC3, H264, HEVC, AV1, MPEG4_PART2, H263, WAVPACK -> true;
+            case MP3, MP2, FLAC, AMR_NB, AMR_WB, AC3, EAC3, H264, HEVC, VVC, AV1, MPEG4_PART2, H263, WAVPACK -> true;
             default -> codec.isPcm();
         };
     }
@@ -282,9 +282,9 @@ public final class RawMuxer implements Muxer {
      * <p>{@link ContainerFormat#MPEG_AUDIO} carries MP3 and MP2, {@link ContainerFormat#FLAC} FLAC,
      * {@link ContainerFormat#AMR} AMR-NB and AMR-WB, {@link ContainerFormat#AC3} AC-3 and E-AC-3,
      * {@link ContainerFormat#DTS} DTS, {@link ContainerFormat#H264}, {@link ContainerFormat#HEVC},
-     * {@link ContainerFormat#AV1}, {@link ContainerFormat#AV1_ANNEX_B}, {@link ContainerFormat#MPEG4_VIDEO},
-     * {@link ContainerFormat#H263} and {@link ContainerFormat#WAVPACK} their codec, and {@link ContainerFormat#PCM}
-     * every PCM codec; every other format is not an elementary stream this muxer writes.
+     * {@link ContainerFormat#VVC}, {@link ContainerFormat#AV1}, {@link ContainerFormat#AV1_ANNEX_B},
+     * {@link ContainerFormat#MPEG4_VIDEO}, {@link ContainerFormat#H263} and {@link ContainerFormat#WAVPACK} their codec,
+     * and {@link ContainerFormat#PCM} every PCM codec; every other format is not an elementary stream this muxer writes.
      *
      * @param format the file format
      * @param codec the codec of the track
@@ -301,6 +301,7 @@ public final class RawMuxer implements Muxer {
             case DTS -> codec == Codec.DTS;
             case H264 -> codec == Codec.H264;
             case HEVC -> codec == Codec.HEVC;
+            case VVC -> codec == Codec.VVC;
             case AV1, AV1_ANNEX_B -> codec == Codec.AV1;
             case MPEG4_VIDEO -> codec == Codec.MPEG4_PART2;
             case H263 -> codec == Codec.H263;
@@ -313,8 +314,8 @@ public final class RawMuxer implements Muxer {
     /**
      * {@inheritDoc}
      *
-     * @throws IllegalArgumentException if the codec has no raw form, the configuration a FLAC, H.264 or HEVC track
-     * needs is missing or invalid, or an AMR track has more than 15 channels
+     * @throws IllegalArgumentException if the codec has no raw form, the configuration a FLAC, H.264, HEVC or VVC
+     * track needs is missing or invalid, or an AMR track has more than 15 channels
      * @throws IllegalStateException if a track was already declared or the muxer is finished
      */
     @Override
@@ -353,6 +354,14 @@ public final class RawMuxer implements Muxer {
                 var parsed = NalRecords.parseHevc(config);
                 if (parsed == null) {
                     throw new IllegalArgumentException("truncated hvcC");
+                }
+                lengthSize = parsed.lengthSize();
+                parameterSets = NalUnits.annexBParameterSets(parsed.parameterSets());
+            }
+            case VVC -> {
+                var parsed = config == null || config.length < 2 ? null : NalRecords.parseVvc(config);
+                if (parsed == null) {
+                    throw new IllegalArgumentException("a VVC track needs its vvcC configuration");
                 }
                 lengthSize = parsed.lengthSize();
                 parameterSets = NalUnits.annexBParameterSets(parsed.parameterSets());
@@ -422,14 +431,14 @@ public final class RawMuxer implements Muxer {
     /**
      * {@inheritDoc}
      *
-     * <p>A packet that changes the codec configuration of an H.264, HEVC or AV1 stream replaces the
+     * <p>A packet that changes the codec configuration of an H.264, HEVC, VVC or AV1 stream replaces the
      * parameter sets or sequence header repeated before the key frames from then on.
      *
-     * @throws IllegalArgumentException if the packet belongs to another track, an H.264 or HEVC packet is not made
-     * of length-prefixed NAL units, or a new H.264 or HEVC configuration cannot be parsed
+     * @throws IllegalArgumentException if the packet belongs to another track, an H.264, HEVC or VVC packet is not
+     * made of length-prefixed NAL units, or a new H.264, HEVC or VVC configuration cannot be parsed
      * @throws IllegalStateException if no track was declared or the muxer is finished
      * @throws MediaException.Unsupported if the packet changes the codec configuration of a stream
-     * that is not H.264, HEVC or AV1
+     * that is not H.264, HEVC, VVC or AV1
      */
     @Override
     public void writePacket(Packet packet) {
@@ -446,9 +455,12 @@ public final class RawMuxer implements Muxer {
         var newConfig = ConfigChanges.changed(packet, config);
         if (newConfig != null) {
             switch (track.codec()) {
-                case H264, HEVC -> {
-                    var parsed = track.codec() == Codec.H264 ? NalRecords.parseAvc(newConfig)
-                            : NalRecords.parseHevc(newConfig);
+                case H264, HEVC, VVC -> {
+                    var parsed = switch (track.codec()) {
+                        case H264 -> NalRecords.parseAvc(newConfig);
+                        case HEVC -> NalRecords.parseHevc(newConfig);
+                        default -> NalRecords.parseVvc(newConfig);
+                    };
                     if (parsed == null) {
                         throw new IllegalArgumentException("the new " + track.codec().displayName()
                                 + " configuration cannot be parsed");
@@ -467,7 +479,7 @@ public final class RawMuxer implements Muxer {
             writeHeader();
         }
         switch (track.codec()) {
-            case H264, HEVC -> writeAnnexB(packet);
+            case H264, HEVC, VVC -> writeAnnexB(packet);
             case AV1 -> writeTemporalUnit(packet);
             case MPEG4_PART2 -> {
                 if (packet.keyframe() && config != null && !startsWithConfiguration(packet.data())) {
@@ -977,12 +989,12 @@ public final class RawMuxer implements Muxer {
     }
 
     /**
-     * Writes an H.264 or HEVC access unit as start-code prefixed NAL units.
+     * Writes an H.264, HEVC or VVC access unit as start-code prefixed NAL units.
      *
      * @param packet the access unit of length-prefixed NAL units
      */
     private void writeAnnexB(Packet packet) {
-        var unit = NalUnits.toAnnexB(packet.data(), lengthSize, track.codec() == Codec.HEVC,
+        var unit = NalUnits.toAnnexB(packet.data(), lengthSize, track.codec(),
                 packet.keyframe() ? parameterSets : null, null);
         output.write(ByteBuffer.wrap(unit));
     }

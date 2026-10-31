@@ -8,6 +8,7 @@ import com.github.auties00.smalt.internal.codec.NalConfigs;
 import com.github.auties00.smalt.internal.header.AdtsHeader;
 import com.github.auties00.smalt.internal.header.Crc32Mpeg;
 import com.github.auties00.smalt.internal.io.ByteWriter;
+import com.github.auties00.smalt.internal.nal.NalRecords;
 import com.github.auties00.smalt.internal.nal.NalUnits;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.track.AudioTrack;
@@ -37,10 +38,10 @@ import java.util.PriorityQueue;
  *   <li>MPEG-1 and MPEG-2 video ({@code 0x01}, {@code 0x02}), ids from {@code 0xE0}: frames as they are, a key frame
  *       that does not start with a sequence header getting the one of the track's configuration, when it has
  *       one;</li>
- *   <li>MPEG-4 Part 2 ({@code 0x10}), H.264 ({@code 0x1B}) and HEVC ({@code 0x24}), ids from {@code 0xE0}, as
- *       {@link TsMuxer} writes them: MPEG-4 Part 2 key frames get the headers of the configuration they lack, and
- *       H.264 and HEVC access units become Annex B byte streams with an access unit delimiter and the parameter sets
- *       of the configuration on every key frame;</li>
+ *   <li>MPEG-4 Part 2 ({@code 0x10}), H.264 ({@code 0x1B}), HEVC ({@code 0x24}) and VVC ({@code 0x33}), ids from
+ *       {@code 0xE0}, as {@link TsMuxer} writes them: MPEG-4 Part 2 key frames get the headers of the configuration
+ *       they lack, and H.264, HEVC and VVC access units become Annex B byte streams with an access unit delimiter
+ *       and the parameter sets of the configuration on every key frame;</li>
  *   <li>MP2 and MP3 ({@code 0x03}, or {@code 0x04} below 32 kHz) and AAC ({@code 0x0F}, every packet framed in ADTS
  *       from the {@code AudioSpecificConfig}), ids from {@code 0xC0};</li>
  *   <li>in private stream 1 ({@code 0xBD}), with the DVD-Video substream headers: AC-3 ({@code 0x80} to
@@ -55,8 +56,8 @@ import java.util.PriorityQueue;
  *       at one, two or six channels, four at three, five or seven and one at four or eight, and {@link #finish()}
  *       completes a last group the track's samples leave short with silent frames;</li>
  * </ul>
- * MPEG-4 Part 2, H.264, HEVC and AAC need the program stream map, which is then written in the first pack and before
- * every video key frame, with the ISO 639 language descriptor of every track that has a language
+ * MPEG-4 Part 2, H.264, HEVC, VVC and AAC need the program stream map, which is then written in the first pack and
+ * before every video key frame, with the ISO 639 language descriptor of every track that has a language
  * ({@link PsMuxerOptions#programStreamMap()} writes it for any streams); it never lists private stream 1, whose
  * substreams identify themselves. The {@link PsMuxerOptions.Syntax#MPEG1} syntax carries MPEG-1 and MPEG-2 video and
  * MPEG audio only. With {@linkplain PsMuxerOptions#navigationPacks() navigation packs} the muxer accepts only the
@@ -143,6 +144,16 @@ public final class PsMuxer implements Muxer {
      * The access unit delimiter of HEVC access units.
      */
     private static final byte[] HEVC_DELIMITER = {0, 0, 0, 1, 0x46, 0x01, 0x50};
+
+    /**
+     * The access unit delimiter of VVC access units that are not IRAP or GDR access units.
+     */
+    private static final byte[] VVC_DELIMITER = {0, 0, 0, 1, 0x00, (byte) 0xA1, 0x28};
+
+    /**
+     * The access unit delimiter of VVC IRAP and GDR access units ({@code aud_irap_or_gdr_flag} set).
+     */
+    private static final byte[] VVC_KEY_DELIMITER = {0, 0, 0, 1, 0x00, (byte) 0xA1, (byte) 0xA8};
 
     /**
      * The length of the presentation control information packet's payload, its substream byte included.
@@ -294,12 +305,12 @@ public final class PsMuxer implements Muxer {
      * Returns whether program streams written by this muxer with its default options can carry a codec.
      *
      * @param codec the codec of a track to add
-     * @return {@code true} for MPEG-1 and MPEG-2 video, MPEG-4 Part 2, H.264, HEVC, MP2, MP3, AAC, AC-3, E-AC-3, DTS,
-     * 16-bit and 24-bit PCM and DVD subtitles
+     * @return {@code true} for MPEG-1 and MPEG-2 video, MPEG-4 Part 2, H.264, HEVC, VVC, MP2, MP3, AAC, AC-3, E-AC-3,
+     * DTS, 16-bit and 24-bit PCM and DVD subtitles
      */
     public static boolean supports(Codec codec) {
         return switch (Objects.requireNonNull(codec, "codec")) {
-            case MPEG1_VIDEO, MPEG2_VIDEO, MPEG4_PART2, H264, HEVC, MP2, MP3, AAC, AC3, EAC3, DTS, PCM_S16BE, PCM_S16LE,
+            case MPEG1_VIDEO, MPEG2_VIDEO, MPEG4_PART2, H264, HEVC, VVC, MP2, MP3, AAC, AC3, EAC3, DTS, PCM_S16BE, PCM_S16LE,
                  PCM_S24BE, PCM_S24LE, DVD_SUBTITLE -> true;
             default -> false;
         };
@@ -356,8 +367,8 @@ public final class PsMuxer implements Muxer {
      * {@inheritDoc}
      *
      * @throws IllegalArgumentException if the id is already used, the track cannot be carried
-     * ({@link #supports(Track, PsMuxerOptions)}), its configuration is missing or unusable (an H.264, HEVC, MPEG-4
-     * Part 2 or AAC track without one), or the track would exceed the stream ids of its kind or, with navigation
+     * ({@link #supports(Track, PsMuxerOptions)}), its configuration is missing or unusable (an H.264, HEVC, VVC,
+     * MPEG-4 Part 2 or AAC track without one), or the track would exceed the stream ids of its kind or, with navigation
      * packs, the one video track or eight audio tracks of DVD-Video
      * @throws IllegalStateException if a packet was already written or the muxer is finished
      */
@@ -411,18 +422,23 @@ public final class PsMuxer implements Muxer {
                 stream.bufferScale = 1;
                 stream.bufferSize = 232;
             }
-            case H264, HEVC -> {
-                var hevc = track.codec() == Codec.HEVC;
-                var parsed = hevc ? NalConfigs.parseHevc(config) : NalConfigs.parseAvc(config);
+            case H264, HEVC, VVC -> {
+                var codec = track.codec();
+                var parsed = parseNalConfig(codec, config);
                 if (parsed == null) {
-                    throw new IllegalArgumentException("an " + track.codec().displayName() + " track needs its "
-                            + (hevc ? "hvcC" : "avcC") + " configuration");
+                    throw new IllegalArgumentException("a " + codec.displayName() + " track needs its "
+                            + (codec == Codec.VVC ? "vvcC" : codec == Codec.HEVC ? "hvcC" : "avcC")
+                            + " configuration");
                 }
-                stream.hevc = hevc;
+                stream.hevc = codec == Codec.HEVC;
                 stream.lengthSize = parsed.lengthSize();
                 stream.parameterSets = NalUnits.annexBParameterSets(parsed.parameterSets());
                 stream.streamId = nextId(0xE0, 16, false, track);
-                stream.streamType = hevc ? 0x24 : 0x1B;
+                stream.streamType = switch (codec) {
+                    case HEVC -> 0x24;
+                    case VVC -> 0x33;
+                    default -> 0x1B;
+                };
                 stream.needsMap = true;
                 stream.bufferScale = 1;
                 stream.bufferSize = 1024;
@@ -543,7 +559,7 @@ public final class PsMuxer implements Muxer {
      * @throws IllegalArgumentException if the packet belongs to no declared track, carries no timestamp, has a
      * malformed body for its codec (a PCM packet that is not whole sample frames, an AAC frame too long for ADTS), or
      * changes the codec configuration of a track whose codec has no in-band configuration change (only MPEG-1, MPEG-2
-     * and MPEG-4 Part 2 video, H.264, HEVC and AAC change theirs)
+     * and MPEG-4 Part 2 video, H.264, HEVC, VVC and AAC change theirs)
      * @throws IllegalStateException if no track was declared or the muxer is finished
      * @throws MediaException.Io if writing the output fails
      */
@@ -571,8 +587,8 @@ public final class PsMuxer implements Muxer {
         var newConfig = ConfigChanges.changed(packet, stream.acceptedConfig);
         if (newConfig != null) {
             switch (stream.track.codec()) {
-                case H264, HEVC -> {
-                    if ((stream.hevc ? NalConfigs.parseHevc(newConfig) : NalConfigs.parseAvc(newConfig)) == null) {
+                case H264, HEVC, VVC -> {
+                    if (parseNalConfig(stream.track.codec(), newConfig) == null) {
                         throw new IllegalArgumentException("the new " + stream.track.codec().displayName()
                                 + " configuration of track " + packet.trackId() + " cannot be parsed");
                     }
@@ -1387,8 +1403,9 @@ public final class PsMuxer implements Muxer {
     private static byte[] videoPayload(Stream stream, Packet packet) {
         var newConfig = ConfigChanges.changed(packet, stream.appliedConfig);
         if (newConfig != null) {
-            if (stream.track.codec() == Codec.H264 || stream.track.codec() == Codec.HEVC) {
-                var parsed = stream.hevc ? NalConfigs.parseHevc(newConfig) : NalConfigs.parseAvc(newConfig);
+            var codec = stream.track.codec();
+            if (codec == Codec.H264 || codec == Codec.HEVC || codec == Codec.VVC) {
+                var parsed = parseNalConfig(codec, newConfig);
                 stream.lengthSize = parsed.lengthSize();
                 stream.parameterSets = NalUnits.annexBParameterSets(parsed.parameterSets());
             } else {
@@ -1400,6 +1417,9 @@ public final class PsMuxer implements Muxer {
         return switch (stream.track.codec()) {
             case H264, HEVC -> NalUnits.toAnnexB(data, stream.lengthSize, stream.hevc,
                     packet.keyframe() ? stream.parameterSets : null, stream.hevc ? HEVC_DELIMITER : AVC_DELIMITER);
+            case VVC -> NalUnits.toAnnexB(data, stream.lengthSize, Codec.VVC,
+                    packet.keyframe() ? stream.parameterSets : null,
+                    packet.keyframe() ? VVC_KEY_DELIMITER : VVC_DELIMITER);
             case MPEG4_PART2 -> packet.keyframe() && !startsWithMpeg4Headers(data) ? join(stream.parameterSets, data)
                     : data;
             default -> !packet.keyframe() || stream.parameterSets.length == 0
@@ -1846,5 +1866,20 @@ public final class PsMuxer implements Muxer {
             length += unit.length;
             lastPts = pts;
         }
+    }
+
+    /**
+     * Takes apart the configuration record of an H.264, HEVC or VVC track.
+     *
+     * @param codec the codec of the track
+     * @param config the {@code avcC}, {@code hvcC} or {@code vvcC} record, or {@code null}
+     * @return the length prefix size and parameter sets, or {@code null} when the record is missing or truncated
+     */
+    private static NalRecords.Parsed parseNalConfig(Codec codec, byte[] config) {
+        return switch (codec) {
+            case HEVC -> NalConfigs.parseHevc(config);
+            case VVC -> NalConfigs.parseVvc(config);
+            default -> NalConfigs.parseAvc(config);
+        };
     }
 }

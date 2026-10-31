@@ -26,6 +26,11 @@ public enum Codec {
     HEVC(TrackKind.VIDEO, "hevc"),
 
     /**
+     * ITU-T H.266 / MPEG-I VVC.
+     */
+    VVC(TrackKind.VIDEO, "vvc"),
+
+    /**
      * VP8.
      */
     VP8(TrackKind.VIDEO, "vp8"),

@@ -11,7 +11,8 @@ import java.util.List;
  * Takes apart the configuration records of the NAL-unit video codecs: the H.264
  * {@code AVCDecoderConfigurationRecord} ({@code avcC}, ISO/IEC 14496-15 clause 5.3.3) and the HEVC
  * {@code HEVCDecoderConfigurationRecord} ({@code hvcC}, clause 8.3.3) with the
- * {@code LHEVCDecoderConfigurationRecord} ({@code lhvC}, clause 9.6.3) of the layers above the base layer.
+ * {@code LHEVCDecoderConfigurationRecord} ({@code lhvC}, clause 9.6.3) of the layers above the base layer, and
+ * the VVC {@code VvcDecoderConfigurationRecord} ({@code vvcC}, clause 11.2.4.2).
  *
  * <p>Each record has two parsers over one walk. The strict parsers serve decoders: they throw
  * {@link MediaException.Malformed} for a truncated record and reject the length prefix size 3,
@@ -30,6 +31,16 @@ public final class NalRecords {
      * The size of the fixed header of an {@code HEVCDecoderConfigurationRecord}.
      */
     private static final int HEVC_HEADER = 23;
+
+    /**
+     * The VVC NAL unit type of decoding capability information, whose {@code vvcC} array has no count.
+     */
+    private static final int VVC_DCI = 13;
+
+    /**
+     * The VVC NAL unit type of operating point information, whose {@code vvcC} array has no count.
+     */
+    private static final int VVC_OPI = 12;
 
     /**
      * Prevents instantiation.
@@ -277,6 +288,133 @@ public final class NalRecords {
             throw new MediaException.Malformed("invalid lhvC NAL unit length size 3");
         }
         return walkHevc(config, LHEVC_HEADER, true);
+    }
+
+    /**
+     * Returns a {@code VvcDecoderConfigurationRecord} without the version and flags of the {@code vvcC} full box
+     * that may precede it.
+     *
+     * <p>The first byte of a record has its five reserved bits set, so a leading zero byte marks the full box
+     * header.
+     *
+     * @param config the record, with or without the full box header
+     * @return the record without the header; {@code config} itself when it has none
+     */
+    public static byte[] withoutVvcBoxHeader(byte[] config) {
+        if (config.length >= 5 && config[0] == 0 && config[1] == 0 && config[2] == 0 && config[3] == 0) {
+            return Arrays.copyOfRange(config, 4, config.length);
+        }
+        return config;
+    }
+
+    /**
+     * Takes a {@code VvcDecoderConfigurationRecord} apart, tolerating damage.
+     *
+     * <p>A leading {@code vvcC} full box header is skipped. Empty NAL units are dropped.
+     *
+     * @param config the record, or {@code null}
+     * @return the parsed record, or {@code null} when {@code config} is {@code null} or truncated
+     */
+    public static Parsed parseVvc(byte[] config) {
+        if (config == null) {
+            return null;
+        }
+        return walkVvc(withoutVvcBoxHeader(config), false);
+    }
+
+    /**
+     * Takes a {@code VvcDecoderConfigurationRecord} apart for a decoder.
+     *
+     * <p>A leading {@code vvcC} full box header is skipped. Empty NAL units are kept, as empty arrays. The
+     * profile, tier and level record is skipped, not checked.
+     *
+     * @param config the record, with or without the full box header
+     * @return the parsed record
+     * @throws MediaException.Malformed if the record is truncated or declares a length prefix size of 3
+     */
+    public static Parsed parseVvcStrict(byte[] config) {
+        return walkVvc(withoutVvcBoxHeader(config), true);
+    }
+
+    /**
+     * Walks a {@code VvcDecoderConfigurationRecord} without its full box header: the length size and
+     * {@code ptl_present_flag} byte, the optional {@code ols_idx}, {@code num_sublayers}, {@code constant_frame_rate},
+     * {@code chroma_format_idc} and {@code bit_depth_minus8} fields with the {@code VvcPTLRecord} and the picture
+     * size and frame rate, then the arrays, whose decoding capability information and operating point
+     * information arrays hold a single NAL unit without a count.
+     *
+     * @param config the record
+     * @param strict whether a truncation throws rather than returns {@code null}, and whether empty units are kept
+     * @return the parsed record, or {@code null} when it is truncated and {@code strict} is {@code false}
+     */
+    private static Parsed walkVvc(byte[] config, boolean strict) {
+        if (config.length < 2) {
+            return fail(strict, "truncated VvcDecoderConfigurationRecord");
+        }
+        var lengthSize = ((config[0] >> 1) & 3) + 1;
+        if (strict && lengthSize == 3) {
+            throw new MediaException.Malformed("invalid vvcC NAL unit length size 3");
+        }
+        var position = 1;
+        if ((config[0] & 1) != 0) {
+            if (position + 4 > config.length) {
+                return fail(strict, "truncated VvcDecoderConfigurationRecord");
+            }
+            var sublayers = (config[position + 1] >> 4) & 7;
+            position += 3;
+            var constraintBytes = config[position] & 0x3F;
+            position += 3 + constraintBytes;
+            if (sublayers > 1) {
+                if (position >= config.length) {
+                    return fail(strict, "truncated VvcPTLRecord");
+                }
+                var present = config[position++] & 0xFF;
+                for (var i = sublayers - 2; i >= 0; i--) {
+                    if ((present & (0x80 >> (sublayers - 2 - i))) != 0) {
+                        position++;
+                    }
+                }
+            }
+            if (position >= config.length) {
+                return fail(strict, "truncated VvcPTLRecord");
+            }
+            var subProfiles = config[position++] & 0xFF;
+            position += 4 * subProfiles + 6;
+        }
+        if (position >= config.length) {
+            return fail(strict, "truncated VvcDecoderConfigurationRecord");
+        }
+        var arrays = config[position++] & 0xFF;
+        var sets = new ArrayList<byte[]>();
+        for (var array = 0; array < arrays; array++) {
+            if (position >= config.length) {
+                return fail(strict, "truncated vvcC array");
+            }
+            var type = config[position++] & 0x1F;
+            var count = 1;
+            if (type != VVC_DCI && type != VVC_OPI) {
+                if (position + 2 > config.length) {
+                    return fail(strict, "truncated vvcC array");
+                }
+                count = ((config[position] & 0xFF) << 8) | (config[position + 1] & 0xFF);
+                position += 2;
+            }
+            for (var index = 0; index < count; index++) {
+                if (position + 2 > config.length) {
+                    return fail(strict, "truncated vvcC NAL unit length");
+                }
+                var length = ((config[position] & 0xFF) << 8) | (config[position + 1] & 0xFF);
+                position += 2;
+                if (length > config.length - position) {
+                    return fail(strict, "vvcC NAL unit exceeds the record");
+                }
+                if (strict || length > 0) {
+                    sets.add(Arrays.copyOfRange(config, position, position + length));
+                }
+                position += length;
+            }
+        }
+        return new Parsed(lengthSize, List.copyOf(sets));
     }
 
     /**

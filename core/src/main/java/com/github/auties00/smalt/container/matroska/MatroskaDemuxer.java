@@ -161,7 +161,7 @@ import java.util.Set;
  * {@code DefaultDuration} converts to an exact number of samples; their block timestamps are
  * rescaled to it, keeping the rounding of the stored timestamps. Timestamps are the block
  * timestamps as stored: Matroska stores presentation timestamps only,
- * so the decoding timestamp of codecs that reorder frames (H.264, HEVC, MPEG-4 Part 2, MPEG-1 and MPEG-2
+ * so the decoding timestamp of codecs that reorder frames (H.264, HEVC, VVC, MPEG-4 Part 2, MPEG-1 and MPEG-2
  * video) is {@link Packet#NO_TIMESTAMP}, and equals the presentation timestamp for every other track. The
  * {@code CodecDelay} of an audio track is reported as {@link AudioTrack#skipSamples()} rather
  * than subtracted from the timestamps, except for Opus, whose pre-skip already signals it in band.
@@ -1505,7 +1505,7 @@ public final class MatroskaDemuxer implements Demuxer {
      * Returns whether the frames of a track may be stored out of presentation order.
      *
      * @param trackId the track
-     * @return {@code true} for H.264, HEVC, MPEG-4 Part 2, MPEG-1 video, MPEG-2 video and unidentified video
+     * @return {@code true} for H.264, HEVC, VVC, MPEG-4 Part 2, MPEG-1 video, MPEG-2 video and unidentified video
      */
     boolean reorders(int trackId) {
         var entry = byNumber.get((long) trackId);

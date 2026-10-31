@@ -127,6 +127,7 @@ SEED_CODECS = {
     'video:VideoFuzzTest.proRes': ['prores'], 'video:VideoFuzzTest.dnxhd': ['dnxhd'],
     'video:VideoFuzzTest.theora': ['theora'], 'video:VideoFuzzTest.ffv1': ['ffv1'],
     'mpeg:MpegFuzzTest.h264': ['h264'], 'mpeg:MpegFuzzTest.hevc': ['hevc'], 'mpeg:MpegFuzzTest.hevcLayers': ['hevc'],
+    'mpeg:MpegFuzzTest.vvc': ['vvc'],
     'mpeg:MpegFuzzTest.mpeg4': ['mpeg4_part2'], 'mpeg:MpegFuzzTest.h263': ['h263'],
     'mpeg:MpegFuzzTest.mpeg1Video': ['mpeg1video'], 'mpeg:MpegFuzzTest.mpeg2Video': ['mpeg2video'],
     'mpeg:MpegFuzzTest.vc1': ['vc1'],

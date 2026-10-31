@@ -119,7 +119,7 @@ import java.util.function.Predicate;
  * raw MPEG audio and ADTS streams, which have only a frame sync word, are recognized by requiring
  * two consecutive consistent frame headers, and LOAS streams by two consecutive {@code AudioSyncStream} frames (or
  * one that ends the input). Elementary video streams are recognized by their structure up to a
- * sequence header: H.264 and HEVC Annex B streams by {@link AnnexBDemuxer#detect(byte[])}, AV1 OBU streams by
+ * sequence header: H.264, HEVC and VVC Annex B streams by {@link AnnexBDemuxer#detect(byte[])}, AV1 OBU streams by
  * {@link ObuDemuxer#detect(byte[])}, MPEG-4 Part 2 and H.263 streams by {@link Mpeg4VideoDemuxer#detect(byte[])}.
  * Text files are recognized last, in this order: an HLS playlist by its {@code #EXTM3U} first line, a DASH manifest
  * by its {@code MPD} root element, a WebVTT file by its {@code WEBVTT} signature, a TTML
@@ -133,8 +133,8 @@ import java.util.function.Predicate;
  * fast-start {@link Mp4Muxer}, a Matroska (not WebM) {@link MatroskaMuxer}, an {@link OggMuxer}, and the
  * {@link WavMuxer}, {@link Wave64Muxer}, {@link AiffMuxer}, {@link CafMuxer}, {@link AuMuxer}, {@link AdtsMuxer},
  * {@link LoasMuxer}, {@link AdifMuxer}, {@link IvfMuxer}, {@link TsMuxer}, {@link PsMuxer}, {@link MxfMuxer},
- * {@link AviMuxer}, {@link FlvMuxer} and {@link Y4mMuxer}; MPEG audio, FLAC, AMR, AC-3, H.264, HEVC, AV1 (low-overhead
- * and Annex B),
+ * {@link AviMuxer}, {@link FlvMuxer} and {@link Y4mMuxer}; MPEG audio, FLAC, AMR, AC-3, H.264, HEVC, VVC, AV1
+ * (low-overhead and Annex B),
  * MPEG-4 Part 2, H.263 and PCM files are the elementary streams a {@link RawMuxer} writes.
  * {@link #openMuxer(OutputContainer, MediaSink)} also writes WebM, M4A, QuickTime and fragmented MP4
  * ({@link FragmentedMp4Muxer}). A caller that needs other options (RF64 policies, fragment durations)
@@ -462,7 +462,7 @@ public final class Containers {
             case FLV -> new FlvDemuxer(source, options);
             case HLS -> new HlsDemuxer(source, options);
             case DASH -> new DashDemuxer(source, options);
-            case H264, HEVC -> new AnnexBDemuxer(source, ElementaryStreamOptions.of(options));
+            case H264, HEVC, VVC -> new AnnexBDemuxer(source, ElementaryStreamOptions.of(options));
             case AV1, AV1_ANNEX_B -> new ObuDemuxer(source, ElementaryStreamOptions.of(options));
             case MPEG4_VIDEO, H263 -> new Mpeg4VideoDemuxer(source, options);
             case Y4M -> new Y4mDemuxer(source, options);
@@ -516,7 +516,7 @@ public final class Containers {
             case MPEG_TS -> TsMuxer.supports(codec);
             case MPEG_PS -> PsMuxer.supports(codec);
             case MXF -> MxfMuxer.supports(codec);
-            case MPEG_AUDIO, FLAC, AMR, AC3, DTS, H264, HEVC, AV1, AV1_ANNEX_B, MPEG4_VIDEO, H263, PCM, WAVPACK ->
+            case MPEG_AUDIO, FLAC, AMR, AC3, DTS, H264, HEVC, VVC, AV1, AV1_ANNEX_B, MPEG4_VIDEO, H263, PCM, WAVPACK ->
                     RawMuxer.supports(format, codec);
             case SUBRIP -> SubRipMuxer.supports(codec);
             case WEBVTT -> WebVttMuxer.supports(codec);
@@ -578,7 +578,7 @@ public final class Containers {
      * Creates the muxer that writes a container format with the default options of that format.
      *
      * <p>The muxers are the ones the class description lists; MPEG audio, FLAC, AMR, AC-3, H.264, HEVC,
-     * AV1, MPEG-4 Part 2, H.263 and PCM files are elementary streams whose muxer accepts only the codecs of the
+     * VVC, AV1, MPEG-4 Part 2, H.263 and PCM files are elementary streams whose muxer accepts only the codecs of the
      * format.
      *
      * @param format the container format
@@ -607,7 +607,7 @@ public final class Containers {
             case LOAS -> new LoasMuxer(output);
             case ADIF -> new AdifMuxer(output);
             case IVF -> new IvfMuxer(output);
-            case MPEG_AUDIO, FLAC, AMR, AC3, DTS, H264, HEVC, AV1, MPEG4_VIDEO, H263, PCM, WAVPACK ->
+            case MPEG_AUDIO, FLAC, AMR, AC3, DTS, H264, HEVC, VVC, AV1, MPEG4_VIDEO, H263, PCM, WAVPACK ->
                     new FormatMuxer(format, new RawMuxer(output));
             case AV1_ANNEX_B -> new FormatMuxer(format, new RawMuxer(output,
                     RawMuxerOptions.builder().av1AnnexB(true).build()));
@@ -989,8 +989,8 @@ public final class Containers {
     }
 
     /**
-     * Recognizes an elementary video stream: an H.264 or HEVC Annex B stream, an AV1 OBU stream, or an MPEG-4 Part 2
-     * or H.263 stream.
+     * Recognizes an elementary video stream: an H.264, HEVC or VVC Annex B stream, an AV1 OBU stream, or an MPEG-4
+     * Part 2 or H.263 stream.
      *
      * <p>A stream that starts with a start code is examined over up to {@value #VIDEO_PROBE_LENGTH} bytes, so that
      * the sequence header after large SEI messages is reached.

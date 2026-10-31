@@ -168,6 +168,11 @@ class DemuxerFuzzTest {
     }
 
     @FuzzTest
+    void vvc(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.VVC, data);
+    }
+
+    @FuzzTest
     void av1(byte[] data) {
         FuzzMedia.demuxer(ContainerFormat.AV1, data);
     }

@@ -64,6 +64,8 @@ import com.github.auties00.smalt.video.mpeg4.Mpeg4Encoder;
 import com.github.auties00.smalt.video.mpeg4.Mpeg4EncoderOptions;
 import com.github.auties00.smalt.video.mpeg4.Mpeg4Profile;
 import com.github.auties00.smalt.video.vc1.Vc1Decoder;
+import com.github.auties00.smalt.video.vvc.VvcDecoder;
+import com.github.auties00.smalt.video.vvc.VvcDecoderOptions;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
@@ -165,6 +167,8 @@ final class MpegWorkloads {
                 file("mpeg2-decode-t1", () -> mpegVideoDecode(1)),
                 file("mpeg2-decode-t2", () -> mpegVideoDecode(2)),
                 file("vc1-decode", MpegWorkloads::vc1Decode),
+                file("vvc-decode-t1", () -> vvcDecode(1)),
+                file("vvc-decode-t2", () -> vvcDecode(2)),
                 file("hevc-encode-fast-b-t2", () -> hevcEncode("hevc-encode-fast-b-t2",
                         hevcFileOptions(HevcEncoderSpeed.FAST, 2).toBuilder().bFrames(3).build())),
                 file("hevc-encode-balanced-t1", () -> hevcEncode("hevc-encode-balanced-t1",
@@ -811,6 +815,38 @@ final class MpegWorkloads {
     private static Packet packet(byte[] stream, int from, int to, boolean key) {
         return new Packet(1, java.util.Arrays.copyOfRange(stream, from, to), Packet.NO_TIMESTAMP, Packet.NO_TIMESTAMP,
                 0, key);
+    }
+
+    /**
+     * The VVC streams decoded by {@link #vvcDecode(int)}, coded by the VVenC encoder
+     * ({@code tools/testdata/vvc-vectors/make-vectors.py}, as smalt-mpeg's test vectors): a random access stream
+     * (merge and AMVP candidates, decoder side motion vector refinement, bi-directional optical flow, the transform
+     * and loop filter tools), a stream of two tiles and a stream of wavefront rows, whose substreams a decoder of
+     * several threads decodes concurrently.
+     */
+    private static final List<String> VVC_STREAMS = List.of("ra-420-10bit.vvc", "tiles-420-10bit.vvc",
+            "wpp-420-10bit.vvc");
+
+    /**
+     * Returns a workload that decodes the VVC streams, each in one packet, to 16-bit pictures.
+     *
+     * @param threads the decoder threads; above 1 the tiles and wavefront rows of a slice are decoded concurrently
+     * @return the workload
+     */
+    private static TrainingWorkload vvcDecode(int threads) {
+        var rounds = new ArrayList<Runnable>();
+        for (var name : VVC_STREAMS) {
+            byte[] stream;
+            try (var input = MpegWorkloads.class.getResourceAsStream("vvc/" + name)) {
+                stream = input.readAllBytes();
+            } catch (java.io.IOException | NullPointerException exception) {
+                throw new IllegalStateException("missing training stream " + name, exception);
+            }
+            var packets = List.of(new Packet(1, stream, Packet.NO_TIMESTAMP, Packet.NO_TIMESTAMP, 0, true));
+            rounds.add(VideoStreams.decodeRound(packets, new VvcDecoder(VideoStreams.track(Codec.VVC, 128, 96, null),
+                    VvcDecoderOptions.builder().threads(threads).highBitDepth(true).build())));
+        }
+        return TrainingWorkload.of("vvc-decode-t" + threads, () -> rounds.forEach(Runnable::run));
     }
 
     /**

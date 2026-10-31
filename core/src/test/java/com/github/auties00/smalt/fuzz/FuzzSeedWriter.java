@@ -235,6 +235,12 @@ class FuzzSeedWriter {
         var ts = ffmpeg("ts", av, "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-b:a", "16k", "-ac", "1");
         copy(DemuxerFuzzTest.class, "mpegTs", "valid-h264-aac.ts", ts);
         write(DemuxerFuzzTest.class, "mpegTs", "valid-h264-aac-names.ts", namedTracks(Files.readAllBytes(ts)));
+        // VVC: the low-delay VVenC stream of smalt-mpeg's test vectors, timed at 25 frames per second
+        var vvcMp4 = ffmpeg("mp4", List.of("-r", "25", "-f", "vvc", "-i", java.nio.file.Path.of("..", "mpeg", "src",
+                "test", "resources", "com", "github", "auties00", "smalt", "video", "vvc", "ld-420-8bit.vvc")
+                .toAbsolutePath().toString()), "-c", "copy");
+        copy(DemuxerFuzzTest.class, "mpegTs", "valid-vvc.ts", ffmpeg("ts", List.of("-i",
+                vvcMp4.toAbsolutePath().toString()), "-c", "copy"));
         copy(DemuxerFuzzTest.class, "mpegTs", "valid-hevc-mp2.ts", ffmpeg("ts", args(video(32, 32, 2),
                 tone(16000, 0.2)), "-c:v", "libx265", "-preset", "ultrafast", "-x265-params", "log-level=0",
                 "-c:a", "mp2", "-b:a", "32k"));
@@ -951,6 +957,10 @@ class FuzzSeedWriter {
                 "-preset", "ultrafast", "-bf", "2", "-g", "4"));
         copy(DemuxerFuzzTest.class, "hevc", "valid-hevc.h265", ffmpeg("hevc", video(32, 32, 6), "-c:v", "libx265",
                 "-preset", "ultrafast", "-x265-params", "log-level=0:keyint=4:bframes=2"));
+        // VVC has no encoder in ffmpeg 7.1: the seed is a VVenC stream of smalt-mpeg's test vectors (see vvc.tsv)
+        write(DemuxerFuzzTest.class, "vvc", "valid-vvc.266", java.nio.file.Files.readAllBytes(java.nio.file.Path.of(
+                "..", "mpeg", "src", "test", "resources", "com", "github", "auties00", "smalt", "video", "vvc",
+                "ld-420-8bit.vvc")));
         var obu = ffmpeg("obu", video(32, 32, 4), "-c:v", "libaom-av1", "-cpu-used", "8", "-b:v", "50k");
         copy(DemuxerFuzzTest.class, "av1", "valid-av1.obu", obu);
         var annexB = Files.createTempFile("seed", ".obu");

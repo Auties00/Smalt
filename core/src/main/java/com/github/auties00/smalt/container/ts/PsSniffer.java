@@ -207,7 +207,12 @@ final class PsSniffer extends ElementaryParser {
         if (format == null) {
             return null;
         }
-        return new NalParser(entry, limits, format == ContainerFormat.HEVC);
+        var codec = switch (format) {
+            case HEVC -> Codec.HEVC;
+            case VVC -> Codec.VVC;
+            default -> Codec.H264;
+        };
+        return new NalParser(entry, limits, codec);
     }
 
     /**

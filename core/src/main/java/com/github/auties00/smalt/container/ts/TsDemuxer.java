@@ -42,15 +42,15 @@ import java.util.function.Function;
  *
  * <p>Supported streams, by {@code stream_type} and descriptors:
  * <ul>
- *   <li>H.264 ({@code 0x1B}) and HEVC ({@code 0x24}, or {@code 0x06} with the {@code "HEVC"}
- *       registration): one packet per access unit, split on the access unit boundaries of the
- *       byte stream whatever the PES packetization, as four-byte length-prefixed NAL units
- *       without the access unit delimiters, with an {@code avcC} or {@code hvcC} configuration
- *       built from the parameter sets met before the first key frame. IDR and IRAP pictures, and
- *       H.264 intra pictures with a recovery point SEI message, are key frames; the access units
- *       before the first key frame cannot be decoded and are dropped. A packet lasts until the
- *       next access unit's decoding time. The Dolby Vision reference processing units (HEVC NAL
- *       unit type 62) stay in the packets;</li>
+ *   <li>H.264 ({@code 0x1B}), HEVC ({@code 0x24}, or {@code 0x06} with the {@code "HEVC"}
+ *       registration) and VVC ({@code 0x33}): one packet per access unit, split on the access unit
+ *       boundaries of the byte stream whatever the PES packetization, as four-byte length-prefixed
+ *       NAL units without the access unit delimiters, with an {@code avcC}, {@code hvcC} or
+ *       {@code vvcC} configuration built from the parameter sets met before the first key frame.
+ *       IDR and IRAP pictures, VVC GDR pictures, and H.264 intra pictures with a recovery point SEI
+ *       message, are key frames; the access units before the first key frame cannot be decoded and
+ *       are dropped. A packet lasts until the next access unit's decoding time. The Dolby Vision
+ *       reference processing units (HEVC NAL unit type 62) stay in the packets;</li>
  *   <li>AV1 ({@code 0x06} with the {@code "AV01"} registration, AOM "Carriage of AV1 in MPEG-2
  *       TS"): one packet per temporal unit, its OBUs freed of their start codes and emulation
  *       prevention and stored with size fields, without temporal delimiters, as ISOBMFF stores
@@ -1328,8 +1328,9 @@ public final class TsDemuxer implements Demuxer {
             case 0x11 -> new LatmParser(stream, limits);
             case 0x15 -> new PesParser(stream, limits, Codec.DATA,
                     stream.id3Metadata() || stream.registered(Psi.ID3) ? PesParser.ID3_HANDLER : "metadata");
-            case 0x1B -> new NalParser(stream, limits, false);
-            case 0x24 -> new NalParser(stream, limits, true);
+            case 0x1B -> new NalParser(stream, limits, Codec.H264);
+            case 0x24 -> new NalParser(stream, limits, Codec.HEVC);
+            case 0x33 -> new NalParser(stream, limits, Codec.VVC);
             case 0x80 -> hdmv ? new PcmParser(stream, limits, false) : new PesParser(stream, limits, Codec.DATA, "private");
             case 0x81, 0x87 -> new Ac3Parser(stream, limits);
             case 0x84 -> hdmv ? new Ac3Parser(stream, limits) : new PesParser(stream, limits, Codec.DATA, "private");
@@ -1368,7 +1369,7 @@ public final class TsDemuxer implements Demuxer {
             return new Ac3Parser(stream, limits);
         }
         if (stream.registered(Psi.HEVC)) {
-            return new NalParser(stream, limits, true);
+            return new NalParser(stream, limits, Codec.HEVC);
         }
         if (stream.dtsDescriptor() || stream.registered(Psi.DTS1) || stream.registered(Psi.DTS2)
                 || stream.registered(Psi.DTS3)) {

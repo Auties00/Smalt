@@ -7,6 +7,7 @@ import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.container.internal.SeekTimes;
 import com.github.auties00.smalt.internal.codec.NalConfigs;
 import com.github.auties00.smalt.internal.codec.VideoConfigs;
+import com.github.auties00.smalt.internal.codec.VvcSyntax;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.nal.NalUnits;
 import com.github.auties00.smalt.io.MediaSource;
@@ -30,20 +31,25 @@ import java.util.TreeMap;
 import java.util.function.LongPredicate;
 
 /**
- * Reads an H.264 ({@code .h264}, {@code .264}, {@code .jsv}) or HEVC ({@code .h265}, {@code .265}, {@code .bit})
- * elementary stream in the Annex B byte stream format: NAL units after {@code 00 00 01} start codes.
+ * Reads an H.264 ({@code .h264}, {@code .264}, {@code .jsv}), HEVC ({@code .h265}, {@code .265}, {@code .bit}) or VVC
+ * ({@code .h266}, {@code .266}, {@code .vvc}) elementary stream in the Annex B byte stream format: NAL units after
+ * {@code 00 00 01} start codes.
  *
- * <p>The stream becomes one {@link VideoTrack} of {@link Codec#H264} or {@link Codec#HEVC}, with identifier 1, whose
- * configuration record ({@code avcC} or {@code hvcC}) holds the parameter sets met before the first key frame (or,
+ * <p>The stream becomes one {@link VideoTrack} of {@link Codec#H264}, {@link Codec#HEVC} or {@link Codec#VVC}, with
+ * identifier 1, whose configuration record ({@code avcC}, {@code hvcC} or {@code vvcC}) holds the parameter sets met
+ * before the first key frame (or,
  * in a stream whose first key frame comes late or never, within its first 256 access units or 8 MiB) and which
  * takes its picture size, color and sample aspect ratio from the first sequence parameter set. Each access unit
  * becomes one packet of NAL units with four-byte big-endian lengths, as an MP4 file stores them: access unit
  * delimiters are removed and every other NAL unit (parameter sets and SEI messages included) is kept. A new access
- * unit starts, once the current one holds a coded slice, at the NAL unit types ITU-T H.264 clause 7.4.1.2.3 and H.265
- * clause 7.4.2.4.4 list or at the first slice of a new picture. Two H.264 fields of opposite parity with the same
+ * unit starts, once the current one holds a coded slice, at the NAL unit types ITU-T H.264 clause 7.4.1.2.3, H.265
+ * clause 7.4.2.4.4 and H.266 clauses 7.4.2.4.3 and 7.4.2.4.4 list or at the first slice of a new picture; a VVC NAL
+ * unit that would start a picture unit of a layer above every layer of the current access unit's slices stays in
+ * it. Two H.264 fields of opposite parity with the same
  * {@code frame_num}, coded one after the other, make one packet, as they make one frame. A packet is a key frame when
  * it holds an IDR picture or, for H.264, only intra slices and a recovery point SEI message; for HEVC, when it holds
- * an IRAP picture. An IDR or IRAP access unit at which the active sequence (and HEVC video) parameter sets differ
+ * an IRAP picture; for VVC, when every base layer slice is an IRAP or GDR slice. An IDR, IRAP or (VVC) GDR access
+ * unit at which the active sequence (and HEVC and VVC video) parameter sets differ
  * from those last reported carries a record of every active set as its
  * {@linkplain PacketSideData#newCodecConfig() new codec configuration}.
  *
@@ -51,7 +57,9 @@ import java.util.function.LongPredicate;
  * counts. The time base is one field period of the track's frame rate: the rate of the
  * {@linkplain ElementaryStreamOptions#frameRate() options} or, by default, of the timing information of the first
  * sequence parameter set (the HEVC video parameter set's when the sequence parameter set has none), else 25 frames
- * per second. A picture lasts as many fields as it is displayed for: a frame 2 ticks and a field coded alone 1 tick,
+ * per second; VVC timing information is the general timing and HRD parameters of the sequence parameter set, whose
+ * {@code elemental_duration_in_tc_minus1} scales the tick of a fixed picture rate. A picture lasts as many fields as
+ * it is displayed for: a frame 2 ticks and a field coded alone (or a picture of a VVC sequence of fields) 1 tick,
  * or, when picture timing SEI messages carry a {@code pic_struct}, 3 ticks for a frame shown with a repeated field,
  * 4 for a doubled frame and 6 for a tripled one. Unless the options set the frame rate, each picture's field period
  * is that of the timing information of its own sequence parameter set, so a stream whose frame rate changes is timed
@@ -62,15 +70,20 @@ import java.util.function.LongPredicate;
  * decoding time follows its presentation time. The reorder depth is the one a decoder applies: H.264
  * {@code max_num_reorder_frames} when the VUI signals it, 0 for {@code pic_order_cnt_type} 2 and otherwise the
  * decoded picture buffer size of the level and picture size; HEVC {@code sps_max_num_reorder_pics}, with
- * {@code sps_max_latency_increase_plus1}. Pictures the decoding process does not output (HEVC pictures with
- * {@code pic_output_flag} zero, the skipped leading pictures of a stream that starts at a CRA picture, and the
- * pictures still waiting for output when an IDR or IRAP picture with {@code no_output_of_prior_pics_flag} set, or an
+ * {@code sps_max_latency_increase_plus1}; VVC {@code dpb_max_num_reorder_pics} with
+ * {@code dpb_max_latency_increase_plus1}. Pictures the decoding process does not output (HEVC and VVC pictures with
+ * {@code pic_output_flag} zero, the skipped leading pictures of a stream that starts at a CRA picture, the VVC
+ * pictures before the recovery point of a GDR picture that starts a sequence, and the
+ * pictures still waiting for output when an IDR or IRAP picture (or a VVC GDR picture that starts a coded video
+ * sequence) with {@code no_output_of_prior_pics_flag} set, or an
  * HEVC CRA picture after an end of sequence, empties the decoded picture buffer) have no presentation time; which
  * pictures still wait follows the decoder's output process, with its reorder, latency and buffer size bounds and the
- * reference pictures the HEVC reference picture sets and the H.264 reference marking keep.
+ * reference pictures the HEVC reference picture sets, the VVC reference picture lists and the H.264 reference marking
+ * keep.
  *
  * <p>The demuxer is seekable: the first {@link #seek(long)} reads the whole stream once to index its key frames,
- * and every seek then resumes from the IDR or IRAP picture that starts the run of pictures holding the target.
+ * and every seek then resumes from the IDR, IRAP or GDR picture that starts the run of pictures holding the
+ * target.
  * The source is read sequentially between seeks and is not closed. Instances are not thread-safe.
  */
 public final class AnnexBDemuxer implements Demuxer {
@@ -140,7 +153,20 @@ public final class AnnexBDemuxer implements Demuxer {
 
     private final MediaLimits limits;
 
+    /**
+     * The codec of the stream.
+     */
+    private final Codec codec;
+
+    /**
+     * Whether the stream is HEVC.
+     */
     private final boolean hevc;
+
+    /**
+     * Whether the stream is VVC.
+     */
+    private final boolean vvc;
 
     private final VideoTrack track;
 
@@ -189,7 +215,8 @@ public final class AnnexBDemuxer implements Demuxer {
      * Constructs a demuxer with {@link ElementaryStreamOptions#defaults()}.
      *
      * @param source the stream, read from offset zero and not closed by this demuxer
-     * @throws MediaException.Malformed if the content is not an H.264 or HEVC Annex B stream with parameter sets
+     * @throws MediaException.Malformed if the content is not an H.264, HEVC or VVC Annex B stream with parameter
+     * sets
      * @throws MediaException.LimitExceeded if a NAL unit or the picture size exceeds the limits
      * @throws MediaException.Io if reading fails
      */
@@ -201,7 +228,7 @@ public final class AnnexBDemuxer implements Demuxer {
      * Constructs a demuxer with options.
      *
      * <p>The codec is recognized from the stream: HEVC when its first NAL units have HEVC headers and an HEVC
-     * parameter set, H.264 otherwise.
+     * parameter set, VVC when they have VVC headers and a VVC sequence parameter set, H.264 otherwise.
      *
      * @param source the stream, read from offset zero and not closed by this demuxer
      * @param options the limits and frame rate
@@ -225,9 +252,11 @@ public final class AnnexBDemuxer implements Demuxer {
         var probe = Arrays.copyOf(head, read);
         var kind = ElementaryProbe.annexB(probe);
         if (kind == null) {
-            throw new MediaException.Malformed("not an H.264 or HEVC Annex B stream");
+            throw new MediaException.Malformed("not an H.264, HEVC or VVC Annex B stream");
         }
+        this.codec = kind;
         this.hevc = kind == Codec.HEVC;
+        this.vvc = kind == Codec.VVC;
         var first = new Splitter(this, 0, null, null);
         var configured = first.configure();
         if (configured == null) {
@@ -239,7 +268,7 @@ public final class AnnexBDemuxer implements Demuxer {
                 : ElementaryStreamOptions.DEFAULT_FRAME_RATE);
         var builder = VideoTrack.builder()
                 .id(1)
-                .codec(hevc ? Codec.HEVC : Codec.H264)
+                .codec(codec)
                 .timeBase(new Rational(frameRate.denominator(), 2 * frameRate.numerator()).reduce())
                 .frameRate(frameRate)
                 .codecConfig(configured.config());
@@ -259,27 +288,40 @@ public final class AnnexBDemuxer implements Demuxer {
     }
 
     /**
-     * Recognizes an H.264 or HEVC Annex B byte stream from its leading bytes.
+     * Recognizes an H.264, HEVC or VVC Annex B byte stream from its leading bytes.
      *
      * <p>The bytes must start with a start code and hold NAL units with valid headers, among them a sequence
      * parameter set that parses, so other content that happens to start with a start code is not taken for a
      * stream; the first 64 KiB of a stream are enough.
      *
      * @param header the leading bytes of the input
-     * @return {@link ContainerFormat#H264} or {@link ContainerFormat#HEVC}, or empty when the bytes start neither
+     * @return {@link ContainerFormat#H264}, {@link ContainerFormat#HEVC} or {@link ContainerFormat#VVC}, or empty
+     * when the bytes start none of them
      */
     public static Optional<ContainerFormat> detect(byte[] header) {
         var codec = ElementaryProbe.annexB(Objects.requireNonNull(header, "header"));
-        return codec == null ? Optional.empty()
-                : Optional.of(codec == Codec.HEVC ? ContainerFormat.HEVC : ContainerFormat.H264);
+        return codec == null ? Optional.empty() : Optional.of(formatOf(codec));
     }
 
     /**
-     * {@return {@link ContainerFormat#HEVC} or {@link ContainerFormat#H264}}
+     * {@return the container format of an elementary stream of a NAL unit codec}
+     *
+     * @param codec {@link Codec#H264}, {@link Codec#HEVC} or {@link Codec#VVC}
+     */
+    private static ContainerFormat formatOf(Codec codec) {
+        return switch (codec) {
+            case HEVC -> ContainerFormat.HEVC;
+            case VVC -> ContainerFormat.VVC;
+            default -> ContainerFormat.H264;
+        };
+    }
+
+    /**
+     * {@return {@link ContainerFormat#H264}, {@link ContainerFormat#HEVC} or {@link ContainerFormat#VVC}}
      */
     @Override
     public ContainerFormat format() {
-        return hevc ? ContainerFormat.HEVC : ContainerFormat.H264;
+        return formatOf(codec);
     }
 
     @Override
@@ -399,6 +441,8 @@ public final class AnnexBDemuxer implements Demuxer {
      * @param avcPictures the H.264 picture parameter sets met
      * @param hevcSequences the HEVC sequence parameter sets met
      * @param hevcPictures the HEVC picture parameter sets met
+     * @param vvcSequences the VVC sequence parameter sets met
+     * @param vvcPictures the VVC picture parameter sets met
      * @param video the latest HEVC video parameter set, or {@code null}
      * @param active the latest parameter sets by type and identifier
      * @param established the parameter sets of the configuration last reported
@@ -406,6 +450,7 @@ public final class AnnexBDemuxer implements Demuxer {
     private record Snapshot(long offset, long outputs, long presentClock, double elapsed, long period,
                             Map<Integer, AvcSyntax.Sps> avcSequences, Map<Integer, AvcSyntax.Pps> avcPictures,
                             Map<Integer, HevcSyntax.Sps> hevcSequences, Map<Integer, HevcSyntax.Pps> hevcPictures,
+                            Map<Integer, VvcSyntax.Sps> vvcSequences, Map<Integer, VvcSyntax.Pps> vvcPictures,
                             HevcSyntax.Vps video, TreeMap<Integer, byte[]> active, List<byte[]> established) {
     }
 
@@ -419,6 +464,8 @@ public final class AnnexBDemuxer implements Demuxer {
      * @param avcPictures the H.264 picture parameter sets met
      * @param hevcSequences the HEVC sequence parameter sets met
      * @param hevcPictures the HEVC picture parameter sets met
+     * @param vvcSequences the VVC sequence parameter sets met
+     * @param vvcPictures the VVC picture parameter sets met
      * @param video the latest HEVC video parameter set, or {@code null}
      * @param active the latest parameter sets by type and identifier
      * @param established the parameter sets of the configuration last reported
@@ -426,8 +473,9 @@ public final class AnnexBDemuxer implements Demuxer {
     private record PendingSnapshot(long offset, double elapsed, long period,
                                    Map<Integer, AvcSyntax.Sps> avcSequences, Map<Integer, AvcSyntax.Pps> avcPictures,
                                    Map<Integer, HevcSyntax.Sps> hevcSequences,
-                                   Map<Integer, HevcSyntax.Pps> hevcPictures, HevcSyntax.Vps video,
-                                   TreeMap<Integer, byte[]> active, List<byte[]> established) {
+                                   Map<Integer, HevcSyntax.Pps> hevcPictures,
+                                   Map<Integer, VvcSyntax.Sps> vvcSequences, Map<Integer, VvcSyntax.Pps> vvcPictures,
+                                   HevcSyntax.Vps video, TreeMap<Integer, byte[]> active, List<byte[]> established) {
         /**
          * Completes the snapshot once the access unit was added to the ordering.
          *
@@ -437,7 +485,7 @@ public final class AnnexBDemuxer implements Demuxer {
          */
         Snapshot complete(long outputs, long presentClock) {
             return new Snapshot(offset, outputs, presentClock, elapsed, period, avcSequences, avcPictures,
-                    hevcSequences, hevcPictures, video, active, established);
+                    hevcSequences, hevcPictures, vvcSequences, vvcPictures, video, active, established);
         }
     }
 
@@ -479,7 +527,7 @@ public final class AnnexBDemuxer implements Demuxer {
     /**
      * The configuration the stream's leading parameter sets give.
      *
-     * @param config the {@code avcC} or {@code hvcC} record
+     * @param config the {@code avcC}, {@code hvcC} or {@code vvcC} record
      * @param width the picture width, or {@code 0}
      * @param height the picture height, or {@code 0}
      * @param color the color description, or {@code null}
@@ -508,9 +556,35 @@ public final class AnnexBDemuxer implements Demuxer {
         boolean coded;
 
         /**
-         * Whether an IDR picture (H.264) or IRAP picture (HEVC) was added.
+         * Whether an IDR picture (H.264), an IRAP picture (HEVC) or an IRAP or GDR slice of the base layer (VVC) was
+         * added.
          */
         boolean idr;
+
+        /**
+         * Whether a VVC base layer slice that is neither an IRAP nor a GDR slice was added.
+         */
+        boolean nonRandomAccess;
+
+        /**
+         * The highest {@code nuh_layer_id} of the VVC slices added, or -1.
+         */
+        int maxLayer = -1;
+
+        /**
+         * The VVC NAL unit type of the first base layer slice, or {@code -1}.
+         */
+        int vvcType = -1;
+
+        /**
+         * The picture header of the VVC base layer picture, or {@code null}.
+         */
+        VvcSyntax.PictureHeader vvcHeader;
+
+        /**
+         * The first slice header of the VVC base layer picture, or {@code null} when it cannot be read.
+         */
+        VvcSyntax.Slice vvcSlice;
 
         /**
          * Whether a recovery point SEI message was added.
@@ -737,6 +811,22 @@ public final class AnnexBDemuxer implements Demuxer {
 
         private final Map<Integer, HevcSyntax.Pps> hevcPictures;
 
+        private final boolean vvc;
+
+        private final Map<Integer, VvcSyntax.Sps> vvcSequences;
+
+        private final Map<Integer, VvcSyntax.Pps> vvcPictures;
+
+        /**
+         * Whether the pictures of a VVC GDR picture that starts a sequence are decoded before its recovery point.
+         */
+        private boolean recovering;
+
+        /**
+         * The picture order count of the recovery point of the GDR picture being recovered.
+         */
+        private long recoveryPoc;
+
         /**
          * The latest parameter set of each type and identifier, keyed by {@code type * 256 + id}.
          */
@@ -850,6 +940,7 @@ public final class AnnexBDemuxer implements Demuxer {
         Splitter(AnnexBDemuxer owner, long offset, Snapshot resume, Index index) {
             this.owner = owner;
             this.hevc = owner.hevc;
+            this.vvc = owner.vvc;
             this.index = index;
             this.base = offset;
             this.resumed = resume;
@@ -858,6 +949,8 @@ public final class AnnexBDemuxer implements Demuxer {
                 avcPictures = new HashMap<>(resume.avcPictures);
                 hevcSequences = new HashMap<>(resume.hevcSequences);
                 hevcPictures = new HashMap<>(resume.hevcPictures);
+                vvcSequences = new HashMap<>(resume.vvcSequences);
+                vvcPictures = new HashMap<>(resume.vvcPictures);
                 active = new TreeMap<>(resume.active);
                 established = new ArrayList<>(resume.established);
                 period = resume.period - 1;
@@ -869,6 +962,8 @@ public final class AnnexBDemuxer implements Demuxer {
                 avcPictures = new HashMap<>();
                 hevcSequences = new HashMap<>();
                 hevcPictures = new HashMap<>();
+                vvcSequences = new HashMap<>();
+                vvcPictures = new HashMap<>();
                 active = new TreeMap<>();
             }
         }
@@ -903,8 +998,7 @@ public final class AnnexBDemuxer implements Demuxer {
             if (sequenceSets.isEmpty() || pictureSets.isEmpty()) {
                 return null;
             }
-            var config = hevc ? NalConfigs.hevcConfig(videoSets, sequenceSets, pictureSets)
-                    : NalConfigs.avcConfig(sequenceSets, pictureSets);
+            var config = buildConfig(videoSets, sequenceSets, pictureSets);
             if (config == null) {
                 return null;
             }
@@ -913,7 +1007,8 @@ public final class AnnexBDemuxer implements Demuxer {
             VideoConfigs.Info info;
             try {
                 var first = sequenceSets.getFirst();
-                info = hevc ? VideoConfigs.hevcSps(first) : VideoConfigs.avcSps(first);
+                info = vvc ? VideoConfigs.vvcSps(first) : hevc ? VideoConfigs.hevcSps(first)
+                        : VideoConfigs.avcSps(first);
             } catch (RuntimeException exception) {
                 info = null;
             }
@@ -934,7 +1029,9 @@ public final class AnnexBDemuxer implements Demuxer {
             }
             var first = sequenceSets.getFirst();
             long[] period;
-            if (hevc) {
+            if (vvc) {
+                period = fieldPeriod(VvcSyntax.sps(first, 0, first.length));
+            } else if (hevc) {
                 period = fieldPeriod(HevcSyntax.sps(first, 0, first.length));
             } else {
                 var sps = AvcSyntax.sps(first, 0, first.length);
@@ -957,6 +1054,21 @@ public final class AnnexBDemuxer implements Demuxer {
          */
         private static long[] fieldPeriod(AvcSyntax.Sps sps) {
             return sps.timingUnits() > 0 ? new long[]{sps.timingUnits(), sps.timingScale()} : null;
+        }
+
+        /**
+         * Returns the field period of a VVC sequence parameter set's timing information: the tick is a picture, which
+         * is a field when {@code sps_field_seq_flag} is set and a frame otherwise.
+         *
+         * @param sps the set, or {@code null}
+         * @return the period as {@code {units, scale}} seconds, or {@code null} without timing information
+         */
+        private static long[] fieldPeriod(VvcSyntax.Sps sps) {
+            if (sps == null || sps.timingUnits() <= 0 || sps.timingScale() <= 0) {
+                return null;
+            }
+            return sps.fieldSeq() ? new long[]{sps.timingUnits(), sps.timingScale()}
+                    : new long[]{sps.timingUnits(), 2 * sps.timingScale()};
         }
 
         /**
@@ -1012,6 +1124,10 @@ public final class AnnexBDemuxer implements Demuxer {
          */
         private int fields(AccessUnit unit) {
             int picStruct;
+            if (vvc) {
+                var header = unit.vvcHeader;
+                return header != null && header.sps().fieldSeq() ? 1 : 2;
+            }
             if (hevc) {
                 var slice = unit.hevcSlice;
                 if (slice == null) {
@@ -1051,7 +1167,9 @@ public final class AnnexBDemuxer implements Demuxer {
             var ratio = 1.0;
             if (!owner.fixedRate) {
                 long[] period = null;
-                if (hevc && unit.hevcSlice != null) {
+                if (vvc && unit.vvcHeader != null) {
+                    period = fieldPeriod(unit.vvcHeader.sps());
+                } else if (hevc && unit.hevcSlice != null) {
                     period = fieldPeriod(unit.hevcSlice.sps());
                 } else if (!hevc && unit.avc != null) {
                     period = fieldPeriod(unit.avc.sps());
@@ -1084,7 +1202,13 @@ public final class AnnexBDemuxer implements Demuxer {
                 var depth = MAX_REORDER;
                 var latency = 0;
                 var interlaced = false;
-                if (hevc) {
+                if (vvc) {
+                    var sps = firstSequence(vvcSequences);
+                    if (sps != null && sps.reorderPictures() >= 0) {
+                        depth = sps.reorderPictures();
+                        latency = sps.latencyIncreasePlus1() == 0 ? 0 : depth + sps.latencyIncreasePlus1() - 1;
+                    }
+                } else if (hevc) {
                     var sps = firstSequence(hevcSequences);
                     if (sps != null) {
                         depth = sps.reorderPictures();
@@ -1137,7 +1261,8 @@ public final class AnnexBDemuxer implements Demuxer {
                 return sequences.values().stream().findFirst().orElse(null);
             }
             var first = sequenceSets.getFirst();
-            var id = hevc ? hevcSpsId(first) : avcSpsId(first);
+            var id = vvc ? VvcSyntax.parameterSetId(first, 0, first.length) : hevc ? hevcSpsId(first)
+                    : avcSpsId(first);
             var sps = sequences.get(id);
             return sps != null ? sps : sequences.values().stream().findFirst().orElse(null);
         }
@@ -1231,6 +1356,12 @@ public final class AnnexBDemuxer implements Demuxer {
          * @param unit the completed access unit
          */
         private void time(AccessUnit unit) {
+            if (vvc) {
+                vvcPoc(unit);
+                unit.duration = ticks(unit);
+                add(unit);
+                return;
+            }
             if (hevc) {
                 hevcPoc(unit);
                 unit.duration = ticks(unit);
@@ -1277,7 +1408,19 @@ public final class AnnexBDemuxer implements Demuxer {
         private void add(AccessUnit unit) {
             seenPicture = true;
             PresentationOrder.Entry entry;
-            if (hevc && unit.hevcSlice != null) {
+            if (vvc && unit.vvcHeader != null) {
+                var sps = unit.vvcHeader.sps();
+                var reorder = sps.reorderPictures();
+                var latency = reorder < 0 || sps.latencyIncreasePlus1() == 0 ? 0
+                        : reorder + sps.latencyIncreasePlus1() - 1;
+                var lists = unit.vvcSlice == null ? null : unit.vvcSlice.references();
+                var poc = unit.poc;
+                var log2MaxPocLsb = sps.log2MaxPocLsb();
+                LongPredicate references = lists == null ? null : other -> lists.keeps(other, poc, log2MaxPocLsb);
+                entry = new PresentationOrder.Entry(unit.poc, unit.period, unit.output, unit.duration,
+                        unit.discardPrior, reorder, reorder < 0 ? -1 : latency,
+                        lists == null ? 0 : sps.maxDecPicBuffering(), references, true, false, unit);
+            } else if (hevc && unit.hevcSlice != null) {
                 var slice = unit.hevcSlice;
                 var sps = slice.sps();
                 var latency = sps.latencyIncreasePlus1() == 0 ? 0
@@ -1475,11 +1618,12 @@ public final class AnnexBDemuxer implements Demuxer {
          * @param unit the access unit
          */
         private void snapshot(AccessUnit unit) {
-            if (index == null || (!hevc && !unit.idr) || order == null) {
+            if (index == null || (!hevc && !vvc && !unit.idr) || order == null) {
                 return;
             }
             unit.snapshot = new PendingSnapshot(unit.offset, elapsed, period + 1, Map.copyOf(avcSequences),
-                    Map.copyOf(avcPictures), Map.copyOf(hevcSequences), Map.copyOf(hevcPictures), video,
+                    Map.copyOf(avcPictures), Map.copyOf(hevcSequences), Map.copyOf(hevcPictures),
+                    Map.copyOf(vvcSequences), Map.copyOf(vvcPictures), video,
                     new TreeMap<>(active), established == null ? List.of() : List.copyOf(established));
         }
 
@@ -1612,6 +1756,75 @@ public final class AnnexBDemuxer implements Demuxer {
             unit.poc = poc;
             unit.field = slice.field();
             unit.bottom = slice.bottom();
+        }
+
+        /**
+         * Computes the picture order count of a VVC picture of the base layer (ITU-T H.266 clause 8.3.1), its run and
+         * whether it is output.
+         *
+         * <p>A coded layer video sequence starts at an IDR picture, and at a CRA or GDR picture that is the first
+         * picture of the stream or follows an end of sequence; the RASL pictures of a CRA picture that starts one, and
+         * the pictures before the recovery point of a GDR picture that starts one, are not output.
+         *
+         * @param unit the access unit
+         */
+        private void vvcPoc(AccessUnit unit) {
+            var type = unit.vvcType;
+            var header = unit.vvcHeader;
+            if (header == null) {
+                unit.period = period;
+                unit.poc = Long.MAX_VALUE / 2;
+                unit.output = false;
+                afterEndOfSequence |= unit.endOfSequence;
+                return;
+            }
+            var irap = VvcSyntax.isIrap(type) && !header.mixedNaluTypes();
+            var gdr = type == VvcSyntax.GDR && !header.mixedNaluTypes();
+            var clvss = (irap || gdr) && (type == VvcSyntax.IDR_W_RADL || type == VvcSyntax.IDR_N_LP
+                    || !seenPicture || afterEndOfSequence);
+            if (clvss) {
+                snapshot(unit);
+                period++;
+            }
+            if (VvcSyntax.isIrap(type)) {
+                // the IRAP slices of a picture with mixed NAL unit types still lead the RASL pictures that follow
+                skipLeading = clvss;
+            }
+            unit.period = period;
+            var maxLsb = 1L << header.sps().log2MaxPocLsb();
+            var lsb = header.pocLsb();
+            long msb;
+            if (header.pocMsb() >= 0) {
+                msb = header.pocMsb() * maxLsb;
+            } else if (clvss) {
+                msb = 0;
+            } else if (lsb < prevTid0Lsb && prevTid0Lsb - lsb >= maxLsb / 2) {
+                msb = prevTid0Msb + maxLsb;
+            } else if (lsb > prevTid0Lsb && lsb - prevTid0Lsb > maxLsb / 2) {
+                msb = prevTid0Msb - maxLsb;
+            } else {
+                msb = prevTid0Msb;
+            }
+            unit.poc = msb + lsb;
+            var rasl = type == 3;
+            var radl = type == 2;
+            if (unit.temporalId == 0 && !header.nonReference() && !rasl && !radl) {
+                prevTid0Msb = msb;
+                prevTid0Lsb = lsb;
+            }
+            if (gdr && clvss) {
+                recovering = header.recoveryPocCount() > 0;
+                recoveryPoc = unit.poc + header.recoveryPocCount();
+            } else if (irap && clvss) {
+                recovering = false;
+            }
+            var beforeRecovery = recovering && unit.poc < recoveryPoc;
+            if (recovering && !beforeRecovery) {
+                recovering = false;
+            }
+            unit.output = header.output() && !(rasl && skipLeading) && !beforeRecovery;
+            unit.discardPrior = clvss && seenPicture && unit.vvcSlice != null && unit.vvcSlice.noOutputOfPriorPics();
+            afterEndOfSequence = unit.endOfSequence;
         }
 
         /**
@@ -1786,8 +1999,11 @@ public final class AnnexBDemuxer implements Demuxer {
          * @return the access unit the NAL unit completed, or {@code null}
          */
         private AccessUnit handleUnit(byte[] data, int offset, int length, long code) {
-            if ((data[offset] & 0x80) != 0 || (hevc && length < 2)) {
+            if ((data[offset] & 0x80) != 0 || ((hevc || vvc) && length < 2)) {
                 return null;
+            }
+            if (vvc) {
+                return handleVvcUnit(data, offset, length, code);
             }
             var type = hevc ? (data[offset] >> 1) & 0x3F : data[offset] & 0x1F;
             var layer = hevc ? ((data[offset] & 1) << 5) | ((data[offset + 1] & 0xFF) >> 3) : 0;
@@ -1837,6 +2053,123 @@ public final class AnnexBDemuxer implements Demuxer {
                 append(current, data, offset, length);
             }
             return completed;
+        }
+
+        /**
+         * Adds a VVC NAL unit to the access unit being collected.
+         *
+         * @param data the bytes
+         * @param offset the index of the NAL unit header
+         * @param length the NAL unit length
+         * @param code the stream offset of the unit's start code
+         * @return the access unit the NAL unit completed, or {@code null}
+         */
+        private AccessUnit handleVvcUnit(byte[] data, int offset, int length, long code) {
+            var type = VvcSyntax.type(data, offset);
+            var layer = VvcSyntax.layer(data, offset);
+            AccessUnit completed = null;
+            if (current != null && current.coded && startsVvcAccessUnit(type, layer, data, offset, length)) {
+                completed = finishAccessUnit();
+            }
+            if (current == null) {
+                current = new AccessUnit();
+                current.offset = code;
+            }
+            if (type == VvcSyntax.AUD) {
+                return completed;
+            }
+            if (layer == 0) {
+                vvcParameterSet(type, data, offset, length);
+            }
+            if (VvcSyntax.isSlice(type)) {
+                current.coded = true;
+                current.maxLayer = Math.max(current.maxLayer, layer);
+                if (layer == 0) {
+                    if (current.vvcType < 0) {
+                        current.vvcType = type;
+                        current.temporalId = VvcSyntax.temporalId(data, offset);
+                        current.vvcSlice = VvcSyntax.slice(data, offset, length, current.vvcHeader, vvcSequences,
+                                vvcPictures);
+                        if (current.vvcSlice != null) {
+                            current.vvcHeader = current.vvcSlice.header();
+                        } else if (current.vvcHeader == null) {
+                            current.vvcHeader = VvcSyntax.pictureHeader(data, offset, length, vvcSequences,
+                                    vvcPictures);
+                        }
+                    }
+                    if (VvcSyntax.isIrap(type) || type == VvcSyntax.GDR) {
+                        current.idr = true;
+                    } else {
+                        current.nonRandomAccess = true;
+                    }
+                }
+            } else if (type == VvcSyntax.PH && layer == 0 && current.vvcHeader == null) {
+                current.vvcHeader = VvcSyntax.pictureHeader(data, offset, length, vvcSequences, vvcPictures);
+            } else if (type == VvcSyntax.EOS) {
+                current.endOfSequence = true;
+            }
+            if (index == null) {
+                append(current, data, offset, length);
+            }
+            return completed;
+        }
+
+        /**
+         * Returns whether a VVC NAL unit starts a new access unit after a coded slice: an access unit delimiter,
+         * operating point or decoding capability information, or a NAL unit that starts a picture unit (a parameter
+         * set, a prefix APS or SEI message, a picture header, a slice whose header holds the picture header, or the
+         * reserved and unspecified types 26, 28 and 29) of a layer not above the current access unit's slices.
+         *
+         * @param type the NAL unit type
+         * @param layer the {@code nuh_layer_id}
+         * @param data the bytes
+         * @param offset the index of the NAL unit header
+         * @param length the NAL unit length
+         * @return {@code true} when the NAL unit belongs to the next access unit
+         */
+        private boolean startsVvcAccessUnit(int type, int layer, byte[] data, int offset, int length) {
+            if (type == VvcSyntax.AUD || type == VvcSyntax.OPI || type == VvcSyntax.DCI) {
+                return true;
+            }
+            var startsPicture = VvcSyntax.isSlice(type) ? length > 2 && (data[offset + 2] & 0x80) != 0
+                    : (type >= VvcSyntax.VPS && type <= VvcSyntax.PREFIX_APS) || type == VvcSyntax.PH
+                    || type == VvcSyntax.PREFIX_SEI || type == 26 || type == 28 || type == 29;
+            return startsPicture && layer <= current.maxLayer;
+        }
+
+        /**
+         * Records a VVC parameter set of the base layer: for the track configuration before it is configured, as
+         * the active set of its type and identifier, and parsed for the picture headers.
+         *
+         * @param type the NAL unit type
+         * @param data the bytes
+         * @param offset the index of the NAL unit header
+         * @param length the NAL unit length
+         */
+        private void vvcParameterSet(int type, byte[] data, int offset, int length) {
+            List<byte[]> target;
+            switch (type) {
+                case VvcSyntax.VPS -> target = videoSets;
+                case VvcSyntax.SPS -> {
+                    var sps = VvcSyntax.sps(data, offset, length);
+                    if (sps != null) {
+                        vvcSequences.put(sps.id(), sps);
+                    }
+                    target = sequenceSets;
+                }
+                case VvcSyntax.PPS -> {
+                    var pps = VvcSyntax.pps(data, offset, length);
+                    if (pps != null) {
+                        vvcPictures.put(pps.id(), pps);
+                    }
+                    target = pictureSets;
+                }
+                default -> {
+                    return;
+                }
+            }
+            var id = VvcSyntax.parameterSetId(data, offset, length);
+            record(type, id, target, data, offset, length);
         }
 
         /**
@@ -1908,6 +2241,21 @@ public final class AnnexBDemuxer implements Demuxer {
                     }
                 }
             }
+            record(type, id, target, data, offset, length);
+        }
+
+        /**
+         * Records a parameter set as the active one of its type and identifier and, before the track is configured,
+         * for the configuration record.
+         *
+         * @param type the NAL unit type
+         * @param id the parameter set identifier, or -1 when it cannot be read
+         * @param target the list of the configuration record the set joins
+         * @param data the bytes
+         * @param offset the index of the NAL unit header
+         * @param length the NAL unit length
+         */
+        private void record(int type, int id, List<byte[]> target, byte[] data, int offset, int length) {
             if (id < 0 || length > 0xFFFF) {
                 return;
             }
@@ -1937,7 +2285,7 @@ public final class AnnexBDemuxer implements Demuxer {
             if (unit == null || !unit.coded) {
                 return null;
             }
-            unit.key = unit.idr || (!hevc && unit.recovery && unit.intra);
+            unit.key = vvc ? unit.idr && !unit.nonRandomAccess : unit.idr || (!hevc && unit.recovery && unit.intra);
             if (unit.avc != null) {
                 unit.field = unit.avc.field();
                 unit.bottom = unit.avc.bottom();
@@ -1968,9 +2316,9 @@ public final class AnnexBDemuxer implements Demuxer {
             var pictureUnits = new ArrayList<byte[]>();
             for (var entry : active.entrySet()) {
                 var type = entry.getKey() / 256;
-                if (hevc && type == HEVC_VPS) {
+                if (type == videoSetType()) {
                     videoUnits.add(entry.getValue());
-                } else if (type == (hevc ? HEVC_SPS : AVC_SPS)) {
+                } else if (type == sequenceSetType()) {
                     sequenceUnits.add(entry.getValue());
                 } else {
                     pictureUnits.add(entry.getValue());
@@ -1979,8 +2327,7 @@ public final class AnnexBDemuxer implements Demuxer {
             if (sequenceUnits.isEmpty() || pictureUnits.isEmpty()) {
                 return null;
             }
-            var config = hevc ? NalConfigs.hevcConfig(videoUnits, sequenceUnits, pictureUnits)
-                    : NalConfigs.avcConfig(sequenceUnits, pictureUnits);
+            var config = buildConfig(videoUnits, sequenceUnits, pictureUnits);
             if (config != null) {
                 established = units;
             }
@@ -1996,12 +2343,42 @@ public final class AnnexBDemuxer implements Demuxer {
         private List<byte[]> sequenceLevel(List<byte[]> units) {
             var result = new ArrayList<byte[]>();
             for (var unit : units) {
-                var type = hevc ? (unit[0] >> 1) & 0x3F : unit[0] & 0x1F;
-                if (hevc ? type == HEVC_VPS || type == HEVC_SPS : type == AVC_SPS) {
+                var type = NalUnits.type(unit, 0, unit.length, owner.codec);
+                if (type == videoSetType() || type == sequenceSetType()) {
                     result.add(unit);
                 }
             }
             return result;
+        }
+
+        /**
+         * {@return the NAL unit type of a video parameter set, or -1 for H.264, which has none}
+         */
+        private int videoSetType() {
+            return vvc ? VvcSyntax.VPS : hevc ? HEVC_VPS : -1;
+        }
+
+        /**
+         * {@return the NAL unit type of a sequence parameter set}
+         */
+        private int sequenceSetType() {
+            return vvc ? VvcSyntax.SPS : hevc ? HEVC_SPS : AVC_SPS;
+        }
+
+        /**
+         * Builds the configuration record of the stream's codec.
+         *
+         * @param videoUnits the video parameter sets
+         * @param sequenceUnits the sequence parameter sets
+         * @param pictureUnits the picture parameter sets
+         * @return the record, or {@code null} when the sets do not make one
+         */
+        private byte[] buildConfig(List<byte[]> videoUnits, List<byte[]> sequenceUnits, List<byte[]> pictureUnits) {
+            if (vvc) {
+                return NalConfigs.vvcConfig(videoUnits, sequenceUnits, pictureUnits);
+            }
+            return hevc ? NalConfigs.hevcConfig(videoUnits, sequenceUnits, pictureUnits)
+                    : NalConfigs.avcConfig(sequenceUnits, pictureUnits);
         }
 
         /**

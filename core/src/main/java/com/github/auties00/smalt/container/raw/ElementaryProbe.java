@@ -3,13 +3,14 @@ package com.github.auties00.smalt.container.raw;
 import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.internal.bits.MsbBitReader;
 import com.github.auties00.smalt.internal.codec.VideoConfigs;
+import com.github.auties00.smalt.internal.codec.VvcSyntax;
 import com.github.auties00.smalt.internal.nal.NalUnits;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Rational;
 
 /**
- * Recognizes elementary video streams from their leading bytes: H.264 and HEVC Annex B byte streams, AV1 OBU streams
- * in the low-overhead and Annex B formats, and MPEG-4 Part 2 and H.263 streams.
+ * Recognizes elementary video streams from their leading bytes: H.264, HEVC and VVC Annex B byte streams, AV1 OBU
+ * streams in the low-overhead and Annex B formats, and MPEG-4 Part 2 and H.263 streams.
  *
  * <p>Each test walks the structure of the stream as far as the bytes given reach and requires a parsable sequence
  * header (a sequence parameter set, an AV1 sequence header OBU, a video object plane or a second picture start
@@ -58,11 +59,15 @@ final class ElementaryProbe {
     }
 
     /**
-     * Recognizes an H.264 or HEVC Annex B byte stream: start-code prefixed NAL units with valid headers, among them a
-     * parsable sequence parameter set.
+     * Recognizes an H.264, HEVC or VVC Annex B byte stream: start-code prefixed NAL units with valid headers, among
+     * them a parsable sequence parameter set of the base layer.
+     *
+     * <p>A VVC NAL unit header has its {@code nuh_reserved_zero_bit} clear, a nonzero {@code nuh_temporal_id_plus1}
+     * and no reserved NAL unit type; the parameter set headers of H.264 and HEVC streams set that bit, so no stream
+     * passes two of the tests.
      *
      * @param header the leading bytes of the input
-     * @return {@link Codec#H264}, {@link Codec#HEVC}, or {@code null}
+     * @return {@link Codec#H264}, {@link Codec#HEVC}, {@link Codec#VVC}, or {@code null}
      */
     static Codec annexB(byte[] header) {
         if (!NalUnits.looksLikeAnnexB(header)) {
@@ -70,12 +75,25 @@ final class ElementaryProbe {
         }
         var avc = new int[]{1, 0};
         var hevc = new int[]{1, 0};
+        var vvc = new int[]{1, 0};
         NalUnits.forEachAnnexB(header, (data, offset, length) -> {
             var first = data[offset] & 0xFF;
             if ((first & 0x80) != 0) {
                 avc[0] = 0;
                 hevc[0] = 0;
+                vvc[0] = 0;
                 return;
+            }
+            if ((first & 0x40) != 0 || length < 2 || (data[offset + 1] & 7) == 0) {
+                vvc[0] = 0;
+            } else {
+                var vvcType = VvcSyntax.type(data, offset);
+                if ((vvcType >= 4 && vvcType <= 6) || vvcType == 11 || vvcType == 26 || vvcType == 27) {
+                    vvc[0] = 0;
+                } else if (vvcType == VvcSyntax.SPS && VvcSyntax.layer(data, offset) == 0
+                        && VvcSyntax.sps(data, offset, length) != null) {
+                    vvc[1] = 1;
+                }
             }
             var avcType = first & 0x1F;
             if (avcType == 0 || (avcType >= 22 && avcType <= 31)) {
@@ -101,6 +119,9 @@ final class ElementaryProbe {
         }
         if (hevc[0] == 1 && hevc[1] == 1) {
             return Codec.HEVC;
+        }
+        if (vvc[0] == 1 && vvc[1] == 1) {
+            return Codec.VVC;
         }
         return null;
     }

@@ -152,6 +152,12 @@ public enum OutputContainer {
     HEVC(ContainerFormat.HEVC, "h265", "video/h265", List.of(Codec.HEVC), List.of()),
 
     /**
+     * A VVC elementary stream in the Annex B byte stream format, holding one video stream and no
+     * timing, like {@link #H264}.
+     */
+    VVC(ContainerFormat.VVC, "h266", "video/h266", List.of(Codec.VVC), List.of()),
+
+    /**
      * An AV1 elementary stream in the low-overhead bitstream format ({@code .obu}), holding one
      * video stream and no timing, like {@link #H264}.
      */
@@ -484,7 +490,7 @@ public enum OutputContainer {
      */
     public boolean supportsTags() {
         return switch (this) {
-            case IVF, H264, HEVC, AV1, Y4M, W64, LOAS, ADIF, MPEG_PS, SRT, WEBVTT, ASS, SSA, TTML, SAMI, MICRODVD -> false;
+            case IVF, H264, HEVC, VVC, AV1, Y4M, W64, LOAS, ADIF, MPEG_PS, SRT, WEBVTT, ASS, SSA, TTML, SAMI, MICRODVD -> false;
             default -> true;
         };
     }
@@ -511,19 +517,19 @@ public enum OutputContainer {
     boolean needsConfig(Codec codec) {
         return switch (format) {
             case MP4 -> switch (codec) {
-                case H264, HEVC, AAC, OPUS, ALAC, FLAC -> true;
+                case H264, HEVC, VVC, AAC, OPUS, ALAC, FLAC -> true;
                 default -> false;
             };
             case MATROSKA -> switch (codec) {
-                case H264, HEVC, AAC, FLAC, VORBIS, ALAC -> true;
+                case H264, HEVC, VVC, AAC, FLAC, VORBIS, ALAC -> true;
                 default -> false;
             };
             case MPEG_TS -> switch (codec) {
-                case H264, HEVC, MPEG4_PART2, AAC, OPUS -> true;
+                case H264, HEVC, VVC, MPEG4_PART2, AAC, OPUS -> true;
                 default -> false;
             };
             case MPEG_PS -> switch (codec) {
-                case H264, HEVC, MPEG4_PART2, AAC -> true;
+                case H264, HEVC, VVC, MPEG4_PART2, AAC -> true;
                 default -> false;
             };
             case OGG -> codec == Codec.VORBIS || codec == Codec.FLAC;
@@ -533,6 +539,7 @@ public enum OutputContainer {
             case LOAS, ADIF -> codec == Codec.AAC;
             case H264 -> codec == Codec.H264;
             case HEVC -> codec == Codec.HEVC;
+            case VVC -> codec == Codec.VVC;
             case Y4M -> codec == Codec.RAW_VIDEO;
             default -> false;
         };
@@ -550,7 +557,8 @@ public enum OutputContainer {
      * {@code au} and {@code snd} to {@link #AU}, and
      * {@code ivf}, {@code mp3}, {@code flac}, {@code amr}, {@code ac3} and {@code avi} to their constants,
      * {@code ec3} and {@code eac3} to {@link #EAC3}, {@code h264} and {@code 264} to {@link #H264},
-     * {@code h265}, {@code 265} and {@code hevc} to {@link #HEVC}, {@code obu} to {@link #AV1}, {@code y4m} to
+     * {@code h265}, {@code 265} and {@code hevc} to {@link #HEVC}, {@code h266}, {@code 266} and {@code vvc} to
+     * {@link #VVC}, {@code obu} to {@link #AV1}, {@code y4m} to
      * {@link #Y4M}, {@code ts} to {@link #MPEG_TS}, {@code mpg}, {@code mpeg}, {@code m2p}, {@code ps} and
      * {@code vob} to {@link #MPEG_PS}, {@code mxf} to {@link #MXF}, {@code srt} to {@link #SRT}, {@code vtt} to
      * {@link #WEBVTT}, {@code ass} and {@code ssa} to {@link #ASS} and {@link #SSA}, {@code ttml},
@@ -590,6 +598,7 @@ public enum OutputContainer {
             case "ec3", "eac3" -> EAC3;
             case "h264", "264" -> H264;
             case "h265", "265", "hevc" -> HEVC;
+            case "h266", "266", "vvc" -> VVC;
             case "obu" -> AV1;
             case "ts" -> MPEG_TS;
             case "mpg", "mpeg", "m2p", "ps", "vob" -> MPEG_PS;

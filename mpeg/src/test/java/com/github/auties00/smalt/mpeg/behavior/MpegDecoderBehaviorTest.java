@@ -16,11 +16,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
- * Runs the H.264, HEVC, MPEG-4 Part 2, H.263, MPEG-1 and MPEG-2 video and VC-1 decoders and the AAC, AC-3, E-AC-3 and AMR
- * audio decoders ({@link ReaderAsserts}) and the HEIC image decoder ({@link ImageDecoderAsserts}) of this artifact through
+ * Runs the H.264, HEVC, VVC, MPEG-4 Part 2, H.263, MPEG-1 and MPEG-2 video and VC-1 decoders and the AAC, AC-3,
+ * E-AC-3 and AMR audio decoders ({@link ReaderAsserts}) and the HEIC image decoder ({@link ImageDecoderAsserts}) of this artifact through
  * the I/O behavior harness over the container samples (core's {@code src/test/resources/samples}), smoke-tier
  * vectors, the HEIF fuzz seeds of AVC, uncompressed and layered HEVC items, the HEVC screen content coding and
- * separate color plane vectors and the multi-layer HEVC vectors ({@link HevcSamples}), and the MPEG-4 object tool and
+ * separate color plane vectors and the multi-layer HEVC vectors ({@link HevcSamples}), the VVenC vectors
+ * ({@link VvcSamples}), and the MPEG-4 object tool and
  * H.263 annex test streams in AVI ({@link ElementarySamples}), comparing each with its golden dump under
  * {@code src/test/resources/dumps}.
  */
@@ -33,6 +34,9 @@ class MpegDecoderBehaviorTest {
 
     private static final Path HEVC_VECTORS = Path.of("src", "test", "resources", "com", "github", "auties00", "smalt",
             "video", "hevc");
+
+    private static final Path VVC_VECTORS = Path.of("src", "test", "resources", "com", "github", "auties00", "smalt",
+            "video", "vvc");
 
     private static final Path ELEMENTARY = Path.of("src", "test", "resources", "com", "github", "auties00", "smalt",
             "video");
@@ -125,6 +129,15 @@ class MpegDecoderBehaviorTest {
         var stream = Files.readAllBytes(HEVC_VECTORS.resolve(vector));
         ReaderAsserts.video("hevc/" + vector + ".mp4", HevcSamples.mp4(stream, width, height, chromaFormatIdc,
                 bitDepth)).run();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @CsvSource({"ra-420-10bit, 136, 104", "ld-420-8bit, 128, 96", "intra-400-10bit, 104, 72",
+            "tiles-420-10bit, 256, 128"})
+    @DisplayName("VVC vectors in MP4: identical frames under every source behavior")
+    void vvc(String vector, int width, int height) throws IOException {
+        var stream = Files.readAllBytes(VVC_VECTORS.resolve(vector + ".vvc"));
+        ReaderAsserts.video("vvc/" + vector + ".mp4", VvcSamples.mp4(stream, width, height)).run();
     }
 
     @ParameterizedTest(name = "{0}")

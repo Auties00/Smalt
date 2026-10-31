@@ -1123,6 +1123,16 @@ class FuzzSeedWriter {
     }
 
     @Test
+    @DisplayName("writes the VVC seeds from the VVenC test streams, one NAL unit per packet")
+    void vvc() {
+        var vectors = Path.of("src", "test", "resources", "com", "github", "auties00", "smalt", "video", "vvc");
+        for (var name : List.of("ra-420-10bit", "intra-400-10bit", "tiles-420-10bit")) {
+            write(MpegFuzzTest.class, "vvc", "valid-" + name + "-annexb.bin", FuzzPackets.video(0, 0, 0, null,
+                    nalUnitParts(Fixtures.read(vectors.resolve(name + ".vvc")))));
+        }
+    }
+
+    @Test
     @DisplayName("writes the seeds of the layered H.264 target from the scalable and alpha test streams")
     void h264Layers() {
         var vectors = Path.of("src", "test", "resources", "com", "github", "auties00", "smalt", "video", "h264");

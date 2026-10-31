@@ -550,6 +550,14 @@ class PackagerTest {
             assertEquals("mp4v.20.245", CodecStrings.of(video(Codec.MPEG4_PART2, null), frame));
             assertEquals("mp4v.20", CodecStrings.of(video(Codec.MPEG4_PART2, null), null));
             assertEquals("s263", CodecStrings.of(video(Codec.H263, null), null));
+            // a vvcC record of the Main 10 profile at level 3.1 (35): the length size byte with ptl_present_flag,
+            // ols_idx to bit_depth_minus8, one constraint byte, profile_idc 1 with the Main tier, level_idc 35
+            var vvcC = new byte[]{(byte) 0xFF, 0x00, 0x55, 0x5F, 0x01, 0x02, 0x23, (byte) 0x80};
+            assertEquals("vvc1.1.L35", CodecStrings.of(video(Codec.VVC, vvcC), null));
+            var boxed = new byte[vvcC.length + 4];
+            System.arraycopy(vvcC, 0, boxed, 4, vvcC.length);
+            assertEquals("vvc1.1.L35", CodecStrings.of(video(Codec.VVC, boxed), null));
+            assertEquals("vvc1", CodecStrings.of(video(Codec.VVC, null), null));
             assertEquals("mp4v.6C", CodecStrings.of(video(Codec.MJPEG, null), null));
             assertEquals("mjp2", CodecStrings.of(video(Codec.JPEG2000, null), null));
             assertEquals("apch", CodecStrings.of(video(Codec.PRORES, "apch".getBytes(StandardCharsets.US_ASCII)), null));

@@ -358,7 +358,8 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         var indexed = depth == 1 || depth == 2 || depth == 4 || depth == 8;
         var colorTable = colorTableId == 0 && indexed ? parseColorTable(payload) : null;
         var sinfs = new ArrayList<BoxCursor>();
-        byte[] avcC = null, hvcC = null, lhvC = null, vpcC = null, av1C = null, jp2h = null, glbl = null, dvc1 = null;
+        byte[] avcC = null, hvcC = null, lhvC = null, vvcC = null, vpcC = null, av1C = null, jp2h = null, glbl = null,
+                dvc1 = null;
         var layerConfigs = new ArrayList<byte[]>();
         EsDescriptor esds = null;
         ColorInfo color = null;
@@ -377,6 +378,11 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                 case BoxTypes.SVCC, BoxTypes.MVCC -> layerConfigs.add(body.rest());
                 case BoxTypes.HVCC -> hvcC = body.rest();
                 case BoxTypes.LHVC -> lhvC = body.rest();
+                case BoxTypes.VVCC -> {
+                    if (body.remaining() >= 4 && body.fullBoxHeader() == 0) {
+                        vvcC = body.rest();
+                    }
+                }
                 case BoxTypes.VPCC -> {
                     if (body.remaining() >= 4) {
                         body.skip(4);
@@ -447,6 +453,10 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                 codec = Codec.HEVC;
                 // the parameter sets of the other layers of a multi-layer track join the base layer's
                 config = hvcC != null && lhvC != null ? NalRecords.appendLayeredHevc(hvcC, lhvC) : hvcC;
+            }
+            case BoxTypes.VVC1, BoxTypes.VVI1 -> {
+                codec = Codec.VVC;
+                config = vvcC;
             }
             case BoxTypes.VP08 -> {
                 codec = Codec.VP8;

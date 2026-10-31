@@ -201,6 +201,12 @@ public enum ContainerFormat {
     HEVC,
 
     /**
+     * A VVC elementary stream in the Annex B byte stream format ({@code .h266}, {@code .266}, {@code .vvc}):
+     * start-code prefixed NAL units.
+     */
+    VVC,
+
+    /**
      * An AV1 elementary stream in the low-overhead bitstream format of the AV1 specification, section 5
      * ({@code .obu}): temporal units of OBUs with size fields, each starting with a temporal delimiter.
      */

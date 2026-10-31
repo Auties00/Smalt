@@ -31,7 +31,7 @@ import java.util.Arrays;
 
 /**
  * Serializes the sample description of a track the {@link Mp4Muxer} writes: a visual sample entry
- * ({@code avc1}, {@code hvc1}, {@code vp08}, {@code vp09}, {@code av01}, the Dolby Vision {@code dva1},
+ * ({@code avc1}, {@code hvc1}, {@code vvc1}, {@code vp08}, {@code vp09}, {@code av01}, the Dolby Vision {@code dva1},
  * {@code dvh1} and {@code dav1} of a stream without a backward compatible base layer, {@code mp4v} with its
  * {@code esds}, {@code s263} with its {@code d263}, the QuickTime {@code h263}, {@code jpeg},
  * {@code mjpa} and {@code mjpb}, and the Motion JPEG 2000 {@code mjp2} with its {@code jp2h} box and, in a
@@ -131,6 +131,7 @@ final class SampleEntryWriter {
             case H264 -> writeVisual(writer, dolbyVisionFormat(BoxTypes.AVC1, BoxTypes.DVA1, (VideoTrack) described),
                     BoxTypes.AVCC, false, (VideoTrack) described, config);
             case HEVC -> writeHevc(writer, (VideoTrack) described, config);
+            case VVC -> writeVvc(writer, (VideoTrack) described, config);
             case VP8 -> writeVisual(writer, BoxTypes.VP08, BoxTypes.VPCC, true, (VideoTrack) described, config);
             case VP9 -> writeVisual(writer, BoxTypes.VP09, BoxTypes.VPCC, true, (VideoTrack) described, config);
             case AV1 -> writeVisual(writer, dolbyVisionFormat(BoxTypes.AV01, BoxTypes.DAV1, (VideoTrack) described),
@@ -334,6 +335,25 @@ final class SampleEntryWriter {
             writer.end();
         }
         writeDolbyVision(writer, video);
+        writeVisualTrailer(writer, video);
+    }
+
+    /**
+     * Writes a {@code vvc1} sample entry with its {@code vvcC} box, a full box of version 0 holding the record.
+     *
+     * @param writer the destination
+     * @param video the track
+     * @param config the {@code VvcDecoderConfigurationRecord}, with or without the full box header
+     */
+    private static void writeVvc(BoxWriter writer, VideoTrack video, byte[] config) {
+        if (config == null) {
+            throw new IllegalStateException(video.codec().displayName() + " track " + video.id()
+                    + " has no codec configuration");
+        }
+        writeVisualHeader(writer, BoxTypes.VVC1, video, null);
+        writer.beginFull(BoxTypes.VVCC, 0, 0);
+        writer.bytes(NalRecords.withoutVvcBoxHeader(config));
+        writer.end();
         writeVisualTrailer(writer, video);
     }
 

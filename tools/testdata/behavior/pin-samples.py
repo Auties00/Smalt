@@ -23,6 +23,8 @@ def generator(root, relative):
         return "make-image-samples.sh"
     if root.startswith("video/"):
         return "make-avif-samples.py"
+    if relative == "elementary/vvc.266":
+        return "tools/testdata/vvc-vectors/make-vectors.py (the ra-420-10bit vector)"
     if relative == "mp4/motion.mj2":
         return "make-mj2-sample.py"
     if relative in ("amr/nb-stereo.amr", "amr/wb-3ch.awb"):

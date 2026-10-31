@@ -40,7 +40,7 @@ import java.util.Set;
  * table, and their language; the other streams are recognized from their content:
  * <ul>
  *   <li>video streams: MPEG-1 and MPEG-2 video ({@link Codec#MPEG1_VIDEO}, {@link Codec#MPEG2_VIDEO}, as the
- *       sequence header says), MPEG-4 Part 2, H.264 and HEVC;</li>
+ *       sequence header says), MPEG-4 Part 2, H.264, HEVC and VVC;</li>
  *   <li>audio streams: MP3 and MP2, and AAC in ADTS or LOAS/LATM framing;</li>
  *   <li>DVD-Video substreams of private stream 1: subpictures ({@code 0x20} to {@code 0x3F}) as
  *       {@link Codec#DVD_SUBTITLE}, one packet per subpicture unit lasting until its first stop display command;

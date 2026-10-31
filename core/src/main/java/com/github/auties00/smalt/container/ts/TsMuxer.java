@@ -15,6 +15,7 @@ import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
 import com.github.auties00.smalt.internal.codec.MpegVideoHeaders;
 import com.github.auties00.smalt.internal.codec.NalConfigs;
 import com.github.auties00.smalt.internal.codec.VideoConfigs;
+import com.github.auties00.smalt.internal.nal.NalRecords;
 import com.github.auties00.smalt.internal.nal.NalUnits;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.TransferCharacteristics;
@@ -48,11 +49,12 @@ import java.util.PriorityQueue;
  *
  * <p>Supported codecs, with their {@code stream_type}, PES {@code stream_id} and descriptors:
  * <ul>
- *   <li>H.264 ({@code 0x1B}) and HEVC ({@code 0x24}), stream ids from {@code 0xE0}: each packet
- *       becomes an Annex B access unit that starts with an access unit delimiter (which ISO/IEC
- *       13818-1 clause 2.14 requires), and every key frame that carries no parameter set gets
- *       those of the track's {@code avcC} or {@code hvcC} record, so decoding can start at any
- *       key frame;</li>
+ *   <li>H.264 ({@code 0x1B}), HEVC ({@code 0x24}) and VVC ({@code 0x33}), stream ids from
+ *       {@code 0xE0}: each packet becomes an Annex B access unit that starts with an access unit
+ *       delimiter (which ISO/IEC 13818-1 clause 2.14 requires; the VVC one sets
+ *       {@code aud_irap_or_gdr_flag} on key frames), and every key frame that carries no parameter
+ *       set gets those of the track's {@code avcC}, {@code hvcC} or {@code vvcC} record, so
+ *       decoding can start at any key frame;</li>
  *   <li>AV1 ({@code 0x06}, id {@code 0xBD}, the {@code "AV01"} registration and, when the track
  *       has an {@code av1C} record, the AV1 video descriptor built from it, as the AOM "Carriage of
  *       AV1 in MPEG-2 TS" specifies): each temporal unit becomes an access unit that opens with a
@@ -235,6 +237,18 @@ public final class TsMuxer implements Muxer {
     private static final byte[] HEVC_DELIMITER = {0, 0, 0, 1, 0x46, 0x01, 0x50};
 
     /**
+     * A VVC access unit delimiter of an access unit that is not an IRAP or GDR access unit, allowing every slice
+     * type ({@code aud_pic_type} 2), start code included.
+     */
+    private static final byte[] VVC_DELIMITER = {0, 0, 0, 1, 0x00, (byte) 0xA1, 0x28};
+
+    /**
+     * A VVC access unit delimiter of an IRAP or GDR access unit ({@code aud_irap_or_gdr_flag} set), allowing every
+     * slice type, start code included.
+     */
+    private static final byte[] VVC_KEY_DELIMITER = {0, 0, 0, 1, 0x00, (byte) 0xA1, (byte) 0xA8};
+
+    /**
      * The single-stream output, or {@code null}.
      */
     private final MediaSink output;
@@ -411,12 +425,12 @@ public final class TsMuxer implements Muxer {
      * Returns whether transport streams written by this muxer can carry a codec.
      *
      * @param codec the codec of a track to add
-     * @return {@code true} for H.264, HEVC, AV1, MPEG-4 Part 2, MPEG-1 and MPEG-2 video, AAC, MP3, MP2, AC-3,
+     * @return {@code true} for H.264, HEVC, VVC, AV1, MPEG-4 Part 2, MPEG-1 and MPEG-2 video, AAC, MP3, MP2, AC-3,
      * E-AC-3, Opus, 16-bit and 24-bit PCM, PGS and DVB subtitles, DVB teletext, and data
      */
     public static boolean supports(Codec codec) {
         return switch (Objects.requireNonNull(codec, "codec")) {
-            case H264, HEVC, AV1, MPEG4_PART2, MPEG1_VIDEO, MPEG2_VIDEO, AAC, MP3, MP2, AC3, EAC3, OPUS, PCM_S16LE,
+            case H264, HEVC, VVC, AV1, MPEG4_PART2, MPEG1_VIDEO, MPEG2_VIDEO, AAC, MP3, MP2, AC3, EAC3, OPUS, PCM_S16LE,
                  PCM_S16BE, PCM_S24LE, PCM_S24BE, PGS, DVB_SUBTITLE, DVB_TELETEXT, DATA -> true;
             default -> false;
         };
@@ -589,17 +603,22 @@ public final class TsMuxer implements Muxer {
                     registration(descriptors, "BSSD");
                 }
             }
-            case H264, HEVC -> {
-                var hevc = track.codec() == Codec.HEVC;
-                var parsed = hevc ? NalConfigs.parseHevc(config) : NalConfigs.parseAvc(config);
+            case H264, HEVC, VVC -> {
+                var codec = track.codec();
+                var parsed = parseNalConfig(codec, config);
                 if (parsed == null) {
-                    throw new IllegalArgumentException("an " + track.codec().displayName() + " track needs its "
-                            + (hevc ? "hvcC" : "avcC") + " configuration");
+                    throw new IllegalArgumentException("a " + codec.displayName() + " track needs its "
+                            + (codec == Codec.VVC ? "vvcC" : codec == Codec.HEVC ? "hvcC" : "avcC")
+                            + " configuration");
                 }
                 stream.lengthSize = parsed.lengthSize();
                 stream.parameterSets = NalUnits.annexBParameterSets(parsed.parameterSets());
-                stream.hevc = hevc;
-                stream.streamType = hevc ? 0x24 : 0x1B;
+                stream.hevc = codec == Codec.HEVC;
+                stream.streamType = switch (codec) {
+                    case HEVC -> 0x24;
+                    case VVC -> 0x33;
+                    default -> 0x1B;
+                };
                 stream.streamId = 0xE0 + Math.min(video, 15);
             }
             case AAC -> {
@@ -961,8 +980,8 @@ public final class TsMuxer implements Muxer {
         var newConfig = ConfigChanges.changed(packet, stream.acceptedConfig);
         if (newConfig != null) {
             switch (stream.track.codec()) {
-                case H264, HEVC -> {
-                    if ((stream.hevc ? NalConfigs.parseHevc(newConfig) : NalConfigs.parseAvc(newConfig)) == null) {
+                case H264, HEVC, VVC -> {
+                    if (parseNalConfig(stream.track.codec(), newConfig) == null) {
                         throw new IllegalArgumentException("the new " + stream.track.codec().displayName()
                                 + " configuration of track " + packet.trackId() + " cannot be parsed");
                     }
@@ -1664,9 +1683,10 @@ public final class TsMuxer implements Muxer {
      * @throws IllegalArgumentException if a NAL unit length overruns the packet
      */
     private static byte[] annexB(Stream stream, Packet packet) {
+        var codec = stream.track.codec();
         var newConfig = ConfigChanges.changed(packet, stream.appliedConfig);
         if (newConfig != null) {
-            var parsed = stream.hevc ? NalConfigs.parseHevc(newConfig) : NalConfigs.parseAvc(newConfig);
+            var parsed = parseNalConfig(codec, newConfig);
             stream.lengthSize = parsed.lengthSize();
             stream.parameterSets = NalUnits.annexBParameterSets(parsed.parameterSets());
             stream.appliedConfig = newConfig;
@@ -1677,8 +1697,28 @@ public final class TsMuxer implements Muxer {
             data = stream.sampleAes.video(data, lengthSize);
             lengthSize = 4;
         }
-        return NalUnits.toAnnexB(data, lengthSize, stream.hevc,
-                packet.keyframe() ? stream.parameterSets : null, stream.hevc ? HEVC_DELIMITER : AVC_DELIMITER);
+        var delimiter = switch (codec) {
+            case HEVC -> HEVC_DELIMITER;
+            case VVC -> packet.keyframe() ? VVC_KEY_DELIMITER : VVC_DELIMITER;
+            default -> AVC_DELIMITER;
+        };
+        return NalUnits.toAnnexB(data, lengthSize, codec, packet.keyframe() ? stream.parameterSets : null,
+                delimiter);
+    }
+
+    /**
+     * Takes apart the configuration record of an H.264, HEVC or VVC track.
+     *
+     * @param codec the codec of the track
+     * @param config the {@code avcC}, {@code hvcC} or {@code vvcC} record, or {@code null}
+     * @return the length prefix size and parameter sets, or {@code null} when the record is missing or truncated
+     */
+    private static NalRecords.Parsed parseNalConfig(Codec codec, byte[] config) {
+        return switch (codec) {
+            case HEVC -> NalConfigs.parseHevc(config);
+            case VVC -> NalConfigs.parseVvc(config);
+            default -> NalConfigs.parseAvc(config);
+        };
     }
 
     /**

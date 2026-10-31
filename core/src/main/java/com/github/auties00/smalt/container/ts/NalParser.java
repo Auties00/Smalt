@@ -4,6 +4,7 @@ import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.internal.bits.MsbBitReader;
 import com.github.auties00.smalt.internal.codec.NalConfigs;
 import com.github.auties00.smalt.internal.codec.VideoConfigs;
+import com.github.auties00.smalt.internal.codec.VvcSyntax;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.nal.NalUnits;
 import com.github.auties00.smalt.track.Codec;
@@ -20,21 +21,25 @@ import java.util.List;
 import java.util.TreeMap;
 
 /**
- * Splits an H.264 ({@code stream_type 0x1B}) or HEVC ({@code stream_type 0x24}) Annex B byte
- * stream into access units.
+ * Splits an H.264 ({@code stream_type 0x1B}), HEVC ({@code stream_type 0x24}) or VVC
+ * ({@code stream_type 0x33}) Annex B byte stream into access units.
  *
  * <p>NAL units are delimited by start codes, whatever the PES packet boundaries. A new access unit
  * starts, once the current one holds a coded slice, at an access unit delimiter, a parameter set,
  * a prefix SEI message or the other NAL unit types the specifications list (ITU-T H.264 clause
- * 7.4.1.2.3, H.265 clause 7.4.2.4.4), or at the first slice of a new picture
- * ({@code first_mb_in_slice} zero, {@code first_slice_segment_in_pic_flag} set). Each access unit
- * becomes one packet of four-byte length-prefixed NAL units, access unit delimiters removed and
- * every other NAL unit (parameter sets and SEI included) kept, so that parameter set changes
- * reach the decoder.
+ * 7.4.1.2.3, H.265 clause 7.4.2.4.4, H.266 clauses 7.4.2.4.3 and 7.4.2.4.4), or at the first slice
+ * of a new picture ({@code first_mb_in_slice} zero, {@code first_slice_segment_in_pic_flag} set,
+ * VVC {@code sh_picture_header_in_slice_header_flag} set). For VVC, a NAL unit that would start a
+ * picture unit of a layer above every layer of the current access unit's slices stays in it, so an
+ * access unit keeps the pictures of all its layers. Each access unit becomes one packet of
+ * four-byte length-prefixed NAL units, access unit delimiters removed and every other NAL unit
+ * (parameter sets and SEI included) kept, so that parameter set changes reach the decoder.
  *
- * <p>An access unit is a key frame when it holds an IDR picture (H.264) or an IRAP picture (HEVC),
- * or, for H.264, when it holds only intra slices and a recovery point SEI message (the random
- * access points of open-GOP broadcast streams). Access units before the first key frame are
+ * <p>An access unit is a key frame when it holds an IDR picture (H.264), an IRAP picture (HEVC),
+ * a base layer picture whose slices are all IRAP or GDR slices (VVC, whose decoders start at a GDR
+ * picture and output from its recovery point), or, for H.264, when it holds only intra slices and
+ * a recovery point SEI message (the random access points of open-GOP broadcast streams). Access
+ * units before the first key frame are
  * dropped: they cannot be decoded. Timestamps are the PES ones on the 90 kHz timeline; an access
  * unit whose PES packet carried none follows the previous one by the previous frame duration.
  * The duration of a packet is the gap to the next access unit's decoding time (the last one
@@ -67,9 +72,19 @@ final class NalParser extends ElementaryParser {
     private static final int MAX_PARAMETER_SETS = 16;
 
     /**
-     * Whether the stream is HEVC rather than H.264.
+     * The codec of the stream: {@link Codec#H264}, {@link Codec#HEVC} or {@link Codec#VVC}.
+     */
+    private final Codec codec;
+
+    /**
+     * Whether the stream is HEVC.
      */
     private final boolean hevc;
+
+    /**
+     * Whether the stream is VVC.
+     */
+    private final boolean vvc;
 
     /**
      * The buffered stream.
@@ -158,11 +173,13 @@ final class NalParser extends ElementaryParser {
      *
      * @param entry the program map entry of the stream
      * @param limits the resource bounds
-     * @param hevc whether the stream is HEVC rather than H.264
+     * @param codec the codec of the stream: {@link Codec#H264}, {@link Codec#HEVC} or {@link Codec#VVC}
      */
-    NalParser(Psi.StreamEntry entry, MediaLimits limits, boolean hevc) {
+    NalParser(Psi.StreamEntry entry, MediaLimits limits, Codec codec) {
         super(entry, limits);
-        this.hevc = hevc;
+        this.codec = codec;
+        this.hevc = codec == Codec.HEVC;
+        this.vvc = codec == Codec.VVC;
         this.buffer = new StreamBuffer((int) Math.min(CAPACITY, limits.maxBytes()));
     }
 
@@ -186,9 +203,19 @@ final class NalParser extends ElementaryParser {
         boolean coded;
 
         /**
-         * Whether an IDR or IRAP slice was added.
+         * Whether an IDR or IRAP slice (VVC: an IRAP or GDR slice of the base layer) was added.
          */
         boolean idr;
+
+        /**
+         * Whether a VVC base layer slice that is neither an IRAP nor a GDR slice was added.
+         */
+        boolean nonRandomAccess;
+
+        /**
+         * The highest {@code nuh_layer_id} of the VVC slices added, or -1.
+         */
+        int maxLayer = -1;
 
         /**
          * Whether a recovery point SEI message was added.
@@ -233,7 +260,7 @@ final class NalParser extends ElementaryParser {
 
     @Override
     ElementaryParser fresh() {
-        var parser = new NalParser(entry, limits, hevc);
+        var parser = new NalParser(entry, limits, codec);
         parser.track = track;
         parser.establish(track == null ? null : track.codecConfig().orElse(null));
         return parser;
@@ -249,7 +276,8 @@ final class NalParser extends ElementaryParser {
         if (config == null) {
             return;
         }
-        var parsed = hevc ? NalConfigs.parseHevc(config) : NalConfigs.parseAvc(config);
+        var parsed = vvc ? NalConfigs.parseVvc(config) : hevc ? NalConfigs.parseHevc(config)
+                : NalConfigs.parseAvc(config);
         if (parsed == null) {
             return;
         }
@@ -276,8 +304,8 @@ final class NalParser extends ElementaryParser {
                 return;
             }
         }
-        var type = hevc ? (data[offset] >> 1) & 0x3F : data[offset] & 0x1F;
-        var id = parameterSetId(type, data, offset, length);
+        var type = unitType(data, offset);
+        var id = vvc ? VvcSyntax.parameterSetId(data, offset, length) : parameterSetId(type, data, offset, length);
         if (id < 0 || active.size() >= 3 * 256) {
             return;
         }
@@ -363,9 +391,9 @@ final class NalParser extends ElementaryParser {
         var pictureUnits = new ArrayList<byte[]>();
         for (var entry : active.entrySet()) {
             var type = entry.getKey() / 256;
-            if (hevc && type == NalConfigs.HEVC_VPS) {
+            if (type == videoSetType()) {
                 videoUnits.add(entry.getValue());
-            } else if (type == (hevc ? NalConfigs.HEVC_SPS : NalConfigs.AVC_SPS)) {
+            } else if (type == sequenceSetType()) {
                 sequenceUnits.add(entry.getValue());
             } else {
                 pictureUnits.add(entry.getValue());
@@ -374,8 +402,7 @@ final class NalParser extends ElementaryParser {
         if (sequenceUnits.isEmpty() || pictureUnits.isEmpty()) {
             return null;
         }
-        var config = hevc ? NalConfigs.hevcConfig(videoUnits, sequenceUnits, pictureUnits)
-                : NalConfigs.avcConfig(sequenceUnits, pictureUnits);
+        var config = buildConfig(videoUnits, sequenceUnits, pictureUnits);
         if (config != null) {
             established = units;
             activated = false;
@@ -392,12 +419,62 @@ final class NalParser extends ElementaryParser {
     private List<byte[]> sequenceLevel(List<byte[]> units) {
         var result = new ArrayList<byte[]>();
         for (var unit : units) {
-            var type = hevc ? (unit[0] >> 1) & 0x3F : unit[0] & 0x1F;
-            if (hevc ? type == NalConfigs.HEVC_VPS || type == NalConfigs.HEVC_SPS : type == NalConfigs.AVC_SPS) {
+            var type = unitType(unit, 0);
+            if (type == videoSetType() || type == sequenceSetType()) {
                 result.add(unit);
             }
         }
         return result;
+    }
+
+    /**
+     * {@return the NAL unit type of a NAL unit of the stream's codec}
+     *
+     * @param data the bytes
+     * @param offset the index of the NAL unit header
+     */
+    private int unitType(byte[] data, int offset) {
+        if (vvc) {
+            return VvcSyntax.type(data, offset);
+        }
+        return hevc ? (data[offset] >> 1) & 0x3F : data[offset] & 0x1F;
+    }
+
+    /**
+     * {@return the NAL unit type of a video parameter set, or -1 for H.264, which has none}
+     */
+    private int videoSetType() {
+        return vvc ? VvcSyntax.VPS : hevc ? NalConfigs.HEVC_VPS : -1;
+    }
+
+    /**
+     * {@return the NAL unit type of a sequence parameter set}
+     */
+    private int sequenceSetType() {
+        return vvc ? VvcSyntax.SPS : hevc ? NalConfigs.HEVC_SPS : NalConfigs.AVC_SPS;
+    }
+
+    /**
+     * {@return the NAL unit type of a picture parameter set}
+     */
+    private int pictureSetType() {
+        return vvc ? VvcSyntax.PPS : hevc ? NalConfigs.HEVC_PPS : NalConfigs.AVC_PPS;
+    }
+
+    /**
+     * Builds the configuration record of the stream's codec.
+     *
+     * @param videoUnits the video parameter sets
+     * @param sequenceUnits the sequence parameter sets
+     * @param pictureUnits the picture parameter sets
+     * @return the record, or {@code null} when the sets do not make one
+     */
+    private byte[] buildConfig(List<byte[]> videoUnits, List<byte[]> sequenceUnits, List<byte[]> pictureUnits) {
+        if (vvc) {
+            return NalConfigs.vvcConfig(videoUnits, sequenceUnits, pictureUnits);
+        }
+        return hevc ? NalConfigs.hevcConfig(videoUnits, sequenceUnits, pictureUnits)
+                : NalConfigs.avcConfig(sequenceUnits, pictureUnits);
     }
 
     /**
@@ -538,10 +615,10 @@ final class NalParser extends ElementaryParser {
      * @param sink receives the completed packets
      */
     private void handleUnit(byte[] data, int offset, int length, long code, UnitSink sink) {
-        if ((data[offset] & 0x80) != 0 || (hevc && length < 2)) {
+        if ((data[offset] & 0x80) != 0 || ((hevc || vvc) && length < 2)) {
             return;
         }
-        var type = hevc ? (data[offset] >> 1) & 0x3F : data[offset] & 0x1F;
+        var type = unitType(data, offset);
         if (current != null && current.coded && startsAccessUnit(type, data, offset, length)) {
             finishAccessUnit(sink);
         }
@@ -564,13 +641,22 @@ final class NalParser extends ElementaryParser {
         if (track == null) {
             remember(type, data, offset, length);
         }
-        if (hevc ? type >= NalConfigs.HEVC_VPS && type <= NalConfigs.HEVC_PPS
-                : type == NalConfigs.AVC_SPS || type == NalConfigs.AVC_PPS) {
+        if (type == videoSetType() || type == sequenceSetType() || type == pictureSetType()) {
             activate(data, offset, length);
         }
         if (isSlice(type)) {
             current.coded = true;
-            if (hevc) {
+            if (vvc) {
+                var layer = VvcSyntax.layer(data, offset);
+                current.maxLayer = Math.max(current.maxLayer, layer);
+                if (layer == 0) {
+                    if (VvcSyntax.isIrap(type) || type == VvcSyntax.GDR) {
+                        current.idr = true;
+                    } else {
+                        current.nonRandomAccess = true;
+                    }
+                }
+            } else if (hevc) {
                 current.idr |= type >= 16 && type <= 23;
             } else {
                 current.idr |= type == 5;
@@ -591,7 +677,7 @@ final class NalParser extends ElementaryParser {
      * @return {@code true} for an access unit delimiter
      */
     private boolean isDelimiter(int type) {
-        return hevc ? type == 35 : type == 9;
+        return vvc ? type == VvcSyntax.AUD : hevc ? type == 35 : type == 9;
     }
 
     /**
@@ -601,7 +687,7 @@ final class NalParser extends ElementaryParser {
      * @return {@code true} for a VCL NAL unit
      */
     private boolean isSlice(int type) {
-        return hevc ? type <= 31 : type >= 1 && type <= 5;
+        return vvc ? VvcSyntax.isSlice(type) : hevc ? type <= 31 : type >= 1 && type <= 5;
     }
 
     /**
@@ -626,6 +712,15 @@ final class NalParser extends ElementaryParser {
      * @return {@code true} when the NAL unit belongs to the next access unit
      */
     private boolean startsAccessUnit(int type, byte[] data, int offset, int length) {
+        if (vvc) {
+            if (type == VvcSyntax.AUD || type == VvcSyntax.OPI || type == VvcSyntax.DCI) {
+                return true;
+            }
+            var startsPicture = VvcSyntax.isSlice(type) ? length > 2 && (data[offset + 2] & 0x80) != 0
+                    : (type >= VvcSyntax.VPS && type <= VvcSyntax.PREFIX_APS) || type == VvcSyntax.PH
+                    || type == VvcSyntax.PREFIX_SEI || type == 26 || type == 28 || type == 29;
+            return startsPicture && VvcSyntax.layer(data, offset) <= current.maxLayer;
+        }
         if (hevc) {
             if (type <= 31) {
                 return length > 2 && (data[offset + 2] & 0x80) != 0;
@@ -703,7 +798,14 @@ final class NalParser extends ElementaryParser {
      */
     private void remember(int type, byte[] data, int offset, int length) {
         List<byte[]> target;
-        if (hevc) {
+        if (vvc) {
+            target = switch (type) {
+                case VvcSyntax.VPS -> videoSets;
+                case VvcSyntax.SPS -> sequenceSets;
+                case VvcSyntax.PPS -> pictureSets;
+                default -> null;
+            };
+        } else if (hevc) {
             target = switch (type) {
                 case NalConfigs.HEVC_VPS -> videoSets;
                 case NalConfigs.HEVC_SPS -> sequenceSets;
@@ -768,7 +870,7 @@ final class NalParser extends ElementaryParser {
         if (unit == null || !unit.coded) {
             return;
         }
-        unit.key = unit.idr || (!hevc && unit.recovery && unit.intra);
+        unit.key = vvc ? unit.idr && !unit.nonRandomAccess : unit.idr || (!hevc && unit.recovery && unit.intra);
         if (track == null && unit.key) {
             configure();
             if (track != null) {
@@ -832,20 +934,20 @@ final class NalParser extends ElementaryParser {
         if (sequenceSets.isEmpty() || pictureSets.isEmpty()) {
             return;
         }
-        var config = hevc ? NalConfigs.hevcConfig(videoSets, sequenceSets, pictureSets)
-                : NalConfigs.avcConfig(sequenceSets, pictureSets);
+        var config = buildConfig(videoSets, sequenceSets, pictureSets);
         if (config == null) {
             return;
         }
         VideoConfigs.Info info;
         try {
-            info = hevc ? VideoConfigs.hevcSps(sequenceSets.getFirst()) : VideoConfigs.avcSps(sequenceSets.getFirst());
+            var first = sequenceSets.getFirst();
+            info = vvc ? VideoConfigs.vvcSps(first) : hevc ? VideoConfigs.hevcSps(first) : VideoConfigs.avcSps(first);
         } catch (RuntimeException exception) {
             info = null;
         }
         var builder = VideoTrack.builder()
                 .id(trackId())
-                .codec(hevc ? Codec.HEVC : Codec.H264)
+                .codec(codec)
                 .timeBase(TIME_BASE)
                 .codecConfig(config)
                 .language(entry.language());

@@ -28,6 +28,7 @@ import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.header.OpusHeader;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
+import com.github.auties00.smalt.internal.nal.NalRecords;
 import com.github.auties00.smalt.internal.tags.EbmlIds;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -56,7 +57,8 @@ import java.util.Set;
  * Matroska codec specification (RFC 9559 and the Matroska codec mappings registry).
  *
  * <p>Codec configurations follow {@link Track#codecConfig()}: {@code CodecPrivate} is passed
- * through for H.264 ({@code avcC}), HEVC ({@code hvcC}), AV1 ({@code av1C}), MPEG-4 Part 2, AAC,
+ * through for H.264 ({@code avcC}), HEVC ({@code hvcC}), VVC ({@code vvcC}, without the full box header some
+ * writers keep), AV1 ({@code av1C}), MPEG-4 Part 2, AAC,
  * Opus ({@code OpusHead}), Vorbis (Xiph-laced headers) and FLAC ({@code fLaC} and metadata
  * blocks); legacy {@code A_AAC/MPEG2/...} and {@code A_AAC/MPEG4/...} identifiers, and an
  * {@code A_AAC} track without {@code CodecPrivate}, get an {@code AudioSpecificConfig} synthesized
@@ -91,6 +93,12 @@ final class MatroskaTrackEntry {
      * The {@code TrackType} of a video track.
      */
     private static final int TYPE_VIDEO = 1;
+
+    /**
+     * The size of a visual sample entry up to its child boxes: the box header, the sample entry fields and the
+     * visual fields of ISO/IEC 14496-12 clause 12.1.3.
+     */
+    private static final int VISUAL_SAMPLE_ENTRY = 86;
 
     /**
      * The {@code TrackType} of an audio track.
@@ -817,6 +825,7 @@ final class MatroskaTrackEntry {
             codec = switch (codecId) {
                 case "V_MPEG4/ISO/AVC" -> Codec.H264;
                 case "V_MPEGH/ISO/HEVC" -> Codec.HEVC;
+                case "V_MPEGI/ISO/VVC" -> Codec.VVC;
                 case "V_VP8" -> Codec.VP8;
                 case "V_VP9" -> Codec.VP9;
                 case "V_AV1" -> Codec.AV1;
@@ -842,10 +851,14 @@ final class MatroskaTrackEntry {
                 config = null;
             } else if (codecId.equals("V_QUICKTIME")) {
                 config = codec == Codec.PRORES ? Arrays.copyOfRange(codecPrivate, 4, 8)
-                        : codec == Codec.DNXHD ? dnxhdConfig(codecPrivate) : null;
+                        : codec == Codec.DNXHD ? dnxhdConfig(codecPrivate)
+                        : codec == Codec.VVC ? vvcFromImageDescription() : null;
             } else if (codecId.equals("V_MS/VFW/FOURCC")) {
                 config = codec == Codec.DNXHD ? Arrays.copyOfRange(codecPrivate, 16, 20)
                         : codecPrivate != null && codecPrivate.length > 40 ? Arrays.copyOfRange(codecPrivate, 40, codecPrivate.length) : null;
+            }
+            if (codec == Codec.VVC && config != null) {
+                config = NalRecords.withoutVvcBoxHeader(config);
             }
             if (codec == Codec.JPEG2000 && !Jp2Frames.isHeader(config)) {
                 config = null;
@@ -1035,10 +1048,10 @@ final class MatroskaTrackEntry {
      * Returns whether blocks of this track may be stored out of presentation order, so that their
      * decoding timestamps cannot be taken from the block timestamps.
      *
-     * @return {@code true} for H.264, HEVC, MPEG-4 Part 2, MPEG-1 video, MPEG-2 video and unidentified video
+     * @return {@code true} for H.264, HEVC, VVC, MPEG-4 Part 2, MPEG-1 video, MPEG-2 video and unidentified video
      */
     boolean reorders() {
-        return codec == Codec.H264 || codec == Codec.HEVC || codec == Codec.MPEG4_PART2 || codec == Codec.MPEG1_VIDEO
+        return codec == Codec.H264 || codec == Codec.HEVC || codec == Codec.VVC || codec == Codec.MPEG4_PART2 || codec == Codec.MPEG1_VIDEO
                 || codec == Codec.MPEG2_VIDEO || codec == Codec.UNKNOWN_VIDEO;
     }
 
@@ -1117,8 +1130,49 @@ final class MatroskaTrackEntry {
             case "apco", "apcs", "apcn", "apch", "ap4h", "ap4x" -> Codec.PRORES;
             case "AVdn", "AVdh" -> Codec.DNXHD;
             case "mjp2" -> Codec.JPEG2000;
+            case "vvc1", "vvi1" -> Codec.VVC;
             default -> Codec.UNKNOWN_VIDEO;
         };
+    }
+
+    /**
+     * Returns the {@code VvcDecoderConfigurationRecord} of a QuickTime image description codec private, the visual
+     * sample entry a {@code V_QUICKTIME} track stores: the body of its {@code vvcC} box without the full box header,
+     * or the bare record, with or without that header, that follows the visual fields, as ffmpeg 7.1 writes it.
+     *
+     * @return the record, or {@code null} when the description holds none
+     */
+    private byte[] vvcFromImageDescription() {
+        var position = VISUAL_SAMPLE_ENTRY;
+        while (position + 8 <= codecPrivate.length) {
+            var size = ((codecPrivate[position] & 0xFFL) << 24) | ((codecPrivate[position + 1] & 0xFF) << 16)
+                    | ((codecPrivate[position + 2] & 0xFF) << 8) | (codecPrivate[position + 3] & 0xFF);
+            if (size < 8 || size > codecPrivate.length - position) {
+                return position == VISUAL_SAMPLE_ENTRY ? bareVvcRecord() : null;
+            }
+            var type = new String(codecPrivate, position + 4, 4, java.nio.charset.StandardCharsets.ISO_8859_1);
+            if (type.equals("vvcC") && size > 12) {
+                return Arrays.copyOfRange(codecPrivate, position + 12, position + (int) size);
+            }
+            position += (int) size;
+        }
+        return null;
+    }
+
+    /**
+     * Returns the bare {@code VvcDecoderConfigurationRecord} that follows the visual fields of a QuickTime image
+     * description, with the full box header it may carry.
+     *
+     * @return the record, or {@code null} when the bytes after the visual fields do not start one
+     */
+    private byte[] bareVvcRecord() {
+        var start = VISUAL_SAMPLE_ENTRY;
+        var header = codecPrivate.length > start + 4 && codecPrivate[start] == 0 && codecPrivate[start + 1] == 0
+                && codecPrivate[start + 2] == 0 && codecPrivate[start + 3] == 0 ? 4 : 0;
+        if (codecPrivate.length <= start + header || (codecPrivate[start + header] & 0xF8) != 0xF8) {
+            return null;
+        }
+        return Arrays.copyOfRange(codecPrivate, start, codecPrivate.length);
     }
 
     /**

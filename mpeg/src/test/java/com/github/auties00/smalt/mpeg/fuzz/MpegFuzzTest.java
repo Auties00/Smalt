@@ -114,6 +114,11 @@ class MpegFuzzTest {
         FuzzMedia.video(Codec.HEVC, data);
     }
 
+    @FuzzTest
+    void vvc(byte[] data) {
+        FuzzMedia.video(Codec.VVC, data);
+    }
+
     /**
      * Decodes HEVC streams with the layers of an output layer set: bit 0 of the options asks for high-bit-depth
      * output, bits 1 to 3 give the output layer set index (7 for the last one) and bit 4 leaves the alpha layers
