@@ -9,8 +9,11 @@ import com.github.auties00.smalt.internal.io.ByteWriter;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.metadata.StandardTag;
+import com.github.auties00.smalt.metadata.XmpPacket;
 
 import java.io.ByteArrayOutputStream;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -30,9 +33,11 @@ import java.util.zip.Inflater;
  * <p>Reading turns the tag into frames held in a canonical form: the per-frame
  * unsynchronization, data length indicator and compression of the stored frame are undone, so a
  * frame can be written back without them. Text, comment, lyrics, URL, picture and chapter frames
- * are then decoded into {@link MediaTags}; every other frame (binary frames such as {@code PRIV},
+ * are then decoded into {@link MediaTags}, and so is the XMP packet of a {@code PRIV} frame of owner {@code XMP}
+ * (XMP Specification Part 3); every other frame (binary frames such as {@code PRIV},
  * {@code GEOB}, {@code POPM}, comments with a description) is kept as an opaque {@link Frame}
- * that a rewrite can carry over.
+ * that a rewrite can carry over, except a {@code SEEK} frame, whose offset no longer holds once
+ * the tag is rewritten ({@link #seekOffset()} reads it).
  *
  * <p>Writing produces a tag without unsynchronization, extended header or footer: text in
  * ISO-8859-1 when it fits and otherwise UTF-16 (version 2.3) or UTF-8 (version 2.4); several
@@ -46,6 +51,11 @@ public final class Id3v2Tag {
      * The size of the tag header, in bytes.
      */
     public static final int HEADER_SIZE = 10;
+
+    /**
+     * The owner identifier of the {@code PRIV} frame holding XMP, with its terminator.
+     */
+    private static final byte[] XMP_OWNER = {'X', 'M', 'P', 0};
 
     /**
      * The largest tag body a syncsafe size can declare.
@@ -94,6 +104,16 @@ public final class Id3v2Tag {
     private static final String SLASH = "/";
 
     /**
+     * The owner of the {@code UFID} frame holding the MusicBrainz recording identifier.
+     */
+    private static final String MUSICBRAINZ = "http://musicbrainz.org";
+
+    /**
+     * The {@code TXXX} description that stores a MusicBrainz recording identifier a {@code UFID} frame cannot hold.
+     */
+    private static final String MUSICBRAINZ_TRACK_ID = "MusicBrainz Track Id";
+
+    /**
      * The tag version (2, 3 or 4).
      */
     private final int major;
@@ -104,14 +124,21 @@ public final class Id3v2Tag {
     private final List<Frame> frames;
 
     /**
+     * Whether the version 2.4 extended header flags the tag as an update of an earlier one.
+     */
+    private final boolean update;
+
+    /**
      * Constructs a tag.
      *
      * @param major the tag version
      * @param frames the frames in tag order, copied
+     * @param update whether the tag is flagged as an update
      */
-    private Id3v2Tag(int major, List<Frame> frames) {
+    private Id3v2Tag(int major, List<Frame> frames, boolean update) {
         this.major = major;
         this.frames = List.copyOf(frames);
+        this.update = update;
     }
 
     /**
@@ -126,6 +153,30 @@ public final class Id3v2Tag {
      */
     public List<Frame> frames() {
         return frames;
+    }
+
+    /**
+     * {@return whether the extended header of a version 2.4 tag flags it as an update, whose unique frames override
+     * those of a tag found earlier in the file}
+     */
+    public boolean isUpdate() {
+        return update;
+    }
+
+    /**
+     * Returns the offset of the next tag that a {@code SEEK} frame declares.
+     *
+     * @return the number of bytes from the end of this tag to the start of the next, or {@code -1} when the tag has no
+     * well-formed {@code SEEK} frame
+     */
+    public long seekOffset() {
+        for (var frame : frames) {
+            if (frame.id().equals("SEEK") && (frame.flags() & ENCRYPTED) == 0) {
+                var data = frame.data();
+                return data.length >= 4 ? ByteArrays.u32be(data, 0) : -1;
+            }
+        }
+        return -1;
     }
 
     /**
@@ -197,19 +248,21 @@ public final class Id3v2Tag {
             length = removeUnsynchronization(body, 0, length);
         }
         var offset = 0;
+        var update = false;
         if ((flags & 0x40) != 0 && major >= 3) {
             if (length < 4) {
-                return new Id3v2Tag(major, List.of());
+                return new Id3v2Tag(major, List.of(), false);
             }
             var extended = major == 4 ? syncsafe(body, 0) : (int) Math.min(Integer.MAX_VALUE, ByteArrays.u32be(body, 0) + 4);
             if (extended < 0 || extended > length) {
-                return new Id3v2Tag(major, List.of());
+                return new Id3v2Tag(major, List.of(), false);
             }
+            update = major == 4 && extended >= 6 && body[4] >= 1 && (body[5] & 0x40) != 0;
             offset = extended;
         }
         var frames = new ArrayList<Frame>();
         readFrames(body, offset, length, major, major == 4 && tagUnsync, limits, keep, frames);
-        return new Id3v2Tag(major, frames);
+        return new Id3v2Tag(major, frames, update);
     }
 
     /**
@@ -393,7 +446,10 @@ public final class Id3v2Tag {
         String time = null;
         String timestamp = null;
         var lyricsSeen = false;
+        var ratingSeen = false;
         var dateIndex = -1;
+        XmpPacket xmp = null;
+        Frame xmpFrame = null;
         for (var frame : frames) {
             if ((frame.flags() & ENCRYPTED) != 0) {
                 opaque.add(frame);
@@ -454,6 +510,33 @@ public final class Id3v2Tag {
                         }
                     }
                     case "CHAP", "CTOC" -> chapterFrames.add(frame);
+                    case "SEEK" -> {
+                    }
+                    case "UFID" -> {
+                        var identifier = musicBrainzId(data);
+                        if (identifier != null) {
+                            add(entries, StandardTag.MUSICBRAINZ_RECORDING_ID.key(), identifier);
+                        } else {
+                            opaque.add(frame);
+                        }
+                    }
+                    case "PRIV" -> {
+                        var packet = xmp == null ? xmpPacket(data) : null;
+                        if (packet != null) {
+                            xmp = packet;
+                            xmpFrame = frame;
+                        } else {
+                            opaque.add(frame);
+                        }
+                    }
+                    case "POPM" -> {
+                        var popularimeter = ratingSeen ? null : Popularimeter.parse(data);
+                        if (popularimeter != null) {
+                            ratingSeen = true;
+                            add(entries, StandardTag.RATING.key(), popularimeter.ratingText());
+                        }
+                        opaque.add(frame);
+                    }
                     default -> {
                         if (id.length() == 4 && id.charAt(0) == 'T') {
                             for (var value : text(data)) {
@@ -478,7 +561,25 @@ public final class Id3v2Tag {
             entries.add(Math.max(0, Math.min(dateIndex, entries.size())), new MediaTags.Entry(StandardTag.DATE.key(), date));
         }
         decodeChapters(chapterFrames, chapters);
-        return new Content(entries, pictures, chapters, opaque, chapterFrames);
+        return new Content(entries, pictures, chapters, opaque, chapterFrames, xmp, xmpFrame);
+    }
+
+    /**
+     * Decodes the XMP packet of a {@code PRIV} frame.
+     *
+     * @param data the frame content: a terminated ISO-8859-1 owner and the private data
+     * @return the packet, or {@code null} for another owner or data that is no packet
+     */
+    private static XmpPacket xmpPacket(byte[] data) {
+        if (data.length <= XMP_OWNER.length || !Arrays.equals(data, 0, XMP_OWNER.length, XMP_OWNER, 0,
+                XMP_OWNER.length)) {
+            return null;
+        }
+        try {
+            return XmpPacket.parse(Arrays.copyOfRange(data, XMP_OWNER.length, data.length));
+        } catch (MediaException.Malformed exception) {
+            return null;
+        }
     }
 
     /**
@@ -630,7 +731,9 @@ public final class Id3v2Tag {
      * identifier, the form a demuxer reports.
      *
      * <p>A {@code TXXX} frame is keyed {@code TXXX:} followed by its description, and a comment
-     * {@code COMM} whatever its description. The values of one frame, and the values of frames
+     * {@code COMM} whatever its description, a {@code UFID} frame of owner {@code http://musicbrainz.org}
+     * {@code UFID} with its identifier, and the first {@code POPM} frame {@code POPM} with its rating as
+     * {@link StandardTag#RATING} describes it. The values of one frame, and the values of frames
      * with the same key, are joined with {@code "; "}; blank values and encrypted frames are
      * skipped.
      *
@@ -657,6 +760,16 @@ public final class Id3v2Tag {
                 }
             } else if (id.charAt(0) == 'T') {
                 putField(fields, id, String.join("; ", text(data)));
+            } else if (id.equals("UFID")) {
+                var identifier = musicBrainzId(data);
+                if (identifier != null) {
+                    putField(fields, id, identifier);
+                }
+            } else if (id.equals("POPM") && !fields.containsKey(id)) {
+                var popularimeter = Popularimeter.parse(data);
+                if (popularimeter != null) {
+                    putField(fields, id, popularimeter.ratingText());
+                }
             }
         }
         return fields;
@@ -789,6 +902,38 @@ public final class Id3v2Tag {
     }
 
     /**
+     * Decodes the identifier of a MusicBrainz {@code UFID} frame.
+     *
+     * @param data the frame content: a terminated ISO-8859-1 owner and up to 64 identifier bytes
+     * @return the identifier, or {@code null} for another owner or a blank identifier
+     */
+    private static String musicBrainzId(byte[] data) {
+        var ownerEnd = terminator(data, 0, data.length, 0);
+        if (ownerEnd >= data.length || !new String(data, 0, ownerEnd, StandardCharsets.ISO_8859_1).equals(MUSICBRAINZ)) {
+            return null;
+        }
+        var identifier = new String(data, ownerEnd + 1, data.length - ownerEnd - 1, StandardCharsets.ISO_8859_1).strip();
+        var end = identifier.indexOf(0);
+        identifier = end >= 0 ? identifier.substring(0, end) : identifier;
+        return identifier.isBlank() ? null : identifier;
+    }
+
+    /**
+     * Encodes the content of a MusicBrainz {@code UFID} frame.
+     *
+     * @param identifier the identifier, at most 64 printable ASCII characters
+     * @return the content
+     */
+    private static byte[] musicBrainzContent(String identifier) {
+        var out = new ByteWriter(64);
+        out.bytes(MUSICBRAINZ.getBytes(StandardCharsets.ISO_8859_1));
+        out.u8(0);
+        var bytes = identifier.getBytes(StandardCharsets.ISO_8859_1);
+        out.bytes(bytes);
+        return out.toByteArray();
+    }
+
+    /**
      * Decodes text in an ID3v2 encoding.
      *
      * @param data the bytes
@@ -900,6 +1045,14 @@ public final class Id3v2Tag {
             case "TCR" -> "TCOP";
             case "TPB" -> "TPUB";
             case "TBP" -> "TBPM";
+            case "TRC" -> "TSRC";
+            case "TST" -> "TSOT";
+            case "TSP" -> "TSOP";
+            case "TSA" -> "TSOA";
+            case "TS2" -> "TSO2";
+            case "TSC" -> "TSOC";
+            case "UFI" -> "UFID";
+            case "POP" -> "POPM";
             case "TXX" -> "TXXX";
             case "COM" -> "COMM";
             case "ULT" -> "USLT";
@@ -912,7 +1065,8 @@ public final class Id3v2Tag {
      *
      * <p>The entries become text, comment, lyrics and URL frames in order of first appearance of
      * their key, followed by one {@code APIC} frame per picture, a {@code CTOC} frame and one
-     * {@code CHAP} frame per chapter, and the carried-over frames. When {@code exactSize} is
+     * {@code CHAP} frame per chapter, the {@code PRIV} frame of the XMP packet, and the carried-over frames. When
+     * {@code exactSize} is
      * positive and the frames fit it, the tag is padded to exactly that size; otherwise
      * {@code padding} zero bytes follow the frames.
      *
@@ -929,13 +1083,36 @@ public final class Id3v2Tag {
      */
     public static byte[] encode(MediaTags tags, List<Frame> preserved, List<Frame> chapterFrames, int major,
                                 long exactSize, int padding) {
+        return encode(tags, preserved, chapterFrames, null, major, exactSize, padding);
+    }
+
+    /**
+     * Encodes a tag, keeping the {@code PRIV} frame the XMP packet was read from while the packet is unchanged.
+     *
+     * @param tags the tags to write
+     * @param preserved the opaque frames to carry over; frames of another version than {@code major} are converted when
+     * possible and dropped otherwise
+     * @param chapterFrames the chapter frames to carry over unchanged instead of encoding {@code tags.chapters()}, or
+     * {@code null}
+     * @param xmpFrame the frame the XMP packet of the file was read from, written unchanged when it holds the packet
+     * of {@code tags}, or {@code null}
+     * @param major the version to write, 3 or 4
+     * @param exactSize the size to fill, or {@code 0}
+     * @param padding the padding when the tag does not fill {@code exactSize}
+     * @return the encoded tag, header included
+     * @throws MediaException.LimitExceeded if the tag exceeds the 256 MiB an ID3v2 tag can hold
+     * @see #encode(MediaTags, List, List, int, long, int)
+     */
+    public static byte[] encode(MediaTags tags, List<Frame> preserved, List<Frame> chapterFrames, Frame xmpFrame,
+                                int major, long exactSize, int padding) {
         var out = new ByteWriter(4096);
         var grouped = new LinkedHashMap<String, List<String>>();
         for (var entry : tags.entries()) {
             grouped.computeIfAbsent(entry.key(), _ -> new ArrayList<>()).add(entry.value());
         }
+        var template = ratingTemplate(preserved);
         for (var group : grouped.entrySet()) {
-            writeEntry(out, group.getKey(), group.getValue(), major);
+            writeEntry(out, group.getKey(), group.getValue(), major, template);
         }
         for (var picture : tags.pictures()) {
             writeFrame(out, "APIC", 0, pictureContent(picture, major), major);
@@ -947,8 +1124,19 @@ public final class Id3v2Tag {
         } else if (!tags.chapters().isEmpty()) {
             writeChapters(out, tags.chapters(), major);
         }
+        if (tags.xmp().isPresent()) {
+            var packet = tags.xmp().get();
+            if (xmpFrame != null && packet.equals(xmpPacket(xmpFrame.data())) && xmpFrame.major() != 2) {
+                writePreserved(out, xmpFrame, major);
+            } else {
+                var content = new ByteWriter(4096);
+                content.bytes(XMP_OWNER);
+                content.bytes(packet.toBytes());
+                writeFrame(out, "PRIV", 0, content.toByteArray(), major);
+            }
+        }
         for (var frame : preserved) {
-            if ((frame.flags() & TAG_ALTER) == 0) {
+            if ((frame.flags() & TAG_ALTER) == 0 && frame != template) {
                 writePreserved(out, frame, major);
             }
         }
@@ -978,11 +1166,13 @@ public final class Id3v2Tag {
      * @param tags the tags to encode
      * @param preserved the opaque frames to carry over
      * @param chapterFrames the chapter frames to carry over, or {@code null}
+     * @param xmpFrame the frame the XMP packet of the file was read from, or {@code null}
      * @param major the version
      * @return the size in bytes
      */
-    public static long framesSize(MediaTags tags, List<Frame> preserved, List<Frame> chapterFrames, int major) {
-        return encode(tags, preserved, chapterFrames, major, 0, 0).length - HEADER_SIZE;
+    public static long framesSize(MediaTags tags, List<Frame> preserved, List<Frame> chapterFrames, Frame xmpFrame,
+                                  int major) {
+        return encode(tags, preserved, chapterFrames, xmpFrame, major, 0, 0).length - HEADER_SIZE;
     }
 
     /**
@@ -992,11 +1182,34 @@ public final class Id3v2Tag {
      * @param key the tag key
      * @param values the values of the key, in order
      * @param major the version
+     * @param template the {@code POPM} frame whose e-mail address and counter a rating keeps, or {@code null}
      */
-    private static void writeEntry(ByteWriter out, String key, List<String> values, int major) {
+    private static void writeEntry(ByteWriter out, String key, List<String> values, int major, Frame template) {
         var standard = StandardTag.fromName(key);
         if (standard.isPresent()) {
             switch (standard.get()) {
+                case MUSICBRAINZ_RECORDING_ID -> {
+                    var identifier = values.getFirst();
+                    if (identifier.length() <= 64 && identifier.chars().allMatch(c -> c > 0x20 && c < 0x7F)) {
+                        writeFrame(out, "UFID", 0, musicBrainzContent(identifier), major);
+                    } else {
+                        writeUserText(out, MUSICBRAINZ_TRACK_ID, values, major);
+                    }
+                    return;
+                }
+                case RATING -> {
+                    var rating = Popularimeter.ratingByte(values.getFirst());
+                    if (rating >= 0) {
+                        var kept = template != null ? Popularimeter.parse(template.data()) : null;
+                        var popularimeter = kept != null ? new Popularimeter(kept.email(), rating, kept.counter())
+                                : new Popularimeter("", rating, new byte[0]);
+                        writeFrame(out, "POPM", template != null ? template.flags() & ~GROUPING : 0,
+                                popularimeter.content(), major);
+                        return;
+                    }
+                    writeUserText(out, standard.get().id3Description(), values, major);
+                    return;
+                }
                 case COMMENT -> {
                     writeFrame(out, "COMM", 0, describedContent(String.join("\n", values), major), major);
                     return;
@@ -1013,8 +1226,10 @@ public final class Id3v2Tag {
                     var frame = standard.get().id3Frame();
                     if (frame.isPresent()) {
                         writeFrame(out, frame.get(), 0, textContent(values, major, true), major);
-                        return;
+                    } else {
+                        writeUserText(out, standard.get().id3Description(), values, major);
                     }
+                    return;
                 }
             }
         }
@@ -1023,15 +1238,43 @@ public final class Id3v2Tag {
         } else if (key.length() == 4 && isValidId(key) && key.charAt(0) == 'W' && !key.equals("WXXX")) {
             writeFrame(out, key, 0, values.getFirst().getBytes(StandardCharsets.ISO_8859_1), major);
         } else {
-            var all = new ArrayList<String>(values.size() + 1);
-            all.add(key);
-            if (major == 3) {
-                all.add(String.join(SLASH, values));
-            } else {
-                all.addAll(values);
-            }
-            writeFrame(out, "TXXX", 0, textContent(all, major, false), major);
+            writeUserText(out, key, values, major);
         }
+    }
+
+    /**
+     * Writes a {@code TXXX} user text frame.
+     *
+     * @param out the destination
+     * @param description the frame description
+     * @param values the values of the tag, joined with {@code /} in version 2.3
+     * @param major the version
+     */
+    private static void writeUserText(ByteWriter out, String description, List<String> values, int major) {
+        var all = new ArrayList<String>(values.size() + 1);
+        all.add(description);
+        if (major == 3) {
+            all.add(String.join(SLASH, values));
+        } else {
+            all.addAll(values);
+        }
+        writeFrame(out, "TXXX", 0, textContent(all, major, false), major);
+    }
+
+    /**
+     * Returns the first carried-over {@code POPM} frame that decodes, the frame a rating replaces.
+     *
+     * @param preserved the opaque frames to carry over
+     * @return the frame, or {@code null}
+     */
+    private static Frame ratingTemplate(List<Frame> preserved) {
+        for (var frame : preserved) {
+            if (frame.id().equals("POPM") && frame.major() != 2 && (frame.flags() & ENCRYPTED) == 0
+                    && Popularimeter.parse(frame.data()) != null) {
+                return frame;
+            }
+        }
+        return null;
     }
 
     /**
@@ -1441,6 +1684,69 @@ public final class Id3v2Tag {
     }
 
     /**
+     * The content of a {@code POPM} popularimeter frame.
+     *
+     * @param email the e-mail address of the user the rating belongs to, possibly empty
+     * @param rating the rating byte, from 0 (unknown) to 255
+     * @param counter the play counter bytes, possibly empty
+     */
+    record Popularimeter(String email, int rating, byte[] counter) {
+        /**
+         * Parses a frame's content.
+         *
+         * @param data the content
+         * @return the popularimeter, or {@code null} when the e-mail address is unterminated or the rating missing
+         */
+        static Popularimeter parse(byte[] data) {
+            var end = terminator(data, 0, data.length, 0);
+            if (end + 1 >= data.length) {
+                return null;
+            }
+            return new Popularimeter(new String(data, 0, end, StandardCharsets.ISO_8859_1), data[end + 1] & 0xFF,
+                    Arrays.copyOfRange(data, end + 2, data.length));
+        }
+
+        /**
+         * {@return the content}
+         */
+        byte[] content() {
+            var out = new ByteWriter(email.length() + 2 + counter.length);
+            out.bytes(email.getBytes(StandardCharsets.ISO_8859_1));
+            out.u8(0);
+            out.u8(rating);
+            out.bytes(counter);
+            return out.toByteArray();
+        }
+
+        /**
+         * {@return the rating as {@link StandardTag#RATING} text: five times the byte over 255, at most two
+         * decimals}
+         */
+        String ratingText() {
+            return BigDecimal.valueOf(rating * 5L).divide(BigDecimal.valueOf(255), 2, RoundingMode.HALF_UP)
+                    .stripTrailingZeros().toPlainString();
+        }
+
+        /**
+         * Converts {@link StandardTag#RATING} text to the nearest rating byte.
+         *
+         * @param text the rating, a number from 0 to 5
+         * @return the byte, or {@code -1} when the text is not such a number
+         */
+        static int ratingByte(String text) {
+            try {
+                var value = new BigDecimal(text.strip());
+                if (value.signum() < 0 || value.compareTo(BigDecimal.valueOf(5)) > 0) {
+                    return -1;
+                }
+                return value.multiply(BigDecimal.valueOf(51)).setScale(0, RoundingMode.HALF_UP).intValueExact();
+            } catch (NumberFormatException | ArithmeticException exception) {
+                return -1;
+            }
+        }
+    }
+
+    /**
      * A chapter as a {@code CHAP} frame stores it.
      *
      * @param startMillis the start, in milliseconds
@@ -1458,9 +1764,11 @@ public final class Id3v2Tag {
      * @param chapters the chapters in start order
      * @param opaque the frames without a {@link MediaTags} representation
      * @param chapterFrames the {@code CHAP} and {@code CTOC} frames as read
+     * @param xmp the XMP packet of the first {@code PRIV} frame of owner {@code XMP} that holds one, or {@code null}
+     * @param xmpFrame the frame {@code xmp} was read from, or {@code null}
      */
     public record Content(List<MediaTags.Entry> entries, List<AttachedPicture> pictures, List<Chapter> chapters,
-                          List<Frame> opaque, List<Frame> chapterFrames) {
+                          List<Frame> opaque, List<Frame> chapterFrames, XmpPacket xmp, Frame xmpFrame) {
         /**
          * {@return the decoded content as tags}
          */
@@ -1468,6 +1776,9 @@ public final class Id3v2Tag {
             var builder = MediaTags.builder();
             for (var entry : entries) {
                 builder.add(entry.key(), entry.value());
+            }
+            if (xmp != null) {
+                builder.xmp(xmp);
             }
             return builder.pictures(pictures).chapters(chapters).build();
         }

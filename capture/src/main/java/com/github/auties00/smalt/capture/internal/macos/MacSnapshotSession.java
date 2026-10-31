@@ -2,6 +2,8 @@ package com.github.auties00.smalt.capture.internal.macos;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.capture.CaptureDevice;
+import com.github.auties00.smalt.capture.ScreenCaptureOptions;
+import com.github.auties00.smalt.capture.internal.CaptureArea;
 import com.github.auties00.smalt.capture.internal.FramePacing;
 import com.github.auties00.smalt.capture.internal.convert.YuvCoefficients;
 import com.github.auties00.smalt.track.Rational;
@@ -16,11 +18,12 @@ import java.util.concurrent.locks.LockSupport;
  * ScreenCaptureKit (before 12.3).
  *
  * <p>A platform thread wakes once per frame interval, takes a {@code CGDisplayCreateImage}
- * snapshot, draws it scaled into an sRGB BGRX bitmap context of the session size (which also
+ * snapshot, draws it scaled into an sRGB BGRX bitmap context of the screen's size (which also
  * normalizes the pixel format and color space of whatever the snapshot holds), and converts the
- * bitmap to limited-range BT.709 4:2:0. When a snapshot takes longer than an interval the missed
- * ticks are skipped rather than queued. A snapshot that fails (the display disconnected, or the
- * Screen Recording permission was revoked) fails the session.
+ * captured area of the bitmap (the screen, or the part of the options' region on it) to limited-range
+ * BT.709 4:2:0. Snapshots never hold the pointer, so it is not drawn whatever the options ask. When a
+ * snapshot takes longer than an interval the missed ticks are skipped rather than queued. A snapshot that
+ * fails (the display disconnected, or the Screen Recording permission was revoked) fails the session.
  */
 final class MacSnapshotSession extends MacCaptureSession {
     /**
@@ -59,6 +62,21 @@ final class MacSnapshotSession extends MacCaptureSession {
     private final long stride;
 
     /**
+     * The width of the bitmap, the screen's even width.
+     */
+    private final int sourceWidth;
+
+    /**
+     * The height of the bitmap, the screen's even height.
+     */
+    private final int sourceHeight;
+
+    /**
+     * The part of {@link #bitmap} from the first pixel of the captured area on.
+     */
+    private final MemorySegment area;
+
+    /**
      * Cleared to stop the capture thread.
      */
     private volatile boolean running;
@@ -82,18 +100,20 @@ final class MacSnapshotSession extends MacCaptureSession {
      * Creates a session.
      *
      * @param displayId the display
-     * @param width the picture width, even
-     * @param height the picture height, even
+     * @param captured the captured area of the screen, which sets the picture size
      * @param frameRate the frames per second
      */
-    private MacSnapshotSession(CaptureDevice.Screen screen, int displayId, int width, int height, Rational frameRate) {
-        super(screen, width, height, 0);
+    private MacSnapshotSession(CaptureDevice.Screen screen, int displayId, CaptureArea captured, Rational frameRate) {
+        super(screen, captured.width(), captured.height(), 0);
         this.displayId = displayId;
         this.intervalNanos = FramePacing.periodNanos(frameRate);
         this.converter = new FrameConverter();
         this.arena = Arena.ofShared();
-        this.stride = 4L * width;
-        this.bitmap = arena.allocate(stride * height, 64);
+        this.sourceWidth = screen.width() & ~1;
+        this.sourceHeight = screen.height() & ~1;
+        this.stride = 4L * sourceWidth;
+        this.bitmap = arena.allocate(stride * sourceHeight, 64);
+        this.area = bitmap.asSlice(captured.y() * stride + 4L * captured.x());
         this.colorSpace = MemorySegment.NULL;
         this.context = MemorySegment.NULL;
     }
@@ -103,21 +123,17 @@ final class MacSnapshotSession extends MacCaptureSession {
      *
      * <p>Runs on a platform thread inside an autorelease pool.
      *
-     * @param frameRate the frames per second
+     * @param options the frame rate and region; the pointer is never drawn
      * @return the running session
      * @throws MediaException.Io if the permission is missing or the drawing context cannot
      * be created
-     * @throws MediaException.Unsupported if the screen is smaller than 2x2 pixels
+     * @throws MediaException.Unsupported if the captured area is smaller than 2x2 pixels
      */
-    static MacSnapshotSession open(CaptureDevice.Screen screen, Rational frameRate) {
+    static MacSnapshotSession open(CaptureDevice.Screen screen, ScreenCaptureOptions options) {
         MacDisplays.requireCapturePermission();
         var displayId = MacDisplays.displayId(screen);
-        var width = screen.width() & ~1;
-        var height = screen.height() & ~1;
-        if (width == 0 || height == 0) {
-            throw new MediaException.Unsupported("capture size", "the screen " + screen.name() + " is smaller than 2x2 pixels");
-        }
-        var session = new MacSnapshotSession(screen, displayId, width, height, frameRate);
+        var captured = CaptureArea.of(options, screen.width(), screen.height(), "the screen " + screen.name());
+        var session = new MacSnapshotSession(screen, displayId, captured, FramePacing.atMost(options.frameRate(), 1_000));
         try {
             session.start();
             return session;
@@ -135,7 +151,7 @@ final class MacSnapshotSession extends MacCaptureSession {
     private void start() {
         colorSpace = CoreGraphics.createSrgb();
         context = ObjC.isNull(colorSpace) ? MemorySegment.NULL
-                : CoreGraphics.createBitmapContext(bitmap, width(), height(), stride, colorSpace);
+                : CoreGraphics.createBitmapContext(bitmap, sourceWidth, sourceHeight, stride, colorSpace);
         if (ObjC.isNull(context)) {
             throw new MediaException.Io("cannot create the screen capture bitmap", new IOException("CGBitmapContextCreate failed"));
         }
@@ -158,7 +174,7 @@ final class MacSnapshotSession extends MacCaptureSession {
                 }
                 var timestamp = exchange.micros(System.nanoTime());
                 var target = exchange.acquire();
-                converter.bgra(bitmap, stride, width(), height(), target, YuvCoefficients.BT709_LIMITED);
+                converter.bgra(area, stride, width(), height(), target, YuvCoefficients.BT709_LIMITED);
                 exchange.publish(target, timestamp);
             } catch (Throwable failure) {
                 exchange.fail(failure instanceof MediaException.Io io ? io
@@ -189,7 +205,7 @@ final class MacSnapshotSession extends MacCaptureSession {
                 return false;
             }
             try {
-                CoreGraphics.drawImage(context, width(), height(), image);
+                CoreGraphics.drawImage(context, sourceWidth, sourceHeight, image);
             } finally {
                 CoreGraphics.releaseImage(image);
             }

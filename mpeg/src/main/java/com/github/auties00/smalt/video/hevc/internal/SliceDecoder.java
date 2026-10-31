@@ -17,7 +17,7 @@ import java.util.function.IntConsumer;
  *
  * <p>Instances are reused across slice segments and are not thread-safe.
  */
-public final class SliceDecoder {
+public final class SliceDecoder implements NeighborAvailability {
     /**
      * {@code ctxIdxMap} of Table 9-50, the significance context of each position of a 4x4 block.
      */
@@ -400,6 +400,34 @@ public final class SliceDecoder {
     private int rdpcmDirection;
 
     /**
+     * The palette mode decoder and the palette predictor of the slice segment.
+     */
+    private final PaletteCoding palette = new PaletteCoding();
+
+    /**
+     * The quantization parameters of the components of a palette coding unit.
+     */
+    private final int[] paletteQp = new int[3];
+
+    /**
+     * {@code tu_residual_act_flag} of the transform unit being decoded: its residuals are
+     * collected in {@link #actResidual} and color transformed before they are added.
+     */
+    private boolean actTu;
+
+    /**
+     * The residual samples of the three components of a transform unit coded with the adaptive
+     * color transform.
+     */
+    private final int[][] actResidual = {new int[32 * 32], new int[32 * 32], new int[32 * 32]};
+
+    /**
+     * Whether each component of {@link #actResidual} holds a residual of the current transform
+     * unit; a component without one has a zero residual.
+     */
+    private final boolean[] actPresent = new boolean[3];
+
+    /**
      * Constructs a decoder.
      */
     public SliceDecoder() {
@@ -602,6 +630,10 @@ public final class SliceDecoder {
             var row = ctbAddrRs / sps.widthInCtbs;
             System.arraycopy(cabac.states, 0, pic.wppStates, row * CabacTables.COUNT, CabacTables.COUNT);
             System.arraycopy(statCoeff, 0, pic.wppStatCoeff, row * 4, 4);
+            if (sps.paletteModeEnabled) {
+                pic.wppPaletteSize[row] = palette.store(pic.wppPalette, row * pic.paletteStride,
+                        sps.paletteMaxPredictorSize);
+            }
         }
         saveBottomLine();
         if (cabac.overrun()) {
@@ -621,7 +653,7 @@ public final class SliceDecoder {
         }
         var col = ctbAddrRs - row * widthCtbs;
         var shift = sps.log2CtbSize;
-        var planes = sps.chromaFormatIdc == 0 ? 1 : 3;
+        var planes = sps.chromaArrayType == 0 ? 1 : 3;
         for (var c = 0; c < planes; c++) {
             var sx = c == 0 ? 0 : sps.chromaShiftX;
             var sy = c == 0 ? 0 : sps.chromaShiftY;
@@ -648,6 +680,9 @@ public final class SliceDecoder {
             System.arraycopy(cabac.states, 0, pic.dependentStates, 0, CabacTables.COUNT);
             System.arraycopy(statCoeff, 0, pic.dependentStatCoeff, 0, 4);
             pic.dependentQp = lastQpY;
+            if (sps.paletteModeEnabled) {
+                pic.dependentPaletteSize = palette.store(pic.dependentPalette, 0, sps.paletteMaxPredictorSize);
+            }
         }
     }
 
@@ -689,6 +724,10 @@ public final class SliceDecoder {
                 var above = ctbAddrRs / widthCtbs - 1;
                 System.arraycopy(pic.wppStates, above * CabacTables.COUNT, cabac.states, 0, CabacTables.COUNT);
                 System.arraycopy(pic.wppStatCoeff, above * 4, statCoeff, 0, 4);
+                if (sps.paletteModeEnabled) {
+                    palette.load(pic.wppPalette, above * pic.paletteStride, sps.paletteMaxPredictorSize,
+                            pic.wppPaletteSize[above]);
+                }
             } else {
                 initializeContexts();
             }
@@ -698,6 +737,9 @@ public final class SliceDecoder {
                 System.arraycopy(pic.dependentStates, 0, cabac.states, 0, CabacTables.COUNT);
                 System.arraycopy(pic.dependentStatCoeff, 0, statCoeff, 0, 4);
                 lastQpY = pic.dependentQp;
+                if (sps.paletteModeEnabled) {
+                    palette.load(pic.dependentPalette, 0, sps.paletteMaxPredictorSize, pic.dependentPaletteSize);
+                }
                 firstQuantGroup = false;
             } else {
                 initializeContexts();
@@ -716,6 +758,9 @@ public final class SliceDecoder {
     private void initializeContexts() {
         CabacTables.init(initType, header.sliceQp, cabac.states);
         java.util.Arrays.fill(statCoeff, 0);
+        if (sps.paletteModeEnabled) {
+            palette.initialize(sps, pps);
+        }
     }
 
     /**
@@ -728,7 +773,8 @@ public final class SliceDecoder {
      * @param yNb the neighboring luma y
      * @return {@code true} when the neighbor is decoded, in the same slice and in the same tile
      */
-    boolean available(int xCurr, int yCurr, int xNb, int yNb) {
+    @Override
+    public boolean available(int xCurr, int yCurr, int xNb, int yNb) {
         if (xNb < 0 || yNb < 0 || xNb >= sps.width || yNb >= sps.height) {
             return false;
         }
@@ -972,6 +1018,12 @@ public final class SliceDecoder {
             predictionUnit(x0, y0, size, size, x0, y0, log2Size, 0, true, PART_2Nx2N);
         } else {
             cuIntra = header.sliceType == HevcSliceHeader.I || cabac.decodeBin(CabacTables.PRED_MODE) == 1;
+            if (cuIntra && sps.paletteModeEnabled && log2Size <= sps.log2MaxTbSize
+                    && cabac.decodeBin(CabacTables.PALETTE_MODE) == 1) {
+                paletteCodingUnit(x0, y0, log2Size);
+                finishCodingUnit(x0, y0, size);
+                return;
+            }
             if (!cuIntra || log2Size == sps.log2MinCbSize) {
                 partMode = partMode(log2Size);
             }
@@ -1006,6 +1058,74 @@ public final class SliceDecoder {
             }
         }
         finishCodingUnit(x0, y0, size);
+    }
+
+    /**
+     * Parses and reconstructs a coding unit coded in palette mode (7.3.8.13 and 8.4.4.2.7), then
+     * updates the palette predictor.
+     *
+     * @param x0 the luma x of the coding block
+     * @param y0 the luma y of the coding block
+     * @param log2Size the coding block size as a power of two
+     */
+    private void paletteCodingUnit(int x0, int y0, int log2Size) {
+        var size = 1 << log2Size;
+        markIntra(x0, y0, size);
+        var w4 = pic.width4;
+        var blocks = size >> 2;
+        var start = blockIndex(x0, y0);
+        for (var j = 0; j < blocks; j++) {
+            for (var i = 0; i < blocks; i++) {
+                pic.flags[start + j * w4 + i] |= PictureState.PALETTE;
+                pic.intraMode[start + j * w4 + i] = 1;
+            }
+        }
+        var escape = palette.parseHeader(cabac, sps, log2Size);
+        if (escape) {
+            deltaQp();
+            if (!bypass && header.cuChromaQpOffsetEnabled && !chromaQpOffsetCoded) {
+                chromaQpOffset();
+            }
+        }
+        palette.parseIndices(cabac);
+        palette.parseEscapes(cabac, sps, bypass);
+        var components = sps.chromaArrayType == 0 ? 1 : 3;
+        for (var c = 0; c < components; c++) {
+            paletteQp[c] = escape && !bypass ? quantizer(c) : 0;
+        }
+        palette.reconstruct(frame, sps, x0, y0, bypass, paletteQp);
+        palette.updatePredictor(sps.paletteMaxPredictorSize);
+    }
+
+    /**
+     * Parses a {@code delta_qp()} structure (7.3.8.14) when the quantization group has no
+     * {@code CuQpDeltaVal} yet, and derives {@code QpY} (equation 8-283).
+     *
+     * @throws MediaException.Malformed if {@code CuQpDeltaVal} is out of range
+     */
+    private void deltaQp() {
+        if (!pps.cuQpDeltaEnabled || cuQpDeltaCoded) {
+            return;
+        }
+        var abs = 0;
+        var ctx = CabacTables.CU_QP_DELTA;
+        while (abs < 5 && cabac.decodeBin(ctx) == 1) {
+            abs++;
+            ctx = CabacTables.CU_QP_DELTA + 1;
+        }
+        if (abs == 5) {
+            abs += expGolomb(0);
+        }
+        var value = abs;
+        if (abs > 0 && cabac.decodeBypass() == 1) {
+            value = -abs;
+        }
+        var qpBdOffset = 6 * (sps.bitDepthLuma - 8);
+        if (value < -(26 + qpBdOffset / 2) || value > 25 + qpBdOffset / 2) {
+            throw new MediaException.Malformed("CuQpDeltaVal out of range");
+        }
+        cuQpDeltaCoded = true;
+        qpY = ((qpYPred + value + 52 + 2 * qpBdOffset) % (52 + qpBdOffset)) - qpBdOffset;
     }
 
     /**
@@ -1668,31 +1788,19 @@ public final class SliceDecoder {
                                int cbfLuma, int cbfCb, int cbfCr) {
         var chroma = sps.chromaArrayType != 0;
         var cbfChroma = chroma && (cbfCb != 0 || cbfCr != 0);
+        actTu = false;
         if (cbfLuma != 0 || cbfChroma) {
-            if (pps.cuQpDeltaEnabled && !cuQpDeltaCoded) {
-                var abs = 0;
-                var ctx = CabacTables.CU_QP_DELTA;
-                while (abs < 5 && cabac.decodeBin(ctx) == 1) {
-                    abs++;
-                    ctx = CabacTables.CU_QP_DELTA + 1;
-                }
-                if (abs == 5) {
-                    abs += expGolomb(0);
-                }
-                var value = abs;
-                if (abs > 0 && cabac.decodeBypass() == 1) {
-                    value = -abs;
-                }
-                var qpBdOffset = 6 * (sps.bitDepthLuma - 8);
-                if (value < -(26 + qpBdOffset / 2) || value > 25 + qpBdOffset / 2) {
-                    throw new MediaException.Malformed("CuQpDeltaVal out of range");
-                }
-                cuQpDeltaCoded = true;
-                qpY = ((qpYPred + value + 52 + 2 * qpBdOffset) % (52 + qpBdOffset)) - qpBdOffset;
+            if (pps.actEnabled && (!cuIntra || (chromaSyntax[0] == 4 && chromaSyntax[1] == 4 && chromaSyntax[2] == 4
+                    && chromaSyntax[3] == 4))) {
+                actTu = cabac.decodeBin(CabacTables.ACT_FLAG) == 1;
             }
+            deltaQp();
             if (cbfChroma && !bypass && header.cuChromaQpOffsetEnabled && !chromaQpOffsetCoded) {
                 chromaQpOffset();
             }
+        }
+        if (actTu) {
+            java.util.Arrays.fill(actPresent, false);
         }
         var size = 1 << log2Size;
         if (cuIntra) {
@@ -1721,6 +1829,9 @@ public final class SliceDecoder {
             resScaleVal = crossComponent ? crossComponentScale(1) : 0;
             chromaBlocks(x0, y0, log2SizeC, 2, cbfCr);
             resScaleVal = 0;
+            if (actTu) {
+                inverseColorTransform(x0, y0, log2Size);
+            }
         } else if (blkIdx == 3) {
             chromaBlocks(xBase, yBase, 2, 1, cbfCb);
             chromaBlocks(xBase, yBase, 2, 2, cbfCr);
@@ -1881,15 +1992,16 @@ public final class SliceDecoder {
             IntraPredictor.substitute(boundary, boundaryAvailable, count, bitDepth);
         }
         var filter = !sps.intraSmoothingDisabled && (cIdx == 0 || sps.chromaArrayType == 3);
-        var edgeFilters = cIdx == 0 && !(sps.implicitRdpcm && bypass);
+        var dcFilter = !sps.intraBoundaryFilteringDisabled;
+        var edgeFilters = cIdx == 0 && dcFilter && !(sps.implicitRdpcm && bypass);
         if (plane8 == null) {
-            intra.predict(boundary, log2Size, mode, cIdx == 0, filter, sps.strongIntraSmoothing, edgeFilters, bitDepth,
-                    plane, yc * stride + xc, stride);
+            intra.predict(boundary, log2Size, mode, cIdx == 0, filter, sps.strongIntraSmoothing, edgeFilters, dcFilter,
+                    bitDepth, plane, yc * stride + xc, stride);
             return;
         }
         var predicted = intraBlock;
-        intra.predict(boundary, log2Size, mode, cIdx == 0, filter, sps.strongIntraSmoothing, edgeFilters, bitDepth,
-                predicted, 0, size);
+        intra.predict(boundary, log2Size, mode, cIdx == 0, filter, sps.strongIntraSmoothing, edgeFilters, dcFilter,
+                bitDepth, predicted, 0, size);
         for (var y = 0; y < size; y++) {
             var row = (yc + y) * stride + xc;
             var in = y * size;
@@ -2304,7 +2416,8 @@ public final class SliceDecoder {
             var coeffMin = -(1L << log2Range);
             var finalShift = Math.max(20 - bitDepth, sps.extendedPrecision ? 11 : 0);
             if (columns == 1 && rows == 1 && !transformSkip && log2Range <= 15 && rdpcmDirection < 0
-                    && !pps.crossComponentPrediction && frame.eightBit() && !(cuIntra && cIdx == 0 && log2Size == 2)) {
+                    && !pps.crossComponentPrediction && !actTu && frame.eightBit()
+                    && !(cuIntra && cIdx == 0 && log2Size == 2)) {
                 var column = Math.clamp((64 * coeffs[0] + 64) >> 7, -32768, 32767);
                 coeffs[0] = 0;
                 var dc = (64 * column + (1 << (finalShift - 1))) >> finalShift;
@@ -2341,7 +2454,12 @@ public final class SliceDecoder {
         } else if (resScaleVal != 0 && lumaResidualValid) {
             addCrossComponent(res, count);
         }
-        addResidual(x0, y0, size, cIdx, res);
+        if (actTu) {
+            System.arraycopy(res, 0, actResidual[cIdx], 0, count);
+            actPresent[cIdx] = true;
+        } else {
+            addResidual(x0, y0, size, cIdx, res);
+        }
         for (var y = 0; y < rows; y++) {
             java.util.Arrays.fill(coeffs, y * size, y * size + columns, 0);
         }
@@ -2402,7 +2520,59 @@ public final class SliceDecoder {
         var res = residual;
         java.util.Arrays.fill(res, 0, count, 0);
         addCrossComponent(res, count);
-        addResidual(x0, y0, size, cIdx, res);
+        if (actTu) {
+            System.arraycopy(res, 0, actResidual[cIdx], 0, count);
+            actPresent[cIdx] = true;
+        } else {
+            addResidual(x0, y0, size, cIdx, res);
+        }
+    }
+
+    /**
+     * Applies the adaptive color transform to the residuals of the three components of a 4:4:4
+     * transform unit (8.6.8.2) and adds them to the predicted samples.
+     *
+     * @param x0 the luma x of the transform unit
+     * @param y0 the luma y of the transform unit
+     * @param log2Size the transform block size as a power of two
+     */
+    private void inverseColorTransform(int x0, int y0, int log2Size) {
+        var size = 1 << log2Size;
+        var count = size * size;
+        for (var c = 0; c < 3; c++) {
+            if (!actPresent[c]) {
+                java.util.Arrays.fill(actResidual[c], 0, count, 0);
+            }
+        }
+        var rY = actResidual[0];
+        var rCb = actResidual[1];
+        var rCr = actResidual[2];
+        var maxY = (1 << sps.log2TransformRangeLuma) - 1;
+        var minY = -(1 << sps.log2TransformRangeLuma);
+        var maxC = (1 << sps.log2TransformRangeChroma) - 1;
+        var minC = -(1 << sps.log2TransformRangeChroma);
+        var depth = Math.max(sps.bitDepthLuma, sps.bitDepthChroma);
+        var deltaY = bypass ? 0 : depth - sps.bitDepthLuma;
+        var deltaC = bypass ? 0 : depth - sps.bitDepthChroma;
+        var chromaShift = bypass ? 0 : deltaC + 1;
+        var offsetY = deltaY > 0 ? 1 << (deltaY - 1) : 0;
+        var offsetC = deltaC > 0 ? 1 << (deltaC - 1) : 0;
+        for (var i = 0; i < count; i++) {
+            var y = Math.clamp(rY[i], minY, maxY) << deltaY;
+            var cb = Math.clamp(rCb[i], minC, maxC) << chromaShift;
+            var cr = Math.clamp(rCr[i], minC, maxC) << chromaShift;
+            var t = y - (cb >> 1);
+            y = t + cb;
+            cb = t - (cr >> 1);
+            cr += cb;
+            rY[i] = (y + offsetY) >> deltaY;
+            rCb[i] = (cb + offsetC) >> deltaC;
+            rCr[i] = (cr + offsetC) >> deltaC;
+        }
+        actTu = false;
+        addResidual(x0, y0, size, 0, rY);
+        addResidual(x0, y0, size, 1, rCb);
+        addResidual(x0, y0, size, 2, rCr);
     }
 
     /**
@@ -2457,11 +2627,13 @@ public final class SliceDecoder {
     private int quantizer(int cIdx) {
         var qpBdOffsetY = 6 * (sps.bitDepthLuma - 8);
         if (cIdx == 0) {
-            return Math.clamp(qpY + qpBdOffsetY, 0, 51 + qpBdOffsetY);
+            var act = actTu ? pps.actQpOffset[0] + header.actQpOffset[0] : 0;
+            return Math.clamp(qpY + qpBdOffsetY + act, 0, 51 + qpBdOffsetY);
         }
         var qpBdOffsetC = 6 * (sps.bitDepthChroma - 8);
-        var offset = cIdx == 1 ? pps.cbQpOffset + header.cbQpOffset + cuQpOffsetCb
-                : pps.crQpOffset + header.crQpOffset + cuQpOffsetCr;
+        var cuOffset = cIdx == 1 ? cuQpOffsetCb : cuQpOffsetCr;
+        var offset = actTu ? pps.actQpOffset[cIdx] + header.actQpOffset[cIdx] + cuOffset
+                : cIdx == 1 ? pps.cbQpOffset + header.cbQpOffset + cuOffset : pps.crQpOffset + header.crQpOffset + cuOffset;
         var qPi = Math.clamp(qpY + offset, -qpBdOffsetC, 57);
         int qPc;
         if (sps.chromaArrayType == 1) {
