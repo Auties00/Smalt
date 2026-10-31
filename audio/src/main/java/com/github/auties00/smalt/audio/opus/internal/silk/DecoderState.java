@@ -1,6 +1,8 @@
 /* Ports libopus 1.5.2 (silk/structs.h). Copyright Skype Limited; BSD 3-Clause License. Modified for Smalt. */
 package com.github.auties00.smalt.audio.opus.internal.silk;
 
+import com.github.auties00.smalt.audio.opus.internal.dnn.Osce;
+
 import java.util.Arrays;
 
 import static com.github.auties00.smalt.audio.opus.internal.silk.Define.MAX_FRAMES_PER_PACKET;
@@ -174,6 +176,16 @@ public final class DecoderState {
     public final PlcState sPLC = new PlcState();
 
     /**
+     * Whether the channel behaves as the reference built with the deep PLC and OSCE.
+     */
+    public boolean dnn;
+
+    /**
+     * The speech enhancer of the channel, or {@code null} outside deep PLC mode; kept across resets.
+     */
+    public Osce osce;
+
+    /**
      * The scratch buffer of the dequantized pulses of {@code silk_decode_frame}, rounded up to a
      * whole number of shell blocks.
      */
@@ -225,6 +237,16 @@ public final class DecoderState {
      * The scratch buffer of the LPC coefficients of {@code silk_PLC_conceal}.
      */
     final short[] scratchPlcA_Q12 = new short[MAX_LPC_ORDER];
+
+    /**
+     * The scratch buffer of the gains of the last two subframes, in Q10, of {@code silk_PLC_conceal}.
+     */
+    final int[] scratchPlcPrevGain_Q10 = new int[2];
+
+    /**
+     * The scratch buffer of the packed energies of the last two subframes of {@code silk_PLC_conceal}.
+     */
+    final long[] scratchPlcEnergies = new long[2];
 
     /**
      * The scratch buffer of the comfort noise excitation of {@code silk_CNG}.

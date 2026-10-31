@@ -466,37 +466,45 @@ final class IntraPredictor {
     }
 
     /**
-     * Predicts an 8x8 chroma block of a 4:2:0 macroblock (ITU-T H.264 8.3.4).
+     * Predicts the 8x8 (4:2:0) or 8x16 (4:2:2) chroma block of a macroblock (ITU-T H.264
+     * 8.3.4).
      *
      * @param mode the intra_chroma_pred_mode, 0 to 3
      * @param plane the chroma plane
      * @param offset the index of the block's top-left sample
      * @param stride the row stride
-     * @param hasLeft whether the left references are available
+     * @param rows the block height {@code MbHeightC}, 8 or 16
+     * @param leftBlocks the 4-row groups whose left references are available, bit {@code i} for
+     * rows {@code 4i} to {@code 4i + 3}
      * @param hasTop whether the top references are available
      * @param hasTopLeft whether the corner reference is available
      */
-    void predictChroma(int mode, byte[] plane, int offset, int stride, boolean hasLeft, boolean hasTop,
+    void predictChroma(int mode, byte[] plane, int offset, int stride, int rows, int leftBlocks, boolean hasTop,
                        boolean hasTopLeft) {
         var above = offset - stride;
+        var blockRows = rows >> 2;
         switch (mode) {
             case 0 -> {
-                for (var by = 0; by < 2; by++) {
+                var sumTop0 = 0;
+                var sumTop1 = 0;
+                if (hasTop) {
+                    for (var i = 0; i < 4; i++) {
+                        sumTop0 += plane[above + i] & 0xFF;
+                        sumTop1 += plane[above + 4 + i] & 0xFF;
+                    }
+                }
+                for (var by = 0; by < blockRows; by++) {
+                    var hasLeft = ((leftBlocks >> by) & 1) != 0;
+                    var sumLeft = 0;
+                    if (hasLeft) {
+                        for (var i = 0; i < 4; i++) {
+                            sumLeft += plane[offset + (by * 4 + i) * stride - 1] & 0xFF;
+                        }
+                    }
                     for (var bx = 0; bx < 2; bx++) {
-                        var sumTop = 0;
-                        var sumLeft = 0;
-                        if (hasTop) {
-                            for (var i = 0; i < 4; i++) {
-                                sumTop += plane[above + bx * 4 + i] & 0xFF;
-                            }
-                        }
-                        if (hasLeft) {
-                            for (var i = 0; i < 4; i++) {
-                                sumLeft += plane[offset + (by * 4 + i) * stride - 1] & 0xFF;
-                            }
-                        }
+                        var sumTop = bx == 0 ? sumTop0 : sumTop1;
                         int dc;
-                        if (bx == by) {
+                        if ((bx == 0) == (by == 0)) {
                             if (hasTop && hasLeft) {
                                 dc = (sumTop + sumLeft + 4) >> 3;
                             } else if (hasLeft) {
@@ -528,7 +536,7 @@ final class IntraPredictor {
                 }
             }
             case 1 -> {
-                for (var y = 0; y < 8; y++) {
+                for (var y = 0; y < rows; y++) {
                     var row = offset + y * stride;
                     var value = plane[row - 1];
                     for (var x = 0; x < 8; x++) {
@@ -537,30 +545,35 @@ final class IntraPredictor {
                 }
             }
             case 2 -> {
-                for (var y = 0; y < 8; y++) {
+                for (var y = 0; y < rows; y++) {
                     System.arraycopy(plane, above, plane, offset + y * stride, 8);
                 }
             }
             default -> {
-                if (!hasTop || !hasLeft || !hasTopLeft) {
-                    fill(plane, offset, stride, 8, 128);
+                if (!hasTop || leftBlocks != (1 << blockRows) - 1 || !hasTopLeft) {
+                    for (var y = 0; y < rows; y += 8) {
+                        fill(plane, offset + y * stride, stride, 8, 128);
+                    }
                     return;
                 }
+                var yCF = rows == 16 ? 4 : 0;
                 var h = 0;
                 var v = 0;
                 for (var i = 0; i < 4; i++) {
                     h += (i + 1) * ((plane[above + 4 + i] & 0xFF) - (plane[above + 2 - i] & 0xFF));
-                    v += (i + 1) * ((plane[offset + (4 + i) * stride - 1] & 0xFF)
-                            - (plane[offset + (2 - i) * stride - 1] & 0xFF));
                 }
-                var a = 16 * ((plane[offset + 7 * stride - 1] & 0xFF) + (plane[above + 7] & 0xFF));
+                for (var i = 0; i < 4 + yCF; i++) {
+                    v += (i + 1) * ((plane[offset + (4 + yCF + i) * stride - 1] & 0xFF)
+                            - (plane[offset + (2 + yCF - i) * stride - 1] & 0xFF));
+                }
+                var a = 16 * ((plane[offset + (rows - 1) * stride - 1] & 0xFF) + (plane[above + 7] & 0xFF));
                 var b = (34 * h + 32) >> 6;
-                var c = (34 * v + 32) >> 6;
-                for (var y = 0; y < 8; y++) {
+                var c = ((yCF != 0 ? 5 : 34) * v + 32) >> 6;
+                for (var y = 0; y < rows; y++) {
                     var row = offset + y * stride;
-                    var base = a + c * (y - 3) + 16 - 3 * b;
+                    var start = a + c * (y - 3 - yCF) + 16 - 3 * b;
                     for (var x = 0; x < 8; x++) {
-                        plane[row + x] = (byte) clip((base + b * x) >> 5);
+                        plane[row + x] = (byte) clip((start + b * x) >> 5);
                     }
                 }
             }
