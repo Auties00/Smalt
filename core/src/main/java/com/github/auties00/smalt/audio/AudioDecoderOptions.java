@@ -11,14 +11,16 @@ import java.util.OptionalInt;
  * and thread-safe; create them with {@link #builder()} or a preset such as {@link #defaults()}.
  */
 public final class AudioDecoderOptions {
-    private static final AudioDecoderOptions DEFAULTS = new AudioDecoderOptions(MediaLimits.DEFAULT, 0);
+    private static final AudioDecoderOptions DEFAULTS = new AudioDecoderOptions(MediaLimits.DEFAULT, 0, false);
 
     private final MediaLimits limits;
     private final int preferredSampleRate;
+    private final boolean verifyIntegrity;
 
-    private AudioDecoderOptions(MediaLimits limits, int preferredSampleRate) {
+    private AudioDecoderOptions(MediaLimits limits, int preferredSampleRate, boolean verifyIntegrity) {
         this.limits = limits;
         this.preferredSampleRate = preferredSampleRate;
+        this.verifyIntegrity = verifyIntegrity;
     }
 
     /**
@@ -67,21 +69,37 @@ public final class AudioDecoderOptions {
         return preferredSampleRate == 0 ? OptionalInt.empty() : OptionalInt.of(preferredSampleRate);
     }
 
+    /**
+     * {@return whether the decoder checks the whole-stream checksum the stream carries; {@code false} by default}
+     *
+     * <p>FLAC carries one, the MD5 signature of {@code STREAMINFO}, and WavPack its MD5 signature metadata. When it is
+     * set (not all zeros) and the first frame decoded starts the stream, the flush compares the signature with the
+     * decoded samples and raises
+     * {@link com.github.auties00.smalt.MediaException.Malformed} on a mismatch, as it does when frames were lost or
+     * repeated or the decode ended before the declared length. A decode that starts after the first sample is not
+     * checked. The check hashes every decoded sample, a cost linear in the length of the stream.
+     */
+    public boolean verifyIntegrity() {
+        return verifyIntegrity;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof AudioDecoderOptions that
                 && limits.equals(that.limits)
-                && preferredSampleRate == that.preferredSampleRate;
+                && preferredSampleRate == that.preferredSampleRate
+                && verifyIntegrity == that.verifyIntegrity;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(limits, preferredSampleRate);
+        return Objects.hash(limits, preferredSampleRate, verifyIntegrity);
     }
 
     @Override
     public String toString() {
-        return "AudioDecoderOptions[limits=" + limits + ", preferredSampleRate=" + preferredSampleRate + "]";
+        return "AudioDecoderOptions[limits=" + limits + ", preferredSampleRate=" + preferredSampleRate
+                + ", verifyIntegrity=" + verifyIntegrity + "]";
     }
 
     /**
@@ -93,10 +111,12 @@ public final class AudioDecoderOptions {
     public static final class Builder {
         private MediaLimits limits;
         private OptionalInt preferredSampleRate;
+        private boolean verifyIntegrity;
 
         private Builder(AudioDecoderOptions options) {
             this.limits = options.limits;
             this.preferredSampleRate = options.preferredSampleRate();
+            this.verifyIntegrity = options.verifyIntegrity;
         }
 
         /**
@@ -133,6 +153,17 @@ public final class AudioDecoderOptions {
         }
 
         /**
+         * Sets whether the whole-stream checksum is checked; see {@link AudioDecoderOptions#verifyIntegrity()}.
+         *
+         * @param verify the value
+         * @return this builder
+         */
+        public Builder verifyIntegrity(boolean verify) {
+            this.verifyIntegrity = verify;
+            return this;
+        }
+
+        /**
          * Returns options holding the settings of this builder.
          *
          * @return the options
@@ -141,7 +172,7 @@ public final class AudioDecoderOptions {
         public AudioDecoderOptions build() {
             var rate = preferredSampleRate.isPresent()
                     ? Checks.positive("preferred sample rate", preferredSampleRate.getAsInt()) : 0;
-            return new AudioDecoderOptions(limits, rate);
+            return new AudioDecoderOptions(limits, rate, verifyIntegrity);
         }
     }
 }
