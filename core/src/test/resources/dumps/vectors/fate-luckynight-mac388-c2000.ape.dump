@@ -1,0 +1,38 @@
+# demux dump of vectors/fate-luckynight-mac388-c2000.ape; regenerate with -Dsmalt.test.updateDumps=true
+format APE
+duration 60480000
+seekable true
+track 0 AUDIO APE timebase=1/44100 duration=2667168 config=32:0ee695fd
+  audio rate=44100 bits=16 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 15
+0 t0 pts=0 dts=0 dur=9216 flags=KEY size=15694 crc=ac6d59a6
+1 t0 pts=9216 dts=9216 dur=9216 flags=KEY size=16970 crc=386f806b
+2 t0 pts=18432 dts=18432 dur=9216 flags=KEY size=17228 crc=a536d844
+3 t0 pts=27648 dts=27648 dur=9216 flags=KEY size=16831 crc=433ffcd5
+4 t0 pts=36864 dts=36864 dur=9216 flags=KEY size=16619 crc=d91f9d6e
+5 t0 pts=46080 dts=46080 dur=9216 flags=KEY size=17129 crc=1c72e508
+6 t0 pts=55296 dts=55296 dur=9216 flags=KEY size=16909 crc=a8347773
+7 t0 pts=64512 dts=64512 dur=9216 flags=KEY size=24504 crc=1c426066
+8 t0 pts=73728 dts=73728 dur=9216 flags=KEY size=22670 crc=5f12e45a
+9 t0 pts=82944 dts=82944 dur=9216 flags=KEY size=25049 crc=c4252a1e
+10 t0 pts=92160 dts=92160 dur=9216 flags=KEY size=24225 crc=9b572b47
+11 t0 pts=101376 dts=101376 dur=9216 flags=KEY size=25359 crc=b89dda09
+12 t0 pts=110592 dts=110592 dur=9216 flags=KEY size=23014 crc=4437fe66
+13 t0 pts=119808 dts=119808 dur=9216 flags=KEY size=22504 crc=c8e77a89
+14 t0 pts=129024 dts=129024 dur=9216 flags=KEY size=23357 crc=503511a0
+seek 0: t0@0
+seek 20160000: end
+seek 40320000: end
+seek 3134694: end
+seek 60480000: end
+seek -1000000: t0@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format APE
+  duration 60480000
+  seekable false
+  track 0 AUDIO APE timebase=1/44100 duration=2667168 config=32:0ee695fd
+    audio rate=44100 bits=16 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+not seekable over UNKNOWN_LENGTH
+seek refused over READ_ONCE: 0
+seek refused over READ_ONCE: -1000000
+not seekable over READ_ONCE_UNKNOWN_LENGTH

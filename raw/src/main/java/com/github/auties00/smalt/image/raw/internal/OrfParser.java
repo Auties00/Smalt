@@ -87,7 +87,7 @@ final class OrfParser {
             sensor.reader = (plane, limits) -> {
                 var row = new byte[width * 2];
                 for (var y = 0; y < plane.height; y++) {
-                    var read = source.read(offset + (long) y * row.length, row, 0, row.length);
+                    var read = reader.readAvailable(offset + (long) y * row.length, row, 0, row.length);
                     if (read <= 0) {
                         return;
                     }
@@ -106,7 +106,7 @@ final class OrfParser {
                 LimitChecks.checkAllocation(limits, stride);
                 var row = new byte[stride];
                 for (var y = 0; y < plane.height; y++) {
-                    var read = source.read(offset + (long) y * stride, row, 0, stride);
+                    var read = reader.readAvailable(offset + (long) y * stride, row, 0, stride);
                     if (read <= 0) {
                         return;
                     }
@@ -145,7 +145,7 @@ final class OrfParser {
                 LimitChecks.checkAllocation(limits, stride);
                 var row = new byte[stride];
                 for (var y = 0; y < plane.height; y++) {
-                    var read = source.read(offset + (long) y * stride, row, 0, stride);
+                    var read = reader.readAvailable(offset + (long) y * stride, row, 0, stride);
                     if (read <= 0) {
                         return;
                     }
@@ -170,8 +170,31 @@ final class OrfParser {
         sensor.white = new double[]{(1 << sensor.bitsPerSample) - 1};
         if (processing != null) {
             levels(processing, sensor, file);
+            sensor.lens = VendorLens.olympus(processing.doubles(0x150A), processing.doubles(0x150C),
+                    imageArea(processing, sensor), sensor.width, sensor.height);
         }
         file.sensor = sensor;
+    }
+
+    /**
+     * Returns the image area the image processing directory records: {@code CropLeft} ({@code 0x0612}),
+     * {@code CropTop} ({@code 0x0613}), {@code CropWidth} ({@code 0x0614}) and {@code CropHeight}
+     * ({@code 0x0615}).
+     *
+     * @param processing the image processing directory
+     * @param sensor the sensor description
+     * @return the area as x, y, width and height, or {@code null} when it is absent or outside the image
+     */
+    private static double[] imageArea(Ifd processing, Sensor sensor) {
+        var left = processing.longs(0x0612);
+        var top = processing.longs(0x0613);
+        var width = processing.longValue(0x0614, 0);
+        var height = processing.longValue(0x0615, 0);
+        if (left == null || top == null || left.length == 0 || top.length == 0 || width <= 0 || height <= 0
+                || left[0] + width > sensor.width || top[0] + height > sensor.height) {
+            return null;
+        }
+        return new double[]{left[0], top[0], width, height};
     }
 
     /**

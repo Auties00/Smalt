@@ -44,6 +44,26 @@ final class JpegTestVectors {
         return fetch("ljt-testorig12.jpg", TURBO_OLD + "testorig12.jpg", "34790770f76db8e60a7765b52ca4edf5f16bc21bcb8c6045ca2efef39a8a013e");
     }
 
+    static byte[] test1Icc() {
+        return fetch("ljt-test1.icc", TURBO + "test1.icc", "1a996ebe6b5d1e7a21620993ce1903df16e4e8fa6cca312bedfb5ae133e62b4d");
+    }
+
+    static byte[] testScan() {
+        return fetch("ljt-test.scan", TURBO + "test.scan", "a6e81cd5f36367b301e1d1c20902ec70357e4eb66ad8105a39bacc394475b144");
+    }
+
+    static byte[] testorigPgm() {
+        return fetch("ljt-testorig.pgm", TURBO + "testorig.pgm", "e9250f272bb11de5452dcebd12500ebc8f418fc30530c39f0edfee76ad2eaac9");
+    }
+
+    static byte[] monkey16Ppm() {
+        return fetch("ljt-monkey16.ppm", TURBO + "monkey16.ppm", "030176fd82427469b57a80caf8cce9b62e4214291f44424f2022a081b5b04163");
+    }
+
+    static byte[] monkey16Pgm() {
+        return fetch("ljt-monkey16.pgm", TURBO + "monkey16.pgm", "8d122b926fba68154c4e3d73d29496c8bc67a8498ab34bb3edde56093364359f");
+    }
+
     static byte[] ijgTestimgPpm() {
         return fetch("ijg6b-testimg.ppm", IJG + "testimg.ppm", "b64a47d529e289e5570648db9f0385d9b240448724cdde7716fa0139b121d491");
     }

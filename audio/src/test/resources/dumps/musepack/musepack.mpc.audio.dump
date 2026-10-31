@@ -1,0 +1,22 @@
+# audio decode dump of musepack/musepack.mpc; regenerate with -Dsmalt.test.updateDumps=true
+format MUSEPACK
+duration 600000
+seekable true
+track 0 MUSEPACK8 rate=44100 layout=[FRONT_LEFT, FRONT_RIGHT]
+0 frames=4096 crc16=099ca175
+1 frames=4096 crc16=6229af79
+2 frames=4096 crc16=634c13ed
+3 frames=4096 crc16=9c6fc248
+4 frames=4096 crc16=91a543ce
+5 frames=4096 crc16=d8d1cc0e
+6 frames=1884 crc16=aaa514a0
+seek 0: @sample 0
+seek 200000: @sample 8820
+seek 400000: @sample 17640
+seek 600000: end
+seek -1000000: @sample 0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format MUSEPACK
+  duration 600000
+  seekable false
+  track 0 MUSEPACK8 rate=44100 layout=[FRONT_LEFT, FRONT_RIGHT]

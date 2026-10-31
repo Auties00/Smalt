@@ -1,5 +1,7 @@
 package com.github.auties00.smalt.capture.internal.windows;
 
+import com.github.auties00.smalt.capture.internal.CaptureArea;
+import com.github.auties00.smalt.capture.internal.Pictures;
 import com.github.auties00.smalt.capture.internal.convert.ConversionKernel;
 import com.github.auties00.smalt.capture.internal.convert.RgbLayout;
 import com.github.auties00.smalt.capture.internal.convert.YuvCoefficients;
@@ -17,9 +19,10 @@ import static java.lang.foreign.ValueLayout.JAVA_INT_UNALIGNED;
  * <p>The image is read two rows at a time into a small heap buffer, the mouse pointer is
  * composed onto those rows, and a {@link ConversionKernel} converts them, so the working
  * set stays in the processor's caches and nothing is allocated per frame. An image stored rotated
- * (a display whose mode is rotated) is first turned upright into a heap copy. The image's even
- * part is converted (an odd last row or column is cropped); when that differs from the picture's
- * size, as after a resolution change, the image is converted at its own size and rescaled.
+ * (a display whose mode is rotated) is first turned upright into a heap copy. The captured area of
+ * the upright image (all of it, or a {@link CaptureArea}) is converted in its even part (an odd last
+ * row or column is cropped); when that differs from the picture's size, as after a resolution change,
+ * the area is converted at its own size and rescaled.
  */
 final class BgraConverter {
     private final ConversionKernel kernel = ConversionKernel.INSTANCE;
@@ -62,12 +65,14 @@ final class BgraConverter {
      * {@link Dxgi#ROTATE_90}, {@link Dxgi#ROTATE_180} and {@link Dxgi#ROTATE_270}
      * mean upright
      * @param pointer the pointer to compose, or {@code null}
+     * @param area the rectangle of the upright image to convert, or {@code null} for all of it; the part
+     * outside the image is ignored
      * @param out the picture receiving the frame
-     * @return whether the image was converted; {@code false} when it has no even part
+     * @return whether the image was converted; {@code false} when the captured area has no even part
      * @throws IndexOutOfBoundsException if the image does not fit in {@code memory}
      */
     boolean convert(MemorySegment memory, long origin, long pitch, int width, int height, int rotation,
-                    PointerOverlay pointer, YuvPicture out) {
+                    PointerOverlay pointer, CaptureArea area, YuvPicture out) {
         var turned = rotation == Dxgi.ROTATE_90 || rotation == Dxgi.ROTATE_270;
         var uprightWidth = turned ? height : width;
         var uprightHeight = turned ? width : height;
@@ -79,11 +84,22 @@ final class BgraConverter {
             sourceOrigin = 0;
             sourcePitch = 4L * uprightWidth;
         }
-        var evenWidth = uprightWidth & ~1;
-        var evenHeight = uprightHeight & ~1;
+        var cropX = 0;
+        var cropY = 0;
+        var cropWidth = uprightWidth;
+        var cropHeight = uprightHeight;
+        if (area != null) {
+            cropX = area.x();
+            cropY = area.y();
+            cropWidth = Math.min(area.width(), uprightWidth - cropX);
+            cropHeight = Math.min(area.height(), uprightHeight - cropY);
+        }
+        var evenWidth = Math.max(0, cropWidth) & ~1;
+        var evenHeight = Math.max(0, cropHeight) & ~1;
         if (evenWidth == 0 || evenHeight == 0) {
             return false;
         }
+        sourceOrigin += cropY * sourcePitch + 4L * cropX;
         var target = out;
         if (evenWidth != out.width() || evenHeight != out.height()) {
             scratch = Pictures.reuse(scratch, evenWidth, evenHeight, out.color());
@@ -101,8 +117,8 @@ final class BgraConverter {
             MemorySegment.copy(source, JAVA_BYTE, sourceOrigin + row * sourcePitch, rows, 0, rowBytes);
             MemorySegment.copy(source, JAVA_BYTE, sourceOrigin + (row + 1) * sourcePitch, rows, rowBytes, rowBytes);
             if (pointer != null) {
-                pointer.apply(rows, 0, row, evenWidth);
-                pointer.apply(rows, rowBytes, row + 1, evenWidth);
+                pointer.apply(rows, 0, cropY + row, cropX, evenWidth);
+                pointer.apply(rows, rowBytes, cropY + row + 1, cropX, evenWidth);
             }
             kernel.rgbToLuma(rows, 0, evenWidth, RgbLayout.BGRX, coefficients, y, row * yStride);
             kernel.rgbToLuma(rows, rowBytes, evenWidth, RgbLayout.BGRX, coefficients, y, (row + 1) * yStride);

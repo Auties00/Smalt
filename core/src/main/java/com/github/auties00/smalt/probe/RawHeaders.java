@@ -57,6 +57,11 @@ final class RawHeaders {
     private static final int MAX_STRING = 256;
 
     /**
+     * The longest XMP packet read from a first directory.
+     */
+    private static final int MAX_XMP = 64 * 1024;
+
+    /**
      * The largest metadata block (CR3 {@code CMT} box) read into memory.
      */
     private static final int MAX_BLOCK = 4 << 20;
@@ -160,6 +165,16 @@ final class RawHeaders {
         String lens;
 
         /**
+         * The {@code tiff:Make} of the first directory's XMP packet, used when no directory has a make tag.
+         */
+        String xmpMake;
+
+        /**
+         * The {@code tiff:Model} of the first directory's XMP packet, used when no directory has a model tag.
+         */
+        String xmpModel;
+
+        /**
          * The capture time, as EXIF writes it ({@code YYYY:MM:DD HH:MM:SS}).
          */
         String dateTimeOriginal;
@@ -215,6 +230,8 @@ final class RawHeaders {
          */
         Map<String, String> tags() {
             var tags = new LinkedHashMap<String, String>();
+            var make = this.make != null && !this.make.isBlank() ? this.make : xmpMake;
+            var model = this.model != null && !this.model.isBlank() ? this.model : xmpModel(make);
             if (make != null && !make.isBlank()) {
                 tags.put("make", make.strip());
             }
@@ -243,6 +260,29 @@ final class RawHeaders {
                         + "T" + date.substring(11, 19));
             }
             return Map.copyOf(tags);
+        }
+
+        /**
+         * Returns the camera name of the XMP {@code tiff:Model}: the text before a serial number in parentheses,
+         * without a leading maker name, as a Leaf MOS file writes {@code Leaf Aptus 22(LF10043)/Mamiya 645 AFD}.
+         *
+         * @param make the maker name, or {@code null}
+         * @return the name, or {@code null} without one
+         */
+        private String xmpModel(String make) {
+            if (xmpModel == null) {
+                return null;
+            }
+            var name = xmpModel;
+            var serial = name.indexOf('(');
+            if (serial >= 0) {
+                name = name.substring(0, serial);
+            }
+            name = name.strip();
+            if (make != null && !make.isBlank() && name.startsWith(make.strip() + " ")) {
+                name = name.substring(make.strip().length()).strip();
+            }
+            return name.isEmpty() ? null : name;
         }
     }
 
@@ -373,6 +413,11 @@ final class RawHeaders {
                         }
                     }
                     case 0x8827 -> state.iso = first;
+                    case 0x2BC -> {
+                        if (firstDirectory && state.xmpModel == null) {
+                            xmp(input, ifd, index, state);
+                        }
+                    }
                     case 0xC620 -> {
                         var size = numbers(input, ifd, index);
                         cropWidth = size[0];
@@ -519,14 +564,14 @@ final class RawHeaders {
         var shot = crwWords(records.get(0x102A), little);
         if (shot.length > 5) {
             if (shot[2] > 0) {
-                state.iso = Math.round(100 * Math.pow(2, (shot[2] - 160 + shot[1]) / 32.0));
+                state.iso = Math.round(100 * StrictMath.pow(2, (shot[2] - 160 + shot[1]) / 32.0));
             }
             if (shot[4] != Short.MIN_VALUE && shot[4] != 0) {
-                state.fNumber = Math.pow(2, shot[4] / 64.0);
+                state.fNumber = StrictMath.pow(2, shot[4] / 64.0);
             }
             if (shot[5] != Short.MIN_VALUE && shot[5] != 0) {
                 state.exposureNumerator = 1_000_000;
-                state.exposureDenominator = Math.max(1, Math.round(1_000_000 * Math.pow(2, shot[5] / 32.0)));
+                state.exposureDenominator = Math.max(1, Math.round(1_000_000 * StrictMath.pow(2, shot[5] / 32.0)));
             }
         }
         var camera = crwWords(records.get(0x102D), little);
@@ -780,6 +825,43 @@ final class RawHeaders {
             }
             position += 2 + size;
         }
+    }
+
+    /**
+     * Reads the {@code tiff:Make} and {@code tiff:Model} elements of an XMP packet entry.
+     *
+     * @param input the bytes holding the structure
+     * @param ifd the directory
+     * @param index the entry index
+     * @param state the collected values
+     */
+    private static void xmp(TiffInput input, Ifd ifd, int index, State state) {
+        var bytes = new byte[(int) Math.min(ifd.valueCount(index), MAX_XMP)];
+        var count = input.readAvailable(ifd.valuePosition(index), bytes, 0, bytes.length);
+        var text = new String(bytes, 0, Math.max(count, 0), StandardCharsets.UTF_8);
+        state.xmpMake = element(text, "tiff:Make");
+        state.xmpModel = element(text, "tiff:Model");
+    }
+
+    /**
+     * Returns the text of the first element of a name, at most {@link #MAX_STRING} characters.
+     *
+     * @param text the XML text
+     * @param name the qualified element name
+     * @return the element's text, or {@code null} without one
+     */
+    private static String element(String text, String name) {
+        var open = text.indexOf("<" + name + ">");
+        if (open < 0) {
+            return null;
+        }
+        var start = open + name.length() + 2;
+        var close = text.indexOf("</" + name + ">", start);
+        if (close < 0) {
+            return null;
+        }
+        var value = text.substring(start, Math.min(close, start + MAX_STRING)).strip();
+        return value.isEmpty() ? null : value;
     }
 
     /**

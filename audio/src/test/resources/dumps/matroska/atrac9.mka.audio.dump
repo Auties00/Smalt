@@ -1,0 +1,12 @@
+# audio decode dump of matroska/atrac9.mka; regenerate with -Dsmalt.test.updateDumps=true
+format MATROSKA
+duration 256000
+seekable true
+track 1 ATRAC9 rate=24000 layout=[FRONT_LEFT, FRONT_RIGHT]
+0 frames=4096 crc16=f9ef38f1
+1 frames=1920 crc16=488f2a2f
+seek 0: @sample 0
+seek 85333: @sample 2048
+seek 170666: @sample 4096
+seek 256000: end
+seek -1000000: @sample 0

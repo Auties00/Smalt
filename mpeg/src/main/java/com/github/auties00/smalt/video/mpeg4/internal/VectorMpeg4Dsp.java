@@ -195,11 +195,6 @@ final class VectorMpeg4Dsp extends ScalarMpeg4Dsp {
     private static final IntVector I_1 = IntVector.broadcast(I256, 1);
 
     /**
-     * Two in 32-bit lanes.
-     */
-    private static final IntVector I_2 = IntVector.broadcast(I256, 2);
-
-    /**
      * Three in 32-bit lanes.
      */
     private static final IntVector I_3 = IntVector.broadcast(I256, 3);
@@ -796,52 +791,35 @@ final class VectorMpeg4Dsp extends ScalarMpeg4Dsp {
                     rounding, scratch);
             return;
         }
-        var cols = width + 1;
         var rows = height + 1;
-        padReference(src, srcOffset, srcStride, cols, rows, scratch);
+        padReference(src, srcOffset, srcStride, width + 1, rows, scratch);
+        var source = INTEGER_PLANE + 3;
         if (quarterX != 0) {
-            vectorHorizontalHalves(scratch, width, rows, rounding);
+            vectorHorizontalPass(scratch, width, rows, quarterX, rounding);
             for (var k = 0; k < 3; k++) {
                 System.arraycopy(scratch, HORIZONTAL_PLANE + (3 + k) * GRID_STRIDE, scratch,
                         HORIZONTAL_PLANE + (2 - k) * GRID_STRIDE, width);
                 System.arraycopy(scratch, HORIZONTAL_PLANE + (2 + rows - k) * GRID_STRIDE, scratch,
                         HORIZONTAL_PLANE + (3 + rows + k) * GRID_STRIDE, width);
             }
+            source = HORIZONTAL_PLANE;
         }
-        if (quarterY != 0) {
-            vectorVerticalHalves(scratch, INTEGER_PLANE + 3, VERTICAL_PLANE, width, height, rounding);
-            verticalHalves(scratch, INTEGER_PLANE + 3 + width, VERTICAL_PLANE + width, 1, height, 16 - rounding);
-            if (quarterX != 0) {
-                vectorVerticalHalves(scratch, HORIZONTAL_PLANE, CENTER_PLANE, width, height, rounding);
-            }
-        }
-        var hx = quarterX >> 1;
-        var hy = quarterY >> 1;
-        var fx = quarterX & 1;
-        var fy = quarterY & 1;
-        var a = gridOrigin(hx, hy);
-        if (fx == 0 && fy == 0) {
-            vectorAverage2(scratch, a, a, dst, dstOffset, dstStride, width, height, 0);
-        } else if (fx == 0 || fy == 0) {
-            vectorAverage2(scratch, a, gridOrigin(hx + fx, hy + fy), dst, dstOffset, dstStride, width, height,
-                    1 - rounding);
-        } else {
-            vectorAverage4(scratch, a, gridOrigin(hx + 1, hy), gridOrigin(hx, hy + 1), gridOrigin(hx + 1, hy + 1), dst,
-                    dstOffset, dstStride, width, height, 2 - rounding);
-        }
+        vectorVerticalPass(scratch, source, dst, dstOffset, dstStride, width, height, quarterY, rounding);
     }
 
     /**
-     * Computes the horizontal half samples of the quarter sample interpolation, eight per vector,
-     * from the padded integer plane into the horizontal plane.
+     * Interpolates every row of the padded reference block to the horizontal fraction into the
+     * horizontal plane, eight samples per vector, as {@link ScalarMpeg4Dsp#horizontalPass} does.
      *
      * @param scratch the scratch buffer
-     * @param width the number of half samples per row, 8 or 16
+     * @param width the number of samples per row, 8 or 16
      * @param rows the number of rows
+     * @param quarterX the horizontal quarter sample fraction, from 1 to 3
      * @param rounding the rounding control, 0 or 1
      */
-    private static void vectorHorizontalHalves(int[] scratch, int width, int rows, int rounding) {
+    private static void vectorHorizontalPass(int[] scratch, int width, int rows, int quarterX, int rounding) {
         var round = rounding == 0 ? I_16 : I_15;
+        var add = rounding == 0 ? I_1 : I_0;
         for (var j = 0; j < rows; j++) {
             for (var x = 0; x < width; x += 8) {
                 var k = INTEGER_PLANE + (j + 3) * GRID_STRIDE + 3 + x;
@@ -859,106 +837,62 @@ final class VectorMpeg4Dsp extends ScalarMpeg4Dsp {
                         .lanewise(VectorOperators.ADD, m2.lanewise(VectorOperators.ADD, t3)
                                 .lanewise(VectorOperators.MUL, I_3))
                         .lanewise(VectorOperators.SUB, m3.lanewise(VectorOperators.ADD, t4));
-                sum.lanewise(VectorOperators.ADD, round).lanewise(VectorOperators.ASHR, 5)
-                        .lanewise(VectorOperators.MAX, I_0).lanewise(VectorOperators.MIN, I_255)
-                        .intoArray(scratch, HORIZONTAL_PLANE + (j + 3) * GRID_STRIDE + x);
+                var value = sum.lanewise(VectorOperators.ADD, round).lanewise(VectorOperators.ASHR, 5)
+                        .lanewise(VectorOperators.MAX, I_0).lanewise(VectorOperators.MIN, I_255);
+                if (quarterX != 2) {
+                    value = value.lanewise(VectorOperators.ADD, quarterX == 3 ? t1 : t0)
+                            .lanewise(VectorOperators.ADD, add).lanewise(VectorOperators.ASHR, 1);
+                }
+                value.intoArray(scratch, HORIZONTAL_PLANE + (j + 3) * GRID_STRIDE + x);
             }
         }
     }
 
     /**
-     * Computes vertical half samples of the quarter sample interpolation, eight per vector, from a
-     * plane padded by three mirrored rows above and below.
+     * Interpolates the columns of a plane padded by three mirrored rows above and below to the
+     * vertical fraction into the destination, eight samples per vector, as {@link
+     * ScalarMpeg4Dsp#verticalPass} does.
      *
      * @param scratch the scratch buffer
      * @param source the index of the first column of the source plane in its top padding row
-     * @param target the index of the target plane
+     * @param dst the destination plane
+     * @param dstOffset the index of the destination's top-left sample
+     * @param dstStride the row stride of the destination
      * @param width the number of columns, 8 or 16
-     * @param height the number of half samples per column
+     * @param height the number of rows
+     * @param quarterY the vertical quarter sample fraction, from 0 to 3
      * @param rounding the rounding control, 0 or 1
      */
-    private static void vectorVerticalHalves(int[] scratch, int source, int target, int width, int height,
-                                             int rounding) {
+    private static void vectorVerticalPass(int[] scratch, int source, byte[] dst, int dstOffset, int dstStride,
+                                           int width, int height, int quarterY, int rounding) {
         var round = rounding == 0 ? I_16 : I_15;
+        var add = rounding == 0 ? I_1 : I_0;
         for (var j = 0; j < height; j++) {
             for (var x = 0; x < width; x += 8) {
                 var k = source + (j + 3) * GRID_STRIDE + x;
                 var t0 = INT_256.cast(IntVector.fromArray(I256, scratch, k));
-                var t1 = INT_256.cast(IntVector.fromArray(I256, scratch, k + GRID_STRIDE));
-                var m1 = INT_256.cast(IntVector.fromArray(I256, scratch, k - GRID_STRIDE));
-                var t2 = INT_256.cast(IntVector.fromArray(I256, scratch, k + 2 * GRID_STRIDE));
-                var m2 = INT_256.cast(IntVector.fromArray(I256, scratch, k - 2 * GRID_STRIDE));
-                var t3 = INT_256.cast(IntVector.fromArray(I256, scratch, k + 3 * GRID_STRIDE));
-                var m3 = INT_256.cast(IntVector.fromArray(I256, scratch, k - 3 * GRID_STRIDE));
-                var t4 = INT_256.cast(IntVector.fromArray(I256, scratch, k + 4 * GRID_STRIDE));
-                var sum = t0.lanewise(VectorOperators.ADD, t1).lanewise(VectorOperators.MUL, I_20)
-                        .lanewise(VectorOperators.SUB, m1.lanewise(VectorOperators.ADD, t2)
-                                .lanewise(VectorOperators.MUL, I_6))
-                        .lanewise(VectorOperators.ADD, m2.lanewise(VectorOperators.ADD, t3)
-                                .lanewise(VectorOperators.MUL, I_3))
-                        .lanewise(VectorOperators.SUB, m3.lanewise(VectorOperators.ADD, t4));
-                sum.lanewise(VectorOperators.ADD, round).lanewise(VectorOperators.ASHR, 5)
-                        .lanewise(VectorOperators.MAX, I_0).lanewise(VectorOperators.MIN, I_255)
-                        .intoArray(scratch, target + j * GRID_STRIDE + x);
-            }
-        }
-    }
-
-    /**
-     * Stores the rounded average of two half sample grid planes, eight samples per vector; passing
-     * the same plane twice with rounding term 0 copies it.
-     *
-     * @param scratch the scratch buffer
-     * @param a the index of the first plane's sample for the top-left output sample
-     * @param b the index of the second plane's sample
-     * @param dst the destination
-     * @param dstOffset the index of the top-left destination sample
-     * @param dstStride the destination row stride
-     * @param width the block width, 8 or 16
-     * @param height the block height
-     * @param add the rounding term, 0 to 2
-     */
-    private static void vectorAverage2(int[] scratch, int a, int b, byte[] dst, int dstOffset, int dstStride,
-                                       int width, int height, int add) {
-        var round = add == 0 ? I_0 : add == 1 ? I_1 : I_2;
-        for (var j = 0; j < height; j++) {
-            for (var x = 0; x < width; x += 8) {
-                var o = j * GRID_STRIDE + x;
-                var value = INT_256.cast(IntVector.fromArray(I256, scratch, a + o))
-                        .lanewise(VectorOperators.ADD, INT_256.cast(IntVector.fromArray(I256, scratch, b + o)))
-                        .lanewise(VectorOperators.ADD, round).lanewise(VectorOperators.ASHR, 1);
-                BYTE_64.cast(value.convertShape(VectorOperators.I2B, B64, 0))
-                        .intoArray(dst, dstOffset + j * dstStride + x);
-            }
-        }
-    }
-
-    /**
-     * Stores the rounded average of four half sample grid planes, eight samples per vector.
-     *
-     * @param scratch the scratch buffer
-     * @param a the index of the first plane's sample for the top-left output sample
-     * @param b the index of the second plane's sample
-     * @param c the index of the third plane's sample
-     * @param d the index of the fourth plane's sample
-     * @param dst the destination
-     * @param dstOffset the index of the top-left destination sample
-     * @param dstStride the destination row stride
-     * @param width the block width, 8 or 16
-     * @param height the block height
-     * @param add the rounding term, 0 to 2
-     */
-    private static void vectorAverage4(int[] scratch, int a, int b, int c, int d, byte[] dst, int dstOffset,
-                                       int dstStride, int width, int height, int add) {
-        var round = add == 0 ? I_0 : add == 1 ? I_1 : I_2;
-        for (var j = 0; j < height; j++) {
-            for (var x = 0; x < width; x += 8) {
-                var o = j * GRID_STRIDE + x;
-                var value = INT_256.cast(IntVector.fromArray(I256, scratch, a + o))
-                        .lanewise(VectorOperators.ADD, INT_256.cast(IntVector.fromArray(I256, scratch, b + o)))
-                        .lanewise(VectorOperators.ADD, INT_256.cast(IntVector.fromArray(I256, scratch, c + o)))
-                        .lanewise(VectorOperators.ADD, INT_256.cast(IntVector.fromArray(I256, scratch, d + o)))
-                        .lanewise(VectorOperators.ADD, round).lanewise(VectorOperators.ASHR, 2);
+                var value = t0;
+                if (quarterY != 0) {
+                    var t1 = INT_256.cast(IntVector.fromArray(I256, scratch, k + GRID_STRIDE));
+                    var m1 = INT_256.cast(IntVector.fromArray(I256, scratch, k - GRID_STRIDE));
+                    var t2 = INT_256.cast(IntVector.fromArray(I256, scratch, k + 2 * GRID_STRIDE));
+                    var m2 = INT_256.cast(IntVector.fromArray(I256, scratch, k - 2 * GRID_STRIDE));
+                    var t3 = INT_256.cast(IntVector.fromArray(I256, scratch, k + 3 * GRID_STRIDE));
+                    var m3 = INT_256.cast(IntVector.fromArray(I256, scratch, k - 3 * GRID_STRIDE));
+                    var t4 = INT_256.cast(IntVector.fromArray(I256, scratch, k + 4 * GRID_STRIDE));
+                    var sum = t0.lanewise(VectorOperators.ADD, t1).lanewise(VectorOperators.MUL, I_20)
+                            .lanewise(VectorOperators.SUB, m1.lanewise(VectorOperators.ADD, t2)
+                                    .lanewise(VectorOperators.MUL, I_6))
+                            .lanewise(VectorOperators.ADD, m2.lanewise(VectorOperators.ADD, t3)
+                                    .lanewise(VectorOperators.MUL, I_3))
+                            .lanewise(VectorOperators.SUB, m3.lanewise(VectorOperators.ADD, t4));
+                    value = sum.lanewise(VectorOperators.ADD, round).lanewise(VectorOperators.ASHR, 5)
+                            .lanewise(VectorOperators.MAX, I_0).lanewise(VectorOperators.MIN, I_255);
+                    if (quarterY != 2) {
+                        value = value.lanewise(VectorOperators.ADD, quarterY == 3 ? t1 : t0)
+                                .lanewise(VectorOperators.ADD, add).lanewise(VectorOperators.ASHR, 1);
+                    }
+                }
                 BYTE_64.cast(value.convertShape(VectorOperators.I2B, B64, 0))
                         .intoArray(dst, dstOffset + j * dstStride + x);
             }

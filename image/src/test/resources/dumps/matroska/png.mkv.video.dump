@@ -1,0 +1,15 @@
+# video decode dump of matroska/png.mkv; regenerate with -Dsmalt.test.updateDumps=true
+format MATROSKA
+duration 500000
+seekable true
+track 1 PNG 64x48 timebase=1/1000
+0 pts=0 dur=100 key=true 64x48 rgba8 alpha=false crc=21a1f87e
+1 pts=100 dur=100 key=true 64x48 rgba8 alpha=false crc=f7f3e90b
+2 pts=200 dur=100 key=true 64x48 rgba8 alpha=false crc=552cf115
+3 pts=300 dur=100 key=true 64x48 rgba8 alpha=false crc=0ab95142
+4 pts=400 dur=100 key=true 64x48 rgba8 alpha=false crc=47f43e96
+seek 0: @0
+seek 166666: @1
+seek 333333: @3
+seek 500000: end
+seek -1000000: @0

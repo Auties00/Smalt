@@ -4,14 +4,15 @@ the extern-C shim next to this script (smalt_apm_shim.h), compiled to wasm32-was
 
 The module is the bit-exact reference VoiceProcessorOracleTest and MobileEchoCancellerOracleTest
 run through Chicory. WebAssembly fixes the floating-point semantics the reference is compiled to:
-IEEE single precision, no fused multiply-add contraction, no SIMD, musl's libm. Besides the basic
-create/process calls the shim exports cobalt_webrtc_apm_create_ex (every echo canceller, noise
-suppression level and gain controller 1 mode, without its analog controller), the analog level
-calls, and the legacy mobile echo canceller API. The checked-in module was built with wasi-sdk 34
-and -O2 from these sources, then named cobalt_webrtc_apm_shim.*, whose only differences are
-comments and preprocessor names; its SHA-256 is
-7f33a13caadb68ba59aa74d2ceb5635aeb8f25605d5bf81ba692e509c738ddad. The export names keep their
-cobalt_webrtc_ prefix until the next rebuild (see the TODO in smalt_apm_shim.h).
+IEEE single precision, no fused multiply-add contraction, no SIMD, musl's libm. The shim exports
+smalt_apm_create, which takes every setting of the configurations the voice processor supports
+(sample rate, channel layout, echo canceller, noise suppression, gain controller 1 with its
+analog controller and clipping predictor, gain controller 2), the process and level calls, and
+some of the APM's building blocks (resampler, band splitting filter, AGC2 voice activity detector,
+the voice activity detector of the analog gain controller, legacy mobile echo canceller) and the
+libm functions the ports of musl are checked against. The checked-in module was built with wasi-sdk
+34 and -O2 from these sources; its SHA-256 is
+f06df17d6540a447743b4d37a2174538e517bfa5caa79388915be21217e2fb8d.
 
 Steps:
 
@@ -28,7 +29,8 @@ Steps:
    It recompiles every source of the APM, its base libraries and abseil with wasi-sdk's clang
    (skipping poison.cc and platform_thread.cc, which need threads), with two upstream files
    patched for wasm32 (see PATCHES), archives each target, compiles the shim next to this script
-   and links a reactor module exporting the shim, malloc and free.
+   and links a reactor module exporting the shim, malloc and free. An object file newer than its
+   source is reused, so a rebuild after a shim change recompiles only the shim.
 """
 import argparse
 import concurrent.futures
@@ -51,11 +53,13 @@ PATCHES = {
 TARGETS = {"libbase", "libapi", "system_wrappers", "common_audio", "libpffft", "librnnoise", "libfft",
            "webrtc-audio-processing-2"}
 
-EXPORTS = ["cobalt_webrtc_apm_create", "cobalt_webrtc_apm_process_reverse", "cobalt_webrtc_apm_process",
-           "cobalt_webrtc_apm_set_stream_delay_ms", "cobalt_webrtc_apm_destroy", "cobalt_webrtc_apm_create_ex",
-           "cobalt_webrtc_apm_set_stream_analog_level", "cobalt_webrtc_apm_recommended_stream_analog_level",
-           "cobalt_webrtc_aecm_create", "cobalt_webrtc_aecm_buffer_farend", "cobalt_webrtc_aecm_process",
-           "cobalt_webrtc_aecm_destroy", "malloc", "free"]
+EXPORTS = ["smalt_apm_create", "smalt_apm_process_reverse", "smalt_apm_process", "smalt_apm_set_stream_delay_ms",
+           "smalt_apm_set_stream_analog_level", "smalt_apm_recommended_stream_analog_level", "smalt_apm_destroy",
+           "smalt_resampler_create", "smalt_resampler_resample", "smalt_resampler_destroy", "smalt_split_create",
+           "smalt_split_analysis", "smalt_split_synthesis", "smalt_split_destroy", "smalt_vad_create",
+           "smalt_vad_analyze", "smalt_vad_destroy", "smalt_aecm_create", "smalt_aecm_buffer_farend",
+           "smalt_aecm_process", "smalt_aecm_destroy", "smalt_libm", "smalt_avad_create",
+           "smalt_avad_process", "smalt_avad_destroy", "malloc", "free"]
 
 
 def main():
@@ -117,6 +121,9 @@ def main():
 
     def compile_one(job):
         os.makedirs(os.path.dirname(job[1]), exist_ok=True)
+        source = job[2][-3]
+        if os.path.exists(job[1]) and os.path.getmtime(job[1]) >= os.path.getmtime(source):
+            return job, 0, ""
         result = subprocess.run(job[2], capture_output=True, text=True)
         return job, result.returncode, result.stderr
 

@@ -1,0 +1,22 @@
+# video decode dump of vvc/ra-420-10bit.mp4; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 600000
+seekable true
+track 1 VVC 136x104 timebase=1/90000
+0 pts=10800 dur=3600 key=false 136x104 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=6208bc9a u=cde03ce0 v=9751564e
+1 pts=14400 dur=3600 key=false 136x104 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=27b7ef01 u=723656b5 v=aeb3c4e7
+2 pts=18000 dur=3600 key=false 136x104 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=6cc6b5d0 u=19dc7f1d v=87369009
+3 pts=21600 dur=3600 key=false 136x104 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=452e41ba u=956fa853 v=344e89fb
+4 pts=25200 dur=3600 key=false 136x104 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=0407e193 u=ce514f4d v=898c8dd4
+5 pts=28800 dur=3600 key=false 136x104 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=40da17f5 u=9c3f77c5 v=5b1d48fc
+6 pts=32400 dur=3600 key=false 136x104 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=8332c2dd u=c4cd484d v=7174c743
+7 pts=36000 dur=3600 key=true 136x104 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=8253d388 u=c006abaa v=433db105
+8 pts=39600 dur=3600 key=false 136x104 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=c7d239ec u=14fd8e99 v=c4442519
+9 pts=43200 dur=3600 key=false 136x104 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=65cd1cee u=4d0a6e80 v=c5f451e1
+10 pts=46800 dur=3600 key=false 136x104 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=d7ed8d90 u=d213332d v=18dcc7dc
+11 pts=50400 dur=3600 key=false 136x104 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=e9b670e7 u=f0f91c81 v=3c8a30a3
+seek 0: @0
+seek 200000: @2
+seek 400000: @7
+seek 600000: end
+seek -1000000: @0
