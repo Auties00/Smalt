@@ -7,7 +7,6 @@ import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Rational;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 /**
@@ -26,22 +25,6 @@ import java.util.Arrays;
  * count 48 kHz samples.
  */
 final class OpusParser extends FrameParser {
-    /**
-     * The coded streams by channel count, for counts 1 to 8 (RFC 7845 clause 5.1.1.2).
-     */
-    private static final int[] STREAMS = {1, 1, 2, 2, 3, 4, 4, 5};
-
-    /**
-     * The coupled streams by channel count, for counts 1 to 8.
-     */
-    private static final int[] COUPLED = {0, 1, 1, 2, 2, 2, 3, 3};
-
-    /**
-     * The Vorbis channel mappings of mapping family 1 by channel count, for counts 1 to 8.
-     */
-    private static final int[][] MAPPINGS = {{0}, {0, 1}, {0, 2, 1}, {0, 1, 2, 3}, {0, 4, 1, 2, 3},
-            {0, 4, 1, 2, 3, 5}, {0, 4, 1, 2, 3, 5, 6}, {0, 6, 1, 2, 3, 4, 5, 7}};
-
     /**
      * Constructs a parser.
      *
@@ -169,41 +152,11 @@ final class OpusParser extends FrameParser {
      */
     private void configure(int preSkip) {
         var code = entry.opusChannels();
-        int channels;
-        int[] mapping;
-        int streams;
-        int coupled;
-        if (code == 0x80) {
-            channels = 2;
-            streams = 2;
-            coupled = 0;
-            mapping = new int[]{0, 1};
-        } else {
-            channels = code >= 1 && code <= 8 ? code : 2;
-            streams = STREAMS[channels - 1];
-            coupled = COUPLED[channels - 1];
-            mapping = MAPPINGS[channels - 1];
-        }
-        var family = channels > 2 || code == 0x80 ? 1 : 0;
-        var head = new byte[family == 0 ? 19 : 21 + channels];
-        System.arraycopy("OpusHead".getBytes(StandardCharsets.US_ASCII), 0, head, 0, 8);
-        head[8] = 1;
-        head[9] = (byte) channels;
-        head[10] = (byte) preSkip;
-        head[11] = (byte) (preSkip >> 8);
-        head[12] = (byte) 0x80;
-        head[13] = (byte) 0xBB;
-        head[18] = (byte) family;
-        if (family != 0) {
-            head[19] = (byte) streams;
-            head[20] = (byte) coupled;
-            for (var index = 0; index < channels; index++) {
-                head[21 + index] = (byte) mapping[index];
-            }
-        }
+        var channels = code == 0x80 ? 2 : code >= 1 && code <= 8 ? code : 2;
+        var head = AudioConfigs.opusHead(channels, preSkip, 48_000, code == 0x80);
         timestampRate = 48_000;
         track = AudioTrack.builder()
-                .id(pid())
+                .id(trackId())
                 .codec(Codec.OPUS)
                 .timeBase(Rational.timeBaseOf(48_000))
                 .codecConfig(head)

@@ -1,0 +1,35 @@
+# demux dump of wav/ima-adpcm.wav; regenerate with -Dsmalt.test.updateDumps=true
+format WAV
+duration 500000
+seekable true
+metadata ISFT="Lavf61.7.100"
+track 0 AUDIO ADPCM_IMA_WAV timebase=1/22050 duration=11025 config=none
+  audio rate=22050 bits=4 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 22
+0 t0 pts=0 dts=0 dur=505 flags=KEY size=512 crc=a7a57e98
+1 t0 pts=505 dts=505 dur=505 flags=KEY size=512 crc=7213824d
+2 t0 pts=1010 dts=1010 dur=505 flags=KEY size=512 crc=3e4bbfda
+3 t0 pts=1515 dts=1515 dur=505 flags=KEY size=512 crc=77e9a547
+4 t0 pts=2020 dts=2020 dur=505 flags=KEY size=512 crc=0b05ca76
+5 t0 pts=2525 dts=2525 dur=505 flags=KEY size=512 crc=00c24001
+6 t0 pts=3030 dts=3030 dur=505 flags=KEY size=512 crc=00b9c52b
+7 t0 pts=3535 dts=3535 dur=505 flags=KEY size=512 crc=a2172fd8
+8 t0 pts=4040 dts=4040 dur=505 flags=KEY size=512 crc=9345385f
+9 t0 pts=4545 dts=4545 dur=505 flags=KEY size=512 crc=853a83be
+10 t0 pts=5050 dts=5050 dur=505 flags=KEY size=512 crc=4d608e54
+11 t0 pts=5555 dts=5555 dur=505 flags=KEY size=512 crc=26c0e2ec
+12 t0 pts=6060 dts=6060 dur=505 flags=KEY size=512 crc=ab744ed3
+13 t0 pts=6565 dts=6565 dur=505 flags=KEY size=512 crc=76ce86c2
+14 t0 pts=7070 dts=7070 dur=505 flags=KEY size=512 crc=4613dc41
+15 t0 pts=7575 dts=7575 dur=505 flags=KEY size=512 crc=e8497f80
+16 t0 pts=8080 dts=8080 dur=505 flags=KEY size=512 crc=18d3d3b6
+17 t0 pts=8585 dts=8585 dur=505 flags=KEY size=512 crc=187ea70d
+18 t0 pts=9090 dts=9090 dur=505 flags=KEY size=512 crc=eb9b18ea
+19 t0 pts=9595 dts=9595 dur=505 flags=KEY size=512 crc=ee030bd7
+20 t0 pts=10100 dts=10100 dur=505 flags=KEY size=512 crc=a2da88ba
+21 t0 pts=10605 dts=10605 dur=420 flags=KEY size=512 crc=9258f068
+seek 0: t0@0
+seek 166666: t0@7
+seek 333333: t0@14
+seek 500000: end
+seek -1000000: t0@0

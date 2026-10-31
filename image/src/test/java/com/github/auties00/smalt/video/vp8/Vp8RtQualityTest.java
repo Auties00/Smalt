@@ -26,7 +26,8 @@ import java.util.Locale;
  * Bjontegaard rate difference. It runs only with {@code -Dvp8rt.quality=true}, writing its table
  * to {@code vp8rt.quality.out}.
  */
-@EnabledIfSystemProperty(named = "vp8rt.quality", matches = "true")
+@EnabledIfSystemProperty(named = "vp8rt.quality", matches = "true",
+        disabledReason = "[opt-in:vp8rt-quality] set -Dvp8rt.quality=true to run the quality report")
 @DisplayName("real-time VP8 quality against libvpx")
 class Vp8RtQualityTest {
     record Clip(String name, int width, int height, int[] kbps) {

@@ -22,6 +22,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.List;
 import java.util.Optional;
@@ -117,6 +118,38 @@ class ContainersApiTest {
         void unknown() {
             assertThrows(MediaException.Unsupported.class, () -> Containers.openDemuxer(MediaSource.of(new byte[300])));
         }
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(booleans = {true, false})
+        @DisplayName("reports running out of stack or memory while reading the structure as a limit")
+        void resources(boolean stack) {
+            var data = MediaSource.of(wav());
+            // every read after the first fails the way a parser recursing without bound, or allocating without
+            // bound, fails inside the demuxer
+            var source = new MediaSource() {
+                private int reads;
+
+                @Override
+                public long size() {
+                    return data.size();
+                }
+
+                @Override
+                public int read(long position, byte[] buffer, int offset, int length) {
+                    if (reads++ > 0) {
+                        throw stack ? new StackOverflowError() : new OutOfMemoryError();
+                    }
+                    return data.read(position, buffer, offset, length);
+                }
+
+                @Override
+                public void close() {
+                }
+            };
+            var exception = assertThrows(MediaException.LimitExceeded.class, () -> Containers.openDemuxer(source));
+            assertEquals(stack ? "container nests too deeply" : "container needs more memory than is available",
+                    exception.getMessage());
+        }
     }
 
     @Nested
@@ -126,6 +159,13 @@ class ContainersApiTest {
         @EnumSource(ContainerFormat.class)
         @DisplayName("creates a muxer for every format")
         void format(ContainerFormat format) {
+            if (format == ContainerFormat.VOBSUB || format == ContainerFormat.HLS || format == ContainerFormat.DASH
+                    || format == ContainerFormat.OTHER) {
+                // a VobSub pair is two files, written by VobSubMuxer; an HLS or DASH presentation many, by Packager;
+                // OTHER names no single container
+                assertThrows(IllegalArgumentException.class, () -> Containers.openMuxer(format, MediaSink.memory()));
+                return;
+            }
             try (var muxer = Containers.openMuxer(format, MediaSink.memory())) {
                 assertNotNull(muxer);
             }
@@ -140,6 +180,11 @@ class ContainersApiTest {
                     case MP4, M4A, MOV -> assertInstanceOf(Mp4Muxer.class, muxer);
                     case FRAGMENTED_MP4 -> assertInstanceOf(FragmentedMp4Muxer.class, muxer);
                     case MATROSKA, WEBM -> assertInstanceOf(MatroskaMuxer.class, muxer);
+                    // the profiles narrower than their format's muxer reject the other codecs
+                    case OGG_FLAC, AC3, EAC3 -> assertThrows(IllegalArgumentException.class, () -> muxer.addTrack(
+                            com.github.auties00.smalt.track.AudioTrack.builder().id(1).codec(Codec.PCM_S16LE)
+                                    .timeBase(Rational.timeBaseOf(48_000)).sampleRate(48_000).layout(ChannelLayout.STEREO)
+                                    .build()));
                     default -> {
                         try (var expected = Containers.openMuxer(container.format(), MediaSink.memory())) {
                             assertEquals(expected.getClass(), muxer.getClass());
@@ -197,9 +242,11 @@ class ContainersApiTest {
         @EnumSource(Codec.class)
         @DisplayName("isMuxable(ContainerFormat, Codec) keeps its answers for MP4, Ogg and the elementary streams")
         void formats(Codec codec) {
-            assertEquals(FragmentedMp4Muxer.supports(codec) || codec == Codec.MOV_TEXT || codec == Codec.WEBVTT,
-                    Containers.isMuxable(ContainerFormat.MP4, codec));
-            assertEquals(codec == Codec.OPUS || codec == Codec.VORBIS, Containers.isMuxable(ContainerFormat.OGG, codec));
+            assertEquals(Mp4Muxer.supports(Mp4MuxerOptions.Brand.MP4, codec), Containers.isMuxable(ContainerFormat.MP4, codec));
+            assertEquals(Mp4Muxer.supports(Mp4MuxerOptions.Brand.MP4, codec) || codec == Codec.PRORES || codec == Codec.DNXHD,
+                    FragmentedMp4Muxer.supports(codec));
+            assertEquals(codec == Codec.OPUS || codec == Codec.VORBIS || codec == Codec.FLAC || codec == Codec.SPEEX
+                    || codec == Codec.THEORA, Containers.isMuxable(ContainerFormat.OGG, codec));
             assertEquals(codec == Codec.MP3 || codec == Codec.MP2, Containers.isMuxable(ContainerFormat.MPEG_AUDIO, codec));
             assertEquals(codec == Codec.FLAC, Containers.isMuxable(ContainerFormat.FLAC, codec));
             assertEquals(codec == Codec.AMR_NB || codec == Codec.AMR_WB, Containers.isMuxable(ContainerFormat.AMR, codec));
@@ -219,7 +266,13 @@ class ContainersApiTest {
             if (mp4) {
                 assertTrue(quickTime);
             }
-            assertEquals(codec == Codec.PRORES || codec == Codec.DNXHD, quickTime && !mp4);
+            // ISO files have no sample entry for ProRes, DNxHD, the image and intermediate video codecs, 8-bit PCM,
+            // G.711, ima4, GSM 06.10 and MACE
+            assertEquals(codec == Codec.PRORES || codec == Codec.DNXHD || codec == Codec.PNG || codec == Codec.TIFF
+                    || codec == Codec.GIF || codec == Codec.QTRLE || codec == Codec.CFHD || codec == Codec.HAP
+                    || codec == Codec.PCM_U8 || codec == Codec.PCM_S8
+                    || codec == Codec.PCM_ALAW || codec == Codec.PCM_MULAW || codec == Codec.ADPCM_IMA_QT
+                    || codec == Codec.GSM || codec == Codec.MACE3 || codec == Codec.MACE6, quickTime && !mp4);
         }
 
         @Test
@@ -227,7 +280,8 @@ class ContainersApiTest {
         void oggAndRaw() {
             assertTrue(OggMuxer.supports(Codec.OPUS));
             assertTrue(OggMuxer.supports(Codec.VORBIS));
-            assertFalse(OggMuxer.supports(Codec.FLAC));
+            assertTrue(OggMuxer.supports(Codec.FLAC));
+            assertFalse(OggMuxer.supports(Codec.AAC));
             assertTrue(RawMuxer.supports(ContainerFormat.AMR, Codec.AMR_WB));
             assertFalse(RawMuxer.supports(ContainerFormat.AMR, Codec.MP3));
             assertFalse(RawMuxer.supports(ContainerFormat.WAV, Codec.PCM_S16LE));

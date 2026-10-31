@@ -1,0 +1,15 @@
+# video decode dump of avi/cfhd.avi; regenerate with -Dsmalt.test.updateDumps=true
+format AVI
+duration 500000
+seekable true
+track 1 CFHD 64x48 timebase=1/10
+0 pts=0 dur=1 key=true 64x48 rgba16 depth=16 alpha=false crc=22b37602
+1 pts=1 dur=1 key=true 64x48 rgba16 depth=16 alpha=false crc=78370d94
+2 pts=2 dur=1 key=true 64x48 rgba16 depth=16 alpha=false crc=f64f4be1
+3 pts=3 dur=1 key=true 64x48 rgba16 depth=16 alpha=false crc=5f64d64f
+4 pts=4 dur=1 key=true 64x48 rgba16 depth=16 alpha=false crc=780dd11f
+seek 0: @0
+seek 166666: @1
+seek 333333: @3
+seek 500000: end
+seek -1000000: @0
