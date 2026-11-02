@@ -641,5 +641,13 @@ class CrwParserTest {
         older.set = 0;
         older.bits = 10;
         FuzzSeeds.write(FUZZ_TARGET, "crw", "valid-set0-10bit.crw", older.samples(10, 3).write());
+        // table set 1, and a spread that reaches the long codes of the AC tables
+        var first = new Crw();
+        first.set = 1;
+        first.bits = 10;
+        FuzzSeeds.write(FUZZ_TARGET, "crw", "valid-set1-10bit.crw", first.samples(20, 3).write());
+        var wide = new Crw();
+        wide.set = 1;
+        FuzzSeeds.write(FUZZ_TARGET, "crw", "valid-set1-12bit-wide.crw", wide.samples(30, 600).write());
     }
 }

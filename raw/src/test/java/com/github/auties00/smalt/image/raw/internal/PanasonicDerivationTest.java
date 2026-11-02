@@ -69,9 +69,9 @@ class PanasonicDerivationTest {
     @DisplayName("whole 16-byte blocks of 14 (version 4) or 9 (version 5) photosites fill the data")
     void rate() {
         for (var sample : version4()) {
-            assertEquals(PanasonicDecoder.group(4), PanasonicDerivation.photositesPerBlock(sample), sample.name());
+            assertEquals(PanasonicDecoder.group(4, 12), PanasonicDerivation.photositesPerBlock(sample), sample.name());
         }
-        assertEquals(PanasonicDecoder.group(5), PanasonicDerivation.photositesPerBlock(version5));
+        assertEquals(PanasonicDecoder.group(5, 14), PanasonicDerivation.photositesPerBlock(version5));
     }
 
     @Test

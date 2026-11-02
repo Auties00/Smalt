@@ -117,6 +117,20 @@ class FuzzSeedWriter {
     }
 
     @Test
+    @DisplayName("writes the reduced samples of the formats the CC0 sample gaps added")
+    void gaps() throws IOException {
+        var jpeg = Files.readAllBytes(ffmpeg("jpg", video(16, 16, 1), "-frames:v", "1", "-update", "1", "-q:v", "10"));
+        // Panasonic raw format versions 6 (12-bit data), 7 and 8, and Sony files whose white balance is in the
+        // encrypted SR2 directory of the layouts of first bytes 224 and 220
+        reduce("rw2", "rawpixls-panasonic-dc-gh5m2-4-3-5082.rw2", RawSeedReducer.Layout.RW2, jpeg);
+        reduce("rw2", "rawpixls-panasonic-dc-s5-3-2-6339.rw2", RawSeedReducer.Layout.RW2, jpeg);
+        write(RawFuzzTest.class, "rw2", "valid-reduced-panasonic-dc-s9-3-2-7702.rw2", RawSeedReducer.reduceTiledRw2(
+                Files.readAllBytes(vector("rawpixls-panasonic-dc-s9-3-2-7702.rw2")), ROWS, jpeg));
+        reduce("arw", "rawpixls-sony-dslr-a450-12bit-12bit-compressed-3-2.arw", RawSeedReducer.Layout.ARW, jpeg);
+        reduce("arw", "rawpixls-sony-dslr-a700-8bit-8bit-compressed-3-2.arw", RawSeedReducer.Layout.ARW, jpeg);
+    }
+
+    @Test
     @DisplayName("writes the RAF seeds")
     void raf() {
         var bayer = new RafWriter();

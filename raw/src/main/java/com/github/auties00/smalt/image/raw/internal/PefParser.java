@@ -19,21 +19,25 @@ import java.util.List;
  * {@code 0x0220} holds the Huffman table after a 14-byte header: {@code n} 16-bit codes in the
  * maker note's byte order, left-aligned on 12 bits, then their {@code n} bit lengths, with
  * {@code n} 13 for 12-bit data and 15 for 14-bit data; the code of index {@code c} announces a
- * difference of {@code c} bits, extended as in a JPEG DC table. The data is one stream of such
- * codes, most significant bit first, one per photosite row by row; each photosite is predicted
- * from the previous one of the same color in its row, the first two of a row from the first two
- * of the row two above, starting from zero. Tag {@code 0x0200} holds the black level of each CFA
- * position and tag {@code 0x0201} the as-shot white balance levels. Uncompressed 12-bit data is
- * packed most significant bit first, also when the older models label it with TIFF compression
- * 32773, or stored in 16-bit words when the strip holds two bytes per photosite. A monochrome
- * sensor stores linear raw data of one sample.
+ * difference of {@code c} bits, extended as in a JPEG DC table; a tag too short to hold 13 codes is
+ * malformed. A maker note without the tag implies the 13-code table the K10D, K20D, K200D, K-7, K-x
+ * and K-r files embed (also for 14-bit data). The data is one stream of such codes, most
+ * significant bit first, one per photosite row by row; each photosite is predicted from the
+ * previous one of the same color in its row, the first two of a row from the first two of the row
+ * two above, starting from zero, and is clamped to the range of its bit depth before it predicts
+ * others. Tag {@code 0x0200} holds the black level of each CFA position and tag {@code 0x0201} the
+ * as-shot white balance levels. Uncompressed 12-bit data is packed most significant bit first, also
+ * when the older models label it with TIFF compression 32773, or stored in 16-bit words when the
+ * strip holds two bytes per photosite. A monochrome sensor stores linear raw data of one sample.
  *
  * @implNote This implementation derives the stream layout from the table the files embed and from
  * decoding CC0 sample files, with tag names from the ExifTool tag documentation; it reads
  * no other implementation. The table layout of the 14-bit and little-endian files and the
  * packing of the files labeled with compression 32773 were checked against Adobe DNG
- * Converter, run as a black box. Files whose maker note carries no Huffman table are not
- * supported.
+ * Converter, run as a black box. No CC0 file lacks the table: the implied table and the clamp
+ * reproduce the values the converter stores for copies of CC0 files (12-bit files embedding
+ * that table and another one, and a 14-bit file) whose maker note tag {@code 0x0220} is
+ * renamed.
  */
 final class PefParser {
     /**
@@ -45,6 +49,19 @@ final class PefParser {
      * The TIFF compression code (PackBits) the oldest models give their uncompressed data.
      */
     private static final int PACKBITS_LABEL = 32773;
+
+    /**
+     * The codes of the table that decodes files whose maker note carries none, by difference bit
+     * length, left-aligned on 12 bits.
+     */
+    private static final int[] DEFAULT_CODES = {
+            0x0F00, 0x0C00, 0x0800, 0x0000, 0x0400, 0x0A00, 0x0E00, 0x0F80, 0x0FC0, 0x0FE0, 0x0FF0, 0x0FF8, 0x0FFC
+    };
+
+    /**
+     * The bit lengths of {@link #DEFAULT_CODES}.
+     */
+    private static final int[] DEFAULT_LENGTHS = {5, 3, 3, 2, 2, 3, 4, 6, 7, 8, 9, 10, 10};
 
     /**
      * The frames of a Pentax pixel-shift file.
@@ -123,13 +140,12 @@ final class PefParser {
                 throw new MediaException.Malformed("invalid PEF raw image");
             }
             var table = note == null ? null : note.bytes(0x220);
-            if (table == null || table.length < 39) {
-                // TODO: decode PEF files whose maker note carries no Huffman table; every CC0 model on
-                //  raw.pixls.us carries one, so no sample was available to derive the default from
-                unsupported(file, "PEF files without a Huffman table are not supported");
-                return null;
+            if (table != null && table.length < 39) {
+                throw new MediaException.Malformed("PEF Huffman table of " + table.length + " bytes");
             }
-            var spec = huffman(table, note.reader().little());
+            var spec = table == null
+                    ? Huffman.fromCodes(DEFAULT_CODES, DEFAULT_LENGTHS, 12)
+                    : huffman(table, note.reader().little());
             var offsets = raw.longs(TiffSamples.STRIP_OFFSETS);
             var counts = raw.longs(TiffSamples.STRIP_BYTE_COUNTS);
             if (offsets == null || counts == null || offsets.length == 0 || counts.length == 0) {
@@ -330,21 +346,21 @@ final class PefParser {
                 }
                 int value;
                 if (column < 2) {
-                    vertical[parity + column] += difference;
-                    value = vertical[parity + column];
+                    value = Math.clamp(vertical[parity + column] + difference, 0, maximum);
+                    vertical[parity + column] = value;
                     if (column == 0) {
                         even = value;
                     } else {
                         odd = value;
                     }
                 } else if ((column & 1) == 0) {
-                    even += difference;
-                    value = even;
+                    value = Math.clamp(even + difference, 0, maximum);
+                    even = value;
                 } else {
-                    odd += difference;
-                    value = odd;
+                    value = Math.clamp(odd + difference, 0, maximum);
+                    odd = value;
                 }
-                out[line + column] = (short) Math.clamp(value, 0, maximum);
+                out[line + column] = (short) value;
             }
             if (bits.exhausted()) {
                 return;

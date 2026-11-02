@@ -157,7 +157,7 @@ final class Cr2Parser {
             LimitChecks.checkAllocation(limits, length);
             var data = reader.bytes(offset, length);
             var jpeg = new LosslessJpeg(data, 0, data.length, true);
-            var layout = new SensorPlane(unitColumns * perUnit, unitRows, 1, false, limits);
+            var layout = new SensorPlane(unitColumns, unitRows, perUnit, false, limits);
             var cursor = new int[]{0, 0, 0, 0};
             jpeg.decodeUnits((row, samples) -> lay(samples, samples.length, widths, cursor, layout));
             CanonSraw.convert(layout.integers, unitColumns, unitRows, mraw, kind, lumaOffset, plane.width, plane.height,
@@ -209,7 +209,7 @@ final class Cr2Parser {
             var y = cursor[1];
             var x = cursor[2];
             var run = Math.min(count - index, sliceWidth - x);
-            var target = y * plane.width + cursor[3] + x;
+            var target = y * plane.width * plane.samplesPerPixel + cursor[3] + x;
             for (var k = 0; k < run; k++) {
                 out[target + k] = (short) samples[index + k];
             }

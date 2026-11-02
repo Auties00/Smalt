@@ -95,6 +95,111 @@ final class RawSeedReducer {
      * Reduces an uncompressed RAF file: the JPEG keeps its application segments (the EXIF metadata) around the tiny
      * picture, the sensor block keeps its first rows, and the header offsets follow.
      */
+    /**
+     * Reduces a Panasonic RW2 file of raw format version 8, whose sensor data is a row of Huffman-coded tiles: each tile
+     * keeps its first rows and the start of its stream, the embedded JPEG becomes the tiny one (after the original's
+     * application segments, which hold the EXIF block), the unread block of tag {@code 0x127} is dropped, and the tile
+     * offsets and stream sizes in bits (tag {@code 0x46}) follow. The shortest stream starts that decode as the whole streams do are kept.
+     *
+     * @param original the raw file, little-endian, with the embedded JPEG after every other referenced block but the
+     * tag {@code 0x127} block and the tiles
+     * @param rows the sensor rows to keep
+     * @param jpeg the tiny JPEG
+     * @return the reduced file
+     * @throws IllegalStateException if no reduction decodes as the file with whole tiles does
+     */
+    static byte[] reduceTiledRw2(byte[] original, int rows, byte[] jpeg) {
+        var in = java.nio.ByteBuffer.wrap(original).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        var directory = in.getInt(4);
+        var jpegEntry = rw2Entry(in, directory, 0x2E);
+        var offsets = in.getInt(rw2Entry(in, directory, 0x44) + 8);
+        var widths = in.getInt(rw2Entry(in, directory, 0x47) + 8);
+        var count = in.getShort(offsets) & 0xFFFF;
+        var starts = new int[count];
+        var whole = new int[count];
+        var tileWidths = new int[count];
+        for (var index = 0; index < count; index++) {
+            starts[index] = in.getInt(offsets + 2 + 4 * index);
+            tileWidths[index] = in.getShort(widths + 2 + 2 * index) & 0xFFFF;
+        }
+        // a tile's stream runs to the next one's, or to the end of the file
+        for (var index = 0; index < count; index++) {
+            var end = original.length;
+            for (var start : starts) {
+                if (start > starts[index] && start < end) {
+                    end = start;
+                }
+            }
+            whole[index] = end - starts[index];
+        }
+        var preview = withSegments(Arrays.copyOfRange(original, in.getInt(jpegEntry + 8),
+                in.getInt(jpegEntry + 8) + in.getInt(jpegEntry + 4)), jpeg);
+        var reference = Decoded.of(tiledRw2(original, directory, rows, preview, starts, whole));
+        for (var factor : new double[]{0.5, 0.75, 1, 1.5, 2, 3, 4}) {
+            var lengths = new int[count];
+            for (var index = 0; index < count; index++) {
+                lengths[index] = (int) Math.min(whole[index], Math.ceil(tileWidths[index] * rows * factor));
+            }
+            var reduced = tiledRw2(original, directory, rows, preview, starts, lengths);
+            if (reference.equals(Decoded.tryOf(reduced))) {
+                return reduced;
+            }
+        }
+        throw new IllegalStateException("no reduced version 8 RW2 file decodes as the file with whole tiles does");
+    }
+
+    // a version 8 RW2 file of the first rows of each tile: the bytes before the embedded JPEG, the JPEG, then the
+    // first lengths[i] bytes of each tile's stream
+    private static byte[] tiledRw2(byte[] original, int directory, int rows, byte[] preview, int[] starts,
+                                   int[] lengths) {
+        var in = java.nio.ByteBuffer.wrap(original).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        var jpegAt = in.getInt(rw2Entry(in, directory, 0x2E) + 8);
+        var total = jpegAt + preview.length + (4 - preview.length % 4) % 4;
+        var positions = new int[starts.length];
+        for (var index = 0; index < starts.length; index++) {
+            positions[index] = total;
+            total += lengths[index];
+        }
+        var out = java.nio.ByteBuffer.allocate(total).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        out.put(original, 0, jpegAt).put(preview);
+        for (var index = 0; index < starts.length; index++) {
+            out.position(positions[index]);
+            out.put(original, starts[index], lengths[index]);
+        }
+        out.putInt(rw2Entry(out, directory, 0x2E) + 4, preview.length);
+        var block = rw2Entry(out, directory, 0x127);
+        if (block >= 0) {
+            out.putInt(block + 4, 0).putInt(block + 8, 0);
+        }
+        out.putShort(rw2Entry(out, directory, 0x03) + 8, (short) rows);
+        var bottom = rw2Entry(out, directory, 0x06);
+        if (bottom >= 0 && (out.getShort(bottom + 8) & 0xFFFF) > rows) {
+            out.putShort(bottom + 8, (short) rows);
+        }
+        out.putInt(rw2Entry(out, directory, 0x118) + 8, positions[0]);
+        var offsets = out.getInt(rw2Entry(out, directory, 0x44) + 8);
+        var sizes = out.getInt(rw2Entry(out, directory, 0x46) + 8);
+        var heights = out.getInt(rw2Entry(out, directory, 0x48) + 8);
+        for (var index = 0; index < starts.length; index++) {
+            out.putInt(offsets + 2 + 4 * index, positions[index]);
+            out.putInt(sizes + 2 + 4 * index, lengths[index] * 8);
+            out.putShort(heights + 2 + 2 * index, (short) rows);
+        }
+        return out.array();
+    }
+
+    // the position of the entry of a tag in a directory, or -1
+    private static int rw2Entry(java.nio.ByteBuffer data, int directory, int tag) {
+        var count = data.getShort(directory) & 0xFFFF;
+        for (var index = 0; index < count; index++) {
+            var at = directory + 2 + 12 * index;
+            if ((data.getShort(at) & 0xFFFF) == tag) {
+                return at;
+            }
+        }
+        return -1;
+    }
+
     private static byte[] reduceRaf(byte[] original, int rows, byte[] jpeg) {
         var jpegOffset = (int) be32(original, 84);
         var jpegLength = (int) be32(original, 88);

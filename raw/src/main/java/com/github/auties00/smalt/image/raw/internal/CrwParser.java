@@ -67,8 +67,9 @@ import java.util.Set;
  * ExifTool documentation; the stream structure, the predictor, the Huffman tables, the low-bit
  * layout, the black and white levels and the meaning of the shot settings' fields were derived
  * clean-room from CC0 sample files against the values Adobe DNG Converter, run as a black box,
- * stores for them. Table sets beyond the three the samples use, files without a decoder table
- * and Huffman codes no sample has shown raise {@link MediaException.Unsupported}. The black level
+ * stores for them, and the codes no sample uses from the values it stores for copies of the
+ * samples that use them. Table sets beyond the three of the samples (which the converter refuses
+ * too) and files without a decoder table raise {@link MediaException.Unsupported}. The black level
  * is measured on the masked rectangle when the sensor data is read.
  */
 final class CrwParser {
@@ -597,7 +598,6 @@ final class CrwParser {
      * @param layout where the sensor data lies
      * @param plane the plane to fill, of the stored size
      * @param limits the resource bounds
-     * @throws MediaException.Unsupported if the stream uses a Huffman code no sample file has shown
      */
     static void decompress(MediaSource source, Layout layout, SensorPlane plane, MediaLimits limits) {
         LimitChecks.checkAllocation(limits, layout.streamLength());
@@ -618,9 +618,6 @@ final class CrwParser {
         var column = 0;
         for (var start = 0; start < total; start += 64) {
             var category = bits.decode(dc);
-            if (category < 0) {
-                throw underived();
-            }
             first += extend(bits.read(category), category);
             coefficients[0] = first;
             for (var index = 1; index < 64; index++) {
@@ -635,10 +632,10 @@ final class CrwParser {
                     difference = (entry & 0xFFF) - FAST_BIAS;
                 } else {
                     var code = bits.decode(ac);
+                    if (code == CrwTables.ZERO) {
+                        continue;
+                    }
                     if (code <= 0) {
-                        if (code < 0) {
-                            throw underived();
-                        }
                         break;
                     }
                     index += code >>> 4;
@@ -666,13 +663,6 @@ final class CrwParser {
     }
 
     /**
-     * {@return the exception for a Huffman code whose value no sample file has shown}
-     */
-    private static MediaException.Unsupported underived() {
-        return new MediaException.Unsupported("crw", "the CRW stream uses a Huffman code no sample file has shown");
-    }
-
-    /**
      * Builds the fused AC lookup of an AC table.
      *
      * @param spec the table, as code counts followed by values
@@ -685,7 +675,7 @@ final class CrwParser {
         for (var length = 1; length <= 16; length++) {
             for (var count = 0; count < spec[length - 1]; count++, code++) {
                 var value = spec[index++];
-                if (value == CrwTables.UNDERIVED || length > FAST_BITS) {
+                if (value == CrwTables.ZERO || length > FAST_BITS) {
                     continue;
                 }
                 var size = value & 15;

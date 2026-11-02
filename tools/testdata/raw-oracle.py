@@ -53,8 +53,9 @@ for every sample both support (checked on RW2 files); 18.0 is needed for the 202
 Panasonic models. The converter is free to download and use; nothing of it is redistributed.
 
 For the samples of VENDOR_SAMPLES (the Samsung SRW, Epson ERF, GoPro GPR, Hasselblad 3FR and FFF, Leaf MOS,
-Mamiya MEF and Kodak DCR, KDC and TIFF files, the packed DSLR-A900 ARW file and the uncompressed Panasonic RAW files
-of the oldest models) and the copies of samples with bytes changed (PATCHED_SAMPLES: a Minolta DiMAGE A2 file whose
+Mamiya MEF and Kodak DCR, KDC and TIFF files, the packed DSLR-A900 ARW file, the DSLR-A450 and A700 cRAW files, the
+DSLR-A200 file whose coding the decoder does not read, and the uncompressed Panasonic RAW files of the oldest models)
+and the copies of samples with bytes changed (PATCHED_SAMPLES: a Minolta DiMAGE A2 file whose
 Bayer pattern byte is set to 4, and Mamiya ZD files with other white balance values), it keeps instead of the DNG file a
 <stem>.photosites summary and a <stem>.levels file, and for the samples of CURVE_SAMPLES (the lossy Nikon NEF
 files and the 8-bit Kodak EOS DCS 3 file, whose photosites the summary cannot hold) only the
@@ -65,12 +66,21 @@ columns, rows and colors), the black levels (black, the repeat's rows and column
 levels (white), the as-shot neutral (neutral) and the linearization table (linearization, its length, then its
 entries); VendorOracleTest compares the decoder with them.
 
+The samples of GAP_SAMPLES (the sRAW and mRAW files of 16 Canon bodies, Pentax files and Panasonic files of raw
+format versions 6, 7 and 8) are kept as <stem>.photosites summaries, the Panasonic files with a <stem>.levels file too,
+and so are the copies of PATCHED_SAMPLES that rename the Huffman table tag of Pentax files or change the version 8
+parameters of a Panasonic file, and the copies
+of CODE_COPIES, CRW files whose streams use every code of their table sets, which the script builds as the raw
+module's test-scope CrwCodeCopies does (both are pinned by SHA-256).
+
 Naming sample files converts only those (for example the MRW samples of SAMPLES), leaving the other
 oracle files in place.
 
     python tools/testdata/raw-oracle.py [--coverage] [sample ...]
 """
+import hashlib
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -295,6 +305,9 @@ VENDOR_SAMPLES = [
     'rawpixls-kodak-dcs-pro-slr-c-12bit-3-2.dcr',
     'rawpixls-kodak-dcs-pro-slr-n-12bit-3-2.dcr',
     'rawpixls-sony-dslr-a900-12bit-12bit-compressed-3-2.arw',
+    'rawpixls-sony-dslr-a450-12bit-12bit-compressed-3-2.arw',
+    'rawpixls-sony-dslr-a700-8bit-8bit-compressed-3-2.arw',
+    'rawpixls-sony-dslr-a200-12bit-12bit-compressed-3-2.arw',
     'rawpixls-mamiya-zd.mef',
 ]
 
@@ -344,6 +357,42 @@ PATCHED_SAMPLES = {
     'patched-minolta-dimage-a2-gbrg.mrw': (A2, b'\0PRD', 23, 4),
 }
 
+# copies of Pentax samples whose maker note tag 0x0220 (the Huffman table) is renamed 0x7FFF, at the offset of its
+# directory entry (in the maker note's byte order): files that embed the table the converter implies without one
+# (K10D), another table (K2000), and 14-bit data (K-70)
+for _name, _source, _offset, _value in (
+        ('k10d', 'rawpixls-pentax-k10d-12bit-12bit-compressed-3-2.pef', 1688, b'\x7f\xff'),
+        ('k2000', 'rawpixls-pentax-k2000-12bit-12bit-compressed-3-2.pef', 1796, b'\x7f\xff'),
+        ('k-70', 'rawpixls-pentax-k-70-14bit-3-2.pef', 1910, b'\xff\x7f')):
+    PATCHED_SAMPLES[f'patched-pentax-{_name}-no-table.pef'] = (_source, None, _offset, _value)
+
+S5M2 = 'rawpixls-panasonic-dc-s5m2-14bit-3-2-7790.rw2'
+
+# copies of a Panasonic raw format version 8 sample with the parameters of its raw tags changed, a list of (absolute
+# offset, bytes) changes each: the gains (tag 0x39, 798) and offsets (tag 0x3A, 824) of six 32-bit values, which the
+# converter ignores, the ceiling (tag 0x3B, 406) and the origins of the four cells (tags 0x3C to 0x3F, 418, 430, 442
+# and 454); and the shifts of the 17 Huffman values (tag 0x41, 920), on short and long codes, some longer than the
+# codes they shift
+PATCHED_SAMPLES['patched-panasonic-dc-s5m2-ceiling-origins.rw2'] = (S5M2, None, [
+    (798, struct.pack('<6I', *[2 << 16] * 6)), (824, struct.pack('<6I', *[100] * 6)), (406, struct.pack('<H', 4000)),
+    (418, struct.pack('<H', 1000)), (430, struct.pack('<H', 2000)), (442, struct.pack('<H', 3000)),
+    (454, struct.pack('<H', 60000))], None)
+PATCHED_SAMPLES['patched-panasonic-dc-s5m2-shifts.rw2'] = (S5M2, None, [
+    (920, struct.pack('<17H', 0, 0, 1, 2, 3, 4, 5, 6, 7, 3, 2, 1, 0, 0, 2, 3, 4))], None)
+PATCHED_SAMPLES['patched-panasonic-dc-s5m2-long-shifts.rw2'] = (S5M2, None, [
+    (920, struct.pack('<17H', 0, 0, 0, 0, 0, 7, 6, 0, 0, 15, 0, 6, 7, 8, 9, 0, 16))], None)
+
+# copies of CRW samples whose streams use every code of their table sets (crw_code_copy, as the raw module's
+# test-scope CrwCodeCopies writes them), each its source sample and SHA-256; kept as summaries
+CODE_COPIES = {
+    'codes-canon-powershot-g1-raw-4-3.crw': ('rawpixls-canon-powershot-g1-raw-4-3.crw',
+                                             'b75f1cab12dac178165d615aa37cd8c5b1a4e2c347712a2418eafc8201832b61'),
+    'codes-canon-eos-d60-raw-3-2.crw': ('rawpixls-canon-eos-d60-raw-3-2.crw',
+                                        'a730b913631e0486f6980e0827645e673712f4d8acf9b9753c42302b0aaf9bc4'),
+    'codes-canon-eos-10d-raw-3-2-3164.crw': ('rawpixls-canon-eos-10d-raw-3-2-3164.crw',
+                                             'b13377268ae4c9d16b1dbd905220d40108bb6ad71941278760259d06e35a4a6e'),
+}
+
 ZD = 'rawpixls-mamiya-zd.mef'
 
 # copies of the Mamiya ZD sample with values of its maker note's white balance directory changed (an absolute
@@ -368,8 +417,52 @@ JXL_SAMPLES = [
 
 JXL_FLAGS = ['-losslessJXL', '-jxl', '-p2', '-fl']
 
+# the sRAW and mRAW files of the other bodies, the Pentax files whose maker note table copies of PATCHED_SAMPLES
+# leave out, and Panasonic raw format versions 6 (12-bit data), 7 and 8 (a grid of tiles among them); kept as summaries
+GAP_SAMPLES = [
+    'rawpixls-canon-eos-1d-mark-iv-sraw1-mraw-3-2.cr2',
+    'rawpixls-canon-eos-1d-mark-iv-sraw2-sraw-3-2.cr2',
+    'rawpixls-canon-eos-1d-x-mark-ii-sraw1-mraw-3-2.cr2',
+    'rawpixls-canon-eos-1d-x-mark-ii-sraw2-sraw-3-2.cr2',
+    'rawpixls-canon-eos-50d-sraw1-mraw-3-2.cr2',
+    'rawpixls-canon-eos-50d-sraw2-sraw-3-2.cr2',
+    'rawpixls-canon-eos-5d-mark-ii-sraw1-mraw-3-2.cr2',
+    'rawpixls-canon-eos-5d-mark-ii-sraw2-sraw-3-2.cr2',
+    'rawpixls-canon-eos-5d-mark-iii-sraw1-mraw.cr2',
+    'rawpixls-canon-eos-5d-mark-iv-sraw1-mraw-3-2.cr2',
+    'rawpixls-canon-eos-5d-mark-iv-sraw2-sraw-3-2.cr2',
+    'rawpixls-canon-eos-5ds-r-sraw1-mraw-3-2.cr2',
+    'rawpixls-canon-eos-5ds-r-sraw2-sraw-3-2.cr2',
+    'rawpixls-canon-eos-5ds-sraw1-mraw-3-2.cr2',
+    'rawpixls-canon-eos-5ds-sraw2-sraw-3-2.cr2',
+    'rawpixls-canon-eos-60d-sraw1-mraw-3-2.cr2',
+    'rawpixls-canon-eos-60d-sraw2-sraw-3-2.cr2',
+    'rawpixls-canon-eos-6d-mark-ii-sraw1-mraw-3-2.cr2',
+    'rawpixls-canon-eos-6d-mark-ii-sraw2-sraw-3-2.cr2',
+    'rawpixls-canon-eos-6d-sraw1-mraw.cr2',
+    'rawpixls-canon-eos-6d-sraw2-sraw.cr2',
+    'rawpixls-canon-eos-70d-sraw1-mraw.cr2',
+    'rawpixls-canon-eos-70d-sraw2-sraw.cr2',
+    'rawpixls-canon-eos-7d-mark-ii-sraw1-mraw-3-2.cr2',
+    'rawpixls-canon-eos-7d-mark-ii-sraw2-sraw-3-2.cr2',
+    'rawpixls-canon-eos-80d-sraw1-mraw-3-2.cr2',
+    'rawpixls-canon-eos-80d-sraw2-sraw-3-2.cr2',
+    'rawpixls-pentax-k-70-14bit-3-2.pef',
+    'rawpixls-pentax-k10d-12bit-12bit-compressed-3-2.pef',
+    'rawpixls-pentax-k2000-12bit-12bit-compressed-3-2.pef',
+    'rawpixls-panasonic-dc-gh5m2-4-3-5082.rw2',
+    'rawpixls-panasonic-dc-gh7-4-3-8062.rw2',
+    'rawpixls-panasonic-dc-s1rm2-3-2-7723.rw2',
+    'rawpixls-panasonic-dc-s1rm2-3-2-7724.rw2',
+    'rawpixls-panasonic-dc-s5-3-2-4098.rw2',
+    'rawpixls-panasonic-dc-s5-3-2-6339.rw2',
+    'rawpixls-panasonic-dc-s9-3-2-7702.rw2',
+]
+
+SAMPLES += GAP_SAMPLES
+
 # kept as <stem>.photosites summaries instead of DNG files, for their size
-SUMMARY_SAMPLES = [
+SUMMARY_SAMPLES = GAP_SAMPLES + [
     'rawpixls-fujifilm-gfx-50s-14bit-14bit-compressed-3-2.raf',
     'rawpixls-fujifilm-gfx100s-16bit-16bit-lossless-compressed-4-3.raf',
     'rawpixls-fujifilm-gfx100-ii-16bit-16bit-compressed-4-3.raf',
@@ -559,11 +652,13 @@ def write_summary(path, target):
     tags, width, height, spp, words = image_words(path)
     if sys.byteorder != 'little':
         words.byteswap()
-    dimensions = tags[33421]
     lines = [f'# the stored image of {os.path.basename(path)}, written by tools/testdata/raw-oracle.py',
-             f'width {width}', f'height {height}', f'samples {spp}',
-             'cfa ' + ' '.join(str(value) for value in [dimensions[1], dimensions[0], *tags[33422]]),
-             f'layout {tags.get(50711, [1])[0]}']
+             f'width {width}', f'height {height}', f'samples {spp}']
+    if 33421 in tags:
+        # a linear raw image (the sRAW and mRAW files) has no filter array
+        dimensions = tags[33421]
+        lines.append('cfa ' + ' '.join(str(value) for value in [dimensions[1], dimensions[0], *tags[33422]]))
+    lines.append(f'layout {tags.get(50711, [1])[0]}')
     for sample in range(spp):
         values = words[sample::spp] if spp > 1 else words
         lines.append(f'digest {sample} {hashlib.sha256(values.tobytes()).hexdigest()}')
@@ -647,10 +742,11 @@ def write_levels(path, target):
 
 def patched(data, block, offset, value):
     """Returns a copy of a file with bytes changed: given a block name, one byte of an MRW header block's body;
-    without one, the bytes of value at an absolute offset."""
+    without one, the bytes of value at an absolute offset, or with a list of (offset, bytes) changes as offset."""
     data = bytearray(data)
     if block is None:
-        data[offset:offset + len(value)] = value
+        for at, change in (offset if isinstance(offset, list) else [(offset, value)]):
+            data[at:at + len(change)] = change
         return bytes(data)
     length = struct.unpack('>I', data[4:8])[0]
     position = 8
@@ -661,6 +757,276 @@ def patched(data, block, offset, value):
             return bytes(data)
         position += 8 + size
     sys.exit(f'no {block} block')
+
+
+CRW_TABLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'raw', 'src', 'main', 'java', 'com',
+                          'github', 'auties00', 'smalt', 'image', 'raw', 'internal', 'CrwTables.java')
+
+CRW_ZERO = -1
+
+
+def crw_tables():
+    """Returns the CRW Huffman tables of the raw module's CrwTables, as (length, code, value) lists in code order."""
+    text = open(CRW_TABLES, encoding='utf-8').read()
+    body = text[text.index('TABLES = {'):]
+    body = body[:body.index('};')]
+    tables = []
+    for block in re.findall(r'\{([^{}]*)\}', body):
+        spec = [CRW_ZERO if token == 'ZERO' else int(token, 0)
+                for token in re.findall(r'0x[0-9A-Fa-f]+|\d+|ZERO', block)]
+        codes, code, index = [], 0, 16
+        for length in range(1, 17):
+            for _ in range(spec[length - 1]):
+                codes.append((length, code, spec[index]))
+                index += 1
+                code += 1
+            code <<= 1
+        tables.append(codes)
+    return tables
+
+
+def ciff_records(data):
+    """Returns the records of a CIFF file as {kind: (absolute offset, length)}, the first of each kind."""
+    order = '<' if data[:2] == b'II' else '>'
+    records = {}
+
+    def walk(start, end, depth):
+        directory = struct.unpack(order + 'I', data[end - 4:end])[0] + start
+        count = struct.unpack(order + 'H', data[directory:directory + 2])[0]
+        for index in range(count):
+            at = directory + 2 + 10 * index
+            tag, size, offset = struct.unpack(order + 'HII', data[at:at + 10])
+            kind = tag & 0x3FFF
+            if tag >> 14 == 1:
+                records.setdefault(kind, (at + 2, 8))
+                continue
+            records.setdefault(kind, (start + offset, size))
+            if kind & 0x3800 in (0x2800, 0x3000) and depth < 8:
+                walk(start + offset, start + offset + size, depth + 1)
+
+    walk(struct.unpack(order + 'I', data[2:6])[0], len(data), 0)
+    return order, records
+
+
+def crw_code_copy(data):
+    """Returns the copy of a CRW file that the raw module's test-scope CrwCodeCopies writes: the stream's blocks as
+    they are, except in a region of whole rows from the middle row on, where blocks flat at 512 use every code of the
+    file's table set (see CrwCodeCopies)."""
+    order, records = ciff_records(data)
+
+    def words(kind):
+        offset, size = records[kind]
+        return struct.unpack(order + 'H' * (size // 2), data[offset:offset + size // 2 * 2])
+
+    raw_offset, raw_length = records[0x2005]
+    info = words(0x1031)
+    width, height = info[1], info[2]
+    table_offset, _ = records[0x1835]
+    table_set = struct.unpack(order + 'I', data[table_offset:table_offset + 4])[0]
+    skip = struct.unpack(order + 'I', data[table_offset + 8:table_offset + 12])[0]
+    sample = words(0x1030) if 0x1030 in records else ()
+    bits_per_sample = sample[5] if len(sample) > 5 else 12
+    low = (width * height + 3) // 4 if bits_per_sample == 12 else 0
+    stream_offset = raw_offset + low + skip
+    room = raw_offset + raw_length - stream_offset
+    tables = crw_tables()
+    dc, ac = tables[2 * table_set], tables[2 * table_set + 1]
+    total = width * height
+    if total % 64:
+        sys.exit('the CRW sensor does not hold whole blocks')
+    blocks = total // 64
+
+    # the stream without its stuffed bytes, as a string of bits
+    stream = data[stream_offset:stream_offset + room]
+    unstuffed = bytearray()
+    index = 0
+    while index < len(stream):
+        value = stream[index]
+        if value == 0xFF:
+            if index + 1 < len(stream) and stream[index + 1] != 0:
+                break
+            index += 1
+        unstuffed.append(value)
+        index += 1
+    bits = ''.join(format(value, '08b') for value in unstuffed)
+
+    def category(value):
+        return 0 if value == 0 else abs(value).bit_length()
+
+    def field(value, size):
+        return value if value >= 0 else value + (1 << size) - 1
+
+    def primary(codes, value):
+        for code in codes:
+            if code[2] == value:
+                return code
+        sys.exit(f'no CRW code of value {value}')
+
+    def code_bits(code):
+        return format(code[1], '0%db' % code[0])
+
+    def number_bits(value, size):
+        return format(value, '0%db' % size) if size else ''
+
+    # the region's blocks: [values, forced codes by index, DC code, end code, skip]
+    def empty():
+        return [[0] * 64, {}, None, None, 0]
+
+    queue = []
+    for code in ac:
+        value = code[2]
+        block = empty()
+        if value == 0:
+            block[3] = code
+        elif value == CRW_ZERO or value == 0xF0:
+            at = 17 if value == 0xF0 else 2
+            block[1][1] = code
+            block[0][at] = -1
+            block[0][at + 2] = 1
+            block[4] = 16 if value == 0xF0 else 1
+        else:
+            run, size = value >> 4, value & 15
+            block[0][run + 1] = -(1 << (size - 1))
+            block[0][run + 3] = 1 << (size - 1)
+            block[1][run + 1] = code
+        queue.append([block])
+    for code in dc:
+        if code[2] == 0:
+            block = empty()
+            block[2] = code
+            queue.append([block])
+        elif code[2] <= 10:
+            raise_by = 1 << (code[2] - 1)
+            lower, raised, back = empty(), empty(), empty()
+            lower[0][62] = -raise_by
+            raised[0][0] = raise_by
+            back[2] = code
+            queue.append([lower, raised, back])
+
+    def fits(unit, block):
+        high = [0] * (64 * len(unit))
+        for position in range(len(high)):
+            column = (64 * block + position) % width
+            predictor = 512 if column < 2 or position < 2 else high[position - 2]
+            value = predictor + unit[position // 64][0][position % 64]
+            if value < 0 or value > 1023:
+                return False
+            high[position] = value
+        return True
+
+    rows = 1
+    while rows * width % 64:
+        rows += 1
+    start = (height // 2 // rows) * rows * width // 64
+    region = []
+    block = start
+    while queue or (64 * block) % width:
+        unit = queue[0] if queue else [empty()]
+        if fits(unit, block):
+            if queue:
+                queue.pop(0)
+        else:
+            unit = [empty()]
+        region += unit
+        block += len(unit)
+    end = block
+    if end >= blocks:
+        sys.exit('the CRW image is too small for the region')
+
+    # the file's blocks up to the region's end: where each starts and its first value
+    def decoder(codes):
+        return {(length, code): value for length, code, value in codes}
+
+    dc_codes, ac_codes = decoder(dc), decoder(ac)
+    position = 0
+
+    def decode(codes):
+        nonlocal position
+        code = 0
+        for length in range(1, 17):
+            code = (code << 1) | (bits[position] == '1' if position < len(bits) else 0)
+            position += 1
+            if (length, code) in codes:
+                return codes[(length, code)]
+        sys.exit(f'no CRW code at bit {position}')
+
+    def read(count):
+        nonlocal position
+        piece = bits[position:position + count].ljust(count, '0')
+        position += count
+        return int(piece, 2) if count else 0
+
+    firsts, starts, dc_ends = [0] * (end + 1), [0] * (end + 1), [0] * (end + 1)
+    first = 0
+    for block in range(end + 1):
+        starts[block] = position
+        size = decode(dc_codes)
+        value = read(size)
+        first += value if size == 0 or value >= 1 << (size - 1) else value - (1 << size) + 1
+        firsts[block] = first
+        dc_ends[block] = position
+        index = 1
+        while index < 64:
+            value = decode(ac_codes)
+            if value == 0:
+                break
+            if value != CRW_ZERO:
+                index += value >> 4
+                position += value & 15
+            index += 1
+
+    out = [bits[:starts[start]]]
+    previous = firsts[start - 1]
+    for values, forced, dc_code, end_code, skip_by in region:
+        difference = values[0] - previous
+        size = category(difference)
+        code = dc_code if dc_code is not None else primary(dc, size)
+        if code[2] != size:
+            sys.exit(f'DC code of category {code[2]} for {difference}')
+        out.append(code_bits(code) + number_bits(field(difference, size), size))
+        index, last = 1, 63
+        while last > 0 and values[last] == 0:
+            last -= 1
+        while index <= last:
+            if index in forced and skip_by > 0:
+                out.append(code_bits(forced[index]))
+                index += skip_by
+                continue
+            run = 0
+            while values[index + run] == 0:
+                run += 1
+            while run >= 16:
+                out.append(code_bits(primary(ac, 0xF0)))
+                run -= 16
+                index += 16
+            value = values[index + run]
+            size = category(value)
+            symbol = (run << 4) | size
+            chosen = forced.get(index + run)
+            if chosen is None or chosen[2] != symbol:
+                chosen = primary(ac, symbol)
+            out.append(code_bits(chosen) + number_bits(field(value, size), size))
+            index += run + 1
+        if index <= 63:
+            out.append(code_bits(end_code if end_code is not None else primary(ac, 0)))
+        previous = values[0]
+    difference = firsts[end] - previous
+    size = category(difference)
+    out.append(code_bits(primary(dc, size)) + number_bits(field(difference, size), size))
+    out.append(bits[dc_ends[end]:])
+    text = ''.join(out)
+    text += '1' * (-len(text) % 8)
+    stuffed = bytearray()
+    for index in range(0, len(text), 8):
+        value = int(text[index:index + 8], 2)
+        stuffed.append(value)
+        if value == 0xFF:
+            stuffed.append(0)
+    if len(stuffed) > room:
+        sys.exit('the CRW copy\'s stream is longer than the file\'s')
+    copy = bytearray(data)
+    copy[stream_offset:stream_offset + len(stuffed)] = stuffed
+    return bytes(copy)
 
 
 def main():
@@ -676,10 +1042,11 @@ def main():
     else:
         samples = SAMPLES + VENDOR_SAMPLES + CURVE_SAMPLES
     if named:
-        unknown = [name for name in named if name not in samples and name not in PATCHED_SAMPLES]
+        unknown = [name for name in named if name not in samples and name not in PATCHED_SAMPLES
+                   and name not in CODE_COPIES]
         if unknown:
             sys.exit(f'not an oracle sample: {", ".join(unknown)}')
-        samples = [name for name in named if name not in PATCHED_SAMPLES]
+        samples = [name for name in named if name not in PATCHED_SAMPLES and name not in CODE_COPIES]
     unavailable = []
     for name in samples:
         row = vectors[name]
@@ -721,6 +1088,8 @@ def main():
                 sys.exit(f'Adobe DNG Converter wrote no {target}')
             if not coverage and name in SUMMARY_SAMPLES:
                 write_summary(target, os.path.splitext(target)[0] + '.photosites')
+                if name in GAP_SAMPLES and name.endswith('.rw2'):
+                    write_levels(target, os.path.splitext(target)[0] + '.levels')
                 os.remove(target)
             if not coverage and name in VENDOR_SAMPLES:
                 write_summary(target, os.path.splitext(target)[0] + '.photosites')
@@ -750,6 +1119,31 @@ def main():
                     sys.exit(f'Adobe DNG Converter wrote no {staged}')
                 os.replace(staged, os.path.join(output, os.path.splitext(name)[0] + '-jxl.dng'))
         renamed = 0
+        for name, (source, digest) in CODE_COPIES.items():
+            if coverage or (named and name not in named):
+                continue
+            row = vectors[source]
+            origin = os.path.join(directory, source)
+            if not testdata.valid(origin, row['sha256']):
+                print(f'fetching {source}')
+                testdata.download(row['url'], origin, row['sha256'])
+            print(f'converting {name}')
+            with open(origin, 'rb') as stream:
+                copy = crw_code_copy(stream.read())
+            if hashlib.sha256(copy).hexdigest() != digest:
+                sys.exit(f'the copy {name} is not the one CrwCodeCopies writes')
+            path = os.path.join(work, name)
+            with open(path, 'wb') as stream:
+                stream.write(copy)
+            subprocess.run([converter, '-u', '-d', windows(output), windows(path)], check=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            target = os.path.join(output, os.path.splitext(name)[0] + '.dng')
+            if not os.path.isfile(target):
+                sys.exit(f'Adobe DNG Converter wrote no {target}')
+            write_summary(target, os.path.splitext(target)[0] + '.photosites')
+            os.remove(target)
+            os.remove(path)
+            renamed += 1
         for name, (source, block, offset, value) in PATCHED_SAMPLES.items():
             if coverage or (named and name not in named):
                 continue

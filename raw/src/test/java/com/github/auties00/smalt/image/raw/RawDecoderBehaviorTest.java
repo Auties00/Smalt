@@ -311,6 +311,21 @@ class RawDecoderBehaviorTest {
                 .run();
     }
 
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"rawpixls-panasonic-dc-gh5m2-4-3-5082.rw2", "rawpixls-panasonic-dc-s5-3-2-6339.rw2",
+            "rawpixls-panasonic-dc-s9-3-2-7702.rw2", "rawpixls-sony-dslr-a450-12bit-12bit-compressed-3-2.arw",
+            "rawpixls-canon-powershot-g1-raw-4-3.crw"})
+    @DisplayName("full-tier files of Panasonic raw format versions 6 (12-bit), 7 and 8, of a Sony white balance in the "
+            + "encrypted SR2 directory and of CRW table set 1: identical pictures and sensor data under every source "
+            + "behavior and clean faults")
+    void gaps(String name) throws IOException {
+        harness("vectors/" + name, Files.readAllBytes(Conformance.fetchListed(name)))
+                .noScaled()
+                .maxFaultReads(4)
+                .timeout(Duration.ofMinutes(5))
+                .run();
+    }
+
     @Test
     @DisplayName("a smoke-tier GoPro GPR file of VC-5 sensor data: identical pictures and sensor data under every "
             + "source behavior and clean faults")

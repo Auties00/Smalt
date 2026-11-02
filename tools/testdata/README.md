@@ -188,7 +188,12 @@ readings of each photosite and the places of the interleaved EXR HR images. Of t
 no file is published, it converts copies of the F700 and E550 samples named after them (`renamed-fujifilm-finepix-f710.dng`,
 `renamed-fujifilm-finepix-f810.dng`), which `RafOracleTest` checks photosite for photosite, and records with a
 `<stem>.refused` file that the converter refuses the swapped copies (the E550's file named F710, the F700's named
-F810). Without them the oracle tests are
+F810). `SampleGapsOracleTest` checks against `<stem>.photosites` summaries the sRAW and mRAW files of the
+other Canon bodies, Pentax and Panasonic samples of the versions and fields no earlier sample covered, and copies
+of samples with a field changed (Pentax files whose maker note table tag is renamed, a Panasonic version 8 file
+with shifts, a ceiling and cell origins); `CrwTablesTest` checks copies of CRW samples whose streams use every code
+of their table sets, which the script builds as the raw module's test-scope `CrwCodeCopies` does (both check the
+copies' SHA-256). Without them the oracle tests are
 skipped. With `--coverage` the script converts every ORF sample and every RW2 or RWL sample of version 4
 in `vectors.tsv` (about 6 GB of DNG files) into `<conformance cache>/raw-oracle-coverage` for
 `RawOracleCoverageTest` (`-Dsmalt.test.rawCoverage`).

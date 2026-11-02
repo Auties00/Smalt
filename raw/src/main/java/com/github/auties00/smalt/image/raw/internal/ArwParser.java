@@ -32,7 +32,8 @@ import java.util.Set;
  * into three bytes least significant bits first (the first sample is the first byte and the low
  * half of the second, the second sample the high half of the second byte and the third byte); its
  * untagged black level is a quarter of the 14-bit one (128), its white level 4095 and its image
- * the 6048 by 4032 area 12 photosites from the left and 8 from the top.
+ * the 6048 by 4032 area 12 photosites from the left and 8 from the top. The DSLR-A700, whose EXIF image size is
+ * its whole sensor image too, has the 4272 by 2848 area four photosites from the left and the top.
  *
  * <p>The levels are those of the raw directory's own tags when it has them:
  * {@code BlackLevel} (tag {@code 0x7310}, four values in red, green, green, blue order) and
@@ -41,8 +42,9 @@ import java.util.Set;
  * one, except on the models whose photosites saturate lower, and 16300 on the models without it.
  * Files without the black level tag take the black level of their model, 512 on the 14-bit scale
  * except 800 on the RX10, RX10 III, RX100 to RX100 V and RX0 compacts; files without the white balance
- * tag, whose white balance is in the encrypted {@code SR2} directory, have it estimated from the
- * camera's embedded preview (see {@link PreviewBalance}).
+ * tag read it from the encrypted {@code SR2} directory where its layout is known ({@link Sr2Balance}), and
+ * otherwise have it estimated from the camera's embedded preview (see {@link PreviewBalance}). The files whose
+ * compression 32767 data is not decoded still report the white balance they record.
  *
  * @implNote This implementation follows Henry Dietz's description of the cRAW format ("Sony ARW2
  * Compression: Artifacts And Credible Repair", Electronic Imaging 2016) and the block
@@ -115,7 +117,8 @@ final class ArwParser {
      * The image areas, as x, y, width and height, of the models whose EXIF image size is the whole
      * sensor image.
      */
-    private static final Map<String, double[]> CROP_OF_MODEL = Map.of("DSLR-A900", new double[]{12, 8, 6048, 4032});
+    private static final Map<String, double[]> CROP_OF_MODEL = Map.of("DSLR-A900", new double[]{12, 8, 6048, 4032},
+            "DSLR-A700", new double[]{4, 4, 4272, 2848});
 
     /**
      * Prevents instantiation.
@@ -189,6 +192,7 @@ final class ArwParser {
             //  public descriptions are GPL and LGPL decoders, so it needs a specification or a clean-room derivation
             file.unsupported = "Sony's variable-length ARW coding at " + total + " bytes for " + pixels
                     + " photosites is not supported";
+            balance(reader, tree.first, raw, file);
             return;
         } else if (total >= pixels * 2) {
             try {
@@ -231,7 +235,7 @@ final class ArwParser {
             file.unsupported = "the ARW raw image has no CFA pattern";
             return;
         }
-        levels(raw, file, sensor, compression == SONY_COMPRESSION && !packed ? bits : 0, packed);
+        levels(reader, tree.first, raw, file, sensor, compression == SONY_COMPRESSION && !packed ? bits : 0, packed);
         var crop = CROP_OF_MODEL.get(file.model == null ? "" : file.model.strip());
         sensor.defaultCrop = crop != null && crop[0] + crop[2] <= sensor.width && crop[1] + crop[3] <= sensor.height
                 ? crop.clone() : centeredCrop(tree.exif, sensor);
@@ -346,6 +350,8 @@ final class ArwParser {
     /**
      * Sets the black and white levels and the white balance of a file.
      *
+     * @param reader the TIFF structure
+     * @param first the first directory
      * @param raw the raw image directory
      * @param file the description to fill
      * @param sensor the sensor description, its color filter array set
@@ -353,7 +359,8 @@ final class ArwParser {
      * @param packed whether the data is packed 12-bit samples on the 12-bit scale, whose untagged levels are a
      * quarter of the 14-bit ones and whose white level is the largest 12-bit value
      */
-    private static void levels(Ifd raw, RawFile file, Sensor sensor, int crawBits, boolean packed) {
+    private static void levels(TiffReader reader, Ifd first, Ifd raw, RawFile file, Sensor sensor, int crawBits,
+                               boolean packed) {
         var model = file.model == null ? "" : file.model.strip();
         var tagged = raw.longs(0x7310);
         double[] black = null;
@@ -379,14 +386,33 @@ final class ArwParser {
             white = tag > 0 && tag < 1 << 16 ? (int) tag : packed ? PACKED_WHITE : WHITE;
         }
         sensor.white = new double[]{white};
+        sensor.estimateBalance = !balance(reader, first, raw, file);
+    }
+
+    /**
+     * Sets the as-shot white balance of a file from the raw directory's {@code WB_RGGBLevels} tag, or else from the
+     * encrypted {@code SR2} directory where its layout is known.
+     *
+     * @param reader the TIFF structure
+     * @param first the first directory
+     * @param raw the raw image directory
+     * @param file the description to fill
+     * @return whether the file records its white balance where it is read
+     */
+    private static boolean balance(TiffReader reader, Ifd first, Ifd raw, RawFile file) {
         var balance = raw.longs(0x7313);
         if (balance != null && balance.length >= 4 && balance[0] > 0 && balance[1] > 0 && balance[2] > 0
                 && balance[3] > 0) {
             var green = (balance[1] + balance[2]) / 2.0;
             file.color.asShotNeutral = new double[]{green / balance[0], 1, green / balance[3]};
-        } else {
-            sensor.estimateBalance = true;
+            return true;
         }
+        var neutral = Sr2Balance.neutral(reader, first);
+        if (neutral == null) {
+            return false;
+        }
+        file.color.asShotNeutral = neutral;
+        return true;
     }
 
     /**

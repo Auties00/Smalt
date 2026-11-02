@@ -1678,7 +1678,241 @@ public enum RawSamples {
      * rawpixls-leica-digilux-3-4-3.raw (15041536 bytes).
      */
     RW2_DIGILUX_3_4_3("rawpixls-leica-digilux-3-4-3.raw", "https://raw.pixls.us/getfile.php/4884/nice/Leica%20-%20Digilux%203%20-%204%3A3.RAW",
-            "d2a4c556fe3660b70df34846dbb19c900a4e1fda0416e5651b1f8b6be7bfdd38");
+            "d2a4c556fe3660b70df34846dbb19c900a4e1fda0416e5651b1f8b6be7bfdd38"),
+
+    /**
+     * rawpixls-canon-eos-1d-mark-iv-sraw1-mraw-3-2.cr2 (17389621 bytes).
+     */
+    CR2_1D4_MRAW("rawpixls-canon-eos-1d-mark-iv-sraw1-mraw-3-2.cr2", "https://raw.pixls.us/getfile.php/4259/nice/Canon%20-%20EOS-1D%20Mark%20IV%20-%20sRAW1%20%28mRAW%29%20%283%3A2%29.CR2",
+            "41b78f2fa379c741d2a16aa344526d88814a8699ac03855bdd501199d9371fc6"),
+
+    /**
+     * rawpixls-canon-eos-1d-mark-iv-sraw2-sraw-3-2.cr2 (11923978 bytes).
+     */
+    CR2_1D4_SRAW("rawpixls-canon-eos-1d-mark-iv-sraw2-sraw-3-2.cr2", "https://raw.pixls.us/getfile.php/4260/nice/Canon%20-%20EOS-1D%20Mark%20IV%20-%20sRAW2%20%28sRAW%29%20%283%3A2%29.CR2",
+            "994de61e04ad10158b22cc991a5f387b9c591d1eec36f549bae670bf37c8d62c"),
+
+    /**
+     * rawpixls-canon-eos-1d-x-mark-ii-sraw1-mraw-3-2.cr2 (18236074 bytes).
+     */
+    CR2_1DX2_MRAW("rawpixls-canon-eos-1d-x-mark-ii-sraw1-mraw-3-2.cr2", "https://raw.pixls.us/getfile.php/1059/nice/Canon%20-%20EOS-1D%20X%20Mark%20II%20-%20sRAW1%20%28mRAW%29%20%283%3A2%29.CR2",
+            "ac6f21a2a416f808ab6d8ffc0df0b1e5af51794f73099fee85dc722ca1dbf9b9"),
+
+    /**
+     * rawpixls-canon-eos-1d-x-mark-ii-sraw2-sraw-3-2.cr2 (12294856 bytes).
+     */
+    CR2_1DX2_SRAW("rawpixls-canon-eos-1d-x-mark-ii-sraw2-sraw-3-2.cr2", "https://raw.pixls.us/getfile.php/1060/nice/Canon%20-%20EOS-1D%20X%20Mark%20II%20-%20sRAW2%20%28sRAW%29%20%283%3A2%29.CR2",
+            "35b66b2fc26a015ee622af7269eaf3e694fa6f5b6126ade27d910957d417d81a"),
+
+    /**
+     * rawpixls-canon-eos-50d-sraw1-mraw-3-2.cr2 (13124350 bytes).
+     */
+    CR2_50D_MRAW("rawpixls-canon-eos-50d-sraw1-mraw-3-2.cr2", "https://raw.pixls.us/getfile.php/1793/nice/Canon%20-%20EOS%2050D%20-%20sRAW1%20%28mRAW%29%20%283%3A2%29.CR2",
+            "278f80205ffadb850d2538bd3544f70365b59eed59e8233f9f9667c33b03a729"),
+
+    /**
+     * rawpixls-canon-eos-50d-sraw2-sraw-3-2.cr2 (9705243 bytes).
+     */
+    CR2_50D_SRAW("rawpixls-canon-eos-50d-sraw2-sraw-3-2.cr2", "https://raw.pixls.us/getfile.php/1794/nice/Canon%20-%20EOS%2050D%20-%20sRAW2%20%28sRAW%29%20%283%3A2%29.CR2",
+            "1f8521e21d53e8df6c5f6b390aa4e0e9928e87412e94d0d0a6f34f4848c18304"),
+
+    /**
+     * rawpixls-canon-eos-5d-mark-ii-sraw1-mraw-3-2.cr2 (15445115 bytes).
+     */
+    CR2_5D2_MRAW("rawpixls-canon-eos-5d-mark-ii-sraw1-mraw-3-2.cr2", "https://raw.pixls.us/getfile.php/1594/nice/Canon%20-%20EOS%205D%20Mark%20II%20-%20sRAW1%20%28mRAW%29%20%283%3A2%29.cr2",
+            "acadf73d760b1f311f18f473b859e262ef3ba1513b3360f02675c38dcadba80b"),
+
+    /**
+     * rawpixls-canon-eos-5d-mark-ii-sraw2-sraw-3-2.cr2 (11425647 bytes).
+     */
+    CR2_5D2_SRAW("rawpixls-canon-eos-5d-mark-ii-sraw2-sraw-3-2.cr2", "https://raw.pixls.us/getfile.php/1595/nice/Canon%20-%20EOS%205D%20Mark%20II%20-%20sRAW2%20%28sRAW%29%20%283%3A2%29.cr2",
+            "e8a31e7dfa7d5739f26da1049b1bbe78982d25004e0e857209f32d2e308c4a0c"),
+
+    /**
+     * rawpixls-canon-eos-5d-mark-iii-sraw1-mraw.cr2 (15573918 bytes).
+     */
+    CR2_5D3_MRAW("rawpixls-canon-eos-5d-mark-iii-sraw1-mraw.cr2", "https://raw.pixls.us/getfile.php/772/nice/Canon%20-%20EOS%205D%20Mark%20III%20-%20sRAW1%20%28mRAW%29.CR2",
+            "bca87871cd91523e0ff4450a51a1a677de9241c3110b213b99198b9ed3751f66"),
+
+    /**
+     * rawpixls-canon-eos-5d-mark-iv-sraw1-mraw-3-2.cr2 (22152195 bytes).
+     */
+    CR2_5D4_MRAW("rawpixls-canon-eos-5d-mark-iv-sraw1-mraw-3-2.cr2", "https://raw.pixls.us/getfile.php/982/nice/Canon%20-%20EOS%205D%20Mark%20IV%20-%20sRAW1%20%28mRAW%29%20%283%3A2%29.CR2",
+            "3ea2d03556747afcafa24f13fee69106f383dfaf3a2f436f8331f14518f20037"),
+
+    /**
+     * rawpixls-canon-eos-5d-mark-iv-sraw2-sraw-3-2.cr2 (15217883 bytes).
+     */
+    CR2_5D4_SRAW("rawpixls-canon-eos-5d-mark-iv-sraw2-sraw-3-2.cr2", "https://raw.pixls.us/getfile.php/981/nice/Canon%20-%20EOS%205D%20Mark%20IV%20-%20sRAW2%20%28sRAW%29%20%283%3A2%29.CR2",
+            "25d928f9e9a65525ac796bdff13e93b7b36b627568d7a17338e12dc44424078a"),
+
+    /**
+     * rawpixls-canon-eos-5ds-r-sraw1-mraw-3-2.cr2 (44726139 bytes).
+     */
+    CR2_5DSR_MRAW("rawpixls-canon-eos-5ds-r-sraw1-mraw-3-2.cr2", "https://raw.pixls.us/getfile.php/2975/nice/Canon%20-%20EOS%205DS%20R%20-%20sRAW1%20%28mRAW%29%20%283%3A2%29.CR2",
+            "274da4038c620d653e31983f96090e7de338bab758ec1c0c8d9eb029a4eeccec"),
+
+    /**
+     * rawpixls-canon-eos-5ds-r-sraw2-sraw-3-2.cr2 (30622065 bytes).
+     */
+    CR2_5DSR_SRAW("rawpixls-canon-eos-5ds-r-sraw2-sraw-3-2.cr2", "https://raw.pixls.us/getfile.php/2976/nice/Canon%20-%20EOS%205DS%20R%20-%20sRAW2%20%28sRAW%29%20%283%3A2%29.CR2",
+            "26868d8b944395bf37d1ffc6fe88cc2039e913bba6b7724b5223d128a626b3b3"),
+
+    /**
+     * rawpixls-canon-eos-5ds-sraw1-mraw-3-2.cr2 (43000282 bytes).
+     */
+    CR2_5DS_MRAW("rawpixls-canon-eos-5ds-sraw1-mraw-3-2.cr2", "https://raw.pixls.us/getfile.php/2084/nice/Canon%20-%20EOS%205DS%20-%20sRAW1%20%28mRAW%29%20%283%3A2%29.CR2",
+            "9cbbc3686ff03ba7b27028155fa9a4ad90cf20053653bbb99f2463c5e3b27e30"),
+
+    /**
+     * rawpixls-canon-eos-5ds-sraw2-sraw-3-2.cr2 (29092088 bytes).
+     */
+    CR2_5DS_SRAW("rawpixls-canon-eos-5ds-sraw2-sraw-3-2.cr2", "https://raw.pixls.us/getfile.php/2085/nice/Canon%20-%20EOS%205DS%20-%20sRAW2%20%28sRAW%29%20%283%3A2%29.CR2",
+            "32a2431603c83c370c52cb8b8f642c96f81f439456ba2463c7ab3c3ec7228bff"),
+
+    /**
+     * rawpixls-canon-eos-60d-sraw1-mraw-3-2.cr2 (17619487 bytes).
+     */
+    CR2_60D_MRAW("rawpixls-canon-eos-60d-sraw1-mraw-3-2.cr2", "https://raw.pixls.us/getfile.php/994/nice/Canon%20-%20EOS%2060D%20-%20sRAW1%20%28mRAW%29%20%283%3A2%29.CR2",
+            "185b0e6bcfd7b6474fa7dff12dedfa140a995ef60e6879db2a8eae4dd00c5c73"),
+
+    /**
+     * rawpixls-canon-eos-60d-sraw2-sraw-3-2.cr2 (11955913 bytes).
+     */
+    CR2_60D_SRAW("rawpixls-canon-eos-60d-sraw2-sraw-3-2.cr2", "https://raw.pixls.us/getfile.php/995/nice/Canon%20-%20EOS%2060D%20-%20sRAW2%20%28sRAW%29%20%283%3A2%29.CR2",
+            "248945210b1edd43073499f8211707e06adf5a66e416ca9d1c86196e3f941d19"),
+
+    /**
+     * rawpixls-canon-eos-6d-mark-ii-sraw1-mraw-3-2.cr2 (28971919 bytes).
+     */
+    CR2_6D2_MRAW("rawpixls-canon-eos-6d-mark-ii-sraw1-mraw-3-2.cr2", "https://raw.pixls.us/getfile.php/1624/nice/Canon%20-%20EOS%206D%20Mark%20II%20-%20sRAW1%20%28mRAW%29%20%283%3A2%29.CR2",
+            "c34f6dc459901b44a837cf30eacee19fef548ce5a66c4611d68ed3fae8997498"),
+
+    /**
+     * rawpixls-canon-eos-6d-mark-ii-sraw2-sraw-3-2.cr2 (20556842 bytes).
+     */
+    CR2_6D2_SRAW("rawpixls-canon-eos-6d-mark-ii-sraw2-sraw-3-2.cr2", "https://raw.pixls.us/getfile.php/1623/nice/Canon%20-%20EOS%206D%20Mark%20II%20-%20sRAW2%20%28sRAW%29%20%283%3A2%29.CR2",
+            "a4bf9842c2222b2eeb95ec71065f9d981c9b5be619b96db7f121e395968a119b"),
+
+    /**
+     * rawpixls-canon-eos-6d-sraw1-mraw.cr2 (17373532 bytes).
+     */
+    CR2_6D_MRAW("rawpixls-canon-eos-6d-sraw1-mraw.cr2", "https://raw.pixls.us/getfile.php/800/nice/Canon%20-%20EOS%206D%20-%20sRAW1%20%28mRAW%29.CR2",
+            "339186717b6df392c39ad12e1406f643de5aa49e5948afc3f4a280d833c79350"),
+
+    /**
+     * rawpixls-canon-eos-6d-sraw2-sraw.cr2 (11605858 bytes).
+     */
+    CR2_6D_SRAW("rawpixls-canon-eos-6d-sraw2-sraw.cr2", "https://raw.pixls.us/getfile.php/801/nice/Canon%20-%20EOS%206D%20-%20sRAW2%20%28sRAW%29.CR2",
+            "a4f71895b4c5087791ed2cb97b30790ae9d52a9e7b66f0c9ea91cf3e4a12335b"),
+
+    /**
+     * rawpixls-canon-eos-70d-sraw1-mraw.cr2 (17753935 bytes).
+     */
+    CR2_70D_MRAW("rawpixls-canon-eos-70d-sraw1-mraw.cr2", "https://raw.pixls.us/getfile.php/785/nice/Canon%20-%20EOS%2070D%20-%20sRAW1%20%28mRAW%29.CR2",
+            "cc72b582b2907cccbeead1ea6f5a59233a9f387b4eb9cca5bd37afbfbe0c9124"),
+
+    /**
+     * rawpixls-canon-eos-70d-sraw2-sraw.cr2 (12068759 bytes).
+     */
+    CR2_70D_SRAW("rawpixls-canon-eos-70d-sraw2-sraw.cr2", "https://raw.pixls.us/getfile.php/786/nice/Canon%20-%20EOS%2070D%20-%20sRAW2%20%28sRAW%29.CR2",
+            "dd166060ef873a2356f9a41a991b875d09229692cf219073e65dc906e42e042f"),
+
+    /**
+     * rawpixls-canon-eos-7d-mark-ii-sraw1-mraw-3-2.cr2 (14774007 bytes).
+     */
+    CR2_7D2_MRAW("rawpixls-canon-eos-7d-mark-ii-sraw1-mraw-3-2.cr2", "https://raw.pixls.us/getfile.php/1065/nice/Canon%20-%20EOS%207D%20Mark%20II%20-%20sRAW1%20%28mRAW%29%20%283%3A2%29.cr2",
+            "fca673cdec6a65c8fbafc5fd6416e2c9adbc214b86ea2a0db2daea958b70ffd6"),
+
+    /**
+     * rawpixls-canon-eos-7d-mark-ii-sraw2-sraw-3-2.cr2 (9857862 bytes).
+     */
+    CR2_7D2_SRAW("rawpixls-canon-eos-7d-mark-ii-sraw2-sraw-3-2.cr2", "https://raw.pixls.us/getfile.php/1066/nice/Canon%20-%20EOS%207D%20Mark%20II%20-%20sRAW2%20%28sRAW%29%20%283%3A2%29.cr2",
+            "2d86d7af6168af36ac666e462c0bac325884f88c1cb78eebfd4c9c11dcacc116"),
+
+    /**
+     * rawpixls-canon-eos-80d-sraw1-mraw-3-2.cr2 (29507192 bytes).
+     */
+    CR2_80D_MRAW("rawpixls-canon-eos-80d-sraw1-mraw-3-2.cr2", "https://raw.pixls.us/getfile.php/1295/nice/Canon%20-%20EOS%2080D%20-%20sRAW1%20%28mRAW%29%20%283%3A2%29.CR2",
+            "181cf35881cf967d025948694bc06d5e3e194ec371df3263ed26ec34909ffedb"),
+
+    /**
+     * rawpixls-canon-eos-80d-sraw2-sraw-3-2.cr2 (20220625 bytes).
+     */
+    CR2_80D_SRAW("rawpixls-canon-eos-80d-sraw2-sraw-3-2.cr2", "https://raw.pixls.us/getfile.php/1296/nice/Canon%20-%20EOS%2080D%20-%20sRAW2%20%28sRAW%29%20%283%3A2%29.CR2",
+            "f9c5404b57248c21e9b269721aa0d721c3b1281c94ebdee3c50bf32db42613a8"),
+
+    /**
+     * rawpixls-pentax-k10d-12bit-12bit-compressed-3-2.pef (9561139 bytes).
+     */
+    PEF_K10D("rawpixls-pentax-k10d-12bit-12bit-compressed-3-2.pef", "https://raw.pixls.us/getfile.php/2239/nice/Pentax%20-%20K10D%20-%2012bit%2012bit%20compressed%20%283%3A2%29.PEF",
+            "e35ae4154a468be3154f5f462e884ba5941f010d3e8f23d347fbec14809f44d3"),
+
+    /**
+     * rawpixls-pentax-k2000-12bit-12bit-compressed-3-2.pef (12485449 bytes).
+     */
+    PEF_K2000("rawpixls-pentax-k2000-12bit-12bit-compressed-3-2.pef", "https://raw.pixls.us/getfile.php/5239/nice/Pentax%20-%20K2000%20-%2012bit%2012bit%20compressed%20%283%3A2%29.PEF",
+            "985003748c094b8d02f2517b4c07d66d48ea5380260235ccb3409f41ceb3ea84"),
+
+    /**
+     * rawpixls-pentax-k-70-14bit-3-2.pef (28663115 bytes).
+     */
+    PEF_K70("rawpixls-pentax-k-70-14bit-3-2.pef", "https://raw.pixls.us/getfile.php/1141/nice/Pentax%20-%20K-70%20-%2014bit%20%283%3A2%29.PEF",
+            "1d64c6aa71680642ba8f00b6f6105df3e66a4534e631f422fbf3316273c4408c"),
+
+    /**
+     * rawpixls-panasonic-dc-gh5m2-4-3-5082.rw2 (24210944 bytes).
+     */
+    RW2_GH5M2("rawpixls-panasonic-dc-gh5m2-4-3-5082.rw2", "https://raw.pixls.us/getfile.php/5082/nice/Panasonic%20-%20DC-GH5M2%20-%204%3A3.RW2",
+            "0ea0efd2a9442d8c68508e4196e29f1da4577407dc3df5add4cf360f70493c7b"),
+
+    /**
+     * rawpixls-panasonic-dc-gh7-4-3-8062.rw2 (40815104 bytes).
+     */
+    RW2_GH7("rawpixls-panasonic-dc-gh7-4-3-8062.rw2", "https://raw.pixls.us/getfile.php/8062/nice/Panasonic%20-%20DC-GH7%20-%204%3A3.RW2",
+            "d7d99d4702f1a28326e119e39d4c43dfb7ce16bbab1a3580e813191f0edbfd87"),
+
+    /**
+     * rawpixls-panasonic-dc-s1rm2-3-2-7723.rw2 (55315968 bytes).
+     */
+    RW2_S1RM2("rawpixls-panasonic-dc-s1rm2-3-2-7723.rw2", "https://raw.pixls.us/getfile.php/7723/nice/Panasonic%20-%20DC-S1RM2%20-%203%3A2.RW2",
+            "0175ac937261744fe13b5d234eb4ede83695562d100d2c7b4bb2e7fc3bd69e67"),
+
+    /**
+     * rawpixls-panasonic-dc-s1rm2-3-2-7724.rw2 (200118272 bytes).
+     */
+    RW2_S1RM2_HIGH_RES("rawpixls-panasonic-dc-s1rm2-3-2-7724.rw2", "https://raw.pixls.us/getfile.php/7724/nice/Panasonic%20-%20DC-S1RM2%20-%203%3A2.RW2",
+            "d569bafb6730ea9f23669377cfc17a3865ab1b43edc488092ceaa4638fe547a2"),
+
+    /**
+     * rawpixls-panasonic-dc-s5-3-2-4098.rw2 (173061632 bytes).
+     */
+    RW2_S5_HIGH_RES("rawpixls-panasonic-dc-s5-3-2-4098.rw2", "https://raw.pixls.us/getfile.php/4098/nice/Panasonic%20-%20DC-S5%20-%203%3A2.RW2",
+            "3d1c714cab86a9e699e37f6f96719a98a5a2930e5ac77c73c1cba9b18f98c828"),
+
+    /**
+     * rawpixls-panasonic-dc-s5-3-2-6339.rw2 (43520512 bytes).
+     */
+    RW2_S5_V7("rawpixls-panasonic-dc-s5-3-2-6339.rw2", "https://raw.pixls.us/getfile.php/6339/nice/Panasonic%20-%20DC-S5%20-%203%3A2.RW2",
+            "3615c85207097180b231f0c89d018eb3f1a71988780612921eb0a05246bca706"),
+
+    /**
+     * rawpixls-panasonic-dc-s9-3-2-7702.rw2 (27680768 bytes).
+     */
+    RW2_S9("rawpixls-panasonic-dc-s9-3-2-7702.rw2", "https://raw.pixls.us/getfile.php/7702/nice/Panasonic%20-%20DC-S9%20-%203%3A2.RW2",
+            "290ad5b4e396cb241a59459b2613d2b0659a03ff654e5d5368b3376d35812e50"),
+
+    /**
+     * rawpixls-sony-dslr-a450-12bit-12bit-compressed-3-2.arw (14712832 bytes).
+     */
+    ARW_A450_CRAW_12("rawpixls-sony-dslr-a450-12bit-12bit-compressed-3-2.arw", "https://raw.pixls.us/getfile.php/2349/nice/Sony%20-%20DSLR-A450%20-%2012bit%2012bit%20compressed%20%283%3A2%29.ARW",
+            "7c2205a14fbfb05aa22e2e290750ea8894229a52a106a67516b4e797759e37ad"),
+
+    /**
+     * rawpixls-sony-dslr-a700-8bit-8bit-compressed-3-2.arw (12967424 bytes).
+     */
+    ARW_A700_CRAW_8("rawpixls-sony-dslr-a700-8bit-8bit-compressed-3-2.arw", "https://raw.pixls.us/getfile.php/2521/nice/Sony%20-%20DSLR-A700%20-%208bit%208bit%20compressed%20%283%3A2%29.ARW",
+            "3159e28892bf0771d01525cd4b6190f9c15bbb19fa2fab6d2515ced0594e8f40");
 
     private final String file;
     private final String url;
