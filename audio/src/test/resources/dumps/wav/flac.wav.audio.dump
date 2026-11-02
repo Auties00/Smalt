@@ -1,0 +1,14 @@
+# audio decode dump of wav/flac.wav; regenerate with -Dsmalt.test.updateDumps=true
+format WAV
+duration 600000
+seekable true
+track 0 FLAC rate=22050 layout=[FRONT_LEFT, FRONT_RIGHT]
+0 frames=4096 crc16=84c3b4f5
+1 frames=4096 crc16=2045611d
+2 frames=4096 crc16=cd9f2081
+3 frames=942 crc16=fac70601
+seek 0: @sample 0
+seek 200000: @sample 4410
+seek 400000: @sample 8820
+seek 600000: end
+seek -1000000: @sample 0

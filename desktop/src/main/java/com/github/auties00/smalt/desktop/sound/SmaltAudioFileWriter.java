@@ -31,7 +31,8 @@ import java.util.Objects;
  * {@link SampledAudio} reads, or any stream Java Sound converts to
  * {@link AudioFormat.Encoding#PCM_SIGNED} (such as a compressed stream of
  * {@link SmaltAudioFileReader}). Opus codes 8, 12, 16, 24 or 48 kHz: other rates are resampled to
- * 48 kHz; more than two channels are downmixed to stereo. The file ends exactly at the last input
+ * 48 kHz; up to 255 channels are coded as they are (surround layouts up to 7.1 with the Opus
+ * surround mapping) and more are downmixed to stereo. The file ends exactly at the last input
  * sample (the Ogg end granule position trims the encoder's padding). WAV, AIFF and AU are left to
  * the JDK's writers.
  *
@@ -42,6 +43,11 @@ public final class SmaltAudioFileWriter extends AudioFileWriter {
      * The track identifier of the encoded stream.
      */
     private static final int TRACK_ID = 0;
+
+    /**
+     * The most channels an Opus stream carries.
+     */
+    private static final int MAX_CHANNELS = 255;
 
     /**
      * The number of frames read from the input per block.
@@ -143,7 +149,7 @@ public final class SmaltAudioFileWriter extends AudioFileWriter {
         var format = input.getFormat();
         var inputRate = Math.round(format.getSampleRate());
         var inputLayout = SampledAudio.layoutOf(format);
-        var outputLayout = inputLayout.channels() <= 2 ? inputLayout : ChannelLayout.STEREO;
+        var outputLayout = inputLayout.channels() <= MAX_CHANNELS ? inputLayout : ChannelLayout.STEREO;
         try (var encoder = EncoderTail.open(Codec.OPUS, inputRate, outputLayout, false, true, AudioEncoderOptions::of);
              var muxer = new OggMuxer(sink)) {
             muxer.addTrack(EncoderTail.track(encoder, TRACK_ID).build());

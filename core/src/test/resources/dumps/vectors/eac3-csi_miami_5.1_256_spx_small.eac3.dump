@@ -1,0 +1,67 @@
+# demux dump of vectors/eac3-csi_miami_5.1_256_spx_small.eac3; regenerate with -Dsmalt.test.updateDumps=true
+format AC3
+duration 1504000
+seekable true
+track 0 AUDIO EAC3 timebase=1/48000 duration=72192 config=none
+  audio rate=48000 bits=0 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT, FRONT_CENTER, LOW_FREQUENCY, SIDE_LEFT, SIDE_RIGHT]
+packets 47
+0 t0 pts=0 dts=0 dur=1536 flags=KEY size=1024 crc=c61ef378
+1 t0 pts=1536 dts=1536 dur=1536 flags=KEY size=1024 crc=3ebadda6
+2 t0 pts=3072 dts=3072 dur=1536 flags=KEY size=1024 crc=81564bcc
+3 t0 pts=4608 dts=4608 dur=1536 flags=KEY size=1024 crc=0e54f2bf
+4 t0 pts=6144 dts=6144 dur=1536 flags=KEY size=1024 crc=464dff3e
+5 t0 pts=7680 dts=7680 dur=1536 flags=KEY size=1024 crc=be7795b8
+6 t0 pts=9216 dts=9216 dur=1536 flags=KEY size=1024 crc=083611a3
+7 t0 pts=10752 dts=10752 dur=1536 flags=KEY size=1024 crc=b7d4b59e
+8 t0 pts=12288 dts=12288 dur=1536 flags=KEY size=1024 crc=12a2e031
+9 t0 pts=13824 dts=13824 dur=1536 flags=KEY size=1024 crc=72de15cf
+10 t0 pts=15360 dts=15360 dur=1536 flags=KEY size=1024 crc=67082977
+11 t0 pts=16896 dts=16896 dur=1536 flags=KEY size=1024 crc=744ef786
+12 t0 pts=18432 dts=18432 dur=1536 flags=KEY size=1024 crc=a334a606
+13 t0 pts=19968 dts=19968 dur=1536 flags=KEY size=1024 crc=be0f12d9
+14 t0 pts=21504 dts=21504 dur=1536 flags=KEY size=1024 crc=c19370ef
+15 t0 pts=23040 dts=23040 dur=1536 flags=KEY size=1024 crc=c8019077
+16 t0 pts=24576 dts=24576 dur=1536 flags=KEY size=1024 crc=1934db94
+17 t0 pts=26112 dts=26112 dur=1536 flags=KEY size=1024 crc=10341223
+18 t0 pts=27648 dts=27648 dur=1536 flags=KEY size=1024 crc=ed2eb314
+19 t0 pts=29184 dts=29184 dur=1536 flags=KEY size=1024 crc=ac182391
+20 t0 pts=30720 dts=30720 dur=1536 flags=KEY size=1024 crc=9bffe9cf
+21 t0 pts=32256 dts=32256 dur=1536 flags=KEY size=1024 crc=5b92152f
+22 t0 pts=33792 dts=33792 dur=1536 flags=KEY size=1024 crc=dc4908da
+23 t0 pts=35328 dts=35328 dur=1536 flags=KEY size=1024 crc=931a6c5b
+24 t0 pts=36864 dts=36864 dur=1536 flags=KEY size=1024 crc=b6300bcd
+25 t0 pts=38400 dts=38400 dur=1536 flags=KEY size=1024 crc=d3d4e285
+26 t0 pts=39936 dts=39936 dur=1536 flags=KEY size=1024 crc=c0e91b87
+27 t0 pts=41472 dts=41472 dur=1536 flags=KEY size=1024 crc=b2e69ddf
+28 t0 pts=43008 dts=43008 dur=1536 flags=KEY size=1024 crc=6f7aeb2b
+29 t0 pts=44544 dts=44544 dur=1536 flags=KEY size=1024 crc=62ede3c8
+30 t0 pts=46080 dts=46080 dur=1536 flags=KEY size=1024 crc=966b61d9
+31 t0 pts=47616 dts=47616 dur=1536 flags=KEY size=1024 crc=b4877a55
+32 t0 pts=49152 dts=49152 dur=1536 flags=KEY size=1024 crc=dfeedb35
+33 t0 pts=50688 dts=50688 dur=1536 flags=KEY size=1024 crc=ac421287
+34 t0 pts=52224 dts=52224 dur=1536 flags=KEY size=1024 crc=7ab3b59c
+35 t0 pts=53760 dts=53760 dur=1536 flags=KEY size=1024 crc=db4d7c47
+36 t0 pts=55296 dts=55296 dur=1536 flags=KEY size=1024 crc=9d710e62
+37 t0 pts=56832 dts=56832 dur=1536 flags=KEY size=1024 crc=81bbe24d
+38 t0 pts=58368 dts=58368 dur=1536 flags=KEY size=1024 crc=4ce55025
+39 t0 pts=59904 dts=59904 dur=1536 flags=KEY size=1024 crc=14bb727a
+40 t0 pts=61440 dts=61440 dur=1536 flags=KEY size=1024 crc=40d021f4
+41 t0 pts=62976 dts=62976 dur=1536 flags=KEY size=1024 crc=d193b6fc
+42 t0 pts=64512 dts=64512 dur=1536 flags=KEY size=1024 crc=e49ff1e5
+43 t0 pts=66048 dts=66048 dur=1536 flags=KEY size=1024 crc=d043787f
+44 t0 pts=67584 dts=67584 dur=1536 flags=KEY size=1024 crc=f1896589
+45 t0 pts=69120 dts=69120 dur=1536 flags=KEY size=1024 crc=f14af581
+46 t0 pts=70656 dts=70656 dur=1536 flags=KEY size=1024 crc=ba98ca38
+seek 0: t0@0
+seek 501333: t0@15
+seek 1002666: t0@31
+seek 1504000: end
+seek -1000000: t0@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format AC3
+  duration -1
+  seekable false
+  track 0 AUDIO EAC3 timebase=1/48000 duration=? config=none
+    audio rate=48000 bits=0 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT, FRONT_CENTER, LOW_FREQUENCY, SIDE_LEFT, SIDE_RIGHT]
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH
