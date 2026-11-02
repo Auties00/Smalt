@@ -22,9 +22,10 @@ public abstract sealed class Vp8EncDsp permits ScalarVp8EncDsp, VectorVp8EncDsp 
     public static final Vp8EncDsp SCALAR = new ScalarVp8EncDsp();
 
     /**
-     * The implementation selected by {@link Simd#ENABLED}.
+     * The implementation selected by {@link Simd#WIDE}: the Vector API kernels, written for 256-bit
+     * vectors, or {@link #SCALAR}.
      */
-    public static final Vp8EncDsp INSTANCE = Simd.ENABLED ? VectorVp8EncDsp.create() : SCALAR;
+    public static final Vp8EncDsp INSTANCE = Simd.WIDE ? VectorVp8EncDsp.create() : SCALAR;
 
     /**
      * Creates an implementation.

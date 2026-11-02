@@ -1,0 +1,27 @@
+# demux dump of vectors/mpegff-13_long.mp4; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 5000000000000000
+seekable true
+metadata compatible_brands="isom"
+metadata copyright="ENST IsoMedia Conformance Files - ENST (c) 2006 - Rights released for ISO Conformance use"
+metadata creation_time="2006-07-05T12:35:36.000000Z"
+metadata major_brand="isom"
+metadata minor_version="1"
+track 1 VIDEO MPEG4_PART2 timebase=1/1 duration=5000000000 config=57:c05a6683
+  video 120x96 orientation=NORMAL rate=1/500000000
+packets 10
+0 t1 pts=0 dts=0 dur=500000000 flags=KEY size=1919 crc=e4eab5c6
+1 t1 pts=500000000 dts=500000000 dur=500000000 flags=KEY size=2771 crc=92052e90
+2 t1 pts=1000000000 dts=1000000000 dur=500000000 flags=KEY size=2805 crc=67318301
+3 t1 pts=1500000000 dts=1500000000 dur=500000000 flags=KEY size=4020 crc=91b91eee
+4 t1 pts=2000000000 dts=2000000000 dur=500000000 flags=KEY size=4038 crc=389468ff
+5 t1 pts=2500000000 dts=2500000000 dur=500000000 flags=KEY size=4017 crc=4bc2da96
+6 t1 pts=3000000000 dts=3000000000 dur=500000000 flags=KEY size=4039 crc=481b0e46
+7 t1 pts=3500000000 dts=3500000000 dur=500000000 flags=KEY size=4009 crc=a7a811e9
+8 t1 pts=4000000000 dts=4000000000 dur=500000000 flags=KEY size=4037 crc=6ea2c464
+9 t1 pts=4500000000 dts=4500000000 dur=500000000 flags=KEY size=4027 crc=b9870581
+seek 0: t1@0
+seek 1666666666666666: t1@3
+seek 3333333333333333: t1@6
+seek 5000000000000000: end
+seek -1000000: t1@0

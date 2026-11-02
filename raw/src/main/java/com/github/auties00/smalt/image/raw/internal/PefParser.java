@@ -6,6 +6,8 @@ import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Parses a Pentax PEF file: a TIFF/EP structure whose color filter array directory holds the
@@ -45,6 +47,11 @@ final class PefParser {
     private static final int PACKBITS_LABEL = 32773;
 
     /**
+     * The frames of a Pentax pixel-shift file.
+     */
+    private static final int PIXEL_SHIFT_FRAMES = 4;
+
+    /**
      * Prevents instantiation.
      */
     private PefParser() {
@@ -65,7 +72,47 @@ final class PefParser {
             file.unsupported = "the PEF file holds no raw image";
             return;
         }
-        var note = makerNote(tree);
+        var note = makerNote(tree.exif, tree.first.reader());
+        var sensor = frame(reader, raw, note, tree.exif, file);
+        if (sensor == null) {
+            return;
+        }
+        sensor.defaultCrop = NefParser.previewCrop(file, sensor);
+        var frames = pixelShiftFrames(tree, raw);
+        if (frames.size() == PIXEL_SHIFT_FRAMES && sensor.cfa != null && sensor.cfa.isBayer()
+                && sensor.samplesPerPixel == 1) {
+            var parsed = new ArrayList<Sensor>(frames.size());
+            parsed.add(sensor);
+            for (var index = 1; index < frames.size(); index++) {
+                var directory = frames.get(index);
+                var exif = directory.child(TiffTree.EXIF_IFD);
+                var frame = frame(reader, directory, makerNote(exif, reader), exif, null);
+                if (frame == null) {
+                    file.sensor = sensor;
+                    return;
+                }
+                frame.defaultCrop = sensor.defaultCrop;
+                parsed.add(frame);
+            }
+            var merged = PixelShift.merge(parsed, PixelShift.PENTAX_DX, PixelShift.PENTAX_DY);
+            file.sensor = merged != null ? merged : sensor;
+        } else {
+            file.sensor = sensor;
+        }
+    }
+
+    /**
+     * Describes the image of one raw directory.
+     *
+     * @param reader the TIFF structure
+     * @param raw the raw image directory
+     * @param note the maker note of the directory, or {@code null}
+     * @param exif the EXIF directory of the directory, or {@code null}
+     * @param file the description to fill with the white balance and the reason a file is not supported,
+     * or {@code null} to leave the file as it is
+     * @return the sensor description, or {@code null} when the image cannot be decoded
+     */
+    private static Sensor frame(TiffReader reader, Ifd raw, Ifd note, Ifd exif, RawFile file) {
         var sensor = new Sensor();
         var compression = raw.intValue(TiffSamples.COMPRESSION, 1);
         if (compression == PENTAX_COMPRESSION) {
@@ -79,8 +126,8 @@ final class PefParser {
             if (table == null || table.length < 39) {
                 // TODO: decode PEF files whose maker note carries no Huffman table; every CC0 model on
                 //  raw.pixls.us carries one, so no sample was available to derive the default from
-                file.unsupported = "PEF files without a Huffman table are not supported";
-                return;
+                unsupported(file, "PEF files without a Huffman table are not supported");
+                return null;
             }
             var spec = huffman(table, note.reader().little());
             var offsets = raw.longs(TiffSamples.STRIP_OFFSETS);
@@ -100,13 +147,12 @@ final class PefParser {
             sensor.compression = "uncompressed";
             var offset = reader.base() + raw.longs(TiffSamples.STRIP_OFFSETS)[0];
             var width = sensor.width;
-            var source = reader.source();
             var little = reader.little();
             var bits = sensor.bitsPerSample;
             sensor.reader = (plane, limits) -> {
                 var row = new byte[width * 2];
                 for (var y = 0; y < plane.height; y++) {
-                    var read = source.read(offset + (long) y * row.length, row, 0, row.length);
+                    var read = reader.readAvailable(offset + (long) y * row.length, row, 0, row.length);
                     if (read <= 0) {
                         return;
                     }
@@ -120,13 +166,12 @@ final class PefParser {
             sensor.compression = "uncompressed";
             var offset = reader.base() + raw.longs(TiffSamples.STRIP_OFFSETS)[0];
             var width = sensor.width;
-            var source = reader.source();
             sensor.reader = (plane, limits) -> {
                 var stride = width * 3 / 2;
                 LimitChecks.checkAllocation(limits, stride);
                 var row = new byte[stride];
                 for (var y = 0; y < plane.height; y++) {
-                    var read = source.read(offset + (long) y * stride, row, 0, stride);
+                    var read = reader.readAvailable(offset + (long) y * stride, row, 0, stride);
                     if (read <= 0) {
                         return;
                     }
@@ -137,16 +182,16 @@ final class PefParser {
             try {
                 sensor.reader = TiffSamples.describe(raw, sensor);
             } catch (MediaException.Unsupported exception) {
-                file.unsupported = exception.getMessage();
-                return;
+                unsupported(file, exception.getMessage());
+                return null;
             }
         }
-        sensor.cfa = TiffEpParser.cfa(raw, tree.exif);
+        sensor.cfa = TiffEpParser.cfa(raw, exif);
         var monochrome = raw.intValue(TiffSamples.PHOTOMETRIC, 0) == DngParser.PHOTOMETRIC_LINEAR_RAW
                 && raw.intValue(TiffSamples.SAMPLES_PER_PIXEL, 1) == 1;
         if (sensor.cfa == null && !monochrome) {
-            file.unsupported = "the PEF raw image has no CFA pattern";
-            return;
+            unsupported(file, "the PEF raw image has no CFA pattern");
+            return null;
         }
         if (monochrome) {
             sensor.cfa = null;
@@ -154,8 +199,42 @@ final class PefParser {
         if (note != null) {
             levels(note, sensor, file);
         }
-        sensor.defaultCrop = NefParser.previewCrop(file, sensor);
-        file.sensor = sensor;
+        return sensor;
+    }
+
+    /**
+     * Records why a file cannot be decoded.
+     *
+     * @param file the description to fill, or {@code null}
+     * @param reason the missing feature
+     */
+    private static void unsupported(RawFile file, String reason) {
+        if (file != null) {
+            file.unsupported = reason;
+        }
+    }
+
+    /**
+     * Returns the frames of a pixel-shift file: the raw directory and the other directories of a color
+     * filter array image of its size, compression and bit depth, in the order the file stores them.
+     *
+     * @param tree the directories
+     * @param raw the raw image directory
+     * @return the directories, the raw directory first
+     */
+    private static List<Ifd> pixelShiftFrames(TiffTree tree, Ifd raw) {
+        var result = new ArrayList<Ifd>();
+        result.add(raw);
+        for (var ifd : tree.directories) {
+            if (ifd != raw && ifd.intValue(TiffSamples.PHOTOMETRIC, 0) == DngParser.PHOTOMETRIC_CFA
+                    && ifd.longValue(TiffSamples.IMAGE_WIDTH, 0) == raw.longValue(TiffSamples.IMAGE_WIDTH, -1)
+                    && ifd.longValue(TiffSamples.IMAGE_LENGTH, 0) == raw.longValue(TiffSamples.IMAGE_LENGTH, -1)
+                    && ifd.intValue(TiffSamples.COMPRESSION, 1) == raw.intValue(TiffSamples.COMPRESSION, 1)
+                    && ifd.intValue(TiffSamples.BITS_PER_SAMPLE, 0) == raw.intValue(TiffSamples.BITS_PER_SAMPLE, 0)) {
+                result.add(ifd);
+            }
+        }
+        return result;
     }
 
     /**
@@ -276,18 +355,18 @@ final class PefParser {
     /**
      * Finds the maker note's directory.
      *
-     * @param tree the directories
+     * @param exif the EXIF directory, or {@code null}
+     * @param reader the TIFF structure
      * @return the directory, or {@code null}
      */
-    private static Ifd makerNote(TiffTree tree) {
-        if (tree.exif == null) {
+    private static Ifd makerNote(Ifd exif, TiffReader reader) {
+        if (exif == null) {
             return null;
         }
-        var position = tree.exif.valuePosition(TiffTree.MAKER_NOTE);
+        var position = exif.valuePosition(TiffTree.MAKER_NOTE);
         if (position < 0) {
             return null;
         }
-        var reader = tree.first.reader();
         var head = new byte[10];
         if (reader.readAvailable(position, head, 0, 10) < 10) {
             return null;
@@ -312,7 +391,7 @@ final class PefParser {
      *
      * @param note the maker note's directory
      * @param sensor the sensor description to fill
-     * @param file the description to fill
+     * @param file the description to fill with the white balance, or {@code null}
      */
     private static void levels(Ifd note, Sensor sensor, RawFile file) {
         var black = note.longs(0x200);
@@ -326,7 +405,7 @@ final class PefParser {
             sensor.black = values;
         }
         var white = note.longs(0x201);
-        if (white != null && white.length >= 4 && white[0] > 0 && white[1] > 0 && white[2] > 0 && white[3] > 0) {
+        if (file != null && white != null && white.length >= 4 && white[0] > 0 && white[1] > 0 && white[2] > 0 && white[3] > 0) {
             var green = (white[1] + white[2]) / 2.0;
             file.color.asShotNeutral = new double[]{green / white[0], 1, green / white[3]};
         }

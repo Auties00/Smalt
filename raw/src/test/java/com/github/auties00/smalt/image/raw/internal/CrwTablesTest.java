@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.image.raw.internal;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.raw.RawSamples;
 import com.github.auties00.smalt.io.MediaSource;
@@ -24,7 +25,6 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Checks the Huffman tables of {@link CrwTables}: their structure and, against Adobe DNG Converter
@@ -45,7 +45,7 @@ class CrwTablesTest {
     private static Path oracle(RawSamples sample) {
         var name = sample.fileName();
         var path = ORACLE.resolve(name.substring(0, name.length() - 4) + ".dng");
-        assumeTrue(Files.isRegularFile(path), "no oracle file " + path + "; run tools/testdata/raw-oracle.py");
+        Skip.unless(Files.isRegularFile(path), "data:raw-oracle", "no oracle file " + path + "; run tools/testdata/raw-oracle.py");
         return path;
     }
 

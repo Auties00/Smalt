@@ -1,0 +1,32 @@
+# audio decode dump of matroska/vp9-vorbis.webm; regenerate with -Dsmalt.test.updateDumps=true
+format MATROSKA
+duration 2003991
+seekable true
+track 2 VORBIS rate=44100 layout=[FRONT_CENTER]
+0 frames=4096 crc16=7fe72128
+1 frames=4096 crc16=6dbea684
+2 frames=4096 crc16=99abe946
+3 frames=4096 crc16=8af86d38
+4 frames=4096 crc16=e1096e5b
+5 frames=4096 crc16=116a89b4
+6 frames=4096 crc16=03c522c5
+7 frames=4096 crc16=56e4fa1a
+8 frames=4096 crc16=6d5b978d
+9 frames=4096 crc16=6bca460e
+10 frames=4096 crc16=75de26ea
+11 frames=4096 crc16=157394de
+12 frames=4096 crc16=65e7bc1d
+13 frames=4096 crc16=0eec7aba
+14 frames=4096 crc16=51f3bf14
+15 frames=4096 crc16=2567dd39
+16 frames=4096 crc16=e1c14345
+17 frames=4096 crc16=cfe4eba6
+18 frames=4096 crc16=31a39cf2
+19 frames=4096 crc16=acb3b47a
+20 frames=4096 crc16=3f791f36
+21 frames=2304 crc16=1d91db80
+seek 0: @sample 0
+seek 667997: @sample 29459
+seek 1335994: @sample 58917
+seek 2003991: end
+seek -1000000: @sample 0

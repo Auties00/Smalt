@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.testkit;
 
-import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.Assertions;
+import org.opentest4j.TestAbortedException;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -21,8 +22,18 @@ import java.util.concurrent.TimeUnit;
  * and libtiff tools, exiftool, flac) that serve as independent oracles in differential tests.
  *
  * <p>Tools are looked up on {@code PATH} once. Tests call {@link #assume(Tool)} so they are
- * skipped, not failed, on machines without the tool; a tool without a {@link Tool} constant is
- * found and run by its executable name.
+ * skipped, not failed, on machines without the tool, with the reason id {@code oracle:<executable>}; a tool
+ * without a {@link Tool} constant is found and run by its executable name. When
+ * {@code smalt.test.requireOracles} (see {@link Skip}) names a tool, a missing tool fails the test instead,
+ * through {@link #assume(Tool)} and {@link #find(Tool)} alike, so that a test that only checks for a tool before
+ * comparing with it cannot pass silently where CI provisions the tool.
+ *
+ * <p>An ffmpeg or ffprobe run that fails because the build lacks an encoder, a decoder, a format or a filter
+ * skips the test with the reason id {@code oracle:ffmpeg-feature} (see {@link #missingFeature(String)}), so that a
+ * local ffmpeg without, say, the opencore AMR libraries skips the tests that need them. On CI it fails instead:
+ * every runner's ffmpeg has every component of {@code tools/testdata/ffmpeg-oracle/features.tsv}, and
+ * {@code smalt.test.requireOracles} names ffmpeg there, so a missing component is a broken environment, not a gap
+ * the skip baseline may record.
  */
 public final class Oracle {
     /**
@@ -68,13 +79,134 @@ public final class Oracle {
         DJPEG("djpeg"),
 
         /** libjpeg-turbo's JPEG encoder CLI. */
-        CJPEG("cjpeg");
+        CJPEG("cjpeg"),
+
+        /** libwebp's animation encoder CLI. */
+        IMG2WEBP("img2webp"),
+
+        /** libwebp's GIF to WebP converter CLI. */
+        GIF2WEBP("gif2webp"),
+
+        /** libwebp's container structure dump CLI. */
+        WEBPINFO("webpinfo"),
+
+        /** OpenJPEG's codestream structure dump CLI. */
+        OPJ_DUMP("opj_dump"),
+
+        /** libtiff's directory listing CLI. */
+        TIFFINFO("tiffinfo"),
+
+        /** libtiff's raw tag dump CLI. */
+        TIFFDUMP("tiffdump"),
+
+        /** libtiff's RGBA conversion CLI. */
+        TIFF2RGBA("tiff2rgba"),
+
+        /** opus-tools' Opus encoder CLI. */
+        OPUSENC("opusenc"),
+
+        /** opus-tools' Opus decoder CLI. */
+        OPUSDEC("opusdec"),
+
+        /** libopus' {@code opus_compare}, the RFC 6716 decoder conformance comparison. */
+        OPUS_COMPARE("opus_compare"),
+
+        /** GPAC's MP4Box, the ISO base media file inspector and packager. */
+        MP4BOX("MP4Box"),
+
+        /** MKVToolNix's Matroska muxer. */
+        MKVMERGE("mkvmerge"),
+
+        /** MKVToolNix's Matroska structure dump. */
+        MKVINFO("mkvinfo"),
+
+        /** The Matroska foundation's Matroska and WebM conformance validator. */
+        MKVALIDATOR("mkvalidator"),
+
+        /** TSDuck's transport stream processor. */
+        TSP("tsp"),
+
+        /** SoX, the audio file converter. */
+        SOX("sox"),
+
+        /** {@code tools/testdata/png-oracle}'s libpng chunk and pixel dump. */
+        PNGDUMP("smalt-pngdump"),
+
+        /** {@code tools/testdata/icc-hdr}'s Little CMS profile writer and reader. */
+        LCMSDUMP("smalt-lcmsdump"),
+
+        /** {@code tools/testdata/mpeg4-oracle}'s build of the MPEG-4 Visual reference decoder of ISO/IEC 14496-5. */
+        MPEG4REF("smalt-mpeg4ref"),
+
+        /**
+         * {@code tools/testdata/mpeg2-oracle}'s build of the MPEG-2 video reference decoder of ISO/IEC 13818-5, with
+         * Smalt's inverse DCT.
+         */
+        MPEG2DEC("smalt-mpeg2dec"),
+
+        /** {@code tools/testdata/mpeg2-oracle}'s build of the MPEG-2 video reference encoder of ISO/IEC 13818-5. */
+        MPEG2ENC("smalt-mpeg2enc"),
+
+        /** {@code tools/testdata/gif-oracle}'s driver of giflib 5.2.2's GIF encoder. */
+        GIFENC("smalt-gifenc"),
+
+        /** {@code tools/testdata/alac-oracle}'s driver of the encoder of Apple's ALAC library. */
+        ALACENC("smalt-alacenc"),
+
+        /** {@code tools/testdata/atrac9-oracle}'s driver of the LibAtrac9 decoder. */
+        AT9DEC("smalt-at9dec"),
+
+        /** libultrahdr's Ultra HDR encoder and decoder CLI. */
+        ULTRAHDR_APP("ultrahdr_app"),
+
+        /** libavif's gain map tool (tone mapping, metadata dump). */
+        AVIFGAINMAPUTIL("avifgainmaputil"),
+
+        /** libavif's AVIF decoder CLI. */
+        AVIFDEC("avifdec"),
+
+        /** libheif's HEIF decoder CLI. */
+        HEIF_DEC("heif-dec"),
+
+        /** libheif's HEIF decoder CLI under the name of libheif 1.17 and earlier. */
+        HEIF_CONVERT("heif-convert"),
+
+        /** libheif's HEIF structure dump CLI. */
+        HEIF_INFO("heif-info"),
+
+        /** The validator of Adobe's DNG SDK (tools/testdata/dng-validate). */
+        DNG_VALIDATE("dng_validate");
 
         /** The executable name without extension. */
         private final String executable;
 
         Tool(String executable) {
             this.executable = executable;
+        }
+
+        /** {@return the executable name without extension} */
+        public String executable() {
+            return executable;
+        }
+
+        /** {@return the lowercase executable name, the name part of the tool's skip reason id} */
+        public String id() {
+            return executable.toLowerCase(java.util.Locale.ROOT);
+        }
+
+        /**
+         * Returns the tool of an executable name.
+         *
+         * @param executable the executable name without extension
+         * @return the tool, or empty for a tool without a constant
+         */
+        public static Optional<Tool> of(String executable) {
+            for (var tool : values()) {
+                if (tool.executable.equals(executable)) {
+                    return Optional.of(tool);
+                }
+            }
+            return Optional.empty();
         }
     }
 
@@ -99,18 +231,38 @@ public final class Oracle {
     }
 
     /**
-     * Returns the executable of a tool, searching {@code PATH}.
+     * Returns the executable of a tool, searching {@code PATH}; fails the calling test when the tool is
+     * missing and {@code smalt.test.requireOracles} requires it.
      */
     public static Optional<Path> find(Tool tool) {
-        return RESOLVED.computeIfAbsent(tool, key -> lookup(key.executable));
+        var found = RESOLVED.computeIfAbsent(tool, key -> lookup(key.executable));
+        if (found.isEmpty() && required(tool)) {
+            Assertions.fail(Skip.message("oracle:" + tool.id(), tool.executable
+                    + " is not on PATH and smalt.test.requireOracles requires it"));
+        }
+        return found;
     }
 
     /**
-     * Returns the executable of a tool by name, searching {@code PATH}, for a tool without a
-     * {@link Tool} constant.
+     * Returns the executable of a tool by name, searching {@code PATH}; a name with a {@link Tool}
+     * constant behaves as {@link #find(Tool)}.
      */
     public static Optional<Path> find(String executable) {
+        var tool = Tool.of(executable);
+        if (tool.isPresent()) {
+            return find(tool.get());
+        }
         return RESOLVED_NAMES.computeIfAbsent(executable, Oracle::lookup);
+    }
+
+    /**
+     * Returns whether {@code smalt.test.requireOracles} requires a tool.
+     *
+     * @param tool the tool
+     * @return whether a missing tool fails instead of skipping
+     */
+    public static boolean required(Tool tool) {
+        return Skip.requires("smalt.test.requireOracles", "SMALT_TEST_REQUIRE_ORACLES", tool.executable);
     }
 
     private static Optional<Path> lookup(String executable) {
@@ -138,17 +290,114 @@ public final class Oracle {
     }
 
     /**
-     * Skips the calling test when the tool is not installed.
+     * Skips the calling test when the tool is not installed, or fails it when
+     * {@code smalt.test.requireOracles} requires the tool.
      */
     public static void assume(Tool tool) {
-        Assumptions.assumeTrue(find(tool).isPresent(), tool.executable + " is not on PATH");
+        Skip.unless(find(tool).isPresent(), "oracle:" + tool.id(), tool.executable + " is not on PATH");
     }
 
     /**
-     * Skips the calling test when the tool of that name is not installed.
+     * Skips the calling test when the tool of that name is not installed; a name with a {@link Tool}
+     * constant behaves as {@link #assume(Tool)}.
      */
     public static void assume(String executable) {
-        Assumptions.assumeTrue(find(executable).isPresent(), executable + " is not on PATH");
+        Skip.unless(find(executable).isPresent(), "oracle:" + executable.toLowerCase(java.util.Locale.ROOT),
+                executable + " is not on PATH");
+    }
+
+    /**
+     * Skips the calling test unless ffmpeg is installed and its build has an encoder; fails it instead when
+     * {@code smalt.test.requireOracles} requires ffmpeg (see {@link #missingFeature(String)}).
+     *
+     * @param encoder the encoder name as {@code ffmpeg -encoders} lists it, for example {@code libopencore_amrnb}
+     */
+    public static void assumeEncoder(String encoder) {
+        assume(Tool.FFMPEG);
+        if (!Features.ENCODERS.contains(encoder)) {
+            throw missingFeature("the ffmpeg build has no " + encoder + " encoder");
+        }
+    }
+
+    /**
+     * Skips the calling test unless ffmpeg is installed and its build has a filter; fails it instead when
+     * {@code smalt.test.requireOracles} requires ffmpeg (see {@link #missingFeature(String)}).
+     *
+     * @param filter the filter name as {@code ffmpeg -filters} lists it, for example {@code zscale}
+     */
+    public static void assumeFilter(String filter) {
+        assume(Tool.FFMPEG);
+        if (!Features.FILTERS.contains(filter)) {
+            throw missingFeature("the ffmpeg build has no " + filter + " filter");
+        }
+    }
+
+    /**
+     * Skips the calling test with the reason id {@code oracle:ffmpeg-feature} because the ffmpeg build lacks a
+     * component the test needs, or fails it when {@code smalt.test.requireOracles} requires ffmpeg.
+     *
+     * <p>The requirement switch names ffmpeg on CI, whose ffmpeg has every component of
+     * {@code tools/testdata/ffmpeg-oracle/features.tsv}; a test that needs a component of an external library
+     * lists it there.
+     *
+     * @param detail what the build lacks
+     * @return never returns normally; declared so that a caller can write {@code throw Oracle.missingFeature(...)}
+     */
+    public static TestAbortedException missingFeature(String detail) {
+        if (required(Tool.FFMPEG)) {
+            Assertions.fail(Skip.message("oracle:ffmpeg-feature", detail
+                    + ", and smalt.test.requireOracles requires an ffmpeg with every component of"
+                    + " tools/testdata/ffmpeg-oracle/features.tsv"));
+        }
+        throw Skip.now("oracle:ffmpeg-feature", detail);
+    }
+
+    /** The encoders and filters of the ffmpeg on {@code PATH}, listed once. */
+    private static final class Features {
+        static final java.util.Set<String> ENCODERS = list("-encoders");
+        static final java.util.Set<String> FILTERS = list("-filters");
+
+        /** Collects the second column of an ffmpeg listing, the component names. */
+        private static java.util.Set<String> list(String option) {
+            var result = execute(executable(Tool.FFMPEG), Duration.ofMinutes(1), null,
+                    List.of("-hide_banner", option), null);
+            var names = new java.util.HashSet<String>();
+            for (var line : new String(result.stdout(), java.nio.charset.StandardCharsets.UTF_8).lines().toList()) {
+                var fields = line.trim().split(" +");
+                if (fields.length > 1 && !fields[1].equals("=")) {
+                    names.add(fields[1]);
+                }
+            }
+            return java.util.Set.copyOf(names);
+        }
+    }
+
+    /** The ffmpeg diagnostics of a build that lacks a component, with the component name in one group. */
+    private static final java.util.regex.Pattern MISSING_FEATURE = java.util.regex.Pattern.compile(
+            "Unknown encoder '([^']+)'|Encoder ([^ ]+) not found|Unknown decoder '([^']+)'"
+                    + "|No such filter: '([^']+)'|Unknown input format: '([^']+)'"
+                    + "|Requested output format '([^']+)' is not (?:a suitable output format|known)");
+
+    /**
+     * Skips the calling test when a failed ffmpeg or ffprobe run reports a component its build lacks, or fails it
+     * when {@code smalt.test.requireOracles} requires ffmpeg (see {@link #missingFeature(String)}).
+     *
+     * @param executable the executable that ran
+     * @param stderr its standard error
+     */
+    public static void skipOnMissingFeature(Path executable, String stderr) {
+        var name = executable.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
+        if (!name.startsWith("ffmpeg") && !name.startsWith("ffprobe")) {
+            return;
+        }
+        var matcher = MISSING_FEATURE.matcher(stderr);
+        if (matcher.find()) {
+            for (var group = 1; group <= matcher.groupCount(); group++) {
+                if (matcher.group(group) != null) {
+                    throw missingFeature("the ffmpeg build lacks " + matcher.group(group));
+                }
+            }
+        }
     }
 
     /**
@@ -176,8 +425,8 @@ public final class Oracle {
      * on a non-zero exit; for a tool without a {@link Tool} constant.
      */
     public static byte[] run(String executable, Duration timeout, byte[] stdin, List<String> arguments) {
-        return run(find(executable).orElseThrow(() -> new IllegalStateException(executable + " is not on PATH")),
-                timeout, stdin, arguments);
+        assume(executable);
+        return run(find(executable).orElseThrow(), timeout, stdin, arguments);
     }
 
     /**
@@ -189,6 +438,20 @@ public final class Oracle {
     }
 
     /**
+     * Runs an executable by path and returns its exit code and both outputs, without failing on a non-zero exit;
+     * an ffmpeg or ffprobe executable that crashes is run again as for the tools (see {@link #crashed(int)}).
+     *
+     * @param executable the executable
+     * @param timeout    the maximum run time of one attempt
+     * @param stdin      the standard input, or {@code null} for none
+     * @param arguments  the command-line arguments
+     * @return the exit code and outputs of the last attempt
+     */
+    public static Result execute(Path executable, Duration timeout, byte[] stdin, List<String> arguments) {
+        return execute(executable, timeout, stdin, arguments, null);
+    }
+
+    /**
      * Runs a tool and returns its standard output followed by its standard error, as one text,
      * failing on a non-zero exit; for tools that report their results on standard error.
      */
@@ -196,6 +459,7 @@ public final class Oracle {
         var result = execute(executable(tool), timeout, null, arguments, null);
         var text = new String(result.stdout(), java.nio.charset.StandardCharsets.UTF_8) + result.stderr();
         if (result.exitCode() != 0) {
+            skipOnMissingFeature(executable(tool), result.stderr());
             throw new IllegalStateException(tool.executable + " exited with " + result.exitCode() + ": " + arguments
                     + "\n" + text);
         }
@@ -211,31 +475,75 @@ public final class Oracle {
     public static String run(Tool tool, Duration timeout, List<String> arguments, java.io.OutputStream stdout) {
         var result = execute(executable(tool), timeout, null, arguments, stdout);
         if (result.exitCode() != 0) {
+            skipOnMissingFeature(executable(tool), result.stderr());
             throw new IllegalStateException(tool.executable + " exited with " + result.exitCode() + ": " + arguments
                     + "\n" + result.stderr());
         }
         return result.stderr();
     }
 
+    /** Returns the executable of a tool, skipping the calling test (or failing it, when required) without it. */
     private static Path executable(Tool tool) {
-        return find(tool).orElseThrow(() -> new IllegalStateException(tool.executable + " is not on PATH"));
+        assume(tool);
+        return find(tool).orElseThrow();
     }
 
     private static byte[] run(Path executable, Duration timeout, byte[] stdin, List<String> arguments) {
         var result = execute(executable, timeout, stdin, arguments, null);
         if (result.exitCode() != 0) {
+            skipOnMissingFeature(executable, result.stderr());
             throw new IllegalStateException(executable.getFileName() + " exited with " + result.exitCode() + ": "
                     + arguments + "\n" + result.stderr());
         }
         return result.stdout();
     }
 
+    /** The most times an ffmpeg or ffprobe run that crashed is made. */
+    private static final int CRASH_ATTEMPTS = 3;
+
+    /**
+     * Runs an executable as {@link #executeOnce} does, repeating an ffmpeg or ffprobe run that crashed (see
+     * {@link #crashed(int)}) up to {@link #CRASH_ATTEMPTS} times in all when its standard output is captured.
+     *
+     * <p>ffmpeg 7.1's libaom wrapper crashes now and then in its muxing thread on macOS (a released buffer is
+     * released again, in about one run in fifteen of a realtime AV1 fixture under a test suite's load, and in
+     * Homebrew's build too); the run is otherwise deterministic, so a repeat yields the fixture. A crash that
+     * repeats, or one of another tool, is returned as it is.
+     */
+    private static Result execute(Path executable, Duration timeout, byte[] stdin, List<String> arguments,
+                                  java.io.OutputStream stdout) {
+        var name = executable.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
+        var repeatable = stdout == null && (name.startsWith("ffmpeg") || name.startsWith("ffprobe"));
+        for (var attempt = 1; ; attempt++) {
+            var result = executeOnce(executable, timeout, stdin, arguments, stdout);
+            if (!repeatable || !crashed(result.exitCode()) || attempt == CRASH_ATTEMPTS) {
+                return result;
+            }
+            System.err.println(executable.getFileName() + " crashed with exit code " + result.exitCode()
+                    + ", running it again: " + arguments);
+        }
+    }
+
+    /**
+     * Returns whether an exit code reports a crash rather than an error exit: 128 plus SIGILL, SIGTRAP (with which
+     * macOS's allocator stops a process whose heap is corrupt), SIGABRT, SIGBUS or SIGSEGV, as the JDK reports a
+     * process killed by a signal on Unix, or STATUS_ACCESS_VIOLATION on Windows.
+     *
+     * @param exitCode the exit code
+     * @return whether the process crashed
+     */
+    public static boolean crashed(int exitCode) {
+        return exitCode == 128 + 4 || exitCode == 128 + 5 || exitCode == 128 + 6 || exitCode == 128 + 7
+                || exitCode == 128 + 11
+                || exitCode == 0xC0000005;
+    }
+
     /**
      * Runs an executable, draining both outputs on helper threads so the process never blocks on a
      * full pipe; {@code stdout}, when given, receives the standard output instead of the result.
      */
-    private static Result execute(Path executable, Duration timeout, byte[] stdin, List<String> arguments,
-                                  java.io.OutputStream stdout) {
+    private static Result executeOnce(Path executable, Duration timeout, byte[] stdin, List<String> arguments,
+                                      java.io.OutputStream stdout) {
         var command = new ArrayList<String>();
         command.add(executable.toString());
         command.addAll(arguments);
@@ -327,10 +635,20 @@ public final class Oracle {
     }
 
     /**
-     * Fully decodes every stream of a file with ffmpeg, failing if ffmpeg reports any error;
-     * the conformance check for muxer and encoder output.
+     * Validates a file with the container validators of {@link com.github.auties00.smalt.testkit.validate.Validators}
+     * and fully decodes every stream of it with ffmpeg, failing if a validator finds a problem or ffmpeg reports any
+     * error; the conformance check for muxer and encoder output.
      */
     public static void assertDecodesCleanly(Path input) {
+        com.github.auties00.smalt.testkit.validate.Validators.assertValid(input);
+        assertFfmpegDecodes(input);
+    }
+
+    /**
+     * Fully decodes every stream of a file with ffmpeg, failing if ffmpeg reports any error, without the container
+     * validators of {@link #assertDecodesCleanly(Path)}.
+     */
+    public static void assertFfmpegDecodes(Path input) {
         run(Tool.FFMPEG, Duration.ofMinutes(5), List.of("-v", "error", "-xerror", "-i", input.toString(), "-f", "null", "-"));
     }
 

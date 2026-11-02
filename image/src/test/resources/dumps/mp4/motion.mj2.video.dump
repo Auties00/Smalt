@@ -1,0 +1,16 @@
+# video decode dump of mp4/motion.mj2; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 400000
+seekable true
+track 1 JPEG2000 64x48 timebase=1/15
+0 pts=0 dur=1 key=true 64x48 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=df3ae6e2 u=48a84ab2 v=2003ea31
+1 pts=1 dur=1 key=true 64x48 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=df3ae6e2 u=48a84ab2 v=2003ea31
+2 pts=2 dur=1 key=true 64x48 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=15b39009 u=ae151713 v=250e1ce3
+3 pts=3 dur=1 key=true 64x48 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=15b39009 u=ae151713 v=250e1ce3
+4 pts=4 dur=1 key=true 64x48 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=b504394d u=0913b51b v=ca4098c1
+5 pts=5 dur=1 key=true 64x48 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=b504394d u=0913b51b v=ca4098c1
+seek 0: @0
+seek 133333: @1
+seek 266666: @3
+seek 400000: end
+seek -1000000: @0

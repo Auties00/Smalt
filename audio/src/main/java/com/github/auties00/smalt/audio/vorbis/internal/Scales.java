@@ -42,7 +42,7 @@ public final class Scales {
      * @return the Bark rate, in the double precision the C macro evaluates to
      */
     public static double toBark(float n) {
-        return 13.1f * Math.atan(.00074f * n) + 2.24f * Math.atan(n * n * 1.85e-8f) + 1e-4f * n;
+        return 13.1f * StrictMath.atan(.00074f * n) + 2.24f * StrictMath.atan(n * n * 1.85e-8f) + 1e-4f * n;
     }
 
     /**
@@ -52,7 +52,7 @@ public final class Scales {
      * @return the octave
      */
     public static double toOctave(double n) {
-        return Math.log(n) * 1.442695f - 5.965784f;
+        return StrictMath.log(n) * 1.442695f - 5.965784f;
     }
 
     /**
@@ -62,6 +62,6 @@ public final class Scales {
      * @return the frequency in hertz
      */
     public static double fromOctave(double o) {
-        return Math.exp((o + 5.965784f) * .693147f);
+        return StrictMath.exp((o + 5.965784f) * .693147f);
     }
 }

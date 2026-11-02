@@ -195,6 +195,26 @@ final class AnalysisScratch {
     final int[] predGainDb = new int[1];
 
     /**
+     * The codebook indices of the LTP quantizer's current codebook.
+     */
+    final byte[] ltpTempIdx = new byte[MAX_NB_SUBFR];
+
+    /**
+     * The residual energy, rate-distortion and gain outputs of one LTP vector quantization.
+     */
+    final int[] ltpOut = new int[4];
+
+    /**
+     * The state of the warped autocorrelation of a 10 ms frame.
+     */
+    final double[] warpedState = new double[MAX_SHAPE_LPC_ORDER + 1];
+
+    /**
+     * The accumulated correlations of the warped autocorrelation of a 10 ms frame.
+     */
+    final double[] warpedCorr = new double[MAX_SHAPE_LPC_ORDER + 1];
+
+    /**
      * The quantizer state of the LBRR encoding ({@code sNSQ_LBRR}).
      */
     final NsqState sNSQ_LBRR = new NsqState();

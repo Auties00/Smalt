@@ -21,11 +21,18 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class H264CabacTest {
     private static final int[] SIG_BASE = {105, 120, 134, 149, 152, 402};
     private static final int[] LAST_BASE = {166, 181, 195, 210, 213, 417};
+    private static final int[] SIG_BASE_FIELD = {277, 292, 306, 321, 324, 436};
+    private static final int[] LAST_BASE_FIELD = {338, 353, 367, 382, 385, 451};
     private static final int[] LEVEL_BASE = {227, 237, 247, 257, 266, 426};
     private static final int[] MAX_COEFF = {16, 15, 16, 4, 15, 64};
     private static final byte[] SIG_8X8 = {
             0, 1, 2, 3, 4, 5, 5, 4, 4, 3, 3, 4, 4, 4, 5, 5, 4, 4, 4, 4, 3, 3, 6, 7, 7, 7, 8, 9, 10, 9, 8, 7,
             7, 6, 11, 12, 13, 11, 6, 7, 8, 9, 14, 10, 9, 8, 6, 11, 12, 13, 11, 6, 9, 14, 10, 9, 11, 12, 13, 11, 14, 10, 12
+    };
+    // Table 9-43, the significant_coeff_flag column of field coded macroblocks.
+    private static final byte[] SIG_8X8_FIELD = {
+            0, 1, 1, 2, 2, 3, 3, 4, 5, 6, 7, 7, 7, 8, 4, 5, 6, 9, 10, 10, 8, 11, 12, 11, 9, 9, 10, 10, 8, 11, 12, 11,
+            9, 9, 10, 10, 8, 11, 12, 11, 9, 9, 10, 10, 8, 13, 13, 9, 9, 10, 10, 8, 13, 13, 9, 9, 10, 10, 14, 14, 14, 14, 14
     };
     private static final byte[] LAST_8X8 = {
             0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
@@ -36,7 +43,8 @@ class H264CabacTest {
      * The arithmetic decoding engine exactly as the standard describes it.
      */
     private static final class Reference {
-        final byte[] states = new byte[1024];
+        // the 1024 contexts of ITU-T H.264 9.3.1.1 and the 7 of the scalable extension (F.9.3.1)
+        final byte[] states = new byte[1031];
         private final byte[] data;
         private final int end;
         private long position;
@@ -114,18 +122,18 @@ class H264CabacTest {
          * Decodes a residual block into {@code coefficients} (in scan order), returning the
          * number of non-zero coefficients.
          */
-        int residual(int category, int[] coefficients) {
+        int residual(int category, boolean field, int[] coefficients) {
             var maxCoeff = MAX_COEFF[category];
             Arrays.fill(coefficients, 0);
             var significant = new boolean[64];
             var numCoeff = maxCoeff;
             var i = 0;
             for (; i < numCoeff - 1; i++) {
-                var sigInc = category == 5 ? SIG_8X8[i] : category == 3 ? Math.min(i, 2) : i;
-                significant[i] = decision(SIG_BASE[category] + sigInc) != 0;
+                var sigInc = category == 5 ? (field ? SIG_8X8_FIELD : SIG_8X8)[i] : category == 3 ? Math.min(i, 2) : i;
+                significant[i] = decision((field ? SIG_BASE_FIELD : SIG_BASE)[category] + sigInc) != 0;
                 if (significant[i]) {
                     var lastInc = category == 5 ? LAST_8X8[i] : category == 3 ? Math.min(i, 2) : i;
-                    if (decision(LAST_BASE[category] + lastInc) != 0) {
+                    if (decision((field ? LAST_BASE_FIELD : LAST_BASE)[category] + lastInc) != 0) {
                         numCoeff = i + 1;
                         break;
                     }
@@ -214,7 +222,7 @@ class H264CabacTest {
 
     @ParameterizedTest(name = "seed {0}")
     @ValueSource(ints = {1, 2, 3, 4})
-    @DisplayName("residual blocks of every category match the bit-serial engine")
+    @DisplayName("residual blocks of every category, frame and field coded, match the bit-serial engine")
     void residualBlocks(int seed) {
         var random = new Random(seed);
         var data = payload(random, 1 << 16);
@@ -230,8 +238,9 @@ class H264CabacTest {
         var levels = new int[64];
         for (var block = 0; block < 3000; block++) {
             var category = random.nextInt(6);
-            var count = reference.residual(category, expected);
-            var decoded = engine.residualBlock(category, MAX_COEFF[category], indices, levels);
+            var field = random.nextBoolean();
+            var count = reference.residual(category, field, expected);
+            var decoded = engine.residualBlock(category, MAX_COEFF[category], field, indices, levels);
             Arrays.fill(actual, 0);
             for (var k = 0; k < decoded; k++) {
                 actual[indices[k]] = levels[k];
