@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.audio.aac.internal;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.audio.aac.internal.ep.ErrorProtectionConfig;
 import com.github.auties00.smalt.internal.bits.MsbBitWriter;
 import com.github.auties00.smalt.internal.header.AacRates;
 
@@ -36,16 +37,20 @@ import com.github.auties00.smalt.internal.header.AacRates;
  * parametric stereo
  * @param resilience the error resilience tools of the error resilient object types, a combination of
  * {@link #VIRTUAL_CODEBOOKS}, {@link #RVLC_SCALEFACTORS} and {@link #CODEWORD_REORDERING}
- * @param epConfig the error protection configuration of the error resilient object types, 0 or 1
+ * @param epConfig the error protection configuration of the error resilient object types: 0 for one access unit per
+ * frame, 1 for one per error sensitivity category instance, 2 and 3 for the error protection tool (with
+ * {@code directMapping} for 3)
  * @param lowDelaySbr the low delay spectral band replication of AAC-ELD, or {@code null}
  * @param layer the coding layer of a scalable AAC configuration ({@code layerNr}, from 0 to 7), 0 otherwise
  * @param coreCoderDelay the delay of the core coder a scalable AAC layer depends on ({@code coreCoderDelay}, in
  * samples), or -1 when the layer depends on no core coder
+ * @param errorProtection the {@code ErrorProtectionSpecificConfig} of {@code epConfig} 2 and 3, or {@code null}
  */
 public record AudioSpecificConfig(int objectType, int sampleRate, int tableIndex, int channelConfiguration,
                                   ProgramConfig programConfig, int frameLength, boolean sbr, boolean ps,
                                   int extensionSampleRate, boolean sbrSignaled, boolean psSignaled, int resilience,
-                                  int epConfig, LowDelaySbr lowDelaySbr, int layer, int coreCoderDelay) {
+                                  int epConfig, LowDelaySbr lowDelaySbr, int layer, int coreCoderDelay,
+                                  ErrorProtectionConfig errorProtection) {
     /**
      * The audio object type of AAC Main, which adds backward-adaptive frequency-domain prediction.
      */
@@ -169,7 +174,7 @@ public record AudioSpecificConfig(int objectType, int sampleRate, int tableIndex
      * @throws MediaException.Malformed if the configuration is truncated or invalid
      * @throws MediaException.Unsupported if it describes an object type other than AAC Main, Low
      * Complexity, SSR, LTP, scalable, ER LC, ER LTP, ER scalable, ER BSAC, LD or ELD (possibly with SBR or PS), or
-     * error protection
+     * error protection classes without direct mapping ({@code "aac er epconfig 3 mapping"})
      */
     public static AudioSpecificConfig parse(byte[] data) {
         if (data.length == 0) {
@@ -251,9 +256,19 @@ public record AudioSpecificConfig(int objectType, int sampleRate, int tableIndex
             }
         }
         var epConfig = 0;
+        ErrorProtectionConfig errorProtection = null;
         if (isErrorResilient(objectType) || objectType == AOT_ER_BSAC) {
             epConfig = reader.read(2);
-            checkErrorResilience(objectType, epConfig, channelConfiguration);
+            checkErrorResilience(channelConfiguration);
+            if (epConfig >= 2) {
+                errorProtection = ErrorProtectionConfig.read(reader);
+            }
+            if (epConfig == 3 && !reader.readFlag()) {
+                // TODO: epConfig 3 without directMapping maps EP classes to category instances in a way ISO/IEC
+                //  14496-3 leaves "to be defined"; no stream or text defines it.
+                throw new MediaException.Unsupported("aac er epconfig 3 mapping",
+                        "error protection classes without direct mapping (epConfig 3, directMapping 0) are not defined");
+            }
         }
         reader.checkNotOverrun();
         if (!sbr && !isErrorResilient(objectType) && reader.bitsLeft() >= 16 && reader.read(11) == SYNC_EXTENSION_SBR) {
@@ -286,7 +301,7 @@ public record AudioSpecificConfig(int objectType, int sampleRate, int tableIndex
         }
         return new AudioSpecificConfig(objectType, sampleRate, SamplingTables.tableIndexFor(sampleRate),
                 channelConfiguration, programConfig, frameLength, sbr, ps, extensionSampleRate, sbrSignaled,
-                psSignaled, resilience, epConfig, lowDelaySbr, layer, coreCoderDelay);
+                psSignaled, resilience, epConfig, lowDelaySbr, layer, coreCoderDelay, errorProtection);
     }
 
     /**
@@ -600,31 +615,12 @@ public record AudioSpecificConfig(int objectType, int sampleRate, int tableIndex
     }
 
     /**
-     * Rejects the error resilient configurations whose payloads this decoder cannot read.
+     * Rejects the channel configurations error resilient payloads reserve.
      *
-     * @param objectType the core audio object type
-     * @param epConfig the error protection configuration
      * @param channelConfiguration the channel configuration
-     * @throws MediaException.Unsupported if the error protection tool is signaled, or AAC-ELD stores
-     * its category instances separately
-     * @throws MediaException.Malformed if the channel configuration is 0 or above 7, which error
-     * resilient payloads reserve
+     * @throws MediaException.Malformed if the channel configuration is 0 or above 7
      */
-    private static void checkErrorResilience(int objectType, int epConfig, int channelConfiguration) {
-        // TODO: epConfig 2 and 3 apply the error protection tool of ISO/IEC 14496-3 subpart 1
-        //  (ErrorProtectionSpecificConfig, ep_frame with CRC, SRCPC and Reed-Solomon classes); neither its
-        //  specification text nor a permissively licensed implementation is available.
-        if (epConfig >= 2) {
-            throw new MediaException.Unsupported("aac er epconfig " + epConfig,
-                    "error resilient AAC with the error protection tool (epConfig " + epConfig + ") is not supported");
-        }
-        // TODO: AAC-ELD with epConfig 1 needs the error sensitivity category of its TNS data (which ELD moves
-        //  ahead of the spectral data) and of its low delay SBR payload; ISO/IEC 14496-26 has no ELD stream with
-        //  epConfig 1, and libxaac, the permissive implementation, parses epConfig for ELD but ignores it.
-        if (epConfig == 1 && objectType == AOT_ER_ELD) {
-            throw new MediaException.Unsupported("aac eld epconfig 1",
-                    "AAC-ELD with separately stored error sensitivity categories (epConfig 1) is not supported");
-        }
+    private static void checkErrorResilience(int channelConfiguration) {
         if (channelConfiguration == 0 || channelConfiguration > 7) {
             throw new MediaException.Malformed("error resilient AAC reserves channel configuration "
                     + channelConfiguration);

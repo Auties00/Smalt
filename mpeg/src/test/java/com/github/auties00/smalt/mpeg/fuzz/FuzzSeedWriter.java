@@ -1,5 +1,7 @@
 package com.github.auties00.smalt.mpeg.fuzz;
 
+import com.github.auties00.smalt.audio.aac.internal.AudioSpecificConfig;
+import com.github.auties00.smalt.audio.aac.internal.ep.EpFrameEncoder;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.heic.HeicEncoder;
@@ -157,6 +159,56 @@ class FuzzSeedWriter {
                 FuzzPackets.audio(0, 44100, 2, 0, new byte[]{(byte) 0x9A, 0x11, 0x00}, errorResilientLtp));
         write(MpegFuzzTest.class, "aac", "valid-ssr-gain-control.bin",
                 FuzzPackets.audio(0, 44100, 1, 0, new byte[]{0x1A, 0x08}, ssr));
+    }
+
+    @Test
+    @DisplayName("writes the error protected ER AAC LTP seed of the AAC target")
+    void aacErrorProtection() {
+        // the ER AAC LTP frames of valid-er-ltp-pair.bin under epConfig 2: one pre-defined set of two classes, the
+        // first 60 bits (their length signaled in band, 8 bits) terminated at SRCPC 8/16 with an 8-bit CRC, the rest
+        // until the end unprotected with a 6-bit CRC; no interleaving, bit stuffing, the 11 attribute bits under
+        // Golay(23,12)
+        var config = new MsbBitWriter();
+        config.write(19, 5);
+        config.write(4, 4);
+        config.write(2, 4);
+        config.write(0b001, 3);
+        config.write(0, 4);
+        config.write(2, 2);
+        config.write(1, 8);
+        config.write(0, 2);
+        config.write(1, 3);
+        config.write(1, 3);
+        config.write(2, 6);
+        config.write(0b100, 3);
+        config.write(0, 2);
+        config.write(1, 1);
+        config.write(0, 1);
+        config.write(8, 4);
+        config.write(8, 5);
+        config.write(8, 5);
+        config.write(0b100, 3);
+        config.write(0, 2);
+        config.write(0, 1);
+        config.write(0, 1);
+        config.write(0, 4);
+        config.write(0, 5);
+        config.write(6, 5);
+        config.write(0, 1);
+        config.write(0, 1);
+        config.alignWithZeros();
+        var configBytes = config.toByteArray();
+        var protection = AudioSpecificConfig.parse(configBytes).errorProtection();
+        var frames = new ArrayList<FuzzPackets.Part>();
+        for (var frame = 0; frame < 8; frame++) {
+            var data = ltpPair(frame, true);
+            var bits = EpFrameEncoder.unpack(data, data.length * 8);
+            var first = Math.min(bits.length, 60);
+            var classes = new byte[][][]{{Arrays.copyOf(bits, first), Arrays.copyOfRange(bits, first, bits.length)}};
+            frames.add(new FuzzPackets.Part(EpFrameEncoder.encode(protection, 0, classes, null, null), true));
+        }
+        write(MpegFuzzTest.class, "aac", "valid-er-ltp-protected.bin",
+                FuzzPackets.audio(0, 44100, 2, 0, configBytes, frames));
     }
 
     @Test

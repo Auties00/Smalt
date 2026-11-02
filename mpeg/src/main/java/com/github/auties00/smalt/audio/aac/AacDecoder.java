@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.audio.aac;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.AudioDecoder;
 import com.github.auties00.smalt.audio.ChannelLayout;
@@ -8,6 +9,7 @@ import com.github.auties00.smalt.audio.aac.internal.AudioSpecificConfig;
 import com.github.auties00.smalt.audio.aac.internal.DynamicRangeControl;
 import com.github.auties00.smalt.audio.aac.internal.FrameDecoder;
 import com.github.auties00.smalt.audio.aac.internal.SamplingTables;
+import com.github.auties00.smalt.audio.aac.internal.ep.ErrorProtectionDecoder;
 import com.github.auties00.smalt.audio.aac.internal.mps.MpsConfig;
 import com.github.auties00.smalt.audio.aac.internal.usac.UsacConfig;
 import com.github.auties00.smalt.audio.aac.internal.usac.UsacDecoder;
@@ -68,8 +70,17 @@ import java.util.function.Consumer;
  * variable length coded scalefactors (RVLC) and Huffman codeword reordering (HCR). AAC-LD adds the
  * low overlap window and long term prediction with the low delay lag; AAC-ELD the low delay
  * filterbank, the {@code ELDSpecificConfig} and low delay spectral band replication, at dual rate
- * or downsampled as the configuration signals. Error resilient streams decode with {@code epConfig}
- * 0 and 1. Spectral band replication or parametric stereo signaled around an error resilient or
+ * or downsampled as the configuration signals. Error resilient streams decode with every {@code epConfig}: 0 and
+ * 1, and 2 and 3, which apply the error protection tool of ISO/IEC 14496-3 subclause 1.8. An error protected access
+ * unit carries one or more source coder frames as classes under CRCs, SRCPC codes (Viterbi decoded) and shortened
+ * Reed-Solomon codes, interleaved, behind a header protected by block codes: the decoder corrects what the codes
+ * allow and conceals ({@link #conceal}) a frame whose header, lengths or CRCs still fail. With {@code epConfig} 2 the
+ * classes of a frame concatenate into its access unit; with {@code epConfig} 3 each class is one error sensitivity
+ * category instance, as {@code epConfig} 1 stores them (direct mapping; {@code epConfig} 3 without it raises
+ * {@link MediaException.Unsupported}, {@code "aac er epconfig 3 mapping"}), so such a stream decodes through
+ * {@link #decode(Packet, Consumer)} from one access unit per frame; a scalable AAC or ER BSAC object whose layers
+ * come in several error protected elementary streams decodes through {@link #decode(List, Consumer)} from the access
+ * unit of each. Spectral band replication or parametric stereo signaled around an error resilient or
  * scalable core (object type 5 or 29) is not decoded: the core decodes alone at its own rate.
  * Corrupt RVLC codewords and reordered spectral data are concealed rather than rejected: scalefactors
  * that cannot be decoded in either direction take the quieter of the values decoded around them or the
@@ -96,7 +107,7 @@ import java.util.function.Consumer;
  * the stereo layers of a stereo output outputs its mono layers in both channels. A decoder built from the base
  * layer's track alone decodes the base layer. Every tool of the layers decodes: long term prediction of the first
  * layer, M/S and intensity stereo, noise substitution, TNS of the first layer and of the first stereo layer above a
- * mono one, and, for object type 20, the error resilience tools of each layer with {@code epConfig} 0 and 1. Layers
+ * mono one, and, for object type 20, the error resilience tools of each layer with every {@code epConfig}. Layers
  * over a CELP or TwinVQ core raise {@link MediaException.Unsupported} ({@code "aac scalable core"}).
  *
  * <p>USAC (object type 42, ISO/IEC 23003-3) decodes with its frequency domain coder (arithmetic coded spectra,
@@ -162,9 +173,7 @@ import java.util.function.Consumer;
  * default the full dynamic range is reproduced at the stream's own level. Every channel
  * configuration decodes, the 22.2 configuration 13 into the 24 speakers of
  * {@link #layout()}. Unsupported object types raise {@link MediaException.Unsupported}
- * naming them ({@code "mpeg-4 audio object type 8"}), as do error resilient configurations that
- * signal the error protection tool ({@code "aac er epconfig 2"} and {@code "aac er epconfig 3"}),
- * and AAC-ELD with {@code epConfig} 1 ({@code "aac eld epconfig 1"}).
+ * naming them ({@code "mpeg-4 audio object type 8"}).
  *
  * <p>Instances are not thread-safe.
  */
@@ -194,6 +203,32 @@ public final class AacDecoder implements AudioDecoder {
      * frames, or -1.
      */
     private final int surroundTrack;
+
+    /**
+     * The error protection decoder of each elementary stream (one per layer of a scalable stream) when the
+     * configuration sets {@code epConfig} 2 or 3, or {@code null}.
+     */
+    private final ErrorProtectionDecoder[] protection;
+
+    /**
+     * The classes, or source coder frames, handed to the frame decoder after error protection decoding.
+     */
+    private byte[][] protectedUnits = new byte[0][];
+
+    /**
+     * The number of bytes of each entry of {@link #protectedUnits}.
+     */
+    private int[] protectedSizes = new int[0];
+
+    /**
+     * The buffers that hold the source coder frames of {@code epConfig} 2, one per elementary stream.
+     */
+    private byte[][] protectedFrames = new byte[0][];
+
+    /**
+     * The error protected access units of the frame being decoded, one per elementary stream.
+     */
+    private byte[][] protectedInput = new byte[0][];
 
     /**
      * Constructs a decoder for a track under {@link AacDecoderOptions#defaults()}.
@@ -307,6 +342,7 @@ public final class AacDecoder implements AudioDecoder {
                 this.config = null;
                 this.decoder = null;
                 this.surroundTrack = -1;
+                this.protection = null;
                 var target = options.targetLevel();
                 var request = new UsacDecoder.DrcRequest(target.isPresent() ? -target.getAsInt() / 4.0f : Float.NaN,
                         effectRequest(options.drcEffect()), options.boostScale(), options.cutScale());
@@ -360,11 +396,56 @@ public final class AacDecoder implements AudioDecoder {
                 decoder.enableSurround(surround);
             }
             this.surroundTrack = surroundIndex;
+            this.protection = config.errorProtection() == null ? null
+                    : protectionDecoders(config.bsac() ? bsacConfigs(config, tracks) : configs, limits);
         } catch (MediaException exception) {
             throw exception;
         } catch (RuntimeException exception) {
             throw new MediaException.Malformed("invalid AAC configuration", exception);
         }
+    }
+
+    /**
+     * Builds the error protection decoder of each elementary stream.
+     *
+     * @param configs the configuration of each elementary stream, the base layer first
+     * @param limits the resource limits
+     * @return one decoder per configuration
+     * @throws MediaException.Malformed if the streams concatenate different numbers of frames
+     */
+    private static ErrorProtectionDecoder[] protectionDecoders(List<AudioSpecificConfig> configs, MediaLimits limits) {
+        var decoders = new ErrorProtectionDecoder[configs.size()];
+        for (var i = 0; i < decoders.length; i++) {
+            var protection = configs.get(i).errorProtection();
+            if (protection == null || protection.concatenatedFrames() != configs.getFirst().errorProtection()
+                    .concatenatedFrames()) {
+                throw new MediaException.Malformed("error protected streams of different configurations");
+            }
+            decoders[i] = new ErrorProtectionDecoder(protection, limits);
+        }
+        return decoders;
+    }
+
+    /**
+     * Returns the configuration of each elementary stream of an ER BSAC object, whose layers may come in several
+     * elementary streams, each with an {@code ErrorProtectionSpecificConfig} of its own.
+     *
+     * @param first the configuration of the first elementary stream
+     * @param tracks the tracks of the object's elementary streams, in stream order
+     * @return the configurations in stream order
+     * @throws MediaException.Malformed if a track carries no configuration
+     */
+    private static List<AudioSpecificConfig> bsacConfigs(AudioSpecificConfig first, List<AudioTrack> tracks) {
+        var configs = new ArrayList<AudioSpecificConfig>(tracks.size());
+        configs.add(first);
+        for (var i = 1; i < tracks.size(); i++) {
+            var stream = tracks.get(i).codecConfig();
+            if (stream.isEmpty()) {
+                throw new MediaException.Malformed("ER BSAC track without an AudioSpecificConfig");
+            }
+            configs.add(AudioSpecificConfig.parse(stream.get()));
+        }
+        return configs;
     }
 
     /**
@@ -477,7 +558,7 @@ public final class AacDecoder implements AudioDecoder {
         var rate = track.sampleRate();
         return new AudioSpecificConfig(AudioSpecificConfig.AOT_LC, rate,
                 SamplingTables.tableIndexFor(rate),
-                configuration, null, 1024, false, false, 0, false, false, 0, 0, null, 0, -1);
+                configuration, null, 1024, false, false, 0, false, false, 0, 0, null, 0, -1, null);
     }
 
     /**
@@ -566,7 +647,9 @@ public final class AacDecoder implements AudioDecoder {
      * {@inheritDoc}
      *
      * <p>A packet holding several {@code raw_data_block}s back to back, as a CRC-less ADTS frame
-     * with more than one block does, yields one block of samples per raw data block. A decoder built with
+     * with more than one block does, yields one block of samples per raw data block. A packet of a stream that
+     * applies the error protection tool holds one EP frame and yields one block per source coder frame it carries,
+     * concealed when the frame cannot be corrected. A decoder built with
      * a separate MPEG Surround elementary stream decodes the packet as a block whose spatial frame is
      * missing: the upmix keeps the parameters of the last frame, and the downmix is the output before the
      * first one ({@link #decode(List, Consumer)} takes both access units). An exception thrown by
@@ -585,6 +668,16 @@ public final class AacDecoder implements AudioDecoder {
                     "error resilient AAC with separate category instances needs every instance of a block");
         }
         var data = packet.data();
+        if (protection != null) {
+            ensureUnits(1);
+            protectedInput[0] = data;
+            try {
+                ConsumerFailure.<AudioBuffer>run("AAC packet", output, emit -> decodeProtected(1, emit));
+            } finally {
+                protectedInput[0] = null;
+            }
+            return;
+        }
         if (usac != null) {
             ConsumerFailure.<AudioBuffer>run("USAC packet", output, emit -> usac.decode(data, 0, data.length, emit));
             return;
@@ -610,14 +703,17 @@ public final class AacDecoder implements AudioDecoder {
      * layer, or with {@code epConfig} 1 of each category instance of each layer, in the order of the tracks the
      * decoder was built from; the layers from the first missing one on are not decoded. For a separate MPEG
      * Surround elementary stream, {@code instances} holds the access units of the tracks the decoder was built
-     * from, the downmix first; units of other tracks are ignored. The packets are read only during the call. An
-     * exception thrown by {@code output} propagates unchanged.
+     * from, the downmix first; units of other tracks are ignored. For a stream that applies the error protection
+     * tool ({@code epConfig} 2 or 3), {@code instances} holds the error protected access unit of each elementary
+     * stream (one per layer of scalable AAC, one per elementary stream of ER BSAC), whose source coder frames each
+     * yield a block. The packets are read only during the call. An exception thrown by {@code output} propagates unchanged.
      *
      * @param instances the category instances of the block
      * @param output receives the block's samples, valid only during the call
      * @throws NullPointerException if one of the packets of {@code instances} is {@code null}
      * @throws IllegalStateException if the configuration neither stores category instances
-     * separately nor is ER BSAC or scalable AAC, nor comes with a separate MPEG Surround elementary stream
+     * separately nor is ER BSAC or scalable AAC, nor applies the error protection tool, nor comes with a separate
+     * MPEG Surround elementary stream
      * @throws MediaException.Malformed if an instance is corrupt or missing
      * @throws MediaException.LimitExceeded if the block declares more channels than the
      * configured limits allow
@@ -627,6 +723,19 @@ public final class AacDecoder implements AudioDecoder {
         Objects.requireNonNull(output, "output");
         if (surroundTrack >= 0) {
             decodeSurround(instances, output);
+            return;
+        }
+        if (protection != null) {
+            var streams = Math.min(instances.size(), protection.length);
+            ensureUnits(streams);
+            for (var i = 0; i < streams; i++) {
+                protectedInput[i] = Objects.requireNonNull(instances.get(i), "instance").data();
+            }
+            try {
+                ConsumerFailure.<AudioBuffer>run("AAC packet", output, emit -> decodeProtected(streams, emit));
+            } finally {
+                Arrays.fill(protectedInput, 0, streams, null);
+            }
             return;
         }
         if (!separateCategoryInstances() && (config == null || !(config.bsac() || config.scalable()))) {
@@ -644,6 +753,112 @@ public final class AacDecoder implements AudioDecoder {
             ConsumerFailure.<AudioBuffer>run("AAC packet", output, emit -> decoder.decodeInstances(data, count, emit));
         } finally {
             Arrays.fill(data, 0, count, null);
+        }
+    }
+
+    /**
+     * Decodes the error protected access units of one EP frame of every elementary stream and the source coder frames
+     * they carry.
+     *
+     * <p>Each source coder frame decodes from the classes of every stream: with {@code epConfig} 3 every class is one
+     * error sensitivity category instance, as {@code epConfig} 1 would store it; with {@code epConfig} 2 the classes
+     * of a stream concatenate into its {@code epConfig} 0 access unit. A frame whose header, lengths or CRCs fail in
+     * the first stream, or that carries no data, is concealed; for scalable AAC and ER BSAC the layers of the
+     * streams from the first failing one on are not decoded.
+     *
+     * @param streams the number of access units in {@link #protectedInput}, one per elementary stream in stream order
+     * @param output receives each frame's samples
+     */
+    private void decodeProtected(int streams, Consumer<AudioBuffer> output) {
+        if (streams == 0) {
+            throw new MediaException.Malformed("error protected frame without access units");
+        }
+        for (var i = 0; i < streams; i++) {
+            var data = protectedInput[i];
+            protection[i].decode(data, 0, data.length);
+        }
+        var direct = config.epConfig() == 3;
+        var layered = config.scalable() || config.bsac();
+        for (var frame = 0; frame < protection[0].frames(); frame++) {
+            var intact = 0;
+            while (intact < streams && protection[intact].intact(frame)) {
+                intact++;
+            }
+            if (intact == 0 || (intact < streams && !layered)) {
+                output.accept(decoder.conceal());
+                continue;
+            }
+            var count = 0;
+            var total = 0L;
+            for (var i = 0; i < intact; i++) {
+                var stream = protection[i];
+                if (direct) {
+                    for (var c = 0; c < stream.classCount(); c++) {
+                        put(count++, stream.classData(frame, c), (stream.classBits(frame, c) + 7) >>> 3);
+                        total += protectedSizes[count - 1];
+                    }
+                } else {
+                    var bytes = (stream.frameBits(frame) + 7) >>> 3;
+                    if (bytes > Integer.MAX_VALUE - 8) {
+                        throw new MediaException.Malformed("error protected frame too large");
+                    }
+                    var target = slot(count, (int) bytes);
+                    put(count++, target, stream.concatenate(frame, target));
+                    total += protectedSizes[count - 1];
+                }
+            }
+            if (total == 0 && !config.scalable()) {
+                output.accept(decoder.conceal());
+            } else if (direct || layered) {
+                decoder.decodeInstances(protectedUnits, protectedSizes, count, output);
+            } else {
+                decoder.decode(protectedUnits[0], 0, protectedSizes[0], output);
+            }
+        }
+    }
+
+    /**
+     * Returns a reusable buffer for one unit handed to the frame decoder.
+     *
+     * @param index the unit index
+     * @param bytes the number of bytes needed
+     * @return the buffer
+     */
+    private byte[] slot(int index, int bytes) {
+        ensureUnits(index + 1);
+        var buffer = protectedFrames[index];
+        if (buffer == null || buffer.length < Math.max(1, bytes)) {
+            buffer = new byte[Math.max(Math.max(1, bytes), buffer == null ? 0 : buffer.length * 2)];
+            protectedFrames[index] = buffer;
+        }
+        return buffer;
+    }
+
+    /**
+     * Records one unit handed to the frame decoder.
+     *
+     * @param index the unit index
+     * @param data the array holding the unit
+     * @param size the number of bytes of the unit
+     */
+    private void put(int index, byte[] data, int size) {
+        ensureUnits(index + 1);
+        protectedUnits[index] = data;
+        protectedSizes[index] = size;
+    }
+
+    /**
+     * Grows the unit tables to hold a number of units.
+     *
+     * @param count the number of units
+     */
+    private void ensureUnits(int count) {
+        if (protectedUnits.length < count) {
+            var length = Math.max(count, protectedUnits.length * 2);
+            protectedUnits = Arrays.copyOf(protectedUnits, length);
+            protectedSizes = Arrays.copyOf(protectedSizes, length);
+            protectedFrames = Arrays.copyOf(protectedFrames, length);
+            protectedInput = Arrays.copyOf(protectedInput, length);
         }
     }
 

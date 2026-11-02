@@ -6,6 +6,7 @@ audio	core
 audio.aac	mpeg
 audio.aac.internal	mpeg
 audio.aac.internal.drc	mpeg
+audio.aac.internal.ep	mpeg
 audio.aac.internal.mps	mpeg
 audio.aac.internal.sbr	mpeg
 audio.aac.internal.usac	mpeg

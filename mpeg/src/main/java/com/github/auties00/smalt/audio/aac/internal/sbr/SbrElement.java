@@ -135,6 +135,12 @@ public final class SbrElement {
     private long consumed;
 
     /**
+     * The reader of the category 10 instance while {@link #parseLowDelay(AacBitReader, AacBitReader, boolean)} reads
+     * the control data from another one, or {@code null}.
+     */
+    private AacBitReader split;
+
+    /**
      * Whether the last frame synthesized each channel from its own subband matrix, without parametric stereo.
      */
     private boolean plainSynthesis;
@@ -276,6 +282,36 @@ public final class SbrElement {
     }
 
     /**
+     * Parses the low delay extension payload of one channel element of an AAC-ELD frame whose error sensitivity
+     * categories come in separate instances ({@code epConfig} 1 or the direct mapping of {@code epConfig} 3).
+     *
+     * <p>The instance of category 9 holds the CRC bits, the header and, per ISO/IEC 14496-3 Table 4.149, the
+     * element's control data up to and including its {@code sbr_dtdf}; the instance of category 10 holds the rest,
+     * from {@code sbr_invf} on. A payload that does not parse leaves the frame without extension data.
+     *
+     * @param control the instance of category 9
+     * @param envelope the instance of category 10
+     * @param crc whether the payload starts with a CRC
+     */
+    public void parseLowDelay(AacBitReader control, AacBitReader envelope, boolean crc) {
+        seen = true;
+        frameData = false;
+        try {
+            split = envelope;
+            frameData = read(control, Long.MAX_VALUE, crc);
+            control.checkNotOverrun();
+            envelope.checkNotOverrun();
+        } catch (MediaException exception) {
+            frameData = false;
+        } finally {
+            split = null;
+        }
+        if (!frameData && stereo != null) {
+            stereo.discard();
+        }
+    }
+
+    /**
      * Parses one extension payload, the content of a fill element of type
      * {@code EXT_SBR_DATA} or {@code EXT_SBR_DATA_CRC} after its type.
      *
@@ -345,7 +381,7 @@ public final class SbrElement {
         } else {
             readPair(reader);
         }
-        if (reader.bitPosition() > bits) {
+        if (split == null && reader.bitPosition() > bits) {
             throw new MediaException.Malformed("SBR extension payload overrun");
         }
         consumed = reader.bitPosition();
@@ -364,6 +400,7 @@ public final class SbrElement {
         var channel = data[0];
         readGrid(channel, reader);
         channel.readDirections(reader);
+        reader = split != null ? split : reader;
         channel.readInverseFiltering(reader, tables.noiseBands);
         channel.readEnvelope(reader, tables, header.ampResolution, false);
         channel.readNoise(reader, tables.noiseBands, false);
@@ -387,6 +424,7 @@ public final class SbrElement {
             right.copyGrid(left);
             left.readDirections(reader);
             right.readDirections(reader);
+            reader = split != null ? split : reader;
             left.readInverseFiltering(reader, tables.noiseBands);
             right.copyInverseFiltering(left);
             left.readEnvelope(reader, tables, header.ampResolution, false);
@@ -398,6 +436,7 @@ public final class SbrElement {
             readGrid(right, reader);
             left.readDirections(reader);
             right.readDirections(reader);
+            reader = split != null ? split : reader;
             left.readInverseFiltering(reader, tables.noiseBands);
             right.readInverseFiltering(reader, tables.noiseBands);
             left.readEnvelope(reader, tables, header.ampResolution, false);

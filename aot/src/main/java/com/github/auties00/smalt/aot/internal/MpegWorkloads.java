@@ -196,6 +196,7 @@ final class MpegWorkloads {
                 file("aac-ltp-decode", () -> aacLtpDecode("aac-ltp-decode", false, 4)),
                 file("aac-er-ltp-decode", () -> aacLtpDecode("aac-er-ltp-decode", true, 4)),
                 file("aac-er-lc-tools-decode", () -> aacResilienceToolsDecode(4)),
+                file("aac-er-protected-decode", () -> aacProtectedDecode(4)),
                 file("aac-ld-decode", () -> aacLowDelayDecode(4)),
                 file("aac-eld-decode", () -> aacEnhancedLowDelayDecode("aac-eld-decode", false, 4)),
                 file("aac-eld-sbr-decode", () -> aacEnhancedLowDelayDecode("aac-eld-sbr-decode", true, 4)),
@@ -1276,6 +1277,76 @@ final class MpegWorkloads {
         var track = AudioTrack.builder().id(1).codec(Codec.AAC).timeBase(new Rational(1, 44100)).sampleRate(44100)
                 .layout(ChannelLayout.MONO).codecConfig(config).build();
         return AudioStreams.decode("aac-er-lc-tools-decode", packets, new AacDecoder(track));
+    }
+
+    /**
+     * Returns a workload that decodes ER AAC LC frames under the error protection tool ({@code epConfig} 2) through
+     * damaged channels: every frame is 168 pseudo-random bytes, so the SRCPC Viterbi decoder, the Reed-Solomon
+     * decoder and the CRC checks run on every one and the frames are concealed. The configuration has one
+     * pre-defined set of fixed classes and no in-band header: a terminated SRCPC 8/16 class of 120 bits with an 8-bit
+     * CRC, a Reed-Solomon class of 400 bits correcting 4 bytes with a 10-bit CRC and an unprotected class of 606 bits,
+     * interleaved within the frame.
+     *
+     * @param seconds the audio decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacProtectedDecode(double seconds) {
+        var frames = (int) Math.ceil(seconds * 44100 / 1024);
+        var random = new java.util.SplittableRandom(17);
+        var packets = new ArrayList<Packet>(frames);
+        for (var frame = 0; frame < frames; frame++) {
+            var data = new byte[168];
+            for (var i = 0; i < data.length; i++) {
+                data[i] = (byte) random.nextInt(256);
+            }
+            packets.add(new Packet(1, data, frame * 1024L, frame * 1024L, 1024, true));
+        }
+        var bits = new PacketBits();
+        // object type 17, sampling frequency index 4 (44.1 kHz), mono, the extension flag, no resilience tools,
+        // epConfig 2
+        bits.write(17, 5);
+        bits.write(4, 4);
+        bits.write(1, 4);
+        bits.write(0b001, 3);
+        bits.write(0, 4);
+        bits.write(2, 2);
+        // ErrorProtectionSpecificConfig: one set, intra-frame interleaving, no stuffing, one frame, three classes
+        bits.write(1, 8);
+        bits.write(1, 2);
+        bits.write(0, 3);
+        bits.write(1, 3);
+        bits.write(3, 6);
+        protectedClass(bits, 0, true, 120, 8, 8);
+        protectedClass(bits, 1, false, 400, 4, 10);
+        protectedClass(bits, 0, false, 606, 0, 0);
+        bits.write(0, 1);
+        bits.write(0, 1);
+        var track = AudioTrack.builder().id(1).codec(Codec.AAC).timeBase(new Rational(1, 44100)).sampleRate(44100)
+                .layout(ChannelLayout.MONO).codecConfig(bits.toByteArray()).build();
+        return AudioStreams.decode("aac-er-protected-decode", packets, new AacDecoder(track));
+    }
+
+    /**
+     * Writes one class of an {@code ErrorProtectionSpecificConfig} with fixed attributes.
+     *
+     * @param bits the writer
+     * @param fecType 0 for SRCPC, 1 for a Reed-Solomon code
+     * @param terminated whether an SRCPC class is terminated
+     * @param length the class length in bits
+     * @param rate the SRCPC rate index, or the number of correctable bytes
+     * @param crc the CRC length code
+     */
+    private static void protectedClass(PacketBits bits, int fecType, boolean terminated, int length, int rate,
+                                       int crc) {
+        bits.write(0, 3);
+        bits.write(fecType, 2);
+        if (fecType == 0) {
+            bits.write(terminated ? 1 : 0, 1);
+        }
+        bits.write(0, 1);
+        bits.write(length, 16);
+        bits.write(rate, fecType == 0 ? 5 : 7);
+        bits.write(crc, 5);
     }
 
     /**

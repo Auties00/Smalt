@@ -257,20 +257,31 @@ class ConfigurationTest {
             }
             assertEquals(0, config.epConfig());
             // epConfig lands after the headers and the extension list, so a misread header shifts it
-            var exception = assertThrows(MediaException.Unsupported.class,
-                    () -> AudioSpecificConfig.parse(eldWithHeaders(channels, headers, 1)));
-            assertEquals("aac eld epconfig 1", exception.format());
+            assertEquals(1, AudioSpecificConfig.parse(eldWithHeaders(channels, headers, 1)).epConfig());
         }
 
         @ParameterizedTest(name = "{0}")
-        @CsvSource({"99890c, aac er epconfig 3", "899148, aac er epconfig 2", "8b09ec0624480500715400101a012238001c1a, aac er epconfig 3",
-                "f8e62004, aac eld epconfig 1"})
-        @DisplayName("rejects the error protection tool and AAC-ELD with separate category instances as unsupported")
-        void errorProtection(String hex, String format) {
-            // the third configuration is that of er_al18_24_ep3_crc02, with its ErrorProtectionSpecificConfig
+        @CsvSource({"99890c", "899148", "b189080b60"})
+        @DisplayName("rejects an ErrorProtectionSpecificConfig cut short as malformed")
+        void truncatedErrorProtection(String hex) {
+            assertThrows(MediaException.Malformed.class, () -> AudioSpecificConfig.parse(HexFormat.of().parseHex(hex)));
+        }
+
+        @Test
+        @DisplayName("reads the ErrorProtectionSpecificConfig and directMapping of epConfig 3")
+        void errorProtection() {
+            // er_al18_24_ep3_crc02: one pre-defined set of four classes, the third optional, class-wise
+            // interleaving, bit stuffing, SRCPC 8/32 header protection with a 6-bit CRC, directMapping 1
+            var config = AudioSpecificConfig.parse(HexFormat.of().parseHex("8b09ec0624480500715400101a012238001c1a"));
+            assertEquals(3, config.epConfig());
+            var protection = config.errorProtection();
+            assertEquals(1, protection.concatenatedFrames());
+            assertEquals(4, protection.maxClasses());
+            // directMapping 0 leaves the mapping to an undefined application level
             var exception = assertThrows(MediaException.Unsupported.class,
-                    () -> AudioSpecificConfig.parse(HexFormat.of().parseHex(hex)));
-            assertEquals(format, exception.format());
+                    () -> AudioSpecificConfig.parse(HexFormat.of().parseHex("8b09ec0624480500715400101a012238001c18")));
+            assertEquals("aac er epconfig 3 mapping", exception.format());
+            assertEquals(1, AudioSpecificConfig.parse(HexFormat.of().parseHex("f8e62004")).epConfig());
         }
 
         @Test
@@ -366,9 +377,6 @@ class ConfigurationTest {
             assertTrue(sbr.sbr() && sbr.sbrSignaled());
             assertEquals(48000, sbr.extensionSampleRate());
             assertEquals(0, sbr.epConfig());
-            var exception = assertThrows(MediaException.Unsupported.class,
-                    () -> AudioSpecificConfig.parse(java.util.HexFormat.of().parseHex("b189080b60")));
-            assertEquals("aac er epconfig 3", exception.format());
         }
 
         @Test

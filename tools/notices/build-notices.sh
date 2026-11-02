@@ -127,6 +127,7 @@ Contents
   70. libmpcdec (Musepack)
   71. ISO/IEC 14496-5 MPEG-4 Audio reference software, DST module
   72. LibAtrac9
+  73. MPEG-4 Audio error protection tool reference software (NTT DoCoMo)
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -2476,6 +2477,35 @@ Copyright:
 EOF
 license_start "MIT License (LICENSE)"
 cat "$LIC/libatrac9-LICENSE"
+
+section "73. MPEG-4 Audio error protection tool reference software (NTT DoCoMo)"
+cat <<'EOF'
+Project:      the common error protection tool (epTool, version 0.75++) of the
+              ISO/IEC 14496-5:2001 audio reference software
+Source:       ISO/IEC 14496-5:2001 reference software (audio.zip,
+              audio/natural/refSoft/epTool) of ISO's Publicly Available
+              Standards
+License text: the notice at the head of every source file
+License:      free license for use in hardware or software products claiming
+              conformance to MPEG-2 NBC/MPEG-4 Audio; the copyright notice
+              must be included in all copies or derivative works
+
+Derived Smalt packages:
+  audio.aac.internal.ep (the bit conventions of the CRC check bits of crc.c,
+  the Reed-Solomon symbol and codeword order of reedsolomon.c and the bytewise
+  interleaving of Reed-Solomon classes of interleave.c, followed where
+  ISO/IEC 14496-3 subclause 1.8 leaves them open)
+
+Derivation: conventions followed; the decoder is written from ISO/IEC 14496-3
+and checked against the ISO/IEC 14496-26 conformance streams.
+
+Copyright:
+  Copyright (c) 1998 NTT Mobile Communications Network, Inc. and the
+  subsequent editors named in the source files
+EOF
+license_start "License notice (src/eptool.c and the other source files)"
+cat "$LIC/iso14496-5-eptool-notice.txt"
+
 } > "$OUT"
 
 echo "wrote $OUT"

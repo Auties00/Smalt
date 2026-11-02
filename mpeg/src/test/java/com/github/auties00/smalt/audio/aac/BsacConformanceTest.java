@@ -1,6 +1,5 @@
 package com.github.auties00.smalt.audio.aac;
 
-import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.audio.aac.internal.AudioSpecificConfig;
@@ -17,7 +16,6 @@ import java.util.Map;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -36,7 +34,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code er_bs23}) have no reference waveforms and are decoded for their output format and finiteness.
  *
  * <p>The smoke tier decodes {@code er_bs01_48}, {@code er_bs02_08} at three layers, {@code er_bs09_48} (five
- * channels) at its base and top layers, {@code er_bs13_sbr_1_48} and the error protected {@code er_bs01_48_ep3}.
+ * channels) at its base and top layers and {@code er_bs13_sbr_1_48}; {@link AacErrorProtectionConformanceTest}
+ * covers the error protected {@code ep3} streams.
  */
 @DisplayName("ER BSAC conformance (ISO/IEC 14496-26)")
 class BsacConformanceTest {
@@ -147,7 +146,7 @@ class BsacConformanceTest {
      * The highest layer the tracks present in the truncated MP4 files hold: the files list tracks whose samples lie
      * past their end.
      */
-    private static final Map<String, Integer> TRUNCATED = Map.ofEntries(
+    static final Map<String, Integer> TRUNCATED = Map.ofEntries(
             Map.entry("er_bs02_24_ep0", 47), Map.entry("er_bs02_32_ep0", 23), Map.entry("er_bs02_44_ep0", 22),
             Map.entry("er_bs02_48_ep0", 22), Map.entry("er_bs04_44_ep0", 36), Map.entry("er_bs04_48_ep0", 36),
             Map.entry("er_bs02_32_ep1", 24), Map.entry("er_bs02_44_ep1", 24), Map.entry("er_bs02_48_ep1", 24),
@@ -185,14 +184,6 @@ class BsacConformanceTest {
             tests.add(DynamicTest.dynamicTest(stream, () -> checkSbr(stream)));
         }
         return tests.stream();
-    }
-
-    @Test
-    @DisplayName("rejects the error protection tool of epConfig 3")
-    void errorProtection() {
-        var stream = AacTestSupport.parseMp4(Fixtures.read(Conformance.fetchListed("mpeg4audio-er_bs01_48_ep3.mp4")));
-        var exception = assertThrows(MediaException.Unsupported.class, () -> new AacDecoder(stream.track()));
-        assertTrue(exception.getMessage().contains("epConfig 3"), exception.getMessage());
     }
 
     /**

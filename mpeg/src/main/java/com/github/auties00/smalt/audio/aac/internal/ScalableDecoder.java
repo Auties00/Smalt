@@ -299,7 +299,7 @@ final class ScalableDecoder {
         this.instanceCounts = new int[count];
         this.streams = new ChannelStream[count][];
         this.errorResilient = first.errorResilient();
-        this.separateCategories = errorResilient && first.epConfig() == 1;
+        this.separateCategories = errorResilient && (first.epConfig() == 1 || first.epConfig() == 3);
         this.frameLength = first.frameLength();
         this.longOffsets = SamplingTables.longOffsets(first.tableIndex(), frameLength);
         this.shortOffsets = SamplingTables.shortOffsets(first.tableIndex(), frameLength);
@@ -383,10 +383,11 @@ final class ScalableDecoder {
      *
      * @param units the access units in stream order, in their first {@code count} entries: one per layer, or with
      * {@code epConfig} 1 one per category instance; read only during the call
+     * @param sizes the number of bytes of each unit, or {@code null} when each fills its array
      * @param count the number of access units
      * @throws MediaException.Malformed if the first layer is missing or a layer is corrupt
      */
-    void decode(byte[][] units, int count) {
+    void decode(byte[][] units, int[] sizes, int count) {
         var present = 0;
         var unit = 0;
         for (var layer = 0; layer < layerCount; layer++) {
@@ -395,15 +396,17 @@ final class ScalableDecoder {
                     break;
                 }
                 for (var i = 0; i < instanceCounts[layer]; i++) {
-                    var data = units[unit++];
-                    instanceReaders[layer][i].reset(data, 0, data.length);
+                    var data = units[unit];
+                    instanceReaders[layer][i].reset(data, 0, sizes == null ? data.length : sizes[unit]);
+                    unit++;
                 }
             } else {
                 if (unit == count) {
                     break;
                 }
-                var data = units[unit++];
-                layerReaders[layer].reset(data, 0, data.length);
+                var data = units[unit];
+                layerReaders[layer].reset(data, 0, sizes == null ? data.length : sizes[unit]);
+                unit++;
             }
             present++;
         }

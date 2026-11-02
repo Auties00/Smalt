@@ -44,8 +44,10 @@ import java.util.function.Consumer;
  * {@link SsrSynthesis} filterbank. An error resilient block holds the channel elements its channel
  * configuration lists, without element identifiers, followed by extension payloads, which are
  * skipped, except the low delay spectral band replication of AAC-ELD, which follows the elements; it
- * fills the whole packet. With {@code epConfig} 1 the block comes as one access unit per error
- * sensitivity category instance, which {@link #decodeInstances} reads in turn. AAC-LD runs the 512- or
+ * fills the whole packet. With {@code epConfig} 1, and with the direct mapping of {@code epConfig} 3 once the error
+ * protection tool is undone, the block comes as one access unit per error sensitivity category instance, which
+ * {@link #decodeInstances} reads in turn; the low delay SBR payload of AAC-ELD then comes as an instance of category
+ * 9 and one of category 10 per channel element. AAC-LD runs the 512- or
  * 480-sample transform with the sine or the low overlap window and long term prediction; AAC-ELD runs
  * the {@link LowDelayFilterbank}, and its channel pairs always share their {@code ics_info}.
  */
@@ -181,7 +183,7 @@ public final class FrameDecoder {
 
     /**
      * Whether each error sensitivity category instance of a block comes in its own access unit
-     * ({@code epConfig} 1).
+     * ({@code epConfig} 1, or 3 with direct mapping).
      */
     private final boolean separateCategories;
 
@@ -601,7 +603,8 @@ public final class FrameDecoder {
         this.lowDelaySbr = config.lowDelaySbr();
         this.bsac = config.bsac() ? new BsacDecoder(config, maxLayer, limits) : null;
         this.scalable = config.scalable() ? new ScalableDecoder(configs, maxLayer, AacKernels.INSTANCE) : null;
-        this.separateCategories = config.epConfig() == 1 && bsac == null && scalable == null;
+        this.separateCategories = (config.epConfig() == 1 || config.epConfig() == 3) && bsac == null
+                && scalable == null;
         this.reversibleScalefactors = (config.resilience() & AudioSpecificConfig.RVLC_SCALEFACTORS) != 0;
         this.coreRate = config.sampleRate();
         this.sbrMode = sbrMode;
@@ -781,7 +784,7 @@ public final class FrameDecoder {
             scalableUnit[0] = offset == 0 && length == data.length ? data : Arrays.copyOfRange(data, offset,
                     offset + length);
             try {
-                output.accept(decodeScalable(scalableUnit, 1));
+                output.accept(decodeScalable(scalableUnit, null, 1));
             } finally {
                 scalableUnit[0] = null;
             }
@@ -814,15 +817,39 @@ public final class FrameDecoder {
      * {@code count} entries; read only during the call
      * @param count the number of category instances
      * @param output receives the block's samples, valid only during the call
-     * @throws IllegalStateException if the configuration does not set {@code epConfig} 1
+     * @throws IllegalStateException if the configuration sets neither {@code epConfig} 1 nor 3
      * @throws MediaException.Malformed if an instance is corrupt or missing
      * @throws MediaException.LimitExceeded if the block declares too many channels
      */
     public void decodeInstances(byte[][] data, int count, Consumer<AudioBuffer> output) {
+        decodeInstances(data, null, count, output);
+    }
+
+    /**
+     * Decodes one error resilient block whose error sensitivity category instances come in separate
+     * access units, as {@code epConfig} 1 stores them (and the direct mapping of {@code epConfig} 3 yields them),
+     * and hands the decoded block to {@code output}.
+     *
+     * <p>Each channel element contributes its instances in order: a channel pair first the instance
+     * of its common side information, then every channel the instance of its side information (the
+     * element tag of a single channel element included), of its RVLC codewords when the configuration
+     * codes them, of its TNS data and of its spectral data. Instances beyond the last one the
+     * elements read, which hold extension payloads, are skipped.
+     *
+     * @param data the category instances, in the order of their elementary streams, in its first
+     * {@code count} entries; read only during the call
+     * @param sizes the number of bytes of each instance, or {@code null} when each fills its array
+     * @param count the number of category instances
+     * @param output receives the block's samples, valid only during the call
+     * @throws IllegalStateException if the configuration sets neither {@code epConfig} 1 nor 3
+     * @throws MediaException.Malformed if an instance is corrupt or missing
+     * @throws MediaException.LimitExceeded if the block declares too many channels
+     */
+    public void decodeInstances(byte[][] data, int[] sizes, int count, Consumer<AudioBuffer> output) {
         if (bsac != null) {
             var length = 0L;
             for (var i = 0; i < count; i++) {
-                length += data[i].length;
+                length += sizes == null ? data[i].length : sizes[i];
             }
             if (length == 0) {
                 throw new MediaException.Malformed("empty ER BSAC frame");
@@ -836,14 +863,15 @@ public final class FrameDecoder {
             }
             var position = 0;
             for (var i = 0; i < count; i++) {
-                System.arraycopy(data[i], 0, bsacFrame, position, data[i].length);
-                position += data[i].length;
+                var size = sizes == null ? data[i].length : sizes[i];
+                System.arraycopy(data[i], 0, bsacFrame, position, size);
+                position += size;
             }
             output.accept(decodeBsac(position));
             return;
         }
         if (scalable != null) {
-            output.accept(decodeScalable(data, count));
+            output.accept(decodeScalable(data, sizes, count));
             return;
         }
         if (!separateCategories) {
@@ -858,7 +886,7 @@ public final class FrameDecoder {
         }
         for (var i = 0; i < count; i++) {
             var instance = data[i];
-            instances[i].reset(instance, 0, instance.length);
+            instances[i].reset(instance, 0, sizes == null ? instance.length : sizes[i]);
         }
         instanceCount = count;
         instanceCursor = 0;
@@ -989,12 +1017,13 @@ public final class FrameDecoder {
      * Decodes one scalable AAC frame from the access units of its elementary streams.
      *
      * @param units the access units in stream order, in their first {@code count} entries
+     * @param sizes the number of bytes of each unit, or {@code null} when each fills its array
      * @param count the number of access units
      * @return the decoded samples, valid until the next block
      */
-    private AudioBuffer decodeScalable(byte[][] units, int count) {
+    private AudioBuffer decodeScalable(byte[][] units, int[] sizes, int count) {
         beginBlock();
-        scalable.decode(units, count);
+        scalable.decode(units, sizes, count);
         var first = streamCount;
         var sequence = scalable.windowSequence();
         var shape = scalable.windowShape();
@@ -1347,6 +1376,15 @@ public final class FrameDecoder {
             reader.checkNotOverrun();
         }
         if (separateCategories) {
+            if (lowDelaySbr != null && sbrActive()) {
+                for (var element = 0; element < elementCount && instanceCount - instanceCursor >= 2; element++) {
+                    if (elementTypes[element] != ElementId.LFE) {
+                        sbrInBlock = true;
+                        sbrElement(element, elementTypes[element]).parseLowDelay(nextInstance(), nextInstance(),
+                                lowDelaySbr.crc());
+                    }
+                }
+            }
             return;
         }
         if (lowDelaySbr != null && sbrActive()) {

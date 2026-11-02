@@ -35,8 +35,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * of the suites that use perceptual noise substitution, whose noise differs sample by sample, are compared by
  * their band energies instead. Streams stored with {@code epConfig} 1 (one track per error sensitivity category
  * instance) must decode bit for bit like their {@code epConfig} 0 twins, the streams ffmpeg's native decoder handles
- * must agree with it to single precision rounding, and the error protection tool
- * ({@code epConfig} 3) must be rejected as unsupported.
+ * must agree with it to single precision rounding; {@link AacErrorProtectionConformanceTest} covers the streams of the
+ * error protection tool ({@code epConfig} 3).
  */
 class AacErrorResilientConformanceTest {
     private static final String[] ENHANCED_LOW_DELAY = {"1000np", "1001np", "1010np", "1020np", "1030np", "1040np",
@@ -389,21 +389,6 @@ class AacErrorResilientConformanceTest {
                     }
                 }
             }
-        }
-    }
-
-    @Nested
-    @DisplayName("the error protection tool (epConfig 3)")
-    class ErrorProtection {
-        @ParameterizedTest(name = "{0}")
-        @ValueSource(strings = {"er_al10_08_ep3_crc01", "er_al15_48_ep3_srcpc01", "er_al18_11_ep3_crc02",
-                "er_al21_32_ep3_crc03", "er_al23_44_ep3_crc04", "er_al26_88_ep3_srcpc03", "er_ad1111_22_ep3_srs01",
-                "er_ad2050_48_ep3_srs03", "er_ad2170_32_ep3_srs04", "er_ap27_16_ep3_srcpc04"})
-        @DisplayName("is rejected as unsupported, naming it")
-        void unsupported(String stream) {
-            var parsed = AacTestSupport.parseMp4(Fixtures.read(ErrorResilientVectors.fetch(stream + ".mp4")));
-            var exception = assertThrows(MediaException.Unsupported.class, () -> new AacDecoder(parsed.track()));
-            assertEquals("aac er epconfig 3", exception.format());
         }
     }
 
