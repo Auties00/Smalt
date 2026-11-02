@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.image.raw.internal;
 
+import com.github.auties00.smalt.Media;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.raw.RawDecoder;
@@ -51,6 +52,7 @@ class LeafParserTest {
         String neutrals = "3270\n2703\n3270\n2232";
         String rotation = "90";
         String model = "Leaf Aptus 22(LF10043    )/Mamiya 645 AFD";
+        String fields;
         int[] photosites;
 
         Mos photosites(long seed) {
@@ -87,6 +89,9 @@ class LeafParserTest {
             capture.add(packet("CaptProf_version", value("80005")));
             if (mosaic != null) {
                 capture.add(packet("CaptProf_mosaic_pattern", value(mosaic)));
+            }
+            if (fields != null) {
+                capture.add(packet("CaptProf_image_fields", value(fields)));
             }
             var neutral = packet("NeutObj_neutrals", value(neutrals));
             var image = packet("ImgProf_rotation_angle", value(rotation));
@@ -250,6 +255,40 @@ class LeafParserTest {
         assertArrayEquals(new double[]{15000}, file.sensor.white);
         assertArrayEquals(new double[]{2703 / 3270.0, 1, 2232 / 3270.0}, file.color.asShotNeutral, 1e-12);
         assertEquals(compressed ? "lossless JPEG" : "uncompressed", file.sensor.compression);
+    }
+
+    @ParameterizedTest(name = "compressed {0}, {1} rows")
+    @CsvSource({"false, 10", "true, 10", "false, 9", "true, 1"})
+    @DisplayName("a sensor read as two fields, whose stored rows alternate between the top and the bottom field, "
+            + "decodes to its rows in picture order")
+    void twoFields(boolean compressed, int height) {
+        var picture = new Mos();
+        picture.height = height;
+        picture.photosites(3);
+        var synthetic = new Mos();
+        synthetic.height = height;
+        synthetic.compressed = compressed;
+        synthetic.fields = String.join("\n", "1 0 0 1 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0".split(" "));
+        synthetic.photosites = new int[picture.photosites.length];
+        var width = picture.width;
+        for (int top = 0, stored = 0; stored < height; top++) {
+            System.arraycopy(picture.photosites, top * width, synthetic.photosites, stored++ * width, width);
+            if (stored < height) {
+                System.arraycopy(picture.photosites, (height - 1 - top) * width, synthetic.photosites,
+                        stored++ * width, width);
+            }
+        }
+        assertArrayEquals(picture.photosites, read(parse(synthetic.write())));
+        synthetic.fields = String.join("\n", "1", "0", "0", "0");
+        assertArrayEquals(synthetic.photosites, read(parse(synthetic.write())));
+    }
+
+    @Test
+    @DisplayName("a probe names the maker and the camera of the XMP packet, as the parser does")
+    void probeTags() {
+        var tags = Media.probe(MediaSource.of(new Mos().photosites(1).write())).tags();
+        assertEquals("Leaf", tags.get("make"), tags.toString());
+        assertEquals("Aptus 22", tags.get("model"), tags.toString());
     }
 
     @ParameterizedTest(name = "{0} -> {1}")

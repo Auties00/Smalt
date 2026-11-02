@@ -4,6 +4,8 @@
  * 14496-2. Modified for Smalt. */
 package com.github.auties00.smalt.video.mpeg4.internal.object;
 
+import com.github.auties00.smalt.MediaException;
+
 import java.util.Arrays;
 
 /**
@@ -139,6 +141,8 @@ abstract class ObjectSprite extends ObjectErrorResilience {
 
     /**
      * Decodes a sprite VOP: its warping points, its pieces, and the warping ({@code decodeSpt}).
+     *
+     * @throws MediaException.Malformed if the VOP warps a sprite the stream has not decoded
      */
     final void decodeSpt() {
         if (numOfPnts > 0) {
@@ -153,6 +157,9 @@ abstract class ObjectSprite extends ObjectErrorResilience {
             decodeSpritePieces();
         }
         if (numOfPnts > 0) {
+            if (sptQ == null) {
+                throw new MediaException.Malformed("MPEG-4 sprite VOP before its sprite");
+            }
             var warp = volmd.alphaUsage != VopPlanes.RECTANGLE ? new Rct(rctCurrVOPY)
                     : new Rct(0, 0, volWidth, volHeight);
             if (numOfPnts == 2 || numOfPnts == 3) {

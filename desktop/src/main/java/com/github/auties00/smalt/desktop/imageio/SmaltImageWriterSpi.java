@@ -58,7 +58,7 @@ public abstract sealed class SmaltImageWriterSpi extends ImageWriterSpi
                 SmaltImageWriter.class.getName(), new Class<?>[]{ImageOutputStream.class},
                 new String[]{SmaltImageReaderSpi.class.getName()},
                 false, null, null, null, null,
-                false, null, null, null, null);
+                true, SmaltImageMetadataFormat.NAME, SmaltImageMetadataFormat.class.getName(), null, null);
         this.format = Objects.requireNonNull(format, "format");
     }
 

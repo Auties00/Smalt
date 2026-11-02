@@ -16,13 +16,16 @@ import java.util.List;
  *   <Density unit="dots_per_inch" horizontal="300.0" vertical="300.0"/>
  *   <Exif/>       <!-- user object: the raw EXIF block, when the image has one -->
  *   <IccProfile/> <!-- user object: the raw ICC profile, when the image has one -->
+ *   <Xmp/>        <!-- user object: the XMP packet, when the image has one -->
  * </com_github_auties00_smalt_image_1.0>
  * }
  *
  * <p>{@code orientation} is the EXIF orientation code, {@code 1} to {@code 8}; the readers report
- * it and never apply it. {@code Animation} is present only for animated images, {@code loopCount}
- * counts plays with {@code 0} meaning forever. {@code Density} is present only when the image
- * declares a pixel density, as {@link SmaltImageMetadata#density()} reports it: its {@code unit} is
+ * it and never apply it, and it is absent from writer metadata that leaves the orientation to the EXIF
+ * block. {@code width} and {@code height} are absent from writer metadata. {@code Animation} is present
+ * only for animated images, {@code loopCount} counts plays with {@code 0} meaning forever. {@code Density}
+ * is present only when the image declares a pixel density, as {@link SmaltImageMetadata#density()} reports
+ * it: its {@code unit} is
  * the lowercase name of the {@link com.github.auties00.smalt.image.PixelDensity.Unit} constant and its
  * values are the positive pixels per unit (or, for {@code aspect_ratio}, the relative values).
  */
@@ -43,10 +46,10 @@ public final class SmaltImageMetadataFormat extends IIOMetadataFormatImpl {
     private SmaltImageMetadataFormat() {
         super(NAME, CHILD_POLICY_SOME);
         addAttribute(NAME, "format", DATATYPE_STRING, true, null);
-        addAttribute(NAME, "width", DATATYPE_INTEGER, true, null, "1", null, true, false);
-        addAttribute(NAME, "height", DATATYPE_INTEGER, true, null, "1", null, true, false);
+        addAttribute(NAME, "width", DATATYPE_INTEGER, false, null, "1", null, true, false);
+        addAttribute(NAME, "height", DATATYPE_INTEGER, false, null, "1", null, true, false);
         addBooleanAttribute(NAME, "hasAlpha", false, false);
-        addAttribute(NAME, "orientation", DATATYPE_INTEGER, true, "1", "1", "8", true, true);
+        addAttribute(NAME, "orientation", DATATYPE_INTEGER, false, "1", "1", "8", true, true);
         addBooleanAttribute(NAME, "animated", false, false);
 
         addElement("Animation", NAME, CHILD_POLICY_EMPTY);
@@ -66,6 +69,9 @@ public final class SmaltImageMetadataFormat extends IIOMetadataFormatImpl {
 
         addElement("IccProfile", NAME, CHILD_POLICY_EMPTY);
         addObjectValue("IccProfile", byte.class, 0, Integer.MAX_VALUE);
+
+        addElement("Xmp", NAME, CHILD_POLICY_EMPTY);
+        addObjectValue("Xmp", byte.class, 0, Integer.MAX_VALUE);
     }
 
     /**
@@ -85,6 +91,6 @@ public final class SmaltImageMetadataFormat extends IIOMetadataFormatImpl {
      */
     @Override
     public boolean canNodeAppear(String elementName, ImageTypeSpecifier imageType) {
-        return List.of(NAME, "Animation", "Density", "Exif", "IccProfile").contains(elementName);
+        return List.of(NAME, "Animation", "Density", "Exif", "IccProfile", "Xmp").contains(elementName);
     }
 }

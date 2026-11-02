@@ -1198,7 +1198,9 @@ public final class MxfMuxer implements Muxer {
 
     /**
      * {@return the index flags a picture contributes beyond random access: the sequence header flag and the
-     * prediction bits; an H.264 picture presented before a picture written earlier is flagged bidirectional}
+     * prediction bits; an H.264 picture presented before a picture written earlier is flagged bidirectional, an
+     * MPEG-4 Part 2 picture takes the prediction of its {@code vop_coding_type}, and a picture of another codec that
+     * is not a key frame is flagged forward predicted}
      *
      * @param out the track
      * @param packet the packet written
@@ -1231,7 +1233,25 @@ public final class MxfMuxer implements Muxer {
                     }
                 }
             }
+            case MPEG4_PART2 -> {
+                for (var at = 0; at + 4 < data.length; at++) {
+                    if (data[at] != 0 || data[at + 1] != 0 || data[at + 2] != 1) {
+                        continue;
+                    }
+                    var code = data[at + 3] & 0xFF;
+                    if (code == 0xB0 || code >= 0x20 && code <= 0x2F) {
+                        flags |= 0x40;
+                    } else if (code == 0xB6) {
+                        var type = (data[at + 4] >>> 6) & 3;
+                        flags |= type == 0 ? 0 : type == 2 ? 0x30 : 0x20;
+                        break;
+                    }
+                }
+            }
             default -> {
+                if (!packet.keyframe()) {
+                    flags |= 0x20;
+                }
             }
         }
         return flags;

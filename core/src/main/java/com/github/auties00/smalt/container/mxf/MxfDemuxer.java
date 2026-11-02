@@ -67,7 +67,8 @@ import java.util.TreeMap;
  * each, as length-prefixed NAL units; configuration an {@code avcC} record of the parameter sets of the first access
  * unit or, for a headerless AVC-Intra stream, of the parameter sets of its class and raster</td></tr>
  * <tr><td>MPEG-1, MPEG-2 and MPEG-4 Part 2 video (SMPTE ST 381-1)</td><td>{@link Codec#MPEG1_VIDEO},
- * {@link Codec#MPEG2_VIDEO}, {@link Codec#MPEG4_PART2}</td><td>one picture each</td></tr>
+ * {@link Codec#MPEG2_VIDEO}, {@link Codec#MPEG4_PART2}</td><td>one picture each; for MPEG-4 Part 2,
+ * configuration the visual object sequence, visual object and video object layer headers of the first picture</td></tr>
  * <tr><td>JPEG 2000 (SMPTE ST 422)</td><td>{@link Codec#JPEG2000}</td><td>one codestream each</td></tr>
  * <tr><td>DV-DIF (SMPTE ST 383)</td><td>{@link Codec#DV}</td><td>one DIF frame each</td></tr>
  * <tr><td>Broadcast Wave and AES3 audio (SMPTE ST 382)</td><td>{@link Codec#PCM_S16LE}, {@link Codec#PCM_S24LE},
@@ -933,6 +934,7 @@ public final class MxfDemuxer implements Demuxer {
                     }
                 }
             }
+            case MPEG4_PART2 -> config = first == null ? null : CodecConfigs.mpeg4Config(first);
             case H264 -> {
                 var sets = first == null ? null : parameterSets(first, stream);
                 if (sets == null) {

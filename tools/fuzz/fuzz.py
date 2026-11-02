@@ -37,7 +37,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 WORK = ROOT / 'target' / 'fuzz'
-MODULES = ['core', 'image', 'audio', 'video', 'mpeg', 'raw', 'capture']
+MODULES = ['core', 'image', 'audio', 'video', 'mpeg', 'raw', 'capture', 'desktop']
 CLASSPATH_FILE = 'fuzz.classpath'
 DRIVER = 'com.code_intelligence.jazzer.Jazzer'
 JVM_FLAGS = ['-XX:+EnableDynamicAgentLoading', '--add-modules', 'jdk.incubator.vector',

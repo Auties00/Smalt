@@ -5,6 +5,8 @@
  * free license for products conforming to ISO/IEC 14496-2. Modified for Smalt. */
 package com.github.auties00.smalt.video.mpeg4.internal.object;
 
+import com.github.auties00.smalt.MediaException;
+
 import java.util.Arrays;
 
 /**
@@ -1143,6 +1145,9 @@ abstract class ObjectMacroblocks extends ObjectShapeDecoder {
                 || (!(volmd.enhnType == 0 || volmd.useRefShape == 0) && !volmd.shapeOnly)) {
             int colocated;
             if (volmd.enhnType != 0 && volmd.useRefShape == 1) {
+                if (numMBXRef <= 0 || numMBYRef <= 0) {
+                    throw new MediaException.Malformed("MPEG-4 enhancement B-VOP shape without a reference VOP");
+                }
                 colocated = mbmdRef[Math.min(Math.max(0, mbx), numMBXRef - 1)
                         + Math.min(Math.max(0, mby), numMBYRef - 1) * numMBXRef].shpmd;
             } else {
@@ -1151,6 +1156,9 @@ abstract class ObjectMacroblocks extends ObjectShapeDecoder {
             decodeInterShape(forward ? refQ0 : refQ1, mode, mbIndex, mbx, mby, x, y, -1, currMBBY, frm, frmOff,
                     colocated);
         } else if (volmd.volType == VolMode.ENHN_LAYER) {
+            if (numMBBaseXRef <= 0 || numMBBaseYRef <= 0) {
+                throw new MediaException.Malformed("MPEG-4 enhancement B-VOP shape without a base layer VOP");
+            }
             var index = Math.min(Math.max(0, (mbx + xIndex) * volmd.horSamplingFactorMShape
                     / volmd.horSamplingFactorNShape), numMBBaseXRef - 1)
                     + Math.min(Math.max(0, (mby + yIndex) * volmd.verSamplingFactorMShape

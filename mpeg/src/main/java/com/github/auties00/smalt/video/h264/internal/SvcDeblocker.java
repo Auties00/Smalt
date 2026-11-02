@@ -472,7 +472,8 @@ final class SvcDeblocker {
     }
 
     /**
-     * Returns whether the edge between a macroblock and its left or upper neighbor is filtered.
+     * Returns whether the edge between a macroblock and its left or upper neighbor is filtered; the edge to a
+     * neighbor no slice of the layer decoded is not.
      *
      * @param neighbor the neighbor address
      * @param current the {@code sliceIdc} of the current macroblock
@@ -480,6 +481,9 @@ final class SvcDeblocker {
      * @return {@code true} when the edge is filtered
      */
     private boolean edgeAllowed(int neighbor, int current, boolean boundariesOnly) {
+        if (layer.sliceIdc[neighbor] < 0) {
+            return false;
+        }
         var same = layer.sliceIdc[neighbor] == current;
         if ((disableIdc == 2 || disableIdc == 5) && !same) {
             return false;
@@ -815,12 +819,14 @@ final class SvcDeblocker {
         var current = layer.sliceIdc[mb];
         var leftTop = 2 * (pair - 1);
         var aboveTop = 2 * (pair - w);
-        var filterLeft = pairX > 0 && edgeAllowed(leftTop, current, boundariesOnly);
+        var filterLeft = pairX > 0 && layer.sliceIdc[leftTop + 1] >= 0
+                && edgeAllowed(leftTop, current, boundariesOnly);
         boolean filterTop;
         if (!field && bottom == 1) {
             filterTop = edgeAllowed(mb - 1, current, boundariesOnly);
         } else {
-            filterTop = pairY > 0 && edgeAllowed(aboveTop, current, boundariesOnly);
+            filterTop = pairY > 0 && layer.sliceIdc[aboveTop + 1] >= 0
+                    && edgeAllowed(aboveTop, current, boundariesOnly);
         }
         var internal = !((disableIdc == 3 || disableIdc == 6) && boundariesOnly);
         var transform8x8 = layer.cTrafo[mb] == SvcLayer.T_8X8;

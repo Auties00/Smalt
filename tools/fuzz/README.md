@@ -33,7 +33,7 @@ animation and as pages; a raw file rendered three ways) runs one of those ways, 
 
 | What | Where |
 |---|---|
-| Targets | `<module>/src/test/java/.../fuzz/*FuzzTest.java`, in core, image, audio, video, mpeg, raw and capture |
+| Targets | `<module>/src/test/java/.../fuzz/*FuzzTest.java`, in core, image, audio, video, mpeg, raw, capture and desktop |
 | Shared drivers | `core/src/test/java/.../testkit/fuzz`: `Fuzz`, `FuzzRun`, `FuzzMedia` (image, video, audio, demuxer and tag drivers), `FuzzPackets` (the input format of the packet decoder targets) |
 | Seeds | `<module>/src/test/resources/<package>/<Class>Inputs/<method>/`, where Jazzer looks for them |
 | Saved findings | `<module>/src/test/resources/fuzz-regressions/<Class>/<method>/` |

@@ -740,6 +740,12 @@ class HttpMediaSourceTest {
             var date = "Sun, 06 Nov 1994 08:49:37 GMT";
             assertEquals("\"a\"", HttpMediaSource.ifRange("\"a\"", "Sun, 06 Nov 1994 08:00:00 GMT", date));
             assertNull(HttpMediaSource.ifRange("W/\"a\"", "Sun, 06 Nov 1994 08:00:00 GMT", date));
+            assertNull(HttpMediaSource.ifRange("\"a\"û", "Sun, 06 Nov 1994 08:00:00 GMT", date));
+            assertNull(HttpMediaSource.ifRange("\"a\u0001\"", null, null));
+            assertNull(HttpMediaSource.ifRange("\"a\"b\"", null, null));
+            assertNull(HttpMediaSource.ifRange("a", null, null));
+            assertEquals("Sun, 06 Nov 1994 08:49:36 GMT", HttpMediaSource.ifRange(null,
+                    " Sun, 06 Nov 1994 08:49:36 GMT\t", date));
             assertEquals("Sun, 06 Nov 1994 08:49:36 GMT", HttpMediaSource.ifRange(null,
                     "Sun, 06 Nov 1994 08:49:36 GMT", date));
             assertNull(HttpMediaSource.ifRange(null, date, date));

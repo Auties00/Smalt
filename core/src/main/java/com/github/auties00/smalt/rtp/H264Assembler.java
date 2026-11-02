@@ -225,14 +225,16 @@ final class H264Assembler extends Assembler {
         var rbsp = NalUnits.unescape(data, offset + 1, length - 1);
         var reader = new MsbBitReader(rbsp);
         int id;
-        if (type == H264Format.SPS) {
-            if (rbsp.length < 4) {
-                return;
+        try {
+            if (type == H264Format.SPS) {
+                if (rbsp.length < 4) {
+                    return;
+                }
+                reader.skip(24);
             }
-            reader.skip(24);
             id = reader.readUe();
-        } else {
-            id = reader.readUe();
+        } catch (MediaException.Malformed exception) {
+            return;
         }
         if (reader.overrun() || id < 0 || id > 255) {
             return;

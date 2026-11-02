@@ -283,8 +283,9 @@ public final class RawMuxer implements Muxer {
      * {@link ContainerFormat#AMR} AMR-NB and AMR-WB, {@link ContainerFormat#AC3} AC-3 and E-AC-3,
      * {@link ContainerFormat#DTS} DTS, {@link ContainerFormat#H264}, {@link ContainerFormat#HEVC},
      * {@link ContainerFormat#VVC}, {@link ContainerFormat#AV1}, {@link ContainerFormat#AV1_ANNEX_B},
-     * {@link ContainerFormat#MPEG4_VIDEO}, {@link ContainerFormat#H263} and {@link ContainerFormat#WAVPACK} their codec,
-     * and {@link ContainerFormat#PCM} every PCM codec; every other format is not an elementary stream this muxer writes.
+     * {@link ContainerFormat#MPEG4_VIDEO}, {@link ContainerFormat#H263} and {@link ContainerFormat#WAVPACK} their
+     * codec, and {@link ContainerFormat#PCM} every PCM codec; every other format is not an elementary stream this
+     * muxer writes.
      *
      * @param format the file format
      * @param codec the codec of the track

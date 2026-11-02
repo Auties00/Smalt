@@ -72,7 +72,8 @@ class TranscodeFuzzTest {
             if (results.size() != 2) {
                 throw new AssertionError("two outputs gave " + results.size() + " results");
             }
-            if (!results.getFirst().streams().isEmpty() && results.getFirst().streams().getFirst().track().codec()
+            // the reader decodes the first track only, while the result reports the longest of all tracks
+            if (results.getFirst().streams().size() == 1 && results.getFirst().streams().getFirst().track().codec()
                     == Codec.PCM_S16LE) {
                 check(first.toByteArray(), results.getFirst());
             }

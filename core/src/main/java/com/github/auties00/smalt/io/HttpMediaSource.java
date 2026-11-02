@@ -399,9 +399,9 @@ final class HttpMediaSource implements MediaSource, LocalSource {
 
     /**
      * Chooses the {@code If-Range} value of the later requests (RFC 9110 section 13.1.5): the entity tag when it is
-     * strong; nothing when it is weak, since a client holding an entity tag must not send a date; and otherwise the
-     * modification date when it is strong, that is at least one second before the {@code Date} of the response
-     * (RFC 9110 section 8.8.2.2).
+     * strong; nothing when it is weak or not a well-formed entity tag of visible ASCII characters, since a client
+     * holding an entity tag must not send a date; and otherwise the modification date when it is strong, that is at
+     * least one second before the {@code Date} of the response (RFC 9110 section 8.8.2.2).
      *
      * @param entityTag the {@code ETag} value of the first response, or {@code null}
      * @param lastModified the {@code Last-Modified} value of the first response, or {@code null}
@@ -410,7 +410,7 @@ final class HttpMediaSource implements MediaSource, LocalSource {
      */
     static String ifRange(String entityTag, String lastModified, String date) {
         if (entityTag != null) {
-            return entityTag.startsWith("W/") ? null : entityTag;
+            return entityTag.startsWith("W/") || !isEntityTag(entityTag) ? null : entityTag;
         }
         if (lastModified == null || date == null) {
             return null;
@@ -418,10 +418,30 @@ final class HttpMediaSource implements MediaSource, LocalSource {
         try {
             var modified = ZonedDateTime.parse(lastModified.strip(), DateTimeFormatter.RFC_1123_DATE_TIME);
             var sent = ZonedDateTime.parse(date.strip(), DateTimeFormatter.RFC_1123_DATE_TIME);
-            return modified.plusSeconds(1).isAfter(sent) ? null : lastModified;
+            return modified.plusSeconds(1).isAfter(sent) ? null : lastModified.strip();
         } catch (DateTimeParseException exception) {
             return null;
         }
+    }
+
+    /**
+     * Returns whether a value is a strong entity tag of RFC 9110 section 8.8.3: a quoted string of visible ASCII
+     * characters other than the double quote.
+     *
+     * @param value the {@code ETag} header value
+     * @return whether the value is such an entity tag
+     */
+    private static boolean isEntityTag(String value) {
+        if (value.length() < 2 || value.charAt(0) != '"' || value.charAt(value.length() - 1) != '"') {
+            return false;
+        }
+        for (var index = 1; index < value.length() - 1; index++) {
+            var character = value.charAt(index);
+            if (character < 0x21 || character > 0x7E || character == '"') {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

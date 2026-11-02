@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.image.raw.internal;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.raw.CfaPattern;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 
@@ -20,10 +21,16 @@ import java.util.Map;
  * rotation of the picture from {@code ImgProf_rotation_angle}; {@code JPEG_preview_data} holds the camera's JPEG
  * preview. The camera's name is the XMP {@code tiff:Model} up to its serial number in parentheses.
  *
+ * <p>When the fourth number of {@code CaptProf_image_fields} is not zero, the sensor was read as two fields, one
+ * from its top edge down and one from its bottom edge up, and the stored rows alternate between them: stored row
+ * {@code 2k} is row {@code k} of the picture and stored row {@code 2k + 1} is row {@code height - 1 - k}.
+ *
  * @implNote This implementation's filter array, as-shot neutral, orientation and white level were checked against
  * Adobe DNG Converter, run as a black box, on a CC0 sample file, whose photosites it reproduces exactly. The
  * white level of a model is not in the file, so {@link #WHITE_OF_MODEL} keeps the levels of the models checked;
- * other models take the largest value of their bit depth.
+ * other models take the largest value of their bit depth. The meaning of the image fields was derived from the
+ * CC0 samples: the AFi-II 12 sample, whose fourth field number is 1, renders its JPEG preview's scene only with
+ * its rows taken in that order, and the Aptus 22 samples, whose fourth number is 0, store the rows in order.
  */
 final class LeafParser {
     /**
@@ -56,6 +63,11 @@ final class LeafParser {
      * The deepest nesting of packets followed.
      */
     private static final int MAX_DEPTH = 16;
+
+    /**
+     * The index, within {@code CaptProf_image_fields}, of the number that says the sensor was read as two fields.
+     */
+    private static final int TWO_FIELDS = 3;
 
     /**
      * The white levels of the models checked on CC0 samples: the level Adobe DNG Converter gives the Aptus 22, and
@@ -127,6 +139,10 @@ final class LeafParser {
         }
         var white = file.model == null ? null : WHITE_OF_MODEL.get(file.model);
         sensor.white = new double[]{white != null ? white : (1 << sensor.bitsPerSample) - 1};
+        var fields = numbers(values.get("CaptProf_image_fields"));
+        if (fields != null && fields.length > TWO_FIELDS && fields[TWO_FIELDS] != 0) {
+            sensor.reader = unfolding(sensor.reader);
+        }
         var neutrals = numbers(values.get("NeutObj_neutrals"));
         if (neutrals != null && neutrals.length >= 4 && neutrals[1] > 0 && neutrals[2] > 0 && neutrals[3] > 0) {
             file.color.asShotNeutral = new double[]{neutrals[1] / neutrals[2], 1, neutrals[3] / neutrals[2]};
@@ -134,6 +150,75 @@ final class LeafParser {
             sensor.estimateBalance = true;
         }
         file.sensor = sensor;
+    }
+
+    /**
+     * Returns a reader that puts the rows of a sensor read as two fields, which the stored data alternates, in
+     * picture order.
+     *
+     * @param stored the reader of the rows as stored
+     * @return the reader of the rows in picture order
+     */
+    private static Sensor.Reader unfolding(Sensor.Reader stored) {
+        return new Sensor.Reader() {
+            @Override
+            public void read(SensorPlane plane, MediaLimits limits) {
+                stored.read(plane, limits);
+                unfold(plane);
+            }
+
+            @Override
+            public void read(SensorPlane plane, MediaLimits limits, boolean corrections) {
+                stored.read(plane, limits, corrections);
+                unfold(plane);
+            }
+        };
+    }
+
+    /**
+     * Moves stored row {@code 2k} of a plane to row {@code k} and stored row {@code 2k + 1} to row
+     * {@code height - 1 - k}, in place, following the cycles of that permutation.
+     *
+     * @param plane the plane, of the sensor's stored size
+     */
+    static void unfold(SensorPlane plane) {
+        var height = plane.height;
+        var rowLength = plane.width * plane.samplesPerPixel;
+        Object samples = plane.integers != null ? plane.integers : plane.wide != null ? plane.wide : plane.floats;
+        Object held = newRow(samples, rowLength);
+        Object displaced = newRow(samples, rowLength);
+        var placed = new boolean[height];
+        for (var start = 0; start < height; start++) {
+            if (placed[start]) {
+                continue;
+            }
+            System.arraycopy(samples, start * rowLength, held, 0, rowLength);
+            var row = start;
+            do {
+                var target = (row & 1) == 0 ? row >> 1 : height - 1 - (row >> 1);
+                System.arraycopy(samples, target * rowLength, displaced, 0, rowLength);
+                System.arraycopy(held, 0, samples, target * rowLength, rowLength);
+                var swap = held;
+                held = displaced;
+                displaced = swap;
+                placed[target] = true;
+                row = target;
+            } while (row != start);
+        }
+    }
+
+    /**
+     * {@return an array of the samples' type holding one row}
+     *
+     * @param samples the plane's samples: a {@code short[]}, {@code int[]} or {@code float[]}
+     * @param length the samples of a row
+     */
+    private static Object newRow(Object samples, int length) {
+        return switch (samples) {
+            case short[] _ -> new short[length];
+            case int[] _ -> new int[length];
+            default -> new float[length];
+        };
     }
 
     /**

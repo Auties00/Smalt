@@ -40,7 +40,7 @@ class MxfThirdPartyTest {
                 assertEquals(ContainerFormat.MXF, Containers.detect(source).orElseThrow());
             }
             var probe = new String(Oracle.run(Oracle.Tool.FFPROBE, Duration.ofMinutes(10), List.of("-v", "error",
-                    "-show_entries", "packet=stream_index,size:packet_side_data=", "-show_data_hash", "CRC32", "-of",
+                    "-show_entries", "packet=stream_index,size,data_hash:packet_side_data=", "-show_data_hash", "CRC32", "-of",
                     "compact", file.toString())), StandardCharsets.UTF_8);
             var expected = new HashMap<Integer, List<String>>();
             for (var line : probe.split("\r?\n")) {

@@ -48,13 +48,17 @@ class V4l2FormatsLiveTest {
     @Test
     @DisplayName("every pixel format of the single-planar vivid camera shows the reference pattern")
     void singlePlanarFormats() {
-        sweep(Skip.setting("smalt.test.vivid", "SMALT_TEST_VIVID"), "camera-formats");
+        var path = Skip.setting("smalt.test.vivid", "SMALT_TEST_VIVID");
+        Skip.unlessDevice(!path.isEmpty(), "camera-formats", "set the vivid node of camera-formats");
+        sweep(path);
     }
 
     @Test
     @DisplayName("every pixel format of the multi-planar vivid camera shows the reference pattern")
     void multiPlanarFormats() {
-        sweep(Skip.setting("smalt.test.vividMplane", "SMALT_TEST_VIVID_MPLANE"), "camera-multiplanar");
+        var path = Skip.setting("smalt.test.vividMplane", "SMALT_TEST_VIVID_MPLANE");
+        Skip.unlessDevice(!path.isEmpty(), "camera-multiplanar", "set the vivid node of camera-multiplanar");
+        sweep(path);
     }
 
     @Test
@@ -168,8 +172,7 @@ class V4l2FormatsLiveTest {
     /**
      * Captures a vivid camera in every format it offers and compares each with its YUYV capture.
      */
-    private static void sweep(String path, String device) {
-        Skip.unlessDevice(!path.isEmpty(), device, "set the vivid node of " + device);
+    private static void sweep(String path) {
         assertTimeoutPreemptively(Duration.ofSeconds(300), () -> {
             still(path, "75% Colorbar");
             var camera = V4l2Cameras.find(path).orElseThrow();

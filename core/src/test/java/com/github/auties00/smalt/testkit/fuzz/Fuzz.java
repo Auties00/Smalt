@@ -93,7 +93,9 @@ public final class Fuzz {
      * {@link NullPointerException}, a {@link ClassCastException}, an {@link ArrayStoreException}, a buffer underflow
      * or overflow, a {@link java.util.NoSuchElementException}, a
      * {@link java.util.ConcurrentModificationException}, an {@link UnsupportedOperationException} or a division by
-     * zero; running out of memory under {@link #LIMITS} or out of stack is one too. An
+     * zero; running out of memory under {@link #LIMITS} or out of stack, which the guard reports as a
+     * {@link MediaException.LimitExceeded}, is one too (a {@link MediaException.Malformed} whose message only quotes
+     * such text from the input is not). An
      * {@link IllegalArgumentException} or {@link IllegalStateException} in the chain is a rejection: Smalt throws
      * them on purpose, for example when a muxer refuses a packet the input timed wrongly, and its entry points
      * translate them knowingly.
@@ -104,7 +106,8 @@ public final class Fuzz {
      */
     public static void check(String step, MediaException exception) {
         var message = exception.getMessage();
-        if (message != null && (message.endsWith(" needs more memory than is available")
+        if (exception instanceof MediaException.LimitExceeded && message != null
+                && (message.endsWith(" needs more memory than is available")
                 || message.startsWith("out of memory") || message.endsWith(" nests too deeply"))) {
             throw new AssertionError(step + " ran out of memory or stack: " + message, exception);
         }
