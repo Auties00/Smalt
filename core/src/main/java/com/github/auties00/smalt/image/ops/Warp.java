@@ -9,12 +9,12 @@ import com.github.auties00.smalt.internal.task.ParallelBands;
 import java.util.Arrays;
 
 /**
- * Resamples packed RGBA pictures through an affine map: every output pixel is the source sampled
+ * Resamples packed RGBA pictures through a {@link SourceMap}: every output pixel is the source sampled
  * at the point its center maps to.
  *
  * <p>The map goes from output coordinates to source coordinates (the inverse of the transform the
  * caller asked for). Output pixel {@code (i, j)} samples the source at
- * {@code (sx, sy) = inverse(i + 0.5, j + 0.5)}:
+ * {@code (sx, sy) = map(i + 0.5, j + 0.5)}, and takes the background when the map gives it no point:
  * <ul>
  *   <li>{@link Interpolation#NEAREST} copies source pixel {@code (floor(sx), floor(sy))}, or the
  *       background when that pixel does not exist;</li>
@@ -77,7 +77,7 @@ final class Warp {
      * Resamples an 8-bit RGBA picture.
      *
      * @param src the source picture
-     * @param inverse the map from output coordinates to source coordinates
+     * @param map the map from output pixel centers to source points
      * @param width the output width
      * @param height the output height
      * @param interpolation how source pixels are interpolated
@@ -85,18 +85,18 @@ final class Warp {
      * @param hasAlpha whether the result reports alpha
      * @return the resampled picture
      */
-    static RgbaPicture rgba(RgbaPicture src, AffineTransform inverse, int width, int height, Interpolation interpolation,
+    static RgbaPicture rgba(RgbaPicture src, SourceMap map, int width, int height, Interpolation interpolation,
                             int argbBackground, boolean hasAlpha) {
         var out = RgbaPicture.allocate(width, height, hasAlpha);
         var taps = taps(interpolation);
         var bands = ParallelBands.bands(height, TAP_WORK * taps * taps * width * height);
         if (interpolation == Interpolation.NEAREST) {
-            ParallelBands.run(bands, band -> nearestRows(src, inverse, argbBackground, out,
+            ParallelBands.run(bands, band -> nearestRows(src, map, argbBackground, out,
                     ParallelBands.start(band, bands, height), ParallelBands.start(band + 1, bands, height)));
             return out;
         }
         var padded = pad(src, argbBackground);
-        ParallelBands.run(bands, band -> interpolatedRows(padded, src.width(), src.height(), inverse, taps, out,
+        ParallelBands.run(bands, band -> interpolatedRows(padded, src.width(), src.height(), map, taps, out,
                 ParallelBands.start(band, bands, height), ParallelBands.start(band + 1, bands, height)));
         return out;
     }
@@ -138,13 +138,13 @@ final class Warp {
      * @param padded the padded packed source
      * @param width the source width
      * @param height the source height
-     * @param inverse the map from output coordinates to source coordinates
+     * @param map the map from output pixel centers to source points
      * @param taps {@code 2} for bilinear, {@code 4} for bicubic interpolation
      * @param out the output picture
      * @param top the first row
      * @param bottom the row after the last one
      */
-    private static void interpolatedRows(int[] padded, int width, int height, AffineTransform inverse, int taps,
+    private static void interpolatedRows(int[] padded, int width, int height, SourceMap map, int taps,
                                          RgbaPicture out, int top, int bottom) {
         var kernel = WarpKernel.INSTANCE;
         var stride = width + 2 * PAD;
@@ -153,17 +153,18 @@ final class Warp {
         var wx = new float[taps][count];
         var wy = new float[taps][count];
         var sums = new float[4][count];
+        var pixels = new int[taps][count];
         var weights = new float[4];
+        var xs = new double[count];
+        var ys = new double[count];
         var reach = taps / 2;
         for (var j = top; j < bottom; j++) {
-            var cy = j + 0.5;
-            var rowX = inverse.m01() * cy + inverse.m02();
-            var rowY = inverse.m11() * cy + inverse.m12();
+            map.row(j, count, xs, ys);
             for (var i = 0; i < count; i++) {
-                var cx = i + 0.5;
-                var u = inverse.m00() * cx + rowX - 0.5;
-                var v = inverse.m10() * cx + rowY - 0.5;
-                if (u <= -reach || v <= -reach || u >= width + reach - 1 || v >= height + reach - 1) {
+                var u = xs[i] - 0.5;
+                var v = ys[i] - 0.5;
+                // the negated test also sends NaN, a pixel the map gives no point, to the background
+                if (!(u > -reach && v > -reach && u < width + reach - 1 && v < height + reach - 1)) {
                     base[i] = 0;
                     weights(0, taps, weights);
                     for (var t = 0; t < taps; t++) {
@@ -188,14 +189,33 @@ final class Warp {
                 Arrays.fill(sum, 0);
             }
             for (var k = 0; k < taps; k++) {
+                for (var t = 0; t < taps; t++) {
+                    gather(padded, k * stride + t, base, pixels[t], count);
+                }
                 if (taps == 2) {
-                    kernel.accumulate2(padded, k * stride, base, wx[0], wx[1], wy[k], sums[0], sums[1], sums[2], sums[3], count);
+                    kernel.accumulate2(pixels[0], pixels[1], wx[0], wx[1], wy[k], sums[0], sums[1], sums[2], sums[3],
+                            count);
                 } else {
-                    kernel.accumulate4(padded, k * stride, base, wx[0], wx[1], wx[2], wx[3], wy[k], sums[0], sums[1], sums[2],
-                            sums[3], count);
+                    kernel.accumulate4(pixels[0], pixels[1], pixels[2], pixels[3], wx[0], wx[1], wx[2], wx[3], wy[k],
+                            sums[0], sums[1], sums[2], sums[3], count);
                 }
             }
             kernel.resolve(sums[0], sums[1], sums[2], sums[3], count, out.pixels(), j * out.stride());
+        }
+    }
+
+    /**
+     * Copies one tap of every pixel of a run out of the padded source.
+     *
+     * @param padded the padded packed source
+     * @param offset the offset of the tap from each pixel's base index
+     * @param base the index of each pixel's top-left tap
+     * @param pixels the destination, one packed pixel per output pixel
+     * @param count the number of pixels
+     */
+    private static void gather(int[] padded, int offset, int[] base, int[] pixels, int count) {
+        for (var i = 0; i < count; i++) {
+            pixels[i] = padded[base[i] + offset];
         }
     }
 
@@ -219,7 +239,7 @@ final class Warp {
      * Resamples a 16-bit RGBA picture.
      *
      * @param src the source picture
-     * @param inverse the map from output coordinates to source coordinates
+     * @param map the map from output pixel centers to source points
      * @param width the output width
      * @param height the output height
      * @param interpolation how source pixels are interpolated
@@ -228,12 +248,12 @@ final class Warp {
      * @param hasAlpha whether the result reports alpha
      * @return the resampled picture
      */
-    static Rgba16Picture rgba16(Rgba16Picture src, AffineTransform inverse, int width, int height,
+    static Rgba16Picture rgba16(Rgba16Picture src, SourceMap map, int width, int height,
                                 Interpolation interpolation, int argbBackground, boolean hasAlpha) {
         var out = Rgba16Picture.allocate(width, height, hasAlpha);
         var taps = taps(interpolation);
         var bands = ParallelBands.bands(height, TAP_WORK * taps * taps * width * height);
-        ParallelBands.run(bands, band -> rgba16Rows(src, inverse, interpolation, argbBackground, out,
+        ParallelBands.run(bands, band -> rgba16Rows(src, map, interpolation, argbBackground, out,
                 ParallelBands.start(band, bands, height), ParallelBands.start(band + 1, bands, height)));
         return out;
     }
@@ -243,27 +263,26 @@ final class Warp {
      * neighbor.
      *
      * @param src the source picture
-     * @param inverse the map from output coordinates to source coordinates
+     * @param map the map from output pixel centers to source points
      * @param argbBackground the background
      * @param out the output picture
      * @param top the first row
      * @param bottom the row after the last one
      */
-    private static void nearestRows(RgbaPicture src, AffineTransform inverse, int argbBackground, RgbaPicture out, int top,
+    private static void nearestRows(RgbaPicture src, SourceMap map, int argbBackground, RgbaPicture out, int top,
                                     int bottom) {
         var sampler = new Sampler8(src, argbBackground);
         var pixels = out.pixels();
         var stride = out.stride();
         var width = out.width();
+        var xs = new double[width];
+        var ys = new double[width];
         for (var j = top; j < bottom; j++) {
-            var cy = j + 0.5;
-            var rowX = inverse.m01() * cy + inverse.m02();
-            var rowY = inverse.m11() * cy + inverse.m12();
+            map.row(j, width, xs, ys);
             var offset = j * stride;
             for (var i = 0; i < width; i++, offset += 4) {
-                var cx = i + 0.5;
-                var sx = inverse.m00() * cx + rowX;
-                var sy = inverse.m10() * cx + rowY;
+                var sx = xs[i];
+                var sy = ys[i];
                 sampler.nearest(sx, sy, pixels, offset);
             }
         }
@@ -273,28 +292,27 @@ final class Warp {
      * Resamples the output rows {@code [top, bottom)} of a 16-bit picture.
      *
      * @param src the source picture
-     * @param inverse the map from output coordinates to source coordinates
+     * @param map the map from output pixel centers to source points
      * @param interpolation how source pixels are interpolated
      * @param argbBackground the background
      * @param out the output picture
      * @param top the first row
      * @param bottom the row after the last one
      */
-    private static void rgba16Rows(Rgba16Picture src, AffineTransform inverse, Interpolation interpolation,
+    private static void rgba16Rows(Rgba16Picture src, SourceMap map, Interpolation interpolation,
                                    int argbBackground, Rgba16Picture out, int top, int bottom) {
         var sampler = new Sampler16(src, argbBackground);
         var pixels = out.pixels();
         var stride = out.stride();
         var width = out.width();
+        var xs = new double[width];
+        var ys = new double[width];
         for (var j = top; j < bottom; j++) {
-            var cy = j + 0.5;
-            var rowX = inverse.m01() * cy + inverse.m02();
-            var rowY = inverse.m11() * cy + inverse.m12();
+            map.row(j, width, xs, ys);
             var offset = j * stride;
             for (var i = 0; i < width; i++, offset += 4) {
-                var cx = i + 0.5;
-                var sx = inverse.m00() * cx + rowX;
-                var sy = inverse.m10() * cx + rowY;
+                var sx = xs[i];
+                var sy = ys[i];
                 switch (interpolation) {
                     case NEAREST -> sampler.nearest(sx, sy, pixels, offset);
                     case BILINEAR -> sampler.bilinear(sx - 0.5, sy - 0.5, pixels, offset);
@@ -380,7 +398,7 @@ final class Warp {
          * @param offset the index of the destination pixel
          */
         void nearest(double sx, double sy, byte[] out, int offset) {
-            if (sx < 0 || sy < 0 || sx >= width || sy >= height) {
+            if (!(sx >= 0 && sy >= 0 && sx < width && sy < height)) {
                 out[offset] = backgroundR;
                 out[offset + 1] = backgroundG;
                 out[offset + 2] = backgroundB;
@@ -479,7 +497,7 @@ final class Warp {
          * @param offset the index of the destination pixel
          */
         void nearest(double sx, double sy, short[] out, int offset) {
-            if (sx < 0 || sy < 0 || sx >= width || sy >= height) {
+            if (!(sx >= 0 && sy >= 0 && sx < width && sy < height)) {
                 out[offset] = backgroundR;
                 out[offset + 1] = backgroundG;
                 out[offset + 2] = backgroundB;
@@ -502,7 +520,7 @@ final class Warp {
          * @param offset the index of the destination pixel
          */
         void bilinear(double u, double v, short[] out, int offset) {
-            if (u <= -1 || v <= -1 || u >= width || v >= height) {
+            if (!(u > -1 && v > -1 && u < width && v < height)) {
                 background(out, offset);
                 return;
             }
@@ -526,7 +544,7 @@ final class Warp {
          * @param offset the index of the destination pixel
          */
         void bicubic(double u, double v, short[] out, int offset) {
-            if (u <= -2 || v <= -2 || u >= width + 1 || v >= height + 1) {
+            if (!(u > -2 && v > -2 && u < width + 1 && v < height + 1)) {
                 background(out, offset);
                 return;
             }

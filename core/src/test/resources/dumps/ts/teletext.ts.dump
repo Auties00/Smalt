@@ -1,0 +1,21 @@
+# demux dump of ts/teletext.ts; regenerate with -Dsmalt.test.updateDumps=true
+format MPEG_TS
+duration -1
+seekable true
+track 257 DATA DVB_TELETEXT timebase=1/90000 duration=? config=5:1f1cfe0c
+packets 3
+0 t257 pts=90000 dts=90000 dur=? flags=KEY size=139 crc=0b73f9e6
+1 t257 pts=180000 dts=180000 dur=? flags=KEY size=139 crc=e7f6b1be
+2 t257 pts=270000 dts=270000 dur=? flags=KEY size=139 crc=aeab40c6
+seek 0: t257@0
+seek 1333333: t257@0
+seek 2666666: t257@1
+seek 4000000: end
+seek -1000000: t257@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format MPEG_TS
+  duration -1
+  seekable false
+  track 257 DATA DVB_TELETEXT timebase=1/90000 duration=? config=5:1f1cfe0c
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH

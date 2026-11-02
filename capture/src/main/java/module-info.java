@@ -1,8 +1,8 @@
 /**
- * Camera, screen, microphone and speaker access of Smalt, through the operating systems' own APIs
- * called with the Foreign Function and Memory API: Media Foundation, DXGI or GDI and WASAPI on
- * Windows, AVFoundation, ScreenCaptureKit and CoreAudio on macOS, Video4Linux2, X11 and ALSA on
- * Linux.
+ * Camera, screen, window, microphone and speaker access of Smalt, through the operating systems' own APIs
+ * called with the Foreign Function and Memory API: Media Foundation, DXGI or GDI, Windows Graphics Capture
+ * and WASAPI on Windows, AVFoundation, ScreenCaptureKit and CoreAudio on macOS, Video4Linux2, X11 and ALSA
+ * on Linux.
  *
  * <p>This is the only Smalt module that calls native code, so it is the only one that needs
  * {@code --enable-native-access=com.github.auties00.smalt.capture}. The other launch requirements

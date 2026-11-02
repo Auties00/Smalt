@@ -1,0 +1,13 @@
+# image dump of psd/gray16-raw.psd; regenerate with -Dsmalt.test.updateDumps=true
+format PSD
+info ImageInfo[format=PSD, width=48, height=32, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 48x32 rgba8 alpha=false crc=987c8a97
+  format=PSD orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=none
+scaled 12x8
+picture 48x32 rgba8 alpha=false crc=987c8a97
+  format=PSD orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=none
