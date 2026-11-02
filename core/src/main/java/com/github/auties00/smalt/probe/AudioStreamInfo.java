@@ -2,11 +2,13 @@ package com.github.auties00.smalt.probe;
 
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.track.TrackDisposition;
 
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.Set;
 
 /**
  * Describes an audio stream of a probed file.
@@ -115,6 +117,11 @@ public final class AudioStreamInfo implements StreamInfo {
         return fields.tags();
     }
 
+    @Override
+    public Set<TrackDisposition> disposition() {
+        return fields.disposition();
+    }
+
     /**
      * Returns the codec of the stream.
      *
@@ -165,7 +172,7 @@ public final class AudioStreamInfo implements StreamInfo {
 
     /**
      * Returns the number of bits of every sample: the sample size of uncompressed audio, or the
-     * coded resolution of lossless audio (FLAC, ALAC).
+     * coded resolution of lossless audio (FLAC, ALAC, WavPack).
      *
      * @return the bits per sample, or empty for lossy codecs and when unknown
      */

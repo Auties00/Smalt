@@ -35,7 +35,11 @@ class AbiTest {
                 Arguments.of("VIDIOC_G_PARM", V4l2.VIDIOC_G_PARM, 0xC0CC5615L),
                 Arguments.of("VIDIOC_S_PARM", V4l2.VIDIOC_S_PARM, 0xC0CC5616L),
                 Arguments.of("VIDIOC_ENUM_FRAMESIZES", V4l2.VIDIOC_ENUM_FRAMESIZES, 0xC02C564AL),
-                Arguments.of("VIDIOC_ENUM_FRAMEINTERVALS", V4l2.VIDIOC_ENUM_FRAMEINTERVALS, 0xC034564BL));
+                Arguments.of("VIDIOC_ENUM_FRAMEINTERVALS", V4l2.VIDIOC_ENUM_FRAMEINTERVALS, 0xC034564BL),
+                Arguments.of("VIDIOC_G_CTRL", V4l2.VIDIOC_G_CTRL, 0xC008561BL),
+                Arguments.of("VIDIOC_S_CTRL", V4l2.VIDIOC_S_CTRL, 0xC008561CL),
+                Arguments.of("VIDIOC_QUERYCTRL", V4l2.VIDIOC_QUERYCTRL, 0xC0445624L),
+                Arguments.of("VIDIOC_QUERYMENU", V4l2.VIDIOC_QUERYMENU, 0xC02C5625L));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -63,7 +67,12 @@ class AbiTest {
                 Arguments.of("XImage", X11.IMAGE.byteSize(), 136L),
                 Arguments.of("XShmSegmentInfo", X11.SHM_SEGMENT_INFO.byteSize(), 32L),
                 Arguments.of("XRRMonitorInfo", X11.MONITOR_INFO.byteSize(), 56L),
-                Arguments.of("XErrorEvent", X11.ERROR_EVENT.byteSize(), 40L));
+                Arguments.of("XErrorEvent", X11.ERROR_EVENT.byteSize(), 40L),
+                Arguments.of("v4l2_queryctrl", V4l2.QUERYCTRL.byteSize(), 68L),
+                Arguments.of("v4l2_control", V4l2.CONTROL.byteSize(), 8L),
+                Arguments.of("v4l2_querymenu", V4l2.QUERYMENU.byteSize(), 44L),
+                Arguments.of("XWindowAttributes", X11Windowing.WINDOW_ATTRIBUTES.byteSize(), 136L),
+                Arguments.of("XFixesCursorImage", X11Windowing.CURSOR_IMAGE.byteSize(), 48L));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -132,13 +141,61 @@ class AbiTest {
                 Arguments.of("XRRMonitorInfo.y", X11.MONITOR_Y, 24L),
                 Arguments.of("XRRMonitorInfo.width", X11.MONITOR_WIDTH, 28L),
                 Arguments.of("XRRMonitorInfo.height", X11.MONITOR_HEIGHT, 32L),
-                Arguments.of("XErrorEvent.error_code", X11.ERROR_CODE, 32L));
+                Arguments.of("XErrorEvent.error_code", X11.ERROR_CODE, 32L),
+                Arguments.of("v4l2_queryctrl.type", V4l2.QUERYCTRL_TYPE, 4L),
+                Arguments.of("v4l2_queryctrl.minimum", V4l2.QUERYCTRL_MINIMUM, 40L),
+                Arguments.of("v4l2_queryctrl.maximum", V4l2.QUERYCTRL_MAXIMUM, 44L),
+                Arguments.of("v4l2_queryctrl.step", V4l2.QUERYCTRL_STEP, 48L),
+                Arguments.of("v4l2_queryctrl.default_value", V4l2.QUERYCTRL_DEFAULT, 52L),
+                Arguments.of("v4l2_queryctrl.flags", V4l2.QUERYCTRL_FLAGS, 56L),
+                Arguments.of("v4l2_control.value", V4l2.CONTROL_VALUE, 4L),
+                Arguments.of("v4l2_querymenu.index", V4l2.QUERYMENU_INDEX, 4L),
+                Arguments.of("XWindowAttributes.width", X11Windowing.ATTRIBUTES_WIDTH, 8L),
+                Arguments.of("XWindowAttributes.border_width", X11Windowing.ATTRIBUTES_BORDER, 16L),
+                Arguments.of("XWindowAttributes.visual", X11Windowing.ATTRIBUTES_VISUAL, 24L),
+                Arguments.of("XWindowAttributes.class", X11Windowing.ATTRIBUTES_CLASS, 40L),
+                Arguments.of("XWindowAttributes.map_state", X11Windowing.ATTRIBUTES_MAP_STATE, 92L),
+                Arguments.of("XWindowAttributes.override_redirect", X11Windowing.ATTRIBUTES_OVERRIDE_REDIRECT, 120L),
+                Arguments.of("Visual.red_mask", X11Windowing.VISUAL_RED_MASK, 24L),
+                Arguments.of("Visual.green_mask", X11Windowing.VISUAL_GREEN_MASK, 32L),
+                Arguments.of("Visual.blue_mask", X11Windowing.VISUAL_BLUE_MASK, 40L));
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("offsets")
     @DisplayName("field offsets match LP64 C")
     void fieldOffsets(String name, long actual, long expected) {
+        assertEquals(expected, actual, name);
+    }
+
+    static Stream<Arguments> controlIds() {
+        return Stream.of(
+                Arguments.of("V4L2_CID_BRIGHTNESS", V4l2.CID_BRIGHTNESS, 0x00980900),
+                Arguments.of("V4L2_CID_CONTRAST", V4l2.CID_CONTRAST, 0x00980901),
+                Arguments.of("V4L2_CID_SATURATION", V4l2.CID_SATURATION, 0x00980902),
+                Arguments.of("V4L2_CID_HUE", V4l2.CID_HUE, 0x00980903),
+                Arguments.of("V4L2_CID_AUTO_WHITE_BALANCE", V4l2.CID_AUTO_WHITE_BALANCE, 0x0098090C),
+                Arguments.of("V4L2_CID_GAMMA", V4l2.CID_GAMMA, 0x00980910),
+                Arguments.of("V4L2_CID_AUTOGAIN", V4l2.CID_AUTOGAIN, 0x00980912),
+                Arguments.of("V4L2_CID_GAIN", V4l2.CID_GAIN, 0x00980913),
+                Arguments.of("V4L2_CID_POWER_LINE_FREQUENCY", V4l2.CID_POWER_LINE_FREQUENCY, 0x00980918),
+                Arguments.of("V4L2_CID_HUE_AUTO", V4l2.CID_HUE_AUTO, 0x00980919),
+                Arguments.of("V4L2_CID_WHITE_BALANCE_TEMPERATURE", V4l2.CID_WHITE_BALANCE_TEMPERATURE, 0x0098091A),
+                Arguments.of("V4L2_CID_SHARPNESS", V4l2.CID_SHARPNESS, 0x0098091B),
+                Arguments.of("V4L2_CID_BACKLIGHT_COMPENSATION", V4l2.CID_BACKLIGHT_COMPENSATION, 0x0098091C),
+                Arguments.of("V4L2_CID_EXPOSURE_AUTO", V4l2.CID_EXPOSURE_AUTO, 0x009A0901),
+                Arguments.of("V4L2_CID_EXPOSURE_ABSOLUTE", V4l2.CID_EXPOSURE_ABSOLUTE, 0x009A0902),
+                Arguments.of("V4L2_CID_PAN_ABSOLUTE", V4l2.CID_PAN_ABSOLUTE, 0x009A0908),
+                Arguments.of("V4L2_CID_TILT_ABSOLUTE", V4l2.CID_TILT_ABSOLUTE, 0x009A0909),
+                Arguments.of("V4L2_CID_FOCUS_ABSOLUTE", V4l2.CID_FOCUS_ABSOLUTE, 0x009A090A),
+                Arguments.of("V4L2_CID_FOCUS_AUTO", V4l2.CID_FOCUS_AUTO, 0x009A090C),
+                Arguments.of("V4L2_CID_ZOOM_ABSOLUTE", V4l2.CID_ZOOM_ABSOLUTE, 0x009A090D));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("controlIds")
+    @DisplayName("control identifiers match the kernel's")
+    void controlIdentifiers(String name, int actual, int expected) {
         assertEquals(expected, actual, name);
     }
 

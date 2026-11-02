@@ -21,9 +21,11 @@ import com.github.auties00.smalt.video.dnxhd.DnxhdProfile;
  *
  * @implNote This implementation passes the limits, the thread count and the high bit depth choice
  *           of the codec-independent decoder options to {@link DnxhdDecoderOptions}. It encodes
- *           {@link DnxhdProfile#DNXHR_HQ} at the requested frame rate and thread count; the
+ *           {@link DnxhdProfile#DNXHR_HQ} at the requested frame rate, thread count and color
+ *           description, or {@link DnxhdProfile#DNXHR_HQX} at 10 or 12 bits for a deeper bit depth
+ *           (rounded up); the
  *           bitrate does not apply, since every DNxHR frame has the size its compression ID
- *           assigns.
+ *           assigns, and neither do the key frame settings, since every frame is a key frame.
  */
 public final class DnxhdCodecProvider implements VideoCodecProvider {
     /**
@@ -53,10 +55,15 @@ public final class DnxhdCodecProvider implements VideoCodecProvider {
 
     @Override
     public VideoEncoder createEncoder(Codec codec, VideoEncoderOptions options) {
-        return new DnxhdEncoder(options.width(), options.height(), DnxhdEncoderOptions.of(DnxhdProfile.DNXHR_HQ)
+        var deep = options.bitDepth() > 8;
+        var builder = DnxhdEncoderOptions.of(deep ? DnxhdProfile.DNXHR_HQX : DnxhdProfile.DNXHR_HQ)
                 .toBuilder()
                 .frameRate(options.frameRate())
-                .threads(options.threads())
-                .build());
+                .threads(options.threads());
+        if (deep) {
+            builder.bitDepth(options.bitDepth() <= 10 ? 10 : 12);
+        }
+        options.color().ifPresent(builder::color);
+        return new DnxhdEncoder(options.width(), options.height(), builder.build());
     }
 }

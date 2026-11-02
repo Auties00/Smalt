@@ -19,17 +19,21 @@ public enum TrainingFamily {
      * filter, 8 and 16-bit), GIF (every quantizer and dithering, still and animated), WebP (lossy,
      * lossless, alpha, animated, on one and on several threads), TIFF (LZW, Deflate with the
      * predictor, PackBits, strips and tiles, 8 and 16-bit), JPEG 2000 (lossless and lossy, reduced
-     * resolution), ICO and BMP, image metadata reading and editing, and VP8: the real-time encoder
-     * at one and two threads, its decoder, and a real-time session that creates an encoder and a
-     * decoder every round next to one that runs across every round.
+     * resolution), ICO and ANI, BMP (every pixel format, run-length coding, 64-bit, wide-mask and CMYK
+     * pixels), image metadata reading and editing, and VP8: the real-time encoder at one and two
+     * threads, its decoder, and a real-time session that creates an encoder and a decoder every round
+     * next to one that runs across every round.
      */
     IMAGE,
 
     /**
      * The codecs of {@code smalt-audio}: Opus (speech and music files, and real-time coding at
      * 10 and 20 ms frames, wideband and fullband, with forward error correction, discontinuous
-     * transmission and loss concealment), Vorbis at several qualities, FLAC at 16 and 24 bits, MP3
-     * at constant and variable bitrate and in real time, the decoders of all four, and the voice
+     * transmission and loss concealment), Vorbis at several qualities, FLAC at 16 and 24 bits, ALAC
+     * stereo (searched and fast) and 24-bit 5.1, MP3 at constant and variable bitrate and in real time,
+     * the decoders of all five, IMA ADPCM (WAVE and {@code ima4} layouts) and Microsoft ADPCM files, G.722, G.726
+     * and GSM 06.10 in real time (encoders and decoders), the Speex decoder with loss concealment, the WavPack
+     * decoder (lossless, floating-point, DSD and hybrid with correction data), and the voice
      * processor (echo cancellation, noise suppression) in 10 ms frames over several echo paths and
      * talk patterns.
      */
@@ -39,7 +43,8 @@ public enum TrainingFamily {
      * The codecs of {@code smalt-video}: the real-time VP9 and AV1 encoders on one and two threads
      * and at two bitrates, their decoders, a real-time AV1 session, the good-quality and intra-only
      * AV1 encoders (8 and 10-bit), multi-threaded and high-bit-depth decoding, AVIF (lossy, lossless,
-     * 10-bit 4:4:4, alpha), and the ProRes and DNxHR intra codecs.
+     * 10-bit 4:4:4, alpha), the ProRes and DNxHR intra codecs, the Theora encoder and decoder (inter frames
+     * included), and the FFV1 encoder and decoder (versions 1 and 3, 8 and 10 bits, one and two threads).
      */
     VIDEO,
 
@@ -59,10 +64,10 @@ public enum TrainingFamily {
     CAPTURE,
 
     /**
-     * The camera raw decoder of {@code smalt-raw}, on synthetic DNG, Minolta MRW, Canon CRW and
-     * Sigma X3F files: Menon and bilinear demosaicing, the color rendering to 8-bit sRGB and to
-     * 16-bit linear Rec. 2020, linear raw data, the vendor codings, the extraction of the sensor
-     * values and the file description.
+     * The camera raw decoder and the DNG encoder of {@code smalt-raw}, on synthetic DNG, Minolta MRW, Canon CRW,
+     * Canon CR3, Sigma X3F and Fujifilm RAF files: Menon and bilinear demosaicing, the color rendering to 8-bit sRGB
+     * and to 16-bit linear Rec. 2020, linear raw data, the vendor codings, the extraction of the sensor
+     * values, the file description, and the writing and conversion of DNG files, uncompressed and lossless JPEG.
      */
     RAW,
 

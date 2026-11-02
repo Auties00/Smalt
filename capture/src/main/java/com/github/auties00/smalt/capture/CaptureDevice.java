@@ -4,15 +4,17 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * A video capture device: a camera or a screen.
+ * A video capture device: a camera, a screen or an application window.
  *
- * <p>Devices are listed by {@link VideoDevices#cameras()} and {@link VideoDevices#screens()} and opened
- * by {@link VideoDevices#openCapture(Camera, CaptureMode)} and
- * {@link VideoDevices#openCapture(Screen, int)}. The {@link #id()} is the operating system's stable
- * identifier of the device, suitable for remembering a user's choice; the {@link #name()} is its
- * human-readable label, which several devices may share. Instances are immutable and thread-safe.
+ * <p>Devices are listed by {@link VideoDevices#cameras()}, {@link VideoDevices#screens()} and
+ * {@link VideoDevices#windows()} and opened by {@link VideoDevices#openCapture(Camera, CaptureMode)},
+ * {@link VideoDevices#openCapture(Screen, ScreenCaptureOptions)} and
+ * {@link VideoDevices#openCapture(Window, ScreenCaptureOptions)}. The {@link #id()} is the operating
+ * system's identifier of the device: stable for cameras and screens, suitable for remembering a user's
+ * choice, and valid for a window only while the window exists. The {@link #name()} is its human-readable
+ * label, which several devices may share. Instances are immutable and thread-safe.
  */
-public sealed interface CaptureDevice permits CaptureDevice.Camera, CaptureDevice.Screen {
+public sealed interface CaptureDevice permits CaptureDevice.Camera, CaptureDevice.Screen, CaptureDevice.Window {
     /**
      * {@return the operating system's identifier of the device, unique among the devices of its kind}
      */
@@ -67,6 +69,39 @@ public sealed interface CaptureDevice permits CaptureDevice.Camera, CaptureDevic
             Objects.requireNonNull(name, "name");
             if (width <= 0 || height <= 0) {
                 throw new IllegalArgumentException("invalid screen size " + width + "x" + height);
+            }
+        }
+    }
+
+    /**
+     * A top-level window of an application, and its place on the virtual desktop when it was listed.
+     *
+     * <p>The bounds are those the window had when {@link VideoDevices#windows()} listed it; a window moves
+     * and resizes freely, and a capture follows it. They are in the same units as the bounds of a
+     * {@link Screen} on the same platform.
+     *
+     * @param id the operating system's identifier of the window: the window handle on Windows, the
+     * {@code CGWindowID} on macOS, the X11 window id on Linux, as a decimal number
+     * @param name the window's title, empty when it has none
+     * @param application the name of the application that owns the window, empty when unknown
+     * @param x the left edge on the virtual desktop
+     * @param y the top edge on the virtual desktop
+     * @param width the width, positive
+     * @param height the height, positive
+     */
+    record Window(String id, String name, String application, int x, int y, int width, int height)
+            implements CaptureDevice {
+        /**
+         * Validates the description.
+         *
+         * @throws IllegalArgumentException if a dimension is not positive
+         */
+        public Window {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(name, "name");
+            Objects.requireNonNull(application, "application");
+            if (width <= 0 || height <= 0) {
+                throw new IllegalArgumentException("invalid window size " + width + "x" + height);
             }
         }
     }

@@ -8,6 +8,8 @@ import com.github.auties00.smalt.internal.limits.LimitChecks;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Parses a Panasonic RW2 (or Leica RWL) file: a TIFF structure with the signature {@code IIU}
@@ -20,15 +22,35 @@ import java.util.Arrays;
  * 4 for {@code BGGR}), the bits per sample ({@code 0x000A}), the white level ({@code 0x000E}), the
  * red, green and blue black levels ({@code 0x001C} to {@code 0x001E}), the red, green and blue
  * white balance levels ({@code 0x0024} to {@code 0x0026}), the raw format version
- * ({@code 0x002D}) and the offset of the sensor data ({@code 0x0118}). {@link PanasonicDecoder}
- * decodes versions 4, 5, 6 and 8.
+ * ({@code 0x002D}) and the offset of the sensor data ({@code 0x0118}, or the strip offset in the
+ * oldest files). {@link PanasonicDecoder} decodes versions 4, 5, 6 and 8, and the uncompressed data of
+ * version 2 and of the files without a version (the RAW files of the oldest models).
+ *
+ * <p>Version 2 rows store ten 12-bit photosites per 16-byte little-endian block, the first in the
+ * least significant bits; the files without a version store one 12-bit photosite in the high bits
+ * of each little-endian 16-bit word. Their zero photosites are repaired as in the other versions,
+ * except on the DMC-FZ50 and DMC-LX1, whose zero photosites are dark ones; the DMC-FZ8, DMC-FZ50 and
+ * Leica Digilux 3 saturate at 3986, the DMC-LX1 at 3971.
  *
  * @implNote This implementation follows the tag names of the ExifTool tag documentation; the
  * levels, the color filter codes and the image area were checked against the values
  * Adobe DNG Converter stores for CC0 sample files, and the version 8 tile tags were
- * worked out from them.
+ * worked out from them, as were the layouts of version 2 (DMC-FZ8) and of the files without a
+ * version (DMC-FZ50, DMC-LX1, Leica Digilux 3).
  */
 final class Rw2Parser {
+    /**
+     * The white levels of the oldest models, whose photosites saturate below the 12-bit maximum tag
+     * {@code 0x000E} states.
+     */
+    private static final Map<String, Integer> UNCOMPRESSED_WHITE = Map.of("DMC-FZ8", 3986, "DMC-FZ50", 3986,
+            "DIGILUX 3", 3986, "DMC-LX1", 3971);
+
+    /**
+     * The oldest models whose zero photosites are dark, not defective, and kept.
+     */
+    private static final Set<String> GENUINE_ZEROS = Set.of("DMC-FZ50", "DMC-LX1");
+
     /**
      * Prevents instantiation.
      */
@@ -95,6 +117,10 @@ final class Rw2Parser {
             tiled(reader, first, file);
             return;
         }
+        if (version == 0 || version == 2) {
+            uncompressed(reader, first, file, version);
+            return;
+        }
         if (!PanasonicDecoder.supports(version)) {
             file.unsupported = "Panasonic RW2 raw format version " + version + " is not supported";
             return;
@@ -150,6 +176,90 @@ final class Rw2Parser {
         sensor.white = new double[]{version == 6 ? white - PanasonicDecoder.PEDESTAL : white};
         describe(first, sensor, file);
         file.sensor = sensor;
+    }
+
+    /**
+     * Describes the uncompressed data of version 2 and of the files without a version.
+     *
+     * @param reader the TIFF structure
+     * @param first the first directory
+     * @param file the description to fill
+     * @param version the raw format version, 2 or 0 for none
+     */
+    private static void uncompressed(TiffReader reader, Ifd first, RawFile file, int version) {
+        var sensor = new Sensor();
+        sensor.width = first.intValue(0x02, 0);
+        sensor.height = first.intValue(0x03, 0);
+        if (sensor.width <= 0 || sensor.height <= 0) {
+            throw new MediaException.Malformed("invalid RW2 sensor of " + sensor.width + "x" + sensor.height);
+        }
+        LimitChecks.checkPicture(file.limits, sensor.width, sensor.height);
+        var rowBytes = version == 2 ? (sensor.width + 9) / 10 * 16 : sensor.width * 2;
+        var count = first.longValue(TiffSamples.STRIP_BYTE_COUNTS, 0);
+        if (count < (long) rowBytes * sensor.height) {
+            file.unsupported = "Panasonic RAW data of " + count + " bytes for " + sensor.width + "x" + sensor.height
+                    + " photosites of raw format version " + version + " is not supported";
+            return;
+        }
+        sensor.bitsPerSample = 12;
+        sensor.cfa = cfa(first);
+        var offset = reader.base() + first.longValue(0x118, first.longValue(TiffSamples.STRIP_OFFSETS, 0));
+        var size = reader.size();
+        if (offset <= 0 || (size >= 0 && offset >= size)) {
+            throw new MediaException.Malformed("RW2 file without sensor data");
+        }
+        var cfa = sensor.cfa;
+        var source = reader.source();
+        var row = PackedRows.of(version == 2 ? PackedRows.Layout.LSB_FIRST_TEN_IN_SIXTEEN : PackedRows.Layout.LITTLE_WORDS,
+                version == 2 ? 12 : 16);
+        var repair = !GENUINE_ZEROS.contains(file.model == null ? "" : file.model.strip());
+        sensor.reader = (plane, limits) -> {
+            PackedRows.read(source, offset, rowBytes, row, plane, limits);
+            PanasonicDecoder.repair(plane, cfa, version == 2 ? 0 : 4, repair);
+        };
+        levels(first, sensor);
+        var white = UNCOMPRESSED_WHITE.get(file.model == null ? "" : file.model.strip());
+        if (white != null) {
+            sensor.white = new double[]{white};
+        }
+        describe(first, sensor, file);
+        file.sensor = sensor;
+    }
+
+    /**
+     * {@return the color filter array of tag {@code 0x0009}}
+     *
+     * @param first the first directory
+     */
+    private static CfaPattern cfa(Ifd first) {
+        return switch (first.intValue(0x09, 1)) {
+            case 2 -> CfaPattern.bayer("GRBG");
+            case 3 -> CfaPattern.bayer("GBRG");
+            case 4 -> CfaPattern.bayer("BGGR");
+            default -> CfaPattern.bayer("RGGB");
+        };
+    }
+
+    /**
+     * Sets the black levels of tags {@code 0x001C} to {@code 0x001E} and the white level of tag
+     * {@code 0x000E} of 12-bit data.
+     *
+     * @param first the first directory
+     * @param sensor the sensor description, its color filter array set
+     */
+    private static void levels(Ifd first, Sensor sensor) {
+        var black = new double[4];
+        for (var row = 0; row < 2; row++) {
+            for (var column = 0; column < 2; column++) {
+                var color = sensor.cfa.color(row, column);
+                var tag = color == CfaColor.RED ? 0x1C : color == CfaColor.BLUE ? 0x1E : 0x1D;
+                black[row * 2 + column] = first.longValue(tag, 0);
+            }
+        }
+        sensor.blackRows = 2;
+        sensor.blackColumns = 2;
+        sensor.black = black;
+        sensor.white = new double[]{Math.min(first.longValue(0x0E, 4095), 4095)};
     }
 
     /**

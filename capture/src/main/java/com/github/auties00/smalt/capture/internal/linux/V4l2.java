@@ -583,6 +583,269 @@ final class V4l2 {
     static final long BUFFER_LENGTH = BUFFER.byteOffset(groupElement("length"));
 
     /**
+     * The layout of {@code struct v4l2_queryctrl}.
+     */
+    static final StructLayout QUERYCTRL = MemoryLayout.structLayout(
+            JAVA_INT.withName("id"),
+            JAVA_INT.withName("type"),
+            MemoryLayout.sequenceLayout(32, JAVA_BYTE).withName("name"),
+            JAVA_INT.withName("minimum"),
+            JAVA_INT.withName("maximum"),
+            JAVA_INT.withName("step"),
+            JAVA_INT.withName("default_value"),
+            JAVA_INT.withName("flags"),
+            MemoryLayout.sequenceLayout(2, JAVA_INT).withName("reserved")).withName("v4l2_queryctrl");
+
+    /**
+     * The offset of {@code v4l2_queryctrl.id}.
+     */
+    static final long QUERYCTRL_ID = QUERYCTRL.byteOffset(groupElement("id"));
+
+    /**
+     * The offset of {@code v4l2_queryctrl.type}.
+     */
+    static final long QUERYCTRL_TYPE = QUERYCTRL.byteOffset(groupElement("type"));
+
+    /**
+     * The offset of {@code v4l2_queryctrl.minimum}.
+     */
+    static final long QUERYCTRL_MINIMUM = QUERYCTRL.byteOffset(groupElement("minimum"));
+
+    /**
+     * The offset of {@code v4l2_queryctrl.maximum}.
+     */
+    static final long QUERYCTRL_MAXIMUM = QUERYCTRL.byteOffset(groupElement("maximum"));
+
+    /**
+     * The offset of {@code v4l2_queryctrl.step}.
+     */
+    static final long QUERYCTRL_STEP = QUERYCTRL.byteOffset(groupElement("step"));
+
+    /**
+     * The offset of {@code v4l2_queryctrl.default_value}.
+     */
+    static final long QUERYCTRL_DEFAULT = QUERYCTRL.byteOffset(groupElement("default_value"));
+
+    /**
+     * The offset of {@code v4l2_queryctrl.flags}.
+     */
+    static final long QUERYCTRL_FLAGS = QUERYCTRL.byteOffset(groupElement("flags"));
+
+    /**
+     * The layout of {@code struct v4l2_control}.
+     */
+    static final StructLayout CONTROL = MemoryLayout.structLayout(
+            JAVA_INT.withName("id"),
+            JAVA_INT.withName("value")).withName("v4l2_control");
+
+    /**
+     * The offset of {@code v4l2_control.id}.
+     */
+    static final long CONTROL_ID = CONTROL.byteOffset(groupElement("id"));
+
+    /**
+     * The offset of {@code v4l2_control.value}.
+     */
+    static final long CONTROL_VALUE = CONTROL.byteOffset(groupElement("value"));
+
+    /**
+     * The layout of the packed {@code struct v4l2_querymenu}, whose union of a 32-byte name and a 64-bit
+     * value is modeled as the name.
+     */
+    static final StructLayout QUERYMENU = MemoryLayout.structLayout(
+            JAVA_INT.withName("id"),
+            JAVA_INT.withName("index"),
+            MemoryLayout.sequenceLayout(32, JAVA_BYTE).withName("name"),
+            JAVA_INT.withName("reserved")).withName("v4l2_querymenu");
+
+    /**
+     * The offset of {@code v4l2_querymenu.id}.
+     */
+    static final long QUERYMENU_ID = QUERYMENU.byteOffset(groupElement("id"));
+
+    /**
+     * The offset of {@code v4l2_querymenu.index}.
+     */
+    static final long QUERYMENU_INDEX = QUERYMENU.byteOffset(groupElement("index"));
+
+    /**
+     * The {@code V4L2_CTRL_TYPE_INTEGER} control type.
+     */
+    static final int CTRL_TYPE_INTEGER = 1;
+
+    /**
+     * The {@code V4L2_CTRL_TYPE_BOOLEAN} control type.
+     */
+    static final int CTRL_TYPE_BOOLEAN = 2;
+
+    /**
+     * The {@code V4L2_CTRL_TYPE_MENU} control type.
+     */
+    static final int CTRL_TYPE_MENU = 3;
+
+    /**
+     * The {@code V4L2_CTRL_FLAG_DISABLED} control flag.
+     */
+    static final int CTRL_FLAG_DISABLED = 0x0001;
+
+    /**
+     * The {@code V4L2_CTRL_FLAG_READ_ONLY} control flag.
+     */
+    static final int CTRL_FLAG_READ_ONLY = 0x0004;
+
+    /**
+     * The {@code V4L2_CID_BASE} of the user control class.
+     */
+    static final int CID_BASE = 0x00980900;
+
+    /**
+     * The {@code V4L2_CID_CAMERA_CLASS_BASE} of the camera control class.
+     */
+    static final int CID_CAMERA_CLASS_BASE = 0x009A0900;
+
+    /**
+     * {@code V4L2_CID_BRIGHTNESS}.
+     */
+    static final int CID_BRIGHTNESS = CID_BASE;
+
+    /**
+     * {@code V4L2_CID_CONTRAST}.
+     */
+    static final int CID_CONTRAST = CID_BASE + 1;
+
+    /**
+     * {@code V4L2_CID_SATURATION}.
+     */
+    static final int CID_SATURATION = CID_BASE + 2;
+
+    /**
+     * {@code V4L2_CID_HUE}.
+     */
+    static final int CID_HUE = CID_BASE + 3;
+
+    /**
+     * {@code V4L2_CID_AUTO_WHITE_BALANCE}, a boolean.
+     */
+    static final int CID_AUTO_WHITE_BALANCE = CID_BASE + 12;
+
+    /**
+     * {@code V4L2_CID_GAMMA}.
+     */
+    static final int CID_GAMMA = CID_BASE + 16;
+
+    /**
+     * {@code V4L2_CID_AUTOGAIN}, a boolean.
+     */
+    static final int CID_AUTOGAIN = CID_BASE + 18;
+
+    /**
+     * {@code V4L2_CID_GAIN}.
+     */
+    static final int CID_GAIN = CID_BASE + 19;
+
+    /**
+     * {@code V4L2_CID_POWER_LINE_FREQUENCY}, a menu of {@link #PLF_DISABLED}, {@link #PLF_50HZ},
+     * {@link #PLF_60HZ} and {@link #PLF_AUTO}.
+     */
+    static final int CID_POWER_LINE_FREQUENCY = CID_BASE + 24;
+
+    /**
+     * {@code V4L2_CID_HUE_AUTO}, a boolean.
+     */
+    static final int CID_HUE_AUTO = CID_BASE + 25;
+
+    /**
+     * {@code V4L2_CID_WHITE_BALANCE_TEMPERATURE}, in kelvin.
+     */
+    static final int CID_WHITE_BALANCE_TEMPERATURE = CID_BASE + 26;
+
+    /**
+     * {@code V4L2_CID_SHARPNESS}.
+     */
+    static final int CID_SHARPNESS = CID_BASE + 27;
+
+    /**
+     * {@code V4L2_CID_BACKLIGHT_COMPENSATION}.
+     */
+    static final int CID_BACKLIGHT_COMPENSATION = CID_BASE + 28;
+
+    /**
+     * {@code V4L2_CID_EXPOSURE_AUTO}, a menu of {@link #EXPOSURE_AUTO}, {@link #EXPOSURE_MANUAL},
+     * {@link #EXPOSURE_SHUTTER_PRIORITY} and {@link #EXPOSURE_APERTURE_PRIORITY}.
+     */
+    static final int CID_EXPOSURE_AUTO = CID_CAMERA_CLASS_BASE + 1;
+
+    /**
+     * {@code V4L2_CID_EXPOSURE_ABSOLUTE}, in units of 100 microseconds.
+     */
+    static final int CID_EXPOSURE_ABSOLUTE = CID_CAMERA_CLASS_BASE + 2;
+
+    /**
+     * {@code V4L2_CID_PAN_ABSOLUTE}, in arc seconds.
+     */
+    static final int CID_PAN_ABSOLUTE = CID_CAMERA_CLASS_BASE + 8;
+
+    /**
+     * {@code V4L2_CID_TILT_ABSOLUTE}, in arc seconds.
+     */
+    static final int CID_TILT_ABSOLUTE = CID_CAMERA_CLASS_BASE + 9;
+
+    /**
+     * {@code V4L2_CID_FOCUS_ABSOLUTE}.
+     */
+    static final int CID_FOCUS_ABSOLUTE = CID_CAMERA_CLASS_BASE + 10;
+
+    /**
+     * {@code V4L2_CID_FOCUS_AUTO}, a boolean.
+     */
+    static final int CID_FOCUS_AUTO = CID_CAMERA_CLASS_BASE + 12;
+
+    /**
+     * {@code V4L2_CID_ZOOM_ABSOLUTE}.
+     */
+    static final int CID_ZOOM_ABSOLUTE = CID_CAMERA_CLASS_BASE + 13;
+
+    /**
+     * {@code V4L2_CID_POWER_LINE_FREQUENCY_DISABLED}.
+     */
+    static final int PLF_DISABLED = 0;
+
+    /**
+     * {@code V4L2_CID_POWER_LINE_FREQUENCY_50HZ}.
+     */
+    static final int PLF_50HZ = 1;
+
+    /**
+     * {@code V4L2_CID_POWER_LINE_FREQUENCY_60HZ}.
+     */
+    static final int PLF_60HZ = 2;
+
+    /**
+     * {@code V4L2_CID_POWER_LINE_FREQUENCY_AUTO}.
+     */
+    static final int PLF_AUTO = 3;
+
+    /**
+     * {@code V4L2_EXPOSURE_AUTO}.
+     */
+    static final int EXPOSURE_AUTO = 0;
+
+    /**
+     * {@code V4L2_EXPOSURE_MANUAL}.
+     */
+    static final int EXPOSURE_MANUAL = 1;
+
+    /**
+     * {@code V4L2_EXPOSURE_SHUTTER_PRIORITY}.
+     */
+    static final int EXPOSURE_SHUTTER_PRIORITY = 2;
+
+    /**
+     * {@code V4L2_EXPOSURE_APERTURE_PRIORITY}.
+     */
+    static final int EXPOSURE_APERTURE_PRIORITY = 3;
+
+    /**
      * The {@code _IOC_WRITE} direction bit of a request number.
      */
     private static final long IOC_WRITE = 1;
@@ -666,6 +929,26 @@ final class V4l2 {
      * {@code VIDIOC_ENUM_FRAMEINTERVALS = _IOWR('V', 75, struct v4l2_frmivalenum)}.
      */
     static final long VIDIOC_ENUM_FRAMEINTERVALS = ioc(IOC_READ | IOC_WRITE, 75, FRMIVALENUM);
+
+    /**
+     * {@code VIDIOC_G_CTRL = _IOWR('V', 27, struct v4l2_control)}.
+     */
+    static final long VIDIOC_G_CTRL = ioc(IOC_READ | IOC_WRITE, 27, CONTROL);
+
+    /**
+     * {@code VIDIOC_S_CTRL = _IOWR('V', 28, struct v4l2_control)}.
+     */
+    static final long VIDIOC_S_CTRL = ioc(IOC_READ | IOC_WRITE, 28, CONTROL);
+
+    /**
+     * {@code VIDIOC_QUERYCTRL = _IOWR('V', 36, struct v4l2_queryctrl)}.
+     */
+    static final long VIDIOC_QUERYCTRL = ioc(IOC_READ | IOC_WRITE, 36, QUERYCTRL);
+
+    /**
+     * {@code VIDIOC_QUERYMENU = _IOWR('V', 37, struct v4l2_querymenu)}.
+     */
+    static final long VIDIOC_QUERYMENU = ioc(IOC_READ | IOC_WRITE, 37, QUERYMENU);
 
     /**
      * Prevents instantiation.

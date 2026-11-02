@@ -1,22 +1,25 @@
-/* Ports X3F tools (x3f_io.c: x3f_load_camf_decode_type2, camf_decode_type4, x3f_setup_camf_entries;
-   x3f_meta.c) at commit e8b48ca. Copyright 2015 Roland and Erik Karlsson; BSD 3-Clause License. Modified for
-   Smalt. */
+/* Ports X3F tools (x3f_io.c: x3f_load_camf_decode_type2, camf_decode_type4, x3f_load_camf_decode_type5,
+   camf_decode_type5, x3f_setup_camf_entries, set_matrix_element_info; x3f_meta.c) at commit e8b48ca. Copyright
+   2015 Roland and Erik Karlsson; BSD 3-Clause License. Modified for Smalt. */
 package com.github.auties00.smalt.image.raw.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
  * Holds the camera metadata block ({@code CAMF}) of a Sigma X3F file: named matrices, texts and
  * property lists of calibration and capture data.
  *
- * <p>The block's body is obfuscated in one of two ways, chosen by its type: type 2 XORs each byte
+ * <p>The block's body is obfuscated in one of three ways, chosen by its type: type 2 XORs each byte
  * with a pseudo-random stream seeded by a key in the block header; type 4 codes the body as 12-bit
- * values with the same Huffman difference coding as the TRUE raw planes ({@link X3fDecoder}). The
+ * values with the same Huffman difference coding as the TRUE raw planes ({@link X3fDecoder}); type 5
+ * (Quattro cameras) codes each byte as the low 8 bits of a running sum of such differences. The
  * decoded body is a sequence of entries, each {@code "CMb"} plus a kind letter ({@code M} a matrix,
  * {@code T} a text, {@code P} a property list), a version, its length, and the offsets of its name
  * and value. A matrix value holds the element type (0 signed 16-bit, 1 and 2 unsigned 32-bit, 3
@@ -26,8 +29,7 @@ import java.util.Map;
  * <p>Instances are immutable and thread-safe.
  *
  * @implNote This implementation ports the decoding of the X3F tools library, whose license was
- * checked; the entry names it reads are the ones that library uses. Type 5, which Quattro cameras
- * write, is not decoded because no Quattro raw image is decoded.
+ * checked; the entry names it reads are the ones that library uses.
  */
 final class X3fCamf {
     /**
@@ -39,6 +41,27 @@ final class X3fCamf {
      * The most entries read.
      */
     private static final int MAX_ENTRIES = 1 << 16;
+
+    /**
+     * The kind of number a matrix's element type holds, as the X3F tools library classifies the
+     * types: 3 is floating-point, 0 signed, 1, 2, 5 and 6 unsigned.
+     */
+    enum Element {
+        /**
+         * Floating-point elements, type 3.
+         */
+        FLOAT,
+
+        /**
+         * Signed integer elements, type 0.
+         */
+        SIGNED,
+
+        /**
+         * Unsigned integer elements, types 1, 2, 5 and 6.
+         */
+        UNSIGNED
+    }
 
     /**
      * An entry: its kind letter, and the offsets of the entry and of its value in the body.
@@ -57,7 +80,7 @@ final class X3fCamf {
     private final byte[] body;
 
     /**
-     * The entries by name; a later entry of the same name replaces an earlier one.
+     * The entries by name; of entries of the same name, the first is kept.
      */
     private final Map<String, Entry> entries;
 
@@ -86,6 +109,7 @@ final class X3fCamf {
         switch (type) {
             case 2 -> body = unscramble(data, header[3]);
             case 4 -> body = unpack(data, header);
+            case 5 -> body = accumulate(data, header);
             default -> {
                 return null;
             }
@@ -171,6 +195,35 @@ final class X3fCamf {
     }
 
     /**
+     * Decodes a type 5 body: {@code header[0]} bytes, each the low 8 bits of a running sum that
+     * starts at {@code header[1]} and adds one TRUE coded difference per byte.
+     *
+     * @param data the bytes after the section header: the code table, ending with a zero length,
+     * then from offset 32 the coded differences
+     * @param header the decoded size and the starting value
+     * @return the body
+     * @throws MediaException.Malformed if the size is out of range or the coding is corrupt
+     */
+    private static byte[] accumulate(byte[] data, long[] header) {
+        var size = header[0];
+        if (size <= 0 || size > MAX_BODY || data.length < 32) {
+            throw new MediaException.Malformed("X3F CAMF block of " + size + " bytes");
+        }
+        var lookup = X3fDecoder.trueLookup(data, 0, data.length);
+        var body = new byte[(int) size];
+        var bits = new X3fDecoder.Bits(data, 32, data.length);
+        var sum = (int) header[1];
+        for (var index = 0; index < body.length; index++) {
+            sum += bits.difference(lookup);
+            body[index] = (byte) sum;
+        }
+        if (bits.consumed(32) > (long) (data.length - 32) * 8) {
+            throw new MediaException.Malformed("X3F CAMF block runs past its end");
+        }
+        return body;
+    }
+
+    /**
      * Indexes the entries of a body, stopping at the first bytes that do not start an entry.
      *
      * @param body the decoded body
@@ -191,7 +244,7 @@ final class X3fCamf {
                 break;
             }
             var text = cString(body, position + (int) name, position + (int) length);
-            entries.put(text, new Entry(kind, position, position + (int) value, position + (int) length));
+            entries.putIfAbsent(text, new Entry(kind, position, position + (int) value, position + (int) length));
             position += (int) length;
         }
         return entries;
@@ -273,6 +326,81 @@ final class X3fCamf {
     }
 
     /**
+     * Returns the elements of a matrix entry whose elements are of a kind.
+     *
+     * @param name the entry name
+     * @param element the kind the elements must be
+     * @return the elements, row by row, or {@code null} when the entry is missing, is not a matrix,
+     * holds elements of another kind or is damaged
+     */
+    double[] numbers(String name, Element element) {
+        var entry = entries.get(name);
+        if (entry == null || entry.kind != 'M' || entry.value + 4 > entry.end) {
+            return null;
+        }
+        var kind = switch ((int) ByteArrays.u32(body, entry.value, true)) {
+            case 0 -> Element.SIGNED;
+            case 3 -> Element.FLOAT;
+            case 1, 2, 5, 6 -> Element.UNSIGNED;
+            default -> null;
+        };
+        return kind == element ? numbers(name) : null;
+    }
+
+    /**
+     * Returns the size of each dimension of a matrix entry, the first dimension the one that varies
+     * slowest.
+     *
+     * @param name the entry name
+     * @return the sizes, or {@code null} when the entry is missing, is not a matrix or is damaged
+     */
+    int[] dimensions(String name) {
+        var entry = entries.get(name);
+        if (entry == null || entry.kind != 'M' || entry.value + 12 > entry.end) {
+            return null;
+        }
+        var dimensions = ByteArrays.u32(body, entry.value + 4, true);
+        if (dimensions < 1 || dimensions > 3 || entry.value + 12 + 12 * dimensions > entry.end) {
+            return null;
+        }
+        var sizes = new int[(int) dimensions];
+        for (var index = 0; index < sizes.length; index++) {
+            sizes[index] = (int) Math.min(ByteArrays.u32(body, entry.value + 12 + 12 * index, true), Integer.MAX_VALUE);
+        }
+        return sizes;
+    }
+
+    /**
+     * Returns the properties of a property list entry, in their order.
+     *
+     * @param list the name of the property list entry
+     * @return each property's name and value, or an empty list when the entry is missing or is not
+     * a property list
+     */
+    List<String[]> properties(String list) {
+        var entry = entries.get(list);
+        var properties = new ArrayList<String[]>();
+        if (entry == null || entry.kind != 'P' || entry.value + 8 > entry.end) {
+            return properties;
+        }
+        var count = ByteArrays.u32(body, entry.value, true);
+        var base = ByteArrays.u32(body, entry.value + 4, true);
+        if (count > (entry.end - entry.value - 8) / 8) {
+            return properties;
+        }
+        var size = entry.end - entry.start;
+        for (var index = 0; index < count; index++) {
+            var nameOffset = base + ByteArrays.u32(body, entry.value + 8 + 8 * index, true);
+            var valueOffset = base + ByteArrays.u32(body, entry.value + 12 + 8 * index, true);
+            if (nameOffset < size && valueOffset < size) {
+                properties.add(new String[]{cString(body, entry.start + (int) nameOffset, entry.end),
+                        cString(body, entry.start + (int) valueOffset, entry.end)});
+            }
+        }
+        return properties;
+    }
+
+    /**
      * Returns a value of a property list entry.
      *
      * @param list the name of the property list entry
@@ -280,27 +408,23 @@ final class X3fCamf {
      * @return the value, or {@code null} when the list or the property is missing
      */
     String property(String list, String name) {
-        var entry = entries.get(list);
-        if (entry == null || entry.kind != 'P' || entry.value + 8 > entry.end) {
-            return null;
-        }
-        var count = ByteArrays.u32(body, entry.value, true);
-        var base = ByteArrays.u32(body, entry.value + 4, true);
-        if (count > (entry.end - entry.value - 8) / 8) {
-            return null;
-        }
-        for (var index = 0; index < count; index++) {
-            var nameOffset = base + ByteArrays.u32(body, entry.value + 8 + 8 * index, true);
-            var valueOffset = base + ByteArrays.u32(body, entry.value + 12 + 8 * index, true);
-            var size = entry.end - entry.start;
-            if (nameOffset >= size || valueOffset >= size) {
-                continue;
-            }
-            if (name.equals(cString(body, entry.start + (int) nameOffset, entry.end))) {
-                return cString(body, entry.start + (int) valueOffset, entry.end);
+        for (var property : properties(list)) {
+            if (name.equals(property[0])) {
+                return property[1];
             }
         }
         return null;
+    }
+
+    /**
+     * Returns whether an entry is a property list.
+     *
+     * @param name the entry name
+     * @return whether the block holds a property list of that name
+     */
+    boolean isPropertyList(String name) {
+        var entry = entries.get(name);
+        return entry != null && entry.kind == 'P';
     }
 
     /**

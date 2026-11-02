@@ -46,7 +46,10 @@ import java.util.Optional;
  * destination images and destination types are honored; band selection is not supported. When the
  * read subsamples a still image, the decoder is asked for a picture of at least the subsampled
  * size ({@link ImageDecoderOptions.Builder#minSize(int, int)}), which lets decoders that shrink while
- * decoding (JPEG, for example) skip the full-size picture.
+ * decoding (JPEG, for example) skip the full-size picture. When a read without subsampling names a
+ * source region smaller than a still image that was not decoded whole before, only that region is decoded
+ * ({@link ImageDecoderOptions.Builder#region(int, int, int, int)}), which the decoders of tiled and
+ * block-coded formats do without decoding the rest of the image; the pixels are those of the whole decode.
  *
  * <p>Instances are not thread-safe.
  *
@@ -219,12 +222,12 @@ public final class SmaltImageReader extends ImageReader {
                 var frame = new SmaltImageMetadata.Frame(imageIndex, timing[0] / 1000, timing[1] / 1000,
                         animation.loopCount());
                 return new SmaltImageMetadata(summary.format(), summary.width(), summary.height(), summary.hasAlpha(),
-                        false, summary.orientation(), frame, Optional.empty(), Optional.empty());
+                        false, summary.orientation(), frame, Optional.empty(), Optional.empty(), Optional.empty());
             }
             var decoded = paged() ? page(imageIndex) : still();
             return new SmaltImageMetadata(summary.format(), decoded.sourceWidth(), decoded.sourceHeight(),
                     decoded.picture().hasAlpha(), BufferedImages.isMonochrome(decoded.picture()),
-                    decoded.orientation(), null, decoded.exif(), decoded.iccProfile());
+                    decoded.orientation(), null, decoded.exif(), decoded.iccProfile(), decoded.density());
         } catch (MediaException exception) {
             throw failure(exception);
         }
@@ -244,6 +247,8 @@ public final class SmaltImageReader extends ImageReader {
             var yStep = param == null ? 1 : param.getSourceYSubsampling();
             Picture picture;
             List<ImageTypeSpecifier> types;
+            // a source region of a still image read without subsampling decodes only that region
+            Rectangle decoded = null;
             if (summary.animated()) {
                 picture = frame(imageIndex).picture();
                 types = animatedTypes();
@@ -251,7 +256,15 @@ public final class SmaltImageReader extends ImageReader {
                 picture = page(imageIndex).picture();
                 types = typesFor(picture);
             } else {
-                picture = decode(width, height, xStep, yStep);
+                var region = still == null && xStep == 1 && yStep == 1 ? getSourceRegion(param, width, height)
+                        : null;
+                if (region != null && !region.isEmpty() && (region.width < width || region.height < height)) {
+                    picture = Images.decode(source(), ImageDecoderOptions.builder().region(region.x, region.y,
+                            region.width, region.height).build()).picture();
+                    decoded = region;
+                } else {
+                    picture = decode(width, height, xStep, yStep);
+                }
                 types = typesFor(picture);
             }
             checkBands(param);
@@ -259,7 +272,14 @@ public final class SmaltImageReader extends ImageReader {
             var sourceRegion = new Rectangle();
             var destinationRegion = new Rectangle();
             computeRegions(param, width, height, destination, sourceRegion, destinationRegion);
-            BufferedImages.copy(picture, width, height, sourceRegion, xStep, yStep, destination,
+            var pictureWidth = width;
+            var pictureHeight = height;
+            if (decoded != null) {
+                sourceRegion.translate(-decoded.x, -decoded.y);
+                pictureWidth = decoded.width;
+                pictureHeight = decoded.height;
+            }
+            BufferedImages.copy(picture, pictureWidth, pictureHeight, sourceRegion, xStep, yStep, destination,
                     destinationRegion.x, destinationRegion.y, (row, total) -> {
                         processImageProgress(100.0f * (row + 1) / total);
                         return !abortRequested();

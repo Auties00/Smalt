@@ -1,0 +1,4 @@
+replaygain_track_gain=1e5
+REPLAYGAIN_TRACK_PEAK=-0
+R128_ALBUM_GAIN=99999999
+=

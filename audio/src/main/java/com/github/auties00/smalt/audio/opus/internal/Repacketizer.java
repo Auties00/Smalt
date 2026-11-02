@@ -51,6 +51,11 @@ public final class Repacketizer {
     private final OpusPacket.Layout layout = new OpusPacket.Layout();
 
     /**
+     * The copy of the packet {@link #pad} reads its frames from, grown to the longest packet padded.
+     */
+    private byte[] padCopy = new byte[0];
+
+    /**
      * Creates an empty repacketizer.
      */
     public Repacketizer() {
@@ -125,11 +130,29 @@ public final class Repacketizer {
      * @return the packet length, or a negative error code
      */
     public int outRange(int begin, int end, byte[] data, int off, int maxlen, boolean pad) {
+        return outRange(begin, end, data, off, maxlen, false, pad);
+    }
+
+    /**
+     * Writes frames {@code [begin, end)} as one packet, optionally in the self-delimited framing of
+     * RFC 6716 appendix B that every stream of a multistream packet but the last uses
+     * ({@code opus_repacketizer_out_range_impl}).
+     *
+     * @param begin         the first frame
+     * @param end           one past the last frame
+     * @param data          the output buffer, which may hold the input frames when padding in place
+     * @param off           the index of the first output byte
+     * @param maxlen        the space available
+     * @param selfDelimited whether to code the length of the last frame
+     * @param pad           whether to pad the packet to exactly {@code maxlen} bytes
+     * @return the packet length, or a negative error code
+     */
+    public int outRange(int begin, int end, byte[] data, int off, int maxlen, boolean selfDelimited, boolean pad) {
         if (begin < 0 || begin >= end || end > nb_frames) {
             return OPUS_BAD_ARG;
         }
         var count = end - begin;
-        var tot_size = 0;
+        var tot_size = selfDelimited ? 1 + (len[end - 1] >= 252 ? 1 : 0) : 0;
         var ptr = off;
         var ones_begin = 0;
         var ones_end = 0;
@@ -157,7 +180,7 @@ public final class Repacketizer {
         }
         if (count > 2 || (pad && tot_size < maxlen)) {
             ptr = off;
-            tot_size = 0;
+            tot_size = selfDelimited ? 1 + (len[end - 1] >= 252 ? 1 : 0) : 0;
             var vbr = false;
             for (var i = 1; i < count; i++) {
                 if (len[begin + i] != len[begin]) {
@@ -205,6 +228,9 @@ public final class Repacketizer {
                 }
             }
         }
+        if (selfDelimited) {
+            ptr += OpusPacket.encodeSize(len[end - 1], data, ptr);
+        }
         for (var i = 0; i < count; i++) {
             System.arraycopy(frameData[begin + i], frames[begin + i], data, ptr, len[begin + i]);
             ptr += len[begin + i];
@@ -221,7 +247,8 @@ public final class Repacketizer {
     }
 
     /**
-     * Pads a packet in place to exactly {@code newLen} bytes ({@code opus_packet_pad}).
+     * Pads a packet in place to exactly {@code newLen} bytes ({@code opus_packet_pad}), discarding
+     * the frames this repacketizer collected.
      *
      * @param data   the buffer holding the packet, with room for {@code newLen} bytes
      * @param off    the index of the first byte
@@ -229,7 +256,7 @@ public final class Repacketizer {
      * @param newLen the padded length
      * @return {@link OpusDefines#OPUS_OK} or a negative error code
      */
-    static int pad(byte[] data, int off, int n, int newLen) {
+    int pad(byte[] data, int off, int n, int newLen) {
         if (n < 1) {
             return OPUS_BAD_ARG;
         }
@@ -238,14 +265,16 @@ public final class Repacketizer {
         } else if (n > newLen) {
             return OPUS_BAD_ARG;
         }
-        var copy = new byte[n];
-        System.arraycopy(data, off, copy, 0, n);
-        var rp = new Repacketizer();
-        var ret = rp.cat(copy, 0, n);
+        if (padCopy.length < n) {
+            padCopy = new byte[n];
+        }
+        System.arraycopy(data, off, padCopy, 0, n);
+        init();
+        var ret = cat(padCopy, 0, n);
         if (ret != OPUS_OK) {
             return ret;
         }
-        ret = rp.outRange(0, rp.nb_frames, data, off, newLen, true);
+        ret = outRange(0, nb_frames, data, off, newLen, true);
         return ret > 0 ? OPUS_OK : ret;
     }
 }

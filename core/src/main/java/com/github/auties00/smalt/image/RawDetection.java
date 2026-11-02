@@ -13,11 +13,12 @@ import java.util.Arrays;
  *
  * <p>A TIFF-structured file is a {@link ImageFormat#DNG} when its first directory holds the
  * {@code DNGVersion} tag, a {@link ImageFormat#RAW} when it is a Canon CR2 file ({@code CR} at
- * offset 8) or when one of its directories (the main chain and the {@code SubIFDs} they point to)
- * describes a color filter array or linear raw image or uses a vendor raw compression, and a
- * {@link ImageFormat#TIFF} otherwise. The walk is bounded in the directories and entries it reads,
- * so it terminates on every input; a directory it cannot read ends the walk, and the file is then
- * classified from what was read so far.
+ * offset 8) or a Phase One IIQ file ({@code IIIICwaR} at offset 8), when its first directory carries a
+ * tag only camera raw files carry, or when one of its directories (the main chain and the
+ * {@code SubIFDs} they point to) describes a color filter array or linear raw image or uses a vendor
+ * raw compression, and a {@link ImageFormat#TIFF} otherwise. The walk is bounded in the directories
+ * and entries it reads, so it terminates on every input; a directory it cannot read ends the walk,
+ * and the file is then classified from what was read so far.
  */
 final class RawDetection {
     /**
@@ -56,6 +57,12 @@ final class RawDetection {
      * 32769 and 32770 of older Nikon and Sony files.
      */
     private static final int[] RAW_COMPRESSIONS = {262, 32767, 32769, 32770, 34316, 34713, 65000, 65535};
+
+    /**
+     * The tags only camera raw files carry: Kodak's directory of the DCS files (33424), Leaf's metadata packets
+     * of the MOS files (34310) and Kodak's directory of the KDC files (65024).
+     */
+    private static final int[] RAW_TAGS = {33424, 34310, 65024};
 
     /**
      * The most directories examined.
@@ -179,7 +186,7 @@ final class RawDetection {
         if (ByteArrays.u16(header, 2, little) != 42) {
             return ImageFormat.TIFF;
         }
-        if (header[8] == 'C' && header[9] == 'R') {
+        if ((header[8] == 'C' && header[9] == 'R') || startsWith(header, 8, "IIIICwaR")) {
             return ImageFormat.RAW;
         }
         var pending = new long[MAX_DIRECTORIES];
@@ -231,8 +238,7 @@ final class RawDetection {
                             }
                         }
                     }
-                    default -> {
-                    }
+                    default -> raw |= first && Arrays.binarySearch(RAW_TAGS, tag) >= 0;
                 }
             }
             if (entries > 0) {

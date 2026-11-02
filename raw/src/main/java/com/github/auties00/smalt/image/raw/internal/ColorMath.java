@@ -401,7 +401,7 @@ final class ColorMath {
      */
     private static double lobe(double lambda, double center, double below, double above) {
         var t = (lambda - center) / (lambda < center ? below : above);
-        return Math.exp(-0.5 * t * t);
+        return StrictMath.exp(-0.5 * t * t);
     }
 
     /**

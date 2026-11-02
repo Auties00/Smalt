@@ -10,16 +10,18 @@ import java.util.Objects;
  * and thread-safe; create them with {@link #builder()} or a preset such as {@link #defaults()}.
  */
 public final class VideoDecoderOptions {
-    private static final VideoDecoderOptions DEFAULTS = new VideoDecoderOptions(MediaLimits.DEFAULT, 0, false);
+    private static final VideoDecoderOptions DEFAULTS = new VideoDecoderOptions(MediaLimits.DEFAULT, 0, false, false);
 
     private final MediaLimits limits;
     private final int threads;
     private final boolean highBitDepth;
+    private final boolean dolbyVisionBaseLayer;
 
-    private VideoDecoderOptions(MediaLimits limits, int threads, boolean highBitDepth) {
+    private VideoDecoderOptions(MediaLimits limits, int threads, boolean highBitDepth, boolean dolbyVisionBaseLayer) {
         this.limits = limits;
         this.threads = threads;
         this.highBitDepth = highBitDepth;
+        this.dolbyVisionBaseLayer = dolbyVisionBaseLayer;
     }
 
     /**
@@ -82,27 +84,46 @@ public final class VideoDecoderOptions {
      * {@link com.github.auties00.smalt.image.YuvPicture}. Codecs without a high bit depth output
      * ignore it.
      *
-     * @implNote This implementation honors the setting in the VP9 and AV1 decoders.
+     * @implNote This implementation honors the setting in the VP9, AV1, HEVC, H.264 and Motion-JPEG
+     * decoders.
      */
     public boolean highBitDepth() {
         return highBitDepth;
     }
 
+    /**
+     * {@return whether a Dolby Vision stream whose base layer is not backward compatible decodes to its base layer
+     * pictures; {@code false} by default}
+     *
+     * <p>The base layer of such a stream (profile 5, or any
+     * {@linkplain com.github.auties00.smalt.track.DolbyVision#isBackwardCompatible() configuration} with
+     * compatibility identifier 0) is coded in a Dolby Vision specific color space, so its pictures show wrong
+     * colors without the reconstruction its reference processing units describe. When {@code false},
+     * {@link VideoDecoders#create(com.github.auties00.smalt.track.VideoTrack, VideoDecoderOptions)} rejects a track
+     * that declares such a configuration and the HEVC decoder rejects a single-layer stream whose first reference
+     * processing unit is of profile 5, both with {@link com.github.auties00.smalt.MediaException.Unsupported}; when
+     * {@code true}, they decode the base layer as plain video, its pictures tagged with the color description of
+     * the bitstream.
+     */
+    public boolean dolbyVisionBaseLayer() {
+        return dolbyVisionBaseLayer;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof VideoDecoderOptions that && limits.equals(that.limits) && threads == that.threads
-                && highBitDepth == that.highBitDepth;
+                && highBitDepth == that.highBitDepth && dolbyVisionBaseLayer == that.dolbyVisionBaseLayer;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(limits, threads, highBitDepth);
+        return Objects.hash(limits, threads, highBitDepth, dolbyVisionBaseLayer);
     }
 
     @Override
     public String toString() {
         return "VideoDecoderOptions[limits=" + limits + ", threads=" + threads + ", highBitDepth=" + highBitDepth
-                + "]";
+                + ", dolbyVisionBaseLayer=" + dolbyVisionBaseLayer + "]";
     }
 
     /**
@@ -115,11 +136,13 @@ public final class VideoDecoderOptions {
         private MediaLimits limits;
         private int threads;
         private boolean highBitDepth;
+        private boolean dolbyVisionBaseLayer;
 
         private Builder(VideoDecoderOptions options) {
             this.limits = options.limits;
             this.threads = options.threads;
             this.highBitDepth = options.highBitDepth;
+            this.dolbyVisionBaseLayer = options.dolbyVisionBaseLayer;
         }
 
         /**
@@ -157,6 +180,18 @@ public final class VideoDecoderOptions {
         }
 
         /**
+         * Sets whether a Dolby Vision stream without a backward compatible base layer decodes to its base layer;
+         * see {@link VideoDecoderOptions#dolbyVisionBaseLayer()}.
+         *
+         * @param dolbyVisionBaseLayer the value
+         * @return this builder
+         */
+        public Builder dolbyVisionBaseLayer(boolean dolbyVisionBaseLayer) {
+            this.dolbyVisionBaseLayer = dolbyVisionBaseLayer;
+            return this;
+        }
+
+        /**
          * Returns options holding the settings of this builder.
          *
          * @return the options
@@ -164,7 +199,7 @@ public final class VideoDecoderOptions {
          */
         public VideoDecoderOptions build() {
             Checks.nonNegative("thread count", threads);
-            return new VideoDecoderOptions(limits, threads, highBitDepth);
+            return new VideoDecoderOptions(limits, threads, highBitDepth, dolbyVisionBaseLayer);
         }
     }
 }

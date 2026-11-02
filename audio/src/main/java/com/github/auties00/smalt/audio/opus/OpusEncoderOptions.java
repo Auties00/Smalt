@@ -1,8 +1,13 @@
 package com.github.auties00.smalt.audio.opus;
 
+import com.github.auties00.smalt.audio.Ambisonics;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.audio.Speaker;
+import com.github.auties00.smalt.audio.opus.internal.OpusMultistreamEncoder;
 import com.github.auties00.smalt.internal.check.Checks;
+import com.github.auties00.smalt.internal.header.VorbisChannelOrder;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.OptionalInt;
 
@@ -22,6 +27,11 @@ public final class OpusEncoderOptions {
     private static final int MAX_CHANNEL_BITRATE = 300_000;
 
     /**
+     * The largest number of channels a stream carries.
+     */
+    private static final int MAX_CHANNELS = 255;
+
+    /**
      * The options of {@link #defaults()}.
      */
     private static final OpusEncoderOptions DEFAULTS = new Builder().build();
@@ -36,7 +46,12 @@ public final class OpusEncoderOptions {
 
     private final int sampleRate;
 
-    private final int channels;
+    private final ChannelLayout layout;
+
+    /**
+     * The channel mapping, or {@code null} to choose it from the layout.
+     */
+    private final OpusChannelMapping channelMapping;
 
     private final OpusApplication application;
 
@@ -61,9 +76,10 @@ public final class OpusEncoderOptions {
 
     private final boolean dtx;
 
-    private OpusEncoderOptions(Builder builder) {
+    private OpusEncoderOptions(Builder builder, ChannelLayout layout) {
         this.sampleRate = builder.sampleRate;
-        this.channels = builder.channels;
+        this.layout = layout;
+        this.channelMapping = builder.channelMapping;
         this.application = builder.application;
         this.bitrate = builder.bitrate == null ? 0 : builder.bitrate;
         this.bitrateMode = builder.bitrateMode;
@@ -129,7 +145,8 @@ public final class OpusEncoderOptions {
      * given format, otherwise the same as {@link #forRealtime()}.
      *
      * @param sampleRate the input sampling rate: 8000, 12000, 16000, 24000 or 48000 Hz
-     * @param channels the number of input channels: 1 or 2
+     * @param channels the number of input channels, from 1 to 255, in the layout of
+     * {@link ChannelLayout#defaultFor(int)}
      * @return the voice call options
      * @throws IllegalArgumentException if the rate or the channel count is not supported
      */
@@ -166,10 +183,96 @@ public final class OpusEncoderOptions {
     }
 
     /**
-     * {@return the number of input channels, 1 or 2; 2 by default}
+     * {@return the number of input channels, from 1 to 255; 2 by default}
      */
     public int channels() {
-        return channels;
+        return layout.channels();
+    }
+
+    /**
+     * {@return the input channel layout; {@link ChannelLayout#STEREO} by default}
+     *
+     * <p>The planes of every {@link com.github.auties00.smalt.audio.AudioBuffer} the encoder takes, and
+     * the channels of every interleaved frame, are in this order. With the {@link OpusChannelMapping#VORBIS}
+     * mapping and three or more channels the speakers decide where each channel goes in the stream;
+     * with one or two channels, and with the other mappings, only the order counts: the first of
+     * two channels is coded as left.
+     */
+    public ChannelLayout layout() {
+        return layout;
+    }
+
+    /**
+     * {@return the channel mapping family the stream uses}
+     *
+     * <p>Unless one is set, the mapping is {@link OpusChannelMapping#AMBISONIC} for a layout with
+     * {@linkplain ChannelLayout#ambisonics() ambisonics}, {@link OpusChannelMapping#VORBIS} for one or two
+     * channels and for the layouts {@code VORBIS} accepts, and {@link OpusChannelMapping#DISCRETE} otherwise.
+     */
+    public OpusChannelMapping channelMapping() {
+        if (channelMapping != null) {
+            return channelMapping;
+        }
+        if (layout.ambisonics().isPresent()) {
+            return OpusChannelMapping.AMBISONIC;
+        }
+        return vorbisRouting(layout) != null ? OpusChannelMapping.VORBIS : OpusChannelMapping.DISCRETE;
+    }
+
+    /**
+     * Returns whether a layout is one the ambisonic mappings code: every component of an order in ACN order
+     * with SN3D normalization, optionally followed by front left and front right.
+     *
+     * @param layout the input layout
+     * @return {@code true} when a decoder of an ambisonic mapping outputs this layout
+     */
+    static boolean isOpusAmbisonic(ChannelLayout layout) {
+        var ambisonics = layout.ambisonics().orElse(null);
+        if (ambisonics == null || ambisonics.normalization() != Ambisonics.Normalization.SN3D
+                || !ambisonics.isSequential()) {
+            return false;
+        }
+        return layout.equals(ChannelLayout.ofAmbisonics(ambisonics))
+                || layout.equals(ChannelLayout.ofAmbisonics(ambisonics, List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT)));
+    }
+
+    /**
+     * Returns the input channel feeding each channel of the Vorbis order, for a layout the
+     * {@link OpusChannelMapping#VORBIS} mapping accepts.
+     *
+     * @param layout the input layout
+     * @return a new array whose entry {@code v} is the index in {@code layout} of Vorbis channel
+     * {@code v}, or {@code null} when the mapping does not accept the layout
+     */
+    static int[] vorbisRouting(ChannelLayout layout) {
+        var channels = layout.channels();
+        if (channels <= 2) {
+            return channels == 1 ? new int[]{0} : new int[]{0, 1};
+        }
+        if (channels > VorbisChannelOrder.MAX_CHANNELS) {
+            return null;
+        }
+        var speakers = layout.speakers();
+        var expected = ChannelLayout.defaultFor(channels).speakers();
+        var sidesForBacks = channels <= 6 && !speakers.contains(Speaker.BACK_LEFT)
+                && !speakers.contains(Speaker.BACK_RIGHT);
+        var route = new int[channels];
+        var used = new boolean[channels];
+        for (var v = 0; v < channels; v++) {
+            var speaker = expected.get(VorbisChannelOrder.waveIndex(channels, v));
+            if (sidesForBacks && speaker == Speaker.BACK_LEFT) {
+                speaker = Speaker.SIDE_LEFT;
+            } else if (sidesForBacks && speaker == Speaker.BACK_RIGHT) {
+                speaker = Speaker.SIDE_RIGHT;
+            }
+            var index = speakers.indexOf(speaker);
+            if (index < 0 || used[index]) {
+                return null;
+            }
+            used[index] = true;
+            route[v] = index;
+        }
+        return route;
     }
 
     /**
@@ -187,7 +290,9 @@ public final class OpusEncoderOptions {
      * empty (the default) for the automatic bitrate the encoder derives from the format and the
      * packet duration}
      *
-     * <p>The automatic bitrate is about 99 kb/s for 48 kHz stereo in 20 ms packets.
+     * <p>The automatic bitrate is about 99 kb/s for 48 kHz stereo in 20 ms packets, and about
+     * 308 kb/s for 48 kHz 5.1. The bitrate is the total of all streams; a multistream encoder
+     * raises a bitrate below 500 per channel to that.
      */
     public OptionalInt bitrate() {
         return bitrate == 0 ? OptionalInt.empty() : OptionalInt.of(bitrate);
@@ -270,7 +375,8 @@ public final class OpusEncoderOptions {
     public boolean equals(Object object) {
         return object instanceof OpusEncoderOptions that
                 && sampleRate == that.sampleRate
-                && channels == that.channels
+                && layout.equals(that.layout)
+                && channelMapping == that.channelMapping
                 && application == that.application
                 && bitrate == that.bitrate
                 && bitrateMode == that.bitrateMode
@@ -285,14 +391,15 @@ public final class OpusEncoderOptions {
 
     @Override
     public int hashCode() {
-        return Objects.hash(sampleRate, channels, application, bitrate, bitrateMode, complexity, frameDurationMicros,
+        return Objects.hash(sampleRate, layout, channelMapping, application, bitrate, bitrateMode, complexity, frameDurationMicros,
                 signal, maxBandwidth, inbandFec, packetLossPercent, dtx);
     }
 
     @Override
     public String toString() {
         return "OpusEncoderOptions[sampleRate=" + sampleRate
-                + ", channels=" + channels
+                + ", layout=" + layout
+                + ", channelMapping=" + (channelMapping == null ? "auto" : channelMapping.toString())
                 + ", application=" + application
                 + ", bitrate=" + (bitrate == 0 ? "auto" : String.valueOf(bitrate))
                 + ", bitrateMode=" + bitrateMode
@@ -314,7 +421,21 @@ public final class OpusEncoderOptions {
     public static final class Builder {
         private int sampleRate;
 
+        /**
+         * The input layout, or {@code null} when {@link #channels} selects the default layout of a
+         * channel count at build time.
+         */
+        private ChannelLayout layout;
+
+        /**
+         * The channel count of {@link #format(int, int)}, used while {@link #layout} is {@code null}.
+         */
         private int channels;
+
+        /**
+         * The channel mapping, or {@code null} to choose it from the layout.
+         */
+        private OpusChannelMapping channelMapping;
 
         private OpusApplication application;
 
@@ -341,7 +462,7 @@ public final class OpusEncoderOptions {
 
         private Builder() {
             this.sampleRate = 48_000;
-            this.channels = 2;
+            this.layout = ChannelLayout.STEREO;
             this.application = OpusApplication.AUDIO;
             this.bitrateMode = OpusBitrateMode.VBR;
             this.complexity = 10;
@@ -352,7 +473,8 @@ public final class OpusEncoderOptions {
 
         private Builder(OpusEncoderOptions options) {
             this.sampleRate = options.sampleRate;
-            this.channels = options.channels;
+            this.layout = options.layout;
+            this.channelMapping = options.channelMapping;
             this.application = options.application;
             this.bitrate = options.bitrate == 0 ? null : options.bitrate;
             this.bitrateMode = options.bitrateMode;
@@ -366,8 +488,9 @@ public final class OpusEncoderOptions {
         }
 
         /**
-         * Sets the input format; see {@link OpusEncoderOptions#sampleRate()} and
-         * {@link OpusEncoderOptions#channels()}.
+         * Sets the input format with the layout {@link ChannelLayout#defaultFor(int)} gives the
+         * channel count; see {@link OpusEncoderOptions#sampleRate()} and
+         * {@link OpusEncoderOptions#layout()}.
          *
          * @param sampleRate the sampling rate
          * @param channels the number of channels
@@ -375,23 +498,45 @@ public final class OpusEncoderOptions {
          */
         public Builder format(int sampleRate, int channels) {
             this.sampleRate = sampleRate;
+            this.layout = null;
             this.channels = channels;
             return this;
         }
 
         /**
-         * Sets the input format from a channel layout; see {@link OpusEncoderOptions#sampleRate()}
-         * and {@link OpusEncoderOptions#channels()}.
-         *
-         * <p>Only the channel count of {@code layout} is kept: a one-channel layout codes mono and a
-         * two-channel layout codes stereo, its first channel left and its second right.
+         * Sets the input format; see {@link OpusEncoderOptions#sampleRate()} and
+         * {@link OpusEncoderOptions#layout()}.
          *
          * @param sampleRate the sampling rate
          * @param layout the channel layout
          * @return this builder
          */
         public Builder format(int sampleRate, ChannelLayout layout) {
-            return format(sampleRate, layout.channels());
+            this.sampleRate = sampleRate;
+            this.layout = Objects.requireNonNull(layout, "layout");
+            return this;
+        }
+
+        /**
+         * Sets the channel mapping family; see {@link OpusEncoderOptions#channelMapping()}.
+         *
+         * @param channelMapping the value
+         * @return this builder
+         */
+        public Builder channelMapping(OpusChannelMapping channelMapping) {
+            this.channelMapping = Objects.requireNonNull(channelMapping, "channelMapping");
+            return this;
+        }
+
+        /**
+         * Lets the encoder choose the channel mapping family from the layout; see
+         * {@link OpusEncoderOptions#channelMapping()}.
+         *
+         * @return this builder
+         */
+        public Builder automaticChannelMapping() {
+            this.channelMapping = null;
+            return this;
         }
 
         /**
@@ -523,15 +668,45 @@ public final class OpusEncoderOptions {
          *
          * @return the options
          * @throws IllegalArgumentException if the sampling rate is not 8000, 12000, 16000, 24000 or
-         * 48000 Hz, the channel count is not 1 or 2, an explicit bitrate is outside 500 to
-         * {@code 300000} per channel, the complexity is outside 0 to 10, the packet duration is not
-         * an Opus packet duration or the expected loss is outside 0 to 100
+         * 48000 Hz, the channel count is outside 1 to 255, the layout has ambisonics other than every
+         * component of an order in ACN order with SN3D normalization, optionally followed by front left and
+         * right, and the mapping is not {@link OpusChannelMapping#DISCRETE}, the {@link OpusChannelMapping#VORBIS}
+         * mapping is set for a layout it does not accept, the {@link OpusChannelMapping#AMBISONIC}
+         * mapping is set for a channel count that is not an ambisonic order squared, optionally plus
+         * two, the {@link OpusChannelMapping#AMBISONIC_PROJECTION} mapping is set for a channel count
+         * that is not the square of an order from 1 to 5, optionally plus two, an explicit bitrate is
+         * outside 500 to {@code 300000} per channel, the complexity is outside 0 to 10, the packet
+         * duration is not an Opus packet duration or the expected loss is outside 0 to 100
          */
         public OpusEncoderOptions build() {
             OpusDecoderOptions.checkSampleRate("sample rate", sampleRate);
-            Checks.inRange("channel count", channels, 1, 2);
+            var resolved = layout;
+            if (resolved == null) {
+                Checks.inRange("channel count", channels, 1, MAX_CHANNELS);
+                resolved = ChannelLayout.defaultFor(channels);
+            }
+            var count = resolved.channels();
+            Checks.inRange("channel count", count, 1, MAX_CHANNELS);
+            if (resolved.ambisonics().isPresent() && channelMapping != OpusChannelMapping.DISCRETE
+                    && !isOpusAmbisonic(resolved)) {
+                throw new IllegalArgumentException("Opus codes ambisonics only as every component of an order in"
+                        + " ACN order with SN3D normalization, optionally followed by front left and right, not "
+                        + resolved);
+            }
+            if (channelMapping == OpusChannelMapping.VORBIS && vorbisRouting(resolved) == null) {
+                throw new IllegalArgumentException("the Vorbis channel mapping does not code the layout " + resolved);
+            }
+            if (channelMapping == OpusChannelMapping.AMBISONIC
+                    && !OpusMultistreamEncoder.isAmbisonicChannelCount(count)) {
+                throw new IllegalArgumentException("the ambisonic channel mapping does not code " + count + " channels");
+            }
+            if (channelMapping == OpusChannelMapping.AMBISONIC_PROJECTION
+                    && OpusMultistreamEncoder.projectionOrder(count) < 0) {
+                throw new IllegalArgumentException("the ambisonic projection channel mapping does not code " + count
+                        + " channels");
+            }
             if (bitrate != null) {
-                Checks.inRange("bitrate", bitrate, MIN_BITRATE, MAX_CHANNEL_BITRATE * channels);
+                Checks.inRange("bitrate", bitrate, MIN_BITRATE, MAX_CHANNEL_BITRATE * count);
             }
             Checks.inRange("complexity", complexity, 0, 10);
             switch (frameDurationMicros) {
@@ -541,7 +716,7 @@ public final class OpusEncoderOptions {
                         + " us is not one of 2500, 5000, 10000, 20000, 40000, 60000, 80000, 100000, 120000");
             }
             Checks.inRange("packet loss percent", packetLossPercent, 0, 100);
-            return new OpusEncoderOptions(this);
+            return new OpusEncoderOptions(this, resolved);
         }
     }
 }

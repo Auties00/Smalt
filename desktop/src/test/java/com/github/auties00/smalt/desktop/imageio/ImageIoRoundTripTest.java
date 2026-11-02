@@ -177,6 +177,33 @@ class ImageIoRoundTripTest {
     }
 
     @Nested
+    @DisplayName("JPEG XL writer")
+    class JxlWriter {
+        @Test
+        @DisplayName("ImageIO.write writes lossless and lossy files that read back")
+        void roundTrip(@TempDir Path directory) throws IOException {
+            var image = image(true);
+            var writer = ImageIO.getImageWritersByFormatName("jxl").next();
+            var param = writer.getDefaultWriteParam();
+            param.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+            param.setCompressionType(SmaltImageWriteParam.LOSSLESS);
+            var out = new java.io.ByteArrayOutputStream();
+            try (var stream = ImageIO.createImageOutputStream(out)) {
+                writer.setOutput(stream);
+                writer.write(null, new javax.imageio.IIOImage(image, null, null), param);
+            }
+            writer.dispose();
+            var decoded = ImageIO.read(new ByteArrayInputStream(out.toByteArray()));
+            assertArrayEquals(pixels(image), pixels(decoded));
+            var file = directory.resolve("out.jxl");
+            assertTrue(ImageIO.write(image, "jxl", file.toFile()));
+            var expected = Images.encode(BufferedImages.toPicture(image), ImageFormat.JXL,
+                    ImageEncoderOptions.defaults());
+            assertArrayEquals(expected, Files.readAllBytes(file));
+        }
+    }
+
+    @Nested
     @DisplayName("WebP reader")
     class Reader {
         @Test
@@ -314,7 +341,7 @@ class ImageIoRoundTripTest {
             var result = new ArrayList<int[]>();
             try (var animation = Images.openAnimation(MediaSource.of(data))) {
                 for (var frame = animation.read(); frame != null; frame = animation.read()) {
-                    result.add(pixels(frame.picture()));
+                    result.add(pixels((RgbaPicture) frame.picture()));
                 }
             }
             return result;
