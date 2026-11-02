@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 // The codec artifacts on this test class path are smalt-image, smalt-audio, smalt-mpeg and
-// smalt-video: they decode WebP, PNG, HEIC and AVIF and encode WebP and AVIF, and nothing encodes HEIC.
+// smalt-video: they decode WebP, PNG, HEIC and AVIF and encode WebP, AVIF and HEIC.
 @DisplayName("ImageIO provider discovery")
 class ImageIoProvidersTest {
     static <T> List<T> list(Iterator<T> iterator) {
@@ -54,18 +54,24 @@ class ImageIoProvidersTest {
     void readerFormats() {
         var provider = new SmaltImageReaderSpi();
         assertEquals(List.of(ImageFormat.PNG, ImageFormat.WEBP, ImageFormat.HEIC, ImageFormat.AVIF, ImageFormat.ICO,
-                ImageFormat.JP2, ImageFormat.JXL, ImageFormat.DNG, ImageFormat.RAW), provider.formats());
+                ImageFormat.ANI, ImageFormat.JP2, ImageFormat.JXL, ImageFormat.DNG, ImageFormat.RAW, ImageFormat.PNM,
+                ImageFormat.TGA, ImageFormat.QOI, ImageFormat.HDR, ImageFormat.ICNS, ImageFormat.PSD, ImageFormat.EXR,
+                ImageFormat.JXR, ImageFormat.DDS), provider.formats());
         var names = Arrays.asList(provider.getFormatNames());
         assertTrue(names.contains("webp"));
         assertTrue(names.contains("avif"));
         assertTrue(names.contains("heic"));
         assertTrue(names.contains("apng"));
         assertTrue(names.contains("ico"));
+        assertTrue(names.contains("ani"));
+        assertTrue(Arrays.asList(provider.getFileSuffixes()).contains("ani"));
         assertTrue(names.contains("jpeg2000"));
         assertTrue(names.contains("jp2"));
+        assertTrue(Arrays.asList(provider.getFileSuffixes()).containsAll(List.of("jph", "jhc")));
+        assertTrue(Arrays.asList(provider.getMIMETypes()).containsAll(List.of("image/jph", "image/jphc")));
         assertTrue(names.contains("dng"));
         assertTrue(names.contains("raw"));
-        assertTrue(Arrays.asList(provider.getFileSuffixes()).contains("nef"));
+        assertTrue(Arrays.asList(provider.getFileSuffixes()).containsAll(List.of("nef", "arq")));
         assertFalse(names.contains("tiff"));
         assertFalse(names.contains("png"));
         assertFalse(names.contains("jpeg"));
@@ -73,7 +79,7 @@ class ImageIoProvidersTest {
     }
 
     @Test
-    @DisplayName("the WebP and AVIF writers are registered and the HEIC writer deregisters itself")
+    @DisplayName("the WebP, AVIF, JPEG XL and HEIC writers are registered")
     void writers() {
         var webp = list(ImageIO.getImageWritersByFormatName("webp"));
         assertEquals(1, webp.size());
@@ -82,11 +88,18 @@ class ImageIoProvidersTest {
         var avif = list(ImageIO.getImageWritersByFormatName("avif"));
         assertEquals(1, avif.size());
         assertInstanceOf(SmaltImageWriter.class, avif.getFirst());
-        assertTrue(list(ImageIO.getImageWritersByFormatName("heic")).isEmpty());
+        var jxl = list(ImageIO.getImageWritersByFormatName("jxl"));
+        assertEquals(1, jxl.size());
+        assertInstanceOf(SmaltImageWriter.class, jxl.getFirst());
+        var heic = list(ImageIO.getImageWritersByFormatName("heic"));
+        assertEquals(1, heic.size());
+        assertInstanceOf(SmaltImageWriter.class, heic.getFirst());
+        assertInstanceOf(SmaltImageWriter.class, list(ImageIO.getImageWritersByMIMEType("image/heic")).getFirst());
         var registered = list(IIORegistry.getDefaultInstance().getServiceProviders(ImageWriterSpi.class, false));
         assertTrue(registered.stream().anyMatch(WebpImageWriterSpi.class::isInstance));
         assertTrue(registered.stream().anyMatch(AvifImageWriterSpi.class::isInstance));
-        assertTrue(registered.stream().noneMatch(HeicImageWriterSpi.class::isInstance));
+        assertTrue(registered.stream().anyMatch(JxlImageWriterSpi.class::isInstance));
+        assertTrue(registered.stream().anyMatch(HeicImageWriterSpi.class::isInstance));
     }
 
     @Test

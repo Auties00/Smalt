@@ -2,6 +2,7 @@ package com.github.auties00.smalt.capture.internal.linux;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.capture.CaptureDevice;
+import com.github.auties00.smalt.capture.CaptureMode;
 
 import java.io.IOException;
 import java.nio.file.DirectoryIteratorException;
@@ -61,6 +62,23 @@ final class V4l2Cameras {
     }
 
     /**
+     * Lists the identifiers of the cameras without enumerating their modes.
+     *
+     * @return the identifiers in node order
+     * @throws MediaException.Io if {@code /dev} cannot be listed
+     */
+    static List<String> ids() {
+        var stableIds = stableIds();
+        var posix = new Posix();
+        var ids = new ArrayList<String>();
+        for (var node : nodes()) {
+            var id = stableIds.getOrDefault(node.toString(), node.toString());
+            probe(posix, node, id, false).ifPresent(camera -> ids.add(camera.id()));
+        }
+        return List.copyOf(ids);
+    }
+
+    /**
      * Lists the cameras.
      *
      * @return the cameras in node order
@@ -71,7 +89,7 @@ final class V4l2Cameras {
         var posix = new Posix();
         var cameras = new ArrayList<CaptureDevice.Camera>();
         for (var node : nodes()) {
-            probe(posix, node, stableIds.getOrDefault(node.toString(), node.toString())).ifPresent(cameras::add);
+            probe(posix, node, stableIds.getOrDefault(node.toString(), node.toString()), true).ifPresent(cameras::add);
         }
         return List.copyOf(cameras);
     }
@@ -86,7 +104,7 @@ final class V4l2Cameras {
         var stableIds = stableIds();
         var posix = new Posix();
         for (var node : nodes()) {
-            var camera = probe(posix, node, stableIds.getOrDefault(node.toString(), node.toString()));
+            var camera = probe(posix, node, stableIds.getOrDefault(node.toString(), node.toString()), true);
             if (camera.isPresent()) {
                 return camera;
             }
@@ -110,7 +128,7 @@ final class V4l2Cameras {
         if (!NODE_PATH.matcher(node).matches() || !id.equals(stableIds().getOrDefault(node, node))) {
             return Optional.empty();
         }
-        return probe(new Posix(), Path.of(node), id);
+        return probe(new Posix(), Path.of(node), id, true);
     }
 
     /**
@@ -145,10 +163,11 @@ final class V4l2Cameras {
      * @param posix the C library
      * @param node the node path
      * @param id the identifier the camera gets
+     * @param withModes whether to enumerate the modes; without, the camera has none
      * @return the camera, or empty when the node cannot be opened, is not a capture node this
      * backend converts, or fails while being queried
      */
-    private static Optional<CaptureDevice.Camera> probe(Posix posix, Path node, String id) {
+    private static Optional<CaptureDevice.Camera> probe(Posix posix, Path node, String id, boolean withModes) {
         var fd = posix.open(node.toString(), Posix.O_RDWR | Posix.O_NONBLOCK | Posix.O_CLOEXEC);
         if (fd < 0) {
             return Optional.empty();
@@ -159,7 +178,7 @@ final class V4l2Cameras {
             if (!capability.canCapture() || V4l2Formats.pixelFormats(device).isEmpty()) {
                 return Optional.empty();
             }
-            var modes = V4l2Formats.modes(V4l2Formats.offers(device));
+            var modes = withModes ? V4l2Formats.modes(V4l2Formats.offers(device)) : List.<CaptureMode>of();
             return Optional.of(new CaptureDevice.Camera(id, capability.card(), modes));
         } catch (MediaException ignored) {
             // The node vanished or misbehaved while being queried: it is not a usable camera.

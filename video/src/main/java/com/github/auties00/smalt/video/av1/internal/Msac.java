@@ -26,7 +26,7 @@ public final class Msac {
      * narrower machine would run the 16-lane operations on the library's allocating fallback, a
      * cost the per-symbol call cannot absorb.
      */
-    static final boolean VECTORS = Simd.ENABLED && Simd.preferredBits() >= 256;
+    static final boolean VECTORS = Simd.WIDE;
 
     /**
      * The number of bits the probabilities are reduced by before scaling the range.
