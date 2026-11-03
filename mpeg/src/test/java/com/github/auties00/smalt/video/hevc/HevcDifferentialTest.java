@@ -2,6 +2,7 @@ package com.github.auties00.smalt.video.hevc;
 
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Tolerance;
 import com.github.auties00.smalt.video.VideoFrame;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -12,7 +13,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
@@ -24,6 +24,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  */
 @DisplayName("HEVC decoder against ffmpeg on x265 streams")
 class HevcDifferentialTest {
+    /** HEVC reconstruction is normative (ITU-T H.265 clause 8), so every picture equals ffmpeg's decode. */
+    static final Tolerance TOLERANCE = Tolerance.exact();
+
     record Case(String name, String size, String pixelFormat, String params, double seconds, String scene,
                 boolean ffmpegExact) {
         Case(String name, String size, String pixelFormat, String params, double seconds, String scene) {
@@ -51,7 +54,11 @@ class HevcDifferentialTest {
                 new Case("lossless", "64x64", "yuv420p", "lossless=1", 0.3, moving),
                 new Case("four slices", "192x128", "yuv420p", "slices=4", 0.5, moving),
                 new Case("no wavefront", "192x128", "yuv420p", "wpp=0", 0.5, natural),
-                new Case("16x16 coding tree blocks", "160x96", "yuv420p", "ctu=16:min-cu-size=8:max-tu-size=16", 0.5, moving),
+                // ffmpeg 7.1 deblocks the chroma of 16x16 coding tree blocks differently from the HM reference
+                // decoder in some streams (the x265 of the 2025 static builds makes one here); this decoder agrees
+                // with every picture hash x265 writes, which hashVerification checks
+                new Case("16x16 coding tree blocks", "160x96", "yuv420p", "ctu=16:min-cu-size=8:max-tu-size=16", 0.5, moving,
+                        false),
                 new Case("32x32 coding tree blocks with deep transform trees", "160x96", "yuv420p",
                         "ctu=32:tu-intra-depth=4:tu-inter-depth=4:max-tu-size=32", 0.5, natural),
                 new Case("adaptive quantization groups", "192x128", "yuv420p", "aq-mode=3:qg-size=8", 0.5, natural),
@@ -98,7 +105,15 @@ class HevcDifferentialTest {
                 new Case("4:2:2 adaptive quantization groups", "192x128", "yuv422p", "aq-mode=3:qg-size=8", 0.5,
                         natural),
                 new Case("4:4:4 constrained intra and PCM", "128x96", "yuv444p", "constrained-intra=1:pcm=1", 0.6,
-                        moving)
+                        moving),
+                new Case("weighted prediction main10", "128x96", "yuv420p10le", "weightp=1:weightb=1", 1.0, "fade"),
+                new Case("weighted prediction 4:4:4 12", "96x64", "yuv444p12le", "weightp=1:weightb=1", 1.0, "fade"),
+                // x265 restarts the chroma CRC at each row of coding tree blocks, so the CRC cases are one row tall;
+                // HevcPictureHashTest checks CRCs of taller pictures, which the HM reference encoder writes
+                new Case("CRC picture hashes", "128x64", "yuv420p", "hash=2", 0.4, moving),
+                new Case("CRC picture hashes 4:2:2 12", "96x64", "yuv422p12le", "hash=2", 0.4, natural),
+                new Case("checksum picture hashes main10", "128x96", "yuv420p10le", "hash=3", 0.4, moving),
+                new Case("checksum picture hashes monochrome", "96x64", "gray", "hash=3", 0.4, natural)
         );
     }
 
@@ -135,7 +150,7 @@ class HevcDifferentialTest {
         }
         assertEquals(expected.length, raw.size(), "decoded size of " + c.name() + " after " + count[0] + " frames");
         if (c.ffmpegExact()) {
-            assertArrayEquals(expected, raw.toByteArray(), c.name());
+            TOLERANCE.assertWithin(c.name(), expected, raw.toByteArray());
         }
     }
 }

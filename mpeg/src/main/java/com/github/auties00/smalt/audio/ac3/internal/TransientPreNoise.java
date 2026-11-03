@@ -3,35 +3,44 @@ package com.github.auties00.smalt.audio.ac3.internal;
 import java.util.Arrays;
 
 /**
- * Applies the transient pre-noise processing of E-AC-3 (ATSC A/52 Annex E section 3.7) to the
- * decoded PCM of the full-bandwidth channels of one substream.
+ * Applies the transient pre-noise processing of E-AC-3 (ATSC A/52 Annex E section 3.7, ETSI TS
+ * 102 366 clause E.2.7) to the decoded PCM of the full-bandwidth channels of one substream.
  *
  * <p>For a channel whose frame carries transient pre-noise data, the decoded samples before the
  * transient are overwritten with a time scaling synthesis buffer copied from earlier audio, so that
- * the quantization noise a long transform spreads ahead of the transient disappears. With the
- * transient at {@code transloc} samples from the start of the frame, the block before the one
- * holding it starting at {@code blockStart}, and {@code pnlen = transloc - blockStart}, the buffer
- * is the {@code 2 * TC1 + pnlen} samples that start {@code 2 * TC1 + 2 * pnlen} samples before the
+ * the quantization noise a long transform spreads ahead of the transient disappears. The transient
+ * lies {@code T = 4 * transprocloc + 256} decoded samples after the first decoded sample of the
+ * frame: the location counts from the frame's first input sample, which the decoder outputs 256
+ * samples later. With the block before the one holding the transient starting at
+ * {@code blockStart = (T / 256 - 1) * 256} and {@code pnlen = T - blockStart}, the buffer is the
+ * {@code 2 * TC1 + pnlen} samples that start {@code 2 * TC1 + 2 * pnlen} samples before the
  * transient; it replaces the {@code pnlen + transproclen + TC1} samples before the transient,
- * entering with a cross-fade of {@code TC1 = 256} samples and leaving with one of
- * {@code TC2 = 128} samples.
+ * entering with a cross-fade of {@code TC1 = 256} samples and leaving with one of {@code TC2 = 128}
+ * samples.
  *
- * <p>The processor keeps the last {@link #HISTORY} output samples of each channel, from which the
- * buffer may draw. A correction whose transient lies in the next frame is completed when that frame
- * is processed, with the buffer taken when its samples became available. Instances are not
+ * <p>Data whose {@code 4 * transprocloc} lies outside {@code [1024, 2560)} is ignored. Inside that
+ * range, the buffer and the corrected samples never precede the frame carrying the data, and a
+ * correction ends at most 2816 samples after its start. A correction is applied once every sample
+ * of its buffer is decoded, to the samples of that frame and of later frames; several corrections
+ * of a channel may be pending at once. The processor keeps the last {@link #HISTORY} output samples
+ * of each channel, from which a buffer completed in a later frame draws. Instances are not
  * thread-safe.
  *
- * @implNote This implementation cross-fades with the complementary raised-cosine (Hann) windows
- * the specification names as giving good results, since its pseudo-code leaves the windows open. It
- * corrects only the samples of the frame being decoded and of later frames, because earlier frames
- * were already output.
+ * @implNote This implementation follows Dolby's decoder (the Dolby Digital Plus decoder of Windows
+ * Media Foundation, measured as a black box with forged streams), where the specification leaves
+ * room: the 256-sample offset of the location, the range of locations applied, and the cross-fade
+ * windows, which the specification leaves to the implementation. The first cross-fade weighs the
+ * decoded samples with {@code w(n) = (1 + cos(pi * (n + 1) / 257)) / 2} and the buffer with
+ * {@code 1 - w(n)}; the last weighs the buffer with {@code w(2k + 1)} and the decoded samples with
+ * {@code 1 - w(2k)}, the first windows taken at every other sample, which is not of constant
+ * amplitude.
  */
 final class TransientPreNoise {
-    // TODO: the output differs from Dolby's decoder (the Windows Media Foundation decoder used as a
-    //  black box) in every frame with pre-noise data and the frame after it, about 11 dB of SNR
-    //  below the extension band against the 53 dB of every other frame, in the Audition encodes of
-    //  ffmpeg ticket 10958; the cross-fade windows, the buffer placement and the handling of a zero
-    //  transproclen need checking against that decoder.
+    // TODO: Dolby's decoder holds its output back until a correction's buffer is complete, so it
+    //  also corrects the samples of the frame carrying the data when the buffer reaches into the
+    //  next frame (a transient less than pnlen + 256 samples before that frame's end); this
+    //  processor outputs every frame as it is decoded, so those samples stay uncorrected and only
+    //  the samples of later frames are.
 
     /**
      * The length of the time scaling synthesis cross-fade into the buffer, {@code TC1}.
@@ -44,8 +53,23 @@ final class TransientPreNoise {
     static final int TC2 = 128;
 
     /**
-     * The number of past output samples kept per channel: enough for a buffer reaching
-     * {@code 2 * TC1 + 2 * 511} samples before a transient at the start of a frame.
+     * The offset of the decoded output from the input the transient location counts in.
+     */
+    static final int DELAY = 256;
+
+    /**
+     * The smallest transient location {@code 4 * transprocloc} applied.
+     */
+    static final int FIRST_LOCATION = 1024;
+
+    /**
+     * The end of the transient locations {@code 4 * transprocloc} applied, exclusive.
+     */
+    static final int LOCATION_LIMIT = 2560;
+
+    /**
+     * The number of past output samples kept per channel: more than the longest buffer, which a
+     * correction completed in a later frame copies partly from earlier frames.
      */
     static final int HISTORY = 2048;
 
@@ -55,15 +79,42 @@ final class TransientPreNoise {
     private static final int LONGEST = 2 * TC1 + 511;
 
     /**
-     * The weight of the decoded samples over the first cross-fade, from one to zero.
+     * The most corrections of a channel pending at once: one per frame, over the at most 2816
+     * samples a correction spans, in frames of one block.
      */
-    private static final float[] FADE_OUT_1 = fadeOut(TC1);
+    private static final int SLOTS = 12;
 
     /**
-     * The weight of the decoded samples over the last cross-fade, from one to zero; the buffer
-     * fades out with it, the decoded samples fade in with its complement.
+     * The weight {@code w(n)} of the decoded samples over the first cross-fade, from one to zero.
      */
-    private static final float[] FADE_OUT_2 = fadeOut(TC2);
+    static final float[] FADE_OUT = new float[TC1];
+
+    /**
+     * The weight {@code 1 - w(n)} of the buffer over the first cross-fade, from zero to one.
+     */
+    static final float[] FADE_IN = new float[TC1];
+
+    /**
+     * The weight {@code w(2k + 1)} of the buffer over the last cross-fade.
+     */
+    static final float[] TAIL_BUFFER = new float[TC2];
+
+    /**
+     * The weight {@code 1 - w(2k)} of the decoded samples over the last cross-fade.
+     */
+    static final float[] TAIL_DECODED = new float[TC2];
+
+    static {
+        for (var n = 0; n < TC1; n++) {
+            var weight = 0.5 * (1 + StrictMath.cos(Math.PI * (n + 1) / (TC1 + 1)));
+            FADE_OUT[n] = (float) weight;
+            FADE_IN[n] = (float) (1 - weight);
+        }
+        for (var k = 0; k < TC2; k++) {
+            TAIL_BUFFER[k] = FADE_OUT[2 * k + 1];
+            TAIL_DECODED[k] = FADE_IN[2 * k];
+        }
+    }
 
     /**
      * The past output samples of each channel, the most recent last.
@@ -71,35 +122,50 @@ final class TransientPreNoise {
     private final float[][] history;
 
     /**
-     * Whether each channel has a correction pending from the previous frame.
+     * The number of samples of each channel processed so far.
      */
-    private final boolean[] pending;
+    private final long[] position;
 
     /**
-     * Whether the pending correction of each channel still needs its synthesis buffer.
+     * Whether each correction slot of each channel is pending.
      */
-    private final boolean[] pendingDeferred;
+    private final boolean[][] active;
 
     /**
-     * The transient location of the pending correction of each channel, relative to the start of
-     * the next frame.
+     * Whether the synthesis buffer of each correction slot has been taken.
      */
-    private final int[] pendingLocation;
+    private final boolean[][] captured;
 
     /**
-     * The processing length {@code transproclen} of the pending correction of each channel.
+     * The sample, counted from the channel's first, at which the transient of each slot lies.
      */
-    private final int[] pendingLength;
+    private final long[][] transients;
 
     /**
-     * The synthesis buffer of the pending correction of each channel.
+     * The pre-noise length {@code pnlen} of each slot.
      */
-    private final float[][] pendingBuffer;
+    private final int[][] preNoise;
 
     /**
-     * The synthesis buffer of the correction being applied.
+     * The processing length {@code transproclen} of each slot.
      */
-    private final float[] buffer = new float[LONGEST];
+    private final int[][] length;
+
+    /**
+     * The slot of the oldest correction of each channel still held: the slots form a ring in the
+     * order the corrections started.
+     */
+    private final int[] head;
+
+    /**
+     * The number of slots of each channel held from {@link #head}, pending or finished.
+     */
+    private final int[] held;
+
+    /**
+     * The synthesis buffer of each slot.
+     */
+    private final float[][][] buffers;
 
     /**
      * Creates the processor of a substream.
@@ -108,25 +174,15 @@ final class TransientPreNoise {
      */
     TransientPreNoise(int channels) {
         this.history = new float[channels][HISTORY];
-        this.pending = new boolean[channels];
-        this.pendingDeferred = new boolean[channels];
-        this.pendingLocation = new int[channels];
-        this.pendingLength = new int[channels];
-        this.pendingBuffer = new float[channels][LONGEST];
-    }
-
-    /**
-     * Builds a raised-cosine fade from one to zero.
-     *
-     * @param length the number of samples
-     * @return the weights
-     */
-    private static float[] fadeOut(int length) {
-        var weights = new float[length];
-        for (var n = 0; n < length; n++) {
-            weights[n] = (float) (0.5 * (1 + Math.cos(Math.PI * (n + 0.5) / length)));
-        }
-        return weights;
+        this.position = new long[channels];
+        this.active = new boolean[channels][SLOTS];
+        this.captured = new boolean[channels][SLOTS];
+        this.transients = new long[channels][SLOTS];
+        this.preNoise = new int[channels][SLOTS];
+        this.length = new int[channels][SLOTS];
+        this.head = new int[channels];
+        this.held = new int[channels];
+        this.buffers = new float[channels][SLOTS][LONGEST];
     }
 
     /**
@@ -142,51 +198,162 @@ final class TransientPreNoise {
      * Forgets the past output and every pending correction, as after a seek.
      */
     void reset() {
-        for (var line : history) {
-            Arrays.fill(line, 0);
+        for (var ch = 0; ch < history.length; ch++) {
+            Arrays.fill(history[ch], 0);
+            Arrays.fill(active[ch], false);
+            position[ch] = 0;
+            held[ch] = 0;
         }
-        Arrays.fill(pending, false);
     }
 
     /**
-     * Processes the decoded samples of one channel in place and records them as past output.
+     * Returns whether a transient location is one the processor applies.
      *
-     * <p>The correction pending from the previous frame is applied first; then the correction of
-     * this frame, when {@code location} is not negative.
+     * @param location the transient location {@code 4 * transprocloc}
+     * @return whether data with it corrects the output
+     */
+    static boolean applied(int location) {
+        return location >= FIRST_LOCATION && location < LOCATION_LIMIT;
+    }
+
+    /**
+     * Processes the decoded samples of one frame of a channel in place and records them as past
+     * output.
+     *
+     * <p>The correction of this frame, when {@code location} is applied, joins the pending ones;
+     * then every pending correction whose buffer is complete is applied to the frame's samples, in
+     * the order the corrections started.
      *
      * @param ch the channel
      * @param pcm the decoded samples, corrected in place
      * @param offset the index of the frame's first sample
      * @param samples the samples of the frame
-     * @param location the transient location {@code 4 * transprocloc} relative to the first sample
-     * of the frame, or {@code -1} without transient pre-noise data
-     * @param length the processing length {@code transproclen}, from 0 to 255
+     * @param location the transient location {@code 4 * transprocloc} relative to the first input
+     * sample of the frame, or {@code -1} without transient pre-noise data
+     * @param processing the processing length {@code transproclen}, from 0 to 255
      */
-    void process(int ch, float[] pcm, int offset, int samples, int location, int length) {
-        if (pending[ch]) {
-            pending[ch] = false;
-            if (pendingDeferred[ch]) {
-                correct(ch, pcm, offset, samples, pendingLocation[ch], pendingLength[ch]);
-            } else {
-                System.arraycopy(pendingBuffer[ch], 0, buffer, 0, LONGEST);
-                apply(ch, pcm, offset, samples, pendingLocation[ch], pendingLength[ch]);
+    void process(int ch, float[] pcm, int offset, int samples, int location, int processing) {
+        var start = position[ch];
+        if (applied(location)) {
+            start(ch, start + location + DELAY, processing);
+        }
+        var end = start + samples;
+        var slots = active[ch];
+        for (var i = 0; i < held[ch]; i++) {
+            var slot = (head[ch] + i) % SLOTS;
+            if (!slots[slot]) {
+                continue;
+            }
+            var t = transients[ch][slot];
+            var pn = preNoise[ch][slot];
+            if (!captured[ch][slot]) {
+                var bufferStart = t - 2 * TC1 - 2L * pn;
+                var bufferLength = 2 * TC1 + pn;
+                if (bufferStart + bufferLength > end) {
+                    continue;
+                }
+                capture(ch, slot, pcm, offset, start, bufferStart, bufferLength);
+            }
+            apply(ch, slot, pcm, offset, start, end);
+            if (t <= end) {
+                slots[slot] = false;
             }
         }
-        if (location >= 0) {
-            correct(ch, pcm, offset, samples, location, length);
+        while (held[ch] > 0 && !slots[head[ch]]) {
+            head[ch] = (head[ch] + 1) % SLOTS;
+            held[ch]--;
         }
         remember(ch, pcm, offset, samples);
+        position[ch] = end;
     }
 
     /**
-     * Records the samples of a frame of a channel as past output without processing them.
+     * Starts a correction in the next slot of a channel's ring, dropping the oldest correction when
+     * every slot is held.
+     *
+     * @param ch the channel
+     * @param t the transient, counted from the channel's first sample
+     * @param processing the processing length
+     */
+    private void start(int ch, long t, int processing) {
+        if (held[ch] == SLOTS) {
+            head[ch] = (head[ch] + 1) % SLOTS;
+            held[ch]--;
+        }
+        var slot = (head[ch] + held[ch]) % SLOTS;
+        held[ch]++;
+        var blockStart = (t / 256 - 1) * 256;
+        active[ch][slot] = true;
+        captured[ch][slot] = false;
+        transients[ch][slot] = t;
+        preNoise[ch][slot] = (int) (t - blockStart);
+        length[ch][slot] = processing;
+    }
+
+    /**
+     * Copies the synthesis buffer of a slot from the frame and the past output.
+     *
+     * @param ch the channel
+     * @param slot the slot of the correction
+     * @param pcm the decoded samples of the frame
+     * @param offset the index of the frame's first sample
+     * @param frameStart the frame's first sample, counted from the channel's first
+     * @param bufferStart the buffer's first sample, counted from the channel's first
+     * @param bufferLength the buffer length
+     */
+    private void capture(int ch, int slot, float[] pcm, int offset, long frameStart, long bufferStart,
+                         int bufferLength) {
+        var past = history[ch];
+        var buffer = buffers[ch][slot];
+        for (var n = 0; n < bufferLength; n++) {
+            var index = (int) (bufferStart + n - frameStart);
+            buffer[n] = index >= 0 ? pcm[offset + index] : index >= -HISTORY ? past[HISTORY + index] : 0;
+        }
+        captured[ch][slot] = true;
+    }
+
+    /**
+     * Overwrites the samples of a slot's correction that fall in the frame with its buffer,
+     * cross-faded at both ends.
+     *
+     * @param ch the channel
+     * @param slot the slot of the correction
+     * @param pcm the decoded samples, corrected in place
+     * @param offset the index of the frame's first sample
+     * @param frameStart the frame's first sample, counted from the channel's first
+     * @param frameEnd the end of the frame, counted from the channel's first sample
+     */
+    private void apply(int ch, int slot, float[] pcm, int offset, long frameStart, long frameEnd) {
+        var t = transients[ch][slot];
+        var total = preNoise[ch][slot] + length[ch][slot] + TC1;
+        var start = t - total;
+        var tail = total - TC2;
+        var buffer = buffers[ch][slot];
+        var from = (int) Math.max(0, frameStart - start);
+        var to = (int) Math.min(total, frameEnd - start);
+        for (var k = from; k < to; k++) {
+            var index = offset + (int) (start + k - frameStart);
+            float value;
+            if (k < TC1) {
+                value = pcm[index] * FADE_OUT[k] + buffer[k] * FADE_IN[k];
+            } else if (k < tail) {
+                value = buffer[k];
+            } else {
+                value = pcm[index] * TAIL_DECODED[k - tail] + buffer[k] * TAIL_BUFFER[k - tail];
+            }
+            pcm[index] = value;
+        }
+    }
+
+    /**
+     * Records the samples of a frame of a channel as past output.
      *
      * @param ch the channel
      * @param pcm the samples
      * @param offset the index of the frame's first sample
      * @param samples the samples of the frame
      */
-    void remember(int ch, float[] pcm, int offset, int samples) {
+    private void remember(int ch, float[] pcm, int offset, int samples) {
         var past = history[ch];
         if (samples >= HISTORY) {
             System.arraycopy(pcm, offset + samples - HISTORY, past, 0, HISTORY);
@@ -194,79 +361,5 @@ final class TransientPreNoise {
         }
         System.arraycopy(past, samples, past, 0, HISTORY - samples);
         System.arraycopy(pcm, offset, past, HISTORY - samples, samples);
-    }
-
-    /**
-     * Starts a correction: takes its synthesis buffer when every sample of it is decoded and
-     * applies it, or defers it to the next frame.
-     *
-     * @param ch the channel
-     * @param pcm the decoded samples
-     * @param offset the index of the frame's first sample
-     * @param samples the samples of the frame
-     * @param location the transient location relative to the first sample of the frame
-     * @param length the processing length
-     */
-    private void correct(int ch, float[] pcm, int offset, int samples, int location, int length) {
-        var blockStart = (location / 256 - 1) * 256;
-        var preNoise = location - blockStart;
-        var bufferLength = 2 * TC1 + preNoise;
-        var bufferStart = location - 2 * TC1 - 2 * preNoise;
-        if (bufferStart + bufferLength > samples) {
-            pending[ch] = true;
-            pendingDeferred[ch] = true;
-            pendingLocation[ch] = location - samples;
-            pendingLength[ch] = length;
-            return;
-        }
-        var past = history[ch];
-        for (var n = 0; n < bufferLength; n++) {
-            var index = bufferStart + n;
-            buffer[n] = index >= 0 ? pcm[offset + index] : index >= -HISTORY ? past[HISTORY + index] : 0;
-        }
-        apply(ch, pcm, offset, samples, location, length);
-    }
-
-    /**
-     * Overwrites the samples of a correction that fall in the frame with the synthesis buffer,
-     * cross-faded at both ends, and keeps the correction pending when it continues into the next
-     * frame.
-     *
-     * @param ch the channel
-     * @param pcm the decoded samples, corrected in place
-     * @param offset the index of the frame's first sample
-     * @param samples the samples of the frame
-     * @param location the transient location relative to the first sample of the frame
-     * @param length the processing length
-     */
-    private void apply(int ch, float[] pcm, int offset, int samples, int location, int length) {
-        var blockStart = (location / 256 - 1) * 256;
-        var preNoise = location - blockStart;
-        var total = preNoise + length + TC1;
-        var start = location - total;
-        var tail = total - TC2;
-        var from = Math.max(0, -start);
-        var to = Math.min(total, samples - start);
-        for (var k = from; k < to; k++) {
-            var index = offset + start + k;
-            float value;
-            if (k < TC1) {
-                var weight = FADE_OUT_1[k];
-                value = pcm[index] * weight + buffer[k] * (1 - weight);
-            } else if (k < tail) {
-                value = buffer[k];
-            } else {
-                var weight = FADE_OUT_2[k - tail];
-                value = pcm[index] * (1 - weight) + buffer[k] * weight;
-            }
-            pcm[index] = value;
-        }
-        if (to < total) {
-            pending[ch] = true;
-            pendingDeferred[ch] = false;
-            pendingLocation[ch] = location - samples;
-            pendingLength[ch] = length;
-            System.arraycopy(buffer, 0, pendingBuffer[ch], 0, LONGEST);
-        }
     }
 }

@@ -443,6 +443,27 @@ final class PanasonicDecoder {
     }
 
     /**
+     * Brings the values of uncompressed data down by a shift (the 12-bit photosites the oldest
+     * files store in the high bits of 16-bit words) and repairs its zero photosites.
+     *
+     * @param plane the read plane, modified in place
+     * @param cfa the color filter array
+     * @param shift the right shift of every value
+     * @param zeros whether zero photosites are defects to repair
+     */
+    static void repair(SensorPlane plane, CfaPattern cfa, int shift, boolean zeros) {
+        if (shift != 0) {
+            var samples = plane.integers;
+            for (var index = 0; index < samples.length; index++) {
+                samples[index] = (short) ((samples[index] & 0xFFFF) >>> shift);
+            }
+        }
+        if (zeros) {
+            repairZeros(plane, cfa, 0);
+        }
+    }
+
+    /**
      * Replaces zero photosites with the rounded mean of their non-zero same-color neighbors and
      * lowers every value by an offset.
      *

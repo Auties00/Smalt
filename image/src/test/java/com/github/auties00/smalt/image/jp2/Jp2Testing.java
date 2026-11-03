@@ -118,8 +118,8 @@ final class Jp2Testing {
         }
         var dx = channel.subsamplingX();
         var dy = channel.subsamplingY();
-        var xoff = dx * channel.x0() - image.x0();
-        var yoff = dy * channel.y0() - image.y0();
+        var xoff = (int) (dx * channel.x0() - image.x0());
+        var yoff = (int) (dy * channel.y0() - image.y0());
         var result = new int[width * height];
         for (var y = yoff; y < height; y++) {
             var row = Math.min((y - yoff) / dy, channel.height() - 1);

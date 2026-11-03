@@ -6,6 +6,7 @@ import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Scratch;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -39,7 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @DisplayName("Mp4Muxer")
 class Mp4MuxerTest {
-    static final Path OUTPUT = Path.of("target", "mp4-muxer-out");
+    static final Path OUTPUT = Scratch.directory("mp4-muxer-out");
 
     record RemuxCase(String name, java.util.function.Supplier<Path> file) {
         @Override
@@ -298,6 +299,58 @@ class Mp4MuxerTest {
                 muxer.finish();
                 assertThrows(IllegalStateException.class, muxer::finish);
                 assertThrows(IllegalStateException.class, () -> muxer.writePacket(new Packet(1, new byte[4], 2048, 2048, 1024, true)));
+            }
+        }
+    }
+
+    @Nested
+    @DisplayName("3GP brand")
+    class ThreeGpp {
+        @Test
+        @DisplayName("carries the codecs of 3GPP TS 26.244 only")
+        void codecs() {
+            var brand = Mp4MuxerOptions.Brand.THREE_GPP;
+            for (var codec : List.of(Codec.H263, Codec.MPEG4_PART2, Codec.H264, Codec.AMR_NB, Codec.AMR_WB, Codec.AAC,
+                    Codec.MOV_TEXT)) {
+                assertTrue(Mp4Muxer.supports(brand, codec), codec.displayName());
+            }
+            for (var codec : List.of(Codec.OPUS, Codec.MP3, Codec.FLAC, Codec.AC3, Codec.VP9, Codec.AV1, Codec.HEVC,
+                    Codec.PCM_S16LE, Codec.PRORES)) {
+                assertFalse(Mp4Muxer.supports(brand, codec), codec.displayName());
+            }
+            var opus = AudioTrack.builder().id(1).codec(Codec.OPUS).timeBase(new Rational(1, 48000))
+                    .codecConfig(new byte[19]).sampleRate(48000).layout(ChannelLayout.STEREO).build();
+            try (var muxer = new Mp4Muxer(MediaSink.memory(), Mp4MuxerOptions.threeGpp())) {
+                var rejection = assertThrows(IllegalArgumentException.class, () -> muxer.addTrack(opus));
+                assertTrue(rejection.getMessage().contains("3GP"), rejection.getMessage());
+            }
+        }
+
+        @Test
+        @DisplayName("writes the 3gp6 file type, compatible with 3gp5, 3gp4 and isom, which the demuxer reads back")
+        void fileType() throws IOException {
+            assertEquals(Mp4MuxerOptions.Brand.THREE_GPP, Mp4MuxerOptions.threeGpp().brand());
+            assertEquals(Mp4MuxerOptions.threeGpp(), Mp4MuxerOptions.builder().brand(Mp4MuxerOptions.Brand.THREE_GPP)
+                    .build());
+            var sink = MediaSink.memory();
+            try (var muxer = new Mp4Muxer(sink, Mp4MuxerOptions.threeGpp())) {
+                muxer.addTrack(aacTrack(1, 48000, 2, -1, 0));
+                muxer.writePacket(new Packet(1, new byte[4], 0, 0, 1024, true));
+                muxer.writePacket(new Packet(1, new byte[4], 1024, 1024, 1024, true));
+                muxer.finish();
+            }
+            var bytes = sink.toByteArray();
+            var ftyp = new String(bytes, 4, 28, java.nio.charset.StandardCharsets.ISO_8859_1);
+            assertEquals("ftyp3gp6\0\0\2\0" + "3gp63gp53gp4isom", ftyp);
+            assertEquals(32, java.nio.ByteBuffer.wrap(bytes, 0, 4).getInt(), "ftyp box size");
+            try (var source = MediaSource.of(bytes); var demuxer = com.github.auties00.smalt.container.Containers
+                    .openDemuxer(source)) {
+                assertEquals(Codec.AAC, demuxer.tracks().getFirst().codec());
+                var count = 0;
+                while (demuxer.read() != null) {
+                    count++;
+                }
+                assertEquals(2, count);
             }
         }
     }

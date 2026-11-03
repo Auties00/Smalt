@@ -7,14 +7,18 @@ import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.container.internal.SeekFilter;
 import com.github.auties00.smalt.internal.io.ForwardOnlySource;
+import com.github.auties00.smalt.internal.io.MeasuredSource;
 import com.github.auties00.smalt.internal.io.ReadAheadCache;
+import com.github.auties00.smalt.internal.tags.TsDescriptors;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Track;
+import com.github.auties00.smalt.track.TrackDisposition;
 import com.github.auties00.smalt.track.TrackKind;
 
 import java.util.ArrayDeque;
+import java.util.Collections;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -23,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Function;
 
 /**
  * Reads MPEG-2 transport streams (ISO/IEC 13818-1): broadcast captures, {@code .ts} files, HLS
@@ -33,41 +38,107 @@ import java.util.Set;
  * recognized from the spacing of their sync bytes, after up to 64 KiB of leading garbage. The
  * program association table names the programs; the demuxer exposes the elementary streams of
  * one of them ({@link TsDemuxerOptions#program()}, the first program with an elementary stream by
- * default), and {@link #programs()} lists them all. Every track's identifier is its PID.
+ * default), and {@link #programs()} lists them all.
  *
  * <p>Supported streams, by {@code stream_type} and descriptors:
  * <ul>
- *   <li>H.264 ({@code 0x1B}) and HEVC ({@code 0x24}, or {@code 0x06} with the {@code "HEVC"}
- *       registration): one packet per access unit, split on the access unit boundaries of the
- *       byte stream whatever the PES packetization, as four-byte length-prefixed NAL units
- *       without the access unit delimiters, with an {@code avcC} or {@code hvcC} configuration
- *       built from the parameter sets met before the first key frame. IDR and IRAP pictures, and
- *       H.264 intra pictures with a recovery point SEI message, are key frames; the access units
- *       before the first key frame cannot be decoded and are dropped. A packet lasts until the
- *       next access unit's decoding time;</li>
+ *   <li>H.264 ({@code 0x1B}), HEVC ({@code 0x24}, or {@code 0x06} with the {@code "HEVC"}
+ *       registration) and VVC ({@code 0x33}): one packet per access unit, split on the access unit
+ *       boundaries of the byte stream whatever the PES packetization, as four-byte length-prefixed
+ *       NAL units without the access unit delimiters, with an {@code avcC}, {@code hvcC} or
+ *       {@code vvcC} configuration built from the parameter sets met before the first key frame.
+ *       IDR and IRAP pictures, VVC GDR pictures, and H.264 intra pictures with a recovery point SEI
+ *       message, are key frames; the access units before the first key frame cannot be decoded and
+ *       are dropped. A packet lasts until the next access unit's decoding time. The Dolby Vision
+ *       reference processing units (HEVC NAL unit type 62) stay in the packets;</li>
+ *   <li>AV1 ({@code 0x06} with the {@code "AV01"} registration, AOM "Carriage of AV1 in MPEG-2
+ *       TS"): one packet per temporal unit, its OBUs freed of their start codes and emulation
+ *       prevention and stored with size fields, without temporal delimiters, as ISOBMFF stores
+ *       them, with an {@code av1C} configuration built from the sequence header in force at the
+ *       first key frame; temporal units before it are dropped;</li>
+ *   <li>the DOVI video stream descriptor (tag {@code 0xB0}, Dolby's "Dolby Vision Streams Within the MPEG-2
+ *       Transport Stream Format") of an H.264, HEVC or AV1 stream gives its track's
+ *       {@link com.github.auties00.smalt.track.VideoTrack#dolbyVision() Dolby Vision configuration};</li>
+ *   <li>MPEG-4 Part 2 ({@code 0x10}): one packet per PES packet, with the visual object sequence,
+ *       visual object and video object layer headers of the first key frame as the
+ *       configuration, and the picture size, frame rate and sample aspect ratio of the video
+ *       object layer;</li>
+ *   <li>VC-1 advanced profile ({@code 0xEA}, the Blu-ray VC-1 stream type): one packet per frame, with the
+ *       sequence header and entry point of the first key frame as the configuration, and the picture size,
+ *       frame rate and sample aspect ratio of the sequence header;</li>
  *   <li>AAC in ADTS ({@code 0x0F}) and in LOAS/LATM ({@code 0x11}): raw data blocks with an
- *       {@code AudioSpecificConfig};</li>
+ *       {@code AudioSpecificConfig}; a LATM stream may declare several programs and layers (the
+ *       first is exposed), chunked payloads, fixed frame lengths and a program config element;</li>
  *   <li>MPEG audio ({@code 0x03}, {@code 0x04}): MP3 and MP2 frames;</li>
  *   <li>AC-3 and E-AC-3 ({@code 0x81}, {@code 0x87}, the Blu-ray {@code 0x84}, or {@code 0x06}
  *       with a DVB AC-3 or enhanced AC-3 descriptor or the {@code "AC-3"} or {@code "EAC3"}
- *       registration): sync frames, passed through (Smalt has no decoder for them);</li>
+ *       registration): one packet per access unit (a sync frame with its dependent substreams),
+ *       as MP4 and Matroska store them;</li>
+ *   <li>DTS and DTS-HD (the Blu-ray {@code 0x82}, {@code 0x85}, {@code 0x86} and {@code 0xA2} in a program with
+ *       the {@code "HDMV"} registration, {@code 0x06} with the {@code "DTS1"}, {@code "DTS2"} or {@code "DTS3"}
+ *       registration or a DVB DTS or DTS-HD descriptor, and {@code 0x82} or {@code 0x06} without a descriptor
+ *       whose first payload starts with a DTS sync word, as ffmpeg writes it) as {@link Codec#DTS}: one packet per
+ *       access unit (a core frame with the extension substream frames that follow it, or an extension substream
+ *       frame of a stream without core);</li>
  *   <li>Opus ({@code 0x06} with the {@code "Opus"} registration): Opus packets with an
  *       {@code OpusHead} built from the DVB extension descriptor;</li>
+ *   <li>uncompressed audio: Blu-ray linear PCM ({@code 0x80} in a program with the
+ *       {@code "HDMV"} registration) and SMPTE ST 302 AES3 data ({@code 0x06} with the
+ *       {@code "BSSD"} registration), as packets of interleaved PCM samples (16-bit or 24-bit,
+ *       20-bit words in 24-bit samples), one per PES packet;</li>
  *   <li>ID3 timed metadata ({@code 0x15}, or {@code 0x06} with the {@code "ID3 "} registration,
  *       as HLS uses it): a {@link com.github.auties00.smalt.track.DataTrack} with the handler
  *       {@code "id3"} whose packets are the ID3v2 tags, unparsed;</li>
+ *   <li>SCTE 35 splice information ({@code 0x86} outside Blu-ray programs, carried in sections): a
+ *       data track with the handler {@code "scte35"} whose packets are the whole
+ *       {@code splice_info_section}s, stamped with the program's latest decoding time when they
+ *       arrive, and unparsed but for the {@code pts_adjustment}, rebased so that a splice time plus
+ *       it is a time of the timeline the tracks share, in 90 kHz ticks;</li>
+ *   <li>subtitles: Blu-ray presentation graphic streams ({@code 0x90}) as {@link Codec#PGS}, one PES packet
+ *       (one segment, usually) per packet; DVB subtitles ({@code 0x06} with a subtitling descriptor) as
+ *       {@link Codec#DVB_SUBTITLE}, the segments of each PES packet with the descriptor body as the
+ *       configuration; DVB teletext ({@code 0x06} with a teletext descriptor) as {@link Codec#DVB_TELETEXT}, each
+ *       PES data field with the descriptor body as the configuration;</li>
+ *   <li>MPEG-1 and MPEG-2 video ({@code 0x01}, {@code 0x02}) as {@link Codec#MPEG1_VIDEO} and
+ *       {@link Codec#MPEG2_VIDEO}, as the sequence header says (either stream type may carry either): one packet
+ *       per PES packet (a PES packet that starts inside a picture completing the packet before it), with the
+ *       sequence header and extensions of the first key frame as the configuration, and
+ *       the picture size, frame rate, sample aspect ratio and color description of that header; packets before it
+ *       are dropped;</li>
  *   <li>other PES streams: private data ({@code 0x06}, user private types from {@code 0x80})
- *       become data tracks with the handler {@code "private"}, {@code "dvb_subtitle"} or
- *       {@code "dvb_teletext"}, except that a {@code 0x06} stream without a descriptor whose first
- *       payload starts with an ADTS, LOAS, AC-3 or MPEG audio header is that audio (M2TS writers
- *       declare AAC that way); MPEG-1/2 video ({@code 0x01}, {@code 0x02}), MPEG-4 Part 2
- *       ({@code 0x10}) and the other Blu-ray audio types are passed through one PES packet per
- *       packet.</li>
+ *       become data tracks with the handler {@code "private"}, except that a {@code 0x06} stream without a
+ *       descriptor whose first payload starts with an ADTS, LOAS, AC-3, DTS or MPEG audio header or an MPEG-4 Part 2
+ *       start code is that audio or video (M2TS writers declare AAC and MPEG-4 Part 2 that way); the other
+ *       Blu-ray audio types are passed through one PES packet per packet.</li>
  * </ul>
- * Section-carried streams (SCTE-35 cues, DSM-CC) are not exposed. The tracks are described from
- * the first {@link TsDemuxerOptions#probeBytes()} bytes, which are read again by the first
- * {@link #read()}; a stream whose format is not known by then is not exposed, and changes of the
- * program map table after the start are ignored.
+ * Other section-carried streams (DSM-CC) are not exposed. The tracks are described from the first
+ * {@link TsDemuxerOptions#probeBytes()} bytes, which are read again by the first {@link #read()}.
+ *
+ * <p>Program map changes. A new version of the exposed program's map table (or a map that lists
+ * other streams under the same version, as concatenated recordings have) takes effect at the
+ * packet that carries it: a stream on the same PID with the same coding keeps its track, a stream
+ * whose coding matches one the new map dropped continues that stream's track on its new PID, and
+ * any other stream is a track of its own, identified by its PID, or by the first free identifier
+ * from {@code 0x2000} when an earlier track already had that one. A move of the map table itself
+ * to another PID is followed through the program association table. The maps in force after the
+ * probe window are found when the demuxer opens a source with random access (one of unknown size
+ * is measured first) or a source read once whose whole input fits its memory budget: it reads the
+ * map table near the end of the file and, while that map differs from the one in force, bisects
+ * for the packet where the map changes; a track a later map adds is described from the packets
+ * that follow that map. From any other source read once, only the tracks of the probe window are
+ * exposed: later maps move them to their new PIDs, and a later map that adds a stream fails the
+ * read with {@link MediaException.Unsupported}. Every track's identifier is the PID its stream had
+ * when first found.
+ *
+ * <p>A stream whose configuration changes after the start (a splice, concatenated recordings)
+ * keeps its track, and the packet where the change takes effect carries the new configuration as
+ * its {@link com.github.auties00.smalt.track.PacketSideData#newCodecConfig()}: an H.264 IDR or
+ * HEVC IRAP access unit whose active sequence (and HEVC video) parameter sets differ from those of
+ * the configuration in force (a picture parameter set change alone stays in band), the first ADTS
+ * frame of a new sampling frequency, profile or channel configuration that the next frame
+ * confirms, and the first LATM payload after a new {@code AudioSpecificConfig}. Audio durations
+ * stay in samples of the track's rate. After a seek the configuration in force is the track's, so
+ * the first packet read in another one carries it again.
  *
  * <p>Timing. PES timestamps are unwrapped across the 33-bit wrap and continued across timeline
  * discontinuities (a splice or a restarted encoder, recognized by a stream's decoding times
@@ -121,6 +192,23 @@ public final class TsDemuxer implements Demuxer {
     private static final int SYNC_RUN = 5;
 
     /**
+     * The length of the end of the file read for its last program map, to find the changes of the map; the
+     * length doubles, up to {@link #MAX_TAIL_WINDOW}, until the part read holds a map table.
+     */
+    private static final long MAP_TAIL_BYTES = 512 * 1024;
+
+    /**
+     * The length by which each doubling of the tail read for the last program map overlaps the part read before,
+     * so a section that straddles the boundary is still found.
+     */
+    private static final long MAP_OVERLAP_BYTES = 64 * 1024;
+
+    /**
+     * The farthest a program map read reads forwards for a section.
+     */
+    private static final int MAP_SAMPLE_BYTES = 4 << 20;
+
+    /**
      * The initial size of the tail window read to measure the duration.
      */
     private static final long TAIL_WINDOW = 2L << 20;
@@ -172,9 +260,30 @@ public final class TsDemuxer implements Demuxer {
     private final TsProgram program;
 
     /**
-     * The configured parsers of the exposed tracks, in program map order.
+     * The configured parsers of the exposed tracks, by track identifier, in track order.
      */
-    private final List<ElementaryParser> parsers;
+    private final Map<Integer, ElementaryParser> parsers;
+
+    /**
+     * The program map versions of the exposed program, in file order; set once the probe ends.
+     */
+    private List<MapVersion> versions;
+
+    /**
+     * The program map versions found so far during the probe.
+     */
+    private final List<MapVersion> probeVersions = new ArrayList<>();
+
+    /**
+     * Whether the program map versions of the whole file were looked for when opening, so that a map met later
+     * that adds a stream is one the sampling missed rather than one that could not be known.
+     */
+    private boolean mapsDiscovered;
+
+    /**
+     * The PIDs of every exposed stream in any program map version.
+     */
+    private final Set<Integer> exposedPids = new HashSet<>();
 
     /**
      * The exposed tracks, in program map order.
@@ -262,19 +371,27 @@ public final class TsDemuxer implements Demuxer {
             probe.run();
             this.programs = List.copyOf(probe.programs());
             this.program = probe.selected;
-            var described = new ArrayList<ElementaryParser>();
+            this.versions = List.copyOf(probeVersions);
+            var described = new LinkedHashMap<Integer, ElementaryParser>();
             var trackList = new ArrayList<Track>();
-            for (var parser : probe.parsers) {
+            for (var parser : probe.parsers.values()) {
                 if (parser.configured()) {
-                    described.add(parser);
+                    described.put(parser.trackId(), parser);
                     trackList.add(parser.track());
                 }
             }
             if (trackList.isEmpty()) {
                 throw new MediaException.Malformed("the transport stream program has no recognized elementary stream");
             }
-            this.parsers = List.copyOf(described);
+            this.parsers = Collections.unmodifiableMap(described);
             this.tracks = List.copyOf(trackList);
+            for (var version : versions) {
+                for (var entry : version.entries()) {
+                    if (described.containsKey(entry.trackId())) {
+                        exposedPids.add(entry.pid());
+                    }
+                }
+            }
             this.origin = probe.origin(tracks);
             this.durationMicros = measureDuration();
             restart(geometry.first(), TsClock.NONE);
@@ -368,6 +485,320 @@ public final class TsDemuxer implements Demuxer {
     }
 
     /**
+     * Describes the streams of the exposed program that a program map table version maps, from the file offset
+     * at which it comes in force.
+     *
+     * @param offset the offset of the first packet read with this mapping
+     * @param pmtPid the PID of the program map table
+     * @param pmt the program map section
+     * @param entries the streams of the section, each with the identifier of the track it feeds
+     */
+    private record MapVersion(long offset, int pmtPid, Psi.PmtSection pmt, List<Psi.StreamEntry> entries) {
+    }
+
+    /**
+     * Gives the streams of a program map section the identifiers of the tracks they feed.
+     *
+     * <p>A stream keeps the track of the stream of the previous mapping with the same PID and coding; a stream
+     * whose coding matches a stream of the previous mapping that no stream continued that way continues that
+     * stream's track (the stream moved to another PID); any other stream starts a track, identified by its PID
+     * unless an earlier track took that identifier, in which case it gets the first free identifier from
+     * {@code 0x2000}.
+     *
+     * @param previous the streams of the mapping in force before, with their track identifiers
+     * @param pmt the new section
+     * @param used the track identifiers given out so far, updated with the new ones
+     * @return the streams of the new section with their track identifiers
+     */
+    static List<Psi.StreamEntry> assign(List<Psi.StreamEntry> previous, Psi.PmtSection pmt, Set<Integer> used) {
+        var result = new ArrayList<Psi.StreamEntry>();
+        var continued = new HashSet<Integer>();
+        var pending = new ArrayList<Psi.StreamEntry>();
+        for (var stream : pmt.streams()) {
+            Psi.StreamEntry match = null;
+            for (var old : previous) {
+                if (old.pid() == stream.pid() && old.sameCoding(stream) && !continued.contains(old.trackId())) {
+                    match = old;
+                    break;
+                }
+            }
+            if (match != null) {
+                continued.add(match.trackId());
+                result.add(stream.withTrackId(match.trackId()));
+            } else {
+                result.add(null);
+                pending.add(stream);
+            }
+        }
+        var index = 0;
+        for (var position = 0; position < result.size(); position++) {
+            if (result.get(position) != null) {
+                continue;
+            }
+            var stream = pending.get(index++);
+            Psi.StreamEntry moved = null;
+            for (var old : previous) {
+                if (old.sameCoding(stream) && !continued.contains(old.trackId())) {
+                    moved = old;
+                    break;
+                }
+            }
+            int id;
+            if (moved != null) {
+                id = moved.trackId();
+            } else if (!used.contains(stream.pid())) {
+                id = stream.pid();
+            } else {
+                id = 0x2000;
+                while (used.contains(id)) {
+                    id++;
+                }
+            }
+            continued.add(id);
+            used.add(id);
+            result.set(position, stream.withTrackId(id));
+        }
+        return result;
+    }
+
+    /**
+     * Keeps the parsers of a scan in step with the program map: starts it with the mapping in force at its
+     * first packet and, when the program map table (or the PID that carries it) changes during the scan,
+     * moves, adds and removes parsers so that every track keeps its parser.
+     */
+    private final class Mapper {
+        /**
+         * The scan.
+         */
+        private final TsScanner scanner;
+
+        /**
+         * Creates the parser of a track that joins the scan.
+         */
+        private final Function<Psi.StreamEntry, ElementaryParser> provider;
+
+        /**
+         * The program whose map is followed.
+         */
+        private final int programNumber;
+
+        /**
+         * The streams of the mapping in force, with their track identifiers.
+         */
+        private List<Psi.StreamEntry> current;
+
+        /**
+         * The section of the mapping in force.
+         */
+        private Psi.PmtSection section;
+
+        /**
+         * The parser of each track of the mapping in force, by track identifier.
+         */
+        private final Map<Integer, ElementaryParser> live = new HashMap<>();
+
+        /**
+         * The PID of the program map table.
+         */
+        private int pmtPid;
+
+        /**
+         * Receives the sections of a version met during the scan, or {@code null}.
+         */
+        private final VersionListener versions;
+
+        /**
+         * Starts following the program map in a scan.
+         *
+         * @param scanner the scan
+         * @param programNumber the program
+         * @param version the mapping in force at the scan's first packet
+         * @param provider creates the parser of a track, or returns {@code null} for a stream that is not exposed
+         * @param versions receives every new mapping met, or {@code null}
+         */
+        Mapper(TsScanner scanner, int programNumber, MapVersion version,
+               Function<Psi.StreamEntry, ElementaryParser> provider, VersionListener versions) {
+            this.scanner = scanner;
+            this.provider = provider;
+            this.programNumber = programNumber;
+            this.versions = versions;
+            this.current = List.of();
+            this.pmtPid = version.pmtPid();
+            install(version.pmt(), version.entries(), null);
+            scanner.watch(0, this::table);
+            scanner.watch(pmtPid, this::table);
+        }
+
+        /**
+         * Receives a section of the program association table or of the program map table.
+         *
+         * @param pid the PID
+         * @param bytes the section
+         * @param offset the offset of the packet in which it started
+         * @param sink the sink of the scan
+         */
+        private void table(int pid, byte[] bytes, long offset, ElementaryParser.UnitSink sink) {
+            var table = bytes[0] & 0xFF;
+            if (pid == 0 && table == Psi.PAT_TABLE) {
+                if (!Psi.isCurrent(bytes)) {
+                    return;
+                }
+                for (var entry : Psi.parsePat(bytes)) {
+                    if (entry.number() == programNumber && entry.pid() != pmtPid && entry.pid() != 0) {
+                        scanner.unwatch(pmtPid);
+                        pmtPid = entry.pid();
+                        scanner.watch(pmtPid, this::table);
+                    }
+                }
+            } else if (pid == pmtPid && table == Psi.PMT_TABLE && Psi.isCurrent(bytes)) {
+                var pmt = Psi.parsePmt(bytes);
+                if (pmt == null || pmt.number() != programNumber || pmt.sameStreams(section)) {
+                    return;
+                }
+                var known = knownVersion(pmt);
+                var entries = known != null ? known.entries() : assign(current, pmt, new HashSet<>(usedIds()));
+                if (known == null && versions == null && !mapsDiscovered) {
+                    for (var entry : entries) {
+                        if (!parsers.containsKey(entry.trackId()) && parserFor(entry, limits) != null) {
+                            throw new MediaException.Unsupported("mpeg-ts program map change", "the program map adds"
+                                    + " a stream on PID " + entry.pid() + ", which a source read once without a known"
+                                    + " size cannot describe in advance");
+                        }
+                    }
+                }
+                if (versions != null) {
+                    versions.version(new MapVersion(offset, pmtPid, pmt, entries));
+                }
+                install(pmt, entries, sink);
+            }
+        }
+
+        /**
+         * Returns the identifiers of the tracks of the mapping in force and of every known mapping.
+         *
+         * @return the identifiers
+         */
+        private Set<Integer> usedIds() {
+            var ids = new HashSet<Integer>();
+            for (var entry : current) {
+                ids.add(entry.trackId());
+            }
+            for (var version : mapVersions()) {
+                for (var entry : version.entries()) {
+                    ids.add(entry.trackId());
+                }
+            }
+            return ids;
+        }
+
+        /**
+         * Makes a mapping the one in force: keeps the parsers of the streams that stay on their PID, moves the
+         * parser of every track whose stream changed PID (after passing it the PES packet in progress on the old
+         * PID), gives the new tracks theirs, and flushes and drops those of the tracks the mapping leaves out.
+         *
+         * @param pmt the section
+         * @param entries its streams with their track identifiers
+         * @param sink receives what the dropped parsers still held, or {@code null} at the start of the scan
+         */
+        private void install(Psi.PmtSection pmt, List<Psi.StreamEntry> entries, ElementaryParser.UnitSink sink) {
+            var kept = new HashSet<Integer>();
+            var unchanged = new HashSet<Long>();
+            for (var entry : entries) {
+                kept.add(entry.trackId());
+            }
+            for (var old : current) {
+                for (var entry : entries) {
+                    if (entry.pid() == old.pid() && entry.trackId() == old.trackId()) {
+                        unchanged.add((long) old.pid() << 32 | old.trackId());
+                    }
+                }
+            }
+            for (var old : current) {
+                var parser = live.get(old.trackId());
+                if (parser == null || unchanged.contains((long) old.pid() << 32 | old.trackId())) {
+                    continue;
+                }
+                scanner.unparse(old.pid(), sink);
+                if (!kept.contains(old.trackId())) {
+                    live.remove(old.trackId());
+                    if (sink != null) {
+                        parser.flush(scanner.clock(), sink);
+                    }
+                }
+            }
+            for (var entry : entries) {
+                if (unchanged.contains((long) entry.pid() << 32 | entry.trackId())) {
+                    continue;
+                }
+                var parser = live.get(entry.trackId());
+                if (parser == null) {
+                    parser = provider.apply(entry);
+                    if (parser == null) {
+                        continue;
+                    }
+                    live.put(entry.trackId(), parser);
+                }
+                scanner.parse(entry.pid(), parser);
+            }
+            current = entries;
+            section = pmt;
+        }
+    }
+
+    /**
+     * Receives the program map versions met by a scan.
+     */
+    @FunctionalInterface
+    private interface VersionListener {
+        /**
+         * Receives one version.
+         *
+         * @param version the version, in force from the packet in which its section started
+         */
+        void version(MapVersion version);
+    }
+
+    /**
+     * Returns the known program map versions, in file order.
+     *
+     * @return the versions; during the probe, those found so far
+     */
+    private List<MapVersion> mapVersions() {
+        return versions != null ? versions : probeVersions;
+    }
+
+    /**
+     * Returns the known version that maps the same streams as a section.
+     *
+     * @param pmt the section
+     * @return the version, or {@code null}
+     */
+    private MapVersion knownVersion(Psi.PmtSection pmt) {
+        for (var version : mapVersions()) {
+            if (version.pmt().sameStreams(pmt)) {
+                return version;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Returns the program map version in force at a file offset.
+     *
+     * @param offset the offset of a packet
+     * @return the last version starting at or before it, the first one for an earlier offset
+     */
+    private MapVersion versionAt(long offset) {
+        var result = versions.getFirst();
+        for (var version : versions) {
+            if (version.offset() <= offset) {
+                result = version;
+            }
+        }
+        return result;
+    }
+
+    /**
      * Describes the programs and configures the parsers from the probe window.
      */
     private final class Probe {
@@ -382,14 +813,26 @@ public final class TsDemuxer implements Demuxer {
         private final Map<Integer, Integer> pmtPids = new LinkedHashMap<>();
 
         /**
-         * The parsed program map sections, by program number.
+         * The first program map section of each program, by program number.
          */
         private final Map<Integer, Psi.PmtSection> pmts = new HashMap<>();
 
         /**
-         * The parsers of the selected program, in program map order.
+         * The offset of the packet in which the first program map section of each program started, by program
+         * number.
          */
-        private final List<ElementaryParser> parsers = new ArrayList<>();
+        private final Map<Integer, Long> pmtOffsets = new HashMap<>();
+
+        /**
+         * The parser of every track of the selected program, by track identifier, in the order the tracks were
+         * met.
+         */
+        private final Map<Integer, ElementaryParser> parsers = new LinkedHashMap<>();
+
+        /**
+         * The track identifiers given out.
+         */
+        private final Set<Integer> used = new HashSet<>();
 
         /**
          * The earliest presentation time seen of each track, in 90 kHz ticks.
@@ -412,6 +855,11 @@ public final class TsDemuxer implements Demuxer {
         private boolean patSeen;
 
         /**
+         * The offset at which the scan of the selected program's probe window stopped.
+         */
+        private long scannedTo;
+
+        /**
          * Constructs the probe.
          *
          * @param options the program selection and probe window
@@ -421,7 +869,7 @@ public final class TsDemuxer implements Demuxer {
         }
 
         /**
-         * Reads the probe window.
+         * Reads the probe window, then looks for program map changes in the rest of the file.
          *
          * @throws MediaException.Unsupported if the requested program does not exist
          * @throws MediaException.Malformed if no program is found
@@ -430,20 +878,14 @@ public final class TsDemuxer implements Demuxer {
             var end = geometry.first() + options.probeBytes();
             probeScanner = new TsScanner(source, geometry, geometry.first(), end, limits, new TsClock(0, TsClock.NONE));
             probeScanner.watch(0, this::section);
-            ElementaryParser.UnitSink recorder = (packet, offset) -> {
-                var track = parserTrack(packet.trackId());
-                if (track == null || packet.pts() == Packet.NO_TIMESTAMP) {
-                    return;
-                }
-                var ticks = track.timeBase().rescale(packet.pts(), NalParser.TIME_BASE);
-                firstTimes.merge(packet.trackId(), ticks, Math::min);
-            };
+            ElementaryParser.UnitSink recorder = this::record;
             while (probeScanner.step(recorder)) {
                 if (selected != null && complete()) {
                     break;
                 }
             }
             probeScanner.finish(recorder);
+            scannedTo = probeScanner.position();
             if (selected == null) {
                 selectFallback();
             }
@@ -455,21 +897,22 @@ public final class TsDemuxer implements Demuxer {
                 throw new MediaException.Malformed(patSeen ? "no program map table found in the transport stream"
                         : "no program association table found in the transport stream");
             }
+            discover(scannedTo);
         }
 
         /**
-         * Returns the track of a configured parser.
+         * Records the presentation time of a probed packet.
          *
-         * @param pid the PID
-         * @return the track, or {@code null}
+         * @param packet a packet of a parser of the probe
+         * @param offset the file offset where a read reproduces it
          */
-        private Track parserTrack(int pid) {
-            for (var parser : parsers) {
-                if (parser.pid() == pid) {
-                    return parser.track();
-                }
+        private void record(Packet packet, long offset) {
+            var parser = parsers.get(packet.trackId());
+            if (parser == null || !parser.configured() || packet.pts() == Packet.NO_TIMESTAMP) {
+                return;
             }
-            return null;
+            var ticks = parser.track().timeBase().rescale(packet.pts(), NalParser.TIME_BASE);
+            firstTimes.merge(packet.trackId(), ticks, Math::min);
         }
 
         /**
@@ -478,8 +921,9 @@ public final class TsDemuxer implements Demuxer {
          * @return {@code true} when the probe can stop
          */
         private boolean complete() {
-            for (var parser : parsers) {
-                if (!parser.configured() || (parser.track().kind() != TrackKind.DATA && !firstTimes.containsKey(parser.pid()))) {
+            for (var parser : parsers.values()) {
+                if (!parser.configured() || (parser.track().kind() != TrackKind.DATA
+                        && !firstTimes.containsKey(parser.trackId()))) {
                     return false;
                 }
             }
@@ -487,12 +931,18 @@ public final class TsDemuxer implements Demuxer {
         }
 
         /**
-         * Receives a section of a watched PID.
+         * Receives a section of the program association table or of a program map table before a program is
+         * selected.
          *
          * @param pid the PID
          * @param section the reassembled PSI section
+         * @param offset the offset of the packet in which it started
+         * @param sink the sink of the scan
          */
-        private void section(int pid, byte[] section) {
+        private void section(int pid, byte[] section, long offset, ElementaryParser.UnitSink sink) {
+            if (!Psi.isCurrent(section)) {
+                return;
+            }
             var table = section[0] & 0xFF;
             if (pid == 0 && table == Psi.PAT_TABLE) {
                 if (patSeen) {
@@ -507,8 +957,9 @@ public final class TsDemuxer implements Demuxer {
                 }
             } else if (table == Psi.PMT_TABLE && pmtPids.containsValue(pid)) {
                 var pmt = Psi.parsePmt(section);
-                if (pmt != null && Objects.equals(pmtPids.get(pmt.number()), pid)) {
-                    pmts.putIfAbsent(pmt.number(), pmt);
+                if (pmt != null && Objects.equals(pmtPids.get(pmt.number()), pid) && !pmts.containsKey(pmt.number())) {
+                    pmts.put(pmt.number(), pmt);
+                    pmtOffsets.put(pmt.number(), offset);
                 }
             }
             if (selected == null) {
@@ -525,9 +976,8 @@ public final class TsDemuxer implements Demuxer {
             }
             var requested = options.program();
             if (requested.isPresent()) {
-                var pmt = pmts.get(requested.getAsInt());
-                if (pmt != null) {
-                    choose(pmt);
+                if (pmts.containsKey(requested.getAsInt())) {
+                    choose(requested.getAsInt(), probeScanner);
                 }
                 return;
             }
@@ -537,7 +987,7 @@ public final class TsDemuxer implements Demuxer {
                     return;
                 }
                 if (hasParsers(pmt)) {
-                    choose(pmt);
+                    choose(number, probeScanner);
                     return;
                 }
             }
@@ -554,25 +1004,17 @@ public final class TsDemuxer implements Demuxer {
             for (var number : pmtPids.keySet()) {
                 var pmt = pmts.get(number);
                 if (pmt != null && hasParsers(pmt)) {
-                    choose(pmt);
                     var replay = new TsScanner(source, geometry, geometry.first(), geometry.first() + options.probeBytes(),
                             limits, new TsClock(0, TsClock.NONE));
-                    for (var parser : parsers) {
-                        replay.parse(parser);
-                    }
-                    ElementaryParser.UnitSink recorder = (packet, offset) -> {
-                        var track = parserTrack(packet.trackId());
-                        if (track != null && packet.pts() != Packet.NO_TIMESTAMP) {
-                            firstTimes.merge(packet.trackId(), track.timeBase().rescale(packet.pts(), NalParser.TIME_BASE),
-                                    Math::min);
-                        }
-                    };
+                    choose(number, replay);
+                    ElementaryParser.UnitSink recorder = this::record;
                     while (replay.step(recorder)) {
                         if (complete()) {
                             break;
                         }
                     }
                     replay.finish(recorder);
+                    scannedTo = replay.position();
                     return;
                 }
             }
@@ -594,24 +1036,158 @@ public final class TsDemuxer implements Demuxer {
         }
 
         /**
-         * Selects a program and starts parsing its streams.
+         * Selects a program and follows its map in a scan from the start of the file.
          *
-         * @param pmt the program map section
+         * @param number the program number
+         * @param scanner the scan
          */
-        private void choose(Psi.PmtSection pmt) {
-            var pids = new ArrayList<Integer>();
-            for (var stream : pmt.streams()) {
-                pids.add(stream.pid());
-                if (parsers.stream().anyMatch(parser -> parser.pid() == stream.pid())) {
-                    continue;
-                }
-                var parser = parserFor(stream, limits);
+        private void choose(int number, TsScanner scanner) {
+            var pmt = pmts.get(number);
+            var pmtPid = pmtPids.get(number);
+            var first = new MapVersion(geometry.first(), pmtPid, pmt, assign(List.of(), pmt, used));
+            probeVersions.add(first);
+            selected = program(number, pmtPid, pmt);
+            new Mapper(scanner, number, first, this::parserOf, this::versionMet);
+        }
+
+        /**
+         * Returns the parser of a track, creating it the first time.
+         *
+         * @param entry the stream feeding the track
+         * @return the parser, or {@code null} for a stream that is not exposed
+         */
+        private ElementaryParser parserOf(Psi.StreamEntry entry) {
+            var parser = parsers.get(entry.trackId());
+            if (parser == null) {
+                parser = parserFor(entry, limits);
                 if (parser != null) {
-                    parsers.add(parser);
-                    probeScanner.parse(parser);
+                    parsers.put(entry.trackId(), parser);
                 }
             }
-            selected = new TsProgram(pmt.number(), pmtPids.get(pmt.number()), pmt.pcrPid(), pids);
+            return parser;
+        }
+
+        /**
+         * Records a program map version met while scanning.
+         *
+         * @param version the version, which a version at a later offset than every known one adds
+         */
+        private void versionMet(MapVersion version) {
+            if (version.offset() <= probeVersions.getLast().offset()) {
+                return;
+            }
+            for (var entry : version.entries()) {
+                used.add(entry.trackId());
+            }
+            probeVersions.add(version);
+        }
+
+        /**
+         * Looks for program map versions after the probe window, when the source is sized and cheap to reach:
+         * reads the last map of the file, finds where the map changes from the one in force by bisection, and
+         * repeats from there while the last map differs, configuring the parsers of the tracks each new version
+         * adds from the packets that follow it.
+         *
+         * @param from the offset where the probe window ended
+         */
+        private void discover(long from) {
+            var size = MeasuredSource.measure(source).size();
+            if (size < 0 || !ForwardOnlySource.isCheapToReach(source, size)) {
+                return;
+            }
+            mapsDiscovered = true;
+            if (size <= from) {
+                return;
+            }
+            var number = selected.number();
+            var last = probeVersions.getLast();
+            var lastOffset = alignedBefore(from);
+            var offset = alignedBefore(Math.max(from, size - MAP_TAIL_BYTES));
+            var found = map(offset, size, number, last.pmtPid(), true);
+            while (found == null && offset > lastOffset && size - offset < MAX_TAIL_WINDOW) {
+                var earlier = alignedBefore(Math.max(lastOffset, size - 2 * (size - offset)));
+                found = map(earlier, Math.min(size, offset + MAP_OVERLAP_BYTES), number, last.pmtPid(), true);
+                offset = earlier;
+            }
+            if (found != null) {
+                offset = found.offset();
+                while (!found.pmt().sameStreams(last.pmt())) {
+                    var change = locate(lastOffset, offset, number, last);
+                    var known = knownVersion(change.pmt());
+                    var entries = known != null ? known.entries() : assign(last.entries(), change.pmt(), used);
+                    var version = new MapVersion(change.offset(), change.pmtPid(), change.pmt(), entries);
+                    probeVersions.add(version);
+                    configureNew(version);
+                    last = version;
+                    if (change.offset() <= lastOffset) {
+                        break;
+                    }
+                    lastOffset = change.offset();
+                }
+            }
+        }
+
+        /**
+         * Finds by bisection the first program map section that differs from a version, between an offset where
+         * the next section read is that version's and one where it is not.
+         *
+         * @param low an offset whose next section is the version's
+         * @param high a later offset whose next section is not
+         * @param number the program
+         * @param last the version in force at {@code low}
+         * @return the first section that differs, with the offset of the packet in which it started
+         */
+        private FoundMap locate(long low, long high, int number, MapVersion last) {
+            while (high - low > geometry.packetSize()) {
+                var middle = alignedBefore(low + (high - low) / 2);
+                if (middle <= low) {
+                    break;
+                }
+                var probe = mapAt(middle, number, last.pmtPid());
+                if (probe == null || probe.pmt().sameStreams(last.pmt())) {
+                    low = middle;
+                } else {
+                    high = middle;
+                }
+            }
+            var located = mapAt(low, number, last.pmtPid());
+            if (located == null || located.pmt().sameStreams(last.pmt())) {
+                located = mapAt(high, number, last.pmtPid());
+            }
+            return located;
+        }
+
+        /**
+         * Configures the parsers of the tracks a program map version adds, from the packets that follow it.
+         *
+         * @param version the version, in force from its offset
+         */
+        private void configureNew(MapVersion version) {
+            var scan = new TsScanner(source, geometry, version.offset(), version.offset() + options.probeBytes(), limits,
+                    new TsClock(0, TsClock.NONE));
+            var added = new ArrayList<ElementaryParser>();
+            for (var entry : version.entries()) {
+                if (parsers.containsKey(entry.trackId())) {
+                    continue;
+                }
+                var parser = parserFor(entry, limits);
+                if (parser != null) {
+                    parsers.put(entry.trackId(), parser);
+                    added.add(parser);
+                    scan.parse(entry.pid(), parser);
+                }
+            }
+            if (added.isEmpty()) {
+                return;
+            }
+            ElementaryParser.UnitSink ignore = (packet, offset) -> {
+            };
+            while (scan.step(ignore)) {
+                if (added.stream().allMatch(ElementaryParser::configured)) {
+                    return;
+                }
+            }
+            scan.finish(ignore);
         }
 
         /**
@@ -623,13 +1199,8 @@ public final class TsDemuxer implements Demuxer {
             var result = new ArrayList<TsProgram>();
             for (var entry : pmtPids.entrySet()) {
                 var pmt = pmts.get(entry.getKey());
-                var pids = new ArrayList<Integer>();
-                if (pmt != null) {
-                    for (var stream : pmt.streams()) {
-                        pids.add(stream.pid());
-                    }
-                }
-                result.add(new TsProgram(entry.getKey(), entry.getValue(), pmt != null ? pmt.pcrPid() : 0x1FFF, pids));
+                result.add(pmt != null ? program(entry.getKey(), entry.getValue(), pmt)
+                        : new TsProgram(entry.getKey(), entry.getValue(), 0x1FFF, List.of()));
             }
             return result;
         }
@@ -653,31 +1224,124 @@ public final class TsDemuxer implements Demuxer {
     }
 
     /**
+     * Describes a program from its map section.
+     *
+     * @param number the program number
+     * @param pmtPid the PID of its map table
+     * @param pmt the map section
+     * @return the description
+     */
+    private static TsProgram program(int number, int pmtPid, Psi.PmtSection pmt) {
+        var pids = new ArrayList<Integer>();
+        for (var stream : pmt.streams()) {
+            pids.add(stream.pid());
+        }
+        return new TsProgram(number, pmtPid, pmt.pcrPid(), pids);
+    }
+
+    /**
+     * Describes the program map section found reading forwards from an offset.
+     *
+     * @param offset the offset of the packet in which the section started
+     * @param pmtPid the PID that carried it
+     * @param pmt the section
+     */
+    private record FoundMap(long offset, int pmtPid, Psi.PmtSection pmt) {
+    }
+
+    /**
+     * Reads forwards from an offset to the first current program map section of a program.
+     *
+     * @param offset a packet boundary
+     * @param number the program
+     * @param pmtPid the PID of its map table at the last known point; a program association table met first
+     * can move it
+     * @return the section, or {@code null} when none is found within {@value #MAP_SAMPLE_BYTES} bytes
+     */
+    private FoundMap mapAt(long offset, int number, int pmtPid) {
+        return map(offset, offset + MAP_SAMPLE_BYTES, number, pmtPid, false);
+    }
+
+    /**
+     * Reads a range of the file for the current program map sections of a program.
+     *
+     * @param offset a packet boundary where the read starts
+     * @param end the offset at which the read ends
+     * @param number the program
+     * @param pmtPid the PID of its map table at the last known point; a program association table met first
+     * can move it
+     * @param last whether to return the last section of the range rather than the first
+     * @return the section, or {@code null} when the range holds none
+     */
+    private FoundMap map(long offset, long end, int number, int pmtPid, boolean last) {
+        var scan = new TsScanner(source, geometry, offset, end, limits, new TsClock(0, TsClock.NONE));
+        var result = new FoundMap[1];
+        var pid = new int[]{pmtPid};
+        TsScanner.SectionListener listener = new TsScanner.SectionListener() {
+            @Override
+            public void section(int from, byte[] section, long at, ElementaryParser.UnitSink sink) {
+                if ((result[0] != null && !last) || !Psi.isCurrent(section)) {
+                    return;
+                }
+                var table = section[0] & 0xFF;
+                if (from == 0 && table == Psi.PAT_TABLE) {
+                    for (var entry : Psi.parsePat(section)) {
+                        if (entry.number() == number && entry.pid() != pid[0] && entry.pid() != 0) {
+                            scan.unwatch(pid[0]);
+                            pid[0] = entry.pid();
+                            scan.watch(pid[0], this);
+                        }
+                    }
+                } else if (from == pid[0] && table == Psi.PMT_TABLE) {
+                    var pmt = Psi.parsePmt(section);
+                    if (pmt != null && pmt.number() == number) {
+                        result[0] = new FoundMap(at, from, pmt);
+                    }
+                }
+            }
+        };
+        scan.watch(0, listener);
+        scan.watch(pmtPid, listener);
+        ElementaryParser.UnitSink ignore = (packet, at) -> {
+        };
+        while ((result[0] == null || last) && scan.step(ignore)) {
+            // the sections are delivered to the listener
+        }
+        return result[0];
+    }
+
+    /**
      * Creates the parser of an elementary stream.
      *
      * @param stream the program map entry
      * @param limits the resource bounds
-     * @return the parser, or {@code null} for a stream that is not carried in PES packets
+     * @return the parser, or {@code null} for a stream this demuxer does not expose
      */
     static ElementaryParser parserFor(Psi.StreamEntry stream, MediaLimits limits) {
-        var hdmv = stream.programRegistration() == Psi.HDMV;
+        var hdmv = stream.programRegistered(Psi.HDMV);
         return switch (stream.streamType()) {
-            case 0x01, 0x02 -> new PesParser(stream, limits, Codec.UNKNOWN_VIDEO, null);
+            case 0x01 -> new MpegVideoParser(stream, limits, Codec.MPEG1_VIDEO);
+            case 0x02 -> new MpegVideoParser(stream, limits, Codec.MPEG2_VIDEO);
             case 0x03, 0x04 -> new MpegAudioParser(stream, limits);
             case 0x0F -> new AdtsParser(stream, limits);
-            case 0x10 -> new PesParser(stream, limits, Codec.MPEG4_PART2, null);
+            case 0x10 -> new Mpeg4VideoParser(stream, limits);
             case 0x11 -> new LatmParser(stream, limits);
             case 0x15 -> new PesParser(stream, limits, Codec.DATA,
-                    stream.id3Metadata() || stream.registration() == Psi.ID3 ? PesParser.ID3_HANDLER : "metadata");
-            case 0x1B -> new NalParser(stream, limits, false);
-            case 0x24 -> new NalParser(stream, limits, true);
+                    stream.id3Metadata() || stream.registered(Psi.ID3) ? PesParser.ID3_HANDLER : "metadata");
+            case 0x1B -> new NalParser(stream, limits, Codec.H264);
+            case 0x24 -> new NalParser(stream, limits, Codec.HEVC);
+            case 0x33 -> new NalParser(stream, limits, Codec.VVC);
+            case 0x80 -> hdmv ? new PcmParser(stream, limits, false) : new PesParser(stream, limits, Codec.DATA, "private");
             case 0x81, 0x87 -> new Ac3Parser(stream, limits);
             case 0x84 -> hdmv ? new Ac3Parser(stream, limits) : new PesParser(stream, limits, Codec.DATA, "private");
-            case 0x80, 0x82, 0x83, 0x85, 0xA1, 0xA2 -> hdmv ? new PesParser(stream, limits, Codec.UNKNOWN_AUDIO, null)
+            case 0x82 -> hdmv ? new DtsParser(stream, limits) : new SniffingParser(stream, limits);
+            case 0x85, 0xA2 -> hdmv ? new DtsParser(stream, limits)
                     : new PesParser(stream, limits, Codec.DATA, "private");
-            case 0x86 -> hdmv ? new PesParser(stream, limits, Codec.UNKNOWN_AUDIO, null) : null;
-            case 0x90 -> new PesParser(stream, limits, Codec.DATA, hdmv ? "pgs" : "private");
-            case 0xEA -> new PesParser(stream, limits, Codec.UNKNOWN_VIDEO, null);
+            case 0x83, 0xA1 -> hdmv ? new PesParser(stream, limits, Codec.UNKNOWN_AUDIO, null)
+                    : new PesParser(stream, limits, Codec.DATA, "private");
+            case 0x86 -> hdmv ? new DtsParser(stream, limits) : new Scte35Parser(stream, limits);
+            case 0x90 -> new PesParser(stream, limits, Codec.PGS, null);
+            case 0xEA -> new Vc1Parser(stream, limits);
             case 0x06 -> privateParser(stream, limits);
             default -> stream.streamType() >= 0x80 ? new PesParser(stream, limits, Codec.DATA, "private") : null;
         };
@@ -691,24 +1355,34 @@ public final class TsDemuxer implements Demuxer {
      * @return the parser
      */
     private static ElementaryParser privateParser(Psi.StreamEntry stream, MediaLimits limits) {
-        var registration = stream.registration();
-        if (registration == Psi.OPUS) {
+        if (stream.registered(Psi.OPUS)) {
             return new OpusParser(stream, limits);
         }
-        if (stream.ac3Descriptor() || stream.eac3Descriptor() || registration == Psi.AC3 || registration == Psi.EAC3) {
+        if (stream.registered(Psi.AV1)) {
+            return new Av1Parser(stream, limits);
+        }
+        if (stream.registered(Psi.AES3)) {
+            return new PcmParser(stream, limits, true);
+        }
+        if (stream.ac3Descriptor() || stream.eac3Descriptor() || stream.registered(Psi.AC3)
+                || stream.registered(Psi.EAC3)) {
             return new Ac3Parser(stream, limits);
         }
-        if (registration == Psi.HEVC) {
-            return new NalParser(stream, limits, true);
+        if (stream.registered(Psi.HEVC)) {
+            return new NalParser(stream, limits, Codec.HEVC);
         }
-        if (registration == Psi.ID3 || stream.id3Metadata()) {
+        if (stream.dtsDescriptor() || stream.registered(Psi.DTS1) || stream.registered(Psi.DTS2)
+                || stream.registered(Psi.DTS3)) {
+            return new DtsParser(stream, limits);
+        }
+        if (stream.registered(Psi.ID3) || stream.id3Metadata()) {
             return new PesParser(stream, limits, Codec.DATA, PesParser.ID3_HANDLER);
         }
         if (stream.dvbSubtitles()) {
-            return new PesParser(stream, limits, Codec.DATA, "dvb_subtitle");
+            return new PesParser(stream, limits, Codec.DVB_SUBTITLE, null, stream.subtitling());
         }
         if (stream.teletext()) {
-            return new PesParser(stream, limits, Codec.DATA, "dvb_teletext");
+            return new PesParser(stream, limits, Codec.DVB_TELETEXT, null, stream.teletextPages());
         }
         return new SniffingParser(stream, limits);
     }
@@ -751,13 +1425,17 @@ public final class TsDemuxer implements Demuxer {
      */
     private TsScanner newScanner(long position, long end, long reference, boolean search) {
         var created = new TsScanner(source, geometry, position, end, limits, new TsClock(origin, reference));
-        for (var parser : parsers) {
+        new Mapper(created, program.number(), versionAt(position), entry -> {
+            var parser = parsers.get(entry.trackId());
+            if (parser == null) {
+                return null;
+            }
             var fresh = parser.fresh();
             if (search) {
                 fresh.keepLeadingUnits();
             }
-            created.parse(fresh);
-        }
+            return fresh;
+        }, null);
         return created;
     }
 
@@ -879,6 +1557,55 @@ public final class TsDemuxer implements Demuxer {
     @Override
     public Map<String, String> metadata() {
         return Map.of();
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The tags of a track are the first string of the ATSC component name descriptor of its program map entry,
+     * under {@code "title"}.
+     */
+    @Override
+    public Map<String, String> trackMetadata(int trackId) {
+        var parser = parserOf(trackId);
+        return parser == null || parser.entry.name() == null ? Map.of() : Map.of("title", parser.entry.name());
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The dispositions of a track are those the {@code audio_type} of the ISO 639 language descriptor of its
+     * program map entry names: 1 {@link TrackDisposition#CLEAN_EFFECTS}, 2
+     * {@link TrackDisposition#HEARING_IMPAIRED} and 3 {@link TrackDisposition#VISUAL_IMPAIRED}.
+     */
+    @Override
+    public Set<TrackDisposition> trackDisposition(int trackId) {
+        var parser = parserOf(trackId);
+        if (parser == null) {
+            return Set.of();
+        }
+        return TsDescriptors.dispositions(parser.entry.audioType());
+    }
+
+    /**
+     * Returns the parser of an exposed track.
+     *
+     * @param trackId the identifier of the track
+     * @return the parser, or {@code null} for an unknown track
+     */
+    private ElementaryParser parserOf(int trackId) {
+        return parsers.get(trackId);
+    }
+
+    /**
+     * {@return the PES presentation time, in 90 kHz ticks, that the demuxer's timeline
+     * starts from: the earliest presentation time of the probed packets, which the packets report as zero}
+     *
+     * @apiNote Streams of one program cut apart, such as the variants and renditions of an HLS presentation, share
+     * their PES timestamps; subtracting the differences of their origins puts their packets on one timeline.
+     */
+    public long originTicks() {
+        return origin;
     }
 
     @Override
@@ -1141,7 +1868,7 @@ public final class TsDemuxer implements Demuxer {
                 continue;
             }
             var pid = (packet[sync + 1] & 0x1F) << 8 | (packet[sync + 2] & 0xFF);
-            if (trackOf(pid) == null) {
+            if (!exposedPids.contains(pid)) {
                 continue;
             }
             var payload = sync + 4;
