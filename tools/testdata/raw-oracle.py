@@ -73,6 +73,10 @@ parameters of a Panasonic file, and the copies
 of CODE_COPIES, CRW files whose streams use every code of their table sets, which the script builds as the raw
 module's test-scope CrwCodeCopies does (both are pinned by SHA-256).
 
+For the Nikon HE and HE* samples of WINDOW_SAMPLES it keeps instead of the DNG file a <stem>.windows file (see
+write_windows: the SHA-256 of every photosite, the sums of the photosites of every band of 64 rows and the photosites
+of the four corners, the center and the first and last rows) and a <stem>.levels file, which NikonHighEfficiencyOracleTest compares the decoder with.
+
 Naming sample files converts only those (for example the MRW samples of SAMPLES), leaving the other
 oracle files in place.
 
@@ -461,6 +465,46 @@ GAP_SAMPLES = [
 
 SAMPLES += GAP_SAMPLES
 
+# Nikon HE and HE* files, whose DNG files the tests read only in part: each is kept as a <stem>.windows file (see
+# write_windows) and a <stem>.levels file
+WINDOW_SAMPLES = [
+    'rawpixls-nikon-z-9-8bit-8bit-compressed-3-2-5147.nef',
+    'rawpixls-nikon-z-9-8bit-8bit-compressed-3-2-5148.nef',
+    'rawpixls-nikon-z-8-8bit-8bit-compressed-3-2-6616.nef',
+    'rawpixls-nikon-z-8-8bit-8bit-compressed-3-2-6618.nef',
+    'rawpixls-nikon-z-f-8bit-8bit-lossy-compressed-3-2-6886.nef',
+    'rawpixls-nikon-z-f-8bit-8bit-lossy-compressed-3-2-6887.nef',
+    'rawpixls-nikon-z5-2-8bit-compressed-1-1-7735.nef',
+    'rawpixls-nikon-z5-2-8bit-compressed-16-9-7736.nef',
+    'rawpixls-nikon-z5-2-8bit-compressed-3-2-7737.nef',
+    'rawpixls-nikon-z5-2-8bit-compressed-3-2-7738.nef',
+    'rawpixls-nikon-z5-2-8bit-compressed-1-1-7740.nef',
+    'rawpixls-nikon-z5-2-8bit-compressed-16-9-7741.nef',
+    'rawpixls-nikon-z5-2-8bit-compressed-3-2-7742.nef',
+    'rawpixls-nikon-z5-2-8bit-compressed-3-2-7743.nef',
+    'rawpixls-nikon-z50-2-8bit-compressed-3-2-7763.nef',
+    'rawpixls-nikon-z50-2-8bit-compressed-3-2-7764.nef',
+    'rawpixls-nikon-z50-2-8bit-compressed-1-1-7766.nef',
+    'rawpixls-nikon-z50-2-8bit-compressed-1-1-7767.nef',
+    'rawpixls-nikon-z50-2-8bit-compressed-16-9-7769.nef',
+    'rawpixls-nikon-z50-2-8bit-compressed-16-9-7770.nef',
+    'rawpixls-nikon-z6-3-8bit-compressed-1-1-7808.nef',
+    'rawpixls-nikon-z6-3-8bit-compressed-16-9-7809.nef',
+    'rawpixls-nikon-z6-3-8bit-compressed-3-2-7810.nef',
+    'rawpixls-nikon-z6-3-8bit-compressed-3-2-7811.nef',
+    'rawpixls-nikon-z6-3-8bit-compressed-1-1-7812.nef',
+    'rawpixls-nikon-z6-3-8bit-compressed-16-9-7813.nef',
+    'rawpixls-nikon-z6-3-8bit-compressed-3-2-7814.nef',
+    'rawpixls-nikon-z6-3-8bit-compressed-3-2-7815.nef',
+]
+
+# the windows of a <stem>.windows file: the four corners of WINDOW_CORNER photosites square, the center of
+# WINDOW_CENTER, and the first and last WINDOW_ROWS rows; the band sums cover WINDOW_BAND rows each
+WINDOW_CORNER = 256
+WINDOW_CENTER = 512
+WINDOW_ROWS = 2
+WINDOW_BAND = 64
+
 # kept as <stem>.photosites summaries instead of DNG files, for their size
 SUMMARY_SAMPLES = GAP_SAMPLES + [
     'rawpixls-fujifilm-gfx-50s-14bit-14bit-compressed-3-2.raf',
@@ -665,6 +709,50 @@ def write_summary(path, target):
         lines.append(f'row {sample} {values[:width].tobytes().hex()}')
     with open(target, 'w', newline='\n') as output:
         output.write('\n'.join(lines) + '\n')
+
+
+def write_windows(path, target):
+    """Writes the <stem>.windows file of an uncompressed CFA DNG file: the magic "SMALTWIN", then as little-endian
+    32-bit integers the version 2, the width and height of the stored image, the band height and the number of windows;
+    then the SHA-256 of every photosite of the image as little-endian 16-bit words, row by row; then for every band of
+    WINDOW_BAND rows (the last one shorter) the sums of the photosites of each position of the
+    2x2 filter repeat (top-left, top-right, bottom-left, bottom-right) as little-endian 64-bit integers; then each
+    window: its left, top, width and height as 32-bit integers and its photosites as little-endian 16-bit words, row
+    by row."""
+    from array import array
+    _, width, height, spp, words = image_words(path)
+    if spp != 1:
+        sys.exit(f'not a one-sample CFA DNG: {path}')
+    corner, center = min(WINDOW_CORNER, width // 2, height // 2), min(WINDOW_CENTER, width, height)
+    windows = [(0, 0, corner, corner), (width - corner, 0, corner, corner), (0, height - corner, corner, corner),
+               (width - corner, height - corner, corner, corner),
+               ((width - center) // 2 & ~1, (height - center) // 2 & ~1, center, center),
+               (0, 0, width, WINDOW_ROWS), (0, height - WINDOW_ROWS, width, WINDOW_ROWS)]
+    bands = (height + WINDOW_BAND - 1) // WINDOW_BAND
+    sums = [0] * (bands * 4)
+    for y in range(height):
+        row = words[y * width:(y + 1) * width]
+        base = (y // WINDOW_BAND) * 4 + (y & 1) * 2
+        sums[base] += sum(row[0::2])
+        sums[base + 1] += sum(row[1::2])
+    image = array('H', words)
+    if sys.byteorder != 'little':
+        image.byteswap()
+    digest = hashlib.sha256(image.tobytes()).digest()
+    del image
+    with open(target, 'wb') as output:
+        output.write(b'SMALTWIN')
+        output.write(struct.pack('<5I', 2, width, height, WINDOW_BAND, len(windows)))
+        output.write(digest)
+        output.write(struct.pack('<%dQ' % len(sums), *sums))
+        for left, top, window_width, window_height in windows:
+            out = array('H')
+            for y in range(top, top + window_height):
+                out.extend(words[y * width + left:y * width + left + window_width])
+            if sys.byteorder != 'little':
+                out.byteswap()
+            output.write(struct.pack('<4I', left, top, window_width, window_height))
+            output.write(out.tobytes())
 
 
 def number(value):
@@ -1040,7 +1128,7 @@ def main():
         samples = sorted(name for name in vectors if name.startswith('rawpixls-') and name.endswith(('.orf', '.rw2', '.rwl')))
         samples += sorted(name for name in vectors if name.startswith('rawpixls-sony-') and name.endswith('.arw'))
     else:
-        samples = SAMPLES + VENDOR_SAMPLES + CURVE_SAMPLES
+        samples = SAMPLES + VENDOR_SAMPLES + CURVE_SAMPLES + WINDOW_SAMPLES
     if named:
         unknown = [name for name in named if name not in samples and name not in PATCHED_SAMPLES
                    and name not in CODE_COPIES]
@@ -1093,6 +1181,10 @@ def main():
                 os.remove(target)
             if not coverage and name in VENDOR_SAMPLES:
                 write_summary(target, os.path.splitext(target)[0] + '.photosites')
+                write_levels(target, os.path.splitext(target)[0] + '.levels')
+                os.remove(target)
+            if not coverage and name in WINDOW_SAMPLES:
+                write_windows(target, os.path.splitext(target)[0] + '.windows')
                 write_levels(target, os.path.splitext(target)[0] + '.levels')
                 os.remove(target)
             if (not coverage and name in CURVE_SAMPLES) or (coverage and name.endswith('.arw')):

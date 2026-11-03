@@ -32,8 +32,9 @@ import java.util.regex.Pattern;
  * before linearization; so is the placement of the sampled curves' points, with which the
  * expanded curves equal the converter's linearization tables entry for entry; as the converter
  * does, the 12-bit lossy files of the D3, D300 and D700, whose own curve ends early, take the curve
- * every file of version {@code 0x44 0x10} carries. Nikon's high-efficiency (HE and HE*)
- * compression is not supported. The interlaced rows of the {@code E}-series Coolpix
+ * every file of version {@code 0x44 0x10} carries. The high-efficiency (HE and HE*) data of the
+ * Z-series cameras, whose strip is a codestream in JPEG XS syntax, is decoded by
+ * {@link NikonHighEfficiency}. The interlaced rows of the {@code E}-series Coolpix
  * models were found by matching the rows of three CC0 files (E5700, E8400, E8800) with
  * those the converter stores, and the place of their white balance by finding the as-shot
  * neutral the converter stores among the maker note's values (E8400, E8800).
@@ -48,6 +49,11 @@ final class NefParser {
      * The size of the Coolpix maker note block (tag {@code 0x0014}) that holds the white balance.
      */
     private static final int COOLPIX_BALANCE_SIZE = 2560;
+
+    /**
+     * The most bytes of a high-efficiency codestream read to parse its main header.
+     */
+    private static final int HIGH_EFFICIENCY_HEADER = 4096;
 
     /**
      * The maker note tag pointing to the directory of the camera's JPEG preview, relative to the
@@ -90,7 +96,14 @@ final class NefParser {
         }
         var compression = raw.intValue(TiffSamples.COMPRESSION, 1);
         var sensor = new Sensor();
-        if (compression == NIKON_COMPRESSION) {
+        if (compression == NIKON_COMPRESSION && highEfficiency(reader, raw)) {
+            try {
+                highEfficiency(reader, raw, sensor);
+            } catch (MediaException.Unsupported exception) {
+                file.unsupported = exception.getMessage();
+                return;
+            }
+        } else if (compression == NIKON_COMPRESSION) {
             Compressed compressed;
             try {
                 compressed = compressed(reader, raw, note, file.model);
@@ -141,6 +154,55 @@ final class NefParser {
         }
         sensor.defaultCrop = previewCrop(file, sensor);
         file.sensor = sensor;
+    }
+
+    /**
+     * Returns whether the strip of a Nikon-compressed image holds high-efficiency (HE or HE*) data,
+     * which starts with the markers of {@link NikonHighEfficiency}.
+     *
+     * @param reader the TIFF structure
+     * @param raw the raw image directory
+     * @return whether the image is high-efficiency data
+     */
+    private static boolean highEfficiency(TiffReader reader, Ifd raw) {
+        var offsets = raw.longs(TiffSamples.STRIP_OFFSETS);
+        var counts = raw.longs(TiffSamples.STRIP_BYTE_COUNTS);
+        if (offsets == null || counts == null || offsets.length != 1 || counts.length != 1 || counts[0] < 4) {
+            return false;
+        }
+        var head = new byte[4];
+        var read = reader.readAvailable(reader.base() + offsets[0], head, 0, head.length);
+        return read == head.length && NikonHighEfficiency.matches(head);
+    }
+
+    /**
+     * Describes a high-efficiency image: the size its codestream header gives, 14 bits, and a
+     * reader decoding the whole strip.
+     *
+     * @param reader the TIFF structure
+     * @param raw the raw image directory
+     * @param sensor the sensor description to fill
+     * @throws MediaException.Unsupported if the codestream uses parameters no sample file has shown
+     * @throws MediaException.Malformed if its header is invalid or does not match the directory
+     */
+    private static void highEfficiency(TiffReader reader, Ifd raw, Sensor sensor) {
+        var offset = reader.base() + raw.longs(TiffSamples.STRIP_OFFSETS)[0];
+        var length = raw.longs(TiffSamples.STRIP_BYTE_COUNTS)[0];
+        var head = reader.bytes(offset, Math.min(length, HIGH_EFFICIENCY_HEADER));
+        var header = NikonHighEfficiency.header(head);
+        if (header.length() != length || header.width() != raw.intValue(TiffSamples.IMAGE_WIDTH, 0)
+                || header.height() != raw.intValue(TiffSamples.IMAGE_LENGTH, 0)) {
+            throw new MediaException.Malformed("the NEF high-efficiency codestream does not match its directory");
+        }
+        sensor.width = header.width();
+        sensor.height = header.height();
+        sensor.bitsPerSample = 14;
+        sensor.compression = header.star() ? "Nikon HE*" : "Nikon HE";
+        sensor.white = new double[]{(1 << 14) - 1};
+        sensor.reader = (plane, limits) -> {
+            LimitChecks.checkAllocation(limits, length);
+            NikonHighEfficiency.decode(reader.bytes(offset, length), header, plane, limits);
+        };
     }
 
     /**

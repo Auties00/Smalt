@@ -19,7 +19,7 @@ import java.util.zip.CRC32;
  * {@link TinyDng} in every sample layout and by {@link DngSpecSamples} in the layouts and profile features of DNG
  * 1.2 to 1.7, synthetic Pentax pixel-shift and Sony ARQ files ({@link PixelShiftFiles}), a smoke-tier GoPro GPR file of VC-5 sensor data, synthetic Sigma X3F files ({@link X3fWriter}) and Canon CR3 files ({@link Cr3Writer}), a smoke-tier DNG
  * and full-tier files of every camera raw format (three for CR3: a lossless file, a version 2 C-RAW file and a
- * version 1 C-RAW file of two tiles),
+ * version 1 C-RAW file of two tiles, and a Nikon HE file),
  * comparing each with its golden dump under {@code src/test/resources/dumps}.
  */
 @DisplayName("raw decoder I/O behaviors")
@@ -319,6 +319,18 @@ class RawDecoderBehaviorTest {
             + "encrypted SR2 directory and of CRW table set 1: identical pictures and sensor data under every source "
             + "behavior and clean faults")
     void gaps(String name) throws IOException {
+        harness("vectors/" + name, Files.readAllBytes(Conformance.fetchListed(name)))
+                .noScaled()
+                .maxFaultReads(4)
+                .timeout(Duration.ofMinutes(5))
+                .run();
+    }
+
+    @Test
+    @DisplayName("a full-tier Nikon HE file: identical pictures and sensor data under every source behavior and clean "
+            + "faults")
+    void nikonHighEfficiency() throws IOException {
+        var name = "rawpixls-nikon-z6-3-8bit-compressed-3-2-7810.nef";
         harness("vectors/" + name, Files.readAllBytes(Conformance.fetchListed(name)))
                 .noScaled()
                 .maxFaultReads(4)

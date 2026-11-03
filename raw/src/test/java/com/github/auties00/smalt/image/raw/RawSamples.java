@@ -1675,6 +1675,252 @@ public enum RawSamples {
             "8ff982526d215d337706640cc6aa0822cccbe65a86ebe01daef0fd43cb45a4ca"),
 
     /**
+     * rawpixls-nikon-z-9-8bit-8bit-compressed-3-2-5146.nef (57580695 bytes).
+     */
+    NEF_Z9_LOSSLESS("rawpixls-nikon-z-9-8bit-8bit-compressed-3-2-5146.nef", "https://raw.pixls.us/getfile.php/5146/nice/Nikon%20-%20Z%209%20-%208bit%208bit%20compressed%20%283%3A2%29.NEF",
+            "99d0fe24a38f0f7623aeab21440d266a5ac09f9665cf5283f590337e84323c38"),
+
+    /**
+     * rawpixls-nikon-z-9-8bit-8bit-compressed-3-2-5147.nef (35592704 bytes).
+     */
+    NEF_Z9_HE_STAR("rawpixls-nikon-z-9-8bit-8bit-compressed-3-2-5147.nef", "https://raw.pixls.us/getfile.php/5147/nice/Nikon%20-%20Z%209%20-%208bit%208bit%20compressed%20%283%3A2%29.NEF",
+            "e113deb305d84153b26251ce259d1f839be1f36b048cbe83a4548cbda806c0f5"),
+
+    /**
+     * rawpixls-nikon-z-9-8bit-8bit-compressed-3-2-5148.nef (24839168 bytes).
+     */
+    NEF_Z9_HE("rawpixls-nikon-z-9-8bit-8bit-compressed-3-2-5148.nef", "https://raw.pixls.us/getfile.php/5148/nice/Nikon%20-%20Z%209%20-%208bit%208bit%20compressed%20%283%3A2%29.NEF",
+            "be91bac25573adf7ec6320a542105d87b4fb9c956d7b620ec90d57ac2ae6c3f0"),
+
+    /**
+     * rawpixls-nikon-z-8-8bit-8bit-compressed-3-2-6616.nef (24384512 bytes).
+     */
+    NEF_Z8_HE("rawpixls-nikon-z-8-8bit-8bit-compressed-3-2-6616.nef", "https://raw.pixls.us/getfile.php/6616/nice/Nikon%20-%20Z%208%20-%208bit%208bit%20compressed%20%283%3A2%29.NEF",
+            "82df041542b8d328738443bb5ff3373b396e406ecc8cbe7dc3b35252790c53e7"),
+
+    /**
+     * rawpixls-nikon-z-8-8bit-8bit-compressed-3-2-6617.nef (60842580 bytes).
+     */
+    NEF_Z8_LOSSLESS("rawpixls-nikon-z-8-8bit-8bit-compressed-3-2-6617.nef", "https://raw.pixls.us/getfile.php/6617/nice/Nikon%20-%20Z%208%20-%208bit%208bit%20compressed%20%283%3A2%29.NEF",
+            "c13a8675294456b9c979e6c1e556951654f35377b2870af2874bfb556f21ce40"),
+
+    /**
+     * rawpixls-nikon-z-8-8bit-8bit-compressed-3-2-6618.nef (35744768 bytes).
+     */
+    NEF_Z8_HE_STAR("rawpixls-nikon-z-8-8bit-8bit-compressed-3-2-6618.nef", "https://raw.pixls.us/getfile.php/6618/nice/Nikon%20-%20Z%208%20-%208bit%208bit%20compressed%20%283%3A2%29.NEF",
+            "ea8b093cd11c946c5eeb501b775859e8e617ce1d79577abc41b233c339e4004c"),
+
+    /**
+     * rawpixls-nikon-z-f-14bit-14bit-compressed-3-2-6885.nef (31109991 bytes).
+     */
+    NEF_ZF_LOSSLESS("rawpixls-nikon-z-f-14bit-14bit-compressed-3-2-6885.nef", "https://raw.pixls.us/getfile.php/6885/nice/Nikon%20-%20Z%20f%20-%2014bit%2014bit%20compressed%20%283%3A2%29.NEF",
+            "83c82be0be8865d796096dfbcc8ef2abf5af1bd37db44dfad6715070b0c99d15"),
+
+    /**
+     * rawpixls-nikon-z-f-8bit-8bit-lossy-compressed-3-2-6886.nef (19627008 bytes).
+     */
+    NEF_ZF_HE_STAR("rawpixls-nikon-z-f-8bit-8bit-lossy-compressed-3-2-6886.nef", "https://raw.pixls.us/getfile.php/6886/nice/Nikon%20-%20Z%20f%20-%208bit%208bit%20lossy%20compressed%20%283%3A2%29.NEF",
+            "c888f109dc420e359853a2ce768d8a6274b8ba0109b2f5cb6e0c982981d5a624"),
+
+    /**
+     * rawpixls-nikon-z-f-8bit-8bit-lossy-compressed-3-2-6887.nef (13462016 bytes).
+     */
+    NEF_ZF_HE("rawpixls-nikon-z-f-8bit-8bit-lossy-compressed-3-2-6887.nef", "https://raw.pixls.us/getfile.php/6887/nice/Nikon%20-%20Z%20f%20-%208bit%208bit%20lossy%20compressed%20%283%3A2%29.NEF",
+            "98d6ca8e6c98048ca7ffed68ccaeda7b2b9f03807f0d320d97d5678db21748c2"),
+
+    /**
+     * rawpixls-nikon-z5-2-8bit-compressed-1-1-7735.nef (8875008 bytes).
+     */
+    NEF_Z5II_HE_1_1("rawpixls-nikon-z5-2-8bit-compressed-1-1-7735.nef", "https://raw.pixls.us/getfile.php/7735/nice/Nikon%20-%20Z5_2%20-%208bit%20compressed%20%281%3A1%29.NEF",
+            "465aba7a444c013063b3a85d7dca1595e4ce1c77fdd115b781b952d490af7258"),
+
+    /**
+     * rawpixls-nikon-z5-2-8bit-compressed-16-9-7736.nef (11314176 bytes).
+     */
+    NEF_Z5II_HE_16_9("rawpixls-nikon-z5-2-8bit-compressed-16-9-7736.nef", "https://raw.pixls.us/getfile.php/7736/nice/Nikon%20-%20Z5_2%20-%208bit%20compressed%20%2816%3A9%29.NEF",
+            "6d087e8860491a9a871edbd145fa9a423ad41e06d787be4e0fec30b925c38218"),
+
+    /**
+     * rawpixls-nikon-z5-2-8bit-compressed-3-2-7737.nef (6174720 bytes).
+     */
+    NEF_Z5II_HE_DX("rawpixls-nikon-z5-2-8bit-compressed-3-2-7737.nef", "https://raw.pixls.us/getfile.php/7737/nice/Nikon%20-%20Z5_2%20-%208bit%20compressed%20%283%3A2%29.NEF",
+            "196971ea960cfa6f5c0a19cebe515ac118e079c57ceeef850ab3a4995dc7d20f"),
+
+    /**
+     * rawpixls-nikon-z5-2-8bit-compressed-3-2-7738.nef (12580864 bytes).
+     */
+    NEF_Z5II_HE_FX("rawpixls-nikon-z5-2-8bit-compressed-3-2-7738.nef", "https://raw.pixls.us/getfile.php/7738/nice/Nikon%20-%20Z5_2%20-%208bit%20compressed%20%283%3A2%29.NEF",
+            "d8938c5df60f23ea848498752549bc053b2885af4a4ca11746a27c4c220b3457"),
+
+    /**
+     * rawpixls-nikon-z5-2-8bit-compressed-1-1-7740.nef (12679680 bytes).
+     */
+    NEF_Z5II_HE_STAR_1_1("rawpixls-nikon-z5-2-8bit-compressed-1-1-7740.nef", "https://raw.pixls.us/getfile.php/7740/nice/Nikon%20-%20Z5_2%20-%208bit%20compressed%20%281%3A1%29.NEF",
+            "a605497e0581f4ff174bfd341b596df3253aa7755264cb706e4063d9a1470fc7"),
+
+    /**
+     * rawpixls-nikon-z5-2-8bit-compressed-16-9-7741.nef (16578048 bytes).
+     */
+    NEF_Z5II_HE_STAR_16_9("rawpixls-nikon-z5-2-8bit-compressed-16-9-7741.nef", "https://raw.pixls.us/getfile.php/7741/nice/Nikon%20-%20Z5_2%20-%208bit%20compressed%20%2816%3A9%29.NEF",
+            "06069e1c3fcd4f56e38cfa7508310c9cc0e21dc530cd9f332edea51372056ccc"),
+
+    /**
+     * rawpixls-nikon-z5-2-8bit-compressed-3-2-7742.nef (8701440 bytes).
+     */
+    NEF_Z5II_HE_STAR_DX("rawpixls-nikon-z5-2-8bit-compressed-3-2-7742.nef", "https://raw.pixls.us/getfile.php/7742/nice/Nikon%20-%20Z5_2%20-%208bit%20compressed%20%283%3A2%29.NEF",
+            "276ef4ad5f02e7917eb959c2f4fcfd19bf2fe9f6b9e3725a93877e43e6ec8eed"),
+
+    /**
+     * rawpixls-nikon-z5-2-8bit-compressed-3-2-7743.nef (18844160 bytes).
+     */
+    NEF_Z5II_HE_STAR_FX("rawpixls-nikon-z5-2-8bit-compressed-3-2-7743.nef", "https://raw.pixls.us/getfile.php/7743/nice/Nikon%20-%20Z5_2%20-%208bit%20compressed%20%283%3A2%29.NEF",
+            "b44bb31787098631a396b553454a8ebf960766d9b538521ce9852896bd6df3a8"),
+
+    /**
+     * rawpixls-nikon-z5-2-8bit-compressed-1-1-7744.nef (20220027 bytes).
+     */
+    NEF_Z5II_LOSSLESS_1_1("rawpixls-nikon-z5-2-8bit-compressed-1-1-7744.nef", "https://raw.pixls.us/getfile.php/7744/nice/Nikon%20-%20Z5_2%20-%208bit%20compressed%20%281%3A1%29.NEF",
+            "133d8a624f2d39769dec3cb9e7b9ae81971ae8787b5e8d0675bc6ecd27ddef4b"),
+
+    /**
+     * rawpixls-nikon-z5-2-8bit-compressed-3-2-7745.nef (29537212 bytes).
+     */
+    NEF_Z5II_LOSSLESS_FX("rawpixls-nikon-z5-2-8bit-compressed-3-2-7745.nef", "https://raw.pixls.us/getfile.php/7745/nice/Nikon%20-%20Z5_2%20-%208bit%20compressed%20%283%3A2%29.NEF",
+            "387d613e1f81e43a704bc349d7c64ef297880a8f306b001baf8be39856c532de"),
+
+    /**
+     * rawpixls-nikon-z5-2-8bit-compressed-3-2-7746.nef (13835273 bytes).
+     */
+    NEF_Z5II_LOSSLESS_DX("rawpixls-nikon-z5-2-8bit-compressed-3-2-7746.nef", "https://raw.pixls.us/getfile.php/7746/nice/Nikon%20-%20Z5_2%20-%208bit%20compressed%20%283%3A2%29.NEF",
+            "ba6c66ece60b18eaf6a3461ecfbccd346af785a1db311b3e651ae0284232a1c8"),
+
+    /**
+     * rawpixls-nikon-z50-2-8bit-compressed-3-2-7762.nef (27501049 bytes).
+     */
+    NEF_Z50II_LOSSLESS_DX("rawpixls-nikon-z50-2-8bit-compressed-3-2-7762.nef", "https://raw.pixls.us/getfile.php/7762/nice/Nikon%20-%20Z50_2%20-%208bit%20compressed%20%283%3A2%29.NEF",
+            "a3314a026524396e603b461afc4fe61a8a5a3958232f3687bb1c8eca0dcbed93"),
+
+    /**
+     * rawpixls-nikon-z50-2-8bit-compressed-3-2-7763.nef (17646080 bytes).
+     */
+    NEF_Z50II_HE_STAR_DX("rawpixls-nikon-z50-2-8bit-compressed-3-2-7763.nef", "https://raw.pixls.us/getfile.php/7763/nice/Nikon%20-%20Z50_2%20-%208bit%20compressed%20%283%3A2%29.NEF",
+            "0add1dad5776669a4896640de31b128032f893e13418f6569da7a4744a05ed42"),
+
+    /**
+     * rawpixls-nikon-z50-2-8bit-compressed-3-2-7764.nef (12438016 bytes).
+     */
+    NEF_Z50II_HE_DX("rawpixls-nikon-z50-2-8bit-compressed-3-2-7764.nef", "https://raw.pixls.us/getfile.php/7764/nice/Nikon%20-%20Z50_2%20-%208bit%20compressed%20%283%3A2%29.NEF",
+            "71c12d398e6f5a01e0e32c2211c40cafdb29e85ba1e17c4f65e7a4e958754c54"),
+
+    /**
+     * rawpixls-nikon-z50-2-8bit-compressed-1-1-7765.nef (18641028 bytes).
+     */
+    NEF_Z50II_LOSSLESS_1_1("rawpixls-nikon-z50-2-8bit-compressed-1-1-7765.nef", "https://raw.pixls.us/getfile.php/7765/nice/Nikon%20-%20Z50_2%20-%208bit%20compressed%20%281%3A1%29.NEF",
+            "ba925fc9fed35a82e279eb4e102d2221e36d35a8df3e21fb24037e0e518b715a"),
+
+    /**
+     * rawpixls-nikon-z50-2-8bit-compressed-1-1-7766.nef (11932672 bytes).
+     */
+    NEF_Z50II_HE_STAR_1_1("rawpixls-nikon-z50-2-8bit-compressed-1-1-7766.nef", "https://raw.pixls.us/getfile.php/7766/nice/Nikon%20-%20Z50_2%20-%208bit%20compressed%20%281%3A1%29.NEF",
+            "605f903e4c07a534c812288bfe3b0ce00716cfb0905c134f7e418e228f455040"),
+
+    /**
+     * rawpixls-nikon-z50-2-8bit-compressed-1-1-7767.nef (8443392 bytes).
+     */
+    NEF_Z50II_HE_1_1("rawpixls-nikon-z50-2-8bit-compressed-1-1-7767.nef", "https://raw.pixls.us/getfile.php/7767/nice/Nikon%20-%20Z50_2%20-%208bit%20compressed%20%281%3A1%29.NEF",
+            "99b2a569356fb084d6946fa6e0b501b014e6e004be0a8e8d564a7b9dab91857e"),
+
+    /**
+     * rawpixls-nikon-z50-2-8bit-compressed-16-9-7768.nef (23267980 bytes).
+     */
+    NEF_Z50II_LOSSLESS_16_9("rawpixls-nikon-z50-2-8bit-compressed-16-9-7768.nef", "https://raw.pixls.us/getfile.php/7768/nice/Nikon%20-%20Z50_2%20-%208bit%20compressed%20%2816%3A9%29.NEF",
+            "32909911193eb2a84db377fd8fd984e2d6ca3646f678ce17932766bbfaa42bb4"),
+
+    /**
+     * rawpixls-nikon-z50-2-8bit-compressed-16-9-7769.nef (14885888 bytes).
+     */
+    NEF_Z50II_HE_STAR_16_9("rawpixls-nikon-z50-2-8bit-compressed-16-9-7769.nef", "https://raw.pixls.us/getfile.php/7769/nice/Nikon%20-%20Z50_2%20-%208bit%20compressed%20%2816%3A9%29.NEF",
+            "ea847c786c0f0524b8587769c5c29d15194b2bc01eef9cc9babf35d5b554f466"),
+
+    /**
+     * rawpixls-nikon-z50-2-8bit-compressed-16-9-7770.nef (10363904 bytes).
+     */
+    NEF_Z50II_HE_16_9("rawpixls-nikon-z50-2-8bit-compressed-16-9-7770.nef", "https://raw.pixls.us/getfile.php/7770/nice/Nikon%20-%20Z50_2%20-%208bit%20compressed%20%2816%3A9%29.NEF",
+            "663fd340edbf91cae2e754c2c5c0b2e49e3a25b7a471c1379ecffdb01cfe1599"),
+
+    /**
+     * rawpixls-nikon-z6-3-8bit-compressed-1-1-7808.nef (9021440 bytes).
+     */
+    NEF_Z6III_HE_1_1("rawpixls-nikon-z6-3-8bit-compressed-1-1-7808.nef", "https://raw.pixls.us/getfile.php/7808/nice/Nikon%20-%20Z6_3%20-%208bit%20compressed%20%281%3A1%29.NEF",
+            "da2fd1a263bb9985776d8c40aa2bdcb89dd7d8cc55bfa44dd851727c43709af8"),
+
+    /**
+     * rawpixls-nikon-z6-3-8bit-compressed-16-9-7809.nef (11616768 bytes).
+     */
+    NEF_Z6III_HE_16_9("rawpixls-nikon-z6-3-8bit-compressed-16-9-7809.nef", "https://raw.pixls.us/getfile.php/7809/nice/Nikon%20-%20Z6_3%20-%208bit%20compressed%20%2816%3A9%29.NEF",
+            "890e6bf952bf87d37491f8a6bd7bbfae3c464e08063767d57bf0d97d588d30df"),
+
+    /**
+     * rawpixls-nikon-z6-3-8bit-compressed-3-2-7810.nef (6520320 bytes).
+     */
+    NEF_Z6III_HE_DX("rawpixls-nikon-z6-3-8bit-compressed-3-2-7810.nef", "https://raw.pixls.us/getfile.php/7810/nice/Nikon%20-%20Z6_3%20-%208bit%20compressed%20%283%3A2%29.NEF",
+            "a8fa2cacadcf9dc85475ebcf37fcc32614072bc155e39d01491cb9e293c1343d"),
+
+    /**
+     * rawpixls-nikon-z6-3-8bit-compressed-3-2-7811.nef (13429248 bytes).
+     */
+    NEF_Z6III_HE_FX("rawpixls-nikon-z6-3-8bit-compressed-3-2-7811.nef", "https://raw.pixls.us/getfile.php/7811/nice/Nikon%20-%20Z6_3%20-%208bit%20compressed%20%283%3A2%29.NEF",
+            "9ae7346adb3b16f011d1d3c11b4c7ae2ab0231c64111dff3fad8e28dd55353c8"),
+
+    /**
+     * rawpixls-nikon-z6-3-8bit-compressed-1-1-7812.nef (13130240 bytes).
+     */
+    NEF_Z6III_HE_STAR_1_1("rawpixls-nikon-z6-3-8bit-compressed-1-1-7812.nef", "https://raw.pixls.us/getfile.php/7812/nice/Nikon%20-%20Z6_3%20-%208bit%20compressed%20%281%3A1%29.NEF",
+            "b026ebf6a3ee851925a8a9a44134e39cf3cddd6b383d39aafff15df2b418c89e"),
+
+    /**
+     * rawpixls-nikon-z6-3-8bit-compressed-16-9-7813.nef (16825344 bytes).
+     */
+    NEF_Z6III_HE_STAR_16_9("rawpixls-nikon-z6-3-8bit-compressed-16-9-7813.nef", "https://raw.pixls.us/getfile.php/7813/nice/Nikon%20-%20Z6_3%20-%208bit%20compressed%20%2816%3A9%29.NEF",
+            "b84499212126ef8bab31aa2b150f6dbf8cb6e0e2aab7ca669d85c3259784ecc5"),
+
+    /**
+     * rawpixls-nikon-z6-3-8bit-compressed-3-2-7814.nef (9169408 bytes).
+     */
+    NEF_Z6III_HE_STAR_DX("rawpixls-nikon-z6-3-8bit-compressed-3-2-7814.nef", "https://raw.pixls.us/getfile.php/7814/nice/Nikon%20-%20Z6_3%20-%208bit%20compressed%20%283%3A2%29.NEF",
+            "1c7be7b9081fcbd8bb75b28a8432531fae4dc56acda6b7f41a32625fb2555600"),
+
+    /**
+     * rawpixls-nikon-z6-3-8bit-compressed-3-2-7815.nef (19554816 bytes).
+     */
+    NEF_Z6III_HE_STAR_FX("rawpixls-nikon-z6-3-8bit-compressed-3-2-7815.nef", "https://raw.pixls.us/getfile.php/7815/nice/Nikon%20-%20Z6_3%20-%208bit%20compressed%20%283%3A2%29.NEF",
+            "10eea35531eb5427c171ab5158d064b79844a9fe039f8ca971b20c4f3be36cfd"),
+
+    /**
+     * rawpixls-nikon-z6-3-8bit-compressed-1-1-7816.nef (21993695 bytes).
+     */
+    NEF_Z6III_LOSSLESS_1_1("rawpixls-nikon-z6-3-8bit-compressed-1-1-7816.nef", "https://raw.pixls.us/getfile.php/7816/nice/Nikon%20-%20Z6_3%20-%208bit%20compressed%20%281%3A1%29.NEF",
+            "ffd2eae3f5bdfd58edea142761107af70ad11a54abdd87b5896d8dba029f038c"),
+
+    /**
+     * rawpixls-nikon-z6-3-8bit-compressed-16-9-7817.nef (28255075 bytes).
+     */
+    NEF_Z6III_LOSSLESS_16_9("rawpixls-nikon-z6-3-8bit-compressed-16-9-7817.nef", "https://raw.pixls.us/getfile.php/7817/nice/Nikon%20-%20Z6_3%20-%208bit%20compressed%20%2816%3A9%29.NEF",
+            "883db3023a5b502931b3d8470424ae03fe7fa77d0c0e54141687fab949cef6b2"),
+
+    /**
+     * rawpixls-nikon-z6-3-8bit-compressed-3-2-7818.nef (15481018 bytes).
+     */
+    NEF_Z6III_LOSSLESS_DX("rawpixls-nikon-z6-3-8bit-compressed-3-2-7818.nef", "https://raw.pixls.us/getfile.php/7818/nice/Nikon%20-%20Z6_3%20-%208bit%20compressed%20%283%3A2%29.NEF",
+            "7f214d6ea98e2eea44347d42e4dee0b7fa3ccab12c29275e2d029775685b74b5"),
+
+    /**
+     * rawpixls-nikon-z6-3-8bit-compressed-3-2-7819.nef (32956558 bytes).
+     */
+    NEF_Z6III_LOSSLESS_FX("rawpixls-nikon-z6-3-8bit-compressed-3-2-7819.nef", "https://raw.pixls.us/getfile.php/7819/nice/Nikon%20-%20Z6_3%20-%208bit%20compressed%20%283%3A2%29.NEF",
+            "17180e80555c149c5954a8a2f09459ede593b49731f1941f7094be105f3520e2"),
+
+    /**
      * rawpixls-leica-digilux-3-4-3.raw (15041536 bytes).
      */
     RW2_DIGILUX_3_4_3("rawpixls-leica-digilux-3-4-3.raw", "https://raw.pixls.us/getfile.php/4884/nice/Leica%20-%20Digilux%203%20-%204%3A3.RAW",

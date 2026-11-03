@@ -7484,6 +7484,9 @@ Derived Smalt packages:
   JxsEncoderCore: the header,
   precinct and quantization coding of PackHeaders.c, PackPrecinct.c, Quant.c
   and NltEnc.c; JxsWeights: the band weight tables of WeightTable.c)
+  image.raw.internal (NikonHighEfficiency: the bit-plane count decoding of
+  Packing.c, the uniform dequantization of Dequant.c and the 5/3 synthesis of
+  Idwt.c, applied to the JPEG XS syntax of Nikon's high-efficiency NEF data)
 
 Derivation: C code translated to Java and tables copied.
 
