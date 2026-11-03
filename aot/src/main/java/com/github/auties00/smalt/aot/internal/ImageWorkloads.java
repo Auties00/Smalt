@@ -129,7 +129,8 @@ import static com.github.auties00.smalt.aot.internal.WorkloadFactory.realtime;
 /**
  * Creates the workloads of {@link TrainingFamily#IMAGE}, the codecs of {@code smalt-image}: the
  * still-image and animation codecs and their metadata, each on synthetic content that is encoded
- * once, when the workload is created, and the VP8 video codec.
+ * once, when the workload is created, and the VP8 video codec; {@link ImageFormatWorkloads} adds the other
+ * image formats and the image video codecs.
  */
 final class ImageWorkloads {
     /**
@@ -155,6 +156,18 @@ final class ImageWorkloads {
      * @return the factories, in order
      */
     static List<WorkloadFactory> factories() {
+        var factories = new ArrayList<>(codecFactories());
+        factories.addAll(ImageFormatWorkloads.factories());
+        return List.copyOf(factories);
+    }
+
+    /**
+     * Returns the factories of the workloads of the VP8, JPEG, PNG, GIF, WebP, JPEG XL, TIFF, JPEG 2000, ICO and BMP
+     * codecs and of the image metadata.
+     *
+     * @return the factories, in order
+     */
+    private static List<WorkloadFactory> codecFactories() {
         return List.of(
                 realtime("vp8-encode-rt-s6-t1", () -> vp8Encode(1, 6)),
                 realtime("vp8-encode-rt-s6-t2", () -> vp8Encode(2, 6)),

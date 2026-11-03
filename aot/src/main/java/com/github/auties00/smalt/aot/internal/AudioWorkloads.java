@@ -17,6 +17,7 @@ import com.github.auties00.smalt.audio.alac.AlacDecoder;
 import com.github.auties00.smalt.audio.alac.AlacEncoder;
 import com.github.auties00.smalt.audio.alac.AlacEncoderOptions;
 import com.github.auties00.smalt.audio.atrac9.Atrac9Decoder;
+import com.github.auties00.smalt.audio.dst.DstDecoder;
 import com.github.auties00.smalt.audio.flac.FlacDecoder;
 import com.github.auties00.smalt.audio.flac.FlacEncoder;
 import com.github.auties00.smalt.audio.flac.FlacEncoderOptions;
@@ -77,9 +78,9 @@ import static com.github.auties00.smalt.aot.internal.WorkloadFactory.realtime;
 /**
  * Creates the workloads of {@link TrainingFamily#AUDIO}, the codecs of {@code smalt-audio}: Opus,
  * Vorbis, FLAC, ALAC, MP3, MP2, IMA and Microsoft ADPCM, G.722, G.726 and GSM 06.10 encoding and decoding, Speex,
- * WavPack, Monkey's Audio, Musepack and ATRAC9 decoding, the DSD to PCM conversion of {@code smalt-core}, and the
- * voice processor, each on synthetic speech or
- * music and keeping its codecs across rounds as a long-running application does.
+ * WavPack, Monkey's Audio, Musepack, ATRAC9 and DST decoding, the DSD to PCM conversion of {@code smalt-core}, and
+ * the voice processor, each on synthetic speech or music and keeping its codecs across rounds as a long-running
+ * application does.
  */
 final class AudioWorkloads {
     /**
@@ -157,7 +158,8 @@ final class AudioWorkloads {
                 file("ape-decode", AudioWorkloads::apeDecode),
                 file("musepack-decode", AudioWorkloads::musepackDecode),
                 file("dsd-decode", AudioWorkloads::dsdDecode),
-                file("atrac9-decode", AudioWorkloads::atrac9Decode));
+                file("atrac9-decode", AudioWorkloads::atrac9Decode),
+                file("dst-decode", AudioWorkloads::dstDecode));
     }
 
     /**
@@ -300,6 +302,44 @@ final class AudioWorkloads {
             rounds.add(AudioStreams.decode(name, stream.packets(), new Atrac9Decoder((AudioTrack) stream.track())));
         }
         return sequence("atrac9-decode", rounds);
+    }
+
+    /**
+     * Returns a workload that decodes DST to PCM: eight frames of stereo DSD64 and four of mono DSD128, coded by
+     * {@link SyntheticDst} from sigma-delta modulated tones.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload dstDecode() {
+        var rounds = new ArrayList<TrainingWorkload>();
+        for (var format : new int[][]{{2, 2_822_400, 8}, {1, 5_644_800, 4}}) {
+            var stream = dstStream(format[0], format[1], format[2]);
+            rounds.add(AudioStreams.decode("dst-" + format[0], stream.packets(),
+                    new DstDecoder((AudioTrack) stream.track())));
+        }
+        return sequence("dst-decode", rounds);
+    }
+
+    /**
+     * Returns a DST track of synthetic DSD and its frames as packets.
+     *
+     * @param channels the number of channels
+     * @param rate the DSD rate in bits per second per channel, a multiple of 600
+     * @param frames the number of frames
+     * @return the track and its packets
+     */
+    static TrainingStreams.Demuxed dstStream(int channels, int rate, int frames) {
+        var frameBytes = rate / 600;
+        var dsd = SyntheticDst.dsd(channels, rate, frameBytes * frames);
+        var track = AudioTrack.builder().id(1).codec(Codec.DST).timeBase(new Rational(1, rate)).sampleRate(rate)
+                .layout(ChannelLayout.defaultFor(channels)).build();
+        var packets = new ArrayList<Packet>();
+        var duration = frameBytes * 8L;
+        for (var frame : SyntheticDst.encode(dsd, channels, frameBytes)) {
+            var pts = packets.size() * duration;
+            packets.add(new Packet(1, frame, pts, pts, duration, true));
+        }
+        return new TrainingStreams.Demuxed(track, List.copyOf(packets));
     }
 
     /**

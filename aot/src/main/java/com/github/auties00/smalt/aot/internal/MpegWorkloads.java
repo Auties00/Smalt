@@ -92,9 +92,10 @@ import static com.github.auties00.smalt.aot.internal.WorkloadFactory.file;
 import static com.github.auties00.smalt.aot.internal.WorkloadFactory.realtime;
 
 /**
- * Creates the workloads of {@link TrainingFamily#MPEG}, the codecs of {@code smalt-mpeg}: H.264, HEVC, HEIC,
- * MPEG-1 and MPEG-2 video, MPEG-4 Part 2, H.263, AAC, AC-3 and E-AC-3, and AMR, each keeping its codecs across
- * rounds as a long-running application does.
+ * Creates the workloads of {@link TrainingFamily#MPEG}, the codecs of {@code smalt-mpeg}: H.264, HEVC, HEIC, VVC,
+ * MPEG-1 and MPEG-2 video, VC-1, MPEG-4 Part 2, H.263, AAC, AC-3 and E-AC-3, DTS and AMR, each keeping its codecs
+ * across rounds as a long-running application does; {@link MpegStreamWorkloads} adds the coding tools only bundled
+ * reference streams exercise.
  */
 final class MpegWorkloads {
     /**
@@ -115,9 +116,18 @@ final class MpegWorkloads {
      * @return the factories, in order
      */
     static List<WorkloadFactory> factories() {
-        // TODO: train the USAC decoder, the H.263 decoder of the modes the H.263 encoder does not code (PB-frames,
-        //  B-pictures, scalability and the optional modes beyond Annexes D, F, I, J, K and T), and the separate color
-        //  plane path of the H.264 decoder, which need streams that no Smalt encoder produces
+        var factories = new ArrayList<>(codecFactories());
+        factories.addAll(MpegStreamWorkloads.factories());
+        return List.copyOf(factories);
+    }
+
+    /**
+     * Returns the factories of the workloads that code with Smalt's encoders or bundled streams of the MPEG video,
+     * VC-1 and VVC decoders.
+     *
+     * @return the factories, in order
+     */
+    private static List<WorkloadFactory> codecFactories() {
         return List.of(
                 realtime("h264-encode-rt-t1", () -> h264Encode(1, null, null)),
                 realtime("h264-encode-rt-tools", MpegWorkloads::h264RealtimeTools),

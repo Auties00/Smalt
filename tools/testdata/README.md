@@ -947,7 +947,11 @@ compares with the committed MD5s), and the `README.md` and `.sha256` file next t
 and pin the files. `theora-oracle/make-fuzz-seeds.py` and `ffv1/make-fuzz-seeds.py` write the `valid-*` seeds of
 `VideoFuzzTest.theora` and `VideoFuzzTest.ffv1` (the FFV1 ones from ffmpeg 7.1's FFV1 encoder in AVI). A few of the
 vectors are also the training streams of `smalt-aot` (`aot/src/main/resources/.../aot/internal/{theora,speex,wavpack,ape,musepack}`; its `dsd` streams are the DSD
-behavior samples of `behavior/make-lossless-dsd-samples.py`).
+behavior samples of `behavior/make-lossless-dsd-samples.py`). So are copies of other modules' pinned vectors, which
+`aot/src/test/resources/.../aot/internal/streams.sha256` pins again and traces to their origin: OpenEXR files of
+`behavior/make-exr-vectors.py` (`exr`), JPEG XR files of `behavior/make-jxr-vectors.py` (`jxr`), H.263 streams of
+`h263-annexes/make-vectors.py` (`h263`), the JM streams of separately coded H.264 color planes (`h264`) and the
+libxaac USAC seeds of `MpegFuzzTest` (`usac`).
 
 ## Adding a vector
 

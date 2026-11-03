@@ -1,0 +1,46 @@
+# SHA-256 of the training streams this module bundles, each a copy of a pinned test vector of another module:
+# exr: image's OpenEXR vectors (tools/testdata/behavior/make-exr-vectors.py, OpenEXR 3.5.2, exr.sha256);
+# jxr: image's JPEG XR vectors (tools/testdata/behavior/make-jxr-vectors.py, jxrlib 1.1 JxrEncApp, jxr.tsv);
+# h263: mpeg's H.263 annex streams (tools/testdata/h263-annexes/make-vectors.py, TMN 3.2 and h263enc.py, golden.tsv);
+# h264: mpeg's separate color plane streams (JM, video/h264/chroma444/streams.tsv);
+# usac: mpeg's USAC fuzz seeds (libxaac's encoder, MpegFuzzTestInputs/aac/valid-usac-*.bin).
+e1e0218c80d12b3fc1f9bbe801da3f0834a9fc920e3235cf244cb38f9c67ccdc  exr/deep-scanline-zips.exr
+3a879cbf5f0847cb309d88f6895fbb85b12393ef87f8dcd14dc8c8f970d952ff  exr/float-pxr24.exr
+2171e3fcb1403e301a45d95faac0463b6fde700662deaf92e15521f651b112d6  exr/luminance-chroma-piz.exr
+ab19de4bda7d1100a28dc5245471f8aae47088d3788a0a77a76d3c40f9874f1f  exr/multipart.exr
+64e47c20fb248c5fbd92c8a9b5bc43720f28b549ef5bbcb8823ab99d39507d11  exr/scanline-b44a.exr
+34b90bce521eb05a06367f7d66b17d75bbc7703f017c70699bf098b2c86652b2  exr/scanline-dwab.exr
+ac8924b22e38a966d038a6f8b2f2993751444e494784e3c8e5fdc3d034931fcd  exr/scanline-htj2k32.exr
+b794cb4d541cfd461f8aca6715ba1f98c386de0e0aaa3f4a7a864e40330ea5fa  exr/scanline-piz.exr
+b32e0ff09a8ed78b6b1b81153ef7cb3c5978d2a41bebfbcc3715d80e368cb9bd  exr/scanline-pxr24.exr
+67ed1d23cc9d351789641292c9274570a963cc6b7997d509b76c496cad26732f  exr/scanline-rle.exr
+3640d2ce62859f99c936598589093aa3b5a33979d6dae105ff9807d1b2eb6c39  exr/scanline-zips.exr
+3a0e2535a6b9c4ea36ff6a44d18ea75d05a475885bcf7fe4c4bcb630059eac42  exr/scanline-zstd.exr
+b5e2b946fd7549d4f84a55a42e1eb7dbefe1128d4627a3b0a8ed0d05fc140a6f  exr/tiled-mipmap-zip.exr
+2556ede9878cdc52c4e1f29be7191d7c48f4924f9baa64de0a8839ae83af6d84  jxr/bgr565-q40.jxr
+575db4b9663abe185c33d5dd0c72a3e07727bfedfd38b4a7cdbf55eff8c7b4ca  jxr/bgra8-hardd1l1.jxr
+5b8a648107bb4d9349657ee32a0a4bdd539f093a74599a1f3e779bd98e90823b  jxr/bgra8-q30tile-a3.jxr
+6317465f3ae4c0db62dfcfe74f94382aa84a9c32e693b17268b62be3924d1192  jxr/bgra8-q40-a2.jxr
+8c93d276835db5aba5ba6b53fd1a3aeb1da40454471b6378b29210c50ac8e91f  jxr/cmyk8-ic-q80.jxr
+24b54db2e49fc0a9ed83faa2d1c110773237fab3561644dab034c080fbecdb3b  jxr/gray16-q40.jxr
+9f27432db9ff59059bd8f613315e3e04741b1081528f35a37802a0352d3b3809  jxr/rgb8-q1.jxr
+82e75144b26f6163a0cfce4165804a9645ef20eccad4d9afd7bc0c14a211b487  jxr/rgb8-q20d2l2.jxr
+fd22d2b864617d8dd3e60020a103fe02cda750dbaf371eccbd05e9ca3b25d2e4  jxr/rgb8-q30tilesp.jxr
+1818a21d4a2e85fd1d728326ac65c6800854a8bebb0070049fba5bca82e27ddf  jxr/rgb8-q30trim.jxr
+f3fa7ddeb0ef5f397c2719f29a7ded0beb53f1dae5f69dff5f38d1c0628790be  jxr/rgbe-q40.jxr
+d18c38b34f10daf5127bc429606fe6188f85cb61b416af3b3091bc2b491824ef  jxr/rgbh-q40.jxr
+3db66e77a4a955db480dbe10a81d11d799a8d7738d83a0fbdabcf0ea6f320398  h263/smalt-b.263
+722399e5cdd42aa77f167ea11e1756b80a0bb62bec68ef8dfa93a77eb5e89d5d  h263/smalt-dps-ipb.263
+2e6cbcc1d85997f5d205c313c3040d2d5cad12c3d1756c2f2840a31b4ebc0dcb  h263/smalt-isd-rect.263
+37410dc9265f04e8c6aad19ce8c30e54adf4e2a8c0937cdc21c787939213c9d0  h263/smalt-ist.263
+ef59dabe33cd3da87662cd93eaee664f917b9a33f8fce53db170149f1f237d87  h263/smalt-rpr.263
+509a7570cb57b7e46e61f78370b4d9ca70f88b6f08c5be4482e0b62968f4c854  h263/smalt-rru.263
+881d007d0502f2498e01195cde0b641b8f348a29f6fdb65f58378df1503b265b  h263/tmn-pb-sac.263
+12848c386e1af0d2684ac719ba8b6309286c045c578db9976045259a887a46b9  h263/tmn-snr.263
+77e41b485bb9a2bc811971e448057880362a4482cf5f1086e8887bc3b9a721d1  h263/tmn-spatial-horizontal.263
+0c05709da586e9d8f2616a3adf4b8abdbf760c216b8415b46a098721d305fa6e  h264/m8-cabac-slices-sep.264
+9fc46c0685539c4c2773d728561076499a4ed36b90e50ea6fc5470c7acf622b8  h264/m8-cavlc-scaling-sep.264
+aede3ea78a92c6e88eb4a6ce2db1225523fdb051beeae70859d46ff26f4ea145  h264/m8-cavlc-sep.264
+0231e35cf80acbb6e3eab086ed42efb4529992240734deafdb3c03fe7d3dd419  usac/usac-fd-stereo.bin
+6a321c3fc23135c0aa9ff63ba9e89d54da316492564c1657433ad9b19cc8d477  usac/usac-mps212.bin
+b8ca3b150616d3f39598a1643d944ed5a410417a25ffd4cae989e942de358ee3  usac/usac-switched-esbr-drc.bin

@@ -98,7 +98,7 @@ import static com.github.auties00.smalt.aot.internal.WorkloadFactory.file;
 
 /**
  * Creates the workloads of {@link TrainingFamily#TRANSCODE}, the transcoder, containers and
- * processing of {@code smalt-core}.
+ * processing of {@code smalt-core}; {@link ContainerWorkloads} adds the other containers and the subtitle files.
  */
 final class TranscodeWorkloads {
     /**
@@ -114,6 +114,18 @@ final class TranscodeWorkloads {
      * @return the factories, in order
      */
     static List<WorkloadFactory> factories() {
+        var factories = new ArrayList<>(processingFactories());
+        factories.addAll(ContainerWorkloads.factories());
+        return List.copyOf(factories);
+    }
+
+    /**
+     * Returns the factories of the workloads of the transcoder, the MP4, Matroska, MPEG-TS, MPEG-PS, MXF, WAV and
+     * Y4M containers, and image and audio processing.
+     *
+     * @return the factories, in order
+     */
+    private static List<WorkloadFactory> processingFactories() {
         return List.of(
                 file("transcode", TranscodeWorkloads::transcode),
                 file("transcode-video-processing", TranscodeWorkloads::videoProcessing),

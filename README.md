@@ -2197,6 +2197,8 @@ checks a FLAC source's MD5 signature on the way.
 - Container providers: the transcoder writes only the `OutputContainer` profiles, so a container a provider adds
   that `ContainerFormat` does not name (`ContainerFormat.OTHER`) is a transcode input but not a transcode output;
   `Containers.openMuxer(String, MediaSink)` writes it.
+- AOT training: `smalt-aot` has no workload for Phase One IIQ files, whose sensor data the raw decoder does not
+  read; a cache trained with `SmaltTraining` covers them only when the application's own workloads use them.
 
 ---
 
@@ -3241,6 +3243,13 @@ transcoder, containers and processing of `smalt-core`), and every workload belon
 files and streams coded ahead of time, `REALTIME` for the low-delay encoders and decoders, the voice
 processor and the capture conversion. Train the families of the artifacts you use, and only the real-time
 mode if that is the latency you care about (`TrainingOptions.forRealtime()`).
+
+The content is synthetic and written by Smalt itself: by its encoders, and for the formats it only reads by small
+writers in `smalt-aot` that simulate the decoders they feed (the camera raw files of every vendor the raw decoder
+reads, Photoshop documents, DDS textures, DST frames, PGS and DVD subtitles, ASF files). The coding tools no writer
+of Smalt produces train on reference streams the artifact bundles, each a copy of a pinned test vector: OpenEXR
+files of each compression family, JPEG XR files, USAC, the optional modes of H.263, H.264 with separately coded color
+planes, and the MPEG-2, VC-1, VVC, DTS, Speex, Theora, WavPack, Monkey's Audio, Musepack, DSD and ATRAC9 streams.
 
 From your application's own training mode (any application, and the only route on the module path, where
 the application module `requires com.github.auties00.smalt.aot`), adding your workloads so that one cache
