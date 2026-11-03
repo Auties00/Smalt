@@ -9,6 +9,7 @@ import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.internal.header.AdtsHeader;
 import com.github.auties00.smalt.internal.header.Crc32Mpeg;
 import com.github.auties00.smalt.internal.io.ByteWriter;
+import com.github.auties00.smalt.internal.codec.JxsConfigs;
 import com.github.auties00.smalt.internal.codec.Ac3Configs;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
@@ -18,6 +19,7 @@ import com.github.auties00.smalt.internal.codec.VideoConfigs;
 import com.github.auties00.smalt.internal.nal.NalRecords;
 import com.github.auties00.smalt.internal.nal.NalUnits;
 import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.internal.tags.TsDescriptors;
@@ -75,6 +77,10 @@ import java.util.PriorityQueue;
  *   <li>MPEG-1 and MPEG-2 video ({@code 0x01}, {@code 0x02}, ids from {@code 0xE0}): frames as they are, a key
  *       frame that does not start with a sequence header getting the one of the track's configuration, when it
  *       has one;</li>
+ *   <li>JPEG XS ({@code 0x32}, id {@code 0xBD}, the JPEG XS video descriptor of Rec. ITU-T H.222.0 Annex W when the
+ *       track has a configuration): every frame becomes an access unit that starts with the {@code jxes} elementary
+ *       stream header, built from the track's configuration and color description or, without a configuration,
+ *       from the first frame's picture header and the track's frame rate and field order;</li>
  *   <li>AAC ({@code 0x0F}, ids from {@code 0xC0}): every packet gets an ADTS header built from the
  *       {@code AudioSpecificConfig} (HE-AAC is signaled implicitly, by its core);</li>
  *   <li>MP3 and MP2 ({@code 0x03}, or {@code 0x04} below 32 kHz, ids from {@code 0xC0}): frames as
@@ -425,13 +431,13 @@ public final class TsMuxer implements Muxer {
      * Returns whether transport streams written by this muxer can carry a codec.
      *
      * @param codec the codec of a track to add
-     * @return {@code true} for H.264, HEVC, VVC, AV1, MPEG-4 Part 2, MPEG-1 and MPEG-2 video, AAC, MP3, MP2, AC-3,
-     * E-AC-3, Opus, 16-bit and 24-bit PCM, PGS and DVB subtitles, DVB teletext, and data
+     * @return {@code true} for H.264, HEVC, VVC, AV1, MPEG-4 Part 2, MPEG-1 and MPEG-2 video, JPEG XS, AAC, MP3, MP2,
+     * AC-3, E-AC-3, Opus, 16-bit and 24-bit PCM, PGS and DVB subtitles, DVB teletext, and data
      */
     public static boolean supports(Codec codec) {
         return switch (Objects.requireNonNull(codec, "codec")) {
-            case H264, HEVC, VVC, AV1, MPEG4_PART2, MPEG1_VIDEO, MPEG2_VIDEO, AAC, MP3, MP2, AC3, EAC3, OPUS, PCM_S16LE,
-                 PCM_S16BE, PCM_S24LE, PCM_S24BE, PGS, DVB_SUBTITLE, DVB_TELETEXT, DATA -> true;
+            case H264, HEVC, VVC, AV1, MPEG4_PART2, MPEG1_VIDEO, MPEG2_VIDEO, JPEG_XS, AAC, MP3, MP2, AC3, EAC3, OPUS,
+                 PCM_S16LE, PCM_S16BE, PCM_S24LE, PCM_S24BE, PGS, DVB_SUBTITLE, DVB_TELETEXT, DATA -> true;
             default -> false;
         };
     }
@@ -592,6 +598,14 @@ public final class TsMuxer implements Muxer {
                 stream.parameterSets = config == null ? new byte[0] : config;
                 stream.streamType = track.codec() == Codec.MPEG1_VIDEO ? 0x01 : 0x02;
                 stream.streamId = 0xE0 + Math.min(video, 15);
+            }
+            case JPEG_XS -> {
+                stream.streamType = 0x32;
+                stream.streamId = 0xBD;
+                stream.jxsConfig = JxsConfigs.parseConfig(config);
+                if (stream.jxsConfig != null) {
+                    jxsDescriptor(descriptors, (VideoTrack) track, stream.jxsConfig);
+                }
             }
             case PCM_S16LE, PCM_S16BE, PCM_S24LE, PCM_S24BE -> {
                 configurePcm(stream);
@@ -1353,10 +1367,70 @@ public final class TsMuxer implements Muxer {
     private static byte[] videoPayload(Stream stream, Packet packet) {
         return switch (stream.track.codec()) {
             case AV1 -> av1AccessUnit(stream, packet);
+            case JPEG_XS -> jxsAccessUnit(stream, packet);
             case MPEG4_PART2 -> mpeg4Frame(stream, packet);
             case MPEG1_VIDEO, MPEG2_VIDEO -> mpegVideoFrame(stream, packet);
             default -> annexB(stream, packet);
         };
+    }
+
+    /**
+     * Prefixes a JPEG XS frame with the {@code jxes} elementary stream header of Rec. ITU-T H.222.0 Annex W, built from
+     * the track's configuration or, without one, from the frame's picture header and the track.
+     *
+     * @param stream the JPEG XS stream
+     * @param packet the frame: one codestream, or two for an interlaced frame
+     * @return the access unit
+     * @throws IllegalArgumentException if the packet does not start with a JPEG XS codestream
+     */
+    private static byte[] jxsAccessUnit(Stream stream, Packet packet) {
+        var data = packet.data();
+        if (stream.jxsConfig == null) {
+            var picture = JxsConfigs.picture(data, 0, data.length);
+            if (picture == null) {
+                throw new IllegalArgumentException("a JPEG XS packet of track " + packet.trackId()
+                        + " does not start with a codestream");
+            }
+            var video = (VideoTrack) stream.track;
+            stream.jxsConfig = new JxsConfigs.Config(0, JxsConfigs.frat(video.frameRate().orElse(null),
+                    video.interlacing().orElse(null)), JxsConfigs.schar(picture), 0, picture.profile(),
+                    picture.level());
+        }
+        var header = JxsConfigs.jxes(stream.jxsConfig, ((VideoTrack) stream.track).color().orElse(null));
+        var unit = new byte[header.length + data.length];
+        System.arraycopy(header, 0, unit, 0, header.length);
+        System.arraycopy(data, 0, unit, header.length, data.length);
+        return unit;
+    }
+
+    /**
+     * Writes the JPEG XS video descriptor (extension descriptor 0x14 of Rec. ITU-T H.222.0 Annex W) of a track.
+     *
+     * @param out the descriptors
+     * @param track the JPEG XS track
+     * @param config its configuration
+     */
+    private static void jxsDescriptor(ByteWriter out, VideoTrack track, JxsConfigs.Config config) {
+        var color = track.color().orElse(null);
+        out.u8(0x3F);
+        out.u8(30);
+        out.u8(0x14);
+        out.u8(0);
+        out.u16be(track.width());
+        out.u16be(track.height());
+        out.u32be(config.brat());
+        out.u32be(config.frat() & 0xFFFFFFFFL);
+        out.u16be(config.schar());
+        out.u16be(config.profile());
+        out.u8(config.level() >>> 8);
+        out.u8(config.level() & 0xFF);
+        out.u32be(0);
+        out.u8(0);
+        out.u8(color == null ? 2 : color.primaries().code());
+        out.u8(color == null ? 2 : color.transfer().code());
+        out.u8(color == null ? 2 : color.matrix().code());
+        out.u8((color != null && color.range() == ColorRange.FULL ? 0x80 : 0) | 0x7F);
+        out.u8(0);
     }
 
     /**
@@ -2255,6 +2329,11 @@ public final class TsMuxer implements Muxer {
          * The codec configuration the packets being converted use, initially the track's.
          */
         byte[] appliedConfig;
+
+        /**
+         * The configuration of a JPEG XS track, from its configuration or its first frame, or {@code null}.
+         */
+        JxsConfigs.Config jxsConfig;
 
         /**
          * The {@code channel_config_code} of an Opus track.

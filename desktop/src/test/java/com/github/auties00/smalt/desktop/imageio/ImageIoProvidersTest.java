@@ -56,7 +56,7 @@ class ImageIoProvidersTest {
         assertEquals(List.of(ImageFormat.PNG, ImageFormat.WEBP, ImageFormat.HEIC, ImageFormat.AVIF, ImageFormat.ICO,
                 ImageFormat.ANI, ImageFormat.JP2, ImageFormat.JXL, ImageFormat.DNG, ImageFormat.RAW, ImageFormat.PNM,
                 ImageFormat.TGA, ImageFormat.QOI, ImageFormat.HDR, ImageFormat.ICNS, ImageFormat.PSD, ImageFormat.EXR,
-                ImageFormat.JXR, ImageFormat.DDS), provider.formats());
+                ImageFormat.JXR, ImageFormat.DDS, ImageFormat.JPEG_XS), provider.formats());
         var names = Arrays.asList(provider.getFormatNames());
         assertTrue(names.contains("webp"));
         assertTrue(names.contains("avif"));
@@ -72,6 +72,9 @@ class ImageIoProvidersTest {
         assertTrue(names.contains("dng"));
         assertTrue(names.contains("raw"));
         assertTrue(Arrays.asList(provider.getFileSuffixes()).containsAll(List.of("nef", "arq")));
+        assertTrue(names.contains("jxs"));
+        assertTrue(Arrays.asList(provider.getFileSuffixes()).containsAll(List.of("jxs", "jxc")));
+        assertTrue(Arrays.asList(provider.getMIMETypes()).contains("image/jxs"));
         assertFalse(names.contains("tiff"));
         assertFalse(names.contains("png"));
         assertFalse(names.contains("jpeg"));
@@ -79,7 +82,7 @@ class ImageIoProvidersTest {
     }
 
     @Test
-    @DisplayName("the WebP, AVIF, JPEG XL and HEIC writers are registered")
+    @DisplayName("the WebP, AVIF, JPEG XL, HEIC and JPEG XS writers are registered")
     void writers() {
         var webp = list(ImageIO.getImageWritersByFormatName("webp"));
         assertEquals(1, webp.size());
@@ -100,6 +103,10 @@ class ImageIoProvidersTest {
         assertTrue(registered.stream().anyMatch(AvifImageWriterSpi.class::isInstance));
         assertTrue(registered.stream().anyMatch(JxlImageWriterSpi.class::isInstance));
         assertTrue(registered.stream().anyMatch(HeicImageWriterSpi.class::isInstance));
+        var jxs = list(ImageIO.getImageWritersBySuffix("jxs"));
+        assertEquals(1, jxs.size());
+        assertInstanceOf(SmaltImageWriter.class, jxs.getFirst());
+        assertTrue(registered.stream().anyMatch(JpegXsImageWriterSpi.class::isInstance));
     }
 
     @Test

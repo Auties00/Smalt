@@ -57,7 +57,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Re-reads the images Smalt writes with the formats' reference decoders: libpng (through
- * {@code tools/testdata/png-oracle}), libjpeg-turbo's djpeg, libwebp's dwebp, OpenJPEG's opj_decompress, libtiff's
+ * {@code tools/testdata/png-oracle}), libjpeg-turbo's djpeg, libwebp's dwebp, OpenJPEG's opj_decompress, the ISO/IEC 21122-5 JPEG XS reference decoder, libtiff's
  * tools and ffmpeg's decoders (dav1d for AVIF, its HEVC decoder for HEIC), and requires the pixels to equal Smalt's own decode (or the source, for
  * lossless coding) within the tolerance declared for the format; JPEG-LS, which no image format constant names,
  * through ffmpeg's decoder. Metadata edits are checked the same way: a reference
@@ -78,7 +78,7 @@ class ReferenceImageDecodeTest {
     private static final Set<ImageFormat> COVERED = Set.of(ImageFormat.PNG, ImageFormat.JPEG, ImageFormat.WEBP,
             ImageFormat.GIF, ImageFormat.BMP, ImageFormat.TIFF, ImageFormat.ICO, ImageFormat.JP2, ImageFormat.AVIF,
             ImageFormat.ANI, ImageFormat.JXL, ImageFormat.HEIC, ImageFormat.PNM, ImageFormat.TGA, ImageFormat.QOI,
-            ImageFormat.HDR, ImageFormat.ICNS);
+            ImageFormat.HDR, ImageFormat.ICNS, ImageFormat.JPEG_XS);
 
     /** A picture with gradients, edges and noise, and with alpha when asked. */
     static RgbaPicture source(boolean alpha) {
@@ -305,6 +305,42 @@ class ReferenceImageDecodeTest {
 
     static byte[] pngdump(Path file) {
         return Oracle.run(Oracle.Tool.PNGDUMP, Duration.ofMinutes(1), List.of("pixels", file.toString()));
+    }
+
+    /**
+     * Decodes the codestream of a JXS file with the ISO/IEC 21122-5 reference decoder into tight RGBA samples: its
+     * three 8-bit planes interleaved under an opaque alpha.
+     */
+    static byte[] jxsReference(Path file) {
+        var data = read(file);
+        var start = 0;
+        while (start + 4 <= data.length && !(data[start] == (byte) 0xFF && data[start + 1] == 0x10
+                && data[start + 2] == (byte) 0xFF && data[start + 3] == 0x50)) {
+            start++;
+        }
+        var codestream = save(file.getFileName() + ".jxc", Arrays.copyOfRange(data, start, data.length));
+        var listing = file.resolveSibling(file.getFileName() + ".pgx");
+        Oracle.run("smalt-jxsdec", Duration.ofMinutes(1), null, List.of(codestream.toString(), listing.toString()));
+        var planes = new ArrayList<byte[]>();
+        try {
+            for (var line : Files.readAllLines(listing, StandardCharsets.ISO_8859_1)) {
+                if (!line.isBlank()) {
+                    // the listing names the planes relative to the decoder's working directory
+                    planes.add(read(listing.resolveSibling(Path.of(line.strip()).getFileName())));
+                }
+            }
+        } catch (IOException exception) {
+            throw new UncheckedIOException(exception);
+        }
+        assertEquals(3, planes.size(), "reference planes");
+        var out = new byte[WIDTH * HEIGHT * 4];
+        for (var i = 0; i < WIDTH * HEIGHT; i++) {
+            for (var c = 0; c < 3; c++) {
+                out[i * 4 + c] = planes.get(c)[i];
+            }
+            out[i * 4 + 3] = (byte) 255;
+        }
+        return out;
     }
 
     static byte[] opj(Path file) {
@@ -547,6 +583,21 @@ class ReferenceImageDecodeTest {
             var file = save("jp2-" + mode + ".jp2", Images.encode(source, ImageFormat.JP2, options));
             var reference = opj(file);
             EXACT.assertWithin("opj_decompress", reference, smalt(read(file)));
+            if (mode.equals("lossless")) {
+                EXACT.assertWithin("source", rgba(source), reference);
+            }
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"lossless", "lossy"})
+        @DisplayName("JPEG XS decodes in the ISO/IEC 21122-5 reference decoder exactly as in Smalt, and losslessly to "
+                + "the source")
+        void jpegXs(String mode) {
+            var source = source(false);
+            var options = mode.equals("lossless") ? ImageEncoderOptions.lossless() : ImageEncoderOptions.ofQuality(40);
+            var file = save("jxs-" + mode + ".jxs", Images.encode(source, ImageFormat.JPEG_XS, options));
+            var reference = jxsReference(file);
+            EXACT.assertWithin("smalt-jxsdec", reference, smalt(read(file)));
             if (mode.equals("lossless")) {
                 EXACT.assertWithin("source", rgba(source), reference);
             }

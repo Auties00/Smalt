@@ -142,6 +142,8 @@ image.jxl.internal.render	image
 image.jxl.internal.vardct	image
 image.jxr	image
 image.jxr.internal	image
+image.jxs	mpeg
+image.jxs.internal	mpeg
 image.metadata	image
 image.ops	core
 image.png	image

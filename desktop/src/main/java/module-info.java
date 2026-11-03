@@ -5,7 +5,7 @@
  * <p>With this module present, {@code javax.imageio.ImageIO} reads every image format the Smalt
  * codec artifacts present at run time decode and the JDK does not (WebP still and animated, APNG,
  * ICO and CUR, animated cursors (ANI), JPEG 2000 under the names {@code jpeg2000} and {@code jp2},
- * and AVIF or HEIC once an artifact decodes them), reads TIFF under the format name {@code smalt-tiff}
+ * and AVIF, HEIC or JPEG XS once an artifact decodes them), reads TIFF under the format name {@code smalt-tiff}
  * with every page as an image index and BMP under the format name {@code smalt-bmp} with every bitmap
  * of an OS/2 bitmap array as an image index, and writes WebP, ICO, JPEG 2000, APNG (format name {@code apng}) and,
  * under the format names {@code smalt-gif}, {@code smalt-tiff} and {@code smalt-bmp}, GIF with
@@ -22,7 +22,7 @@
  *
  * @provides javax.imageio.spi.ImageReaderSpi the readers of the formats the codec artifacts decode
  * and the JDK does not, of TIFF as {@code smalt-tiff} and of BMP as {@code smalt-bmp}
- * @provides javax.imageio.spi.ImageWriterSpi WebP, AVIF, HEIC, APNG, GIF ({@code smalt-gif}), ICO,
+ * @provides javax.imageio.spi.ImageWriterSpi WebP, AVIF, HEIC, JPEG XS, APNG, GIF ({@code smalt-gif}), ICO,
  * JPEG 2000, TIFF ({@code smalt-tiff}) and BMP ({@code smalt-bmp})
  * @provides javax.sound.sampled.spi.AudioFileReader the audio files and the audio of the video files the
  * codec artifacts decode, and the WAVE, AIFF-C and AU variants the JDK's readers decline
@@ -52,6 +52,7 @@ module com.github.auties00.smalt.desktop {
             com.github.auties00.smalt.desktop.imageio.JxlImageWriterSpi,
             com.github.auties00.smalt.desktop.imageio.AvifImageWriterSpi,
             com.github.auties00.smalt.desktop.imageio.HeicImageWriterSpi,
+            com.github.auties00.smalt.desktop.imageio.JpegXsImageWriterSpi,
             com.github.auties00.smalt.desktop.imageio.ApngImageWriterSpi,
             com.github.auties00.smalt.desktop.imageio.GifImageWriterSpi,
             com.github.auties00.smalt.desktop.imageio.IcoImageWriterSpi,

@@ -699,6 +699,7 @@ final class MuxTrack {
         if (codec == Codec.DV) {
             return 6 * 80;
         }
-        return codec == Codec.AC3 || codec == Codec.EAC3 || codec == Codec.JPEG2000 ? 64 << 10 : 64;
+        return codec == Codec.AC3 || codec == Codec.EAC3 || codec == Codec.JPEG2000 || codec == Codec.JPEG_XS ? 64 << 10
+                : 64;
     }
 }

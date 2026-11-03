@@ -377,7 +377,7 @@ public final class Mp4Muxer implements Muxer {
      * AMR-WB, AC-3 and E-AC-3; {@link Mp4MuxerOptions.Brand#MP4}, {@link Mp4MuxerOptions.Brand#QUICKTIME} and
      * {@link Mp4MuxerOptions.Brand#MJ2} add Motion JPEG 2000; {@link Mp4MuxerOptions.Brand#MP4} and
      * {@link Mp4MuxerOptions.Brand#QUICKTIME} add H.264, HEVC, VVC, VP8, VP9, AV1, MPEG-4 Part 2, MPEG-1 and MPEG-2
-     * video, H.263, Motion-JPEG, the 16-, 24- and 32-bit integer and 32- and 64-bit float PCM formats,
+     * video, H.263, Motion-JPEG, JPEG XS, the 16-, 24- and 32-bit integer and 32- and 64-bit float PCM formats,
      * {@link Codec#MOV_TEXT}, {@link Codec#WEBVTT}, {@link Codec#TTML}, {@link Codec#DVD_SUBTITLE},
      * {@link Codec#CEA_608} and {@link Codec#CEA_708}; only
      * {@link Mp4MuxerOptions.Brand#QUICKTIME} carries ProRes, DNxHD, DV, PNG, TIFF, GIF, QuickTime Animation,
@@ -401,6 +401,7 @@ public final class Mp4Muxer implements Muxer {
         return switch (Objects.requireNonNull(codec, "codec")) {
             case AAC, OPUS, MP3, MP2, ALAC, FLAC, AMR_NB, AMR_WB, AC3, EAC3 -> true;
             case JPEG2000 -> brand != Mp4MuxerOptions.Brand.M4A;
+            case JPEG_XS -> brand == Mp4MuxerOptions.Brand.MP4 || brand == Mp4MuxerOptions.Brand.QUICKTIME;
             case H264, HEVC, VVC, VP8, VP9, AV1, MPEG4_PART2, MPEG1_VIDEO, MPEG2_VIDEO, H263, MJPEG, MOV_TEXT, WEBVTT,
                  TTML, DVD_SUBTITLE, CEA_608, CEA_708, PCM_S16LE, PCM_S16BE,
                  PCM_S24LE, PCM_S24BE, PCM_S32LE, PCM_S32BE, PCM_F32LE, PCM_F32BE, PCM_F64LE, PCM_F64BE ->
@@ -429,7 +430,9 @@ public final class Mp4Muxer implements Muxer {
      * {@code mjpb} for format B frames) in a QuickTime file. Motion JPEG 2000 is {@code mjp2} with a {@code jp2h}
      * box, the track's configuration or, without one, the JP2 Header box of the first frame or one built from its
      * main codestream header; a Motion JPEG 2000 file adds the {@code fiel}, {@code jsub} and {@code orfo} boxes and
-     * stores each frame as its Contiguous Codestream boxes, dropping the other boxes of a JP2 file. AAC needs its
+     * stores each frame as its Contiguous Codestream boxes, dropping the other boxes of a JP2 file. JPEG XS is
+     * {@code jxsm} with the {@code jpvi} and {@code jxpl} boxes of the track's configuration or, without one, built
+     * from the first frame's picture header. AAC needs its
      * {@code AudioSpecificConfig}, Opus its {@code OpusHead}, ALAC its {@code ALACSpecificConfig}
      * and FLAC its metadata blocks; MP3 and MP2 are {@code mp4a}
      * entries with the MPEG-1 or MPEG-2 audio object type; AMR-NB and AMR-WB are {@code samr} and

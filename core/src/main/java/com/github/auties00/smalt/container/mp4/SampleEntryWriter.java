@@ -10,6 +10,7 @@ import com.github.auties00.smalt.internal.io.FourCc;
 import com.github.auties00.smalt.image.Chromaticity;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorRange;
+import com.github.auties00.smalt.internal.codec.JxsConfigs;
 import com.github.auties00.smalt.internal.codec.Ac3Configs;
 import com.github.auties00.smalt.internal.codec.AmrConfigs;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
@@ -156,6 +157,7 @@ final class SampleEntryWriter {
             }
             case H263 -> writeH263(writer, track, (VideoTrack) described);
             case JPEG2000 -> writeMotionJpeg2000(writer, track, (VideoTrack) described, config);
+            case JPEG_XS -> writeJpegXs(writer, track, (VideoTrack) described, config);
             case PRORES, DNXHD -> writeQuickTimeVisual(writer, track, (VideoTrack) described, config);
             case DV -> writeDv(writer, track, (VideoTrack) described);
             case PNG, TIFF, GIF, QTRLE, CFHD, HAP -> writeIntermediate(writer, track, (VideoTrack) described, config);
@@ -519,6 +521,35 @@ final class SampleEntryWriter {
             writer.end();
             writeHdrMetadata(writer, color);
         }
+    }
+
+    /**
+     * Writes the {@code jxsm} sample entry of a JPEG XS track (ISO/IEC 21122-3 Annex B): the visual sample entry
+     * fields, the video information ({@code jpvi}) and profile and level ({@code jxpl}) boxes of the configuration or,
+     * without one, built from the first frame's picture header and the track's frame rate and field order, and the
+     * optional {@code colr}, {@code mdcv}, {@code clli}, {@code pasp} and {@code fiel} boxes.
+     *
+     * @param writer the destination
+     * @param track the track state
+     * @param video the track
+     * @param config the configuration of the sample description, or {@code null}
+     */
+    private static void writeJpegXs(BoxWriter writer, MuxTrack track, VideoTrack video, byte[] config) {
+        writeVisualHeader(writer, BoxTypes.JXSM, video, "JPEG XS");
+        if (JxsConfigs.parseConfig(config) != null) {
+            writer.bytes(config);
+        } else {
+            var picture = track.firstBytes == null ? null
+                    : JxsConfigs.picture(track.firstBytes, 0, track.firstBytes.length);
+            if (picture != null) {
+                writer.bytes(JxsConfigs.config(new JxsConfigs.Config(0, JxsConfigs.frat(video.frameRate()
+                        .orElse(null), video.interlacing().orElse(null)), JxsConfigs.schar(picture), 0,
+                        picture.profile(), picture.level())));
+            }
+        }
+        writeColorAndAspect(writer, video);
+        video.interlacing().ifPresent(interlacing -> writeFields(writer, interlacing));
+        writer.end();
     }
 
     /**

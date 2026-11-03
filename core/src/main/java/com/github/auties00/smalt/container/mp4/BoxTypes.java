@@ -474,6 +474,21 @@ final class BoxTypes {
     static final int MJP2 = 0x6D6A7032;
 
     /**
+     * The JPEG XS video sample entry ({@code jxsm}, ISO/IEC 21122-3 Annex B).
+     */
+    static final int JXSM = 0x6A78736D;
+
+    /**
+     * The JPEG XS video information box ({@code jpvi}, ISO/IEC 21122-3).
+     */
+    static final int JPVI = 0x6A707669;
+
+    /**
+     * The JPEG XS profile and level box ({@code jxpl}, ISO/IEC 21122-3).
+     */
+    static final int JXPL = 0x6A78706C;
+
+    /**
      * The simple profile brand of a Motion JPEG 2000 file ({@code mj2s}).
      */
     static final int MJ2S = 0x6D6A3273;

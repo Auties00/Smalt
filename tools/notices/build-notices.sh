@@ -128,6 +128,7 @@ Contents
   71. ISO/IEC 14496-5 MPEG-4 Audio reference software, DST module
   72. LibAtrac9
   73. MPEG-4 Audio error protection tool reference software (NTT DoCoMo)
+  74. SVT-JPEG-XS
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -2505,6 +2506,33 @@ Copyright:
 EOF
 license_start "License notice (src/eptool.c and the other source files)"
 cat "$LIC/iso14496-5-eptool-notice.txt"
+
+section "74. SVT-JPEG-XS"
+cat <<'EOF'
+Project:      SVT-JPEG-XS, Intel's Scalable Video Technology JPEG XS codec
+              (version 0.9.0, commit 01bc7cc)
+Home:         https://github.com/OpenVisualCloud/SVT-JPEG-XS
+Source:       https://github.com/OpenVisualCloud/SVT-JPEG-XS (Source/Lib)
+License text: LICENSE.md at the root of the repository
+License:      BSD-2-Clause-Patent
+
+Derived Smalt packages:
+  image.jxs.internal (JxsHeader: the main header parser of ParseHeader.c;
+  JxsLayout: the picture layout of Pi.c; JxsSliceDecoder: the slice, precinct
+  and packet decoding of Decoder.c, ParseHeader.c, Packing.c, Dequant.c and
+  EncDec.c; JxsWavelet: the 5/3 wavelet of Idwt.c and Dwt.c; JxsTransforms:
+  the color transformations and nonlinear transforms of Mct.c and NltDec.c;
+  JxsEncoderCore: the header,
+  precinct and quantization coding of PackHeaders.c, PackPrecinct.c, Quant.c
+  and NltEnc.c; JxsWeights: the band weight tables of WeightTable.c)
+
+Derivation: C code translated to Java and tables copied.
+
+Copyright:
+  Copyright(c) 2024 Intel Corporation
+EOF
+license_start "SVT-JPEG-XS license (LICENSE.md)"
+cat "$LIC/svt-jpeg-xs-LICENSE.md"
 
 } > "$OUT"
 

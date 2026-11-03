@@ -115,6 +115,17 @@ public enum Codec {
     JPEG2000(TrackKind.VIDEO, "jpeg2000"),
 
     /**
+     * JPEG XS (ISO/IEC 21122): every frame is a JPEG XS codestream, intra coded unless it uses temporal differential
+     * coding.
+     *
+     * <p>A packet is one frame: a codestream (starting with the {@code SOC} and {@code CAP} markers
+     * {@code FF 10 FF 50}) or, for an interlaced frame, its two field codestreams one after the other, the earlier
+     * field first. The configuration, when the track has one, is the content of the {@code jpvi} and {@code jxpl}
+     * boxes of the {@code jxsm} sample entry ({@code VideoTrack} carries the rest of the description).
+     */
+    JPEG_XS(TrackKind.VIDEO, "jpegxs"),
+
+    /**
      * Apple ProRes.
      */
     PRORES(TrackKind.VIDEO, "prores"),

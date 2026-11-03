@@ -71,6 +71,8 @@ import java.util.TreeMap;
  * configuration the visual object sequence, visual object and video object layer headers of the first picture</td></tr>
  * <tr><td>JPEG 2000 (SMPTE ST 422)</td><td>{@link Codec#JPEG2000}</td><td>one codestream each</td></tr>
  * <tr><td>DV-DIF (SMPTE ST 383)</td><td>{@link Codec#DV}</td><td>one DIF frame each</td></tr>
+ * <tr><td>JPEG XS (SMPTE ST 2124)</td><td>{@link Codec#JPEG_XS}</td><td>one codestream each, two for an interlaced
+ * frame</td></tr>
  * <tr><td>Broadcast Wave and AES3 audio (SMPTE ST 382)</td><td>{@link Codec#PCM_S16LE}, {@link Codec#PCM_S24LE},
  * {@link Codec#PCM_S32LE}, {@link Codec#PCM_U8}, and the big-endian codecs for AIFF coded sound</td><td>the samples of
  * one edit unit (frame wrapped) or of at most 100 ms (clip wrapped)</td></tr>
@@ -785,6 +787,9 @@ public final class MxfDemuxer implements Demuxer {
             if (scheme == 0x02 && coding[12] == 0x03 && coding[13] == 0x01) {
                 return Codec.JPEG2000;
             }
+            if (scheme == 0x02 && coding[12] == 0x03 && coding[13] == 0x08) {
+                return Codec.JPEG_XS;
+            }
             if (scheme == 0x02 && coding[12] == 0x01) {
                 var variant = coding[13] & 0xFF;
                 if (variant >= 0x30 && variant <= 0x3F) {
@@ -808,6 +813,7 @@ public final class MxfDemuxer implements Demuxer {
             case 0x10, 0x0F -> Codec.H264;
             case 0x04 -> Codec.MPEG2_VIDEO;
             case 0x0C -> Codec.JPEG2000;
+            case 0x21 -> Codec.JPEG_XS;
             default -> Codec.UNKNOWN_VIDEO;
         };
     }
@@ -2058,7 +2064,8 @@ public final class MxfDemuxer implements Demuxer {
      * @param codec the coding format asked about
      */
     private static boolean isAlwaysKey(Codec codec) {
-        return codec == Codec.DNXHD || codec == Codec.PRORES || codec == Codec.JPEG2000 || codec == Codec.DV;
+        return codec == Codec.DNXHD || codec == Codec.PRORES || codec == Codec.JPEG2000 || codec == Codec.DV
+                || codec == Codec.JPEG_XS;
     }
 
     /**

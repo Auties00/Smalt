@@ -18,8 +18,8 @@
  *
  * @provides com.github.auties00.smalt.spi.AudioCodecProvider AAC, AMR-NB and AMR-WB, AC-3 and E-AC-3, DTS
  * @provides com.github.auties00.smalt.spi.VideoCodecProvider H.264, HEVC, VVC, MPEG-4 Part 2 Visual, H.263,
- * MPEG-1 and MPEG-2 video, and VC-1
- * @provides com.github.auties00.smalt.spi.ImageCodecProvider HEIC
+ * MPEG-1 and MPEG-2 video, VC-1, and JPEG XS
+ * @provides com.github.auties00.smalt.spi.ImageCodecProvider HEIC and JPEG XS
  */
 module com.github.auties00.smalt.mpeg {
     // Smalt core: the model and the codec service-provider interfaces
@@ -41,6 +41,7 @@ module com.github.auties00.smalt.mpeg {
 
     // Image codecs built on the video codecs
     exports com.github.auties00.smalt.image.heic;
+    exports com.github.auties00.smalt.image.jxs;
 
     // Audio codecs and processing
     exports com.github.auties00.smalt.audio.aac;
@@ -61,9 +62,11 @@ module com.github.auties00.smalt.mpeg {
             com.github.auties00.smalt.internal.provider.mpeg.Mpeg4CodecProvider,
             com.github.auties00.smalt.internal.provider.mpeg.Mpeg2CodecProvider,
             com.github.auties00.smalt.internal.provider.mpeg.H263CodecProvider,
-            com.github.auties00.smalt.internal.provider.mpeg.Vc1CodecProvider;
+            com.github.auties00.smalt.internal.provider.mpeg.Vc1CodecProvider,
+            com.github.auties00.smalt.internal.provider.mpeg.JpegXsVideoCodecProvider;
     provides com.github.auties00.smalt.spi.ImageCodecProvider with
-            com.github.auties00.smalt.internal.provider.mpeg.HeicCodecProvider;
+            com.github.auties00.smalt.internal.provider.mpeg.HeicCodecProvider,
+            com.github.auties00.smalt.internal.provider.mpeg.JpegXsCodecProvider;
     // The HEIC decoder, for the HEIF decoders of the artifacts that do not depend on this one
     provides com.github.auties00.smalt.internal.heif.HeifImageCodec with
             com.github.auties00.smalt.internal.provider.mpeg.HeicImageCodec;

@@ -27,6 +27,14 @@ import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.heic.HeicDecoder;
 import com.github.auties00.smalt.image.heic.HeicEncoder;
 import com.github.auties00.smalt.image.heic.HeicEncoderOptions;
+import com.github.auties00.smalt.image.jxs.JpegXsDecoder;
+import com.github.auties00.smalt.image.jxs.JpegXsEncoder;
+import com.github.auties00.smalt.image.jxs.JpegXsEncoderOptions;
+import com.github.auties00.smalt.image.jxs.JpegXsImage;
+import com.github.auties00.smalt.image.jxs.JpegXsVideoDecoder;
+import com.github.auties00.smalt.image.jxs.JpegXsVideoEncoder;
+import com.github.auties00.smalt.track.VideoTrack;
+import com.github.auties00.smalt.video.VideoEncoderOptions;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.AudioTrack;
@@ -179,6 +187,8 @@ final class MpegWorkloads {
                 file("hevc-encode-still", MpegWorkloads::hevcStillEncode),
                 file("heic-encode", MpegWorkloads::heicEncode),
                 file("heic-decode", MpegWorkloads::heicDecode),
+                file("jxs-encode", MpegWorkloads::jpegXsEncode),
+                file("jxs-decode", MpegWorkloads::jpegXsDecode),
                 file("hevc-decode-t1", () -> hevcDecode(1, false)),
                 file("hevc-decode-t2", () -> hevcDecode(2, false)),
                 file("aac-encode", () -> aacEncode(6)),
@@ -301,6 +311,72 @@ final class MpegWorkloads {
                 writer.finish();
             }
             Blackhole.consume(sink.toByteArray().length);
+        });
+    }
+
+    /**
+     * Returns a workload that encodes JPEG XS images: a 4:2:2 picture at 4 bits per pixel, an R'G'B'A picture
+     * losslessly through the color transform, a 12-bit Bayer mosaic through the Star-Tetrix transform, and video
+     * frames through the video encoder.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload jpegXsEncode() {
+        var yuv = SyntheticVideo.natural(384, 256, 1).getFirst();
+        var rgba = SyntheticImages.rgba(yuv, true);
+        var mosaic = new short[384 * 256];
+        for (var i = 0; i < mosaic.length; i++) {
+            mosaic[i] = (short) ((yuv.y()[i] & 0xFF) << 4);
+        }
+        var bayer = JpegXsEncoder.bayer(mosaic, 384, 256, 12, JpegXsImage.CfaPattern.RGGB);
+        var frames = SyntheticVideo.natural(WIDTH, HEIGHT, 3);
+        return TrainingWorkload.of("jxs-encode", () -> {
+            Blackhole.consume(JpegXsEncoder.encode(yuv, JpegXsEncoderOptions.defaults()).length);
+            Blackhole.consume(JpegXsEncoder.encode(rgba, JpegXsEncoderOptions.forLossless()).length);
+            Blackhole.consume(JpegXsEncoder.encode(bayer, JpegXsEncoderOptions.ofBitsPerPixel(3)).length);
+            var encoder = new JpegXsVideoEncoder(VideoEncoderOptions.of(WIDTH, HEIGHT, new Rational(30, 1),
+                    BITRATE * 8));
+            for (var frame : frames) {
+                encoder.encode(new VideoFrame(frame, Packet.NO_TIMESTAMP, 0, true),
+                        packet -> Blackhole.consume(packet.data().length));
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that probes and decodes JPEG XS images of the JPEG XS encoder (a 4:2:2 picture, a lossless
+     * R'G'B'A picture at full depth, a Bayer mosaic) and decodes video frames through the video decoder.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload jpegXsDecode() {
+        var yuv = SyntheticVideo.natural(384, 256, 1).getFirst();
+        var lossy = JpegXsEncoder.encode(yuv, JpegXsEncoderOptions.defaults());
+        var lossless = JpegXsEncoder.encode(SyntheticImages.rgba(yuv, true), JpegXsEncoderOptions.forLossless());
+        var mosaic = new short[384 * 256];
+        for (var i = 0; i < mosaic.length; i++) {
+            mosaic[i] = (short) ((yuv.y()[i] & 0xFF) << 4);
+        }
+        var bayer = JpegXsEncoder.encode(JpegXsEncoder.bayer(mosaic, 384, 256, 12, JpegXsImage.CfaPattern.RGGB),
+                JpegXsEncoderOptions.ofBitsPerPixel(3));
+        var encoder = new JpegXsVideoEncoder(VideoEncoderOptions.of(WIDTH, HEIGHT, new Rational(30, 1),
+                BITRATE * 8));
+        var packets = new ArrayList<Packet>();
+        for (var frame : SyntheticVideo.natural(WIDTH, HEIGHT, 3)) {
+            encoder.encode(new VideoFrame(frame, Packet.NO_TIMESTAMP, 0, true), packets::add);
+        }
+        var track = VideoTrack.builder().id(0).codec(Codec.JPEG_XS).timeBase(encoder.timeBase()).width(WIDTH)
+                .height(HEIGHT).codecConfig(encoder.codecConfig().orElseThrow()).build();
+        var highBitDepth = ImageDecoderOptions.builder().highBitDepth(true).build();
+        return TrainingWorkload.of("jxs-decode", () -> {
+            Blackhole.consume(JpegXsDecoder.probe(MediaSource.of(lossy)).hashCode());
+            Blackhole.consume(JpegXsDecoder.decode(MediaSource.of(lossy)).picture().width());
+            Blackhole.consume(JpegXsDecoder.decode(MediaSource.of(lossless), highBitDepth).picture().width());
+            Blackhole.consume(JpegXsDecoder.decodeImage(MediaSource.of(bayer)).width());
+            var decoder = new JpegXsVideoDecoder(track);
+            for (var packet : packets) {
+                decoder.decode(packet, frame -> Blackhole.consume(frame.picture().width()));
+            }
         });
     }
 

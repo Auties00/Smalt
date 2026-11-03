@@ -180,6 +180,37 @@ final class MxfLabels {
     static final byte[] BWF_CLIP = bytes("060e2b34040101010d01030102060200");
 
     /**
+     * The essence container label of frame-wrapped progressive JPEG XS pictures (SMPTE ST 2124).
+     */
+    static final byte[] JXS_FRAME = bytes("060e2b340401010d0d01030102210100");
+
+    /**
+     * The essence container label of frame-wrapped interlaced JPEG XS pictures, two fields per element.
+     */
+    static final byte[] JXS_FRAME_INTERLACED = bytes("060e2b340401010d0d01030102210200");
+
+    /**
+     * The essence container label of clip-wrapped JPEG XS pictures.
+     */
+    static final byte[] JXS_CLIP = bytes("060e2b340401010d0d01030102210300");
+
+    /**
+     * The picture essence coding label of a JPEG XS codestream; byte 14 names its profile (1 unrestricted).
+     */
+    static final byte[] JXS_CODING = bytes("060e2b340401010d0401020203080100");
+
+    /**
+     * The key of the JPEG XS picture sub-descriptor set.
+     */
+    static final byte[] JXS_SUB_DESCRIPTOR = bytes("060e2b34025301010d01010101018102");
+
+    /**
+     * The first local tag of the JPEG XS sub-descriptor items, {@code Ppih} to {@code Hsl} in the order of SMPTE ST
+     * 2124 table 4.
+     */
+    static final int JXS_FIRST_WRITE_TAG = 0x8002;
+
+    /**
      * The essence container label of frame-wrapped VC-3 (ST 2019-4).
      */
     static final byte[] VC3_FRAME = bytes("060e2b340401010a0d01030102110100");

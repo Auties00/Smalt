@@ -5,6 +5,7 @@ import com.github.auties00.smalt.container.Muxer;
 import com.github.auties00.smalt.container.Timecode;
 import com.github.auties00.smalt.container.internal.TimecodeTags;
 import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.internal.codec.JxsConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.internal.codec.NalConfigs;
 import com.github.auties00.smalt.internal.codec.VideoConfigs;
@@ -49,6 +50,9 @@ import java.util.UUID;
  * <tbody>
  * <tr><td>{@link Codec#DNXHD}</td><td>VC-3, SMPTE ST 2019-4</td><td>none</td></tr>
  * <tr><td>{@link Codec#PRORES}</td><td>SMPTE RDD 44, frame wrapped</td><td>none</td></tr>
+ * <tr><td>{@link Codec#JPEG_XS}</td><td>SMPTE ST 2124, frame wrapped (two field codestreams per element for an
+ * interlaced track) or clip wrapped, with the JPEG XS picture sub-descriptor of the first codestream</td>
+ * <td>none</td></tr>
  * <tr><td>{@link Codec#H264}</td><td>AVC byte stream, SMPTE ST 381-3, or AVC-Intra (SMPTE RP 2027) with
  * {@link MxfMuxerOptions#avcIntraClass()}</td><td>an {@code avcC} configuration</td></tr>
  * <tr><td>{@link Codec#MPEG1_VIDEO}, {@link Codec#MPEG2_VIDEO}, {@link Codec#MPEG4_PART2}</td><td>MPEG video
@@ -314,8 +318,8 @@ public final class MxfMuxer implements Muxer {
      */
     public static boolean supports(Codec codec) {
         return switch (codec) {
-            case DNXHD, PRORES, H264, MPEG1_VIDEO, MPEG2_VIDEO, MPEG4_PART2, PCM_S16LE, PCM_S24LE, PCM_S32LE,
-                 PCM_S16BE, PCM_S24BE, PCM_S32BE, PCM_U8, PCM_S8 -> true;
+            case DNXHD, PRORES, H264, MPEG1_VIDEO, MPEG2_VIDEO, MPEG4_PART2, JPEG_XS, PCM_S16LE, PCM_S24LE,
+                 PCM_S32LE, PCM_S16BE, PCM_S24BE, PCM_S32BE, PCM_U8, PCM_S8 -> true;
             default -> false;
         };
     }
@@ -564,6 +568,12 @@ public final class MxfMuxer implements Muxer {
         private int pcmStart;
         private boolean described;
 
+        /**
+         * The main header of the first codestream of a JPEG XS track, from {@code SOC} to its first slice header,
+         * or {@code null}.
+         */
+        private byte[] jxsHeader;
+
         private Out(Track track) {
             this.track = track;
             this.kind = track instanceof VideoTrack ? 'p' : 's';
@@ -659,9 +669,42 @@ public final class MxfMuxer implements Muxer {
                 }
             }
             case MPEG4_PART2 -> out.coding = MxfLabels.bytes("060e2b34040101030401020201200000");
+            case JPEG_XS -> {
+                out.coding = MxfLabels.JXS_CODING.clone();
+                var parsed = JxsConfigs.parseConfig(config);
+                if (parsed != null) {
+                    out.coding[14] = (byte) jxsProfileIndex(parsed.profile());
+                    if ((parsed.schar() & 0x8000) != 0) {
+                        out.depth = ((parsed.schar() >>> 4) & 0x0F) + 1;
+                        var sampling = parsed.schar() & 0x0F;
+                        out.horizontalSubsampling = sampling == 0 || sampling == 3 || sampling == 4 ? 2 : 1;
+                        out.verticalSubsampling = sampling == 3 ? 2 : 1;
+                    }
+                }
+            }
             default -> {
             }
         }
+    }
+
+    /**
+     * {@return the profile byte of the JPEG XS picture coding label of a profile (SMPTE ST 2124 table 3), 1
+     * (unrestricted) for a profile the table does not name}
+     *
+     * @param profile the profile code {@code Ppih}
+     */
+    private static int jxsProfileIndex(int profile) {
+        return switch (profile) {
+            case 0x3540 -> 2;
+            case 0x3A40 -> 3;
+            case 0x3E40 -> 4;
+            case 0x1500 -> 5;
+            case 0x1A00 -> 6;
+            case 0x2500 -> 7;
+            case 0x4A40 -> 8;
+            case 0x4E40 -> 9;
+            default -> 1;
+        };
     }
 
     /**
@@ -827,6 +870,11 @@ public final class MxfMuxer implements Muxer {
                     case H264 -> {
                         type = clip ? 0x06 : 0x05;
                         out.container = clip ? MxfLabels.AVC_CLIP : MxfLabels.AVC_FRAME;
+                    }
+                    case JPEG_XS -> {
+                        type = clip ? 0x1B : 0x1A;
+                        out.container = clip ? MxfLabels.JXS_CLIP : out.interlaced ? MxfLabels.JXS_FRAME_INTERLACED
+                                : MxfLabels.JXS_FRAME;
                     }
                     default -> {
                         type = clip ? 0x06 : 0x05;
@@ -1089,6 +1137,23 @@ public final class MxfMuxer implements Muxer {
     private void describeFromFrame(Out out, byte[] data) {
         out.described = true;
         switch (out.track.codec()) {
+            case JPEG_XS -> {
+                var picture = JxsConfigs.picture(data, 0, data.length);
+                if (picture == null) {
+                    return;
+                }
+                out.jxsHeader = jxsMainHeader(data);
+                out.coding = MxfLabels.JXS_CODING.clone();
+                out.coding[14] = (byte) jxsProfileIndex(picture.profile());
+                if (picture.bitDepth() > 0) {
+                    out.depth = picture.bitDepth();
+                }
+                if (picture.sampling() >= 0) {
+                    var sampling = picture.sampling();
+                    out.horizontalSubsampling = sampling == 0 || sampling == 3 || sampling == 4 ? 2 : 1;
+                    out.verticalSubsampling = sampling == 3 ? 2 : 1;
+                }
+            }
             case DNXHD -> {
                 if (data.length < 0x30) {
                     return;
@@ -1770,7 +1835,8 @@ public final class MxfMuxer implements Muxer {
         var multiple = outs.size() > 1 ? uid() : null;
         var avcSubs = new ArrayList<byte[]>();
         for (var out : outs) {
-            avcSubs.add(out.track.codec() == Codec.H264 ? uid() : null);
+            avcSubs.add(out.track.codec() == Codec.H264
+                    || out.track.codec() == Codec.JPEG_XS && out.jxsHeader != null ? uid() : null);
         }
         var comments = new ArrayList<byte[]>();
         var commentEntries = new ArrayList<MediaTags.Entry>();
@@ -1891,9 +1957,13 @@ public final class MxfMuxer implements Muxer {
             descriptor(sets, outs.get(index), trackSets.get(index)[6], known, avcSubs.get(index));
             if (avcSubs.get(index) != null) {
                 var out = outs.get(index);
-                sets.begin(MxfLabels.AVC_SUB_DESCRIPTOR, avcSubs.get(index));
-                sets.u8(MxfLabels.AVC_DECODING_DELAY_WRITE_TAG, known ? decodingDelay(out) : 0xFF);
-                sets.end();
+                if (out.track.codec() == Codec.JPEG_XS) {
+                    jxsSubDescriptor(sets, out, avcSubs.get(index));
+                } else {
+                    sets.begin(MxfLabels.AVC_SUB_DESCRIPTOR, avcSubs.get(index));
+                    sets.u8(MxfLabels.AVC_DECODING_DELAY_WRITE_TAG, known ? decodingDelay(out) : 0xFF);
+                    sets.end();
+                }
             }
         }
         MxfSetWriter.fill(writer, base + writer.size(), options.kagSize());
@@ -2025,7 +2095,15 @@ public final class MxfMuxer implements Muxer {
             "3d09", "060e2b34010101050402030305000000",
             "3d0a", "060e2b34010101050402030201000000",
             "8000", "060e2b34010101090601010406100000",
-            "8001", "060e2b340101010e04010606010e0000"
+            "8001", "060e2b340101010e04010606010e0000",
+            "8002", "060e2b340101010e0401060b01000000",
+            "8003", "060e2b340101010e0401060b02000000",
+            "8004", "060e2b340101010e0401060b03000000",
+            "8005", "060e2b340101010e0401060b04000000",
+            "8006", "060e2b340101010e0401060b05000000",
+            "8007", "060e2b340101010e0401060b06000000",
+            "8008", "060e2b340101010e0401060b07000000",
+            "8009", "060e2b340101010e0401060b08000000"
     };
 
     /**
@@ -2166,6 +2244,58 @@ public final class MxfMuxer implements Muxer {
             sets.batch(MxfLabels.SUB_DESCRIPTORS_WRITE_TAG, List.of(avcSub));
         }
         sets.end();
+    }
+
+    /**
+     * Writes the JPEG XS picture sub-descriptor of a track (SMPTE ST 2124 section 9.2) from the main header of its
+     * first codestream.
+     *
+     * @param sets the header metadata
+     * @param out the JPEG XS track, whose main header is known
+     * @param instance the instance UID of the set
+     */
+    private static void jxsSubDescriptor(MxfSetWriter sets, Out out, byte[] instance) {
+        var header = out.jxsHeader;
+        var pih = 4 + u16(header, 4);
+        sets.beginKey(MxfLabels.JXS_SUB_DESCRIPTOR);
+        sets.bytes(0x3C0A, instance);
+        var tag = MxfLabels.JXS_FIRST_WRITE_TAG;
+        sets.u16(tag, u16(header, pih + 8));
+        sets.u16(tag + 1, u16(header, pih + 10));
+        sets.u16(tag + 2, u16(header, pih + 12));
+        sets.u16(tag + 3, u16(header, pih + 14));
+        sets.u8(tag + 4, header[pih + 20] & 0xFF);
+        var cdt = pih + 28;
+        while (cdt + 4 <= header.length && u16(header, cdt) != 0xFF13) {
+            cdt += 2 + u16(header, cdt + 2);
+        }
+        if (cdt + 4 <= header.length) {
+            sets.bytes(tag + 5, Arrays.copyOfRange(header, cdt, Math.min(header.length, cdt + 2 + u16(header, cdt + 2))));
+        }
+        sets.u16(tag + 6, u16(header, pih + 16));
+        sets.u16(tag + 7, u16(header, pih + 18));
+        sets.end();
+    }
+
+    /**
+     * {@return the bytes of a JPEG XS codestream from {@code SOC} to its first slice header}
+     *
+     * @param data the codestream
+     */
+    private static byte[] jxsMainHeader(byte[] data) {
+        var position = 2;
+        while (position + 4 <= data.length) {
+            var marker = u16(data, position);
+            if (marker == 0xFF20 || marker == 0xFF21) {
+                break;
+            }
+            position += 2 + u16(data, position + 2);
+        }
+        return Arrays.copyOf(data, Math.min(position, data.length));
+    }
+
+    private static int u16(byte[] data, int offset) {
+        return (data[offset] & 0xFF) << 8 | data[offset + 1] & 0xFF;
     }
 
     /**

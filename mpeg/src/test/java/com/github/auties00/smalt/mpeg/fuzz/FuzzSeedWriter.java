@@ -4,7 +4,14 @@ import com.github.auties00.smalt.audio.aac.internal.AudioSpecificConfig;
 import com.github.auties00.smalt.audio.aac.internal.ep.EpFrameEncoder;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.image.ChromaFormat;
+import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.heic.HeicEncoder;
+import com.github.auties00.smalt.image.jxs.JpegXsEncoder;
+import com.github.auties00.smalt.image.jxs.JpegXsEncoderOptions;
+import com.github.auties00.smalt.image.jxs.JpegXsImage;
+import com.github.auties00.smalt.image.jxs.JpegXsVideoEncoder;
 import com.github.auties00.smalt.image.heic.HeicEncoderOptions;
 import com.github.auties00.smalt.internal.bits.MsbBitWriter;
 import com.github.auties00.smalt.internal.sei.SeiWriter;
@@ -17,7 +24,11 @@ import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.testkit.fuzz.FuzzPackets;
 import com.github.auties00.smalt.testkit.fuzz.FuzzSeeds;
 import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.track.Packet;
+import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.VideoTrack;
+import com.github.auties00.smalt.video.VideoEncoderOptions;
+import com.github.auties00.smalt.video.VideoFrame;
 import com.github.auties00.smalt.video.hevc.encoder.HevcEncoderSpeed;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -835,6 +846,55 @@ class FuzzSeedWriter {
         writer.write(7, 3);
         writer.alignWithZeros();
         return writer.toByteArray();
+    }
+
+    @Test
+    @DisplayName("writes the seeds of the JPEG XS target that the JPEG XS encoder makes")
+    void jpegXs() {
+        var gradient = gradient(40, 24, 1, true);
+        write(MpegFuzzTest.class, "jpegXs", "valid-rgba.jxs", JpegXsEncoder.encode(gradient,
+                JpegXsEncoderOptions.ofBitsPerPixel(6)));
+        write(MpegFuzzTest.class, "jpegXs", "valid-rgb-lossless.jxc", JpegXsEncoder.encode(gradient(37, 19, 2,
+                false), JpegXsEncoderOptions.forLossless().toBuilder().fileFormat(false).build()));
+        var yuv = ImageOps.toYuv(gradient(48, 32, 3, false), ChromaFormat.YUV420, ColorInfo.BT709_LIMITED);
+        write(MpegFuzzTest.class, "jpegXs", "valid-420-narrow-precincts.jxc", JpegXsEncoder.encode(yuv,
+                JpegXsEncoderOptions.ofBitsPerPixel(3).toBuilder().fileFormat(false).horizontalLevels(2)
+                        .precinctWidth(1).sliceHeight(4).build()));
+        var mosaic = new short[48 * 32];
+        for (var i = 0; i < mosaic.length; i++) {
+            mosaic[i] = (short) ((i * 37) % 4096);
+        }
+        write(MpegFuzzTest.class, "jpegXs", "valid-bayer.jxc", JpegXsEncoder.encode(JpegXsEncoder.bayer(mosaic, 48,
+                32, 12, JpegXsImage.CfaPattern.GBRG), JpegXsEncoderOptions.ofBitsPerPixel(8).toBuilder()
+                .fileFormat(false).build()));
+        write(MpegFuzzTest.class, "jpegXsVideo", "valid-progressive.bin", jpegXsVideo(false));
+        write(MpegFuzzTest.class, "jpegXsVideo", "valid-fields.bin", jpegXsVideo(true));
+    }
+
+    /**
+     * Returns a JPEG XS video input of three 48x32 frames from the video encoder, or of three frames of two 48x16
+     * field codestreams each.
+     */
+    static byte[] jpegXsVideo(boolean fields) {
+        var parts = new ArrayList<FuzzPackets.Part>();
+        if (!fields) {
+            var encoder = new JpegXsVideoEncoder(VideoEncoderOptions.of(48, 32, new Rational(25, 1), 2_000_000));
+            for (var frame = 0; frame < 3; frame++) {
+                var yuv = ImageOps.toYuv(gradient(48, 32, frame, false), ChromaFormat.YUV422, ColorInfo.BT709_LIMITED);
+                encoder.encode(new VideoFrame(yuv, Packet.NO_TIMESTAMP, 0, true),
+                        packet -> parts.add(new FuzzPackets.Part(packet.data(), true)));
+            }
+            return FuzzPackets.video(0, 48, 32, encoder.codecConfig().orElseThrow(), parts);
+        }
+        var options = JpegXsEncoderOptions.ofBitsPerPixel(4).toBuilder().fileFormat(false).sliceHeight(8).build();
+        for (var frame = 0; frame < 3; frame++) {
+            var top = JpegXsEncoder.encode(gradient(48, 16, 2 * frame, false), options);
+            var bottom = JpegXsEncoder.encode(gradient(48, 16, 2 * frame + 1, false), options);
+            var data = Arrays.copyOf(top, top.length + bottom.length);
+            System.arraycopy(bottom, 0, data, top.length, bottom.length);
+            parts.add(new FuzzPackets.Part(data, true));
+        }
+        return FuzzPackets.video(0, 48, 32, null, parts);
     }
 
     @Test

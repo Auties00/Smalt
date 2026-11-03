@@ -395,6 +395,17 @@ class MpegFuzzTest {
     }
 
     @FuzzTest
+    void jpegXs(byte[] data) {
+        FuzzMedia.image(ImageFormat.JPEG_XS, data);
+    }
+
+    // Options bit 0: high bit depth. A packet holds one codestream, or two field codestreams woven top field first.
+    @FuzzTest
+    void jpegXsVideo(byte[] data) {
+        FuzzMedia.video(Codec.JPEG_XS, data);
+    }
+
+    @FuzzTest
     void elementaryStream(byte[] data) {
         var run = Fuzz.start("elementaryStream");
         var options = DemuxerOptions.builder().limits(Fuzz.LIMITS).build();

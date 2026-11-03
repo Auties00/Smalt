@@ -2,6 +2,7 @@ package com.github.auties00.smalt.property;
 
 import com.github.auties00.smalt.audio.AudioEncoders;
 import com.github.auties00.smalt.audio.AudioReader;
+import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.container.Muxer;
 import com.github.auties00.smalt.container.matroska.MatroskaMuxer;
@@ -78,6 +79,9 @@ class ReferenceDecodeTest {
                 List.of(options));
     }
 
+    /** The reference decoder of JPEG XS, which runs outside ffmpeg. */
+    private static final String JPEG_XS_REFERENCE = "smalt-jxsdec";
+
     /** Normative reconstruction: every decoder conforming to the standard produces the same samples. */
     private static final Tolerance NORMATIVE = Tolerance.exact();
 
@@ -119,6 +123,10 @@ class ReferenceDecodeTest {
             // range, which ffmpeg's decoder leaves untagged
             entry(Codec.JPEG2000, of(OutputContainer.MOV, "jpeg2000", Tolerance.offByOne().and(Tolerance.psnr(60)),
                     "-color_range", "pc")),
+            // ffmpeg has no JPEG XS decoder of its own, so the ISO/IEC 21122-5 reference decoder reads each
+            // codestream; the reconstruction is integer arithmetic that ISO/IEC 21122-1 specifies exactly
+            entry(Codec.JPEG_XS, new Reference("ts", sink -> Containers.openMuxer(ContainerFormat.MPEG_TS, sink),
+                    JPEG_XS_REFERENCE, NORMATIVE, List.of())),
             // the float synthesis of both decoders differs only by rounding
             entry(Codec.AAC, of(OutputContainer.M4A, "aac", Tolerance.snr(110))),
             entry(Codec.MP3, of(OutputContainer.MP3, "mp3float", Tolerance.snr(110)
@@ -208,8 +216,12 @@ class ReferenceDecodeTest {
     @MethodSource("encoded")
     @DisplayName("decodes to the reference decoder's output within the codec's declared tolerance")
     void matchesReference(Codec codec) {
-        Oracle.assume(Oracle.Tool.FFMPEG);
         var reference = REFERENCES.get(codec);
+        if (reference.decoder().equals(JPEG_XS_REFERENCE)) {
+            matchesJpegXsReference(reference);
+            return;
+        }
+        Oracle.assume(Oracle.Tool.FFMPEG);
         var stream = Catalog.stream(codec);
         var file = write(codec, reference, stream);
         if (codec == Codec.AC3 || codec == Codec.EAC3) {
@@ -261,6 +273,41 @@ class ReferenceDecodeTest {
             Oracle.run(Oracle.Tool.FLAC, Duration.ofMinutes(1), List.of("--test", "--silent",
                     file.toAbsolutePath().toString()));
         }
+    }
+
+    // Each packet is one codestream; the reference decoder writes its planes, 8-bit samples one byte each, which
+    // concatenate to the planar layout Smalt's frames are compared in.
+    private static void matchesJpegXsReference(Reference reference) {
+        var stream = Catalog.stream(Codec.JPEG_XS);
+        var file = write(Codec.JPEG_XS, reference, stream);
+        Validators.assertValid(file);
+        var ours = smaltVideo(file);
+        var directory = file.resolveSibling("jpeg-xs-reference");
+        var expected = new ByteArrayOutputStream();
+        try {
+            Files.createDirectories(directory);
+            var index = 0;
+            for (var packet : stream.packets()) {
+                var input = directory.resolve("frame-" + index + ".jxc");
+                var listing = directory.resolve("frame-" + index + ".pgx");
+                Files.write(input, packet.data());
+                Oracle.run(JPEG_XS_REFERENCE, Duration.ofMinutes(1), null, List.of(input.toString(),
+                        listing.toString()));
+                for (var line : Files.readAllLines(listing)) {
+                    if (!line.isBlank()) {
+                        expected.writeBytes(Files.readAllBytes(directory.resolve(Path.of(line.strip())
+                                .getFileName())));
+                    }
+                }
+                index++;
+            }
+        } catch (IOException exception) {
+            throw new UncheckedIOException(exception);
+        }
+        var what = "JPEG_XS in ts against " + JPEG_XS_REFERENCE;
+        assertEquals("yuv422p", ours.pixelFormat(), what + ": pixel format");
+        assertEquals(stream.packets().size(), ours.frames(), what + ": frame count");
+        reference.tolerance().assertFrames(what, expected.toByteArray(), ours.data(), ours.frameSize());
     }
 
     private static Path write(Codec codec, Reference reference, Streams.Encoded stream) {

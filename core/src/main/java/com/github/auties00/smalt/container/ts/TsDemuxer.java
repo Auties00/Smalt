@@ -1330,6 +1330,7 @@ public final class TsDemuxer implements Demuxer {
                     stream.id3Metadata() || stream.registered(Psi.ID3) ? PesParser.ID3_HANDLER : "metadata");
             case 0x1B -> new NalParser(stream, limits, Codec.H264);
             case 0x24 -> new NalParser(stream, limits, Codec.HEVC);
+            case 0x32 -> new JxsParser(stream, limits);
             case 0x33 -> new NalParser(stream, limits, Codec.VVC);
             case 0x80 -> hdmv ? new PcmParser(stream, limits, false) : new PesParser(stream, limits, Codec.DATA, "private");
             case 0x81, 0x87 -> new Ac3Parser(stream, limits);

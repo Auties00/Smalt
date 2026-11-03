@@ -56,7 +56,7 @@ public final class Artifacts {
      */
     public static String decoderOf(Codec codec) {
         return switch (codec) {
-            case H264, HEVC, AAC, AMR_NB, AMR_WB, MPEG4_PART2, H263, FLV1, AC3, EAC3 -> MPEG;
+            case H264, HEVC, AAC, AMR_NB, AMR_WB, MPEG4_PART2, H263, FLV1, AC3, EAC3, JPEG_XS -> MPEG;
             case VP9, AV1, PRORES, DNXHD, QTRLE, CFHD -> VIDEO;
             case VP8, MJPEG, JPEG2000, PNG, TIFF, GIF, HAP -> IMAGE;
             case OPUS, VORBIS, FLAC, MP3, MP2, ALAC, ADPCM_IMA_WAV, ADPCM_IMA_QT, ADPCM_MS, ADPCM_G722, ADPCM_G726, GSM,
@@ -73,7 +73,7 @@ public final class Artifacts {
      */
     public static String encoderOf(Codec codec) {
         return switch (codec) {
-            case H264, AAC, AMR_NB, AMR_WB, AC3, EAC3 -> MPEG;
+            case H264, AAC, AMR_NB, AMR_WB, AC3, EAC3, JPEG_XS -> MPEG;
             case VP9, AV1, PRORES, DNXHD, QTRLE -> VIDEO;
             case VP8, MJPEG, JPEG2000, PNG, TIFF, HAP -> IMAGE;
             case OPUS, FLAC, MP3, VORBIS, ADPCM_IMA_WAV, ADPCM_IMA_QT, ADPCM_MS, ADPCM_G722, ADPCM_G726, GSM,
@@ -92,7 +92,7 @@ public final class Artifacts {
         return switch (format) {
             case JPEG, PNG, GIF, WEBP, BMP, TIFF, ICO, ANI, JP2, JXL, PNM, TGA, QOI, HDR, ICNS, PSD, EXR, DDS, JXR -> IMAGE;
             case AVIF -> VIDEO;
-            case HEIC -> MPEG;
+            case HEIC, JPEG_XS -> MPEG;
             case DNG, RAW -> CAMERA_RAW;
             default -> null;
         };
@@ -108,6 +108,7 @@ public final class Artifacts {
         return switch (format) {
             case JPEG, PNG, GIF, WEBP, TIFF, ICO, ANI, JP2, PNM, TGA, QOI, HDR, ICNS -> IMAGE;
             case AVIF -> VIDEO;
+            case JPEG_XS -> MPEG;
             default -> null;
         };
     }

@@ -521,6 +521,20 @@ class FuzzSeedWriter {
         }
     }
 
+    @Test
+    @DisplayName("writes the Matroska seed of JPEG XS: V_QUICKTIME with the jxsm sample description of the first codestream")
+    void jpegXs() {
+        var codestream = com.github.auties00.smalt.testkit.Fixtures.read(Path.of("..", "mpeg", "src", "test", "resources", "com", "github", "auties00",
+                "smalt", "mpeg", "fuzz", "MpegFuzzTestInputs", "jpegXs", "valid-rgb-lossless.jxc"));
+        var track = VideoTrack.builder().id(1).codec(Codec.JPEG_XS).width(37).height(19)
+                .timeBase(com.github.auties00.smalt.track.Rational.timeBaseOf(25))
+                .frameRate(new com.github.auties00.smalt.track.Rational(25, 1)).build();
+        var packets = List.of(new com.github.auties00.smalt.track.Packet(1, codestream, 0, 0, 1, true),
+                new com.github.auties00.smalt.track.Packet(1, codestream, 1, 1, 1, true));
+        write(DemuxerFuzzTest.class, "matroska", "valid-jpeg-xs.mkv", muxed(MatroskaMuxer::new,
+                List.of(track), packets, MediaTags.empty()));
+    }
+
     private static byte[] muxed(java.util.function.Function<MediaSink, com.github.auties00.smalt.container.Muxer> factory,
                                 List<com.github.auties00.smalt.track.Track> tracks,
                                 List<com.github.auties00.smalt.track.Packet> packets, MediaTags tags) {

@@ -17,7 +17,7 @@ import java.nio.file.Path;
 
 /**
  * Runs the H.264, HEVC, VVC, MPEG-4 Part 2, H.263, MPEG-1 and MPEG-2 video and VC-1 decoders and the AAC, AC-3,
- * E-AC-3 and AMR audio decoders ({@link ReaderAsserts}) and the HEIC image decoder ({@link ImageDecoderAsserts}) of this artifact through
+ * E-AC-3 and AMR audio decoders ({@link ReaderAsserts}) and the HEIC and JPEG XS image decoders ({@link ImageDecoderAsserts}) of this artifact through
  * the I/O behavior harness over the container samples (core's {@code src/test/resources/samples}), smoke-tier
  * vectors, the HEIF fuzz seeds of AVC, uncompressed and layered HEVC items, the HEVC screen content coding and
  * separate color plane vectors and the multi-layer HEVC vectors ({@link HevcSamples}), the VVenC vectors
@@ -31,6 +31,9 @@ class MpegDecoderBehaviorTest {
 
     private static final Path HEIF_SEEDS = Path.of("src", "test", "resources", "com", "github", "auties00", "smalt",
             "mpeg", "fuzz", "MpegFuzzTestInputs", "heic");
+
+    private static final Path JPEG_XS_SEEDS = Path.of("src", "test", "resources", "com", "github", "auties00",
+            "smalt", "mpeg", "fuzz", "MpegFuzzTestInputs", "jpegXs");
 
     private static final Path HEVC_VECTORS = Path.of("src", "test", "resources", "com", "github", "auties00", "smalt",
             "video", "hevc");
@@ -102,6 +105,22 @@ class MpegDecoderBehaviorTest {
     @DisplayName("HEIC smoke vectors: identical pictures under every source behavior and clean faults")
     void heic(String name) throws IOException {
         ImageDecoderAsserts.of("vectors/" + name, Files.readAllBytes(Conformance.fetchListed(name))).run();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"valid-rgba.jxs", "valid-rgb-lossless.jxc", "valid-420-narrow-precincts.jxc",
+            "valid-bayer.jxc"})
+    @DisplayName("JPEG XS images (the JPEG XS fuzz seeds): identical pictures under every source behavior")
+    void jpegXs(String name) throws IOException {
+        ImageDecoderAsserts.of("jpeg-xs/" + name, Files.readAllBytes(JPEG_XS_SEEDS.resolve(name))).run();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"1.jxs", "200.jxc", "213.jxc"})
+    @DisplayName("JPEG XS conformance codestreams: identical pictures under every source behavior")
+    void jpegXsConformance(String name) throws IOException {
+        var archive = Conformance.archive("jpeg-xs-conformance-smoke");
+        ImageDecoderAsserts.of("jpeg-xs/conformance-" + name, Files.readAllBytes(archive.fetch(name))).run();
     }
 
     @ParameterizedTest(name = "{0}")

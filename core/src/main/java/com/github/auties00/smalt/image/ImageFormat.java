@@ -177,7 +177,13 @@ public enum ImageFormat {
     /**
      * DirectDraw Surface (DDS), magic {@code DDS } followed by the header size 124.
      */
-    DDS("image/vnd-ms.dds");
+    DDS("image/vnd-ms.dds"),
+
+    /**
+     * JPEG XS (ISO/IEC 21122): a JXS file, starting with the 12-byte signature box
+     * {@code 00 00 00 0C 4A 58 53 20 0D 0A 87 0A}, or a raw codestream, magic {@code FF 10 FF 50}.
+     */
+    JPEG_XS("image/jxs");
 
     /**
      * The number of leading bytes {@link #detect(byte[], int)} needs to recognize every format
@@ -277,6 +283,9 @@ public enum ImageFormat {
         }
         if (isJp2(header, length)) {
             return JP2;
+        }
+        if (isJpegXs(header, length)) {
+            return JPEG_XS;
         }
         var magic = detectMagic(header, length);
         if (magic != null) {
@@ -434,6 +443,19 @@ public enum ImageFormat {
         var size = ByteArrays.u32le(header, 14);
         var offset = ByteArrays.u32le(header, 18);
         return size > 0 && offset >= 6L + 16L * count;
+    }
+
+    /**
+     * Returns whether the bytes start a JXS file or a raw JPEG XS codestream.
+     */
+    private static boolean isJpegXs(byte[] header, int length) {
+        if (length >= 4 && u8(header, 0) == 0xFF && u8(header, 1) == 0x10 && u8(header, 2) == 0xFF
+                && u8(header, 3) == 0x50) {
+            return true;
+        }
+        return length >= 12 && header[0] == 0 && header[1] == 0 && header[2] == 0 && header[3] == 12
+                && header[4] == 'J' && header[5] == 'X' && header[6] == 'S' && header[7] == ' '
+                && header[8] == 0x0D && header[9] == 0x0A && u8(header, 10) == 0x87 && header[11] == 0x0A;
     }
 
     /**

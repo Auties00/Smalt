@@ -117,6 +117,7 @@ final class ImageHeaders {
                 case EXR -> RasterHeaders.exr(source);
                 case JXR -> RasterHeaders.jxr(source);
                 case DDS -> RasterHeaders.dds(source);
+                case JPEG_XS -> RasterHeaders.jpegXs(source);
             };
             if (header.width <= 0 || header.height <= 0) {
                 throw new MediaException.Malformed("the " + format.name().toLowerCase(Locale.ROOT)

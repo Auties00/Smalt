@@ -418,7 +418,7 @@ class MatroskaMuxerCodecTest {
                     assertThrows(IllegalArgumentException.class, () -> muxer.addTrack(track), track.toString());
                 }
             }
-            for (var codec : List.of(Codec.MPEG4_PART2, Codec.MJPEG, Codec.JPEG2000, Codec.H263, Codec.ALAC, Codec.AMR_NB, Codec.AMR_WB,
+            for (var codec : List.of(Codec.MPEG4_PART2, Codec.MJPEG, Codec.JPEG2000, Codec.JPEG_XS, Codec.H263, Codec.ALAC, Codec.AMR_NB, Codec.AMR_WB,
                     Codec.PCM_ALAW, Codec.PCM_MULAW, Codec.PCM_S8, Codec.PCM_F32BE, Codec.PCM_F64BE)) {
                 assertTrue(MatroskaMuxer.supports(MatroskaDocType.MATROSKA, codec), codec.toString());
                 assertFalse(MatroskaMuxer.supports(MatroskaDocType.WEBM, codec), codec.toString());

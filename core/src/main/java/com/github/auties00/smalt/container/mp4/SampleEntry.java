@@ -373,6 +373,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         StereoMode stereoMode = null;
         DolbyVision dolbyVision = null;
         ByteArrayOutputStream avid = null;
+        var jxs = new ByteArrayOutputStream();
         for (var box : children(payload)) {
             var body = box;
             switch (box.type()) {
@@ -395,6 +396,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                 case BoxTypes.GLBL -> glbl = body.rest();
                 case BoxTypes.DVC1 -> dvc1 = body.rest();
                 case BoxTypes.JP2H -> jp2h = withHeader(BoxTypes.JP2H, body.rest());
+                case BoxTypes.JPVI, BoxTypes.JXPL -> jxs.writeBytes(withHeader(box.type(), body.rest()));
                 case BoxTypes.ESDS -> esds = parseEsds(body);
                 case BoxTypes.COLR -> {
                     if (color == null) {
@@ -495,6 +497,10 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
             case BoxTypes.MJP2 -> {
                 codec = Codec.JPEG2000;
                 config = Jp2Frames.isHeader(jp2h) ? jp2h : null;
+            }
+            case BoxTypes.JXSM -> {
+                codec = Codec.JPEG_XS;
+                config = jxs.size() > 0 ? jxs.toByteArray() : null;
             }
             case BoxTypes.APCH, BoxTypes.APCN, BoxTypes.APCS, BoxTypes.APCO, BoxTypes.AP4H, BoxTypes.AP4X -> {
                 codec = Codec.PRORES;

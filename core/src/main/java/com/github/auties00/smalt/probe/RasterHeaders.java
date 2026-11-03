@@ -504,6 +504,66 @@ final class RasterHeaders {
     }
 
     /**
+     * Reads the picture header of a JPEG XS codestream, bare or in the {@code jp2c} box of a JXS file: the size of
+     * the picture (twice the sampling grid for a Bayer codestream), the largest component precision and alpha for four
+     * components other than Bayer data.
+     */
+    static ImageHeaders.Header jpegXs(MediaSource source) {
+        var result = new ImageHeaders.Header();
+        var head = new byte[1 << 16];
+        var length = SourceBytes.readAvailable(source, 0, head, 0, head.length);
+        var start = 0;
+        if (length >= 12 && head[4] == 'J' && head[5] == 'X' && head[6] == 'S' && head[7] == ' ') {
+            start = -1;
+            var position = 12;
+            while (position + 8 <= length) {
+                var size = (head[position] & 0xFFL) << 24 | (head[position + 1] & 0xFF) << 16
+                        | (head[position + 2] & 0xFF) << 8 | head[position + 3] & 0xFF;
+                if (head[position + 4] == 'j' && head[position + 5] == 'p' && head[position + 6] == '2'
+                        && head[position + 7] == 'c') {
+                    start = position + 8;
+                    break;
+                }
+                if (size < 8) {
+                    break;
+                }
+                position += (int) Math.min(size, Integer.MAX_VALUE - position);
+            }
+            if (start < 0) {
+                throw new MediaException.Malformed("the JXS file has no codestream box in its first "
+                        + head.length + " bytes");
+            }
+        }
+        // SOC, CAP (marker, length, bits), then PIH (marker, length) and its fields
+        if (start + 6 > length) {
+            throw new MediaException.Malformed("the JPEG XS codestream is truncated");
+        }
+        var cap = (head[start + 4] & 0xFF) << 8 | head[start + 5] & 0xFF;
+        var pih = start + 4 + cap;
+        if (pih + 28 > length || (head[pih] & 0xFF) != 0xFF || (head[pih + 1] & 0xFF) != 0x12) {
+            throw new MediaException.Malformed("the JPEG XS codestream has no picture header after CAP");
+        }
+        var width = (head[pih + 12] & 0xFF) << 8 | head[pih + 13] & 0xFF;
+        var height = (head[pih + 14] & 0xFF) << 8 | head[pih + 15] & 0xFF;
+        var components = head[pih + 20] & 0xFF;
+        var bayer = (head[pih + 25] & 0x0F) == 3;
+        result.width = bayer ? width * 2 : width;
+        result.height = bayer ? height * 2 : height;
+        result.alpha = !bayer && components == 4;
+        var cdt = pih + 28;
+        while (cdt + 4 <= length && (head[cdt] & 0xFF) == 0xFF && (head[cdt + 1] & 0xFF) != 0x13
+                && (head[cdt + 1] & 0xFF) != 0x20) {
+            cdt += 2 + ((head[cdt + 2] & 0xFF) << 8 | head[cdt + 3] & 0xFF);
+        }
+        if (cdt + 4 + 2 * components <= length && (head[cdt] & 0xFF) == 0xFF && (head[cdt + 1] & 0xFF) == 0x13) {
+            for (var c = 0; c < components; c++) {
+                result.bitDepth = Math.max(result.bitDepth, head[cdt + 4 + 2 * c] & 0xFF);
+            }
+        }
+        return result;
+    }
+
+    /**
      * Reads a DDS header: the size of the top surface, the depth of its pixel format, alpha from the format, and as
      * frames the surfaces of every array element, face, mipmap level and depth slice.
      */

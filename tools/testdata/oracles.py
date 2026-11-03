@@ -67,6 +67,7 @@ VERSION_ARGS = {
     'mkvmerge': ['--version'], 'mkvinfo': ['--version'], 'mkvalidator': ['--version'], 'tsp': ['--version'],
     'sox': ['--version'], 'smalt-pngdump': [], 'smalt-lcmsdump': [], 'smalt-mpeg4ref': [], 'smalt-gifenc': [], 'smalt-bcdec': [],
     'smalt-alacenc': [], 'smalt-at9dec': [], 'smalt-mpeg2dec': [], 'smalt-mpeg2enc': [],
+    'smalt-jxsdec': [], 'smalt-jxsenc': [],
     'ultrahdr_app': [], 'avifgainmaputil': ['--version'], 'avifdec': ['--version'], 'dng_validate': [],
 }
 VERSION_MARKERS = ('version', 'libtiff', 'opj_', 'usage', 'exiftool', ' v', 'copyright')
@@ -419,6 +420,8 @@ def build(row, target):
     if name == 'smalt-mpeg2ref':
         key += ' ' + digest(os.path.join(HERE, 'mpeg2-oracle', 'build.py'))
         key += ' ' + digest(os.path.join(HERE, 'mpeg2-oracle', 'smalt_idct.c'))
+    if name == 'smalt-jxsref':
+        key += ' ' + digest(os.path.join(HERE, 'jxs-oracle', 'build.py'))
     if name == 'smalt-gifenc':
         key += ' ' + digest(os.path.join(HERE, 'gif-oracle', 'smalt-gifenc.c'))
     if name == 'smalt-bcdec':
@@ -574,6 +577,11 @@ def build(row, target):
             builder = load_script('mpeg2-oracle', 'build.py')
             builder.build(archive, work, compiler(target), os.path.join(out, 'smalt-mpeg2dec' + EXE),
                           os.path.join(out, 'smalt-mpeg2enc' + EXE), env=env)
+        elif name == 'smalt-jxsref':
+            archive = download(row['source'], row['sha256'])
+            builder = load_script('jxs-oracle', 'build.py')
+            builder.build(archive, work, compiler(target), os.path.join(out, 'smalt-jxsdec' + EXE),
+                          os.path.join(out, 'smalt-jxsenc' + EXE), env=env)
         elif name == 'libultrahdr':
             tree = source_tree(row, work)
             build_dir = os.path.join(work, 'build')

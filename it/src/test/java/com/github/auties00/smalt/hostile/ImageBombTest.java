@@ -88,6 +88,7 @@ class ImageBombTest {
                 new Bomb("HEIF uncompressed", () -> heifUncompressed(16, 16, 16),
                         (file, width, height) -> heifUncompressed(width, height, 16)),
                 new Bomb("JPEG XL", () -> jxl(16, 16), (file, width, height) -> jxl(width, height), false),
+                new Bomb("JPEG XS", () -> encode(ImageFormat.JPEG_XS, false), ImageBombTest::jpegXs, false),
                 new Bomb("DNG", () -> dng(16, 16), (file, width, height) -> dng(width, height)));
         var arguments = new ArrayList<Arguments>();
         for (var bomb : bombs) {
@@ -124,6 +125,8 @@ class ImageBombTest {
                 new Large("AVIF", () -> encodeFlat(ImageFormat.AVIF, LARGE, ImageEncoderOptions.builder().build()), LARGE),
                 new Large("HEIF uncompressed", () -> heifUncompressed(LARGE, LARGE, LARGE), LARGE),
                 new Large("JPEG XL", ImageBombTest::cjxl, LARGE),
+                new Large("JPEG XS", () -> encodeFlat(ImageFormat.JPEG_XS, LARGE, ImageEncoderOptions.builder().build()),
+                        LARGE),
                 new Large("DNG", () -> dng(LARGE, LARGE), LARGE));
     }
 
@@ -563,6 +566,16 @@ class ImageBombTest {
         be32(data, siz + 18, 0);
         be32(data, siz + 22, width);
         be32(data, siz + 26, height);
+        return data;
+    }
+
+    // the picture header follows SOC and CAP; its width and height sit 12 and 14 bytes after its marker
+    static byte[] jpegXs(byte[] file, int width, int height) {
+        var data = file.clone();
+        var soc = indexOf(data, new byte[]{(byte) 0xFF, 0x10, (byte) 0xFF, 0x50}, 0);
+        var pih = soc + 4 + be16(data, soc + 4);
+        be16(data, pih + 12, width);
+        be16(data, pih + 14, height);
         return data;
     }
 

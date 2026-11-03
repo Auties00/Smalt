@@ -18,6 +18,7 @@ import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
 import com.github.auties00.smalt.internal.codec.IntermediateFrames;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
+import com.github.auties00.smalt.internal.codec.JxsConfigs;
 import com.github.auties00.smalt.internal.codec.NalConfigs;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.io.ByteWriter;
@@ -94,7 +95,10 @@ import java.util.Set;
  *       {@code BITMAPINFOHEADER} with the FourCC {@code MPNG} or {@code CFHD}), TIFF, GIF, QuickTime Animation and HAP
  *       ({@code V_QUICKTIME}, a QuickTime video sample description of type {@code tiff}, {@code gif }, {@code rle }
  *       with the depth and color table of the track's configuration, or the HAP type of the track's
- *       configuration, {@code Hap1} without one), AAC ({@code A_AAC}, the
+ *       configuration, {@code Hap1} without one), JPEG XS ({@code V_QUICKTIME}, the {@code jxsm}
+ *       visual sample entry of ISO/IEC 21122-3 Annex B with the {@code jpvi} and {@code jxpl} boxes of the track's
+ *       configuration or, without one, of the first codestream's picture header and the track's frame rate and
+ *       field order; Matroska registers no codec identifier of its own for JPEG XS), AAC ({@code A_AAC}, the
  *       {@code AudioSpecificConfig}), FLAC ({@code A_FLAC}, the {@code fLaC} marker and metadata
  *       blocks), ALAC ({@code A_ALAC}, the 24-byte {@code ALACSpecificConfig}), WavPack ({@code A_WAVPACK4}, the
  *       two-byte stream version, taken from the first packet when the track has no configuration; packets of
@@ -603,7 +607,8 @@ public final class MatroskaMuxer implements Muxer {
             case PRORES -> "V_PRORES";
             case THEORA -> "V_THEORA";
             case FFV1 -> "V_FFV1";
-            case DNXHD, TIFF, GIF, QTRLE, HAP -> "V_QUICKTIME";
+            // TODO: write a dedicated JPEG XS codec identifier (and read it) once the Matroska registry assigns one
+            case DNXHD, TIFF, GIF, QTRLE, HAP, JPEG_XS -> "V_QUICKTIME";
             case PNG, CFHD -> "V_MS/VFW/FOURCC";
             case OPUS -> "A_OPUS";
             case VORBIS -> "A_VORBIS";
@@ -1626,6 +1631,12 @@ public final class MatroskaMuxer implements Muxer {
         byte[] codecPrivate;
 
         /**
+         * Whether the {@code jpvi} and {@code jxpl} boxes of a JPEG XS track are still to be derived from its first
+         * codestream, as the track has no configuration.
+         */
+        boolean jpegXsDerived;
+
+        /**
          * The format of an ADPCM or telephony track, or {@code null}.
          */
         AdpcmFormat adpcm;
@@ -1816,6 +1827,11 @@ public final class MatroskaMuxer implements Muxer {
                     case H264, HEVC, PRORES, THEORA -> codecPrivate = require(config);
                     case VVC -> codecPrivate = NalRecords.withoutVvcBoxHeader(require(config));
                     case DNXHD -> codecPrivate = imageDescription(require(config), videoTrack);
+                    case JPEG_XS -> {
+                        var parsed = JxsConfigs.parseConfig(config);
+                        jpegXsDerived = parsed == null;
+                        codecPrivate = jpegXsDescription(videoTrack, parsed == null ? null : JxsConfigs.config(parsed));
+                    }
                     case AV1, MPEG4_PART2, MPEG1_VIDEO, MPEG2_VIDEO, FFV1 -> codecPrivate = config;
                     case VP9 -> codecPrivate = config == null ? null : vp9Features(config);
                     case H263 -> codecPrivate = bitmapInfo(videoTrack, "H263", 24, config);
@@ -2043,6 +2059,32 @@ public final class MatroskaMuxer implements Muxer {
             compressor[0] = (byte) name.length();
             System.arraycopy(name.getBytes(StandardCharsets.US_ASCII), 0, compressor, 1, name.length());
             buffer.put(compressor).putShort((short) depth).putShort((short) (table.length > 0 ? 0 : -1)).put(table);
+            return buffer.array();
+        }
+
+        /**
+         * Builds the {@code CodecPrivate} of a JPEG XS {@code V_QUICKTIME} track: the {@code jxsm} visual sample
+         * entry of ISO/IEC 21122-3 Annex B as a QuickTime video sample description, 86 bytes from its size and type
+         * to its color table ID, followed by the video information ({@code jpvi}) and profile and level
+         * ({@code jxpl}) boxes.
+         *
+         * @param video the track
+         * @param boxes the {@code jpvi} and {@code jxpl} boxes, or {@code null} for none
+         * @return the sample description
+         */
+        private static byte[] jpegXsDescription(VideoTrack video, byte[] boxes) {
+            var extra = boxes == null ? new byte[0] : boxes;
+            var name = "JPEG XS";
+            var buffer = ByteBuffer.allocate(86 + extra.length);
+            buffer.putInt(86 + extra.length).put("jxsm".getBytes(StandardCharsets.US_ASCII)).put(new byte[6])
+                    .putShort((short) 1);
+            buffer.putShort((short) 0).putShort((short) 0).putInt(0).putInt(0).putInt(0);
+            buffer.putShort((short) video.width()).putShort((short) video.height());
+            buffer.putInt(0x00480000).putInt(0x00480000).putInt(0).putShort((short) 1);
+            var compressor = new byte[32];
+            compressor[0] = (byte) name.length();
+            System.arraycopy(name.getBytes(StandardCharsets.US_ASCII), 0, compressor, 1, name.length());
+            buffer.put(compressor).putShort((short) 24).putShort((short) -1).put(extra);
             return buffer.array();
         }
 
@@ -2276,15 +2318,26 @@ public final class MatroskaMuxer implements Muxer {
         }
 
         /**
-         * Derives a missing AV1 or VP9 configuration from the first packet.
+         * Derives a missing AV1, VP9 or JPEG XS configuration from the first packet.
          *
          * @param first the track's first packet
          */
         void resolveConfig(Packet first) {
+            var videoTrack = (track instanceof VideoTrack v) ? v : null;
+            if (jpegXsDerived && videoTrack != null) {
+                jpegXsDerived = false;
+                var data = first.data();
+                var picture = JxsConfigs.picture(data, 0, data.length);
+                if (picture != null) {
+                    codecPrivate = jpegXsDescription(videoTrack, JxsConfigs.config(new JxsConfigs.Config(0,
+                            JxsConfigs.frat(videoTrack.frameRate().orElse(null), videoTrack.interlacing().orElse(null)),
+                            JxsConfigs.schar(picture), 0, picture.profile(), picture.level())));
+                }
+                return;
+            }
             if (codecPrivate != null || !first.keyframe()) {
                 return;
             }
-            var videoTrack = (track instanceof VideoTrack v) ? v : null;
             if (track.codec() == Codec.AV1) {
                 codecPrivate = CodecConfigs.av1Config(first.data());
             } else if (track.codec() == Codec.VP9 && videoTrack != null) {

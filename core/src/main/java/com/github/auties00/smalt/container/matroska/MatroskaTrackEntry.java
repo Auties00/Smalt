@@ -29,6 +29,7 @@ import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
 import com.github.auties00.smalt.internal.codec.IntermediateFrames;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
+import com.github.auties00.smalt.internal.codec.JxsConfigs;
 import com.github.auties00.smalt.internal.header.OpusHeader;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.nal.NalRecords;
@@ -68,7 +69,10 @@ import java.util.Set;
  * from the object type in the identifier and the declared rates and channels. VP8 and VP9 carry no
  * configuration (their bitstreams are self-describing). Tracks stored through the
  * {@code V_MS/VFW/FOURCC} and {@code A_MS/ACM} compatibility identifiers are mapped from their
- * {@code BITMAPINFOHEADER} and {@code WAVEFORMATEX} structures.
+ * {@code BITMAPINFOHEADER} and {@code WAVEFORMATEX} structures, and those of {@code V_QUICKTIME} from the sample
+ * entry type of their QuickTime image description; a JPEG XS ({@code jxsm}) entry gives its {@code jpvi} and
+ * {@code jxpl} boxes as the configuration, and their frame rate and field order when the track declares none, as does
+ * a {@code V_MS/VFW/FOURCC} track of FourCC {@code jxsm} whose extra bytes hold that entry (as ffmpeg copies one).
  */
 final class MatroskaTrackEntry {
     /**
@@ -102,6 +106,11 @@ final class MatroskaTrackEntry {
      * visual fields of ISO/IEC 14496-12 clause 12.1.3.
      */
     private static final int VISUAL_SAMPLE_ENTRY = 86;
+
+    /**
+     * The size of a {@code BITMAPINFOHEADER} without its extra bytes.
+     */
+    private static final int BITMAP_INFO_HEADER = 40;
 
     /**
      * The {@code TrackType} of an audio track.
@@ -856,10 +865,13 @@ final class MatroskaTrackEntry {
                 config = codec == Codec.PRORES || codec == Codec.HAP ? Arrays.copyOfRange(codecPrivate, 4, 8)
                         : codec == Codec.DNXHD ? dnxhdConfig(codecPrivate)
                         : codec == Codec.QTRLE ? qtrleConfig(codecPrivate)
-                        : codec == Codec.VVC ? vvcFromImageDescription() : null;
+                        : codec == Codec.VVC ? vvcFromImageDescription()
+                        : codec == Codec.JPEG_XS ? jpegXsBoxes(VISUAL_SAMPLE_ENTRY) : null;
             } else if (codecId.equals("V_MS/VFW/FOURCC")) {
                 config = codec == Codec.DNXHD || codec == Codec.HAP ? hapOrDnxhdFourCc(codec, codecPrivate)
                         : codec == Codec.DV || codec == Codec.PNG || codec == Codec.TIFF || codec == Codec.CFHD ? null
+                        : codec == Codec.JPEG_XS ? (isJxsmDescription(BITMAP_INFO_HEADER)
+                        ? jpegXsBoxes(BITMAP_INFO_HEADER + VISUAL_SAMPLE_ENTRY) : null)
                         : codecPrivate != null && codecPrivate.length > 40 ? Arrays.copyOfRange(codecPrivate, 40, codecPrivate.length) : null;
             }
             if (codec == Codec.VVC && config != null) {
@@ -879,6 +891,10 @@ final class MatroskaTrackEntry {
                 LimitChecks.checkPicture(limits, width, height);
             }
             var frameRate = defaultDuration > 0 ? Optional.of(new Rational(1_000_000_000L, defaultDuration).reduce()) : Optional.<Rational>empty();
+            var jxs = codec == Codec.JPEG_XS ? JxsConfigs.parseConfig(config) : null;
+            if (frameRate.isEmpty() && jxs != null) {
+                frameRate = Optional.ofNullable(jxs.frameRate());
+            }
             var builder = VideoTrack.builder().id(id).codec(codec).timeBase(timeBase)
                     .duration(duration(segmentBase, segmentDuration))
                     .codecConfig(config)
@@ -893,6 +909,9 @@ final class MatroskaTrackEntry {
                 builder.sampleAspectRatio(aspect);
             }
             var scan = interlacing();
+            if (scan == null && jxs != null) {
+                scan = jxs.interlacing();
+            }
             if (scan != null) {
                 builder.interlacing(scan);
             }
@@ -1121,6 +1140,7 @@ final class MatroskaTrackEntry {
             case "TIFF" -> Codec.TIFF;
             case "CFHD" -> Codec.CFHD;
             case "HAP1", "HAP5", "HAPY", "HAPM", "HAPA", "HAP7", "HAPH" -> Codec.HAP;
+            case "JXSM" -> Codec.JPEG_XS;
             default -> Codec.UNKNOWN_VIDEO;
         };
     }
@@ -1188,8 +1208,8 @@ final class MatroskaTrackEntry {
 
     /**
      * Maps the sample entry type of a QuickTime image description codec private
-     * ({@code V_QUICKTIME}): ProRes, DNxHD, Motion JPEG 2000, PNG, TIFF, GIF, QuickTime Animation, CineForm and
-     * HAP.
+     * ({@code V_QUICKTIME}): ProRes, DNxHD, Motion JPEG 2000, VVC, PNG, TIFF, GIF, QuickTime Animation, CineForm,
+     * HAP and JPEG XS.
      *
      * @return the codec
      */
@@ -1212,6 +1232,7 @@ final class MatroskaTrackEntry {
             case "rle " -> Codec.QTRLE;
             case "CFHD" -> Codec.CFHD;
             case "Hap1", "Hap5", "HapY", "HapM", "HapA", "Hap7", "HapH" -> Codec.HAP;
+            case "jxsm" -> Codec.JPEG_XS;
             default -> Codec.UNKNOWN_VIDEO;
         };
     }
@@ -1238,6 +1259,44 @@ final class MatroskaTrackEntry {
             position += (int) size;
         }
         return null;
+    }
+
+    /**
+     * Returns the configuration of a JPEG XS track from the boxes of its codec private that start at {@code start}:
+     * those of the {@code jxsm} visual sample entry (ISO/IEC 21122-3 Annex B) of a {@code V_QUICKTIME} track, or of
+     * that entry after the {@code BITMAPINFOHEADER} of a {@code V_MS/VFW/FOURCC} track of FourCC {@code jxsm}, as
+     * ffmpeg writes the first when it copies it. The video information ({@code jpvi}) and profile
+     * and level ({@code jxpl}) boxes are kept, the others dropped. The boxes end where the size field of the
+     * sample description says it ends, or at the end of the codec private when that size is out of range.
+     *
+     * @param start the offset of the first box, 86 bytes after the description's size field
+     * @return the {@code jpvi} and {@code jxpl} boxes, or {@code null} when the codec private holds neither
+     */
+    private byte[] jpegXsBoxes(int start) {
+        if (codecPrivate.length <= start) {
+            return null;
+        }
+        var from = start - VISUAL_SAMPLE_ENTRY;
+        var size = (codecPrivate[from] & 0xFFL) << 24 | (codecPrivate[from + 1] & 0xFF) << 16
+                | (codecPrivate[from + 2] & 0xFF) << 8 | codecPrivate[from + 3] & 0xFF;
+        var end = size >= VISUAL_SAMPLE_ENTRY && size <= codecPrivate.length - from ? from + (int) size
+                : codecPrivate.length;
+        if (end <= start) {
+            return null;
+        }
+        var parsed = JxsConfigs.parseConfig(Arrays.copyOfRange(codecPrivate, start, end));
+        return parsed == null ? null : JxsConfigs.config(parsed);
+    }
+
+    /**
+     * {@return whether a QuickTime sample description of type {@code jxsm} starts at {@code offset} of the codec
+     * private}
+     *
+     * @param offset the position of its size field
+     */
+    private boolean isJxsmDescription(int offset) {
+        return codecPrivate.length >= offset + VISUAL_SAMPLE_ENTRY && codecPrivate[offset + 4] == 'j'
+                && codecPrivate[offset + 5] == 'x' && codecPrivate[offset + 6] == 's' && codecPrivate[offset + 7] == 'm';
     }
 
     /**
