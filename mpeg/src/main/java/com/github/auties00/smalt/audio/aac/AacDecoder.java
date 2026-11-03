@@ -706,7 +706,8 @@ public final class AacDecoder implements AudioDecoder {
      * from, the downmix first; units of other tracks are ignored. For a stream that applies the error protection
      * tool ({@code epConfig} 2 or 3), {@code instances} holds the error protected access unit of each elementary
      * stream (one per layer of scalable AAC, one per elementary stream of ER BSAC), whose source coder frames each
-     * yield a block. The packets are read only during the call. An exception thrown by {@code output} propagates unchanged.
+     * yield a block. The packets are read only during the call. An exception thrown by {@code output} propagates
+     * unchanged.
      *
      * @param instances the category instances of the block
      * @param output receives the block's samples, valid only during the call
