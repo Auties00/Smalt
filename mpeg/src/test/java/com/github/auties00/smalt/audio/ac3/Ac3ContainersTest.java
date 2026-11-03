@@ -134,6 +134,23 @@ class Ac3ContainersTest {
         }
     }
 
+    /** Returns num_dep_sub of the first independent substream of the dec3 box of an MP4 file (ETSI TS 102 366 F.6). */
+    static int dependentSubstreams(Path file) {
+        try {
+            var bytes = Files.readAllBytes(file);
+            for (var i = 4; i + 9 < bytes.length; i++) {
+                if (bytes[i] == 'd' && bytes[i + 1] == 'e' && bytes[i + 2] == 'c' && bytes[i + 3] == '3') {
+                    // data_rate(13) num_ind_sub(3), fscod(2) bsid(5) reserved(1) asvc(1) bsmod(3) acmod(3)
+                    // lfeon(1), reserved(3) num_dep_sub(4) ...
+                    return (bytes[i + 8] >> 1) & 0xF;
+                }
+            }
+            throw new AssertionError("no dec3 box in " + file);
+        } catch (IOException exception) {
+            throw new UncheckedIOException(exception);
+        }
+    }
+
     @Nested
     @DisplayName("raw elementary streams")
     class Raw {
@@ -337,18 +354,19 @@ class Ac3ContainersTest {
         }
 
         @Test
-        @DisplayName("read the stream ffmpeg remuxes, whose dec3 box omits the dependent substream")
+        @DisplayName("read the stream ffmpeg remuxes, as its dec3 box describes it, and decode all of its channels")
         void foreign() {
             Oracle.assume(Oracle.Tool.FFMPEG);
             var input = Ac3TestSupport.SAMPLES.get(7).fetch();
             var output = directory.resolve("remuxed.mp4");
             Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(1), List.of("-v", "error", "-y", "-i", input.toString(), "-c", "copy",
                     output.toString()));
-            // ffmpeg 7.1 declares num_dep_sub = 0 for an AC-3 core with an E-AC-3 dependent
-            // substream, so the box describes the 5.1 core; the frames decode to 7.1
+            // ffmpeg 7.1.1 and earlier declare num_dep_sub = 0 for an AC-3 core with an E-AC-3
+            // dependent substream, so the box describes the 5.1 core; 7.1.2 declares the dependent
+            // substream and its channels. Either way the frames decode to 7.1.
             var track = firstTrack(MediaSource.of(output));
             assertEquals(Codec.EAC3, track.codec());
-            assertEquals(6, track.layout().orElseThrow().channels());
+            assertEquals(dependentSubstreams(output) == 0 ? 6 : 8, track.layout().orElseThrow().channels());
             var packets = readAll(MediaSource.of(output));
             assertSamePayloads(units(read(input)), packets);
             try (var decoder = AudioDecoders.create(track)) {

@@ -15,8 +15,10 @@ import java.util.regex.Pattern;
  * <p>The maker note (a TIFF structure of its own after the {@code Nikon} signature) provides tag
  * {@code 0x0096}, the compression data: two version bytes, the four initial vertical predictors,
  * the size of the linearization curve and its values, and for some lossy versions the split row;
- * tag {@code 0x000C}, the red and blue white balance multipliers; and tag {@code 0x003D}, the black
- * level of each CFA channel. The compressed data is a single stream of Huffman-coded differences,
+ * tag {@code 0x000C}, the red and blue white balance multipliers; tag {@code 0x003D}, the black
+ * level of each CFA channel; and, in a file whose TIFF structure holds no JPEG preview, as the Coolpix
+ * files store only an uncompressed thumbnail there, tag {@code 0x0011} points to the directory of
+ * the camera's JPEG preview. The compressed data is a single stream of Huffman-coded differences,
  * one per photosite row by row: each photosite is predicted from the previous one of the same
  * color in its row, the first two of a row from the first two of the row two above, and the
  * decoded value indexes the linearization curve. A lossy stream with a split row switches from
@@ -27,9 +29,10 @@ import java.util.regex.Pattern;
  * {@link NikonTables}, the meaning of the split row, the clamping of the predictors and
  * the curve of version {@code 0x44 0x40} were worked out from CC0 sample files against
  * the values Adobe DNG Converter stores for them, which this decoder reproduces exactly
- * before linearization. The linear interpolation of the sampled curves matches Adobe's
- * tables within 3 levels for version {@code 0x44 0x40} but runs up to 1% of the white
- * level above them for version {@code 0x44 0x20}. Nikon's high-efficiency (HE and HE*)
+ * before linearization; so is the placement of the sampled curves' points, with which the
+ * expanded curves equal the converter's linearization tables entry for entry; as the converter
+ * does, the 12-bit lossy files of the D3, D300 and D700, whose own curve ends early, take the curve
+ * every file of version {@code 0x44 0x10} carries. Nikon's high-efficiency (HE and HE*)
  * compression is not supported. The interlaced rows of the {@code E}-series Coolpix
  * models were found by matching the rows of three CC0 files (E5700, E8400, E8800) with
  * those the converter stores, and the place of their white balance by finding the as-shot
@@ -45,6 +48,12 @@ final class NefParser {
      * The size of the Coolpix maker note block (tag {@code 0x0014}) that holds the white balance.
      */
     private static final int COOLPIX_BALANCE_SIZE = 2560;
+
+    /**
+     * The maker note tag pointing to the directory of the camera's JPEG preview, relative to the
+     * maker note's TIFF header.
+     */
+    private static final int PREVIEW_IFD = 0x0011;
 
     /**
      * The model names of the Coolpix cameras whose NEF files store interlaced rows.
@@ -73,12 +82,18 @@ final class NefParser {
             return;
         }
         var note = makerNote(tree);
+        if (note != null && file.previews.isEmpty()) {
+            var preview = note.child(PREVIEW_IFD);
+            if (preview != null) {
+                TiffTree.preview(preview, file);
+            }
+        }
         var compression = raw.intValue(TiffSamples.COMPRESSION, 1);
         var sensor = new Sensor();
         if (compression == NIKON_COMPRESSION) {
             Compressed compressed;
             try {
-                compressed = compressed(reader, raw, note);
+                compressed = compressed(reader, raw, note, file.model);
             } catch (MediaException.Unsupported exception) {
                 file.unsupported = exception.getMessage();
                 return;
@@ -97,8 +112,6 @@ final class NefParser {
             try {
                 sensor.reader = uncompressed(raw, sensor);
                 if (interlaced(file)) {
-                    // TODO: render the cyan, yellow, green and magenta E5700: it needs color matrices, and its CFA tag
-                    //  (YCGM) is one row off the pattern Adobe DNG Converter stores for it (GMYC)
                     sensor.reader = interlaced(sensor.reader);
                 }
             } catch (MediaException.Unsupported exception) {
@@ -111,11 +124,38 @@ final class NefParser {
             file.unsupported = "the NEF raw image has no CFA pattern";
             return;
         }
+        if (!sensor.cfa.isRgb()) {
+            // the four-color E5700's CFA tag (YCGM) is one row off the pattern its photosites follow (GMYC, which
+            // Adobe DNG Converter stores over the same samples); the planes are green, magenta, cyan and yellow, in
+            // the order the converter stores them
+            sensor.cfa = sensor.cfa.shifted(1, 0);
+            sensor.planeOfColor = new int[]{-1, 0, -1, 2, 1, 3, -1};
+        }
         if (note != null) {
             levels(note, sensor, file);
         }
+        if (!sensor.cfa.isRgb()) {
+            // the maker note's red and blue multipliers do not balance four colors
+            file.color.asShotNeutral = null;
+            sensor.estimateBalance = true;
+        }
         sensor.defaultCrop = previewCrop(file, sensor);
         file.sensor = sensor;
+    }
+
+    /**
+     * Reads the parameters of a Nikon-compressed image from its directory and the maker note, the
+     * camera model unknown.
+     *
+     * @param reader the TIFF structure
+     * @param raw the raw image directory
+     * @param note the maker note's directory, or {@code null}
+     * @return the parameters
+     * @throws MediaException.Unsupported if the file has no compression data
+     * @throws MediaException.Malformed if the image dimensions or data are invalid
+     */
+    static Compressed compressed(TiffReader reader, Ifd raw, Ifd note) {
+        return compressed(reader, raw, note, null);
     }
 
     /**
@@ -129,11 +169,12 @@ final class NefParser {
      * @param reader the TIFF structure
      * @param raw the raw image directory
      * @param note the maker note's directory, or {@code null}
+     * @param model the camera model, or {@code null}
      * @return the parameters
      * @throws MediaException.Unsupported if the file has no compression data
      * @throws MediaException.Malformed if the image dimensions or data are invalid
      */
-    static Compressed compressed(TiffReader reader, Ifd raw, Ifd note) {
+    static Compressed compressed(TiffReader reader, Ifd raw, Ifd note, String model) {
         var width = raw.intValue(TiffSamples.IMAGE_WIDTH, 0);
         var height = raw.intValue(TiffSamples.IMAGE_LENGTH, 0);
         var bits = raw.intValue(TiffSamples.BITS_PER_SAMPLE, 12);
@@ -152,7 +193,9 @@ final class NefParser {
         for (var index = 0; index < 4; index++) {
             predictors[index] = ByteArrays.u16(data, 2 + 2 * index, little);
         }
-        var curve = curve(data, little, version0, version1, bits);
+        var curve = version0 == 0x44 && version1 == 0x20 && bits == 12 && model != null
+                && NikonTables.TYPE_1_CURVE_MODELS.contains(model.strip())
+                ? NikonTables.typeOneCurve() : curve(data, little, version0, version1, bits);
         var split = 0;
         if (version0 == 0x44 && (version1 == 0x20 || version1 == 0x40) && data.length >= 564) {
             split = ByteArrays.u16(data, 562, little);
@@ -211,13 +254,15 @@ final class NefParser {
         return (plane, limits) -> {
             reader.read(plane, limits);
             var stride = plane.width * plane.samplesPerPixel;
-            LimitChecks.checkAllocation(limits, (long) stride * plane.height * 2);
-            var stored = plane.integers.clone();
+            LimitChecks.checkAllocation(limits, (long) stride * plane.height * (plane.integers != null ? 2 : 4));
+            Object samples = plane.integers != null ? plane.integers : plane.wide != null ? plane.wide : plane.floats;
+            var stored = plane.integers != null ? (Object) plane.integers.clone()
+                    : plane.wide != null ? plane.wide.clone() : plane.floats.clone();
             var even = (plane.height + 1) / 2;
             for (var row = 0; row < plane.height; row++) {
                 var source = row < even ? row : row - even;
                 var target = row < even ? 2 * source : 2 * source + 1;
-                System.arraycopy(stored, row * stride, plane.integers, target * stride, stride);
+                System.arraycopy(stored, row * stride, samples, target * stride, stride);
             }
         };
     }
@@ -268,11 +313,13 @@ final class NefParser {
      * Expands the linearization curve of the compression data to every value the predictor can
      * take.
      *
-     * <p>Lossless data (version {@code 0x46}) has no curve. Lossy data of version {@code 0x44 0x20}
-     * gives the curve at evenly spaced points of the whole value range, and version
-     * {@code 0x44 0x40} at evenly spaced points of its lowest quarter, the values above holding
-     * the last point; the curve is interpolated linearly between the points. Other lossy data
-     * gives one curve value per decoded value.
+     * <p>Lossless data (version {@code 0x46}) has no curve. Lossy data of versions {@code 0x44 0x20}
+     * and {@code 0x44 0x40} gives the curve at {@code n} evenly spaced points, between which it is
+     * interpolated linearly and rounded to the nearest integer, halves up; past the last point it
+     * holds the last value. With {@code m = 2^bits - 1}, decoded value {@code i} lies at point
+     * {@code i * (n - 2) / m} for version {@code 0x44 0x20} and at point {@code i * 4 * (n - 1) / m}
+     * for version {@code 0x44 0x40}, whose points cover the lowest quarter of the range. Other lossy
+     * data gives one curve value per decoded value.
      *
      * @param data the compression data
      * @param little whether its integers are little endian
@@ -295,16 +342,21 @@ final class NefParser {
         for (var index = 0; index < entries; index++) {
             values[index] = ByteArrays.u16(data, 12 + 2 * index, little);
         }
-        // TODO: find the interpolation Adobe DNG Converter applies to the 0x44 0x20 curves; its tables run up to 1%
-        //  below this linear interpolation in the highlights
-        var sampled = version0 == 0x44 && (version1 == 0x20 || version1 == 0x40);
-        var step = sampled ? (version1 == 0x40 ? size >> 2 : size) / (entries - 1) : 0;
-        if (step > 0) {
+        if (version0 == 0x44 && (version1 == 0x20 || version1 == 0x40) && entries > 2) {
+            // the converter's tables place the points at these fractions of the value range
+            var numerator = version1 == 0x40 ? 4L * (entries - 1) : entries - 2;
+            var denominator = (long) size - 1;
             for (var index = 0; index < size; index++) {
-                var lower = Math.min(index / step, entries - 1);
-                var fraction = lower == entries - 1 ? 0 : index % step;
-                var upper = Math.min(lower + 1, entries - 1);
-                curve[index] = (values[lower] * (step - fraction) + values[upper] * fraction) / step;
+                var position = index * numerator;
+                var lower = position / denominator;
+                if (lower >= entries - 1) {
+                    curve[index] = values[entries - 1];
+                    continue;
+                }
+                var remainder = position % denominator;
+                var rise = values[(int) lower + 1] - values[(int) lower];
+                curve[index] = values[(int) lower]
+                        + (int) Math.floorDiv(2 * rise * remainder + denominator, 2 * denominator);
             }
         } else {
             for (var index = 0; index < size; index++) {

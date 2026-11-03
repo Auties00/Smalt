@@ -4,6 +4,7 @@ import com.github.auties00.smalt.container.mp4.Mp4Muxer;
 import com.github.auties00.smalt.container.mp4.Mp4MuxerOptions;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.io.MediaSink;
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Oracle;
 import com.github.auties00.smalt.track.Codec;
@@ -33,7 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Compares the ProRes and DNxHR encoders with ffmpeg's prores_ks and dnxhd encoders on the same
- * natural frames (the Xiph {@code parkrun} sequence when cached, else a synthetic scene): both files
+ * natural frames (the Xiph {@code parkrun} sequence, or the first frames of it in the clip tier): both files
  * are decoded by ffmpeg and measured against the source, and Smalt must reach comparable quality
  * without spending more bits.
  */
@@ -44,9 +45,19 @@ class IntraQualityTest {
     static final int FRAMES = 3;
 
     static byte[] sourceRaw(String format) {
+        // The comparison is calibrated on natural frames: synthetic scenes such as mandelbrot favor neither encoder
         var parkrun = Path.of(Conformance.directory().toString(), "720p50_parkrun_ter.y4m");
-        var input = Files.isRegularFile(parkrun) ? List.of("-i", parkrun.toString())
-                : List.of("-f", "lavfi", "-i", "mandelbrot=size=1280x720:rate=25");
+        var clip = Path.of(System.getProperty("smalt.test.clips", Path.of(System.getProperty("user.home"), ".smalt",
+                "cache", "clips").toString()), "parkrun720.yuv");
+        List<String> input;
+        if (Files.isRegularFile(parkrun)) {
+            input = List.of("-i", parkrun.toString());
+        } else {
+            Skip.unless(Files.isRegularFile(clip), "data:clip", "neither 720p50_parkrun_ter.y4m nor the parkrun720.yuv"
+                    + " clip is cached (python tools/testdata/testdata.py fetch --tier full)");
+            input = List.of("-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", WIDTH + "x" + HEIGHT, "-r", "50", "-i",
+                    clip.toString());
+        }
         var arguments = new ArrayList<>(List.of("-v", "error"));
         arguments.addAll(input);
         arguments.addAll(List.of("-frames:v", Integer.toString(FRAMES), "-f", "rawvideo", "-pix_fmt", format, "-"));

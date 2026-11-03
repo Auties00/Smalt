@@ -123,6 +123,8 @@ final class Opcodes {
                 var index = (row * plane.width + column) * plane.samplesPerPixel + p;
                 if (plane.integers != null) {
                     plane.integers[index] = (short) Math.clamp(Math.round(value), 0, 65535);
+                } else if (plane.wide != null) {
+                    plane.wide[index] = (int) Math.clamp(Math.round((double) value), 0L, 0xFFFFFFFFL);
                 } else {
                     plane.floats[index] = value;
                 }
@@ -130,7 +132,50 @@ final class Opcodes {
 
             @Override
             public float maximum() {
-                return plane.integers != null ? 65535 : Float.MAX_VALUE;
+                return plane.integers != null ? 65535 : plane.wide != null ? 4294967295f : Float.MAX_VALUE;
+            }
+        }, list);
+    }
+
+    /**
+     * Applies an opcode list to a linear image of one sample per photosite that interleaves the two samples of each
+     * pixel of the list's image in adjacent columns, sample 1 first: the staggered image of the diagonal pairs of a
+     * two-sample DNG image.
+     *
+     * @param image the linear image, of an even width, modified in place
+     * @param list the opcode list
+     */
+    static void applyToPairs(LinearImage image, byte[] list) {
+        var width = image.width;
+        apply(new Surface() {
+            @Override
+            public int width() {
+                return width / 2;
+            }
+
+            @Override
+            public int height() {
+                return image.height;
+            }
+
+            @Override
+            public int planes() {
+                return 2;
+            }
+
+            @Override
+            public float get(int row, int column, int plane) {
+                return image.data[row * width + 2 * column + 1 - plane];
+            }
+
+            @Override
+            public void set(int row, int column, int plane, float value) {
+                image.data[row * width + 2 * column + 1 - plane] = Math.clamp(value, 0f, 1f);
+            }
+
+            @Override
+            public float maximum() {
+                return 1;
             }
         }, list);
     }
@@ -817,7 +862,7 @@ final class Opcodes {
             if (r < 1e-12) {
                 f = k[0];
             } else {
-                var t = Math.atan(r);
+                var t = StrictMath.atan(r);
                 var t2 = t * t;
                 f = t * (k[0] + t2 * (k[1] + t2 * (k[2] + t2 * k[3]))) / r;
             }

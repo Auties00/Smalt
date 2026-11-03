@@ -3,6 +3,8 @@ package com.github.auties00.smalt.capture.internal.linux;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.capture.CaptureDevice;
+import com.github.auties00.smalt.capture.ScreenCaptureOptions;
+import com.github.auties00.smalt.capture.internal.CaptureArea;
 import com.github.auties00.smalt.capture.internal.convert.ConversionKernel;
 import com.github.auties00.smalt.capture.internal.convert.RgbLayout;
 import com.github.auties00.smalt.capture.internal.convert.YuvCoefficients;
@@ -29,6 +31,10 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
  * pixels over the connection with {@code XGetImage}. The image must be a 32-bit
  * {@code ZPixmap} with one byte per channel ({@link RgbLayout}), which every TrueColor visual of
  * depth 24 or 32 provides.
+ *
+ * <p>The rectangle is the screen, or the part of the options' region on it. When the options draw the
+ * pointer and the server offers XFixes, the pointer's image is blended over the pixels before the
+ * conversion.
  *
  * <p>A grab that fails because the rectangle left the root window (the screen was unplugged or
  * the resolution reduced) or because the connection was lost reports that the screen no longer
@@ -108,6 +114,11 @@ final class X11ScreenGrabber implements ScreenGrabber {
     private final ConversionKernel kernel = ConversionKernel.INSTANCE;
 
     /**
+     * The pointer overlay, or {@code null} when the pointer is not drawn.
+     */
+    private final X11Cursor cursor;
+
+    /**
      * Whether the grabber is closed.
      */
     private boolean closed;
@@ -124,9 +135,10 @@ final class X11ScreenGrabber implements ScreenGrabber {
      * @param shared the shared memory image, or {@code null}
      * @param bytesPerLine the row stride of the grabbed pixels
      * @param layout the pixel layout
+     * @param cursor the pointer overlay, or {@code null}
      */
     private X11ScreenGrabber(X11 x11, MemorySegment display, long root, int x, int y, int width, int height,
-                             SharedImage shared, int bytesPerLine, RgbLayout layout) {
+                             SharedImage shared, int bytesPerLine, RgbLayout layout, X11Cursor cursor) {
         this.x11 = x11;
         this.display = display;
         this.root = root;
@@ -137,6 +149,7 @@ final class X11ScreenGrabber implements ScreenGrabber {
         this.shared = shared;
         this.bytesPerLine = bytesPerLine;
         this.layout = layout;
+        this.cursor = cursor;
         this.pixels = new byte[Math.multiplyExact(bytesPerLine, height)];
         this.target = YuvPicture.allocate(width, height, ChromaFormat.YUV420, false, YuvCoefficients.BT709_LIMITED.color());
     }
@@ -145,13 +158,14 @@ final class X11ScreenGrabber implements ScreenGrabber {
      * Opens a grabber for a screen.
      *
      * @param x11 the bindings
+     * @param options the region and pointer settings
      * @return the grabber
      * @throws MediaException.Io if the X server cannot be reached or the screen lies
      * outside the root window
      * @throws MediaException.Unsupported if the screen's pixel format is not a 32-bit TrueColor
-     * format or the screen is smaller than 2x2
+     * format, or the screen or the part of the region on it is smaller than 2x2
      */
-    static X11ScreenGrabber open(X11 x11, CaptureDevice.Screen screen) {
+    static X11ScreenGrabber open(X11 x11, CaptureDevice.Screen screen, ScreenCaptureOptions options) {
         var display = x11.openDisplay();
         if (display.equals(MemorySegment.NULL)) {
             throw new MediaException.Io("cannot connect to the X server",
@@ -170,11 +184,11 @@ final class X11ScreenGrabber implements ScreenGrabber {
                 throw new MediaException.Io("the screen " + screen.id() + " is not on the display",
                         new IOException("rectangle outside the root window"));
             }
-            var width = (right - left) & ~1;
-            var height = (bottom - top) & ~1;
-            if (width < 2 || height < 2) {
-                throw new MediaException.Unsupported("screen size", "the screen " + screen.id() + " is smaller than 2x2 pixels");
-            }
+            var area = CaptureArea.of(options, right - left, bottom - top, "the screen " + screen.id());
+            left += area.x();
+            top += area.y();
+            var width = area.width();
+            var height = area.height();
             LimitChecks.checkPicture(MediaLimits.DEFAULT, width, height);
             if (x11.shmQueryExtension(display)) {
                 shared = SharedImage.create(x11, display, number, width, height);
@@ -205,7 +219,9 @@ final class X11ScreenGrabber implements ScreenGrabber {
                         new IOException("bytes_per_line " + bytesPerLine + " for " + width + " pixels"));
             }
             LimitChecks.checkAllocation(MediaLimits.DEFAULT, (long) bytesPerLine * height);
-            return new X11ScreenGrabber(x11, display, root, left, top, width, height, shared, bytesPerLine, layout);
+            var windowing = options.cursor() ? X11Windowing.instance() : null;
+            var cursor = windowing != null && windowing.hasFixes(display) ? new X11Cursor(windowing, display) : null;
+            return new X11ScreenGrabber(x11, display, root, left, top, width, height, shared, bytesPerLine, layout, cursor);
         } catch (RuntimeException | Error failure) {
             if (shared != null) {
                 shared.close(x11, display);
@@ -255,6 +271,9 @@ final class X11ScreenGrabber implements ScreenGrabber {
             } finally {
                 x11.destroyImage(image);
             }
+        }
+        if (cursor != null) {
+            cursor.draw(pixels, bytesPerLine, layout, x, y, width, height);
         }
         convert();
         return target;

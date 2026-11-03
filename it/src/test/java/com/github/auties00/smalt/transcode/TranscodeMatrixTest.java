@@ -143,7 +143,9 @@ class TranscodeMatrixTest {
         }
         if (expectAudio) {
             var audio = probe.audio();
-            var codec = container.supports(input.audio()) ? input.audio() : container.audioCodecs().getFirst();
+            // a WAV output keeps PCM and decodes coded audio unless the options name its codec
+            var copied = container.supports(input.audio()) && (container != OutputContainer.WAV || input.audio().isPcm());
+            var codec = copied ? input.audio() : container.audioCodecs().getFirst();
             assertEquals(ffmpegName(codec), audio.codec(), "audio codec");
             // ffmpeg's raw decoding keeps the padding of a final AAC frame trimmed only by an edit list
             var tolerance = codec == Codec.AAC || input.audio() == Codec.AAC || input.audio() == Codec.MP3 ? 0.05 : 0.025;

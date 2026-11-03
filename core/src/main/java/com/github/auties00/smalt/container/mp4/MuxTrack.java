@@ -3,6 +3,7 @@ package com.github.auties00.smalt.container.mp4;
 import com.github.auties00.smalt.internal.codec.AmrConfigs;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
+import com.github.auties00.smalt.internal.codec.MpegVideoHeaders;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -11,7 +12,9 @@ import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.TrackKind;
 import com.github.auties00.smalt.track.VideoTrack;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 /**
  * Collects the samples of one track while an {@link Mp4Muxer} writes, and derives the timing
@@ -22,7 +25,9 @@ import java.util.Arrays;
  * reordering), decoding timestamps are derived at the end: the sorted presentation timestamps,
  * lowered by the largest reordering delay so that no sample is decoded after it is presented.
  * A video track whose time base is a frame duration in nanoseconds is written in its frame
- * rate's timescale ({@link #frameTimescale}).
+ * rate's timescale ({@link #frameTimescale}). A PCM track is recorded one packet per entry in the
+ * timescale of its sampling rate, each packet starting where the previous one's frames end; the
+ * muxers expand the packets into frames when they write the tables.
  */
 final class MuxTrack {
     /**
@@ -94,6 +99,11 @@ final class MuxTrack {
     int count;
 
     /**
+     * The {@code cdp_hdr_sequence_cntr} of the next caption distribution packet of a CEA-708 track.
+     */
+    int cdpSequence;
+
+    /**
      * The duration of the last packet in media timescale units, or {@code 0} when unknown.
      */
     long lastDuration;
@@ -112,6 +122,28 @@ final class MuxTrack {
      * The number of chunks.
      */
     int chunkCount;
+
+    /**
+     * The zero-based sample description of each chunk.
+     */
+    int[] chunkEntries = new int[64];
+
+    /**
+     * The codec configurations of the sample descriptions after the first, whose configuration is
+     * {@link #config}.
+     */
+    final List<byte[]> extraConfigs = new ArrayList<>();
+
+    /**
+     * The zero-based sample description of the samples being added.
+     */
+    int entry;
+
+    /**
+     * The edit list the caller set, as {@code Mp4Track.editsInMediaUnits} returns it but in the
+     * track's time base, or {@code null} to derive it from the timestamps.
+     */
+    long[][] edits;
 
     /**
      * The initial size of {@link #pending}.
@@ -162,24 +194,63 @@ final class MuxTrack {
     int amrModes;
 
     /**
-     * The codec configuration the sample entry stores: the track's, or for a VP9 or AV1 track
-     * without one, the configuration derived from its first key frame; {@code null} until known.
+     * The codec configuration the sample entry stores: the track's, or for a VP8, VP9, AV1 or
+     * MPEG-4 Part 2 track without one, the configuration derived from its first key frame;
+     * {@code null} until known.
      */
     byte[] config;
+
+    /**
+     * Whether the sample entries follow the QuickTime file format rather than the ISO base media
+     * bindings, where the two differ (PCM, H.263, Motion-JPEG).
+     */
+    boolean quickTime;
+
+    /**
+     * Whether the track belongs to a Motion JPEG 2000 file, whose video sample entries carry the {@code fiel},
+     * {@code jsub} and {@code orfo} boxes ISO/IEC 15444-3 defines.
+     */
+    boolean motionJpeg2000;
+
+    /**
+     * The JP2 Header box ({@code jp2h}) of a Motion JPEG 2000 track, taken from its configuration or its first frame,
+     * or {@code null} until known.
+     */
+    byte[] jp2Header;
+
+    /**
+     * The size of one PCM frame (one sample of every channel) of an uncompressed audio track, or
+     * {@code 0} for any other track. Such a track is stored one frame per sample in a timescale of
+     * its sampling rate.
+     */
+    final int pcmFrameBytes;
+
+    /**
+     * The number of PCM frames recorded.
+     */
+    long pcmFrames;
 
     /**
      * Constructs the state of a declared track.
      *
      * @param track the description
      * @param number the track identifier written in the file
+     * @throws IllegalArgumentException if a PCM track declares no sampling rate or channel layout
      */
     MuxTrack(Track track, int number) {
         this.track = track;
         this.number = number;
         this.config = track.codecConfig().filter(bytes -> bytes.length > 0).orElse(null);
+        this.pcmFrameBytes = pcmFrameBytes(track);
         var timeBase = track.timeBase();
         var frameTimescale = track instanceof VideoTrack ? frameTimescale(timeBase) : 0;
-        if (frameTimescale > 0) {
+        if (pcmFrameBytes > 0) {
+            var rate = ((AudioTrack) track).sampleRate();
+            this.timescale = rate;
+            var exact = timeBase.numerator() == 1 && timeBase.denominator() == rate;
+            this.multiplier = exact ? 1 : 0;
+            this.media = exact ? null : new Rational(1, rate);
+        } else if (frameTimescale > 0) {
             this.timescale = frameTimescale;
             this.multiplier = 0;
             this.media = new Rational(1, frameTimescale);
@@ -193,6 +264,24 @@ final class MuxTrack {
             this.multiplier = 0;
             this.media = new Rational(1, fallback);
         }
+    }
+
+    /**
+     * Returns the size of one frame of a PCM track: the channel count times the bytes of one coded
+     * sample.
+     *
+     * @param track the declared track
+     * @return the frame size, or {@code 0} when the codec is not PCM
+     * @throws IllegalArgumentException if a PCM track declares no sampling rate or channel layout
+     */
+    static int pcmFrameBytes(Track track) {
+        if (!track.codec().isPcm()) {
+            return 0;
+        }
+        if (!(track instanceof AudioTrack audio) || audio.sampleRate() <= 0 || audio.layout().isEmpty()) {
+            throw new IllegalArgumentException("PCM track " + track.id() + " needs its sampling rate and channel layout");
+        }
+        return audio.layout().get().channels() * (track.codec().pcmBitsPerSample().orElseThrow() / 8);
     }
 
     /**
@@ -234,25 +323,34 @@ final class MuxTrack {
     }
 
     /**
-     * Derives the configuration of a VP9 or AV1 track that declares none from a key frame.
+     * Derives the configuration of a VP8, VP9, AV1, MPEG-4 Part 2, MPEG-1 video or MPEG-2 video track that
+     * declares none from a key frame.
      *
-     * <p>Does nothing when the configuration is known, the codec is neither VP9 nor AV1, or the
-     * frame does not hold the headers the configuration comes from.
+     * <p>Does nothing when the configuration is known, the codec is none of those, or the frame
+     * does not hold the headers the configuration comes from; an MPEG-4 Part 2, MPEG-1 or MPEG-2
+     * configuration is looked for in the first frame only, since later frames repeat it if they carry it at all.
      *
      * @param data the array holding the key frame
      * @param offset the index of the first frame byte
      * @param size the frame size
      */
     void deriveConfig(byte[] data, int offset, int size) {
-        if (config != null || data == null) {
+        var codec = track.codec();
+        var firstOnly = codec == Codec.MPEG4_PART2 || codec == Codec.MPEG1_VIDEO || codec == Codec.MPEG2_VIDEO;
+        if (config != null || data == null
+                || (codec != Codec.AV1 && codec != Codec.VP9 && codec != Codec.VP8 && !firstOnly)
+                || (firstOnly && count > 0)) {
             return;
         }
         var frame = offset == 0 && size == data.length ? data : Arrays.copyOfRange(data, offset, offset + size);
-        if (track.codec() == Codec.AV1) {
-            config = CodecConfigs.av1Config(frame);
-        } else if (track.codec() == Codec.VP9 && track instanceof VideoTrack video) {
-            config = CodecConfigs.vp9Config(frame, video.width(), video.height(), video.color().orElse(null));
-        }
+        var video = (VideoTrack) track;
+        config = switch (codec) {
+            case AV1 -> CodecConfigs.av1Config(frame);
+            case VP9 -> CodecConfigs.vp9Config(frame, video.width(), video.height(), video.color().orElse(null));
+            case VP8 -> CodecConfigs.vp8Config(frame, video.width(), video.height(), video.color().orElse(null));
+            case MPEG1_VIDEO, MPEG2_VIDEO -> MpegVideoHeaders.config(frame);
+            default -> CodecConfigs.mpeg4Config(frame);
+        };
     }
 
     /**
@@ -329,6 +427,10 @@ final class MuxTrack {
      * missing when the track needs them
      */
     void addSample(int size, long packetPts, long packetDts, long packetDuration, boolean keyframe, byte[] data, int offset) {
+        if (pcmFrameBytes > 0) {
+            addPcm(size, packetPts, packetDts, data, offset);
+            return;
+        }
         if (count == 0) {
             ptsOnly = packetDts == Packet.NO_TIMESTAMP && packetPts != Packet.NO_TIMESTAMP;
         }
@@ -364,6 +466,55 @@ final class MuxTrack {
         }
         if (data != null && (track.codec() == Codec.AMR_NB || track.codec() == Codec.AMR_WB)) {
             amrModes |= AmrConfigs.modes(track.codec() == Codec.AMR_WB, data, offset, size);
+        }
+    }
+
+    /**
+     * Records one packet of a PCM track: a whole number of frames that follow the previous
+     * packet's without a gap, the first placed at its own timestamp.
+     *
+     * @param size the packet size in bytes
+     * @param packetPts the presentation timestamp in the track's time base, or
+     * {@link Packet#NO_TIMESTAMP}
+     * @param packetDts the decoding timestamp in the track's time base, or
+     * {@link Packet#NO_TIMESTAMP}
+     * @param data the array holding the packet, or {@code null} when only the layout is planned
+     * @param offset the index of the first packet byte in {@code data}
+     * @throws IllegalArgumentException if the packet does not hold a whole positive number of
+     * frames, or the track exceeds {@code 2^32 - 1} frames, the most a sample size table counts
+     */
+    private void addPcm(int size, long packetPts, long packetDts, byte[] data, int offset) {
+        if (size <= 0 || size % pcmFrameBytes != 0) {
+            throw new IllegalArgumentException("a packet of PCM track " + track.id() + " holds " + size
+                    + " bytes, not a whole number of " + pcmFrameBytes + "-byte frames");
+        }
+        var frames = size / pcmFrameBytes;
+        if (pcmFrames + frames > 0xFFFFFFFFL) {
+            throw new IllegalArgumentException("PCM track " + track.id() + " exceeds 2^32 - 1 frames");
+        }
+        long time;
+        if (count == 0) {
+            var first = packetDts != Packet.NO_TIMESTAMP ? packetDts : packetPts != Packet.NO_TIMESTAMP ? packetPts : 0;
+            time = toMedia(first);
+        } else {
+            time = dts[count - 1] + sizes[count - 1] / pcmFrameBytes;
+        }
+        if (count == sizes.length) {
+            var capacity = count * 2;
+            sizes = Arrays.copyOf(sizes, capacity);
+            dts = Arrays.copyOf(dts, capacity);
+            pts = Arrays.copyOf(pts, capacity);
+            keyframes = Arrays.copyOf(keyframes, capacity);
+        }
+        sizes[count] = size;
+        dts[count] = time;
+        pts[count] = time;
+        keyframes[count] = true;
+        count++;
+        pcmFrames += frames;
+        lastDuration = frames;
+        if (firstBytes == null && data != null) {
+            firstBytes = Arrays.copyOfRange(data, offset, offset + Math.min(size, firstBytesLength(track.codec())));
         }
     }
 
@@ -438,9 +589,11 @@ final class MuxTrack {
         if (chunkCount == chunkOffsets.length) {
             chunkOffsets = Arrays.copyOf(chunkOffsets, chunkCount * 2);
             chunkSamples = Arrays.copyOf(chunkSamples, chunkCount * 2);
+            chunkEntries = Arrays.copyOf(chunkEntries, chunkCount * 2);
         }
         chunkOffsets[chunkCount] = offset;
         chunkSamples[chunkCount] = pendingSamples;
+        chunkEntries[chunkCount] = entry;
         chunkCount++;
         pendingBytes = 0;
         pendingSamples = 0;
@@ -539,9 +692,11 @@ final class MuxTrack {
      *
      * @param codec the codec of the track
      * @return the whole sample, up to 64 KiB, for AC-3 and E-AC-3, whose configuration boxes
-     * describe every substream of the first access unit; eight bytes otherwise
+     * describe every substream of the first access unit, and for Motion JPEG 2000, whose JP2 header and main
+     * codestream header describe the frames; 64 bytes otherwise
      */
     static int firstBytesLength(Codec codec) {
-        return codec == Codec.AC3 || codec == Codec.EAC3 ? 64 << 10 : 64;
+        return codec == Codec.AC3 || codec == Codec.EAC3 || codec == Codec.JPEG2000 || codec == Codec.JPEG_XS ? 64 << 10
+                : 64;
     }
 }
