@@ -343,7 +343,7 @@ public final class HeicFiles {
      * Returns whether an item may decode to a layer of another size than its {@code ispe} property declares: a
      * layered HEVC item, or an item with a layer selector.
      *
-     * @param item the item
+     * @param item the item the region would be planned on
      * @return whether the decoded size can differ from the declared one
      */
     private static boolean layered(HeifItem item) {

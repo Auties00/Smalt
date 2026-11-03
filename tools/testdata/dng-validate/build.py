@@ -207,7 +207,10 @@ def build(archive, work, executable, jobs=None, env=None, cc=None, cxx=None):
                 + ['-I' + os.path.join(tree, 'libjxl', 'libjxl', 'lib', 'include'),
                    '-I' + os.path.join(tree, 'libjxl', 'client_projects', 'include'),
                    '-I' + os.path.join(jxl_build, 'lib', 'include')])
-    sdk_objects = compile_all(jobs, cxx, ['-O2', '-std=c++17', '-w'] + defines + includes, sdk_sources,
+    # Ubuntu's compilers define _FORTIFY_SOURCE, whose object-size checks abort the SDK's TIFF writer on the Leica M9
+    # DNG sample ("buffer overflow detected"); the SDK is built as Adobe's projects build it, without them.
+    sdk_objects = compile_all(jobs, cxx, ['-O2', '-std=c++17', '-w', '-U_FORTIFY_SOURCE'] + defines + includes,
+                              sdk_sources,
                               os.path.join(work, 'sdk-objects'), environment)
     os.makedirs(os.path.dirname(executable), exist_ok=True)
     libraries = [os.path.join(jxl_build, *library.split('/')) for library in JXL_LIBRARIES]

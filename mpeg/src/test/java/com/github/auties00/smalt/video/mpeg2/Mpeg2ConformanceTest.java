@@ -45,6 +45,13 @@ class Mpeg2ConformanceTest {
      */
     static final String CUT_SAMPLE = "mpeg2-fate-mpeg2_field_encoding.ts";
 
+    /**
+     * The sample whose last group of pictures holds a sequence end code between the two fields of its last frame,
+     * after which the reference decoder predicts that frame's second field from outside its frame buffers (it
+     * crashes on Linux); it is compared up to that group.
+     */
+    static final String STRAY_END_SAMPLE = "mpeg2-fate-t.mpg";
+
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"mpeg2video-hhi_burst_short.bits.gz", "mpeg2video-hhi_burst_long.bits.gz",
             "mpeg2video-hhi_burst_422_short.bits.gz", "mpeg2video-hhi_burst_422_long.bits.gz",
@@ -55,7 +62,7 @@ class Mpeg2ConformanceTest {
     @DisplayName("decodes every sample as the reference decoder does")
     void conformance(String name) {
         var stream = elementary(name, Conformance.fetchListed(name));
-        if (name.equals(CUT_SAMPLE)) {
+        if (name.equals(CUT_SAMPLE) || name.equals(STRAY_END_SAMPLE)) {
             stream = Arrays.copyOf(stream, lastGroup(stream));
         }
         var decoded = Mpeg2ReferenceDecoderTest.check(name, stream, Codec.MPEG2_VIDEO);
