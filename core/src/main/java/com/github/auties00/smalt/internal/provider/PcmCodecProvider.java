@@ -6,6 +6,7 @@ import com.github.auties00.smalt.audio.AudioDecoders;
 import com.github.auties00.smalt.audio.AudioEncoder;
 import com.github.auties00.smalt.audio.AudioEncoderOptions;
 import com.github.auties00.smalt.audio.AudioEncoders;
+import com.github.auties00.smalt.audio.pcm.DsdDecoder;
 import com.github.auties00.smalt.audio.pcm.PcmDecoder;
 import com.github.auties00.smalt.audio.pcm.PcmEncoder;
 import com.github.auties00.smalt.audio.pcm.PcmEncoderOptions;
@@ -15,7 +16,7 @@ import com.github.auties00.smalt.track.Codec;
 
 /**
  * Provides {@link PcmDecoder} to {@link AudioDecoders} and {@link PcmEncoder} to
- * {@link AudioEncoders} for every uncompressed PCM codec.
+ * {@link AudioEncoders} for every uncompressed PCM codec, and {@link DsdDecoder} for every uncompressed DSD codec.
  */
 public final class PcmCodecProvider implements AudioCodecProvider {
     /**
@@ -26,12 +27,12 @@ public final class PcmCodecProvider implements AudioCodecProvider {
 
     @Override
     public boolean decodes(Codec codec) {
-        return codec.isPcm();
+        return codec.isPcm() || codec.isDsd();
     }
 
     @Override
     public AudioDecoder createDecoder(AudioTrack track, AudioDecoderOptions options) {
-        return new PcmDecoder(track);
+        return track.codec().isDsd() ? new DsdDecoder(track, options) : new PcmDecoder(track);
     }
 
     @Override

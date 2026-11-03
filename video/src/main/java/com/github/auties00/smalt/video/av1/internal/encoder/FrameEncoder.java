@@ -3,14 +3,17 @@ package com.github.auties00.smalt.video.av1.internal.encoder;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorRange;
-import com.github.auties00.smalt.image.YuvPicture;
+import com.github.auties00.smalt.image.ChromaSiting;
+import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.internal.task.ParallelBands;
+import com.github.auties00.smalt.video.av1.Av1TimingInfo;
 import com.github.auties00.smalt.video.av1.internal.Av1Picture;
 import com.github.auties00.smalt.video.av1.internal.Av1PicturePool;
 import com.github.auties00.smalt.video.av1.internal.BitReader;
 import com.github.auties00.smalt.video.av1.internal.Cdf;
 import com.github.auties00.smalt.video.av1.internal.CdefDsp;
 import com.github.auties00.smalt.video.av1.internal.EncoderBridge;
+import com.github.auties00.smalt.video.av1.internal.FilmGrainData;
 import com.github.auties00.smalt.video.av1.internal.FrameContext;
 import com.github.auties00.smalt.video.av1.internal.FrameHeader;
 import com.github.auties00.smalt.video.av1.internal.LoopFilterDsp;
@@ -39,6 +42,12 @@ import java.util.concurrent.atomic.AtomicIntegerArray;
  * CDEF strengths are searched on the reconstruction ({@link LoopFilterSearch}, {@link CdefSearch}),
  * and the symbols are coded afterwards with each superblock's CDEF index.
  *
+ * <p>The frames may be coded at a size below the sequence header's, which their headers signal,
+ * and under super-resolution at a reduced width the decoder upscales; references of another size
+ * than the coded frame are predicted from with the decoder's scaled motion compensation and
+ * searched in copies resampled to the coded size. {@link #inherit} continues a stream at another
+ * size.
+ *
  * <p>An instance is used by one thread at a time; it runs its tiles on the shared pool.
  */
 final class FrameEncoder implements FilterTarget {
@@ -53,7 +62,7 @@ final class FrameEncoder implements FilterTarget {
     static final int ORDER_HINT_BITS = 7;
 
     /**
-     * The picture width.
+     * The coded width of the frames: the picture width, or less under super-resolution.
      */
     final int width;
 
@@ -387,12 +396,13 @@ final class FrameEncoder implements FilterTarget {
      * @param limits the allocation limits
      */
     FrameEncoder(int width, int height, ColorInfo color, int level, int temporalLayers, MediaLimits limits) {
-        this(width, height, sequenceHeader(width, height, color, level, temporalLayers), limits);
+        this(width, height, sequenceHeader(width, height, color, level, temporalLayers, SequenceHeader.LAYOUT_I420,
+                8), limits);
     }
 
     /**
-     * Creates a frame encoder whose stream carries a given sequence header, describing 8-bit 4:2:0
-     * pictures of the given size with order hints.
+     * Creates a frame encoder whose stream carries a given sequence header, describing pictures of
+     * the given size, of the header's chroma layout and bit depth, with order hints.
      *
      * @param width the picture width
      * @param height the picture height
@@ -400,21 +410,107 @@ final class FrameEncoder implements FilterTarget {
      * @param limits the allocation limits
      */
     FrameEncoder(int width, int height, SequenceHeader seq, MediaLimits limits) {
+        this(width, height, 8, seq, limits);
+    }
+
+    /**
+     * Creates a frame encoder whose frames are coded at a reduced width that the decoder upscales
+     * (super-resolution), for a sequence header that enables it.
+     *
+     * @param upscaledWidth the picture width, the width of the decoded frames
+     * @param height the picture height
+     * @param superresDenominator the super-resolution denominator, 8 to code at the picture width
+     * or 9 to 16 to code at {@code 8 / superresDenominator} of it
+     * @param seq the sequence header
+     * @param limits the allocation limits
+     */
+    FrameEncoder(int upscaledWidth, int height, int superresDenominator, SequenceHeader seq, MediaLimits limits) {
+        var width = codedWidth(upscaledWidth, superresDenominator);
+        this.upscaledWidth = upscaledWidth;
+        this.superresDenominator = superresDenominator;
         this.width = width;
         this.height = height;
         this.limits = limits;
         this.pool = new Av1PicturePool(limits);
         this.seq = seq;
         this.seqObu = obuWriter.sequenceHeader(seq);
-        this.source = pool.obtain(width, height, SequenceHeader.LAYOUT_I420, 8);
+        this.layout = seq.layout;
+        this.ssHor = layout == SequenceHeader.LAYOUT_I420 || layout == SequenceHeader.LAYOUT_I422 ? 1 : 0;
+        this.ssVer = layout == SequenceHeader.LAYOUT_I420 ? 1 : 0;
+        this.planes = layout == SequenceHeader.LAYOUT_I400 ? 1 : 3;
+        this.bitDepth = 8 + 2 * seq.hbd;
+        this.bdMax = (1 << bitDepth) - 1;
+        this.dsp = EncDsp.select(bitDepth);
+        this.source = pool.obtain(width, height, layout, bitDepth);
         this.sbCols = (width + 63) >> 6;
         this.sbRows = (height + 63) >> 6;
         this.sbCdef = new int[sbCols * sbRows];
         this.speed = SpeedFeatures.realtime(9, width, height);
         for (var i = 0; i < quantizers.length; i++) {
-            quantizers[i] = new Quantizer();
+            quantizers[i] = new Quantizer(bitDepth);
         }
     }
+
+    /**
+     * The width of the decoded frames, the picture width; {@link #width}, the coded width, is
+     * smaller under super-resolution.
+     */
+    final int upscaledWidth;
+
+    /**
+     * The super-resolution denominator, 8 when the frames are coded at the picture width.
+     */
+    final int superresDenominator;
+
+    /**
+     * Returns the width a frame is coded at under super-resolution ({@code compute_superres_scaled_width}
+     * in the decoder's terms).
+     *
+     * @param upscaledWidth the picture width
+     * @param denominator the super-resolution denominator, 8 to 16
+     * @return the coded width
+     */
+    static int codedWidth(int upscaledWidth, int denominator) {
+        if (denominator <= 8) {
+            return upscaledWidth;
+        }
+        return Math.max((upscaledWidth * 8 + (denominator >> 1)) / denominator, Math.min(16, upscaledWidth));
+    }
+
+    /**
+     * The chroma layout of the coded pictures, one of the {@link SequenceHeader} layouts.
+     */
+    final int layout;
+
+    /**
+     * 1 when chroma is subsampled horizontally, 0 otherwise.
+     */
+    final int ssHor;
+
+    /**
+     * 1 when chroma is subsampled vertically, 0 otherwise.
+     */
+    final int ssVer;
+
+    /**
+     * The number of coded planes: 1 for monochrome, 3 otherwise.
+     */
+    final int planes;
+
+    /**
+     * The bit depth of the coded pictures, 8, 10 or 12.
+     */
+    final int bitDepth;
+
+    /**
+     * The largest sample value, {@code (1 << bitDepth) - 1}.
+     */
+    final int bdMax;
+
+    /**
+     * The analysis kernels of the bit depth, whose measurements are at the 8-bit scale.
+     */
+    final EncDsp dsp;
 
     /**
      * Builds the sequence header of a single-layer stream that may also enable loop restoration
@@ -427,11 +523,13 @@ final class FrameEncoder implements FilterTarget {
      * @param level the {@code seq_level_idx}
      * @param restoration whether loop restoration is enabled
      * @param filterIntra whether filter intra prediction is enabled
+     * @param layout the chroma layout, one of the {@link SequenceHeader} layouts
+     * @param bitDepth the bit depth, 8, 10 or 12
      * @return the sequence header
      */
     static SequenceHeader sequenceHeader(int width, int height, ColorInfo color, int level,
-                                                boolean restoration, boolean filterIntra) {
-        var seq = sequenceHeader(width, height, color, level, 1);
+                                         boolean restoration, boolean filterIntra, int layout, int bitDepth) {
+        var seq = sequenceHeader(width, height, color, level, 1, layout, bitDepth);
         seq.restoration = restoration;
         seq.filterIntra = filterIntra;
         seq.warpedMotion = true;
@@ -447,12 +545,15 @@ final class FrameEncoder implements FilterTarget {
      * @param color the color description
      * @param level the {@code seq_level_idx}
      * @param temporalLayers the number of temporal layers
+     * @param layout the chroma layout, one of the {@link SequenceHeader} layouts
+     * @param bitDepth the bit depth, 8, 10 or 12
      * @return the sequence header
      */
-    private static SequenceHeader sequenceHeader(int width, int height, ColorInfo color, int level,
-                                                 int temporalLayers) {
+    static SequenceHeader sequenceHeader(int width, int height, ColorInfo color, int level, int temporalLayers,
+                                         int layout, int bitDepth) {
         var seq = new SequenceHeader();
-        seq.profile = 0;
+        seq.profile = bitDepth == 12 || layout == SequenceHeader.LAYOUT_I422 ? 2
+                : layout == SequenceHeader.LAYOUT_I444 ? 1 : 0;
         seq.numOperatingPoints = temporalLayers;
         for (var i = 0; i < temporalLayers; i++) {
             // operating point i decodes the temporal layers 0 to temporalLayers - 1 - i of spatial layer 0
@@ -470,15 +571,39 @@ final class FrameEncoder implements FilterTarget {
         seq.screenContentTools = 0;
         seq.forceIntegerMv = 2;
         seq.cdef = true;
-        seq.layout = SequenceHeader.LAYOUT_I420;
-        seq.ssHor = 1;
-        seq.ssVer = 1;
+        var mono = layout == SequenceHeader.LAYOUT_I400;
+        seq.layout = layout;
+        seq.hbd = (bitDepth - 8) >> 1;
+        seq.monochrome = mono;
+        seq.ssHor = mono || layout != SequenceHeader.LAYOUT_I444 ? 1 : 0;
+        seq.ssVer = mono || layout == SequenceHeader.LAYOUT_I420 ? 1 : 0;
         seq.colorDescriptionPresent = true;
         seq.pri = color.primaries().code();
         seq.trc = color.transfer().code();
         seq.mtrx = color.matrix().code();
-        seq.colorRange = color.range() == ColorRange.FULL;
+        if (seq.mtrx == 0 && layout != SequenceHeader.LAYOUT_I444) {
+            // the identity matrix needs 4:4:4; the stream signals an unspecified matrix instead
+            seq.mtrx = 2;
+        }
+        // color_config codes the sRGB description without a range, which it implies is full
+        var srgb = seq.pri == 1 && seq.trc == 13 && seq.mtrx == 0;
+        seq.colorRange = color.range() == ColorRange.FULL || srgb;
+        seq.chr = layout == SequenceHeader.LAYOUT_I420 ? chromaPosition(color.chromaSiting()) : 0;
         return seq;
+    }
+
+    /**
+     * Returns the AV1 chroma sample position of a chroma siting.
+     *
+     * @param siting the chroma siting
+     * @return the {@code chroma_sample_position}: 0 unknown, 1 vertical, 2 colocated
+     */
+    private static int chromaPosition(ChromaSiting siting) {
+        return switch (siting) {
+            case LEFT -> 1;
+            case TOP_LEFT -> 2;
+            default -> 0;
+        };
     }
 
     /**
@@ -517,7 +642,136 @@ final class FrameEncoder implements FilterTarget {
      * @return the reference
      */
     RefFrame ref(int ref) {
-        return slotRef[f.frameHdr.refidx[ref]];
+        var slot = f.frameHdr.refidx[ref];
+        var pic = refPic[slot];
+        return pic != null && (pic.w != width || pic.h != height) ? resampledRef[slot] : slotRef[slot];
+    }
+
+    /**
+     * Returns whether a decoder reference index of the frame being encoded points to a picture of
+     * another size, which the frame predicts from with scaled motion compensation.
+     *
+     * @param ref the decoder reference index
+     * @return {@code true} when the reference is scaled
+     */
+    boolean scaled(int ref) {
+        return f.svcScale[ref * 2] != 0 || f.svcScale[ref * 2 + 1] != 0;
+    }
+
+    /**
+     * The edge-extended reference of each slot whose picture has another size, resampled to the
+     * picture size for the motion search and the mode decision, or {@code null}.
+     */
+    private final RefFrame[] resampledRef = new RefFrame[SLOTS];
+
+    /**
+     * The reference picture each entry of {@link #resampledRef} was resampled from.
+     */
+    private final Av1Picture[] resampledFrom = new Av1Picture[SLOTS];
+
+    /**
+     * Returns whether a reference slot list holds a picture of another size than the frame's.
+     *
+     * @param refIdx the slot of each decoder reference index
+     * @return {@code true} when a reference is scaled
+     */
+    private boolean scaledReferences(int[] refIdx) {
+        for (var i = 0; i < 7; i++) {
+            var pic = refPic[refIdx[i]];
+            if (pic != null && (pic.w != width || pic.h != height)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Returns whether every slot holds a picture the frame size may predict from: at most twice the
+     * frame's width and height and at least a sixteenth of them.
+     *
+     * @return {@code true} when an inter frame may reference every slot
+     */
+    boolean referencesPredictable() {
+        for (var pic : refPic) {
+            if (pic == null || 2 * width < pic.w || 2 * height < pic.h || width > 16 * pic.w
+                    || height > 16 * pic.h) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Returns the scale factor of a reference dimension against the frame's, in 1/16384 units
+     * ({@code get_scale_factor}).
+     *
+     * @param refSize the reference dimension
+     * @param size the frame dimension
+     * @return the factor
+     */
+    private static int scaleFactor(int refSize, int size) {
+        return (int) ((((long) refSize << 14) + (size >> 1)) / size);
+    }
+
+    /**
+     * Resamples the scaled references of an inter frame to the picture size, each from its slot's
+     * picture with the zero-motion scaled prediction a decoder makes, and edge-extends them for the
+     * motion search; a slot keeps its resampled picture while its picture stays.
+     *
+     * @param hdr the frame header, set up
+     * @param threads the threads the edge extension may use
+     */
+    private void resampleReferences(FrameHeader hdr, int threads) {
+        filterTask.f = f;
+        for (var i = 0; i < 7; i++) {
+            if (!scaled(i)) {
+                continue;
+            }
+            var slot = hdr.refidx[i];
+            var pic = refPic[slot];
+            if (resampledFrom[slot] == pic && resampledRef[slot] != null) {
+                continue;
+            }
+            var resampled = pool.obtain(width, height, layout, bitDepth);
+            EncoderBridge.resample(filterTask, resampled, pic, i);
+            if (resampledRef[slot] == null) {
+                resampledRef[slot] = new RefFrame();
+            }
+            resampledRef[slot].build(resampled, width, height, threads);
+            resampledRef[slot].orderHint = slotRef[slot].orderHint;
+            resampled.release();
+            resampledFrom[slot] = pic;
+        }
+    }
+
+    /**
+     * Takes over the stream state of the frame encoder of another picture size of the same
+     * sequence: the reference slots with their pictures, headers, CDFs, order hints and motion
+     * records, the film grain seed, the decoder model times and the golden and motion statistics,
+     * so the next frame continues the stream at this encoder's size. Call it before the first
+     * frame; the other encoder may then be closed.
+     *
+     * @param from the encoder of the previous size, sharing this encoder's sequence header
+     */
+    void inherit(FrameEncoder from) {
+        for (var i = 0; i < SLOTS; i++) {
+            refPic[i] = from.refPic[i] != null ? from.refPic[i].retain() : null;
+            refHdr[i] = from.refHdr[i];
+            if (from.refCdf[i] != null) {
+                refCdfStore[i] = from.refCdf[i].clone();
+                refCdf[i] = refCdfStore[i];
+            }
+            refOrderHint[i] = from.refOrderHint[i];
+            slotRef[i] = from.slotRef[i];
+            slotMvs[i] = from.slotMvs[i];
+            System.arraycopy(from.slotRefPoc[i], 0, slotRefPoc[i], 0, 7);
+        }
+        grainSeed = from.grainSeed;
+        timing = from.timing;
+        framesSinceGolden = from.framesSinceGolden;
+        avgFrameLowMotion = from.avgFrameLowMotion;
+        avgSourceSad = from.avgSourceSad;
+        lastThreads = from.lastThreads;
     }
 
     /**
@@ -619,7 +873,7 @@ final class FrameEncoder implements FilterTarget {
         var sads = sbSad;
         var count = Math.min(lastThreads, sbRows);
         ParallelBands.run(count, band -> {
-            var dsp = EncDsp.select();
+            var dsp = this.dsp;
             var last = ParallelBands.start(band + 1, count, sbRows);
             for (var r = ParallelBands.start(band, count, sbRows); r < last; r++) {
                 for (var c = 0; c < sbCols; c++) {
@@ -658,6 +912,7 @@ final class FrameEncoder implements FilterTarget {
         var sbRows = (height + 63) >> 6;
         var stride = source.stride[0];
         var y = source.data[0];
+        var mid = 128 << (bitDepth - 8);
         long total = 0;
         for (var r = 0; r < sbRows; r++) {
             for (var c = 0; c < sbCols; c++) {
@@ -667,7 +922,7 @@ final class FrameEncoder implements FilterTarget {
                 for (var row = 0; row < 64; row++) {
                     var off = base + row * stride;
                     for (var x = 0; x < 64; x++) {
-                        var d = y[off + x] - 128;
+                        long d = y[off + x] - mid;
                         sum += d;
                         sse += d * d;
                     }
@@ -675,7 +930,7 @@ final class FrameEncoder implements FilterTarget {
                 total += sse - ((sum * sum) >> 12);
             }
         }
-        return (int) ((total / (sbRows * sbCols)) >> 12);
+        return (int) ((total / (sbRows * sbCols)) >> (12 + distShift()));
     }
 
     /**
@@ -738,49 +993,97 @@ final class FrameEncoder implements FilterTarget {
      * right and bottom edges to whole superblocks, in horizontal bands on as many threads as the
      * frame coded last could use.
      *
-     * @param in the picture
+     * @param in the picture, of the encoder's size, chroma layout and bit depth
      */
-    private void loadSource(YuvPicture in) {
+    private void loadSource(Picture in) {
         var count = Math.max(1, Math.min(lastThreads, (height + 1) >> 1));
+        if (upscaledWidth != width && resamplers.length < count) {
+            var grown = Arrays.copyOf(resamplers, count);
+            var rows = Arrays.copyOf(wideRows, count);
+            for (var i = resamplers.length; i < count; i++) {
+                grown[i] = new RowResampler();
+                rows[i] = new short[upscaledWidth];
+            }
+            resamplers = grown;
+            wideRows = rows;
+        }
         if (count == 1) {
-            for (var pl = 0; pl < 3; pl++) {
-                loadRows(in, pl, 0, pl == 0 ? height : (height + 1) >> 1);
+            for (var pl = 0; pl < planes; pl++) {
+                loadRows(in, pl, 0, planeHeight(pl), 0);
             }
             return;
         }
         ParallelBands.run(count, band -> {
-            for (var pl = 0; pl < 3; pl++) {
-                var h = pl == 0 ? height : (height + 1) >> 1;
-                loadRows(in, pl, ParallelBands.start(band, count, h), ParallelBands.start(band + 1, count, h));
+            for (var pl = 0; pl < planes; pl++) {
+                var h = planeHeight(pl);
+                loadRows(in, pl, ParallelBands.start(band, count, h), ParallelBands.start(band + 1, count, h), band);
             }
         });
     }
 
     /**
-     * Widens a range of one plane's source rows to 16 bits and repeats each row's last sample to
-     * the 64-aligned width; the range holding the last visible row also repeats that row down to
-     * the 64-aligned height.
+     * The downscaler of each band of the source loading of super-resolution frames.
+     */
+    private RowResampler[] resamplers = new RowResampler[0];
+
+    /**
+     * The picture-width row of each band of the source loading of super-resolution frames.
+     */
+    private short[][] wideRows = new short[0][];
+
+    /**
+     * Returns the visible width of a plane.
      *
-     * @param in the picture
+     * @param pl the plane
+     * @return the width
+     */
+    int planeWidth(int pl) {
+        return pl == 0 ? width : (width + ssHor) >> ssHor;
+    }
+
+    /**
+     * Returns the visible height of a plane.
+     *
+     * @param pl the plane
+     * @return the height
+     */
+    int planeHeight(int pl) {
+        return pl == 0 ? height : (height + ssVer) >> ssVer;
+    }
+
+    /**
+     * Widens a range of one plane's source rows to 16 bits, downscaled to the coded width under
+     * super-resolution, and repeats each row's last sample to the 64-aligned width; the range
+     * holding the last visible row also repeats that row down to the 64-aligned height.
+     *
+     * @param in the picture, of the encoder's picture size, chroma layout and bit depth
      * @param pl the plane
      * @param first the first row
      * @param end the row after the last
+     * @param band the loading band, which owns a downscaler
      */
-    private void loadRows(YuvPicture in, int pl, int first, int end) {
-        var w = pl == 0 ? width : (width + 1) >> 1;
-        var h = pl == 0 ? height : (height + 1) >> 1;
-        var pw = pl == 0 ? (width + 63) & ~63 : ((width + 63) & ~63) >> 1;
-        var ph = pl == 0 ? (height + 63) & ~63 : ((height + 63) & ~63) >> 1;
-        var src = pl == 0 ? in.y() : pl == 1 ? in.u() : in.v();
-        var srcStride = pl == 0 ? in.yStride() : in.uvStride();
+    private void loadRows(Picture in, int pl, int first, int end, int band) {
+        var ssx = pl == 0 ? 0 : ssHor;
+        var ssy = pl == 0 ? 0 : ssVer;
+        var w = planeWidth(pl);
+        var h = planeHeight(pl);
+        var pw = ((width + 63) & ~63) >> ssx;
+        var ph = ((height + 63) & ~63) >> ssy;
         var dst = source.data[pl];
         var stride = source.stride[pl != 0 ? 1 : 0];
-        for (var y = first; y < end; y++) {
-            var s = y * srcStride;
-            var d = y * stride;
-            for (var x = 0; x < w; x++) {
-                dst[d + x] = (short) (src[s + x] & 0xFF);
+        var inW = SourcePlanes.width(in, pl);
+        if (inW != w) {
+            var row = wideRows[band];
+            var resampler = resamplers[band];
+            for (var y = first; y < end; y++) {
+                SourcePlanes.widen(in, pl, y, y + 1, row, 0, inW);
+                resampler.resample(row, 0, inW, dst, y * stride, w, bdMax);
             }
+        } else {
+            SourcePlanes.widen(in, pl, first, end, dst, first * stride, stride);
+        }
+        for (var y = first; y < end; y++) {
+            var d = y * stride;
             Arrays.fill(dst, d + w, d + pw, dst[d + w - 1]);
         }
         if (end == h) {
@@ -793,12 +1096,12 @@ final class FrameEncoder implements FilterTarget {
     /**
      * Encodes one frame and returns its temporal unit.
      *
-     * @param in the picture, 4:2:0 of the encoder's size
+     * @param in the picture, of the encoder's size, chroma layout and bit depth
      * @param p the frame parameters
      * @return the temporal unit: a temporal delimiter, the sequence header on key frames and the
      * frame OBU
      */
-    byte[] encode(YuvPicture in, FrameParams p) {
+    byte[] encode(Picture in, FrameParams p) {
         load(in);
         analyze(Integer.MAX_VALUE);
         return encode(p);
@@ -807,9 +1110,9 @@ final class FrameEncoder implements FilterTarget {
     /**
      * Loads the next source picture, keeping the previous one for the scene analysis.
      *
-     * @param in the picture, 4:2:0 of the encoder's size
+     * @param in the picture, of the encoder's size, chroma layout and bit depth
      */
-    void load(YuvPicture in) {
+    void load(Picture in) {
         loadSource(in);
     }
 
@@ -817,10 +1120,10 @@ final class FrameEncoder implements FilterTarget {
      * Loads the next source picture and the picture its scene analysis and partitioning compare it
      * with, normally the source of the frame its {@code LAST} reference reconstructs.
      *
-     * @param in the picture, 4:2:0 of the encoder's size
+     * @param in the picture, of the encoder's size, chroma layout and bit depth
      * @param previous the picture to compare with, or {@code null} for none
      */
-    void load(YuvPicture in, YuvPicture previous) {
+    void load(Picture in, Picture previous) {
         if (previous == null) {
             if (lastSource != null) {
                 lastSource.release();
@@ -828,7 +1131,7 @@ final class FrameEncoder implements FilterTarget {
             }
         } else {
             if (lastSource == null) {
-                lastSource = pool.obtain(width, height, SequenceHeader.LAYOUT_I420, 8);
+                lastSource = pool.obtain(width, height, layout, bitDepth);
             }
             var current = source;
             source = lastSource;
@@ -848,8 +1151,9 @@ final class FrameEncoder implements FilterTarget {
      * @param hdr the key frame's parsed header
      */
     void installKeyFrame(Av1Picture recon, FrameHeader hdr) {
+        Arrays.fill(resampledFrom, null);
         var padded = freeRefs.isEmpty() ? new RefFrame() : freeRefs.pop();
-        padded.build(recon, width, height, lastThreads);
+        padded.build(recon, recon.w, recon.h, lastThreads);
         padded.orderHint = hdr.frameOffset;
         var cdf = defaults(hdr.quantYac);
         for (var i = 0; i < SLOTS; i++) {
@@ -916,14 +1220,15 @@ final class FrameEncoder implements FilterTarget {
      *
      * @param slot the reference slot holding a showable frame
      * @param temporalDelimiter whether the bytes start a temporal unit
+     * @param pts the timestamp of the shown frame, in time base units
      * @return the OBUs
      */
-    byte[] showExisting(int slot, boolean temporalDelimiter) {
+    byte[] showExisting(int slot, boolean temporalDelimiter, long pts) {
         var out = new ByteArrayOutputStream(16);
         if (temporalDelimiter) {
             ObuWriter.writeTemporalDelimiter(out);
         }
-        var w = obuWriter.showExistingHeader(slot);
+        var w = obuWriter.showExistingHeader(seq, slot, timing != null ? timing.presentation(seq, pts) : 0);
         ObuWriter.writeObu(out, Obu.OBU_FRAME_HDR, w.buffer(), 0, w.size());
         return out.toByteArray();
     }
@@ -941,7 +1246,7 @@ final class FrameEncoder implements FilterTarget {
     private void swapSources() {
         var old = lastSource;
         lastSource = source;
-        source = old != null ? old : pool.obtain(width, height, SequenceHeader.LAYOUT_I420, 8);
+        source = old != null ? old : pool.obtain(width, height, layout, bitDepth);
     }
 
     /**
@@ -1046,6 +1351,9 @@ final class FrameEncoder implements FilterTarget {
         lastThreads = threads;
         var good = p.goodSpeed > 0 && hdr.isInterOrSwitch();
         setupFrame(hdr, threads > 1 || good);
+        if (hdr.isInterOrSwitch()) {
+            resampleReferences(hdr, threads);
+        }
         if (good) {
             estimateGlobal();
         }
@@ -1101,6 +1409,9 @@ final class FrameEncoder implements FilterTarget {
         }
         if (replay != null) {
             replay.join();
+        }
+        if (f.resized()) {
+            EncoderBridge.superres(f);
         }
         var largest = 0;
         var maxSize = 0;
@@ -1467,8 +1778,65 @@ final class FrameEncoder implements FilterTarget {
             avgFrameLowMotion = avgFrameLowMotion == 0 ? pct : (3 * avgFrameLowMotion + pct) / 4;
         }
         framesSinceGolden = params.goldenUpdate || params.key ? 0 : framesSinceGolden + 1;
+        if (seq.filmGrainPresent && (hdr.showFrame || hdr.showableFrame)) {
+            advanceGrainSeed(hdr.filmGrainPresent ? hdr.filmGrain.seed : grainSeed(params.grain));
+        }
+        if (timing != null) {
+            timing.advance(params.key, params.pts);
+        }
         refresh(hdr);
         swapSources();
+    }
+
+    /**
+     * The decoder model times of the frame headers, or {@code null} when the sequence signals no
+     * timing.
+     */
+    private FrameTiming timing;
+
+    /**
+     * Makes the frame headers carry the decoder model times of a stream whose sequence header
+     * {@link StreamTiming#apply} set up.
+     *
+     * @param stream the stream's timing
+     */
+    void timing(StreamTiming stream) {
+        timing = stream.mode() == Av1TimingInfo.NONE ? null : new FrameTiming(stream);
+    }
+
+    /**
+     * Returns the decoder model times of the frame headers, which a key frame another encoder
+     * codes must fill and advance.
+     *
+     * @return the times, or {@code null} when the sequence signals no timing
+     */
+    FrameTiming timing() {
+        return timing;
+    }
+
+    /**
+     * The film grain seed of the next shown or showable frame, or -1 before the first.
+     */
+    private int grainSeed = -1;
+
+    /**
+     * Returns the film grain seed of the next shown or showable frame: the running seed, or before
+     * the first frame the seed of the frame's parameters ({@code random_seed}).
+     *
+     * @param grain the frame's film grain, or {@code null} for none
+     * @return the seed, from 0 to 65535
+     */
+    int grainSeed(FilmGrainData grain) {
+        return grainSeed >= 0 ? grainSeed : grain != null ? grain.seed : 0;
+    }
+
+    /**
+     * Advances the film grain seed past a shown or showable frame.
+     *
+     * @param used the seed the frame signaled or would have signaled
+     */
+    void advanceGrainSeed(int used) {
+        grainSeed = FilmGrains.nextSeed(used);
     }
 
     /**
@@ -1477,6 +1845,9 @@ final class FrameEncoder implements FilterTarget {
      */
     void discard() {
         pending = null;
+        if (f.srCur != f.cur) {
+            f.srCur.release();
+        }
         f.cur.release();
         for (var i = 0; i < 7; i++) {
             f.refp[i] = null;
@@ -1503,11 +1874,27 @@ final class FrameEncoder implements FilterTarget {
         h.primaryRefFrame = p.key || p.errorResilient ? FrameHeader.PRIMARY_REF_NONE : p.primaryRefFrame;
         h.refreshFrameFlags = p.key ? 0xFF : p.refreshFlags;
         System.arraycopy(p.refIdx, 0, h.refidx, 0, 7);
-        h.hp = p.allowHighPrecisionMv;
+        h.temporalId = p.temporalId;
+        h.spatialId = 0;
+        if (timing != null) {
+            timing.fill(h, seq, p.pts);
+        } else {
+            h.bufferRemovalTimePresent = false;
+        }
+        h.allowScreenContentTools = seq.screenContentTools == SequenceHeader.ADAPTIVE && p.screenContent;
+        h.forceIntegerMv = !p.key && h.allowScreenContentTools && p.integerMv;
+        h.hp = p.allowHighPrecisionMv && !h.forceIntegerMv;
         h.subpelFilterMode = p.interpFilter;
-        h.switchableMotionMode = p.warpedMotion && seq.warpedMotion;
+        h.upscaledWidth = upscaledWidth;
+        h.codedWidth = width;
+        h.height = height;
+        h.superResEnabled = upscaledWidth != width;
+        h.superResDenominator = h.superResEnabled ? superresDenominator : 8;
+        h.frameSizeOverride = upscaledWidth != seq.maxWidth || height != seq.maxHeight;
+        var scaled = !p.key && scaledReferences(p.refIdx);
+        h.switchableMotionMode = p.warpedMotion && seq.warpedMotion && !scaled;
         h.warpMotion = h.switchableMotionMode;
-        h.useRefFrameMvs = seq.refFrameMvs && seq.orderHint && !h.errorResilientMode && p.refFrameMvs;
+        h.useRefFrameMvs = seq.refFrameMvs && seq.orderHint && !h.errorResilientMode && p.refFrameMvs && !scaled;
         h.refreshContext = true;
         ObuWriter.uniformTiling(h, sbCols, sbRows, p.tileColsLog2, 0);
         h.quantYac = p.qindex;
@@ -1537,6 +1924,14 @@ final class FrameEncoder implements FilterTarget {
         h.txfmMode = p.txSwitchable ? FrameHeader.TX_SWITCHABLE : FrameHeader.TX_LARGEST;
         h.switchableCompRefs = !p.key && p.referenceSelect;
         h.skipModeEnabled = h.switchableCompRefs && p.skipMode;
+        h.filmGrainPresent = false;
+        h.filmGrainUpdate = true;
+        if (seq.filmGrainPresent && (h.showFrame || h.showableFrame) && p.grain != null) {
+            h.filmGrainPresent = true;
+            h.filmGrain.copyFrom(p.grain);
+            h.filmGrain.seed = grainSeed(p.grain);
+            h.filmGrainUpdate = FilmGrains.referenceSlot(h, refHdr) < 0;
+        }
         var w = obuWriter.frameHeader(seq, h, refOrderHint, refHdr);
         var gb = headerReader;
         gb.init(w.buffer(), 0, w.size());
@@ -1606,14 +2001,28 @@ final class FrameEncoder implements FilterTarget {
             }
             f.svcScale[i * 2] = 0;
             f.svcScale[i * 2 + 1] = 0;
+            var ref = f.refp[i];
+            if (ref != null && (ref.w != width || ref.h != height)) {
+                f.svcScale[i * 2] = scaleFactor(ref.w, width);
+                f.svcScale[i * 2 + 1] = scaleFactor(ref.h, height);
+                f.svcStep[i * 2] = (f.svcScale[i * 2] + 8) >> 4;
+                f.svcStep[i * 2 + 1] = (f.svcScale[i * 2 + 1] + 8) >> 4;
+            }
             f.gmvWarpAllowed[i] = false;
             f.refpoc[i] = inter ? refOrderHint[hdr.refidx[i]] : 0;
         }
-        var cur = pool.obtain(width, height, SequenceHeader.LAYOUT_I420, 8);
+        var cur = pool.obtain(width, height, layout, bitDepth);
         cur.frameHdr = hdr;
         cur.seqHdr = seq;
         f.cur = cur;
         f.srCur = cur;
+        if (upscaledWidth != width) {
+            var sr = pool.obtain(upscaledWidth, height, layout, bitDepth);
+            sr.frameHdr = hdr;
+            sr.seqHdr = seq;
+            f.srCur = sr;
+            EncoderBridge.setupSuperres(f);
+        }
         f.w4 = (hdr.codedWidth + 3) >> 2;
         f.h4 = (hdr.height + 3) >> 2;
         f.bw = ((hdr.codedWidth + 7) >> 3) << 1;
@@ -1624,7 +2033,7 @@ final class FrameEncoder implements FilterTarget {
         f.sbStep = 16;
         f.sbh = (f.bh + f.sbStep - 1) >> f.sbShift;
         f.b4Stride = (f.bw + 31) & ~31;
-        f.bitdepthMax = 255;
+        f.bitdepthMax = bdMax;
         f.haveTt = rowFilters;
         if (inter) {
             var size = f.sb128h * 16 * (f.b4Stride >> 1);
@@ -1698,15 +2107,17 @@ final class FrameEncoder implements FilterTarget {
      */
     private void refresh(FrameHeader hdr) {
         var cur = f.cur;
+        var out = f.srCur;
         var cdf = hdr.refreshContext ? f.outCdf : f.inCdf;
         RefFrame padded = null;
         if (hdr.refreshFrameFlags != 0) {
             padded = freeRefs.isEmpty() ? new RefFrame() : freeRefs.pop();
-            padded.build(cur, width, height, lastThreads);
+            padded.build(out, out.w, out.h, lastThreads);
             padded.orderHint = hdr.frameOffset;
         }
         for (var i = 0; i < SLOTS; i++) {
             if ((hdr.refreshFrameFlags & (1 << i)) != 0) {
+                resampledFrom[i] = null;
                 var old = slotRef[i];
                 slotRef[i] = padded;
                 if (old != null && old != padded && !held(old)) {
@@ -1715,7 +2126,7 @@ final class FrameEncoder implements FilterTarget {
                 if (refPic[i] != null) {
                     refPic[i].release();
                 }
-                refPic[i] = cur.retain();
+                refPic[i] = out.retain();
                 refHdr[i] = hdr;
                 if (refCdfStore[i] == null) {
                     refCdfStore[i] = new char[Cdf.SIZE];
@@ -1737,6 +2148,9 @@ final class FrameEncoder implements FilterTarget {
                 }
             }
             f.mvs = null;
+        }
+        if (out != cur) {
+            out.release();
         }
         cur.release();
         for (var i = 0; i < 7; i++) {
@@ -1788,37 +2202,37 @@ final class FrameEncoder implements FilterTarget {
 
     @Override
     public int layout() {
-        return SequenceHeader.LAYOUT_I420;
+        return layout;
     }
 
     @Override
     public int ssHor() {
-        return 1;
+        return ssHor;
     }
 
     @Override
     public int ssVer() {
-        return 1;
+        return ssVer;
     }
 
     @Override
     public int bitDepth() {
-        return 8;
+        return bitDepth;
     }
 
     @Override
     public int bdMax() {
-        return 255;
+        return bdMax;
     }
 
     @Override
     public int hbd() {
-        return 0;
+        return (bitDepth - 8) >> 1;
     }
 
     @Override
     public int distShift() {
-        return 0;
+        return 2 * (bitDepth - 8);
     }
 
     @Override

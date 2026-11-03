@@ -1,0 +1,97 @@
+# The cjpeg runs JpegEncoderModesTest reproduces: name, input, cjpeg arguments (always with -dct int), and the MD5
+# of the output of libjpeg-turbo 3.1.3's cjpeg, recorded by tools/testdata/jpegenc/cjpeg-record.py. An input is
+# a libjpeg-turbo test image, cropped to its top-left WxH pixels after "@"; file arguments name files of this
+# directory or test images.
+prog-420	testorig.ppm	-progressive	1c4afddc05c0a43489ee54438a482d92
+prog-420-q90	testorig.ppm	-progressive -quality 90 -baseline	ad17cd3344aeb5240e9e1169070af7e2
+prog-444-rst	testorig.ppm	-progressive -sample 1x1 -restart 2B	222109aa9542dd028ebb06342a3e9f0a
+prog-422-crop	testorig.ppm@61x37	-progressive -sample 2x1	8d7c42ea033ecdea5b25eac081961e0a
+prog-440	testorig.ppm	-progressive -sample 1x2	1614faede97d41dbe37d40f48e9bb8e6
+prog-gray	testorig.ppm	-progressive -grayscale	42d9c2ad11e7ff648aad05c208e2db16
+prog-rgb	testorig.ppm	-progressive -rgb	46937d734d82fd0a194c1e0578e98216
+prog-pgm	testorig.pgm	-progressive -restart 5B	85d1958724b0efc05c32a48a1731f571
+prog-1x1	testorig.ppm@1x1	-progressive	a287dc9c9ad17c9de8b344774ad4c5a0
+prog-9x17	testorig.ppm@9x17	-progressive -sample 2x2	03c4ec13aac25e7f372e6fc72d56fef1
+prog-q10	testorig.ppm	-progressive -quality 10	f577e7f8476ad8dd82cdbf9e067d0996
+prog-test-scan	testorig.ppm	-scans test.scan	5ef53c18aedd2a5c76aad3600c10e7c9
+prog-custom-scan	testorig.ppm	-scans prog2.scan -restart 1B	3c4ffe019c7ed7fff1c70db25b579072
+prog-custom-scan-crop	testorig.ppm@40x23	-scans prog2.scan -sample 2x1 -quality 95 -baseline	928ac22a19a66887b06cf87a9a3893f8
+ari-420	testorig.ppm	-arithmetic	e986fb0a637a8d833d96e8a6d6d84ea1
+ari-422-rst	testorig.ppm	-arithmetic -sample 2x1 -restart 3B	7d33f78e1188bb2b88ea947f949bfe38
+ari-444-q95	testorig.ppm	-arithmetic -sample 1x1 -quality 95 -baseline	1bb3970b41f487a486caa5bbd9c7462e
+ari-gray	testorig.ppm	-arithmetic -grayscale	0f8ab34993026ec74917de79bece39e2
+ari-rgb	testorig.ppm	-arithmetic -rgb	c338774f4103ee502980d00c27f95651
+ari-pgm	testorig.pgm	-arithmetic -restart 1B	67936976d8422a635349dbe8c4f341e4
+ari-17x9	testorig.ppm@17x9	-arithmetic	6b40c9d065a01b4b1244a9e7e847cf6a
+ari-411	testorig.ppm	-arithmetic -sample 4x1	bfa35f02df76e194ebad55ced66c27e4
+ari-q2	testorig.ppm	-arithmetic -quality 2	4e30d0e12c08546841124f7e5688f062
+ari-prog-444	testorig.ppm	-arithmetic -progressive -sample 1x1	0a8f1c8f66e113c3cf635df0a475a617
+ari-prog-420-rst	testorig.ppm	-arithmetic -progressive -restart 1B	4e90aa19a3c3a3d937b7cfe49363d965
+ari-prog-rgb	testorig.ppm	-arithmetic -progressive -rgb	afe62fb6113b9fc155a6df10efaa7765
+ari-test-scan	testorig.ppm	-arithmetic -scans test.scan	7e284b0a70a5ad10b75b4351ed19e8f1
+ari-custom-scan	testorig.ppm@61x37	-arithmetic -scans prog2.scan -restart 2B	e80c6091d0f68a3907ae2d0f7840c030
+ari-multiscan	testorig.ppm	-arithmetic -scans seq3.scan	7236dbe9b148a74b3013a4434495d9f7
+seq-440	testorig.ppm	-sample 1x2	538bc02bd4b4658fd85de6ece6cbeda6
+seq-440-opt	testorig.ppm	-sample 1x2 -optimize	a7b2ba96090b3b4fe7b2b9dfdea5380f
+seq-411	testorig.ppm	-sample 4x1	b514b96b22fc744d904b3fbba47559d2
+seq-411-opt-rst	testorig.ppm	-sample 4x1 -optimize -restart 4B	5d6a89dfb69a0fe21e6faf9480c2b4b9
+seq-3x2	testorig.ppm	-sample 3x2	032f0218b153235c8759e3605b485f32
+seq-4x2-crop	testorig.ppm@50x30	-sample 4x2 -optimize	bb82d9a9511f82ceb7053421910f9258
+seq-2x2-1x1-2x1	testorig.ppm	-sample 2x2,1x1,2x1 -optimize	9cab0278c2c8ad38ab27d3f202a60e75
+seq-1x1-2x2-1x2	testorig.ppm	-sample 1x1,2x2,1x2	ccbe68ac2e2532ab556547bc145fc099
+seq-gray-2x2	testorig.ppm	-grayscale -sample 2x2	329caa69653aae7176d16090cf27e391
+seq-q10	testorig.ppm	-quality 10	11cc59f14d07033abc4b3bcb78159cc6
+seq-q3-opt	testorig.ppm	-quality 3 -optimize -sample 1x1	1182a2f9c79d10aed01203b6a86f8cd8
+seq-quality-pair	testorig.ppm	-quality 90,40	0c69f546fec0ace0dec4f462d9279375
+seq-quality-pair-opt	testorig.ppm	-quality 85,50 -optimize -sample 2x1 -baseline	b3e81432560a840bccc6c8af5dbd1c61
+seq-qtables2	testorig.ppm	-quality 50 -qtables tables2.txt -baseline	f3b905f42c5724c857651c2f7f66e6a7
+seq-qtables3	testorig.ppm	-quality 70 -qtables tables3.txt -qslots 0,1,2 -optimize	e5f1933a907e4625afeb2790aed7ed2c
+seq-qtables3-q30	testorig.ppm	-quality 30 -qtables tables3.txt -qslots 0,2	4f0aca1a989c0777abd9c9b26987393f
+seq-qtables3-rgb	testorig.ppm	-rgb -quality 50,80 -qtables tables3.txt -qslots 1,2,0 -baseline	e853e269386e6149166abd56f8ce96dc
+seq-multiscan3	testorig.ppm	-scans seq3.scan	fd93261921aedaddf3a54129e7874e01
+seq-multiscan2-opt	testorig.ppm	-scans seq2.scan -optimize -restart 6B	9cebf57a6884a13a17d7312f312f41d0
+seq-rgb-icc	testorig.ppm	-rgb -icc test1.icc	1d44a406f61da743b5fd31c0a9abdca3
+seq-rgb-opt-rst	testorig.ppm	-rgb -optimize -restart 7B	8b763ce49b953af59e2f6df5c9e91c79
+seq-gray-pgm	testorig.pgm	-optimize	57920c8a1e152d005d6202875f339c6b
+seq-1x1	testorig.ppm@1x1	-sample 1x2	8839bdfba3d6bc842dff2914c0452617
+p12-rgb-icc	testorig.ppm	-precision 12 -rgb -icc test1.icc	9d7369207c520d37f2c1cbfcb82b2964
+p12-440	testorig.ppm	-precision 12 -sample 1x2	e25c1912e38367be505a89c410c1c2d2
+p12-gray	testorig.ppm	-precision 12 -grayscale	235c90707b16e2e069f37c888b2636d9
+p12-420	testorig.ppm	-precision 12	ccfeb42c65ca3dc2a882f8d28508af3e
+p12-422-rst	testorig.ppm	-precision 12 -sample 2x1 -restart 3B	534527c47d2163e5a762da28f21cc9e5
+p12-444-q95	testorig.ppm	-precision 12 -sample 1x1 -quality 95 -baseline	5d7fcd487130dd3372c3c62a243f8cbc
+p12-q20	testorig.ppm	-precision 12 -quality 20	9420403902ea0c727528f5d32caa37fb
+p12-q20-baseline	testorig.ppm	-precision 12 -quality 20 -baseline	6265e395ac6c0f6d91b948eb07cbd1e2
+p12-prog	testorig.ppm	-precision 12 -progressive	851722e26679ecce465a3a3093026892
+p12-prog-rgb	testorig.ppm	-precision 12 -progressive -rgb	76e5e11c7ea1dc5707bb6cca740aef62
+p12-ari	testorig.ppm	-precision 12 -arithmetic	c029057cb39471d6210956029de41e06
+p12-ari-prog-gray	testorig.ppm	-precision 12 -arithmetic -progressive -grayscale	8102b8a9b743f2ca77bc0a66e1cf036c
+p12-monkey	monkey16.ppm	-precision 12	4b79de10baef47b4d774e24387fd5486
+p12-monkey-pgm-prog	monkey16.pgm	-precision 12 -progressive	6ad3c900a4ba09cc455cd32dd188d0e9
+p12-pgm8	testorig.pgm	-precision 12 -sample 1x1	1f65de35c4bf6bc63a448dfb1783b8d9
+p12-test-scan	testorig.ppm	-precision 12 -scans test.scan	fe14a95638604ed155dd55f62d967c43
+p12-qtables3	testorig.ppm	-precision 12 -quality 60 -qtables tables3.txt -qslots 0,1,2	5301c5799cf03207f7001eeb117725d6
+p12-crop	testorig.ppm@13x7	-precision 12 -sample 2x2 -restart 1B	0448895a09308dd884533fdcf759a746
+p12-411	testorig.ppm	-precision 12 -sample 4x1 -arithmetic	140b825acb5220c4dbc1c3cf654588d5
+ll-psv1	testorig.ppm	-lossless 1	db0eb45d691d9bc525d17be29580af5f
+ll-psv2-pt1	testorig.ppm	-lossless 2,1	3884776d680cc37fc62d4e18e7b37639
+ll-psv3	testorig.ppm	-lossless 3 -restart 1	f7e10573c8e17e5a0b8d0683e3509d8b
+ll-psv4-rst	testorig.ppm	-lossless 4 -restart 1	fc777b82d42d835ae1282ba1ee87c209
+ll-psv5-pt2	testorig.ppm	-lossless 5,2	73dba7a4731ab4fd1fe4a96bb84facab
+ll-psv6	testorig.ppm	-lossless 6 -restart 3	53d79d82534e3abf333cab1481ef1cfa
+ll-psv7-pt3	testorig.ppm	-lossless 7,3	afcb66897c18d399c190beee0b5b484e
+ll-pgm-psv1	testorig.pgm	-lossless 1	67ce71b460770667d7c67b550ae0b252
+ll-pgm-psv6-rst	testorig.pgm	-lossless 6 -restart 2	fc5557b2134d06085c0dce0cd539101f
+ll-p2	testorig.ppm	-precision 2 -lossless 1	8d244785b23a8bf87cb261440d418a90
+ll-p4-pt1	testorig.ppm	-precision 4 -lossless 7,1	4f8fb166c184913a0e5b0bc79d712045
+ll-p10	testorig.ppm	-precision 10 -lossless 3 -restart 3	808ea5168b8c2d37ce688eb16d5b2f60
+ll-p12-rst	testorig.ppm	-precision 12 -lossless 4 -restart 1	8473501f5bb7c826524472c858bf4fcd
+ll-p16-rst	testorig.ppm	-precision 16 -lossless 4 -restart 1	fe99437df4e9976fe5e841969242b208
+ll-p14-pgm	monkey16.pgm	-precision 14 -lossless 4	fd473add26be6d564f60a32ee05002de
+ll-p16-monkey	monkey16.ppm	-precision 16 -lossless 1	22b8122102219b61dab502c5da8586f9
+ll-p16-monkey-pt	monkey16.ppm	-precision 16 -lossless 5,4	8484515072c6e12227fef400619157ce
+ll-p16-pgm-rst	monkey16.pgm	-precision 16 -lossless 2 -restart 2	2b60451de67206dee71e5942e8d22d80
+ll-scans	testorig.ppm	-scans ll.scan	99721c38f3d17e85d48a5eb8ada1eee1
+ll-scans-interleaved	testorig.ppm	-scans ll2.scan -restart 1	7f3ef788056629aef844457de9151ca3
+ll-1x1	testorig.ppm@1x1	-lossless 1	3ff5ee76d32ec59de46461fd2b195b40
+ll-5x3	testorig.ppm@5x3	-lossless 4	9b7793dd6f82051a06ddb6e0a2b5c214

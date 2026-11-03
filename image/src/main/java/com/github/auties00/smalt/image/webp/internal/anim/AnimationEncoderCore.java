@@ -558,7 +558,7 @@ public final class AnimationEncoderCore {
      * @return the difference
      */
     private static int qualityToMaxDiff(float quality) {
-        var val = Math.pow(quality / 100., 0.5);
+        var val = StrictMath.pow(quality / 100., 0.5);
         var maxDiff = 31 * (1 - val) + val;
         return (int) (maxDiff + 0.5);
     }
