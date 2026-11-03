@@ -340,6 +340,17 @@ public final class HeicFiles {
     }
 
     /**
+     * Returns whether an item may decode to a layer of another size than its {@code ispe} property declares: a
+     * layered HEVC item, or an item with a layer selector.
+     *
+     * @param item the item
+     * @return whether the decoded size can differ from the declared one
+     */
+    private static boolean layered(HeifItem item) {
+        return item.type().equals("lhv1") || item.property(HeifProperty.LayerSelector.class) != null;
+    }
+
+    /**
      * Decodes the image a HEIC file shows.
      *
      * @param source the file
@@ -481,9 +492,11 @@ public final class HeicFiles {
         HeifStill result = null;
         HeifGeometry full = null;
         Region crop = null;
-        if (hinted || region != null) {
+        var planned = region == null ? primary : shown(file, primary);
+        // a layered item may decode to a layer smaller than its ispe, so its region is planned on the decoded image
+        if ((hinted || region != null) && !(region != null && layered(planned))) {
             try {
-                full = geometry(source, file, region == null ? primary : shown(file, primary), limits);
+                full = geometry(source, file, planned, limits);
             } catch (MediaException.Io exception) {
                 throw exception;
             } catch (MediaException exception) {

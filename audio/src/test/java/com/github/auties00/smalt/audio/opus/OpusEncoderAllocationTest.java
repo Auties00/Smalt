@@ -8,7 +8,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
-import java.lang.reflect.Method;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.util.Random;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -40,13 +42,17 @@ class OpusEncoderAllocationTest {
             "1, 0, voip, cbr, 20000"
     })
     @DisplayName("allocates nothing per packet in steady state")
-    void steadyState(int channels, int family, String application, String mode, int micros) throws Exception {
+    void steadyState(int channels, int family, String application, String mode, int micros) throws Throwable {
         Skip.unless(!Simd.ENABLED, "simd:enabled", "vector kernels allocate until compiled; run with -Dsmalt.test.simd=false");
+        // An exact method handle returns the counter unboxed: Method.invoke boxes it into a Long that the JIT may or
+        // may not eliminate, which shows up as 16 bytes of the measurement
         Object threads;
-        Method allocated;
+        MethodHandle allocated;
         try {
             threads = Class.forName("java.lang.management.ManagementFactory").getMethod("getThreadMXBean").invoke(null);
-            allocated = Class.forName("com.sun.management.ThreadMXBean").getMethod("getCurrentThreadAllocatedBytes");
+            allocated = MethodHandles.publicLookup().findVirtual(Class.forName("com.sun.management.ThreadMXBean"),
+                    "getCurrentThreadAllocatedBytes", MethodType.methodType(long.class))
+                    .asType(MethodType.methodType(long.class, Object.class));
         } catch (ReflectiveOperationException | RuntimeException exception) {
             throw Skip.now("env:allocation-counter", "thread allocation counter unavailable: " + exception);
         }
@@ -64,19 +70,19 @@ class OpusEncoderAllocationTest {
         for (var k = 0; k < 16; k++) {
             assertTrue(encoder.encodeFloat(pcm, (k % 8) * frame * channels, frame, packet, 0, packet.length) > 0);
         }
-        // The reflective counter boxes its result: measure that overhead with nothing in between
+        // Measure the counter's own overhead with nothing in between
         var overhead = Long.MAX_VALUE;
         for (var i = 0; i < 10; i++) {
-            var before = (long) allocated.invoke(threads);
-            overhead = Math.min(overhead, (long) allocated.invoke(threads) - before);
+            var before = (long) allocated.invokeExact(threads);
+            overhead = Math.min(overhead, (long) allocated.invokeExact(threads) - before);
         }
         long bytes = 0;
         for (var pass = 0; pass < 40; pass++) {
-            var before = (long) allocated.invoke(threads);
+            var before = (long) allocated.invokeExact(threads);
             for (var k = 0; k < 8; k++) {
                 encoder.encodeFloat(pcm, k * frame * channels, frame, packet, 0, packet.length);
             }
-            bytes = (long) allocated.invoke(threads) - before - overhead;
+            bytes = (long) allocated.invokeExact(threads) - before - overhead;
             if (pass >= 2 && bytes == 0) {
                 break;
             }

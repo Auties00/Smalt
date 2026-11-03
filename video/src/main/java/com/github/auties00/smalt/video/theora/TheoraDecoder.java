@@ -84,7 +84,7 @@ public final class TheoraDecoder implements VideoDecoder {
         } catch (RuntimeException exception) {
             throw new MediaException.Malformed("invalid Theora header lacing", exception);
         }
-        if (headers.length != 3) {
+        if (headers == null || headers.length != 3) {
             throw new MediaException.Malformed("Theora configuration without three headers");
         }
         this.setup = new TheoraSetup(headers[0], headers[2]);

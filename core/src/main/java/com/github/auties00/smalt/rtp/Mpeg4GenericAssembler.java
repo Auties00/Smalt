@@ -68,6 +68,7 @@ final class Mpeg4GenericAssembler extends Assembler {
             var reader = new MsbBitReader(payload, 2, bytes);
             long index = 0;
             while (reader.bitPosition() < bits) {
+                var start = reader.bitPosition();
                 var first = count == 0;
                 var size = (int) reader.readLong(format.sizeLength);
                 var indexBits = first ? format.indexLength : format.indexDeltaLength;
@@ -94,6 +95,10 @@ final class Mpeg4GenericAssembler extends Assembler {
                 reader.readLong(format.streamStateIndication);
                 if (reader.bitPosition() > bits) {
                     throw new MediaException.Malformed("AU header runs past AU-headers-length");
+                }
+                if (reader.bitPosition() == start) {
+                    // every field of the AU header has zero length, so the header section never ends
+                    throw new MediaException.Malformed("AU-headers-length of " + bits + " bits with empty AU headers");
                 }
                 if (count == sizes.length) {
                     sizes = java.util.Arrays.copyOf(sizes, count * 2);

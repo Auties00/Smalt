@@ -265,7 +265,8 @@ public final class ExrSamples {
             var packedSize = ExrHeader.i64(data, at + 8);
             var unpackedSize = ExrHeader.i64(data, at + 16);
             at += 24;
-            if (tableSize < 0 || packedSize < 0 || unpackedSize < 0 || at + tableSize + packedSize > data.length
+            if (tableSize < 0 || packedSize < 0 || unpackedSize < 0 || tableSize > data.length - at
+                    || packedSize > data.length - at - tableSize
                     || unpackedSize > Integer.MAX_VALUE) {
                 throw new MediaException.Malformed("an OpenEXR deep chunk runs past the file");
             }

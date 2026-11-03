@@ -3,6 +3,7 @@
    licence (use in products conforming to ISO/IEC 23003). Modified for Smalt. */
 package com.github.auties00.smalt.audio.aac.internal.usac;
 
+import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.audio.aac.internal.AacBitReader;
 
 /**
@@ -31,6 +32,12 @@ final class ArithmeticDecoder {
      * The escape symbol of the 2-tuple models.
      */
     private static final int ESCAPE = 16;
+
+    /**
+     * The most escapes a spectral value may take: each adds a bit to both values of the pair, and 2 + 20 bits exceed
+     * every quantized magnitude ISO/IEC 23003-3 allows, so a stream that keeps escaping is corrupt.
+     */
+    private static final int MAX_ESCAPES = 20;
 
     /**
      * The largest number of 2-tuples of a spectrum (1024 lines), plus the context margin.
@@ -182,6 +189,10 @@ final class ArithmeticDecoder {
                     break;
                 }
                 lev++;
+                if (lev > MAX_ESCAPES) {
+                    throw new MediaException.Malformed("USAC spectral value with more than " + MAX_ESCAPES
+                            + " escapes");
+                }
                 escapes = Math.min(lev, 7);
             }
             if (r == 0) {

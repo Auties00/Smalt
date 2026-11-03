@@ -988,7 +988,7 @@ public final class AsfDemuxer implements Demuxer {
             if (truncated && position + replicatedLength + (multiple ? width(lengthType) : 0) > loaded) {
                 return;
             }
-            if (replicatedLength > end - position) {
+            if (replicatedLength < 0 || replicatedLength > end - position) {
                 throw new MediaException.Malformed("ASF payload replicated data overruns data packet " + index);
             }
             var replicatedStart = position;

@@ -8,7 +8,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
-import java.lang.reflect.Method;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -22,29 +24,33 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class OpusDnnAllocationTest {
     private static Object threads;
-    private static Method allocated;
+    private static MethodHandle allocated;
 
     private static void counter() {
         Skip.unless(!Simd.ENABLED, "simd:enabled", "vector kernels allocate until compiled; run with -Dsmalt.test.simd=false");
+        // An exact method handle returns the counter unboxed: Method.invoke boxes it into a Long that the JIT may or
+        // may not eliminate, which shows up as 16 bytes of the measurement
         try {
             threads = Class.forName("java.lang.management.ManagementFactory").getMethod("getThreadMXBean").invoke(null);
-            allocated = Class.forName("com.sun.management.ThreadMXBean").getMethod("getCurrentThreadAllocatedBytes");
+            allocated = MethodHandles.publicLookup().findVirtual(Class.forName("com.sun.management.ThreadMXBean"),
+                    "getCurrentThreadAllocatedBytes", MethodType.methodType(long.class))
+                    .asType(MethodType.methodType(long.class, Object.class));
         } catch (ReflectiveOperationException | RuntimeException exception) {
             throw Skip.now("env:allocation-counter", "thread allocation counter unavailable: " + exception);
         }
     }
 
-    private static long measure(Runnable work) throws Exception {
+    private static long measure(Runnable work) throws Throwable {
         var overhead = Long.MAX_VALUE;
         for (var i = 0; i < 10; i++) {
-            var before = (long) allocated.invoke(threads);
-            overhead = Math.min(overhead, (long) allocated.invoke(threads) - before);
+            var before = (long) allocated.invokeExact(threads);
+            overhead = Math.min(overhead, (long) allocated.invokeExact(threads) - before);
         }
         long bytes = 0;
         for (var pass = 0; pass < 40; pass++) {
-            var before = (long) allocated.invoke(threads);
+            var before = (long) allocated.invokeExact(threads);
             work.run();
-            bytes = (long) allocated.invoke(threads) - before - overhead;
+            bytes = (long) allocated.invokeExact(threads) - before - overhead;
             if (pass >= 2 && bytes == 0) {
                 break;
             }
@@ -55,7 +61,7 @@ class OpusDnnAllocationTest {
     @ParameterizedTest(name = "{0} {1} us")
     @CsvSource({"vbr, 20000", "cbr, 20000", "cvbr, 40000", "vbr, 60000"})
     @DisplayName("the DRED encoder allocates nothing per packet in steady state")
-    void encoder(String mode, int micros) throws Exception {
+    void encoder(String mode, int micros) throws Throwable {
         counter();
         var input = OpusEncoderGoldenTest.input("speech48k");
         var encoder = new OpusStreamEncoder(48000, 1, OpusDefines.OPUS_APPLICATION_VOIP);
@@ -105,7 +111,7 @@ class OpusDnnAllocationTest {
     @ParameterizedTest(name = "{0} at complexity {1}")
     @CsvSource({"decode, 0", "conceal, 0", "decode, 7", "conceal, 7", "parse, 7", "recover, 7"})
     @DisplayName("a decoder allocates nothing per packet while decoding, concealing and recovering")
-    void decoder(String operation, int complexity) throws Exception {
+    void decoder(String operation, int complexity) throws Throwable {
         counter();
         List<byte[]> packets = OpusDnnGoldenTest.packets("e_dred48");
         var decoder = new OpusDecoder(OpusDecoderOptions.of(48000, 1).toBuilder().complexity(complexity).build());
