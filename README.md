@@ -1891,6 +1891,9 @@ checks a FLAC source's MD5 signature on the way.
   codestream or compositing layer headers), cannot store comments (the codestream's `COM` segments are not
   rewritten) or the metadata of a raw codestream, and refuses to move the boxes of a file whose codestream is
   held in fragment tables, whose offsets would no longer point at it.
+- The JPEG 2000 encoder accepts channels of up to 31 bits, but its reversible (lossless) coding keeps at most 25
+  magnitude bits per wavelet coefficient, so a lossless image of more than 24 bits per channel does not decode
+  back to its input.
 - The JPEG 2000 encoder's rectangle region of interest scales the coefficients of the code-blocks it covers
   in part, so a scaled coefficient must keep at most 25 magnitude bit-planes: channels of more than about 10 bits,
   lossless or lossy, are rejected with a rectangle; a whole-component region has no such bound. Its lossy output is

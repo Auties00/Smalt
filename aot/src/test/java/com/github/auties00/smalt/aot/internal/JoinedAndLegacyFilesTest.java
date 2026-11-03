@@ -10,6 +10,7 @@ import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.subtitle.BitmapSubtitleDecoder;
 import com.github.auties00.smalt.subtitle.Subtitles;
+import com.github.auties00.smalt.testkit.Oracle;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -49,7 +50,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Checks the files of the ASF, VobSub and joined inputs training workloads: the ASF writer's file demuxes to the
@@ -193,7 +193,7 @@ class JoinedAndLegacyFilesTest {
         @Test
         @DisplayName("reads in ffprobe as the same streams and media objects")
         void ffprobe(@TempDir Path directory) throws IOException, InterruptedException {
-            assumeTrue(available("ffprobe"), "ffprobe is not installed");
+            Oracle.assume(Oracle.Tool.FFPROBE);
             var path = directory.resolve("training.asf");
             Files.write(path, asf.file());
             var streams = run("ffprobe", "-v", "error", "-show_entries",
@@ -220,7 +220,7 @@ class JoinedAndLegacyFilesTest {
         @Test
         @DisplayName("decodes in ffmpeg to the original samples and pictures")
         void ffmpeg(@TempDir Path directory) throws IOException, InterruptedException {
-            assumeTrue(available("ffmpeg"), "ffmpeg is not installed");
+            Oracle.assume(Oracle.Tool.FFMPEG);
             var path = directory.resolve("training.asf");
             Files.write(path, asf.file());
             // an independent demuxer undoes the audio spread and expands the compressed payloads
@@ -269,7 +269,7 @@ class JoinedAndLegacyFilesTest {
         @Test
         @DisplayName("read in ffprobe as two DVD subtitle streams of their units")
         void ffprobe(@TempDir Path directory) throws IOException, InterruptedException {
-            assumeTrue(available("ffprobe"), "ffprobe is not installed");
+            Oracle.assume(Oracle.Tool.FFPROBE);
             var tracks = ContainerWorkloads.vobSubTracks(6);
             var pair = ContainerWorkloads.vobSub(tracks);
             Files.write(directory.resolve("pair.idx"), pair[0]);
@@ -555,16 +555,6 @@ class JoinedAndLegacyFilesTest {
         assertTrue(process.waitFor(60, TimeUnit.SECONDS));
         assertEquals(0, process.exitValue());
         return output;
-    }
-
-    private static boolean available(String tool) {
-        try {
-            var process = new ProcessBuilder(tool, "-version").redirectErrorStream(true)
-                    .redirectOutput(ProcessBuilder.Redirect.DISCARD).start();
-            return process.waitFor(30, TimeUnit.SECONDS) && process.exitValue() == 0;
-        } catch (IOException | InterruptedException exception) {
-            return false;
-        }
     }
 
     private static List<String> run(String... command) throws IOException, InterruptedException {
