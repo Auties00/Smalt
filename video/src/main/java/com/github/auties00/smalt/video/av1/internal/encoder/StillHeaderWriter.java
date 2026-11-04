@@ -12,9 +12,11 @@ import java.util.Arrays;
  * restoration.
  *
  * <p>Headers are written from the decoder's {@link SequenceHeader} and {@link FrameHeader} models,
- * so a written header parses back into the same fields. The stream has one operating point, no
- * timing or decoder model information, no frame identifiers, order hints, super-resolution or
- * film grain, and its frames are shown key frames that keep no CDFs for later frames.
+ * so a written header parses back into the same fields. The stream of {@link #sequenceHeader} has
+ * one operating point, no timing or decoder model information, no frame identifiers, order hints or
+ * super-resolution, film grain only when its header signals it, and its frames are shown key frames
+ * that keep no CDFs for later frames; {@link #frameHeader} also writes the key frames of a video
+ * stream, with their order hint and film grain when its sequence header signals them.
  *
  * <p>The tile, quantizer and restoration syntax is {@link ObuWriter}'s.
  *
@@ -82,37 +84,8 @@ final class StillHeaderWriter {
         w.flag(false);
         w.flag(seq.cdef);
         w.flag(seq.restoration);
-        w.flag(seq.hbd > 0);
-        if (seq.profile == 2 && seq.hbd > 0) {
-            w.flag(seq.hbd == 2);
-        }
-        if (seq.profile != 1) {
-            w.flag(seq.monochrome);
-        }
-        w.flag(seq.colorDescriptionPresent);
-        if (seq.colorDescriptionPresent) {
-            w.bits(seq.pri, 8);
-            w.bits(seq.trc, 8);
-            w.bits(seq.mtrx, 8);
-        }
-        if (seq.monochrome) {
-            w.flag(seq.colorRange);
-        } else if (!(seq.pri == 1 && seq.trc == 13 && seq.mtrx == 0)) {
-            w.flag(seq.colorRange);
-            if (seq.profile == 2 && seq.hbd == 2) {
-                w.bit(seq.ssHor);
-                if (seq.ssHor != 0) {
-                    w.bit(seq.ssVer);
-                }
-            }
-            if (seq.ssHor != 0 && seq.ssVer != 0) {
-                w.bits(seq.chr, 2);
-            }
-        }
-        if (!seq.monochrome) {
-            w.flag(seq.separateUvDeltaQ);
-        }
-        w.flag(false);
+        ObuWriter.writeColorConfig(w, seq);
+        w.flag(seq.filmGrainPresent);
         w.trailingBits();
         return Arrays.copyOf(w.buffer(), w.size());
     }
@@ -131,6 +104,7 @@ final class StillHeaderWriter {
             w.flag(false);
             w.bits(FrameHeader.KEY, 2);
             w.flag(true);
+            ObuWriter.writePresentationTime(w, seq, hdr.framePresentationTime);
         }
         w.flag(false);
         if (seq.screenContentTools == SequenceHeader.ADAPTIVE) {
@@ -144,6 +118,10 @@ final class StillHeaderWriter {
         }
         if (seq.orderHint) {
             w.bits(hdr.frameOffset, seq.orderHintNBits);
+        }
+        ObuWriter.writeRemovalTimes(w, seq, hdr);
+        if (seq.superRes) {
+            w.flag(false);
         }
         w.flag(false);
         if (hdr.allowScreenContentTools) {
@@ -189,6 +167,9 @@ final class StillHeaderWriter {
             w.flag(hdr.txfmMode == FrameHeader.TX_SWITCHABLE);
         }
         w.flag(hdr.reducedTxtpSet);
+        if (seq.filmGrainPresent) {
+            FilmGrains.write(w, seq, hdr, null);
+        }
         w.byteAlign();
     }
 }

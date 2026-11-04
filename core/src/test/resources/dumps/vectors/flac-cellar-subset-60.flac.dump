@@ -1,0 +1,77 @@
+# demux dump of vectors/flac-cellar-subset-60.flac; regenerate with -Dsmalt.test.updateDumps=true
+format FLAC
+duration 5152993
+seekable true
+track 0 AUDIO FLAC timebase=1/44100 duration=227247 config=111:caa2ee4e
+  audio rate=44100 bits=16 skip=0 layout=[FRONT_CENTER]
+packets 56
+0 t0 pts=0 dts=0 dur=4096 flags=KEY size=11 crc=c1421daf
+1 t0 pts=4096 dts=4096 dur=4096 flags=KEY size=11 crc=eda6fb06
+2 t0 pts=8192 dts=8192 dur=4096 flags=KEY size=11 crc=988bd0fd
+3 t0 pts=12288 dts=12288 dur=4096 flags=KEY size=11 crc=b46f3654
+4 t0 pts=16384 dts=16384 dur=4096 flags=KEY size=11 crc=5724ea19
+5 t0 pts=20480 dts=20480 dur=4096 flags=KEY size=11 crc=7bc00cb0
+6 t0 pts=24576 dts=24576 dur=4096 flags=KEY size=11 crc=0eed274b
+7 t0 pts=28672 dts=28672 dur=4096 flags=KEY size=11 crc=2209c1e2
+8 t0 pts=32768 dts=32768 dur=4096 flags=KEY size=11 crc=2fe5c5c2
+9 t0 pts=36864 dts=36864 dur=4096 flags=KEY size=11 crc=0301236b
+10 t0 pts=40960 dts=40960 dur=4096 flags=KEY size=11 crc=762c0890
+11 t0 pts=45056 dts=45056 dur=4096 flags=KEY size=11 crc=5ac8ee39
+12 t0 pts=49152 dts=49152 dur=4096 flags=KEY size=11 crc=b9833274
+13 t0 pts=53248 dts=53248 dur=4096 flags=KEY size=11 crc=9567d4dd
+14 t0 pts=57344 dts=57344 dur=4096 flags=KEY size=11 crc=e04aff26
+15 t0 pts=61440 dts=61440 dur=4096 flags=KEY size=11 crc=ccae198f
+16 t0 pts=65536 dts=65536 dur=4096 flags=KEY size=11 crc=de679a74
+17 t0 pts=69632 dts=69632 dur=4096 flags=KEY size=11 crc=f2837cdd
+18 t0 pts=73728 dts=73728 dur=4096 flags=KEY size=11 crc=87ae5726
+19 t0 pts=77824 dts=77824 dur=4096 flags=KEY size=11 crc=ab4ab18f
+20 t0 pts=81920 dts=81920 dur=4096 flags=KEY size=1397 crc=6efb1f3c
+21 t0 pts=86016 dts=86016 dur=4096 flags=KEY size=2282 crc=99bc34da
+22 t0 pts=90112 dts=90112 dur=4096 flags=KEY size=3194 crc=958b2278
+23 t0 pts=94208 dts=94208 dur=4096 flags=KEY size=3556 crc=830e9028
+24 t0 pts=98304 dts=98304 dur=4096 flags=KEY size=3595 crc=4ab300bd
+25 t0 pts=102400 dts=102400 dur=4096 flags=KEY size=3322 crc=36ce02a5
+26 t0 pts=106496 dts=106496 dur=4096 flags=KEY size=2494 crc=aef549b2
+27 t0 pts=110592 dts=110592 dur=4096 flags=KEY size=3063 crc=117121a9
+28 t0 pts=114688 dts=114688 dur=4096 flags=KEY size=3509 crc=06c4af50
+29 t0 pts=118784 dts=118784 dur=4096 flags=KEY size=3326 crc=81473cf9
+30 t0 pts=122880 dts=122880 dur=4096 flags=KEY size=3487 crc=ffb2a50d
+31 t0 pts=126976 dts=126976 dur=4096 flags=KEY size=3034 crc=2a5d53b2
+32 t0 pts=131072 dts=131072 dur=4096 flags=KEY size=2053 crc=34c79d60
+33 t0 pts=135168 dts=135168 dur=4096 flags=KEY size=699 crc=c8706905
+34 t0 pts=139264 dts=139264 dur=4096 flags=KEY size=11 crc=8335b259
+35 t0 pts=143360 dts=143360 dur=4096 flags=KEY size=11 crc=afd154f0
+36 t0 pts=147456 dts=147456 dur=4096 flags=KEY size=11 crc=4c9a88bd
+37 t0 pts=151552 dts=151552 dur=4096 flags=KEY size=11 crc=607e6e14
+38 t0 pts=155648 dts=155648 dur=4096 flags=KEY size=11 crc=155345ef
+39 t0 pts=159744 dts=159744 dur=4096 flags=KEY size=11 crc=39b7a346
+40 t0 pts=163840 dts=163840 dur=4096 flags=KEY size=11 crc=345ba766
+41 t0 pts=167936 dts=167936 dur=4096 flags=KEY size=11 crc=18bf41cf
+42 t0 pts=172032 dts=172032 dur=4096 flags=KEY size=11 crc=6d926a34
+43 t0 pts=176128 dts=176128 dur=4096 flags=KEY size=11 crc=41768c9d
+44 t0 pts=180224 dts=180224 dur=4096 flags=KEY size=11 crc=a23d50d0
+45 t0 pts=184320 dts=184320 dur=4096 flags=KEY size=11 crc=8ed9b679
+46 t0 pts=188416 dts=188416 dur=4096 flags=KEY size=11 crc=fbf49d82
+47 t0 pts=192512 dts=192512 dur=4096 flags=KEY size=11 crc=d7107b2b
+48 t0 pts=196608 dts=196608 dur=4096 flags=KEY size=11 crc=c5d9f8d0
+49 t0 pts=200704 dts=200704 dur=4096 flags=KEY size=11 crc=e93d1e79
+50 t0 pts=204800 dts=204800 dur=4096 flags=KEY size=11 crc=9c103582
+51 t0 pts=208896 dts=208896 dur=4096 flags=KEY size=11 crc=b0f4d32b
+52 t0 pts=212992 dts=212992 dur=4096 flags=KEY size=11 crc=53bf0f66
+53 t0 pts=217088 dts=217088 dur=4096 flags=KEY size=11 crc=7f5be9cf
+54 t0 pts=221184 dts=221184 dur=4096 flags=KEY size=11 crc=0a76c234
+55 t0 pts=225280 dts=225280 dur=1967 flags=KEY size=13 crc=3dfb96ea
+seek 0: t0@0
+seek 1717664: t0@18
+seek 3435328: t0@36
+seek 5152994: end
+seek 5152993: t0@55
+seek -1000000: t0@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format FLAC
+  duration 5152993
+  seekable false
+  track 0 AUDIO FLAC timebase=1/44100 duration=227247 config=111:caa2ee4e
+    audio rate=44100 bits=16 skip=0 layout=[FRONT_CENTER]
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH

@@ -20,6 +20,10 @@ package com.github.auties00.smalt.audio.aac.internal.sbr;
  * radix-2 pass followed by two eight-point tails, with the same output permutation for every
  * slot, so no lane ever needs a shuffle; the subbands are transposed back to one slot per row
  * of 32 on the way out.
+ *
+ * <p>The low delay bank of AAC-ELD uses the window {@code (c(2n) + c(2n + 1)) / 2} of the prototype of
+ * {@link LowDelayQmfWindow} and the modulation {@code W(k) = 2 sum u(n) exp(i pi (k + 1/2)(n - 95/2) / 32)}:
+ * the same transforms with the output rotation {@code exp(-i 3 pi (k + 1/2) / 2)}.
  */
 final class QmfAnalysis {
     /**
@@ -47,6 +51,22 @@ final class QmfAnalysis {
      * The imaginary parts of the output rotation.
      */
     private static final float[] ROTATION_IMAGINARY = new float[32];
+
+    /**
+     * The window of the low delay bank, {@code 2 * 32768 * (c(2n) + c(2n + 1)) / 2} with
+     * {@code n = 63 - m + 64 j}, at {@code 64 j + m}.
+     */
+    private static final float[] LOW_DELAY_WINDOW = new float[320];
+
+    /**
+     * The real parts of the low delay output rotation {@code exp(-i 3 pi (k + 1/2) / 2)}.
+     */
+    private static final float[] LOW_DELAY_ROTATION_REAL = new float[32];
+
+    /**
+     * The imaginary parts of the low delay output rotation.
+     */
+    private static final float[] LOW_DELAY_ROTATION_IMAGINARY = new float[32];
 
     /**
      * The pre-twiddle cosines {@code cos(pi (k + 1/8) / 32)}.
@@ -77,18 +97,28 @@ final class QmfAnalysis {
         }
         for (var k = 0; k < 32; k++) {
             var angle = -3 * Math.PI * (k + 0.5) / 128;
-            ROTATION_REAL[k] = (float) Math.cos(angle);
-            ROTATION_IMAGINARY[k] = (float) Math.sin(angle);
+            ROTATION_REAL[k] = (float) StrictMath.cos(angle);
+            ROTATION_IMAGINARY[k] = (float) StrictMath.sin(angle);
+            var lowDelayAngle = -3 * Math.PI * (k + 0.5) / 2;
+            LOW_DELAY_ROTATION_REAL[k] = (float) StrictMath.cos(lowDelayAngle);
+            LOW_DELAY_ROTATION_IMAGINARY[k] = (float) StrictMath.sin(lowDelayAngle);
+        }
+        for (var j = 0; j < 5; j++) {
+            for (var m = 0; m < 64; m++) {
+                var n = 63 - m + 64 * j;
+                LOW_DELAY_WINDOW[64 * j + m] = (float) (32768 * (LowDelayQmfWindow.COEFFICIENTS[2 * n]
+                        + LowDelayQmfWindow.COEFFICIENTS[2 * n + 1]));
+            }
         }
         for (var k = 0; k < 16; k++) {
             var angle = Math.PI * (k + 0.125) / 32;
-            TWIDDLE_COS[k] = (float) Math.cos(angle);
-            TWIDDLE_SIN[k] = (float) Math.sin(angle);
+            TWIDDLE_COS[k] = (float) StrictMath.cos(angle);
+            TWIDDLE_SIN[k] = (float) StrictMath.sin(angle);
             POSITIONS[k] = (k & 1) * 8 + (Integer.reverse(k >> 1) >>> 29);
         }
         for (var j = 0; j < 8; j++) {
-            RADIX2[j] = (float) Math.cos(-Math.PI * j / 8);
-            RADIX2[8 + j] = (float) Math.sin(-Math.PI * j / 8);
+            RADIX2[j] = (float) StrictMath.cos(-Math.PI * j / 8);
+            RADIX2[8 + j] = (float) StrictMath.sin(-Math.PI * j / 8);
         }
     }
 
@@ -133,12 +163,40 @@ final class QmfAnalysis {
     private final float[] bandsIm;
 
     /**
+     * The window of the bank.
+     */
+    private final float[] window;
+
+    /**
+     * The real parts of the output rotation of the bank.
+     */
+    private final float[] rotationRe;
+
+    /**
+     * The imaginary parts of the output rotation of the bank.
+     */
+    private final float[] rotationIm;
+
+    /**
      * Creates an analysis bank with a silent history.
      *
      * @param kernel the transform kernel
      */
     QmfAnalysis(SbrKernel kernel) {
+        this(kernel, false);
+    }
+
+    /**
+     * Creates an analysis bank with a silent history, optionally the low delay bank of AAC-ELD.
+     *
+     * @param kernel the transform kernel
+     * @param lowDelay whether the bank is the low delay bank
+     */
+    QmfAnalysis(SbrKernel kernel, boolean lowDelay) {
         this.kernel = kernel;
+        this.window = lowDelay ? LOW_DELAY_WINDOW : WINDOW;
+        this.rotationRe = lowDelay ? LOW_DELAY_ROTATION_REAL : ROTATION_REAL;
+        this.rotationIm = lowDelay ? LOW_DELAY_ROTATION_IMAGINARY : ROTATION_IMAGINARY;
         var width = kernel.width();
         this.windowed = new float[width * 64];
         this.rows = new float[64 * width];
@@ -163,13 +221,13 @@ final class QmfAnalysis {
         System.arraycopy(input, 0, samples, HISTORY, length);
         var width = kernel.width();
         for (var column = 0; column < slots; column += width) {
-            kernel.analysisWindow(samples, HISTORY + 32 * column - 32, WINDOW, windowed);
+            kernel.analysisWindow(samples, HISTORY + 32 * column - 32, window, windowed);
             kernel.transpose(windowed, 0, 64, rows, 0, width, width, 64);
             kernel.foldRows(rows, TWIDDLE_COS, TWIDDLE_SIN, fftRe, fftIm);
             kernel.radix2(fftRe, fftIm, 0, RADIX2);
             kernel.radix2(fftRe, fftIm, 16, RADIX2);
             kernel.tail8(fftRe, fftIm, 0, 4);
-            kernel.analysisOutput(fftRe, fftIm, POSITIONS, TWIDDLE_COS, TWIDDLE_SIN, ROTATION_REAL, ROTATION_IMAGINARY,
+            kernel.analysisOutput(fftRe, fftIm, POSITIONS, TWIDDLE_COS, TWIDDLE_SIN, rotationRe, rotationIm,
                     bandsRe, bandsIm);
             var lanes = Math.min(width, slots - column);
             if (lanes == width) {

@@ -192,6 +192,11 @@ final class Vp9RtCoder {
     private final Vp9IntraPredictor intraPredictor = new Vp9IntraPredictor();
 
     /**
+     * The full-precision block coding of a 10 or 12-bit frame, or {@code null} for an 8-bit one.
+     */
+    private final Vp9HighBlockCoder high;
+
+    /**
      * The variance partitioning of superblocks.
      */
     final Vp9RtPartition partition;
@@ -205,6 +210,23 @@ final class Vp9RtCoder {
      * The motion search.
      */
     final Vp9RtMotion motion;
+
+    /**
+     * The rate-distortion search of good-quality frames.
+     */
+    final Vp9RdCoder rd;
+
+    /**
+     * Whether the block being coded only feeds the search of the blocks after it: it is
+     * reconstructed and its nonzero contexts are set, but it adds no tokens and no counts.
+     */
+    boolean dryRun;
+
+    /**
+     * The largest motion vector component, in full samples, of the new vectors the coded blocks
+     * of the current frame chose.
+     */
+    int maxMvMagnitude;
 
     /**
      * The symbols this coder counted in the frame.
@@ -318,6 +340,29 @@ final class Vp9RtCoder {
     final byte[][] leftEntropy = {new byte[16], new byte[16], new byte[16]};
 
     /**
+     * The coefficient optimization of good-quality blocks, whose rates the 8-bit token costs of
+     * the frame give.
+     */
+    final Vp9CoefficientOptimizer optimizer;
+
+    /**
+     * The coefficient optimization of the full-precision coding of a high bit depth frame, whose
+     * category 6 tokens carry the extra bits of the bit depth.
+     */
+    final Vp9CoefficientOptimizer highOptimizer;
+
+    /**
+     * The above nonzero contexts the coefficient optimization of a plane being coded updates, one
+     * per 4x4 column of the block.
+     */
+    final byte[] codingAbove = new byte[16];
+
+    /**
+     * The left nonzero contexts the coefficient optimization of a plane being coded updates.
+     */
+    final byte[] codingLeft = new byte[16];
+
+    /**
      * The left partition contexts, one per 8x8 row of the superblock.
      */
     final byte[] leftPartition = new byte[8];
@@ -346,6 +391,11 @@ final class Vp9RtCoder {
      * The motion search's sum of absolute differences per bit.
      */
     int sadPerBit16;
+
+    /**
+     * The motion search's sum-of-differences weight of sub-8x8 blocks ({@code sadperbit4}).
+     */
+    int sadPerBit4;
 
     /**
      * How much of the luma residual can be skipped: 0 none, 1 everything
@@ -464,22 +514,22 @@ final class Vp9RtCoder {
     /**
      * The transform coefficients of each plane, 16 per 4x4 unit.
      */
-    final int[][] coeff = {new int[4096], new int[1024], new int[1024]};
+    final int[][] coeff = {new int[4096], new int[4096], new int[4096]};
 
     /**
      * The quantized coefficients of each plane.
      */
-    final int[][] qcoeff = {new int[4096], new int[1024], new int[1024]};
+    final int[][] qcoeff = {new int[4096], new int[4096], new int[4096]};
 
     /**
      * The dequantized coefficients of each plane.
      */
-    final int[][] dqcoeff = {new int[4096], new int[1024], new int[1024]};
+    final int[][] dqcoeff = {new int[4096], new int[4096], new int[4096]};
 
     /**
      * The end of block of each transform block of each plane, by 4x4 unit index.
      */
-    final int[][] eobs = {new int[256], new int[64], new int[64]};
+    final int[][] eobs = {new int[256], new int[256], new int[256]};
 
     /**
      * The coefficients of one transform block in the decoder's layout.
@@ -572,6 +622,85 @@ final class Vp9RtCoder {
         this.partition = new Vp9RtPartition(this);
         this.motion = new Vp9RtMotion(this);
         this.pick = new Vp9RtPickMode(this);
+        this.high = enc.bitDepth > 8 ? new Vp9HighBlockCoder(this) : null;
+        this.optimizer = new Vp9CoefficientOptimizer(enc.rdCosts, enc.rdCosts);
+        this.highOptimizer = enc.bitDepth > 8 ? new Vp9CoefficientOptimizer(enc.rdCosts, new Vp9RdCosts(enc.bitDepth))
+                : optimizer;
+        this.rd = new Vp9RdCoder(this);
+    }
+
+    /**
+     * Returns whether the coding of the chosen blocks optimizes their quantized coefficients,
+     * libvpx's {@code x->optimize}: good-quality frames of a two-pass encode that are not
+     * lossless.
+     *
+     * @return whether it does
+     */
+    boolean optimizesCoding() {
+        return enc.good && enc.optimizeCoefficients && !enc.lossless;
+    }
+
+    /**
+     * Loads the nonzero contexts of each transform block of a plane of the current block, the
+     * contexts of its 4x4 columns and rows merged over the transform's width and height
+     * ({@code vp9_get_entropy_contexts}).
+     *
+     * @param plane the plane index
+     * @param planeBsize the block size in the plane
+     * @param txSize the transform size
+     * @param ta receives the above contexts, at the 4x4 column of each transform block
+     * @param tl receives the left contexts, at the 4x4 row of each transform block
+     */
+    void entropyContexts(int plane, int planeBsize, int txSize, byte[] ta, byte[] tl) {
+        var sx = plane == 0 ? 0 : enc.ssX;
+        var sy = plane == 0 ? 0 : enc.ssY;
+        var num4w = NUM_4X4_WIDE[planeBsize];
+        var num4h = NUM_4X4_HIGH[planeBsize];
+        var step = 1 << txSize;
+        var above = enc.aboveEntropy[plane];
+        var left = leftEntropy[plane];
+        var aboveBase = (miCol * 2) >> sx;
+        var leftBase = ((miRow * 2) & 15) >> sy;
+        for (var i = 0; i < num4w; i += step) {
+            var v = 0;
+            for (var k = 0; k < step && i + k < 16; k++) {
+                v |= above[aboveBase + i + k];
+            }
+            ta[i] = (byte) (v != 0 ? 1 : 0);
+        }
+        for (var i = 0; i < num4h; i += step) {
+            var v = 0;
+            for (var k = 0; k < step && i + k < 16; k++) {
+                v |= left[leftBase + i + k];
+            }
+            tl[i] = (byte) (v != 0 ? 1 : 0);
+        }
+    }
+
+    /**
+     * Optimizes the quantized coefficients of one transform block of the current block with the
+     * dequantization of a quantizer ({@code vp9_optimize_b}).
+     *
+     * @param optimizer the optimizer of the coefficients' bit depth
+     * @param q the quantizer the block was quantized with
+     * @param bitDepth the bit depth of the coefficients
+     * @param plane the plane index
+     * @param off the index of the block's first coefficient
+     * @param eob the end of block of the quantization
+     * @param txSize the transform size
+     * @param txType the transform type
+     * @param ctx the block's nonzero context, from 0 to 2
+     * @return the end of block after the optimization
+     */
+    int optimizeBlock(Vp9CoefficientOptimizer optimizer, Vp9Quantizer q, int bitDepth, int plane, int off, int eob,
+                      int txSize, int txType, int ctx) {
+        if (eob == 0) {
+            return 0;
+        }
+        var pidx = qindex * 2;
+        var dequant = plane == 0 ? q.yDequant : q.uvDequant;
+        return optimizer.optimize(coeff[plane], qcoeff[plane], dqcoeff[plane], off, eob, txSize, txType, plane,
+                mi.isInter(), ctx, dequant[pidx], dequant[pidx + 1], rdmult, bitDepth);
     }
 
     /**
@@ -661,6 +790,7 @@ final class Vp9RtCoder {
      */
     void startFrame() {
         counts.clear();
+        maxMvMagnitude = 0;
     }
 
     /**
@@ -689,7 +819,11 @@ final class Vp9RtCoder {
             if (wavefront != null && sbRow > 0) {
                 wavefront.await(tile, sbRow - 1, sbColInTile + 1);
             }
-            codeSuperblock(row, col);
+            if (enc.good) {
+                rd.codeSuperblock(row, col, threshFact);
+            } else {
+                codeSuperblock(row, col);
+            }
             if (wavefront != null) {
                 wavefront.publish(tile, sbRow, sbColInTile + 1);
             }
@@ -900,9 +1034,8 @@ final class Vp9RtCoder {
         var src = enc.source;
         var recon = enc.recon;
         for (var plane = 0; plane < 3; plane++) {
-            var ss = plane == 0 ? 0 : 1;
-            var x = (col * 8) >> ss;
-            var y = (row * 8) >> ss;
+            var x = (col * 8) >> (plane == 0 ? 0 : enc.ssX);
+            var y = (row * 8) >> (plane == 0 ? 0 : enc.ssY);
             srcOff[plane] = src.offset(plane, x, y);
             dstOff[plane] = y * recon.strides[plane] + x;
         }
@@ -933,6 +1066,7 @@ final class Vp9RtCoder {
         var segRdmult = enc.computeRdMult(qindex);
         errorPerBit = Math.max(1, segRdmult >> 6);
         sadPerBit16 = Vp9RtEncoder.SAD_PER_BIT16[qindex];
+        sadPerBit4 = Vp9RtEncoder.SAD_PER_BIT4[qindex];
     }
 
     /**
@@ -963,6 +1097,78 @@ final class Vp9RtCoder {
         }
         duplicateModeInfo(bsize);
         encodeBlock(bsize, rate, dist);
+    }
+
+    /**
+     * Codes a block whose modes the rate-distortion search chose and copied into its mode
+     * information ({@code encode_b}): reconstructs it and, when coding into the bitstream,
+     * tokenizes it and counts its symbols; otherwise only sets the contexts the blocks after it
+     * read.
+     *
+     * @param bsize the block size
+     * @param output whether the block is coded into the bitstream
+     */
+    void encodeChosenBlock(int bsize, boolean output) {
+        duplicateModeInfo(bsize);
+        var m = mi;
+        if (output) {
+            var inter = m.isInter();
+            if (inter) {
+                if (bsize < BLOCK_8X8) {
+                    var w4 = NUM_4X4_WIDE[bsize];
+                    var h4 = NUM_4X4_HIGH[bsize];
+                    for (var idy = 0; idy < 2; idy += h4) {
+                        for (var idx = 0; idx < 2; idx += w4) {
+                            var j = idy * 2 + idx;
+                            if (m.subModes[j] == NEWMV) {
+                                countNewMv(m.subMv0[j], m.subMv1[j]);
+                            }
+                        }
+                    }
+                } else if (m.mode == NEWMV) {
+                    countNewMv(m.mv0, m.mv1);
+                }
+                if (enc.interpFilter == SWITCHABLE) {
+                    var ctx = Vp9PredContexts.switchableInterp(aboveMi, leftMi);
+                    counts.counts[Vp9EncCounts.SWITCHABLE_INTERP + ctx * 3 + m.interpFilter]++;
+                }
+            }
+            var index = miRow * enc.miCols + miCol;
+            enc.blockModeContext[index] = inter ? modeContext[m.ref0] : 0;
+            enc.blockRefMv[index] = inter ? refMvs[m.ref0 * 2] : 0;
+            enc.blockRefMv1[index] = inter && m.hasSecondRef() ? refMvs[m.ref1 * 2] : 0;
+            if (!enc.keyFrame) {
+                enc.storeFrameMvs(m, miRow, miCol, bsize);
+            }
+        }
+        dryRun = !output;
+        try {
+            encodeSuperblock(bsize);
+        } finally {
+            dryRun = false;
+        }
+        if (output) {
+            updateStats();
+            tokens.endBlock();
+        }
+    }
+
+    /**
+     * Counts the vectors of a new motion vector against the block's best predicted vectors and
+     * tracks the largest magnitude ({@code vp9_update_mv_count}, {@code vp9_encode_mv}).
+     *
+     * @param mv0 the packed vector of the first reference
+     * @param mv1 the packed vector of the second reference, ignored without one
+     */
+    private void countNewMv(int mv0, int mv1) {
+        var m = mi;
+        var ref = refMvs[m.ref0 * 2];
+        counts.countMv((mv0 >> 16) - (ref >> 16), (short) mv0 - (short) ref);
+        maxMvMagnitude = Math.max(maxMvMagnitude, Math.max(Math.abs(mv0 >> 16), Math.abs((short) mv0)) >> 3);
+        if (m.hasSecondRef()) {
+            var ref1 = refMvs[m.ref1 * 2];
+            counts.countMv((mv1 >> 16) - (ref1 >> 16), (short) mv1 - (short) ref1);
+        }
     }
 
     /**
@@ -1145,14 +1351,13 @@ final class Vp9RtCoder {
     void predictIntraBlock(int plane, int bwl, int txSize, int mode, int col, int row, int dOff, byte[] ref,
                            int refOff, int refStride) {
         var recon = enc.recon;
-        var ss = plane == 0 ? 0 : 1;
         var bw = 1 << bwl;
         var txw = 1 << txSize;
         var haveTop = row != 0 || aboveMi != null;
         var haveLeft = col != 0 || leftMi != null;
         var haveRight = col + txw < bw;
-        var x0 = (-mbToLeftEdge >> (3 + ss)) + col * 4;
-        var y0 = (-mbToTopEdge >> (3 + ss)) + row * 4;
+        var x0 = (-mbToLeftEdge >> (3 + (plane == 0 ? 0 : enc.ssX))) + col * 4;
+        var y0 = (-mbToTopEdge >> (3 + (plane == 0 ? 0 : enc.ssY))) + row * 4;
         intraPredictor.predict(ref, refStride, recon.planes8[plane], dOff, recon.strides[plane], refOff, mode, txSize,
                 haveTop, haveLeft, haveRight, x0, y0, recon.planeWidths[plane], recon.planeHeights[plane],
                 mbToRightEdge < 0, mbToBottomEdge < 0);
@@ -1167,18 +1372,77 @@ final class Vp9RtCoder {
      */
     void buildInterPredictor(int plane, int bsize) {
         var recon = enc.recon;
-        var ss = plane == 0 ? 0 : 1;
-        var w = (NUM_4X4_WIDE[bsize] * 4) >> ss;
-        var h = (NUM_4X4_HIGH[bsize] * 4) >> ss;
-        var x0 = (miCol * 8) >> ss;
-        var y0 = (miRow * 8) >> ss;
+        var sx = plane == 0 ? 0 : enc.ssX;
+        var sy = plane == 0 ? 0 : enc.ssY;
+        var w = (NUM_4X4_WIDE[bsize] * 4) >> sx;
+        var h = (NUM_4X4_HIGH[bsize] * 4) >> sy;
+        var x0 = (miCol * 8) >> sx;
+        var y0 = (miRow * 8) >> sy;
         var m = mi;
+        if (m.sbType < BLOCK_8X8) {
+            var stride = recon.strides[plane];
+            var n4w = Math.max(1, 2 >> sx);
+            var n4h = Math.max(1, 2 >> sy);
+            for (var ref = 0; ref < (m.ref1 > INTRA_FRAME ? 2 : 1); ref++) {
+                var picture = enc.activeRef(ref == 0 ? m.ref0 : m.ref1);
+                var i = 0;
+                for (var y = 0; y < n4h; y++) {
+                    for (var x = 0; x < n4w; x++) {
+                        var mv = averageSplitMvs(m, plane, ref, i++, sx, sy);
+                        predictor.predictInter(picture, plane, x0 + 4 * x, y0 + 4 * y, mv, m.interpFilter,
+                                recon.planes8[plane], dstOff[plane] + 4 * (y * stride + x), stride, 4, 4, ref == 1);
+                    }
+                }
+            }
+            return;
+        }
         predictor.predictInter(enc.activeRef(m.ref0), plane, x0, y0, m.mv0, m.interpFilter, recon.planes8[plane],
                 dstOff[plane], recon.strides[plane], w, h, false);
         if (m.ref1 > INTRA_FRAME) {
             predictor.predictInter(enc.activeRef(m.ref1), plane, x0, y0, m.mv1, m.interpFilter, recon.planes8[plane],
                     dstOff[plane], recon.strides[plane], w, h, true);
         }
+    }
+
+    /**
+     * Returns the vector of one 4x4 block of a plane of a sub-8x8 block, averaging the luma
+     * sub-block vectors that a subsampled chroma block covers ({@code average_split_mvs}).
+     *
+     * @param m the block
+     * @param plane the plane index
+     * @param ref 0 for the first reference, 1 for the second
+     * @param block the index of the plane's 4x4 block within the 8x8 block
+     * @param sx the plane's horizontal subsampling shift
+     * @param sy the plane's vertical subsampling shift
+     * @return the packed vector
+     */
+    static int averageSplitMvs(ModeInfo m, int plane, int ref, int block, int sx, int sy) {
+        var mvs = ref == 0 ? m.subMv0 : m.subMv1;
+        if (plane == 0 || (sx == 0 && sy == 0)) {
+            return mvs[block];
+        }
+        if (sx == 0) {
+            return averageQ2(mvs[block], mvs[block + 2]);
+        }
+        if (sy == 0) {
+            return averageQ2(mvs[block], mvs[block + 1]);
+        }
+        var row = (mvs[0] >> 16) + (mvs[1] >> 16) + (mvs[2] >> 16) + (mvs[3] >> 16);
+        var col = (short) mvs[0] + (short) mvs[1] + (short) mvs[2] + (short) mvs[3];
+        return ModeInfo.packMv((row < 0 ? row - 2 : row + 2) / 4, (col < 0 ? col - 2 : col + 2) / 4);
+    }
+
+    /**
+     * Returns the rounded average of two packed vectors ({@code mi_mv_pred_q2}).
+     *
+     * @param a the first vector
+     * @param b the second vector
+     * @return the packed average
+     */
+    private static int averageQ2(int a, int b) {
+        var row = (a >> 16) + (b >> 16);
+        var col = (short) a + (short) b;
+        return ModeInfo.packMv((row < 0 ? row - 1 : row + 1) / 2, (col < 0 ? col - 1 : col + 1) / 2);
     }
 
     /**
@@ -1195,10 +1459,11 @@ final class Vp9RtCoder {
      */
     void buildInterPredictorInto(int plane, int bsize, int ref, int mv, int filter, byte[] dst, int dOff,
                                  int dstStride) {
-        var ss = plane == 0 ? 0 : 1;
-        var w = (NUM_4X4_WIDE[bsize] * 4) >> ss;
-        var h = (NUM_4X4_HIGH[bsize] * 4) >> ss;
-        predictor.predictInter(enc.activeRef(ref), plane, (miCol * 8) >> ss, (miRow * 8) >> ss, mv, filter, dst, dOff,
+        var sx = plane == 0 ? 0 : enc.ssX;
+        var sy = plane == 0 ? 0 : enc.ssY;
+        var w = (NUM_4X4_WIDE[bsize] * 4) >> sx;
+        var h = (NUM_4X4_HIGH[bsize] * 4) >> sy;
+        predictor.predictInter(enc.activeRef(ref), plane, (miCol * 8) >> sx, (miRow * 8) >> sy, mv, filter, dst, dOff,
                 dstStride, w, h, false);
     }
 
@@ -1253,13 +1518,35 @@ final class Vp9RtCoder {
         c[Vp9EncCounts.INTRA_INTER + Vp9PredContexts.intraInter(aboveMi, leftMi) * 2 + (inter ? 1 : 0)]++;
         if (inter) {
             var ref0 = m.ref0;
-            var ctx1 = Vp9PredContexts.singleRefP1(aboveMi, leftMi);
-            c[Vp9EncCounts.SINGLE_REF + ctx1 * 4 + (ref0 != Vp9Constants.LAST_FRAME ? 1 : 0)]++;
-            if (ref0 != Vp9Constants.LAST_FRAME) {
-                var ctx2 = Vp9PredContexts.singleRefP2(aboveMi, leftMi);
-                c[Vp9EncCounts.SINGLE_REF + ctx2 * 4 + 2 + (ref0 != Vp9Constants.GOLDEN_FRAME ? 1 : 0)]++;
+            if (enc.referenceMode == Vp9RtEncoder.REFERENCE_MODE_SELECT) {
+                c[Vp9EncCounts.COMP_INTER + Vp9PredContexts.referenceMode(aboveMi, leftMi, enc.compFixedRef) * 2
+                        + (m.hasSecondRef() ? 1 : 0)]++;
             }
-            c[Vp9EncCounts.INTER_MODE + modeContext[ref0] * 4 + (m.mode - NEARESTMV)]++;
+            if (m.hasSecondRef()) {
+                var fixedIdx = enc.signBias[enc.compFixedRef];
+                var ctx = Vp9PredContexts.compRef(aboveMi, leftMi, fixedIdx, enc.compVarRef0, enc.compVarRef1,
+                        enc.compFixedRef);
+                var varRef = fixedIdx == 1 ? m.ref0 : m.ref1;
+                c[Vp9EncCounts.COMP_REF + ctx * 2 + (varRef == enc.compVarRef1 ? 1 : 0)]++;
+            } else {
+                var ctx1 = Vp9PredContexts.singleRefP1(aboveMi, leftMi);
+                c[Vp9EncCounts.SINGLE_REF + ctx1 * 4 + (ref0 != Vp9Constants.LAST_FRAME ? 1 : 0)]++;
+                if (ref0 != Vp9Constants.LAST_FRAME) {
+                    var ctx2 = Vp9PredContexts.singleRefP2(aboveMi, leftMi);
+                    c[Vp9EncCounts.SINGLE_REF + ctx2 * 4 + 2 + (ref0 != Vp9Constants.GOLDEN_FRAME ? 1 : 0)]++;
+                }
+            }
+            if (m.sbType < BLOCK_8X8) {
+                var w4 = NUM_4X4_WIDE[m.sbType];
+                var h4 = NUM_4X4_HIGH[m.sbType];
+                for (var idy = 0; idy < 2; idy += h4) {
+                    for (var idx = 0; idx < 2; idx += w4) {
+                        c[Vp9EncCounts.INTER_MODE + modeContext[ref0] * 4 + (m.subModes[idy * 2 + idx] - NEARESTMV)]++;
+                    }
+                }
+            } else {
+                c[Vp9EncCounts.INTER_MODE + modeContext[ref0] * 4 + (m.mode - NEARESTMV)]++;
+            }
         }
     }
 
@@ -1274,12 +1561,27 @@ final class Vp9RtCoder {
         if (!m.isInter()) {
             m.skip = 1;
             for (var plane = 0; plane < 3; plane++) {
-                encodeIntraPlane(codeSize, plane);
+                if (high != null) {
+                    high.encodeIntraPlane(codeSize, plane);
+                } else {
+                    encodeIntraPlane(codeSize, plane);
+                }
             }
-            if (!enc.keyFrame) {
-                counts.counts[Vp9EncCounts.Y_MODE + Vp9Constants.SIZE_GROUP[bsize] * 10 + m.mode]++;
+            if (!enc.keyFrame && !dryRun) {
+                if (bsize < BLOCK_8X8) {
+                    var w4 = NUM_4X4_WIDE[bsize];
+                    var h4 = NUM_4X4_HIGH[bsize];
+                    for (var idy = 0; idy < 2; idy += h4) {
+                        for (var idx = 0; idx < 2; idx += w4) {
+                            counts.counts[Vp9EncCounts.Y_MODE + m.subModes[idy * 2 + idx]]++;
+                        }
+                    }
+                } else {
+                    counts.counts[Vp9EncCounts.Y_MODE + Vp9Constants.SIZE_GROUP[bsize] * 10 + m.mode]++;
+                }
             }
-            tokenizeBlock(codeSize);
+        } else if (high != null) {
+            high.encodeInter(codeSize);
         } else {
             if (!enc.sf.reuseInterPredSby) {
                 buildInterPredictor(0, codeSize);
@@ -1287,7 +1589,16 @@ final class Vp9RtCoder {
             buildInterPredictor(1, codeSize);
             buildInterPredictor(2, codeSize);
             encodeInter(codeSize);
-            tokenizeBlock(codeSize);
+        }
+        if (high != null) {
+            high.updateProxy(codeSize);
+        }
+        tokenizeBlock(codeSize);
+        if (dryRun) {
+            if (m.isInter() && m.skip != 0 && enc.txMode != TX_MODE_SELECT) {
+                m.txSize = Math.min(Vp9Constants.TX_MODE_TO_BIGGEST[enc.txMode], Vp9Constants.MAX_TX_SIZE[bsize]);
+            }
+            return;
         }
         var c = counts.counts;
         if (enc.txMode == TX_MODE_SELECT && bsize >= BLOCK_8X8 && !(m.isInter() && m.skip != 0)) {
@@ -1304,26 +1615,13 @@ final class Vp9RtCoder {
             m.txSize = bsize >= BLOCK_8X8 ? m.txSize : TX_4X4;
         }
         c[Vp9EncCounts.TX_TOTALS + m.txSize]++;
-        c[Vp9EncCounts.TX_TOTALS + uvTxSize(m)]++;
+        c[Vp9EncCounts.TX_TOTALS + enc.uvTxSize(m)]++;
         if (enc.segEnabled && enc.cyclicRefreshEnabled) {
             enc.cr.updateSbPostencode(enc, m, miRow, miCol, bsize);
         }
         if (enc.temporalLayerId == 0 && !enc.keyFrame) {
             enc.updateZeroMvCount(m, miRow, miCol, bsize);
         }
-    }
-
-    /**
-     * Returns the chroma transform size of a block ({@code get_uv_tx_size}).
-     *
-     * @param m the block's mode information
-     * @return the transform size
-     */
-    static int uvTxSize(ModeInfo m) {
-        if (m.sbType < BLOCK_8X8) {
-            return TX_4X4;
-        }
-        return Vp9Constants.UV_TX_SIZE[((m.sbType * 4 + m.txSize) * 2 + 1) * 2 + 1];
     }
 
     /**
@@ -1335,13 +1633,14 @@ final class Vp9RtCoder {
      */
     private void encodeIntraPlane(int bsize, int plane) {
         var m = mi;
-        var ss = plane == 0 ? 0 : 1;
-        var planeBsize = Vp9Constants.SS_SIZE[bsize * 4 + ss * 2 + ss];
-        var txSize = plane == 0 ? m.txSize : uvTxSize(m);
+        var sx = plane == 0 ? 0 : enc.ssX;
+        var sy = plane == 0 ? 0 : enc.ssY;
+        var planeBsize = plane == 0 ? bsize : enc.uvBsize(bsize);
+        var txSize = plane == 0 ? m.txSize : enc.uvTxSize(m);
         var num4w = NUM_4X4_WIDE[planeBsize];
         var num4h = NUM_4X4_HIGH[planeBsize];
-        var maxWide = num4w + (mbToRightEdge >= 0 ? 0 : mbToRightEdge >> (5 + ss));
-        var maxHigh = num4h + (mbToBottomEdge >= 0 ? 0 : mbToBottomEdge >> (5 + ss));
+        var maxWide = num4w + (mbToRightEdge >= 0 ? 0 : mbToRightEdge >> (5 + sx));
+        var maxHigh = num4h + (mbToBottomEdge >= 0 ? 0 : mbToBottomEdge >> (5 + sy));
         var step = 1 << txSize;
         var bwl = B_WIDTH_LOG2[planeBsize];
         var recon = enc.recon;
@@ -1359,6 +1658,10 @@ final class Vp9RtCoder {
         var cf = coeff[plane];
         var qc = qcoeff[plane];
         var dq = dqcoeff[plane];
+        var optimize = optimizesCoding();
+        if (optimize) {
+            entropyContexts(plane, planeBsize, txSize, codingAbove, codingLeft);
+        }
         for (var r = 0; r < maxHigh; r += step) {
             for (var c = 0; c < maxWide; c += step) {
                 var block = r * num4w + (c << txSize);
@@ -1380,6 +1683,10 @@ final class Vp9RtCoder {
                     e = Vp9Quantizer.quantizeB(cf, off, n, qc, dq, scan, q.uvZbin, q.uvRound, q.uvQuant, q.uvQuantShift,
                             q.uvDequant, pidx, txSize == TX_32X32);
                 }
+                if (optimize) {
+                    e = optimizeBlock(optimizer, q, 8, plane, off, e, txSize, txType, codingAbove[c] + codingLeft[r]);
+                    codingAbove[c] = codingLeft[r] = (byte) (e > 0 ? 1 : 0);
+                }
                 eob[block] = e;
                 if (e > 0) {
                     reconstruct(txSize, txType, e, dq, off, scan, dstPlane, dOff, dstStride);
@@ -1398,32 +1705,46 @@ final class Vp9RtCoder {
      * @param off the index of the first coefficient
      */
     private void forwardTransform(int txSize, int txType, int[] out, int off) {
-        var size = 4 << txSize;
+        forwardTransform(txSize, txType, srcDiff, 0, 4 << txSize, out, off);
+    }
+
+    /**
+     * Computes the forward transform of a residual block.
+     *
+     * @param txSize the transform size
+     * @param txType the transform type
+     * @param diff the residuals
+     * @param diffOff the index of the block's first residual
+     * @param diffStride the residual row stride
+     * @param out receives the coefficients
+     * @param off the index of the first coefficient
+     */
+    void forwardTransform(int txSize, int txType, short[] diff, int diffOff, int diffStride, int[] out, int off) {
         switch (txSize) {
             case TX_4X4 -> {
                 if (enc.lossless) {
-                    Vp9FwdTxfm.fwht4x4(srcDiff, 0, size, out, off);
+                    Vp9FwdTxfm.fwht4x4(diff, diffOff, diffStride, out, off);
                 } else if (txType == DCT_DCT) {
-                    edsp.fdct4x4(srcDiff, 0, size, out, off, fdctScratch);
+                    edsp.fdct4x4(diff, diffOff, diffStride, out, off, fdctScratch);
                 } else {
-                    Vp9FwdTxfm.fht4x4(srcDiff, 0, size, out, off, txType, fdctScratch);
+                    Vp9FwdTxfm.fht4x4(diff, diffOff, diffStride, out, off, txType, fdctScratch);
                 }
             }
             case 1 -> {
                 if (txType == DCT_DCT) {
-                    edsp.fdct8x8(srcDiff, 0, size, out, off, fdctScratch);
+                    edsp.fdct8x8(diff, diffOff, diffStride, out, off, fdctScratch);
                 } else {
-                    Vp9FwdTxfm.fht8x8(srcDiff, 0, size, out, off, txType, fdctScratch);
+                    Vp9FwdTxfm.fht8x8(diff, diffOff, diffStride, out, off, txType, fdctScratch);
                 }
             }
             case TX_16X16 -> {
                 if (txType == DCT_DCT) {
-                    edsp.fdct16x16(srcDiff, 0, size, out, off, fdctScratch, fdctInts);
+                    edsp.fdct16x16(diff, diffOff, diffStride, out, off, fdctScratch, fdctInts);
                 } else {
-                    Vp9FwdTxfm.fht16x16(srcDiff, 0, size, out, off, txType, fdctScratch);
+                    Vp9FwdTxfm.fht16x16(diff, diffOff, diffStride, out, off, txType, fdctScratch);
                 }
             }
-            default -> edsp.fdct32x32(srcDiff, 0, size, out, off, true, fdctScratch, fdctInts);
+            default -> edsp.fdct32x32(diff, diffOff, diffStride, out, off, true, fdctScratch, fdctInts);
         }
     }
 
@@ -1491,18 +1812,19 @@ final class Vp9RtCoder {
         var recon = enc.recon;
         var src = enc.source;
         for (var plane = 0; plane < 3; plane++) {
-            var ss = plane == 0 ? 0 : 1;
-            var planeBsize = Vp9Constants.SS_SIZE[bsize * 4 + ss * 2 + ss];
+            var sx = plane == 0 ? 0 : enc.ssX;
+            var sy = plane == 0 ? 0 : enc.ssY;
+            var planeBsize = plane == 0 ? bsize : enc.uvBsize(bsize);
             var bw = NUM_4X4_WIDE[planeBsize] * 4;
             var bh = NUM_4X4_HIGH[planeBsize] * 4;
             var dstPlane = recon.planes8[plane];
             var dstStride = recon.strides[plane];
             edsp.subtract(srcDiff, 0, bw, src.planes[plane], srcOff[plane], src.strides[plane], dstPlane,
                     dstOff[plane], dstStride, bw, bh);
-            var txSize = plane == 0 ? m.txSize : uvTxSize(m);
+            var txSize = plane == 0 ? m.txSize : enc.uvTxSize(m);
             var num4w = NUM_4X4_WIDE[planeBsize];
-            var maxWide = num4w + (mbToRightEdge >= 0 ? 0 : mbToRightEdge >> (5 + ss));
-            var maxHigh = NUM_4X4_HIGH[planeBsize] + (mbToBottomEdge >= 0 ? 0 : mbToBottomEdge >> (5 + ss));
+            var maxWide = num4w + (mbToRightEdge >= 0 ? 0 : mbToRightEdge >> (5 + sx));
+            var maxHigh = NUM_4X4_HIGH[planeBsize] + (mbToBottomEdge >= 0 ? 0 : mbToBottomEdge >> (5 + sy));
             var step = 1 << txSize;
             var size = 4 << txSize;
             var n = size * size;
@@ -1512,6 +1834,10 @@ final class Vp9RtCoder {
             var qc = qcoeff[plane];
             var dq = dqcoeff[plane];
             var y = plane == 0;
+            var optimize = optimizesCoding();
+            if (optimize) {
+                entropyContexts(plane, planeBsize, txSize, codingAbove, codingLeft);
+            }
             for (var r = 0; r < maxHigh; r += step) {
                 for (var c = 0; c < maxWide; c += step) {
                     var block = r * num4w + (c << txSize);
@@ -1546,6 +1872,11 @@ final class Vp9RtCoder {
                                 : Vp9Quantizer.quantizeB(cf, off, n, qc, dq, scan, q.uvZbin, q.uvRound, q.uvQuant,
                                 q.uvQuantShift, q.uvDequant, pidx, txSize == TX_32X32);
                     }
+                    if (optimize) {
+                        e = optimizeBlock(optimizer, q, 8, plane, off, e, txSize, DCT_DCT,
+                                codingAbove[c] + codingLeft[r]);
+                        codingAbove[c] = codingLeft[r] = (byte) (e > 0 ? 1 : 0);
+                    }
                     eob[block] = e;
                     if (e > 0) {
                         m.skip = 0;
@@ -1568,24 +1899,29 @@ final class Vp9RtCoder {
         var ctx = skipContext();
         var c = counts.counts;
         if (m.skip != 0) {
-            c[Vp9EncCounts.SKIP + ctx * 2 + 1]++;
+            if (!dryRun) {
+                c[Vp9EncCounts.SKIP + ctx * 2 + 1]++;
+            }
             resetSkipContext(bsize);
             return;
         }
-        c[Vp9EncCounts.SKIP + ctx * 2]++;
+        if (!dryRun) {
+            c[Vp9EncCounts.SKIP + ctx * 2]++;
+        }
         for (var plane = 0; plane < 3; plane++) {
-            var ss = plane == 0 ? 0 : 1;
-            var planeBsize = Vp9Constants.SS_SIZE[bsize * 4 + ss * 2 + ss];
-            var txSize = plane == 0 ? m.txSize : uvTxSize(m);
+            var sx = plane == 0 ? 0 : enc.ssX;
+            var sy = plane == 0 ? 0 : enc.ssY;
+            var planeBsize = plane == 0 ? bsize : enc.uvBsize(bsize);
+            var txSize = plane == 0 ? m.txSize : enc.uvTxSize(m);
             var num4w = NUM_4X4_WIDE[planeBsize];
             var num4h = NUM_4X4_HIGH[planeBsize];
-            var maxWide = num4w + (mbToRightEdge >= 0 ? 0 : mbToRightEdge >> (5 + ss));
-            var maxHigh = num4h + (mbToBottomEdge >= 0 ? 0 : mbToBottomEdge >> (5 + ss));
+            var maxWide = num4w + (mbToRightEdge >= 0 ? 0 : mbToRightEdge >> (5 + sx));
+            var maxHigh = num4h + (mbToBottomEdge >= 0 ? 0 : mbToBottomEdge >> (5 + sy));
             var step = 1 << txSize;
             var above = enc.aboveEntropy[plane];
             var left = leftEntropy[plane];
-            var aboveBase = (miCol * 2) >> ss;
-            var leftBase = ((miRow * 2) & 15) >> ss;
+            var aboveBase = (miCol * 2) >> sx;
+            var leftBase = ((miRow * 2) & 15) >> sy;
             for (var r = 0; r < maxHigh; r += step) {
                 for (var col = 0; col < maxWide; col += step) {
                     var block = r * num4w + (col << txSize);
@@ -1595,7 +1931,10 @@ final class Vp9RtCoder {
                         txType = Vp9Constants.MODE_TO_TX_TYPE[mode];
                     }
                     var eob = eobs[plane][block];
-                    tokenizeTxBlock(plane, txSize, txType, block * 16, eob, above, aboveBase + col, left, leftBase + r);
+                    if (!dryRun) {
+                        tokenizeTxBlock(plane, txSize, txType, block * 16, eob, above, aboveBase + col, left,
+                                leftBase + r);
+                    }
                     setContexts(above, aboveBase + col, left, leftBase + r, txSize, eob > 0, maxWide, maxHigh, col, r);
                 }
             }
@@ -1710,12 +2049,13 @@ final class Vp9RtCoder {
      */
     private void resetSkipContext(int bsize) {
         for (var plane = 0; plane < 3; plane++) {
-            var ss = plane == 0 ? 0 : 1;
-            var planeBsize = Vp9Constants.SS_SIZE[bsize * 4 + ss * 2 + ss];
+            var sx = plane == 0 ? 0 : enc.ssX;
+            var sy = plane == 0 ? 0 : enc.ssY;
+            var planeBsize = plane == 0 ? bsize : enc.uvBsize(bsize);
             var w = NUM_4X4_WIDE[planeBsize];
             var h = NUM_4X4_HIGH[planeBsize];
-            Arrays.fill(enc.aboveEntropy[plane], (miCol * 2) >> ss, ((miCol * 2) >> ss) + w, (byte) 0);
-            var lb = ((miRow * 2) & 15) >> ss;
+            Arrays.fill(enc.aboveEntropy[plane], (miCol * 2) >> sx, ((miCol * 2) >> sx) + w, (byte) 0);
+            var lb = ((miRow * 2) & 15) >> sy;
             Arrays.fill(leftEntropy[plane], lb, lb + h, (byte) 0);
         }
     }
