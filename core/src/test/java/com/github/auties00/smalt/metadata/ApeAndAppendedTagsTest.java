@@ -678,6 +678,58 @@ class ApeAndAppendedTagsTest {
             assertEquals(Map.of("title", "Seek title", "album", "Lead album"), Media.probe(MediaSource.of(file)).tags());
         }
 
+        /** Returns the offset of the first MP3 frame boundary at least {@code minimum} bytes into {@code bare}. */
+        static int boundaryAfter(byte[] bare, int minimum) {
+            var boundary = 0;
+            for (var frame : packets(bare)) {
+                if (boundary >= minimum) {
+                    break;
+                }
+                boundary += frame.length;
+            }
+            return boundary;
+        }
+
+        @ParameterizedTest(name = "{0} bytes short")
+        @ValueSource(ints = {0, 1, 100, 4096})
+        @DisplayName("follows a SEEK frame whose offset falls short of the tag, which ID3v2.4 makes a minimum")
+        void seekShort(int shortfall) {
+            var bare = bareMp3();
+            var boundary = boundaryAfter(bare, 5000);
+            var mid = id3v24(false, false, textFrame("TALB", "Seek album"), textFrame("TIT2", "Seek title"));
+            var leading = id3v24(false, false, textFrame("TIT2", "Lead title"), seekFrame(boundary - shortfall));
+            var file = concat(leading, Arrays.copyOf(bare, boundary), mid, Arrays.copyOfRange(bare, boundary, bare.length));
+            var tags = TagEditor.read(MediaSource.of(file));
+            assertEquals(List.of(new MediaTags.Entry("album", "Seek album"), new MediaTags.Entry("title", "Seek title")),
+                    tags.entries(), "the located tag replaces the leading one");
+            assertEquals(Map.of("title", "Seek title", "album", "Seek album"), Media.probe(MediaSource.of(file)).tags());
+            var rewritten = TagEditor.write(file, tags, TagWriteOptions.defaults());
+            assertArrayEquals(bare, audioOf(rewritten), "the located tag is cut from the audio");
+            assertEquals(tags.entries(), TagEditor.read(MediaSource.of(rewritten)).entries());
+            assertSamePackets(bare, rewritten);
+        }
+
+        @Test
+        @DisplayName("passes over padding and tag-like bytes between a SEEK target and the tag")
+        void seekPastGarbage() {
+            var bare = bareMp3();
+            var boundary = boundaryAfter(bare, 2000);
+            // padding, a header whose flags set an undefined bit, a tag holding no frame, a bare "ID3"
+            var garbage = concat(new byte[300], id3v24(false, false, textFrame("TIT2", "Bogus")),
+                    id3v24(false, false, new byte[16]), "ID3".getBytes(StandardCharsets.US_ASCII));
+            garbage[300 + 5] = 0x01;
+            var mid = id3v24(false, false, textFrame("TIT2", "Seek title"));
+            var leading = id3v24(false, false, textFrame("TIT2", "Lead title"), seekFrame(boundary));
+            var audio = concat(Arrays.copyOf(bare, boundary), garbage, Arrays.copyOfRange(bare, boundary, bare.length));
+            var file = concat(leading, Arrays.copyOf(audio, boundary + garbage.length), mid,
+                    Arrays.copyOfRange(audio, boundary + garbage.length, audio.length));
+            var tags = TagEditor.read(MediaSource.of(file));
+            assertEquals(List.of(new MediaTags.Entry("title", "Seek title")), tags.entries());
+            assertEquals(Map.of("title", "Seek title"), Media.probe(MediaSource.of(file)).tags());
+            var rewritten = TagEditor.write(file, tags, TagWriteOptions.defaults());
+            assertArrayEquals(audio, audioOf(rewritten), "only the located tag is cut, the bytes before it stay");
+        }
+
         @Test
         @DisplayName("ignores SEEK frames that point at no valid tag")
         void badSeek() {

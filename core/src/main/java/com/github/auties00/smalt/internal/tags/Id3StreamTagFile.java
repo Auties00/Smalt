@@ -42,8 +42,7 @@ import java.util.Set;
  */
 final class Id3StreamTagFile implements TagFile {
     /**
-     * The largest number of consecutive ID3v2 tags read at the start, and of {@code SEEK} frames
-     * followed.
+     * The largest number of consecutive ID3v2 tags read at the start.
      */
     private static final int MAX_TAGS = 64;
 
@@ -140,7 +139,7 @@ final class Id3StreamTagFile implements TagFile {
         }
         for (var index = 0; index < tags.size(); index++) {
             if (tags.get(index).seekOffset() >= 0) {
-                follow(tags.get(index), ends.get(index), located);
+                follow(ends.get(index) + tags.get(index).seekOffset(), located);
                 break;
             }
         }
@@ -151,39 +150,18 @@ final class Id3StreamTagFile implements TagFile {
     }
 
     /**
-     * Adds the tags a chain of {@code SEEK} frames leads to inside the audio.
+     * Adds the tags a chain of {@code SEEK} frames leads to inside the audio, as
+     * {@link TrailingTags#seekRegions(TrailingTags.Tail, long, long, long)} finds them between the
+     * leading region and the trailing tags.
      *
-     * <p>A target counts only when a valid tag header starts there, after the leading region, and
-     * the whole tag lies before the trailing tags; a target that is already a located tag ends
-     * the chain.
-     *
-     * @param tag the tag holding the first {@code SEEK} frame
-     * @param end the offset of the end of that tag
+     * @param target the offset the first {@code SEEK} frame points at
      * @param located the located tags, which receives the new ones
      */
-    private void follow(Id3v2Tag tag, long end, List<Located> located) {
-        for (var hop = 0; hop < MAX_TAGS; hop++) {
-            var offset = tag.seekOffset();
-            if (offset < 0) {
-                return;
-            }
-            // TODO: search forward from a target that holds no tag; ID3v2.4 makes the SEEK offset a minimum
-            var target = end + offset;
-            for (var known : located) {
-                if (known.offset() == target) {
-                    return;
-                }
-            }
-            if (target < audioStart || audioEnd - target < Id3v2Tag.HEADER_SIZE) {
-                return;
-            }
-            var size = Id3v2Tag.size(TagIo.read(source, target, Id3v2Tag.HEADER_SIZE, limits), 0);
-            if (size < 0 || size > audioEnd - target) {
-                return;
-            }
-            tag = Id3v2Tag.parse(TagIo.read(source, target, size, limits), limits);
-            located.add(new Located(tag, target, size));
-            end = target + size;
+    private void follow(long target, List<Located> located) {
+        var regions = TrailingTags.seekRegions(new TrailingTags.Tail(source, audioStart), target, audioStart, audioEnd);
+        for (var region : regions) {
+            located.add(new Located(Id3v2Tag.parse(TagIo.read(source, region.offset(), region.length(), limits), limits),
+                    region.offset(), region.length()));
         }
     }
 

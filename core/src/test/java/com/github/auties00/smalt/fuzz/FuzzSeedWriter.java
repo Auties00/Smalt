@@ -280,6 +280,9 @@ class FuzzSeedWriter {
                 "-ar", "8000")));
         write(TagFuzzTest.class, "tags", "valid-nb-id3.amr", taggedAmr);
         write(DemuxerFuzzTest.class, "amr", "valid-nb-id3.amr", taggedAmr);
+        var seekForward = seekForward(Files.readAllBytes(mp3));
+        write(TagFuzzTest.class, "tags", "valid-mp3-seek-forward.mp3", seekForward);
+        write(DemuxerFuzzTest.class, "mpegAudio", "valid-mp3-seek-forward.mp3", seekForward);
         write(TagFuzzTest.class, "tags", "valid-eac3-id3.eac3", withTags(Files.readAllBytes(ffmpeg("eac3",
                 tone(48000, 0.1), "-c:a", "eac3", "-b:a", "64k"))));
         write(TagFuzzTest.class, "tags", "valid-s16-rifx.wav", rifx(Files.readAllBytes(wav)));
@@ -896,6 +899,61 @@ class FuzzSeedWriter {
         var f32 = ffmpeg("wav", tone(8000, 0.02), "-c:a", "pcm_f32le");
         write(PcmFuzzTest.class, "pcm", "valid-f32le.bin", FuzzSeeds.packets(f32, Codec.PCM_F32LE,
                 codecs.indexOf(Codec.PCM_F32LE) << 1, 8));
+    }
+
+    /**
+     * Replaces the leading tag of an MP3 with an ID3v2.4 tag whose {@code SEEK} frame points 100 bytes short of a
+     * second ID3v2.4 tag placed after the audio, without a footer, so only a forward search from the target finds it.
+     */
+    private static byte[] seekForward(byte[] mp3) {
+        var audioStart = (int) com.github.auties00.smalt.internal.tags.Id3v2Tag.size(mp3, 0);
+        var audio = Arrays.copyOfRange(mp3, audioStart, mp3.length);
+        var seek = ByteBuffer.allocate(4).putInt(audio.length - 100).array();
+        var leading = id3v24Tag(id3v24Frame("TIT2", text("Seed lead")), id3v24Frame("SEEK", seek));
+        var located = id3v24Tag(id3v24Frame("TIT2", text("Seed seek")), id3v24Frame("TALB", text("Seed")));
+        var output = new java.io.ByteArrayOutputStream();
+        output.writeBytes(leading);
+        output.writeBytes(audio);
+        output.writeBytes(located);
+        return output.toByteArray();
+    }
+
+    /** Returns a UTF-8 ID3v2.4 text frame payload. */
+    private static byte[] text(String value) {
+        var bytes = value.getBytes(StandardCharsets.UTF_8);
+        var payload = new byte[bytes.length + 1];
+        payload[0] = 3;
+        System.arraycopy(bytes, 0, payload, 1, bytes.length);
+        return payload;
+    }
+
+    /** Returns an ID3v2.4 frame without flags. */
+    private static byte[] id3v24Frame(String id, byte[] payload) {
+        var output = new java.io.ByteArrayOutputStream();
+        output.writeBytes(id.getBytes(StandardCharsets.US_ASCII));
+        output.writeBytes(syncsafe(payload.length));
+        output.writeBytes(new byte[2]);
+        output.writeBytes(payload);
+        return output.toByteArray();
+    }
+
+    /** Returns an ID3v2.4 tag without flags or padding. */
+    private static byte[] id3v24Tag(byte[]... frames) {
+        var body = new java.io.ByteArrayOutputStream();
+        for (var frame : frames) {
+            body.writeBytes(frame);
+        }
+        var output = new java.io.ByteArrayOutputStream();
+        output.writeBytes(new byte[]{'I', 'D', '3', 4, 0, 0});
+        output.writeBytes(syncsafe(body.size()));
+        output.writeBytes(body.toByteArray());
+        return output.toByteArray();
+    }
+
+    /** Returns a 28-bit syncsafe integer. */
+    private static byte[] syncsafe(int value) {
+        return new byte[]{(byte) (value >> 21 & 0x7F), (byte) (value >> 14 & 0x7F), (byte) (value >> 7 & 0x7F),
+                (byte) (value & 0x7F)};
     }
 
     /** Adds an ID3v2.4 tag without padding and an ID3v1 tag, both titled "Seed", to a raw stream. */

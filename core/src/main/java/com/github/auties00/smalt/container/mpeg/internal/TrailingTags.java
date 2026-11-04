@@ -299,9 +299,16 @@ public final class TrailingTags {
     /**
      * Returns the ID3v2 tags that a chain of {@code SEEK} frames leads to inside the audio.
      *
-     * <p>A target counts only when a valid ID3v2 header starts there and the whole tag lies
-     * between {@code start} and {@code end}; the chain also ends at a target already found, at a
-     * tag too large to decode or corrupt, and after {@value #MAX_TAGS} tags.
+     * <p>The offset of a {@code SEEK} frame is the minimum distance to the next tag (ID3v2.4
+     * sections 3.5 and 4.29), so the tag is searched forward from each target, up to
+     * {@value #MAX_SEEK_SCAN} bytes past it. A tag found at the target itself needs only a valid
+     * header; one found further on must also have the undefined header flags clear and hold at
+     * least one frame, so audio bytes that happen to spell an ID3v2 header are not mistaken for
+     * a tag. Every tag must lie whole between {@code start} and {@code end} and be small enough
+     * to decode. A header that fails these checks is passed over, and the call gives up after
+     * {@value #MAX_SEEK_CANDIDATES} of them; the chain ends at a target with no tag in reach, at
+     * a tag without a {@code SEEK} frame, and after {@value #MAX_TAGS} tags, so the work is
+     * bounded on crafted input.
      *
      * @param tail the tail window over the source
      * @param target the offset the {@code SEEK} frame of a leading tag points at, or {@code -1}
@@ -311,40 +318,267 @@ public final class TrailingTags {
      */
     public static List<Region> seekRegions(Tail tail, long target, long start, long end) {
         var found = new ArrayList<Region>(1);
-        var header = new byte[Id3v2Tag.HEADER_SIZE];
-        // TODO: search forward from a target that holds no tag; ID3v2.4 makes the SEEK offset a minimum
+        var scan = new SeekScan(tail, end);
         while (target >= start && found.size() < MAX_TAGS && end - target >= Id3v2Tag.HEADER_SIZE) {
-            for (var known : found) {
-                if (known.offset() == target) {
-                    return found;
-                }
-            }
-            if (!tail.read(target, header, header.length)) {
-                break;
-            }
-            var size = Id3v2Tag.size(header, 0);
-            if (size < 0 || size > end - target || size > MAX_PARSED_PICTURE_TAG) {
-                break;
-            }
-            var bytes = new byte[(int) size];
-            if (!tail.read(target, bytes, bytes.length)) {
-                break;
-            }
-            Id3v2Tag tag;
-            try {
-                tag = Id3v2Tag.parse(bytes, MediaLimits.DEFAULT, id -> id.equals("SEEK"));
-            } catch (MediaException ignored) {
-                // a corrupt tag ends the chain; the tags found before it stay usable
-                break;
-            }
-            found.add(new Region(Kind.ID3V2, target, size));
-            var offset = tag.seekOffset();
+            var offset = scan.find(target);
             if (offset < 0) {
                 break;
             }
-            target += size + offset;
+            found.add(new Region(Kind.ID3V2, offset, scan.size));
+            if (scan.seek < 0) {
+                break;
+            }
+            target = offset + scan.size + scan.seek;
         }
         return found;
+    }
+
+    /**
+     * The largest number of bytes searched past a {@code SEEK} target for the tag it leads to.
+     *
+     * @implNote This implementation searches 1 MiB, far more than the padding or alignment a
+     * writer leaves between the offset it records and the tag, while keeping a whole chain to
+     * {@value #MAX_TAGS} such windows.
+     */
+    static final int MAX_SEEK_SCAN = 1 << 20;
+
+    /**
+     * The largest number of ID3v2 headers a {@link #seekRegions(Tail, long, long, long)} call
+     * passes over before giving up, which bounds the tags it decodes on crafted input.
+     */
+    static final int MAX_SEEK_CANDIDATES = 16;
+
+    /**
+     * The number of bytes a {@link SeekScan} reads per step, plus the overlap that keeps a header
+     * across two steps whole.
+     */
+    private static final int SEEK_CHUNK = 8192;
+
+    /**
+     * The forward search for the tag a {@code SEEK} frame leads to.
+     *
+     * <p>Each {@link #find(long)} that succeeds leaves the tag's size and {@code SEEK} offset in
+     * {@link #size} and {@link #seek}; the number of headers passed over accumulates across
+     * calls.
+     */
+    private static final class SeekScan {
+        /**
+         * The window over the source.
+         */
+        private final Tail tail;
+
+        /**
+         * The offset no tag may run past.
+         */
+        private final long end;
+
+        /**
+         * The bytes of the current step, allocated by the first step that is not at the target.
+         */
+        private byte[] chunk;
+
+        /**
+         * The number of body bytes read to check the first frame of a tag found past the target,
+         * enough for the largest extended header either version defines.
+         */
+        private static final int FRAME_PROBE = 64;
+
+        /**
+         * The first body bytes of the tag being checked.
+         */
+        private final byte[] probe = new byte[FRAME_PROBE];
+
+        /**
+         * The number of headers passed over so far.
+         */
+        private int rejected;
+
+        /**
+         * The total size of the tag the last successful {@link #find(long)} returned.
+         */
+        long size;
+
+        /**
+         * The {@code SEEK} offset of that tag, or {@code -1} when it has none.
+         */
+        long seek;
+
+        /**
+         * Constructs a search over {@code tail}.
+         *
+         * @param tail the window over the source
+         * @param end the offset no tag may run past
+         */
+        SeekScan(Tail tail, long end) {
+            this.tail = tail;
+            this.end = end;
+        }
+
+        /**
+         * Finds the first tag at or after {@code target}, within {@link #MAX_SEEK_SCAN} bytes.
+         *
+         * @param target the offset the {@code SEEK} frame points at
+         * @return the offset of the tag, or {@code -1} when none is in reach or too many headers
+         * were passed over
+         */
+        long find(long target) {
+            var last = Math.min(end - Id3v2Tag.HEADER_SIZE, target + MAX_SEEK_SCAN);
+            var header = new byte[Id3v2Tag.HEADER_SIZE];
+            if (tail.read(target, header, header.length) && Id3v2Tag.size(header, 0) >= 0) {
+                if (accept(target, header, 0, false)) {
+                    return target;
+                }
+                if (rejected >= MAX_SEEK_CANDIDATES) {
+                    return -1;
+                }
+            }
+            if (chunk == null) {
+                chunk = new byte[SEEK_CHUNK + Id3v2Tag.HEADER_SIZE - 1];
+            }
+            var position = target + 1;
+            while (position <= last) {
+                var length = (int) Math.min(chunk.length, end - position);
+                if (!tail.read(position, chunk, length)) {
+                    return -1;
+                }
+                var stop = (int) Math.min(length - Id3v2Tag.HEADER_SIZE, last - position);
+                for (var index = 0; index <= stop; index++) {
+                    if (chunk[index] == 'I' && chunk[index + 1] == 'D' && chunk[index + 2] == '3'
+                            && Id3v2Tag.size(chunk, index) >= 0) {
+                        var offset = position + index;
+                        if (accept(offset, chunk, index, true)) {
+                            return offset;
+                        }
+                        if (rejected >= MAX_SEEK_CANDIDATES) {
+                            return -1;
+                        }
+                    }
+                }
+                position += stop + 1;
+            }
+            return -1;
+        }
+
+        /**
+         * Decodes the tag whose valid header starts at {@code offset}, counting it as passed over
+         * when it is not a usable tag.
+         *
+         * @param offset the source offset of the header
+         * @param bytes the bytes holding the header
+         * @param index the index of the header in {@code bytes}
+         * @param strict whether the undefined flags must be clear and the tag must hold a frame
+         * @return whether the tag is usable, in which case {@link #size} and {@link #seek} hold
+         * its size and {@code SEEK} offset
+         */
+        private boolean accept(long offset, byte[] bytes, int index, boolean strict) {
+            var total = Id3v2Tag.size(bytes, index);
+            if (total > end - offset || total > MAX_PARSED_PICTURE_TAG
+                    || strict && ((bytes[index + 5] & undefinedFlags(bytes[index + 3])) != 0
+                    || !startsWithFrame(offset, bytes[index + 3], bytes[index + 5], total))) {
+                rejected++;
+                return false;
+            }
+            var tag = new byte[(int) total];
+            if (!tail.read(offset, tag, tag.length)) {
+                rejected++;
+                return false;
+            }
+            var frames = new int[1];
+            Id3v2Tag parsed;
+            try {
+                parsed = Id3v2Tag.parse(tag, MediaLimits.DEFAULT, id -> {
+                    frames[0]++;
+                    return id.equals("SEEK");
+                });
+            } catch (MediaException ignored) {
+                rejected++;
+                return false;
+            }
+            if (strict && frames[0] == 0) {
+                rejected++;
+                return false;
+            }
+            size = total;
+            seek = parsed.seekOffset();
+            return true;
+        }
+
+        /**
+         * Checks, before the tag is read whole, that its first frame starts with a frame
+         * identifier, so a header claiming a large tag over audio bytes costs one short read.
+         *
+         * <p>The check reads the first {@value #FRAME_PROBE} bytes of the body, undoes the
+         * unsynchronisation of a version 2.2 or 2.3 tag and steps over an extended header, which
+         * must have a size the version allows (6 or 10 bytes after the size field in version 2.3,
+         * a syncsafe size of at least 6 in version 2.4) and end inside those bytes.
+         *
+         * @param offset the source offset of the header
+         * @param major the major version byte of the header, 2 to 4
+         * @param flags the flags byte of the header
+         * @param total the total size of the tag
+         * @return whether the first frame starts with a frame identifier
+         */
+        private boolean startsWithFrame(long offset, byte major, int flags, long total) {
+            var available = (int) Math.min(total - Id3v2Tag.HEADER_SIZE, FRAME_PROBE);
+            if (available <= 0 || !tail.read(offset + Id3v2Tag.HEADER_SIZE, probe, available)) {
+                return false;
+            }
+            if (major < 4 && (flags & 0x80) != 0) {
+                var kept = 0;
+                for (var index = 0; index < available; index++) {
+                    if (index == 0 || probe[index] != 0 || probe[index - 1] != (byte) 0xFF) {
+                        probe[kept++] = probe[index];
+                    }
+                }
+                available = kept;
+            }
+            var start = 0;
+            if ((flags & 0x40) != 0 && major >= 3) {
+                if (available < 4) {
+                    return false;
+                }
+                if (major == 3) {
+                    var size = (probe[0] & 0xFF) << 24 | (probe[1] & 0xFF) << 16 | (probe[2] & 0xFF) << 8
+                            | probe[3] & 0xFF;
+                    if (size != 6 && size != 10) {
+                        return false;
+                    }
+                    start = size + 4;
+                } else {
+                    if ((probe[0] | probe[1] | probe[2] | probe[3]) < 0) {
+                        return false;
+                    }
+                    start = probe[0] << 21 | probe[1] << 14 | probe[2] << 7 | probe[3];
+                    if (start < 6) {
+                        return false;
+                    }
+                }
+            }
+            var length = major == 2 ? 3 : 4;
+            if (start > available - length) {
+                return false;
+            }
+            for (var index = start; index < start + length; index++) {
+                var value = probe[index];
+                if ((value < 'A' || value > 'Z') && (value < '0' || value > '9')) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /**
+         * {@return the header flag bits a tag of the given version leaves undefined}
+         *
+         * @param major the major version byte of the header, 2 to 4
+         */
+        private static int undefinedFlags(byte major) {
+            return switch (major) {
+                case 2 -> 0x3F;
+                case 3 -> 0x1F;
+                default -> 0x0F;
+            };
+        }
     }
 
     /**

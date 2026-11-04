@@ -1353,8 +1353,9 @@ checks a FLAC source's MD5 signature on the way.
 - Tag editing: the APE and ID3v1 tags `TagEditor` writes mirror what their formats hold (APE keys of printable ASCII,
   one picture per role), the ID3v2 tag holding everything. APE tags without a footer (a header-only tag at the start
   of a file) are not recognized. In FLAC files `TagEditor` keeps ID3v2 tags, leading or appended, without reading
-  them, while the FLAC demuxer reports their fields. The offset of an ID3v2.4 `SEEK` frame is taken as the exact
-  start of the next tag, while the specification makes it a minimum from which a reader may search.
+  them, while the FLAC demuxer reports their fields. The offset of an ID3v2.4 `SEEK` frame is a minimum, as the
+  specification says: the next tag is searched for up to 1 MiB past it, and a tag found beyond the offset itself
+  counts only when its undefined header flags are clear and it holds at least one frame.
 - Streaming: the HLS demuxer does not decrypt `SAMPLE-AES` transport stream segments, rejects a media playlist whose
   initialization section changes (a discontinuity to another encoding), and reads an I-frame playlist of fragmented
   MP4 segments by the first sample of each range alone (timed by `tfdt` and the composition offset, without the edit
