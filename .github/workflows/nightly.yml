@@ -635,7 +635,8 @@ jobs:
         id: test
         shell: bash
         run: >
-          mvn -B -ntp -fae -pl raw -am verify -Dtest=RawOracleCoverageTest -Dsurefire.failIfNoSpecifiedTests=false
+          mvn -B -ntp -fae -pl raw -am verify -Dtest=RawOracleCoverageTest,VendorOracleTest
+          -Dsurefire.failIfNoSpecifiedTests=false
 
       - name: Record the outcomes
         if: always() && steps.test.outcome != 'skipped'

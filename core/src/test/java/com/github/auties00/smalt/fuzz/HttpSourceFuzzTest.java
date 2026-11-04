@@ -26,10 +26,10 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Deque;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
@@ -117,11 +117,12 @@ class HttpSourceFuzzTest {
         } catch (NumberFormatException ignored) {
             // a part without a status line is a 200
         }
-        var headers = new LinkedHashMap<String, List<String>>();
+        // HttpHeaders.of trims names and compares them ignoring case, so the lines it would merge are one header
+        var headers = new TreeMap<String, List<String>>(String.CASE_INSENSITIVE_ORDER);
         for (var index = 1; index < lines.length; index++) {
             var colon = lines[index].indexOf(':');
             if (colon > 0) {
-                var name = lines[index].substring(0, colon).strip();
+                var name = lines[index].substring(0, colon).trim();
                 var value = lines[index].substring(colon + 1).strip();
                 // an HTTP client never returns a header without a name
                 if (name.isEmpty()) {

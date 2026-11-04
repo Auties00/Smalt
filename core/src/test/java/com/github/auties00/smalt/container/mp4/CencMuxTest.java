@@ -219,8 +219,57 @@ class CencMuxTest {
                 actual.packets().values().stream().mapToInt(List::size).sum());
         var noCommon = encrypt(clear, CommonEncryption.forCenc(KEY_ID, KEY).toBuilder().commonProtectionSystem(false)
                 .build(), "no-common");
-        assertFalse(new String(Files.readAllBytes(noCommon), java.nio.charset.StandardCharsets.ISO_8859_1)
-                .contains("pssh"));
+        // the random initialization vectors make "pssh" a possible substring of the samples, so the boxes are read
+        assertFalse(hasPsshBox(Files.readAllBytes(noCommon)), "a pssh box");
+    }
+
+    /**
+     * Returns whether a file holds a pssh box in its moov or moof boxes, where Common Encryption puts them.
+     */
+    private static boolean hasPsshBox(byte[] file) {
+        var position = 0L;
+        while (position + 8 <= file.length) {
+            var size = boxSize(file, position);
+            var type = boxType(file, position);
+            if (size < 8 || position + size > file.length) {
+                break;
+            }
+            if (type.equals("moov") || type.equals("moof")) {
+                var header = (file[(int) position] | file[(int) position + 1] | file[(int) position + 2]) == 0
+                        && file[(int) position + 3] == 1 ? 16 : 8;
+                for (var child = position + header; child + 8 <= position + size; ) {
+                    var childSize = boxSize(file, child);
+                    if (childSize < 8) {
+                        break;
+                    }
+                    if (boxType(file, child).equals("pssh")) {
+                        return true;
+                    }
+                    child += childSize;
+                }
+            }
+            position += size;
+        }
+        return false;
+    }
+
+    private static long boxSize(byte[] file, long position) {
+        var at = (int) position;
+        var size = Integer.toUnsignedLong((file[at] & 0xFF) << 24 | (file[at + 1] & 0xFF) << 16
+                | (file[at + 2] & 0xFF) << 8 | file[at + 3] & 0xFF);
+        if (size == 1 && at + 16 <= file.length) {
+            size = 0;
+            for (var index = 8; index < 16; index++) {
+                size = size << 8 | file[at + index] & 0xFF;
+            }
+        } else if (size == 0) {
+            size = file.length - position;
+        }
+        return size;
+    }
+
+    private static String boxType(byte[] file, long position) {
+        return new String(file, (int) position + 4, 4, java.nio.charset.StandardCharsets.ISO_8859_1);
     }
 
     @ParameterizedTest(name = "{0}")

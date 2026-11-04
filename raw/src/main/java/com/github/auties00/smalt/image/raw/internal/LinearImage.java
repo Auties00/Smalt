@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.image.raw.internal;
 
+import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.raw.CfaPattern;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
@@ -118,11 +119,18 @@ final class LinearImage {
         var table = sensor.linearization;
         var rowCount = sensor.blackRows;
         var columnCount = sensor.blackColumns;
+        // a pattern of one level per position applies to every sample of the position
+        var blackSamples = sensor.black != null && sensor.black.length >= (long) rowCount * columnCount * spp ? spp : 1;
+        if (sensor.black != null && sensor.black.length < (long) rowCount * columnCount) {
+            throw new MediaException.Malformed("raw black level pattern of " + sensor.black.length
+                    + " values for a repeat of " + rowCount + "x" + columnCount);
+        }
         var rowBlack = new float[rowCount][width * spp];
         for (var row = 0; row < rowCount; row++) {
             for (var column = 0; column < width; column++) {
                 for (var sample = 0; sample < spp; sample++) {
-                    var black = sensor.black == null ? 0 : sensor.black[((row * columnCount) + column % columnCount) * spp + sample];
+                    var black = sensor.black == null ? 0 : sensor.black[((row * columnCount) + column % columnCount)
+                            * blackSamples + Math.min(sample, blackSamples - 1)];
                     if (sensor.blackDeltaH != null && column < sensor.blackDeltaH.length) {
                         black += sensor.blackDeltaH[column];
                     }
