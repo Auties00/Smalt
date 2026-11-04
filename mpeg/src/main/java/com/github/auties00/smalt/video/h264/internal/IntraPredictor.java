@@ -401,6 +401,12 @@ final class IntraPredictor {
     void predict16x16(int mode, byte[] plane, int offset, int stride, boolean hasLeft, boolean hasTop,
                       boolean hasTopLeft) {
         var above = offset - stride;
+        // a corrupt stream may name a mode whose references are unavailable, which predicts mid-gray as the plane
+        // mode does
+        if (mode == 0 && !hasTop || mode == 1 && !hasLeft) {
+            fill(plane, offset, stride, 16, 128);
+            return;
+        }
         switch (mode) {
             case 0 -> {
                 for (var y = 0; y < 16; y++) {
@@ -483,6 +489,14 @@ final class IntraPredictor {
                        boolean hasTopLeft) {
         var above = offset - stride;
         var blockRows = rows >> 2;
+        // a corrupt stream may name a mode whose references are unavailable, which predicts mid-gray as the plane
+        // mode does
+        if (mode == 1 && leftBlocks != (1 << blockRows) - 1 || mode == 2 && !hasTop) {
+            for (var y = 0; y < rows; y += 8) {
+                fill(plane, offset + y * stride, stride, 8, 128);
+            }
+            return;
+        }
         switch (mode) {
             case 0 -> {
                 var sumTop0 = 0;
