@@ -281,9 +281,9 @@ final class WaylandOutputs {
                 var name = integer(message);
                 var iface = string(message);
                 var version = integer(message);
-                if (iface.equals("wl_output")) {
+                if ("wl_output".equals(iface)) {
                     outputGlobals.add(new int[]{name, version});
-                } else if (iface.equals("zxdg_output_manager_v1")) {
+                } else if ("zxdg_output_manager_v1".equals(iface)) {
                     managerGlobal = name;
                     managerVersion = version;
                 }

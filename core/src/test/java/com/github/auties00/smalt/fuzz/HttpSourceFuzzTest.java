@@ -123,6 +123,10 @@ class HttpSourceFuzzTest {
             if (colon > 0) {
                 var name = lines[index].substring(0, colon).strip();
                 var value = lines[index].substring(colon + 1).strip();
+                // an HTTP client never returns a header without a name
+                if (name.isEmpty()) {
+                    continue;
+                }
                 // a Retry-After the source waits for would stall the fuzzer, so the short delays become zero
                 if (name.equalsIgnoreCase("Retry-After") && value.matches("[0-9]{1,18}")
                         && Long.parseLong(value) <= 60) {

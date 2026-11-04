@@ -1195,11 +1195,11 @@ final class HttpMediaSource implements MediaSource, LocalSource {
                 at = reached;
                 continue;
             }
-            var filled = complete(from, reached, blocks.length);
-            if (filled > 0) {
-                return filled;
-            }
             if (attempt >= options.retries()) {
+                var filled = complete(from, reached, blocks.length);
+                if (filled > 0) {
+                    return filled;
+                }
                 var message = "the response for bytes " + at + " to " + (to - 1) + " of " + uri
                         + " held no byte of them";
                 throw new MediaException.Io(message, failure[0] != null ? failure[0] : new IOException(message));

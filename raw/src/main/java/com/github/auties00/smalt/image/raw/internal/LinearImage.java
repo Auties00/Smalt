@@ -110,7 +110,10 @@ final class LinearImage {
         var maximum = sensor.maximum();
         var white = new double[spp];
         for (var sample = 0; sample < spp; sample++) {
-            white[sample] = sensor.white != null && sensor.white[sample] > 0 ? sensor.white[sample] : maximum;
+            // a single white level applies to every sample
+            var level = sensor.white == null || sensor.white.length == 0 ? 0
+                    : sensor.white[Math.min(sample, sensor.white.length - 1)];
+            white[sample] = level > 0 ? level : maximum;
         }
         var table = sensor.linearization;
         var rowCount = sensor.blackRows;

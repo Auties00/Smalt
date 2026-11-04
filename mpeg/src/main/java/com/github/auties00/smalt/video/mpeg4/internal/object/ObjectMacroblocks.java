@@ -527,9 +527,8 @@ abstract class ObjectMacroblocks extends ObjectShapeDecoder {
         var frm = refQ1.by.pixels;
         if (vopmd.shapeCodingType) {
             if (!(volmd.spatialScalability && volmd.hierarchyType == 0)) {
-                var colocated = mbmdRef[Math.min(Math.max(0, mbx), numMBXRef - 1)
-                        + Math.min(Math.max(0, mby), numMBYRef - 1) * numMBXRef].shpmd;
-                decodeInterShape(refQ0, mode, mbIndex, mbx, mby, x, y, mvOff, mbBY, frm, frmOff, colocated);
+                decodeInterShape(refQ0, mode, mbIndex, mbx, mby, x, y, mvOff, mbBY, frm, frmOff,
+                        colocatedPShape(mbx, mby));
             } else if (volmd.volType == VolMode.ENHN_LAYER && volmd.enhnType == 1 && volmd.useRefShape == 1) {
                 if (mbx == 0) {
                     mv[mvOff].setToZero();
@@ -539,9 +538,8 @@ abstract class ObjectMacroblocks extends ObjectShapeDecoder {
                         MbMode.ALL_OPAQUE);
             } else if (volmd.volType == VolMode.BASE_LAYER
                     || (!(volmd.enhnType == 0 || volmd.useRefShape == 0) && !volmd.shapeOnly)) {
-                var colocated = mbmdRef[Math.min(Math.max(0, mbx), numMBXRef - 1)
-                        + Math.min(Math.max(0, mby), numMBYRef - 1) * numMBXRef].shpmd;
-                decodeInterShape(refQ0, mode, mbIndex, mbx, mby, x, y, mvOff, mbBY, frm, frmOff, colocated);
+                decodeInterShape(refQ0, mode, mbIndex, mbx, mby, x, y, mvOff, mbBY, frm, frmOff,
+                        colocatedPShape(mbx, mby));
             } else if (volmd.volType == VolMode.ENHN_LAYER) {
                 decodeSIShapePVOP(refQ0, mode, mbx, mby, x, y, mbBY, frm, frmOff);
             }
@@ -1166,6 +1164,15 @@ abstract class ObjectMacroblocks extends ObjectShapeDecoder {
             var colocated = baseShapeModes[index];
             decodeSIShapeBVOP(refQ0, refQ1, mode, index, mbx, mby, x, y, currMBBY, frm, frmOff, colocated);
         }
+    }
+
+    private int colocatedPShape(int mbx, int mby) {
+        if (numMBXRef <= 0 || numMBYRef <= 0) {
+            // a VOP decoded without its reference is dropped as unreferenced, and is corrupt otherwise
+            throw CorruptStream.INSTANCE;
+        }
+        return mbmdRef[Math.min(Math.max(0, mbx), numMBXRef - 1)
+                + Math.min(Math.max(0, mby), numMBYRef - 1) * numMBXRef].shpmd;
     }
 
     private int colocatedBShape(boolean forward, int mbx, int mby) {

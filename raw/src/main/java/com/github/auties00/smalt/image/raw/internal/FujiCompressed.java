@@ -533,8 +533,11 @@ final class FujiCompressed {
             var sum = sums[index];
             var count = counts[index];
             var k = 0;
-            while ((count << k) < sum) {
-                k++;
+            while (((long) count << k) < sum) {
+                // a valid context keeps its sum within the code's range, which a corrupt one leaves
+                if (++k > 30) {
+                    throw new MediaException.Malformed("corrupt Fujifilm compressed data");
+                }
             }
             var zeros = zeros();
             // the escape threshold of a code limited to 4 * bits bits (JPEG-LS LIMIT - qbpp - 1)

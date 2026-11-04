@@ -1158,6 +1158,9 @@ abstract class ObjectTexture extends ObjectShape {
     }
 
     private void intraTableIndex(int index) {
+        if (index < 0 || index >= RefTables.INTRA_YAVCLHASHING_TABLE.length) {
+            throw CorruptStream.INSTANCE;
+        }
         var entry = RefTables.INTRA_YAVCLHASHING_TABLE[index];
         level = entry & 0x1F;
         run = (entry & 0x3E0) >> 5;

@@ -208,7 +208,7 @@ final class SvcColocated {
                 mbCol = 2 * w * (mbAddr / w) + (mbAddr % w) + w * (yCol / 8);
                 yM = (2 * yCol) % 16;
                 vertMvScale = FRM_TO_FLD;
-            } else if (!col.fieldMb[2 * mbAddr]) {
+            } else if (!fieldMacroblock(col, 2 * mbAddr)) {
                 mbCol = 2 * mbAddr + (yCol / 8);
                 yM = (2 * yCol) % 16;
                 vertMvScale = FRM_TO_FLD;
@@ -234,7 +234,7 @@ final class SvcColocated {
                 yM = yCol;
             }
         } else if (!fieldMb) {
-            if (!col.fieldMb[mbAddr]) {
+            if (!fieldMacroblock(col, mbAddr)) {
                 mbCol = mbAddr;
                 yM = yCol;
             } else {
@@ -242,7 +242,7 @@ final class SvcColocated {
                 yM = 8 * (mbAddr % 2) + 4 * (yCol / 8);
                 vertMvScale = FLD_TO_FRM;
             }
-        } else if (!col.fieldMb[mbAddr]) {
+        } else if (!fieldMacroblock(col, mbAddr)) {
             mbCol = 2 * (mbAddr / 2) + (yCol / 8);
             yM = (2 * yCol) % 16;
             vertMvScale = FRM_TO_FLD;
@@ -266,6 +266,18 @@ final class SvcColocated {
             mvColX = col.mv1[block];
             mvColY = col.mv1[block + 1];
         }
+    }
+
+    /**
+     * Returns whether a macroblock of the co-located motion is a field macroblock, {@code false} past the macroblocks
+     * it holds (a corrupt stream whose reference has another size), where {@link #locate} finds no motion either.
+     *
+     * @param col the co-located motion
+     * @param mbAddr the macroblock address in it
+     * @return whether the macroblock exists and is a field macroblock
+     */
+    private static boolean fieldMacroblock(SvcMotionStore col, int mbAddr) {
+        return mbAddr >= 0 && mbAddr < col.fieldMb.length && col.fieldMb[mbAddr];
     }
 
     /**

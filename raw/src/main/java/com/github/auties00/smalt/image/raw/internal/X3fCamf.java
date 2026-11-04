@@ -155,6 +155,11 @@ final class X3fCamf {
             throw new MediaException.Malformed("X3F CAMF block of " + size + " bytes in " + rows + " rows of "
                     + columns + " values");
         }
+        // every value takes at least the one bit of its code, and two values fill three bytes
+        if (data.length < 32 || (size * 2 + 2) / 3 > (data.length - 32L) * 8) {
+            throw new MediaException.Malformed("X3F CAMF block of " + size + " bytes coded in " + data.length
+                    + " bytes");
+        }
         var lookup = X3fDecoder.trueLookup(data, 0, data.length);
         var body = new byte[(int) size];
         var bits = new X3fDecoder.Bits(data, 32, data.length);
@@ -206,7 +211,8 @@ final class X3fCamf {
      */
     private static byte[] accumulate(byte[] data, long[] header) {
         var size = header[0];
-        if (size <= 0 || size > MAX_BODY || data.length < 32) {
+        // every byte takes at least the one bit of its code
+        if (size <= 0 || size > MAX_BODY || data.length < 32 || size > (data.length - 32L) * 8) {
             throw new MediaException.Malformed("X3F CAMF block of " + size + " bytes");
         }
         var lookup = X3fDecoder.trueLookup(data, 0, data.length);
@@ -300,6 +306,10 @@ final class X3fCamf {
         var count = 1L;
         for (var index = 0; index < dimensions; index++) {
             count *= ByteArrays.u32(body, entry.value + 12 + 12 * (int) index, true);
+            // each value takes a byte or more of the entry, which bounds the product before it can overflow
+            if (count > entry.end - entry.start) {
+                return null;
+            }
         }
         var width = switch (type) {
             case 0, 6 -> 2;
