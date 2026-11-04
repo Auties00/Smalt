@@ -1,0 +1,15 @@
+# video decode dump of mp4/qtrle-argb.mov; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 500000
+seekable true
+track 1 QTRLE 64x48 timebase=1/10240
+0 pts=0 dur=1024 key=true 64x48 rgba8 alpha=true crc=1ac513d8
+1 pts=1024 dur=1024 key=false 64x48 rgba8 alpha=true crc=0a620bda
+2 pts=2048 dur=1024 key=false 64x48 rgba8 alpha=true crc=ac6d4f35
+3 pts=3072 dur=1024 key=true 64x48 rgba8 alpha=true crc=060199a8
+4 pts=4096 dur=1024 key=false 64x48 rgba8 alpha=true crc=88e55007
+seek 0: @0
+seek 166666: @1
+seek 333333: @3
+seek 500000: end
+seek -1000000: @0

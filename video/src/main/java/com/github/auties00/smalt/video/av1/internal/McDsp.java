@@ -43,10 +43,10 @@ public abstract class McDsp {
     static final McDsp SCALAR = new ScalarMcDsp();
 
     /**
-     * The implementation every frame uses: {@link VectorMcDsp} when
-     * {@link Simd#ENABLED}, {@link #SCALAR} otherwise.
+     * The implementation every frame uses: {@link VectorMcDsp}, written for 256-bit vectors, when
+     * {@link Simd#WIDE}, {@link #SCALAR} otherwise.
      */
-    private static final McDsp FIXED = Simd.ENABLED ? VectorMcDsp.create() : SCALAR;
+    private static final McDsp FIXED = Simd.WIDE ? VectorMcDsp.create() : SCALAR;
 
     /**
      * The minimum size of the {@code short} scratch buffer of the interpolation and warp kernels:

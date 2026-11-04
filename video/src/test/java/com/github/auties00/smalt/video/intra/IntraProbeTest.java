@@ -71,6 +71,7 @@ class IntraProbeTest {
             muxer.writePacket(packet.withTrackId(1));
             muxer.finish();
         }
+        com.github.auties00.smalt.testkit.validate.Validators.assertValid(file);
         return Media.probe(MediaSource.of(file)).videoStreams().getFirst();
     }
 

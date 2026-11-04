@@ -25,8 +25,11 @@ import java.util.concurrent.ConcurrentHashMap;
  * @implNote This implementation follows the ICC.1:2022 specification and the tag readers of Little CMS 2.17
  * ({@code cmsio0.c} and {@code cmstypes.c}): a {@code curv} of one entry is an 8.8 fixed-point gamma, {@code para}
  * function types {@code 0..4} map to the Little CMS types {@code 1..5}, the {@code lut8Type} and {@code lut16Type}
- * matrix is applied whenever it is not the identity and the input has three channels, and the {@code lutAtoBType} and
- * {@code lutBtoAType} elements are read in their fixed order.
+ * matrix is applied whenever it is not the identity and the input has three channels, the {@code lutAtoBType} and
+ * {@code lutBtoAType} elements are read in their fixed order, a {@code multiProcessElementType} skips its
+ * {@code bACS} and {@code eACS} elements and rejects a {@code float32Number} that is not zero or normal or whose
+ * magnitude exceeds {@code 1e20}, and a {@code namedColor2Type} name keeps at most 31 characters of its prefix and
+ * suffix and 32 of its root.
  */
 final class IccReader {
     /**
@@ -48,6 +51,30 @@ final class IccReader {
      * The largest number of 16-bit samples of one lookup table grid.
      */
     private static final long MAX_CLUT_SAMPLES = 1L << 22;
+
+    /**
+     * The length of a name field of a {@code namedColor2Type}.
+     */
+    private static final int NAME_LENGTH = 32;
+
+    /**
+     * Holds the colors of a {@code namedColor2Type} tag.
+     *
+     * @param prefix the prefix of every name
+     * @param suffix the suffix of every name
+     * @param roots the root name of each color
+     * @param pcs the three 16-bit connection space values of each color, in the legacy L*a*b* or the XYZ encoding
+     * @param devices the number of device coordinates of each color, {@code 0} for none
+     * @param device the 16-bit device coordinates of each color
+     */
+    record NamedColors(String prefix, String suffix, String[] roots, int[] pcs, int devices, int[] device) {
+        /**
+         * {@return the number of colors}
+         */
+        int count() {
+            return roots.length;
+        }
+    }
 
     /**
      * The profile bytes, not copied.
@@ -248,6 +275,28 @@ final class IccReader {
     }
 
     /**
+     * Reads the {@code cicp} tag of ICC.1:2022 (version 4.4, section 9.2.17).
+     *
+     * <p>The code points follow the reserved field of the {@code cicpType}; in a tag of at least 16 bytes whose
+     * first four bytes after the reserved field are zero (defined color primaries and transfer characteristics
+     * are never zero), they follow those four bytes instead, the layout Little CMS 2.16 and 2.17 write.
+     *
+     * @return the color primaries, transfer characteristics, matrix coefficients and video full range flag codes,
+     * or {@code null} when the tag is absent or is not a {@code cicpType} of at least 12 bytes
+     */
+    int[] cicp() {
+        var entry = tags.get(signature("cicp"));
+        if (entry == null || entry[1] < 12 || u32(entry[0]) != signature("cicp")) {
+            return null;
+        }
+        var at = entry[0] + 8;
+        if (entry[1] >= 16 && u32(at) == 0) {
+            at += 4;
+        }
+        return new int[]{u8(at), u8(at + 1), u8(at + 2), u8(at + 3)};
+    }
+
+    /**
      * Reads a text tag: {@code multiLocalizedUnicodeType}, {@code textDescriptionType} or
      * {@code textType}.
      *
@@ -267,8 +316,8 @@ final class IccReader {
     }
 
     /**
-     * Reads a lookup table tag: {@code lut8Type}, {@code lut16Type}, {@code lutAtoBType} or
-     * {@code lutBtoAType}.
+     * Reads a lookup table tag: {@code lut8Type}, {@code lut16Type}, {@code lutAtoBType},
+     * {@code lutBtoAType} or {@code multiProcessElementType}.
      *
      * @param tag the tag signature
      * @return the stages of the table in evaluation order, or {@code null} when the tag is absent
@@ -308,10 +357,310 @@ final class IccReader {
             if (type == signature("mBA ")) {
                 return readLutAtoB(at, end, false);
             }
+            if (type == signature("mpet")) {
+                return readMultiProcess(at, end);
+            }
         } catch (IndexOutOfBoundsException | IllegalArgumentException | ArithmeticException exception) {
             throw new MediaException.Malformed("ICC tag " + name(tag) + " is truncated or invalid", exception);
         }
         throw new MediaException.Unsupported("icc", "ICC lookup table type " + name(type) + " in tag " + name(tag));
+    }
+
+    /**
+     * Decodes a {@code multiProcessElementType} (ICC.1:2022 section 10.15): curve set, matrix and table elements in
+     * file order, the stages working on natural XYZ and L*a*b* values.
+     *
+     * @param at the offset of the tag
+     * @param end the end of the tag
+     * @return the pipeline
+     * @throws MediaException.Unsupported if an element type is unknown
+     */
+    private Pipeline readMultiProcess(int at, int end) {
+        checkRange(at, 16, end);
+        var inputs = u16(at + 8);
+        var outputs = u16(at + 10);
+        checkElementChannels(inputs, outputs);
+        var count = u32(at + 12) & 0xFFFFFFFFL;
+        if (count > (end - (at + 16)) / 8) {
+            throw new IllegalArgumentException("element table does not fit");
+        }
+        var pipeline = new Pipeline(inputs, outputs);
+        for (var i = 0; i < count; i++) {
+            var element = position(at, at + 16 + i * 8, end);
+            var type = u32(element);
+            if (type == signature("cvst")) {
+                pipeline.append(readCurveSetElement(element, end));
+            } else if (type == signature("matf")) {
+                pipeline.append(readMatrixElement(element, end));
+            } else if (type == signature("clut")) {
+                pipeline.append(readClutElement(element, end));
+            } else if (type != signature("bACS") && type != signature("eACS")) {
+                throw new MediaException.Unsupported("icc", "ICC multiProcessElement type " + name(type));
+            }
+        }
+        var stages = pipeline.stages();
+        if (!stages.isEmpty()) {
+            var channels = stages.getFirst().inputs;
+            for (var stage : stages) {
+                if (stage.inputs != channels) {
+                    throw new IllegalArgumentException("elements with inconsistent channels");
+                }
+                channels = stage.outputs;
+            }
+            if (stages.getFirst().inputs != inputs || channels != outputs) {
+                throw new IllegalArgumentException("elements do not match the tag channels");
+            }
+        }
+        return pipeline;
+    }
+
+    /**
+     * Reads one entry of a position table and checks that the element it points to starts within the tag.
+     *
+     * @param base the offset the positions are relative to
+     * @param entry the offset of the entry
+     * @param end the end of the tag
+     * @return the offset of the element
+     */
+    private int position(int base, int entry, int end) {
+        checkRange(entry, 8, end);
+        var offset = u32(entry) & 0xFFFFFFFFL;
+        if (base + offset + 8 > end) {
+            throw new IllegalArgumentException("element outside the tag");
+        }
+        return (int) (base + offset);
+    }
+
+    /**
+     * Checks the channel counts of a processing element.
+     *
+     * @param inputs the number of inputs
+     * @param outputs the number of outputs
+     */
+    private static void checkElementChannels(int inputs, int outputs) {
+        if (inputs == 0 || inputs > MAX_CHANNELS || outputs == 0 || outputs > MAX_CHANNELS) {
+            throw new IllegalArgumentException("invalid channel count");
+        }
+    }
+
+    /**
+     * Reads a {@code curveSetElement}: one {@code segmentedCurveType} per channel.
+     *
+     * @param at the offset of the element
+     * @param end the end of the tag
+     * @return the stage
+     */
+    private Stage readCurveSetElement(int at, int end) {
+        checkRange(at, 12, end);
+        var inputs = u16(at + 8);
+        var outputs = u16(at + 10);
+        checkElementChannels(inputs, outputs);
+        if (inputs != outputs) {
+            throw new IllegalArgumentException("curve set with different input and output channels");
+        }
+        var curves = new ToneCurve[inputs];
+        for (var c = 0; c < inputs; c++) {
+            curves[c] = readSegmentedCurve(position(at, at + 12 + c * 8, end), end);
+        }
+        return new Stage.Curves(curves);
+    }
+
+    /**
+     * Reads a {@code segmentedCurveType}: breakpoints, then formula ({@code parf}) and sampled ({@code samf})
+     * segments.
+     *
+     * @param at the offset of the curve
+     * @param end the end of the tag
+     * @return the curve
+     */
+    private ToneCurve readSegmentedCurve(int at, int end) {
+        checkRange(at, 12, end);
+        if (u32(at) != signature("curf")) {
+            throw new IllegalArgumentException("curve set element is not a segmented curve");
+        }
+        var count = u16(at + 8);
+        if (count == 0) {
+            throw new IllegalArgumentException("segmented curve without segments");
+        }
+        checkRange(at + 12, (count - 1) * 4, end);
+        var segments = new ToneCurve.Segment[count];
+        var breaks = new float[count + 1];
+        breaks[0] = ToneCurve.MINUS_INFINITY;
+        breaks[count] = ToneCurve.PLUS_INFINITY;
+        for (var i = 1; i < count; i++) {
+            breaks[i] = float32(at + 12 + (i - 1) * 4);
+        }
+        var cursor = at + 12 + (count - 1) * 4;
+        for (var i = 0; i < count; i++) {
+            checkRange(cursor, 12, end);
+            var type = u32(cursor);
+            if (type == signature("parf")) {
+                var function = u16(cursor + 8);
+                if (function > 2) {
+                    throw new IllegalArgumentException("unknown segment formula " + function);
+                }
+                var parameters = new double[ToneCurve.SEGMENT_PARAMETERS[function]];
+                checkRange(cursor + 12, parameters.length * 4, end);
+                for (var j = 0; j < parameters.length; j++) {
+                    parameters[j] = float32(cursor + 12 + j * 4);
+                }
+                segments[i] = new ToneCurve.Segment(breaks[i], breaks[i + 1], function + 6, parameters, null);
+                cursor += 12 + parameters.length * 4;
+            } else if (type == signature("samf")) {
+                var samples = u32(cursor + 8) & 0xFFFFFFFFL;
+                if (samples > (end - (cursor + 12)) / 4) {
+                    throw new IllegalArgumentException("sampled segment does not fit");
+                }
+                var points = new float[(int) samples + 1];
+                for (var j = 1; j < points.length; j++) {
+                    points[j] = float32(cursor + 12 + (j - 1) * 4);
+                }
+                segments[i] = new ToneCurve.Segment(breaks[i], breaks[i + 1], 0, null, points);
+                cursor += 12 + (int) samples * 4;
+            } else {
+                throw new IllegalArgumentException("unknown curve segment " + name(type));
+            }
+        }
+        return ToneCurve.segmented(segments);
+    }
+
+    /**
+     * Reads a {@code matrixElement}: the coefficients row by row, one row per output, then one offset per output.
+     *
+     * @param at the offset of the element
+     * @param end the end of the tag
+     * @return the stage
+     */
+    private Stage readMatrixElement(int at, int end) {
+        checkRange(at, 12, end);
+        var inputs = u16(at + 8);
+        var outputs = u16(at + 10);
+        checkElementChannels(inputs, outputs);
+        var size = inputs * outputs;
+        checkRange(at + 12, (size + outputs) * 4, end);
+        var coefficients = new double[size];
+        for (var i = 0; i < size; i++) {
+            coefficients[i] = float32(at + 12 + i * 4);
+        }
+        var offset = new double[outputs];
+        for (var i = 0; i < outputs; i++) {
+            offset[i] = float32(at + 12 + (size + i) * 4);
+        }
+        return new Stage.Matrix(inputs, outputs, coefficients, offset, Stage.Role.PLAIN);
+    }
+
+    /**
+     * Reads a {@code CLUTElement}: the grid points per input, then {@code float32Number} samples.
+     *
+     * @param at the offset of the element
+     * @param end the end of the tag
+     * @return the stage
+     */
+    private Stage readClutElement(int at, int end) {
+        checkRange(at, 28, end);
+        var inputs = u16(at + 8);
+        var outputs = u16(at + 10);
+        checkElementChannels(inputs, outputs);
+        var grid = new int[inputs];
+        var samples = (long) outputs;
+        for (var i = 0; i < inputs; i++) {
+            var points = u8(at + 12 + i);
+            if (points < 2) {
+                throw new IllegalArgumentException("invalid grid points " + points);
+            }
+            grid[i] = points;
+            samples *= points;
+            if (samples > MAX_CLUT_SAMPLES) {
+                throw new IllegalArgumentException("lookup table too large");
+            }
+        }
+        checkRange(at + 28, (int) samples * 4, end);
+        var table = new float[(int) samples];
+        for (var i = 0; i < table.length; i++) {
+            table[i] = float32(at + 28 + i * 4);
+        }
+        return new Stage.FloatClut(grid, outputs, table);
+    }
+
+    /**
+     * Reads the {@code namedColor2Type} tag ({@code ncl2}).
+     *
+     * @return the colors, or {@code null} when the tag is absent
+     * @throws MediaException.Malformed if the tag is not a valid {@code namedColor2Type}
+     */
+    NamedColors namedColors() {
+        var tag = signature("ncl2");
+        var entry = tags.get(tag);
+        if (entry == null) {
+            return null;
+        }
+        return (NamedColors) cache.computeIfAbsent(tag, _ -> {
+            var at = entry[0];
+            var end = at + entry[1];
+            expectType(at, "ncl2", tag);
+            try {
+                checkRange(at, 84, end);
+                var count = u32(at + 12) & 0xFFFFFFFFL;
+                var devices = u32(at + 16) & 0xFFFFFFFFL;
+                if (devices > MAX_CHANNELS) {
+                    throw new MediaException.Malformed("ICC named colors with " + devices + " device coordinates");
+                }
+                var record = NAME_LENGTH + 6 + 2 * (int) devices;
+                if (count > (end - (at + 84)) / record) {
+                    throw new MediaException.Malformed("ICC tag ncl2 of " + count + " colors is truncated");
+                }
+                var prefix = string(at + 20, NAME_LENGTH - 1);
+                var suffix = string(at + 52, NAME_LENGTH - 1);
+                var roots = new String[(int) count];
+                var pcs = new int[(int) count * 3];
+                var device = new int[(int) (count * devices)];
+                var cursor = at + 84;
+                for (var i = 0; i < count; i++) {
+                    roots[i] = string(cursor, NAME_LENGTH);
+                    for (var c = 0; c < 3; c++) {
+                        pcs[i * 3 + c] = u16(cursor + NAME_LENGTH + c * 2);
+                    }
+                    for (var c = 0; c < devices; c++) {
+                        device[(int) (i * devices + c)] = u16(cursor + NAME_LENGTH + 6 + c * 2);
+                    }
+                    cursor += record;
+                }
+                return new NamedColors(prefix, suffix, roots, pcs, (int) devices, device);
+            } catch (IndexOutOfBoundsException | IllegalArgumentException exception) {
+                throw new MediaException.Malformed("ICC tag ncl2 is truncated or invalid", exception);
+            }
+        });
+    }
+
+    /**
+     * Reads a NUL-terminated string of a fixed-length field.
+     *
+     * @param at the offset of the field
+     * @param length the largest number of characters
+     * @return the characters before the first NUL, one per byte
+     */
+    private String string(int at, int length) {
+        var count = 0;
+        while (count < length && data[at + count] != 0) {
+            count++;
+        }
+        return new String(data, at, count, StandardCharsets.ISO_8859_1);
+    }
+
+    /**
+     * Reads a big-endian {@code float32Number} that is zero or normal and within {@code -1e20..1e20}.
+     *
+     * @param at the offset
+     * @return the value
+     * @throws IllegalArgumentException if the value is out of range, subnormal, infinite or NaN
+     */
+    private float float32(int at) {
+        var value = Float.intBitsToFloat(u32(at));
+        if (value > 1e20 || value < -1e20 || !(value == 0 || Math.getExponent(value) >= Float.MIN_EXPONENT)
+                || Float.isNaN(value)) {
+            throw new IllegalArgumentException("invalid float32Number " + value);
+        }
+        return value;
     }
 
     /**

@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.capture.internal.windows;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.capture.internal.CaptureArea;
 import com.github.auties00.smalt.image.YuvPicture;
 
 import java.lang.foreign.Arena;
@@ -76,6 +77,16 @@ final class GdiGrabber implements ScreenGrabber {
      * The height of the monitor when the grabber was opened.
      */
     private final int openHeight;
+
+    /**
+     * The captured area, or {@code null} for the whole monitor.
+     */
+    private CaptureArea area;
+
+    /**
+     * Whether the pointer is drawn.
+     */
+    private boolean cursorShown = true;
 
     /**
      * The device context of the virtual screen.
@@ -245,6 +256,12 @@ final class GdiGrabber implements ScreenGrabber {
     }
 
     @Override
+    public void configure(CaptureArea area, boolean cursor) {
+        this.area = area;
+        this.cursorShown = cursor;
+    }
+
+    @Override
     public Result grab(YuvPicture out) {
         var now = System.nanoTime();
         if (now - nextBoundsCheck >= 0) {
@@ -271,9 +288,11 @@ final class GdiGrabber implements ScreenGrabber {
         if (!Gdi.copyScreen(memoryDc, width, height, screenDc, x, y)) {
             return Result.UNCHANGED;
         }
-        drawCursor();
+        if (cursorShown) {
+            drawCursor();
+        }
         Gdi.flush();
-        return converter.convert(pixels, 0, 4L * width, width, height, 0, null, out) ? Result.CHANGED : Result.UNCHANGED;
+        return converter.convert(pixels, 0, 4L * width, width, height, 0, null, area, out) ? Result.CHANGED : Result.UNCHANGED;
     }
 
     /**
