@@ -56,9 +56,9 @@ final class Transfer {
     static double encode(RawColorSpace space, double value) {
         var v = Math.clamp(value, 0, 1);
         return switch (space) {
-            case SRGB, DISPLAY_P3 -> v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
-            case ADOBE_RGB -> Math.pow(v, 256.0 / 563.0);
-            case PROPHOTO_RGB -> Math.pow(v, 1 / 1.8);
+            case SRGB, DISPLAY_P3 -> v <= 0.0031308 ? 12.92 * v : 1.055 * StrictMath.pow(v, 1 / 2.4) - 0.055;
+            case ADOBE_RGB -> StrictMath.pow(v, 256.0 / 563.0);
+            case PROPHOTO_RGB -> StrictMath.pow(v, 1 / 1.8);
             case LINEAR_SRGB, LINEAR_REC2020 -> v;
         };
     }

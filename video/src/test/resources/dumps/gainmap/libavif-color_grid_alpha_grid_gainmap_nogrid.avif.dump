@@ -1,0 +1,23 @@
+# image dump of gainmap/libavif-color_grid_alpha_grid_gainmap_nogrid.avif; regenerate with -Dsmalt.test.updateDumps=true
+format AVIF
+info ImageInfo[format=AVIF, width=512, height=600, hasAlpha=true, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 512x600 yuv8 YUV444 color=UNSPECIFIED/FULL/UNSPECIFIED/PQ y=d0f09def u=65215a97 v=65215a97 a=d438768b
+  format=AVIF orientation=NORMAL source=512x600
+  icc=none exif=none xmp=none
+  profile=ColorProfile[CICP BT709 / PQ, RGB, DISPLAY, v4.4.0]
+scaled 128x150
+picture 512x600 yuv8 YUV444 color=UNSPECIFIED/FULL/UNSPECIFIED/PQ y=d0f09def u=65215a97 v=65215a97 a=d438768b
+  format=AVIF orientation=NORMAL source=512x600
+  icc=none exif=none xmp=none
+  profile=ColorProfile[CICP BT709 / PQ, RGB, DISPLAY, v4.4.0]
+pages 1
+page 0 ImageInfo[format=AVIF, width=512, height=600, hasAlpha=true, animated=false, frameCount=1, orientation=NORMAL]
+picture 512x600 yuv8 YUV444 color=UNSPECIFIED/FULL/UNSPECIFIED/PQ y=d0f09def u=65215a97 v=65215a97 a=d438768b
+  format=AVIF orientation=NORMAL source=512x600
+  icc=none exif=none xmp=none
+  profile=ColorProfile[CICP BT709 / PQ, RGB, DISPLAY, v4.4.0]
+decoder gain map
+picture 64x80 yuv8 YUV420 color=UNSPECIFIED/FULL/UNSPECIFIED/UNSPECIFIED y=cfcbc9b1 u=05ffca03 v=05ffca03
+decoder auxiliary images
+[AuxiliaryImage[index=0, type=ALPHA, identifier=urn:mpeg:mpegB:cicp:systems:auxiliary:alpha, width=512, height=600], AuxiliaryImage[index=1, type=GAIN_MAP, identifier=tmap, width=64, height=80]]

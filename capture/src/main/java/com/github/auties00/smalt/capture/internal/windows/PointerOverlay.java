@@ -119,19 +119,21 @@ final class PointerOverlay {
      * @param row      the BGRX pixels holding the row
      * @param offset   the index of the row's first byte
      * @param rowY     the row's index in the captured image
+     * @param originX  the column of the captured image that the row's first pixel holds
      * @param rowWidth the number of pixels of the row
      */
-    void apply(byte[] row, int offset, int rowY, int rowWidth) {
+    void apply(byte[] row, int offset, int rowY, int originX, int rowWidth) {
         if (!visible || type == 0 || rowY < y || rowY >= y + height) {
             return;
         }
+        var left = x - originX;
         var shapeY = rowY - y;
-        var from = Math.max(0, -x);
-        var to = Math.min(width, rowWidth - x);
+        var from = Math.max(0, -left);
+        var to = Math.min(width, rowWidth - left);
         switch (type) {
-            case Dxgi.POINTER_COLOR -> color(row, offset, shapeY, from, to);
-            case Dxgi.POINTER_MASKED_COLOR -> maskedColor(row, offset, shapeY, from, to);
-            default -> monochrome(row, offset, shapeY, from, to);
+            case Dxgi.POINTER_COLOR -> color(row, offset, left, shapeY, from, to);
+            case Dxgi.POINTER_MASKED_COLOR -> maskedColor(row, offset, left, shapeY, from, to);
+            default -> monochrome(row, offset, left, shapeY, from, to);
         }
     }
 
@@ -140,11 +142,12 @@ final class PointerOverlay {
      *
      * @param row    the BGRX pixels holding the row
      * @param offset the index of the row's first byte
+     * @param left   the column of the row where the shape starts
      * @param shapeY the shape row
      * @param from   the first shape column drawn
      * @param to     the shape column after the last one drawn
      */
-    private void color(byte[] row, int offset, int shapeY, int from, int to) {
+    private void color(byte[] row, int offset, int left, int shapeY, int from, int to) {
         var base = shapeY * pitch;
         for (var shapeX = from; shapeX < to; shapeX++) {
             var source = base + 4 * shapeX;
@@ -152,7 +155,7 @@ final class PointerOverlay {
             if (alpha == 0) {
                 continue;
             }
-            var target = offset + 4 * (x + shapeX);
+            var target = offset + 4 * (left + shapeX);
             for (var channel = 0; channel < 3; channel++) {
                 var s = shape[source + channel] & 0xFF;
                 var d = row[target + channel] & 0xFF;
@@ -166,16 +169,17 @@ final class PointerOverlay {
      *
      * @param row    the BGRX pixels holding the row
      * @param offset the index of the row's first byte
+     * @param left   the column of the row where the shape starts
      * @param shapeY the shape row
      * @param from   the first shape column drawn
      * @param to     the shape column after the last one drawn
      */
-    private void maskedColor(byte[] row, int offset, int shapeY, int from, int to) {
+    private void maskedColor(byte[] row, int offset, int left, int shapeY, int from, int to) {
         var base = shapeY * pitch;
         for (var shapeX = from; shapeX < to; shapeX++) {
             var source = base + 4 * shapeX;
             var xor = shape[source + 3] != 0;
-            var target = offset + 4 * (x + shapeX);
+            var target = offset + 4 * (left + shapeX);
             for (var channel = 0; channel < 3; channel++) {
                 row[target + channel] = xor ? (byte) (row[target + channel] ^ shape[source + channel]) : shape[source + channel];
             }
@@ -187,18 +191,19 @@ final class PointerOverlay {
      *
      * @param row    the BGRX pixels holding the row
      * @param offset the index of the row's first byte
+     * @param left   the column of the row where the shape starts
      * @param shapeY the shape row
      * @param from   the first shape column drawn
      * @param to     the shape column after the last one drawn
      */
-    private void monochrome(byte[] row, int offset, int shapeY, int from, int to) {
+    private void monochrome(byte[] row, int offset, int left, int shapeY, int from, int to) {
         var andBase = shapeY * pitch;
         var xorBase = (shapeY + height) * pitch;
         for (var shapeX = from; shapeX < to; shapeX++) {
             var bit = 0x80 >> (shapeX & 7);
             var keep = (shape[andBase + (shapeX >> 3)] & bit) != 0;
             var invert = (shape[xorBase + (shapeX >> 3)] & bit) != 0;
-            var target = offset + 4 * (x + shapeX);
+            var target = offset + 4 * (left + shapeX);
             for (var channel = 0; channel < 3; channel++) {
                 var value = keep ? row[target + channel] : 0;
                 row[target + channel] = (byte) (invert ? value ^ 0xFF : value);

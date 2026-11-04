@@ -283,6 +283,183 @@ class TagHelpersTest {
             }
         }
 
+        static byte[] lyrics3v1(String text) {
+            return ("LYRICSBEGIN" + text + "LYRICSEND").getBytes(StandardCharsets.US_ASCII);
+        }
+
+        List<TrailingTags.Region> regions(byte[]... parts) {
+            var data = new byte[1000];
+            for (var part : parts) {
+                data = concat(data, part);
+            }
+            return TrailingTags.regions(MediaSource.of(data), 0, data.length);
+        }
+
+        @Test
+        @DisplayName("reports the kind, offset and size of every trailing tag in file order")
+        void regionLayout() {
+            var ape = ape(true, 40);
+            var lyrics = lyrics();
+            var appended = tag(4, 0x10, frame(4, "TIT2", text(0, "t"), 0), true);
+            var found = regions(appended, ape, lyrics, id3v1(true));
+            assertEquals(List.of(
+                    new TrailingTags.Region(TrailingTags.Kind.ID3V2, 1000, appended.length),
+                    new TrailingTags.Region(TrailingTags.Kind.APE, 1000 + appended.length, ape.length),
+                    new TrailingTags.Region(TrailingTags.Kind.LYRICS3, 1000 + appended.length + ape.length, lyrics.length),
+                    new TrailingTags.Region(TrailingTags.Kind.ID3V1_ENHANCED, 1000 + appended.length + ape.length + lyrics.length, 227),
+                    new TrailingTags.Region(TrailingTags.Kind.ID3V1, 1000 + appended.length + ape.length + lyrics.length + 227, 128)),
+                    found);
+            assertTrue(regions().isEmpty());
+        }
+
+        @Test
+        @DisplayName("finds a Lyrics3v1 block only right before an ID3v1 tag")
+        void lyrics3v1() {
+            var block = lyrics3v1("[00:01]la la");
+            assertEquals(List.of(new TrailingTags.Region(TrailingTags.Kind.LYRICS3, 1000, block.length),
+                    new TrailingTags.Region(TrailingTags.Kind.ID3V1, 1000 + block.length, 128)), regions(block, id3v1(false)));
+            assertTrue(regions(block).isEmpty(), "no ID3v1 tag follows");
+            var long_ = lyrics3v1("x".repeat(5100));
+            assertEquals(1000, end(long_, id3v1(false)));
+            var tooLong = lyrics3v1("x".repeat(5101));
+            assertEquals(1000 + tooLong.length, end(tooLong, id3v1(false)));
+        }
+
+        @Test
+        @DisplayName("requires an appended ID3v2 tag to be a version 2.4 tag whose header matches its footer")
+        void appendedValidation() {
+            var appended = tag(4, 0x10, frame(4, "TIT2", text(0, "t"), 0), true);
+            var noHeader = appended.clone();
+            noHeader[0] = 'X';
+            assertEquals(1000 + noHeader.length, end(noHeader));
+            var v3 = appended.clone();
+            v3[appended.length - 7] = 3;
+            assertEquals(1000 + v3.length, end(v3));
+            var noFlag = appended.clone();
+            noFlag[appended.length - 5] = 0;
+            assertEquals(1000 + noFlag.length, end(noFlag));
+        }
+
+        static byte[] metadataFixture() {
+            var appended = tag(4, 0x10, concat(frame(4, "TIT2", text(3, "Appended title"), 0),
+                    frame(4, "TALB", text(3, "Appended album"), 0)), true);
+            var apeTag = com.github.auties00.smalt.internal.tags.ApeTag.encode(com.github.auties00.smalt.metadata.MediaTags.builder()
+                    .set("title", "APE title").set("artist", "APE artist").set("REPLAYGAIN_TRACK_GAIN", "-2 dB").build(), List.of());
+            var v1 = id3v1(false);
+            System.arraycopy("V1 title".getBytes(StandardCharsets.US_ASCII), 0, v1, 3, 8);
+            System.arraycopy("V1 comment".getBytes(StandardCharsets.US_ASCII), 0, v1, 97, 10);
+            v1[127] = (byte) 0xFF;
+            return concat(concat(concat(new byte[1000], appended), apeTag), v1);
+        }
+
+        static Map<String, String> readMetadata(byte[] data, Id3v2.Merge merge, Map<String, String> leading) {
+            var tail = new TrailingTags.Tail(MediaSource.of(data), 0);
+            tail.load(data.length);
+            var metadata = new LinkedHashMap<>(leading);
+            TrailingTags.readMetadata(tail, List.of(), TrailingTags.regions(tail, 0, data.length), metadata, null, merge);
+            return metadata;
+        }
+
+        @Test
+        @DisplayName("lets an appended ID3v2 tag replace the leading ID3v2 fields, then adds the missing APE and ID3v1 fields")
+        void metadataReplace() {
+            var metadata = readMetadata(metadataFixture(), Id3v2.Merge.REPLACE, Map.of("TPE1", "Leading artist"));
+            assertEquals("Appended title", metadata.get("TIT2"));
+            assertEquals("Appended album", metadata.get("TALB"));
+            assertEquals("APE title", metadata.get("title"));
+            assertEquals("-2 dB", metadata.get("replaygain_track_gain"));
+            assertEquals("V1 comment", metadata.get("COMM"));
+            assertEquals(List.of("TIT2", "TALB", "title", "artist", "replaygain_track_gain", "COMM"),
+                    List.copyOf(metadata.keySet()), "the leading TPE1 is discarded");
+        }
+
+        @Test
+        @DisplayName("lets an appended ID3v2 tag only add missing fields when the main tags are in another format")
+        void metadataFill() {
+            var leading = new LinkedHashMap<String, String>();
+            leading.put("TPE1", "Leading artist");
+            leading.put("TIT2", "Vorbis");
+            var metadata = readMetadata(metadataFixture(), Id3v2.Merge.FILL, leading);
+            assertEquals("Vorbis", metadata.get("TIT2"));
+            assertEquals("Leading artist", metadata.get("TPE1"));
+            assertEquals("Appended album", metadata.get("TALB"));
+            assertEquals(List.of("TPE1", "TIT2", "TALB", "title", "artist", "replaygain_track_gain", "COMM"),
+                    List.copyOf(metadata.keySet()));
+        }
+
+        @Test
+        @DisplayName("lets an appended ID3v2 tag flagged as an update replace only the values it holds")
+        void updateFlag() {
+            var extended = new byte[]{0, 0, 0, 6, 1, 0x40};
+            var update = tag(4, 0x50, concat(extended, frame(4, "TIT2", text(3, "Updated"), 0)), true);
+            var metadata = readMetadata(concat(new byte[1000], update), Id3v2.Merge.REPLACE,
+                    Map.of("TIT2", "Leading", "TALB", "Leading album"));
+            assertEquals("Updated", metadata.get("TIT2"));
+            assertEquals("Leading album", metadata.get("TALB"));
+            var plain = tag(4, 0x10, frame(4, "TIT2", text(3, "Replaced"), 0), true);
+            var replaced = readMetadata(concat(new byte[1000], plain), Id3v2.Merge.REPLACE,
+                    Map.of("TIT2", "Leading", "TALB", "Leading album"));
+            assertEquals(Map.of("TIT2", "Replaced"), replaced);
+        }
+
+        @Test
+        @DisplayName("counts the APE header only when the footer flags it and it is present")
+        void apeHeaderFlag() {
+            var withHeader = ape(true, 40);
+            assertEquals(1000, end(withHeader));
+            var footerOnly = java.util.Arrays.copyOfRange(withHeader, 32, withHeader.length);
+            // the footer still flags a header, which the 32 bytes before the items do not hold
+            assertEquals(1032, end(new byte[32], footerOnly));
+            assertEquals(List.of(new TrailingTags.Region(TrailingTags.Kind.APE, 1000, footerOnly.length)), regions(footerOnly));
+        }
+
+        @Test
+        @DisplayName("finds a Lyrics3v1 block before an enhanced ID3v1 tag")
+        void lyrics3v1Enhanced() {
+            var block = lyrics3v1("[00:01]la la");
+            assertEquals(1000, end(block, id3v1(true)));
+        }
+
+        @Nested
+        @DisplayName("SEEK chains")
+        class Seek {
+            static byte[] seekTag(long offset) {
+                return tag(4, 0, frame(4, "SEEK", ByteBuffer.allocate(4).putInt((int) offset).array(), 0), false);
+            }
+
+            List<TrailingTags.Region> located(byte[] data, long target, long end) {
+                return TrailingTags.seekRegions(new TrailingTags.Tail(MediaSource.of(data), 0), target, 0, end);
+            }
+
+            @Test
+            @DisplayName("follows a chain of SEEK frames through tags inside the audio")
+            void chain() {
+                var last = tag(4, 0, frame(4, "TIT2", text(3, "x"), 0), false);
+                var first = seekTag(50);
+                var data = concat(concat(concat(concat(new byte[100], first), new byte[50]), last), new byte[100]);
+                assertEquals(List.of(new TrailingTags.Region(TrailingTags.Kind.ID3V2, 100, first.length),
+                        new TrailingTags.Region(TrailingTags.Kind.ID3V2, 150 + first.length, last.length)),
+                        located(data, 100, data.length));
+            }
+
+            @Test
+            @DisplayName("stops at a target holding no tag, at a tag running past the audio and after a tag without SEEK")
+            void stops() {
+                var target = tag(4, 0, frame(4, "TIT2", text(3, "x"), 0), false);
+                var data = concat(concat(new byte[100], target), new byte[100]);
+                assertTrue(located(data, 99, data.length).isEmpty());
+                assertTrue(located(data, -1, data.length).isEmpty());
+                assertTrue(located(data, 100, 100 + target.length - 1).isEmpty(), "the tag must end before the trailing tags");
+                assertEquals(1, located(data, 100, data.length).size());
+                var next = seekTag(0);
+                var chained = concat(concat(new byte[100], next), new byte[100]);
+                assertEquals(1, located(chained, 100, chained.length).size(), "the SEEK target after the tag holds none");
+                var corrupt = target.clone();
+                corrupt[3] = 9;
+                assertTrue(located(concat(concat(new byte[100], corrupt), new byte[100]), 100, 300).isEmpty());
+            }
+        }
+
         @Test
         @DisplayName("ignores tag-like bytes that do not form a valid tag")
         void falsePositives() {

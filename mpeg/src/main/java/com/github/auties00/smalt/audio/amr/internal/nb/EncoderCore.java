@@ -2,6 +2,17 @@
    Copyright PacketVideo; Apache License 2.0. Modified for Smalt. */
 package com.github.auties00.smalt.audio.amr.internal.nb;
 
+import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.add;
+import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.extractH;
+import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.lAdd;
+import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.lExtractHi;
+import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.lExtractLo;
+import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.lMac;
+import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.lMult;
+import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.lShl;
+import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.mpy3216;
+import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.round;
+import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.sub;
 import static com.github.auties00.smalt.audio.amr.internal.nb.Constants.L_FRAME;
 import static com.github.auties00.smalt.audio.amr.internal.nb.Constants.L_FRAME_BY2;
 import static com.github.auties00.smalt.audio.amr.internal.nb.Constants.L_INTERPOL;
@@ -226,7 +237,7 @@ final class EncoderCore {
     /**
      * The voice activity detector.
      */
-    private final Vad1 vadSt = new Vad1();
+    private final VoiceActivityDetector vadSt;
 
     /**
      * The discontinuous transmission state.
@@ -362,9 +373,11 @@ final class EncoderCore {
      * Creates an encoder in its reset state.
      *
      * @param dtx whether discontinuous transmission is on
+     * @param vad2 whether discontinuous transmission uses VAD option 2 instead of option 1
      */
-    EncoderCore(boolean dtx) {
+    EncoderCore(boolean dtx, boolean vad2) {
         this.dtx = dtx;
+        this.vadSt = vad2 ? new Vad2() : new Vad1();
         reset();
     }
 
@@ -409,26 +422,23 @@ final class EncoderCore {
      * @param lg the number of samples
      */
     private void preProcess(short[] signal, int offset, int lg) {
-        var xn2 = x1;
-        var xn1 = x0;
+        var overflow = this.overflow;
         for (var i = 0; i < lg; i++) {
-            var lTmp = y1Hi * 7807;
-            lTmp += (y1Lo * 7807) >> 15;
-            lTmp += y2Hi * -3733;
+            var x2 = x1;
+            x1 = x0;
+            x0 = signal[offset + i];
+            var lTmp = mpy3216(y1Hi, y1Lo, (short) 7807, overflow);
+            lTmp = lAdd(lTmp, mpy3216(y2Hi, y2Lo, (short) -3733, overflow), overflow);
+            lTmp = lMac(lTmp, x0, (short) 1899, overflow);
+            lTmp = lMac(lTmp, x1, (short) -3798, overflow);
+            lTmp = lMac(lTmp, x2, (short) 1899, overflow);
+            lTmp = lShl(lTmp, (short) 3);
+            signal[offset + i] = round(lTmp, overflow);
             y2Hi = y1Hi;
-            lTmp += (y2Lo * -3733) >> 15;
             y2Lo = y1Lo;
-            lTmp += xn2 * 1899;
-            xn2 = xn1;
-            lTmp += xn1 * -3798;
-            xn1 = signal[offset + i];
-            lTmp += xn1 * 1899;
-            signal[offset + i] = (short) ((lTmp + 0x0000800) >> 12);
-            y1Hi = (short) (lTmp >> 12);
-            y1Lo = (short) ((lTmp << 3) - (y1Hi << 15));
+            y1Hi = lExtractHi(lTmp);
+            y1Lo = lExtractLo(lTmp);
         }
-        x1 = xn2;
-        x0 = xn1;
     }
 
     /**
@@ -488,6 +498,9 @@ final class EncoderCore {
         } else {
             lspFlag = tonStabSt.checkLsp(lspSt.lspOld);
         }
+        if (dtx) {
+            vadSt.openLoopStart();
+        }
         for (int subfrNr = 0, iSubfr = 0; subfrNr < L_FRAME / L_FRAME_BY2; subfrNr++, iSubfr += L_FRAME_BY2) {
             preBig(mode, iSubfr);
             if (mode != Mode.MR475 && mode != Mode.MR515) {
@@ -500,7 +513,7 @@ final class EncoderCore {
             tOp[1] = tOp[0];
         }
         if (dtx) {
-            vadSt.pitchDetection(tOp, overflow);
+            vadSt.openLoopEnd(mode, tOp, overflow);
         }
         if (usedMode != Mode.MRDTX) {
             subframes(usedMode, ana, anap, lspFlag);
@@ -580,14 +593,14 @@ final class EncoderCore {
             } else {
                 System.arraycopy(memErrSave, 0, memErr, 0, M);
                 Filters.predLt3or6(oldExc, EXC + iSubfrSf0, t0Sf0, t0FracSf0, L_SUBFR, true, work);
-                CodebookCorrelation.convolve(oldExc, EXC + iSubfrSf0, h1Sf0, 0, y1, 0, L_SUBFR);
+                CodebookCorrelation.convolve(oldExc, EXC + iSubfrSf0, h1Sf0, 0, y1, 0, L_SUBFR, overflow);
                 aq -= MP1;
                 sharpSave = subframePostProc(mode, iSubfrSf0, gains[GainQuantizer.SF0_GAIN_PIT],
                         gains[GainQuantizer.SF0_GAIN_COD], aq, xnSf0, codeSf0, y1, y2Sf0, memSyn, memW0);
                 aq += MP1;
                 subframePreProc(mode, a, aq, iSubfr, memW0);
                 Filters.predLt3or6(oldExc, EXC + iSubfr, t0, t0Frac, L_SUBFR, true, work);
-                CodebookCorrelation.convolve(oldExc, EXC + iSubfr, hvec, H1, y1, 0, L_SUBFR);
+                CodebookCorrelation.convolve(oldExc, EXC + iSubfr, hvec, H1, y1, 0, L_SUBFR, overflow);
                 sharp = subframePostProc(mode, iSubfr, gains[GainQuantizer.GAIN_PIT], gains[GainQuantizer.GAIN_COD],
                         aq, xn, code, y1, y2, memSyn, memW0);
             }
@@ -608,8 +621,10 @@ final class EncoderCore {
         for (var i = 0; i < 2; i++) {
             Filters.weightAi(aT, aOffset, g1, 0, ap1, 0);
             Filters.weightAi(aT, aOffset, GAMMA2, 0, ap2, 0);
-            Filters.residu(ap1, 0, oldSpeech, SPEECH + frameOffset, oldWsp, WSP + frameOffset, L_SUBFR, work);
-            Filters.synFilt(ap2, 0, oldWsp, WSP + frameOffset, oldWsp, WSP + frameOffset, L_SUBFR, memW, 0, true);
+            Filters.residu(ap1, 0, oldSpeech, SPEECH + frameOffset, oldWsp, WSP + frameOffset, L_SUBFR, work,
+                    overflow);
+            Filters.synFilt(ap2, 0, oldWsp, WSP + frameOffset, oldWsp, WSP + frameOffset, L_SUBFR, memW, 0, true,
+                    overflow);
             aOffset += MP1;
             frameOffset += L_SUBFR;
         }
@@ -630,13 +645,13 @@ final class EncoderCore {
         Filters.weightAi(aT, a, g1, 0, ap1, 0);
         Filters.weightAi(aT, a, GAMMA2, 0, ap2, 0);
         System.arraycopy(ap1, 0, aiZero, 0, M + 1);
-        Filters.synFilt(aqT, aq, aiZero, 0, hvec, H1, L_SUBFR, aiZero, ZERO, false);
-        Filters.synFilt(ap2, 0, hvec, H1, hvec, H1, L_SUBFR, aiZero, ZERO, false);
-        Filters.residu(aqT, aq, oldSpeech, SPEECH + iSubfr, res, 0, L_SUBFR, work);
+        Filters.synFilt(aqT, aq, aiZero, 0, hvec, H1, L_SUBFR, aiZero, ZERO, false, overflow);
+        Filters.synFilt(ap2, 0, hvec, H1, hvec, H1, L_SUBFR, aiZero, ZERO, false, overflow);
+        Filters.residu(aqT, aq, oldSpeech, SPEECH + iSubfr, res, 0, L_SUBFR, work, overflow);
         System.arraycopy(res, 0, oldExc, EXC + iSubfr, L_SUBFR);
-        Filters.synFilt(aqT, aq, oldExc, EXC + iSubfr, memErr, ERROR, L_SUBFR, memErr, 0, false);
-        Filters.residu(ap1, 0, memErr, ERROR, xn, 0, L_SUBFR, work);
-        Filters.synFilt(ap2, 0, xn, 0, xn, 0, L_SUBFR, memW0, 0, false);
+        Filters.synFilt(aqT, aq, oldExc, EXC + iSubfr, memErr, ERROR, L_SUBFR, memErr, 0, false, overflow);
+        Filters.residu(ap1, 0, memErr, ERROR, xn, 0, L_SUBFR, work, overflow);
+        Filters.synFilt(ap2, 0, xn, 0, xn, 0, L_SUBFR, memW0, 0, false, overflow);
     }
 
     /**
@@ -658,33 +673,33 @@ final class EncoderCore {
      */
     private short subframePostProc(int mode, int iSubfr, short gainPit, short gainCode, int aq, short[] xn,
                                    short[] code, short[] y1, short[] y2, short[] memSyn, short[] memW0) {
-        int tempShift;
-        int kShift;
+        var overflow = this.overflow;
+        short tempShift;
+        short kShift;
         short pitchFac;
         if (mode != Mode.MR122) {
             tempShift = 1;
-            kShift = 16 - 2 - 1;
+            kShift = 2;
             pitchFac = gainPit;
         } else {
             tempShift = 2;
-            kShift = 16 - 4 - 1;
+            kShift = 4;
             pitchFac = (short) (gainPit >> 1);
         }
         var newSharp = gainPit < SHARPMAX ? gainPit : SHARPMAX;
         var exc = oldExc;
         var base = EXC + iSubfr;
         for (var i = 0; i < L_SUBFR; i++) {
-            var lTemp = (exc[base + i] * pitchFac) << 1;
-            lTemp += (code[i] * gainCode) << 1;
-            lTemp <<= tempShift;
-            exc[base + i] = (short) ((lTemp + 0x08000) >> 16);
+            var lTemp = lMult(exc[base + i], pitchFac, overflow);
+            lTemp = lMac(lTemp, code[i], gainCode, overflow);
+            exc[base + i] = round(lShl(lTemp, tempShift), overflow);
         }
-        Filters.synFilt(aqT, aq, exc, base, synth, iSubfr, L_SUBFR, memSyn, 0, true);
+        Filters.synFilt(aqT, aq, exc, base, synth, iSubfr, L_SUBFR, memSyn, 0, true, overflow);
         for (int i = L_SUBFR - M, j = 0; i < L_SUBFR; i++, j++) {
-            memErr[j] = (short) (oldSpeech[SPEECH + iSubfr + i] - synth[iSubfr + i]);
-            var temp = (short) ((y1[i] * gainPit) >> 14);
-            temp += (short) ((y2[i] * gainCode) >> kShift);
-            memW0[j] = (short) (xn[i] - temp);
+            memErr[j] = sub(oldSpeech[SPEECH + iSubfr + i], synth[iSubfr + i], overflow);
+            var temp = extractH(lShl(lMult(y1[i], gainPit, overflow), (short) 1));
+            var k = extractH(lShl(lMult(y2[i], gainCode, overflow), kShift));
+            memW0[j] = sub(xn[i], add(temp, k, overflow), overflow);
         }
         return newSharp;
     }
