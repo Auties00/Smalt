@@ -107,6 +107,10 @@ final class EsbrHfGenerator {
         }
         var noiseTable = bands.noise;
         var noiseBands = bands.noiseBands;
+        // the tables of a header rejected part way through its derivation do not end at the same subband
+        if (noiseBands < 1 || noiseTable[noiseBands] != usb) {
+            throw new MediaException.Malformed("SBR noise floor bands do not span the master bands");
+        }
         for (var i = 0; i < noiseBands; i++) {
             var mode = frame.inverseFiltering[i];
             var previous = frame.previousInverseFiltering[i];

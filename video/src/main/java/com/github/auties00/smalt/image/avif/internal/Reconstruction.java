@@ -266,9 +266,9 @@ final class Reconstruction {
     /**
      * Returns the size an image item declares, before its transformative properties.
      *
-     * <p>The size is that of the payload of a grid, or of its {@code ispe} property; without one,
-     * that of the payload of an overlay, or of the first input of an identity derivation or a
-     * sample transform.
+     * <p>The size is that of the payload of a grid or an overlay, the size they decode to whatever their
+     * {@code ispe} property says, or of the {@code ispe} property; without one, that of the first input of an
+     * identity derivation or a sample transform.
      *
      * @param source the file
      * @param file the parsed file
@@ -288,13 +288,13 @@ final class Reconstruction {
                 var grid = HeifStills.readGrid(FORMAT, source, file, current, limits);
                 width = grid.outputWidth();
                 height = grid.outputHeight();
-            } else if (extent != null) {
-                width = extent.width();
-                height = extent.height();
             } else if (current.type().equals("iovl") && current.size() <= 20 + 8L * inputs.length) {
                 var overlay = HeifOverlay.parse(file.readItem(source, current, limits), inputs.length);
                 width = overlay.outputWidth();
                 height = overlay.outputHeight();
+            } else if (extent != null) {
+                width = extent.width();
+                height = extent.height();
             } else if ((current.type().equals("iden") || current.type().equals("sato")) && inputs.length > 0
                     && file.item(inputs[0]) != null) {
                 current = file.item(inputs[0]);

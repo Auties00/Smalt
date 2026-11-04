@@ -210,9 +210,21 @@ final class HeicReference {
      */
     static Planes decode(String demuxer, byte[] annexB, int frames, int width, int height, ChromaFormat format,
                          int depth) {
-        var raw = Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(2), annexB,
-                List.of("-v", "error", "-f", demuxer, "-i", "pipe:0", "-f", "rawvideo", "-pix_fmt",
-                        pixelFormat(format, depth), "-"));
+        return decode(demuxer, annexB, frames, width, height, format, depth, false);
+    }
+
+    /**
+     * Decodes the last picture of an Annex B stream, cropped from its top left corner to {@code width x height}
+     * when {@code crop} is set (a coded item showing its ispe size, smaller than the coded picture).
+     */
+    private static Planes decode(String demuxer, byte[] annexB, int frames, int width, int height, ChromaFormat format,
+                                 int depth, boolean crop) {
+        var arguments = new ArrayList<>(List.of("-v", "error", "-f", demuxer, "-i", "pipe:0"));
+        if (crop) {
+            arguments.addAll(List.of("-vf", "crop=" + width + ":" + height + ":0:0:exact=1"));
+        }
+        arguments.addAll(List.of("-f", "rawvideo", "-pix_fmt", pixelFormat(format, depth), "-"));
+        var raw = Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(2), annexB, arguments);
         var bytes = depth == 8 ? 1 : 2;
         var luma = width * height;
         var chroma = format.hasChroma() ? format.chromaWidth(width) * format.chromaHeight(height) : 0;
@@ -320,12 +332,15 @@ final class HeicReference {
         for (var coded : chain) {
             payloads.add(file.readItem(source, coded, MediaLimits.DEFAULT));
         }
+        // a coded picture larger than the ispe property shows its top left corner of that size
+        var extent = item.property(HeifProperty.SpatialExtent.class);
+        var crop = extent != null && extent.width() == width && extent.height() == height;
         if (item.type().equals("avc1")) {
             var avcC = item.property(HeifProperty.AvcConfiguration.class).record();
-            return decode("h264", annexBAvc(avcC, payloads), chain.size(), width, height, format, depth);
+            return decode("h264", annexBAvc(avcC, payloads), chain.size(), width, height, format, depth, crop);
         }
         var hvcC = item.property(HeifProperty.HevcConfiguration.class).record();
-        return decode(annexB(hvcC, payloads), chain.size(), width, height, format, depth);
+        return decode("hevc", annexB(hvcC, payloads), chain.size(), width, height, format, depth, crop);
     }
 
     /**

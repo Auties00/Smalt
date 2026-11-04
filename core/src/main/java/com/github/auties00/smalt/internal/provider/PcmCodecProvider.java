@@ -32,7 +32,7 @@ public final class PcmCodecProvider implements AudioCodecProvider {
 
     @Override
     public AudioDecoder createDecoder(AudioTrack track, AudioDecoderOptions options) {
-        return track.codec().isDsd() ? new DsdDecoder(track, options) : new PcmDecoder(track);
+        return track.codec().isDsd() ? new DsdDecoder(track, options) : new PcmDecoder(track, options);
     }
 
     @Override

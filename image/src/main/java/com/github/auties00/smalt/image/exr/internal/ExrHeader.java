@@ -256,9 +256,14 @@ public final class ExrHeader {
     }
 
     /**
-     * Reads a null-terminated string.
+     * Reads a string ending at a null byte or at the end of the data.
+     *
+     * @throws MediaException.Malformed if the string starts past the end of the data, after an unterminated one
      */
     static String string(byte[] data, int position) {
+        if (position > data.length) {
+            throw new MediaException.Malformed("an OpenEXR header string runs past the file");
+        }
         var end = position;
         while (end < data.length && data[end] != 0) {
             end++;

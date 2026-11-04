@@ -319,10 +319,8 @@ public final class HeicFiles {
         long width;
         long height;
         var extent = item.property(HeifProperty.SpatialExtent.class);
-        if (extent != null) {
-            width = extent.width();
-            height = extent.height();
-        } else if (item.type().equals("grid") && item.size() <= 12) {
+        // a grid or an overlay decodes to the size of its payload, which takes precedence over its ispe
+        if (item.type().equals("grid") && item.size() <= 12) {
             var grid = HeifGrid.parse(file.readItem(source, item, limits));
             width = grid.outputWidth();
             height = grid.outputHeight();
@@ -330,6 +328,9 @@ public final class HeicFiles {
             var overlay = HeifOverlay.parse(file.readItem(source, item, limits), item.references("dimg").length);
             width = overlay.outputWidth();
             height = overlay.outputHeight();
+        } else if (extent != null) {
+            width = extent.width();
+            height = extent.height();
         } else {
             throw new MediaException.Malformed("heic: item " + item.id() + " has no ispe property");
         }
@@ -337,6 +338,27 @@ public final class HeicFiles {
             throw new MediaException.Malformed("heic: invalid image size " + width + "x" + height);
         }
         return HeifGeometry.resolve(item.properties(), (int) width, (int) height);
+    }
+
+    /**
+     * Resolves the geometry a region or a reduced-size hint is planned on, {@code null} when the item declares none
+     * this decoder can read, in which case the item is decoded whole first.
+     *
+     * @param source the file
+     * @param file the parsed file
+     * @param item the image item
+     * @param limits the bounds
+     * @return the geometry, or {@code null}
+     * @throws MediaException.Io if the file cannot be read
+     */
+    private static HeifGeometry plannedGeometry(MediaSource source, HeifFile file, HeifItem item, MediaLimits limits) {
+        try {
+            return geometry(source, file, item, limits);
+        } catch (MediaException.Io exception) {
+            throw exception;
+        } catch (MediaException exception) {
+            return null;
+        }
     }
 
     /**
@@ -495,13 +517,7 @@ public final class HeicFiles {
         var planned = region == null ? primary : shown(file, primary);
         // a layered item may decode to a layer smaller than its ispe, so its region is planned on the decoded image
         if ((hinted || region != null) && !(region != null && layered(planned))) {
-            try {
-                full = geometry(source, file, planned, limits);
-            } catch (MediaException.Io exception) {
-                throw exception;
-            } catch (MediaException exception) {
-                full = null;
-            }
+            full = plannedGeometry(source, file, planned, limits);
         }
         if (region != null && full != null) {
             ImageRegions.check(region, full.width(), full.height());
@@ -527,7 +543,24 @@ public final class HeicFiles {
                 decoded = ImageRegions.expand(region, full.width(), full.height());
                 crop = ImageRegions.within(region, decoded);
             }
-            result = decodeShown(source, file, primary, limits, options.highBitDepth(), decoded);
+            if (region != null && planned != primary) {
+                try {
+                    result = StillDecoder.decode(source, file, planned, limits, options.highBitDepth(), decoded);
+                } catch (MediaException.Malformed | MediaException.Unsupported exception) {
+                    // the primary item is the alternative every reader can show, and the region is planned again on it
+                    full = layered(primary) ? null : plannedGeometry(source, file, primary, limits);
+                    decoded = null;
+                    crop = null;
+                    if (full != null) {
+                        ImageRegions.check(region, full.width(), full.height());
+                        decoded = ImageRegions.expand(region, full.width(), full.height());
+                        crop = ImageRegions.within(region, decoded);
+                    }
+                    result = StillDecoder.decode(source, file, primary, limits, options.highBitDepth(), decoded);
+                }
+            } else {
+                result = decodeShown(source, file, primary, limits, options.highBitDepth(), decoded);
+            }
             if (region != null && full == null) {
                 ImageRegions.check(region, result.geometry().width(), result.geometry().height());
                 crop = region;

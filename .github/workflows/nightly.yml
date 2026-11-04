@@ -574,7 +574,7 @@ jobs:
           SMALT_CONFORMANCE_DOWNLOAD: 'true'
         run: |
           mvn -B -ntp -fae -pl core,audio,image,video,mpeg,raw -am verify -Dsmalt.fuzz.writeSeeds=true \
-            -Dtest='FuzzSeedWriter,CrwParserTest,MrwParserTest,X3fParserTest' -Dsurefire.failIfNoSpecifiedTests=false
+            -Dtest='FuzzSeedWriter,*Test#fuzzSeeds' -Dsurefire.failIfNoSpecifiedTests=false
           {
             echo "### Fuzz seeds that differ from the committed ones"
             echo '```'

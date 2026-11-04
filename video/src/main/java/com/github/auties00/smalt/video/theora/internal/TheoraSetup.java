@@ -95,7 +95,8 @@ public final class TheoraSetup {
         var bottomY = (int) bits.read(8);
         fpsNumerator = bits.read(32);
         fpsDenominator = bits.read(32);
-        if (frameWidth == 0 || frameHeight == 0 || pictureWidth + pictureX > frameWidth
+        if (frameWidth == 0 || frameHeight == 0 || pictureWidth == 0 || pictureHeight == 0
+                || pictureWidth + pictureX > frameWidth
                 || pictureHeight + bottomY > frameHeight || fpsNumerator == 0 || fpsDenominator == 0) {
             throw new MediaException.Malformed("invalid Theora identification header");
         }

@@ -445,9 +445,9 @@ public final class StillDecoder {
     private Picture coded(HeifItem item, boolean wide, int depth) {
         var alpha = alphaOf(source, file, item, limits);
         var frame = decodeCoded(decoders, item);
-        checkExtent(item, frame);
+        var extent = extent(item, frame);
         var own = frame.alpha();
-        var canvas = frame.canvas(limits, frame.width(), frame.height(), wide, alpha != null || own != null);
+        var canvas = frame.canvas(limits, extent[0], extent[1], wide, alpha != null || own != null);
         var color = Colors.of(frame, item);
         canvas.writeColor(frame, 0, 0, canvas.width(), canvas.height(), true);
         if (own != null) {
@@ -462,24 +462,28 @@ public final class StillDecoder {
     }
 
     /**
-     * Checks that a coded item decodes to the size its {@code ispe} property declares, which a region of it is planned
-     * against, as a grid tile must. A layered item ({@code lhv1}) may decode to a layer smaller than its
-     * {@code ispe}, and an item without the property declares nothing; neither is checked.
+     * Returns the size a coded item shows: the size its {@code ispe} property declares, which a region of it is
+     * planned against, the decoded picture being cropped to it from its top left corner when it is larger, as
+     * cameras that code a thumbnail in whole coding blocks (a 320x212 image coded 320x256) rely on. A layered item
+     * ({@code lhv1}) may decode to a layer smaller than its {@code ispe}, and an item without the property declares
+     * nothing; both show the decoded size.
      *
      * @param item the coded item
      * @param frame the decoded picture
-     * @throws MediaException.Malformed if the sizes differ
+     * @return the width and the height
+     * @throws MediaException.Malformed if the picture is smaller than the declared size
      */
-    private static void checkExtent(HeifItem item, CodedFrame frame) {
+    private static int[] extent(HeifItem item, CodedFrame frame) {
         var extent = item.property(HeifProperty.SpatialExtent.class);
         if (extent == null || item.type().equals("lhv1") || item.property(HeifProperty.LayerSelector.class) != null) {
-            return;
+            return new int[]{frame.width(), frame.height()};
         }
-        if (frame.width() != extent.width() || frame.height() != extent.height()) {
+        if (frame.width() < extent.width() || frame.height() < extent.height()) {
             throw new MediaException.Malformed("heic: item " + item.id() + " decodes to " + frame.width() + "x"
-                    + frame.height() + ", not the " + extent.width() + "x" + extent.height()
+                    + frame.height() + ", smaller than the " + extent.width() + "x" + extent.height()
                     + " its ispe property declares");
         }
+        return new int[]{(int) extent.width(), (int) extent.height()};
     }
 
     /**

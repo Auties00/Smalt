@@ -941,6 +941,9 @@ public final class AsfDemuxer implements Demuxer {
         if ((flags & 0x80) != 0) {
             // error correction data: the low nibble is its length
             position += flags & 0x0F;
+            if (position + 2 > data.length) {
+                throw new MediaException.Malformed("ASF data packet " + index + " header overruns the packet size");
+            }
             flags = data[position++] & 0xFF;
         }
         var properties = data[position++] & 0xFF;
@@ -949,6 +952,9 @@ public final class AsfDemuxer implements Demuxer {
         position += width(flags >> 1);
         var padding = field(data, position, flags >> 3);
         position += width(flags >> 3);
+        if (position + 6 > data.length) {
+            throw new MediaException.Malformed("ASF data packet " + index + " header overruns the packet size");
+        }
         var sendTime = ByteArrays.u32le(data, position);
         position += 6;
         var end = packetLength > 0 && packetLength <= packetSize ? packetLength : packetSize;
@@ -963,6 +969,9 @@ public final class AsfDemuxer implements Demuxer {
         var count = 1;
         var lengthType = 0;
         if (multiple) {
+            if (position >= end) {
+                throw new MediaException.Malformed("ASF data packet " + index + " ends before its payload flags");
+            }
             var payloadFlags = data[position++] & 0xFF;
             count = payloadFlags & 0x3F;
             lengthType = payloadFlags >> 6;
@@ -1074,6 +1083,9 @@ public final class AsfDemuxer implements Demuxer {
      * @return the value, 0 for an absent field
      */
     private static long field(byte[] data, int position, int type) {
+        if (position + width(type) > data.length) {
+            throw new MediaException.Malformed("ASF data packet header overruns the packet size");
+        }
         return switch (type & 3) {
             case 0 -> 0;
             case 1 -> data[position] & 0xFF;

@@ -3,12 +3,14 @@ package com.github.auties00.smalt.audio.pcm;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.AudioDecoder;
+import com.github.auties00.smalt.audio.AudioDecoderOptions;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.DoubleAudioBuffer;
 import com.github.auties00.smalt.audio.IntegerAudioBuffer;
 import com.github.auties00.smalt.internal.check.Checks;
 import com.github.auties00.smalt.internal.codec.WaveformConcealer;
 import com.github.auties00.smalt.internal.io.ByteArrays;
+import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -138,14 +140,32 @@ public final class PcmDecoder implements AudioDecoder {
     private final WaveformConcealer concealer;
 
     /**
-     * Constructs a decoder for a PCM track.
+     * Constructs a decoder for a PCM track under the default limits.
      *
      * @param track the track to decode
      * @throws IllegalArgumentException if the track's codec is not a PCM codec
      * @throws MediaException.Malformed if the track declares no sample rate or no layout
+     * @throws MediaException.LimitExceeded if the channel count or the buffers its sampling rate needs exceed the
+     * default limits
      */
     public PcmDecoder(AudioTrack track) {
+        this(track, AudioDecoderOptions.defaults());
+    }
+
+    /**
+     * Constructs a decoder for a PCM track.
+     *
+     * @param track the track to decode
+     * @param options the decoding options, whose limits bound the channel count and the buffers the sampling rate
+     * needs
+     * @throws IllegalArgumentException if the track's codec is not a PCM codec
+     * @throws MediaException.Malformed if the track declares no sample rate or no layout
+     * @throws MediaException.LimitExceeded if the channel count or the buffers its sampling rate needs exceed the
+     * options' limits
+     */
+    public PcmDecoder(AudioTrack track, AudioDecoderOptions options) {
         Objects.requireNonNull(track, "track");
+        Objects.requireNonNull(options, "options");
         this.codec = track.codec();
         if (!codec.isPcm()) {
             throw new IllegalArgumentException(codec + " is not a PCM codec");
@@ -155,6 +175,8 @@ public final class PcmDecoder implements AudioDecoder {
         }
         this.sampleRate = track.sampleRate();
         this.layout = track.layout().orElseThrow(() -> new MediaException.Malformed("PCM track without a channel layout"));
+        LimitChecks.checkChannels(options.limits(), layout.channels());
+        LimitChecks.checkAllocation(options.limits(), WaveformConcealer.footprint(layout.channels(), sampleRate));
         this.bytesPerSample = bytesPerSample(codec);
         this.frameSize = bytesPerSample * layout.channels();
         this.buffer = new AudioBuffer(layout, sampleRate, 0);
