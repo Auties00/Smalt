@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.audio.voice;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.internal.simd.Simd;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -23,11 +24,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * The public behavior of {@link VoiceProcessor}: options and argument validation, the
- * equivalence of the float and 16-bit entry points, render frames before the first capture,
+ * equivalence of the float and 16-bit entry points, render bursts,
  * echo cancellation, noise suppression and gain control quality on the scenario suite (with and
  * without the Vector API kernels), hostile sample values, and zero steady-state allocation with
  * every stage enabled.
@@ -43,7 +43,51 @@ class VoiceProcessorTest {
                     .gainControl(GainControl.ADAPTIVE_DIGITAL).build(),
             "mobile with gain control", VoiceProcessorOptions.forVoip().toBuilder()
                     .echoCancellation(EchoCancellation.MOBILE)
-                    .comfortNoise(true).gainControl(GainControl.ADAPTIVE_ANALOG).build());
+                    .comfortNoise(true).gainControl(GainControl.ADAPTIVE_ANALOG).build(),
+            "48 kHz stereo voip with level control", VoiceProcessorOptions.forVoip().toBuilder().sampleRate(48000)
+                    .captureChannels(2).renderChannels(2).multichannelCapture(true).multichannelRender(true)
+                    .levelControl(LevelControlOptions.builder().inputVolumeController(true).build()).build(),
+            "32 kHz voip with managed analog gain control", VoiceProcessorOptions.forVoip().toBuilder()
+                    .sampleRate(32000).gainControl(GainControl.MANAGED_ANALOG)
+                    .analogGainController(AnalogGainControllerOptions.builder()
+                            .clippingPrediction(ClippingPrediction.ADAPTIVE_STEP_PEAK).build()).build(),
+            "8 kHz stereo mobile", VoiceProcessorOptions.forVoip().toBuilder().sampleRate(8000).captureChannels(2)
+                    .echoCancellation(EchoCancellation.MOBILE).build(),
+            "16 kHz level control at its largest gains", VoiceProcessorOptions.forVoip().toBuilder()
+                    .echoCancellation(EchoCancellation.OFF).noiseSuppression(NoiseSuppression.OFF)
+                    .levelControl(LevelControlOptions.builder().fixedGainDb(49.9f).headroomDb(0).maxGainDb(100)
+                            .initialGainDb(100).maxGainChangeDbPerSecond(1e6f).maxOutputNoiseLevelDbfs(0).build())
+                    .build());
+
+    static Stream<Arguments> volumeControllers() {
+        var voip = VoiceProcessorOptions.forVoip();
+        return Stream.of(
+                Arguments.of("managed analog", voip.toBuilder().gainControl(GainControl.MANAGED_ANALOG).build()),
+                Arguments.of("input volume controller", voip.toBuilder().sampleRate(48000).captureChannels(2)
+                        .levelControl(LevelControlOptions.builder().inputVolumeController(true).build()).build()));
+    }
+
+    /** Runs interleaved streams through a processor, feeding the recommended volume back, and returns the output. */
+    static short[] run(VoiceProcessor processor, RateScenarios.Streams streams, int initialLevel, int[] finalLevel) {
+        var n = streams.frameSamples();
+        var render = new short[n * streams.renderChannels()];
+        var capture = new short[n * streams.captureChannels()];
+        var out = new short[streams.capture().length];
+        var level = initialLevel;
+        for (var f = 0; f < streams.frames(); f++) {
+            System.arraycopy(streams.render(), f * render.length, render, 0, render.length);
+            System.arraycopy(streams.capture(), f * capture.length, capture, 0, capture.length);
+            processor.processRender(render, 0);
+            processor.setAnalogLevel(level);
+            processor.processCapture(capture, 0, capture, 0);
+            level = processor.recommendedAnalogLevel();
+            System.arraycopy(capture, 0, out, f * capture.length, capture.length);
+        }
+        if (finalLevel != null) {
+            finalLevel[0] = level;
+        }
+        return out;
+    }
 
     static Stream<Arguments> stageCombinations() {
         return STAGES.keySet().stream().sorted()
@@ -204,6 +248,109 @@ class VoiceProcessorTest {
             processor.processCapture(frame, 0, frame, 0);
             assertTrue(processor.recommendedAnalogLevel() > 0, "recommended level after the first frame");
         }
+
+        @ParameterizedTest(name = "{0} Hz")
+        @ValueSource(ints = {8000, 16000, 32000, 48000})
+        @DisplayName("frames hold 10 ms per channel at every rate")
+        void rates(int rate) {
+            var options = VoiceProcessorOptions.forVoip().toBuilder().sampleRate(rate).captureChannels(2)
+                    .renderChannels(3).build();
+            assertEquals(rate, options.sampleRate());
+            assertEquals(rate / 100, new VoiceProcessor(options).frameSamples());
+        }
+
+        @ParameterizedTest(name = "rate {0}, capture {1}, render {2}")
+        @CsvSource({"44100, 1, 1", "0, 1, 1", "96000, 1, 1", "16000, 0, 1", "16000, 9, 1", "16000, 1, 0",
+                "16000, 1, 9"})
+        @DisplayName("rejects unsupported rates and channel counts")
+        void layoutRanges(int rate, int capture, int render) {
+            assertThrows(IllegalArgumentException.class, () -> VoiceProcessorOptions.forVoip().toBuilder()
+                    .sampleRate(rate).captureChannels(capture).renderChannels(render).build());
+        }
+
+        @Test
+        @DisplayName("the level controller is off by default, set by levelControl and cleared by noLevelControl")
+        void levelControl() {
+            var options = VoiceProcessorOptions.forVoip();
+            assertTrue(options.levelControl().isEmpty());
+            var level = LevelControlOptions.builder().fixedGainDb(6).adaptiveDigital(false).build();
+            var with = options.toBuilder().levelControl(level).build();
+            assertEquals(level, with.levelControl().orElseThrow());
+            assertEquals(options, with.toBuilder().noLevelControl().build());
+            assertThrows(NullPointerException.class, () -> options.toBuilder().levelControl(null));
+            assertThrows(IllegalArgumentException.class, () -> options.toBuilder().gainControl(GainControl.ADAPTIVE_DIGITAL)
+                    .levelControl(LevelControlOptions.builder().inputVolumeController(true).build()).build());
+        }
+
+        @Test
+        @DisplayName("level controller and analog gain controller settings reject values out of range")
+        void controllerRanges() {
+            assertThrows(IllegalArgumentException.class, () -> LevelControlOptions.builder().fixedGainDb(-1).build());
+            assertThrows(IllegalArgumentException.class, () -> LevelControlOptions.builder().fixedGainDb(50).build());
+            assertThrows(IllegalArgumentException.class, () -> LevelControlOptions.builder().headroomDb(-1).build());
+            assertThrows(IllegalArgumentException.class,
+                    () -> LevelControlOptions.builder().maxGainChangeDbPerSecond(0).build());
+            for (var invalid : new float[]{Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY}) {
+                assertThrows(IllegalArgumentException.class,
+                        () -> LevelControlOptions.builder().headroomDb(invalid).build());
+                assertThrows(IllegalArgumentException.class,
+                        () -> LevelControlOptions.builder().maxGainDb(invalid).build());
+                assertThrows(IllegalArgumentException.class,
+                        () -> LevelControlOptions.builder().initialGainDb(invalid).build());
+                assertThrows(IllegalArgumentException.class,
+                        () -> LevelControlOptions.builder().maxGainChangeDbPerSecond(invalid).build());
+                assertThrows(IllegalArgumentException.class,
+                        () -> LevelControlOptions.builder().maxOutputNoiseLevelDbfs(invalid).build());
+            }
+            assertThrows(IllegalArgumentException.class, () -> LevelControlOptions.builder().maxGainDb(100.5f).build());
+            assertThrows(IllegalArgumentException.class,
+                    () -> LevelControlOptions.builder().initialGainDb(101).build());
+            assertEquals(100, LevelControlOptions.builder().maxGainDb(100).initialGainDb(100).build().initialGainDb());
+            assertThrows(IllegalArgumentException.class,
+                    () -> AnalogGainControllerOptions.builder().predictionWindowFrames(1001).build());
+            assertThrows(IllegalArgumentException.class,
+                    () -> AnalogGainControllerOptions.builder().referenceWindowFrames(Integer.MAX_VALUE).build());
+            assertThrows(IllegalArgumentException.class,
+                    () -> AnalogGainControllerOptions.builder().referenceWindowDelayFrames(1001).build());
+            var longest = AnalogGainControllerOptions.builder().predictionWindowFrames(1000).referenceWindowFrames(1000)
+                    .referenceWindowDelayFrames(1000).clippingPrediction(ClippingPrediction.ADAPTIVE_STEP_PEAK).build();
+            var processor = new VoiceProcessor(VoiceProcessorOptions.forVoip().toBuilder()
+                    .gainControl(GainControl.MANAGED_ANALOG).analogGainController(longest).build());
+            processor.setAnalogLevel(128);
+            var frame = new short[processor.frameSamples()];
+            for (var f = 0; f < 2100; f++) {
+                Arrays.fill(frame, (short) (f % 2 == 0 ? 30000 : -30000));
+                processor.processCapture(frame, 0, frame, 0);
+            }
+            assertThrows(IllegalArgumentException.class,
+                    () -> AnalogGainControllerOptions.builder().clippedLevelMin(255).build());
+            assertThrows(IllegalArgumentException.class,
+                    () -> AnalogGainControllerOptions.builder().clippedLevelStep(0).build());
+            assertThrows(IllegalArgumentException.class,
+                    () -> AnalogGainControllerOptions.builder().clippedRatioThreshold(1).build());
+            assertThrows(IllegalArgumentException.class,
+                    () -> AnalogGainControllerOptions.builder().clippedWaitFrames(0).build());
+            assertThrows(IllegalArgumentException.class, () -> AnalogGainControllerOptions.builder()
+                    .predictionWindowFrames(6).referenceWindowFrames(1).referenceWindowDelayFrames(5).build());
+            assertThrows(NullPointerException.class,
+                    () -> AnalogGainControllerOptions.builder().clippingPrediction(null));
+            var analog = AnalogGainControllerOptions.builder().clippedLevelMin(90).digitalAdaptive(false)
+                    .clippingPrediction(ClippingPrediction.FIXED_STEP_PEAK).build();
+            assertEquals(analog, analog.toBuilder().build());
+            assertEquals(analog, VoiceProcessorOptions.forVoip().toBuilder().analogGainController(analog).build()
+                    .analogGainController());
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("com.github.auties00.smalt.audio.voice.VoiceProcessorTest#volumeControllers")
+        @DisplayName("every volume controller rejects capture frames until a microphone level is reported")
+        void volumeLevelRequired(String name, VoiceProcessorOptions options) {
+            var processor = new VoiceProcessor(options);
+            var frame = new short[processor.frameSamples() * options.captureChannels()];
+            assertThrows(IllegalStateException.class, () -> processor.processCapture(frame, 0, frame, 0));
+            processor.setAnalogLevel(100);
+            processor.processCapture(frame, 0, frame, 0);
+        }
     }
 
     @Nested
@@ -272,20 +419,6 @@ class VoiceProcessorTest {
         }
 
         @Test
-        @DisplayName("discard render frames that arrive before the first capture frame")
-        void earlyRenderDiscarded() {
-            var scenario = VoiceScenarios.farEndOnly(6, 100);
-            var plain = new VoiceProcessor(VoiceProcessorOptions.forVoip(), false, true);
-            var early = new VoiceProcessor(VoiceProcessorOptions.forVoip(), false, true);
-            var noise = new short[160];
-            Arrays.fill(noise, (short) 1234);
-            for (var i = 0; i < 7; i++) {
-                early.processRender(noise, 0);
-            }
-            assertArrayEquals(process(plain, scenario), process(early, scenario));
-        }
-
-        @Test
         @DisplayName("the float entry point into another array equals the in-place one and leaves its input untouched")
         void floatIntoOutput() {
             var scenario = VoiceScenarios.doubleTalk(4, 60);
@@ -335,7 +468,7 @@ class VoiceProcessorTest {
         @ValueSource(booleans = {false, true})
         @DisplayName("cancels at least 40 dB of echo at every delay, across a path change and under drift")
         void echoReturnLossEnhancement(boolean vectorize) {
-            assumeTrue(!vectorize || Simd.ENABLED, "Vector API not enabled");
+            Skip.unless(!vectorize || Simd.ENABLED, "simd:disabled", "Vector API not enabled");
             for (var scenario : VoiceScenarios.suite(SECONDS)) {
                 if (scenario.name().equals("noise only") || scenario.name().equals("silence")) {
                     continue;
@@ -348,7 +481,7 @@ class VoiceProcessorTest {
         @Test
         @DisplayName("the vector kernels cancel the echo within 1 dB of the scalar ones")
         void vectorMatchesScalar() {
-            assumeTrue(Simd.ENABLED, "Vector API not enabled");
+            Skip.unlessVector(Simd.ENABLED);
             for (var delay : new int[]{20, 250, 500}) {
                 var scenario = VoiceScenarios.farEndOnly(SECONDS, delay);
                 var scalar = medianErle(scenario, process(new VoiceProcessor(VoiceProcessorOptions.forVoip(), false, true), scenario));
@@ -406,6 +539,66 @@ class VoiceProcessorTest {
                 level = processor.recommendedAnalogLevel();
             }
             assertTrue(level > 100, "recommended level after the quiet talker " + level);
+        }
+
+        @ParameterizedTest(name = "{0} Hz, {1} capture x {2} render, multichannel {3}")
+        @CsvSource({"8000, 1, 1, false", "32000, 1, 1, false", "48000, 1, 1, false", "48000, 2, 2, true",
+                "32000, 1, 2, false", "16000, 2, 2, true"})
+        @DisplayName("the standard echo canceller cancels the echo at every rate and channel layout")
+        void echoReturnLossEnhancementLayouts(int rate, int captureChannels, int renderChannels, boolean multichannel) {
+            var streams = RateScenarios.farEnd(SECONDS, rate, renderChannels, captureChannels, true);
+            var options = VoiceProcessorOptions.forVoip().toBuilder().sampleRate(rate).captureChannels(captureChannels)
+                    .renderChannels(renderChannels).multichannelCapture(multichannel).multichannelRender(multichannel)
+                    .build();
+            var out = run(new VoiceProcessor(options, false, true), streams, 128, null);
+            var window = rate / 2 * captureChannels;
+            var values = new ArrayList<Double>();
+            for (var a = 5 * rate * captureChannels; a + window <= out.length; a += window) {
+                var in = levelDb(streams.capture(), a, a + window);
+                if (in < -50) {
+                    continue;
+                }
+                values.add(in - levelDb(out, a, a + window));
+            }
+            var sorted = values.stream().mapToDouble(Double::doubleValue).sorted().toArray();
+            var erle = sorted[sorted.length / 2];
+            assertTrue(erle >= 25, () -> "median ERLE " + erle + " dB over " + Arrays.toString(sorted));
+        }
+
+        @Test
+        @DisplayName("the level controller raises a quiet talker by at least 6 dB at 48 kHz")
+        void levelControl() {
+            var streams = RateScenarios.levelChanges(SECONDS, 48000, 1, 1);
+            var options = VoiceProcessorOptions.forVoip().toBuilder().sampleRate(48000)
+                    .echoCancellation(EchoCancellation.OFF).noiseSuppression(NoiseSuppression.OFF)
+                    .levelControl(LevelControlOptions.defaults()).build();
+            var out = run(new VoiceProcessor(options), streams, 128, null);
+            var third = out.length / 3;
+            var gain = levelDb(out, third / 2, third) - levelDb(streams.capture(), third / 2, third);
+            assertTrue(gain >= 6, "gain on the quiet talker " + gain + " dB");
+        }
+
+        @Test
+        @DisplayName("the managed analog gain controller recommends a higher microphone level for a quiet talker")
+        void managedAnalogGainControl() {
+            var streams = RateScenarios.levelChanges(15, 16000, 1, 1);
+            var options = VoiceProcessorOptions.forVoip().toBuilder().gainControl(GainControl.MANAGED_ANALOG).build();
+            var quiet = new RateScenarios.Streams(streams.name(), streams.rate(), 1, 1,
+                    Arrays.copyOf(streams.render(), streams.render().length / 3),
+                    Arrays.copyOf(streams.capture(), streams.capture().length / 3));
+            var level = new int[1];
+            run(new VoiceProcessor(options), quiet, 100, level);
+            assertTrue(level[0] > 100, "recommended level after the quiet talker " + level[0]);
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("com.github.auties00.smalt.audio.voice.VoiceProcessorTest#volumeControllers")
+        @DisplayName("every volume controller lowers the microphone level when the capture clips")
+        void clippingLowersLevel(String name, VoiceProcessorOptions options) {
+            var streams = RateScenarios.clipping(SECONDS, options.sampleRate(), 1, options.captureChannels());
+            var level = new int[1];
+            run(new VoiceProcessor(options), streams, 200, level);
+            assertTrue(level[0] < 200, "recommended level after clipping " + level[0]);
         }
 
         @Test
@@ -473,27 +666,33 @@ class VoiceProcessorTest {
         @MethodSource("com.github.auties00.smalt.audio.voice.VoiceProcessorTest#stageCombinations")
         @DisplayName("NaN, infinite and full-scale samples keep the output finite and in range")
         void hostileSamples(String name, boolean vectorize) {
-            assumeTrue(!vectorize || Simd.ENABLED, "Vector API not enabled");
-            var processor = new VoiceProcessor(STAGES.get(name), vectorize, true);
+            Skip.unless(!vectorize || Simd.ENABLED, "simd:disabled", "Vector API not enabled");
+            var options = STAGES.get(name);
+            var processor = new VoiceProcessor(options, vectorize, true);
             processor.setAnalogLevel(128);
             var random = new SplittableRandom(5);
-            var render = new float[160];
-            var capture = new float[160];
+            var render = new float[processor.frameSamples() * options.renderChannels()];
+            var capture = new float[processor.frameSamples() * options.captureChannels()];
             for (var f = 0; f < 3000; f++) {
-                for (var i = 0; i < 160; i++) {
+                for (var i = 0; i < Math.max(render.length, capture.length); i++) {
                     var kind = (f / 100) % 6;
-                    render[i] = switch (kind) {
+                    var value = switch (kind) {
                         case 0 -> Float.NaN;
                         case 1 -> random.nextBoolean() ? Float.POSITIVE_INFINITY : Float.NEGATIVE_INFINITY;
                         case 2 -> (i / 8) % 2 == 0 ? 1.f : -1.f;
                         case 3 -> Float.MIN_VALUE * random.nextInt(100);
                         default -> (float) (random.nextDouble() * 2 - 1);
                     };
-                    capture[i] = kind == 0 ? Float.NaN : (float) (random.nextDouble() * 4 - 2);
+                    if (i < render.length) {
+                        render[i] = value;
+                    }
+                    if (i < capture.length) {
+                        capture[i] = kind == 0 ? Float.NaN : kind < 4 ? value : (float) (random.nextDouble() * 4 - 2);
+                    }
                 }
                 processor.processRender(render, 0);
                 processor.processCapture(capture, 0, capture, 0);
-                for (var i = 0; i < 160; i++) {
+                for (var i = 0; i < capture.length; i++) {
                     var v = capture[i];
                     assertTrue(Float.isFinite(v) && v >= -1.f && v <= 1.f, "frame " + f + " sample " + i + ": " + v);
                 }
@@ -533,23 +732,26 @@ class VoiceProcessorTest {
         @MethodSource("com.github.auties00.smalt.audio.voice.VoiceProcessorTest#stageCombinations")
         @DisplayName("allocates nothing per frame in steady state")
         void steadyState(String name, boolean vectorize) throws Exception {
-            assumeTrue(!vectorize || Simd.ENABLED, "Vector API not enabled");
+            Skip.unless(!vectorize || Simd.ENABLED, "simd:disabled", "Vector API not enabled");
             Object threads;
             Method allocated;
             try {
                 threads = Class.forName("java.lang.management.ManagementFactory").getMethod("getThreadMXBean").invoke(null);
                 allocated = Class.forName("com.sun.management.ThreadMXBean").getMethod("getCurrentThreadAllocatedBytes");
             } catch (ReflectiveOperationException | RuntimeException exception) {
-                assumeTrue(false, "thread allocation counter unavailable: " + exception);
-                return;
+                throw Skip.now("env:allocation-counter", "thread allocation counter unavailable: " + exception);
             }
-            var scenario = VoiceScenarios.doubleTalk(SECONDS, 100);
-            var processor = new VoiceProcessor(STAGES.get(name), vectorize, true);
+            var options = STAGES.get(name);
+            var streams = RateScenarios.doubleTalk(SECONDS, options.sampleRate(), options.renderChannels(),
+                    options.captureChannels(), true);
+            var processor = new VoiceProcessor(options, vectorize, true);
             processor.setAnalogLevel(128);
             processor.setStreamDelayMs(0);
-            var render = new short[160];
-            var capture = new short[160];
-            // The reflective counter boxes its result: measure that overhead with nothing in between
+            var render = new short[processor.frameSamples() * options.renderChannels()];
+            var capture = new short[processor.frameSamples() * options.captureChannels()];
+            // The reflective counter boxes its result: measure that overhead with nothing in between. Once the
+            // counter's call is compiled the box may be elided, so a pass can come out below the overhead; a
+            // per-frame allocation would add at least 16 bytes per frame
             var overhead = Long.MAX_VALUE;
             for (var i = 0; i < 10; i++) {
                 var before = (long) allocated.invoke(threads);
@@ -558,18 +760,20 @@ class VoiceProcessorTest {
             long bytes = 0;
             for (var pass = 0; pass < 6; pass++) {
                 var before = (long) allocated.invoke(threads);
-                for (var f = 0; f < scenario.frames(); f++) {
-                    System.arraycopy(scenario.render(), f * 160, render, 0, 160);
-                    System.arraycopy(scenario.capture(), f * 160, capture, 0, 160);
+                for (var f = 0; f < streams.frames(); f++) {
+                    System.arraycopy(streams.render(), f * render.length, render, 0, render.length);
+                    System.arraycopy(streams.capture(), f * capture.length, capture, 0, capture.length);
                     processor.processRender(render, 0);
                     processor.processCapture(capture, 0, capture, 0);
                 }
                 bytes = (long) allocated.invoke(threads) - before - overhead;
-                if (pass >= 3 && bytes == 0) {
+                if (pass >= 3 && bytes <= 0) {
                     break;
                 }
             }
-            assertEquals(0, bytes, "bytes allocated over " + scenario.frames() + " frames");
+            var allocatedBytes = bytes;
+            assertTrue(allocatedBytes <= 0, () -> allocatedBytes + " bytes allocated over " + streams.frames()
+                    + " frames");
         }
     }
 }

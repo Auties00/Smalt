@@ -80,9 +80,14 @@ final class VopJob implements Runnable {
     private final long trd;
 
     /**
-     * The frame period of the stream.
+     * The distance from the past to the B-VOP in frame periods.
      */
-    private final long framePeriod;
+    private final int framesB;
+
+    /**
+     * The distance from the past to the future picture in frame periods.
+     */
+    private final int framesD;
 
     /**
      * The cap on the number of bands the reconstruction is split into.
@@ -128,12 +133,13 @@ final class VopJob implements Runnable {
      * @param length the length of the VOP in bytes
      * @param trb the temporal distance from the past to the B-VOP
      * @param trd the temporal distance from the past to the future picture
-     * @param framePeriod the frame period
+     * @param framesB the distance from the past to the B-VOP in frame periods
+     * @param framesD the distance from the past to the future picture in frame periods
      * @param threads the cap on the reconstruction bands
      * @param pools the shared resources
      */
     VopJob(Frame frame, Frame forward, Frame backward, Vop vop, VideoObjectLayer layer, byte[] data, int offset,
-           int length, long trb, long trd, long framePeriod, int threads, Pools pools) {
+           int length, long trb, long trd, int framesB, int framesD, int threads, Pools pools) {
         this.frame = frame;
         this.forward = forward;
         this.backward = backward;
@@ -141,7 +147,8 @@ final class VopJob implements Runnable {
         this.layer = layer;
         this.trb = trb;
         this.trd = trd;
-        this.framePeriod = framePeriod;
+        this.framesB = framesB;
+        this.framesD = framesD;
         this.threads = threads;
         this.pools = pools;
         var bits = pools.readers.poll();
@@ -205,7 +212,7 @@ final class VopJob implements Runnable {
             if (backward != null) {
                 backward.awaitParsed();
             }
-            var corrupt = parser.parse(reader, vop, frame, backward, trb, trd, framePeriod);
+            var corrupt = parser.parse(reader, vop, frame, backward, trb, trd, framesB, framesD);
             frame.damaged = corrupt;
             frame.publishParsed();
             if (forward != null) {

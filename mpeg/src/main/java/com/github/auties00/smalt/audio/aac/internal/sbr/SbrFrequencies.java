@@ -11,8 +11,9 @@ import java.util.Arrays;
  * <p>All band borders are absolute QMF subband indices. {@link #update(SbrHeader, int)} returns
  * {@code false} for a header that violates the constraints of ISO/IEC 14496-3 (a stop frequency
  * below the start frequency, a range wider than the rate allows, a crossover above subband 32,
- * more than five noise bands or patches, empty bands); the decoder then leaves the high band
- * empty until a valid header arrives.
+ * more than five noise bands, empty bands); the decoder then leaves the high band empty until a
+ * valid header arrives. A header whose tables need more than the five patches the standard allows
+ * an encoder is decoded with every patch the derivation builds.
  *
  * @implNote This implementation follows the frequency band table and patch derivations of
  * ISO/IEC 14496-3, with the limiter band table built as the PacketVideo AAC decoder builds it. The
@@ -39,9 +40,9 @@ final class SbrFrequencies {
     private static final double[] LIMITER_BANDS_PER_OCTAVE = {1.2, 2.0, 3.0};
 
     /**
-     * The largest number of patches the standard allows.
+     * The largest number of patches the derivation can build, one per high subband.
      */
-    static final int MAX_PATCHES = 5;
+    private static final int PATCH_CAPACITY = 64;
 
     /**
      * The largest number of noise floor bands the standard allows.
@@ -111,17 +112,17 @@ final class SbrFrequencies {
     /**
      * The number of subbands of each patch.
      */
-    final int[] patchSubbands = new int[MAX_PATCHES + 1];
+    final int[] patchSubbands = new int[PATCH_CAPACITY];
 
     /**
      * The first source subband of each patch.
      */
-    final int[] patchStart = new int[MAX_PATCHES + 1];
+    final int[] patchStart = new int[PATCH_CAPACITY];
 
     /**
      * The limiter band table, {@link #limiterBands} + 1 borders.
      */
-    final int[] limiter = new int[64 + MAX_PATCHES + 1];
+    final int[] limiter = new int[64 + PATCH_CAPACITY + 1];
 
     /**
      * The number of limiter bands.
@@ -189,7 +190,7 @@ final class SbrFrequencies {
             return false;
         }
         noiseBands = header.noiseBands == 0 ? 1
-                : Math.max(1, (int) Math.round(header.noiseBands * Math.log((double) stop / kx) / Math.log(2)));
+                : Math.max(1, (int) Math.round(header.noiseBands * StrictMath.log((double) stop / kx) / StrictMath.log(2)));
         if (noiseBands > MAX_NOISE_BANDS) {
             return false;
         }
@@ -255,8 +256,8 @@ final class SbrFrequencies {
         var widths = new int[13];
         var ratio = 64.0 / minimum;
         for (var i = 0; i < 13; i++) {
-            widths[i] = (int) Math.round(minimum * Math.pow(ratio, (i + 1) / 13.0))
-                    - (int) Math.round(minimum * Math.pow(ratio, i / 13.0));
+            widths[i] = (int) Math.round(minimum * StrictMath.pow(ratio, (i + 1) / 13.0))
+                    - (int) Math.round(minimum * StrictMath.pow(ratio, i / 13.0));
         }
         Arrays.sort(widths);
         var stop = minimum;
@@ -328,7 +329,7 @@ final class SbrFrequencies {
         var warp = alterScale != 0 ? 1.3 : 1.0;
         var twoRegions = (double) stop / start > 2.2449;
         var middle = twoRegions ? 2 * start : stop;
-        var bands0 = 2 * (int) Math.round(bandsPerOctave * Math.log((double) middle / start) / (2 * Math.log(2)));
+        var bands0 = 2 * (int) Math.round(bandsPerOctave * StrictMath.log((double) middle / start) / (2 * StrictMath.log(2)));
         if (bands0 <= 0 || bands0 > 63) {
             return false;
         }
@@ -344,7 +345,7 @@ final class SbrFrequencies {
         if (!twoRegions) {
             return true;
         }
-        var bands1 = 2 * (int) Math.round(bandsPerOctave * Math.log((double) stop / middle) / (2 * Math.log(2) * warp));
+        var bands1 = 2 * (int) Math.round(bandsPerOctave * StrictMath.log((double) stop / middle) / (2 * StrictMath.log(2) * warp));
         if (bands1 <= 0 || bands0 + bands1 > 64) {
             return false;
         }
@@ -377,7 +378,7 @@ final class SbrFrequencies {
         var ratio = (double) to / from;
         var previous = from;
         for (var k = 0; k < bands; k++) {
-            var current = (int) Math.round(from * Math.pow(ratio, (k + 1) / (double) bands));
+            var current = (int) Math.round(from * StrictMath.pow(ratio, (k + 1) / (double) bands));
             widths[k] = current - previous;
             previous = current;
         }
@@ -422,12 +423,12 @@ final class SbrFrequencies {
             } while (sb > k0 - 1 + msb - odd);
             var width = Math.max(sb - usb, 0);
             if (width > 0) {
-                if (count == MAX_PATCHES + 1) {
+                if (count == PATCH_CAPACITY) {
                     return false;
                 }
                 patchSubbands[count] = width;
                 patchStart[count] = k0 - odd - width;
-                if (patchStart[count] < 1) {
+                if (patchStart[count] < 0) {
                     return false;
                 }
                 usb = sb;
@@ -443,7 +444,7 @@ final class SbrFrequencies {
         if (count > 1 && patchSubbands[count - 1] < 3) {
             count--;
         }
-        if (count == 0 || count > MAX_PATCHES) {
+        if (count == 0) {
             return false;
         }
         patches = count;
@@ -480,7 +481,7 @@ final class SbrFrequencies {
         var perOctave = LIMITER_BANDS_PER_OCTAVE[mode - 1];
         var k = 1;
         while (k < count) {
-            var octaves = Math.log((double) limiter[k] / limiter[k - 1]) / Math.log(2);
+            var octaves = StrictMath.log((double) limiter[k] / limiter[k - 1]) / StrictMath.log(2);
             if (octaves * perOctave >= 0.49) {
                 k++;
                 continue;

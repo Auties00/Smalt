@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.audio.aac.internal;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.internal.bits.MsbBitWriter;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -115,5 +116,42 @@ public record ProgramConfig(int instanceTag, int objectType, int samplingIndex, 
             throw new MediaException.Malformed("AAC program configuration declares no channel");
         }
         return new ProgramConfig(instanceTag, objectType, samplingIndex, front, side, back, lfe, coupling, channels);
+    }
+
+    /**
+     * Writes this configuration as a {@code program_config_element} without its element identifier,
+     * with no mixdown, associated data or coupling elements and an empty comment.
+     *
+     * <p>The element's {@code byte_alignment()} aligns to the writer's byte boundaries, so the writer
+     * must start where the {@code AudioSpecificConfig} or raw data block that carries the element starts.
+     *
+     * @param writer the bit sink
+     * @throws IllegalArgumentException if a list is longer than its count field holds
+     */
+    public void write(MsbBitWriter writer) {
+        if (front.size() > 15 || side.size() > 15 || back.size() > 15 || lfe.size() > 3) {
+            throw new IllegalArgumentException("too many elements for a program config element");
+        }
+        writer.write(instanceTag, 4);
+        writer.write(objectType, 2);
+        writer.write(samplingIndex, 4);
+        writer.write(front.size(), 4);
+        writer.write(side.size(), 4);
+        writer.write(back.size(), 4);
+        writer.write(lfe.size(), 2);
+        writer.write(0, 3);
+        writer.write(0, 4);
+        writer.write(0, 3);
+        for (var list : List.of(front, side, back)) {
+            for (var element : list) {
+                writer.write(element.pair() ? 1 : 0, 1);
+                writer.write(element.tag(), 4);
+            }
+        }
+        for (var tag : lfe) {
+            writer.write(tag, 4);
+        }
+        writer.alignWithZeros();
+        writer.write(0, 8);
     }
 }
