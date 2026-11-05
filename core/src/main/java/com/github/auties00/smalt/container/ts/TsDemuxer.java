@@ -74,6 +74,10 @@ import java.util.function.Function;
  *       with a DVB AC-3 or enhanced AC-3 descriptor or the {@code "AC-3"} or {@code "EAC3"}
  *       registration): one packet per access unit (a sync frame with its dependent substreams),
  *       as MP4 and Matroska store them;</li>
+ *   <li>the HLS {@code SAMPLE-AES} streams (Apple's MPEG-2 Stream Encryption Format for HTTP Live Streaming): H.264
+ *       ({@code 0xDB}), AAC in ADTS ({@code 0xCF}), AC-3 ({@code 0xC1}) and E-AC-3 ({@code 0xC2}), decrypted with
+ *       the {@link TsDemuxerOptions#sampleAesKeys() keys of the options} into the tracks and packets of the clear
+ *       streams, with the priming and HE-AAC configuration of their audio setup information;</li>
  *   <li>DTS and DTS-HD (the Blu-ray {@code 0x82}, {@code 0x85}, {@code 0x86} and {@code 0xA2} in a program with
  *       the {@code "HDMV"} registration, {@code 0x06} with the {@code "DTS1"}, {@code "DTS2"} or {@code "DTS3"}
  *       registration or a DVB DTS or DTS-HD descriptor, and {@code 0x82} or {@code 0x06} without a descriptor
@@ -245,6 +249,11 @@ public final class TsDemuxer implements Demuxer {
     private final MediaLimits limits;
 
     /**
+     * The keys of {@code SAMPLE-AES} streams.
+     */
+    private final SampleAesKeys sampleAesKeys;
+
+    /**
      * The packet layout.
      */
     private final TsScanner.Geometry geometry;
@@ -362,6 +371,7 @@ public final class TsDemuxer implements Demuxer {
         this.source = Objects.requireNonNull(source, "source");
         Objects.requireNonNull(options, "options");
         this.limits = options.limits();
+        this.sampleAesKeys = options.sampleAesKeys();
         try {
             this.geometry = locate(source);
             if (geometry == null) {
@@ -659,7 +669,7 @@ public final class TsDemuxer implements Demuxer {
                 var entries = known != null ? known.entries() : assign(current, pmt, new HashSet<>(usedIds()));
                 if (known == null && versions == null && !mapsDiscovered) {
                     for (var entry : entries) {
-                        if (!parsers.containsKey(entry.trackId()) && parserFor(entry, limits) != null) {
+                        if (!parsers.containsKey(entry.trackId()) && parserFor(entry, limits, sampleAesKeys) != null) {
                             throw new MediaException.Unsupported("mpeg-ts program map change", "the program map adds"
                                     + " a stream on PID " + entry.pid() + ", which a source read once without a known"
                                     + " size cannot describe in advance");
@@ -1028,7 +1038,7 @@ public final class TsDemuxer implements Demuxer {
          */
         private boolean hasParsers(Psi.PmtSection pmt) {
             for (var stream : pmt.streams()) {
-                if (parserFor(stream, limits) != null) {
+                if (parserFor(stream, limits, sampleAesKeys) != null) {
                     return true;
                 }
             }
@@ -1059,7 +1069,7 @@ public final class TsDemuxer implements Demuxer {
         private ElementaryParser parserOf(Psi.StreamEntry entry) {
             var parser = parsers.get(entry.trackId());
             if (parser == null) {
-                parser = parserFor(entry, limits);
+                parser = parserFor(entry, limits, sampleAesKeys);
                 if (parser != null) {
                     parsers.put(entry.trackId(), parser);
                 }
@@ -1170,7 +1180,7 @@ public final class TsDemuxer implements Demuxer {
                 if (parsers.containsKey(entry.trackId())) {
                     continue;
                 }
-                var parser = parserFor(entry, limits);
+                var parser = parserFor(entry, limits, sampleAesKeys);
                 if (parser != null) {
                     parsers.put(entry.trackId(), parser);
                     added.add(parser);
@@ -1318,8 +1328,24 @@ public final class TsDemuxer implements Demuxer {
      * @return the parser, or {@code null} for a stream this demuxer does not expose
      */
     static ElementaryParser parserFor(Psi.StreamEntry stream, MediaLimits limits) {
+        return parserFor(stream, limits, SampleAesKeys.none());
+    }
+
+    /**
+     * Creates the parser of an elementary stream, with the keys of {@code SAMPLE-AES} streams.
+     *
+     * @param stream the program map entry
+     * @param limits the resource bounds
+     * @param keys the keys of {@code SAMPLE-AES} streams
+     * @return the parser, or {@code null} for a stream this demuxer does not expose
+     */
+    static ElementaryParser parserFor(Psi.StreamEntry stream, MediaLimits limits, SampleAesKeys keys) {
         var hdmv = stream.programRegistered(Psi.HDMV);
         return switch (stream.streamType()) {
+            case 0xDB -> new NalParser(stream, limits, Codec.H264, decryptor(stream, keys, "H.264"));
+            case 0xCF -> new AdtsParser(stream, limits, decryptor(stream, keys, "AAC"));
+            case 0xC1 -> new Ac3Parser(stream, limits, decryptor(stream, keys, "AC-3"));
+            case 0xC2 -> new Ac3Parser(stream, limits, decryptor(stream, keys, "E-AC-3"));
             case 0x01 -> new MpegVideoParser(stream, limits, Codec.MPEG1_VIDEO);
             case 0x02 -> new MpegVideoParser(stream, limits, Codec.MPEG2_VIDEO);
             case 0x03, 0x04 -> new MpegAudioParser(stream, limits);
@@ -1346,6 +1372,18 @@ public final class TsDemuxer implements Demuxer {
             case 0x06 -> privateParser(stream, limits);
             default -> stream.streamType() >= 0x80 ? new PesParser(stream, limits, Codec.DATA, "private") : null;
         };
+    }
+
+    /**
+     * Creates the decryptor of a {@code SAMPLE-AES} stream.
+     *
+     * @param stream the program map entry
+     * @param keys the keys of {@code SAMPLE-AES} streams, none for a clear stream
+     * @param codec the name of the stream's codec, for messages
+     * @return the decryptor
+     */
+    private static SampleAesDecryptor decryptor(Psi.StreamEntry stream, SampleAesKeys keys, String codec) {
+        return new SampleAesDecryptor(keys, "SAMPLE-AES " + codec + " stream on PID " + stream.pid());
     }
 
     /**

@@ -4,7 +4,10 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.container.DemuxerOptions;
+import com.github.auties00.smalt.container.ts.SampleAesKey;
+import com.github.auties00.smalt.container.ts.SampleAesKeys;
 import com.github.auties00.smalt.container.ts.TsDemuxer;
+import com.github.auties00.smalt.container.ts.TsDemuxerOptions;
 import com.github.auties00.smalt.io.DataReferenceResolver;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Track;
@@ -33,6 +36,12 @@ public final class TsKeyFrames implements Demuxer {
     private final List<SegmentSource.Part> ranges;
     private final DataReferenceResolver resolver;
     private final DemuxerOptions options;
+
+    /**
+     * The {@code SAMPLE-AES} key of each range, {@code null} for a clear one.
+     */
+    private final SampleAesKey[] keys;
+
     private final List<Track> tracks = new ArrayList<>();
 
     /**
@@ -62,19 +71,25 @@ public final class TsKeyFrames implements Demuxer {
      * @param ranges the byte range of each key frame, in order
      * @param resolver opens the files
      * @param options the limits, for the segment demuxers
+     * @param keys the {@code SAMPLE-AES} key of each range, {@code null} for a clear one, or {@code null} when every
+     * range is clear
      * @throws MediaException.Malformed if the first range is not a transport stream
      * @throws MediaException.Unsupported if a file cannot be resolved
      * @throws MediaException.Io if reading fails
      */
     public TsKeyFrames(SegmentSource.Part tables, List<SegmentSource.Part> ranges, DataReferenceResolver resolver,
-                       DemuxerOptions options) {
+                       DemuxerOptions options, List<SampleAesKey> keys) {
         this.tables = tables;
         this.ranges = List.copyOf(ranges);
         this.resolver = resolver;
         this.options = options;
+        this.keys = keys == null ? new SampleAesKey[this.ranges.size()] : keys.toArray(SampleAesKey[]::new);
+        if (this.keys.length != this.ranges.size()) {
+            throw new IllegalArgumentException(this.keys.length + " keys for " + this.ranges.size() + " ranges");
+        }
         var origin = 0L;
         if (!this.ranges.isEmpty()) {
-            try (var source = source(0); var demuxer = new TsDemuxer(source, options)) {
+            try (var source = source(0); var demuxer = new TsDemuxer(source, demuxerOptions(0))) {
                 origin = demuxer.originTicks();
                 for (var track : demuxer.tracks()) {
                     if (track.kind() == TrackKind.VIDEO) {
@@ -95,6 +110,18 @@ public final class TsKeyFrames implements Demuxer {
     private SegmentSource source(int index) {
         var parts = tables == null ? List.of(ranges.get(index)) : List.of(tables, ranges.get(index));
         return new SegmentSource(parts, resolver, options.limits());
+    }
+
+    /**
+     * Returns the options of the demuxer of one range.
+     *
+     * @param index the index of the range
+     * @return the limits and the range's {@code SAMPLE-AES} key
+     */
+    private TsDemuxerOptions demuxerOptions(int index) {
+        var key = keys[index];
+        return TsDemuxerOptions.builder().limits(options.limits())
+                .sampleAesKeys(key == null ? SampleAesKeys.none() : SampleAesKeys.of(key)).build();
     }
 
     /**
@@ -138,7 +165,7 @@ public final class TsKeyFrames implements Demuxer {
             pending.clear();
             cursor = 0;
             var index = next++;
-            try (var source = source(index); var demuxer = new TsDemuxer(source, options)) {
+            try (var source = source(index); var demuxer = new TsDemuxer(source, demuxerOptions(index))) {
                 var shift = Math.floorMod(demuxer.originTicks() - origin, WRAP);
                 if (shift >= WRAP / 2) {
                     shift -= WRAP;

@@ -4,10 +4,12 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.DecryptionKeys;
 import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.container.EncryptedFixtures;
+import com.github.auties00.smalt.container.hls.HlsDemuxer;
 import com.github.auties00.smalt.container.mp4.Mp4Demuxer;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Packets;
 import com.github.auties00.smalt.testkit.Scratch;
 import com.github.auties00.smalt.testkit.validate.Validators;
 import org.junit.jupiter.api.DisplayName;
@@ -177,6 +179,18 @@ class PackagerEncryptionTest {
             assertTrue(want.size() > 100, "a five-second clip has every frame");
             for (var index = 0; index < want.size() - 2; index++) {
                 assertEquals(want.get(index), got.get(index), "stream " + stream + " packet " + index);
+            }
+        }
+        // Smalt's demuxer decrypts every packet, the last ones included
+        try (var plainDemuxer = HlsDemuxer.open(clear.resolve("r0.m3u8"));
+             var demuxer = HlsDemuxer.open(encrypted.resolve("r0.m3u8"))) {
+            assertEquals(plainDemuxer.tracks(), demuxer.tracks());
+            var plainPackets = Packets.readAll(plainDemuxer);
+            var packets = Packets.readAll(demuxer);
+            assertEquals(plainPackets.size(), packets.size());
+            for (var index = 0; index < packets.size(); index++) {
+                assertEquals(plainPackets.get(index).pts(), packets.get(index).pts(), "packet " + index);
+                assertArrayEquals(plainPackets.get(index).data(), packets.get(index).data(), "packet " + index);
             }
         }
     }

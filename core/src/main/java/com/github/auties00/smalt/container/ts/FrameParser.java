@@ -108,13 +108,30 @@ abstract class FrameParser extends ElementaryParser {
     private long rateRemainder;
 
     /**
+     * The decryptor of a {@code SAMPLE-AES} stream, or {@code null} for a clear one.
+     */
+    final SampleAesDecryptor sampleAes;
+
+    /**
      * Constructs a parser.
      *
      * @param entry the program map entry of the stream
      * @param limits the resource bounds
      */
     FrameParser(Psi.StreamEntry entry, MediaLimits limits) {
+        this(entry, limits, null);
+    }
+
+    /**
+     * Constructs a parser of a stream that may be encrypted.
+     *
+     * @param entry the program map entry of the stream
+     * @param limits the resource bounds
+     * @param sampleAes the decryptor of a {@code SAMPLE-AES} stream, or {@code null} for a clear one
+     */
+    FrameParser(Psi.StreamEntry entry, MediaLimits limits, SampleAesDecryptor sampleAes) {
         super(entry, limits);
+        this.sampleAes = sampleAes;
     }
 
     /**
@@ -160,6 +177,20 @@ abstract class FrameParser extends ElementaryParser {
      * @param output receives the units
      */
     abstract void frame(byte[] data, int offset, int length, boolean first, FrameOutput output);
+
+    /**
+     * Decrypts a frame of a {@code SAMPLE-AES} stream in place, before it is decoded.
+     *
+     * <p>The default implementation does nothing; it is called only when {@link #sampleAes} is set.
+     *
+     * @param data the bytes
+     * @param offset the index of the frame
+     * @param length the frame length
+     * @param fileOffset the offset of the transport packet that started the PES packet holding the frame
+     * @param corrupt whether a damaged PES packet contributed to the frame
+     */
+    void decrypt(byte[] data, int offset, int length, long fileOffset, boolean corrupt) {
+    }
 
     /**
      * Makes the next packet emitted carry a new codec configuration, which replaces the track's
@@ -312,6 +343,9 @@ abstract class FrameParser extends ElementaryParser {
         currentSink = sink;
         currentOffset = marker.fileOffset;
         currentCorrupt = buffer.corrupt(position, position + length);
+        if (sampleAes != null) {
+            decrypt(data, start, length, marker.fileOffset, currentCorrupt);
+        }
         frame(data, start, length, first, output);
         currentSink = null;
     }

@@ -6,6 +6,7 @@ linux-arm64-vector-full	audio	com.github.auties00.smalt.audio.opus.OpusDnnAlloca
 linux-arm64-vector-full	audio	com.github.auties00.smalt.audio.opus.internal.dnn.OpusDnnKernelAllocationTest	simd:enabled	4
 linux-arm64-vector-full	core	com.github.auties00.smalt.container.caf.CafAppleTest	platform:macos	29
 linux-arm64-vector-full	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
+linux-arm64-vector-full	core	com.github.auties00.smalt.container.hls.HlsSampleAesStreamTest	opt-in:sample-aes-stream	1
 linux-arm64-vector-full	image	com.github.auties00.smalt.image.icns.IcnsAppleTest	platform:macos	17
 linux-arm64-vector-full	image	com.github.auties00.smalt.image.ico.AniTest	platform:windows	1
 linux-arm64-vector-full	image	com.github.auties00.smalt.video.vp8.Vp8RtQualityTest	opt-in:vp8rt-quality	1
@@ -70,6 +71,7 @@ linux-arm64-vector-smoke	core	com.github.auties00.smalt.container.caf.CafAppleTe
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.container.mxf.MxfThirdPartyTest	data:vector	2
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.container.packaging.DashTestVectorsTest	data:vector	2
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
+linux-arm64-vector-smoke	core	com.github.auties00.smalt.container.hls.HlsSampleAesStreamTest	opt-in:sample-aes-stream	1
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.image.color.ColorProfileTest	data:vector	3
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.image.color.ColorTransformTest	data:vector	3
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.image.color.HdrColorTest	data:vector	1
@@ -252,6 +254,7 @@ linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.mxf.MxfThirdPart
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.ogg.OggCrcTest	simd:disabled	16
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.packaging.DashTestVectorsTest	data:vector	2
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
+linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.hls.HlsSampleAesStreamTest	opt-in:sample-aes-stream	1
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.image.color.ColorProfileTest	data:vector	3
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.image.color.ColorTransformTest	data:vector	3
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.image.color.HdrColorTest	data:vector	1
@@ -418,6 +421,7 @@ linux-x64-vector-full	capture	com.github.auties00.smalt.capture.internal.windows
 linux-x64-vector-full	capture	com.github.auties00.smalt.capture.internal.windows.WindowsWindowCaptureTest	platform:windows	2
 linux-x64-vector-full	core	com.github.auties00.smalt.container.caf.CafAppleTest	platform:macos	29
 linux-x64-vector-full	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
+linux-x64-vector-full	core	com.github.auties00.smalt.container.hls.HlsSampleAesStreamTest	opt-in:sample-aes-stream	1
 linux-x64-vector-full	desktop	com.github.auties00.smalt.desktop.sound.JavaSoundReadTest	device:audio-output	1
 linux-x64-vector-full	image	com.github.auties00.smalt.image.icns.IcnsAppleTest	platform:macos	17
 linux-x64-vector-full	image	com.github.auties00.smalt.image.ico.AniTest	platform:windows	1
@@ -480,6 +484,7 @@ linux-x64-vector-smoke	core	com.github.auties00.smalt.container.caf.CafAppleTest
 linux-x64-vector-smoke	core	com.github.auties00.smalt.container.mxf.MxfThirdPartyTest	data:vector	2
 linux-x64-vector-smoke	core	com.github.auties00.smalt.container.packaging.DashTestVectorsTest	data:vector	2
 linux-x64-vector-smoke	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
+linux-x64-vector-smoke	core	com.github.auties00.smalt.container.hls.HlsSampleAesStreamTest	opt-in:sample-aes-stream	1
 linux-x64-vector-smoke	core	com.github.auties00.smalt.image.color.ColorProfileTest	data:vector	3
 linux-x64-vector-smoke	core	com.github.auties00.smalt.image.color.ColorTransformTest	data:vector	3
 linux-x64-vector-smoke	core	com.github.auties00.smalt.image.color.HdrColorTest	data:vector	1
@@ -624,6 +629,7 @@ macos-arm64-vector-full	audio	com.github.auties00.smalt.audio.opus.OpusEncoderAl
 macos-arm64-vector-full	audio	com.github.auties00.smalt.audio.opus.OpusDnnAllocationTest	simd:enabled	10
 macos-arm64-vector-full	audio	com.github.auties00.smalt.audio.opus.internal.dnn.OpusDnnKernelAllocationTest	simd:enabled	4
 macos-arm64-vector-full	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
+macos-arm64-vector-full	core	com.github.auties00.smalt.container.hls.HlsSampleAesStreamTest	opt-in:sample-aes-stream	1
 macos-arm64-vector-full	core	com.github.auties00.smalt.internal.task.ParallelTasksTest	env:threads	1
 macos-arm64-vector-full	image	com.github.auties00.smalt.image.ico.AniTest	platform:windows	1
 macos-arm64-vector-full	image	com.github.auties00.smalt.video.vp8.Vp8RtQualityTest	opt-in:vp8rt-quality	1
@@ -673,6 +679,7 @@ macos-arm64-vector-smoke	core	com.github.auties00.smalt.container.FileFormatConf
 macos-arm64-vector-smoke	core	com.github.auties00.smalt.container.mxf.MxfThirdPartyTest	data:vector	2
 macos-arm64-vector-smoke	core	com.github.auties00.smalt.container.packaging.DashTestVectorsTest	data:vector	2
 macos-arm64-vector-smoke	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
+macos-arm64-vector-smoke	core	com.github.auties00.smalt.container.hls.HlsSampleAesStreamTest	opt-in:sample-aes-stream	1
 macos-arm64-vector-smoke	core	com.github.auties00.smalt.image.color.ColorProfileTest	data:vector	3
 macos-arm64-vector-smoke	core	com.github.auties00.smalt.image.color.ColorTransformTest	data:vector	3
 macos-arm64-vector-smoke	core	com.github.auties00.smalt.image.color.HdrColorTest	data:vector	1
@@ -812,6 +819,7 @@ windows-x64-vector-full	audio	com.github.auties00.smalt.audio.opus.internal.dnn.
 windows-x64-vector-full	core	com.github.auties00.smalt.SkipTest	platform:unix	1
 windows-x64-vector-full	core	com.github.auties00.smalt.container.caf.CafAppleTest	platform:macos	29
 windows-x64-vector-full	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
+windows-x64-vector-full	core	com.github.auties00.smalt.container.hls.HlsSampleAesStreamTest	opt-in:sample-aes-stream	1
 windows-x64-vector-full	image	com.github.auties00.smalt.image.icns.IcnsAppleTest	platform:macos	17
 windows-x64-vector-full	image	com.github.auties00.smalt.video.vp8.Vp8RtQualityTest	opt-in:vp8rt-quality	1
 windows-x64-vector-full	it	com.github.auties00.smalt.image.heic.HeicEncoderInteropTest	platform:macos	6
@@ -868,6 +876,7 @@ windows-x64-vector-smoke	core	com.github.auties00.smalt.container.caf.CafAppleTe
 windows-x64-vector-smoke	core	com.github.auties00.smalt.container.mxf.MxfThirdPartyTest	data:vector	2
 windows-x64-vector-smoke	core	com.github.auties00.smalt.container.packaging.DashTestVectorsTest	data:vector	2
 windows-x64-vector-smoke	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
+windows-x64-vector-smoke	core	com.github.auties00.smalt.container.hls.HlsSampleAesStreamTest	opt-in:sample-aes-stream	1
 windows-x64-vector-smoke	core	com.github.auties00.smalt.image.color.ColorProfileTest	data:vector	3
 windows-x64-vector-smoke	core	com.github.auties00.smalt.image.color.ColorTransformTest	data:vector	3
 windows-x64-vector-smoke	core	com.github.auties00.smalt.image.color.HdrColorTest	data:vector	1

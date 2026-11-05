@@ -197,6 +197,17 @@ public final class SegmentSource implements MediaSource {
         return starts[parts.size()];
     }
 
+    /**
+     * Returns where a part starts in this source.
+     *
+     * @param index the index of the part
+     * @return the offset of its first byte, decrypted when it is encrypted whole
+     * @throws IndexOutOfBoundsException if there is no such part
+     */
+    public long start(int index) {
+        return starts[Objects.checkIndex(index, parts.size())];
+    }
+
     @Override
     public synchronized int read(long position, byte[] buffer, int offset, int length) {
         Objects.checkFromIndexSize(offset, length, buffer.length);

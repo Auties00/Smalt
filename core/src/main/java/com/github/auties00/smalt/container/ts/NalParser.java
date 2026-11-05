@@ -54,6 +54,8 @@ import java.util.TreeMap;
  * stream that changes its resolution or profile (a splice, concatenated recordings) reconfigures
  * its decoder there. A picture parameter set change alone is not reported. The parameter sets stay
  * in the packets too.
+ *
+ * <p>The slices of a {@code SAMPLE-AES} H.264 stream ({@code stream_type 0xDB}) are decrypted before they are read.
  */
 final class NalParser extends ElementaryParser {
     /**
@@ -90,6 +92,11 @@ final class NalParser extends ElementaryParser {
      * The buffered stream.
      */
     private final StreamBuffer buffer;
+
+    /**
+     * The decryptor of a {@code SAMPLE-AES} H.264 stream, or {@code null} for a clear one.
+     */
+    private final SampleAesDecryptor sampleAes;
 
     /**
      * The stream position from which the next start code search begins.
@@ -176,7 +183,20 @@ final class NalParser extends ElementaryParser {
      * @param codec the codec of the stream: {@link Codec#H264}, {@link Codec#HEVC} or {@link Codec#VVC}
      */
     NalParser(Psi.StreamEntry entry, MediaLimits limits, Codec codec) {
+        this(entry, limits, codec, null);
+    }
+
+    /**
+     * Constructs a parser of a stream that may be encrypted.
+     *
+     * @param entry the program map entry of the stream
+     * @param limits the resource bounds
+     * @param codec the codec of the stream: {@link Codec#H264}, {@link Codec#HEVC} or {@link Codec#VVC}
+     * @param sampleAes the decryptor of a {@code SAMPLE-AES} H.264 stream, or {@code null} for a clear one
+     */
+    NalParser(Psi.StreamEntry entry, MediaLimits limits, Codec codec, SampleAesDecryptor sampleAes) {
         super(entry, limits);
+        this.sampleAes = sampleAes;
         this.codec = codec;
         this.hevc = codec == Codec.HEVC;
         this.vvc = codec == Codec.VVC;
@@ -260,7 +280,7 @@ final class NalParser extends ElementaryParser {
 
     @Override
     ElementaryParser fresh() {
-        var parser = new NalParser(entry, limits, codec);
+        var parser = new NalParser(entry, limits, codec, sampleAes);
         parser.track = track;
         parser.establish(track == null ? null : track.codecConfig().orElse(null));
         return parser;
@@ -599,7 +619,14 @@ final class NalParser extends ElementaryParser {
         while (to > from && data[start + to - 1] == 0) {
             to--;
         }
-        if (to > from) {
+        if (to <= from) {
+            return;
+        }
+        if (sampleAes != null && SampleAesDecryptor.isEncryptedSlice(data, start + from, to - from)) {
+            var marker = buffer.markerAt(unitCode);
+            var length = sampleAes.slice(data, start + from, to - from, marker == null ? 0 : marker.fileOffset);
+            handleUnit(sampleAes.slice(), 0, length, unitCode, sink);
+        } else {
             handleUnit(data, start + from, to - from, unitCode, sink);
         }
     }

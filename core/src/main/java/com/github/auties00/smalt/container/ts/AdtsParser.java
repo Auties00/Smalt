@@ -27,6 +27,11 @@ import java.util.Arrays;
  * configuration, and its durations stay in samples of the track's rate. A {@linkplain #fresh()
  * fresh} parser, which a read pass or a seek starts with, starts from the track's configuration,
  * so the first frame of another configuration it meets is announced again.
+ *
+ * <p>The frames of a {@code SAMPLE-AES} stream ({@code stream_type 0xCF}) are decrypted before they are read. Its
+ * audio setup information gives the track's {@link AudioTrack#skipSamples() skipped samples} (the priming, in samples
+ * of the core rate) and, when it declares HE-AAC ({@code zach} or {@code zacp}) with an {@code AudioSpecificConfig}
+ * of the same core rate and channel configuration as the headers, the track's configuration.
  */
 final class AdtsParser extends FrameParser {
     /**
@@ -35,6 +40,16 @@ final class AdtsParser extends FrameParser {
      * configuration.
      */
     private static final int STREAM_MASK = 0x0EFD;
+
+    /**
+     * The {@code audio_type} {@code zach} of the {@code SAMPLE-AES} setup information: HE-AAC.
+     */
+    private static final int ZACH = 0x7A616368;
+
+    /**
+     * The {@code audio_type} {@code zacp} of the {@code SAMPLE-AES} setup information: HE-AAC v2.
+     */
+    private static final int ZACP = 0x7A616370;
 
     /**
      * The shared header bits of the configured stream, or {@code -1}.
@@ -72,9 +87,20 @@ final class AdtsParser extends FrameParser {
         super(entry, limits);
     }
 
+    /**
+     * Constructs a parser of a stream that may be encrypted.
+     *
+     * @param entry the program map entry of the stream
+     * @param limits the resource bounds
+     * @param sampleAes the decryptor of a {@code SAMPLE-AES} stream, or {@code null} for a clear one
+     */
+    AdtsParser(Psi.StreamEntry entry, MediaLimits limits, SampleAesDecryptor sampleAes) {
+        super(entry, limits, sampleAes);
+    }
+
     @Override
     ElementaryParser fresh() {
-        var parser = inheritTiming(new AdtsParser(entry, limits));
+        var parser = inheritTiming(new AdtsParser(entry, limits, sampleAes));
         parser.reference = baseReference;
         parser.channels = baseChannels;
         parser.baseReference = baseReference;
@@ -138,6 +164,14 @@ final class AdtsParser extends FrameParser {
     }
 
     @Override
+    void decrypt(byte[] data, int offset, int length, long fileOffset, boolean corrupt) {
+        if (length >= 7) {
+            // protection_absent, the last bit of the second header byte: a CRC makes the header 9 bytes
+            sampleAes.adts(data, offset, length, (data[offset + 1] & 0x01) == 0 ? 9 : 7, fileOffset);
+        }
+    }
+
+    @Override
     void frame(byte[] data, int offset, int length, boolean first, FrameOutput output) {
         var header = AdtsHeader.parse(data, offset);
         var payload = Arrays.copyOfRange(data, offset + header.headerSize(), offset + length);
@@ -187,16 +221,21 @@ final class AdtsParser extends FrameParser {
         var rate = header.sampleRate();
         var channelConfiguration = header.channelConfiguration();
         var count = channelConfiguration == 7 ? 8 : channelConfiguration;
+        var setup = entry.sampleAes();
+        var config = setupConfig(header);
         var described = AudioTrack.builder()
                 .id(trackId())
                 .codec(Codec.AAC)
                 .timeBase(Rational.timeBaseOf(rate))
-                .codecConfig(header.audioSpecificConfig())
+                .codecConfig(config != null ? config : header.audioSpecificConfig())
                 .language(entry.language())
                 .sampleRate(rate)
                 .layout(count > 0 ? ChannelLayout.defaultFor(count) : null)
+                .skipSamples(setup != null ? setup.priming() : 0)
                 .build();
-        if (header.profile() == 1 && rate <= AacExtensions.MAX_IMPLICIT_CORE_RATE) {
+        if (config != null) {
+            described = AacExtensions.refine(described, payload);
+        } else if (header.profile() == 1 && rate <= AacExtensions.MAX_IMPLICIT_CORE_RATE) {
             described = AacExtensions.refine(described, payload);
         }
         this.track = described;
@@ -206,5 +245,26 @@ final class AdtsParser extends FrameParser {
         this.channels = channelConfiguration;
         this.baseReference = reference;
         this.baseChannels = channelConfiguration;
+    }
+
+    /**
+     * Returns the {@code AudioSpecificConfig} of the {@code SAMPLE-AES} audio setup information when it declares
+     * HE-AAC over the core the headers describe.
+     *
+     * @param header the first header
+     * @return the configuration, or {@code null} when the stream has none to use
+     */
+    private byte[] setupConfig(AdtsHeader header) {
+        var setup = entry.sampleAes();
+        if (setup == null || setup.setup() == null || setup.setup().length < 2
+                || setup.audioType() != ZACH && setup.audioType() != ZACP) {
+            return null;
+        }
+        var config = setup.setup();
+        var objectType = (config[0] & 0xFF) >>> 3;
+        var index = (config[0] & 0x07) << 1 | (config[1] & 0xFF) >>> 7;
+        var channelConfiguration = (config[1] >>> 3) & 0x0F;
+        return (objectType == 5 || objectType == 29) && index == header.frequencyIndex()
+                && channelConfiguration == header.channelConfiguration() ? config.clone() : null;
     }
 }

@@ -12,7 +12,10 @@ import com.github.auties00.smalt.container.internal.StreamMerge;
 import com.github.auties00.smalt.container.internal.TsKeyFrames;
 import com.github.auties00.smalt.container.internal.WebVttSegmentReader;
 import com.github.auties00.smalt.container.mp4.Mp4Demuxer;
+import com.github.auties00.smalt.container.ts.SampleAesKey;
+import com.github.auties00.smalt.container.ts.SampleAesKeys;
 import com.github.auties00.smalt.container.ts.TsDemuxer;
+import com.github.auties00.smalt.container.ts.TsDemuxerOptions;
 import com.github.auties00.smalt.internal.io.SourceBytes;
 import com.github.auties00.smalt.internal.subtitle.TextFiles;
 import com.github.auties00.smalt.io.DataReferenceResolver;
@@ -66,7 +69,13 @@ import java.util.Set;
  * <p>Segments encrypted with {@code METHOD=AES-128} are decrypted with the key their URI names; fragmented MP4
  * segments of {@code SAMPLE-AES} and {@code SAMPLE-AES-CTR} are decrypted with the
  * {@link DemuxerOptions#decryptionKeys() keys of the options}, or else, for the {@code identity} key format, with
- * the key the URI names. A live playlist without {@code EXT-X-ENDLIST} is read as far as it lists.
+ * the key the URI names. Transport stream segments of {@code SAMPLE-AES} (H.264, AAC, AC-3 and E-AC-3 streams, as
+ * {@link com.github.auties00.smalt.container.ts.TsDemuxerOptions#sampleAesKeys()} describes) are decrypted with the
+ * key the keys of the options give for the identifier of sixteen zero bytes (which
+ * {@link com.github.auties00.smalt.container.DecryptionKeys#single(byte[])} answers), or else, for the
+ * {@code identity} key format, with the key the URI names, each segment with the {@code IV} of its
+ * {@code EXT-X-KEY} or else its media sequence number as the initialization vector; encrypted packed audio
+ * segments are not decrypted. A live playlist without {@code EXT-X-ENDLIST} is read as far as it lists.
  *
  * <p>Instances are not thread-safe. The source is not closed by the demuxer; the files it resolves are closed by
  * {@link #close()}.
@@ -305,6 +314,7 @@ public final class HlsDemuxer implements Demuxer {
         HlsPlaylist.Section section = null;
         HlsPlaylist.Key sampleKey = null;
         var parts = new ArrayList<SegmentSource.Part>();
+        var segmentKeys = new ArrayList<HlsPlaylist.Key>();
         var keys = new HashMap<String, byte[]>();
         for (var segment : segments) {
             if (segment.section() != null) {
@@ -328,6 +338,7 @@ public final class HlsDemuxer implements Demuxer {
             } else if (key != null) {
                 sampleKey = key;
             }
+            segmentKeys.add(aesKey == null ? key : null);
             parts.add(new SegmentSource.Part(segment.uri(), segment.offset(), segment.length(), aesKey, iv));
         }
         var fragmented = false;
@@ -344,11 +355,15 @@ public final class HlsDemuxer implements Demuxer {
             return new Opened(plan, null, parts, List.of());
         }
         var decryption = options.decryptionKeys();
-        if (sampleKey != null) {
-            if (!fragmented) {
-                // TODO: decrypt SAMPLE-AES transport stream segments (H.264 slices, AAC and AC-3 frames)
-                throw new MediaException.Unsupported("hls", "SAMPLE-AES transport stream segments are not decrypted");
+        List<SampleAesKey> tsKeys = null;
+        if (sampleKey != null && !fragmented) {
+            tsKeys = new ArrayList<>();
+            for (var index = 0; index < segments.size(); index++) {
+                var key = segmentKeys.get(index);
+                tsKeys.add(key == null ? null : sampleAesKey(key, segments.get(index).sequence(), resolver, options,
+                        keys));
             }
+        } else if (sampleKey != null) {
             var given = decryption;
             var fallback = sampleKey.uri() != null && sampleKey.format().equals("identity")
                     ? keyBytes(sampleKey.uri(), resolver, options) : null;
@@ -358,7 +373,7 @@ public final class HlsDemuxer implements Demuxer {
         if (!fragmented && plan.playlist().iFramesOnly()) {
             var tables = section != null ? parts.getFirst() : null;
             var ranges = section != null ? parts.subList(1, parts.size()) : parts;
-            return new Opened(plan, new TsKeyFrames(tables, ranges, resolver, inner), parts, List.of());
+            return new Opened(plan, new TsKeyFrames(tables, ranges, resolver, inner, tsKeys), parts, List.of());
         }
         if (fragmented && plan.playlist().iFramesOnly()) {
             return new Opened(plan, new FragmentKeyFrames(parts.getFirst(), parts.subList(1, parts.size()), resolver,
@@ -373,7 +388,15 @@ public final class HlsDemuxer implements Demuxer {
                 var format = Containers.detect(source).orElseThrow(() -> new MediaException.Unsupported("hls",
                         "the segments of " + plan.uri() + " are not a recognized container"));
                 if (format == ContainerFormat.MPEG_TS) {
-                    demuxer = new TsDemuxer(source, inner);
+                    var tsOptions = TsDemuxerOptions.builder().limits(inner.limits());
+                    if (tsKeys != null) {
+                        tsOptions.sampleAesKeys(segmentSchedule(source, tsKeys, section != null ? 1 : 0));
+                    }
+                    demuxer = new TsDemuxer(source, tsOptions.build());
+                } else if (tsKeys != null) {
+                    // TODO: decrypt SAMPLE-AES packed audio segments (ADTS, AC-3 and E-AC-3 frames behind an ID3 tag
+                    // whose com.apple.streaming.audioDescription frame holds the audio setup information)
+                    throw new MediaException.Unsupported("hls", "SAMPLE-AES packed audio segments are not decrypted");
                 } else {
                     // packed audio: each segment opens with the ID3 tag of its timestamp, which joins nothing
                     source.close();
@@ -574,6 +597,65 @@ public final class HlsDemuxer implements Demuxer {
             source.readFully(0, key, 0, 16);
             return key;
         }
+    }
+
+    /**
+     * Returns the {@code SAMPLE-AES} key of a transport stream segment: the key the
+     * {@linkplain DemuxerOptions#decryptionKeys() keys of the options} give for the identifier of sixteen zero bytes,
+     * or else, for the {@code identity} key format, the key its URI names; with the {@code IV} of its
+     * {@code EXT-X-KEY} or else its media sequence number as the initialization vector.
+     *
+     * @param key the key tag in force
+     * @param sequence the media sequence number of the segment
+     * @param resolver opens the key files
+     * @param options the limits and the keys
+     * @param fetched the keys read so far, by URI
+     * @return the key
+     * @throws MediaException.Unsupported if the method is not {@code SAMPLE-AES} or no key is known
+     */
+    private static SampleAesKey sampleAesKey(HlsPlaylist.Key key, long sequence, DataReferenceResolver resolver,
+                                             DemuxerOptions options, Map<String, byte[]> fetched) {
+        if (!key.method().equals("SAMPLE-AES")) {
+            throw new MediaException.Unsupported("hls", "the key method " + key.method() + " for transport stream "
+                    + "segments");
+        }
+        var given = options.decryptionKeys().find(new byte[16]).orElse(null);
+        if (given == null) {
+            if (key.uri() == null || !key.format().equals("identity")) {
+                throw new MediaException.Unsupported("hls", "the SAMPLE-AES key format " + key.format()
+                        + (key.uri() == null ? " without a URI" : "") + " and no key in the options");
+            }
+            given = fetched.computeIfAbsent(key.uri(), uri -> keyBytes(uri, resolver, options));
+        }
+        if (given.length != 16) {
+            throw new MediaException.Malformed("a SAMPLE-AES key of " + given.length + " bytes, not 16");
+        }
+        return SampleAesKey.of(given, key.iv() != null ? key.iv() : sequenceIv(sequence));
+    }
+
+    /**
+     * Returns the keys of the segments joined in a source, each from the start of its part.
+     *
+     * @param source the joined segments
+     * @param keys the key of each segment, {@code null} for a clear one
+     * @param first the index of the first segment's part: {@code 1} behind an initialization section
+     * @return the keys
+     */
+    private static SampleAesKeys segmentSchedule(SegmentSource source, List<SampleAesKey> keys, int first) {
+        var offsets = new ArrayList<Long>();
+        var values = new ArrayList<SampleAesKey>();
+        for (var index = 0; index < keys.size(); index++) {
+            var start = source.start(first + index);
+            if (!offsets.isEmpty() && offsets.getLast() == start) {
+                // an empty segment: the next one starts at the same offset
+                offsets.removeLast();
+                values.removeLast();
+            }
+            offsets.add(start);
+            values.add(keys.get(index));
+        }
+        return SampleAesKeys.ranges(offsets.stream().mapToLong(Long::longValue).toArray(),
+                values.toArray(SampleAesKey[]::new));
     }
 
     /**

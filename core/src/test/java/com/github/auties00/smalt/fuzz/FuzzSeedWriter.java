@@ -305,6 +305,56 @@ class FuzzSeedWriter {
     }
 
     @Test
+    @DisplayName("writes the SAMPLE-AES transport stream seeds: the committed clip encrypted, and cut in a slice")
+    void sampleAes() throws IOException {
+        var key = java.util.HexFormat.of().parseHex("8899aabbccddeeff0011223344556677");
+        var iv = java.util.HexFormat.of().parseHex("f0e1d2c3b4a5968778695a4b3c2d1e0f");
+        var clip = Path.of("src", "test", "resources", "com", "github", "auties00", "smalt", "container", "ts",
+                "sample-aes", "sample-aes-input.mp4");
+        byte[] clear;
+        byte[] encrypted;
+        try (var source = com.github.auties00.smalt.io.MediaSource.of(clip);
+             var demuxer = com.github.auties00.smalt.container.Containers.openDemuxer(source)) {
+            var clearSink = com.github.auties00.smalt.io.MediaSink.memory();
+            var encryptedSink = com.github.auties00.smalt.io.MediaSink.memory();
+            try (var clearMuxer = new com.github.auties00.smalt.container.ts.TsMuxer(clearSink);
+                 var encryptedMuxer = new com.github.auties00.smalt.container.ts.TsMuxer(encryptedSink,
+                         com.github.auties00.smalt.container.ts.TsMuxerOptions.builder().sampleAes(key, iv).build())) {
+                for (var track : demuxer.tracks()) {
+                    clearMuxer.addTrack(track);
+                    encryptedMuxer.addTrack(track);
+                }
+                for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                    clearMuxer.writePacket(packet);
+                    encryptedMuxer.writePacket(packet);
+                }
+                clearMuxer.finish();
+                encryptedMuxer.finish();
+            }
+            clear = clearSink.toByteArray();
+            encrypted = encryptedSink.toByteArray();
+        }
+        // the first hundred transport packets hold the first key frame and the first audio frames of every stream
+        write(EncryptionFuzzTest.class, "sampleAesDemux", "valid-clip.ts", Arrays.copyOf(encrypted, 100 * 188));
+        write(EncryptionFuzzTest.class, "sampleAesDemux", "valid-corners.ts", Arrays.copyOf(
+                com.github.auties00.smalt.container.ts.SampleAesStreams.corners(clear, key, iv), 100 * 188));
+        // cut three packets after the start of the second video PES packet, inside its first encrypted slice
+        var videoStarts = 0;
+        var cut = encrypted.length;
+        for (var offset = 0; offset + 188 <= encrypted.length; offset += 188) {
+            var pid = ((encrypted[offset + 1] & 0x1F) << 8) | (encrypted[offset + 2] & 0xFF);
+            if (pid == 0x100 && (encrypted[offset + 1] & 0x40) != 0 && ++videoStarts == 2) {
+                cut = offset + 3 * 188;
+                break;
+            }
+        }
+        write(EncryptionFuzzTest.class, "sampleAesDemux", "truncated-slice.ts", Arrays.copyOf(encrypted, cut));
+        write(EncryptionFuzzTest.class, "sampleAesMux", "valid-h264", Files.readAllBytes(Path.of("src", "test",
+                "resources", "com", "github", "auties00", "smalt", "fuzz", "EncryptionFuzzTestInputs", "encryptedMux",
+                "valid-h264-cbcs")));
+    }
+
+    @Test
     @DisplayName("writes the transport stream seeds of AV1, PCM, SCTE 35, MPEG-4 Part 2, LATM and program map changes")
     void transportStreams() throws IOException {
         copy(DemuxerFuzzTest.class, "mpegTs", "valid-lpcm.m2ts", ffmpeg("m2ts", tone(48000, 0.02), "-c:a", "pcm_bluray",

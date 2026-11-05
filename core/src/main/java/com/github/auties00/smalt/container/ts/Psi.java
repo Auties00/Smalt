@@ -68,6 +68,11 @@ final class Psi {
     static final int DTS1 = 0x44545331;
 
     /**
+     * The registration {@code format_identifier} {@code apad} of the HLS {@code SAMPLE-AES} audio setup information.
+     */
+    static final int APAD = fourCc("apad");
+
+    /**
      * The registration {@code format_identifier} of DTS with 1024-sample frames ({@code "DTS2"}).
      */
     static final int DTS2 = 0x44545332;
@@ -150,12 +155,14 @@ final class Psi {
      * {@code -1}
      * @param name the first string of an ATSC component name descriptor (tag {@code 0xA3}), or {@code null}
      * @param dolbyVision the configuration of a DOVI video stream descriptor (tag {@code 0xB0}), or {@code null}
+     * @param sampleAes the HLS {@code SAMPLE-AES} signaling of the stream, or {@code null} when it has none
      */
     record StreamEntry(int pid, int trackId, int streamType, List<Integer> registrations,
                        List<Integer> programRegistrations, String language, boolean ac3Descriptor,
                        boolean eac3Descriptor, boolean dtsDescriptor, int opusChannels, boolean id3Metadata,
                        byte[] subtitling,
-                       byte[] teletextPages, int audioType, String name, DolbyVision dolbyVision) {
+                       byte[] teletextPages, int audioType, String name, DolbyVision dolbyVision,
+                       SampleAesSetup sampleAes) {
         /**
          * Returns whether a DVB subtitling descriptor is present.
          *
@@ -203,7 +210,7 @@ final class Psi {
         StreamEntry withTrackId(int id) {
             return new StreamEntry(pid, id, streamType, registrations, programRegistrations, language, ac3Descriptor,
                     eac3Descriptor, dtsDescriptor, opusChannels, id3Metadata, subtitling, teletextPages, audioType, name,
-                    dolbyVision);
+                    dolbyVision, sampleAes);
         }
 
         /**
@@ -221,7 +228,33 @@ final class Psi {
                     && opusChannels == other.opusChannels
                     && id3Metadata == other.id3Metadata && Arrays.equals(subtitling, other.subtitling)
                     && Arrays.equals(teletextPages, other.teletextPages)
-                    && Objects.equals(dolbyVision, other.dolbyVision);
+                    && Objects.equals(dolbyVision, other.dolbyVision) && Objects.equals(sampleAes, other.sampleAes);
+        }
+    }
+
+    /**
+     * Describes the HLS {@code SAMPLE-AES} signaling of an encrypted stream (Apple's MPEG-2 Stream Encryption Format
+     * for HTTP Live Streaming, clause 2.3.3.1): its private data indicator descriptor (tag {@code 0x0F}), and for
+     * audio the {@code audio_setup_information} its registration descriptor of identifier {@code apad} carries.
+     *
+     * @param indicator the {@code private_data_indicator}, {@code zavc}, {@code aacd}, {@code ac3d} or
+     * {@code ec3d} for the encrypted streams, or {@code 0} when absent
+     * @param audioType the {@code audio_type} of the setup information ({@code zaac}, {@code zach}, {@code zacp},
+     * {@code zac3} or {@code zec3}), or {@code 0} when absent
+     * @param priming the samples of encoder priming at the start of the stream, or {@code 0}
+     * @param setup the {@code setup_data}: the {@code AudioSpecificConfig} of AAC, or the body of the
+     * {@code dac3} or {@code dec3} box of AC-3 and E-AC-3; {@code null} when absent
+     */
+    record SampleAesSetup(int indicator, int audioType, int priming, byte[] setup) {
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof SampleAesSetup that && indicator == that.indicator && audioType == that.audioType
+                    && priming == that.priming && Arrays.equals(setup, that.setup);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(indicator, audioType, priming) * 31 + Arrays.hashCode(setup);
         }
     }
 
@@ -317,7 +350,8 @@ final class Psi {
             streams.add(new StreamEntry(pid, pid, type, List.copyOf(descriptors.registrations),
                     List.copyOf(programDescriptors.registrations), descriptors.language, descriptors.ac3,
                     descriptors.eac3, descriptors.dts, descriptors.opusChannels, descriptors.id3, descriptors.subtitles,
-                    descriptors.teletext, descriptors.audioType, descriptors.name, descriptors.dolbyVision));
+                    descriptors.teletext, descriptors.audioType, descriptors.name, descriptors.dolbyVision,
+                    descriptors.sampleAes()));
         }
         return new PmtSection(number, version, pcrPid, streams);
     }
@@ -333,7 +367,7 @@ final class Psi {
      */
     static StreamEntry plainEntry(int trackId, int streamType, String language) {
         return new StreamEntry(trackId, trackId, streamType, List.of(), List.of(), language, false, false, false, -1,
-                false, null, null, -1, null, null);
+                false, null, null, -1, null, null, null);
     }
 
     /**
@@ -377,7 +411,8 @@ final class Psi {
             streams.add(new StreamEntry(id, id, type, List.copyOf(descriptors.registrations),
                     List.copyOf(programDescriptors.registrations), descriptors.language, descriptors.ac3,
                     descriptors.eac3, descriptors.dts, descriptors.opusChannels, descriptors.id3,
-                    descriptors.subtitles, descriptors.teletext, descriptors.audioType, descriptors.name, descriptors.dolbyVision));
+                    descriptors.subtitles, descriptors.teletext, descriptors.audioType, descriptors.name, descriptors.dolbyVision,
+                    descriptors.sampleAes()));
         }
         return streams;
     }
@@ -448,6 +483,26 @@ final class Psi {
         private DolbyVision dolbyVision;
 
         /**
+         * The {@code private_data_indicator}, or {@code 0}.
+         */
+        private int indicator;
+
+        /**
+         * The {@code audio_type} of the {@code apad} setup information, or {@code 0}.
+         */
+        private int setupType;
+
+        /**
+         * The priming of the {@code apad} setup information.
+         */
+        private int priming;
+
+        /**
+         * The {@code setup_data} of the {@code apad} setup information, or {@code null}.
+         */
+        private byte[] setup;
+
+        /**
          * Reads a descriptor loop.
          *
          * @param data the section
@@ -469,6 +524,17 @@ final class Psi {
                         if (size >= 4 && registrations.size() < MAX_REGISTRATIONS) {
                             registrations.add((data[body] & 0xFF) << 24 | (data[body + 1] & 0xFF) << 16
                                     | (data[body + 2] & 0xFF) << 8 | (data[body + 3] & 0xFF));
+                        }
+                        if (size >= 12 && fourCc(data, body) == APAD) {
+                            setupType = fourCc(data, body + 4);
+                            priming = (data[body + 8] & 0xFF) << 8 | (data[body + 9] & 0xFF);
+                            var setupLength = Math.min(data[body + 11] & 0xFF, size - 12);
+                            setup = Arrays.copyOfRange(data, body + 12, body + 12 + setupLength);
+                        }
+                    }
+                    case 0x0F -> {
+                        if (size >= 4) {
+                            indicator = fourCc(data, body);
                         }
                     }
                     case 0x0A -> {
@@ -504,6 +570,24 @@ final class Psi {
                 }
                 position = body + size;
             }
+        }
+
+        /**
+         * {@return the {@code SAMPLE-AES} signaling read, or {@code null} when the loop has none}
+         */
+        SampleAesSetup sampleAes() {
+            return indicator == 0 && setupType == 0 ? null : new SampleAesSetup(indicator, setupType, priming, setup);
+        }
+
+        /**
+         * {@return the four bytes at an index as a big-endian number}
+         *
+         * @param data the bytes
+         * @param offset the index of the first byte
+         */
+        private static int fourCc(byte[] data, int offset) {
+            return (data[offset] & 0xFF) << 24 | (data[offset + 1] & 0xFF) << 16 | (data[offset + 2] & 0xFF) << 8
+                    | (data[offset + 3] & 0xFF);
         }
 
         /**

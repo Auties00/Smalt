@@ -44,8 +44,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Reads HLS presentations: hand-written playlists over in-memory files (attribute lists, byte ranges with implicit
  * offsets, gaps, keys, URI resolution, WebVTT segments with timestamp maps and repeated cues, malformed input) and the
- * packager's presentations, whose clear, byte-range, AES-128 and Common Encryption layouts must all give the packets
- * of the clear segmented one.
+ * packager's presentations, whose clear, byte-range, AES-128, SAMPLE-AES transport stream and Common Encryption layouts
+ * must all give the packets of the clear segmented one.
  */
 @DisplayName("HLS demuxer")
 class HlsDemuxerTest {
@@ -357,7 +357,7 @@ class HlsDemuxerTest {
         }
 
         @ParameterizedTest(name = "{0}")
-        @ValueSource(strings = {"hls-byte-ranges", "hls-aes", "hls-aes-sequence", "cmaf-sample-aes",
+        @ValueSource(strings = {"hls-byte-ranges", "hls-aes", "hls-aes-sequence", "ts-sample-aes", "cmaf-sample-aes",
                 "cmaf-sample-aes-ctr"})
         @DisplayName("give the packets of the clear presentation, decrypted with the keys the playlists name")
         void sameAsClear(String layout) {
@@ -371,6 +371,8 @@ class HlsDemuxerTest {
                         .initializationVector(keyId).build()).build();
                 case "hls-aes-sequence" -> PackagingOptions.hls().toBuilder().encryption(PackagingEncryption
                         .forAes128(key, "k.bin").toBuilder().keyFileName("k.bin").build()).build();
+                case "ts-sample-aes" -> PackagingOptions.hls().toBuilder().encryption(PackagingEncryption
+                        .forSampleAes(keyId, key, "k.bin").toBuilder().noKeyId().keyFileName("k.bin").build()).build();
                 case "cmaf-sample-aes" -> PackagingOptions.hlsCmaf().toBuilder().encryption(PackagingEncryption
                         .forSampleAes(keyId, key, "k.bin").toBuilder().keyFileName("k.bin").build()).build();
                 default -> PackagingOptions.hlsCmaf().toBuilder().encryption(PackagingEncryption
@@ -420,11 +422,22 @@ class HlsDemuxerTest {
         }
 
         @Test
-        @DisplayName("reject SAMPLE-AES transport stream segments, which it cannot decrypt")
+        @DisplayName("decrypt SAMPLE-AES transport stream segments with the key of the options when no key file exists")
         void sampleAesTransportStream() {
-            var master = pack("ts-sample-aes", PackagingOptions.hls().toBuilder().encryption(PackagingEncryption
-                    .forSampleAes(new byte[16], new byte[16], "k.bin").toBuilder().noKeyId().build()).build());
+            var key = HexFormat.of().parseHex("00112233445566778899aabbccddeeff");
+            var master = pack("ts-sample-aes-no-file", PackagingOptions.hls().toBuilder().encryption(PackagingEncryption
+                    .forSampleAes(new byte[16], key, "k.bin").toBuilder().noKeyId().build()).build());
             assertThrows(MediaException.Unsupported.class, () -> read(master));
+            var clear = read(pack("clear-ts", PackagingOptions.hls()));
+            try (var demuxer = new HlsDemuxer(MediaSource.of(master), DemuxerOptions.builder()
+                    .dataReferences(DataReferenceResolver.directory(master.getParent()))
+                    .decryptionKeys(com.github.auties00.smalt.container.DecryptionKeys.single(key)).build())) {
+                var packets = packets(demuxer);
+                assertEquals(clear.size(), packets.size());
+                for (var index = 0; index < clear.size(); index++) {
+                    assertArrayEquals(clear.get(index).data(), packets.get(index).data(), "packet " + index);
+                }
+            }
         }
 
         @Test
