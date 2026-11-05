@@ -1,0 +1,6 @@
+# Written by tools/testdata/av1-annexb/make-vectors.py: name, frames, SHA-256 of the stream,
+# SHA-256 of aomdec --annexb --rawvideo output (aomenc and aomdec 3.13.1).
+annexb-8bit-tiles.ivf	10	826c71e4eba0d91e4b9bb33d575aae643e8b04a2c0e5c0db5ed7a5165f97d10b	f6cea1ca9d738e8c00f02e0e02d9ec4ebf55371f959069a593e96546c69bef7d
+annexb-10bit-444.ivf	8	7f00aa3c9782eb4bb8fb6a119b284d438764463e0bda95aa7b2e11ce38453493	253f8284459623c5b155150f4486a75f48b574c87d6fbc347b7c0300d7377cce
+annexb-monochrome.ivf	6	c2b99e23640f8ae14a4aa5cfc794e8ca1810d9a66fe06fb408c69387e1502f47	c454c46125950bda6acc6bf0e0cf052734fd9da8f1e69b7dfb2cdb34a724e5b5
+annexb-raw.obu	9	9c2250fb3df4191119e318cd72ef6c9df8cef4a50ddb5b10170e558b43b32f76	79dd2bd87ad53d3f26a557b674d3c899d08decd0ebbc79f010c348a0b9d2eacf

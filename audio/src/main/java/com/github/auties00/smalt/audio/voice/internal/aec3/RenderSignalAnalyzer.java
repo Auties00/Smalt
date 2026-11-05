@@ -1,3 +1,5 @@
+/* Ports webrtc-audio-processing 2.1 (modules/audio_processing/aec3/render_signal_analyzer.cc). Copyright (c) 2011,
+   The WebRTC project authors; BSD 3-Clause License. Modified for Smalt. */
 package com.github.auties00.smalt.audio.voice.internal.aec3;
 
 import java.util.Arrays;
@@ -11,8 +13,7 @@ import static com.github.auties00.smalt.audio.voice.internal.aec3.Aec3.FFT_LENGT
  * filters to be updated reliably around them.
  *
  * @implNote This implementation ports WebRTC's
- * {@code modules/audio_processing/aec3/render_signal_analyzer.cc} for one render channel and
- * one band.
+ * {@code modules/audio_processing/aec3/render_signal_analyzer.cc}.
  */
 final class RenderSignalAnalyzer {
     /**
@@ -29,6 +30,11 @@ final class RenderSignalAnalyzer {
      * The per-bin counts of consecutive blocks with a narrow-band peak, for bins 1 to 63.
      */
     private final int[] narrowBandCounters = new int[FFT_LENGTH_BY_2 - 1];
+
+    /**
+     * The scratch per-bin counts of channels with a narrow-band peak.
+     */
+    private final int[] channelCounters = new int[FFT_LENGTH_BY_2 - 1];
 
     /**
      * The bin of the strong narrow-band peak, or {@code -1} when there is none.
@@ -49,7 +55,7 @@ final class RenderSignalAnalyzer {
     /**
      * Updates the detection with the latest render data.
      *
-     * @param renderBuffer    the render rings
+     * @param renderBuffer the render buffer
      * @param delayPartitions the delay of the echo path in blocks, or {@code -1} when unknown
      */
     void update(RenderBuffer renderBuffer, int delayPartitions) {
@@ -58,9 +64,7 @@ final class RenderSignalAnalyzer {
     }
 
     /**
-     * Returns whether a narrow-band region has persisted long enough to make the excitation poor.
-     *
-     * @return whether any bin has been narrow-band for more than ten blocks
+     * {@return whether some bin has had a narrow-band peak for more than 10 blocks}
      */
     boolean poorSignalExcitation() {
         for (var counter : narrowBandCounters) {
@@ -72,9 +76,9 @@ final class RenderSignalAnalyzer {
     }
 
     /**
-     * Zeroes the bins of a vector around the persistent narrow-band regions.
+     * Zeroes the bins of a spectrum around the narrow-band regions.
      *
-     * @param v the 65 values
+     * @param v the 65 bins, modified in place
      */
     void maskRegionsAroundNarrowBands(float[] v) {
         if (narrowBandCounters[0] > COUNTER_THRESHOLD) {
@@ -91,61 +95,80 @@ final class RenderSignalAnalyzer {
     }
 
     /**
-     * Returns the bin of the strong narrow-band peak.
-     *
-     * @return the bin, or {@code -1} when there is none
+     * {@return the bin of the strong narrow-band peak, or {@code -1} when there is none}
      */
     int narrowPeakBand() {
         return narrowPeakBand;
     }
 
-    /**
-     * Counts, per bin, the consecutive blocks whose power exceeds three times both neighbors.
-     *
-     * @param renderBuffer    the render rings
-     * @param delayPartitions the delay of the echo path in blocks, or {@code -1} when unknown
-     */
     private void identifySmallNarrowBandRegions(RenderBuffer renderBuffer, int delayPartitions) {
         if (delayPartitions < 0) {
             Arrays.fill(narrowBandCounters, 0);
             return;
         }
+        Arrays.fill(channelCounters, 0);
         var x2 = renderBuffer.spectra;
-        var o = renderBuffer.spectrumOffset(delayPartitions);
+        for (var ch = 0; ch < renderBuffer.numChannels; ch++) {
+            var o = renderBuffer.spectrumOffset(delayPartitions, ch);
+            for (var k = 1; k < FFT_LENGTH_BY_2; ++k) {
+                var neighbor = x2[o + k - 1] < x2[o + k + 1] ? x2[o + k + 1] : x2[o + k - 1];
+                if (x2[o + k] > 3 * neighbor) {
+                    ++channelCounters[k - 1];
+                }
+            }
+        }
         for (var k = 1; k < FFT_LENGTH_BY_2; ++k) {
-            var neighbor = x2[o + k - 1] < x2[o + k + 1] ? x2[o + k + 1] : x2[o + k - 1];
-            var narrow = x2[o + k] > 3 * neighbor;
-            narrowBandCounters[k - 1] = narrow ? narrowBandCounters[k - 1] + 1 : 0;
+            narrowBandCounters[k - 1] = channelCounters[k - 1] > 0 ? narrowBandCounters[k - 1] + 1 : 0;
         }
     }
 
-    /**
-     * Detects a strong isolated spectral peak in the latest render block.
-     *
-     * @param renderBuffer the render rings
-     */
     private void identifyStrongNarrowBandComponent(RenderBuffer renderBuffer) {
         if (narrowPeakBand >= 0 && ++narrowPeakCounter > STRONG_PEAK_FREEZE_DURATION) {
             narrowPeakBand = -1;
         }
         var blocks = renderBuffer.blocks;
-        var b = renderBuffer.blockOffset(0);
         var x2 = renderBuffer.spectra;
-        var o = renderBuffer.spectrumOffset(0);
         var maxPeakLevel = 0.f;
-        var peakBin = 0;
-        for (var k = 1; k < FFT_LENGTH_BY_2_PLUS_1; k++) {
-            if (x2[o + peakBin] < x2[o + k]) {
-                peakBin = k;
+        for (var ch = 0; ch < renderBuffer.numChannels; ch++) {
+            var o = renderBuffer.spectrumOffset(0, ch);
+            var peakBin = 0;
+            for (var k = 1; k < FFT_LENGTH_BY_2_PLUS_1; k++) {
+                if (x2[o + peakBin] < x2[o + k]) {
+                    peakBin = k;
+                }
+            }
+            var nonPeakPower = 0.f;
+            for (var k = Math.max(0, peakBin - 14); k < peakBin - 4; ++k) {
+                nonPeakPower = nonPeakPower < x2[o + k] ? x2[o + k] : nonPeakPower;
+            }
+            for (var k = peakBin + 5; k < Math.min(peakBin + 15, FFT_LENGTH_BY_2_PLUS_1); ++k) {
+                nonPeakPower = nonPeakPower < x2[o + k] ? x2[o + k] : nonPeakPower;
+            }
+            var maxAbs = maxAbs(blocks, renderBuffer.blockOffset(0, 0, ch));
+            if (renderBuffer.numBands > 1) {
+                var maxAbs1 = maxAbs(blocks, renderBuffer.blockOffset(0, 1, ch));
+                maxAbs = maxAbs < maxAbs1 ? maxAbs1 : maxAbs;
+            }
+            var peakLevel = x2[o + peakBin];
+            if (peakBin > 0 && maxAbs > 100 && peakLevel > 100 * nonPeakPower) {
+                if (peakLevel > maxPeakLevel) {
+                    maxPeakLevel = peakLevel;
+                    narrowPeakBand = peakBin;
+                    narrowPeakCounter = 0;
+                }
             }
         }
-        var nonPeakPower = 0.f;
-        for (var k = Math.max(0, peakBin - 14); k < peakBin - 4; ++k) {
-            nonPeakPower = nonPeakPower < x2[o + k] ? x2[o + k] : nonPeakPower;
-        }
-        for (var k = peakBin + 5; k < Math.min(peakBin + 15, FFT_LENGTH_BY_2_PLUS_1); ++k) {
-            nonPeakPower = nonPeakPower < x2[o + k] ? x2[o + k] : nonPeakPower;
-        }
+    }
+
+    /**
+     * Returns the larger magnitude of the first smallest and the last largest sample of a block
+     * ({@code std::minmax_element}).
+     *
+     * @param blocks the samples of the render blocks
+     * @param b the index of the first of the 64 samples
+     * @return the magnitude
+     */
+    private static float maxAbs(float[] blocks, int b) {
         var min = blocks[b];
         var max = blocks[b];
         for (var i = 1; i < BLOCK_SIZE; i++) {
@@ -157,13 +180,6 @@ final class RenderSignalAnalyzer {
                 max = v;
             }
         }
-        var maxAbs = Math.abs(min) < Math.abs(max) ? Math.abs(max) : Math.abs(min);
-        var peakLevel = x2[o + peakBin];
-        if (peakBin > 0 && maxAbs > 100 && peakLevel > 100 * nonPeakPower) {
-            if (peakLevel > maxPeakLevel) {
-                narrowPeakBand = peakBin;
-                narrowPeakCounter = 0;
-            }
-        }
+        return Math.abs(min) < Math.abs(max) ? Math.abs(max) : Math.abs(min);
     }
 }

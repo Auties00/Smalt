@@ -5,7 +5,9 @@ import com.github.auties00.smalt.metadata.StandardTag;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Reads and writes the 128-byte ID3v1 and ID3v1.1 tag found at the end of MP3 files.
@@ -63,6 +65,32 @@ public final class Id3v1Tag {
             add(result, StandardTag.GENRE, genre);
         }
         return result;
+    }
+
+    /**
+     * Decodes a tag into the fields a demuxer reports, keyed by the ID3v2.3 frame identifier of
+     * each field: {@code TIT2}, {@code TPE1}, {@code TALB}, {@code TYER}, {@code COMM},
+     * {@code TRCK} and {@code TCON}.
+     *
+     * @param data the bytes
+     * @param offset the index of the tag's first byte
+     * @return the non-empty fields in tag order
+     */
+    public static Map<String, String> fields(byte[] data, int offset) {
+        var fields = new LinkedHashMap<String, String>();
+        for (var entry : parse(data, offset)) {
+            var key = switch (StandardTag.fromName(entry.key()).orElseThrow()) {
+                case TITLE -> "TIT2";
+                case ARTIST -> "TPE1";
+                case ALBUM -> "TALB";
+                case DATE -> "TYER";
+                case COMMENT -> "COMM";
+                case TRACK -> "TRCK";
+                default -> "TCON";
+            };
+            fields.put(key, entry.value());
+        }
+        return fields;
     }
 
     /**

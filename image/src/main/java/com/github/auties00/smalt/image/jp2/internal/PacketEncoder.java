@@ -81,7 +81,7 @@ final class PacketEncoder {
                 for (var index = 0; index < area.encodedBlocks.length; index++) {
                     var block = area.encodedBlocks[index];
                     block.writtenPasses = 0;
-                    area.zeroPlanes.setValue(index, band.bitPlanes() - block.bitPlanes);
+                    area.zeroPlanes.setValue(index, band.bitPlanes() + block.roiPlanes - block.bitPlanes);
                 }
             }
         }
