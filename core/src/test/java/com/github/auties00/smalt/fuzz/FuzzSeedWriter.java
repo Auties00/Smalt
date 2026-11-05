@@ -26,6 +26,7 @@ import com.github.auties00.smalt.metadata.TrackTags;
 import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Oracle;
 import com.github.auties00.smalt.testkit.container.PresentationSamples;
+import com.github.auties00.smalt.testkit.container.SyntheticAvc;
 import com.github.auties00.smalt.testkit.fuzz.FuzzPackets;
 import com.github.auties00.smalt.testkit.fuzz.FuzzPresentations;
 import com.github.auties00.smalt.testkit.fuzz.FuzzSeeds;
@@ -1095,6 +1096,10 @@ class FuzzSeedWriter {
     void elementary() throws IOException {
         copy(DemuxerFuzzTest.class, "h264", "valid-h264.h264", ffmpeg("h264", video(32, 32, 6), "-c:v", "libx264",
                 "-preset", "ultrafast", "-bf", "2", "-g", "4"));
+        // field pictures released one field at a time, and gaps in frame_num
+        for (var scenario : SyntheticAvc.markingScenarios()) {
+            write(DemuxerFuzzTest.class, "h264", "valid-avc-marking-" + scenario.name() + ".h264", scenario.stream());
+        }
         copy(DemuxerFuzzTest.class, "hevc", "valid-hevc.h265", ffmpeg("hevc", video(32, 32, 6), "-c:v", "libx265",
                 "-preset", "ultrafast", "-x265-params", "log-level=0:keyint=4:bframes=2"));
         // VVC has no encoder in ffmpeg 7.1: the seed is a VVenC stream of smalt-mpeg's test vectors (see vvc.tsv)

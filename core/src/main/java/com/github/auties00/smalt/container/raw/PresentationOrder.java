@@ -435,6 +435,36 @@ final class PresentationOrder {
      * @param entry the picture
      */
     void add(Entry entry) {
+        store(entry);
+        window.add(entry);
+    }
+
+    /**
+     * Adds a frame a decoder infers for a gap in {@code frame_num} (ITU-T H.264 clause 8.2.5.2) in decoding order: it
+     * fills a place of the decoded picture buffer, which can output waiting pictures, and stays there while later
+     * pictures keep it as a reference, but it is never output nor returned by {@link #poll(boolean)}.
+     *
+     * <p>A frame of another period than the last picture added is ignored: a period starts with an empty buffer.
+     *
+     * @param entry the frame, not output, stored as a reference picture with a reference marking, and with an order
+     * count no picture of the period has
+     * @throws IllegalArgumentException if the frame is output
+     */
+    void infer(Entry entry) {
+        if (entry.output) {
+            throw new IllegalArgumentException("an inferred frame is not output");
+        }
+        if (entry.period == lastPeriod) {
+            store(entry);
+        }
+    }
+
+    /**
+     * Stores the next picture in decoding order in the decoder model, outputting the pictures it makes leave.
+     *
+     * @param entry the picture
+     */
+    private void store(Entry entry) {
         var bound = entry.reorder >= 0 ? entry.reorder : reorder;
         var latency = entry.maxLatency >= 0 ? entry.maxLatency : maxLatency;
         if (entry.period != lastPeriod) {
@@ -507,7 +537,6 @@ final class PresentationOrder {
                 break;
             }
         }
-        window.add(entry);
     }
 
     /**

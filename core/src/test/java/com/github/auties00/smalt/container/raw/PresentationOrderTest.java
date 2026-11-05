@@ -5,6 +5,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.RepetitionInfo;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -13,6 +15,7 @@ import java.util.Random;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -184,6 +187,52 @@ class PresentationOrderTest {
         }
         assertEquals(List.of(0L, Packet.NO_TIMESTAMP, 2L, 4L),
                 entries.stream().map(PresentationOrder.Entry::pts).toList());
+    }
+
+    @ParameterizedTest(name = "{0} inferred frames")
+    @ValueSource(ints = {0, 1, 2})
+    @DisplayName("fills the buffer with the inferred frames of a frame_num gap, which are never returned")
+    void inferredFrames(int inferred) {
+        // a buffer of 3 holding the waiting frames I0 (a reference), P8 and B4 (not references); each
+        // inferred frame, kept as a reference, fills the buffer and outputs waiting frames, so the IDR picture finds
+        // fewer waiting frames to discard
+        var order = new PresentationOrder(3, 3, 0, null);
+        var entries = new ArrayList<PresentationOrder.Entry>();
+        long[][] pictures = {{0, 0, 1}, {8, 0, 0}, {4, 0, 0}};
+        for (var i = 0; i < pictures.length; i++) {
+            var picture = pictures[i];
+            var entry = new PresentationOrder.Entry(picture[0], picture[1], true, 2, false, 3, 0, 3,
+                    other -> other == 0, picture[2] == 1, true, i);
+            order.add(entry);
+            entries.add(entry);
+        }
+        var ids = new ArrayList<Long>();
+        for (var i = 0; i < inferred; i++) {
+            var id = Long.MIN_VALUE + i;
+            var kept = List.copyOf(ids);
+            order.infer(new PresentationOrder.Entry(id, 0, false, 0, false, 3, 0, 3,
+                    other -> other == 0 || kept.contains(other), true, false, null));
+            ids.add(id);
+        }
+        // a frame of another period is ignored
+        order.infer(new PresentationOrder.Entry(Long.MIN_VALUE + 9, 7, false, 0, false, 3, 0, 3, other -> true,
+                true, false, null));
+        var idr = new PresentationOrder.Entry(0, 1, true, 2, true, 3, 0, 3, other -> true, true, true, 3);
+        order.add(idr);
+        entries.add(idr);
+        var polled = new ArrayList<Object>();
+        for (var entry = order.poll(true); entry != null; entry = order.poll(true)) {
+            polled.add(entry.payload);
+        }
+        assertEquals(List.of(0, 1, 2, 3), polled, "only the pictures added are returned");
+        var shown = entries.stream().map(entry -> entry.pts() != Packet.NO_TIMESTAMP).toList();
+        assertEquals(switch (inferred) {
+            case 0 -> List.of(false, false, false, true);
+            case 1 -> List.of(true, false, true, true);
+            default -> List.of(true, true, true, true);
+        }, shown);
+        assertThrows(IllegalArgumentException.class, () -> order.infer(new PresentationOrder.Entry(1, 1, true, 2,
+                false, 3, 0, 3, other -> true, true, false, null)));
     }
 
     @Test

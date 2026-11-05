@@ -688,42 +688,117 @@ public final class AnnexBDemuxer implements Demuxer {
     }
 
     /**
-     * An H.264 reference frame of the marking model.
+     * An H.264 frame, complementary field pair or non-paired field of the reference marking model, with the marking
+     * of each of its fields (ITU-T H.264 clause 8.2.5).
      */
     private static final class AvcReference {
         /**
-         * The frame's order count.
+         * The marking of a field not used for reference.
+         */
+        static final int UNUSED = 0;
+
+        /**
+         * The marking of a field used for short-term reference.
+         */
+        static final int SHORT_TERM = 1;
+
+        /**
+         * The marking of a field used for long-term reference.
+         */
+        static final int LONG_TERM = 2;
+
+        /**
+         * The order count of the access unit holding the frame, or a value no picture has for a frame inferred for
+         * a gap in {@code frame_num}.
          */
         final long poc;
 
         /**
          * The frame's {@code frame_num}.
          */
-        final int frameNum;
+        int frameNum;
 
         /**
-         * Whether the frame is a long-term reference.
+         * The marking of the top field.
          */
-        boolean longTerm;
+        int top;
 
         /**
-         * {@code LongTermFrameIdx} of a long-term frame.
+         * The marking of the bottom field.
+         */
+        int bottom;
+
+        /**
+         * {@code LongTermFrameIdx}, valid while a field is marked long-term.
          */
         int longTermIndex;
 
         /**
-         * Constructs a reference frame.
+         * Constructs a frame whose fields are not used for reference yet.
          *
          * @param poc the order count
          * @param frameNum the {@code frame_num}
-         * @param longTerm whether the frame is a long-term reference
-         * @param longTermIndex its long-term frame index
          */
-        AvcReference(long poc, int frameNum, boolean longTerm, int longTermIndex) {
+        AvcReference(long poc, int frameNum) {
             this.poc = poc;
             this.frameNum = frameNum;
-            this.longTerm = longTerm;
-            this.longTermIndex = longTermIndex;
+        }
+
+        /**
+         * Returns the marking of a field.
+         *
+         * @param bottomField whether the field is the bottom field
+         * @return {@link #UNUSED}, {@link #SHORT_TERM} or {@link #LONG_TERM}
+         */
+        int field(boolean bottomField) {
+            return bottomField ? bottom : top;
+        }
+
+        /**
+         * Marks a field.
+         *
+         * @param bottomField whether the field is the bottom field
+         * @param marking {@link #UNUSED}, {@link #SHORT_TERM} or {@link #LONG_TERM}
+         */
+        void mark(boolean bottomField, int marking) {
+            if (bottomField) {
+                bottom = marking;
+            } else {
+                top = marking;
+            }
+        }
+
+        /**
+         * {@return whether a field is used for reference}
+         */
+        boolean referenced() {
+            return top != UNUSED || bottom != UNUSED;
+        }
+
+        /**
+         * {@return whether a field is used for short-term reference}
+         */
+        boolean anyShortTerm() {
+            return top == SHORT_TERM || bottom == SHORT_TERM;
+        }
+
+        /**
+         * {@return whether a field is used for long-term reference}
+         */
+        boolean anyLongTerm() {
+            return top == LONG_TERM || bottom == LONG_TERM;
+        }
+
+        /**
+         * Marks the fields used for long-term reference as unused.
+         */
+        void releaseLongTerm() {
+            if (top == LONG_TERM) {
+                top = UNUSED;
+            }
+            if (bottom == LONG_TERM) {
+                bottom = UNUSED;
+            }
         }
     }
 
@@ -881,6 +956,18 @@ public final class AnnexBDemuxer implements Demuxer {
          * The period the H.264 reference frames belong to.
          */
         private long markedPeriod = Long.MIN_VALUE;
+
+        /**
+         * {@code PrevRefFrameNum} of the period (ITU-T H.264 clause 7.4.3), or {@code -1} before its first reference
+         * picture.
+         */
+        private int prevRefFrameNum = -1;
+
+        /**
+         * The order count given to the last frame inferred for a gap in {@code frame_num}: these count up from the
+         * smallest value, which no picture has.
+         */
+        private long inferredPoc = Long.MIN_VALUE;
 
         /**
          * Packets of access units starting before this offset are not returned.
@@ -1436,7 +1523,8 @@ public final class AnnexBDemuxer implements Demuxer {
                 var references = mark(unit);
                 entry = new PresentationOrder.Entry(unit.poc, unit.period, unit.output, unit.duration,
                         unit.discardPrior, sps.reorderFrames(), 0, sps.dpbFrames(), references::contains,
-                        unit.avc.reference(), true, unit);
+                        unit.avc.reference() || (unit.secondField != null && unit.secondField.reference()), true,
+                        unit);
             } else {
                 entry = new PresentationOrder.Entry(unit.poc, unit.period, unit.output, unit.duration,
                         unit.discardPrior, unit);
@@ -1452,120 +1540,252 @@ public final class AnnexBDemuxer implements Demuxer {
          * Applies the decoded reference picture marking of an H.264 picture (ITU-T H.264 clause 8.2.5) to the
          * reference frames of the period and returns the order counts of the frames that stay references.
          *
-         * <p>Frames and field pairs are marked as frames: the picture numbers of a field picture's operations name
-         * the frame that holds the field.
+         * <p>The two fields of a pair joined into one access unit are marked one after the other, each with its own
+         * parity and operations, and a frame stays a reference while one of its fields is. A {@code frame_num} that
+         * skips values first adds the frames a decoder infers for the gap (clause 8.2.5.2) to the marking and to the
+         * presentation ordering: they fill the decoded picture buffer and push the oldest short-term references out
+         * of the sliding window, but are never output.
          *
          * @param unit the access unit, whose picture is added after the frames returned
          * @return the order counts of the earlier reference frames still used for reference
          */
         private ReferenceSet mark(AccessUnit unit) {
-            // TODO: mark field pictures one field at a time (a frame stays a reference while one of its fields is)
-            // and insert the frames a gap in frame_num implies (ITU-T H.264 clause 8.2.5.2)
-            var slice = unit.avc;
             if (unit.period != markedPeriod) {
                 avcReferences.clear();
                 maxLongTermIndex = -1;
                 markedPeriod = unit.period;
+                prevRefFrameNum = -1;
+            }
+            var current = markPicture(unit, unit.avc, null);
+            if (unit.secondField != null) {
+                current = markPicture(unit, unit.secondField, current);
+            }
+            avcReferences.removeIf(reference -> !reference.referenced());
+            // a marking that releases no frame cannot keep more than a decoded picture buffer holds
+            while (avcReferences.size() > MAX_DPB_FRAMES) {
+                avcReferences.remove(avcReferences.getFirst() == current ? 1 : 0);
             }
             var result = new ReferenceSet();
-            if (slice.idr()) {
-                avcReferences.clear();
-                maxLongTermIndex = slice.longTermReference() ? 0 : -1;
-                if (slice.reference()) {
-                    avcReferences.add(new AvcReference(unit.poc, slice.frameNum(), slice.longTermReference(), 0));
-                }
-                return result;
-            }
-            var maxFrameNum = 1 << slice.sps().log2MaxFrameNum();
-            var current = slice.frameNum();
-            var longTermCurrent = -1;
-            if (slice.reference()) {
-                var operations = new ArrayList<int[]>();
-                if (slice.operations() != null) {
-                    operations.add(slice.operations());
-                }
-                if (unit.secondField != null && unit.secondField.operations() != null) {
-                    operations.add(unit.secondField.operations());
-                }
-                if (operations.isEmpty()) {
-                    var shortTerm = 0;
-                    AvcReference oldest = null;
-                    for (var reference : avcReferences) {
-                        if (!reference.longTerm) {
-                            shortTerm++;
-                            if (oldest == null || wrap(reference.frameNum, current, maxFrameNum)
-                                    < wrap(oldest.frameNum, current, maxFrameNum)) {
-                                oldest = reference;
-                            }
-                        }
-                    }
-                    if (avcReferences.size() >= Math.max(1, slice.sps().refFrames()) && shortTerm > 0) {
-                        avcReferences.remove(oldest);
-                    }
-                }
-                for (var list : operations) {
-                    for (var i = 0; i < list.length; i += 3) {
-                        longTermCurrent = operate(list[i], list[i + 1], list[i + 2], slice, current, maxFrameNum,
-                                longTermCurrent);
-                    }
-                }
-            }
             for (var reference : avcReferences) {
-                result.add(reference.poc);
-            }
-            if (slice.reference()) {
-                avcReferences.add(new AvcReference(unit.poc, current, longTermCurrent >= 0,
-                        Math.max(0, longTermCurrent)));
-                // a marking that releases no frame cannot keep more than a decoded picture buffer holds
-                while (avcReferences.size() > MAX_DPB_FRAMES) {
-                    avcReferences.removeFirst();
+                if (reference != current) {
+                    result.add(reference.poc);
                 }
             }
             return result;
         }
 
         /**
-         * Applies one memory management control operation (ITU-T H.264 clause 8.2.5.4).
+         * Marks one picture of an access unit: a frame, a field, or the second field of the frame whose first field
+         * was marked.
+         *
+         * @param unit the access unit
+         * @param slice the first slice header of the picture
+         * @param pair the frame holding the first field when the picture is the second field of the unit and the
+         * first field is a reference, or {@code null}
+         * @return the frame holding the picture when it is a reference, else {@code pair}
+         */
+        private AvcReference markPicture(AccessUnit unit, AvcSyntax.Slice slice, AvcReference pair) {
+            if (slice.idr()) {
+                if (pair == null) {
+                    avcReferences.clear();
+                    maxLongTermIndex = slice.longTermReference() ? 0 : -1;
+                }
+                prevRefFrameNum = 0;
+                var reference = pair != null ? pair : new AvcReference(unit.poc, 0);
+                store(reference, slice, slice.longTermReference() ? 0 : -1);
+                return reference;
+            }
+            var maxFrameNum = 1 << slice.sps().log2MaxFrameNum();
+            var frameNum = slice.frameNum();
+            if (pair == null && unit.secondField != slice) {
+                inferGap(unit, slice.sps(), frameNum, maxFrameNum);
+            }
+            if (!slice.reference()) {
+                return pair;
+            }
+            var longTermIndex = -1;
+            var mmco5 = false;
+            var operations = slice.operations();
+            if (operations == null) {
+                if (pair == null || !slice.field() || pair.field(!slice.bottom()) != AvcReference.SHORT_TERM) {
+                    slidingWindow(frameNum, maxFrameNum, slice.sps().refFrames());
+                }
+            } else {
+                for (var i = 0; i < operations.length; i += 3) {
+                    mmco5 |= operations[i] == 5;
+                    longTermIndex = operate(operations[i], operations[i + 1], operations[i + 2], slice, frameNum,
+                            maxFrameNum, pair, longTermIndex);
+                }
+            }
+            var reference = pair != null ? pair : new AvcReference(unit.poc, frameNum);
+            store(reference, slice, longTermIndex);
+            if (mmco5) {
+                reference.frameNum = 0;
+            }
+            prevRefFrameNum = mmco5 ? 0 : frameNum;
+            return reference;
+        }
+
+        /**
+         * Marks the fields a reference picture codes in the frame holding it, and adds the frame to the model.
+         *
+         * @param reference the frame
+         * @param slice the first slice header of the picture
+         * @param longTermIndex the long-term frame index the picture takes, or {@code -1} for a short-term picture
+         */
+        private void store(AvcReference reference, AvcSyntax.Slice slice, int longTermIndex) {
+            var marking = longTermIndex >= 0 ? AvcReference.LONG_TERM : AvcReference.SHORT_TERM;
+            if (slice.field()) {
+                reference.mark(slice.bottom(), marking);
+            } else {
+                reference.top = marking;
+                reference.bottom = marking;
+            }
+            if (longTermIndex >= 0) {
+                reference.longTermIndex = longTermIndex;
+            }
+            if (!avcReferences.contains(reference)) {
+                avcReferences.add(reference);
+            }
+        }
+
+        /**
+         * Adds the frames a decoder infers for a gap in {@code frame_num} before a picture (ITU-T H.264 clause
+         * 8.2.5.2), each marked through the sliding window and stored as a short-term reference frame that is never
+         * output.
+         *
+         * <p>Only the last {@code Max(max_num_ref_frames, 1)} frames of the gap (at most 16) are added: the earlier
+         * ones leave the sliding window before the picture, and by then every frame they would have released was
+         * released.
+         *
+         * @param unit the access unit holding the picture
+         * @param sps the active sequence parameter set
+         * @param frameNum the picture's {@code frame_num}
+         * @param maxFrameNum {@code MaxFrameNum}
+         */
+        private void inferGap(AccessUnit unit, AvcSyntax.Sps sps, int frameNum, int maxFrameNum) {
+            if (prevRefFrameNum < 0 || frameNum == prevRefFrameNum
+                    || frameNum == (prevRefFrameNum + 1) % maxFrameNum) {
+                return;
+            }
+            var missing = Math.floorMod(frameNum - prevRefFrameNum - 1, maxFrameNum);
+            var count = Math.min(missing, refFrames(sps.refFrames()));
+            var inferred = (prevRefFrameNum + 1 + missing - count) % maxFrameNum;
+            for (var i = 0; i < count; i++) {
+                slidingWindow(inferred, maxFrameNum, sps.refFrames());
+                var kept = new ReferenceSet();
+                for (var reference : avcReferences) {
+                    kept.add(reference.poc);
+                }
+                var frame = new AvcReference(++inferredPoc, inferred);
+                frame.top = AvcReference.SHORT_TERM;
+                frame.bottom = AvcReference.SHORT_TERM;
+                avcReferences.add(frame);
+                order.infer(new PresentationOrder.Entry(frame.poc, unit.period, false, 0, false, sps.reorderFrames(),
+                        0, sps.dpbFrames(), kept::contains, true, false, null));
+                prevRefFrameNum = inferred;
+                inferred = (inferred + 1) % maxFrameNum;
+            }
+        }
+
+        /**
+         * Applies the sliding window marking (ITU-T H.264 clause 8.2.5.3): when the reference frames fill
+         * {@code Max(max_num_ref_frames, 1)}, the short-term one with the smallest {@code FrameNumWrap} stops being a
+         * reference, both of its fields.
+         *
+         * @param frameNum the current {@code frame_num}
+         * @param maxFrameNum {@code MaxFrameNum}
+         * @param refFrames {@code max_num_ref_frames}
+         */
+        private void slidingWindow(int frameNum, int maxFrameNum, int refFrames) {
+            var shortTerm = 0;
+            var longTerm = 0;
+            AvcReference oldest = null;
+            for (var reference : avcReferences) {
+                if (reference.anyShortTerm()) {
+                    shortTerm++;
+                    if (oldest == null || wrap(reference.frameNum, frameNum, maxFrameNum)
+                            < wrap(oldest.frameNum, frameNum, maxFrameNum)) {
+                        oldest = reference;
+                    }
+                }
+                if (reference.anyLongTerm()) {
+                    longTerm++;
+                }
+            }
+            if (oldest != null && shortTerm + longTerm >= refFrames(refFrames)) {
+                avcReferences.remove(oldest);
+            }
+        }
+
+        /**
+         * Applies one memory management control operation (ITU-T H.264 clause 8.2.5.4) of a frame or field picture.
          *
          * @param operation {@code memory_management_control_operation}
          * @param first its first value
          * @param second its second value
          * @param slice the slice header
-         * @param current the current {@code frame_num}
+         * @param frameNum the current {@code frame_num}
          * @param maxFrameNum {@code MaxFrameNum}
+         * @param pair the frame holding the first field of the current second field, or {@code null}
          * @param longTermCurrent the long-term frame index the current picture takes, or {@code -1}
          * @return the long-term frame index the current picture takes, or {@code -1}
          */
-        private int operate(int operation, int first, int second, AvcSyntax.Slice slice, int current, int maxFrameNum,
-                            int longTermCurrent) {
-            var currentPicNum = slice.field() ? 2 * current + 1 : current;
+        private int operate(int operation, int first, int second, AvcSyntax.Slice slice, int frameNum,
+                            int maxFrameNum, AvcReference pair, int longTermCurrent) {
+            var field = slice.field();
+            var currentPicNum = field ? 2 * frameNum + 1 : frameNum;
             switch (operation) {
-                case 1 -> removeShortTerm(currentPicNum - (first + 1), slice.field(), current, maxFrameNum);
-                case 2 -> avcReferences.removeIf(reference -> reference.longTerm
-                        && reference.longTermIndex == (slice.field() ? first >> 1 : first));
-                case 3 -> {
-                    avcReferences.removeIf(reference -> reference.longTerm && reference.longTermIndex == second);
+                case 1 -> {
                     var picNum = currentPicNum - (first + 1);
+                    var parity = parity(picNum, slice);
+                    release(shortTerm(picNum, field, parity, frameNum, maxFrameNum), field, parity);
+                }
+                case 2 -> {
+                    var parity = parity(first, slice);
+                    release(longTerm(first, field, parity), field, parity);
+                }
+                case 3 -> {
+                    var picNum = currentPicNum - (first + 1);
+                    var parity = parity(picNum, slice);
+                    var target = shortTerm(picNum, field, parity, frameNum, maxFrameNum);
                     for (var reference : avcReferences) {
-                        if (!reference.longTerm && frameNumber(picNum, slice.field())
-                                == wrap(reference.frameNum, current, maxFrameNum)) {
-                            reference.longTerm = true;
-                            reference.longTermIndex = second;
-                            break;
+                        if (reference != target && reference.anyLongTerm() && reference.longTermIndex == second) {
+                            reference.releaseLongTerm();
                         }
+                    }
+                    if (target != null) {
+                        if (field) {
+                            target.mark(parity, AvcReference.LONG_TERM);
+                        } else {
+                            target.top = AvcReference.LONG_TERM;
+                            target.bottom = AvcReference.LONG_TERM;
+                        }
+                        target.longTermIndex = second;
                     }
                 }
                 case 4 -> {
                     maxLongTermIndex = first - 1;
-                    avcReferences.removeIf(reference -> reference.longTerm
-                            && reference.longTermIndex > maxLongTermIndex);
+                    for (var reference : avcReferences) {
+                        if (reference.anyLongTerm() && reference.longTermIndex > maxLongTermIndex) {
+                            reference.releaseLongTerm();
+                        }
+                    }
                 }
                 case 5 -> {
+                    for (var reference : avcReferences) {
+                        reference.top = AvcReference.UNUSED;
+                        reference.bottom = AvcReference.UNUSED;
+                    }
                     avcReferences.clear();
                     maxLongTermIndex = -1;
                 }
                 case 6 -> {
-                    avcReferences.removeIf(reference -> reference.longTerm && reference.longTermIndex == first);
+                    for (var reference : avcReferences) {
+                        if (reference != pair && reference.anyLongTerm() && reference.longTermIndex == first) {
+                            reference.releaseLongTerm();
+                        }
+                    }
                     return first;
                 }
                 default -> {
@@ -1575,29 +1795,92 @@ public final class AnnexBDemuxer implements Demuxer {
         }
 
         /**
-         * Removes the short-term reference frame a picture number names.
+         * Returns the parity of the field a picture number names for a field picture (ITU-T H.264 clause 8.2.4.1):
+         * an odd number names a field of the current picture's parity.
          *
-         * @param picNum the picture number
-         * @param field whether the current picture is a field
-         * @param current the current {@code frame_num}
-         * @param maxFrameNum {@code MaxFrameNum}
+         * @param picNum the picture number or long-term picture number
+         * @param slice the slice header of the current picture
+         * @return whether the field named is a bottom field, meaningless for a frame picture
          */
-        private void removeShortTerm(int picNum, boolean field, int current, int maxFrameNum) {
-            var frame = frameNumber(picNum, field);
-            avcReferences.removeIf(reference -> !reference.longTerm
-                    && wrap(reference.frameNum, current, maxFrameNum) == frame);
+        private static boolean parity(int picNum, AvcSyntax.Slice slice) {
+            return (picNum & 1) != 0 ? slice.bottom() : !slice.bottom();
         }
 
         /**
-         * Returns the {@code FrameNumWrap} a picture number names: the number itself for a frame, the frame of the
-         * field otherwise.
+         * Finds the short-term reference a picture number names (ITU-T H.264 clause 8.2.4.1): a field of that parity
+         * for a field picture, a frame or complementary field pair whose fields are both short-term references for a
+         * frame picture.
          *
-         * @param picNum the picture number
+         * @param picNum {@code picNumX}
          * @param field whether the current picture is a field
-         * @return the frame number wrap
+         * @param bottom the parity of the field named
+         * @param frameNum the current {@code frame_num}
+         * @param maxFrameNum {@code MaxFrameNum}
+         * @return the frame holding the reference, or {@code null} when none matches
          */
-        private static int frameNumber(int picNum, boolean field) {
-            return field ? Math.floorDiv(picNum, 2) : picNum;
+        private AvcReference shortTerm(int picNum, boolean field, boolean bottom, int frameNum, int maxFrameNum) {
+            var frameNumWrap = field ? Math.floorDiv(picNum, 2) : picNum;
+            for (var reference : avcReferences) {
+                if (wrap(reference.frameNum, frameNum, maxFrameNum) == frameNumWrap && (field
+                        ? reference.field(bottom) == AvcReference.SHORT_TERM
+                        : reference.top == AvcReference.SHORT_TERM && reference.bottom == AvcReference.SHORT_TERM)) {
+                    return reference;
+                }
+            }
+            return null;
+        }
+
+        /**
+         * Finds the long-term reference a long-term picture number names (ITU-T H.264 clause 8.2.4.1): a field of
+         * that parity for a field picture, a frame or complementary field pair whose fields are both long-term
+         * references for a frame picture.
+         *
+         * @param longTermPicNum {@code LongTermPicNum}
+         * @param field whether the current picture is a field
+         * @param bottom the parity of the field named
+         * @return the frame holding the reference, or {@code null} when none matches
+         */
+        private AvcReference longTerm(int longTermPicNum, boolean field, boolean bottom) {
+            var index = field ? Math.floorDiv(longTermPicNum, 2) : longTermPicNum;
+            for (var reference : avcReferences) {
+                if (reference.longTermIndex == index && (field
+                        ? reference.field(bottom) == AvcReference.LONG_TERM
+                        : reference.top == AvcReference.LONG_TERM && reference.bottom == AvcReference.LONG_TERM)) {
+                    return reference;
+                }
+            }
+            return null;
+        }
+
+        /**
+         * Marks a reference as unused: one field for a field picture, both fields for a frame picture.
+         *
+         * @param reference the frame holding the reference, or {@code null} for none
+         * @param field whether the current picture is a field
+         * @param bottom the parity of the field, for a field picture
+         */
+        private static void release(AvcReference reference, boolean field, boolean bottom) {
+            if (reference == null) {
+                return;
+            }
+            if (field) {
+                reference.mark(bottom, AvcReference.UNUSED);
+            } else {
+                reference.top = AvcReference.UNUSED;
+                reference.bottom = AvcReference.UNUSED;
+            }
+        }
+
+        /**
+         * Returns {@code Max(max_num_ref_frames, 1)}, bounded by 16, the largest {@code MaxDpbFrames} (ITU-T H.264
+         * clauses 7.4.2.1.1 and A.3.1), so that a stream declaring more reference frames than a decoder holds cannot
+         * make the marking keep or infer more.
+         *
+         * @param refFrames {@code max_num_ref_frames}
+         * @return the number of reference frames the sliding window keeps, from 1 to 16
+         */
+        private static int refFrames(int refFrames) {
+            return Math.clamp(refFrames, 1, MAX_DPB_FRAMES);
         }
 
         /**

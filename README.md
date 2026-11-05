@@ -1289,9 +1289,8 @@ checks a FLAC source's MD5 signature on the way.
   from the first sequence parameter set, so a later sequence that reorders deeper is not accounted for. The pictures
   an IDR or IRAP picture with `no_output_of_prior_pics_flag` discards are found by modelling the decoder's output
   process (reordering, latency and buffer fullness, with HEVC reference picture sets and H.264 sliding window and
-  memory management marking); H.264 field pictures are marked as the frames that hold them and gaps in `frame_num`
-  are not filled, so an interlaced stream with field-level marking or a stream with frame gaps may have a waiting
-  picture misjudged. A frame rate change that the track's time base (one field of the first rate) cannot represent
+  memory management marking applied field by field, and the frames a gap in `frame_num` infers filling the buffer).
+  A frame rate change that the track's time base (one field of the first rate) cannot represent
   is rounded to it, the error carried from picture to picture. H.263 PB-frames (Annex G and M) are timed as one
   picture, at the time of their P-picture.
 - Video processing in transcodes: `SubtitleFont` reads TrueType outlines only (no CFF), applies no hinting and

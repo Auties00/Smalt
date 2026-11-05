@@ -4,6 +4,9 @@ import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
 import com.github.auties00.smalt.testkit.Scratch;
+import com.github.auties00.smalt.testkit.container.DemuxerAsserts;
+import com.github.auties00.smalt.testkit.container.SyntheticAvc;
+import com.github.auties00.smalt.track.PacketFlag;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.VideoTrack;
@@ -11,21 +14,26 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.ByteArrayOutputStream;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Covers how {@link AnnexBDemuxer} times pictures beyond their order counts: frame rate changes between sequence
  * parameter sets, repeated fields of picture timing SEI messages, HEVC field sequences, the pictures an IDR picture
  * with {@code no_output_of_prior_pics_flag} discards (checked against ffmpeg's decode), and the reorder depth H.264
- * sequence parameter sets imply when their VUI does not state it.
+ * sequence parameter sets imply when their VUI does not state it, and the H.264 pictures such an IDR picture discards
+ * when single fields are released from reference or a gap in {@code frame_num} infers frames that fill the decoded
+ * picture buffer.
  */
 @DisplayName("Annex B timing")
 class AnnexBTimingTest {
@@ -296,5 +304,69 @@ class AnnexBTimingTest {
         var plain = AvcSyntax.sps(level21, 0, level21.length);
         assertEquals(-1, AvcSyntax.picStruct(new byte[]{0x50}, plain));
         assertNull(plain.frameRate());
+    }
+
+    static List<SyntheticAvc.Scenario> markingScenarios() {
+        return SyntheticAvc.markingScenarios();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("markingScenarios")
+    @DisplayName("discards at an H.264 IDR picture the frames the field marking and the frames of frame_num gaps leave "
+            + "waiting")
+    void fieldMarkingAndGaps(SyntheticAvc.Scenario scenario) {
+        try (var demuxer = new AnnexBDemuxer(MediaSource.of(scenario.stream()))) {
+            var packets = readAll(demuxer);
+            assertEquals(scenario.shown().size(), packets.size(), "one packet per frame");
+            var shown = new ArrayList<Boolean>();
+            var idrs = 0;
+            for (var i = 0; i < packets.size(); i++) {
+                var packet = packets.get(i);
+                shown.add(packet.pts() != Packet.NO_TIMESTAMP);
+                if (packet.pts() == Packet.NO_TIMESTAMP) {
+                    assertEquals(0, packet.duration(), "a discarded frame has no duration");
+                }
+                if (packet.flags().contains(PacketFlag.KEY)) {
+                    idrs++;
+                }
+            }
+            assertEquals(scenario.shown(), shown, "the frames output");
+            assertEquals(2, idrs, "the IDR pictures are the key frames");
+            assertTrue(packets.getFirst().flags().contains(PacketFlag.KEY));
+            var presented = presented(packets);
+            assertEquals(scenario.shown().stream().filter(value -> value).count(), presented.size());
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("markingScenarios")
+    @DisplayName("reads the field marking and frame_num gap streams the same way under every I/O behavior")
+    void fieldMarkingAndGapsBehavior(SyntheticAvc.Scenario scenario) {
+        DemuxerAsserts.of("raw/avc-marking-" + scenario.name(), scenario.stream()).run();
+    }
+
+    @Test
+    @DisplayName("bounds the H.264 reference frames kept and inferred for frame_num gaps when a stream declares too "
+            + "many")
+    void excessiveReferenceFrames() {
+        // max_num_ref_frames far beyond the 16 frames of any decoded picture buffer, and every picture's frame_num
+        // half of MaxFrameNum 65536 away from the last reference: inferring a frame for each of those 32767 missing
+        // values, each scanning the others, takes billions of steps per picture
+        var pictures = new ArrayList<SyntheticAvc.Picture>();
+        pictures.add(SyntheticAvc.Picture.idr(SyntheticAvc.FRAME, 0, 0, false));
+        for (var i = 1; i <= 40; i++) {
+            pictures.add(SyntheticAvc.Picture.p(SyntheticAvc.FRAME, (i & 1) == 0 ? 0 : 32768, 2 * i % 64,
+                    i % 3 != 0));
+        }
+        var stream = SyntheticAvc.stream(false, 16, 1_000_000, 2, 16, true, pictures);
+        var packets = assertTimeoutPreemptively(Duration.ofSeconds(20), () -> {
+            try (var demuxer = new AnnexBDemuxer(MediaSource.of(stream))) {
+                return readAll(demuxer);
+            }
+        });
+        assertEquals(pictures.size(), packets.size(), "one packet per frame");
+        assertTrue(packets.stream().allMatch(packet -> packet.pts() != Packet.NO_TIMESTAMP),
+                "every frame is presented: the inferred frames are never output and nothing is discarded");
+        assertEquals(pictures.size(), presented(packets).size());
     }
 }

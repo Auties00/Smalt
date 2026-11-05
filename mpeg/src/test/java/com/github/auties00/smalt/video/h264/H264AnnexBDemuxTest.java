@@ -9,6 +9,8 @@ import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
 import com.github.auties00.smalt.testkit.Scratch;
+import com.github.auties00.smalt.testkit.container.SyntheticAvc;
+import com.github.auties00.smalt.track.PacketFlag;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.VideoTrack;
 import com.github.auties00.smalt.video.VideoFrame;
@@ -36,8 +38,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * packets it returns: the output must equal the reference pictures bit for bit, as when the decoder is fed the
  * stream's NAL units one by one, every packet with a presentation time must come out as one frame at that time
  * (and none without), and the durations must tile the timeline. The streams whose picture timing SEI messages repeat
- * fields are timed as ffprobe reports their repeats, and an x264 stream whose IDR pictures were given
- * {@code no_output_of_prior_pics_flag} loses exactly the pictures the decoder drops.
+ * fields are timed as ffprobe reports their repeats, the field and reference marking streams come out in the order
+ * and with the key frames ffprobe reports, and an x264 stream whose IDR pictures were given
+ * {@code no_output_of_prior_pics_flag}, like the synthetic streams whose output depends on the marking of single
+ * fields and on the frames inferred for gaps in {@code frame_num}, loses exactly the pictures the decoder drops.
  */
 @DisplayName("H.264 Annex B demuxing of the conformance streams")
 class H264AnnexBDemuxTest {
@@ -308,5 +312,87 @@ class H264AnnexBDemuxTest {
                 assertEquals(60, frames.size());
             }
         }
+    }
+
+    static Stream<String> fieldVectors() {
+        return Stream.of("CVFI1_SVA_C", "CVFI1_Sony_D", "CVFI2_SVA_C", "CVFI2_Sony_H", "CAPAMA3_Sand_F",
+                "CAPA1_TOSHIBA_B", "CVPA1_TOSHIBA_B", "Sharp_MP_PAFF_1r2", "Sharp_MP_Field_1_B", "Sharp_MP_Field_2_B",
+                "Sharp_MP_Field_3_B", "CVMP_MOT_FLD_L30_B", "MR6_BT_B", "MR7_BT_B", "MR8_BT_B", "MR9_BT_B");
+    }
+
+    /** Runs ffprobe on a stream and returns one map of the requested entries per frame or packet line. */
+    private static List<java.util.Map<String, String>> probe(java.nio.file.Path file, String section,
+                                                             String entries) {
+        var output = new String(Oracle.run(Oracle.Tool.FFPROBE, Duration.ofMinutes(2), List.of("-v", "error",
+                "-f", "h264", "-show_" + section + "s", "-show_entries", section + "=" + entries, "-of",
+                "compact=p=0", file.toString())), StandardCharsets.US_ASCII);
+        var lines = new ArrayList<java.util.Map<String, String>>();
+        for (var line : output.lines().filter(line -> !line.isBlank()).toList()) {
+            var values = new HashMap<String, String>();
+            for (var pair : line.split("\\|")) {
+                var equals = pair.indexOf('=');
+                values.put(pair.substring(0, equals), pair.substring(equals + 1));
+            }
+            lines.add(values);
+        }
+        return lines;
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("fieldVectors")
+    @DisplayName("orders and flags the frames of the field and reference marking streams as ffprobe does")
+    void fieldOrderAsFfprobe(String name) throws IOException {
+        var vector = vectors().filter(entry -> entry.name().equals(name)).findFirst().orElseThrow();
+        var stream = H264ConformanceTest.bitstream(vector);
+        List<Packet> packets;
+        try (var demuxer = new AnnexBDemuxer(MediaSource.of(stream))) {
+            packets = readAll(demuxer);
+        }
+        var file = Scratch.share(Scratch.directory("annexb-fields").resolve(name + ".h264"), stream);
+        var frames = probe(file, "frame", "pkt_pos,key_frame");
+        var starts = frames.stream().map(frame -> Long.parseLong(frame.get("pkt_pos"))).sorted().toList();
+        assertEquals(packets.size(), starts.size(), name + ": one packet per frame ffprobe outputs");
+        assertEquals(starts.size(), new java.util.HashSet<>(starts).size(), name + ": frames start at distinct packets");
+        var probed = new ArrayList<Integer>();
+        for (var frame : frames) {
+            probed.add(starts.indexOf(Long.parseLong(frame.get("pkt_pos"))));
+        }
+        var order = new ArrayList<Integer>();
+        for (var i = 0; i < packets.size(); i++) {
+            order.add(i);
+        }
+        order.sort(Comparator.comparingLong(i -> packets.get(i).pts()));
+        assertTrue(packets.stream().allMatch(packet -> packet.pts() != Packet.NO_TIMESTAMP),
+                name + ": every frame is presented");
+        assertEquals(probed, order, name + ": presentation order, as indices in decoding order");
+        var keys = new HashMap<Long, Boolean>();
+        for (var packet : probe(file, "packet", "pos,flags")) {
+            keys.put(Long.parseLong(packet.get("pos")), packet.get("flags").startsWith("K"));
+        }
+        for (var i = 0; i < packets.size(); i++) {
+            assertEquals(keys.get(starts.get(i)), packets.get(i).flags().contains(PacketFlag.KEY),
+                    name + ": key frame flag of frame " + i);
+        }
+    }
+
+    static Stream<SyntheticAvc.Scenario> markingScenarios() {
+        return SyntheticAvc.markingScenarios().stream();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("markingScenarios")
+    @DisplayName("gives a presentation time to exactly the frames the decoder outputs when single fields leave "
+            + "reference and frame_num gaps infer frames")
+    void fieldMarkingAndGaps(SyntheticAvc.Scenario scenario) {
+        List<Packet> packets;
+        VideoTrack track;
+        try (var demuxer = new AnnexBDemuxer(MediaSource.of(scenario.stream()))) {
+            track = (VideoTrack) demuxer.tracks().getFirst();
+            packets = readAll(demuxer);
+        }
+        var frames = decode(packets, track, H264DecoderOptions.builder().build(), frame -> { });
+        assertTimed(scenario.name(), packets, frames);
+        assertEquals(scenario.shown().stream().filter(shown -> shown).count(), frames.size(),
+                scenario.name() + ": frames the decoder outputs");
     }
 }
