@@ -38,6 +38,8 @@ class FrameHeaderTest {
                 field.setBoolean(object, true);
             } else if (type == short.class) {
                 field.setShort(object, (short) 3);
+            } else if (type == long.class) {
+                field.setLong(object, 9);
             } else if (type.isArray()) {
                 scrambleArray(field.get(object));
             } else {
@@ -55,6 +57,8 @@ class FrameHeaderTest {
                 Array.setBoolean(array, i, true);
             } else if (component == short.class) {
                 Array.setShort(array, i, (short) 3);
+            } else if (component == long.class) {
+                Array.setLong(array, i, 9);
             } else if (component.isArray()) {
                 scrambleArray(Array.get(array, i));
             } else {
@@ -74,7 +78,7 @@ class FrameHeaderTest {
             }
             return null;
         }
-        if (type == Integer.class || type == Boolean.class || type == Short.class) {
+        if (type == Integer.class || type == Boolean.class || type == Short.class || type == Long.class) {
             return expected.equals(actual) ? null : path + ": expected " + expected + " but was " + actual;
         }
         for (var field : type.getDeclaredFields()) {

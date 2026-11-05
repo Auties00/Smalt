@@ -3,10 +3,13 @@ package com.github.auties00.smalt.container;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Track;
+import com.github.auties00.smalt.track.TrackDisposition;
 
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 
 /**
  * Splits a container into the packets of its elementary streams.
@@ -34,6 +37,21 @@ public interface Demuxer extends AutoCloseable {
      * @return the format
      */
     ContainerFormat format();
+
+    /**
+     * Returns the short name of the recognized container, which identifies a container that
+     * {@link ContainerFormat} does not name.
+     *
+     * <p>A demuxer of a {@link com.github.auties00.smalt.spi.ContainerProvider} of {@link ContainerFormat#OTHER}
+     * returns the provider's {@linkplain com.github.auties00.smalt.spi.ContainerProvider#name() name}.
+     *
+     * @implSpec The default implementation returns {@link ContainerFormat#shortName()} of {@link #format()}.
+     *
+     * @return the name, for example {@code "matroska"}
+     */
+    default String formatName() {
+        return format().shortName();
+    }
 
     /**
      * Returns every elementary stream of the container, in container order.
@@ -64,6 +82,18 @@ public interface Demuxer extends AutoCloseable {
     }
 
     /**
+     * Returns the dispositions the container flags one track with, such as the default track or forced subtitles.
+     *
+     * @implSpec The default implementation returns an empty set.
+     *
+     * @param trackId the identifier of the track
+     * @return the dispositions; unmodifiable, empty for an unknown track or a container that stores none
+     */
+    default Set<TrackDisposition> trackDisposition(int trackId) {
+        return Set.of();
+    }
+
+    /**
      * Returns the chapters of the presentation, in start order.
      *
      * @implSpec The default implementation returns an empty list.
@@ -72,6 +102,46 @@ public interface Demuxer extends AutoCloseable {
      */
     default List<Chapter> chapters() {
         return List.of();
+    }
+
+    /**
+     * Returns every chapter edition of the presentation, in container order.
+     *
+     * <p>Only Matroska stores several editions; the chapters of every other container form one edition.
+     * {@link #chapters()} returns the chapters of the {@linkplain ChapterEdition#defaultIndex default} one.
+     *
+     * @implSpec The default implementation returns one edition holding {@link #chapters()}, or none when there are
+     * no chapters.
+     *
+     * @return the editions; unmodifiable
+     */
+    default List<ChapterEdition> chapterEditions() {
+        var chapters = chapters();
+        return chapters.isEmpty() ? List.of() : List.of(ChapterEdition.of(chapters));
+    }
+
+    /**
+     * Returns the files embedded in the container that are not pictures, such as the fonts of
+     * subtitle tracks, in container order.
+     *
+     * @implSpec The default implementation returns an empty list.
+     *
+     * @return the attachments; unmodifiable
+     */
+    default List<Attachment> attachments() {
+        return List.of();
+    }
+
+    /**
+     * Returns the time address the container gives the first frame of the presentation, from a
+     * timecode track or tag.
+     *
+     * @implSpec The default implementation returns an empty optional.
+     *
+     * @return the timecode, or empty when the container declares none
+     */
+    default Optional<Timecode> timecode() {
+        return Optional.empty();
     }
 
     /**

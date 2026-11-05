@@ -1,0 +1,15 @@
+# video decode dump of avi/hap-q.avi; regenerate with -Dsmalt.test.updateDumps=true
+format AVI
+duration 500000
+seekable true
+track 1 HAP 64x48 timebase=1/10
+0 pts=0 dur=1 key=true 64x48 rgba8 alpha=false crc=9dcb58b3
+1 pts=1 dur=1 key=true 64x48 rgba8 alpha=false crc=0710dd16
+2 pts=2 dur=1 key=true 64x48 rgba8 alpha=false crc=b8e1b5b4
+3 pts=3 dur=1 key=true 64x48 rgba8 alpha=false crc=c52defa2
+4 pts=4 dur=1 key=true 64x48 rgba8 alpha=false crc=140c8e79
+seek 0: @0
+seek 166666: @1
+seek 333333: @3
+seek 500000: end
+seek -1000000: @0

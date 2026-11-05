@@ -186,15 +186,15 @@ final class Mp3Psychoacoustics {
         this.spreadDownLong = new float[22];
         for (var b = 1; b < 22; b++) {
             var distance = bark(longLayout.center[b]) - bark(longLayout.center[b - 1]);
-            spreadUpLong[b] = (float) Math.pow(10, -UPWARD_SLOPE * distance / 10);
-            spreadDownLong[b - 1] = (float) Math.pow(10, -DOWNWARD_SLOPE * distance / 10);
+            spreadUpLong[b] = (float) StrictMath.pow(10, -UPWARD_SLOPE * distance / 10);
+            spreadDownLong[b - 1] = (float) StrictMath.pow(10, -DOWNWARD_SLOPE * distance / 10);
         }
         this.spreadUpShort = new float[13];
         this.spreadDownShort = new float[13];
         for (var b = 1; b < 13; b++) {
             var distance = bark(shortLayout.center[3 * b]) - bark(shortLayout.center[3 * b - 3]);
-            spreadUpShort[b] = (float) Math.pow(10, -UPWARD_SLOPE * distance / 10);
-            spreadDownShort[b - 1] = (float) Math.pow(10, -DOWNWARD_SLOPE * distance / 10);
+            spreadUpShort[b] = (float) StrictMath.pow(10, -UPWARD_SLOPE * distance / 10);
+            spreadDownShort[b - 1] = (float) StrictMath.pow(10, -DOWNWARD_SLOPE * distance / 10);
         }
     }
 
@@ -220,7 +220,7 @@ final class Mp3Psychoacoustics {
             for (var line = first; line < last; line++) {
                 minimum = Math.min(minimum, thresholdInQuiet((line + 0.5) * lineWidth));
             }
-            result[b] = (float) (fullScale * Math.pow(10, (minimum - FULL_SCALE_SPL + offset) / 10));
+            result[b] = (float) (fullScale * StrictMath.pow(10, (minimum - FULL_SCALE_SPL + offset) / 10));
         }
         return result;
     }
@@ -233,7 +233,7 @@ final class Mp3Psychoacoustics {
      */
     static double thresholdInQuiet(double frequency) {
         var f = Math.max(frequency, 20) / 1000;
-        var level = 3.64 * Math.pow(f, -0.8) - 6.5 * Math.exp(-0.6 * (f - 3.3) * (f - 3.3)) + 1e-3 * Math.pow(f, 4);
+        var level = 3.64 * StrictMath.pow(f, -0.8) - 6.5 * StrictMath.exp(-0.6 * (f - 3.3) * (f - 3.3)) + 1e-3 * StrictMath.pow(f, 4);
         return Math.min(level, 120);
     }
 
@@ -244,7 +244,7 @@ final class Mp3Psychoacoustics {
      * @return the rate in Bark
      */
     static double bark(double frequency) {
-        return 13 * Math.atan(0.00076 * frequency) + 3.5 * Math.atan((frequency / 7500) * (frequency / 7500));
+        return 13 * StrictMath.atan(0.00076 * frequency) + 3.5 * StrictMath.atan((frequency / 7500) * (frequency / 7500));
     }
 
     /**
@@ -269,7 +269,7 @@ final class Mp3Psychoacoustics {
             energy[b] = sum;
             var tonality = tonality(p, layout.start[b], layout.end[b]);
             var smr = tonality * TONAL_SMR + (1 - tonality) * NOISE_SMR;
-            threshold[b] = sum * (float) Math.pow(10, -smr / 10);
+            threshold[b] = sum * (float) StrictMath.pow(10, -smr / 10);
         }
         spread(threshold, 22, spreadUpLong, spreadDownLong);
         for (var b = 0; b < 22; b++) {
@@ -293,7 +293,7 @@ final class Mp3Psychoacoustics {
      */
     void analyzeShort(float[] lines, float[] energy, float[] threshold) {
         var layout = shortLayout;
-        var ratio = (float) Math.pow(10, -SHORT_SMR / 10);
+        var ratio = (float) StrictMath.pow(10, -SHORT_SMR / 10);
         var window = shortScratch;
         var before = previousShort;
         if (!shortPrimed) {
@@ -356,10 +356,10 @@ final class Mp3Psychoacoustics {
         for (var i = start; i < end; i += 2) {
             var pair = powers[i] + powers[i + 1] + 1e-20;
             arithmetic += pair;
-            logarithmic += Math.log(pair);
+            logarithmic += StrictMath.log(pair);
         }
         var pairs = (end - start) / 2;
-        var flatness = 10 / Math.log(10) * (logarithmic / pairs - Math.log(arithmetic / pairs));
+        var flatness = 10 / StrictMath.log(10) * (logarithmic / pairs - StrictMath.log(arithmetic / pairs));
         var tonality = (NOISE_FLATNESS - flatness) / (NOISE_FLATNESS - TONAL_FLATNESS);
         return (float) Math.clamp(tonality, 0.0, 1.0);
     }
