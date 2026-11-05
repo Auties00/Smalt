@@ -10,15 +10,17 @@ import java.util.Objects;
 /**
  * Writes the packets of one or more elementary streams into a container.
  *
- * <p>Every track is declared with {@link #addTrack(Track)} before the first packet; the track's
- * {@link Track#id()} is the identifier later packets carry. Packets of each track arrive in
- * decoding order through {@link #writePacket(Packet)}; the muxer interleaves tracks itself.
+ * <p>Every track is declared with {@link #addTrack(Track)} before the first packet, except that a
+ * muxer whose {@link #supportsLateTracks()} holds also takes tracks declared later, such as those a
+ * {@link Demuxer} finds while reading; the track's {@link Track#id()} is the identifier later packets
+ * carry. Packets of each track arrive in decoding order through {@link #writePacket(Packet)}; the
+ * muxer interleaves tracks itself.
  * {@link #finish()} completes the file (indexes, trailer); an instance that is closed without
  * finishing leaves incomplete output.
  *
- * @implSpec Implementations must reject a packet for an undeclared track, a track added after the first packet, and a
- * codec the container cannot carry with {@link IllegalArgumentException} or {@link IllegalStateException}, and must
- * translate output failures into {@link MediaException.Io}.
+ * @implSpec Implementations must reject a packet for an undeclared track, a track added after the first packet unless
+ * {@link #supportsLateTracks()} holds, and a codec the container cannot carry with {@link IllegalArgumentException} or
+ * {@link IllegalStateException}, and must translate output failures into {@link MediaException.Io}.
  */
 public interface Muxer extends AutoCloseable {
     /**
@@ -26,9 +28,25 @@ public interface Muxer extends AutoCloseable {
      *
      * @param track the track description; its id must be unique within this muxer
      * @throws IllegalArgumentException if the id is already used or the container cannot carry the codec
-     * @throws IllegalStateException if a packet was already written
+     * @throws IllegalStateException if a packet was already written and {@link #supportsLateTracks()} does not
+     * hold, or the muxer is finished
      */
     void addTrack(Track track);
+
+    /**
+     * Returns whether {@link #addTrack(Track)} takes a track after packets were written.
+     *
+     * <p>A late track is written as the tracks declared before the first packet are, from its own
+     * first packet on; the earlier tracks are not affected.
+     *
+     * @implSpec The default implementation returns {@code false}. An implementation's answer does not
+     * change once a packet was written.
+     *
+     * @return {@code true} when tracks may be declared after the first packet
+     */
+    default boolean supportsLateTracks() {
+        return false;
+    }
 
     /**
      * Returns whether {@link #setTags(MediaTags)} is supported.

@@ -230,6 +230,13 @@ import java.util.Set;
  * The sink is written from its position at construction and is never closed by the muxer. Instances
  * are not thread-safe.
  *
+ * <p>On a seekable sink without live output the muxer {@linkplain #supportsLateTracks() takes tracks
+ * declared after the first packet}. A track declared before the header is written joins it; one
+ * declared later gets blocks from its first packet on, and {@link #finish()} then writes the
+ * {@code Tracks} element again after the clusters, with every track, turns the first one into a
+ * {@code Void} element of the same size and points the {@code SeekHead} at the new one, so a reader
+ * that follows the {@code SeekHead} finds every track.
+ *
  * @implNote This implementation numbers tracks and derives their {@code TrackUID}s from their declaration order and
  * writes no {@code DateUTC}, so equal input gives byte-identical output. WebVTT tracks use the WebM codec identifier
  * {@code D_WEBVTT/SUBTITLES} in Matroska files too, not {@code S_TEXT/WEBVTT}: common players read only the former,
@@ -523,6 +530,21 @@ public final class MatroskaMuxer implements Muxer {
     private long[] metadataPositions = new long[]{-1, -1, -1};
 
     /**
+     * The size of the {@code Tracks} element the header holds.
+     */
+    private int tracksSize;
+
+    /**
+     * Whether a track was declared after the header was written, so {@link #finish()} writes {@code Tracks} again.
+     */
+    private boolean relocated;
+
+    /**
+     * The number of tracks the header declares, the first entries of {@link #tracks}.
+     */
+    private int declaredInHeader;
+
+    /**
      * Whether the header was written.
      */
     private boolean started;
@@ -644,7 +666,8 @@ public final class MatroskaMuxer implements Muxer {
      * track lacks what its codec needs (a configuration, a frame size, a sample rate, a layout or, for a data track,
      * a Matroska codec identifier as its handler), or a DNxHD configuration holds anything but Avid sample
      * description extensions after its sample entry type
-     * @throws IllegalStateException if a packet was already written or the muxer is finished
+     * @throws IllegalStateException if a packet was already written and the sink is not seekable or the output is
+     * live, or the muxer is finished
      */
     @Override
     public void addTrack(Track track) {
@@ -670,13 +693,18 @@ public final class MatroskaMuxer implements Muxer {
      * track lacks what its codec needs (a configuration, a frame size, a sample rate, a layout or, for a data track,
      * a Matroska codec identifier as its handler), or a DNxHD configuration holds anything but Avid sample
      * description extensions after its sample entry type
-     * @throws IllegalStateException if a packet was already written or the muxer is finished
+     * @throws IllegalStateException if a packet was already written and the sink is not seekable or the output is
+     * live, or the muxer is finished
      */
     public void addTrack(Track track, Set<TrackDisposition> flags) {
         Objects.requireNonNull(track, "track");
         Objects.requireNonNull(flags, "flags");
-        if (finished || accepting) {
-            throw new IllegalStateException("tracks must be declared before the first packet");
+        if (finished) {
+            throw new IllegalStateException("the muxer is finished");
+        }
+        if (accepting && !indexed) {
+            throw new IllegalStateException("tracks must be declared before the first packet unless the sink is"
+                    + " seekable and the output is not live");
         }
         for (var existing : tracks) {
             if (existing.track.id() == track.id()) {
@@ -691,8 +719,20 @@ public final class MatroskaMuxer implements Muxer {
         copy.addAll(flags);
         var state = new TrackState(track, tracks.size() + 1, copy);
         state.configure();
+        state.late = started;
+        relocated |= started;
         hasVideo |= state.video;
         tracks.add(state);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return {@code true} when the sink is seekable and the output is not live
+     */
+    @Override
+    public boolean supportsLateTracks() {
+        return indexed;
     }
 
     /**
@@ -770,8 +810,10 @@ public final class MatroskaMuxer implements Muxer {
      * the initial one, and afterwards, on a seekable sink without
      * {@linkplain MatroskaMuxerOptions#live() live} output, it is rewritten in place over the
      * initial {@code CodecPrivate} (and, for FLAC, the {@code Void} reserved after it), when it
-     * fits there. On a streaming sink, in live output, or when it does not fit, the initial
-     * configuration stays. Every other codec keeps its configuration.
+     * fits there. Once a track was declared after the header, it goes to the {@code Tracks} element
+     * {@link #finish()} writes after the clusters, whatever its size. On a streaming sink, in live
+     * output, or when it does not fit, the initial configuration stays. Every other codec keeps its
+     * configuration.
      *
      * @throws IllegalArgumentException if the track was not declared, a FLAC configuration does
      * not start with {@code STREAMINFO} or describes another sample rate, channel count or sample
@@ -819,7 +861,7 @@ public final class MatroskaMuxer implements Muxer {
                         + " describes another stream than the initial one");
             }
         }
-        if (!started) {
+        if (!started || relocated) {
             state.codecPrivate = replacement;
             return;
         }
@@ -906,6 +948,12 @@ public final class MatroskaMuxer implements Muxer {
         }
         var micros = state.orderMicros(packet);
         state.queue.add(new Queued(packet, micros));
+        if (state.late) {
+            // a track declared after the header learns from its first packet what the header learns from the others'
+            state.late = false;
+            state.hdr10PlusMapping = state.video && carriesHdr10Plus(state);
+            state.resolveConfig(packet);
+        }
         queuedBytes += packet.size();
         newestMicros = Math.max(newestMicros, micros);
         drain(false);
@@ -990,6 +1038,9 @@ public final class MatroskaMuxer implements Muxer {
         if (!indexed) {
             return;
         }
+        if (relocated) {
+            relocateTracks();
+        }
         long cuesPosition = -1;
         if (options.cues() && cueLength > 0) {
             cuesPosition = output.position() - segmentStart;
@@ -1036,6 +1087,28 @@ public final class MatroskaMuxer implements Muxer {
             output.position(durationOffset - 3);
             output.write(ByteBuffer.wrap(placeholder));
         }
+        output.position(end);
+    }
+
+    /**
+     * Writes the {@code Tracks} element at the end of the output, with every track, and turns the one the header
+     * holds into a {@code Void} element of the same size.
+     */
+    private void relocateTracks() {
+        for (var state : tracks) {
+            if (state.adpcm != null && state.number > declaredInHeader) {
+                state.adpcm.declare();
+                state.codecPrivate = state.adpcm.waveFormatBytes();
+            }
+        }
+        var first = segmentStart + tracksPosition;
+        tracksPosition = output.position() - segmentStart;
+        buildTracks().writeTo(output);
+        var end = output.position();
+        var blank = new EbmlOutput(tracksSize);
+        blank.voidElement(tracksSize);
+        output.position(first);
+        blank.writeTo(output);
         output.position(end);
     }
 
@@ -1174,6 +1247,8 @@ public final class MatroskaMuxer implements Muxer {
                 state.privateOffset = tracksAt + trackList.markPosition(state.privateMark);
             }
         }
+        tracksSize = trackList.size();
+        declaredInHeader = tracks.size();
         header.raw(trackList.buffer(), 0, trackList.size());
         for (var element : metadata) {
             header.raw(element, 0, element.length);
@@ -1712,6 +1787,11 @@ public final class MatroskaMuxer implements Muxer {
          * Whether the track entry maps {@link #HDR10_PLUS_ADD_ID} to ITU-T T.35 metadata.
          */
         boolean hdr10PlusMapping;
+
+        /**
+         * Whether the track was declared after the header was written and its first packet was not queued yet.
+         */
+        boolean late;
 
         /**
          * Constructs the state of a track.

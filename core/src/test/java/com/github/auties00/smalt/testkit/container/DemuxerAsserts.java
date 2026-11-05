@@ -25,6 +25,7 @@ import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -45,6 +46,10 @@ import java.util.function.Function;
  *       with the golden file {@code dumps/<name>.dump} through {@link Dumps#assertMatches(String, String)};</li>
  *   <li>container recognition over every {@link IoVariant}, which must give the reference format (only
  *       with the default factory, {@link Containers#openDemuxer(MediaSource)});</li>
+ *   <li>in every demux, the track list contract: every packet {@link Demuxer#read()} returns belongs to a
+ *       track that {@link Demuxer#tracks()} lists by then, and a demuxer that finds tracks while reading
+ *       only appends them, leaving the tracks listed before unchanged; the golden dump records the tracks
+ *       a variant added while reading ({@code tracks added while reading over READ_ONCE_UNKNOWN_LENGTH: 1 2});</li>
  *   <li>a full demux over every {@link IoVariant}: identical packets, and an identical header except
  *       that a source of unknown length may change durations, in which case the golden dump records
  *       the other header;</li>
@@ -208,8 +213,9 @@ public final class DemuxerAsserts {
      * @param header the header text, or {@code null} when opening failed
      * @param packets the packets read before the end or the failure
      * @param failure the failure that ended the demux, or {@code null}
+     * @param added the identifiers of the tracks the demuxer added to its track list while reading, in the order added
      */
-    record Outcome(String header, List<Packet> packets, Throwable failure) {
+    record Outcome(String header, List<Packet> packets, Throwable failure, List<Integer> added) {
     }
 
     private static final class Run {
@@ -256,6 +262,7 @@ public final class DemuxerAsserts {
             dump.append("# demux dump of ").append(options.name).append("; regenerate with -Dsmalt.test.updateDumps=true\n");
             dump.append(referenceHeader);
             dump.append(DemuxDump.packets(reference));
+            noteAdded(IoVariant.MEMORY, outcome);
             check("memory source", () -> compare("memory source", demux(MediaSource.of(options.data)), true));
             if (options.defaultFactory) {
                 checkRecognition();
@@ -328,16 +335,53 @@ public final class DemuxerAsserts {
             return Behaviors.withTimeout(options.timeout, options.name, () -> {
                 String header = null;
                 var packets = new ArrayList<Packet>();
+                var added = new ArrayList<Integer>();
                 try (var demuxer = open(source)) {
                     header = DemuxDump.header(demuxer);
+                    var listed = demuxer.tracks();
+                    var ids = new HashSet<Integer>();
+                    listed.forEach(track -> ids.add(track.id()));
                     for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                        if (!ids.contains(packet.trackId())) {
+                            var grown = demuxer.tracks();
+                            var problem = growthProblem(listed, grown, packet);
+                            if (problem != null) {
+                                return new Outcome(header, packets, problem, added);
+                            }
+                            for (var track : grown.subList(listed.size(), grown.size())) {
+                                ids.add(track.id());
+                                added.add(track.id());
+                            }
+                            listed = grown;
+                        }
                         packets.add(packet);
                     }
                 } catch (RuntimeException | StackOverflowError failure) {
-                    return new Outcome(header, packets, failure);
+                    return new Outcome(header, packets, failure, added);
                 }
-                return new Outcome(header, packets, null);
+                return new Outcome(header, packets, null, added);
             });
+        }
+
+        /**
+         * Checks a track list against the one listed before a packet of an unlisted track, which the demuxer may
+         * only have grown by appending that track and others.
+         *
+         * @return the failure, or {@code null} when the grown list holds the earlier one and the packet's track
+         */
+        private static AssertionFailedError growthProblem(List<Track> listed, List<Track> grown, Packet packet) {
+            if (grown.size() <= listed.size() || !grown.subList(0, listed.size()).equals(listed)) {
+                return new AssertionFailedError("read() returned a packet of track " + packet.trackId()
+                        + ", which tracks() does not list, or tracks() changed a track it listed before",
+                        listed.toString(), grown.toString());
+            }
+            for (var track : grown) {
+                if (track.id() == packet.trackId()) {
+                    return null;
+                }
+            }
+            return new AssertionFailedError("read() returned a packet of track " + packet.trackId()
+                    + ", which tracks() does not list", listed.toString(), grown.toString());
         }
 
         private void compare(String behavior, Outcome outcome, boolean sameHeader) {
@@ -395,6 +439,7 @@ public final class DemuxerAsserts {
                     return;
                 }
                 compare(variant.name(), outcome, exact);
+                noteAdded(variant, outcome);
                 variantHeaders.put(variant, outcome.header());
                 if (!exact && !referenceHeader.equals(outcome.header())) {
                     headerNotes.computeIfAbsent(outcome.header(), _ -> new ArrayList<>()).add(variant);
@@ -726,6 +771,16 @@ public final class DemuxerAsserts {
                 }
                 seek(demuxer, 0);
                 comparePackets("chained seeks, final seek to 0", expected.get(0L), DemuxDump.lines(readAll(demuxer)));
+            }
+        }
+
+        /**
+         * Records the tracks a demux added while reading.
+         */
+        private void noteAdded(IoVariant variant, Outcome outcome) {
+            if (!outcome.added().isEmpty()) {
+                note("tracks added while reading over " + variant + ": " + String.join(" ",
+                        outcome.added().stream().map(String::valueOf).toList()) + "\n");
             }
         }
 

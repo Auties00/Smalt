@@ -26,6 +26,7 @@ import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.ops.Region;
 import com.github.auties00.smalt.testkit.image.PictureDump;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.io.StreamSourceOptions;
 import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.metadata.StandardTag;
 import com.github.auties00.smalt.metadata.TagEditor;
@@ -37,12 +38,14 @@ import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
+import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.VideoTrack;
 import com.github.auties00.smalt.video.VideoDecoder;
 import com.github.auties00.smalt.video.VideoDecoderOptions;
 import com.github.auties00.smalt.video.VideoDecoders;
 import com.github.auties00.smalt.video.VideoFrame;
 
+import java.io.ByteArrayInputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -597,6 +600,75 @@ public final class FuzzMedia {
             tags(run, data);
         }
         return run;
+    }
+
+    /**
+     * Demuxes a container of one format through a stream read once whose length is unknown, as a network stream
+     * delivers it: reads every packet, checking that each belongs to a track the track list holds by then and that
+     * the list only grows by appending, and seeks forward once, by reading, after the first packets.
+     *
+     * <p>An input that {@link Containers#detect} does not recognize as {@code format} is skipped.
+     *
+     * @param format the format of the target
+     * @param data the input
+     * @return the run
+     */
+    public static FuzzRun streamDemuxer(ContainerFormat format, byte[] data) {
+        var run = Fuzz.start(format.name() + " stream");
+        var detected = run.value("detect", () -> Containers.detect(MediaSource.of(data)).orElse(null));
+        if (detected.isEmpty() || detected.get() != format) {
+            run.skip("detected " + detected.map(Enum::name).orElse("nothing"));
+            return run;
+        }
+        var options = DemuxerOptions.builder().limits(Fuzz.LIMITS).build();
+        // a target derived from the input, so that mutations reach seeks into every part of a stream
+        var target = Integer.toUnsignedLong(Arrays.hashCode(data)) % 30_000_000L;
+        run.step("stream demux", () -> {
+            try (var source = MediaSource.of(new ByteArrayInputStream(data), -1, StreamSourceOptions.memoryOnly());
+                 var demuxer = Containers.openDemuxer(source, options)) {
+                var listed = demuxer.tracks();
+                for (var count = 0; count < Fuzz.MAX_PACKETS; count++) {
+                    if (count == 4) {
+                        try {
+                            demuxer.seek(target);
+                        } catch (MediaException.Unsupported refused) {
+                            // a stream read once seeks only forward, and only when it is timestamped
+                        }
+                    }
+                    var packet = demuxer.read();
+                    if (packet == null) {
+                        return;
+                    }
+                    if (!lists(listed, packet.trackId())) {
+                        var grown = demuxer.tracks();
+                        if (grown.size() <= listed.size() || !grown.subList(0, listed.size()).equals(listed)
+                                || !lists(grown, packet.trackId())) {
+                            throw new IllegalStateException("packet of track " + packet.trackId() + " outside the"
+                                    + " track list, or a listed track changed: " + listed + " then " + grown);
+                        }
+                        listed = grown;
+                        demuxer.trackMetadata(packet.trackId());
+                    }
+                    run.output();
+                }
+            }
+        });
+        return run;
+    }
+
+    /**
+     * {@return whether a track list holds a track}
+     *
+     * @param tracks the list
+     * @param trackId the identifier of the track
+     */
+    private static boolean lists(List<Track> tracks, int trackId) {
+        for (var track : tracks) {
+            if (track.id() == trackId) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

@@ -10,6 +10,7 @@ import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Track;
 
 import java.util.ArrayDeque;
+import java.util.Arrays;
 import java.util.Objects;
 import java.util.function.Supplier;
 
@@ -24,7 +25,10 @@ import java.util.function.Supplier;
  * declared the muxer is created, the tracks are added to it in identifier order and the held
  * packets are written. Nothing reaches the output before that, so a transcode that fails while it
  * prepares its streams leaves the output untouched. The tags set by {@link #tags} are given to the muxer
- * once its tracks are added, before the held packets.
+ * once its tracks are added, before the held packets. A stream found while the input is read reserves its
+ * track with {@link #reserveLate()}: before the muxer exists it joins the tracks the muxer is created with,
+ * and afterwards its declaration adds it to a muxer that {@linkplain Muxer#supportsLateTracks() takes late
+ * tracks}.
  *
  * <p>An instance is not thread-safe.
  */
@@ -45,9 +49,9 @@ final class OutputMuxer implements AutoCloseable {
     private Muxer muxer;
 
     /**
-     * The declared tracks, indexed by identifier minus one.
+     * The declared tracks, indexed by identifier minus one; grown by {@link #reserveLate()}.
      */
-    private final Track[] tracks;
+    private Track[] tracks;
 
     /**
      * The packets written before every track was declared, in arrival order.
@@ -108,8 +112,32 @@ final class OutputMuxer implements AutoCloseable {
     }
 
     /**
+     * Reserves the identifier of an output track for a stream found while the input is read.
+     *
+     * @return the identifier, counted from one, after every identifier reserved before
+     * @throws IllegalStateException if the muxer exists and does not take tracks after packets
+     */
+    int reserveLate() {
+        if (started && !muxer.supportsLateTracks()) {
+            throw new IllegalStateException("the muxer takes no track after its first packet");
+        }
+        if (reserved == tracks.length) {
+            tracks = Arrays.copyOf(tracks, tracks.length + 1);
+        }
+        return ++reserved;
+    }
+
+    /**
+     * {@return whether a stream found while the input is read can still get an output track: before the muxer
+     * exists, or when it takes tracks after packets}
+     */
+    boolean acceptsLate() {
+        return !started || muxer.supportsLateTracks();
+    }
+
+    /**
      * Declares a reserved track; the last declaration adds every track to the muxer and writes the
-     * held packets.
+     * held packets, and a track reserved late after that is added to the muxer at once.
      *
      * @param track the track, whose identifier was reserved
      * @throws IllegalArgumentException if the muxer rejects a track
@@ -121,7 +149,10 @@ final class OutputMuxer implements AutoCloseable {
             throw new IllegalStateException("output track " + track.id() + " is not reserved or already declared");
         }
         tracks[index] = track;
-        if (++declared == reserved) {
+        if (started) {
+            muxer.addTrack(track);
+            declared++;
+        } else if (++declared == reserved) {
             start();
         }
     }

@@ -295,8 +295,9 @@ class Mp4MuxerTest {
                 assertThrows(IllegalArgumentException.class, () -> muxer.writePacket(new Packet(9, new byte[1], 0, 0, 0, true)));
                 muxer.writePacket(new Packet(1, new byte[4], 1024, 1024, 1024, true));
                 assertThrows(IllegalArgumentException.class, () -> muxer.writePacket(new Packet(1, new byte[4], 0, 0, 1024, true)));
-                assertThrows(IllegalStateException.class, () -> muxer.addTrack(aacTrack(5, 44100, 1, -1, 0)));
                 muxer.finish();
+                // tracks may join after the first packet (Mp4LateTracksTest), but not after the end
+                assertThrows(IllegalStateException.class, () -> muxer.addTrack(aacTrack(5, 44100, 1, -1, 0)));
                 assertThrows(IllegalStateException.class, muxer::finish);
                 assertThrows(IllegalStateException.class, () -> muxer.writePacket(new Packet(1, new byte[4], 2048, 2048, 1024, true)));
             }

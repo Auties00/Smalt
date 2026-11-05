@@ -122,6 +122,11 @@ final class OggParser {
     private long[] linkStarts;
 
     /**
+     * Receives every link this parser starts, or {@code null}.
+     */
+    private LinkObserver observer;
+
+    /**
      * The index of the current link.
      */
     int link;
@@ -292,6 +297,31 @@ final class OggParser {
     }
 
     /**
+     * Receives the links a parser starts.
+     */
+    @FunctionalInterface
+    interface LinkObserver {
+        /**
+         * Receives a link at its first beginning-of-stream page, before any of its streams exists and after every
+         * page of the links before it was processed.
+         *
+         * @param parser the parser that started the link
+         * @param link the link just started, with no stream yet
+         * @param previous the link before it in file order, or {@code null} for the first link the parser reads
+         */
+        void linkStarted(OggParser parser, Link link, Link previous);
+    }
+
+    /**
+     * Sets the receiver of the links this parser starts from now on.
+     *
+     * @param observer the receiver, or {@code null} for none
+     */
+    void observeLinks(LinkObserver observer) {
+        this.observer = observer;
+    }
+
+    /**
      * Reads and processes one page.
      *
      * @return {@code false} at the end of the input
@@ -358,7 +388,11 @@ final class OggParser {
         }
         var started = new Link(link, offset);
         started.planned = planned;
+        var previous = links.isEmpty() ? null : links.getLast();
         links.add(started);
+        if (observer != null) {
+            observer.linkStarted(this, started, previous);
+        }
     }
 
     /**

@@ -13,8 +13,9 @@
  *   <li>{@link com.github.auties00.smalt.testkit.container.DemuxerAsserts} drives a
  *       {@link com.github.auties00.smalt.container.Demuxer}: container recognition, every packet
  *       ({@link com.github.auties00.smalt.testkit.container.DemuxDump}: per-track header, then pts, dts,
- *       duration, flags, size, side data and CRC-32 per packet), and seeks to 0, a third, two thirds and the
- *       end, before zero and chained, checked against the seek contract;</li>
+ *       duration, flags, size, side data and CRC-32 per packet), the track list contract (every packet's track
+ *       listed by the time the packet is returned, tracks found while reading only appended), and seeks to 0, a
+ *       third, two thirds and the end, before zero and chained, checked against the seek contract;</li>
  *   <li>{@link com.github.auties00.smalt.testkit.container.ReaderAsserts} decodes the first video or audio
  *       track with {@code VideoReader} or {@code AudioReader} and dumps one CRC line per frame or block;</li>
  *   <li>{@link com.github.auties00.smalt.testkit.image.ImageDecoderAsserts} runs detection, probing, the full
@@ -45,7 +46,8 @@
  *       {@code ReaderAsserts.audio(name, data)} or {@code ImageDecoderAsserts.of(name, data)}.</li>
  *   <li>Run the test once with {@code -Dsmalt.test.updateDumps=true}, which writes the golden dumps under the
  *       module's {@code src/test/resources/dumps}, review them (a dump records the source variants over which
- *       the header differs or a read-once source refuses, so a degradation is visible) and commit them. Later
+ *       the header differs, a read-once source refuses or the demuxer adds tracks while reading, so a degradation
+ *       is visible) and commit them. Later
  *       runs compare against them, and a behavior change is a one-line diff of the dump.</li>
  *   <li>A demuxer whose index is coarser than its packets uses
  *       {@link com.github.auties00.smalt.testkit.container.DemuxerAsserts.SeekPrecision#AT_OR_BEFORE}, and one

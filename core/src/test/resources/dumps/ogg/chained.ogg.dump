@@ -105,4 +105,14 @@ seek 666666: t0@30 t1@0
 seek 1333333: t0@end t1@15
 seek 2000000: end
 seek -1000000: t0@0 t1@0
-refused over READ_ONCE_UNKNOWN_LENGTH after 45 packets
+header over READ_ONCE_UNKNOWN_LENGTH:
+  format OGG
+  duration -1
+  seekable false
+  metadata encoder="Lavc61.19.100 libvorbis"
+  track 0 AUDIO VORBIS timebase=1/44100 duration=? config=3461:6d3e264a
+    audio rate=44100 bits=0 skip=0 layout=[FRONT_CENTER]
+    metadata encoder="Lavc61.19.100 libvorbis"
+tracks added while reading over READ_ONCE_UNKNOWN_LENGTH: 1
+not seekable over READ_ONCE_UNKNOWN_LENGTH
+seeks forward only over READ_ONCE_UNKNOWN_LENGTH

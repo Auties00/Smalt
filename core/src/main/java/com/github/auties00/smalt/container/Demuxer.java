@@ -14,9 +14,15 @@ import java.util.Set;
 /**
  * Splits a container into the packets of its elementary streams.
  *
- * <p>The track list is complete once the demuxer is constructed. {@link #read()} returns the
- * packets of every track interleaved in file order until the end of the input; callers ignore the
- * tracks they do not need.
+ * <p>{@link #read()} returns the packets of every track interleaved in file order until the end of
+ * the input; callers ignore the tracks they do not need. Every packet belongs to a track that
+ * {@link #tracks()} lists by the time the packet is returned. The track list is usually complete once
+ * the demuxer is constructed. A demuxer that can only find some tracks by reading (the later links of
+ * a chained Ogg stream read once, for example) appends each such track to {@link #tracks()} before
+ * {@link #read()} returns the track's first packet, with an identifier no other track has; the tracks
+ * listed before keep their place and description, so a list returned earlier is a prefix of a later
+ * one. A caller that meets a packet of a track it has not seen looks the track up in a fresh
+ * {@link #tracks()}.
  *
  * <p>Seeking follows the contract shared by every Smalt reader. {@link #seek(long)} positions the
  * demuxer on key frames: afterwards {@link #read()} returns, for every track, packets starting at
@@ -54,7 +60,11 @@ public interface Demuxer extends AutoCloseable {
     }
 
     /**
-     * Returns every elementary stream of the container, in container order.
+     * Returns every elementary stream of the container found so far, in container order.
+     *
+     * <p>The list is a snapshot: it does not change after it is returned. It holds every track of the
+     * container except those the demuxer finds while reading, which a later call lists after them,
+     * as the class description explains.
      *
      * @return the tracks; unmodifiable
      */

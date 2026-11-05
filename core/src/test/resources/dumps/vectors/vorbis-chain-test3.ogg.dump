@@ -429,4 +429,12 @@ seek 8053866: t0@end t1@212
 seek 12080792: end
 seek 12080799: end
 seek -1000000: t0@0 t1@0
-refused over READ_ONCE_UNKNOWN_LENGTH after 80 packets
+header over READ_ONCE_UNKNOWN_LENGTH:
+  format OGG
+  duration -1
+  seekable false
+  track 0 AUDIO VORBIS timebase=1/44100 duration=? config=9517:8e2f2bff
+    audio rate=44100 bits=0 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+tracks added while reading over READ_ONCE_UNKNOWN_LENGTH: 1
+not seekable over READ_ONCE_UNKNOWN_LENGTH
+seeks forward only over READ_ONCE_UNKNOWN_LENGTH

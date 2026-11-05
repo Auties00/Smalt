@@ -457,6 +457,10 @@ final class AvTranscode {
                     }
                 });
             }
+            var known = new HashSet<Integer>();
+            for (var track : tracks) {
+                known.add(track.id());
+            }
             while (!allDone()) {
                 cancellation.check();
                 var packet = demuxer.read();
@@ -470,6 +474,9 @@ final class AvTranscode {
                     }
                 }
                 var list = byTrack.get(packet.trackId());
+                if (list == null && known.add(packet.trackId())) {
+                    list = adoptLate(demuxer, packet.trackId(), muxers, byTrack);
+                }
                 if (list != null) {
                     for (var receiver : list) {
                         receiver.accept(packet);
@@ -563,6 +570,40 @@ final class AvTranscode {
      */
     private VideoDecoderOptions videoDecoderOptions() {
         return VideoDecoderOptions.builder().limits(shared.limits()).highBitDepth(true).build();
+    }
+
+    /**
+     * Gives a track the demuxer found while reading the stages of the outputs that take it.
+     *
+     * @param demuxer the demuxer of the job
+     * @param trackId the identifier of the track, met for the first time
+     * @param muxers the muxers of the outputs, in output order
+     * @param byTrack the receivers of each input track, which the new receivers join
+     * @return the receivers of the track, or {@code null} when no output takes it
+     */
+    private List<TrackReceiver> adoptLate(Demuxer demuxer, int trackId, List<OutputMuxer> muxers,
+                                          Map<Integer, List<TrackReceiver>> byTrack) {
+        Track found = null;
+        for (var track : demuxer.tracks()) {
+            if (track.id() == trackId) {
+                found = track;
+            }
+        }
+        if (found == null) {
+            return null;
+        }
+        var receivers = new ArrayList<TrackReceiver>();
+        for (var index = 0; index < outputs.size(); index++) {
+            var stage = outputs.get(index).adoptLate(found, muxers.get(index));
+            if (stage != null) {
+                receivers.add(stage);
+            }
+        }
+        if (receivers.isEmpty()) {
+            return null;
+        }
+        byTrack.put(trackId, receivers);
+        return receivers;
     }
 
     /**
@@ -1186,10 +1227,19 @@ final class AvTranscode {
         /**
          * {@return whether the job may be handed to {@link Mp4Remuxer}}
          *
+         * <p>A job that reads its input once and takes every audio track in {@link StreamMode#AUTO} mode is not: the
+         * demuxer may find audio tracks while reading, which the remuxer can only copy, while this job encodes those
+         * the container cannot carry.
+         *
          * @param format the input container
          */
         boolean remuxable(ContainerFormat format) {
             var brand = remuxBrand(options.container());
+            var settings = options.audio();
+            if (forwardOnly() && settings.allTracks() && settings.trackId().isEmpty()
+                    && settings.mode() == StreamMode.AUTO) {
+                return false;
+            }
             return start == 0 && end < 0 && cuts.length == 0 && speed.numerator() == speed.denominator()
                     && brand != null && AvTranscode.remuxable(format)
                     && (videoPlan == null || videoPlan.copy() && Mp4Muxer.supports(brand, videoPlan.track().codec()))
@@ -1233,6 +1283,58 @@ final class AvTranscode {
                         muxer, start, subtitleEnd);
                 stages.add(plan.embedded() ? new CaptionStage(new CaptionExtractor(video), stage) : stage);
             }
+        }
+
+        /**
+         * Creates the stage of an audio track the demuxer found while reading, when this output's options take every
+         * audio track of its input.
+         *
+         * @param track a track the demuxer listed only after the first packets
+         * @param muxer the output
+         * @return the stage, already among this output's stages, or {@code null} when the options do not take the
+         * track
+         * @throws IllegalArgumentException if the container carries one audio track, or the track's codec cannot be
+         * written to it
+         * @throws MediaException.Unsupported if the output's muxer takes no track after its first packet, the track
+         * must be copied but cannot be, or two-pass loudness normalization would re-encode it
+         */
+        Stage adoptLate(Track track, OutputMuxer muxer) {
+            var settings = options.audio();
+            if (!(track instanceof AudioTrack audioTrack) || settings.mode() == StreamMode.DROP
+                    || settings.trackId().isPresent() || !settings.allTracks()
+                    || candidates(List.of(track), settings.input()).isEmpty()) {
+                return null;
+            }
+            var container = options.container();
+            if (container.audioCodecs().isEmpty() && !container.supports(track.codec())) {
+                if (settings.mode() == StreamMode.AUTO) {
+                    return null;
+                }
+                throw new IllegalArgumentException(container + " files cannot carry audio");
+            }
+            if (!audio.isEmpty() && !container.carriesSeveralTracks()) {
+                throw new IllegalArgumentException(container + " files carry one audio track, and the input has"
+                        + " another, track " + track.id() + ", found while reading it");
+            }
+            if (!muxer.acceptsLate()) {
+                throw new MediaException.Unsupported("late track", container + " output takes no track after its"
+                        + " first packet, and the input has another audio track, " + track.id()
+                        + ", found while reading it");
+            }
+            var plan = planAudio(audioTrack);
+            if (!plan.copy() && settings.loudnessNormalization().isPresent() && !settings.singlePassNormalization()) {
+                throw new MediaException.Unsupported("late track", "two-pass loudness normalization measures a track"
+                        + " before encoding it, and track " + track.id() + " was found while reading the input");
+            }
+            // TODO: carry the track tags of a track found while reading, which the tags resolved by setTags before the
+            // first packet do not hold; this needs muxers that take track tags after their first packet
+            var selected = new ArrayList<>(audio);
+            selected.add(audioTrack);
+            audio = selected;
+            audioPlans.add(plan);
+            var stage = createAudioStage(plan, muxer.reserveLate(), muxer);
+            stages.add(stage);
+            return stage;
         }
 
         /**
@@ -2014,18 +2116,18 @@ final class AvTranscode {
                 case REPLACE -> builder.tags(options.tags().orElseThrow());
                 case MERGE -> builder.mergeTags(options.tags().orElseThrow());
             }
-            var sources = new ArrayList<Track>();
             if (video == null) {
                 builder.noVideo();
             } else {
                 builder.videoTrack(video.id());
-                sources.add(video);
             }
             if (audio.isEmpty()) {
                 builder.noAudio();
+            } else if (options.audio().allTracks()) {
+                // the remuxer then also copies the audio tracks the demuxer finds while reading
+                builder.allAudioTracks();
             } else {
                 builder.audioTracks(audio.stream().mapToInt(Track::id).toArray());
-                sources.addAll(audio);
             }
             var subtitleTracks = new ArrayList<Track>();
             for (var plan : subtitles) {
@@ -2035,7 +2137,6 @@ final class AvTranscode {
                 builder.noSubtitles();
             } else {
                 builder.subtitleTracks(subtitleTracks.stream().mapToInt(Track::id).toArray());
-                sources.addAll(subtitleTracks);
             }
             var input = firstSource();
             var size = input.size();
@@ -2056,7 +2157,7 @@ final class AvTranscode {
             }
             var streams = new ArrayList<TranscodedStream>();
             for (var index = 0; index < result.tracks().size(); index++) {
-                streams.add(new TranscodedStream(sources.get(index).id(), result.tracks().get(index), true));
+                streams.add(new TranscodedStream(result.sourceTrackIds().get(index), result.tracks().get(index), true));
             }
             var duration = report(result.durationMicros(), true);
             return new TranscodeResult(options.container(), duration, streams, true);

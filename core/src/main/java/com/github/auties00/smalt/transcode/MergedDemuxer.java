@@ -25,7 +25,9 @@ import java.util.Set;
 /**
  * Presents the demuxers of several inputs as one, interleaving their packets by time.
  *
- * <p>The tracks of input {@code i} follow those of the inputs before it, renumbered from 1 in that order; the
+ * <p>The tracks of input {@code i} follow those of the inputs before it, renumbered from 1 in that order, and a track
+ * an input finds while reading is appended to the merged list, with the next free identifier, before its first
+ * packet is returned; the
  * global tags, chapters, attachments and pictures are the first input's. {@link #read()} returns the packet with the
  * earliest decoding time (its presentation time when it has none) among the next packet of every input that has a
  * selected track, so each input's packets keep their order. The demuxer seeks when every input does.
@@ -34,7 +36,21 @@ import java.util.Set;
  */
 final class MergedDemuxer implements SegmentedDemuxer {
     private final List<Demuxer> inputs;
-    private final List<Track> tracks;
+
+    /**
+     * The merged tracks, by merged identifier minus one.
+     */
+    private final List<Track> merged;
+
+    /**
+     * The unmodifiable snapshot of {@link #merged} that {@link #tracks()} returns.
+     */
+    private List<Track> tracks;
+
+    /**
+     * The number of tracks of each input that {@link #merged} holds.
+     */
+    private final int[] adopted;
 
     /**
      * The input of each track, by merged identifier.
@@ -78,23 +94,16 @@ final class MergedDemuxer implements SegmentedDemuxer {
      */
     MergedDemuxer(List<Demuxer> inputs) {
         this.inputs = List.copyOf(inputs);
-        var merged = new ArrayList<Track>();
+        this.merged = new ArrayList<>();
+        this.adopted = new int[this.inputs.size()];
         for (var index = 0; index < this.inputs.size(); index++) {
-            var ids = new HashMap<Integer, Integer>();
-            for (var track : this.inputs.get(index).tracks()) {
-                var id = merged.size() + 1;
-                merged.add(withId(track, id));
-                inputOf.put(id, index);
-                originalOf.put(id, track.id());
-                ids.put(track.id(), id);
-            }
-            mergedOf.add(ids);
+            mergedOf.add(new HashMap<>());
+            adopt(index);
             if (this.inputs.get(index) instanceof SegmentedDemuxer segmented) {
                 var input = index;
                 segmented.segmentListener((trackId, track, startMicros) -> forward(input, trackId, track, startMicros));
             }
         }
-        this.tracks = List.copyOf(merged);
         this.next = new Packet[this.inputs.size()];
         this.ended = new boolean[this.inputs.size()];
         this.read = new boolean[this.inputs.size()];
@@ -103,6 +112,27 @@ final class MergedDemuxer implements SegmentedDemuxer {
     }
 
     private SegmentedDemuxer.Listener listener;
+
+    /**
+     * Appends the tracks of an input that the merged list does not hold yet, which the input lists after those it
+     * listed before.
+     *
+     * @param input the index of the input
+     */
+    private void adopt(int input) {
+        var own = inputs.get(input).tracks();
+        var ids = mergedOf.get(input);
+        for (var position = adopted[input]; position < own.size(); position++) {
+            var track = own.get(position);
+            var id = merged.size() + 1;
+            merged.add(withId(track, id));
+            inputOf.put(id, input);
+            originalOf.put(id, track.id());
+            ids.put(track.id(), id);
+        }
+        adopted[input] = own.size();
+        tracks = List.copyOf(merged);
+    }
 
     /**
      * Forwards the start of a later file of an input's concatenation.
@@ -278,6 +308,9 @@ final class MergedDemuxer implements SegmentedDemuxer {
                         ended[index] = true;
                         continue;
                     }
+                    if (!mergedOf.get(index).containsKey(next[index].trackId())) {
+                        adopt(index);
+                    }
                 }
                 var micros = timeOf(index, next[index]);
                 if (micros < bestMicros) {
@@ -309,7 +342,7 @@ final class MergedDemuxer implements SegmentedDemuxer {
         if (time == Packet.NO_TIMESTAMP || id == null) {
             return lastMicros[input];
         }
-        var micros = tracks.get(id - 1).timeBase().toMicros(time);
+        var micros = merged.get(id - 1).timeBase().toMicros(time);
         lastMicros[input] = micros;
         return micros;
     }

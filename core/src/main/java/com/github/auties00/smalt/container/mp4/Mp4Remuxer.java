@@ -29,6 +29,7 @@ import java.util.Set;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.function.Consumer;
+import java.util.function.IntFunction;
 
 /**
  * Copies the tracks of an ISO base media, Matroska, MPEG transport stream, MPEG program stream, MXF, AVI, FLV or Ogg
@@ -63,6 +64,10 @@ import java.util.function.Consumer;
  * <p>The output carries the codecs {@link Mp4Muxer#supports} lists for the brand, PCM needing its
  * sampling rate and channel layout; a selected track with any other codec raises
  * {@link MediaException.Unsupported} naming the codec, so the caller can transcode it instead.
+ *
+ * <p>A selection of every audio or every subtitle track also takes the tracks of those kinds the
+ * demuxer finds while reading (the later links of a chained Ogg stream read once), each from its
+ * first packet on, after the tracks listed when the input opens.
  */
 public final class Mp4Remuxer {
     private Mp4Remuxer() {
@@ -143,7 +148,7 @@ public final class Mp4Remuxer {
                             muxer.streamAfter(header);
                         }
                     }
-                    packets = copyPackets(demuxer, muxer, copies);
+                    packets = copyPackets(demuxer, muxer, copies, options, format);
                     muxer.finish();
                 } catch (MediaException exception) {
                     throw exception;
@@ -153,11 +158,13 @@ public final class Mp4Remuxer {
                     throw new MediaException.Malformed("cannot remux the input: " + exception, exception);
                 }
                 var tracks = new ArrayList<Track>();
+                var sources = new ArrayList<Integer>();
                 for (var copy : copies) {
                     tracks.add(copy.output);
+                    sources.add(copy.input.id());
                 }
                 var end = output.position();
-                return new RemuxResult(format, tracks, packets, muxer.durationMicros(), end - start);
+                return new RemuxResult(format, tracks, sources, packets, muxer.durationMicros(), end - start);
             }
         }
     }
@@ -608,7 +615,7 @@ public final class Mp4Remuxer {
                 planner.addTrack(copy.output);
             }
             TagCarry.apply(planner, tags, options.tagMode(), options.tags().orElse(null));
-            transfer(demuxer, copies, packet -> {
+            transfer(demuxer, copies, null, packet -> {
                 packet.sideData().newCodecConfig().ifPresent(config -> planner.changeCodecConfig(packet.trackId(), config));
                 planner.planSample(packet.trackId(), packet.size(), packet.pts(), packet.dts(), packet.duration(),
                         packet.keyframe());
@@ -671,14 +678,58 @@ public final class Mp4Remuxer {
      *
      * @param demuxer the input
      * @param muxer the output
-     * @param copies the track plans
+     * @param copies the track plans, which the tracks the demuxer finds while reading and the options select join
+     * @param options the remux options
+     * @param format the detected container
      * @return the number of packets copied
      */
-    private static long copyPackets(Demuxer demuxer, Mp4Muxer muxer, List<Copy> copies) {
+    private static long copyPackets(Demuxer demuxer, Mp4Muxer muxer, List<Copy> copies, RemuxOptions options,
+                                    ContainerFormat format) {
         if (demuxer instanceof Mp4Demuxer indexed) {
             return copySamples(indexed, muxer, copies);
         }
-        return transfer(demuxer, copies, muxer::writePacket);
+        return transfer(demuxer, copies, trackId -> adoptLate(demuxer, muxer, copies, trackId, options, format),
+                muxer::writePacket);
+    }
+
+    /**
+     * Plans the copy of a track the demuxer found while reading, when the options select every track of its kind.
+     *
+     * @param demuxer the input
+     * @param muxer the output, which receives the track
+     * @param copies the track plans, which the new plan joins
+     * @param trackId the identifier of a track met for the first time
+     * @param options the remux options
+     * @param format the detected container
+     * @return the plan, or {@code null} when the options do not select the track
+     * @throws MediaException.Unsupported if the track's codec cannot be stored in MP4
+     */
+    private static Copy adoptLate(Demuxer demuxer, Mp4Muxer muxer, List<Copy> copies, int trackId,
+                                  RemuxOptions options, ContainerFormat format) {
+        Track found = null;
+        for (var track : demuxer.tracks()) {
+            if (track.id() == trackId) {
+                found = track;
+            }
+        }
+        if (found == null || !muxer.supportsLateTracks()) {
+            return null;
+        }
+        var brand = options.brand();
+        Copy copy = null;
+        if (found.kind() == TrackKind.AUDIO && options.audioSelection().mode() == RemuxOptions.Mode.ALL) {
+            copy = prepareAudio(found, copies.size() + 1, format, brand);
+        } else if (found.kind() == TrackKind.DATA && brand != Mp4MuxerOptions.Brand.M4A
+                && options.subtitleSelection().mode() == RemuxOptions.Mode.ALL
+                && !select(List.of(found), TrackKind.DATA, options.subtitleSelection(), brand).isEmpty()) {
+            copy = prepareText(found, copies.size() + 1, brand);
+        }
+        if (copy != null) {
+            // TODO: carry the track tags of the late track, which the tags set before the first packet do not hold
+            muxer.addTrack(copy.output);
+            copies.add(copy);
+        }
+        return copy;
     }
 
     /**
@@ -719,14 +770,20 @@ public final class Mp4Remuxer {
      *
      * @param demuxer the input
      * @param copies the track plans
+     * @param late plans a track met for the first time that is not among {@code copies}, returning {@code null}
+     *             when it is not copied, or {@code null} to copy only {@code copies}
      * @param sink receives the repaired packets
      * @return the number of packets handed over
      */
-    private static long transfer(Demuxer demuxer, List<Copy> copies, Consumer<Packet> sink) {
+    private static long transfer(Demuxer demuxer, List<Copy> copies, IntFunction<Copy> late, Consumer<Packet> sink) {
         var count = 0L;
+        var met = new HashSet<Integer>();
         Packet packet;
         while ((packet = demuxer.read()) != null) {
             var copy = find(copies, packet.trackId());
+            if (copy == null && late != null && met.add(packet.trackId())) {
+                copy = late.apply(packet.trackId());
+            }
             if (copy == null) {
                 continue;
             }

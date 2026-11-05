@@ -806,6 +806,11 @@ public final class Containers {
             return raw.supportsAlpha();
         }
 
+        @Override
+        public boolean supportsLateTracks() {
+            return raw.supportsLateTracks();
+        }
+
         /**
          * @throws MediaException.Unsupported {@inheritDoc}
          */

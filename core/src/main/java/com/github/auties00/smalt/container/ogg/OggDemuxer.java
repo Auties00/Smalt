@@ -23,6 +23,7 @@ import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.VideoTrack;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -117,10 +118,16 @@ import java.util.Set;
  * <p>A source that reads its input once, front to back (a stream), is told after every page which
  * bytes are no longer needed. The last pages that give the duration, and the scan for chained
  * links, are read only when its size is known and the whole input fits the source's memory budget;
- * otherwise the duration is unknown, only the first link is described, and a read that reaches a later
- * link fails with {@link MediaException.Unsupported}. Such a source seeks only forward, by reading,
- * whatever its size: a target at or past the end of the packets read so far is reached by reading on and
- * dropping what precedes it.
+ * otherwise the duration is unknown and construction describes only the first link. {@link #read()}
+ * then describes every later link as it reaches it, as {@link Demuxer} allows: before the first
+ * packet of a stream of the link, the stream's track is appended to {@link #tracks()} and the link
+ * to {@link #links()}, both without a duration, and its chapters to {@link #chapters()}. The link
+ * starts where the previous one ends, measured from the last granule positions of the previous
+ * link, which RFC 3533 places before the next link, so the packets, track identifiers, tracks
+ * (durations aside), tags and link starts are those of a read of the same bytes from memory. Such
+ * a source seeks only forward, by reading, whatever its size: a target at or past the end of the
+ * packets read so far is reached by reading on and dropping what precedes it, through the links
+ * found on the way.
  *
  * @implNote This implementation relies on RFC 3533 section 4, under which every chained logical
  * bitstream has a serial number unique within the physical bitstream: when the pages near the end
@@ -204,9 +211,15 @@ public final class OggDemuxer implements Demuxer {
     private OggParser parser;
 
     /**
-     * The tracks, in stream order.
+     * The tracks, in stream order: those described at construction, then those of later links in the order
+     * {@link #read()} met them.
      */
-    private final List<Track> tracks;
+    private final List<Track> trackList;
+
+    /**
+     * The unmodifiable snapshot of {@link #trackList} that {@link #tracks()} returns.
+     */
+    private List<Track> tracks;
 
     /**
      * The identifiers of {@link #tracks}.
@@ -249,19 +262,31 @@ public final class OggDemuxer implements Demuxer {
     private final boolean forwardOnly;
 
     /**
-     * The described links, in file order.
+     * The described links, in file order: those described at construction, then the later links {@link #read()}
+     * met, as {@link #describeLate(int)} adds them.
      */
     private final List<Span> spans;
 
     /**
-     * The public description of {@link #spans}.
+     * The number of links described at construction, the first entries of {@link #spans}, which are the links whose
+     * place in the file is known and that a seek by bisection can reach.
      */
-    private final List<OggLink> links;
+    private final int describedLinks;
 
     /**
-     * The start of every link in microseconds.
+     * The duration of each link described at construction in microseconds, or {@code -1} when unknown.
      */
-    private final long[] linkStarts;
+    private final long[] linkDurations;
+
+    /**
+     * The public description of {@link #spans}, unmodifiable.
+     */
+    private List<OggLink> links;
+
+    /**
+     * The start of every link in microseconds, indexed by link, grown by {@link #linkStarted} as later links begin.
+     */
+    private long[] linkStarts;
 
     /**
      * The numbering every parser applies to the described links.
@@ -269,9 +294,9 @@ public final class OggDemuxer implements Demuxer {
     private final OggParser.Plan plan;
 
     /**
-     * The chapters of every link, on the presentation timeline.
+     * The chapters of every link, on the presentation timeline; unmodifiable.
      */
-    private final List<Chapter> chapters;
+    private List<Chapter> chapters;
 
     /**
      * The pictures of the first link.
@@ -298,6 +323,12 @@ public final class OggDemuxer implements Demuxer {
      * dropped.
      */
     private Set<Integer> passedTracks = Set.of();
+
+    /**
+     * The target of the last seek by reading while no link that starts after it was met, or {@link Long#MIN_VALUE};
+     * a later link that starts at or before it moves the seek into that link.
+     */
+    private long readingTarget = Long.MIN_VALUE;
 
     /**
      * The latest end, in microseconds, of a timestamped packet the parser produced, or
@@ -385,7 +416,6 @@ public final class OggDemuxer implements Demuxer {
             var size = source.size();
             var firstLink = parser.link(0);
             var found = new ArrayList<Span>();
-            var known = size >= 0;
             var reachable = ForwardOnlySource.isCheapToReach(source, size);
             if (size >= 0 && size <= MAX_SCANNED_BYTES && reachable) {
                 var tail = settledTail(source, size);
@@ -416,6 +446,7 @@ public final class OggDemuxer implements Demuxer {
             } else {
                 found.add(new Span(firstLink, -1, null, 0, List.of()));
             }
+            var known = found.getLast().end() >= 0;
             var result = new ArrayList<Track>();
             var ids = new HashSet<Integer>();
             var bases = new HashMap<Integer, Rational>();
@@ -430,23 +461,10 @@ public final class OggDemuxer implements Demuxer {
                     if (stream.mapping == null || !stream.headersDone) {
                         continue;
                     }
-                    var lastGranule = span.granules() == null ? stream.lastGranule
+                    var lastGranule = !known ? -1 : span.granules() == null ? stream.lastGranule
                             : span.granules().getOrDefault(stream.serial, -1L);
-                    var duration = -1L;
-                    var skip = 0L;
-                    if (known && stream.mapping.timestamped() && stream.anchored && lastGranule != -1) {
-                        var end = stream.mapping.granuleToTime(lastGranule);
-                        var start = stream.firstTimestamp + stream.mapping.decoderDelay();
-                        skip = Math.max(0, -start);
-                        duration = end - Math.max(0, start);
-                        if (duration < 0) {
-                            duration = -1;
-                            skip = 0;
-                        } else {
-                            linkDuration = Math.max(linkDuration, stream.mapping.timeBase().toMicros(end));
-                        }
-                    }
-                    var track = withLanguage(stream.mapping.track(stream.index, duration, skip), stream.skeletonLanguage());
+                    var track = describe(stream, lastGranule);
+                    linkDuration = Math.max(linkDuration, endMicros(stream, lastGranule));
                     spanTracks.add(track);
                     result.add(track);
                     ids.add(stream.index);
@@ -493,14 +511,21 @@ public final class OggDemuxer implements Demuxer {
             }
             this.plan = new OggParser.Plan(planStarts, planIndexes, streamCount);
             this.linkStarts = starts;
+            this.describedLinks = found.size();
+            this.linkDurations = known ? durations : new long[found.size()];
+            if (!known) {
+                Arrays.fill(linkDurations, -1);
+            }
             parser.setPlan(plan);
             parser.setLinkStarts(starts);
+            parser.observeLinks(this::linkStarted);
             if (trustedPages != null) {
                 parser.trustPages(trustedPages, trustedCount);
             }
-            this.spans = List.copyOf(spans);
+            this.spans = spans;
             this.links = List.copyOf(described);
-            this.tracks = Collections.unmodifiableList(result);
+            this.trackList = result;
+            this.tracks = List.copyOf(result);
             this.trackIds = ids;
             this.timeBases = bases;
             this.trackTags = tags;
@@ -518,6 +543,187 @@ public final class OggDemuxer implements Demuxer {
         } catch (RuntimeException exception) {
             throw new MediaException.Malformed("invalid Ogg file", exception);
         }
+    }
+
+    /**
+     * Describes a stream as a track.
+     *
+     * <p>The track's {@code skipSamples} comes from the stream's first timestamp whenever the stream is anchored; its
+     * duration, from the first timestamp to the time of the last granule position, only when that granule position is
+     * known, and neither when the stream would end before it starts.
+     *
+     * @param stream a stream whose headers are complete
+     * @param lastGranule the last granule position of the stream, or {@code -1} when unknown
+     * @return the track
+     */
+    private static Track describe(OggParser.Stream stream, long lastGranule) {
+        var mapping = stream.mapping;
+        var duration = -1L;
+        var skip = 0L;
+        if (mapping.timestamped() && stream.anchored) {
+            var start = stream.firstTimestamp + mapping.decoderDelay();
+            skip = Math.max(0, -start);
+            if (lastGranule != -1) {
+                duration = mapping.granuleToTime(lastGranule) - Math.max(0, start);
+                if (duration < 0) {
+                    duration = -1;
+                    skip = 0;
+                }
+            }
+        }
+        return withLanguage(mapping.track(stream.index, duration, skip), stream.skeletonLanguage());
+    }
+
+    /**
+     * Returns where a stream ends on its link's timeline.
+     *
+     * @param stream a stream whose headers are complete
+     * @param lastGranule the last granule position of the stream, or {@code -1} when unknown
+     * @return the time of the last granule position in microseconds, or {@code -1} when the stream is not
+     *         timestamped, not anchored, its last granule position is unknown, or it would end before it starts
+     */
+    private static long endMicros(OggParser.Stream stream, long lastGranule) {
+        var mapping = stream.mapping;
+        if (!mapping.timestamped() || !stream.anchored || lastGranule == -1) {
+            return -1;
+        }
+        var end = mapping.granuleToTime(lastGranule);
+        if (end - Math.max(0, stream.firstTimestamp + mapping.decoderDelay()) < 0) {
+            return -1;
+        }
+        return mapping.timeBase().toMicros(end);
+    }
+
+    /**
+     * Gives a link that no earlier link start covers its start on the presentation timeline, where the link before it
+     * ends.
+     *
+     * <p>RFC 3533 section 4 places a chained link after every page of the link before it, so when the parser starts
+     * a link the last granule positions of the previous one are final, and the start is the one a construction that
+     * described both links computes.
+     *
+     * @param reader the parser that started the link
+     * @param link the link at its first beginning-of-stream page
+     * @param previous the link before it, or {@code null}
+     */
+    private void linkStarted(OggParser reader, OggParser.Link link, OggParser.Link previous) {
+        if (link.index < linkStarts.length) {
+            return;
+        }
+        var start = 0L;
+        if (previous != null && previous.index < linkStarts.length) {
+            start = linkStarts[previous.index] + Math.max(0, linkDuration(previous));
+        }
+        var grown = Arrays.copyOf(linkStarts, link.index + 1);
+        Arrays.fill(grown, linkStarts.length, grown.length, start);
+        linkStarts = grown;
+        reader.setLinkStarts(grown);
+    }
+
+    /**
+     * Returns the duration of a link: the one construction measured when it described the link with its end, and
+     * otherwise the latest end of the link's streams as a parser that read the whole link saw it.
+     *
+     * @param link a link a parser read to its end
+     * @return the duration in microseconds, or {@code -1} when unknown
+     */
+    private long linkDuration(OggParser.Link link) {
+        if (link.index < describedLinks && spans.get(link.index).end() >= 0) {
+            return linkDurations[link.index];
+        }
+        var duration = -1L;
+        for (var stream : link.streams) {
+            if (stream.mapping != null && stream.headersDone) {
+                duration = Math.max(duration, endMicros(stream, stream.lastGranule));
+            }
+        }
+        return duration;
+    }
+
+    /**
+     * Describes a stream of a link that was not described at construction, as {@link #read()} meets its first packet.
+     *
+     * <p>The stream's track is appended to {@link #tracks()}, and its link to {@link #links()} the first time one of
+     * its streams is described, without a duration; its tags and chapters join the description. During a seek by
+     * reading, a link that starts at or before the target moves the seek into it, and the tracks of a link that
+     * starts later join the seek filter.
+     *
+     * @param trackId the identifier of the packet's stream
+     * @return {@code true} when the stream is now described, {@code false} when it belongs to a link described at
+     *         construction or its headers are incomplete
+     */
+    private boolean describeLate(int trackId) {
+        var stream = parser.stream(trackId);
+        if (stream == null || stream.link < describedLinks || stream.mapping == null || !stream.headersDone) {
+            return false;
+        }
+        var owner = stream.owner;
+        var position = -1;
+        for (var index = describedLinks; index < spans.size(); index++) {
+            if (spans.get(index).link().index == owner.index) {
+                position = index;
+            }
+        }
+        var start = owner.index < linkStarts.length ? linkStarts[owner.index] : 0;
+        var track = describe(stream, -1);
+        var fresh = position < 0;
+        var linkTracks = new ArrayList<Track>();
+        if (fresh) {
+            position = spans.size();
+            spans.add(new Span(owner, -1, null, start, List.of()));
+        } else {
+            linkTracks.addAll(spans.get(position).tracks());
+        }
+        linkTracks.add(track);
+        spans.set(position, spans.get(position).with(start, List.copyOf(linkTracks)));
+        trackList.add(track);
+        tracks = List.copyOf(trackList);
+        trackIds.add(track.id());
+        timeBases.put(track.id(), track.timeBase());
+        trackTags.put(track.id(), Collections.unmodifiableMap(stream.trackTags()));
+        var linkChapters = new ArrayList<Chapter>();
+        for (var chapter : owner.annotations.chapters(-1)) {
+            linkChapters.add(Chapter.of(chapter.startMicros() + start, chapter.endMicros() + start,
+                    chapter.title().orElse(null)));
+        }
+        var ids = new ArrayList<Integer>();
+        for (var described : linkTracks) {
+            ids.add(described.id());
+        }
+        var described = new ArrayList<>(links);
+        var entry = new OggLink(start, -1, ids, owner.metadata(), linkChapters, owner.annotations.pictures());
+        if (fresh) {
+            described.add(entry);
+        } else {
+            described.set(position, entry);
+        }
+        links = List.copyOf(described);
+        var allChapters = new ArrayList<Chapter>();
+        for (var link : links) {
+            allChapters.addAll(link.chapters());
+        }
+        chapters = List.copyOf(allChapters);
+        if (fresh && readingTarget != Long.MIN_VALUE && start <= readingTarget) {
+            var passed = new HashSet<>(passedTracks);
+            for (var index = 0; index < position; index++) {
+                for (var earlier : spans.get(index).tracks()) {
+                    passed.add(earlier.id());
+                }
+            }
+            passedTracks = passed;
+            filter = new SeekFilter(List.of(track), readingTarget);
+        } else {
+            if (fresh) {
+                readingTarget = Long.MIN_VALUE;
+            }
+            if (filter != null) {
+                filter.addTrack(track);
+            } else if (readingTarget != Long.MIN_VALUE) {
+                // a stream of the link the seek moved into whose first page follows the end of the filter
+                filter = new SeekFilter(List.of(track), readingTarget);
+            }
+        }
+        return true;
     }
 
     /**
@@ -900,11 +1106,12 @@ public final class OggDemuxer implements Demuxer {
     }
 
     /**
-     * Returns the links of the file, in file order.
+     * Returns the links of the file found so far, in file order.
      *
-     * <p>A file that is not chained has one link. Only the first link is described when the source
-     * size is unknown, or when the source reads its input once and the whole input does not fit its
-     * memory budget.
+     * <p>A file that is not chained has one link. When the source reads its input once and its size
+     * is unknown or the whole input does not fit its memory budget, construction describes only the
+     * first link, and each later link joins the list, with a duration of {@code -1}, when
+     * {@link #read()} reaches it.
      *
      * @return the links; unmodifiable and never empty
      */
@@ -915,33 +1122,36 @@ public final class OggDemuxer implements Demuxer {
     /**
      * {@inheritDoc}
      *
+     * <p>A packet of a chained link that construction did not describe is preceded by the
+     * description of the link's stream, which {@link #tracks()} and {@link #links()} then list.
+     *
      * @throws MediaException.Malformed {@inheritDoc}
-     * @throws MediaException.Unsupported if the read reaches a chained link that was not described when the
-     * demuxer was opened, which happens only for a source that reads its input once
      * @throws MediaException.Io {@inheritDoc}
      */
     @Override
     public Packet read() {
         try {
-            if (filter != null) {
-                while (true) {
+            while (true) {
+                if (filter != null) {
                     var packet = filter.poll();
                     if (packet != null) {
                         return packet;
                     }
                     if (filter.isTransparent()) {
                         filter = null;
-                        return nextPacket();
-                    }
-                    var next = nextPacket();
-                    if (next == null) {
-                        filter.finish();
-                    } else {
-                        filter.offer(next);
                     }
                 }
+                // reading may describe a later link, which can start a filter for a seek by reading
+                var next = nextPacket();
+                if (filter == null) {
+                    return next;
+                }
+                if (next == null) {
+                    filter.finish();
+                } else {
+                    filter.offer(next);
+                }
             }
-            return nextPacket();
         } catch (MediaException exception) {
             throw exception;
         } catch (RuntimeException exception) {
@@ -958,24 +1168,15 @@ public final class OggDemuxer implements Demuxer {
         while (true) {
             var packet = parser.output.poll();
             if (packet != null) {
-                if (!trackIds.contains(packet.trackId())) {
-                    var stream = parser.stream(packet.trackId());
-                    if (stream != null && stream.link >= spans.size()) {
-                        // TODO: describe the later links of a stream of unknown size, which needs tracks
-                        // added after construction
-                        throw new MediaException.Unsupported("chained Ogg", "a chained Ogg link begins at offset "
-                                + parser.position() + ", after the links described when the demuxer was opened:"
-                                + " the links of a stream read once are found only when its size is known and"
-                                + " the whole input fits its memory budget");
-                    }
-                } else {
-                    if (seeksByReading() && packet.pts() != Packet.NO_TIMESTAMP) {
-                        var end = packet.pts() + Math.max(0, packet.duration());
-                        producedMicros = Math.max(producedMicros, timeBases.get(packet.trackId()).toMicros(end));
-                    }
-                    if (!passedTracks.contains(packet.trackId())) {
-                        return packet;
-                    }
+                if (!trackIds.contains(packet.trackId()) && !describeLate(packet.trackId())) {
+                    continue;
+                }
+                if (seeksByReading() && packet.pts() != Packet.NO_TIMESTAMP) {
+                    var end = packet.pts() + Math.max(0, packet.duration());
+                    producedMicros = Math.max(producedMicros, timeBases.get(packet.trackId()).toMicros(end));
+                }
+                if (!passedTracks.contains(packet.trackId())) {
+                    return packet;
                 }
                 continue;
             }
@@ -1044,7 +1245,8 @@ public final class OggDemuxer implements Demuxer {
                 seekByReading(micros);
                 return;
             }
-            var span = spans.get(linkAt(micros));
+            readingTarget = Long.MIN_VALUE;
+            var span = spans.get(linkAt(micros, describedLinks));
             var position = span.end();
             var located = false;
             for (var stream : span.link().streams) {
@@ -1100,7 +1302,7 @@ public final class OggDemuxer implements Demuxer {
             parser = newParser(spans.getFirst());
             producedMicros = Long.MIN_VALUE;
         }
-        var index = linkAt(micros);
+        var index = linkAt(micros, spans.size());
         var kept = new ArrayList<Track>();
         var passed = new HashSet<Integer>();
         for (var link = 0; link < spans.size(); link++) {
@@ -1114,6 +1316,7 @@ public final class OggDemuxer implements Demuxer {
         }
         filter = new SeekFilter(kept, micros);
         passedTracks = passed;
+        readingTarget = micros;
     }
 
     /**
@@ -1136,11 +1339,12 @@ public final class OggDemuxer implements Demuxer {
      * Returns the link that plays at a time: the last whose start is at or before it, or the first.
      *
      * @param micros the time
+     * @param count the number of leading links of {@link #spans} to consider
      * @return the index of the link in {@link #spans}
      */
-    private int linkAt(long micros) {
+    private int linkAt(long micros, int count) {
         var index = 0;
-        for (var candidate = 1; candidate < spans.size(); candidate++) {
+        for (var candidate = 1; candidate < count; candidate++) {
             if (spans.get(candidate).startMicros() <= micros) {
                 index = candidate;
             }
@@ -1178,6 +1382,7 @@ public final class OggDemuxer implements Demuxer {
         var created = new OggParser(input, limits, false, link.start, link.streams.getFirst().index, link.index);
         created.setPlan(plan);
         created.setLinkStarts(linkStarts);
+        created.observeLinks(this::linkStarted);
         if (trustedPages != null) {
             created.trustPages(trustedPages, trustedCount);
         }

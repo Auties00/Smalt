@@ -23,4 +23,8 @@ seek 448919: @sample 19797
 seek 897838: @sample 39595
 seek 1346757: end
 seek -1000000: @sample 0
-refused over READ_ONCE_UNKNOWN_LENGTH after 14 frames
+header over READ_ONCE_UNKNOWN_LENGTH:
+  format OGG
+  duration -1
+  seekable false
+  track 0 VORBIS rate=44100 layout=[FRONT_LEFT, FRONT_RIGHT]

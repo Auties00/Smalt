@@ -157,6 +157,16 @@ class FuzzSeedWriter {
         var opus = ffmpeg("opus", tone(48000, 0.2), "-c:a", "libopus", "-b:a", "8k", "-metadata", "title=seed");
         copy(DemuxerFuzzTest.class, "ogg", "valid-opus.opus", opus);
         copy(DemuxerFuzzTest.class, "ogg", "valid-flac.oga", ffmpeg("oga", tone(8000, 0.1), "-c:a", "flac"));
+        // a chain of a Vorbis, an Opus and a FLAC link with distinct serial numbers, whose later links a stream read
+        // once describes while reading
+        var chain = new java.io.ByteArrayOutputStream();
+        for (var link : List.of(ffmpeg("ogg", tone(8000, 0.3), "-c:a", "libvorbis", "-serial_offset", "100"),
+                ffmpeg("opus", tone(48000, 0.2), "-c:a", "libopus", "-b:a", "8k", "-serial_offset", "200"),
+                ffmpeg("oga", tone(8000, 0.1), "-c:a", "flac", "-serial_offset", "300"))) {
+            chain.writeBytes(Files.readAllBytes(link));
+        }
+        FuzzSeeds.write(DemuxerFuzzTest.class, "oggStream", "valid-vorbis-opus-flac-chain.ogg", chain.toByteArray());
+        copy(DemuxerFuzzTest.class, "oggStream", "valid-opus.opus", opus);
 
         var mp3 = ffmpeg("mp3", tone(8000, 0.3), "-c:a", "libmp3lame", "-b:a", "8k", "-id3v2_version", "3",
                 "-metadata", "title=seed", "-metadata", "track=1/2");

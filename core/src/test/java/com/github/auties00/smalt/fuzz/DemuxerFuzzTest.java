@@ -48,6 +48,11 @@ class DemuxerFuzzTest {
     }
 
     @FuzzTest
+    void oggStream(byte[] data) {
+        FuzzMedia.streamDemuxer(ContainerFormat.OGG, data);
+    }
+
+    @FuzzTest
     void mpegAudio(byte[] data) {
         FuzzMedia.demuxer(ContainerFormat.MPEG_AUDIO, data);
     }

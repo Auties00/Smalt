@@ -34,6 +34,10 @@ import java.util.Objects;
  * Writes ISO base media files (MP4 and M4A) and QuickTime movies from the packets of the codecs
  * {@link #supports} lists for each {@linkplain Mp4MuxerOptions.Brand brand}.
  *
+ * <p>The {@code moov} box is built by {@link #finish()}, so the muxer {@linkplain #supportsLateTracks() takes
+ * tracks declared after the first packet}: a late track's chunks are stored from its first packet on and the
+ * movie header lists it with the others.
+ *
  * <p>Packets are grouped per track into chunks of at most
  * {@link Mp4MuxerOptions#interleaveMicros()} of media (or 8 MiB), and chunks are stored in the
  * order they complete, which interleaves tracks whose packets arrive interleaved. With
@@ -492,12 +496,16 @@ public final class Mp4Muxer implements Muxer {
      * holds anything but Avid sample description extensions after its sample entry type, a PCM
      * track has no sampling rate or channel layout, an AMR track has more than one channel, or the brand cannot
      * carry the track
+     * @throws IllegalStateException if the muxer is finished
      */
     @Override
     public void addTrack(Track track) {
         Objects.requireNonNull(track, "track");
-        if (started || finished) {
-            throw new IllegalStateException("tracks must be declared before the first packet");
+        if (finished) {
+            throw new IllegalStateException("the muxer is finished");
+        }
+        if (started && !supportsLateTracks()) {
+            throw new IllegalStateException("tracks must be declared before the first packet of a planned header");
         }
         for (var existing : tracks) {
             if (existing.track.id() == track.id()) {
@@ -531,6 +539,17 @@ public final class Mp4Muxer implements Muxer {
             textTracks.add(new TextSamples(track.id(), codec, this::writeTextSample));
         }
         tracks.add(state);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return {@code true} when {@link #finish()} writes the movie header that lists the tracks; {@code false} for a
+     * muxer whose header was planned before its first packet, which lists only the planned tracks
+     */
+    @Override
+    public boolean supportsLateTracks() {
+        return !planning && plannedHeader == null;
     }
 
     /**

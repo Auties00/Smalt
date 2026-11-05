@@ -392,9 +392,15 @@ class MatroskaMuxerTest {
                 assertThrows(IllegalArgumentException.class, () -> muxer.addTrack(pcmTrack(0)));
                 assertThrows(IllegalArgumentException.class, () -> muxer.writePacket(new Packet(5, new byte[2], 0, 0, 1, true)));
                 muxer.writePacket(new Packet(0, new byte[2], 0, 0, 1, true));
-                assertThrows(IllegalStateException.class, () -> muxer.addTrack(pcmTrack(1)));
                 muxer.finish();
+                assertThrows(IllegalStateException.class, () -> muxer.addTrack(pcmTrack(1)));
                 assertThrows(IllegalStateException.class, muxer::finish);
+            }
+            // a stream cannot take a track after the first packet (MatroskaLateTracksTest covers a seekable sink)
+            try (var sink = MediaSink.of(new java.io.ByteArrayOutputStream()); var muxer = new MatroskaMuxer(sink)) {
+                muxer.addTrack(pcmTrack(0));
+                muxer.writePacket(new Packet(0, new byte[2], 0, 0, 1, true));
+                assertThrows(IllegalStateException.class, () -> muxer.addTrack(pcmTrack(1)));
             }
         }
     }

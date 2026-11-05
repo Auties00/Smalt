@@ -114,6 +114,34 @@ public final class SeekFilter {
     }
 
     /**
+     * Adds a track that the demuxer found after the filter was created, before the first packet of
+     * the track is offered.
+     *
+     * <p>The track restarts at its last key frame at or before the target, without a lead, as the
+     * tracks given at construction do; once the margin or the held count has resolved every pending
+     * track, it restarts at its next key frame that ends past the target, and after
+     * {@link #finish()} its packets pass unfiltered.
+     *
+     * @param track the track found after construction, whose identifier is new
+     * @throws IllegalArgumentException if the filter already has a track with the identifier
+     */
+    public void addTrack(Track track) {
+        if (states.containsKey(track.id())) {
+            throw new IllegalArgumentException("the filter already has track " + track.id());
+        }
+        var state = new TrackState(track.timeBase(), rescale(targetMicros, track.timeBase()));
+        states.put(track.id(), state);
+        if (finished) {
+            state.mode = Mode.RESOLVED;
+            return;
+        }
+        if (pendingResolved) {
+            state.mode = Mode.WAIT_KEY;
+        }
+        unresolved++;
+    }
+
+    /**
      * Converts the target to a track time base, rounding down and saturating instead of
      * overflowing.
      *
