@@ -14,12 +14,14 @@ import java.util.Optional;
  * <p>Audio devices are reached through the operating system's own APIs, called with the Foreign
  * Function and Memory API, and no bundled native library: WASAPI on Windows, CoreAudio (the HAL
  * output audio unit) on macOS, ALSA on Linux, where the {@code default} device reaches PulseAudio
- * or PipeWire through their ALSA plugins. On a platform without a backend the lists are empty and
+ * or PipeWire through their ALSA plugins, together with the sinks and sources of a running
+ * PulseAudio or PipeWire sound server, whose identifiers start with {@code pulse:} and whose defaults
+ * are then the default devices. On a platform without a backend the lists are empty and
  * opening a device raises {@link MediaException.Unsupported}. This class is thread-safe.
  *
  * <p>An input is captured with {@link #openCapture(AudioDevice.Input, AudioStreamOptions)}, an
  * output played with {@link #openPlayback(AudioDevice.Output, AudioStreamOptions)}, and on
- * Windows the mix an output is playing can be captured with
+ * Windows and on Linux with a sound server the mix an output is playing can be captured with
  * {@link #openLoopback(AudioDevice.Output, AudioStreamOptions)}. Changes of the default devices
  * and devices plugged in or removed reach the {@link AudioDeviceListener}s added with
  * {@link #addListener(AudioDeviceListener)}.
@@ -188,7 +190,8 @@ public final class AudioDevices {
      * @param device the output device
      * @return the session, which the caller closes
      * @throws MediaException.Io if the device cannot be opened
-     * @throws MediaException.Unsupported if the platform has no loopback capture (macOS and Linux)
+     * @throws MediaException.Unsupported if the platform has no loopback capture (macOS, and Linux
+     * without a PulseAudio or PipeWire sound server)
      * @see #openLoopback(AudioDevice.Output, AudioStreamOptions)
      */
     public static AudioCaptureSession openLoopback(AudioDevice.Output device) {
@@ -200,8 +203,9 @@ public final class AudioDevices {
      * every application.
      *
      * <p>The loopback delivers audio only while something plays on the device; while the device
-     * is silent the session's reads wait. The share mode of {@code options} must be
-     * {@link AudioShareMode#SHARED}.
+     * is silent the session's reads wait, except on Linux, where the sound server's monitor source
+     * delivers silence while the sink is idle but not yet suspended. The share mode of
+     * {@code options} must be {@link AudioShareMode#SHARED}.
      *
      * @apiNote A loopback is the exact far-end reference of an echo canceller when the far-end
      * audio is mixed with other sounds the user hears, at the cost of the mixer's delay.
@@ -210,8 +214,9 @@ public final class AudioDevices {
      * @param options the stream options
      * @return the session, which the caller closes
      * @throws MediaException.Io if the device cannot be opened
-     * @throws MediaException.Unsupported if the platform has no loopback capture (macOS and Linux)
-     * or {@code options} asks for the exclusive mode
+     * @throws MediaException.Unsupported if the platform has no loopback capture (macOS, and Linux
+     * without a PulseAudio or PipeWire sound server), no sink of the sound server plays to
+     * {@code device}, or {@code options} asks for the exclusive mode
      */
     public static AudioCaptureSession openLoopback(AudioDevice.Output device, AudioStreamOptions options) {
         return AudioBackend.current().openLoopback(Objects.requireNonNull(device, "device"), Objects.requireNonNull(options, "options"));

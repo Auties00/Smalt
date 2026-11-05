@@ -28,7 +28,8 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Covers the AMR storage-format demuxer: every AMR-NB and AMR-WB mode from the reference
  * encoders (packets equal to ffprobe's), comfort-noise frames, hand-built frames of every type,
- * multichannel rejection, truncation and mutation robustness.
+ * malformed input, truncation and mutation robustness; {@link AmrMultichannelTest} covers the
+ * multichannel files.
  */
 class AmrDemuxerTest {
     static List<Packet> packets(byte[] data) {
@@ -122,12 +123,8 @@ class AmrDemuxerTest {
     }
 
     @Test
-    @DisplayName("rejects multichannel files as unsupported and other input as malformed")
+    @DisplayName("rejects input without an AMR magic as malformed")
     void rejects() {
-        var multichannel = "#!AMR_MC1.0\n\0\0\0\1".getBytes(StandardCharsets.US_ASCII);
-        assertThrows(MediaException.Unsupported.class, () -> new AmrDemuxer(MediaSource.of(multichannel)));
-        var wideMultichannel = "#!AMR-WB_MC1.0\n\0\0\0\1".getBytes(StandardCharsets.US_ASCII);
-        assertThrows(MediaException.Unsupported.class, () -> new AmrDemuxer(MediaSource.of(wideMultichannel)));
         assertThrows(MediaException.Malformed.class, () -> new AmrDemuxer(MediaSource.of("#!AMX\n".getBytes())));
         assertThrows(MediaException.Malformed.class, () -> new AmrDemuxer(MediaSource.of(new byte[0])));
         assertEquals(0, packets("#!AMR\n".getBytes(StandardCharsets.US_ASCII)).size());
@@ -145,8 +142,9 @@ class AmrDemuxerTest {
             assertEquals(probed(memory), probed(counted));
             assertEquals(opened, source.bytes, "the demux reads nothing after construction");
         }
-        // the magic is read once by itself before the walk
-        assertTrue(source.bytes <= data.length + 15, source.toString());
+        // the ID3v2 header probe, the magic and the block of the trailing tags are read once by themselves before
+        // the walk
+        assertTrue(source.bytes <= data.length + 10 + 19 + 4096, source.toString());
         assertEquals(1, source.requests, source.toString());
     }
 

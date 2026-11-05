@@ -72,7 +72,7 @@ public final class Dequantizer {
     private static float[] buildPow43() {
         var table = new float[POW43_SIZE];
         for (var i = 0; i < table.length; i++) {
-            table[i] = (float) Math.pow(i, 4.0 / 3.0);
+            table[i] = (float) StrictMath.pow(i, 4.0 / 3.0);
         }
         return table;
     }
@@ -85,7 +85,7 @@ public final class Dequantizer {
     private static float[] buildGains() {
         var table = new float[MAX_EXPONENT - MIN_EXPONENT + 1];
         for (var i = 0; i < table.length; i++) {
-            table[i] = (float) Math.pow(2.0, (i + MIN_EXPONENT) / 4.0);
+            table[i] = (float) StrictMath.pow(2.0, (i + MIN_EXPONENT) / 4.0);
         }
         return table;
     }

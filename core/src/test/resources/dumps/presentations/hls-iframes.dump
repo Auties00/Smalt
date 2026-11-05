@@ -1,0 +1,10 @@
+# demux dump of presentations/hls-iframes; regenerate with -Dsmalt.test.updateDumps=true
+format HLS
+duration 2000000
+seekable false
+track 1 VIDEO H264 timebase=1/90000 duration=? config=40:a59e7e8a
+  video 160x120 orientation=NORMAL rate=15/1 sar=1/1
+packets 3
+0 t1 pts=0 dts=-12000 dur=? flags=KEY size=3304 crc=e7fb89b1
+1 t1 pts=60000 dts=48000 dur=? flags=KEY size=3194 crc=48abacf7
+2 t1 pts=120000 dts=108000 dur=? flags=KEY size=3334 crc=1dc83f86

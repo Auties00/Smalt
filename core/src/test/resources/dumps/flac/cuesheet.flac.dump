@@ -1,0 +1,38 @@
+# demux dump of flac/cuesheet.flac; regenerate with -Dsmalt.test.updateDumps=true
+format FLAC
+duration 1000000
+seekable true
+metadata encoder="Lavf61.7.100"
+chapter 0 500000
+chapter 500000 800000
+chapter 800000 1000000
+track 0 AUDIO FLAC timebase=1/44100 duration=44100 config=682:345bc175
+  audio rate=44100 bits=16 skip=0 layout=[FRONT_CENTER]
+packets 10
+0 t0 pts=0 dts=0 dur=4608 flags=KEY size=1242 crc=20c3b03f
+1 t0 pts=4608 dts=4608 dur=4608 flags=KEY size=1246 crc=558411a3
+2 t0 pts=9216 dts=9216 dur=4608 flags=KEY size=1242 crc=6fb4ec7f
+3 t0 pts=13824 dts=13824 dur=4608 flags=KEY size=1258 crc=7357be17
+4 t0 pts=18432 dts=18432 dur=4608 flags=KEY size=1251 crc=aad65ebd
+5 t0 pts=23040 dts=23040 dur=4608 flags=KEY size=1264 crc=d4d529f7
+6 t0 pts=27648 dts=27648 dur=4608 flags=KEY size=1264 crc=39122509
+7 t0 pts=32256 dts=32256 dur=4608 flags=KEY size=1267 crc=94ba3058
+8 t0 pts=36864 dts=36864 dur=4608 flags=KEY size=1260 crc=0496dd45
+9 t0 pts=41472 dts=41472 dur=2628 flags=KEY size=753 crc=10cc4350
+seek 0: t0@0
+seek 333333: t0@3
+seek 666666: t0@6
+seek 1000000: end
+seek -1000000: t0@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format FLAC
+  duration 1000000
+  seekable false
+  metadata encoder="Lavf61.7.100"
+  chapter 0 500000
+  chapter 500000 800000
+  chapter 800000 1000000
+  track 0 AUDIO FLAC timebase=1/44100 duration=44100 config=682:345bc175
+    audio rate=44100 bits=16 skip=0 layout=[FRONT_CENTER]
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH

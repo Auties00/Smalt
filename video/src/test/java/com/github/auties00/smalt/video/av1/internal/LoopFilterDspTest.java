@@ -1,7 +1,7 @@
 package com.github.auties00.smalt.video.av1.internal;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.internal.simd.Simd;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -62,7 +62,7 @@ class LoopFilterDspTest {
     })
     @DisplayName("vector deblocking kernel matches dav1d")
     void vectorKernel(int plane, int dir, int bitDepth, String expected) {
-        Assumptions.assumeTrue(Simd.ENABLED, "the Vector API is unavailable");
+        Skip.unlessVector(Simd.ENABLED);
         state = 1000 + 100 * plane + 10 * dir + bitDepth;
         assertEquals(expected, hex(runKernel(VectorLoopFilterDsp.create(), plane, dir, bitDepth, 300)));
     }
