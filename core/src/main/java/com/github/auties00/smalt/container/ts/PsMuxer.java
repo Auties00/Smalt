@@ -84,11 +84,29 @@ import java.util.PriorityQueue;
  * presentation control and data search information packets of private stream 2. Their general information holds the
  * logical block number of the pack, its system clock reference, the start and end presentation times of the unit,
  * the cell elapsed time, the relative address of the unit's last pack and of the packs that end its first three
- * reference pictures; the highlight, seamless playback, search and synchronous information are zero. Each unit is held
- * in memory until the next one starts, for those addresses.
+ * reference pictures. Each unit is held in memory until the next one starts, for those addresses. The search
+ * information ({@code VOBU_SRI}) addresses the next and previous units, the next and previous units with video, and,
+ * forward and backward, the units presented 0.5 s to 7.5 s (in half-second steps), 10, 30, 60 and 120 s away; each
+ * pointer counts blocks from the navigation pack, its top bit marking a valid pointer and the next bit units skipped
+ * between its target and the closer span's (for the shortest span, the adjacent unit), and {@code 3FFFFFFF} (or
+ * {@code BFFFFFFF} for the video pointers) marks no such unit within the cell, {@code 7FFFFFFF} for the first such
+ * span when units lie between the closer span's target and the end of the cell. A span addresses the unit presented
+ * at its time, and at least the adjacent unit; a time outside the cell has no unit. The synchronous information
+ * ({@code SYNCI}) gives, for each audio stream number, the pack in which the last audio frame starting at or before
+ * the unit's start begins, even across a gap in the audio, or else the first frame after it ({@code 3FFF} when there
+ * is none within 16382 blocks), and, for each
+ * subpicture stream, the pack that starts the subpicture unit displayed at the unit's start or else the first one
+ * that starts during the unit ({@code 7FFFFFFF} when that pack lies within the
+ * unit, {@code 3FFFFFFF} when there is none); the top bit of an address marks a pack before the navigation pack, and
+ * the entries of absent streams are zero. With navigation packs, the audio stream numbers (the low bits of the stream
+ * and substream ids) are shared by every audio codec. The highlight information is zero ({@code HLI_SS} 0, no
+ * buttons), as are the seamless playback and angle information.
  *
- * <p>The output is written in order and the sink is never repositioned, so a streaming sink works. Instances are not
- * thread-safe.
+ * <p>Without navigation packs the output is written in order and the sink is never repositioned, so a streaming sink
+ * works. With them, a {@linkplain MediaSink#isSeekable() seekable} sink gets every unit as soon as it is complete and
+ * its search and synchronous information is rewritten once the units and packs it addresses are written; a sink that
+ * cannot seek gets the units held for up to {@link PsMuxerOptions#navigationLookaheadMicros()} of presentation, the
+ * same bytes as a seekable sink when the whole stream fits that lookahead. Instances are not thread-safe.
  *
  * @implNote This implementation paces the system clock references from decoding times rather than modeling the
  * system target decoder buffers, which players and authoring tools do not need; a stream whose content exceeds the mux
@@ -241,10 +259,29 @@ public final class PsMuxer implements Muxer {
     private Vobu vobu;
 
     /**
-     * The packs of the video object unit being collected, the navigation pack first, or {@code null} before the
-     * first unit.
+     * The index of the video object units written, for their search and synchronous information.
      */
-    private ByteWriter vobuPacks;
+    private final DvdSearchIndex search = new DvdSearchIndex();
+
+    /**
+     * The video object units whose search and synchronous information is not filled yet, oldest first.
+     */
+    private final ArrayDeque<PendingUnit> pendingUnits = new ArrayDeque<>();
+
+    /**
+     * The buffers of written video object units, kept for the next units.
+     */
+    private final ArrayDeque<ByteWriter> spareUnits = new ArrayDeque<>();
+
+    /**
+     * The bytes of the video object units held for a sink that cannot seek.
+     */
+    private long heldBytes;
+
+    /**
+     * The search and synchronous information of the unit being filled.
+     */
+    private final byte[] searchBlock = new byte[DvdSearchIndex.BLOCK_LENGTH];
 
     /**
      * The system header of the navigation packs, or {@code null} until first needed.
@@ -390,6 +427,14 @@ public final class PsMuxer implements Muxer {
         var stream = new Stream(track);
         configure(stream);
         streams.add(stream);
+        if (options.navigationPacks() && track.kind() == TrackKind.VIDEO) {
+            search.expectVideo();
+        } else if (options.navigationPacks() && track.kind() == TrackKind.AUDIO) {
+            search.declareAudio(stream.dvdNumber);
+        } else if (options.navigationPacks() && track.kind() == TrackKind.DATA) {
+            stream.dvdNumber = stream.subId - 0x20;
+            search.declareSubpicture(stream.dvdNumber);
+        }
         mapped = options.syntax() == PsMuxerOptions.Syntax.MPEG2
                 && (options.programStreamMap() || streams.stream().anyMatch(other -> other.needsMap));
     }
@@ -445,7 +490,8 @@ public final class PsMuxer implements Muxer {
             }
             case MP2, MP3 -> {
                 var rate = track instanceof AudioTrack audio ? audio.sampleRate() : 0;
-                stream.streamId = nextId(0xC0, options.navigationPacks() ? 8 : 32, false, track);
+                stream.streamId = options.navigationPacks() ? 0xC0 + dvdAudioNumber(stream)
+                        : nextId(0xC0, 32, false, track);
                 stream.streamType = rate > 0 && rate < 32_000 ? 0x04 : 0x03;
                 stream.bufferScale = 0;
                 stream.bufferSize = 32;
@@ -494,9 +540,35 @@ public final class PsMuxer implements Muxer {
      */
     private void substream(Stream stream, int first, int count) {
         stream.streamId = PsScanner.PRIVATE_1;
-        stream.subId = nextId(first, count, true, stream.track);
+        stream.subId = options.navigationPacks() && stream.track.kind() == TrackKind.AUDIO
+                ? first + dvdAudioNumber(stream) : nextId(first, count, true, stream.track);
         stream.bufferScale = 1;
         stream.bufferSize = 58;
+    }
+
+    /**
+     * Assigns a stream the lowest DVD-Video audio stream number no other audio stream has: the numbers are shared by
+     * every audio codec, the low three bits of the stream or substream id.
+     *
+     * @param stream the audio stream
+     * @return the number, from 0 to 7
+     * @throws IllegalArgumentException if all eight are taken
+     */
+    private int dvdAudioNumber(Stream stream) {
+        for (var number = 0; number < 8; number++) {
+            var taken = false;
+            for (var other : streams) {
+                if (other.dvdNumber == number && other.track.kind() == TrackKind.AUDIO) {
+                    taken = true;
+                    break;
+                }
+            }
+            if (!taken) {
+                stream.dvdNumber = number;
+                return number;
+            }
+        }
+        throw new IllegalArgumentException("a DVD-Video object has at most eight audio tracks");
     }
 
     /**
@@ -737,6 +809,9 @@ public final class PsMuxer implements Muxer {
             }
             case DATA -> {
                 stream.append(packet.data(), ptsOut, ptsOut);
+                if (packet.duration() > 0) {
+                    stream.starts.peekLast().end = ptsOut + timeBase.rescale(packet.duration(), TICKS);
+                }
                 writeAll(stream, false, Long.MIN_VALUE);
             }
             case AUDIO -> {
@@ -901,8 +976,27 @@ public final class PsMuxer implements Muxer {
         if (padding > 0) {
             writePadding(padding);
         }
+        if (stream.dvdNumber >= 0) {
+            indexPack(stream, first);
+        }
         commitPack();
         consume(stream, take);
+    }
+
+    /**
+     * Records in the search index the audio frames or the subpicture unit a pack starts.
+     *
+     * @param stream the audio or subpicture stream of the pack
+     * @param first the first access unit or audio frame that starts in the pack, or {@code null}
+     */
+    private void indexPack(Stream stream, Start first) {
+        if (stream.track.kind() == TrackKind.AUDIO) {
+            if (first != null) {
+                search.audioPack(stream.dvdNumber, packs, first.pts);
+            }
+        } else if (first != null && first.offset == stream.head) {
+            search.subpictureUnit(stream.dvdNumber, packs, first.pts, first.end);
+        }
     }
 
     /**
@@ -1259,11 +1353,12 @@ public final class PsMuxer implements Muxer {
      */
     private void startVobu(long dts) {
         closeVobu();
-        if (vobuPacks == null) {
-            vobuPacks = new ByteWriter(1 << 20);
+        var unitPacks = spareUnits.poll();
+        if (unitPacks == null) {
+            unitPacks = new ByteWriter(64 * 1024);
         }
-        vobuPacks.reset();
-        vobu = new Vobu(vobuPacks);
+        unitPacks.reset();
+        vobu = new Vobu(unitPacks);
         vobu.navLbn = packs;
         vobu.startDts = dts;
         pack.reset();
@@ -1318,17 +1413,69 @@ public final class PsMuxer implements Muxer {
         bytes[dsi + 24] = 0;
         bytes[dsi + 25] = 1;
         bytes[dsi + 27] = 1;
-        // TODO: fill VOBU_SRI with the addresses of the units around this one (the next units need the output held or
-        // a seekable sink), and the highlight and synchronous information
-
         elapsed(bytes, pci + 24, startPts - cellStart);
         elapsed(bytes, dsi + 28, startPts - cellStart);
+        search.addUnit(vobu.navLbn, packs - 1, startPts, endPts, vobu.hasVideo);
+        flushBuffer();
+        var blockOffset = dsi + DvdSearchIndex.SRI_OFFSET;
+        if (output.isSeekable()) {
+            var position = output.position();
+            vobu.packs.writeTo(output);
+            spareUnits.add(vobu.packs);
+            pendingUnits.add(new PendingUnit(null, position + blockOffset));
+        } else {
+            heldBytes += vobu.packs.size();
+            pendingUnits.add(new PendingUnit(vobu.packs, blockOffset));
+        }
+        var startDts = vobu.startDts;
+        vobu = null;
+        fillUnits(false);
+        search.discard(startDts);
+    }
+
+    /**
+     * Writes the bytes not yet written that precede the video object units.
+     */
+    private void flushBuffer() {
         if (buffer.size() > 0) {
             buffer.writeTo(output);
             buffer.reset();
         }
-        vobu.packs.writeTo(output);
-        vobu = null;
+    }
+
+    /**
+     * Fills the search and synchronous information of the units whose targets are known, and, for a sink that cannot
+     * seek, of the oldest held units beyond the navigation lookahead, writing the held units filled.
+     *
+     * @param all whether every unit is filled, the cell being finished
+     */
+    private void fillUnits(boolean all) {
+        var lookahead = options.navigationLookaheadMicros() * 9 / 100;
+        while (search.next() < search.count()) {
+            if (!all && !search.isResolvable(packs)) {
+                var newest = search.count() - 1;
+                var forced = !output.isSeekable() && newest > search.next()
+                        && (search.startOf(newest) - search.startOf(search.next()) > lookahead
+                        || heldBytes > MAX_QUEUED_BYTES);
+                if (!forced) {
+                    return;
+                }
+            }
+            var unit = pendingUnits.removeFirst();
+            search.fill(searchBlock, 0);
+            if (unit.packs() == null) {
+                var end = output.position();
+                output.position(unit.offset());
+                output.write(searchBlock);
+                output.position(end);
+            } else {
+                System.arraycopy(searchBlock, 0, unit.packs().buffer(), (int) unit.offset(), searchBlock.length);
+                flushBuffer();
+                unit.packs().writeTo(output);
+                heldBytes -= unit.packs().size();
+                spareUnits.add(unit.packs());
+            }
+        }
     }
 
     /**
@@ -1620,6 +1767,10 @@ public final class PsMuxer implements Muxer {
         }
         finished = true;
         closeVobu();
+        if (options.navigationPacks()) {
+            search.finish();
+            fillUnits(true);
+        }
         if (!options.fixedPackSize()) {
             buffer.u32be(0x000001B9L);
         }
@@ -1671,6 +1822,15 @@ public final class PsMuxer implements Muxer {
     }
 
     /**
+     * Holds a video object unit whose search and synchronous information is not filled yet.
+     *
+     * @param packs the packs of a unit held for a sink that cannot seek, or {@code null} for a unit already written
+     * @param offset the index of the search information in the held packs, or its sink position
+     */
+    private record PendingUnit(ByteWriter packs, long offset) {
+    }
+
+    /**
      * Marks where an access unit, or an audio frame of linear PCM, starts in a stream's data.
      */
     private static final class Start {
@@ -1688,6 +1848,12 @@ public final class PsMuxer implements Muxer {
          * Its decoding time, with the shift applied.
          */
         final long dts;
+
+        /**
+         * The end of display of a subpicture unit, with the shift applied, or {@link Long#MIN_VALUE} when it lasts
+         * until the next one.
+         */
+        long end = Long.MIN_VALUE;
 
         /**
          * Constructs a start.
@@ -1775,6 +1941,11 @@ public final class PsMuxer implements Muxer {
         final Track track;
         int streamId;
         int subId = -1;
+
+        /**
+         * The DVD-Video audio or subpicture stream number, or {@code -1}.
+         */
+        int dvdNumber = -1;
         int streamType;
         boolean needsMap;
         int bufferScale;

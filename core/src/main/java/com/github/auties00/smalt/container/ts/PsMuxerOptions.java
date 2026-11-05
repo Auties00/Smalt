@@ -40,16 +40,26 @@ public final class PsMuxerOptions {
     static final long DVD_MUX_RATE = 10_080_000;
 
     /**
+     * The default navigation lookahead, in microseconds: 15 seconds.
+     */
+    public static final long DEFAULT_NAVIGATION_LOOKAHEAD_MICROS = 15_000_000;
+
+    /**
+     * The largest navigation lookahead, in microseconds: the longest search span of a navigation pack.
+     */
+    static final long MAX_NAVIGATION_LOOKAHEAD_MICROS = 120_000_000;
+
+    /**
      * The options of {@link #defaults()}.
      */
     private static final PsMuxerOptions DEFAULTS = new PsMuxerOptions(Syntax.MPEG2, 2048, false, DVD_MUX_RATE,
-            500_000, false, false);
+            500_000, false, false, DEFAULT_NAVIGATION_LOOKAHEAD_MICROS);
 
     /**
      * The options of {@link #forDvd()}.
      */
     private static final PsMuxerOptions DVD = new PsMuxerOptions(Syntax.MPEG2, 2048, true, DVD_MUX_RATE, 500_000,
-            true, false);
+            true, false, DEFAULT_NAVIGATION_LOOKAHEAD_MICROS);
 
     private final Syntax syntax;
     private final int packBytes;
@@ -58,9 +68,10 @@ public final class PsMuxerOptions {
     private final long delayMicros;
     private final boolean navigationPacks;
     private final boolean programStreamMap;
+    private final long navigationLookaheadMicros;
 
     private PsMuxerOptions(Syntax syntax, int packBytes, boolean fixedPackSize, long muxRate, long delayMicros,
-                           boolean navigationPacks, boolean programStreamMap) {
+                           boolean navigationPacks, boolean programStreamMap, long navigationLookaheadMicros) {
         this.syntax = syntax;
         this.packBytes = packBytes;
         this.fixedPackSize = fixedPackSize;
@@ -68,6 +79,7 @@ public final class PsMuxerOptions {
         this.delayMicros = delayMicros;
         this.navigationPacks = navigationPacks;
         this.programStreamMap = programStreamMap;
+        this.navigationLookaheadMicros = navigationLookaheadMicros;
     }
 
     /**
@@ -166,23 +178,43 @@ public final class PsMuxerOptions {
         return programStreamMap;
     }
 
+    /**
+     * {@return how far ahead, in presentation time, the output to a sink that cannot seek is held to fill the forward
+     * search pointers and synchronous addresses of the navigation packs, in microseconds, from 0 to 120 s;
+     * {@link #DEFAULT_NAVIGATION_LOOKAHEAD_MICROS} by default}
+     *
+     * <p>The muxer holds at least the video object unit after the one it writes. A pointer whose target lies beyond
+     * the held units addresses the farthest held unit, a pointer to the next unit with video beyond them reads as no
+     * such unit, and an audio or subpicture address beyond them reads as no data. The held units never exceed 64 MiB:
+     * past that, the oldest is written as if the lookahead ended there. A
+     * {@linkplain com.github.auties00.smalt.io.MediaSink#isSeekable() seekable} sink gets every pointer exactly, the
+     * navigation packs being rewritten once their targets are written, and ignores this setting. Holding costs memory
+     * in proportion to the stream's rate.
+     */
+    public long navigationLookaheadMicros() {
+        return navigationLookaheadMicros;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof PsMuxerOptions that && syntax == that.syntax && packBytes == that.packBytes
                 && fixedPackSize == that.fixedPackSize && muxRate == that.muxRate && delayMicros == that.delayMicros
-                && navigationPacks == that.navigationPacks && programStreamMap == that.programStreamMap;
+                && navigationPacks == that.navigationPacks && programStreamMap == that.programStreamMap
+                && navigationLookaheadMicros == that.navigationLookaheadMicros;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(syntax, packBytes, fixedPackSize, muxRate, delayMicros, navigationPacks, programStreamMap);
+        return Objects.hash(syntax, packBytes, fixedPackSize, muxRate, delayMicros, navigationPacks, programStreamMap,
+                navigationLookaheadMicros);
     }
 
     @Override
     public String toString() {
         return "PsMuxerOptions[syntax=" + syntax + ", packBytes=" + packBytes + ", fixedPackSize=" + fixedPackSize
                 + ", muxRate=" + muxRate + ", delayMicros=" + delayMicros + ", navigationPacks=" + navigationPacks
-                + ", programStreamMap=" + programStreamMap + "]";
+                + ", programStreamMap=" + programStreamMap + ", navigationLookaheadMicros=" + navigationLookaheadMicros
+                + "]";
     }
 
     /**
@@ -197,6 +229,7 @@ public final class PsMuxerOptions {
         private long delayMicros;
         private boolean navigationPacks;
         private boolean programStreamMap;
+        private long navigationLookaheadMicros;
 
         private Builder(PsMuxerOptions options) {
             this.syntax = options.syntax;
@@ -206,6 +239,7 @@ public final class PsMuxerOptions {
             this.delayMicros = options.delayMicros;
             this.navigationPacks = options.navigationPacks;
             this.programStreamMap = options.programStreamMap;
+            this.navigationLookaheadMicros = options.navigationLookaheadMicros;
         }
 
         /**
@@ -286,6 +320,17 @@ public final class PsMuxerOptions {
         }
 
         /**
+         * Sets the navigation lookahead; see {@link PsMuxerOptions#navigationLookaheadMicros()}.
+         *
+         * @param micros the value
+         * @return this builder
+         */
+        public Builder navigationLookaheadMicros(long micros) {
+            this.navigationLookaheadMicros = micros;
+            return this;
+        }
+
+        /**
          * Builds the options.
          *
          * @return the options
@@ -300,6 +345,7 @@ public final class PsMuxerOptions {
                 throw new IllegalArgumentException("the mux rate must be a multiple of 400 bits per second");
             }
             Checks.inRange("multiplexing delay", delayMicros, 0, 10_000_000L);
+            Checks.inRange("navigation lookahead", navigationLookaheadMicros, 0, MAX_NAVIGATION_LOOKAHEAD_MICROS);
             if (navigationPacks && (syntax != Syntax.MPEG2 || !fixedPackSize || packBytes != 2048)) {
                 throw new IllegalArgumentException("navigation packs need the MPEG-2 syntax and fixed 2048-byte packs");
             }
@@ -308,7 +354,7 @@ public final class PsMuxerOptions {
                         + " navigation packs only");
             }
             return new PsMuxerOptions(syntax, packBytes, fixedPackSize, muxRate, delayMicros, navigationPacks,
-                    programStreamMap);
+                    programStreamMap, navigationLookaheadMicros);
         }
     }
 }

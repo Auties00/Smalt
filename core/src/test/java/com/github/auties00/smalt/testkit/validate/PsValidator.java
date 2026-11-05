@@ -1,10 +1,14 @@
 package com.github.auties00.smalt.testkit.validate;
 
+import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.HashMap;
+import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 
 /**
  * Checks an MPEG program stream (ISO/IEC 13818-1 clause 2.5) or MPEG-1 system stream (ISO/IEC 11172-1) against its
@@ -14,8 +18,12 @@ import java.util.Set;
  * {@code CRC_32} over the whole map, entries within the map), and every PES packet (a stream id of a PES stream, a
  * length within the stream, the MPEG-2 or MPEG-1 header syntax, the marker bits and prefixes of the PTS and DTS, a DTS
  * only with a PTS and not after it, padding of {@code 0xFF} bytes only), and, for DVD-Video navigation packs, the
- * presentation control and data search information packets of private stream 2 with their sizes. Nothing but packs,
- * PES packets and the program end code may appear between packs, and nothing may follow the end code.
+ * presentation control and data search information packets of private stream 2 with their sizes and, in a stream of
+ * 2048-byte packs, the search information ({@code VOBU_SRI}: the next and previous unit pointers address the adjacent
+ * navigation packs, every other valid pointer a navigation pack on its side, farther spans no nearer units) and the
+ * synchronous information ({@code SYNCI}: every audio and subpicture address names a pack of that stream number, or
+ * one of the reserved values). Nothing but packs, PES packets and the program end code may appear between packs, and
+ * nothing may follow the end code.
  *
  * <p>A strict validation also checks the pacing: each pack's system clock reference at least that of the previous
  * pack plus the time the previous pack takes at the mux rate, and the decoding time of each timestamped PES packet not
@@ -41,6 +49,8 @@ public final class PsValidator {
     private int previousPackBytes;
     private long packs;
     private int navigation;
+    private final List<long[]> navigationBlocks = new ArrayList<>();
+    private final Map<Integer, BitSet> streamPacks = new HashMap<>();
     private boolean endCode;
     private int systemHeaders;
 
@@ -126,12 +136,18 @@ public final class PsValidator {
                     }
                 }
                 case 0xBF -> privateStream2(position, end, where);
-                default -> pes(code, position, end, where);
+                default -> {
+                    pes(code, position, end, where);
+                    markStream(code, position, end);
+                }
             }
             position = end;
         }
         if (packStart >= 0) {
             closePack(position - packStart);
+        }
+        if (!navigationBlocks.isEmpty() && packSizes.equals(Set.of(2048))) {
+            searchInformation();
         }
         return new Summary(Boolean.TRUE.equals(mpeg1), packs, packSizes, muxRate, streamIds, mapTypes, navigation,
                 endCode, systemHeaders);
@@ -258,9 +274,123 @@ public final class PsValidator {
         var length = end - at - 6;
         if (length == 980 && data[at + 6] == 0x00) {
             navigation++;
-            findings.require(startCode(end, 0xBF) && end + 6 + 1018 <= data.length
-                    && ((data[end + 4] & 0xFF) << 8 | (data[end + 5] & 0xFF)) == 1018 && data[end + 6] == 0x01,
-                    where, "presentation control information not followed by data search information");
+            var dsi = startCode(end, 0xBF) && end + 6 + 1018 <= data.length
+                    && ((data[end + 4] & 0xFF) << 8 | (data[end + 5] & 0xFF)) == 1018 && data[end + 6] == 0x01;
+            findings.require(dsi, where, "presentation control information not followed by data search information");
+            if (dsi) {
+                navigationBlocks.add(new long[]{packs - 1, end + 7});
+            }
+        }
+    }
+
+    /** Records the pack of a PES packet under its stream id, or 0x100 plus its private stream 1 substream id. */
+    private void markStream(int code, int at, int end) {
+        var key = code;
+        if (code == 0xBD && end - at >= 9 && (data[at + 6] & 0xC0) == 0x80) {
+            var payload = at + 9 + (data[at + 8] & 0xFF);
+            if (payload >= end) {
+                return;
+            }
+            key = 0x100 | (data[payload] & 0xFF);
+        }
+        streamPacks.computeIfAbsent(key, ignored -> new BitSet()).set((int) (packs - 1));
+    }
+
+    private boolean hasStream(long block, int... keys) {
+        for (var key : keys) {
+            var set = streamPacks.get(key);
+            if (block >= 0 && block <= Integer.MAX_VALUE && set != null && set.get((int) block)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private long u32(long at) {
+        var index = (int) at;
+        return (data[index] & 0xFFL) << 24 | (data[index + 1] & 0xFFL) << 16 | (data[index + 2] & 0xFFL) << 8
+                | data[index + 3] & 0xFFL;
+    }
+
+    /** Checks the search and synchronous information of the data search information of every navigation pack. */
+    private void searchInformation() {
+        var blocks = new TreeMap<Long, Integer>();
+        for (var index = 0; index < navigationBlocks.size(); index++) {
+            blocks.put(navigationBlocks.get(index)[0], index);
+        }
+        for (var index = 0; index < navigationBlocks.size(); index++) {
+            var lbn = navigationBlocks.get(index)[0];
+            var sri = navigationBlocks.get(index)[1] + 234;
+            var where = "navigation pack at block " + lbn;
+            var filled = false;
+            for (var at = (int) sri; at < sri + 168; at++) {
+                filled |= data[at] != 0;
+            }
+            if (!filled) {
+                // a muxer that leaves the search information zero
+                continue;
+            }
+            var next = index + 1 < navigationBlocks.size() ? navigationBlocks.get(index + 1)[0] : -1;
+            var previous = index > 0 ? navigationBlocks.get(index - 1)[0] : -1;
+            findings.require(u32(sri + 80) == (next < 0 ? 0x3FFFFFFFL : 0x80000000L | (next - lbn)), where,
+                    "next unit pointer 0x" + Long.toHexString(u32(sri + 80)) + " does not address the next unit");
+            findings.require(u32(sri + 84) == (previous < 0 ? 0x3FFFFFFFL : 0x80000000L | (lbn - previous)), where,
+                    "previous unit pointer 0x" + Long.toHexString(u32(sri + 84)) + " does not address the previous unit");
+            var lastForward = lbn;
+            for (var entry = 19; entry >= 0; entry--) {
+                var value = u32(sri + 4L * entry);
+                if (value == 0x3FFFFFFFL || entry > 0 && entry < 20 && value == 0x7FFFFFFFL
+                        || entry == 0 && value == 0xBFFFFFFFL) {
+                    continue;
+                }
+                var target = lbn + (value & 0x3FFFFFFFL);
+                var ok = (value & 0x80000000L) != 0 && (value & 0x3FFFFFFFL) > 0 && blocks.containsKey(target);
+                findings.require(ok, where, "forward search entry " + entry + " (0x" + Long.toHexString(value)
+                        + ") does not address a later navigation pack");
+                if (ok && entry > 0) {
+                    findings.require(target >= lastForward, where, "forward search entry " + entry
+                            + " addresses a unit nearer than a shorter span's");
+                    lastForward = target;
+                }
+            }
+            var lastBackward = lbn;
+            for (var entry = 22; entry <= 41; entry++) {
+                var value = u32(sri + 4L * entry);
+                if (value == 0x3FFFFFFFL || entry > 21 && entry < 41 && value == 0x7FFFFFFFL
+                        || entry == 41 && value == 0xBFFFFFFFL) {
+                    continue;
+                }
+                var target = lbn - (value & 0x3FFFFFFFL);
+                var ok = (value & 0x80000000L) != 0 && (value & 0x3FFFFFFFL) > 0 && blocks.containsKey(target);
+                findings.require(ok, where, "backward search entry " + entry + " (0x" + Long.toHexString(value)
+                        + ") does not address an earlier navigation pack");
+                if (ok && entry < 41) {
+                    findings.require(target <= lastBackward, where, "backward search entry " + entry
+                            + " addresses a unit nearer than a shorter span's");
+                    lastBackward = target;
+                }
+            }
+            var synci = sri + 168;
+            for (var number = 0; number < 8; number++) {
+                var at = (int) synci + 2 * number;
+                var value = (data[at] & 0xFF) << 8 | (data[at + 1] & 0xFF);
+                if (value == 0 || value == 0x3FFF) {
+                    continue;
+                }
+                var target = (value & 0x8000) != 0 ? lbn - (value & 0x7FFF) : lbn + (value & 0x7FFF);
+                findings.require(hasStream(target, 0xC0 + number, 0x180 + number, 0x188 + number, 0x1A0 + number),
+                        where, "audio address " + number + " (0x" + Integer.toHexString(value)
+                                + ") does not name a pack of audio stream " + number);
+            }
+            for (var number = 0; number < 32; number++) {
+                var value = u32(synci + 16 + 4L * number);
+                if (value == 0 || value == 0x3FFFFFFFL || value == 0x7FFFFFFFL) {
+                    continue;
+                }
+                var target = (value & 0x80000000L) != 0 ? lbn - (value & 0x7FFFFFFFL) : lbn + value;
+                findings.require(hasStream(target, 0x120 + number), where, "subpicture address " + number + " (0x"
+                        + Long.toHexString(value) + ") does not name a pack of subpicture stream " + number);
+            }
         }
     }
 

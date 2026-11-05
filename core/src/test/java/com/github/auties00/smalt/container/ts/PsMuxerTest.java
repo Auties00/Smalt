@@ -706,6 +706,7 @@ class PsMuxerTest {
             assertEquals(500_000, defaults.delayMicros());
             assertFalse(defaults.navigationPacks());
             assertFalse(defaults.programStreamMap());
+            assertEquals(PsMuxerOptions.DEFAULT_NAVIGATION_LOOKAHEAD_MICROS, defaults.navigationLookaheadMicros());
             var dvd = PsMuxerOptions.forDvd();
             assertTrue(dvd.fixedPackSize());
             assertTrue(dvd.navigationPacks());
@@ -713,6 +714,10 @@ class PsMuxerTest {
             assertEquals(dvd.hashCode(), dvd.toBuilder().build().hashCode());
             assertNotEquals(defaults, dvd);
             assertTrue(dvd.toString().contains("navigationPacks=true"));
+            var held = dvd.toBuilder().navigationLookaheadMicros(0).build();
+            assertEquals(0, held.navigationLookaheadMicros());
+            assertNotEquals(dvd, held);
+            assertEquals(held, held.toBuilder().build());
             var custom = defaults.toBuilder().syntax(PsMuxerOptions.Syntax.MPEG1).packBytes(2324).fixedPackSize(true)
                     .muxRate(1_411_200).delayMicros(0).build();
             assertEquals(custom, custom.toBuilder().build());
@@ -741,6 +746,10 @@ class PsMuxerTest {
             assertThrows(IllegalArgumentException.class, () -> PsMuxerOptions.builder()
                     .syntax(PsMuxerOptions.Syntax.MPEG1).programStreamMap(true).build());
             assertTrue(PsMuxerOptions.builder().programStreamMap(true).build().programStreamMap());
+            assertThrows(IllegalArgumentException.class, () -> PsMuxerOptions.forDvd().toBuilder()
+                    .navigationLookaheadMicros(-1).build());
+            assertThrows(IllegalArgumentException.class, () -> PsMuxerOptions.forDvd().toBuilder()
+                    .navigationLookaheadMicros(120_000_001).build());
         }
     }
 

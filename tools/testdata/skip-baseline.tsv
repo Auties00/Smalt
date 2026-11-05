@@ -1011,3 +1011,7 @@ linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.video.vc1.Vc1ConformanceTe
 linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.vc1.Vc1ConformanceTest	data:vector	1
 macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.vc1.Vc1ConformanceTest	data:vector	1
 windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.vc1.Vc1ConformanceTest	data:vector	1
+windows-x64-vector-full	core	com.github.auties00.smalt.container.ts.DvdAuthorInteropTest	platform:linux	3
+windows-x64-vector-smoke	core	com.github.auties00.smalt.container.ts.DvdAuthorInteropTest	platform:linux	3
+macos-arm64-vector-full	core	com.github.auties00.smalt.container.ts.DvdAuthorInteropTest	platform:linux	3
+macos-arm64-vector-smoke	core	com.github.auties00.smalt.container.ts.DvdAuthorInteropTest	platform:linux	3
