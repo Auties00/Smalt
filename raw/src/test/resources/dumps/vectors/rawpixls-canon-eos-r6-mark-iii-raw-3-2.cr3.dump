@@ -1,0 +1,10 @@
+# image dump of vectors/rawpixls-canon-eos-r6-mark-iii-raw-3-2.cr3; regenerate with -Dsmalt.test.updateDumps=true
+format RAW
+info ImageInfo[format=RAW, width=4320, height=2880, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 4320x2880 rgba8 alpha=false crc=e5719e98
+  format=RAW orientation=NORMAL source=4320x2880
+  icc=520:86132914 exif=1218:0c304bd7 xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+decoder raw sensor data
+sensor 4320x2880 channels=1 cfa=RGGB neutral=[0.4413793103448276, 1.0, 0.7042640990371389] crc=15af44dd

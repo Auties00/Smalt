@@ -24,6 +24,11 @@ package com.github.auties00.smalt.audio.aac.internal.sbr;
  * slots, and {@code V} is transposed back to one {@code 2N}-value row per slot before the
  * windowing, so that the ten taps of a slot are contiguous aligned runs; the rows of the nine
  * slots before the frame stay in front of it.
+ *
+ * <p>The low delay bank of AAC-ELD uses the prototype of {@link LowDelayQmfWindow} ({@code c(n)}, or
+ * {@code (c(2n) + c(2n + 1)) / 2} for 32 subbands) and the modulation offset {@code d = 3N - 1}, a
+ * rotation of each subband by {@code exp(i pi (k + 1/2) / 2)} ahead of the same transforms; it
+ * reconstructs the input of the low delay analysis bank, delayed by {@code N} samples.
  */
 final class QmfSynthesis {
     /**
@@ -45,6 +50,26 @@ final class QmfSynthesis {
      * The window {@code c(2 m) / 32768} of the 32-band bank.
      */
     private static final float[] WINDOW_32 = new float[320];
+
+    /**
+     * The window {@code c(m) / 32768} of the 64-band low delay bank.
+     */
+    private static final float[] LOW_DELAY_WINDOW_64 = new float[640];
+
+    /**
+     * The window {@code (c(2 m) + c(2 m + 1)) / 65536} of the 32-band low delay bank.
+     */
+    private static final float[] LOW_DELAY_WINDOW_32 = new float[320];
+
+    /**
+     * The real parts of the low delay rotation {@code exp(i 3 pi (k + 1/2) / 2)}.
+     */
+    private static final float[] LOW_DELAY_ROTATION_REAL = new float[64];
+
+    /**
+     * The imaginary parts of the low delay rotation.
+     */
+    private static final float[] LOW_DELAY_ROTATION_IMAGINARY = new float[64];
 
     /**
      * The real parts of the 32-band rotation {@code exp(-i pi (k + 1/2) / 128)}.
@@ -86,10 +111,22 @@ final class QmfSynthesis {
         for (var m = 0; m < 320; m++) {
             WINDOW_32[m] = (float) (SbrTables.QMF_WINDOW[2 * m] / 32768);
         }
+        for (var m = 0; m < 640; m++) {
+            LOW_DELAY_WINDOW_64[m] = (float) (LowDelayQmfWindow.COEFFICIENTS[m] / 32768);
+        }
+        for (var m = 0; m < 320; m++) {
+            LOW_DELAY_WINDOW_32[m] = (float) ((LowDelayQmfWindow.COEFFICIENTS[2 * m]
+                    + LowDelayQmfWindow.COEFFICIENTS[2 * m + 1]) / 65536);
+        }
+        for (var k = 0; k < 64; k++) {
+            var angle = 3 * Math.PI * (k + 0.5) / 2;
+            LOW_DELAY_ROTATION_REAL[k] = (float) StrictMath.cos(angle);
+            LOW_DELAY_ROTATION_IMAGINARY[k] = (float) StrictMath.sin(angle);
+        }
         for (var k = 0; k < 32; k++) {
             var angle = -Math.PI * (k + 0.5) / 128;
-            ROTATION_REAL[k] = (float) Math.cos(angle);
-            ROTATION_IMAGINARY[k] = (float) Math.sin(angle);
+            ROTATION_REAL[k] = (float) StrictMath.cos(angle);
+            ROTATION_IMAGINARY[k] = (float) StrictMath.sin(angle);
             POSITIONS_32[k] = (k & 3) * 8 + (Integer.reverse(k >> 2) >>> 29);
         }
         for (var k = 0; k < 16; k++) {
@@ -98,11 +135,11 @@ final class QmfSynthesis {
         for (var j = 0; j < 8; j++) {
             for (var m = 1; m <= 3; m++) {
                 var angle = -2 * Math.PI * m * j / 32;
-                RADIX4[(m - 1) * 8 + j] = (float) Math.cos(angle);
-                RADIX4[(m + 2) * 8 + j] = (float) Math.sin(angle);
+                RADIX4[(m - 1) * 8 + j] = (float) StrictMath.cos(angle);
+                RADIX4[(m + 2) * 8 + j] = (float) StrictMath.sin(angle);
             }
-            RADIX2[j] = (float) Math.cos(-Math.PI * j / 8);
-            RADIX2[8 + j] = (float) Math.sin(-Math.PI * j / 8);
+            RADIX2[j] = (float) StrictMath.cos(-Math.PI * j / 8);
+            RADIX2[8 + j] = (float) StrictMath.sin(-Math.PI * j / 8);
         }
     }
 
@@ -115,6 +152,17 @@ final class QmfSynthesis {
      * The window.
      */
     private final float[] window;
+
+    /**
+     * The real parts of the rotation applied to each subband ahead of the transforms, or {@code null}
+     * for none.
+     */
+    private final float[] rotationRe;
+
+    /**
+     * The imaginary parts of the rotation.
+     */
+    private final float[] rotationIm;
 
     /**
      * The transform kernel.
@@ -194,9 +242,28 @@ final class QmfSynthesis {
      * @param kernel the transform kernel
      */
     QmfSynthesis(int bands, SbrKernel kernel) {
+        this(bands, kernel, false);
+    }
+
+    /**
+     * Creates a synthesis bank with a silent history, optionally the low delay bank of AAC-ELD.
+     *
+     * @param bands the number of subbands, 64 or 32 (downsampled)
+     * @param kernel the transform kernel
+     * @param lowDelay whether the bank is the low delay bank
+     */
+    QmfSynthesis(int bands, SbrKernel kernel, boolean lowDelay) {
         this.bands = bands;
         this.kernel = kernel;
-        this.window = bands == 64 ? WINDOW_64 : WINDOW_32;
+        if (lowDelay) {
+            this.window = bands == 64 ? LOW_DELAY_WINDOW_64 : LOW_DELAY_WINDOW_32;
+            this.rotationRe = LOW_DELAY_ROTATION_REAL;
+            this.rotationIm = LOW_DELAY_ROTATION_IMAGINARY;
+        } else {
+            this.window = bands == 64 ? WINDOW_64 : WINDOW_32;
+            this.rotationRe = bands == 32 ? ROTATION_REAL : null;
+            this.rotationIm = bands == 32 ? ROTATION_IMAGINARY : null;
+        }
         this.positions = bands == 64 ? POSITIONS_32 : POSITIONS_16;
         var half = bands / 2;
         this.preCos = new float[half];
@@ -205,17 +272,17 @@ final class QmfSynthesis {
         this.postSin = new float[half];
         for (var k = 0; k < half; k++) {
             var angle = Math.PI * (k + 0.125) / bands;
-            preCos[k] = (float) (Math.cos(angle) / 64);
-            preSin[k] = (float) (Math.sin(angle) / 64);
-            postCos[k] = (float) Math.cos(angle);
-            postSin[k] = (float) Math.sin(angle);
+            preCos[k] = (float) (StrictMath.cos(angle) / 64);
+            preSin[k] = (float) (StrictMath.sin(angle) / 64);
+            postCos[k] = (float) StrictMath.cos(angle);
+            postSin[k] = (float) StrictMath.sin(angle);
         }
         var width = kernel.width();
         this.vector = new float[(HISTORY + SLOTS) * 2 * bands];
         this.bandsRe = new float[bands * width];
         this.bandsIm = new float[bands * width];
-        this.rotatedRe = bands == 32 ? new float[SLOTS * 32] : null;
-        this.rotatedIm = bands == 32 ? new float[SLOTS * 32] : null;
+        this.rotatedRe = rotationRe != null ? new float[SLOTS * bands] : null;
+        this.rotatedIm = rotationRe != null ? new float[SLOTS * bands] : null;
         this.fftRe = new float[bands * width];
         this.fftIm = new float[bands * width];
         this.rows = new float[2 * bands * width];
@@ -245,11 +312,11 @@ final class QmfSynthesis {
         var inRe = re;
         var inIm = im;
         var stride = 64;
-        if (bands == 32) {
+        if (rotationRe != null) {
             rotate(re, im, slots);
             inRe = rotatedRe;
             inIm = rotatedIm;
-            stride = 32;
+            stride = bands;
         }
         var width = kernel.width();
         for (var column = 0; column < slots; column += width) {
@@ -284,8 +351,8 @@ final class QmfSynthesis {
     }
 
     /**
-     * Rotates the lowest 32 subbands of a frame by the half-sample offset of the 32-band
-     * modulation.
+     * Rotates the subbands of a frame by the offset of the modulation: the half-sample offset of the
+     * 32-band modulation, or the offset of the low delay modulation.
      *
      * @param re    the real parts, 64 per slot
      * @param im    the imaginary parts, 64 per slot
@@ -293,11 +360,11 @@ final class QmfSynthesis {
      */
     private void rotate(float[] re, float[] im, int slots) {
         for (var slot = 0; slot < slots; slot++) {
-            for (var k = 0; k < 32; k++) {
+            for (var k = 0; k < bands; k++) {
                 var xr = re[64 * slot + k];
                 var xi = im[64 * slot + k];
-                rotatedRe[32 * slot + k] = xr * ROTATION_REAL[k] - xi * ROTATION_IMAGINARY[k];
-                rotatedIm[32 * slot + k] = xi * ROTATION_REAL[k] + xr * ROTATION_IMAGINARY[k];
+                rotatedRe[bands * slot + k] = xr * rotationRe[k] - xi * rotationIm[k];
+                rotatedIm[bands * slot + k] = xi * rotationRe[k] + xr * rotationIm[k];
             }
         }
     }
