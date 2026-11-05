@@ -1,0 +1,39 @@
+# audio decode dump of ts/h264-dts.m2ts; regenerate with -Dsmalt.test.updateDumps=true
+format MPEG_TS
+duration 2005333
+seekable true
+track 4352 DTS rate=48000 layout=[FRONT_LEFT, FRONT_RIGHT]
+0 frames=4096 crc16=7f9d8502
+1 frames=4096 crc16=09a7aab6
+2 frames=4096 crc16=0162f7b5
+3 frames=4096 crc16=d560007e
+4 frames=4096 crc16=af7b80d4
+5 frames=4096 crc16=164005ad
+6 frames=4096 crc16=35635813
+7 frames=4096 crc16=bac5dadc
+8 frames=4096 crc16=04ddc8f5
+9 frames=4096 crc16=f509697e
+10 frames=4096 crc16=1ec37433
+11 frames=4096 crc16=0528fdf2
+12 frames=4096 crc16=3d4aa75b
+13 frames=4096 crc16=b578c3d6
+14 frames=4096 crc16=0c265f0f
+15 frames=4096 crc16=e88bead0
+16 frames=4096 crc16=068645a6
+17 frames=4096 crc16=df5acbda
+18 frames=4096 crc16=381ee5a3
+19 frames=4096 crc16=88787ad0
+20 frames=4096 crc16=2718e10e
+21 frames=4096 crc16=1e565602
+22 frames=4096 crc16=7a43b857
+23 frames=2048 crc16=0361290f
+seek 0: @sample 0
+seek 668444: @sample 32085
+seek 1336888: @sample 64171
+seek 2005333: end
+seek -1000000: @sample 0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format MPEG_TS
+  duration -1
+  seekable false
+  track 4352 DTS rate=48000 layout=[FRONT_LEFT, FRONT_RIGHT]

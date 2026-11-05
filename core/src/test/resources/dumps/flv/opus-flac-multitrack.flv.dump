@@ -1,0 +1,78 @@
+# demux dump of flv/opus-flac-multitrack.flv; regenerate with -Dsmalt.test.updateDumps=true
+format FLV
+duration 1020000
+seekable true
+metadata audiocodecid="1332770163"
+metadata audiosamplerate="48000"
+metadata duration="1.02"
+track 1 AUDIO OPUS timebase=1/1000 duration=? config=19:016adf29
+  audio rate=48000 bits=0 skip=0 layout=[FRONT_CENTER]
+track 2 AUDIO FLAC timebase=1/1000 duration=? config=42:4166b40e
+  audio rate=22050 bits=16 skip=0 layout=[FRONT_CENTER]
+packets 61
+0 t1 pts=0 dts=0 dur=? flags=KEY size=95 crc=43fe2a15
+1 t2 pts=0 dts=0 dur=? flags=KEY size=618 crc=a0fa490e
+2 t1 pts=20 dts=20 dur=? flags=KEY size=66 crc=e3cea368
+3 t1 pts=40 dts=40 dur=? flags=KEY size=59 crc=3afbeaa4
+4 t1 pts=60 dts=60 dur=? flags=KEY size=56 crc=22342564
+5 t1 pts=80 dts=80 dur=? flags=KEY size=62 crc=8060da3c
+6 t1 pts=100 dts=100 dur=? flags=KEY size=62 crc=811ba0d3
+7 t2 pts=100 dts=100 dur=? flags=KEY size=618 crc=01790d06
+8 t1 pts=120 dts=120 dur=? flags=KEY size=66 crc=4bd79b9a
+9 t1 pts=140 dts=140 dur=? flags=KEY size=61 crc=5484da98
+10 t1 pts=160 dts=160 dur=? flags=KEY size=63 crc=3070880a
+11 t1 pts=180 dts=180 dur=? flags=KEY size=57 crc=b03d1c62
+12 t1 pts=200 dts=200 dur=? flags=KEY size=51 crc=27a893a3
+13 t2 pts=200 dts=200 dur=? flags=KEY size=618 crc=875a00c4
+14 t1 pts=220 dts=220 dur=? flags=KEY size=52 crc=4fe0968a
+15 t1 pts=240 dts=240 dur=? flags=KEY size=54 crc=2d36dfed
+16 t1 pts=260 dts=260 dur=? flags=KEY size=53 crc=6b6ec533
+17 t1 pts=280 dts=280 dur=? flags=KEY size=48 crc=7c7fe1e7
+18 t1 pts=300 dts=300 dur=? flags=KEY size=49 crc=eb83fce5
+19 t2 pts=300 dts=300 dur=? flags=KEY size=619 crc=cc6dd43a
+20 t1 pts=320 dts=320 dur=? flags=KEY size=44 crc=9ae9ef6b
+21 t1 pts=340 dts=340 dur=? flags=KEY size=78 crc=d09f6951
+22 t1 pts=360 dts=360 dur=? flags=KEY size=77 crc=d0ecd625
+23 t1 pts=380 dts=380 dur=? flags=KEY size=72 crc=1163e708
+24 t1 pts=400 dts=400 dur=? flags=KEY size=74 crc=e2378c0a
+25 t2 pts=400 dts=400 dur=? flags=KEY size=620 crc=c10c970e
+26 t1 pts=420 dts=420 dur=? flags=KEY size=71 crc=74ce13f4
+27 t1 pts=440 dts=440 dur=? flags=KEY size=75 crc=7df4f2c1
+28 t1 pts=460 dts=460 dur=? flags=KEY size=73 crc=e773f408
+29 t1 pts=480 dts=480 dur=? flags=KEY size=74 crc=ec81d5e0
+30 t1 pts=500 dts=500 dur=? flags=KEY size=76 crc=fd052d2f
+31 t2 pts=500 dts=500 dur=? flags=KEY size=619 crc=40429c99
+32 t1 pts=520 dts=520 dur=? flags=KEY size=74 crc=bdfb7b9f
+33 t1 pts=540 dts=540 dur=? flags=KEY size=78 crc=40a75963
+34 t1 pts=560 dts=560 dur=? flags=KEY size=77 crc=da2e9be9
+35 t1 pts=580 dts=580 dur=? flags=KEY size=79 crc=82d2006b
+36 t1 pts=600 dts=600 dur=? flags=KEY size=82 crc=550e9bba
+37 t2 pts=600 dts=600 dur=? flags=KEY size=617 crc=aaf8bb9e
+38 t1 pts=620 dts=620 dur=? flags=KEY size=79 crc=ac965b80
+39 t1 pts=640 dts=640 dur=? flags=KEY size=81 crc=29f5a973
+40 t1 pts=660 dts=660 dur=? flags=KEY size=80 crc=466d3f2e
+41 t1 pts=680 dts=680 dur=? flags=KEY size=80 crc=05114d12
+42 t1 pts=700 dts=700 dur=? flags=KEY size=82 crc=38b3ba04
+43 t2 pts=700 dts=700 dur=? flags=KEY size=611 crc=2ec5e72f
+44 t1 pts=720 dts=720 dur=? flags=KEY size=79 crc=219b5a76
+45 t1 pts=740 dts=740 dur=? flags=KEY size=81 crc=76167f2b
+46 t1 pts=760 dts=760 dur=? flags=KEY size=80 crc=cedf6d5c
+47 t1 pts=780 dts=780 dur=? flags=KEY size=80 crc=a3acae60
+48 t1 pts=800 dts=800 dur=? flags=KEY size=81 crc=14f94fd7
+49 t2 pts=800 dts=800 dur=? flags=KEY size=611 crc=6848947e
+50 t1 pts=820 dts=820 dur=? flags=KEY size=79 crc=7437b647
+51 t1 pts=840 dts=840 dur=? flags=KEY size=81 crc=51bf2716
+52 t1 pts=860 dts=860 dur=? flags=KEY size=80 crc=7978e8f1
+53 t1 pts=880 dts=880 dur=? flags=KEY size=80 crc=6fa0213f
+54 t1 pts=900 dts=900 dur=? flags=KEY size=82 crc=937ef399
+55 t2 pts=900 dts=900 dur=? flags=KEY size=614 crc=5e4d9ba0
+56 t1 pts=920 dts=920 dur=? flags=KEY size=79 crc=02e0d8de
+57 t1 pts=940 dts=940 dur=? flags=KEY size=82 crc=81f337d3
+58 t1 pts=960 dts=960 dur=? flags=KEY size=80 crc=4480a15c
+59 t1 pts=980 dts=980 dur=? flags=KEY size=80 crc=6ece7a8f
+60 t1 pts=1000 dts=1000 dur=? flags=KEY size=117 crc=b1d98d92
+seek 0: t1@0 t2@0
+seek 340000: t1@17 t2@3
+seek 680000: t1@34 t2@6
+seek 1020000: end
+seek -1000000: t1@0 t2@0

@@ -1,0 +1,10 @@
+# image dump of vectors/rawpixls-canon-eos-5d-mark-iii-14bit-14bit-2.3471882640587.dng; regenerate with -Dsmalt.test.updateDumps=true
+format DNG
+info ImageInfo[format=DNG, width=1920, height=818, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 1920x818 rgba8 alpha=false crc=0ce7697b
+  format=DNG orientation=NORMAL source=1920x818
+  icc=520:86132914 exif=328:e863658a xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+decoder raw sensor data
+sensor 1920x818 channels=1 cfa=RGGB neutral=[0.5712549099359508, 1.0, 0.5102879146472022] crc=5a03a138

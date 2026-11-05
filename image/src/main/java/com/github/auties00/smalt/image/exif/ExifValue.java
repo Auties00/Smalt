@@ -7,14 +7,15 @@ import java.util.Objects;
 /**
  * Holds the typed value of one EXIF (TIFF) directory entry.
  *
- * <p>TIFF defines twelve field types. They are grouped here by how a caller consumes them: text
- * ({@link Ascii}), integers of any width and signedness ({@link Integers}), fractions
- * ({@link Rationals}), IEEE floating point numbers ({@link Reals}), and opaque bytes
- * ({@link Undefined}). Every variant remembers its original {@link Type}, so a value can be
- * written back without loss. Array components are copied on the way in and out, which keeps every
- * value immutable.
+ * <p>TIFF 6.0 defines twelve field types, TIFF Technical Note 1 adds the {@code IFD} type and
+ * EXIF 3.0 the {@code UTF-8} type. They are grouped here by how a caller consumes them: text
+ * ({@link Ascii}, {@link Utf8}), integers of any width and signedness, sub-directory offsets
+ * included ({@link Integers}), fractions ({@link Rationals}), IEEE floating point numbers
+ * ({@link Reals}), and opaque bytes ({@link Undefined}). Every variant remembers its original
+ * {@link Type}, so a value can be written back without loss. Array components are copied on the
+ * way in and out, which keeps every value immutable.
  */
-public sealed interface ExifValue permits ExifValue.Ascii, ExifValue.Integers, ExifValue.Rationals,
+public sealed interface ExifValue permits ExifValue.Ascii, ExifValue.Utf8, ExifValue.Integers, ExifValue.Rationals,
         ExifValue.Reals, ExifValue.Undefined {
     /**
      * Returns the TIFF field type the value was stored with.
@@ -27,7 +28,8 @@ public sealed interface ExifValue permits ExifValue.Ascii, ExifValue.Integers, E
      * Returns the number of elements of the value.
      *
      * <p>For {@link Ascii} this is the number of characters, without the terminating NUL; for
-     * {@link Undefined} it is the number of bytes.
+     * {@link Utf8} the number of UTF-8 bytes, without the terminating NUL; for {@link Undefined}
+     * the number of bytes.
      *
      * @return the element count, non-negative
      */
@@ -105,7 +107,23 @@ public sealed interface ExifValue permits ExifValue.Ascii, ExifValue.Integers, E
     }
 
     /**
-     * Enumerates the TIFF 6.0 field types used by EXIF, with their code and element size.
+     * Returns a {@link Type#UTF8} value, the EXIF 3.0 text type that holds any Unicode text.
+     *
+     * @apiNote Readers written before EXIF 3.0 skip entries of this type; prefer
+     * {@link #ofAscii(String)} for plain ASCII text.
+     * @param value the text, without the terminating NUL
+     * @return the value
+     * @throws IllegalArgumentException if a character is NUL or {@code value} holds an unpaired
+     * surrogate
+     */
+    static Utf8 ofUtf8(String value) {
+        return new Utf8(value);
+    }
+
+    /**
+     * Enumerates the field types used by EXIF, with their code and element size: the twelve of
+     * TIFF 6.0, the {@code IFD} type of TIFF Technical Note 1 and the {@code UTF-8} type of
+     * EXIF 3.0.
      */
     enum Type {
         /**
@@ -166,7 +184,17 @@ public sealed interface ExifValue permits ExifValue.Ascii, ExifValue.Integers, E
         /**
          * A double precision IEEE 754 number (code 12).
          */
-        DOUBLE(12, 8);
+        DOUBLE(12, 8),
+
+        /**
+         * A 32-bit unsigned offset of a sub-directory (code 13, TIFF Technical Note 1).
+         */
+        IFD(13, 4),
+
+        /**
+         * An 8-bit byte of a NUL-terminated UTF-8 string (code 129, EXIF 3.0).
+         */
+        UTF8(129, 1);
 
         /**
          * The constants indexed by code, with {@code null} for unassigned codes.
@@ -197,7 +225,7 @@ public sealed interface ExifValue permits ExifValue.Ascii, ExifValue.Integers, E
         /**
          * Returns the TIFF type code.
          *
-         * @return a value from 1 to 12
+         * @return a value from 1 to 13, or 129
          */
         public int code() {
             return code;
@@ -213,7 +241,8 @@ public sealed interface ExifValue permits ExifValue.Ascii, ExifValue.Integers, E
         }
 
         /**
-         * Returns the constant for a TIFF type code, or {@code null} when the code is not a TIFF 6.0 type.
+         * Returns the constant for a TIFF type code, or {@code null} when the code is not one of the
+         * listed types.
          *
          * @param code the type code read from a directory entry
          * @return the matching constant, or {@code null}
@@ -225,14 +254,14 @@ public sealed interface ExifValue permits ExifValue.Ascii, ExifValue.Integers, E
         /**
          * Returns the constant for a TIFF type code.
          *
-         * @param code the type code, from 1 to 12
+         * @param code the type code, from 1 to 13, or 129
          * @return the matching constant
-         * @throws IllegalArgumentException if {@code code} is not a TIFF 6.0 type code
+         * @throws IllegalArgumentException if {@code code} is not one of the listed type codes
          */
         public static Type of(int code) {
             var type = find(code);
             if (type == null) {
-                throw new IllegalArgumentException("TIFF type code " + code + " is not in [1, 12]");
+                throw new IllegalArgumentException("TIFF type code " + code + " is not in [1, 13] or 129");
             }
             return type;
         }
@@ -243,7 +272,7 @@ public sealed interface ExifValue permits ExifValue.Ascii, ExifValue.Integers, E
          * @return the constants indexed by code
          */
         private static Type[] byCode() {
-            var table = new Type[13];
+            var table = new Type[130];
             for (var type : values()) {
                 table[type.code] = type;
             }
@@ -298,11 +327,80 @@ public sealed interface ExifValue permits ExifValue.Ascii, ExifValue.Integers, E
     }
 
     /**
+     * Holds a {@link Type#UTF8} value (EXIF 3.0).
+     *
+     * <p>The text ends at the first NUL byte. Bytes that are not well-formed UTF-8 decode to
+     * U+FFFD, so only a well-formed value is written back byte for byte.
+     *
+     * @param value the text, without the terminating NUL
+     */
+    record Utf8(String value) implements ExifValue {
+        /**
+         * Validates the value.
+         *
+         * @throws NullPointerException if {@code value} is {@code null}
+         * @throws IllegalArgumentException if a character is NUL or {@code value} holds an unpaired
+         * surrogate
+         */
+        public Utf8 {
+            Objects.requireNonNull(value, "value");
+            for (var i = 0; i < value.length(); i++) {
+                var c = value.charAt(i);
+                if (c == 0) {
+                    throw new IllegalArgumentException("NUL at index " + i + " cannot be stored in a UTF-8 field");
+                }
+                if (Character.isHighSurrogate(c) && i + 1 < value.length() && Character.isLowSurrogate(value.charAt(i + 1))) {
+                    i++;
+                } else if (Character.isSurrogate(c)) {
+                    throw new IllegalArgumentException("unpaired surrogate at index " + i);
+                }
+            }
+        }
+
+        /**
+         * Decodes a NUL-terminated UTF-8 string.
+         *
+         * @param data   the array holding the string
+         * @param offset the index of the first byte
+         * @param length the number of bytes of the field, including any NUL terminator
+         * @return the decoded value
+         */
+        static Utf8 decode(byte[] data, int offset, int length) {
+            var end = offset;
+            var limit = offset + length;
+            while (end < limit && data[end] != 0) {
+                end++;
+            }
+            return new Utf8(new String(data, offset, end - offset, StandardCharsets.UTF_8));
+        }
+
+        /**
+         * {@return the UTF-8 bytes of the text followed by the NUL terminator}
+         */
+        byte[] encode() {
+            var text = value.getBytes(StandardCharsets.UTF_8);
+            return Arrays.copyOf(text, text.length + 1);
+        }
+
+        @Override
+        public Type type() {
+            return Type.UTF8;
+        }
+
+        @Override
+        public int count() {
+            return value.getBytes(StandardCharsets.UTF_8).length;
+        }
+    }
+
+    /**
      * Holds an integer value of type {@link Type#BYTE}, {@link Type#SHORT}, {@link Type#LONG},
-     * {@link Type#SBYTE}, {@link Type#SSHORT} or {@link Type#SLONG}.
+     * {@link Type#SBYTE}, {@link Type#SSHORT}, {@link Type#SLONG} or {@link Type#IFD}.
      *
      * <p>Unsigned types are zero-extended and signed types sign-extended into {@code long}
-     * elements, so every stored value is represented exactly.
+     * elements, so every stored value is represented exactly. An {@link Type#IFD} element is the
+     * offset of a sub-directory, which stays valid only through an edit that keeps the block's
+     * layout ({@link ExifWriter#rewrite(byte[], ExifData)}).
      *
      * @param type   the integer field type
      * @param values the elements
@@ -318,7 +416,7 @@ public sealed interface ExifValue permits ExifValue.Ascii, ExifValue.Integers, E
             Objects.requireNonNull(type, "type");
             Objects.requireNonNull(values, "values");
             switch (type) {
-                case BYTE, SHORT, LONG, SBYTE, SSHORT, SLONG -> {
+                case BYTE, SHORT, LONG, SBYTE, SSHORT, SLONG, IFD -> {
                 }
                 default -> throw new IllegalArgumentException(type + " is not an integer type");
             }

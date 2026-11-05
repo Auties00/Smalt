@@ -169,7 +169,7 @@ public final class Psy {
         var data = VorbisSetupData.get();
         var athTable = data.ath;
         eighthOctaveLines = gi.eighthOctaveLines;
-        shiftOctave = (long) (Math.rint(Math.log(gi.eighthOctaveLines * 8.f) / Math.log(2.f)) - 1);
+        shiftOctave = (long) (Math.rint(StrictMath.log(gi.eighthOctaveLines * 8.f) / StrictMath.log(2.f)) - 1);
         firstOctave = (long) (Scales.toOctave(.25f * rate * .5 / n) * (1 << (shiftOctave + 1)) - gi.eighthOctaveLines);
         var maxOctave = (long) (Scales.toOctave((n + .25f) * rate * .5 / n) * (1 << (shiftOctave + 1)) + .5f);
         totalOctaveLines = (int) (maxOctave - firstOctave + 1);

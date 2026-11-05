@@ -1,7 +1,10 @@
 /**
- * Camera and screen capture through the operating system's own APIs: {@link VideoDevices} lists and
- * opens the {@link CaptureDevice}s, each {@link VideoCaptureSession} delivers planar 4:2:0 frames, and
- * a camera's {@link CaptureMode}s describe the sizes and frame rates it captures at.
+ * Camera, screen and window capture through the operating system's own APIs: {@link VideoDevices} lists and
+ * opens the {@link CaptureDevice}s and reports cameras and screens coming and going to a
+ * {@link VideoDeviceListener}, each {@link VideoCaptureSession} delivers planar 4:2:0 frames, a camera's
+ * {@link CaptureMode}s describe the sizes and frame rates it captures at, a {@link CameraCaptureSession}'s
+ * {@link CameraControls} adjust its exposure, focus, zoom, white balance and power-line frequency, and
+ * {@link ScreenCaptureOptions} choose the frame rate, region and pointer of a screen or window capture.
  *
  * <p>Pictures converted from R'G'B' (every screen, and the cameras that deliver R'G'B') are BT.709 at
  * limited range; pictures a camera delivers as Y'CbCr keep the matrix and range the camera reports.
