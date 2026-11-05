@@ -423,7 +423,7 @@ public final class ScalarLosslessDsp implements LosslessDsp {
 
     @Override
     public void collectColorRedTransforms(int[] argb, int pos, int stride, int tileWidth, int tileHeight, int greenToRed,
-                                          int[] histo) {
+                                          int[] histo, int[] scratch) {
         var g2r = (byte) greenToRed;
         for (var y = 0; y < tileHeight; y++) {
             var row = pos + y * stride;
@@ -437,7 +437,7 @@ public final class ScalarLosslessDsp implements LosslessDsp {
 
     @Override
     public void collectColorBlueTransforms(int[] argb, int pos, int stride, int tileWidth, int tileHeight, int greenToBlue,
-                                           int redToBlue, int[] histo) {
+                                           int redToBlue, int[] histo, int[] scratch) {
         var g2b = (byte) greenToBlue;
         var r2b = (byte) redToBlue;
         for (var y = 0; y < tileHeight; y++) {

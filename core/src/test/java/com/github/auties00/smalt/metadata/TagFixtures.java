@@ -4,6 +4,7 @@ import com.github.auties00.smalt.container.AttachedPicture;
 import com.github.auties00.smalt.container.Chapter;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Scratch;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -32,17 +33,12 @@ final class TagFixtures {
 
     /** Writes an ffmetadata file with common tags and two chapters. */
     static Path metadataFile() {
-        try {
-            var file = Path.of("target", "media-fixtures", "tags-metadata.txt");
-            Files.createDirectories(file.getParent());
-            Files.writeString(file, ";FFMETADATA1\ntitle=Fixture Title\nartist=Fixture Artist\nalbum=Fixture Album\n"
-                    + "genre=Rock\ndate=2021\ntrack=3/12\ncomment=fixture comment\n"
-                    + "\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=800\ntitle=Intro\n"
-                    + "\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=800\nEND=2000\ntitle=Middle\n", StandardCharsets.UTF_8);
-            return file;
-        } catch (IOException exception) {
-            throw new UncheckedIOException(exception);
-        }
+        return Scratch.share(Path.of("target", "media-fixtures", "tags-metadata.txt"),
+                (";FFMETADATA1\ntitle=Fixture Title\nartist=Fixture Artist\nalbum=Fixture Album\n"
+                        + "genre=Rock\ndate=2021\ntrack=3/12\ncomment=fixture comment\n"
+                        + "\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=800\ntitle=Intro\n"
+                        + "\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=800\nEND=2000\ntitle=Middle\n")
+                        .getBytes(StandardCharsets.UTF_8));
     }
 
     static Path cover() {
