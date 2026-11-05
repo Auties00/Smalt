@@ -131,7 +131,8 @@ final class Prober {
         var duration = demuxer.durationMicros() >= 0 ? demuxer.durationMicros() : longest;
         var bitRate = size >= 0 && duration > 0 ? size * 8_000_000L / duration : -1;
         var metadata = demuxer.metadata();
-        if (demuxer.format() == ContainerFormat.WAV || demuxer.format() == ContainerFormat.AVI) {
+        if (demuxer.format() == ContainerFormat.WAV || demuxer.format() == ContainerFormat.W64
+                || demuxer.format() == ContainerFormat.AVI) {
             var renamed = new LinkedHashMap<String, String>();
             metadata.forEach((key, value) -> renamed.putIfAbsent(TagFiles.riffInfoKey(key), value));
             metadata = renamed;

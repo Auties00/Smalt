@@ -452,7 +452,11 @@ public final class WavMuxer implements Muxer {
         if (started || finished) {
             throw new IllegalStateException("tags must be set before the first packet");
         }
-        MuxerTags.riffChunks(tags, false, 0);
+        if (wave64) {
+            MuxerTags.wave64Chunks(tags, 0);
+        } else {
+            MuxerTags.riffChunks(tags, false, 0);
+        }
         this.tags = tags;
     }
 
@@ -752,6 +756,10 @@ public final class WavMuxer implements Muxer {
             header.u64le(32);
             factOffset = header.size();
             header.u64le(0);
+        }
+        var tagRate = bursts != null ? (int) Math.min(bursts.rate(), Integer.MAX_VALUE) : track.sampleRate();
+        for (var chunk : MuxerTags.wave64Chunks(tags, tagRate)) {
+            header.bytes(chunk);
         }
         wave64Guid(header, "data");
         header.u64le(0);

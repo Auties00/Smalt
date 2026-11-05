@@ -20,6 +20,7 @@ import com.github.auties00.smalt.container.internal.RawAacPayloadDemuxer;
 import com.github.auties00.smalt.container.internal.WaveFormat;
 import com.github.auties00.smalt.container.mpeg.MpegAudioDemuxer;
 import com.github.auties00.smalt.container.mpeg.internal.Id3v2;
+import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.io.ForwardOnlySource;
 import com.github.auties00.smalt.internal.io.PrefixedSource;
 import com.github.auties00.smalt.internal.io.ReadAheadCache;
@@ -157,9 +158,14 @@ import java.util.Objects;
  * naming it.
  *
  * <p>A Sony Wave64 file ({@link ContainerFormat#W64}) is read as a WAVE file whose chunks are named by GUIDs,
- * whose sizes are 64-bit and count the 24-byte chunk header, and which start on multiples of eight bytes: its
- * {@code fmt }, {@code fact} (a 64-bit sample count), {@code data} and {@code bext} chunks are read as in a WAVE
- * file, a {@code data} size of zero extends to the end of the file, and the other chunks are skipped.
+ * whose sizes are 64-bit and count the 24-byte chunk header, and which start on multiples of eight bytes. A chunk
+ * named by the GUID of a RIFF identifier (the identifier followed by the suffix of the {@code wave} GUID) is read as
+ * that WAVE chunk: {@code fmt }, {@code fact} (a 64-bit sample count), {@code data}, {@code bext}, {@code iXML},
+ * {@code axml}, {@code chna}, {@code smpl}, {@code cue } and {@code id3 }; a {@code data} size of zero extends to the
+ * end of the file. The {@code list} chunk is read as a RIFF {@code LIST} chunk ({@code INFO} entries and the
+ * {@code adtl} labels of the cue points), and the {@code summarylist} chunk's entries ({@code INFO} identifiers with
+ * UTF-16LE values) become metadata under their identifiers, as {@code LIST INFO} entries do. The other chunks are
+ * skipped.
  *
  * <p>Chunks are walked in order, honoring the pad byte after odd-sized chunks (and tolerating
  * writers that omit it). A {@code data} chunk whose size is {@code 0} or {@code 0xFFFFFFFF}
@@ -247,6 +253,19 @@ public final class WavDemuxer implements Demuxer {
      */
     private static final byte[] WAVE64_RIFF_SUFFIX = {0x2E, (byte) 0x91, (byte) 0xCF, 0x11, (byte) 0xA5,
             (byte) 0xD6, 0x28, (byte) 0xDB, 0x04, (byte) 0xC1, 0x00, 0x00};
+
+    /**
+     * The Sony Wave64 GUID of the {@code list} chunk, the counterpart of a RIFF {@code LIST} chunk, in file order.
+     */
+    private static final byte[] WAVE64_LIST = {0x6C, 0x69, 0x73, 0x74, 0x2F, (byte) 0x91, (byte) 0xCF, 0x11,
+            (byte) 0xA5, (byte) 0xD6, 0x28, (byte) 0xDB, 0x04, (byte) 0xC1, 0x00, 0x00};
+
+    /**
+     * The Sony Wave64 GUID of the {@code summarylist} chunk, {@code 925F94BC-525A-11D2-86DC-00C04F8EDB8A}, in file
+     * order.
+     */
+    private static final byte[] WAVE64_SUMMARY_LIST = {(byte) 0xBC, (byte) 0x94, 0x5F, (byte) 0x92, 0x5A, 0x52,
+            (byte) 0xD2, 0x11, (byte) 0x86, (byte) 0xDC, 0x00, (byte) 0xC0, 0x4F, (byte) 0x8E, (byte) 0xDB, (byte) 0x8A};
 
     /**
      * The source read.
@@ -752,7 +771,20 @@ public final class WavDemuxer implements Demuxer {
                         header.factSamples = reader.u64le();
                     }
                 }
-                case 0x62657874 -> parseDescriptive(reader, header, id, chunkSize);
+                case 0x62657874, 0x69584D4C, 0x61786D6C, 0x63686E61, 0x736D706C, 0x63756520 ->
+                        parseDescriptive(reader, header, id, chunkSize);
+                case 0x69643320, 0x49443320 -> {
+                    if (size < 0 || chunkSize <= size - body) {
+                        Id3v2.skip(source, body, body + chunkSize, header.metadata);
+                    }
+                }
+                case 0 -> {
+                    if (Arrays.equals(guid, WAVE64_LIST)) {
+                        parseList(reader, header, chunkSize);
+                    } else if (Arrays.equals(guid, WAVE64_SUMMARY_LIST)) {
+                        parseSummaryList(reader, header, chunkSize);
+                    }
+                }
                 case 0x64617461 -> {
                     if (header.dataStart >= 0) {
                         break;
@@ -769,7 +801,6 @@ public final class WavDemuxer implements Demuxer {
                         return;
                     }
                 }
-                // TODO: read the tags of the Wave64 list and summary list chunks
                 default -> {
                 }
             }
@@ -1427,6 +1458,46 @@ public final class WavDemuxer implements Demuxer {
                 header.metadata.merge(key, value, (previous, next) -> previous + "; " + next);
             }
             offset = end + (int) (size & 1);
+        }
+    }
+
+    /**
+     * Parses a Sony Wave64 {@code summarylist} chunk into metadata: a 32-bit little-endian entry count, then per
+     * entry a four-character {@code INFO} identifier, the 32-bit little-endian byte length of its value and the value
+     * in UTF-16LE, up to its first NUL. The entries follow each other without padding; reading stops at an entry
+     * that does not fit the chunk or whose identifier is not printable.
+     *
+     * @param reader the reader positioned at the chunk body
+     * @param header receives the metadata
+     * @param chunkSize the chunk body size
+     */
+    private void parseSummaryList(SourceReader reader, Header header, long chunkSize) {
+        if (chunkSize < 4 || chunkSize > MAX_LIST_SIZE || chunkSize > reader.remaining()) {
+            return;
+        }
+        var body = reader.bytes(chunkSize, MAX_LIST_SIZE);
+        var count = ByteArrays.u32le(body, 0);
+        var offset = 4;
+        for (var i = 0L; i < count && body.length - offset >= 8; i++) {
+            if (!isChunkId(body, offset)) {
+                return;
+            }
+            var key = new String(body, offset, 4, StandardCharsets.ISO_8859_1);
+            var size = ByteArrays.u32le(body, offset + 4);
+            offset += 8;
+            if (size > body.length - offset) {
+                return;
+            }
+            var end = offset + (int) size;
+            var textEnd = offset;
+            while (textEnd + 1 < end && (body[textEnd] != 0 || body[textEnd + 1] != 0)) {
+                textEnd += 2;
+            }
+            var value = new String(body, offset, Math.min(textEnd, end) - offset, StandardCharsets.UTF_16LE).strip();
+            if (!value.isEmpty()) {
+                header.metadata.merge(key, value, (previous, next) -> previous + "; " + next);
+            }
+            offset = end;
         }
     }
 

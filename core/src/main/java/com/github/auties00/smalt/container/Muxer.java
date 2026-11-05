@@ -83,7 +83,8 @@ public interface Muxer extends AutoCloseable {
      * nested chapters and localized titles included) and {@code Attachments} (pictures and
      * {@linkplain MediaTags#attachments() other files}) for Matroska, Vorbis comments for Ogg and FLAC (with a
      * {@code CUESHEET} block for the chapters of native FLAC), ID3v2 for MP3, ADTS, raw AC-3 and AMR, the
-     * {@code LIST/INFO} and {@code id3 } chunks, the Broadcast Wave and sampler chunks and cue points for WAV,
+     * {@code LIST/INFO} and {@code id3 } chunks, the Broadcast Wave and sampler chunks and cue points for WAV, the
+     * {@code summarylist} chunk and the chunks of WAV but {@code LIST/INFO} for Sony Wave64,
      * the text, {@code ID3 }, {@code MARK} and {@code INST} chunks for AIFF, the {@code info} chunk for CAF, the
      * annotation for AU, the {@code LIST INFO} chunk for AVI. The {@linkplain MediaTags#xmp() XMP packet} goes in a
      * top-level {@code uuid} box (or a {@code udta/XMP_} atom of a QuickTime movie) from the MP4 muxers, a

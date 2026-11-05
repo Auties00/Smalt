@@ -394,7 +394,7 @@ class TranscodeTagsTest {
         }
         var tagless = Set.of(OutputContainer.IVF, OutputContainer.H264, OutputContainer.HEVC, OutputContainer.VVC,
                 OutputContainer.AV1,
-                OutputContainer.Y4M, OutputContainer.W64, OutputContainer.LOAS, OutputContainer.ADIF, OutputContainer.MPEG_PS,
+                OutputContainer.Y4M, OutputContainer.LOAS, OutputContainer.ADIF, OutputContainer.MPEG_PS,
                 OutputContainer.SRT, OutputContainer.WEBVTT, OutputContainer.ASS,
                 OutputContainer.SSA, OutputContainer.TTML, OutputContainer.SAMI, OutputContainer.MICRODVD);
         for (var container : OutputContainer.values()) {

@@ -484,16 +484,16 @@ public enum OutputContainer {
      *
      * <p>What each file stores is what its muxer writes
      * ({@link Muxer#setTags(com.github.auties00.smalt.metadata.MediaTags) Muxer.setTags}): everything in the MP4
-     * family, Matroska, WebM, Ogg, FLAC, MP3, AC-3, E-AC-3, AMR, ADTS, WAV, AIFF, CAF and AU files; the tags and the
-     * track names in AVI and MXF files; the track names and some audio dispositions in a transport stream; and the
-     * title, artist and album in an LRC file.
+     * family, Matroska, WebM, Ogg, FLAC, MP3, AC-3, E-AC-3, AMR, ADTS, WAV, Wave64, AIFF, CAF and AU files; the tags
+     * and the track names in AVI and MXF files; the track names and some audio dispositions in a transport stream;
+     * and the title, artist and album in an LRC file.
      *
-     * @return {@code false} for IVF, YUV4MPEG2, Wave64, LOAS, ADIF, MPEG program streams, the video elementary streams
+     * @return {@code false} for IVF, YUV4MPEG2, LOAS, ADIF, MPEG program streams, the video elementary streams
      * and the subtitle files other than LRC
      */
     public boolean supportsTags() {
         return switch (this) {
-            case IVF, H264, HEVC, VVC, AV1, Y4M, W64, LOAS, ADIF, MPEG_PS, SRT, WEBVTT, ASS, SSA, TTML, SAMI, MICRODVD -> false;
+            case IVF, H264, HEVC, VVC, AV1, Y4M, LOAS, ADIF, MPEG_PS, SRT, WEBVTT, ASS, SSA, TTML, SAMI, MICRODVD -> false;
             default -> true;
         };
     }

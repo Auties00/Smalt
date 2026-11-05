@@ -3,6 +3,7 @@ package com.github.auties00.smalt.container.wav;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.Muxer;
 import com.github.auties00.smalt.io.MediaSink;
+import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Track;
@@ -16,8 +17,8 @@ import java.util.Objects;
  * 24-byte header, each starting on a multiple of eight bytes, so it has no 4 GiB limit. The track, its packets and the
  * {@code fmt } structure they get are those of {@link WavMuxer} with its default options, for the codecs
  * {@link #supports(Codec)} accepts; a {@code fact} chunk with the 64-bit sample count follows the {@code fmt } chunk
- * of float, A-law, mu-law and coded audio. The Broadcast Wave {@code mext} chunk of MPEG Layer I and II and tags are
- * not written. {@link WavDemuxer} reads the file back packet for packet.
+ * of float, A-law, mu-law and coded audio. The Broadcast Wave {@code mext} chunk of MPEG Layer I and II is not
+ * written. {@link WavDemuxer} reads the file back packet for packet, with the tags of {@link #setTags(MediaTags)}.
  *
  * <p>On a seekable sink the sizes and the sample count are written by {@link #finish()}, which also pads the data
  * to a multiple of eight bytes. On a streaming sink they stay zero, and the file ends with the data; a zero
@@ -31,8 +32,6 @@ public final class Wave64Muxer implements Muxer {
      * The muxer that writes the file in its Wave64 layout.
      */
     private final WavMuxer muxer;
-
-    // TODO: write the tags in a Wave64 list chunk once its layout can be checked against a reader
 
     /**
      * Constructs a muxer writing to a sink.
@@ -65,6 +64,36 @@ public final class Wave64Muxer implements Muxer {
     @Override
     public void addTrack(Track track) {
         muxer.addTrack(track);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return {@code true}
+     */
+    @Override
+    public boolean supportsTags() {
+        return true;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The values of the keys a WAV {@code LIST/INFO} chunk stores ({@code title}, {@code artist}, ... and the
+     * {@code INFO} identifiers themselves) go in a {@code summarylist} chunk, in UTF-16LE, the first value of each
+     * key; when the tags hold pictures, another value of a key or a key that chunk cannot store, an {@code id3 }
+     * chunk holds every tag. The Broadcast Wave, {@code iXML}, {@code axml}, {@code chna} and {@code smpl} keys get
+     * the chunks {@link WavMuxer#setTags(MediaTags)} writes for them, and the chapters become a {@code cue } chunk
+     * and a {@code list} chunk of form {@code adtl}. Each chunk is named by the Wave64 GUID of its RIFF identifier
+     * and written before {@code data}. The XMP packet is not stored.
+     *
+     * @throws IllegalArgumentException if the value of a {@code chna}, {@code smpl}, {@code umid}, loudness or
+     * {@code time_reference} key is malformed
+     * @throws IllegalStateException if a packet was already written or the muxer is finished
+     */
+    @Override
+    public void setTags(MediaTags tags) {
+        muxer.setTags(tags);
     }
 
     /**

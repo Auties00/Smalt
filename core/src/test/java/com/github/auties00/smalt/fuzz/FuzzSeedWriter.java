@@ -14,6 +14,7 @@ import com.github.auties00.smalt.container.mp4.Mp4Muxer;
 import com.github.auties00.smalt.container.mp4.Mp4MuxerOptions;
 import com.github.auties00.smalt.container.raw.RawMuxer;
 import com.github.auties00.smalt.container.wav.WavMuxer;
+import com.github.auties00.smalt.container.wav.Wave64Muxer;
 import com.github.auties00.smalt.container.ts.TsMuxer;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.io.MediaSink;
@@ -557,6 +558,9 @@ class FuzzSeedWriter {
         var wav = withMuxedTags(ffmpeg("wav", tone(8000, 0.1), "-c:a", "pcm_s16le"), WavMuxer::new, wavTags);
         write(DemuxerFuzzTest.class, "wav", "valid-bext-cue.wav", wav);
         write(TagFuzzTest.class, "tags", "valid-bext-cue.wav", wav);
+        var w64 = withMuxedTags(ffmpeg("w64", tone(8000, 0.1), "-c:a", "pcm_s16le"), Wave64Muxer::new,
+                wavTags.toBuilder().add("title", "seed").add("artist", "\u00e9").add("custom_key", "id3").build());
+        write(DemuxerFuzzTest.class, "w64", "valid-tags.w64", w64);
         var aiffTags = MediaTags.builder().chapters(chapters).add("inst:base_note", "60")
                 .add("inst:sustain_loop", "1 10 20").build();
         var aiff = withMuxedTags(ffmpeg("aiff", tone(8000, 0.1), "-c:a", "pcm_s16be"), AiffMuxer::new, aiffTags);

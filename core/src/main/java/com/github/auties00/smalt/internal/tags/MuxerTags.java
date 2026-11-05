@@ -4,7 +4,9 @@ import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.io.ByteWriter;
 import com.github.auties00.smalt.metadata.MediaTags;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 
@@ -17,6 +19,19 @@ public final class MuxerTags {
      * The ID3v2 version muxers write.
      */
     private static final int ID3_VERSION = 4;
+
+    /**
+     * The GUID of the Wave64 {@code list} chunk, the counterpart of a RIFF {@code LIST} chunk, in file order.
+     */
+    private static final byte[] WAVE64_LIST = {0x6C, 0x69, 0x73, 0x74, 0x2F, (byte) 0x91, (byte) 0xCF, 0x11,
+            (byte) 0xA5, (byte) 0xD6, 0x28, (byte) 0xDB, 0x04, (byte) 0xC1, 0x00, 0x00};
+
+    /**
+     * The GUID of the Wave64 {@code summarylist} chunk, {@code 925F94BC-525A-11D2-86DC-00C04F8EDB8A}, in file order.
+     */
+    private static final byte[] WAVE64_SUMMARY_LIST = {(byte) 0xBC, (byte) 0x94, 0x5F, (byte) 0x92, 0x5A, 0x52,
+            (byte) 0xD2, 0x11, (byte) 0x86, (byte) 0xDC, 0x00, (byte) 0xC0, 0x4F, (byte) 0x8E, (byte) 0xDB, (byte) 0x8A};
+
     private MuxerTags() {
         throw new AssertionError();
     }
@@ -269,5 +284,88 @@ public final class MuxerTags {
             result.addAll(RiffMetadataChunks.waveChunks(tags, true, sampleRate));
         }
         return result;
+    }
+
+    /**
+     * Encodes the metadata chunks of a Sony Wave64 file: a {@code summarylist} chunk holding the values of the keys
+     * a WAV {@code LIST/INFO} chunk stores, an {@code id3 } chunk with every tag when the tags hold pictures or more
+     * than the {@code summarylist} chunk can, then the descriptive chunks of a WAV file
+     * ({@link RiffMetadataChunks#waveChunks}), the {@code LIST adtl} chunk of the cue points becoming a Wave64
+     * {@code list} chunk. The XMP packet is not stored.
+     *
+     * <p>A {@code summarylist} chunk holds a 32-bit little-endian entry count, then per entry the {@code INFO}
+     * identifier, the 32-bit little-endian byte length of its value and the value in UTF-16LE with a terminating
+     * NUL, the entries following each other without padding.
+     *
+     * @param tags the tags, pictures and chapters to store
+     * @param sampleRate the sampling rate of the audio, in hertz, or 0 when unknown, which writes no chapters
+     * @return the complete chunks, each with its 24-byte header and padded to a multiple of eight bytes
+     * @throws IllegalArgumentException if a value of a key of a descriptive chunk is malformed
+     */
+    public static List<byte[]> wave64Chunks(MediaTags tags, int sampleRate) {
+        var result = new ArrayList<byte[]>();
+        var plain = RiffMetadataChunks.withoutOwned(tags, false).toBuilder().noXmp().build();
+        if (!plain.entries().isEmpty() || !plain.pictures().isEmpty()) {
+            var summary = new ByteWriter(256);
+            summary.u32le(0);
+            var stored = new HashSet<String>();
+            var all = true;
+            for (var entry : plain.entries()) {
+                var id = RiffTagFile.infoId(entry.key());
+                if (id == null || !stored.add(id)) {
+                    all = false;
+                    continue;
+                }
+                var text = (entry.value() + "\0").getBytes(StandardCharsets.UTF_16LE);
+                summary.fourCc(id);
+                summary.u32le(text.length);
+                summary.bytes(text);
+            }
+            if (!stored.isEmpty()) {
+                summary.patch32le(0, stored.size());
+                result.add(wave64Chunk(WAVE64_SUMMARY_LIST, summary.toByteArray()));
+            }
+            if (!all || !plain.pictures().isEmpty()) {
+                result.add(wave64Chunk(wave64Guid("id3 "), id3v2(plain.toBuilder().chapters(List.of()).build())));
+            }
+        }
+        for (var chunk : RiffMetadataChunks.waveChunks(tags, true, sampleRate)) {
+            var id = new String(chunk, 0, 4, StandardCharsets.ISO_8859_1);
+            var length = (int) ByteArrays.u32le(chunk, 4);
+            var body = Arrays.copyOfRange(chunk, 8, 8 + length);
+            result.add(wave64Chunk(id.equals("LIST") ? WAVE64_LIST : wave64Guid(id), body));
+        }
+        return result;
+    }
+
+    /**
+     * Returns the GUID that names a Wave64 chunk of a RIFF identifier: the identifier followed by the GUID suffix of
+     * the Wave64 WAVE chunks.
+     *
+     * @param id the four-character identifier
+     * @return the GUID in file order
+     */
+    private static byte[] wave64Guid(String id) {
+        var guid = new byte[]{0, 0, 0, 0, (byte) 0xF3, (byte) 0xAC, (byte) 0xD3, 0x11, (byte) 0x8C, (byte) 0xD1, 0x00,
+                (byte) 0xC0, 0x4F, (byte) 0x8E, (byte) 0xDB, (byte) 0x8A};
+        System.arraycopy(id.getBytes(StandardCharsets.ISO_8859_1), 0, guid, 0, 4);
+        return guid;
+    }
+
+    /**
+     * Builds a Wave64 chunk: the GUID, the 64-bit little-endian size counting the 24-byte header, the body and the
+     * zeros that pad it to a multiple of eight bytes.
+     *
+     * @param guid the GUID in file order
+     * @param body the chunk content after the header
+     * @return the chunk
+     */
+    private static byte[] wave64Chunk(byte[] guid, byte[] body) {
+        var out = new ByteWriter(body.length + 31);
+        out.bytes(guid);
+        out.u64le(24L + body.length);
+        out.bytes(body);
+        out.zeros(-body.length & 7);
+        return out.toByteArray();
     }
 }

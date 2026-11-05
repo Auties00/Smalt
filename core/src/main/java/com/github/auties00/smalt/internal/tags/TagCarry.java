@@ -151,7 +151,7 @@ public final class TagCarry {
      */
     private static void addDemuxerEntries(MediaTags.Builder builder, Map<String, String> metadata,
                                           ContainerFormat format) {
-        var riff = format == ContainerFormat.WAV || format == ContainerFormat.AVI;
+        var riff = format == ContainerFormat.WAV || format == ContainerFormat.W64 || format == ContainerFormat.AVI;
         for (var entry : metadata.entrySet()) {
             var key = riff ? TagFiles.riffInfoKey(entry.getKey()) : entry.getKey();
             if (StandardTag.fromName(key).isEmpty() && key.toUpperCase(Locale.ROOT).startsWith(USER_TEXT_PREFIX)) {
