@@ -14,6 +14,7 @@ import java.lang.invoke.VarHandle;
 import java.util.ArrayList;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
 import static java.lang.foreign.ValueLayout.JAVA_SHORT;
@@ -102,6 +103,82 @@ final class Posix {
      * The {@code ENOTTY} error: the descriptor does not support the request.
      */
     static final int ENOTTY = 25;
+
+    /**
+     * The {@code ECONNREFUSED} error number.
+     */
+    static final int ECONNREFUSED = 111;
+
+    /**
+     * The {@code AF_UNIX} address family.
+     */
+    static final int AF_UNIX = 1;
+
+    /**
+     * The {@code SOCK_STREAM} socket type with {@code SOCK_CLOEXEC}.
+     */
+    static final int SOCK_STREAM_CLOEXEC = 1 | 0x80000;
+
+    /**
+     * The {@code SOL_SOCKET} level of a control message.
+     */
+    static final int SOL_SOCKET = 1;
+
+    /**
+     * The {@code SCM_RIGHTS} control message, which carries descriptors.
+     */
+    static final int SCM_RIGHTS = 1;
+
+    /**
+     * The {@code MSG_CMSG_CLOEXEC} flag of {@code recvmsg}, which marks received descriptors close-on-exec.
+     */
+    static final int MSG_CMSG_CLOEXEC = 0x40000000;
+
+    /**
+     * The {@code MSG_NOSIGNAL} flag of {@code sendmsg}.
+     */
+    static final int MSG_NOSIGNAL = 0x4000;
+
+    /**
+     * The layout of {@code struct sockaddr_un}.
+     */
+    static final StructLayout SOCKADDR_UN = MemoryLayout.structLayout(
+            JAVA_SHORT.withName("sun_family"),
+            MemoryLayout.sequenceLayout(108, JAVA_BYTE).withName("sun_path")).withName("sockaddr_un");
+
+    /**
+     * The layout of {@code struct iovec}.
+     */
+    static final StructLayout IOVEC = MemoryLayout.structLayout(
+            ADDRESS.withName("iov_base"),
+            JAVA_LONG.withName("iov_len")).withName("iovec");
+
+    /**
+     * The layout of {@code struct msghdr}.
+     */
+    static final StructLayout MSGHDR = MemoryLayout.structLayout(
+            ADDRESS.withName("msg_name"),
+            JAVA_INT.withName("msg_namelen"),
+            MemoryLayout.paddingLayout(4),
+            ADDRESS.withName("msg_iov"),
+            JAVA_LONG.withName("msg_iovlen"),
+            ADDRESS.withName("msg_control"),
+            JAVA_LONG.withName("msg_controllen"),
+            JAVA_INT.withName("msg_flags"),
+            MemoryLayout.paddingLayout(4)).withName("msghdr");
+
+    /**
+     * The layout of {@code struct cmsghdr}, whose data follows at {@link #CMSG_DATA}.
+     */
+    static final StructLayout CMSGHDR = MemoryLayout.structLayout(
+            JAVA_LONG.withName("cmsg_len"),
+            JAVA_INT.withName("cmsg_level"),
+            JAVA_INT.withName("cmsg_type")).withName("cmsghdr");
+
+    /**
+     * The offset of a control message's data, {@code CMSG_DATA}: the header rounded up to 8 bytes.
+     */
+    static final long CMSG_DATA = 16;
 
     /**
      * The {@code PROT_READ} protection of {@code mmap}.
@@ -428,6 +505,97 @@ final class Posix {
     }
 
     /**
+     * Connects a stream socket to a Unix domain socket.
+     *
+     * @param path the socket's path; a path starting with a NUL byte names an abstract socket
+     * @return the descriptor, or {@code -1} with {@link #errno()} set
+     */
+    int connectUnix(byte[] path) {
+        if (path.length >= 108) {
+            return -1;
+        }
+        try (var arena = Arena.ofConfined()) {
+            var fd = (int) Functions.SOCKET.invokeExact(state, AF_UNIX, SOCK_STREAM_CLOEXEC, 0);
+            if (fd < 0) {
+                return -1;
+            }
+            var address = arena.allocate(SOCKADDR_UN);
+            address.set(JAVA_SHORT, 0, (short) AF_UNIX);
+            MemorySegment.copy(path, 0, address, JAVA_BYTE, 2, path.length);
+            var length = 2 + path.length + (path.length > 0 && path[0] == 0 ? 0 : 1);
+            while (true) {
+                var result = (int) Functions.CONNECT.invokeExact(state, fd, address, length);
+                if (result == 0) {
+                    return fd;
+                }
+                if (errno() != EINTR) {
+                    var error = errno();
+                    close(fd);
+                    Functions.ERRNO.set(state, 0L, error);
+                    return -1;
+                }
+            }
+        } catch (Throwable throwable) {
+            throw Native.rethrow(throwable);
+        }
+    }
+
+    /**
+     * Sends bytes on a socket, retrying when a signal interrupts the call.
+     *
+     * @param fd the socket
+     * @param data the bytes
+     * @param length the number of bytes
+     * @return the number of bytes sent, or {@code -1} with {@link #errno()} set
+     */
+    long send(int fd, MemorySegment data, long length) {
+        try {
+            while (true) {
+                var result = (long) Functions.SEND.invokeExact(state, fd, data, length, MSG_NOSIGNAL);
+                if (result >= 0 || errno() != EINTR) {
+                    return result;
+                }
+            }
+        } catch (Throwable throwable) {
+            throw Native.rethrow(throwable);
+        }
+    }
+
+    /**
+     * Receives bytes and descriptors from a socket, retrying when a signal interrupts the call.
+     *
+     * @param fd the socket
+     * @param message a {@link #MSGHDR} whose buffers the caller set
+     * @return the number of bytes received, {@code 0} at the end of the stream, or {@code -1} with
+     * {@link #errno()} set
+     */
+    long recvmsg(int fd, MemorySegment message) {
+        try {
+            while (true) {
+                var result = (long) Functions.RECVMSG.invokeExact(state, fd, message, MSG_CMSG_CLOEXEC);
+                if (result >= 0 || errno() != EINTR) {
+                    return result;
+                }
+            }
+        } catch (Throwable throwable) {
+            throw Native.rethrow(throwable);
+        }
+    }
+
+    /**
+     * Returns the real user identifier of the process.
+     *
+     * @return the user identifier
+     */
+    long uid() {
+        try {
+            return Integer.toUnsignedLong((int) Functions.GETUID.invokeExact());
+        } catch (Throwable throwable) {
+            throw Native.rethrow(throwable);
+        }
+    }
+
+    /**
      * Describes an error number.
      *
      * <p>The description is computed without calling the C library, so it is available on every
@@ -450,6 +618,7 @@ final class Posix {
             case ENODEV -> "ENODEV (no such device)";
             case EINVAL -> "EINVAL (invalid argument)";
             case ENOTTY -> "ENOTTY (inappropriate ioctl for device)";
+            case ECONNREFUSED -> "ECONNREFUSED (connection refused)";
             default -> "errno " + errno;
         };
     }
@@ -546,6 +715,31 @@ final class Posix {
          */
         static final MethodHandle SHMCTL = link("shmctl", FunctionDescriptor.of(JAVA_INT, JAVA_INT, JAVA_INT, ADDRESS), true, -1);
 
+
+        /**
+         * {@code int socket(int domain, int type, int protocol)}.
+         */
+        static final MethodHandle SOCKET = link("socket", FunctionDescriptor.of(JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT), true, -1);
+
+        /**
+         * {@code int connect(int fd, const struct sockaddr *address, socklen_t length)}.
+         */
+        static final MethodHandle CONNECT = link("connect", FunctionDescriptor.of(JAVA_INT, JAVA_INT, ADDRESS, JAVA_INT), true, -1);
+
+        /**
+         * {@code ssize_t send(int fd, const void *buffer, size_t length, int flags)}.
+         */
+        static final MethodHandle SEND = link("send", FunctionDescriptor.of(JAVA_LONG, JAVA_INT, ADDRESS, JAVA_LONG, JAVA_INT), true, -1);
+
+        /**
+         * {@code ssize_t recvmsg(int fd, struct msghdr *message, int flags)}.
+         */
+        static final MethodHandle RECVMSG = link("recvmsg", FunctionDescriptor.of(JAVA_LONG, JAVA_INT, ADDRESS, JAVA_INT), true, -1);
+
+        /**
+         * {@code uid_t getuid(void)}.
+         */
+        static final MethodHandle GETUID = link("getuid", FunctionDescriptor.of(JAVA_INT), false, -1);
 
         /**
          * Prevents instantiation.

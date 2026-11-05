@@ -90,6 +90,11 @@ public final class TiffTypes {
     public static final int IFD8 = 18;
 
     /**
+     * {@code UTF-8}: an 8-bit byte of a NUL-terminated UTF-8 string (EXIF 3.0).
+     */
+    public static final int UTF8 = 129;
+
+    /**
      * Prevents instantiation.
      */
     private TiffTypes() {
@@ -104,7 +109,7 @@ public final class TiffTypes {
      */
     public static int size(int type) {
         return switch (type) {
-            case BYTE, ASCII, SBYTE, UNDEFINED -> 1;
+            case BYTE, ASCII, SBYTE, UNDEFINED, UTF8 -> 1;
             case SHORT, SSHORT -> 2;
             case LONG, SLONG, FLOAT, IFD -> 4;
             case RATIONAL, SRATIONAL, DOUBLE, LONG8, SLONG8, IFD8 -> 8;

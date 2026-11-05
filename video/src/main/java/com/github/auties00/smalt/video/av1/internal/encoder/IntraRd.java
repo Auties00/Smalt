@@ -156,7 +156,9 @@ final class IntraRd {
                 | (intraEdgeFilter ? IpredDsp.ANGLE_USE_EDGE_FILTER_FLAG : 0);
         var scan = Scans.SCANS[TX_8X8];
         var iscan = CoefWriter.inverseScan(TX_8X8, CoefWriter.TX_CLASS_2D);
-        var dsp = EncDsp.select();
+        var dsp = frame.dsp;
+        var bdMax = frame.bdMax;
+        var distShift = frame.distShift();
         var itx = f.itx;
         var bestMode = IpredDsp.DC_PRED;
         var bestType = 0;
@@ -166,9 +168,9 @@ final class IntraRd {
             angle[0] = 0;
             var m = IpredDsp.prepareIntraEdges(t.bx, t.bx > ts.colStart, t.by, t.by > ts.rowStart, ts.colEnd,
                     ts.rowEnd, flags, plane, dst, stride, null, 0, mode, angle, 2, 2, intraEdgeFilter, t.edge,
-                    IpredDsp.EDGE_TOPLEFT, 255);
+                    IpredDsp.EDGE_TOPLEFT, bdMax);
             IpredDsp.INSTANCE.intraPred(m, pred, 0, 8, t.edge, IpredDsp.EDGE_TOPLEFT, 8, 8, angle[0] | smooth,
-                    4 * f.bw - px, 4 * f.bh - py, t.ipredScratch, 255);
+                    4 * f.bw - px, 4 * f.bh - py, t.ipredScratch, bdMax);
             for (var y = 0; y < 8; y++) {
                 for (var x = 0; x < 8; x++) {
                     residual[y * 8 + x] = src[srcOff + y * srcStride + x] - pred[y * 8 + x];
@@ -186,15 +188,16 @@ final class IntraRd {
                 System.arraycopy(pred, 0, recon, 0, 64);
                 if (eob > 0) {
                     q.dequantize(levels, eob, scan, 0, dequantized);
-                    itx.itxfmAdd(TX_8X8, type, recon, 0, 8, dequantized, 0, eob - 1, itxScratch, 255);
+                    itx.itxfmAdd(TX_8X8, type, recon, 0, 8, dequantized, 0, eob - 1, itxScratch, bdMax);
                 }
                 long sse = 0;
                 for (var y = 0; y < 8; y++) {
                     for (var x = 0; x < 8; x++) {
-                        var d = src[srcOff + y * srcStride + x] - recon[y * 8 + x];
+                        long d = src[srcOff + y * srcStride + x] - recon[y * 8 + x];
                         sse += d * d;
                     }
                 }
+                sse >>= distShift;
                 counter.startCounting();
                 coefWriter.write(counter, cdf, t.a.lcoef, bx4, t.l.lcoef, by4, TX_8X8, bs, 0, true, mode,
                         hdr.reducedTxtpSet, qidx, type, levels, 0, eob);
