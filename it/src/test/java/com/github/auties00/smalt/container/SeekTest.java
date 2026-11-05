@@ -56,6 +56,26 @@ class SeekTest {
         return Fixtures.ffmpeg(extension, List.of("-f", "lavfi", "-i", AUDIO), options);
     }
 
+    /** Concatenates three two-second Ogg links (Opus, Vorbis, Opus) into a chained file. */
+    static Path chainedOgg() {
+        var output = new java.io.ByteArrayOutputStream();
+        var parts = List.of(List.of("-c:a", "libopus", "-f", "ogg", "-serial_offset", "1"),
+                List.of("-c:a", "libvorbis", "-serial_offset", "2"), List.of("-c:a", "libopus", "-f", "ogg", "-serial_offset", "3"));
+        for (var index = 0; index < parts.size(); index++) {
+            var options = new ArrayList<>(List.of("-ss", Integer.toString(2 * index), "-t", "2"));
+            options.addAll(parts.get(index));
+            output.writeBytes(Fixtures.read(audio("ogg", options)));
+        }
+        try {
+            var file = Path.of("target", "media-fixtures", "chained-seek.ogg");
+            java.nio.file.Files.createDirectories(file.getParent());
+            java.nio.file.Files.write(file, output.toByteArray());
+            return file;
+        } catch (java.io.IOException exception) {
+            throw new java.io.UncheckedIOException(exception);
+        }
+    }
+
     static Stream<Arguments> containers() {
         return Stream.of(
                 Arguments.of("mp4 h264 b-frames + aac", video("mp4", List.of("-c:v", "libx264", "-g", "25", "-bf", "2",
@@ -78,10 +98,19 @@ class SeekTest {
                 Arguments.of("adts aac", audio("aac", List.of("-c:a", "aac", "-f", "adts"))),
                 Arguments.of("ogg opus", audio("opus", List.of("-c:a", "libopus", "-f", "ogg"))),
                 Arguments.of("ogg vorbis", audio("ogg", List.of("-c:a", "libvorbis"))),
+                Arguments.of("ogg chained opus, vorbis, opus", chainedOgg()),
+                Arguments.of("ogv theora + vorbis", video("ogv", List.of("-c:v", "libtheora", "-g", "25", "-c:a",
+                        "libvorbis"))),
                 Arguments.of("flac", audio("flac", List.of("-c:a", "flac"))),
                 Arguments.of("wav", audio("wav", List.of("-c:a", "pcm_s16le"))),
                 Arguments.of("aiff", audio("aiff", List.of("-c:a", "pcm_s16be"))),
                 Arguments.of("mka flac", audio("mka", List.of("-c:a", "flac"))),
+                Arguments.of("wv wavpack", audio("wv", List.of("-c:a", "wavpack"))),
+                Arguments.of("mka wavpack", audio("mka", List.of("-c:a", "wavpack"))),
+                Arguments.of("ogg speex", Fixtures.ffmpeg("spx", List.of("-f", "lavfi", "-i", MONO),
+                        List.of("-c:a", "libspeex"))),
+                Arguments.of("mkv ffv1 + flac", video("mkv", List.of("-c:v", "ffv1", "-level", "3", "-g", "25",
+                        "-c:a", "flac"))),
                 Arguments.of("amr", Fixtures.ffmpeg("amr", List.of("-f", "lavfi", "-i", MONO),
                         List.of("-c:a", "libopencore_amrnb", "-b:a", "12.2k"))),
                 Arguments.of("ts h264 b-frames + aac", video("ts", List.of("-c:v", "libx264", "-g", "25", "-bf", "2",
@@ -280,6 +309,8 @@ class SeekTest {
                 Arguments.of("wav", audio("wav", List.of("-c:a", "pcm_s16le")), 0.0),
                 Arguments.of("flac", audio("flac", List.of("-c:a", "flac")), 0.0),
                 Arguments.of("mka flac", audio("mka", List.of("-c:a", "flac")), 0.0),
+                Arguments.of("wv wavpack", audio("wv", List.of("-c:a", "wavpack")), 0.0),
+                Arguments.of("mka wavpack", audio("mka", List.of("-c:a", "wavpack")), 0.0),
                 Arguments.of("mp3", audio("mp3", List.of("-c:a", "libmp3lame", "-b:a", "128k")), 0.0),
                 Arguments.of("mp3 low bitrate", audio("mp3", List.of("-c:a", "libmp3lame", "-b:a", "32k")), 0.0),
                 Arguments.of("ogg vorbis", audio("ogg", List.of("-c:a", "libvorbis")), 0.0),
