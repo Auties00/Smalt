@@ -91,7 +91,7 @@ final class Ac3Parser extends FrameParser {
             }
             timestampRate = stream.sampleRate();
             track = AudioTrack.builder()
-                    .id(pid())
+                    .id(trackId())
                     .codec(stream.codec())
                     .timeBase(Rational.timeBaseOf(stream.sampleRate()))
                     .language(entry.language())
