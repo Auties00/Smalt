@@ -1,10 +1,15 @@
 package com.github.auties00.smalt.image.avif;
 
 import com.github.auties00.smalt.image.ChromaFormat;
+import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorPrimaries;
+import com.github.auties00.smalt.image.ColorRange;
+import com.github.auties00.smalt.image.MatrixCoefficients;
+import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.DecodedImage;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.Rgba16Picture;
+import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.image.gainmap.GainMap;
 import com.github.auties00.smalt.image.gainmap.GainMapOptions;
 import com.github.auties00.smalt.image.gainmap.GainMaps;
@@ -24,6 +29,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -40,7 +46,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * precision decides the sign of a result near zero. Smalt's own files are written losslessly in R'G'B' for that
  * comparison; from Y'CbCr samples, at the precision Smalt keeps, an 8-bit base renders within 8 code values at
  * most and 0.75 on average. libavif resamples a gain map of another size before converting it to RGB, Smalt
- * after, in the log2 domain, so those files are compared by RMS.
+ * after, in the log2 domain, so those files are compared by RMS. Files whose base is the HDR rendition (libavif's,
+ * and Smalt's own with the renditions swapped as {@code avifgainmaputil swapbase} swaps them) are also rendered
+ * toward SDR as sRGB ({@code --cicp-output 1/13/6}).
  */
 @DisplayName("AVIF gain maps against libavif")
 class AvifGainMapDifferentialTest {
@@ -48,9 +56,16 @@ class AvifGainMapDifferentialTest {
 
     /** Tone maps a file with avifgainmaputil and reads the 10-bit R'G'B' samples, red, green and blue per pixel. */
     static int[] oracle(Path file, double headroom, int width, int height) throws IOException {
-        var out = file.resolveSibling(file.getFileName() + "-" + headroom + ".y4m");
+        return oracle(file, headroom, width, height, TransferCharacteristics.PQ);
+    }
+
+    /** Tone maps a file with avifgainmaputil to BT.709 primaries and a transfer function, PQ or sRGB. */
+    static int[] oracle(Path file, double headroom, int width, int height, TransferCharacteristics transfer)
+            throws IOException {
+        var cicp = transfer == TransferCharacteristics.SRGB ? "1/13/6" : "1/16/6";
+        var out = file.resolveSibling(file.getFileName() + "-" + headroom + "-" + transfer + ".y4m");
         Oracle.run(Oracle.Tool.AVIFGAINMAPUTIL, TIMEOUT, List.of("tonemap", file.toString(), out.toString(),
-                "--headroom", Double.toString(headroom), "--cicp-output", "1/16/6", "--depth", "12", "--yuv", "444"));
+                "--headroom", Double.toString(headroom), "--cicp-output", cicp, "--depth", "12", "--yuv", "444"));
         var data = Files.readAllBytes(out);
         var header = 0;
         while (data[header] != '\n') {
@@ -151,9 +166,9 @@ class AvifGainMapDifferentialTest {
         return (data[at] & 0xFF) | (data[at + 1] & 0xFF) << 8;
     }
 
-    static int[] smalt(DecodedImage base, GainMap gainMap, double headroom) {
+    static int[] smalt(DecodedImage base, GainMap gainMap, double headroom, TransferCharacteristics transfer) {
         var image = GainMaps.apply(base, gainMap, GainMapOptions.builder().headroom(headroom)
-                .primaries(ColorPrimaries.BT709).build());
+                .primaries(ColorPrimaries.BT709).transfer(transfer).build());
         var picture = (Rgba16Picture) image.picture();
         var samples = new int[picture.width() * picture.height() * 3];
         for (var y = 0; y < picture.height(); y++) {
@@ -244,12 +259,17 @@ class AvifGainMapDifferentialTest {
         compare(name, data, headroom, tolerance, true);
     }
 
+    static void compare(String name, byte[] data, double headroom, Tolerance tolerance, boolean asLibavif)
+            throws IOException {
+        compare(name, data, headroom, tolerance, asLibavif, TransferCharacteristics.PQ);
+    }
+
     /**
      * Compares a rendering; with {@code asLibavif}, the base is first rounded to R'G'B' of its own depth, as libavif
      * converts it before it applies the gain map.
      */
-    static void compare(String name, byte[] data, double headroom, Tolerance tolerance, boolean asLibavif)
-            throws IOException {
+    static void compare(String name, byte[] data, double headroom, Tolerance tolerance, boolean asLibavif,
+                        TransferCharacteristics transfer) throws IOException {
         var path = Scratch.directory("avif-gainmap").resolve(name);
         Files.write(path, data);
         // an HDR base of 10 or 12 bits keeps its depth, as libavif's does
@@ -262,9 +282,14 @@ class AvifGainMapDifferentialTest {
         var gainMap = AvifDecoder.decodeGainMap(MediaSource.of(data), deep).orElseThrow();
         var width = base.picture().width();
         var height = base.picture().height();
-        var expected = oracle(path, headroom, width, height);
-        var actual = smalt(base, gainMap, headroom);
-        var what = name + " at headroom " + headroom + worst(expected, actual, base, gainMap, width);
+        var expected = oracle(path, headroom, width, height, transfer);
+        var actual = smalt(base, gainMap, headroom, transfer);
+        var what = name + " at headroom " + headroom + " as " + transfer + worst(expected, actual, base, gainMap,
+                width);
+        if (transfer != TransferCharacteristics.PQ) {
+            tolerance.assertWithin(what, expected, actual);
+            return;
+        }
         // PQ is steepest at black: a result within a few thousandths of zero, where libavif's 8-bit RGB copy of
         // an 8-bit base and its single-precision arithmetic decide the sign, is compared as display light
         var bright = new java.util.ArrayList<int[]>();
@@ -343,5 +368,82 @@ class AvifGainMapDifferentialTest {
         assertTrue(Files.size(png) > 0);
         // both keep the coded orientation of the pixels, reporting irot and imir apart
         compare("smalt-rotated.avif", file, gainMap.metadata().alternateHeadroom(), Tolerance.offByOne());
+    }
+
+    @ParameterizedTest(name = "headroom {0}")
+    @ValueSource(doubles = {0, 0.25, 0.75, 1, 3})
+    @DisplayName("render libavif's HDR-base file toward SDR as sRGB within one code value")
+    void hdrBaseToSrgb(double headroom) throws IOException {
+        Oracle.assume(Oracle.Tool.AVIFGAINMAPUTIL);
+        var name = "seine_hdr_gainmap_srgb.avif";
+        compare(name, AvifGainMapTest.vector(name), headroom, Tolerance.offByOne(), true, TransferCharacteristics.SRGB);
+    }
+
+    /**
+     * Swaps the renditions of an SDR-base gain map as {@code avifgainmaputil swapbase} does: the alternate rendition
+     * rendered in full becomes the base, and the metadata trades its headrooms and offsets and the color space flag.
+     * The oracle build of libavif decodes only, so the swap is done here.
+     */
+    static GainMap swapped(GainMap gainMap) {
+        var metadata = gainMap.metadata();
+        var channels = new java.util.ArrayList<com.github.auties00.smalt.image.gainmap.GainMapChannel>();
+        for (var channel : metadata.channels()) {
+            channels.add(new com.github.auties00.smalt.image.gainmap.GainMapChannel(channel.minimum(),
+                    channel.maximum(), channel.gamma(), channel.alternateOffset(), channel.baseOffset()));
+        }
+        // the SDR alternate rendition is left undeclared: its sRGB profile would be stored as ICC, which
+        // avifgainmaputil tonemap refuses, and both renditions share the BT.709 primaries
+        return new GainMap(new com.github.auties00.smalt.image.gainmap.GainMapMetadata(metadata.alternateHeadroom(),
+                metadata.baseHeadroom(), channels, !metadata.useBaseColorSpace()), gainMap.image(),
+                Optional.empty(), Optional.empty());
+    }
+
+    @ParameterizedTest(name = "multichannel {0}")
+    @ValueSource(booleans = {false, true})
+    @DisplayName("render files whose base is the HDR rendition alike at every headroom down to SDR")
+    void swappedBase(boolean multichannel) throws IOException {
+        Oracle.assume(Oracle.Tool.AVIFGAINMAPUTIL);
+        var base = AvifGainMapTest.sdr(72, 40);
+        var gainMap = AvifGainMapTest.computed(base, multichannel);
+        var hdr = GainMaps.apply(AvifGainMapTest.image(base, Optional.empty()), gainMap,
+                GainMapOptions.builder().primaries(ColorPrimaries.BT709).build());
+        var backward = swapped(gainMap);
+        // lossless 10-bit R'G'B' in the identity matrix, so that both libraries read the same HDR base
+        var pq = new ColorInfo(MatrixCoefficients.IDENTITY, ColorRange.FULL, ColorPrimaries.BT709,
+                TransferCharacteristics.PQ);
+        var file = AvifEncoder.encode(hdr.picture(), backward, AvifEncoderOptions.lossless().toBuilder().bitDepth(10)
+                .color(pq).build(), AvifEncoderOptions.lossless());
+        var read = AvifDecoder.decodeGainMap(MediaSource.of(file)).orElseThrow().metadata();
+        var headroom = gainMap.metadata().alternateHeadroom();
+        assertTrue(headroom > 1, "headroom " + headroom);
+        assertTrue(read.isBaseBrighter(), read.toString());
+        assertEquals(headroom, read.baseHeadroom(), 1e-6);
+        assertEquals(0, read.alternateHeadroom());
+        assertEquals(!gainMap.metadata().useBaseColorSpace(), read.useBaseColorSpace());
+        var name = "swapped-" + multichannel + ".avif";
+        // the SDR rendition the swapped map gives back is the original base, within the precision of the 8-bit
+        // gain map and of the 10-bit HDR base
+        var deep = com.github.auties00.smalt.image.ImageDecoderOptions.builder().highBitDepth(true).build();
+        var sdr = GainMaps.apply(AvifDecoder.decode(MediaSource.of(file), deep),
+                AvifDecoder.decodeGainMap(MediaSource.of(file), deep).orElseThrow(),
+                GainMapOptions.forSdr().toBuilder().primaries(ColorPrimaries.BT709).build());
+        var picture = (Rgba16Picture) sdr.picture();
+        var expected = new int[72 * 40 * 3];
+        var actual = new int[expected.length];
+        for (var y = 0; y < 40; y++) {
+            for (var x = 0; x < 72; x++) {
+                for (var c = 0; c < 3; c++) {
+                    var i = (y * 72 + x) * 3 + c;
+                    expected[i] = base.pixels()[y * base.stride() + x * 4 + c] & 0xFF;
+                    actual[i] = (int) Math.round((picture.pixels()[y * picture.stride() + x * 4 + c] & 0xFFFF) / 257.0);
+                }
+            }
+        }
+        Tolerance.maxAbs(4).and(Tolerance.meanAbs(0.75)).assertWithin("SDR rendition of " + name, expected, actual);
+        for (var display : new double[]{headroom, headroom * 0.7, headroom * 0.3, 0}) {
+            compare(name, file, display, Tolerance.offByOne());
+        }
+        compare(name, file, 0, Tolerance.offByOne(), true, TransferCharacteristics.SRGB);
+        compare(name, file, headroom / 2, Tolerance.offByOne(), true, TransferCharacteristics.SRGB);
     }
 }

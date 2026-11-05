@@ -237,6 +237,112 @@ class JpegGainMapTest {
         }
 
         @Test
+        @DisplayName("writes an HDR-base file whose gain map dims it to the SDR rendition and headrooms between")
+        void hdrBase() {
+            var sdr = sdr(96, 64);
+            var hdr = hdr(sdr);
+            // a 12-bit PQ primary image, so that the dimming is not lost to the coarse 8-bit PQ steps
+            var pq = hdr.colorProfile().orElseThrow();
+            // a color gain map, since a luminance one brings the dark channels of saturated pixels back only to
+            // within the offsets
+            var gainMap = GainMaps.compute(hdr, image(sdr, Optional.empty()),
+                    GainMapComputeOptions.builder().multichannel(true).build());
+            assertTrue(gainMap.metadata().isBaseBrighter());
+            var options = JpegEncoderOptions.builder().quality(98).chromaFormat(ChromaFormat.YUV444).precision(12)
+                    .colorProfile(pq).build();
+            var file = JpegEncoder.encode(hdr.picture(), gainMap, options, JpegEncoderOptions.ofQuality(98));
+            var deep = com.github.auties00.smalt.image.ImageDecoderOptions.builder().highBitDepth(true).build();
+            var primary = JpegDecoder.decode(MediaSource.of(file), deep);
+            var read = JpegDecoder.decodeGainMap(MediaSource.of(file)).orElseThrow();
+            assertTrue(read.metadata().isBaseBrighter());
+            assertMetadata(gainMap.metadata(), read.metadata());
+            var headroom = read.metadata().baseHeadroom();
+            assertTrue(headroom > 1, "headroom " + headroom);
+            assertEquals(0, read.metadata().alternateHeadroom());
+            // at the SDR headroom, the rendering is the SDR source within the coding of both images
+            var rendered = (Rgba16Picture) GainMaps.apply(primary, read, GainMapOptions.forSdr().toBuilder()
+                    .primaries(ColorPrimaries.BT709).build()).picture();
+            var worst = 0;
+            var total = 0L;
+            for (var y = 0; y < 64; y++) {
+                for (var x = 0; x < 96; x++) {
+                    for (var c = 0; c < 3; c++) {
+                        var expected = sdr.pixels()[y * sdr.stride() + x * 4 + c] & 0xFF;
+                        var actual = (int) Math.round((rendered.pixels()[y * rendered.stride() + x * 4 + c] & 0xFFFF)
+                                / 257.0);
+                        worst = Math.max(worst, Math.abs(expected - actual));
+                        total += Math.abs(expected - actual);
+                    }
+                }
+            }
+            var mean = total / (96.0 * 64 * 3);
+            assertTrue(worst <= 16 && mean <= 2, "worst difference " + worst + ", mean " + mean);
+            // between the renditions the light rises with the headroom: every gain is a dimming of the base except
+            // on near-black channels (below 1024 PQ codes, about 0.005 cd/m2), where the coding of both images can
+            // leave a slight brightening, whose fall with the headroom stays within 64 PQ codes (under
+            // 0.001 cd/m2); brighter channels never fall by more than the rounding of the rendering
+            Rgba16Picture previous = null;
+            var rising = 0;
+            for (var step : new double[]{0, 0.25, 0.5, 0.75, 1}) {
+                var between = (Rgba16Picture) GainMaps.apply(primary, read, GainMapOptions.builder()
+                        .headroom(headroom * step).primaries(ColorPrimaries.BT709).build()).picture();
+                for (var i = 0; previous != null && i < between.pixels().length; i++) {
+                    if (i % 4 != 3) {
+                        var now = between.pixels()[i] & 0xFFFF;
+                        var before = previous.pixels()[i] & 0xFFFF;
+                        assertTrue(now + (before < 1024 ? 64 : 2) >= before, "sample " + i + " at step " + step + ": "
+                                + before + " then " + now);
+                        rising += now > before + 64 ? 1 : 0;
+                    }
+                }
+                previous = between;
+            }
+            assertTrue(rising > 96 * 64, "rising samples " + rising);
+            // at the base headroom the base is kept as it is: the PQ samples of its R'G'B'
+            var base = com.github.auties00.smalt.image.ops.ImageOps.toRgba16(primary.picture());
+            for (var y = 0; y < 64; y++) {
+                for (var x = 0; x < 96 * 4; x++) {
+                    if (x % 4 != 3) {
+                        assertEquals(base.pixels()[y * base.stride() + x] & 0xFFFF,
+                                previous.pixels()[y * previous.stride() + x] & 0xFFFF, 3, "pixel " + x / 4 + "," + y);
+                    }
+                }
+            }
+        }
+
+        @ParameterizedTest(name = "HDR base {0}")
+        @ValueSource(booleans = {true, false})
+        @DisplayName("reads the drafts' backward direction flag in the ISO metadata, falling back to XMP when unsupported")
+        void backwardFlag(boolean hdrBase) {
+            var base = sdr(32, 24);
+            var source = GainMaps.compute(image(base, Optional.empty()), hdr(base), GainMapComputeOptions.defaults());
+            var computed = source.metadata();
+            var metadata = hdrBase ? new GainMapMetadata(computed.alternateHeadroom(), computed.baseHeadroom(),
+                    computed.channels(), computed.useBaseColorSpace()) : computed;
+            var file = JpegEncoder.encode(base, new GainMap(metadata, source.image(), Optional.empty(),
+                    Optional.empty()), JpegEncoderOptions.ofQuality(90), JpegEncoderOptions.ofQuality(90));
+            var structure = metadata.toByteArray();
+            var patched = 0;
+            for (var i = 0; i + structure.length <= file.length; i++) {
+                if (Arrays.equals(file, i, i + structure.length, structure, 0, structure.length)) {
+                    file[i + 4] |= 0x04;
+                    patched++;
+                }
+            }
+            assertTrue(patched > 0, "ISO metadata not found in the file");
+            var read = JpegDecoder.decodeGainMap(MediaSource.of(file)).orElseThrow().metadata();
+            assertEquals(hdrBase, read.isBaseBrighter());
+            if (hdrBase) {
+                assertArrayEquals(structure, read.toByteArray());
+            } else {
+                // the flag with a dimmer base is unsupported, so the reader takes the hdrgm XMP form instead
+                assertEquals(metadata.baseHeadroom(), read.baseHeadroom(), 1e-4);
+                assertEquals(metadata.alternateHeadroom(), read.alternateHeadroom(), 1e-4);
+                assertEquals(metadata.channel(0).maximum(), read.channel(0).maximum(), 1e-4);
+            }
+        }
+
+        @Test
         @DisplayName("lays out the Multi-Picture Format index and the XMP container as libultrahdr does")
         void structure() {
             var file = ultraHdr(sdr(64, 48), GainMapComputeOptions.defaults());

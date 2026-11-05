@@ -14,7 +14,7 @@ import com.github.auties00.smalt.internal.task.ParallelBands;
 import java.util.Optional;
 
 /**
- * Applies a gain map to a base image and encodes the result as PQ or HLG at 16 bits.
+ * Applies a gain map to a base image and encodes the result as PQ, HLG or sRGB at 16 bits.
  */
 final class GainMapRenderer {
     /**
@@ -56,7 +56,9 @@ final class GainMapRenderer {
             offsets[3 + channel] = (float) metadata.channel(channel).alternateOffset();
         }
         var hlg = options.transfer() == TransferCharacteristics.HLG;
-        var scale = (float) (referenceWhite / (hlg ? Transfers.HLG_PEAK : Transfers.PQ_PEAK));
+        var sdr = options.transfer() == TransferCharacteristics.SRGB;
+        var nits = sdr ? referenceWhite : hlg ? Transfers.HLG_PEAK : Transfers.PQ_PEAK;
+        var scale = (float) (referenceWhite / nits);
         var luminance = output.luminance();
         var picture = Rgba16Picture.allocate(width, height, source.hasAlpha);
         var bands = ParallelBands.bands(height, (long) width * height * 4);
@@ -125,6 +127,10 @@ final class GainMapRenderer {
                         pixels[at] = quantize(Transfers.hlg(clamp(r * factor)));
                         pixels[at + 1] = quantize(Transfers.hlg(clamp(g * factor)));
                         pixels[at + 2] = quantize(Transfers.hlg(clamp(b * factor)));
+                    } else if (sdr) {
+                        pixels[at] = quantize(Transfers.srgb(r));
+                        pixels[at + 1] = quantize(Transfers.srgb(g));
+                        pixels[at + 2] = quantize(Transfers.srgb(b));
                     } else {
                         pixels[at] = quantize(Transfers.pq(r));
                         pixels[at + 1] = quantize(Transfers.pq(g));
@@ -144,11 +150,11 @@ final class GainMapRenderer {
         for (var y = 0; y < height; y++) {
             sum += sums[y];
         }
-        var nits = hlg ? Transfers.HLG_PEAK : Transfers.PQ_PEAK;
-        var level = new ContentLightLevel((int) Math.min(65535, Math.round(peak * nits)),
-                (int) Math.min(65535, Math.round(sum / ((double) width * height) * nits)));
-        var color = new ColorInfo(MatrixCoefficients.IDENTITY, ColorRange.FULL, output.cicp(), options.transfer())
-                .withContentLightLevel(level);
+        var color = new ColorInfo(MatrixCoefficients.IDENTITY, ColorRange.FULL, output.cicp(), options.transfer());
+        if (!sdr) {
+            color = color.withContentLightLevel(new ContentLightLevel((int) Math.min(65535, Math.round(peak * nits)),
+                    (int) Math.min(65535, Math.round(sum / ((double) width * height) * nits))));
+        }
         return new DecodedImage(picture, base.format(), base.orientation(), base.sourceWidth(), base.sourceHeight(),
                 Optional.empty(), base.exif(), base.xmp(), Optional.of(ColorProfile.of(color)), base.density());
     }

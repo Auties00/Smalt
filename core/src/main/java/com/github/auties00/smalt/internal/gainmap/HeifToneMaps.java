@@ -32,8 +32,9 @@ import java.util.Optional;
  * <p>A {@code tmap} item counts when it has data, references exactly two distinct items with {@code dimg}, the
  * first being the primary item, and an alternatives group ({@code altr}) prefers it to the primary item; a file
  * whose brands must include {@code tmap} (AVIF) is ignored without that brand. Its payload is a version byte, 0,
- * followed by the ISO 21496-1 metadata; another version, or metadata of an unsupported minimum version, makes
- * readers ignore the gain map. This class is thread-safe.
+ * followed by the ISO 21496-1 metadata; another version, or metadata that {@link GainMapMetadata#parse(byte[])}
+ * reports as unsupported (an unsupported minimum version, or the drafts' backward direction flag with a base
+ * headroom below the alternate one), makes readers ignore the gain map. This class is thread-safe.
  */
 public final class HeifToneMaps {
     private HeifToneMaps() {

@@ -49,6 +49,12 @@ class GainMapsTest {
         return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
     }
 
+    /** The sRGB encoding of IEC 61966-2-1, clipped to {@code 0..1}. */
+    static double srgbEncode(double light) {
+        var v = Math.min(Math.max(light, 0), 1);
+        return v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
+    }
+
     static double pq(double nits) {
         var y = Math.min(Math.max(nits / 10000, 0), 1);
         var p = Math.pow(y, M1);
@@ -197,6 +203,91 @@ class GainMapsTest {
                             + 1e-12);
                 }
             }
+        }
+
+        @ParameterizedTest(name = "headroom {0}")
+        @ValueSource(doubles = {0, 0.4, 1, 1.75, 2.5, 3})
+        @DisplayName("dims an HDR base by the weight of every headroom between the renditions")
+        void baseBrighterHeadrooms(double headroom) {
+            var base = base(29, 17, 30);
+            var map = gray(29, 17, 31);
+            var metadata = GainMapMetadata.of(2.5, 0.4, new GainMapChannel(-0.25, 2.5, 1.3, 1.0 / 64, 1.0 / 32));
+            var image = GainMaps.apply(decoded(base, Optional.empty()), new GainMap(metadata, map),
+                    GainMapOptions.builder().headroom(headroom).primaries(ColorPrimaries.BT709).build());
+            var picture = (Rgba16Picture) image.picture();
+            // the base headroom and above show the base as it is, the alternate headroom and below the alternate
+            var weight = headroom >= 2.5 ? 0 : headroom <= 0.4 ? 1 : (2.5 - headroom) / 2.1;
+            assertEquals(weight, metadata.weight(headroom), 1e-12);
+            for (var y = 0; y < 17; y++) {
+                for (var x = 0; x < 29; x++) {
+                    var expected = reference(base, map, metadata, headroom, x, y, null);
+                    for (var c = 0; c < 3; c++) {
+                        var at = y * base.stride() + x * 4 + c;
+                        if (weight == 0) {
+                            assertEquals(srgb((base.pixels()[at] & 0xFF) / 255.0), expected[c], 1e-12);
+                        }
+                        assertClose(pq(expected[c] * 203), picture.pixels()[y * picture.stride() + x * 4 + c]
+                                & 0xFFFF, 2, "pixel " + x + "," + y + " channel " + c);
+                    }
+                }
+            }
+        }
+
+        @Test
+        @DisplayName("renders the SDR rendition of an HDR base as sRGB")
+        void baseBrighterToSdr() {
+            var base = base(31, 19, 32);
+            var map = gray(31, 19, 33);
+            var metadata = GainMapMetadata.of(3, 0, new GainMapChannel(0, 3, 1, 1.0 / 64, 1.0 / 64));
+            var image = GainMaps.apply(decoded(base, Optional.empty()), new GainMap(metadata, map),
+                    GainMapOptions.forSdr().toBuilder().primaries(ColorPrimaries.BT709).build());
+            var picture = (Rgba16Picture) image.picture();
+            // an SDR rendering carries the matrix/TRC profile of its primaries and the sRGB curve, without a light level
+            var profile = image.colorProfile().orElseThrow();
+            assertFalse(profile.isHighDynamicRange());
+            assertEquals(ColorProfile.of(new ColorInfo(MatrixCoefficients.IDENTITY, ColorRange.FULL,
+                    ColorPrimaries.BT709, TransferCharacteristics.SRGB)), profile);
+            assertTrue(image.iccProfile().isEmpty());
+            var dimmed = 0;
+            for (var y = 0; y < 19; y++) {
+                for (var x = 0; x < 31; x++) {
+                    var expected = reference(base, map, metadata, 0, x, y, null);
+                    for (var c = 0; c < 3; c++) {
+                        var actual = picture.pixels()[y * picture.stride() + x * 4 + c] & 0xFFFF;
+                        assertClose(srgbEncode(expected[c]), actual, 2, "pixel " + x + "," + y + " channel " + c);
+                        if (actual + 2 < (base.pixels()[y * base.stride() + x * 4 + c] & 0xFF) * 257) {
+                            dimmed++;
+                        }
+                    }
+                    assertEquals((base.pixels()[y * base.stride() + x * 4 + 3] & 0xFF) * 257,
+                            picture.pixels()[y * picture.stride() + x * 4 + 3] & 0xFFFF);
+                }
+            }
+            assertTrue(dimmed > 31 * 19 * 3 / 2, "dimmed " + dimmed);
+        }
+
+        @Test
+        @DisplayName("renders an SDR base as sRGB at headroom 0 unchanged")
+        void sdrBaseToSdr() {
+            var base = base(23, 11, 34);
+            var map = gray(23, 11, 35);
+            var metadata = GainMapMetadata.of(0, 2, new GainMapChannel(0, 2, 1, 1.0 / 64, 1.0 / 64));
+            var picture = (Rgba16Picture) GainMaps.apply(decoded(base, Optional.empty()), new GainMap(metadata, map),
+                    GainMapOptions.forSdr().toBuilder().primaries(ColorPrimaries.BT709).build()).picture();
+            for (var y = 0; y < 11; y++) {
+                for (var x = 0; x < 23; x++) {
+                    for (var c = 0; c < 3; c++) {
+                        assertClose((base.pixels()[y * base.stride() + x * 4 + c] & 0xFF) / 255.0,
+                                picture.pixels()[y * picture.stride() + x * 4 + c] & 0xFFFF, 2,
+                                "pixel " + x + "," + y + " channel " + c);
+                    }
+                }
+            }
+            var options = GainMapOptions.forSdr();
+            assertEquals(0, options.headroom().orElseThrow());
+            assertEquals(TransferCharacteristics.SRGB, options.transfer());
+            assertTrue(options.primaries().isEmpty());
+            assertEquals(GainMapOptions.DEFAULT_REFERENCE_WHITE, options.referenceWhite());
         }
 
         @Test
@@ -468,7 +559,9 @@ class GainMapsTest {
             assertThrows(IllegalArgumentException.class, () -> GainMapComputeOptions.builder().gamma(0).build());
             assertThrows(IllegalArgumentException.class, () -> GainMapComputeOptions.builder().baseOffset(2).build());
             assertThrows(IllegalArgumentException.class, () -> GainMapOptions.builder()
-                    .transfer(TransferCharacteristics.SRGB).build());
+                    .transfer(TransferCharacteristics.BT709).build());
+            assertThrows(IllegalArgumentException.class, () -> GainMapOptions.builder()
+                    .transfer(TransferCharacteristics.LINEAR).build());
             assertThrows(IllegalArgumentException.class, () -> GainMapOptions.builder().headroom(-1).build());
             assertThrows(IllegalArgumentException.class, () -> GainMapOptions.builder().referenceWhite(0).build());
             assertThrows(IllegalArgumentException.class, () -> GainMapOptions.builder()
@@ -493,7 +586,7 @@ class GainMapsTest {
     @DisplayName("transfer tables")
     class Tables {
         @Test
-        @DisplayName("encode PQ and HLG within half a 16-bit code value")
+        @DisplayName("encode PQ, HLG and sRGB within half a 16-bit code value")
         void accuracy() {
             var random = new Random(23);
             for (var i = 0; i < 200000; i++) {
@@ -501,7 +594,11 @@ class GainMapsTest {
                 light = i % 3 == 0 ? light * light * light : light;
                 assertEquals(Transfers.pqExact(light), Transfers.pq((float) light), 0.5 / 65535, "PQ of " + light);
                 assertEquals(Transfers.hlgOetf(light), Transfers.hlg((float) light), 0.5 / 65535, "HLG of " + light);
+                assertEquals(srgbEncode(light), Transfers.srgb((float) light), 0.5 / 65535, "sRGB of " + light);
             }
+            assertEquals(0, Transfers.srgb(0), 1e-9);
+            assertEquals(1, Transfers.srgb(1), 1e-6);
+            assertEquals(1, Transfers.srgb(2), 1e-6);
         }
     }
 }

@@ -4,7 +4,7 @@ import com.github.auties00.smalt.image.TransferCharacteristics;
 
 /**
  * Holds the transfer functions of gain map rendering as tables: decoding of signal code values to linear light,
- * and PQ and HLG encoding of linear light.
+ * and PQ, HLG and sRGB encoding of linear light.
  *
  * <p>Linear light is relative: 1 is the luminance of the reference white of the options, so that a
  * standard-dynamic-range white decodes to 1 and the PQ and HLG signals decode to their luminance divided by it.
@@ -85,6 +85,11 @@ final class Transfers {
      * The HLG OETF of normalized scene light, sampled at {@code e = t^2} for {@code t} in {@code 0..1}.
      */
     private static final float[] HLG_ENCODE = sample(t -> hlgOetf(t * t));
+
+    /**
+     * The sRGB encoding of linear light, sampled at {@code x = t^2} for {@code t} in {@code 0..1}.
+     */
+    private static final float[] SRGB_ENCODE = sample(t -> srgbExact(t * t));
 
     /**
      * The HLG inverse system gamma {@code y^(1/1.2)}, sampled at {@code y = t^2}.
@@ -178,6 +183,16 @@ final class Transfers {
     }
 
     /**
+     * Encodes linear light with the sRGB transfer function of IEC 61966-2-1.
+     *
+     * @param light the linear light, 1 at the reference white, from 0 to 1
+     * @return the signal, from 0 to 1
+     */
+    static float srgb(float light) {
+        return lookup(SRGB_ENCODE, (float) Math.sqrt(light));
+    }
+
+    /**
      * Raises a luminance to {@code 1/1.2}, the exponent of the HLG inverse system gamma.
      *
      * @param luminance the luminance, from 0 to 1
@@ -216,6 +231,16 @@ final class Transfers {
     static double pqExact(double light) {
         var p = StrictMath.pow(light, M1);
         return StrictMath.pow((C1 + C2 * p) / (1 + C3 * p), M2);
+    }
+
+    /**
+     * Applies the sRGB encoding exactly.
+     *
+     * @param light the linear light, from 0 to 1
+     * @return the signal
+     */
+    static double srgbExact(double light) {
+        return light <= 0.0031308 ? 12.92 * light : 1.055 * StrictMath.pow(light, 1 / 2.4) - 0.055;
     }
 
     /**

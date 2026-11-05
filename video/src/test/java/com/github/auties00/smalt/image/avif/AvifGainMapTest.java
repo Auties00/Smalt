@@ -305,6 +305,40 @@ class AvifGainMapTest {
             assertArrayEquals(gainMap.metadata().toByteArray(), read.toByteArray());
             assertFalse(AvifDecoder.auxiliaryImages(MediaSource.of(file)).isEmpty());
         }
+
+        @ParameterizedTest(name = "HDR base {0}")
+        @ValueSource(booleans = {true, false})
+        @DisplayName("reads the drafts' backward direction flag in a tmap item with an HDR base, ignoring it otherwise")
+        void backwardFlag(boolean hdrBase) {
+            var base = sdr(24, 16);
+            var source = computed(base, false);
+            var computed = source.metadata();
+            var metadata = hdrBase ? new com.github.auties00.smalt.image.gainmap.GainMapMetadata(
+                    computed.alternateHeadroom(), computed.baseHeadroom(), computed.channels(),
+                    computed.useBaseColorSpace()) : computed;
+            var gainMap = new GainMap(metadata, source.image(), Optional.empty(), Optional.empty());
+            var file = AvifEncoder.encode(base, gainMap);
+            var structure = metadata.toByteArray();
+            var at = -1;
+            for (var i = 0; i + structure.length <= file.length && at < 0; i++) {
+                if (Arrays.equals(file, i, i + structure.length, structure, 0, structure.length)) {
+                    at = i;
+                }
+            }
+            assertTrue(at > 0, "metadata not found in the file");
+            assertEquals(0, file[at - 1], "tmap version byte");
+            assertEquals(0, file[at + 4] & 0x04);
+            file[at + 4] |= 0x04;
+            var read = AvifDecoder.decodeGainMap(MediaSource.of(file));
+            if (hdrBase) {
+                assertTrue(read.orElseThrow().metadata().isBaseBrighter());
+                assertArrayEquals(structure, read.orElseThrow().metadata().toByteArray());
+            } else {
+                // the flag with a dimmer base is unsupported, so the gain map is ignored and the base still shows
+                assertTrue(read.isEmpty());
+                assertEquals(24, AvifDecoder.decode(MediaSource.of(file)).picture().width());
+            }
+        }
     }
 
     @Test

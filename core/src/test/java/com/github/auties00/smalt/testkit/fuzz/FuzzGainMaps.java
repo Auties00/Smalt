@@ -16,9 +16,10 @@ import java.util.Optional;
 
 /**
  * The fuzz driver of the gain map and auxiliary image entry points of an image decoder: it decodes the gain map,
- * renders the image with it (to PQ, or to HLG at half the headroom), lists the auxiliary images and decodes the
- * first ones, checking that every picture has a size, that the rendering keeps the base image's size, and that a
- * listed image decodes.
+ * renders the image with it (to PQ, to HLG at half the alternate headroom, and to sRGB at headroom 0; one of them
+ * chosen by the input, or all three in a thorough run), lists the auxiliary images and decodes the first ones,
+ * checking that every picture has a size, that each rendering keeps the base image's size, and that a listed image
+ * decodes.
  */
 public final class FuzzGainMaps {
     /** The auxiliary images decoded per input. */
@@ -66,16 +67,22 @@ public final class FuzzGainMaps {
                 if ((long) picture.width() * picture.height() > Fuzz.MAX_CONVERTED_PIXELS) {
                     return;
                 }
-                var hlg = run.sampled(data, 0, 2);
-                var rendering = hlg ? GainMapOptions.builder().transfer(TransferCharacteristics.HLG)
-                        .headroom(map.metadata().alternateHeadroom() / 2).build() : GainMapOptions.defaults();
-                var rendered = GainMaps.apply(base, map, rendering).picture();
-                if (!(rendered instanceof Rgba16Picture) || rendered.width() != picture.width()
-                        || rendered.height() != picture.height()) {
-                    throw new IllegalStateException("rendered " + rendered.width() + "x" + rendered.height()
-                            + " from " + picture.width() + "x" + picture.height());
+                var renderings = new GainMapOptions[]{GainMapOptions.defaults(),
+                        GainMapOptions.builder().transfer(TransferCharacteristics.HLG)
+                                .headroom(map.metadata().alternateHeadroom() / 2).build(),
+                        GainMapOptions.forSdr()};
+                for (var choice = 0; choice < renderings.length; choice++) {
+                    if (!run.sampled(data, choice, renderings.length)) {
+                        continue;
+                    }
+                    var rendered = GainMaps.apply(base, map, renderings[choice]).picture();
+                    if (!(rendered instanceof Rgba16Picture) || rendered.width() != picture.width()
+                            || rendered.height() != picture.height()) {
+                        throw new IllegalStateException("rendered " + rendered.width() + "x" + rendered.height()
+                                + " from " + picture.width() + "x" + picture.height());
+                    }
+                    run.output();
                 }
-                run.output();
             });
         });
         var listed = run.value("auxiliary images", () -> decoder.auxiliaryImages(MediaSource.of(data), Fuzz.LIMITS));

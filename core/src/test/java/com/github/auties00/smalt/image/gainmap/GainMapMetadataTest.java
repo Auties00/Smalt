@@ -57,6 +57,14 @@ class GainMapMetadataTest {
         out.write((int) value);
     }
 
+    /** Writes a numerator, and its denominator unless the structure has a common one. */
+    static void fraction(ByteArrayOutputStream out, long[] fraction, boolean common) {
+        u32(out, fraction[0]);
+        if (!common) {
+            u32(out, fraction[1]);
+        }
+    }
+
     /** A single-channel structure: headroom 0 and 2.5, min -0.25, max 3, gamma 1, offsets 1/64. */
     static byte[] single() {
         return iso(0, 0x40, new long[]{0, 1, 5, 2},
@@ -167,12 +175,62 @@ class GainMapMetadataTest {
             assertEquals(2.5, GainMapMetadata.parse(extra).alternateHeadroom());
         }
 
+        @ParameterizedTest(name = "flags {0}")
+        @ValueSource(ints = {0x04, 0x44, 0x84, 0xC4, 0x0C, 0x4C})
+        @DisplayName("reads the backward direction flag of the drafts as a brighter base")
+        void backward(int flags) {
+            // headrooms 2.5 (base) and 0, as the drafts' writers stored them with the flag
+            var common = (flags & 0x08) != 0;
+            var channels = (flags & 0x80) != 0 ? 3 : 1;
+            var out = new ByteArrayOutputStream();
+            u16(out, 0);
+            u16(out, 0);
+            out.write(flags);
+            if (common) {
+                u32(out, 4);
+            }
+            long[][] fields = {{10, 4}, {0, 4}, {-1 & 0xFFFFFFFFL, 4}, {12, 4}, {4, 4}, {1, 64}, {1, 64}};
+            for (var i = 0; i < 2; i++) {
+                fraction(out, fields[i], common);
+            }
+            for (var channel = 0; channel < channels; channel++) {
+                for (var i = 2; i < fields.length; i++) {
+                    fraction(out, i >= 5 && common ? new long[]{0, 4} : fields[i], common);
+                }
+            }
+            var withFlag = GainMapMetadata.parse(out.toByteArray());
+            var bytes = out.toByteArray();
+            bytes[4] &= ~0x04;
+            var withoutFlag = GainMapMetadata.parse(bytes);
+            assertEquals(withoutFlag, withFlag);
+            assertTrue(withFlag.isBaseBrighter());
+            assertEquals(2.5, withFlag.baseHeadroom());
+            assertEquals(0, withFlag.alternateHeadroom());
+            assertEquals(channels == 3, withFlag.isMultichannel());
+            assertEquals((flags & 0x40) != 0, withFlag.useBaseColorSpace());
+            assertEquals(new GainMapChannel(-0.25, 3, 1, common ? 0 : 1.0 / 64, common ? 0 : 1.0 / 64),
+                    withFlag.channel(2));
+            // the draft weight, -clamp((h - base) / (alternate - base)), dims fully at the alternate headroom
+            assertEquals(0, withFlag.weight(2.5));
+            assertEquals(0.5, withFlag.weight(1.25));
+            assertEquals(1, withFlag.weight(0));
+            // the published form carries the direction in the headrooms alone
+            assertEquals(0, withFlag.toByteArray()[4] & 0x04);
+            assertEquals(withFlag, GainMapMetadata.parse(withFlag.toByteArray()));
+        }
+
         @Test
-        @DisplayName("refuses the backward direction flag")
-        void backward() {
-            var bytes = GainMapMetadataTest.single();
-            bytes[4] |= 0x04;
-            assertThrows(MediaException.Unsupported.class, () -> GainMapMetadata.parse(bytes));
+        @DisplayName("refuses the backward direction flag with a dimmer base, and accepts it with equal headrooms")
+        void backwardContradiction() {
+            var dimmer = GainMapMetadataTest.single();
+            dimmer[4] |= 0x04;
+            var exception = assertThrows(MediaException.Unsupported.class, () -> GainMapMetadata.parse(dimmer));
+            assertTrue(exception.getMessage().contains("backward direction"), exception.getMessage());
+            var equal = iso(0, 0x44, new long[]{3, 2, 3, 2}, new long[]{0, 1, 1, 1, 1, 1, 1, 64, 1, 64});
+            var metadata = GainMapMetadata.parse(equal);
+            assertFalse(metadata.isBaseBrighter());
+            assertEquals(0, metadata.weight(0));
+            assertEquals(0, metadata.weight(3));
         }
 
         @Test

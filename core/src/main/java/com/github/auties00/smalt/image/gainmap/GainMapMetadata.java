@@ -162,12 +162,18 @@ public record GainMapMetadata(double baseHeadroom, double alternateHeadroom, Lis
      * have their own denominators or share a common one. Bytes after the structure are an error when
      * {@code writer_version} is 0, and are ignored when it is later.
      *
+     * <p>The backward direction flag (bit {@code 0x04} of the flags) of the ISO 21496-1 drafts says that the gain
+     * map is applied with a negative weight, dimming an HDR base rendition toward its alternate one. A base
+     * headroom above the alternate one says the same, and the writers of the drafts stored it along with the flag,
+     * so a structure with the flag and such headrooms, or equal ones, parses to the same metadata as one without
+     * the flag.
+     *
      * @param data the structure
      * @return the metadata
      * @throws MediaException.Malformed if the structure is truncated, a denominator is 0, a gamma is 0, a
      * maximum is less than its minimum, or bytes follow a version 0 structure
      * @throws MediaException.Unsupported if {@code minimum_version} is not 0, or the backward direction flag is
-     * set
+     * set with a base headroom below the alternate one
      */
     public static GainMapMetadata parse(byte[] data) {
         Objects.requireNonNull(data, "data");
@@ -178,17 +184,20 @@ public record GainMapMetadata(double baseHeadroom, double alternateHeadroom, Lis
         }
         var writerVersion = reader.u16();
         var flags = reader.u8();
-        if ((flags & BACKWARD_DIRECTION) != 0) {
-            // TODO: apply gain maps with the backward direction flag of ISO 21496-1 once a specification text
-            //  or a sample defines its arithmetic
-            throw new MediaException.Unsupported("gain map", "the ISO 21496-1 backward direction");
-        }
         var count = (flags & MULTICHANNEL) != 0 ? 3 : 1;
         var common = (flags & COMMON_DENOMINATOR) != 0;
         var denominator = common ? reader.u32() : 0;
         var baseHeadroom = reader.fraction(reader.u32(), common ? denominator : reader.u32(), "base headroom");
         var alternateHeadroom = reader.fraction(reader.u32(), common ? denominator : reader.u32(),
                 "alternate headroom");
+        if ((flags & BACKWARD_DIRECTION) != 0 && baseHeadroom < alternateHeadroom) {
+            // TODO: apply the backward direction flag with a base headroom below the alternate one once a
+            //  published ISO 21496-1 text or a sample shows how readers treat it; the drafts' negated weight
+            //  would dim the base toward a brighter rendition, and no writer is known to store the headrooms in
+            //  that order with the flag
+            throw new MediaException.Unsupported("gain map", "the ISO 21496-1 backward direction with a base headroom ("
+                    + baseHeadroom + ") below the alternate one (" + alternateHeadroom + ")");
+        }
         var channels = new GainMapChannel[count];
         for (var channel = 0; channel < count; channel++) {
             var minimum = reader.fraction(reader.s32(), common ? denominator : reader.u32(), "gain map minimum");

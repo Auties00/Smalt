@@ -54,8 +54,8 @@ public record JxlGainMap(int version, byte[] metadata, Optional<byte[]> alternat
      * @return the gain map; its alternate profile is empty when the box stores none or the stored one does not
      * parse
      * @throws MediaException.Malformed if the metadata is invalid
-     * @throws MediaException.Unsupported if the metadata has an unsupported minimum version or the backward
-     * direction
+     * @throws MediaException.Unsupported if the metadata has an unsupported minimum version, or the backward
+     * direction flag with a base headroom below the alternate one
      */
     public GainMap toGainMap() {
         var profile = alternateIcc.flatMap(icc -> {

@@ -241,9 +241,10 @@ public final class AvifDecoder {
      * alternatives group ({@code altr}) prefers to the primary item, in a file with the {@code tmap} brand. Its
      * payload is a version byte, 0, followed by the ISO 21496-1 metadata
      * ({@link com.github.auties00.smalt.image.gainmap.GainMapMetadata#parse(byte[])}); another version, or metadata
-     * of an unsupported minimum version, is ignored as libavif ignores it. The gain map item decodes as an image
-     * item does, without its orientation; the {@code colr} and {@code clli} properties of the {@code tmap} item
-     * describe the alternate rendition.
+     * of an unsupported minimum version, is ignored as libavif ignores it, and so is metadata with the
+     * backward direction flag of the ISO 21496-1 drafts and a base headroom below the alternate one. The gain map
+     * item decodes as an image item does, without its orientation; the {@code colr} and {@code clli} properties
+     * of the {@code tmap} item describe the alternate rendition.
      *
      * @param source the file
      * @param options the limits and the bit depth choice of the gain map image; the size hint and the color

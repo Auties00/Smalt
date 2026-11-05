@@ -45,7 +45,13 @@ public final class GainMaps {
      * {@link GainMapMetadata#useBaseColorSpace()} is {@code false}), multiplied by the gain of its gain map
      * sample with the {@linkplain GainMapMetadata#weight(double) weight} of the headroom and the offsets of the
      * metadata, converted to the output primaries, and encoded with the output transfer function; at a weight of 0
-     * the base pixels are kept as they are, without the offsets. A gain map of
+     * the base pixels are kept as they are, without the offsets. When the base rendition is the brighter one
+     * (an HDR base, as the Adobe {@code hdrgm:BaseRenditionIsHDR} property and a base headroom above the alternate
+     * one say), the gain is applied with the opposite of the weight and the gain map dims the base toward the
+     * alternate rendition: a headroom
+     * at or above that of the base gives the base, one at or below that of the alternate rendition, such as the 0
+     * of {@link GainMapOptions#forSdr()}, the alternate one, and the headrooms between them a rendition between
+     * the two. A gain map of
      * another size than the image is resampled bilinearly at the pixel centers, in the log2 domain. Values that
      * fall outside the output signal range are clipped.
      *
@@ -53,8 +59,8 @@ public final class GainMaps {
      * with the base image's alpha, and a {@link DecodedImage#colorProfile()} made by
      * {@link com.github.auties00.smalt.image.color.ColorProfile#of} from the output primaries, the output
      * transfer function, the identity matrix and full range, with the content light level of the rendered
-     * pixels. It keeps the format, orientation, source size, EXIF, XMP and density of the base image and has no
-     * ICC bytes. The output does not depend on the thread count.
+     * pixels when the transfer function is PQ or HLG. It keeps the format, orientation, source size, EXIF, XMP and
+     * density of the base image and has no ICC bytes. The output does not depend on the thread count.
      *
      * @apiNote Decode a base image of more than 8 bits, such as the PQ base of an HDR file whose gain map dims it
      * to SDR, and a gain map image of more than 8 bits with

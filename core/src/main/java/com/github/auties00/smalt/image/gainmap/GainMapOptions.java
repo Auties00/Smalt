@@ -55,6 +55,19 @@ public final class GainMapOptions {
     }
 
     /**
+     * Returns the options that render for a standard-dynamic-range display: a headroom of 0, as sRGB, in the
+     * primaries of the alternate rendition, with the BT.2408 reference white.
+     *
+     * <p>They give the base rendition of an image whose base rendition is the standard-dynamic-range one, and the
+     * gain map's full dimming of one whose base rendition is the HDR one.
+     *
+     * @return the options
+     */
+    public static GainMapOptions forSdr() {
+        return builder().headroom(0).transfer(TransferCharacteristics.SRGB).build();
+    }
+
+    /**
      * Returns a builder initialized with {@link #defaults()}.
      *
      * @return the builder
@@ -77,21 +90,23 @@ public final class GainMapOptions {
      * the reference white, at least 0; empty by default, which renders the alternate rendition in full}
      *
      * <p>The gain map is applied with the {@linkplain GainMapMetadata#weight(double) weight} of this headroom: a
-     * headroom at or below that of the base rendition gives the base rendition, one at or above that of the
-     * alternate rendition gives the alternate one.
+     * headroom on the far side of the base rendition's (at or below it for a standard-dynamic-range base, at or
+     * above it for an HDR base) gives the base rendition, one on the far side of the alternate rendition's gives
+     * the alternate one, and the headrooms between them a rendition between the two.
      */
     public OptionalDouble headroom() {
         return Double.isNaN(headroom) ? OptionalDouble.empty() : OptionalDouble.of(headroom);
     }
 
     /**
-     * {@return the transfer function of the rendered picture, {@link TransferCharacteristics#PQ} or
-     * {@link TransferCharacteristics#HLG}; PQ by default}
+     * {@return the transfer function of the rendered picture, {@link TransferCharacteristics#PQ},
+     * {@link TransferCharacteristics#HLG} or {@link TransferCharacteristics#SRGB}; PQ by default}
      *
      * <p>PQ places a linear value of 1 at the {@link #referenceWhite()} and clips at 10000 candelas per square
      * meter. HLG places it at the reference white of the 1000 candelas per square meter reference display, clips
      * at that peak, and removes the BT.2100 system gamma (1.2, on the luminance of the output primaries) before
-     * the OETF.
+     * the OETF. sRGB places it at the signal peak and clips above, which suits a rendering for a headroom of 0,
+     * such as the standard-dynamic-range rendition of an image whose base rendition is the HDR one.
      */
     public TransferCharacteristics transfer() {
         return transfer;
@@ -225,15 +240,16 @@ public final class GainMapOptions {
          *
          * @return the options
          * @throws IllegalArgumentException if the headroom is negative or not finite, the transfer function is
-         * neither PQ nor HLG, the primaries are {@link ColorPrimaries#UNSPECIFIED}, or the reference white is
+         * not PQ, HLG or sRGB, the primaries are {@link ColorPrimaries#UNSPECIFIED}, or the reference white is
          * not from 1 to 10000
          */
         public GainMapOptions build() {
             if (!automaticHeadroom && !(headroom >= 0 && headroom < Double.POSITIVE_INFINITY)) {
                 throw new IllegalArgumentException("invalid headroom " + headroom);
             }
-            if (transfer != TransferCharacteristics.PQ && transfer != TransferCharacteristics.HLG) {
-                throw new IllegalArgumentException("gain maps render to PQ or HLG, not " + transfer);
+            if (transfer != TransferCharacteristics.PQ && transfer != TransferCharacteristics.HLG
+                    && transfer != TransferCharacteristics.SRGB) {
+                throw new IllegalArgumentException("gain maps render to PQ, HLG or sRGB, not " + transfer);
             }
             if (primaries == ColorPrimaries.UNSPECIFIED) {
                 throw new IllegalArgumentException("unspecified primaries");
