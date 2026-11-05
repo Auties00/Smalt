@@ -35,14 +35,17 @@ import java.util.Set;
  * chapters of an ordered edition name, in their order, or the segments of a hard-linked chain one after another.
  *
  * <p>Each part reads its segment from the key frame at or before its start. Video frames that end at or before the
- * start are flagged {@link PacketFlag#DISCARD}, and so are the audio frames before it that the codec needs to
- * rebuild its state (as {@link #prerollCount} counts them); the other frames that end at or before the start are
- * dropped. Video and data frames straddling the start are cut to it, and audio frames straddling it keep their
- * timestamp and carry the samples before it as their discard start. Frames presented at or after the end are
- * dropped, except frames of a track whose frames are stored out of presentation order that a later frame before the
- * end may reference, which are kept and flagged {@link PacketFlag#DISCARD}. Timestamps move to the part's place on
- * the timeline; decoding timestamps never decrease, and a discarded video or data frame gets a negative presentation
- * timestamp, which no presented frame has.
+ * start are flagged {@link PacketFlag#DISCARD}, and so are the audio frames before it that the codec needs to rebuild
+ * its state (as {@link #prerollCount} counts them); the other frames that end at or before the start are dropped. Video
+ * and data frames straddling the start are cut to it, and audio frames straddling it keep their timestamp and carry the
+ * samples before it as their discard start. Frames presented at or after the end are dropped, except frames of a track
+ * whose frames are stored out of presentation order that a later frame before the end may reference, which are kept and
+ * flagged {@link PacketFlag#DISCARD}. The bounds of a part are played times, which for audio lie the codec delay of the
+ * segment track (the Opus pre-skip, {@code CodecDelay}) after the block timestamps (RFC 9559), and the priming a
+ * decoder drops once, at the start of the timeline, is cut that much earlier, so that every part presents the samples
+ * played between its bounds at its place. Timestamps move to the part's place on the timeline; decoding timestamps
+ * never decrease, and a discarded video or data frame gets a negative presentation timestamp, which no presented frame
+ * has.
  *
  * <p>Instances are not thread-safe.
  */
@@ -116,6 +119,11 @@ final class MatroskaTimeline implements AutoCloseable {
      * nanoseconds.
      */
     private static final long OPUS_PREROLL_NANOS = 80_000_000L;
+
+    /**
+     * The time base of the Opus pre-skip.
+     */
+    private static final Rational OPUS_RATE = Rational.timeBaseOf(48_000);
 
     /**
      * The most audio packets before the start of a part held for its pre-roll.
@@ -206,6 +214,12 @@ final class MatroskaTimeline implements AutoCloseable {
     private final long budget;
 
     /**
+     * The largest codec delay of the audio tracks in nanoseconds, how far past the end of the timeline their
+     * timestamps run.
+     */
+    private final long tailNanos;
+
+    /**
      * Constructs a timeline.
      *
      * @param tracks the tracks of the file's own segment
@@ -216,6 +230,7 @@ final class MatroskaTimeline implements AutoCloseable {
      */
     private MatroskaTimeline(List<Track> tracks, List<Part> parts, List<Segment> segments, long durationNanos,
                              List<ChapterEdition> editions) {
+        tracks = primedTracks(tracks, parts.getFirst());
         this.tracks = tracks;
         this.parts = parts;
         this.segments = segments;
@@ -235,6 +250,51 @@ final class MatroskaTimeline implements AutoCloseable {
             size = length < 0 || size > Long.MAX_VALUE / 8 - length ? Long.MAX_VALUE / 8 : size + length;
         }
         this.budget = Math.max(MIN_READ_BUDGET, size * READ_FACTOR);
+        var tail = 0L;
+        for (var track : tracks) {
+            tail = Math.max(tail, track.timeBase().rescale(codecDelay(track), NANOS));
+        }
+        this.tailNanos = tail;
+    }
+
+    /**
+     * Gives the audio tracks of the timeline, other than Opus, the codec delay of the segment tracks that feed them in
+     * the first part, which is the priming their decoders drop from the start of the timeline.
+     *
+     * <p>An Opus decoder takes its pre-skip from the codec configuration, which the first packet of a linked segment
+     * carries, so an Opus track keeps its own.
+     *
+     * @param tracks the tracks of the file's own segment
+     * @param first the first part
+     * @return the tracks of the timeline
+     */
+    private static List<Track> primedTracks(List<Track> tracks, Part first) {
+        if (first.whole()) {
+            return tracks;
+        }
+        List<Track> result = null;
+        for (var entry : first.segment().trackMap.entrySet()) {
+            var source = first.segment().tracks.get(entry.getKey());
+            if (!(source instanceof AudioTrack sourceAudio) || source.codec() == Codec.OPUS) {
+                continue;
+            }
+            for (var index = 0; index < tracks.size(); index++) {
+                if (tracks.get(index).id() != entry.getValue() || !(tracks.get(index) instanceof AudioTrack audio)
+                        || audio.sampleRate() <= 0) {
+                    continue;
+                }
+                var skip = sourceAudio.sampleRate() <= 0 || sourceAudio.skipSamples() <= 0 ? 0
+                        : Rational.timeBaseOf(sourceAudio.sampleRate()).rescale(sourceAudio.skipSamples(),
+                        Rational.timeBaseOf(audio.sampleRate()));
+                if (skip != audio.skipSamples()) {
+                    if (result == null) {
+                        result = new ArrayList<>(tracks);
+                    }
+                    result.set(index, audio.toBuilder().skipSamples(skip).build());
+                }
+            }
+        }
+        return result == null ? tracks : List.copyOf(result);
     }
 
     /**
@@ -902,8 +962,9 @@ final class MatroskaTimeline implements AutoCloseable {
 
     /**
      * Positions the timeline so that every track restarts at its last key frame at or before a time, or, for a time
-     * before the timeline, at its start, from where the packets are those a read from the start returns; a seek that
-     * fails leaves the timeline where it was.
+     * before the timeline, at its start, from where the packets are those a read from the start returns; a time at or
+     * past the end of the timeline and of the audio timestamps, which run the codec delay past it, leaves nothing to
+     * read. A seek that fails leaves the timeline where it was.
      *
      * @param micros the time on the timeline, in microseconds
      */
@@ -931,7 +992,7 @@ final class MatroskaTimeline implements AutoCloseable {
             }
             index = candidate;
         }
-        var past = index < 0 || durationNanos >= 0 && target >= durationNanos;
+        var past = index < 0 || durationNanos >= 0 && target - tailNanos >= durationNanos;
         if (!past) {
             // a hard-linked segment that starts before its first key frame continues the segment before it
             var time = Math.max(target, parts.get(index).offsetNanos());
@@ -1007,10 +1068,22 @@ final class MatroskaTimeline implements AutoCloseable {
         }
         openTracks = 0;
         var counted = new HashSet<Integer>();
-        for (var mapped : part.segment().trackMap.values()) {
+        for (var entry : part.segment().trackMap.entrySet()) {
+            var mapped = entry.getValue();
             var state = states.get(mapped);
-            if (state != null && state.audioOrVideo && counted.add(mapped)) {
+            if (state == null) {
+                continue;
+            }
+            if (state.audioOrVideo && counted.add(mapped)) {
                 openTracks++;
+            }
+            var source = part.segment().tracks.get(entry.getKey());
+            if (source instanceof AudioTrack && !part.whole()) {
+                var base = state.track.timeBase();
+                state.sourceDelay = codecDelay(source);
+                state.shift = state.delay - rescaleDuration(state.sourceDelay, source.timeBase(), base);
+                // the decoder drops its priming once, from the start of the timeline
+                state.priming = Math.max(0, state.delay - NANOS.rescale(part.offsetNanos(), base));
             }
         }
     }
@@ -1073,14 +1146,17 @@ final class MatroskaTimeline implements AutoCloseable {
             endPart();
             return;
         }
-        var audio = source instanceof AudioTrack;
+        if (source instanceof AudioTrack audio) {
+            processAudio(state, audio, packet, effective);
+            return;
+        }
         if (time >= end) {
             state.inRange = false;
             if (state.done) {
                 state.remember(packet);
                 return;
             }
-            if (audio || !segment.demuxer.reorders(packet.trackId())) {
+            if (!segment.demuxer.reorders(packet.trackId())) {
                 state.remember(packet);
                 finishTrack(state);
                 return;
@@ -1106,44 +1182,137 @@ final class MatroskaTimeline implements AutoCloseable {
         state.inRange = time >= start || finish > start;
         if (time < start) {
             if (finish > start) {
-                if (audio) {
-                    // TODO: move the cut by the codec delay (the Opus pre-skip, CodecDelay) on the parts after the
-                    // first, whose decoder drops no delay, so that they start at their place rather than that far off
-                    flushPreroll(state, (AudioTrack) source);
-                    var duration = rescaleDuration(effective, source.timeBase(), base);
-                    var trimEnd = finish > end ? NANOS.rescale(finish - end, base) : 0;
-                    emit(state, source, packet, map(pts, source, state.track), Math.max(0, duration - trimEnd), false,
-                            NANOS.rescale(start - time, base), trimEnd);
-                } else {
-                    emit(state, source, packet, NANOS.rescale(part.offsetNanos(), base),
-                            NANOS.rescale(Math.min(finish, end) - start, base), false, 0, 0);
-                }
+                emit(state, source, packet, NANOS.rescale(part.offsetNanos(), base),
+                        NANOS.rescale(Math.min(finish, end) - start, base), false, 0, 0);
             } else if (source instanceof VideoTrack) {
                 emitDiscarded(state, source, packet);
-            } else if (audio && needsPreroll(source.codec())) {
+            } else {
+                state.remember(packet);
+            }
+            return;
+        }
+        var mappedPts = map(pts, source, state);
+        if (finish > end) {
+            emit(state, source, packet, mappedPts, Math.max(0, NANOS.rescale(part.offsetNanos() + end - start, base)
+                    - mappedPts), false, 0, 0);
+            return;
+        }
+        emit(state, source, packet, mappedPts, rescaleDuration(packet.duration(), source.timeBase(), base), false, 0,
+                0);
+    }
+
+    /**
+     * Applies the part being read to one audio packet of its segment that has a timestamp.
+     *
+     * <p>The part presents the samples played between its start and its end, which lie the codec delay of the
+     * segment track after the block timestamps. The samples the decoder still drops as its priming are added before
+     * them: for Opus, whose decoder drops its pre-skip from everything it decodes, decode-only frames included, as
+     * many samples of the straddling frame as the frames decoded before it leave to drop; for the other codecs,
+     * whose priming is dropped from the presented samples, as many samples before the start.
+     *
+     * @param state the state of the timeline track
+     * @param source the segment track
+     * @param packet the packet, in the segment's terms
+     * @param effective the duration of the packet in the segment track's time base, or
+     * {@link Packet#UNKNOWN_DURATION}
+     */
+    private void processAudio(TrackState state, AudioTrack source, Packet packet, long effective) {
+        var sourceBase = source.timeBase();
+        var base = state.track.timeBase();
+        var pts = packet.pts();
+        var opus = source.codec() == Codec.OPUS;
+        var played = NANOS.rescale(part.startNanos(), sourceBase) + state.sourceDelay;
+        var end = NANOS.rescale(part.endNanos(), sourceBase) + state.sourceDelay;
+        var start = opus ? played : played - rescaleDuration(state.priming, base, sourceBase);
+        var finish = effective >= 0 ? pts + effective : -1;
+        if (pts >= end) {
+            state.inRange = false;
+            state.remember(packet);
+            finishTrack(state);
+            return;
+        }
+        // a frame without timestamp after this one belongs to the part only when this one does
+        state.inRange = pts >= start || finish > start;
+        if (pts < start) {
+            if (finish > start) {
+                flushPreroll(state, source);
+                var skip = start - pts;
+                if (opus) {
+                    skip = Math.max(0, skip - rescaleDuration(primingBefore(state, source, packet), base,
+                            sourceBase));
+                }
+                var trimEnd = finish > end ? rescaleDuration(finish - end, sourceBase, base) : 0;
+                emit(state, source, packet, map(pts, source, state), Math.max(0, rescaleDuration(effective,
+                        sourceBase, base) - trimEnd), false, rescaleDuration(skip, sourceBase, base), trimEnd);
+            } else if (needsPreroll(source.codec())) {
                 state.keepPreroll(packet);
             } else {
                 state.remember(packet);
             }
             return;
         }
-        if (audio) {
-            flushPreroll(state, (AudioTrack) source);
-        }
-        var mappedPts = map(pts, source, state.track);
-        var duration = rescaleDuration(packet.duration(), source.timeBase(), base);
+        flushPreroll(state, source);
+        var mappedPts = map(pts, source, state);
         if (finish > end) {
-            if (audio) {
-                var trimEnd = NANOS.rescale(finish - end, base);
-                emit(state, source, packet, mappedPts, Math.max(0, rescaleDuration(effective, source.timeBase(), base)
-                        - trimEnd), false, 0, trimEnd);
-            } else {
-                emit(state, source, packet, mappedPts, Math.max(0, NANOS.rescale(part.offsetNanos() + end - start,
-                        base) - mappedPts), false, 0, 0);
-            }
+            var trimEnd = rescaleDuration(finish - end, sourceBase, base);
+            emit(state, source, packet, mappedPts, Math.max(0, rescaleDuration(effective, sourceBase, base)
+                    - trimEnd), false, 0, trimEnd);
             return;
         }
-        emit(state, source, packet, mappedPts, duration, false, 0, 0);
+        emit(state, source, packet, mappedPts, rescaleDuration(packet.duration(), sourceBase, base), false, 0, 0);
+    }
+
+    /**
+     * Returns the codec delay of an audio track: the samples its decoder drops from the start of the stream, which
+     * play before the time its block timestamps give (RFC 9559, {@code CodecDelay}).
+     *
+     * @param track a track
+     * @return the Opus pre-skip of the track's {@code OpusHead}, or the {@link AudioTrack#skipSamples()} of another
+     * audio track, in the track's time base; zero for a track that is not audio
+     */
+    private static long codecDelay(Track track) {
+        if (!(track instanceof AudioTrack audio)) {
+            return 0;
+        }
+        if (audio.codec() == Codec.OPUS) {
+            return opusPriming(audio.codecConfig().orElse(null), audio.timeBase());
+        }
+        if (audio.sampleRate() <= 0 || audio.skipSamples() <= 0) {
+            return 0;
+        }
+        return Rational.timeBaseOf(audio.sampleRate()).rescale(audio.skipSamples(), audio.timeBase());
+    }
+
+    /**
+     * Returns the pre-skip an Opus decoder created from a configuration drops.
+     *
+     * @param config the {@code OpusHead}, or {@code null}
+     * @param base the time base of the result
+     * @return the pre-skip in {@code base}, zero when the configuration has none
+     */
+    private static long opusPriming(byte[] config, Rational base) {
+        var preSkip = AudioConfigs.opusPreSkip(config);
+        return preSkip <= 0 ? 0 : OPUS_RATE.rescale(preSkip, base);
+    }
+
+    /**
+     * Returns the priming an Opus decoder still drops when it decodes a packet, counting the decoder that a
+     * codec configuration change the packet carries creates.
+     *
+     * @param state the state of the timeline track
+     * @param source the segment track
+     * @param packet the packet, in the segment's terms
+     * @return the samples, in the time base of the timeline track
+     */
+    private long primingBefore(TrackState state, Track source, Packet packet) {
+        var config = packet.sideData().newCodecConfig().orElse(null);
+        if (config == null) {
+            config = configChange(state, source, packet);
+        }
+        if (config != null && !Arrays.equals(config, state.activeConfig)) {
+            return opusPriming(config, state.track.timeBase());
+        }
+        return state.priming;
     }
 
     /**
@@ -1250,7 +1419,7 @@ final class MatroskaTimeline implements AutoCloseable {
             state.remember(state.preroll.poll());
         }
         for (var packet = state.preroll.poll(); packet != null; packet = state.preroll.poll()) {
-            emit(state, source, packet, map(packet.pts(), source, state.track), rescaleDuration(packet.duration(),
+            emit(state, source, packet, map(packet.pts(), source, state), rescaleDuration(packet.duration(),
                     source.timeBase(), state.track.timeBase()), true, 0, 0);
         }
     }
@@ -1293,17 +1462,21 @@ final class MatroskaTimeline implements AutoCloseable {
     /**
      * Moves a time of a segment track onto the timeline, in the time base of the timeline track.
      *
+     * <p>An audio time also moves by the difference between the codec delays of the timeline track and the segment
+     * track, so that a sample has the timestamp it would have in the file's own segment.
+     *
      * @param value the time, in the segment track's time base
      * @param source the segment track
-     * @param target the timeline track
+     * @param state the state of the timeline track
      * @return the time on the timeline
      */
-    private long map(long value, Track source, Track target) {
-        var base = target.timeBase();
+    private long map(long value, Track source, TrackState state) {
+        var base = state.track.timeBase();
         if (source.timeBase().equals(base)) {
-            return value + NANOS.rescale(part.offsetNanos() - part.startNanos(), base);
+            return value + NANOS.rescale(part.offsetNanos() - part.startNanos(), base) + state.shift;
         }
-        return NANOS.rescale(source.timeBase().rescale(value, NANOS) - part.startNanos() + part.offsetNanos(), base);
+        return NANOS.rescale(source.timeBase().rescale(value, NANOS) - part.startNanos() + part.offsetNanos(), base)
+                + state.shift;
     }
 
     /**
@@ -1363,12 +1536,12 @@ final class MatroskaTimeline implements AutoCloseable {
         var base = state.track.timeBase();
         var whole = part.whole();
         var natural = packet.pts() == Packet.NO_TIMESTAMP ? Packet.NO_TIMESTAMP
-                : whole ? rescale(packet.pts(), source.timeBase(), base) : map(packet.pts(), source, state.track);
+                : whole ? rescale(packet.pts(), source.timeBase(), base) : map(packet.pts(), source, state);
         var offset = whole ? 0 : NANOS.rescale(part.offsetNanos(), base);
         var dts = packet.dts();
         if (dts != Packet.NO_TIMESTAMP) {
             dts = dts == packet.pts() ? natural : whole ? rescale(dts, source.timeBase(), base)
-                    : map(dts, source, state.track);
+                    : map(dts, source, state);
             if (!whole) {
                 dts = Math.max(dts, offset);
             }
@@ -1384,16 +1557,19 @@ final class MatroskaTimeline implements AutoCloseable {
         }
         var sideData = packet.sideData();
         var own = sideData.newCodecConfig().orElse(null);
-        byte[] change = null;
+        var change = own != null ? null : configChange(state, source, packet);
+        if (source instanceof AudioTrack && source.codec() == Codec.OPUS) {
+            var config = own != null ? own : change;
+            if (config != null && !Arrays.equals(config, state.activeConfig)) {
+                state.priming = opusPriming(config, base);
+            }
+            var decoded = rescaleDuration(packet.duration(), source.timeBase(), base);
+            if (decoded >= 0) {
+                state.priming = Math.max(0, state.priming - decoded);
+            }
+        }
         if (own != null) {
             state.activeConfig = own;
-        } else if (state.pendingConfig != null) {
-            change = state.pendingConfig;
-        } else if (state.configSegment != part.segment()) {
-            var config = source.codecConfig().orElse(null);
-            if (config != null && !Arrays.equals(config, state.activeConfig)) {
-                change = config;
-            }
         }
         state.configSegment = part.segment();
         state.pendingConfig = null;
@@ -1410,6 +1586,32 @@ final class MatroskaTimeline implements AutoCloseable {
             sideData = builder.build();
         }
         out.add(new Packet(state.track.id(), packet.data(), pts, dts, duration, flags, sideData));
+    }
+
+    /**
+     * Returns the codec configuration a packet that carries none of its own passes on to the decoder of its track:
+     * that of a dropped packet not yet passed on, or that of the packet's segment where the decoder last decoded
+     * another segment with another configuration.
+     *
+     * @param state the state of the timeline track
+     * @param source the segment track
+     * @param packet the packet, in the segment's terms
+     * @return the configuration, or {@code null} when it stays the one in use
+     */
+    private byte[] configChange(TrackState state, Track source, Packet packet) {
+        if (packet.sideData().newCodecConfig().isPresent()) {
+            return null;
+        }
+        if (state.pendingConfig != null) {
+            return state.pendingConfig;
+        }
+        if (state.configSegment != part.segment()) {
+            var config = source.codecConfig().orElse(null);
+            if (config != null && !Arrays.equals(config, state.activeConfig)) {
+                return config;
+            }
+        }
+        return null;
     }
 
     /**
@@ -1458,6 +1660,28 @@ final class MatroskaTimeline implements AutoCloseable {
         private Segment configSegment;
 
         /**
+         * The codec delay of the timeline track, in its time base.
+         */
+        private final long delay;
+
+        /**
+         * The codec delay of the segment track that feeds the track in the part being read, in that track's time
+         * base.
+         */
+        private long sourceDelay;
+
+        /**
+         * The difference between {@link #delay} and {@link #sourceDelay}, in the time base of the timeline track,
+         * added to the audio timestamps of the part being read.
+         */
+        private long shift;
+
+        /**
+         * The samples the decoder of the track still drops as its priming, in the time base of the timeline track.
+         */
+        private long priming;
+
+        /**
          * Whether the track has no frame left before the end of the part being read.
          */
         private boolean done;
@@ -1489,6 +1713,7 @@ final class MatroskaTimeline implements AutoCloseable {
             this.held = new ArrayList<>();
             this.preroll = new ArrayDeque<>();
             this.activeConfig = track.codecConfig().orElse(null);
+            this.delay = codecDelay(track);
         }
 
         /**

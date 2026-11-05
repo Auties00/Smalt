@@ -15,7 +15,11 @@ Writes, under the repository's core test resources:
 - com/github/auties00/smalt/fuzz/DemuxerFuzzTestInputs/matroskaLinked/valid-linked-editions-loop.mkv: a program
   whose ordered chapter plays an edition of a second file, followed by that file and a third, whose eight ordered
   editions each play the next edition of the other file 64 times over, so that a full expansion would visit 64^8
-  chapters.
+  chapters;
+- com/github/auties00/smalt/fuzz/DemuxerFuzzTestInputs/matroskaLinked/valid-linked-opus-pre-skip.mkv: a program
+  whose Opus track has a pre-skip of 312 samples (its OpusHead and CodecDelay), whose ordered chapters play a span
+  of an intro whose Opus track has none by its SegmentUUID and two spans of its own, followed by the intro; its
+  Opus frames hold two 10 ms frames each (the TOC byte is the track number 2).
 
 Every frame starts with its track number, its file number and its stored timestamp. As for make-samples.sh, the
 committed files are the reference their golden dumps are tied to.
@@ -98,13 +102,22 @@ def clusters(items):
     return result
 
 
-def tracks():
+def tracks(audio=None):
     video = master(0xAE, uint(0xD7, VIDEO), uint(0x73C5, VIDEO), uint(0x83, 1), string(0x86, "V_UNCOMPRESSED"),
                    uint(0x23E383, 40_000_000),
                    master(0xE0, uint(0xB0, 4), uint(0xBA, 4), element(0x2EB524, b"YUY2")))
-    audio = master(0xAE, uint(0xD7, AUDIO), uint(0x73C5, AUDIO), uint(0x83, 2), string(0x86, "A_PCM/INT/LIT"),
-                   master(0xE1, floating(0xB5, 1000.0), uint(0x9F, 1), uint(0x6264, 8)))
+    if audio is None:
+        audio = master(0xAE, uint(0xD7, AUDIO), uint(0x73C5, AUDIO), uint(0x83, 2), string(0x86, "A_PCM/INT/LIT"),
+                       master(0xE1, floating(0xB5, 1000.0), uint(0x9F, 1), uint(0x6264, 8)))
     return master(0x1654AE6B, video, audio)
+
+
+def opus_audio(pre_skip):
+    head = b"OpusHead" + bytes([1, 1]) + struct.pack("<HIhB", pre_skip, 48000, 0, 0)
+    return master(0xAE, uint(0xD7, AUDIO), uint(0x73C5, AUDIO), uint(0x83, 2), string(0x86, "A_OPUS"),
+                  uint(0x23E383, 20_000_000), uint(0x56AA, pre_skip * 1_000_000_000 // 48000),
+                  uint(0x56BB, 80_000_000), element(0x63A2, head), master(0xE1, floating(0xB5, 48000.0),
+                                                                            uint(0x9F, 1)))
 
 
 def info(duration, identifier, *extra):
@@ -133,10 +146,10 @@ def edition(uid, ordered, default, *atoms):
     return master(0x45B9, *fields, *atoms)
 
 
-def matroska(segment_info, chapters, items):
+def matroska(segment_info, chapters, items, track_entries=None):
     header = master(0x1A45DFA3, uint(0x4286, 1), uint(0x42F7, 1), uint(0x42F2, 4), uint(0x42F3, 8),
                     string(0x4282, "matroska"), uint(0x4287, 4), uint(0x4285, 2))
-    children = [segment_info, tracks()]
+    children = [segment_info, track_entries if track_entries is not None else tracks()]
     if chapters is not None:
         children.append(master(0x1043A770, *chapters))
     children += clusters(items)
@@ -199,6 +212,26 @@ def linked_loop():
     return program + files[0] + files[1]
 
 
+def opus_frames(number, start, end):
+    result = []
+    for pts in range(start, end, 20):
+        if pts % SLOT == 0:
+            result.append((VIDEO, pts, pts % 400 == 0, frame(VIDEO, number, pts, 32)))
+        result.append((AUDIO, pts, True, frame(AUDIO, number, pts, 40)))
+    return result
+
+
+def linked_opus_pre_skip():
+    program_uid, intro_uid = uuid(1), uuid(2)
+    program = matroska(info(2000, program_uid), [edition(1, True, True,
+                                                          atom(200, 600, "Intro", element(0x6E67, intro_uid)),
+                                                          atom(1000, 1400, "Later"),
+                                                          atom(0, 400, "Start"))],
+                       opus_frames(0, 0, 2000), tracks(opus_audio(312)))
+    intro = matroska(info(1000, intro_uid), None, opus_frames(1, 0, 1000), tracks(opus_audio(0)))
+    return program + intro
+
+
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
     resources = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(here))), "core", "src", "test",
@@ -211,6 +244,7 @@ def main():
         os.path.join(seeds, "matroskaLinked", "valid-medium-linked.mkv"): medium_linked(),
         os.path.join(seeds, "matroskaLinked", "valid-hard-linked.mkv"): hard_linked(),
         os.path.join(seeds, "matroskaLinked", "valid-linked-editions-loop.mkv"): linked_loop(),
+        os.path.join(seeds, "matroskaLinked", "valid-linked-opus-pre-skip.mkv"): linked_opus_pre_skip(),
     }
     for path, data in outputs.items():
         os.makedirs(os.path.dirname(path), exist_ok=True)

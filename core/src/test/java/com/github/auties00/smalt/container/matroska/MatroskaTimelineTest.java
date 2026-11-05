@@ -1306,6 +1306,285 @@ class MatroskaTimelineTest {
     }
 
     @Nested
+    @DisplayName("codec delay")
+    class CodecDelay {
+        private static final byte[] OTHER = uuid(2);
+
+        static EbmlWriter.Node delayedAudio(String codecId, int rate, long defaultDuration, byte[] codecPrivate,
+                                            long codecDelayNanos) {
+            var children = new ArrayList<EbmlWriter.Node>(List.of(uint(EbmlIds.TRACK_NUMBER, AUDIO),
+                    uint(EbmlIds.TRACK_UID, AUDIO), uint(EbmlIds.TRACK_TYPE, 2), string(EbmlIds.CODEC_ID, codecId),
+                    uint(EbmlIds.DEFAULT_DURATION, defaultDuration), uint(EbmlIds.CODEC_DELAY, codecDelayNanos),
+                    master(EbmlIds.AUDIO, floating(EbmlIds.SAMPLING_FREQUENCY, rate), uint(EbmlIds.CHANNELS, 1))));
+            if (codecPrivate != null) {
+                children.add(binary(EbmlIds.CODEC_PRIVATE, codecPrivate));
+            }
+            return master(EbmlIds.TRACK_ENTRY, children);
+        }
+
+        static byte[] opusHead(int preSkip) {
+            var head = MatroskaTimelineTest.opusHead();
+            head[10] = (byte) preSkip;
+            head[11] = (byte) (preSkip >>> 8);
+            return head;
+        }
+
+        static EbmlWriter.Node opusTracks(int preSkip) {
+            return tracks(video(VIDEO, "V_VP8", null), delayedAudio("A_OPUS", 48000, 20_000_000L, opusHead(preSkip),
+                    preSkip * 1_000_000_000L / 48000));
+        }
+
+        static List<Frame> opusFrames(int segment, long to) {
+            var frames = new ArrayList<Frame>();
+            for (var pts = 0L; pts < to; pts += 20) {
+                if (pts % SLOT == 0) {
+                    frames.add(new Frame(VIDEO, pts, pts % 400 == 0, payload(VIDEO, segment, pts, 16)));
+                }
+                // the first payload byte, the track number 2, is the TOC of two 10 ms frames
+                frames.add(new Frame(AUDIO, pts, true, payload(AUDIO, segment, pts, 40)));
+            }
+            return frames;
+        }
+
+        /**
+         * An audio packet of the timeline: its stored time in milliseconds, whether it is decode-only, and its
+         * timestamp, duration and discards in samples.
+         */
+        record Cut(int segment, long storedMs, boolean discard, long pts, long duration, long discardStart,
+                   long discardEnd) {
+            static Cut of(Packet packet) {
+                var origin = origin(packet);
+                return new Cut(origin.segment(), origin.pts(), packet.flags().contains(PacketFlag.DISCARD),
+                        packet.pts(), packet.duration(), packet.sideData().discardStart(),
+                        packet.sideData().discardEnd());
+            }
+        }
+
+        static List<Cut> audioCuts(List<Packet> packets) {
+            return packets.stream().filter(packet -> packet.trackId() == AUDIO).map(Cut::of).toList();
+        }
+
+        /**
+         * Lists the cuts of the audio frames of one part whose frames last {@code frameMs} and hold
+         * {@code perMs} samples a millisecond.
+         */
+        static void part(List<Cut> into, int segment, long firstMs, long lastMs, long frameMs, int perMs,
+                         long offsetSamples, long discardStart, long lastDuration, int preroll) {
+            for (var stored = firstMs - preroll * frameMs; stored <= lastMs; stored += frameMs) {
+                var pts = (stored - firstMs) * perMs + offsetSamples;
+                var duration = stored == lastMs ? lastDuration : frameMs * perMs;
+                into.add(new Cut(segment, stored, stored < firstMs, pts, duration,
+                        stored == firstMs ? discardStart : 0, stored == lastMs ? frameMs * perMs - lastDuration : 0));
+            }
+        }
+
+        @Test
+        @DisplayName("cuts each part at its played time, the CodecDelay after the block timestamps")
+        void codecDelay() {
+            // 10 ms of codec delay, 80 samples at 8 kHz
+            var tracks = tracks(video(VIDEO, "V_VP8", null), delayedAudio("A_MPEG/L2", 8000, 40_000_000L, null,
+                    10_000_000L));
+            var data = file(info(4000, uuid(1)), tracks, chapters(ordered(atom(2000, 2400, "first"),
+                    atom(610, 1010, "second"))), av(0, 0, 4000));
+            try (var demuxer = open(data)) {
+                assertEquals(80, ((AudioTrack) demuxer.tracks().get(1)).skipSamples());
+                var packets = packets(demuxer);
+                assertMonotonicDts(packets);
+                var expected = new ArrayList<Cut>();
+                // the decoder drops the 80 samples of priming from the first part, which then ends 80 samples into
+                // the frame at 2400 ms
+                part(expected, 0, 2000, 2400, 40, 8, 0, 0, 80, 1);
+                // the second part starts 80 samples after 610 ms, 160 into the frame at 600 ms, and ends as far into
+                // the frame at 1000 ms
+                part(expected, 0, 600, 1000, 40, 8, 400 * 8 - 10 * 8, 160, 160, 1);
+                assertEquals(expected, audioCuts(packets));
+                // a seek gives the frames a read gives from there
+                demuxer.seek(400_000);
+                var restart = packets(demuxer).stream().filter(packet -> packet.trackId() == AUDIO).findFirst()
+                        .orElseThrow();
+                assertEquals(expected.get(13), Cut.of(restart));
+            }
+            DemuxerAsserts.of("matroska/ordered-codec-delay", data).noDump().run();
+        }
+
+        @Test
+        @DisplayName("cuts each Opus part at its played time, after the pre-skip its first frames drop")
+        void opusPreSkip() {
+            var data = file(info(2000, uuid(1)), opusTracks(312), chapters(ordered(atom(0, 400, "first"),
+                    atom(1000, 1400, "second"))), opusFrames(0, 2000));
+            try (var demuxer = open(data)) {
+                var packets = packets(demuxer);
+                assertMonotonicDts(packets);
+                var expected = new ArrayList<Cut>();
+                // the decoder drops the pre-skip from the first frame of the first part
+                part(expected, 0, 0, 400, 20, 48, 0, 0, 312, 0);
+                // the 80 ms decoded before the second part absorb no pre-skip, so its first frame drops 312 samples
+                part(expected, 0, 1000, 1400, 20, 48, 400 * 48, 312, 312, 4);
+                assertEquals(expected, audioCuts(packets));
+                demuxer.seek(-5);
+                assertEquals(expected, audioCuts(packets(demuxer)));
+            }
+            // a first part that starts later decodes its pre-roll first, which absorbs the pre-skip
+            var later = file(info(2000, uuid(1)), opusTracks(312), chapters(ordered(atom(1000, 1400, "only"))),
+                    opusFrames(0, 2000));
+            try (var demuxer = open(later)) {
+                var expected = new ArrayList<Cut>();
+                part(expected, 0, 1000, 1400, 20, 48, 0, 312, 312, 4);
+                assertEquals(expected, audioCuts(packets(demuxer)));
+            }
+            DemuxerAsserts.of("matroska/ordered-opus-pre-skip", data).noDump().run();
+        }
+
+        @Test
+        @DisplayName("times the laced Opus frames of a track without frame duration by their TOCs, and cuts them")
+        void lacedOpus() {
+            var blocks = new ArrayList<EbmlWriter.Node>(List.of(uint(EbmlIds.TIMESTAMP, 0)));
+            for (var pts = 0; pts < 2000; pts += 80) {
+                for (var video = pts; video < pts + 80; video += SLOT) {
+                    blocks.add(binary(EbmlIds.SIMPLE_BLOCK, EbmlWriter.block(VIDEO, video, video % 400 == 0 ? 0x80 : 0,
+                            payload(VIDEO, 0, video, 16))));
+                }
+                // a fixed-size lace of four 20 ms frames, as mkvmerge stores Opus
+                var lace = new java.io.ByteArrayOutputStream();
+                lace.write(3);
+                for (var frame = 0; frame < 4; frame++) {
+                    lace.writeBytes(payload(AUDIO, 0, pts + 20L * frame, 40));
+                }
+                blocks.add(binary(EbmlIds.SIMPLE_BLOCK, EbmlWriter.block(AUDIO, pts, 0x80 | 0x04, lace.toByteArray())));
+            }
+            var opus = master(EbmlIds.TRACK_ENTRY, uint(EbmlIds.TRACK_NUMBER, AUDIO), uint(EbmlIds.TRACK_UID, AUDIO),
+                    uint(EbmlIds.TRACK_TYPE, 2), string(EbmlIds.CODEC_ID, "A_OPUS"),
+                    uint(EbmlIds.CODEC_DELAY, 6_500_000), binary(EbmlIds.CODEC_PRIVATE, opusHead(312)),
+                    master(EbmlIds.AUDIO, floating(EbmlIds.SAMPLING_FREQUENCY, 48000), uint(EbmlIds.CHANNELS, 1)));
+            var stored = EbmlWriter.file("matroska", false, info(2000, uuid(1)), tracks(video(VIDEO, "V_VP8", null),
+                    opus), master(EbmlIds.CLUSTER, blocks));
+            try (var demuxer = open(stored)) {
+                var audio = packets(demuxer).stream().filter(packet -> packet.trackId() == AUDIO).toList();
+                assertEquals(100, audio.size());
+                for (var packet : audio) {
+                    assertEquals(origin(packet).pts() * 48, packet.pts(), packet.toString());
+                }
+            }
+            var data = EbmlWriter.file("matroska", false, info(2000, uuid(1)), tracks(video(VIDEO, "V_VP8", null),
+                    opus), chapters(ordered(atom(0, 400, "first"), atom(1000, 1400, "second"))),
+                    master(EbmlIds.CLUSTER, blocks));
+            try (var demuxer = open(data)) {
+                var expected = new ArrayList<Cut>();
+                part(expected, 0, 0, 400, 20, 48, 0, 0, 312, 0);
+                part(expected, 0, 1000, 1400, 20, 48, 400 * 48, 312, 312, 4);
+                assertEquals(expected, audioCuts(packets(demuxer)));
+            }
+        }
+
+        @Test
+        @DisplayName("counts the pre-skip of each new Opus decoder and the delay of each segment")
+        void linkedPreSkip() {
+            var main = file(info(800, uuid(1)), opusTracks(312), chapters(ordered(atom(0, 400, "intro", link(OTHER)),
+                    atom(0, 400, "main"))), opusFrames(0, 800));
+            var other = file(info(800, OTHER), opusTracks(0), null, opusFrames(1, 800));
+            try (var demuxer = open(main, new Library().add(OTHER, other).options())) {
+                var packets = packets(demuxer);
+                var audio = packets.stream().filter(packet -> packet.trackId() == AUDIO).toList();
+                var expected = new ArrayList<Cut>();
+                // the segment without delay plays from its first sample, stamped as the file's own track stamps it
+                part(expected, 1, 0, 380, 20, 48, 312, 0, 960, 0);
+                // the file's own segment comes with its own configuration, whose new decoder drops the pre-skip
+                part(expected, 0, 0, 400, 20, 48, 400 * 48, 0, 312, 0);
+                assertEquals(expected, audioCuts(packets));
+                assertArrayEquals(opusHead(0), audio.getFirst().sideData().newCodecConfig().orElseThrow());
+                assertArrayEquals(opusHead(312), audio.get(20).sideData().newCodecConfig().orElseThrow());
+            }
+        }
+
+        @Test
+        @DisplayName("stamps a linked segment without CodecDelay as the file's own track, and cuts each at its delay")
+        void linkedCodecDelay() {
+            var main = file(info(4000, uuid(1)), tracks(video(VIDEO, "V_VP8", null), delayedAudio("A_MPEG/L2", 8000,
+                    40_000_000L, null, 10_000_000L)), chapters(ordered(atom(2000, 2400, "main"),
+                    atom(610, 1010, "outro", link(OTHER)))), av(0, 0, 4000));
+            var other = file(info(4000, OTHER), tracks(video(VIDEO, "V_VP8", null), delayedAudio("A_MPEG/L2", 8000,
+                    40_000_000L, null, 0)), null, av(1, 0, 4000));
+            try (var demuxer = open(main, new Library().add(OTHER, other).options())) {
+                assertEquals(80, ((AudioTrack) demuxer.tracks().get(1)).skipSamples());
+                var packets = packets(demuxer);
+                assertMonotonicDts(packets);
+                var expected = new ArrayList<Cut>();
+                // the file's own segment plays from 10 ms after its block timestamps, less the 80 samples of priming
+                // the decoder drops
+                part(expected, 0, 2000, 2400, 40, 8, 0, 0, 80, 1);
+                // the outro plays from 610 ms, its block timestamp, 80 samples into the frame at 600 ms, stamped 80
+                // samples later than in its segment
+                part(expected, 1, 600, 1000, 40, 8, 400 * 8, 80, 80, 1);
+                assertEquals(expected, audioCuts(packets));
+            }
+        }
+
+        @Test
+        @DisplayName("primes the decoder with the CodecDelay of the segment the first part reads")
+        void linkedFirstPart() {
+            var main = file(info(4000, uuid(1)), tracks(video(VIDEO, "V_VP8", null), delayedAudio("A_MPEG/L2", 8000,
+                    40_000_000L, null, 10_000_000L)), chapters(ordered(atom(0, 400, "intro", link(OTHER)),
+                    atom(2000, 2400, "main"))), av(0, 0, 4000));
+            var other = file(info(4000, OTHER), tracks(video(VIDEO, "V_VP8", null), delayedAudio("A_MPEG/L2", 8000,
+                    40_000_000L, null, 0)), null, av(1, 0, 4000));
+            try (var demuxer = open(main, new Library().add(OTHER, other).options())) {
+                // the decoder drops the priming of the intro's track, none, rather than that of the file's own
+                assertEquals(0, ((AudioTrack) demuxer.tracks().get(1)).skipSamples());
+                var packets = packets(demuxer);
+                assertMonotonicDts(packets);
+                var expected = new ArrayList<Cut>();
+                // the intro plays from its first sample, whole
+                part(expected, 1, 0, 360, 40, 8, 0, 0, 320, 0);
+                // the file's own segment plays from 10 ms after its block timestamps, 80 samples into the frame at
+                // 2000 ms, stamped 80 samples earlier so that its first played sample lands at 400 ms
+                part(expected, 0, 2000, 2400, 40, 8, 400 * 8 - 80, 80, 80, 1);
+                assertEquals(expected, audioCuts(packets));
+                demuxer.seek(-5);
+                assertEquals(expected, audioCuts(packets(demuxer)));
+            }
+        }
+
+        @Test
+        @DisplayName("seeks within the codec delay past the end of the timeline to its last audio frame")
+        void seekTail() {
+            var tracks = tracks(video(VIDEO, "V_VP8", null), delayedAudio("A_MPEG/L2", 8000, 40_000_000L, null,
+                    10_000_000L));
+            var data = file(info(4000, uuid(1)), tracks, chapters(ordered(atom(2000, 2400, "first"),
+                    atom(610, 1010, "second"))), av(0, 0, 4000));
+            try (var demuxer = open(data)) {
+                var last = audioCuts(packets(demuxer)).getLast();
+                // the last frame is stamped 790 ms and plays until 810 ms, 10 ms past the 800 ms of the timeline
+                assertEquals(790 * 8, last.pts());
+                demuxer.seek(805_000);
+                assertEquals(List.of(last), audioCuts(packets(demuxer)));
+                demuxer.seek(810_000);
+                assertEquals(List.of(), packets(demuxer));
+            }
+        }
+
+        @Test
+        @DisplayName("times an Opus lace by the TOCs of its frames, an invalid frame counting no samples")
+        void lacedOpusInvalidFrame() {
+            var blocks = new ArrayList<EbmlWriter.Node>(List.of(uint(EbmlIds.TIMESTAMP, 0)));
+            // a fixed-size lace of three 3-byte frames: a 20 ms frame (TOC config 9), a code 3 frame of config 9
+            // whose frame count is zero, and a 10 ms frame (config 8)
+            var lace = new byte[]{2, 9 << 3, 0, 0, 9 << 3 | 3, 0, 0, 8 << 3, 0, 0};
+            blocks.add(binary(EbmlIds.SIMPLE_BLOCK, EbmlWriter.block(AUDIO, 0, 0x80 | 0x04, lace)));
+            var opus = master(EbmlIds.TRACK_ENTRY, uint(EbmlIds.TRACK_NUMBER, AUDIO), uint(EbmlIds.TRACK_UID, AUDIO),
+                    uint(EbmlIds.TRACK_TYPE, 2), string(EbmlIds.CODEC_ID, "A_OPUS"),
+                    binary(EbmlIds.CODEC_PRIVATE, opusHead(312)),
+                    master(EbmlIds.AUDIO, floating(EbmlIds.SAMPLING_FREQUENCY, 48000), uint(EbmlIds.CHANNELS, 1)));
+            var stored = EbmlWriter.file("matroska", false, info(100, uuid(1)), tracks(opus),
+                    master(EbmlIds.CLUSTER, blocks));
+            try (var demuxer = open(stored)) {
+                var audio = packets(demuxer);
+                assertEquals(List.of(0L, 960L, 960L), audio.stream().map(Packet::pts).toList());
+                assertEquals(List.of(960L, 0L, 480L), audio.stream().map(Packet::duration).toList());
+            }
+        }
+    }
+
+    @Nested
     @DisplayName("segment probe")
     class Probe {
         @Test

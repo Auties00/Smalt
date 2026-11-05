@@ -2083,11 +2083,15 @@ checks a FLAC source's MD5 signature on the way.
   timeline but is decoded as the file's own track. Packets flagged `PacketFlag.DISCARD` (the decode-only frames
   before and after a part, and the audio frames before a part that rebuild the decoder state) and the audio packets
   a part cuts are carried by the muxers as the MP4 edits below describe. The audio cut at a part boundary follows
-  the block timestamps, and the codec delay (the Opus pre-skip, a `CodecDelay`) is dropped once, at the start of
-  the decode: the parts after the first start up to that delay (6.5 ms for a usual Opus stream) off their place. A
-  seek restarts the audio at its frame straddling the target, without the decode-only frames before it, except a
-  seek before the timeline, which gives the packets of a read from the start. A seek that lands within a part of
-  another segment than the file's own gives its first packet the codec configuration of that segment as
+  the block timestamps less the codec delay (the Opus pre-skip, a `CodecDelay`), so it is exact to the sample only
+  when they count samples: it lands as far off as they are, up to half a millisecond with the usual millisecond
+  `TimestampScale` for a codec whose frames do not last whole milliseconds (AAC, MP3), and a millisecond in the Opus
+  files ffmpeg writes, which store every block after the first a millisecond late. Opus parts after a jump match a
+  decode of the stored file in place but not bit for bit, as after a seek. An audio track other than Opus reports
+  as its `skipSamples` the codec delay of the segment the first part reads, the priming its decoder drops. A seek
+  restarts the audio at its frame straddling the target, without the decode-only frames before it, except a seek
+  before the timeline, which gives the packets of a read from the start. A seek that lands within a part of another
+  segment than the file's own gives its first packet the codec configuration of that segment as
   `PacketSideData.newCodecConfig`, so the packets after a seek are not always those a read from the start gives
   from there.
 - MP4 edits play at normal speed whatever their media rate other than 0. A dwell edit of an audio track, or

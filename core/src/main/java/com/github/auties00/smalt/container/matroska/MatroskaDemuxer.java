@@ -65,7 +65,8 @@ import java.util.Set;
  * non-key frame and whose {@code BlockDuration} gives the duration) become one packet per frame,
  * Xiph, EBML and fixed-size lacing are split, and frames after the first of a lace get the block
  * timestamp plus the frame duration ({@code DefaultDuration}, or the {@code BlockDuration} divided
- * among the frames), or no timestamp when neither is known. A frame of an IMA or Microsoft ADPCM
+ * among the frames), or, when neither is known, the durations the TOCs of the Opus frames before
+ * them give and no timestamp for other codecs. A frame of an IMA or Microsoft ADPCM
  * {@code A_MS/ACM} track that holds several blocks of its format's block alignment becomes one packet per
  * block, timed in samples from the frame's timestamp. An {@code A_MS/ACM} track of the ATRAC9
  * {@code WAVEFORMATEXTENSIBLE} sub-format is an ATRAC9 track configured with the configuration word of its extra
@@ -132,21 +133,25 @@ import java.util.Set;
  *
  * <p>On a virtual timeline every part plays its segment from the key frame at or before its start: video frames that
  * end at or before the start are returned flagged {@link PacketFlag#DISCARD}, and so are the audio frames before it
- * that rebuild the decoder state (counted per codec as for the edits of an MP4 track: none for PCM, FLAC and ALAC,
- * 80 ms for Opus, two packets for AAC, one for most other codecs), while the other frames that end at or before it
- * are not returned; video and data frames that straddle it are cut to it, and audio frames that straddle it keep their
+ * that rebuild the decoder state (counted per codec as for the edits of an MP4 track: none for PCM, FLAC and ALAC, 80
+ * ms for Opus, two packets for AAC, one for most other codecs), while the other frames that end at or before it are not
+ * returned; video and data frames that straddle it are cut to it, and audio frames that straddle it keep their
  * timestamp and carry the samples before it as their {@link PacketSideData#discardStart()}. A frame presented at or
  * after the end of the part is not returned, except a frame of a track whose frames are stored out of presentation
  * order (H.264, HEVC, MPEG-4 Part 2, MPEG-1 and MPEG-2 video) that a later frame before the end follows, which is
  * returned flagged {@link PacketFlag#DISCARD}; an audio frame straddling the end carries the samples after it as its
- * {@link PacketSideData#discardEnd()} and a video or data frame straddling it is cut. Timestamps are those of the
- * timeline, decoding timestamps never decrease, and a discarded video or data frame has a negative presentation
- * timestamp, which no presented frame has. A seek within a hard-linked segment before its first key frame reads from
- * the last key frames of the segment before. The parts read at most four times the size of their segments, or 4 MiB
- * when that is more, between seeks. The duration, the track durations and the chapters are those of the timeline:
- * {@link #chapterEditions()} holds the played edition alone, flagged as the default and not ordered, its chapters (the
- * visible ones, nested as stored, the visible chapters nested in a hidden one in its place) spanning the parts they
- * play; a hard-linked chain reports the chapters of the default edition of each of its segments.
+ * {@link PacketSideData#discardEnd()} and a video or data frame straddling it is cut. The bounds of a part are the
+ * times its samples play, which for audio lie the codec delay of the track (the Opus pre-skip, {@code CodecDelay})
+ * after the block timestamps: each audio part presents the samples played between its bounds, after the priming the
+ * decoder drops once, at the start of the timeline, as {@link AudioTrack#skipSamples()} or the Opus header gives it;
+ * the {@code skipSamples} of an audio track other than Opus is the codec delay of the segment the first part reads.
+ * Timestamps are those of the timeline, decoding timestamps never decrease, and a discarded video or data frame has a
+ * negative presentation timestamp, which no presented frame has. A seek within a hard-linked segment before its first
+ * key frame reads from the last key frames of the segment before. The parts read at most four times the size of their
+ * segments, or 4 MiB when that is more, between seeks. The duration, the track durations and the chapters are those of
+ * the timeline: {@link #chapterEditions()} holds the played edition alone, flagged as the default and not ordered, its
+ * chapters (the visible ones, nested as stored, the visible chapters nested in a hidden one in its place) spanning the
+ * parts they play; a hard-linked chain reports the chapters of the default edition of each of its segments.
  *
  * <p>Seeking uses the {@code Cues}, read on the first {@link #seek(long)}: the cue points of the first video track (of
  * any track when there is no video) name the cluster holding the last key frame at or before the target. Without usable
@@ -691,7 +696,7 @@ public final class MatroskaDemuxer implements Demuxer {
                 var nanos = built.durationNanos();
                 this.durationMicros = nanos < 0 ? -1 : Math.round(nanos / 1000.0);
                 this.editions = built.editions();
-                this.tracks = withDuration(rawTracks, nanos);
+                this.tracks = withDuration(built.tracks(), nanos);
             } else {
                 this.durationMicros = storedDuration;
                 this.editions = selectEdition(rawEditions, options);
@@ -2489,12 +2494,17 @@ public final class MatroskaDemuxer implements Demuxer {
         var timestamp = clusterTimestamp + layout.relativeTimestamp();
         var frames = layout.frameCount();
         var encoded = entry.encodesFrames();
+        // the samples of the earlier frames of an Opus lace, which time the later frames when no duration is declared
+        var laceSamples = entry.codec == Codec.OPUS ? 0L : -1L;
         for (var index = 0; index < frames; index++) {
             var offset = layout.frameOffset(index);
             var length = layout.frameLength(index);
             var data = encoded ? entry.decodeFrame(block, offset, length, limits) : java.util.Arrays.copyOfRange(block, offset, offset + length);
             queueFrame(entry, data, timestamp, index, frames, blockDuration, keyframe,
-                    simple ? layout.flags() : layout.flags() & INVISIBLE);
+                    simple ? layout.flags() : layout.flags() & INVISIBLE, laceSamples);
+            if (laceSamples >= 0) {
+                laceSamples += opusSamples(data);
+            }
         }
     }
 
@@ -2532,7 +2542,7 @@ public final class MatroskaDemuxer implements Demuxer {
         }
         var data = new byte[(int) (size - length - 3)];
         reader.readFully(data, 0, data.length);
-        queueFrame(entry, data, clusterTimestamp + relative, 0, 1, -1, (flags & 0x80) != 0, flags);
+        queueFrame(entry, data, clusterTimestamp + relative, 0, 1, -1, (flags & 0x80) != 0, flags, -1);
     }
 
     /**
@@ -2542,8 +2552,9 @@ public final class MatroskaDemuxer implements Demuxer {
      * {@link MatroskaTrackEntry#timeBase}. The first frame takes the block timestamp; a later
      * frame of a lace takes the block timestamp plus its offset in the lace, computed from the
      * frame duration: the track's {@code DefaultDuration}, or the {@code BlockDuration} divided
-     * among the frames. Without either, later frames get no timestamp, and the duration of an Opus
-     * frame comes from its TOC.
+     * among the frames. Without either, the duration of an Opus frame comes from its TOC, a later
+     * frame of an Opus lace takes the block timestamp plus the durations of the frames before it,
+     * and a later frame of another codec gets no timestamp.
      *
      * @param entry the frame's track
      * @param data the frame bytes
@@ -2553,9 +2564,11 @@ public final class MatroskaDemuxer implements Demuxer {
      * @param blockDuration the {@code BlockDuration} in segment time base units, or {@code -1}
      * @param keyframe whether the block is a key frame
      * @param blockFlags the flags byte of a {@code SimpleBlock}, or the invisible bit of a {@code Block}
+     * @param laceSamples the 48 kHz samples of the frames before this one in an Opus lace, or {@code -1} for
+     * another codec
      */
     private void queueFrame(MatroskaTrackEntry entry, byte[] data, long timestamp, int index, int frames, long blockDuration,
-                            boolean keyframe, int blockFlags) {
+                            boolean keyframe, int blockFlags, long laceSamples) {
         var base = entry.timeBase;
         var frameDuration = -1.0;
         if (entry.defaultDuration > 0) {
@@ -2569,7 +2582,8 @@ public final class MatroskaDemuxer implements Demuxer {
         if (index == 0) {
             pts = start;
         } else {
-            pts = frameDuration >= 0 ? start + Math.round(index * frameDuration) : Packet.NO_TIMESTAMP;
+            pts = frameDuration >= 0 ? start + Math.round(index * frameDuration)
+                    : laceSamples >= 0 ? start + OPUS_RATE.rescale(laceSamples, base) : Packet.NO_TIMESTAMP;
         }
         long duration;
         if (frames == 1 && blockDuration >= 0) {
