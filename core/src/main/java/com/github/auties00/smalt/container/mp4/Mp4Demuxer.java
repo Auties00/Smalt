@@ -1002,7 +1002,8 @@ public final class Mp4Demuxer implements Demuxer {
     /**
      * Turns the samples of the first QuickTime chapter track into chapters: each sample is a
      * 16-bit big-endian length followed by the title in UTF-8, or in UTF-16 after a byte order
-     * mark, and spans the sample's presentation time.
+     * mark, and spans the sample's presentation time; a sample without a duration ends where the next chapter
+     * starts, or at the end of the presentation.
      *
      * @param annotations receives the chapters
      */
@@ -1038,8 +1039,8 @@ public final class Mp4Demuxer implements Demuxer {
                             title = new String(bytes, 2, length, StandardCharsets.UTF_8);
                         }
                         var start = timeBase.toMicros(Math.max(0, samples.pts(index) + candidate.shift));
-                        var end = start + timeBase.toMicros(Integer.toUnsignedLong(samples.durations[index]));
-                        annotations.addChapter(start, end, title);
+                        var duration = Integer.toUnsignedLong(samples.durations[index]);
+                        annotations.addChapter(start, duration == 0 ? -1 : start + timeBase.toMicros(duration), title);
                     }
                     return;
                 }
@@ -2109,6 +2110,15 @@ public final class Mp4Demuxer implements Demuxer {
          * The index of the first sample byte in {@link #data}.
          */
         int dataOffset;
+    }
+
+    /**
+     * {@return the identifier of the track of the sample {@link #nextSample(SampleInfo)} returns next, or
+     * {@code -1} when every sample was returned}
+     */
+    int nextSampleTrack() {
+        loadFragments();
+        return heapSize == 0 ? -1 : active[heap[0]].id;
     }
 
     /**

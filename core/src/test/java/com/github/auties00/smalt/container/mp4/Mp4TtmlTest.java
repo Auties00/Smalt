@@ -708,4 +708,415 @@ class Mp4TtmlTest {
             }
         }
     }
+
+    @Nested
+    @DisplayName("image resources")
+    class ImageResources {
+        /** Encodes an RGB PNG image whose pixels follow from a seed. */
+        static byte[] png(int width, int height, int seed) {
+            var raw = new byte[height * (1 + width * 3)];
+            var random = new Random(seed);
+            for (var row = 0; row < height; row++) {
+                for (var at = row * (1 + width * 3) + 1; at < (row + 1) * (1 + width * 3); at++) {
+                    raw[at] = (byte) random.nextInt(256);
+                }
+            }
+            var deflater = new java.util.zip.Deflater();
+            deflater.setInput(raw);
+            deflater.finish();
+            var compressed = new ByteArrayOutputStream();
+            var buffer = new byte[4096];
+            while (!deflater.finished()) {
+                compressed.write(buffer, 0, deflater.deflate(buffer));
+            }
+            deflater.end();
+            var header = ByteBuffer.allocate(13).putInt(width).putInt(height).put((byte) 8).put((byte) 2)
+                    .put((byte) 0).put((byte) 0).put((byte) 0).array();
+            var out = new ByteArrayOutputStream();
+            out.writeBytes(new byte[]{(byte) 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A});
+            chunk(out, "IHDR", header);
+            chunk(out, "IDAT", compressed.toByteArray());
+            chunk(out, "IEND", new byte[0]);
+            return out.toByteArray();
+        }
+
+        static void chunk(ByteArrayOutputStream out, String type, byte[] data) {
+            var crc = new java.util.zip.CRC32();
+            var name = type.getBytes(StandardCharsets.US_ASCII);
+            crc.update(name);
+            crc.update(data);
+            out.writeBytes(ByteBuffer.allocate(4).putInt(data.length).array());
+            out.writeBytes(name);
+            out.writeBytes(data);
+            out.writeBytes(ByteBuffer.allocate(4).putInt((int) crc.getValue()).array());
+        }
+
+        /** An IMSC 1 image profile document showing one image per region, the images following it. */
+        static byte[] imageDocument(String prefix, long beginMillis, long endMillis, int images, String suffix) {
+            var text = new StringBuilder(prefix).append("<tt xmlns=\"http://www.w3.org/ns/ttml\" ")
+                    .append("xmlns:smpte=\"http://www.smpte-ra.org/schemas/2052-1/2010/smpte-tt\" ")
+                    .append("xmlns:ttp=\"http://www.w3.org/ns/ttml#parameter\" ")
+                    .append("ttp:profile=\"http://www.w3.org/ns/ttml/profile/imsc1/image\" xml:lang=\"en\">")
+                    .append("<body>");
+            for (var image = 1; image <= images; image++) {
+                text.append("<div begin=\"").append(beginMillis).append("ms\" end=\"").append(endMillis)
+                        .append("ms\" smpte:backgroundImage=\"urn:mpeg:14496-30:subs:").append(image).append("\"/>");
+            }
+            return text.append("</body></tt>").append(suffix).toString().getBytes(StandardCharsets.UTF_8);
+        }
+
+        static byte[] concat(byte[]... parts) {
+            var out = new ByteArrayOutputStream();
+            for (var part : parts) {
+                out.writeBytes(part);
+            }
+            return out.toByteArray();
+        }
+
+        static int[] sizes(byte[]... parts) {
+            return Arrays.stream(parts).mapToInt(part -> part.length).toArray();
+        }
+
+        static List<Packet> packets() {
+            var first = imageDocument("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n", 0, 1000, 2, "\n");
+            var second = imageDocument("", 1000, 2000, 1, "");
+            return List.of(packet(1, concat(first, png(16, 8, 1), png(4, 4, 2)), 0, 1000),
+                    packet(1, document("plain", 2000, 2500), 2000, 500),
+                    packet(1, concat(second, png(32, 2, 3)), 2500, 500));
+        }
+
+        /** The sub-sample sizes of the samples {@link #packets()} become, by sample number from 1. */
+        static java.util.Map<Integer, int[]> expectedSubsamples() {
+            var packets = packets();
+            var first = imageDocument("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n", 0, 1000, 2, "\n");
+            var second = imageDocument("", 1000, 2000, 1, "");
+            assertEquals(0, packets.get(0).pts());
+            // the second sample is the empty document of the gap from 1000 to 2000 ms
+            return java.util.Map.of(1, sizes(first, png(16, 8, 1), png(4, 4, 2)),
+                    4, sizes(second, png(32, 2, 3)));
+        }
+
+        /** One entry of a {@code subs} box: the number of its sample and the sizes of its sub-samples. */
+        record Entry(int sample, List<Integer> sizes) {
+        }
+
+        static final java.util.Set<String> CONTAINERS = java.util.Set.of("moov", "trak", "mdia", "minf", "stbl",
+                "moof", "traf");
+
+        /**
+         * Returns the entries of the {@code subs} boxes of a file with their sample numbers, counted from 1 over the
+         * whole track: in {@code stbl}, or in each {@code traf} after the samples of the earlier fragments of the
+         * track.
+         */
+        static List<Entry> subsEntries(byte[] file, int trackId) {
+            var entries = new ArrayList<Entry>();
+            walk(file, 0, file.length, -1, trackId, new java.util.HashMap<>(), entries);
+            return entries;
+        }
+
+        private static void walk(byte[] file, int start, int end, int track, int trackId,
+                                 java.util.Map<Integer, Integer> before, List<Entry> entries) {
+            var buffer = ByteBuffer.wrap(file);
+            for (var offset = start; offset + 8 <= end && buffer.getInt(offset) >= 8; offset += buffer.getInt(offset)) {
+                var type = new String(file, offset + 4, 4, StandardCharsets.ISO_8859_1);
+                if (type.equals("tkhd")) {
+                    track = buffer.getInt(offset + 8 + ((file[offset + 8] & 0xFF) == 1 ? 20 : 12));
+                } else if (type.equals("tfhd")) {
+                    track = buffer.getInt(offset + 12);
+                }
+            }
+            var runSamples = 0;
+            var pending = new ArrayList<Entry>();
+            for (var offset = start; offset + 8 <= end && buffer.getInt(offset) >= 8; ) {
+                var size = (int) (buffer.getInt(offset) & 0xFFFFFFFFL);
+                var type = new String(file, offset + 4, 4, StandardCharsets.ISO_8859_1);
+                switch (type) {
+                    case "trun" -> runSamples += buffer.getInt(offset + 12);
+                    case "subs" -> {
+                        var version = file[offset + 8] & 0xFF;
+                        var count = buffer.getInt(offset + 12);
+                        var at = offset + 16;
+                        var sample = 0;
+                        for (var entry = 0; entry < count; entry++) {
+                            sample += buffer.getInt(at);
+                            var subsamples = buffer.getShort(at + 4) & 0xFFFF;
+                            at += 6;
+                            var list = new ArrayList<Integer>();
+                            for (var index = 0; index < subsamples; index++) {
+                                list.add(version == 1 ? buffer.getInt(at) : buffer.getShort(at) & 0xFFFF);
+                                assertEquals(0, file[at + (version == 1 ? 4 : 2)], "subsample_priority");
+                                assertEquals(0, file[at + (version == 1 ? 5 : 3)], "discardable");
+                                at += version == 1 ? 10 : 8;
+                            }
+                            pending.add(new Entry(sample, list));
+                        }
+                        assertEquals(offset + size, at, "subs box size");
+                    }
+                    default -> {
+                        if (CONTAINERS.contains(type)) {
+                            walk(file, offset + 8, offset + size, track, trackId, before, entries);
+                        }
+                    }
+                }
+                offset += size;
+            }
+            if (track == trackId) {
+                for (var entry : pending) {
+                    entries.add(new Entry(entry.sample() + before.getOrDefault(track, 0), entry.sizes()));
+                }
+            }
+            before.merge(track, runSamples, Integer::sum);
+        }
+
+        /**
+         * Returns the sub-samples a muxed track must declare: those of the source sample with the same start, by the
+         * sample number of the muxed track.
+         */
+        static java.util.Map<Integer, int[]> bySample(List<Packet> written, List<Packet> source, List<Entry> subs) {
+            var byStart = new java.util.HashMap<Long, int[]>();
+            for (var entry : subs) {
+                byStart.put(source.get(entry.sample() - 1).pts(),
+                        entry.sizes().stream().mapToInt(Integer::intValue).toArray());
+            }
+            var result = new java.util.HashMap<Integer, int[]>();
+            var matched = 0;
+            for (var index = 0; index < written.size(); index++) {
+                var sizes = byStart.get(written.get(index).pts());
+                if (sizes != null) {
+                    result.put(index + 1, sizes);
+                    matched++;
+                }
+            }
+            assertEquals(subs.size(), matched, "every source sample with sub-samples is written");
+            return result;
+        }
+
+        static void assertSubsamples(java.util.Map<Integer, int[]> expected, List<Entry> actual) {
+            assertEquals(expected.size(), actual.size(), actual.toString());
+            for (var entry : actual) {
+                var sizes = expected.get(entry.sample());
+                assertNotNull(sizes, "unexpected entry " + entry);
+                assertEquals(Arrays.stream(sizes).boxed().toList(), entry.sizes(), "sample " + entry.sample());
+            }
+        }
+
+        static List<Function<MediaSink, com.github.auties00.smalt.container.Muxer>> muxers() {
+            return List.of(Mp4Muxer::new, sink -> new Mp4Muxer(sink, Mp4MuxerOptions.builder().fastStart(false).build()),
+                    sink -> new FragmentedMp4Muxer(sink, FragmentedMp4MuxerOptions.builder().fragmentMicros(500_000).build()),
+                    FragmentedMp4Muxer::new);
+        }
+
+        @ParameterizedTest
+        @MethodSource("muxers")
+        @DisplayName("delimit the document and every PNG image of a sample with a subs box")
+        void subs(Function<MediaSink, com.github.auties00.smalt.container.Muxer> factory) {
+            var track = ttmlTrack(1, null);
+            var packets = packets();
+            var output = MuxSupport.toMemory(List.of(track), packets, factory);
+            assertSubsamples(expectedSubsamples(), subsEntries(output, 1));
+            var result = MuxSupport.demux(output);
+            var written = only(result, Codec.TTML);
+            var expected = List.of(packets.get(0), packet(1, EMPTY, 1000, 1000), packets.get(1), packets.get(2));
+            assertSamePackets(expected, track, result.packetsOf(written), written);
+        }
+
+        @Test
+        @DisplayName("write no subs box for documents without images")
+        void noImages() {
+            var output = MuxSupport.toMemory(List.of(ttmlTrack(1, null)), Samples.documents(), Mp4Muxer::new);
+            assertTrue(subsEntries(output, 1).isEmpty());
+            var fragmented = MuxSupport.toMemory(List.of(ttmlTrack(1, null)), Samples.documents(), FragmentedMp4Muxer::new);
+            assertTrue(subsEntries(fragmented, 1).isEmpty());
+            assertEquals(-1, new String(output, StandardCharsets.ISO_8859_1).indexOf("subs"));
+        }
+
+        @Test
+        @DisplayName("count a sample's sub-samples after the gap document written before it")
+        void afterGap() {
+            var image = concat(imageDocument("", 500, 1000, 1, ""), png(8, 8, 9));
+            var output = MuxSupport.toMemory(List.of(ttmlTrack(1, null)), List.of(packet(1, image, 500, 500)),
+                    Mp4Muxer::new);
+            assertSubsamples(java.util.Map.of(2, sizes(imageDocument("", 500, 1000, 1, ""), png(8, 8, 9))),
+                    subsEntries(output, 1));
+        }
+
+        @Test
+        @DisplayName("use 32-bit sizes for a sub-sample larger than 65535 bytes")
+        void wideSizes() {
+            var large = png(256, 160, 4);
+            assertTrue(large.length > 0xFFFF, "an incompressible image of " + large.length + " bytes");
+            var document = imageDocument("", 0, 1000, 1, "");
+            var output = MuxSupport.toMemory(List.of(ttmlTrack(1, null)), List.of(packet(1, concat(document, large), 0,
+                    1000)), Mp4Muxer::new);
+            var subs = box(output, "moov", "trak", "mdia", "minf", "stbl", "subs");
+            assertNotNull(subs);
+            assertEquals(1, subs[0], "version 1");
+            assertSubsamples(java.util.Map.of(1, sizes(document, large)), subsEntries(output, 1));
+        }
+
+        static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments> documents() {
+            var image = png(5, 3, 7);
+            var bom = new byte[]{(byte) 0xEF, (byte) 0xBB, (byte) 0xBF};
+            var utf16 = ("﻿<tt xmlns=\"http://www.w3.org/ns/ttml\"><body><div/></body></tt>\r\n")
+                    .getBytes(StandardCharsets.UTF_16BE);
+            var utf16Little = ("﻿<tt xmlns=\"http://www.w3.org/ns/ttml\"><body/></tt>")
+                    .getBytes(StandardCharsets.UTF_16LE);
+            var tricky = ("<?xml version=\"1.0\"?><!DOCTYPE tt [<!ENTITY gt2 \">\"><!ELEMENT tt ANY>]>"
+                    + "<!-- </tt> --><tt a=\"/>\" b='</tt>'><body><![CDATA[</tt><tt>]]><p>x &gt; y</p></body></tt>"
+                    + " <!-- after --> <?pi done?>\n").getBytes(StandardCharsets.UTF_8);
+            var empty = "<tt xmlns=\"http://www.w3.org/ns/ttml\"/>\n".getBytes(StandardCharsets.UTF_8);
+            return java.util.stream.Stream.of(
+                    org.junit.jupiter.params.provider.Arguments.of("UTF-8 byte order mark", concat(bom, empty), image),
+                    org.junit.jupiter.params.provider.Arguments.of("UTF-16 big-endian", utf16, image),
+                    org.junit.jupiter.params.provider.Arguments.of("UTF-16 little-endian", utf16Little, image),
+                    org.junit.jupiter.params.provider.Arguments.of("markup that looks like the root end", tricky, image),
+                    org.junit.jupiter.params.provider.Arguments.of("an empty root element", empty, image));
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("documents")
+        @DisplayName("find the end of the document")
+        void documentEnd(String name, byte[] document, byte[] image) {
+            var sample = concat(document, image);
+            assertArrayEquals(new int[]{document.length, image.length}, TtmlEntries.subsamples(sample, 0, sample.length));
+            var shifted = concat(new byte[]{1, 2, 3}, sample, new byte[]{4});
+            assertArrayEquals(new int[]{document.length, image.length, 1},
+                    TtmlEntries.subsamples(shifted, 3, sample.length + 1), "within an array, with a trailing byte");
+            assertEquals(null, TtmlEntries.subsamples(document, 0, document.length), "the document alone");
+        }
+
+        @Test
+        @DisplayName("keep bytes that are not a whole PNG image as one last resource, and an open document whole")
+        void irregularResources() {
+            var document = imageDocument("", 0, 1000, 2, "");
+            var image = png(3, 3, 5);
+            var truncated = Arrays.copyOf(image, image.length - 5);
+            var junk = "not an image".getBytes(StandardCharsets.US_ASCII);
+            assertArrayEquals(new int[]{document.length, image.length, truncated.length},
+                    TtmlEntries.subsamples(concat(document, image, truncated), 0,
+                            document.length + image.length + truncated.length));
+            assertArrayEquals(new int[]{document.length, junk.length + image.length},
+                    TtmlEntries.subsamples(concat(document, junk, image), 0, document.length + junk.length
+                            + image.length));
+            var open = Arrays.copyOf(document, document.length - 3);
+            assertEquals(null, TtmlEntries.subsamples(concat(open, image), 0, open.length + image.length));
+            // a document terminated by zero bytes, as a C string, carries no resource
+            var terminated = concat(document, new byte[3]);
+            assertEquals(null, TtmlEntries.subsamples(terminated, 0, terminated.length));
+            var zeroAndImage = concat(document, new byte[1], image);
+            assertArrayEquals(new int[]{document.length, 1 + image.length},
+                    TtmlEntries.subsamples(zeroAndImage, 0, zeroAndImage.length));
+        }
+
+        @Test
+        @DisplayName("split any bytes into sub-samples that cover them, without failing")
+        void robustness() {
+            var random = new Random(0x5B5);
+            var base = packets().getFirst().data();
+            for (var round = 0; round < 3000; round++) {
+                var data = round % 3 == 0 ? new byte[random.nextInt(64)] : base.clone();
+                if (round % 3 == 0) {
+                    var alphabet = "<>/!?-[]\"' tx\u0089PNG\u001A";
+                    for (var index = 0; index < data.length; index++) {
+                        data[index] = (byte) alphabet.charAt(random.nextInt(alphabet.length()));
+                    }
+                } else {
+                    for (var flips = 1 + random.nextInt(6); flips > 0; flips--) {
+                        data[random.nextInt(data.length)] = (byte) random.nextInt(256);
+                    }
+                    if (round % 3 == 2) {
+                        data = Arrays.copyOf(data, random.nextInt(data.length + 1));
+                    }
+                }
+                var sizes = TtmlEntries.subsamples(data, 0, data.length);
+                if (sizes != null) {
+                    assertTrue(sizes.length >= 2);
+                    assertEquals(data.length, Arrays.stream(sizes).sum());
+                    assertTrue(Arrays.stream(sizes).allMatch(size -> size > 0));
+                }
+            }
+        }
+
+        /** The DASH-IF IMSC 1 image subtitle representation, its segments joined after the initialization segment. */
+        static byte[] dashImages() {
+            var archive = com.github.auties00.smalt.testkit.Conformance.archive("dash-livesim-testpic_2s-imsc1_img_eng");
+            var members = new ArrayList<>(archive.members());
+            members.sort(Comparator.comparingInt(member -> member.contains("init") ? -1
+                    : Integer.parseInt(member.replaceAll(".*/([0-9]+)\\.cmft$", "$1"))));
+            var out = new ByteArrayOutputStream();
+            for (var member : members) {
+                try {
+                    out.writeBytes(Files.readAllBytes(archive.fetch(member)));
+                } catch (IOException exception) {
+                    throw new UncheckedIOException(exception);
+                }
+            }
+            return out.toByteArray();
+        }
+
+        @Test
+        @DisplayName("rewrite the subs boxes of the DASH-IF IMSC image vector, whose images still decode")
+        void dashVector() throws IOException {
+            var source = dashImages();
+            var demuxed = MuxSupport.demux(source);
+            var track = only(demuxed, Codec.TTML);
+            var reference = subsEntries(source, 1);
+            var packets = demuxed.packetsOf(track);
+            assertEquals(packets.size(), reference.size(), "every sample of the vector carries an image");
+            for (var factory : List.<Function<MediaSink, com.github.auties00.smalt.container.Muxer>>of(Mp4Muxer::new,
+                    FragmentedMp4Muxer::new)) {
+                var output = MuxSupport.toMemory(List.of(track), packets, factory);
+                var result = MuxSupport.demux(output);
+                var written = result.packetsOf(only(result, Codec.TTML));
+                assertSubsamples(bySample(written, packets, reference), subsEntries(output, 1));
+                for (var packet : packets) {
+                    var copy = written.stream().filter(candidate -> candidate.pts() == packet.pts()).findFirst()
+                            .orElseThrow();
+                    assertArrayEquals(packet.data(), copy.data());
+                }
+            }
+            Oracle.assume(Oracle.Tool.FFMPEG);
+            var directory = Files.createDirectories(Path.of("target", "media-fixtures", "imsc-images"));
+            var count = 0;
+            for (var packet : packets) {
+                var sizes = TtmlEntries.subsamples(packet.data(), 0, packet.size());
+                assertNotNull(sizes);
+                var at = sizes[0];
+                for (var index = 1; index < sizes.length; index++) {
+                    var image = directory.resolve("image-" + count++ + ".png");
+                    Files.write(image, Arrays.copyOfRange(packet.data(), at, at + sizes[index]));
+                    at += sizes[index];
+                    Oracle.assertFfmpegDecodes(image);
+                }
+            }
+            assertTrue(count >= packets.size());
+        }
+
+        static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments> remuxSources() {
+            var dash = dashImages();
+            var demuxed = MuxSupport.demux(dash);
+            var track = only(demuxed, Codec.TTML);
+            var progressive = MuxSupport.toMemory(List.of(track), demuxed.packetsOf(track), Mp4Muxer::new);
+            return java.util.stream.Stream.of(
+                    org.junit.jupiter.params.provider.Arguments.of("the DASH-IF segments", dash),
+                    org.junit.jupiter.params.provider.Arguments.of("a progressive copy", progressive));
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("remuxSources")
+        @DisplayName("let Mp4Remuxer plan the subs box of a TTML track from its samples")
+        void remux(String name, byte[] source) throws IOException {
+            var input = Files.createDirectories(Path.of("target", "media-fixtures"))
+                    .resolve("imsc-images-" + name.replace(' ', '-') + ".mp4");
+            Files.write(input, source);
+            var output = Mp4RemuxerTest.remux(input, "ttml-images-" + name.replace(' ', '-'),
+                    RemuxOptions.builder().allSubtitleTracks().build());
+            var data = Files.readAllBytes(output.file());
+            var before = MuxSupport.demux(source);
+            var after = MuxSupport.demux(data);
+            assertSubsamples(bySample(after.packetsOf(only(after, Codec.TTML)), before.packetsOf(only(before, Codec.TTML)),
+                    subsEntries(source, 1)), subsEntries(data, 1));
+            MuxSupport.validated("ttml-images-remux", data);
+        }
+    }
 }

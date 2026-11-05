@@ -195,6 +195,43 @@ class TimedTextStylesTest {
         }
 
         @Test
+        @DisplayName("measures the tbox in the track region when the sample entry has no default text box")
+        void trackRegion() {
+            for (var justification : new int[][]{{0, 0}, {1, -1}, {-1, 1}, {1, 1}}) {
+                var boxless = TimedText.Config.parse(config(justification[0], justification[1], 0, 0));
+                var sized = boxless.withTrackSize(400, 60);
+                var boxed = TimedText.Config.parse(config(justification[0], justification[1], 60, 400));
+                var placed = new StyledText(List.of(StyledText.Run.of("x", 0)), 0, 0.25, 0.5, "");
+                var encoded = TimedText.encode(placed, sized, MILLIS, 0);
+                // a 400 x 60 track region places the box where a 400 x 60 default text box does
+                assertArrayEquals(TimedText.encode(placed, boxed, MILLIS, 0), encoded);
+                var back = TimedText.decode(encoded, sized, MILLIS);
+                assertEquals(0.25, back.x(), 1e-9);
+                assertEquals(0.5, back.y(), 1e-9);
+                assertTrue(!TimedText.decode(encoded, boxless, MILLIS).hasPosition(), "no region, no position");
+            }
+            var both = TimedText.Config.parse(config(1, -1, 60, 400)).withTrackSize(1920, 1080);
+            var placed = new StyledText(List.of(StyledText.Run.of("x", 0)), 0, 0.25, 0.5, "");
+            assertArrayEquals(TimedText.encode(placed, TimedText.Config.parse(config(1, -1, 60, 400)), MILLIS, 0),
+                    TimedText.encode(placed, both, MILLIS, 0), "the default text box wins over the track region");
+            var half = TimedText.Config.parse(config(1, -1, 0, 0)).withTrackSize(640, 0);
+            assertEquals(0, half.trackWidth());
+            assertTrue(!new String(TimedText.encode(placed, half, MILLIS, 0), StandardCharsets.ISO_8859_1)
+                    .contains("tbox"), "a region without a height is unknown");
+        }
+
+        @Test
+        @DisplayName("reads a tbox in the track region when the sample entry has no default text box")
+        void readTrackRegion() {
+            var sample = sample("x", box("tbox", u16(0), u16(0), u16(20), u16(400)));
+            var placed = TimedText.decode(sample, TimedText.Config.parse(config(1, -1, 0, 0)).withTrackSize(400, 60),
+                    MILLIS);
+            assertEquals(2, placed.alignment());
+            assertEquals(0.5, placed.x(), 1e-9);
+            assertEquals(1.0 / 3, placed.y(), 1e-9);
+        }
+
+        @Test
         @DisplayName("writes the fonts the font table names and the default font for the others")
         void fonts() {
             var config = TimedText.Config.parse(config(1, -1, 0, 0));

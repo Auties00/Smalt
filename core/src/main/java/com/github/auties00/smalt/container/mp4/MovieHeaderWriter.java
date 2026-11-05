@@ -7,6 +7,7 @@ import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.track.DataTrack;
 import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.TrackKind;
 import com.github.auties00.smalt.track.VideoTrack;
@@ -120,7 +121,7 @@ final class MovieHeaderWriter {
      * Writes the {@code tkhd} box of a track that is in the movie and in its preview, enabled or not.
      *
      * <p>An audio track gets full volume; a video track gets its dimensions and the matrix of its
-     * orientation.
+     * orientation, a data track its size when it declares one.
      *
      * @param writer the destination
      * @param track the track the box describes
@@ -147,6 +148,9 @@ final class MovieHeaderWriter {
             width = video.width();
             height = video.height();
             matrix = DisplayMatrix.of(video.orientation(), width, height);
+        } else if (track.track instanceof DataTrack data && data.width() > 0) {
+            width = data.width();
+            height = data.height();
         } else if (track.codec() == Codec.DVD_SUBTITLE) {
             var header = VobSubHeader.parse(track.track.codecConfig().orElse(null));
             width = header.width() > 0 ? header.width() : 720;

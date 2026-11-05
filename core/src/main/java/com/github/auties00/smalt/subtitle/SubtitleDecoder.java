@@ -15,6 +15,7 @@ import com.github.auties00.smalt.internal.subtitle.TimedText;
 import com.github.auties00.smalt.internal.subtitle.TtmlDocument;
 import com.github.auties00.smalt.internal.subtitle.WebVttSamples;
 import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.track.DataTrack;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
@@ -42,7 +43,9 @@ import java.util.Optional;
  *       MarginR, MarginV, Effect} fields as the settings;</li>
  *   <li>3GPP timed text and TTML cues are SubRip text: bold, italic, underline (and strikeout for TTML)
  *       as tags, and the colors, fonts and sizes that differ from the track defaults as {@code <font>} tags,
- *       with an {@code {\anN}} placement.</li>
+ *       with an {@code {\anN}} placement. A 3GPP {@code tbox} gives the position too, measured in the default
+ *       text box of the sample entry or, when the entry declares none, in the region of a track that declares
+ *       its {@linkplain DataTrack#width() size}.</li>
  * </ul>
  * Decoding into another markup ({@link #decode(Packet, SubtitleMarkup)}) converts with the whole track in
  * view: an ASS event gets the bold, italic, underline, strikeout, color and alignment of its style from
@@ -139,7 +142,9 @@ public final class SubtitleDecoder {
         var config = track.codecConfig().orElse(null);
         this.script = codec == Codec.ASS
                 ? AssScript.parse(config == null ? "" : TextFiles.decode(config)) : null;
-        this.timedText = codec == Codec.MOV_TEXT ? TimedText.Config.parse(config) : null;
+        var region = track instanceof DataTrack data ? data : null;
+        this.timedText = codec == Codec.MOV_TEXT ? TimedText.Config.parse(config).withTrackSize(
+                region != null ? region.width() : 0, region != null ? region.height() : 0) : null;
         if (service == null) {
             this.captions = null;
             return;

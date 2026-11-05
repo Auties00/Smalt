@@ -1829,8 +1829,8 @@ final class Mp4TagFile implements TagFile {
             }
             if (!neutralized.isEmpty() && (type.equals("moof") || type.equals("mfra"))) {
                 if (box[1] > MAX_FRAGMENT) {
-                    throw new MediaException.Unsupported("mp4", "a movie fragment of " + box[1] + " bytes names the"
-                            + " removed timecode track");
+                    throw new MediaException.Unsupported("mp4", "a movie fragment of " + box[1] + " bytes names a"
+                            + " removed track");
                 }
                 var bytes = TagIo.read(source, box[0], box[1], limits);
                 var ranges = type.equals("moof") ? neutralizeFragments(bytes, (int) box[2], boxStart, neutralized)
@@ -2244,10 +2244,11 @@ final class Mp4TagFile implements TagFile {
 
         /**
          * The identifiers of the tracks whose {@code trak} and {@code trex} boxes the rewrite removes: the chapter
-         * tracks no movie fragment names, when the chapters change, the timecode tracks no movie fragment names, when
-         * the timecode changes, and every timecode track, when the timecode is removed. A chapter track whose samples
-         * are in fragments stays, without the chapter references that made it one, since a track fragment must name
-         * a track of the movie (ISO/IEC 14496-12 clause 8.8.7).
+         * tracks, when the chapters change, the timecode tracks no movie fragment names, when the timecode changes,
+         * and every timecode track, when the timecode is removed. When a movie fragment or fragment random access box
+         * is too large to rewrite, a chapter track whose samples are in fragments stays, without the chapter
+         * references that made it one, since a track fragment must name a track of the movie (ISO/IEC 14496-12
+         * clause 8.8.7).
          */
         private final Set<Long> removed;
 
@@ -2437,14 +2438,15 @@ final class Mp4TagFile implements TagFile {
             this.dropping = !chapterTracks.isEmpty() && !keep;
             var dropped = new HashSet<Long>(removedTimecodes);
             if (dropping) {
+                var oversized = oversizedFragments();
                 for (var id : chapterTracks) {
-                    if (!fragmentNamed.contains(id)) {
+                    if (!oversized || !fragmentNamed.contains(id)) {
                         dropped.add(id);
                     }
                 }
             }
             this.removed = Set.copyOf(dropped);
-            var named = new HashSet<Long>(removedTimecodes);
+            var named = new HashSet<Long>(dropped);
             named.retainAll(fragmentNamed);
             this.neutralized = Set.copyOf(named);
             var largest = 0L;
@@ -3183,6 +3185,22 @@ final class Mp4TagFile implements TagFile {
             }
         }
         return ids;
+    }
+
+    /**
+     * Returns whether a top-level movie fragment or fragment random access box is larger than the fragments a
+     * rewrite reads into memory to turn the track fragments of removed tracks into {@code free} boxes.
+     *
+     * @return whether such a box exists
+     */
+    private boolean oversizedFragments() {
+        for (var index = 0; index < topLevel.size(); index++) {
+            var type = topLevelTypes.get(index);
+            if ((type.equals("moof") || type.equals("mfra")) && topLevel.get(index)[1] > MAX_FRAGMENT) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

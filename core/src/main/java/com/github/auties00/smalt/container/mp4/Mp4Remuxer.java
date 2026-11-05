@@ -23,6 +23,7 @@ import com.github.auties00.smalt.track.VideoTrack;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.Locale;
@@ -547,8 +548,19 @@ public final class Mp4Remuxer {
             }
         }
         TagCarry.apply(planner, tags, remuxOptions.tagMode(), remuxOptions.tags().orElse(null));
+        var documents = new HashSet<Integer>();
+        for (var copy : copies) {
+            if (copy.output.codec() == Codec.TTML) {
+                documents.add(copy.input.id());
+            }
+        }
         var sample = new Mp4Demuxer.SampleInfo();
-        while (demuxer.nextSample(sample)) {
+        while (true) {
+            // the sub-samples of a TTML sample depend on its bytes, so those samples are read
+            var read = !documents.isEmpty() && documents.contains(demuxer.nextSampleTrack());
+            if (!(read ? demuxer.readSample(sample) : demuxer.nextSample(sample))) {
+                break;
+            }
             var copy = find(copies, sample.trackId);
             if (copy != null) {
                 if (sample.newConfig != null) {
@@ -556,7 +568,7 @@ public final class Mp4Remuxer {
                 }
                 var dts = repairDts(copy, sample.dts);
                 planner.planSample(copy.output.id(), sample.size, repairPts(copy, sample.pts, dts), dts, sample.duration,
-                        sample.keyframe);
+                        sample.keyframe, read ? TtmlEntries.subsamples(sample.data, sample.dataOffset, sample.size) : null);
             }
         }
         var header = planner.finishPlan();

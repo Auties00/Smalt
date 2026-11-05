@@ -1,6 +1,11 @@
 package com.github.auties00.smalt.fuzz;
 
 import com.code_intelligence.jazzer.junit.FuzzTest;
+import com.github.auties00.smalt.container.Containers;
+import com.github.auties00.smalt.container.Muxer;
+import com.github.auties00.smalt.container.mp4.FragmentedMp4Muxer;
+import com.github.auties00.smalt.container.mp4.Mp4Muxer;
+import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.subtitle.BitmapCue;
 import com.github.auties00.smalt.subtitle.BitmapSubtitleDecoder;
@@ -21,7 +26,10 @@ import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.VideoTrack;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.function.Function;
 
 /**
  * Fuzz targets of the subtitle readers: the cues of any file ({@link Subtitles#read}: SubRip, WebVTT, SSA, ASS,
@@ -29,7 +37,9 @@ import java.util.List;
  * codec and of TTML ({@link SubtitleDecoder}, in its own markup and converted to each other), the markup
  * converters ({@link Subtitles#convertText}), the bitmap subtitle packets ({@link BitmapSubtitleDecoder}) and files
  * ({@link Subtitles#readBitmaps}), the caption packets of teletext, CEA-608 and CEA-708 ({@link SubtitleDecoder}
- * with a service chosen by the options byte) and the closed captions of video packets ({@link CaptionExtractor}).
+ * with a service chosen by the options byte), the closed captions of video packets ({@link CaptionExtractor}) and
+ * TTML documents, with or without the images that follow them, muxed into MP4 and fragmented MP4 files that must
+ * read back to the same samples.
  */
 class SubtitleFuzzTest {
     /** The codecs of the cue target, chosen by the options byte modulo their count. */
@@ -49,6 +59,9 @@ class SubtitleFuzzTest {
 
     /** The most cues of a file whose markup is converted. */
     private static final int MAX_CUES = 64;
+
+    /** The most TTML documents muxed per input. */
+    private static final int MAX_DOCUMENTS = 16;
 
     @FuzzTest
     void read(byte[] data) {
@@ -74,6 +87,51 @@ class SubtitleFuzzTest {
             for (var markup : SubtitleMarkup.values()) {
                 run.step("cue " + index + " as " + markup, () -> decoder.decodeAll(packet, markup));
             }
+        }
+    }
+
+    @FuzzTest
+    void mp4Ttml(byte[] data) {
+        var run = Fuzz.start("mp4Ttml");
+        var input = FuzzPackets.parse(data, 1);
+        var track = DataTrack.builder().id(1).codec(Codec.TTML).timeBase(new Rational(1, 1000)).build();
+        var packets = new ArrayList<Packet>();
+        for (var index = 0; index < Math.min(input.packets().size(), MAX_DOCUMENTS); index++) {
+            packets.add(new Packet(1, input.packets().get(index).data(), index * 1000L, index * 1000L, 1000, true));
+        }
+        List<Function<MediaSink, Muxer>> muxers = List.of(Mp4Muxer::new, FragmentedMp4Muxer::new);
+        for (var index = 0; index < muxers.size(); index++) {
+            var factory = muxers.get(index);
+            var name = index == 0 ? "MP4" : "fragmented MP4";
+            run.value("mux " + name, () -> {
+                var sink = MediaSink.memory();
+                try (var muxer = factory.apply(sink)) {
+                    muxer.addTrack(track);
+                    for (var packet : packets) {
+                        muxer.writePacket(packet);
+                    }
+                    muxer.finish();
+                }
+                return sink.toByteArray();
+            }).flatMap(file -> run.value("demux " + name, () -> {
+                var read = new ArrayList<byte[]>();
+                try (var demuxer = Containers.openDemuxer(MediaSource.of(file))) {
+                    for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                        read.add(packet.data());
+                    }
+                }
+                return read;
+            })).ifPresent(read -> {
+                if (read.size() != packets.size()) {
+                    throw new AssertionError(read.size() + " TTML samples read back of " + packets.size());
+                }
+                for (var sample = 0; sample < read.size(); sample++) {
+                    if (!Arrays.equals(read.get(sample), packets.get(sample).data())) {
+                        throw new AssertionError("TTML sample " + sample + " changed");
+                    }
+                }
+                run.output();
+            });
         }
     }
 

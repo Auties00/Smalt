@@ -6,6 +6,7 @@ import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.container.Segment;
 import com.github.auties00.smalt.container.SegmentSink;
 import com.github.auties00.smalt.internal.io.FourCc;
+import com.github.auties00.smalt.internal.tags.Mp4ChapterTrack;
 import com.github.auties00.smalt.internal.tags.Mp4TimecodeTrack;
 import com.github.auties00.smalt.internal.tags.Mp4TrackMetadata;
 import com.github.auties00.smalt.internal.tags.MuxerTags;
@@ -283,6 +284,27 @@ public final class FragmentedMp4Muxer implements Muxer {
     private boolean timecodeWritten;
 
     /**
+     * The chapter track of the tags, or {@code null} when there is none.
+     */
+    private Mp4ChapterTrack chapterTrack;
+
+    /**
+     * Whether the samples of the chapter track were written in a fragment.
+     */
+    private boolean chaptersWritten;
+
+    /**
+     * The offset of the duration of the last chapter sample within the first fragment's {@code moof}, or
+     * {@code -1}.
+     */
+    private int chapterDurationField = -1;
+
+    /**
+     * The absolute offset of the first fragment's {@code moof} in the output, or {@code -1} until it is known.
+     */
+    private long chapterFragmentOffset = -1;
+
+    /**
      * Whether a packet was accepted.
      */
     private boolean started;
@@ -453,17 +475,27 @@ public final class FragmentedMp4Muxer implements Muxer {
      * track tags go in the {@code trak} boxes and the enabled flags of their {@code tkhd}, as {@code Mp4Muxer} writes
      * them.
      *
+     * <p>The chapters are also written as a QuickTime chapter track, as {@link Mp4Muxer#setTags(MediaTags)}
+     * describes, declared after the declared tracks with an empty sample table: its samples, one per chapter, are
+     * in the first fragment, whose {@code tfdt} for the track is the start of the first chapter. A last chapter
+     * without an end lasts until the end of the movie: a seekable output gets that duration when
+     * {@link #finish()} knows it (bounding a declared end too), a streaming one or a {@link SegmentSink} output
+     * a duration of zero, which {@link Mp4Demuxer} reads as an end it does not know.
+     *
      * <p>A {@code timecode} tag becomes a QuickTime timecode track as {@link Mp4Muxer#setTags(MediaTags)}
-     * describes, declared after the declared tracks and referenced by every video track: its one sample, the
+     * describes, declared after the declared tracks (and after the chapter track) and referenced by every video
+     * track: its one sample, the
      * frame number of the address, is in the first fragment and lasts that fragment's duration on the reference
      * track. The address is counted at the rate of the first video track that declares one, known when the
      * first packet arrives. A {@link FragmentedMp4MuxerOptions.Brand#CMAF CMAF} track file carries one track,
-     * so there the tag stays a free-form iTunes item.
+     * so there the tag stays a free-form iTunes item and the chapters are only in the {@code chpl} box.
      *
      * @throws IllegalArgumentException if the {@code timecode} tag of a file that is not a CMAF track file is not
      * a time address
      * @throws MediaException.Unsupported if the value of an iTunes integer atom is not an integer
      * the atom holds, or a value of the {@code loci} key is not ISO 6709 coordinates
+     * @throws MediaException.LimitExceeded if a chapter lasts longer than a 32-bit sample duration in milliseconds
+     * holds
      */
     @Override
     public void setTags(MediaTags tags) {
@@ -471,7 +503,8 @@ public final class FragmentedMp4Muxer implements Muxer {
         if (started || initialized || finished) {
             throw new IllegalStateException("tags must be set before the first packet");
         }
-        // TODO: also write the chapters as a QuickTime chapter track, its samples in the first fragment.
+        var chapters = options.brand() == FragmentedMp4MuxerOptions.Brand.CMAF ? null
+                : tags.chapters().isEmpty() ? null : Mp4ChapterTrack.of(tags.chapters(), -1);
         var timecode = options.brand() == FragmentedMp4MuxerOptions.Brand.CMAF ? null
                 : tags.get(Mp4Muxer.TIMECODE_TAG).map(String::strip).orElse(null);
         if (timecode != null) {
@@ -486,6 +519,7 @@ public final class FragmentedMp4Muxer implements Muxer {
         this.userData = userData;
         this.xmpBox = MuxerTags.mp4Xmp(tags);
         this.timecodeText = timecode;
+        this.chapterTrack = chapters;
         this.tags = tags;
     }
 
@@ -528,7 +562,7 @@ public final class FragmentedMp4Muxer implements Muxer {
                 return;
             }
         }
-        accept(packet);
+        accept(packet, null);
     }
 
     /**
@@ -538,9 +572,10 @@ public final class FragmentedMp4Muxer implements Muxer {
      * @param data the sample, a new array
      * @param time the sample time
      * @param duration the sample duration
+     * @param subsamples the sub-sample sizes of the sample, or {@code null} for none
      */
-    private void acceptTextSample(int trackId, byte[] data, long time, long duration) {
-        accept(new Packet(trackId, data, time, time, duration, true));
+    private void acceptTextSample(int trackId, byte[] data, long time, long duration, int[] subsamples) {
+        accept(new Packet(trackId, data, time, time, duration, true), subsamples);
     }
 
     /**
@@ -548,8 +583,9 @@ public final class FragmentedMp4Muxer implements Muxer {
      * first when the packet starts a new one.
      *
      * @param packet the packet of a declared track
+     * @param subsamples the sub-sample sizes of the packet's sample, or {@code null} for none
      */
-    private void accept(Packet packet) {
+    private void accept(Packet packet, int[] subsamples) {
         FragmentTrack track = null;
         for (var candidate : tracks) {
             if (candidate.media.track.id() == packet.trackId()) {
@@ -578,6 +614,7 @@ public final class FragmentedMp4Muxer implements Muxer {
             }
         }
         var sample = track.toSample(packet);
+        sample.subsamples = subsamples;
         if (track.encryptor != null) {
             var encrypted = new TrackEncryptor.Encrypted();
             sample.data = track.encryptor.encrypt(sample.data, encrypted);
@@ -710,6 +747,20 @@ public final class FragmentedMp4Muxer implements Muxer {
     }
 
     /**
+     * {@return the identifier of the chapter track, after the declared tracks}
+     */
+    private int chapterId() {
+        return tracks.size() + 1;
+    }
+
+    /**
+     * {@return the identifier of the timecode track, after the declared tracks and the chapter track}
+     */
+    private int timecodeId() {
+        return chapterTrack != null ? tracks.size() + 2 : tracks.size() + 1;
+    }
+
+    /**
      * Writes the samples waiting for a fragment as one fragment.
      *
      * @param trigger the track of the sample that caused the cut, or {@code null}
@@ -749,6 +800,9 @@ public final class FragmentedMp4Muxer implements Muxer {
      */
     private void writeInit() {
         initialized = true;
+        if (tracks.isEmpty()) {
+            chapterTrack = null;
+        }
         movieTimescale = MOVIE_TIMESCALE;
         var audioOnly = !tracks.isEmpty();
         for (var track : tracks) {
@@ -773,7 +827,8 @@ public final class FragmentedMp4Muxer implements Muxer {
         writer.end();
         writer.bytes(xmpBox);
         writer.begin(BoxTypes.MOOV);
-        var timecodeId = tracks.size() + 1;
+        var chapterId = chapterId();
+        var timecodeId = timecodeId();
         MovieHeaderWriter.writeMovieHeader(writer, movieTimescale, 0, timecodeTrack != null ? timecodeId + 1 : timecodeId);
         var patchable = output != null && output.isSeekable();
         var kinds = new ArrayList<TrackKind>();
@@ -783,10 +838,20 @@ public final class FragmentedMp4Muxer implements Muxer {
             described.add(tags.track(track.media.track.id()).orElse(null));
         }
         var enabled = Mp4TrackMetadata.enabled(kinds, described);
+        var media = false;
+        for (var kind : kinds) {
+            media |= kind == TrackKind.AUDIO || kind == TrackKind.VIDEO;
+        }
         for (var index = 0; index < tracks.size(); index++) {
             var track = tracks.get(index);
-            writeTrack(writer, track, patchable, timecodeTrack != null && track.video ? timecodeId : -1,
-                    enabled[index], described.get(index));
+            var kind = kinds.get(index);
+            var chapters = chapterTrack != null && (kind == TrackKind.AUDIO || kind == TrackKind.VIDEO
+                    || !media && index == 0);
+            writeTrack(writer, track, patchable, chapters ? chapterId : -1,
+                    timecodeTrack != null && track.video ? timecodeId : -1, enabled[index], described.get(index));
+        }
+        if (chapterTrack != null) {
+            writer.bytes(chapterTrack.fragmentedTrak(chapterId));
         }
         if (timecodeTrack != null) {
             writer.bytes(timecodeTrack.fragmentedTrak(timecodeId));
@@ -801,6 +866,15 @@ public final class FragmentedMp4Muxer implements Muxer {
         for (var track : tracks) {
             writer.beginFull(BoxTypes.TREX, 0, 0);
             writer.u32(track.media.number);
+            writer.u32(1);
+            writer.u32(0);
+            writer.u32(0);
+            writer.u32(0);
+            writer.end();
+        }
+        if (chapterTrack != null) {
+            writer.beginFull(BoxTypes.TREX, 0, 0);
+            writer.u32(chapterId);
             writer.u32(1);
             writer.u32(0);
             writer.u32(0);
@@ -846,18 +920,24 @@ public final class FragmentedMp4Muxer implements Muxer {
      * @param writer the destination of the box
      * @param track the track the box describes
      * @param patchable whether the edit list duration is patched by {@link #finish()}
+     * @param chapterId the identifier of the chapter track the track references, or {@code -1}
      * @param timecodeId the identifier of the timecode track the track references, or {@code -1}
      * @param enabled whether the track is enabled
      * @param described the tags of the track, or {@code null}
      */
-    private void writeTrack(BoxWriter writer, FragmentTrack track, boolean patchable, int timecodeId,
+    private void writeTrack(BoxWriter writer, FragmentTrack track, boolean patchable, int chapterId, int timecodeId,
                             boolean enabled, TrackTags described) {
         var media = track.media;
         writer.begin(BoxTypes.TRAK);
         MovieHeaderWriter.writeTrackHeader(writer, media, 0, enabled);
-        if (timecodeId > 0) {
+        if (chapterId > 0 || timecodeId > 0) {
             writer.begin(BoxTypes.TREF);
-            writer.bytes(Mp4TimecodeTrack.reference(timecodeId));
+            if (chapterId > 0) {
+                writer.bytes(Mp4ChapterTrack.chapReference(chapterId));
+            }
+            if (timecodeId > 0) {
+                writer.bytes(Mp4TimecodeTrack.reference(timecodeId));
+            }
             writer.end();
         }
         var mediaTime = track.mediaTime();
@@ -935,6 +1015,7 @@ public final class FragmentedMp4Muxer implements Muxer {
             moof.beginFull(BoxTypes.TFDT, 1, 0);
             moof.u64(run.decode[0]);
             moof.end();
+            writeSubsamples(moof, run);
             var composition = false;
             var negative = false;
             for (var offset : run.offsets) {
@@ -973,13 +1054,41 @@ public final class FragmentedMp4Muxer implements Muxer {
         for (var duration : indexRun.durations) {
             indexDuration += duration;
         }
+        var chapterData = chapterTrack != null && !chaptersWritten ? chapterTrack.data() : null;
+        var chapterOffsetField = -1;
+        if (chapterData != null) {
+            chaptersWritten = true;
+            moof.begin(BoxTypes.TRAF);
+            moof.beginFull(BoxTypes.TFHD, 0, TFHD_DEFAULT_BASE_IS_MOOF);
+            moof.u32(chapterId());
+            moof.end();
+            moof.beginFull(BoxTypes.TFDT, 1, 0);
+            moof.u64(chapterTrack.startUnits());
+            moof.end();
+            var count = chapterTrack.sampleCount();
+            moof.beginFull(BoxTypes.TRUN, 0, TRUN_FLAGS);
+            moof.u32(count);
+            chapterOffsetField = moof.size();
+            moof.u32(0);
+            for (var index = 0; index < count; index++) {
+                var last = index == count - 1;
+                if (last) {
+                    chapterDurationField = moof.size();
+                }
+                moof.u32(last && chapterTrack.openEnded() ? 0 : chapterTrack.sampleDuration(index));
+                moof.u32(chapterTrack.sampleSize(index));
+                moof.u32(SYNC_SAMPLE_FLAGS);
+            }
+            moof.end();
+            moof.end();
+        }
         var timecodeSample = timecodeTrack != null && !timecodeWritten ? timecodeTrack.sample() : null;
         var timecodeOffsetField = -1;
         if (timecodeSample != null) {
             timecodeWritten = true;
             moof.begin(BoxTypes.TRAF);
             moof.beginFull(BoxTypes.TFHD, 0, TFHD_DEFAULT_BASE_IS_MOOF);
-            moof.u32(tracks.size() + 1L);
+            moof.u32(timecodeId());
             moof.end();
             moof.beginFull(BoxTypes.TFDT, 1, 0);
             moof.u64(0);
@@ -995,7 +1104,8 @@ public final class FragmentedMp4Muxer implements Muxer {
             moof.end();
         }
         moof.end();
-        var dataSize = timecodeSample != null ? (long) timecodeSample.length : 0L;
+        var extra = trailingSamples(chapterData, timecodeSample);
+        var dataSize = extra != null ? (long) extra.length : 0L;
         for (var run : runs) {
             dataSize += run.bytes;
         }
@@ -1004,6 +1114,10 @@ public final class FragmentedMp4Muxer implements Muxer {
         for (var index = 0; index < runs.size(); index++) {
             moof.patch32(dataOffsetFields[index], position);
             position += runs.get(index).bytes;
+        }
+        if (chapterOffsetField >= 0) {
+            moof.patch32(chapterOffsetField, position);
+            position += chapterData.length;
         }
         if (timecodeOffsetField >= 0) {
             moof.patch32(timecodeOffsetField, position);
@@ -1068,7 +1182,7 @@ public final class FragmentedMp4Muxer implements Muxer {
             }
         }
         if (options.segmentIndex() == FragmentedMp4MuxerOptions.SegmentIndex.SINGLE) {
-            spoolFragment(runs, indexRun, moof, mdat, timecodeSample, start, indexRun.track.media.toMicros(indexDuration),
+            spoolFragment(runs, indexRun, moof, mdat, extra, start, indexRun.track.media.toMicros(indexDuration),
                     independent);
             return;
         }
@@ -1089,6 +1203,9 @@ public final class FragmentedMp4Muxer implements Muxer {
                     run.track.addRandomAccess(run.track.presentation(run.decode[0] + run.offsets[0]), moofOffset, trafIndex + 1);
                 }
             }
+            if (chapterOffsetField >= 0 && output != null) {
+                chapterFragmentOffset = output.position();
+            }
             sink.write(ByteBuffer.wrap(moof.buffer(), 0, moof.size()));
             sink.write(ByteBuffer.wrap(mdat.buffer(), 0, mdat.size()));
             for (var run : runs) {
@@ -1096,8 +1213,8 @@ public final class FragmentedMp4Muxer implements Muxer {
                     sink.write(ByteBuffer.wrap(sample.data));
                 }
             }
-            if (timecodeSample != null) {
-                sink.write(ByteBuffer.wrap(timecodeSample));
+            if (extra != null) {
+                sink.write(ByteBuffer.wrap(extra));
             }
         } finally {
             if (output == null) {
@@ -1107,19 +1224,63 @@ public final class FragmentedMp4Muxer implements Muxer {
     }
 
     /**
+     * Joins the samples a fragment holds after the runs' samples.
+     *
+     * @param chapters the samples of the chapter track, or {@code null}
+     * @param timecode the sample of the timecode track, or {@code null}
+     * @return the samples back to back, chapters first, or {@code null} when there are none
+     */
+    private static byte[] trailingSamples(byte[] chapters, byte[] timecode) {
+        if (chapters == null || timecode == null) {
+            return chapters != null ? chapters : timecode;
+        }
+        var joined = Arrays.copyOf(chapters, chapters.length + timecode.length);
+        System.arraycopy(timecode, 0, joined, chapters.length, timecode.length);
+        return joined;
+    }
+
+    /**
+     * Writes the {@code subs} box of a run whose samples include some divided into sub-samples.
+     *
+     * @param moof the destination, inside the run's {@code traf}
+     * @param run the samples of one track in the fragment
+     */
+    private static void writeSubsamples(BoxWriter moof, Run run) {
+        var count = 0;
+        for (var sample : run.samples) {
+            if (sample.subsamples != null) {
+                count++;
+            }
+        }
+        if (count == 0) {
+            return;
+        }
+        var samples = new int[count];
+        var sizes = new int[count][];
+        var entry = 0;
+        for (var index = 0; index < run.samples.length; index++) {
+            if (run.samples[index].subsamples != null) {
+                samples[entry] = index;
+                sizes[entry++] = run.samples[index].subsamples;
+            }
+        }
+        TtmlEntries.writeSubsampleBox(moof, samples, sizes, count);
+    }
+
+    /**
      * Appends a fragment to the spool of a single segment index and records its reference.
      *
      * @param runs the runs of the fragment
      * @param indexRun the run of the reference track
      * @param moof the serialized {@code moof}
      * @param mdat the serialized {@code mdat} header
-     * @param timecodeSample the sample of the timecode track the fragment holds after the runs' samples, or
+     * @param extra the samples of the chapter and timecode tracks the fragment holds after the runs' samples, or
      * {@code null}
      * @param startMicros the earliest presentation time of the fragment, in microseconds
      * @param durationMicros the duration of the fragment on the reference track, in microseconds
      * @param independent whether the fragment starts with a key frame of every video track
      */
-    private void spoolFragment(List<Run> runs, Run indexRun, BoxWriter moof, BoxWriter mdat, byte[] timecodeSample,
+    private void spoolFragment(List<Run> runs, Run indexRun, BoxWriter moof, BoxWriter mdat, byte[] extra,
                                long startMicros, long durationMicros, boolean independent) {
         if (spool == null) {
             spool = new MdatSpool(options.temporaryDirectory().orElse(null));
@@ -1138,8 +1299,8 @@ public final class FragmentedMp4Muxer implements Muxer {
                 spool.write(sample.data, 0, sample.data.length);
             }
         }
-        if (timecodeSample != null) {
-            spool.write(timecodeSample, 0, timecodeSample.length);
+        if (extra != null) {
+            spool.write(extra, 0, extra.length);
         }
         var earliest = Long.MAX_VALUE;
         var duration = 0L;
@@ -1199,6 +1360,9 @@ public final class FragmentedMp4Muxer implements Muxer {
         var written = new long[]{initializationSize + root.size()};
         for (var node = 0; node < levels.get(top).count; node++) {
             writeIndexNode(levels, top, node, leafOffsets, written);
+        }
+        if (chapterDurationField >= 0 && spooledCount > 0) {
+            chapterFragmentOffset = base + leafOffsets[0];
         }
         var subsegments = new ArrayList<Subsegment>(spooledCount);
         var spoolOffsets = new long[spooledCount];
@@ -1461,6 +1625,7 @@ public final class FragmentedMp4Muxer implements Muxer {
      */
     private void patchDurations() {
         var longest = 0L;
+        var longestMicros = 0L;
         for (var track : tracks) {
             var media = track.media;
             var presented = Math.max(track.presentationEnd - track.mediaTime(), 0);
@@ -1470,6 +1635,7 @@ public final class FragmentedMp4Muxer implements Muxer {
             }
             var movie = Mp4Track.rescale(presented, media.timescale, movieTimescale);
             longest = Math.max(longest, movie);
+            longestMicros = Math.max(longestMicros, media.toMicros(presented));
             if (track.elstOffset >= 0) {
                 var field = new BoxWriter(8);
                 field.u64(movie);
@@ -1481,6 +1647,12 @@ public final class FragmentedMp4Muxer implements Muxer {
             var field = new BoxWriter(8);
             field.u64(longest);
             output.position(mehdOffset);
+            output.write(ByteBuffer.wrap(field.buffer(), 0, field.size()));
+        }
+        if (chapterFragmentOffset >= 0 && chapterDurationField >= 0) {
+            var field = new BoxWriter(4);
+            field.u32(chapterTrack.lastDuration(longestMicros));
+            output.position(chapterFragmentOffset + chapterDurationField);
             output.write(ByteBuffer.wrap(field.buffer(), 0, field.size()));
         }
     }
@@ -1499,6 +1671,11 @@ public final class FragmentedMp4Muxer implements Muxer {
          * The encryption of the sample, or {@code null} for a sample of a clear track.
          */
         TrackEncryptor.Encrypted encryption;
+
+        /**
+         * The sub-sample sizes, or {@code null} for a sample without sub-samples.
+         */
+        int[] subsamples;
 
         /**
          * The presentation time.

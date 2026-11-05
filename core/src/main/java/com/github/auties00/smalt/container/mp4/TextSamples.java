@@ -24,7 +24,8 @@ import java.util.List;
  *
  * <p>The packets of a {@link Codec#TTML} track are whole documents, which must not overlap: each
  * becomes one sample, and a gap, the start of the track included, becomes a sample holding a
- * document that shows nothing. Packets without a duration follow the same rule as cues.
+ * document that shows nothing. Packets without a duration follow the same rule as cues. A document followed by
+ * image resources comes with its sub-samples ({@link TtmlEntries#subsamples(byte[], int, int)}).
  *
  * <p>Instances are not thread-safe.
  */
@@ -41,8 +42,9 @@ final class TextSamples {
          * @param data the sample bytes, a new array
          * @param time the sample time in track time-base units
          * @param duration the sample duration in track time-base units, positive
+         * @param subsamples the sizes of the sample's sub-samples, or {@code null} when it has none
          */
-        void sample(int trackId, byte[] data, long time, long duration);
+        void sample(int trackId, byte[] data, long time, long duration, int[] subsamples);
     }
 
     /**
@@ -86,7 +88,8 @@ final class TextSamples {
         this.trackId = trackId;
         this.codec = codec;
         this.sink = sink;
-        this.segmenter = new CueSegmenter<>((start, end, cues) -> sink.sample(trackId, encode(cues), start, end - start));
+        this.segmenter = new CueSegmenter<>((start, end, cues) -> sink.sample(trackId, encode(cues), start, end - start,
+                null));
     }
 
     /**
@@ -182,10 +185,10 @@ final class TextSamples {
             return;
         }
         if (start > position) {
-            sink.sample(trackId, TtmlEntries.emptyDocument(), position, start - position);
+            sink.sample(trackId, TtmlEntries.emptyDocument(), position, start - position, null);
         }
-        // TODO: write the sub-sample information (subs) delimiting the image resources of IMSC image documents
-        sink.sample(trackId, packet.data().clone(), start, end - start);
+        var data = packet.data().clone();
+        sink.sample(trackId, data, start, end - start, TtmlEntries.subsamples(data, 0, data.length));
         position = end;
     }
 

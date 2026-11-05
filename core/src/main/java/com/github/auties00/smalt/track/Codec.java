@@ -690,7 +690,10 @@ public enum Codec {
      *
      * <p>A packet is one TTML document in XML, as an MP4 sample stores it, covering the packet's
      * presentation timestamp and duration; its time expressions count from the start of the
-     * track, not of the packet. Packets follow each other without overlapping. The configuration
+     * track, not of the packet. Packets follow each other without overlapping. A document of the IMSC image
+     * profile is followed in its packet by the PNG images it references as {@code urn:mpeg:14496-30:subs:N}
+     * ({@code N} counting the images from 1), as an MP4 sample stores them; the MP4 muxers delimit them with a
+     * {@code subs} box. The configuration
      * is the body of the {@code stpp} sample entry after its eight leading bytes: the
      * {@code namespace}, {@code schema_location} and {@code auxiliary_mime_types} fields as
      * null-terminated UTF-8 strings (the first a space-separated list of the XML namespaces the

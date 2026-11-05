@@ -157,6 +157,11 @@ final class BoxTypes {
     static final int STSZ = 0x7374737A;
 
     /**
+     * The sub-sample information box ({@code subs}).
+     */
+    static final int SUBS = 0x73756273;
+
+    /**
      * The compact sample size box ({@code stz2}).
      */
     static final int STZ2 = 0x73747A32;

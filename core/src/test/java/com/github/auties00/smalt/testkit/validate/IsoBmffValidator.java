@@ -27,10 +27,11 @@ import static com.github.auties00.smalt.testkit.validate.IsoBmff.version;
  *
  * <p>The checks cover the box layout (sizes, versions, the boxes each container requires and the boxes that must be
  * unique), the sample tables (counts that agree across {@code stts}, {@code ctts}, {@code stsz}, {@code stsc},
- * {@code stco} and {@code stss}, samples inside an {@code mdat} and not overlapping), the durations of
+ * {@code stco} and {@code stss}, samples inside an {@code mdat} and not overlapping, {@code subs} entries that
+ * name existing samples and divide them whole), the durations of
  * {@code mvhd}, {@code tkhd} and {@code mdhd}, the codec configuration of each sample entry, and, for fragments, the
- * {@code trex} defaults, the sequence numbers, the data offsets of every {@code trun}, the continuity of
- * {@code tfdt}, and the {@code sidx} and {@code mfra} indexes.
+ * {@code trex} defaults, the sequence numbers, the data offsets of every {@code trun}, the {@code subs} entries of
+ * each {@code traf}, the continuity of {@code tfdt}, and the {@code sidx} and {@code mfra} indexes.
  */
 public final class IsoBmffValidator {
     /** What a validated file is. */
@@ -793,6 +794,7 @@ public final class IsoBmffValidator {
             return 0;
         }
         var count = sizes.length;
+        stbl.child("subs").ifPresent(subs -> subsamples(subs, sizes, where + "/subs"));
         var stts = stbl.child("stts").orElseThrow();
         var entries = u32(data, stts.payload() + 4);
         if (stts.payloadSize() != 8 + entries * 8) {
@@ -891,6 +893,52 @@ public final class IsoBmffValidator {
         findings.require(sample == count, where + "/stsc", "the chunks hold " + sample + " samples, stsz has "
                 + count);
         return count;
+    }
+
+    /**
+     * Checks a sub-sample information box against the sizes of the samples it describes: each entry names a sample
+     * after the previous one, and the sub-samples of a sample add up to its size.
+     *
+     * @param subs the {@code subs} box
+     * @param sizes the sizes of the samples of the sample table or track fragment, in order
+     * @param where the box path, for findings
+     */
+    private void subsamples(Box subs, long[] sizes, String where) {
+        var version = version(data, subs);
+        if (version > 1 || subs.payloadSize() < 8) {
+            findings.add(where, "version " + version + ", size " + subs.size());
+            return;
+        }
+        var entries = u32(data, subs.payload() + 4);
+        var p = (long) subs.payload() + 8;
+        var sample = 0L;
+        for (var entry = 0; entry < entries; entry++) {
+            if (p + 6 > subs.end()) {
+                findings.add(where, "entry " + entry + " runs past the box");
+                return;
+            }
+            var delta = u32(data, p);
+            var count = u16(data, p + 4);
+            p += 6;
+            findings.require(delta > 0, where, "entry " + entry + " has a sample delta of 0");
+            sample += delta;
+            var total = 0L;
+            for (var index = 0; index < count; index++) {
+                if (p + (version == 1 ? 10 : 8) > subs.end()) {
+                    findings.add(where, "entry " + entry + " runs past the box");
+                    return;
+                }
+                total += version == 1 ? u32(data, p) : u16(data, p);
+                p += version == 1 ? 10 : 8;
+            }
+            if (sample > sizes.length) {
+                findings.add(where, "entry " + entry + " names sample " + sample + " of " + sizes.length);
+                return;
+            }
+            findings.require(count == 0 || total == sizes[(int) sample - 1], where, "the sub-samples of sample "
+                    + sample + " add up to " + total + " bytes, the sample has " + sizes[(int) sample - 1]);
+        }
+        findings.require(p == subs.end(), where, "size " + subs.size() + " for " + entries + " entries");
     }
 
     private long[] sampleSizes(Box box, String where) {
@@ -1080,6 +1128,7 @@ public final class IsoBmffValidator {
         var syncSamples = 0;
         var dataPosition = base;
         var dataEnd = base;
+        var fragmentSizes = new ArrayList<Long>();
         for (var trun : traf.all("trun")) {
             var trunWhere = where + "/trun@" + trun.offset();
             var trunFlags = flags(data, trun);
@@ -1139,6 +1188,7 @@ public final class IsoBmffValidator {
                 duration += sampleDuration;
                 bytes += sampleSize;
                 dataPosition += sampleSize;
+                fragmentSizes.add(sampleSize);
                 samples++;
             }
             if (!insideMdat(mdats, runStart, dataPosition)) {
@@ -1147,6 +1197,8 @@ public final class IsoBmffValidator {
             }
             dataEnd = Math.max(dataEnd, dataPosition);
         }
+        traf.child("subs").ifPresent(subs -> subsamples(subs, fragmentSizes.stream().mapToLong(Long::longValue)
+                .toArray(), where + "/subs"));
         findings.require(samples > 0 || kind == Kind.FILE, where, "a track fragment without samples");
         return new ParsedFragment(new Fragment(moof.offset(), sequence, trackId, baseDecodeTime, duration, samples,
                 firstSync, bytes, syncSamples), dataEnd);

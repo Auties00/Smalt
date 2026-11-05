@@ -26,12 +26,13 @@ import java.util.Map;
  *       {@code hclr});</li>
  *   <li>{@code krok} events to karaoke times;</li>
  *   <li>the sample entry justification to the alignment, and a {@code tbox} to the anchor position,
- *       measured in the region the default text box spans.</li>
+ *       measured in the region the default text box spans, or in the track's region when the sample entry
+ *       declares no default text box (3GPP TS 26.245 measures every box in track coordinates).</li>
  * </ul>
  * The text color, font and size are kept only where they differ from the sample entry's default style
  * (and the color where it is not opaque white), so that a plain track reads as plain text. Writing does
  * the reverse with {@code styl}, {@code hlit}, {@code hclr} and {@code krok}, and with a {@code tbox} whose
- * anchor edge is the position when the text is anchored and the sample entry has a default text box;
+ * anchor edge is the position when the text is anchored and that region is known;
  * scrolling, hyperlinks, blinking and wrapping boxes are ignored when reading and not written.
  */
 public final class TimedText {
@@ -113,11 +114,14 @@ public final class TimedText {
      * @param size the default font size in pixels
      * @param color the default text color as {@code 0xAARRGGBB}
      * @param fonts the font names by identifier
+     * @param trackWidth the width of the track's region in pixels, or {@code 0} when unknown
+     * @param trackHeight the height of the track's region in pixels, or {@code 0} when unknown
      */
     public record Config(int horizontal, int vertical, int[] box, int font, int face, int size, long color,
-                         Map<Integer, String> fonts) {
+                         Map<Integer, String> fonts, int trackWidth, int trackHeight) {
         /**
-         * Parses the body of a sample entry, using the default values for a missing or truncated part.
+         * Parses the body of a sample entry, using the default values for a missing or truncated part; the track
+         * region is unknown.
          *
          * @param config the body after the eight leading bytes, or {@code null}
          * @return the configuration
@@ -157,7 +161,31 @@ public final class TimedText {
                 }
                 position += boxSize;
             }
-            return new Config(horizontal, vertical, box, font, face, size, color, Map.copyOf(fonts));
+            return new Config(horizontal, vertical, box, font, face, size, color, Map.copyOf(fonts), 0, 0);
+        }
+
+        /**
+         * Returns this configuration for a track of a given region.
+         *
+         * @param width the width of the track's region in pixels, or {@code 0} when unknown
+         * @param height the height of the track's region in pixels, or {@code 0} when unknown
+         * @return the configuration
+         */
+        public Config withTrackSize(int width, int height) {
+            var known = width > 0 && height > 0;
+            return new Config(horizontal, vertical, box, font, face, size, color, fonts, known ? width : 0,
+                    known ? height : 0);
+        }
+
+        /**
+         * {@return the region text box positions are measured in, as its height and width: the default text box
+         * when it is not empty, else the track's region, or {@code null} when neither is known}
+         */
+        int[] region() {
+            if (box[2] > box[0] && box[3] > box[1]) {
+                return new int[]{box[2], box[3]};
+            }
+            return trackWidth > 0 && trackHeight > 0 ? new int[]{trackHeight, trackWidth} : null;
         }
 
         /**
@@ -348,9 +376,10 @@ public final class TimedText {
         }
         var styled = builder.build();
         var alignment = config.alignment();
-        if (textBox != null && config.box()[2] > config.box()[0] && config.box()[3] > config.box()[1]) {
-            var regionHeight = config.box()[2];
-            var regionWidth = config.box()[3];
+        var region = textBox != null ? config.region() : null;
+        if (region != null) {
+            var regionHeight = region[0];
+            var regionWidth = region[1];
             var column = config.horizontal() == 0 ? 0 : config.horizontal() < 0 ? 2 : 1;
             var row = config.vertical() == 0 ? 2 : config.vertical() < 0 ? 0 : 1;
             var x = column == 0 ? textBox[1] : column == 2 ? textBox[3] : (textBox[1] + textBox[3]) / 2.0;
@@ -375,9 +404,10 @@ public final class TimedText {
      * Encodes styled text as a sample: the text, then the {@code styl}, {@code hlit}, {@code hclr},
      * {@code krok} and {@code tbox} boxes it needs.
      *
-     * <p>The {@code tbox} is written for anchored text under a sample entry with a default text box: the
-     * edge the entry's justification anchors (or the middle, for centered justification) lies at the
-     * position, measured in the region the default text box spans, so that it reads back to that position.
+     * <p>The {@code tbox} is written for anchored text when the region positions are measured in is known (the
+     * default text box of the sample entry, or else the track's region): the edge the entry's justification
+     * anchors (or the middle, for centered justification) lies at the position, measured in that region, so
+     * that it reads back to that position.
      *
      * <p>Text longer than the 65535 bytes a sample holds is cut at the last whole code point that
      * fits. A font the sample entry's font table does not name is written as the default font.
@@ -390,8 +420,6 @@ public final class TimedText {
      * @return the sample
      */
     public static byte[] encode(StyledText styled, Config config, Rational timeBase, long durationMicros) {
-        // TODO: write a tbox for anchored cues under a sample entry without a default text box, once data tracks
-        //  carry the region (the track size) such a text box is measured in
         var text = new StringBuilder();
         var records = new ArrayList<int[]>();
         var colors = new ArrayList<Long>();
@@ -502,10 +530,10 @@ public final class TimedText {
                 out.end();
             }
         }
-        var region = config.box();
-        if (styled.hasPosition() && region[2] > region[0] && region[3] > region[1]) {
-            var width = region[3];
-            var height = region[2];
+        var region = styled.hasPosition() ? config.region() : null;
+        if (region != null) {
+            var width = region[1];
+            var height = region[0];
             var x = (int) Math.round(Math.clamp(styled.x(), 0, 1) * width);
             var y = (int) Math.round(Math.clamp(styled.y(), 0, 1) * height);
             var column = config.horizontal() == 0 ? 0 : config.horizontal() < 0 ? 2 : 1;

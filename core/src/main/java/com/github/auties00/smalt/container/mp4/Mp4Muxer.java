@@ -310,10 +310,32 @@ public final class Mp4Muxer implements Muxer {
      * decrease
      */
     void planSample(int trackId, int size, long pts, long dts, long duration, boolean keyframe) {
+        planSample(trackId, size, pts, dts, duration, keyframe, null);
+    }
+
+    /**
+     * Declares one sample of the planned file divided into sub-samples, as a TTML sample carrying image
+     * resources is ({@link TtmlEntries#subsamples(byte[], int, int)}).
+     *
+     * @param trackId the identifier of the sample's track
+     * @param size the sample size in bytes
+     * @param pts the presentation timestamp, or {@link Packet#NO_TIMESTAMP}
+     * @param dts the decoding timestamp, or {@link Packet#NO_TIMESTAMP}
+     * @param duration the duration, or {@link Packet#UNKNOWN_DURATION}
+     * @param keyframe whether the sample is a sync sample
+     * @param subsamples the sub-sample sizes, or {@code null} for none
+     * @throws IllegalStateException if this muxer does not plan or is finished
+     * @throws IllegalArgumentException if the track was not declared or its decoding timestamps
+     * decrease
+     */
+    void planSample(int trackId, int size, long pts, long dts, long duration, boolean keyframe, int[] subsamples) {
         if (!planning) {
             throw new IllegalStateException("not a planning muxer");
         }
-        accept(trackId, null, 0, size, pts, dts, duration, keyframe, false);
+        var track = accept(trackId, null, 0, size, pts, dts, duration, keyframe, false);
+        if (subsamples != null) {
+            track.addSubsamples(subsamples);
+        }
     }
 
     /**
@@ -859,14 +881,16 @@ public final class Mp4Muxer implements Muxer {
      * @param data the sample, a new array
      * @param time the sample time
      * @param duration the sample duration
+     * @param subsamples the sub-sample sizes of the sample, or {@code null} for none
      */
-    private void writeTextSample(int trackId, byte[] data, long time, long duration) {
-        accept(trackId, data, 0, data.length, time, time, duration, true, spooling());
+    private void writeTextSample(int trackId, byte[] data, long time, long duration, int[] subsamples) {
+        accept(trackId, data, 0, data.length, time, time, duration, true, spooling()).addSubsamples(subsamples);
     }
 
     /**
      * Writes one sample whose bytes are copied from a range of an array, as
-     * {@link #writePacket(Packet)} writes a packet.
+     * {@link #writePacket(Packet)} writes a packet; the sample of a TTML track is written as it is, with the
+     * sub-samples of its image resources.
      *
      * <p>The array may be reused by the caller as soon as this method returns.
      *
@@ -887,7 +911,10 @@ public final class Mp4Muxer implements Muxer {
         if (planning) {
             throw new IllegalStateException("a planning muxer takes sample sizes, not packets");
         }
-        accept(trackId, data, offset, size, pts, dts, duration, keyframe, false);
+        var track = accept(trackId, data, offset, size, pts, dts, duration, keyframe, false);
+        if (track.codec() == Codec.TTML) {
+            track.addSubsamples(TtmlEntries.subsamples(data, offset, size));
+        }
     }
 
     /**
@@ -913,19 +940,20 @@ public final class Mp4Muxer implements Muxer {
      * @param keyframe whether the sample is a sync sample
      * @param hold whether {@code data} is an immutable whole-sample array that the chunk may hold
      * by reference
+     * @return the track the sample was added to
      * @throws IllegalStateException if the muxer is finished
      * @throws IllegalArgumentException if the track was not declared or its decoding timestamps
      * decrease
      */
-    private void accept(int trackId, byte[] data, int offset, int size, long pts, long dts, long duration, boolean keyframe,
-                        boolean hold) {
+    private MuxTrack accept(int trackId, byte[] data, int offset, int size, long pts, long dts, long duration,
+                            boolean keyframe, boolean hold) {
         if (finished) {
             throw new IllegalStateException("the muxer is finished");
         }
         for (var candidate : tracks) {
             if (candidate.track.id() == trackId) {
                 record(candidate, data, offset, size, pts, dts, duration, keyframe, hold);
-                return;
+                return candidate;
             }
         }
         throw new IllegalArgumentException("sample for undeclared track " + trackId);
@@ -1498,6 +1526,9 @@ public final class Mp4Muxer implements Muxer {
         writer.end();
 
         writeChunkOffsets(writer, track, dataStart, co64);
+        if (track.subsampledCount > 0) {
+            TtmlEntries.writeSubsampleBox(writer, track.subsampled, track.subsampleSizes, track.subsampledCount);
+        }
         writer.end();
     }
 

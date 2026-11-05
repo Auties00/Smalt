@@ -17,7 +17,11 @@ import java.util.List;
  * form one chunk. A chapter's sample lasts until the next chapter starts, the last one until its end, bounded
  * by the movie end when that is known and later than its start. A first chapter that starts after zero is
  * preceded by an empty edit. The media timescale is 1000, or 1000000 when a boundary is not a whole
- * millisecond and every sample duration still fits 32 bits. Instances are immutable and thread-safe.
+ * millisecond and every sample duration still fits 32 bits.
+ *
+ * <p>In a fragmented file the {@code trak} has empty sample tables ({@link #fragmentedTrak(long)}) and the samples
+ * are in a movie fragment, whose decoding time starts at the first chapter, so no edit is needed. Instances are
+ * immutable and thread-safe.
  *
  * @implNote This implementation flags the track as in the movie but not enabled, gives it a QuickTime
  * base media information header ({@code gmhd} holding {@code gmin} and a {@code text} matrix) rather than
@@ -67,6 +71,21 @@ public final class Mp4ChapterTrack {
     private final long startMicros;
 
     /**
+     * The start of the first chapter, in media timescale units.
+     */
+    private final long startUnits;
+
+    /**
+     * The start of the last chapter, in microseconds.
+     */
+    private final long lastStartMicros;
+
+    /**
+     * The end the last chapter declares, in microseconds, or {@code -1} when it declares none past its start.
+     */
+    private final long lastEndMicros;
+
+    /**
      * The end of the last sample, in microseconds.
      */
     private final long endMicros;
@@ -86,10 +105,13 @@ public final class Mp4ChapterTrack {
      */
     private final byte[] data;
 
-    private Mp4ChapterTrack(long timescale, long startMicros, long endMicros, long[] durations, int[] sizes,
-                            byte[] data) {
+    private Mp4ChapterTrack(long timescale, long startMicros, long startUnits, long lastStartMicros,
+                            long lastEndMicros, long endMicros, long[] durations, int[] sizes, byte[] data) {
         this.timescale = timescale;
         this.startMicros = startMicros;
+        this.startUnits = startUnits;
+        this.lastStartMicros = lastStartMicros;
+        this.lastEndMicros = lastEndMicros;
         this.endMicros = endMicros;
         this.durations = durations;
         this.sizes = sizes;
@@ -157,7 +179,9 @@ public final class Mp4ChapterTrack {
             sizes[index] = 2 + title.length + ENCODING.length;
         }
         var endMicros = timescale == 1000 ? units[count] * 1000 : units[count];
-        return new Mp4ChapterTrack(timescale, boundaries[0], endMicros, durations, sizes, out.toByteArray());
+        return new Mp4ChapterTrack(timescale, boundaries[0], units[0], last.startMicros(),
+                last.endMicros() > last.startMicros() ? last.endMicros() : -1, endMicros, durations, sizes,
+                out.toByteArray());
     }
 
     /**
@@ -175,6 +199,75 @@ public final class Mp4ChapterTrack {
     }
 
     /**
+     * {@return the media timescale, in units per second}
+     */
+    public long timescale() {
+        return timescale;
+    }
+
+    /**
+     * {@return the start of the first chapter in media timescale units, the decoding time of the first sample of
+     * a fragmented chapter track}
+     */
+    public long startUnits() {
+        return startUnits;
+    }
+
+    /**
+     * {@return the number of samples, one per chapter}
+     */
+    public int sampleCount() {
+        return sizes.length;
+    }
+
+    /**
+     * Returns the size of a sample.
+     *
+     * @param index the sample index, from 0 to {@code sampleCount() - 1}
+     * @return the size in bytes
+     */
+    public int sampleSize(int index) {
+        return sizes[index];
+    }
+
+    /**
+     * Returns the duration of a sample, as {@link #of(List, long)} laid it out.
+     *
+     * @param index the sample index, from 0 to {@code sampleCount() - 1}
+     * @return the duration in media timescale units
+     */
+    public long sampleDuration(int index) {
+        return durations[index];
+    }
+
+    /**
+     * {@return whether the last chapter declares no end past its start, so that its sample lasts until the movie
+     * end}
+     */
+    public boolean openEnded() {
+        return lastEndMicros < 0;
+    }
+
+    /**
+     * Returns the duration of the last sample in a movie that ends at a given time, as {@link #of(List, long)}
+     * lays it out for that movie end: until the end the last chapter declares, bounded by the movie end when that
+     * is later than its start.
+     *
+     * @param movieEndMicros the movie duration in microseconds, or a value at or below zero when unknown
+     * @return the duration in media timescale units, at least one unit and at most {@code 2^32 - 1}
+     */
+    public long lastDuration(long movieEndMicros) {
+        var end = lastEndMicros >= 0 ? lastEndMicros : movieEndMicros;
+        if (movieEndMicros > lastStartMicros) {
+            end = Math.min(end, movieEndMicros);
+        }
+        end = Math.max(end, lastStartMicros);
+        var startUnit = timescale == 1000 ? Math.floorDiv(lastStartMicros + 500, 1000) : lastStartMicros;
+        var endUnit = timescale == 1000 ? Math.floorDiv(end + 500, 1000) : end;
+        return Math.clamp(endUnit - startUnit, 1, U32_MAX);
+    }
+
+    /**
      * Builds the {@code trak} box.
      *
      * @param trackId the track identifier
@@ -188,12 +281,39 @@ public final class Mp4ChapterTrack {
         if (!co64 && (chunkOffset < 0 || chunkOffset > U32_MAX)) {
             throw new IllegalArgumentException("chunk offset " + chunkOffset + " needs co64");
         }
+        return trak(trackId, movieTimescale, chunkOffset, co64, false);
+    }
+
+    /**
+     * Builds the {@code trak} box of a fragmented file: zero durations, no edit and empty sample tables, as the
+     * samples are in a movie fragment.
+     *
+     * @param trackId the track identifier
+     * @return the box
+     */
+    public byte[] fragmentedTrak(long trackId) {
+        return trak(trackId, 1, 0, false, true);
+    }
+
+    /**
+     * Builds the {@code trak} box.
+     *
+     * @param trackId the track identifier
+     * @param movieTimescale the movie timescale, in units per second
+     * @param chunkOffset the file offset of the samples
+     * @param co64 whether the chunk offset is written as a {@code co64} box rather than {@code stco}
+     * @param fragmented whether the samples are in movie fragments
+     * @return the box
+     */
+    private byte[] trak(long trackId, long movieTimescale, long chunkOffset, boolean co64, boolean fragmented) {
         var mediaDuration = 0L;
-        for (var duration : durations) {
-            mediaDuration += duration;
+        if (!fragmented) {
+            for (var duration : durations) {
+                mediaDuration += duration;
+            }
         }
-        var delay = rescale(startMicros, movieTimescale);
-        var presented = rescale(endMicros, movieTimescale) - delay;
+        var delay = fragmented ? 0 : rescale(startMicros, movieTimescale);
+        var presented = fragmented ? 0 : rescale(endMicros, movieTimescale) - delay;
         var trackDuration = delay + presented;
         var trak = new ByteWriter(512 + data.length / 2);
         var header = new ByteWriter(96);
@@ -264,7 +384,7 @@ public final class Mp4ChapterTrack {
         dref.fourCc("url ");
         dref.u32be(1);
         Mp4Boxes.box(minf, "dinf", Mp4Boxes.box("dref", dref.toByteArray()));
-        Mp4Boxes.box(minf, "stbl", sampleTable(chunkOffset, co64));
+        Mp4Boxes.box(minf, "stbl", sampleTable(chunkOffset, co64, fragmented));
         Mp4Boxes.box(mdia, "minf", minf.toByteArray());
         Mp4Boxes.box(trak, "mdia", mdia.toByteArray());
         return Mp4Boxes.box("trak", trak.toByteArray());
@@ -352,9 +472,10 @@ public final class Mp4ChapterTrack {
      *
      * @param chunkOffset the file offset of the samples
      * @param co64 whether the offset is 64-bit
+     * @param empty whether the sample tables are empty, the samples being in movie fragments
      * @return the payload
      */
-    private byte[] sampleTable(long chunkOffset, boolean co64) {
+    private byte[] sampleTable(long chunkOffset, boolean co64, boolean empty) {
         var out = new ByteWriter(160 + sizes.length * 12);
         var stsd = new ByteWriter(72);
         stsd.u32be(0);
@@ -375,6 +496,13 @@ public final class Mp4ChapterTrack {
         entry.u8(0);
         Mp4Boxes.box(stsd, "text", entry.toByteArray());
         Mp4Boxes.box(out, "stsd", stsd.toByteArray());
+        if (empty) {
+            for (var table : new String[]{"stts", "stsc", "stco"}) {
+                Mp4Boxes.box(out, table, new byte[8]);
+            }
+            Mp4Boxes.box(out, "stsz", new byte[12]);
+            return out.toByteArray();
+        }
         var stts = new ByteWriter(16 + durations.length * 8);
         stts.u32be(0);
         var runsAt = stts.size();

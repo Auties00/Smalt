@@ -231,6 +231,21 @@ final class MuxTrack {
     long pcmFrames;
 
     /**
+     * The indexes of the samples divided into sub-samples, ascending; the first {@link #subsampledCount} are used.
+     */
+    int[] subsampled = new int[0];
+
+    /**
+     * The sub-sample sizes of each sample of {@link #subsampled}.
+     */
+    int[][] subsampleSizes = new int[0][];
+
+    /**
+     * The number of samples divided into sub-samples.
+     */
+    int subsampledCount;
+
+    /**
      * Constructs the state of a declared track.
      *
      * @param track the description
@@ -408,6 +423,24 @@ final class MuxTrack {
      */
     void addSample(int size, long packetPts, long packetDts, long packetDuration, boolean keyframe, byte[] data) {
         addSample(size, packetPts, packetDts, packetDuration, keyframe, data, 0);
+    }
+
+    /**
+     * Records the sub-samples of the last sample recorded.
+     *
+     * @param sizes the sub-sample sizes, summing to the sample size, or {@code null} for none
+     */
+    void addSubsamples(int[] sizes) {
+        if (sizes == null || count == 0) {
+            return;
+        }
+        if (subsampledCount == subsampled.length) {
+            var capacity = Math.max(8, subsampledCount * 2);
+            subsampled = Arrays.copyOf(subsampled, capacity);
+            subsampleSizes = Arrays.copyOf(subsampleSizes, capacity);
+        }
+        subsampled[subsampledCount] = count - 1;
+        subsampleSizes[subsampledCount++] = sizes;
     }
 
     /**

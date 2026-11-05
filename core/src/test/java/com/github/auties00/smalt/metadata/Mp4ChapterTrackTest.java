@@ -3,6 +3,10 @@ package com.github.auties00.smalt.metadata;
 import com.github.auties00.smalt.container.Chapter;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.container.Muxer;
+import com.github.auties00.smalt.container.Segment;
+import com.github.auties00.smalt.container.SegmentSink;
+import com.github.auties00.smalt.container.mp4.FragmentedMp4Muxer;
+import com.github.auties00.smalt.container.mp4.FragmentedMp4MuxerOptions;
 import com.github.auties00.smalt.container.mp4.Mp4Muxer;
 import com.github.auties00.smalt.container.mp4.Mp4MuxerOptions;
 import com.github.auties00.smalt.io.MediaSink;
@@ -19,6 +23,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -32,11 +37,13 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Checks the QuickTime chapter tracks that {@link TagEditor} and {@link Mp4Muxer} write next to the Nero
- * {@code chpl} box: the chapters must read back through the track alone (the {@code chpl} box renamed
+ * {@code chpl} box, and those {@link FragmentedMp4Muxer} writes with their samples in the first fragment: the
+ * chapters must read back through the track alone (the {@code chpl} box renamed
  * {@code free}), by Smalt and by ffprobe as the black-box reader, and the track must have the QuickTime shape
  * (a disabled {@code text} track referenced through {@code tref/chap} by every audio and video track).
  */
@@ -176,11 +183,20 @@ class Mp4ChapterTrackTest {
             assertChapters(CHAPTERS, TagEditor.read(MediaSource.of(trackOnly)).chapters());
             try (var demuxer = Containers.openDemuxer(MediaSource.of(trackOnly))) {
                 assertChapters(CHAPTERS, demuxer.chapters());
-                // a fragmented file keeps ffmpeg's chapter track, whose samples its fragments carry, as a text track
-                // no chapter reference names, since a track fragment must name a track of the movie
-                var dataTracks = container.name().startsWith("fragmented") ? 2 : 1;
-                assertEquals(dataTracks, demuxer.tracks().stream().filter(track -> track.kind() == TrackKind.DATA)
-                        .count());
+                // the track fragments of ffmpeg's chapter track in a fragmented file become free boxes, so the old
+                // track is removed rather than left as a text track no chapter reference names
+                assertEquals(1, demuxer.tracks().stream().filter(track -> track.kind() == TrackKind.DATA).count());
+            }
+            if (container.name().startsWith("fragmented")) {
+                var chapterId = Mp4Atoms.trackId(data, assertChapterTrack(data));
+                var ids = Mp4Atoms.all(data, "moov/trak").stream().map(trak -> Mp4Atoms.trackId(data, trak)).toList();
+                for (var moof : Mp4Atoms.top(data).stream().filter(box -> box.type().equals("moof")).toList()) {
+                    for (var traf : Mp4Atoms.all(data, moof, "traf")) {
+                        var id = Mp4Atoms.u32(data, Mp4Atoms.first(data, traf, "tfhd").payload() + 4);
+                        assertTrue(ids.contains(id) && id != chapterId, "a fragment names track " + id);
+                    }
+                }
+                com.github.auties00.smalt.testkit.validate.Validators.assertValid(file);
             }
             var probeFile = write(directory, "track-only-" + file.getFileName(), trackOnly);
             assertFfprobeChapters(CHAPTERS, probeFile);
@@ -453,6 +469,348 @@ class Mp4ChapterTrackTest {
                     tags(List.of()));
             assertEquals(1, Mp4Atoms.all(output, "moov/trak").size());
             assertTrue(Mp4Atoms.all(output, "moov/trak/tref").isEmpty());
+        }
+    }
+
+    @Nested
+    @DisplayName("FragmentedMp4Muxer")
+    class FragmentedMuxing {
+        static Path audio() {
+            return MuxedTagsTest.untagged("m4a", List.of("-c:a", "aac"));
+        }
+
+        static Path video() {
+            return Fixtures.ffmpeg("mp4", List.of("-f", "lavfi", "-i", TagFixtures.VIDEO, "-f", "lavfi", "-i",
+                    TagFixtures.AUDIO), List.of("-map_metadata", "-1", "-c:v", "libx264", "-preset", "ultrafast", "-c:a",
+                    "aac", "-shortest"));
+        }
+
+        static Stream<Arguments> muxers() {
+            Function<MediaSink, Muxer> plain = FragmentedMp4Muxer::new;
+            Function<MediaSink, Muxer> single = sink -> new FragmentedMp4Muxer(sink, FragmentedMp4MuxerOptions.builder()
+                    .segmentIndex(FragmentedMp4MuxerOptions.SegmentIndex.SINGLE).build());
+            Function<MediaSink, Muxer> indexed = sink -> new FragmentedMp4Muxer(sink, FragmentedMp4MuxerOptions.builder()
+                    .segmentIndex(FragmentedMp4MuxerOptions.SegmentIndex.PER_FRAGMENT).randomAccessIndex(true).build());
+            Function<MediaSink, Muxer> shortFragments = sink -> new FragmentedMp4Muxer(sink,
+                    FragmentedMp4MuxerOptions.builder().fragmentMicros(200_000).build());
+            return Stream.of(
+                    Arguments.of("audio", audio(), plain),
+                    Arguments.of("audio, short fragments", audio(), shortFragments),
+                    Arguments.of("video", video(), plain),
+                    Arguments.of("video, single segment index", video(), single),
+                    Arguments.of("video, segment index per fragment", video(), indexed));
+        }
+
+        /** Remuxes into a streaming sink, which the muxer cannot seek back into. */
+        static byte[] remuxStreaming(Path input, MediaTags tags) {
+            var bytes = new ByteArrayOutputStream();
+            MuxedTagsTest.remux(input, sink -> new FragmentedMp4Muxer(MediaSink.of(bytes)), tags);
+            return bytes.toByteArray();
+        }
+
+        /** Remuxes into one sink per segment and joins the segments, initialization segment first. */
+        static byte[] remuxSegments(Path input, MediaTags tags, List<Segment.Kind> kinds) {
+            var bytes = new ByteArrayOutputStream();
+            SegmentSink segments = segment -> {
+                kinds.add(segment.kind());
+                return MediaSink.of(bytes);
+            };
+            MuxedTagsTest.remux(input, sink -> new FragmentedMp4Muxer(segments,
+                    FragmentedMp4MuxerOptions.builder().fragmentMicros(300_000).keyframeAligned(false).build()), tags);
+            return bytes.toByteArray();
+        }
+
+        /** Returns the track fragments of the chapter track, in file order, and checks they are in the first moof. */
+        static List<Mp4Atoms.Box> chapterFragments(byte[] data, long chapterId) {
+            var result = new ArrayList<Mp4Atoms.Box>();
+            var moofs = Mp4Atoms.top(data).stream().filter(box -> box.type().equals("moof")).toList();
+            assertFalse(moofs.isEmpty(), "no movie fragment");
+            for (var index = 0; index < moofs.size(); index++) {
+                for (var traf : Mp4Atoms.all(data, moofs.get(index), "traf")) {
+                    var tfhd = Mp4Atoms.first(data, traf, "tfhd");
+                    if (Mp4Atoms.u32(data, tfhd.payload() + 4) == chapterId) {
+                        assertEquals(0, index, "the chapter samples are in the first fragment");
+                        result.add(traf);
+                    }
+                }
+            }
+            return result;
+        }
+
+        /** Checks the chapter track fragment and returns the duration of each sample, in its media timescale. */
+        static long[] assertChapterFragment(byte[] data, List<Chapter> chapters) {
+            var track = assertChapterTrack(data);
+            var id = Mp4Atoms.trackId(data, track);
+            var stsz = Mp4Atoms.first(data, track, "mdia/minf/stbl/stsz");
+            assertEquals(0, Mp4Atoms.u32(data, stsz.payload() + 8), "the moov lists no chapter sample");
+            var mdhd = Mp4Atoms.first(data, track, "mdia/mdhd");
+            var timescale = Mp4Atoms.u32(data, mdhd.payload() + 12);
+            assertNull(Mp4Atoms.first(data, track, "edts"), "a fragmented chapter track needs no edit");
+            var fragments = chapterFragments(data, id);
+            assertEquals(1, fragments.size(), "one chapter track fragment");
+            var traf = fragments.getFirst();
+            var tfdt = Mp4Atoms.first(data, traf, "tfdt");
+            assertEquals(1, data[tfdt.payload()] & 0xFF);
+            assertEquals(Math.round(chapters.getFirst().startMicros() * timescale / 1e6),
+                    Mp4Atoms.u64(data, tfdt.payload() + 4), "the decoding time starts at the first chapter");
+            var trun = Mp4Atoms.first(data, traf, "trun");
+            var count = (int) Mp4Atoms.u32(data, trun.payload() + 4);
+            assertEquals(chapters.size(), count);
+            var durations = new long[count];
+            // tr_flags 0x701: a data offset, then the duration, size and flags of each sample
+            assertEquals(0x701, Mp4Atoms.u32(data, trun.payload()) & 0xFFFFFF);
+            var moof = Mp4Atoms.top(data).stream().filter(box -> box.offset() < traf.offset() && traf.end() <= box.end())
+                    .findFirst().orElseThrow();
+            var sample = moof.offset() + (int) Mp4Atoms.u32(data, trun.payload() + 8);
+            for (var index = 0; index < count; index++) {
+                var entry = trun.payload() + 12 + index * 12;
+                durations[index] = Mp4Atoms.u32(data, entry);
+                var size = (int) Mp4Atoms.u32(data, entry + 4);
+                var title = chapters.get(index).title().orElse("").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                assertEquals(title.length, (int) (Mp4Atoms.u32(data, sample) >>> 16), "title length of sample " + index);
+                assertArrayEquals(title, java.util.Arrays.copyOfRange(data, sample + 2, sample + 2 + title.length));
+                assertEquals("encd", Mp4Atoms.type(data, sample + 2 + title.length + 4));
+                sample += size;
+            }
+            for (var index = 0; index + 1 < count; index++) {
+                assertEquals(Math.round((chapters.get(index + 1).startMicros() - chapters.get(index).startMicros())
+                        * timescale / 1e6), durations[index], "duration of sample " + index);
+            }
+            return durations;
+        }
+
+        static long durationMicros(byte[] data) {
+            try (var demuxer = Containers.openDemuxer(MediaSource.of(data))) {
+                return demuxer.durationMicros();
+            }
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("muxers")
+        @DisplayName("writes a chapter track in the first fragment that Smalt, ffprobe and MP4Box read without chpl")
+        void writesTrack(String name, Path input, Function<MediaSink, Muxer> factory, @TempDir Path directory) {
+            var output = MuxedTagsTest.remux(input, factory, tags(CHAPTERS));
+            var durations = assertChapterFragment(output, CHAPTERS);
+            // the declared end of the last chapter, bounded by the end of the two-second movie
+            assertEquals(500, durations[2], 30);
+            var trackOnly = Mp4Atoms.withoutNeroChapters(output);
+            try (var demuxer = Containers.openDemuxer(MediaSource.of(trackOnly))) {
+                assertChapters(CHAPTERS, demuxer.chapters());
+                assertEquals(1, demuxer.tracks().stream().filter(track -> track.kind() == TrackKind.DATA).count());
+                var packets = 0;
+                for (Packet packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                    packets++;
+                }
+                assertTrue(packets > 0);
+            }
+            var file = write(directory, "fragmented.mp4", trackOnly);
+            assertFfprobeChapters(CHAPTERS, file);
+            assertEquals(TagFixtures.packetHash(input), TagFixtures.packetHash(file));
+            Oracle.assertDecodesCleanly(file);
+            assertMp4BoxListsTrack(file, Mp4Atoms.trackId(output, assertChapterTrack(output)));
+        }
+
+        /** Runs MP4Box on a file and checks that it lists a track: the chapter track, whose samples are in fragments. */
+        static void assertMp4BoxListsTrack(Path file, long trackId) {
+            // GPAC publishes no pinnable Windows build, so only the Linux and macOS jobs run this oracle; the rest
+            // of each test still runs on Windows instead of being skipped.
+            if (Oracle.find(Oracle.Tool.MP4BOX).isEmpty()) {
+                return;
+            }
+            var result = Oracle.execute(Oracle.Tool.MP4BOX, java.time.Duration.ofMinutes(1), null,
+                    List.of("-info", file.toAbsolutePath().toString()));
+            var output = new String(result.stdout(), java.nio.charset.StandardCharsets.UTF_8) + result.stderr();
+            var listed = java.util.regex.Pattern.compile("Track.*\\bID " + trackId + "\\b").matcher(output).find();
+            assertTrue(listed, output);
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("muxers")
+        @DisplayName("ends an open last chapter at the movie end on a seekable output")
+        void openLastChapterSeekable(String name, Path input, Function<MediaSink, Muxer> factory,
+                                     @TempDir Path directory) {
+            var chapters = List.of(Chapter.of(0, 600_000, "One"), Chapter.of(600_000, 600_000, "Rest"));
+            var output = MuxedTagsTest.remux(input, factory, tags(chapters));
+            // the patched duration replaces the zero written in the fragment: a patch at the wrong offset would
+            // leave it zero or corrupt another field
+            var durations = assertChapterFragment(output, chapters);
+            var duration = durationMicros(output);
+            assertTrue(durations[1] > 0, "the open end is patched");
+            assertEquals(Math.round((duration - 600_000) / 1000.0), durations[1], 1);
+            var trackOnly = Mp4Atoms.withoutNeroChapters(output);
+            try (var demuxer = Containers.openDemuxer(MediaSource.of(trackOnly))) {
+                var read = demuxer.chapters();
+                assertEquals(2, read.size());
+                assertEquals(duration, read.get(1).endMicros(), 1000);
+            }
+            var file = write(directory, "open-end.mp4", trackOnly);
+            com.github.auties00.smalt.testkit.validate.Validators.assertValid(file);
+            assertEquals(TagFixtures.packetHash(input), TagFixtures.packetHash(file));
+        }
+
+        @Test
+        @DisplayName("bounds a last chapter that ends after the movie by the movie end on a seekable output")
+        void longLastChapter() {
+            var chapters = List.of(Chapter.of(0, 600_000, "One"), Chapter.of(600_000, 900_000_000, "Long"));
+            var output = MuxedTagsTest.remux(audio(), FragmentedMp4Muxer::new, tags(chapters));
+            var durations = assertChapterFragment(output, chapters);
+            assertEquals(Math.round((durationMicros(output) - 600_000) / 1000.0), durations[1], 1);
+        }
+
+        @Test
+        @DisplayName("gives an open last chapter no duration on a streaming output, which reads back to the movie end")
+        void openLastChapterStreaming(@TempDir Path directory) {
+            var chapters = List.of(Chapter.of(0, 600_000, "One"), Chapter.of(600_000, 600_000, "Rest"));
+            var output = remuxStreaming(audio(), tags(chapters));
+            var durations = assertChapterFragment(output, chapters);
+            assertEquals(0, durations[1]);
+            var trackOnly = Mp4Atoms.withoutNeroChapters(output);
+            try (var demuxer = Containers.openDemuxer(MediaSource.of(trackOnly))) {
+                var read = demuxer.chapters();
+                assertEquals(List.of(0L, 600_000L), read.stream().map(Chapter::startMicros).toList());
+                assertEquals(600_000, read.get(0).endMicros());
+                assertEquals(demuxer.durationMicros(), read.get(1).endMicros());
+            }
+            Oracle.assertDecodesCleanly(write(directory, "streamed.m4a", trackOnly));
+        }
+
+        @Test
+        @DisplayName("keeps a declared last end on a streaming output")
+        void declaredEndStreaming() {
+            var output = remuxStreaming(audio(), tags(CHAPTERS));
+            var durations = assertChapterFragment(output, CHAPTERS);
+            assertEquals(500, durations[2]);
+            try (var demuxer = Containers.openDemuxer(MediaSource.of(Mp4Atoms.withoutNeroChapters(output)))) {
+                assertEquals(CHAPTERS, demuxer.chapters());
+            }
+        }
+
+        @Test
+        @DisplayName("puts the chapter track in the first media segment of a segmented output")
+        void segments() {
+            var kinds = new ArrayList<Segment.Kind>();
+            var output = remuxSegments(video(), tags(CHAPTERS), kinds);
+            assertEquals(Segment.Kind.INIT, kinds.getFirst());
+            assertTrue(kinds.size() > 2, "several media segments: " + kinds);
+            assertChapterFragment(output, CHAPTERS);
+            try (var demuxer = Containers.openDemuxer(MediaSource.of(Mp4Atoms.withoutNeroChapters(output)))) {
+                assertEquals(CHAPTERS, demuxer.chapters());
+            }
+        }
+
+        @Test
+        @DisplayName("starts the chapter fragment at a late first chapter")
+        void lateFirstChapter(@TempDir Path directory) {
+            var chapters = List.of(Chapter.of(500_000, 1_200_000, "Late"), Chapter.of(1_200_000, 1_800_000, "Later"));
+            var output = MuxedTagsTest.remux(audio(), FragmentedMp4Muxer::new, tags(chapters));
+            assertChapterFragment(output, chapters);
+            var trackOnly = Mp4Atoms.withoutNeroChapters(output);
+            try (var demuxer = Containers.openDemuxer(MediaSource.of(trackOnly))) {
+                assertEquals(chapters, demuxer.chapters());
+            }
+            assertFfprobeChapters(chapters, write(directory, "late.m4a", trackOnly));
+        }
+
+        @Test
+        @DisplayName("counts microsecond boundaries in a microsecond timescale")
+        void microsecondTimescale() {
+            var chapters = List.of(Chapter.of(0, 333_333, "A"), Chapter.of(333_333, 1_000_001, null),
+                    Chapter.of(1_000_001, 1_900_000, "é".repeat(400)));
+            var output = MuxedTagsTest.remux(audio(), FragmentedMp4Muxer::new, tags(chapters));
+            var track = assertChapterTrack(output);
+            assertEquals(1_000_000, Mp4Atoms.u32(output, Mp4Atoms.first(output, track, "mdia/mdhd").payload() + 12));
+            assertChapterFragment(output, chapters);
+            try (var demuxer = Containers.openDemuxer(MediaSource.of(output))) {
+                assertEquals(chapters, demuxer.chapters(), "the track completes the title chpl cuts");
+            }
+        }
+
+        @Test
+        @DisplayName("writes more chapters than chpl holds into the chapter track")
+        void manyChapters(@TempDir Path directory) {
+            var chapters = manyChapterList();
+            var output = MuxedTagsTest.remux(audio(), FragmentedMp4Muxer::new, tags(chapters));
+            assertChapterFragment(output, chapters);
+            try (var demuxer = Containers.openDemuxer(MediaSource.of(output))) {
+                assertChapters(chapters, demuxer.chapters());
+            }
+            assertFfprobeChapters(chapters, write(directory, "many.m4a", output));
+        }
+
+        @Test
+        @DisplayName("numbers the timecode track after the chapter track")
+        void withTimecode(@TempDir Path directory) {
+            var tags = tags(CHAPTERS).toBuilder().set("timecode", "01:00:00:00").build();
+            var output = MuxedTagsTest.remux(video(), FragmentedMp4Muxer::new, tags);
+            var chapterId = Mp4Atoms.trackId(output, assertChapterTrack(output));
+            var traks = Mp4Atoms.all(output, "moov/trak");
+            assertEquals(traks.size() - 1, chapterId, "the chapter track follows the declared tracks");
+            var timecode = traks.stream().filter(trak -> Mp4Atoms.handler(output, trak).equals("tmcd")).findFirst()
+                    .orElseThrow();
+            assertEquals(chapterId + 1, Mp4Atoms.trackId(output, timecode));
+            for (var trak : traks) {
+                if (Mp4Atoms.handler(output, trak).equals("vide")) {
+                    assertEquals(List.of(chapterId + 1), Mp4Atoms.all(output, trak, "tref/tmcd").stream()
+                            .map(box -> Mp4Atoms.u32(output, box.payload())).toList());
+                }
+            }
+            assertChapterFragment(output, CHAPTERS);
+            try (var demuxer = Containers.openDemuxer(MediaSource.of(Mp4Atoms.withoutNeroChapters(output)))) {
+                assertChapters(CHAPTERS, demuxer.chapters());
+                assertEquals("01:00:00:00", demuxer.timecode().orElseThrow().toString());
+            }
+            Oracle.assertDecodesCleanly(write(directory, "timecode.mp4", output));
+        }
+
+        @Test
+        @DisplayName("writes no chapter track in a CMAF track file or without chapters")
+        void noTrack() {
+            var cmaf = MuxedTagsTest.remux(audio(), sink -> new FragmentedMp4Muxer(sink, FragmentedMp4MuxerOptions
+                    .builder().brand(FragmentedMp4MuxerOptions.Brand.CMAF).build()), tags(CHAPTERS));
+            assertEquals(1, Mp4Atoms.all(cmaf, "moov/trak").size());
+            assertTrue(Mp4Atoms.all(cmaf, "moov/trak/tref").isEmpty());
+            try (var demuxer = Containers.openDemuxer(MediaSource.of(cmaf))) {
+                assertEquals(CHAPTERS, demuxer.chapters(), "the chapters stay in chpl");
+            }
+            var plain = MuxedTagsTest.remux(audio(), FragmentedMp4Muxer::new, tags(List.of()));
+            assertEquals(1, Mp4Atoms.all(plain, "moov/trak").size());
+            assertEquals(1, Mp4Atoms.all(plain, "moov/mvex/trex").size());
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("muxers")
+        @DisplayName("lets TagEditor replace the chapters of its output, freeing the old chapter track's fragment")
+        void tagEditor(String name, Path input, Function<MediaSink, Muxer> factory, @TempDir Path directory) {
+            var output = MuxedTagsTest.remux(input, factory, tags(CHAPTERS));
+            var oldId = Mp4Atoms.trackId(output, assertChapterTrack(output));
+            var traks = Mp4Atoms.all(output, "moov/trak").size();
+            var other = List.of(Chapter.of(0, 900_000, "Uno"), Chapter.of(900_000, 1_300_000, "Dos"),
+                    Chapter.of(1_300_000, 2_000_000, "Tres"));
+            var edited = TagEditor.write(output, tags(other), TagWriteOptions.defaults());
+            assertChapterTrack(edited);
+            assertEquals(traks, Mp4Atoms.all(edited, "moov/trak").size(), "the old chapter track is replaced");
+            assertTrue(Mp4Atoms.all(edited, "moov/trak").stream().noneMatch(trak -> Mp4Atoms.trackId(edited, trak)
+                    == oldId), "the old chapter track is removed");
+            assertTrue(Mp4Atoms.all(edited, "moov/mvex/trex").stream().noneMatch(trex -> Mp4Atoms.u32(edited,
+                    trex.payload() + 4) == oldId), "the old chapter track's trex is removed");
+            for (var moof : Mp4Atoms.top(edited).stream().filter(box -> box.type().equals("moof")).toList()) {
+                for (var traf : Mp4Atoms.all(edited, moof, "traf")) {
+                    var tfhd = Mp4Atoms.first(edited, traf, "tfhd");
+                    assertTrue(Mp4Atoms.u32(edited, tfhd.payload() + 4) != oldId, "a fragment names the old track");
+                }
+            }
+            var trackOnly = Mp4Atoms.withoutNeroChapters(edited);
+            assertChapters(other, TagEditor.read(MediaSource.of(trackOnly)).chapters());
+            try (var demuxer = Containers.openDemuxer(MediaSource.of(trackOnly))) {
+                assertChapters(other, demuxer.chapters());
+                assertEquals(1, demuxer.tracks().stream().filter(track -> track.kind() == TrackKind.DATA).count(),
+                        demuxer.tracks().toString());
+            }
+            var file = write(directory, "edited.mp4", edited);
+            com.github.auties00.smalt.testkit.validate.Validators.assertValid(file);
+            assertEquals(TagFixtures.packetHash(input), TagFixtures.packetHash(file));
+            assertFfprobeChapters(other, write(directory, "edited-track-only.mp4", trackOnly));
+            Oracle.assertDecodesCleanly(file);
         }
     }
 }

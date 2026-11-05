@@ -751,6 +751,7 @@ class FuzzSeedWriter {
         write(SubtitleFuzzTest.class, "cues", "valid-mov-text.bin", cues(2, null, new String(movText,
                 StandardCharsets.ISO_8859_1), "\u0000\u0003two"));
         write(SubtitleFuzzTest.class, "cues", "valid-ttml.bin", cues(4, null, TTML_SEED));
+        write(SubtitleFuzzTest.class, "mp4Ttml", "valid-images.bin", imageDocuments());
         write(SubtitleFuzzTest.class, "cues", "valid-ass.bin", cues(3, ASS_HEADER,
                 "0,0,Default,,0,0,0,,{\\i1}Hello{\\i0}\\Nworld", "1,0,Default,,0,0,0,,two"));
         write(SubtitleFuzzTest.class, "markup", "valid-subrip.txt",
@@ -1127,6 +1128,39 @@ class FuzzSeedWriter {
         var rgb = RawVideoFormat.of(RawPixelFormat.BGR24).withRowAlignment(4).withBottomUp(true).toCodecConfig();
         write(ElementaryFuzzTest.class, "rawVideo", "valid-bgr24-dib.bin", FuzzPackets.video(0, 3, 2, rgb,
                 List.of(new FuzzPackets.Part(new byte[24], true))));
+    }
+
+    /**
+     * The seed of the MP4 TTML target: an IMSC image document followed by two PNG images, a text document, and a
+     * document followed by one image. The image is a 1x1 RGBA PNG whose pixel data is a stored deflate block, so
+     * the bytes do not depend on the zlib build.
+     */
+    private static byte[] imageDocuments() {
+        var png = java.util.HexFormat.of().parseHex("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4"
+                + "8900000010494441547801010500faff00204060ff030401c0fd9a4c7f0000000049454e44ae426082");
+        var out = new java.io.ByteArrayOutputStream();
+        out.write(0);
+        var packets = List.of(join(imageDocument(0, 1000, 2), png, png),
+                "<tt xmlns=\"http://www.w3.org/ns/ttml\"><body><p begin=\"1s\" end=\"2s\">text</p></body></tt>"
+                        .getBytes(StandardCharsets.UTF_8),
+                join(imageDocument(2000, 3000, 1), png));
+        for (var packet : packets) {
+            out.writeBytes(FuzzPackets.MARKER);
+            out.write(1);
+            out.writeBytes(packet);
+        }
+        return out.toByteArray();
+    }
+
+    private static byte[] imageDocument(int begin, int end, int images) {
+        var divs = new StringBuilder();
+        for (var image = 1; image <= images; image++) {
+            divs.append("<div begin=\"").append(begin).append("ms\" end=\"").append(end)
+                    .append("ms\" smpte:backgroundImage=\"urn:mpeg:14496-30:subs:").append(image).append("\"/>");
+        }
+        return ("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<tt xmlns=\"http://www.w3.org/ns/ttml\" "
+                + "xmlns:smpte=\"http://www.smpte-ra.org/schemas/2052-1/2010/smpte-tt\" xml:lang=\"en\"><body>" + divs
+                + "</body></tt>\n").getBytes(StandardCharsets.UTF_8);
     }
 
     private static byte[] cues(int codec, String config, String... texts) {

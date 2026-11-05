@@ -27,7 +27,9 @@ import java.util.Set;
  * packet form: UTF-8 text for {@link Codec#SUBRIP}, the payload with the identifier and settings as side
  * data for {@link Codec#WEBVTT}, a 3GPP text sample for {@link Codec#MOV_TEXT} (its styles, colors,
  * fonts the track's font table names, sizes, highlight and karaoke as {@code styl}, {@code hlit},
- * {@code hclr} and {@code krok} boxes), and an event for {@link Codec#ASS}, numbered in encoding order: an
+ * {@code hclr} and {@code krok} boxes, its anchored position as a {@code tbox} measured in the default text
+ * box of the sample entry or, when the entry declares none, in the region of a track that declares its
+ * {@linkplain DataTrack#width() size}), and an event for {@link Codec#ASS}, numbered in encoding order: an
  * ASS cue keeps its event fields (its settings), a cue of another markup goes to the {@code Default}
  * style, its speaker in the {@code Name} field, its placement and font sizes scaled to the script
  * resolution. The packet starts at the cue start and lasts until its end, in the track's time base.
@@ -80,7 +82,9 @@ public final class SubtitleEncoder {
         this.script = track.codec() == Codec.ASS
                 ? AssScript.parse(TextFiles.decode(config == null ? AssEvents.DEFAULT_HEADER.getBytes(StandardCharsets.UTF_8)
                 : config)) : null;
-        this.timedText = track.codec() == Codec.MOV_TEXT ? TimedText.Config.parse(config) : null;
+        var region = track instanceof DataTrack data ? data : null;
+        this.timedText = track.codec() == Codec.MOV_TEXT ? TimedText.Config.parse(config).withTrackSize(
+                region != null ? region.width() : 0, region != null ? region.height() : 0) : null;
     }
 
     /**

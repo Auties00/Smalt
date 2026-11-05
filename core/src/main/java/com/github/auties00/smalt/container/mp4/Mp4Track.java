@@ -1032,13 +1032,18 @@ final class Mp4Track {
                     .bitsPerSample(entry.bitsPerSample())
                     .skipSamples(skipSamples)
                     .build();
-            case DATA -> DataTrack.builder().id(id).codec(entry.codec()).timeBase(timeBase).duration(duration)
-                    .codecConfig(entry.codec() == Codec.DVD_SUBTITLE
-                            ? BitmapTrackConfigs.vobSubFromMp4(config.orElse(null), headerWidth, headerHeight)
-                            : config.orElse(null))
-                    .language(lang.orElse(null))
-                    .handler(FourCc.printable(handler).trim())
-                    .build();
+            case DATA -> {
+                var data = DataTrack.builder().id(id).codec(entry.codec()).timeBase(timeBase).duration(duration)
+                        .codecConfig(entry.codec() == Codec.DVD_SUBTITLE
+                                ? BitmapTrackConfigs.vobSubFromMp4(config.orElse(null), headerWidth, headerHeight)
+                                : config.orElse(null))
+                        .language(lang.orElse(null))
+                        .handler(FourCc.printable(handler).trim());
+                if (headerWidth > 0 && headerWidth <= 0xFFFF && headerHeight > 0 && headerHeight <= 0xFFFF) {
+                    data.size(headerWidth, headerHeight);
+                }
+                yield data.build();
+            }
         };
     }
 
