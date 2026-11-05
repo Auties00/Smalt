@@ -3,6 +3,7 @@ package com.github.auties00.smalt.fuzz;
 import com.github.auties00.smalt.audio.Ambisonics;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.Speaker;
+import com.github.auties00.smalt.audio.pcm.DopStreams;
 import com.github.auties00.smalt.container.Attachment;
 import com.github.auties00.smalt.container.Chapter;
 import com.github.auties00.smalt.container.ChapterEdition;
@@ -51,6 +52,7 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
@@ -965,6 +967,26 @@ class FuzzSeedWriter {
         var f32 = ffmpeg("wav", tone(8000, 0.02), "-c:a", "pcm_f32le");
         write(PcmFuzzTest.class, "pcm", "valid-f32le.bin", FuzzSeeds.packets(f32, Codec.PCM_F32LE,
                 codecs.indexOf(Codec.PCM_F32LE) << 1, 8));
+    }
+
+    @Test
+    @DisplayName("writes the DSD over PCM seeds: 24 and 32-bit PCM alternating DoP and PCM sections")
+    void dsdOverPcm() {
+        for (var bits : new int[]{24, 32}) {
+            var codec = bits == 24 ? Codec.PCM_S24LE : Codec.PCM_S32BE;
+            var sections = List.of(DopStreams.pcm(2, 40, bits, 1), DopStreams.dop(2, 300, bits, 0x05, 2),
+                    DopStreams.pcm(2, 3, bits, 3), DopStreams.dop(2, 20, bits, 0xFA, 4),
+                    DopStreams.dop(2, 200, bits, 0xFA, 5));
+            var samples = DopStreams.join(sections);
+            var parts = new ArrayList<FuzzPackets.Part>();
+            for (var at = 0; at < samples[0].length; at += 150) {
+                var count = Math.min(150, samples[0].length - at);
+                parts.add(new FuzzPackets.Part(DopStreams.encode(samples, at, count, bits, bits == 32), true));
+            }
+            var options = Arrays.asList(PcmFuzzTest.DOP).indexOf(codec) << 1;
+            write(PcmFuzzTest.class, "dop", "valid-s" + bits + "-switching.bin",
+                    FuzzPackets.audio(options, 176400, 2, bits, null, parts));
+        }
     }
 
     /**

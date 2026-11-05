@@ -94,11 +94,13 @@ public final class AudioDecoderOptions {
      * <p>DSD over PCM carries 16 DSD samples of a channel in each 24-bit PCM sample: the marker {@code 0x05} or
      * {@code 0xFA} in the top byte, alternating from frame to frame, then two bytes of DSD, the oldest sample in the
      * most significant bit. When this is set, {@link AudioDecoders} decodes a track of a codec with integer output of
-     * 24 or 32 bits (integer PCM, FLAC, ALAC, WavPack) through a decoder that inspects the first block: when every
-     * frame of it carries the alternating markers in every channel, the stream is DSD at 16 times the PCM rate, which
-     * is converted to PCM as {@link #preferredSampleRate()} describes (at the PCM rate by default); otherwise the PCM
-     * is output unchanged. Such a decoder has no integer output. A stream whose DSD starts after its first block is
-     * decoded as PCM.
+     * 24 or 32 bits (integer PCM, FLAC, ALAC, WavPack) through a decoder that follows the markers as a DoP 1.1
+     * receiver does: after 32 consecutive frames that carry the alternating markers in every channel, the stream is
+     * DSD at 16 times the PCM rate from the first of them, which is converted to PCM as {@link #preferredSampleRate()}
+     * describes (at the PCM rate by default), until the first frame whose marker is missing in a channel or breaks the
+     * alternation; every other frame is output as PCM, unchanged. A stream may switch between DoP and PCM any number
+     * of times; each DSD section is converted as if decoded alone, and each output block carries the sample rate of
+     * its section. Such a decoder has no integer output.
      */
     public boolean dsdOverPcm() {
         return dsdOverPcm;

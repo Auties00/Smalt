@@ -339,6 +339,19 @@ public final class FuzzMedia {
      * @return the run
      */
     public static FuzzRun audio(Codec codec, byte[] data) {
+        return audio(codec, data, false);
+    }
+
+    /**
+     * Decodes an audio stream in the {@link FuzzPackets} format as {@link #audio(Codec, byte[])} does, asking for
+     * DSD over PCM decoding when {@code dsdOverPcm} is set.
+     *
+     * @param codec the codec of the target
+     * @param data the input
+     * @param dsdOverPcm whether to set {@link AudioDecoderOptions.Builder#dsdOverPcm(boolean)}
+     * @return the run
+     */
+    public static FuzzRun audio(Codec codec, byte[] data, boolean dsdOverPcm) {
         var run = Fuzz.start(codec.name());
         var input = FuzzPackets.parse(data, FuzzPackets.AUDIO_FIELDS);
         var header = input.header();
@@ -353,7 +366,8 @@ public final class FuzzMedia {
             track.layout(ChannelLayout.defaultFor(Math.min(channels, Fuzz.LIMITS.maxChannels())));
         }
         header.config().ifPresent(track::codecConfig);
-        var options = AudioDecoderOptions.builder().limits(Fuzz.LIMITS).verifyIntegrity((header.options() & 2) != 0);
+        var options = AudioDecoderOptions.builder().limits(Fuzz.LIMITS).verifyIntegrity((header.options() & 2) != 0)
+                .dsdOverPcm(dsdOverPcm);
         if ((header.options() & 1) != 0) {
             options.preferredSampleRate(48_000);
         }
