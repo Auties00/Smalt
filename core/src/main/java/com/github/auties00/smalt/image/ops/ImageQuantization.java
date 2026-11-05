@@ -3,6 +3,8 @@ package com.github.auties00.smalt.image.ops;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.image.Yuv16Picture;
+import com.github.auties00.smalt.internal.color.YcgcoR;
 import com.github.auties00.smalt.internal.quantize.ExactColors;
 import com.github.auties00.smalt.internal.quantize.IndexMapper;
 import com.github.auties00.smalt.internal.quantize.MedianCut;
@@ -40,7 +42,6 @@ public final class ImageQuantization {
      *
      * @param picture the picture to reduce
      * @return the quantized image
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the work arrays do not fit one Java array
      * @see QuantizeOptions#defaults()
      */
@@ -54,7 +55,6 @@ public final class ImageQuantization {
      * @param picture the picture to reduce
      * @param options the palette size, algorithm, dithering and alpha threshold
      * @return the quantized image
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the work arrays do not fit one Java array
      */
     public static QuantizedImage quantize(Picture picture, QuantizeOptions options) {
@@ -62,7 +62,8 @@ public final class ImageQuantization {
             Objects.requireNonNull(picture, "picture");
             Objects.requireNonNull(options, "options");
             try {
-                var rgba = ImageOps.toRgba(ImageOps.toEightBit(picture));
+                var rgba = picture instanceof Yuv16Picture yuv && YcgcoR.applies(yuv.color().matrix())
+                        ? ImageOps.toRgba(yuv) : ImageOps.toRgba(ImageOps.toEightBit(picture));
                 return quantize(rgba, options);
             } catch (RuntimeException exception) {
                 throw OpChecks.translate(exception);
