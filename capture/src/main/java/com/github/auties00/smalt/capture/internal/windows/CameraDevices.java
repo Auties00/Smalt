@@ -50,6 +50,18 @@ final class CameraDevices {
     }
 
     /**
+     * Lists the symbolic links of the cameras without activating them.
+     *
+     * <p>Runs on a thread in the multithreaded apartment with Media Foundation started.
+     *
+     * @return the links, in enumeration order
+     * @throws MediaException.Io if the enumeration fails
+     */
+    static List<String> ids() {
+        return list(null, false, false).stream().map(CaptureDevice.Camera::id).toList();
+    }
+
+    /**
      * Lists the video capture devices and the modes of each.
      *
      * <p>A device whose media source cannot be activated (for example because another
@@ -59,7 +71,7 @@ final class CameraDevices {
      * @throws MediaException.Io if the enumeration fails
      */
     static List<CaptureDevice.Camera> list() {
-        return list(null, false);
+        return list(null, false, true);
     }
 
     /**
@@ -70,14 +82,15 @@ final class CameraDevices {
      * @throws MediaException.Io if the enumeration fails
      */
     static Optional<CaptureDevice.Camera> find(String id) {
-        return list(id, true).stream().findFirst();
+        return list(id, true, true).stream().findFirst();
     }
 
     /**
      * Lists the video capture devices whose symbolic link is {@code id}, or every device when
-     * {@code id} is {@code null}, reading the modes of the listed devices only.
+     * {@code id} is {@code null}, reading the modes of the listed devices only, and only when
+     * {@code withModes} is set; without, a camera's name is its link and it has no modes.
      */
-    private static List<CaptureDevice.Camera> list(String id, boolean first) {
+    private static List<CaptureDevice.Camera> list(String id, boolean first, boolean withModes) {
         try (var arena = Arena.ofConfined()) {
             var slot = arena.allocate(ADDRESS);
             var attributes = MediaFoundation.createAttributes(1, slot);
@@ -98,7 +111,8 @@ final class CameraDevices {
                     var activate = activates.getAtIndex(ADDRESS, i);
                     var link = string(activate, MediaFoundation.DEVSOURCE_SYMBOLIC_LINK, arena);
                     if (link != null && (id == null || id.equals(link))) {
-                        cameras.add(describe(activate, link, arena));
+                        cameras.add(withModes ? describe(activate, link, arena)
+                                : new CaptureDevice.Camera(link, link, List.of()));
                     }
                 }
             } finally {

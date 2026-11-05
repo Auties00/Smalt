@@ -231,6 +231,24 @@ public final class RangeEncoder extends EntropyCoder {
     }
 
     /**
+     * Encodes a symbol described by a 16-bit inverse cumulative distribution ({@code ec_enc_icdf16}).
+     *
+     * @param s    the symbol index
+     * @param icdf the inverse CDF, ending with zero
+     * @param ftb  the base-2 logarithm of the total frequency, at most 15
+     */
+    public void encIcdf16(int s, int[] icdf, int ftb) {
+        var r = rng >>> ftb;
+        if (s > 0) {
+            val += rng - r * icdf[s - 1];
+            rng = r * (icdf[s - 1] - icdf[s]);
+        } else {
+            rng -= r * icdf[s];
+        }
+        normalize();
+    }
+
+    /**
      * Encodes a uniformly distributed integer in {@code [0, ft)} ({@code ec_enc_uint}).
      *
      * @param fl the value to encode, unsigned

@@ -1,0 +1,49 @@
+# audio decode dump of vectors/fate-luckynight-mac388-c2000.ape; regenerate with -Dsmalt.test.updateDumps=true
+format APE
+duration 60480000
+seekable true
+track 0 APE rate=44100 layout=[FRONT_LEFT, FRONT_RIGHT]
+0 frames=4096 crc16=7f67dadb
+1 frames=4096 crc16=9ae244b2
+2 frames=4096 crc16=56d82a7c
+3 frames=4096 crc16=43b9964a
+4 frames=4096 crc16=f3d7def7
+5 frames=4096 crc16=40cda316
+6 frames=4096 crc16=828d735c
+7 frames=4096 crc16=68a96775
+8 frames=4096 crc16=4b82d63e
+9 frames=4096 crc16=bbd1a00a
+10 frames=4096 crc16=f481383a
+11 frames=4096 crc16=14bb8d51
+12 frames=4096 crc16=d3b4238a
+13 frames=4096 crc16=bcf8a56d
+14 frames=4096 crc16=b49431d1
+15 frames=4096 crc16=36b34ea7
+16 frames=4096 crc16=64b00299
+17 frames=4096 crc16=5babfbd2
+18 frames=4096 crc16=5e2fe790
+19 frames=4096 crc16=5c827573
+20 frames=4096 crc16=2677b01f
+21 frames=4096 crc16=3907dc98
+22 frames=4096 crc16=8fa95135
+23 frames=4096 crc16=3a86754a
+24 frames=4096 crc16=06cd7943
+25 frames=4096 crc16=60fe6bde
+26 frames=4096 crc16=6d7efcba
+27 frames=4096 crc16=572c7465
+28 frames=4096 crc16=e3de7b8d
+29 frames=4096 crc16=34e74f30
+30 frames=4096 crc16=e3ffb9fb
+31 frames=4096 crc16=f100fc31
+32 frames=4096 crc16=3709f15e
+33 frames=3072 crc16=ba0a71c8
+seek 0: @sample 0
+seek 20160000: end
+seek 40320000: end
+seek 60480000: end
+seek -1000000: @sample 0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format APE
+  duration 60480000
+  seekable false
+  track 0 APE rate=44100 layout=[FRONT_LEFT, FRONT_RIGHT]
