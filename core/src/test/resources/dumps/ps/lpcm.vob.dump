@@ -1,0 +1,73 @@
+# demux dump of ps/lpcm.vob; regenerate with -Dsmalt.test.updateDumps=true
+format MPEG_PS
+duration 410438
+seekable true
+track 224 VIDEO MPEG2_VIDEO timebase=1/90000 duration=? config=22:647584fe
+  video 160x120 orientation=NORMAL rate=25/1 sar=1/1
+track 416 AUDIO PCM_S16BE timebase=1/48000 duration=? config=none
+  audio rate=48000 bits=16 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 49
+0 t416 pts=0 dts=0 dur=502 flags=KEY size=2008 crc=8d26a077
+1 t224 pts=0 dts=-3600 dur=3600 flags=KEY size=3465 crc=20b3bbc9
+2 t224 pts=10800 dts=0 dur=3600 flags=- size=1829 crc=64250370
+3 t224 pts=3600 dts=3600 dur=3600 flags=- size=1131 crc=7ca22291
+4 t416 pts=502 dts=502 dur=503 flags=KEY size=2012 crc=968eb752
+5 t224 pts=7200 dts=7200 dur=3600 flags=- size=902 crc=53bebfc3
+6 t224 pts=21600 dts=10800 dur=3600 flags=KEY size=3553 crc=cd6bd5c8
+7 t224 pts=14400 dts=14400 dur=3600 flags=- size=1173 crc=3c241429
+8 t224 pts=18000 dts=18000 dur=3600 flags=- size=1090 crc=e93d2ba8
+9 t224 pts=32400 dts=21600 dur=3600 flags=KEY size=3639 crc=6ceedc35
+10 t416 pts=1506 dts=1506 dur=503 flags=KEY size=2012 crc=f8c666a8
+11 t416 pts=2009 dts=2009 dur=503 flags=KEY size=2012 crc=8224f4f9
+12 t416 pts=2512 dts=2512 dur=503 flags=KEY size=2012 crc=5034004a
+13 t416 pts=3015 dts=3015 dur=503 flags=KEY size=2012 crc=abcc10c3
+14 t416 pts=3518 dts=3518 dur=503 flags=KEY size=2012 crc=a7aea723
+15 t416 pts=4021 dts=4021 dur=503 flags=KEY size=2012 crc=d6023d16
+16 t416 pts=4524 dts=4524 dur=503 flags=KEY size=2012 crc=a6c65d10
+17 t416 pts=5027 dts=5027 dur=503 flags=KEY size=2012 crc=9442f390
+18 t416 pts=5530 dts=5530 dur=503 flags=KEY size=2012 crc=cda8bb3f
+19 t416 pts=6033 dts=6033 dur=503 flags=KEY size=2012 crc=31537f43
+20 t416 pts=6536 dts=6536 dur=503 flags=KEY size=2012 crc=c839bca8
+21 t416 pts=7039 dts=7039 dur=503 flags=KEY size=2012 crc=3ba3abdd
+22 t416 pts=7542 dts=7542 dur=503 flags=KEY size=2012 crc=b737be50
+23 t416 pts=8045 dts=8045 dur=503 flags=KEY size=2012 crc=d905e230
+24 t416 pts=8548 dts=8548 dur=503 flags=KEY size=2012 crc=f3f114ee
+25 t416 pts=9051 dts=9051 dur=503 flags=KEY size=2012 crc=7ee27e7e
+26 t416 pts=9554 dts=9554 dur=503 flags=KEY size=2012 crc=f48b9899
+27 t416 pts=10057 dts=10057 dur=503 flags=KEY size=2012 crc=7fcad208
+28 t416 pts=10560 dts=10560 dur=503 flags=KEY size=2012 crc=da4517ef
+29 t416 pts=11063 dts=11063 dur=503 flags=KEY size=2012 crc=8a8f4722
+30 t416 pts=11566 dts=11566 dur=503 flags=KEY size=2012 crc=0f025102
+31 t416 pts=12069 dts=12069 dur=503 flags=KEY size=2012 crc=59ab42a5
+32 t416 pts=12572 dts=12572 dur=503 flags=KEY size=2012 crc=227c7cc7
+33 t416 pts=13075 dts=13075 dur=503 flags=KEY size=2012 crc=d42ce888
+34 t416 pts=13578 dts=13578 dur=503 flags=KEY size=2012 crc=abfcc4ee
+35 t416 pts=14081 dts=14081 dur=503 flags=KEY size=2012 crc=dd3ffe2e
+36 t416 pts=14584 dts=14584 dur=503 flags=KEY size=2012 crc=ea89ce6f
+37 t416 pts=15087 dts=15087 dur=503 flags=KEY size=2012 crc=fca82f40
+38 t416 pts=15590 dts=15590 dur=503 flags=KEY size=2012 crc=b5412f1e
+39 t416 pts=16093 dts=16093 dur=503 flags=KEY size=2012 crc=984bdc45
+40 t416 pts=16596 dts=16596 dur=503 flags=KEY size=2012 crc=8c4fccc3
+41 t416 pts=17099 dts=17099 dur=503 flags=KEY size=2012 crc=f5939aab
+42 t416 pts=17602 dts=17602 dur=503 flags=KEY size=2012 crc=a53985bc
+43 t416 pts=18105 dts=18105 dur=503 flags=KEY size=2012 crc=bd96ad97
+44 t416 pts=18608 dts=18608 dur=503 flags=KEY size=2012 crc=0efacb5f
+45 t416 pts=19111 dts=19111 dur=503 flags=KEY size=2012 crc=88a12237
+46 t416 pts=19614 dts=19614 dur=87 flags=KEY size=348 crc=a985ac2a
+47 t224 pts=25200 dts=25200 dur=3600 flags=- size=1404 crc=da7ee13c
+48 t224 pts=28800 dts=28800 dur=3600 flags=- size=1311 crc=d67c561e
+seek 0: t224@0 t416@0
+seek 136812: t224@0 t416@12
+seek 273625: t224@4 t416@25
+seek 410438: end
+seek -1000000: t224@0 t416@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format MPEG_PS
+  duration -1
+  seekable false
+  track 224 VIDEO MPEG2_VIDEO timebase=1/90000 duration=? config=22:647584fe
+    video 160x120 orientation=NORMAL rate=25/1 sar=1/1
+  track 416 AUDIO PCM_S16BE timebase=1/48000 duration=? config=none
+    audio rate=48000 bits=16 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH

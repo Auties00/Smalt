@@ -85,7 +85,7 @@ public final class MediaLimits {
     }
 
     /**
-     * {@return the largest accepted number of audio channels; positive; 64 by default}
+     * {@return the largest accepted number of audio channels or image components; positive; 64 by default}
      */
     public int maxChannels() {
         return maxChannels;
@@ -179,7 +179,8 @@ public final class MediaLimits {
         }
 
         /**
-         * Sets the largest accepted number of audio channels; see {@link MediaLimits#maxChannels()}.
+         * Sets the largest accepted number of audio channels or image components; see
+         * {@link MediaLimits#maxChannels()}.
          *
          * @param maxChannels the value
          * @return this builder
