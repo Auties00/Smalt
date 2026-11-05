@@ -14,6 +14,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
@@ -64,6 +66,38 @@ class PcmDecoderTest {
         void s8() {
             var planes = decode(Codec.PCM_S8, ChannelLayout.MONO, new byte[]{-128, 0, 127, 64});
             assertArrayEquals(new float[]{-1f, 0f, 127 / 128f, 0.5f}, planes[0]);
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({"PCM_S64LE, true", "PCM_S64BE, false"})
+        @DisplayName("maps 64-bit integers to value / 2^63, rounded once to the nearest float")
+        void signed64(Codec codec, boolean littleEndian) {
+            var random = new SplittableRandom(64);
+            var values = new long[2 * 300];
+            var buffer = ByteBuffer.allocate(values.length * 8)
+                    .order(littleEndian ? ByteOrder.LITTLE_ENDIAN : ByteOrder.BIG_ENDIAN);
+            for (var i = 0; i < values.length; i++) {
+                values[i] = switch (i) {
+                    case 0 -> Long.MIN_VALUE;
+                    case 1 -> Long.MAX_VALUE;
+                    case 2 -> 0;
+                    case 3 -> -1;
+                    // a value halfway between two floats, which rounding through a double would push to one side
+                    case 4 -> (1L << 62) + (1L << 38) + 1;
+                    default -> random.nextLong() >> random.nextInt(64);
+                };
+                buffer.putLong(values[i]);
+            }
+            var planes = decode(codec, ChannelLayout.STEREO, buffer.array());
+            var scale = new BigDecimal(BigInteger.ONE.shiftLeft(63));
+            for (var i = 0; i < 300; i++) {
+                for (var c = 0; c < 2; c++) {
+                    var expected = new BigDecimal(values[i * 2 + c]).divide(scale).floatValue();
+                    assertEquals(expected, planes[c][i], "frame " + i + " channel " + c);
+                }
+            }
+            assertEquals(-1f, planes[0][0]);
+            assertEquals(1f, planes[1][0]);
         }
 
         @ParameterizedTest(name = "{0}")
@@ -226,7 +260,7 @@ class PcmDecoderTest {
         @DisplayName("supports every PCM codec constant")
         void everyCodec() {
             var pcm = List.of(Codec.values()).stream().filter(Codec::isPcm).toList();
-            assertEquals(14, pcm.size());
+            assertEquals(16, pcm.size());
             for (var codec : pcm) {
                 var planes = decode(codec, ChannelLayout.STEREO, new byte[64]);
                 assertTrue(planes[0].length > 0, codec.name());

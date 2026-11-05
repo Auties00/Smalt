@@ -21,6 +21,7 @@ import java.util.Objects;
  * {@code timeBase = scale / rate}; each packet becomes a 12-byte frame header (size and 64-bit
  * presentation timestamp, or the decoding timestamp when the presentation timestamp is unknown)
  * followed by the frame. A packet without any timestamp gets the previous timestamp plus one.
+ * A codec configuration change is accepted as it is: the frames describe themselves.
  *
  * <p>On a seekable sink {@link #finish()} patches the frame count of the header; on a streaming
  * sink it stays zero, which readers ignore. The sink is written from its position at

@@ -14,12 +14,14 @@ import java.util.List;
  * color cache, clusters the tile histograms into meta prefix codes, writes everything and keeps
  * the smallest result. The method (0 to 6) trades speed for size: it controls the tile sizes,
  * the search effort and how many configurations are tried; the quality (0 to 100) controls the
- * LZ77 and clustering effort.
+ * LZ77 and clustering effort. A near-lossless level below 100 quantizes the pixels of the
+ * configurations without a palette: through {@link NearLossless#preprocess} when no predictor runs,
+ * through the predictor residuals otherwise.
  *
  * @implNote This implementation follows libwebp's {@code src/enc/vp8l_enc.c} (BSD-3) without
- * near-lossless coding and multi-threading: the analysis ({@code AnalyzeEntropy}), the crunch
- * configurations of each method, the tile-size heuristics and the bitstream layout are the same,
- * so the output closely tracks {@code cwebp -lossless} at equal method and quality.
+ * multi-threading: the analysis ({@code AnalyzeEntropy}), the crunch configurations of each
+ * method, the tile-size heuristics, near-lossless coding and the bitstream layout are the same,
+ * so the output equals {@code cwebp -lossless} at equal method, quality and near-lossless level.
  */
 public final class Vp8lEncoder {
     /**
@@ -113,6 +115,11 @@ public final class Vp8lEncoder {
     private final boolean exact;
 
     /**
+     * The near-lossless level, 100 for lossless coding.
+     */
+    private final int nearLossless;
+
+    /**
      * The scratch parses.
      */
     private final BackwardRefs[] refs = new BackwardRefs[4];
@@ -133,12 +140,14 @@ public final class Vp8lEncoder {
      * @param quality the quality, from 0 to 100
      * @param method  the method, from 0 to 6
      * @param exact   whether transparent pixels keep their color
+     * @param nearLossless the near-lossless level, from 0 to 100
      */
-    private Vp8lEncoder(int quality, int method, boolean exact) {
+    private Vp8lEncoder(int quality, int method, boolean exact, int nearLossless) {
         this.quality = quality;
         this.method = method;
         this.lowEffort = method == 0;
         this.exact = exact;
+        this.nearLossless = nearLossless;
         for (var i = 0; i < 4; i++) {
             refs[i] = new BackwardRefs(256);
         }
@@ -156,6 +165,23 @@ public final class Vp8lEncoder {
      * @return the payload
      */
     public static byte[] encodeImage(int[] argb, int width, int height, int quality, int method, boolean exact) {
+        return encodeImage(argb, width, height, quality, method, exact, 100);
+    }
+
+    /**
+     * Encodes an image as a complete VP8L chunk payload at a near-lossless level.
+     *
+     * @param argb the pixels, {@code width * height} packed ARGB values; not modified
+     * @param width the width, from 1 to 16384
+     * @param height the height, from 1 to 16384
+     * @param quality the quality, from 0 to 100
+     * @param method the method, from 0 to 6
+     * @param exact whether transparent pixels keep their color
+     * @param nearLossless the near-lossless level, from 0 to 100, where 100 is lossless
+     * @return the payload
+     */
+    public static byte[] encodeImage(int[] argb, int width, int height, int quality, int method, boolean exact,
+                                     int nearLossless) {
         var bw = new Vp8lBitWriter(width * height / 2 + 64);
         bw.putBits(width - 1, 14);
         bw.putBits(height - 1, 14);
@@ -168,7 +194,7 @@ public final class Vp8lEncoder {
         }
         bw.putBits(hasAlpha ? 1 : 0, 1);
         bw.putBits(0, 3);
-        new Vp8lEncoder(quality, method, exact).encodeStream(argb, width, height, bw);
+        new Vp8lEncoder(quality, method, exact, nearLossless).encodeStream(argb, width, height, bw);
         var stream = bw.toByteArray();
         var payload = new byte[stream.length + 1];
         payload[0] = (byte) Vp8lDecoder.SIGNATURE;
@@ -189,7 +215,7 @@ public final class Vp8lEncoder {
      */
     public static byte[] encodeStream(int[] argb, int width, int height, int quality, int method, boolean exact) {
         var bw = new Vp8lBitWriter(width * height / 4 + 64);
-        new Vp8lEncoder(quality, method, exact).encodeStream(argb, width, height, bw);
+        new Vp8lEncoder(quality, method, exact, 100).encodeStream(argb, width, height, bw);
         return bw.toByteArray();
     }
 
@@ -233,6 +259,7 @@ public final class Vp8lEncoder {
         }
         var bestSize = Long.MAX_VALUE;
         var palette = new int[Palette.MAX_PALETTE_SIZE];
+        int[] nearLosslessImage = null;
         for (var config : configs) {
             var entropyIdx = config.entropyIdx();
             var useThisPalette = entropyIdx == PALETTE || entropyIdx == PALETTE_AND_SPATIAL;
@@ -254,6 +281,12 @@ public final class Vp8lEncoder {
                 if (paletteSize < (1 << BackwardReferences.MAX_COLOR_CACHE_BITS)) {
                     cacheBits = EntropyMath.bitsLog2Floor(paletteSize) + 1;
                 }
+            } else if (nearLossless < 100 && !usePredict) {
+                if (nearLosslessImage == null) {
+                    nearLosslessImage = NearLossless.preprocess(picture, width, height, nearLossless);
+                }
+                argb = nearLosslessImage.clone();
+                currentWidth = width;
             } else {
                 argb = picture.clone();
                 currentWidth = width;
@@ -271,7 +304,7 @@ public final class Vp8lEncoder {
                 var transformData = new int[Vp8lDecoder.subSampleSize(currentWidth, TransformEncoder.MIN_TRANSFORM_BITS)
                         * Vp8lDecoder.subSampleSize(height, TransformEncoder.MIN_TRANSFORM_BITS)];
                 var bits = TransformEncoder.residualImage(currentWidth, height, minBits, maxBits, lowEffort, argb,
-                        transformData, exact);
+                        transformData, useThisPalette ? 100 : nearLossless, exact, useSubtractGreen);
                 bw.putBits(1, 1);
                 bw.putBits(0, 2);
                 bw.putBits(bits - 2, 3);

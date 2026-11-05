@@ -33,6 +33,25 @@ public final class H264Tables {
     };
 
     /**
+     * The 4x4 field scan of field macroblocks: entry {@code i} is the raster index of the
+     * {@code i}-th coefficient in scan order (ITU-T H.264 Table 8-13).
+     */
+    public static final byte[] FIELD_4X4 = {
+            0, 4, 1, 8, 12, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15
+    };
+
+    /**
+     * The 8x8 field scan of field macroblocks: entry {@code i} is the raster index of the
+     * {@code i}-th coefficient in scan order (ITU-T H.264 Table 8-14).
+     */
+    public static final byte[] FIELD_8X8 = {
+            0, 8, 16, 1, 9, 24, 32, 17, 2, 25, 40, 48, 56, 33, 10, 3,
+            18, 41, 49, 57, 26, 11, 4, 19, 34, 42, 50, 58, 27, 12, 5, 20,
+            35, 43, 51, 59, 28, 13, 6, 21, 36, 44, 52, 60, 29, 14, 22, 37,
+            45, 53, 61, 30, 7, 15, 38, 46, 54, 62, 23, 31, 39, 47, 55, 63
+    };
+
+    /**
      * The default intra 4x4 scaling list {@code Default_4x4_Intra}, in zig-zag order (ITU-T
      * H.264 Table 7-3).
      */

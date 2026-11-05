@@ -1,0 +1,19 @@
+# image dump of gif/animated.gif; regenerate with -Dsmalt.test.updateDumps=true
+format GIF
+info ImageInfo[format=GIF, width=48, height=32, hasAlpha=true, animated=true, frameCount=5, orientation=NORMAL]
+decode
+picture 48x32 rgba8 alpha=true crc=e5a4ebaf
+  format=GIF orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=none
+scaled 12x8
+picture 48x32 rgba8 alpha=true crc=e5a4ebaf
+  format=GIF orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=none
+animation 48x32 loops=0 frames=5
+frame 0 ts=0 dur=200000 48x32 rgba8 alpha=true crc=e5a4ebaf
+frame 1 ts=200000 dur=200000 48x32 rgba8 alpha=true crc=d197b677
+frame 2 ts=400000 dur=200000 48x32 rgba8 alpha=true crc=ab54592a
+frame 3 ts=600000 dur=200000 48x32 rgba8 alpha=true crc=3e12f637
+frame 4 ts=800000 dur=200000 48x32 rgba8 alpha=true crc=29614cc3
