@@ -36,6 +36,30 @@ final class PropertyParser {
             }
             case "av1C" -> HeifProperty.Av1Configuration.parse(box);
             case "hvcC" -> new HeifProperty.HevcConfiguration(box.rest());
+            case "lhvC" -> new HeifProperty.LayeredHevcConfiguration(box.rest());
+            case "tols" -> {
+                box.fullBoxHeader();
+                yield new HeifProperty.TargetOutputLayerSet(box.u16());
+            }
+            case "oinf" -> {
+                box.fullBoxHeader();
+                yield new HeifProperty.OperatingPointsInformation(box.rest());
+            }
+            case "avcC" -> new HeifProperty.AvcConfiguration(box.rest());
+            case "jpgC" -> new HeifProperty.JpegConfiguration(box.rest());
+            case "j2kH" -> parseJpeg2000Header(box);
+            case "uncC" -> HeifProperty.UncompressedConfiguration.parse(box);
+            case "cmpd" -> HeifProperty.ComponentDefinition.parse(box);
+            case "cmpC" -> {
+                box.fullBoxHeader();
+                var compressionType = FourCc.toString(box.fourCc());
+                var flags = box.u8();
+                yield new HeifProperty.CompressionConfiguration(compressionType, (flags & 0x80) != 0, flags & 0x7F);
+            }
+            case "cloc" -> {
+                box.fullBoxHeader();
+                yield new HeifProperty.ChromaLocation(box.u8());
+            }
             case "colr" -> parseColor(box);
             case "pasp" -> new HeifProperty.PixelAspectRatio(box.u32(), box.u32());
             case "clap" -> new HeifProperty.CleanAperture(box.s32(), box.s32(), box.s32(), box.s32(), box.s32(), box.s32(),
@@ -76,6 +100,53 @@ final class PropertyParser {
             }
             default -> new HeifProperty.Unknown(type);
         };
+    }
+
+    /**
+     * Parses a JPEG 2000 header property ({@code j2kH}) into its child boxes.
+     *
+     * <p>The property is a plain box of child boxes; a payload that starts with the four bytes of
+     * a full box header of version 0 is accepted too, as some writers produce it.
+     *
+     * @param box the cursor over the payload
+     * @return the property
+     * @throws MediaException.Malformed if a child box runs past the property
+     */
+    private static HeifProperty parseJpeg2000Header(BoxCursor box) {
+        var start = box.position();
+        if (box.remaining() >= 12 && !plausibleBox(box.data(), start, box.remaining())) {
+            box.skip(4);
+        }
+        var boxes = new java.util.ArrayList<byte[]>();
+        while (box.hasBox()) {
+            var from = box.position();
+            box.nextBox();
+            boxes.add(java.util.Arrays.copyOfRange(box.data(), from, box.position()));
+        }
+        return new HeifProperty.Jpeg2000Header(java.util.List.copyOf(boxes));
+    }
+
+    /**
+     * Returns whether bytes start with a box header whose size fits and whose type is printable.
+     *
+     * @param data the bytes
+     * @param offset the first byte
+     * @param length the bytes available
+     * @return {@code true} for a plausible box header
+     */
+    private static boolean plausibleBox(byte[] data, int offset, int length) {
+        var size = ((long) (data[offset] & 0xFF) << 24) | ((data[offset + 1] & 0xFF) << 16)
+                | ((data[offset + 2] & 0xFF) << 8) | (data[offset + 3] & 0xFF);
+        if (size < 8 || size > length) {
+            return false;
+        }
+        for (var i = offset + 4; i < offset + 8; i++) {
+            var c = data[i] & 0xFF;
+            if (c < 0x20 || c > 0x7E) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

@@ -126,6 +126,13 @@ final class Layer3 {
     private final float[] shortScratch = new float[18];
 
     /**
+     * Forgets the reservoir, whose continuation was lost, and keeps the IMDCT overlap.
+     */
+    void dropReservoir() {
+        reservoirLength = 0;
+    }
+
+    /**
      * Forgets the reservoir and the IMDCT overlap, as after a discontinuity.
      */
     void reset() {
@@ -241,6 +248,18 @@ final class Layer3 {
         System.arraycopy(frame.data, frame.start + frame.position / 8, mainData, have, frameBytes);
         bits.init(mainData, 0, have + frameBytes);
         return reservoirLength >= mainDataBegin;
+    }
+
+    /**
+     * Appends the main data of a frame that is not decoded to the reservoir, so that later frames
+     * can still reach it.
+     *
+     * @param frame the reader positioned after the side information of the frame
+     */
+    void keepMainData(BitReader frame) {
+        restoreReservoir(frame, reservoirLength);
+        bits.position = 0;
+        saveReservoir();
     }
 
     /**
