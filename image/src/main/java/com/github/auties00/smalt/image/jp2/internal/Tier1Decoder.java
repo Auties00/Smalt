@@ -64,6 +64,27 @@ final class Tier1Decoder {
     private final int[] data = new int[MAX_AREA];
 
     /**
+     * The decoded coefficients of a code-block with more than 30 bit-planes, row-major; {@code null} until one
+     * is decoded.
+     */
+    private long[] wideData;
+
+    /**
+     * Whether the current code-block's coefficients are in {@link #wideData}.
+     */
+    private boolean wide;
+
+    /**
+     * The reconstruction value of a newly significant sample of the current pass of a wide code-block.
+     */
+    private long wideOneHalf;
+
+    /**
+     * Half of the weight of the current bit-plane of a wide code-block.
+     */
+    private long wideHalf;
+
+    /**
      * The flag words: one per column of each stripe, with a border column on each side and a
      * border stripe above and below; 3078 words cover the largest layout, a 1024x4 block.
      */
@@ -130,6 +151,16 @@ final class Tier1Decoder {
     }
 
     /**
+     * Returns the decoded coefficients of the last code-block when it had more than 30 bit-planes.
+     *
+     * @return the coefficients, row-major with the code-block's width as stride, or {@code null} when the last
+     * code-block's coefficients are in {@link #data()}
+     */
+    long[] wideData() {
+        return wide ? wideData : null;
+    }
+
+    /**
      * Decodes a code-block.
      *
      * @param block the code-block with its segments
@@ -137,15 +168,19 @@ final class Tier1Decoder {
      * @param orientation the sub-band orientation, 0 to 3
      * @param roiShift the region-of-interest shift
      * @param style the code-block style flags
-     * @throws MediaException.Malformed if the block declares more than 30 bit-planes
+     * @throws MediaException.Malformed if the block declares more than 61 bit-planes
      */
     void decode(CodeBlock block, byte[] body, int orientation, int roiShift, int style) {
-        allocate(block.width(), block.height());
-        zeroContexts = orientation << 9;
         var bitPlane = roiShift + block.bitPlanes;
-        if (bitPlane >= 31) {
+        if (bitPlane >= 62) {
             throw new MediaException.Malformed("JPEG 2000 code-block with " + bitPlane + " bit-planes");
         }
+        wide = bitPlane >= 31;
+        if (wide && wideData == null) {
+            wideData = new long[MAX_AREA];
+        }
+        allocate(block.width(), block.height());
+        zeroContexts = orientation << 9;
         resetContexts();
         if (block.corrupted || block.chunkEntries == 0) {
             return;
@@ -187,6 +222,10 @@ final class Tier1Decoder {
             }
             var passes = block.segmentDataPasses[segment];
             for (var pass = 0; pass < passes && bitPlane >= 1; pass++) {
+                if (wide) {
+                    wideOneHalf = (3L << bitPlane) >> 1;
+                    wideHalf = (1L << bitPlane) >> 1;
+                }
                 switch (passType) {
                     case 0 -> {
                         if (raw) {
@@ -234,7 +273,11 @@ final class Tier1Decoder {
     private void allocate(int w, int h) {
         width = w;
         height = h;
-        Arrays.fill(data, 0, w * h, 0);
+        if (wide) {
+            Arrays.fill(wideData, 0, w * h, 0);
+        } else {
+            Arrays.fill(data, 0, w * h, 0);
+        }
         var stride = w + 2;
         var stripes = (h + 3) / 4;
         Arrays.fill(flags, 0, (stripes + 2) * stride, 0);
@@ -482,7 +525,7 @@ final class Tier1Decoder {
             if (decode(Tier1Tables.ZERO_CONTEXT[zeroContexts + ((f >>> shift) & SIGMA_NEIGHBORS)]) != 0) {
                 var lookup = signIndex(f, flags[fp - 1], flags[fp + 1], row);
                 var v = decode(Tier1Tables.SIGN_CONTEXT[lookup]) ^ Tier1Tables.SIGN_PREDICTION[lookup];
-                data[index] = v != 0 ? -oneHalf : oneHalf;
+                setSignificant(index, v, oneHalf);
                 f = markSignificant(f, fp, row, v, stride, vsc);
             }
             f |= PI_THIS << shift;
@@ -538,7 +581,7 @@ final class Tier1Decoder {
         if ((f & ((SIGMA_THIS | PI_THIS) << shift)) == 0 && (f & (SIGMA_NEIGHBORS << shift)) != 0) {
             if (rawBit() != 0) {
                 var v = rawBit();
-                data[index] = v != 0 ? -oneHalf : oneHalf;
+                setSignificant(index, v, oneHalf);
                 f = markSignificant(f, fp, row, v, stride, vsc);
             }
             flags[fp] = f | (PI_THIS << shift);
@@ -594,7 +637,7 @@ final class Tier1Decoder {
             var context = (neighborhood & MU_THIS) != 0 ? Tier1Tables.MAG + 2
                     : (neighborhood & SIGMA_NEIGHBORS) != 0 ? Tier1Tables.MAG + 1 : Tier1Tables.MAG;
             var v = decode(context);
-            data[index] += (v ^ (data[index] < 0 ? 1 : 0)) != 0 ? half : -half;
+            refine(index, v, half);
             f |= MU_THIS << shift;
         }
         return f;
@@ -643,7 +686,7 @@ final class Tier1Decoder {
         var shift = row * 3;
         if ((f & ((SIGMA_THIS | PI_THIS) << shift)) == (SIGMA_THIS << shift)) {
             var v = rawBit();
-            data[index] += (v ^ (data[index] < 0 ? 1 : 0)) != 0 ? half : -half;
+            refine(index, v, half);
             flags[fp] = f | (MU_THIS << shift);
         }
     }
@@ -732,7 +775,37 @@ final class Tier1Decoder {
     private int cleanupSign(int f, int fp, int index, int row, int oneHalf, int stride, boolean vsc) {
         var lookup = signIndex(f, flags[fp - 1], flags[fp + 1], row);
         var v = decode(Tier1Tables.SIGN_CONTEXT[lookup]) ^ Tier1Tables.SIGN_PREDICTION[lookup];
-        data[index] = v != 0 ? -oneHalf : oneHalf;
+        setSignificant(index, v, oneHalf);
         return markSignificant(f, fp, row, v, stride, vsc);
+    }
+
+    /**
+     * Sets a sample that became significant to the middle of its interval.
+     *
+     * @param index the sample index
+     * @param negative 1 when the sample is negative
+     * @param oneHalf the reconstruction value of a code-block of at most 30 bit-planes
+     */
+    private void setSignificant(int index, int negative, int oneHalf) {
+        if (wide) {
+            wideData[index] = negative != 0 ? -wideOneHalf : wideOneHalf;
+        } else {
+            data[index] = negative != 0 ? -oneHalf : oneHalf;
+        }
+    }
+
+    /**
+     * Refines the magnitude of a significant sample by one bit-plane.
+     *
+     * @param index the sample index
+     * @param bit the refinement bit
+     * @param half half of the bit-plane's weight in a code-block of at most 30 bit-planes
+     */
+    private void refine(int index, int bit, int half) {
+        if (wide) {
+            wideData[index] += (bit ^ (wideData[index] < 0 ? 1 : 0)) != 0 ? wideHalf : -wideHalf;
+        } else {
+            data[index] += (bit ^ (data[index] < 0 ? 1 : 0)) != 0 ? half : -half;
+        }
     }
 }

@@ -28,6 +28,16 @@ public final class LpState {
     public int saved_fs_kHz;
 
     /**
+     * The interpolated feed-forward coefficients of the current transition frame, in Q28.
+     */
+    final int[] B_Q28 = new int[Define.TRANSITION_NB];
+
+    /**
+     * The interpolated feedback coefficients of the current transition frame, in Q28.
+     */
+    final int[] A_Q28 = new int[Define.TRANSITION_NA];
+
+    /**
      * Creates a zeroed state.
      */
     public LpState() {

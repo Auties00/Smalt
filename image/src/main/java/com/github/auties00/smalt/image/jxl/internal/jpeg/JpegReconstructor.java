@@ -260,6 +260,20 @@ public final class JpegReconstructor {
     }
 
     /**
+     * Returns the lengths of the metadata payloads a reconstruction box takes from the container:
+     * the {@code Exif} box payload after its four-byte offset field, and the {@code xml } box.
+     *
+     * @param jbrd the payload of the {@code jbrd} box
+     * @return the EXIF and XMP lengths, in that order, 0 for a kind the original JPEG file did not
+     * hold
+     * @throws MediaException.Malformed if the box header is invalid
+     */
+    public static long[] metadataLengths(byte[] jbrd) {
+        var header = new JbrdHeader(new JxlBitReader(jbrd, 0, jbrd.length));
+        return new long[]{header.expectedExifLength(), header.expectedXmpLength()};
+    }
+
+    /**
      * Rebuilds the JPEG file from the reconstruction box and the codestream coefficients.
      *
      * @param codestream the opened codestream, whose container has a {@code jbrd} box
@@ -434,8 +448,8 @@ public final class JpegReconstructor {
             case 0xFE -> {
                 var length = header.comLengths[comIndex++];
                 var start = appDataLength() + comData;
+                // the stored comment starts with its marker byte, as a verbatim application segment does
                 out.write(0xFF);
-                out.write(0xFE);
                 out.write(data, start, length);
                 comData += length;
             }
