@@ -204,7 +204,7 @@ class EditListDecodeTest {
     }
 
     @Test
-    @DisplayName("plays the samples the edits select, with one packet of AAC pre-roll per jump")
+    @DisplayName("plays the samples the edits select and silence for the empty edit, with one packet of AAC pre-roll per jump")
     void audioEdits() {
         var original = read(audio());
         var reference = samples(original);
@@ -215,10 +215,11 @@ class EditListDecodeTest {
         var edited = withEdits(original, 28_800 * scale / 48_000, priming + 10_000, 1, 4_800 * scale / 48_000, -1, 1,
                 19_200 * scale / 48_000, priming + 5_000, 1, 16_800 * scale / 48_000, priming + 60_000, 1);
         var actual = samples(edited);
-        var expected = new float[28_800 + 19_200 + 16_800];
+        // the empty edit of 4800 samples plays as silence
+        var expected = new float[28_800 + 4_800 + 19_200 + 16_800];
         System.arraycopy(reference, 10_000, expected, 0, 28_800);
-        System.arraycopy(reference, 5_000, expected, 28_800, 19_200);
-        System.arraycopy(reference, 60_000, expected, 48_000, 16_800);
+        System.arraycopy(reference, 5_000, expected, 33_600, 19_200);
+        System.arraycopy(reference, 60_000, expected, 52_800, 16_800);
         assertArrayEquals(expected, actual);
     }
 
@@ -275,7 +276,7 @@ class EditListDecodeTest {
 
     /**
      * Edits an audio clip and returns the decoded result and the reference samples the edits
-     * select, both at the decoder's output rate.
+     * select, with silence for the empty edits, both at the decoder's output rate.
      *
      * @param segments the edits: each the offset of its first sample in output samples ({@code -1}
      * for an empty edit) and its length in units of 20 ms, exact in every timescale used
@@ -292,9 +293,9 @@ class EditListDecodeTest {
             triples[index * 3] = segments[index][1] * movie / 50;
             triples[index * 3 + 1] = segments[index][0] < 0 ? -1 : priming + segments[index][0] * media / outputRate;
             triples[index * 3 + 2] = 1;
+            var start = expected.length;
+            expected = Arrays.copyOf(expected, start + (int) length);
             if (segments[index][0] >= 0) {
-                var start = expected.length;
-                expected = Arrays.copyOf(expected, start + (int) length);
                 System.arraycopy(reference, (int) segments[index][0], expected, start, (int) length);
             }
         }

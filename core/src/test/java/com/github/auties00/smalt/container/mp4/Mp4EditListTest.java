@@ -301,16 +301,19 @@ class Mp4EditListTest {
         }
 
         @Test
-        @DisplayName("decodes exactly the samples the edits present")
+        @DisplayName("decodes exactly the samples the edits present, with silence where they present none")
         void decodes() throws Exception {
             var data = pcmFile(elst(1000, 500, 1, 500, -1, 1, 1500, 1800, 1, 700, 2900, 1));
             var expected = new ArrayList<Integer>();
             for (var index = 500; index < 1500; index++) {
                 expected.add(index);
             }
+            // the empty edit, then the end of the second edit, which has 1200 samples of media for 1500
+            expected.addAll(java.util.Collections.nCopies(500, 0));
             for (var index = 1800; index < 3000; index++) {
                 expected.add(index);
             }
+            expected.addAll(java.util.Collections.nCopies(300, 0));
             for (var index = 2900; index < 3000; index++) {
                 expected.add(index);
             }

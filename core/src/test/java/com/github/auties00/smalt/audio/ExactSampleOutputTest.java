@@ -451,8 +451,11 @@ class ExactSampleOutputTest {
             var frameBytes = 2 * bits / 8;
             for (var start = 0; start < frames; start += 1000) {
                 var count = Math.min(1000, frames - start);
+                // timestamps on the presentation timeline: the discarded packet presents nothing and the discard
+                // start drops samples before the presented ones, so neither leaves a gap after the packet before
+                var pts = start - (start >= 3000 ? 1000 : 0) - (start >= 5000 ? 250 : 0);
                 var packet = new Packet(0, Arrays.copyOfRange(data, start * frameBytes, (start + count) * frameBytes),
-                        start, start, count, true);
+                        pts, pts, count, true);
                 if (start == 3000) {
                     packet = packet.withFlags(Set.of(PacketFlag.KEY, PacketFlag.DISCARD));
                 } else if (start == 5000) {

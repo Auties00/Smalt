@@ -757,7 +757,9 @@ naming it, and the Smalt artifact that implements it when there is one.
 The MP4 demuxer applies every segment of an edit list (ISO/IEC 14496-12 clause 8.6.6): several media edits,
 empty edits between them and dwell edits (media rate 0, which hold a picture) become a presentation index whose
 decode-only pre-roll packets carry `PacketFlag.DISCARD` and whose cut audio packets carry their discard start and
-end, which `VideoReader`, `AudioReader` and the transcoder apply; an edit list of empty edits and one media edit,
+end, which `VideoReader`, `AudioReader` and the transcoder apply (the gap an empty edit, an audio dwell edit or a
+media edit longer than its media leaves after the first media edit is played as silence, as `AudioStreamDecoder`
+fills every gap between the timestamps of audio packets); an edit list of empty edits and one media edit,
 the usual form, still shifts the timestamps alone, and so does the first media edit of a HEIF or AVIF image
 sequence track (`pict`, `auxv`), whose samples are each returned once. Every `stsd` sample description is read and selected per
 sample by `stsc`, `tfhd` or `trex`; a sample whose description has another codec configuration carries it as
@@ -2106,9 +2108,10 @@ checks a FLAC source's MD5 signature on the way.
   segment than the file's own gives its first packet the codec configuration of that segment as
   `PacketSideData.newCodecConfig`, so the packets after a seek are not always those a read from the start gives
   from there.
-- MP4 edits play at normal speed whatever their media rate other than 0. A dwell edit of an audio track, or
-  an empty edit after its first media edit, leaves a gap in the packet timestamps, and `AudioReader` and an
-  audio re-encode join the samples on either side of it instead of filling it with silence. Packets flagged
+- `AudioStreamDecoder` queues the silence that fills a gap between audio packets all at once, so a long gap
+  holds its samples in memory, and one whose silence needs more than `MediaLimits.maxBytes()` fails with
+  `MediaException.LimitExceeded`.
+- MP4 edits play at normal speed whatever their media rate other than 0. Packets flagged
   `PacketFlag.DISCARD` (the decode-only pre-roll of a multi-segment edit list) are written as presented samples
   by every muxer but Matroska (which marks them invisible), and the audio packets an edit cuts lose their discard
   start in every muxer and their discard end in every muxer but Matroska for Opus and AAC (`DiscardPadding`), so a copy

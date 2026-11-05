@@ -40,8 +40,30 @@ import java.util.function.Consumer;
  * which stays the one chosen at creation. Packets
  * are decoded one packet late, so the last one is known when it is decoded: the durations of
  * earlier packets can be rounded by a coarse container time base and never cut decoded audio. A
- * packet the codec rejects as corrupt is skipped, as players do; a run of
+ * packet the codec rejects as corrupt is skipped, as players do, its time filled with silence as a gap
+ * below; a run of
  * {@value #MAX_CONSECUTIVE_FAILURES} corrupt packets in a row fails.
+ *
+ * <p>A packet that presents samples starts on the track's timeline at its timestamp plus its discard
+ * start. When that is later than the end of the samples the presenting packet before it presented,
+ * the gap is filled with silence: an MP4 empty edit or audio dwell edit after a media edit, a media
+ * edit longer than the media it presents, a packet the codec rejected, a discarded packet or discard
+ * start that keeps its time, a gap in the source. The silence counts toward the declared duration and
+ * is converted like decoded samples. A gap is filled only when it exceeds what the rounding of the
+ * timestamps explains and the timestamps were shown to follow the codec's samples (an earlier packet
+ * started where the one before it ended, or the previous packet presented its declared duration). The
+ * rounding is that of the time base (nothing when a tick is one sample, otherwise under two ticks
+ * plus one sample) while every packet started exactly where the one before it ended, and of
+ * millisecond timestamps (two milliseconds and one sample) once a packet started a little early or
+ * late, as in containers that store time rather than samples whatever time base they report; such
+ * differences, overlaps and timestamps that drift from the samples leave the samples joined, and the
+ * packet after one that overlapped the samples before it by more than the rounding follows it without a
+ * gap, so that a single wrong timestamp opens none. A packet
+ * that changes the codec configuration starts the timeline afresh, as the splice of two streams it
+ * usually marks (concatenated transport stream segments) leaves no gap to play: its samples follow
+ * the samples before it. The time before
+ * the first presenting packet is not filled: the output starts with the first sample the track
+ * presents.
  *
  * <p>The codec's layout is the default output layout, except that a PCM or FLAC track whose container declares an
  * {@linkplain ChannelLayout#ambisonics() ambisonic} layout of as many channels (the MP4 spatial audio box, the
@@ -320,6 +342,73 @@ public final class AudioStreamDecoder implements AutoCloseable {
     private boolean currentProduced;
 
     /**
+     * The declared duration of {@link #current}, in samples at the codec rate, or -1 when it declares none.
+     */
+    private long currentDeclared;
+
+    /**
+     * The end, in samples at the codec rate on the track's timeline, of the samples the last presenting
+     * packet presented, or {@link #UNKNOWN} before the first one and after one that overlapped the samples
+     * before it by more than the rounding of the timestamps.
+     */
+    private long presentedEnd = UNKNOWN;
+
+    /**
+     * The timestamp of the last presenting packet, in samples at the codec rate, or {@link #UNKNOWN} when it
+     * had none.
+     */
+    private long presentedIndex = UNKNOWN;
+
+    /**
+     * The declared duration of the last presenting packet, in samples at the codec rate, or -1 when it
+     * declared none.
+     */
+    private long presentedDeclared = -1;
+
+    /**
+     * Whether a presenting packet started where the one before it ended, give or take
+     * {@link #jitterTolerance}, which shows that the track's timestamps follow the codec's samples.
+     */
+    private boolean contiguous;
+
+    /**
+     * The number of presenting packets that started exactly where the one before them ended, within
+     * {@link #gapTolerance}.
+     */
+    private int exactTransitions;
+
+    /**
+     * Whether a presenting packet started a little before or after the end of the one before it, or
+     * overlapped it, so that the timestamps are rounded more coarsely than the time base shows (a
+     * container that stores milliseconds and reports samples) or drift from the samples.
+     */
+    private boolean inexact;
+
+    /**
+     * The largest difference, in samples at the codec rate, between a packet's timestamp and the end of the
+     * samples before it that the rounding of the track's time base explains.
+     */
+    private long gapTolerance;
+
+    /**
+     * The largest difference, in samples at the codec rate, between a packet's timestamp and the end of the
+     * samples before it that timestamps of a millisecond's precision explain, at least {@link #gapTolerance}.
+     */
+    private long jitterTolerance;
+
+    /**
+     * Whether the timing a seek restarted with showed the timestamps exact, so that a target inside a gap is
+     * told from the rounding by {@link #gapTolerance} rather than {@link #jitterTolerance}.
+     */
+    private boolean restartExact;
+
+    /**
+     * A silent block in the codec's output form, filling gaps between packets, or {@code null} until the
+     * first gap.
+     */
+    private Object silence;
+
+    /**
      * Whether the output after a seek waits for the second producing packet to align it.
      */
     private boolean aligning;
@@ -328,6 +417,12 @@ public final class AudioStreamDecoder implements AutoCloseable {
      * The seek target plus the encoder priming, in samples at the codec rate, while aligning.
      */
     private long alignTarget;
+
+    /**
+     * The index, at the codec rate in a decode from the start, of the first decoded sample the output
+     * presents after a seek: the seek target plus the encoder priming.
+     */
+    private long alignTime;
 
     /**
      * The index, at the codec rate in a decode from the start, of the first decoded sample kept
@@ -375,6 +470,11 @@ public final class AudioStreamDecoder implements AutoCloseable {
     private static final int CALIBRATION_PACKETS = 64;
 
     /**
+     * The number of samples per channel of the block that fills a gap with silence.
+     */
+    private static final int SILENCE_FRAMES = 4096;
+
+    /**
      * Constructs a decoder.
      *
      * @param track   the track to decode
@@ -415,6 +515,37 @@ public final class AudioStreamDecoder implements AutoCloseable {
                 ? track.timeBase().rescale(track.duration(), Rational.timeBaseOf(decoderRate))
                 : Long.MAX_VALUE;
         this.packetLimit = Long.MAX_VALUE;
+        this.gapTolerance = gapTolerance(track, decoderRate);
+        this.jitterTolerance = jitterTolerance(decoderRate, gapTolerance);
+    }
+
+    /**
+     * Returns the largest difference between a packet's timestamp and the end of the samples before it that
+     * timestamps of a millisecond's precision explain, the coarsest that containers storing time rather than
+     * samples (Matroska, FLV, ASF) use, whatever time base they report: two milliseconds and one sample.
+     *
+     * @param rate the codec's sampling rate
+     * @param gapTolerance the tolerance of the track's time base
+     * @return the tolerance in samples at {@code rate}
+     */
+    private static long jitterTolerance(int rate, long gapTolerance) {
+        return Math.max(gapTolerance, Math.ceilDiv(2L * rate, 1000) + 1);
+    }
+
+    /**
+     * Returns the largest difference between a packet's timestamp and the end of the samples before it that
+     * the rounding of a track's timestamps explains: none when a tick is one sample, as in an MP4 track whose
+     * timescale is its sampling rate, and otherwise the error of two timestamps each truncated to a tick and
+     * rounded to a sample, under two ticks plus one sample.
+     *
+     * @param track the track whose time base places the packets
+     * @param rate the codec's sampling rate
+     * @return the tolerance in samples at {@code rate}
+     */
+    private static long gapTolerance(AudioTrack track, int rate) {
+        var timeBase = track.timeBase();
+        var samplesPerTick = (double) rate * timeBase.numerator() / timeBase.denominator();
+        return samplesPerTick == 1 ? 0 : (long) Math.ceil(2 * samplesPerTick + 1) - 1;
     }
 
     /**
@@ -615,6 +746,7 @@ public final class AudioStreamDecoder implements AutoCloseable {
         var rate = decoder.sampleRate();
         this.origin = timing.origin == UNKNOWN || timing.originRate == rate ? timing.origin
                 : Math.round((double) timing.origin * rate / timing.originRate);
+        this.restartExact = timing.isExact();
     }
 
     /**
@@ -707,6 +839,8 @@ public final class AudioStreamDecoder implements AutoCloseable {
      * @throws IllegalStateException    if {@link #finish()} ran
      * @throws MediaException.Malformed if {@value #MAX_CONSECUTIVE_FAILURES} consecutive packets are
      *                                  corrupt
+     * @throws MediaException.LimitExceeded if the silence filling a gap before a packet needs more bytes
+     *                                  than {@link AudioStreamDecoderOptions#limits()} allow
      */
     public void decode(Packet packet) {
         Objects.requireNonNull(packet, "packet");
@@ -754,6 +888,7 @@ public final class AudioStreamDecoder implements AutoCloseable {
         } else if (timestamp != Packet.NO_TIMESTAMP && origin != UNKNOWN) {
             aligning = true;
             alignTarget = restartIndex + priming;
+            alignTime = target + priming;
             skipRemaining = 0;
         } else {
             var start = timestamp == Packet.NO_TIMESTAMP ? restartIndex + priming : track.timeBase().rescale(timestamp, rate);
@@ -840,13 +975,23 @@ public final class AudioStreamDecoder implements AutoCloseable {
 
     /**
      * Ends the alignment after a seek: drops the samples before the target and releases the held
-     * samples.
+     * samples, preceded by silence from the restart point when they start after the target, which
+     * then falls in a gap between packets.
      *
      * @param shift the index, in a decode from the start of the track, of the first sample
      *              produced after the seek
      */
     private void align(long shift) {
         aligning = false;
+        if (shift - alignTime > (restartExact ? gapTolerance : jitterTolerance) && !held.isEmpty()) {
+            // nothing presents at the target, which falls in a gap that a decode from the start fills
+            skipRemaining = 0;
+            fillSilence(held.peekFirst(), shift - alignTarget);
+            while (!held.isEmpty()) {
+                trim(held.poll(), false);
+            }
+            return;
+        }
         if (resampledRestart) {
             var priming = alignTarget - restartIndex;
             if (shift > alignTarget) {
@@ -874,6 +1019,8 @@ public final class AudioStreamDecoder implements AutoCloseable {
      * @throws MediaException.Malformed if {@value #MAX_CONSECUTIVE_FAILURES} consecutive packets are
      * corrupt, or the stream fails the integrity check
      * {@link AudioStreamDecoderOptions#verifyIntegrity()} requested
+     * @throws MediaException.LimitExceeded if the silence filling a gap before the last packet needs more
+     * bytes than {@link AudioStreamDecoderOptions#limits()} allow
      */
     public void finish() {
         if (finished) {
@@ -1027,10 +1174,9 @@ public final class AudioStreamDecoder implements AutoCloseable {
         if (newConfig != null && !Arrays.equals(newConfig, config)) {
             reconfigure(newConfig);
         }
-        // TODO: fill a gap between the end of the previous packet and this one's timestamp (an MP4
-        // empty or dwell edit after the first media edit) with silence instead of joining the samples
         var sideData = packet.sideData();
         var codecRate = Rational.timeBaseOf(decoder.sampleRate());
+        currentDeclared = packet.duration() > 0 ? track.timeBase().rescale(packet.duration(), codecRate) : -1;
         packetLimit = (last && packet.duration() > 0) || (sideData.discardEnd() > 0 && packet.duration() >= 0)
                 ? track.timeBase().rescale(packet.duration(), codecRate)
                 : Long.MAX_VALUE;
@@ -1051,7 +1197,8 @@ public final class AudioStreamDecoder implements AutoCloseable {
 
     /**
      * Drains the codec and replaces it with one created from a new codec configuration, keeping
-     * the remaining priming and duration counts in step with a change of sampling rate.
+     * the remaining priming and duration counts in step with a change of sampling rate and starting
+     * the timeline that gaps are measured on afresh.
      *
      * @param newConfig the configuration of the packets from the one being decoded on
      * @throws MediaException.Unsupported if the codec cannot be created for the configuration, or
@@ -1078,6 +1225,12 @@ public final class AudioStreamDecoder implements AutoCloseable {
                 // the codec rejects the configuration itself
             }
         }
+        presentedEnd = UNKNOWN;
+        presentedIndex = UNKNOWN;
+        presentedDeclared = -1;
+        contiguous = false;
+        exactTransitions = 0;
+        inexact = false;
         var replacement = AudioDecoders.create(builder.build(), decoderOptions);
         try {
             requireIntegers(replacement);
@@ -1092,6 +1245,8 @@ public final class AudioStreamDecoder implements AutoCloseable {
         var newRate = decoder.sampleRate();
         if (newRate != oldRate) {
             timestampsExact = false;
+            gapTolerance = gapTolerance(track, newRate);
+            jitterTolerance = jitterTolerance(newRate, gapTolerance);
             skipRemaining = Math.round((double) skipRemaining * newRate / oldRate);
             if (keepRemaining != Long.MAX_VALUE) {
                 keepRemaining = Math.round((double) keepRemaining * newRate / oldRate);
@@ -1109,7 +1264,7 @@ public final class AudioStreamDecoder implements AutoCloseable {
      * @param buffer the decoded block, valid only during the call
      */
     private void accept(AudioBuffer buffer) {
-        produce(buffer.frames());
+        produce(buffer, buffer.frames());
         trim(buffer, true);
     }
 
@@ -1120,7 +1275,7 @@ public final class AudioStreamDecoder implements AutoCloseable {
      * @param buffer the decoded block, valid only during the call
      */
     private void acceptIntegers(IntegerAudioBuffer buffer) {
-        produce(buffer.frames());
+        produce(buffer, buffer.frames());
         trim(buffer, true);
     }
 
@@ -1131,7 +1286,7 @@ public final class AudioStreamDecoder implements AutoCloseable {
      * @param buffer the decoded block, valid only during the call
      */
     private void acceptDoubles(DoubleAudioBuffer buffer) {
-        produce(buffer.frames());
+        produce(buffer, buffer.frames());
         trim(buffer, true);
     }
 
@@ -1159,12 +1314,19 @@ public final class AudioStreamDecoder implements AutoCloseable {
 
     /**
      * Notes the first samples of each packet, for {@link #origin()} and the alignment after a seek,
-     * and counts the samples the codec produced.
+     * and counts the samples the codec produced. Before the first samples of a packet that presents
+     * any, the gap between its timestamp and the end of the samples the packet before it presented is
+     * filled with silence.
      *
-     * @param frames the number of samples per channel of a decoded block
+     * @param buffer the decoded block, whose form the silence takes
+     * @param frames the number of samples per channel of {@code buffer}
+     * @throws MediaException.LimitExceeded if the silence filling a gap exceeds the byte limit
      */
-    private void produce(int frames) {
+    private void produce(Object buffer, int frames) {
         if (current != null && !currentProduced && frames > 0) {
+            if (!packetDiscarded) {
+                present(buffer);
+            }
             if (aligning && producingPackets == 0) {
                 var timestamp = timestamp(current);
                 heldStart = timestamp == Packet.NO_TIMESTAMP || origin == UNKNOWN ? alignTarget
@@ -1173,6 +1335,136 @@ public final class AudioStreamDecoder implements AutoCloseable {
             packetProduced();
         }
         produced += frames;
+    }
+
+    /**
+     * Places the packet being decoded, which presents samples, on the track's timeline, filling the gap
+     * since the end of the samples the last presenting packet presented with silence.
+     *
+     * <p>A gap is filled only when it exceeds the rounding of the timestamps, {@link #gapTolerance} once
+     * packets were seen to follow each other exactly and none missed, {@link #jitterTolerance} otherwise,
+     * and the timestamps were shown to follow the codec's samples: an earlier packet started where the one
+     * before it ended, or the last presenting packet presented its declared duration. Smaller differences
+     * and overlaps mark the timestamps inexact and leave the samples joined. A packet that overlaps the
+     * samples before it by more than the rounding has a timestamp that a single wrong value or a restart
+     * of the timestamps explains as well as the samples, so the packet after it follows it without a gap
+     * whatever its timestamp, and the gaps are measured again from there.
+     *
+     * @param buffer the packet's first decoded block, whose form the silence takes
+     * @throws MediaException.LimitExceeded if the silence exceeds the byte limit
+     */
+    private void present(Object buffer) {
+        var timestamp = timestamp(current);
+        var index = timestamp == Packet.NO_TIMESTAMP ? UNKNOWN
+                : track.timeBase().rescale(timestamp, Rational.timeBaseOf(decoder.sampleRate()));
+        if (index == UNKNOWN) {
+            presentedIndex = UNKNOWN;
+            presentedDeclared = currentDeclared;
+            return;
+        }
+        var start = index + packetSkip;
+        var anchored = true;
+        if (presentedEnd != UNKNOWN) {
+            var gap = start - presentedEnd;
+            if (Math.abs(gap) <= gapTolerance) {
+                exactTransitions++;
+                contiguous = true;
+            } else if (gap > (exactTransitions > 0 && !inexact ? gapTolerance : jitterTolerance)) {
+                if (contiguous || presentedAsDeclared()) {
+                    fillSilence(buffer, gap);
+                }
+            } else {
+                inexact = true;
+                contiguous |= Math.abs(gap) <= jitterTolerance;
+                anchored = gap >= -jitterTolerance;
+            }
+        }
+        presentedEnd = anchored ? start : UNKNOWN;
+        presentedIndex = index;
+        presentedDeclared = currentDeclared;
+    }
+
+    /**
+     * Returns whether the last presenting packet presented its declared duration, give or take the rounding
+     * of the timestamps.
+     *
+     * @return {@code true} when the packet had a timestamp and a duration and its samples filled it
+     */
+    private boolean presentedAsDeclared() {
+        return presentedIndex != UNKNOWN && presentedDeclared > 0
+                && Math.abs(presentedEnd - presentedIndex - presentedDeclared) <= jitterTolerance;
+    }
+
+    /**
+     * Inserts silence in the output, as if the codec had produced it before the block being received.
+     *
+     * <p>The samples the trimming drops anyway (the rest of the declared duration exhausted) are only
+     * counted. The rest goes through {@link #trim(Object, boolean)} in blocks of {@value #SILENCE_FRAMES}
+     * samples, so it is held while aligning after a seek and dropped while the priming or the samples
+     * before a seek target are skipped.
+     *
+     * @param like a decoded block whose form, rate and layout the silence takes
+     * @param frames the number of samples per channel at the codec rate
+     * @throws MediaException.LimitExceeded if the silence the output queues exceeds the byte limit
+     */
+    private void fillSilence(Object like, long frames) {
+        var queued = aligning || keepRemaining == Long.MAX_VALUE ? frames
+                : Math.min(frames, Math.max(0, skipRemaining) + keepRemaining);
+        var outputFrames = (double) queued * outputRate / decoder.sampleRate();
+        var bytes = outputFrames * outputLayout.channels() * (format == SampleFormat.DOUBLE ? Double.BYTES : Float.BYTES);
+        var limit = decoderOptions.limits().maxBytes();
+        if (bytes > limit) {
+            throw new MediaException.LimitExceeded("a gap of " + frames + " samples between audio packets needs "
+                    + (long) bytes + " bytes of silence, above the limit of " + limit);
+        }
+        // TODO: produce the silence as the output is read instead of queueing all of it at once, so that a
+        // long gap does not hold its converted samples in memory (up to the byte limit)
+        var block = silentBlock(like);
+        for (var remaining = queued; remaining > 0; ) {
+            var count = (int) Math.min(remaining, SILENCE_FRAMES);
+            switch (block) {
+                case AudioBuffer silent -> silent.setFrames(count);
+                case IntegerAudioBuffer silent -> silent.setFrames(count);
+                case DoubleAudioBuffer silent -> silent.setFrames(count);
+                default -> throw new IllegalStateException("not a sample block: " + block);
+            }
+            trim(block, false);
+            remaining -= count;
+        }
+        produced += frames;
+    }
+
+    /**
+     * Returns a silent block of {@value #SILENCE_FRAMES} samples in the form, rate and layout of a decoded
+     * block, reusing the previous one when it matches.
+     *
+     * @param like the decoded block
+     * @return the silent block, which no consumer writes
+     */
+    private Object silentBlock(Object like) {
+        switch (like) {
+            case AudioBuffer block -> {
+                if (!(silence instanceof AudioBuffer silent && silent.sampleRate() == block.sampleRate()
+                        && silent.layout().equals(block.layout()))) {
+                    silence = new AudioBuffer(block.layout(), block.sampleRate(), SILENCE_FRAMES);
+                }
+            }
+            case IntegerAudioBuffer block -> {
+                if (!(silence instanceof IntegerAudioBuffer silent && silent.sampleRate() == block.sampleRate()
+                        && silent.layout().equals(block.layout()) && silent.bitsPerSample() == block.bitsPerSample())) {
+                    silence = new IntegerAudioBuffer(block.layout(), block.sampleRate(), block.bitsPerSample(),
+                            SILENCE_FRAMES);
+                }
+            }
+            case DoubleAudioBuffer block -> {
+                if (!(silence instanceof DoubleAudioBuffer silent && silent.sampleRate() == block.sampleRate()
+                        && silent.layout().equals(block.layout()))) {
+                    silence = new DoubleAudioBuffer(block.layout(), block.sampleRate(), SILENCE_FRAMES);
+                }
+            }
+            default -> throw new IllegalStateException("not a sample block: " + like);
+        }
+        return silence;
     }
 
     /**
@@ -1212,6 +1504,9 @@ public final class AudioStreamDecoder implements AutoCloseable {
             }
             if (frames <= 0) {
                 return;
+            }
+            if (presentedEnd != UNKNOWN) {
+                presentedEnd += frames;
             }
         }
         if (aligning) {
