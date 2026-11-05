@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.audio.opus.internal.silk;
 
+import com.github.auties00.smalt.internal.simd.Simd;
 import jdk.incubator.vector.IntVector;
 import jdk.incubator.vector.ShortVector;
 import jdk.incubator.vector.VectorOperators;
@@ -93,13 +94,13 @@ final class VectorSilkKernels implements SilkKernels {
     }
 
     /**
-     * Creates the vector kernels when the platform has 256-bit integer vectors, or the scalar
-     * kernels otherwise, since the eight-lane vectors would not be backed by hardware.
+     * Creates the vector kernels when {@link Simd#WIDE} holds, or the scalar kernels otherwise,
+     * since the eight-lane vectors would not be backed by hardware.
      *
      * @return the kernels
      */
     static SilkKernels create() {
-        if (IntVector.SPECIES_PREFERRED.vectorBitSize() < 256) {
+        if (!Simd.WIDE) {
             return new ScalarSilkKernels();
         }
         return new VectorSilkKernels();

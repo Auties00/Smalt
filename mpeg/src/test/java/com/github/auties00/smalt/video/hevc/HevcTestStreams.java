@@ -195,7 +195,7 @@ final class HevcTestStreams {
     record Result(String md5, int frames) {
     }
 
-    private static Picture unshift(Picture picture, int lumaShift, int chromaShift) {
+    static Picture unshift(Picture picture, int lumaShift, int chromaShift) {
         if (lumaShift == 0 && chromaShift == 0) {
             return picture;
         }

@@ -201,6 +201,23 @@ public final class ModularGroups {
     }
 
     /**
+     * Returns whether the first passes of a frame complete every grouped channel that is not the residual of a
+     * squeeze step.
+     *
+     * @param passes the number of leading passes decoded
+     * @return whether the channels a progressive decode needs are all decoded after {@code passes} passes
+     */
+    public boolean completeAfter(int passes) {
+        var channels = image.channels();
+        for (var i = start; i < passOf.length; i++) {
+            if (passOf[i] >= passes && !channels.get(i).residual) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * Returns the passes that hold modular data.
      *
      * @return the pass indices with at least one channel

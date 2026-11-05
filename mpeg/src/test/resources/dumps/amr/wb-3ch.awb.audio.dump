@@ -1,0 +1,23 @@
+# audio decode dump of amr/wb-3ch.awb; regenerate with -Dsmalt.test.updateDumps=true
+format AMR
+duration 2000000
+seekable true
+track 0 AMR_WB rate=16000 layout=[FRONT_LEFT, FRONT_RIGHT, FRONT_CENTER]
+0 frames=4096 crc16=5419bbcb
+1 frames=4096 crc16=9dc42d27
+2 frames=4096 crc16=2b26b8e2
+3 frames=4096 crc16=e9867cde
+4 frames=4096 crc16=11d69251
+5 frames=4096 crc16=06b82847
+6 frames=4096 crc16=da33353f
+7 frames=3328 crc16=989d72c3
+seek 0: @sample 0
+seek 666666: @sample 10667
+seek 1333333: @sample 21333
+seek 2000000: end
+seek -1000000: @sample 0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format AMR
+  duration -1
+  seekable false
+  track 0 AMR_WB rate=16000 layout=[FRONT_LEFT, FRONT_RIGHT, FRONT_CENTER]

@@ -355,7 +355,7 @@ class AacEncoderTest {
         @DisplayName("validates its configuration")
         void configuration() {
             assertThrows(IllegalArgumentException.class, () -> AacEncoderOptions.of(44000, ChannelLayout.STEREO, 128000));
-            assertThrows(IllegalArgumentException.class, () -> AacEncoderOptions.of(48000, ChannelLayout.defaultFor(3), 128000));
+            assertThrows(IllegalArgumentException.class, () -> AacEncoderOptions.of(48000, ChannelLayout.defaultFor(10), 640000));
             assertThrows(IllegalArgumentException.class, () -> AacEncoderOptions.of(48000, ChannelLayout.STEREO, 1000));
             assertThrows(IllegalArgumentException.class, () -> AacEncoderOptions.of(8000, ChannelLayout.STEREO, 320000));
             assertThrows(IllegalArgumentException.class, () -> AacEncoderOptions.defaults().toBuilder().bandwidth(30000).build());
