@@ -286,7 +286,7 @@ final class VirtualProfiles {
         Arrays.fill(grid, points);
         var white = transform.target().icc().xyz(IccReader.signature("wtpt"));
         return IccWriter.table("Device link", "link", entry, exit, grid, outputs, table, intent,
-                white == null ? ColorMath.d50() : white);
+                white == null ? ColorMath.d50() : white, transform.inputColorants(), transform.outputColorants());
     }
 
     /**

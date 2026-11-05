@@ -305,6 +305,24 @@ release tarball (MIT; SHA-256 `6e6f6411db50e85ae8ff7777f01b2da0614aac13b7b9fcbea
 `<directory>/data` to the resource directory; `icc-advanced/profiles.sha256` pins every file, and the output is
 the same on every run.
 
+## Multi-ink ICC profiles
+
+`MultiInkDifferentialTest` and `MultiInkConversionTest` (`smalt-core`) check multi-ink (`2CLR` to `FCLR`) profiles,
+their colorant tables and the conversion of named-ink separations against Little CMS 2.17. The profiles and
+reference outputs are kept with the tests (`core/src/test/resources/com/github/auties00/smalt/image/color/inks/`)
+and written by `icc-multi-ink/smalt-lcmsinks.c`: output profiles of 2, 3, 5, 6, 7, 8, 12 and 15 inks built through
+the Little CMS API from a model of subtractive inks (`lut8Type`, `lut16Type`, `lutAtoBType` with and without a
+matrix, an 8-bit CLUT, L*a*b* and XYZ connection spaces, `BToA0` tables inverted numerically from the model,
+`clrt` colorant tables, one of them in another ink order than the others), a device link between two ink sets made
+by `cmsTransform2DeviceLink` (with `clrt` and `clot`), and Little CMS's sRGB, L*a*b* v4 and XYZ profiles, with the
+creation date cleared; `cases.tsv` with the outputs of each chain for the 8-bit, 16-bit (optimized and
+unoptimized) and floating-point input sets the program documents; and `colorants.tsv` with the colorant tables as
+`cmsNamedColorInfo` returns them. Build and run it with `bash tools/testdata/icc-multi-ink/build.sh <lcms2 source
+directory> <directory>` from an MSYS2 UCRT64 shell or any shell with gcc, against the Little CMS 2.17 release
+tarball (MIT; SHA-256 `d11af569e42a1baa1650d20ad61d12e41af4fead4aa7964a01f93b08b53ab074`), then copy
+`<directory>/data` to the resource directory; `icc-multi-ink/data.sha256` pins every file, which the test checks,
+and the output is the same on every run.
+
 ## 12-bit JPEG vectors
 
 The 12-bit JPEG tests of `smalt-image` read vectors kept with the tests (`image/src/test/resources`): the

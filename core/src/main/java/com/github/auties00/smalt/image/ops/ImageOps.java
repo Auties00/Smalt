@@ -1777,10 +1777,11 @@ public final class ImageOps {
      * intent).
      *
      * @param picture the picture, whose values are in {@code source}
-     * @param source the profile of the picture, RGB or gray
-     * @param target the profile to convert to, RGB or gray
+     * @param source the profile of the picture, RGB or gray, or the profile of a channel picture
+     * @param target the profile to convert to, RGB, gray, CMYK or multi-ink
      * @return the converted picture, as {@link #convertColor(Picture, ColorTransform)} describes
-     * @throws IllegalArgumentException if a profile is neither RGB nor gray
+     * @throws IllegalArgumentException if a profile does not fit the picture, as
+     * {@link #convertColor(Picture, ColorTransform)} describes
      * @throws MediaException.Malformed if a profile is damaged
      * @throws MediaException.Unsupported if a profile cannot be used as source or target
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
@@ -1794,11 +1795,12 @@ public final class ImageOps {
      * Converts a picture from one color profile to another.
      *
      * @param picture the picture, whose values are in {@code source}
-     * @param source the profile of the picture, RGB or gray
-     * @param target the profile to convert to, RGB or gray
+     * @param source the profile of the picture, RGB or gray, or the profile of a channel picture
+     * @param target the profile to convert to, RGB, gray, CMYK or multi-ink
      * @param options the rendering intent, black point compensation and tone mapping
      * @return the converted picture, as {@link #convertColor(Picture, ColorTransform)} describes
-     * @throws IllegalArgumentException if a profile is neither RGB nor gray
+     * @throws IllegalArgumentException if a profile does not fit the picture, as
+     * {@link #convertColor(Picture, ColorTransform)} describes
      * @throws MediaException.Malformed if a profile is damaged
      * @throws MediaException.Unsupported if a profile cannot be used as source or target
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
@@ -1818,14 +1820,21 @@ public final class ImageOps {
      * an {@link Rgba16Picture}, and alpha is copied unchanged. Y'CbCr pictures are first converted
      * to R'G'B' with the matrix and range of their {@link ColorInfo} (16-bit ones in floating point,
      * keeping their precision). A gray source profile reads the red channel; a gray target profile
-     * writes the same value to red, green and blue. With a CMYK target profile, an RGB picture becomes a
-     * {@link Channel8Picture} or {@link Channel16Picture} of the {@link PixelLayout#CMYK} layout, followed by
-     * alpha when the picture reports it.
+     * writes the same value to red, green and blue. With a CMYK or multi-ink target profile, an RGB picture
+     * becomes a {@link Channel8Picture} or {@link Channel16Picture} of the {@link PixelLayout#CMYK} layout, or of
+     * the {@link com.github.auties00.smalt.image.ColorModel#INK INK} layout of the target's inks (named by
+     * {@link ColorTransform#outputColorants()}, unnamed when the target has no colorant table), followed by alpha
+     * when the picture reports it.
      *
-     * <p>A {@link ChannelPicture} needs a source profile with as many channels as its color channels; its color
-     * channels are replaced by those of the target profile (gray, RGB or CMYK), its extra channels are copied, and
-     * premultiplied colors are divided by their alpha before the transform and multiplied by it after. A
-     * {@link ChannelFloatPicture} is converted in floating point, as
+     * <p>A {@link ChannelPicture} needs a source profile whose channels it holds: as many as its color channels,
+     * read in order, or, when the profile's {@linkplain ColorProfile#colorants() colorants} name them, the color
+     * channels and {@link com.github.auties00.smalt.image.ChannelType#SPOT SPOT} channels of the same names. Names
+     * are compared ignoring case and surrounding white space, a CMYK channel taking the name of its process ink
+     * ({@code Cyan}, {@code Magenta}, {@code Yellow}, {@code Black}), so the inks of a separation convert through a
+     * multi-ink profile that lists them in another order, and spot colors through one that adds them to the
+     * process inks. The channels read are replaced by the color channels of the target profile (gray, RGB, CMYK or
+     * multi-ink), the other extra channels are copied, and premultiplied colors are divided by their alpha before
+     * the transform and multiplied by it after. A {@link ChannelFloatPicture} is converted in floating point, as
      * {@link ColorTransform#transform(float[], int, int, float[], int, int, int)} describes, and stays one: values
      * outside 0.0 to 1.0 are kept where the profiles allow.
      *
@@ -1833,10 +1842,10 @@ public final class ImageOps {
      * same pair of profiles: creating one reads and links the profiles.
      * @param picture the picture, whose values are in the transform's source profile
      * @param transform the transform, from an RGB or gray profile, or the profile of a channel picture, to an
-     * RGB, gray or CMYK profile
+     * RGB, gray, CMYK or multi-ink profile
      * @return the converted picture
-     * @throws IllegalArgumentException if a profile of the transform does not fit the picture or is not RGB, gray
-     * or CMYK
+     * @throws IllegalArgumentException if a profile of the transform does not fit the picture or is not RGB, gray,
+     * CMYK or multi-ink
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture convertColor(Picture picture, ColorTransform transform) {
@@ -1906,8 +1915,10 @@ public final class ImageOps {
      * the other components are kept.
      *
      * <p>A {@link ChannelPicture} is always converted to packed RGBA, an {@link RgbaPicture} for 8-bit samples
-     * and an {@link Rgba16Picture} otherwise. When its color profile has as many channels as its color channels
-     * and can be applied, the picture is converted through it, floating-point samples in floating point before
+     * and an {@link Rgba16Picture} otherwise. When its color profile fits it, as
+     * {@link #convertColor(Picture, ColorTransform)} describes for channel pictures (matching named inks and spot
+     * colors to the profile's colorants), and can be applied, the picture is converted through it, floating-point
+     * samples in floating point before
      * they are quantized to 16 bits, and the result is labeled as above. Otherwise it is converted as
      * {@link #toRgba16(Picture)} describes, keeping the ICC bytes and keeping the color profile only for gray and
      * RGB pictures.

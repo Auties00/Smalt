@@ -22,6 +22,9 @@ import java.util.List;
  * {@code GamutSampler} ({@code cmsgmt.c}), with the {@code cmsFLAGS_HIGHRESPRECALC} grid. When the source has more
  * channels than the proofing profile, Little CMS reads only the leading ones; this implementation spans the table
  * over the source's channels instead, with the grid of the source color space, so that every source channel counts.
+ * A table of more than {@link #MAX_NODES} nodes (nine channels and more) is not sampled: each color is checked on its
+ * own, with the same round trips; Little CMS samples such tables up to its 512 MiB allocation limit and creates no
+ * transform beyond it (ten channels and more).
  */
 final class GamutCheck {
     /**
@@ -30,9 +33,20 @@ final class GamutCheck {
     private static final long NODE_WORK = 2048;
 
     /**
-     * The interpolator over the table.
+     * The largest number of table nodes, {@code 2^25}, the limit of the transform tables of
+     * {@link ClutEngine}.
+     */
+    private static final long MAX_NODES = 1L << 25;
+
+    /**
+     * The interpolator over the table, or {@code null} when each color is checked on its own.
      */
     private final Interpolator interpolator;
+
+    /**
+     * The sampler of each thread when each color is checked on its own, or {@code null} with a table.
+     */
+    private final ThreadLocal<Sampler> samplers;
 
     /**
      * The number of table inputs.
@@ -40,13 +54,30 @@ final class GamutCheck {
     private final int inputs;
 
     /**
-     * Constructs a gamut check.
+     * Constructs a gamut check over a sampled table.
      *
      * @param interpolator the interpolator over the sampled table
      */
     private GamutCheck(Interpolator interpolator) {
         this.interpolator = interpolator;
+        this.samplers = null;
         this.inputs = interpolator.inputs();
+    }
+
+    /**
+     * Constructs a gamut check that checks each color on its own.
+     *
+     * @param toLab the pipeline from the source to L*a*b*
+     * @param forward the pipeline from L*a*b* to the proofing profile
+     * @param reverse the pipeline from the proofing profile to L*a*b*
+     * @param threshold the delta E threshold
+     * @param inputs the number of check inputs
+     */
+    private GamutCheck(Pipeline toLab, Pipeline forward, Pipeline reverse, double threshold, int inputs) {
+        this.interpolator = null;
+        this.samplers = ThreadLocal.withInitial(() -> new Sampler(toLab, forward, reverse, threshold,
+                toLab.inputs()));
+        this.inputs = inputs;
     }
 
     /**
@@ -69,10 +100,14 @@ final class GamutCheck {
         var points = gridPoints(dimensions);
         var grid = new int[dimensions];
         Arrays.fill(grid, points);
-        var nodes = 1;
+        var size = 1L;
         for (var i = 0; i < dimensions; i++) {
-            nodes *= points;
+            size *= points;
+            if (size > MAX_NODES) {
+                return new GamutCheck(toLab, forward, reverse, threshold, dimensions);
+            }
         }
+        var nodes = (int) size;
         var table = new int[nodes];
         var used = sourceChannels;
         var total = nodes;
@@ -148,7 +183,7 @@ final class GamutCheck {
      * {@return scratch space for {@link #isOutOfGamut(int[], int[], int[][])}: the interpolator's, or {@code null}}
      */
     int[][] scratch() {
-        return interpolator.scratch();
+        return interpolator == null ? null : interpolator.scratch();
     }
 
     /**
@@ -160,6 +195,9 @@ final class GamutCheck {
      * @return {@code true} if the color is out of gamut
      */
     boolean isOutOfGamut(int[] words, int[] result, int[][] scratch) {
+        if (interpolator == null) {
+            return samplers.get().sample(words) >= 1;
+        }
         interpolator.evaluate(words, result, scratch);
         return result[0] >= 1;
     }

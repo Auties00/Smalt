@@ -38,9 +38,14 @@ import java.util.function.Supplier;
  * that ends with an abstract profile, ends in the connection space, as XYZ or L*a*b* samples in the
  * ICC version 4 encoding.
  *
+ * <p>Multi-ink profiles ({@link ProfileColorSpace#INK}, 2 to 15 inks) take part like CMYK ones, as sources, targets
+ * and the ends of device links; {@link #inputColorants()} and {@link #outputColorants()} name their inks.
+ *
  * <p>8-bit transforms reproduce Little CMS 2.17 with its default flags: matrix/TRC to matrix/TRC
  * RGB conversions use the same 1.14 fixed-point tables and give the same values, and the other
- * conversions are sampled into the same lookup tables. 16-bit matrix/TRC conversions are computed
+ * conversions are sampled into the same lookup tables, except that a table of more than 2^25 samples (nine inks
+ * and more, or eight inks to more than five channels) is replaced by evaluating the linked profiles on every
+ * pixel, as Little CMS does from ten inks. 16-bit matrix/TRC conversions are computed
  * directly in floating point, which is more accurate than Little CMS's 16-bit lookup tables, and 16-bit RGB to RGB
  * lookup-table conversions use prelinearization curves when they make the table more accurate. Floating-point
  * conversions evaluate the linked profiles on every pixel, as Little CMS's floating-point transforms do, without
@@ -557,6 +562,59 @@ public final class ColorTransform {
     }
 
     /**
+     * Returns the color space of the source samples.
+     *
+     * @return the data color space of the source profile; for a named color profile, whose transform reads color
+     * indexes, the space of its device coordinates
+     */
+    public ProfileColorSpace inputColorSpace() {
+        return ProfileColorSpace.of(entrySpace);
+    }
+
+    /**
+     * Returns the color space of the target samples.
+     *
+     * @return the data color space of the target profile, the output space of a device link that ends the chain,
+     * or the connection space when the chain ends in it
+     */
+    public ProfileColorSpace outputColorSpace() {
+        return ProfileColorSpace.of(exitSpace);
+    }
+
+    /**
+     * Returns the colorants of the source channels: the {@linkplain ColorProfile#colorants() colorant table} of
+     * the source profile, which names the inks of a multi-ink source.
+     *
+     * @return the colorants, one per source channel, an unmodifiable list; empty when the source profile has no
+     * colorant table of {@link #inputChannels()} colorants
+     * @throws MediaException.Malformed if the colorant table is damaged
+     */
+    public List<Colorant> inputColorants() {
+        if (named) {
+            return List.of();
+        }
+        var list = source.colorants();
+        return list.size() == inputs ? list : List.of();
+    }
+
+    /**
+     * Returns the colorants of the target channels: the colorant table of the target profile, its
+     * {@linkplain ColorProfile#outputColorants() output colorant table} when it is a device link, which names the
+     * inks of a multi-ink target.
+     *
+     * @return the colorants, one per target channel, an unmodifiable list; empty when the chain ends in the
+     * connection space or the target profile has no colorant table of {@link #outputChannels()} colorants
+     * @throws MediaException.Malformed if the colorant table is damaged
+     */
+    public List<Colorant> outputColorants() {
+        if (exitSpace == IccReader.signature("Lab ") || exitSpace == IccReader.signature("XYZ ")) {
+            return List.of();
+        }
+        var list = target.deviceClass() == ProfileClass.DEVICE_LINK ? target.outputColorants() : target.colorants();
+        return list.size() == outputs ? list : List.of();
+    }
+
+    /**
      * Converts interleaved 8-bit pixels.
      *
      * <p>Pixel {@code i} reads {@link #inputChannels()} samples from
@@ -993,6 +1051,9 @@ public final class ColorTransform {
      * @return the engine
      */
     private ColorEngine clut(Pipeline pipeline) {
+        if (!ClutEngine.fits(pipeline)) {
+            return new PipelineEngine(pipeline);
+        }
         var fixWhite = lastIntent != RenderingIntent.ABSOLUTE_COLORIMETRIC;
         return new ClutEngine(pipeline, entrySpace, exitSpace, fixWhite);
     }

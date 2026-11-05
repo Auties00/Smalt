@@ -48,9 +48,10 @@ final class IccReader {
     private static final int MAX_CHANNELS = 15;
 
     /**
-     * The largest number of 16-bit samples of one lookup table grid.
+     * The largest number of samples of one lookup table grid, {@code 2^25}: an eight-ink table of 7 points per ink
+     * and three outputs holds about half as many. Every table is read only once the tag is known to hold its samples.
      */
-    private static final long MAX_CLUT_SAMPLES = 1L << 22;
+    private static final long MAX_CLUT_SAMPLES = 1L << 25;
 
     /**
      * The length of a name field of a {@code namedColor2Type}.
@@ -73,6 +74,22 @@ final class IccReader {
          */
         int count() {
             return roots.length;
+        }
+    }
+
+    /**
+     * Holds the colorants of a {@code colorantTableType} tag.
+     *
+     * @param names the name of each colorant
+     * @param pcs the three 16-bit connection space values of each colorant, in the L*a*b* or XYZ encoding of
+     * ICC.1:2022 section 6.3.4.2
+     */
+    record Colorants(String[] names, int[] pcs) {
+        /**
+         * {@return the number of colorants}
+         */
+        int count() {
+            return names.length;
         }
     }
 
@@ -633,6 +650,47 @@ final class IccReader {
     }
 
     /**
+     * Reads a {@code colorantTableType} tag ({@code clrt} or {@code clot}).
+     *
+     * @param tag the tag signature
+     * @return the colorants, or {@code null} when the tag is absent
+     * @throws MediaException.Malformed if the tag is not a valid {@code colorantTableType} or lists more than
+     * 15 colorants
+     */
+    Colorants colorants(int tag) {
+        var entry = tags.get(tag);
+        if (entry == null) {
+            return null;
+        }
+        return (Colorants) cache.computeIfAbsent(tag, _ -> {
+            var at = entry[0];
+            var end = at + entry[1];
+            try {
+                checkRange(at, 12, end);
+                expectType(at, "clrt", tag);
+                var count = u32(at + 8) & 0xFFFFFFFFL;
+                if (count > MAX_CHANNELS) {
+                    throw new MediaException.Malformed("ICC tag " + name(tag) + " lists " + count + " colorants");
+                }
+                checkRange(at + 12, (int) count * (NAME_LENGTH + 6), end);
+                var names = new String[(int) count];
+                var pcs = new int[(int) count * 3];
+                var cursor = at + 12;
+                for (var i = 0; i < count; i++) {
+                    names[i] = string(cursor, NAME_LENGTH);
+                    for (var c = 0; c < 3; c++) {
+                        pcs[i * 3 + c] = u16(cursor + NAME_LENGTH + c * 2);
+                    }
+                    cursor += NAME_LENGTH + 6;
+                }
+                return new Colorants(names, pcs);
+            } catch (IndexOutOfBoundsException | IllegalArgumentException exception) {
+                throw new MediaException.Malformed("ICC tag " + name(tag) + " is truncated or invalid", exception);
+            }
+        });
+    }
+
+    /**
      * Reads a NUL-terminated string of a fixed-length field.
      *
      * @param at the offset of the field
@@ -871,20 +929,20 @@ final class IccReader {
         }
         var precision = u8(at + 16);
         var cursor = at + 20;
+        if (precision != 1 && precision != 2) {
+            throw new IllegalArgumentException("unknown table precision " + precision);
+        }
+        checkRange(cursor, (int) samples * precision, end);
         var table = new int[(int) samples];
         if (precision == 1) {
-            checkRange(cursor, (int) samples, end);
             for (var i = 0; i < samples; i++) {
                 var v = data[cursor + i] & 0xFF;
                 table[i] = (v << 8) | v;
             }
-        } else if (precision == 2) {
-            checkRange(cursor, (int) samples * 2, end);
+        } else {
             for (var i = 0; i < samples; i++) {
                 table[i] = u16(cursor + i * 2);
             }
-        } else {
-            throw new IllegalArgumentException("unknown table precision " + precision);
         }
         return new Stage.Clut(grid, outputs, table, false, Stage.Role.PLAIN);
     }

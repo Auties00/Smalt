@@ -152,4 +152,40 @@ class TiffInksTest {
     private static int u16(byte[] data, int sample) {
         return (data[sample * 2] & 0xFF) | (data[sample * 2 + 1] & 0xFF) << 8;
     }
+
+    @Test
+    @DisplayName("inks named in another order than the profile's colorants convert by name")
+    void inksByName() throws Exception {
+        // the two-ink profile of tools/testdata/icc-multi-ink, whose colorant table names Cyan then Magenta
+        var icc = TiffJpeg12Test.resource("/com/github/auties00/smalt/image/tiff/inks-named/ink2.icc");
+        assertEquals("9e188a63e4617746cac0abf4ee38109ac4897098a8c7a60f710f784e31f23182",
+                HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(icc)));
+        var profile = ColorProfile.parse(icc);
+        assertEquals(List.of("Cyan", "Magenta"), profile.colorants().stream().map(c -> c.name()).toList());
+        var values = TiffFiles.pattern(9, 7, 2, 255, 11);
+        var swapped = new long[values.length];
+        for (var i = 0; i < values.length; i += 2) {
+            swapped[i] = values[i + 1];
+            swapped[i + 1] = values[i];
+        }
+        var inOrder = page(values, icc, "Cyan", "Magenta");
+        var reordered = page(swapped, icc, "Magenta", "Cyan");
+        assertArrayEquals(inOrder.pixels(), reordered.pixels());
+        var mislabeled = page(values, icc, "Magenta", "Cyan");
+        var unnamed = page(swapped, icc, "Ink 1", "Ink 2");
+        assertArrayEquals(unnamed.pixels(), mislabeled.pixels());
+        assertFalse(java.util.Arrays.equals(inOrder.pixels(), mislabeled.pixels()));
+        var kept = TiffDecoder.decode(MediaSource.of(TiffFiles.of(9, 7, 2, 8).photometric(5).tag(332, 2)
+                .tag(334, 2).ascii(333, "Magenta", "Cyan").data(TiffFiles.pack(swapped, 9, 7, 2, 8, true))
+                .undefined(34675, icc).bytes()), ImageDecoderOptions.builder().keepChannels(true).build());
+        var channels = assertInstanceOf(ChannelPicture.class, kept.picture());
+        assertEquals("Magenta", channels.layout().channel(0).name());
+        assertArrayEquals(inOrder.pixels(), ((RgbaPicture) ImageOps.toSrgb(kept).picture()).pixels());
+    }
+
+    private static RgbaPicture page(long[] values, byte[] icc, String... names) {
+        var bytes = TiffFiles.of(9, 7, 2, 8).photometric(5).tag(332, 2).tag(334, 2).ascii(333, names)
+                .data(TiffFiles.pack(values, 9, 7, 2, 8, true)).undefined(34675, icc).bytes();
+        return assertInstanceOf(RgbaPicture.class, TiffDecoder.decode(MediaSource.of(bytes)).picture());
+    }
 }

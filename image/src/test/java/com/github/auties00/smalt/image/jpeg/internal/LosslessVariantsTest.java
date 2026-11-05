@@ -977,6 +977,24 @@ class LosslessVariantsTest {
         }
 
         @Test
+        @DisplayName("the inks of a multi-ink profile take the names of its colorant table")
+        void namedInkProfile() throws IOException {
+            byte[] icc;
+            try (var input = LosslessVariantsTest.class.getResourceAsStream(
+                    "/com/github/auties00/smalt/image/tiff/inks-named/ink2.icc")) {
+                icc = input.readAllBytes();
+            }
+            var factors = ones(2);
+            var source = planes(6, 4, factors, 8, 3);
+            var jpeg = withIcc(Lj92Encoder.encodeFrame(source, 6, 4, factors, 8, false,
+                    List.of(Lj92Encoder.ScanSpec.of(range(2), 1, 0, 0))), icc);
+            var picture = assertInstanceOf(Channel8Picture.class, decode(jpeg, KEEP).picture());
+            assertEquals(ColorModel.INK, picture.layout().colorModel());
+            assertEquals("Cyan", picture.layout().channel(0).name());
+            assertEquals("Magenta", picture.layout().channel(1).name());
+        }
+
+        @Test
         @DisplayName("an RGB or gray profile names the leading channels and leaves the others unspecified")
         void colorProfiles() {
             var factors = ones(5);

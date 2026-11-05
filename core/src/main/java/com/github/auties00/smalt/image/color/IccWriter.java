@@ -334,11 +334,41 @@ final class IccWriter {
      */
     static byte[] table(String description, String deviceClass, String colorSpace, String pcs, int[] grid,
                         int outputs, int[] table, int intent, double[] white) {
+        return table(description, deviceClass, colorSpace, pcs, grid, outputs, table, intent, white, List.of(),
+                List.of());
+    }
+
+    /**
+     * Writes a version 4.3 profile whose {@code A2B0} is a 16-bit lookup table between identity curves, with the
+     * colorant tables of its input and output channels.
+     *
+     * @param description the profile description
+     * @param deviceClass the profile class signature, {@code "link"} or {@code "abst"}
+     * @param colorSpace the input color space signature
+     * @param pcs the output color space signature
+     * @param grid the grid points per input
+     * @param outputs the number of outputs
+     * @param table the 16-bit samples, the first input varying slowest
+     * @param intent the rendering intent of the header, {@code 0..3}
+     * @param white the media white point, or {@code null} for none
+     * @param inputColorants the colorants of the inputs, written as the {@code clrt} tag unless empty
+     * @param outputColorants the colorants of the outputs, written as the {@code clot} tag unless empty
+     * @return the profile bytes
+     */
+    static byte[] table(String description, String deviceClass, String colorSpace, String pcs, int[] grid,
+                        int outputs, int[] table, int intent, double[] white, List<Colorant> inputColorants,
+                        List<Colorant> outputColorants) {
         var tags = new ArrayList<Tag>();
         tags.add(new Tag("desc", text(description)));
         tags.add(new Tag("cprt", text("No copyright, use freely")));
         if (white != null) {
             tags.add(new Tag("wtpt", xyz(white)));
+        }
+        if (!inputColorants.isEmpty()) {
+            tags.add(new Tag("clrt", colorants(inputColorants)));
+        }
+        if (!outputColorants.isEmpty()) {
+            tags.add(new Tag("clot", colorants(outputColorants)));
         }
         tags.add(new Tag("A2B0", lutAtoB(grid.length, outputs, identityCurves(outputs), grid, table,
                 identityCurves(grid.length))));
@@ -763,6 +793,31 @@ final class IccWriter {
      */
     private static int align(int length) {
         return (length + 3) & ~3;
+    }
+
+    /**
+     * Encodes a {@code colorantTableType} with L*a*b* values, as device links hold them.
+     *
+     * @param colorants the colorants, their XYZ values converted to L*a*b*
+     * @return the tag data
+     */
+    private static byte[] colorants(List<Colorant> colorants) {
+        var data = new ByteArrayOutputStream();
+        writeSignature(data, "clrt");
+        writeInt(data, 0);
+        writeInt(data, colorants.size());
+        for (var colorant : colorants) {
+            var name = new byte[32];
+            var ascii = colorant.name().getBytes(StandardCharsets.US_ASCII);
+            System.arraycopy(ascii, 0, name, 0, Math.min(ascii.length, 31));
+            data.writeBytes(name);
+            var values = colorant.connectionSpaceValues();
+            var lab = colorant.connectionSpace() == ProfileColorSpace.XYZ ? ColorMath.xyzToLab(values) : values;
+            writeShort(data, ColorMath.saturateWord(lab[0] * 65535.0 / 100.0));
+            writeShort(data, ColorMath.saturateWord((lab[1] + 128.0) * 65535.0 / 255.0));
+            writeShort(data, ColorMath.saturateWord((lab[2] + 128.0) * 65535.0 / 255.0));
+        }
+        return data.toByteArray();
     }
 
     /**

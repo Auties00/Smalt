@@ -5,6 +5,7 @@ import com.github.auties00.smalt.image.Channel8Picture;
 import com.github.auties00.smalt.image.ChannelFloatPicture;
 import com.github.auties00.smalt.image.ChannelPicture;
 import com.github.auties00.smalt.image.Chromaticity;
+import com.github.auties00.smalt.image.ColorModel;
 import com.github.auties00.smalt.image.DecodedImage;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.ImageFormat;
@@ -28,7 +29,9 @@ import java.util.Optional;
  * layouts (CMYK, extra channels) are kept with {@link ImageDecoderOptions#keepChannels()} and converted to packed
  * RGBA otherwise. Floating-point pictures are kept with {@code keepChannels} and converted to packed RGBA of 8 bits,
  * or of 16 bits with {@code highBitDepth}, otherwise. {@link ImageDecoderOptions#convertToSrgb()} converts through the
- * color profile last, from the floating-point samples for a floating-point picture.
+ * color profile last, from the floating-point samples for a floating-point picture. Ink separations that are not kept
+ * convert to sRGB through a multi-ink profile of one channel per ink even without {@code convertToSrgb}, since they
+ * have no conversion without one.
  */
 public final class RasterOutput {
     /**
@@ -104,6 +107,16 @@ public final class RasterOutput {
                                       ColorProfile profile, byte[] icc, ImageDecoderOptions options) {
         var width = picture.width();
         var height = picture.height();
+        var fits = picture instanceof ChannelPicture && profile != null && fitsChannels(picture, profile);
+        var keep = options.keepChannels() && !options.convertToSrgb();
+        if (fits && (options.convertToSrgb() || (!keep && isInks(picture)))) {
+            var srgb = ImageOps.toSrgb(new DecodedImage(picture, format, orientation, width, height,
+                    Optional.ofNullable(icc), Optional.empty(), Optional.empty(), Optional.of(profile)));
+            if (!options.highBitDepth() && srgb.picture() instanceof Rgba16Picture wide) {
+                return ImageRegions.withPicture(srgb, ImageOps.toEightBit(wide));
+            }
+            return srgb;
+        }
         var converted = convert(picture, profile, options);
         var described = profile;
         if (converted != picture && profile != null && profile.colorSpace().channels() != 1
@@ -115,11 +128,7 @@ public final class RasterOutput {
         if (!options.convertToSrgb()) {
             return image;
         }
-        var source = picture instanceof ChannelPicture && profile != null && fitsChannels(picture, profile)
-                ? new DecodedImage(picture, format, orientation, width, height, Optional.ofNullable(icc),
-                Optional.empty(), Optional.empty(), Optional.of(profile))
-                : image;
-        var srgb = ImageOps.toSrgb(source);
+        var srgb = ImageOps.toSrgb(image);
         if (!options.highBitDepth() && srgb.picture() instanceof Rgba16Picture wide) {
             return ImageRegions.withPicture(srgb, ImageOps.toEightBit(wide));
         }
@@ -161,13 +170,24 @@ public final class RasterOutput {
     }
 
     /**
-     * {@return whether a profile has as many channels as the color channels of a picture}
+     * {@return whether a profile has as many channels as the color channels of a picture, a multi-ink profile
+     * counting its inks}
      *
      * @param picture the picture to read
-     * @param profile the color space of the pixels, or {@code null}
+     * @param profile the color space of the pixels
      */
     private static boolean fitsChannels(Picture picture, ColorProfile profile) {
-        return picture instanceof ChannelPicture channels
-                && channels.layout().colorChannels() == profile.colorSpace().channels();
+        var space = profile.colorSpace();
+        var channels = space == ProfileColorSpace.INK ? profile.channels() : space.channels();
+        return picture instanceof ChannelPicture pixels && pixels.layout().colorChannels() == channels;
+    }
+
+    /**
+     * {@return whether a picture holds ink separations, which convert to RGB only through their profile}
+     *
+     * @param picture the picture to read
+     */
+    private static boolean isInks(Picture picture) {
+        return picture instanceof ChannelPicture pixels && pixels.layout().colorModel() == ColorModel.INK;
     }
 }

@@ -14,7 +14,7 @@ package com.github.auties00.smalt.image.color;
  * per call or kept per thread, never per pixel.
  */
 sealed interface ColorEngine permits IdentityEngine, CurvesEngine, MatShaperEngine, PrelinEngine, ClutEngine,
-        FloatShaperEngine, HdrEngine, HdrTargetEngine, NamedColorEngine, GamutAlarmEngine {
+        FloatShaperEngine, HdrEngine, HdrTargetEngine, NamedColorEngine, GamutAlarmEngine, PipelineEngine {
     /**
      * Transforms 8-bit pixels.
      *

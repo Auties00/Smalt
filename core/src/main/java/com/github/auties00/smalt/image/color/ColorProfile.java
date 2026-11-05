@@ -464,25 +464,29 @@ public final class ColorProfile {
      * Builds a device link that applies one curve to each channel of a color space, as linearization and
      * calibration curves do.
      *
+     * <p>For {@link ProfileColorSpace#INK} the number of curves sets the number of inks, from 2 to 15 (an
+     * {@code nCLR} space); the link has no colorant table, so it names no inks.
+     *
      * @param space the color space the link reads and writes
      * @param curves the curves, one per channel of the space, in channel order
      * @return the profile
-     * @throws IllegalArgumentException if the space is {@link ProfileColorSpace#OTHER} or the number of curves is not
-     * its channel count
+     * @throws IllegalArgumentException if the space is {@link ProfileColorSpace#OTHER}, or the number of curves is
+     * not its channel count or, for {@link ProfileColorSpace#INK}, not 2 to 15
      * @throws NullPointerException if {@code curves} holds a {@code null} element
      */
     public static ColorProfile linearization(ProfileColorSpace space, List<ProfileCurve> curves) {
         Objects.requireNonNull(space, "space");
         var list = List.copyOf(curves);
-        if (space == ProfileColorSpace.OTHER || list.size() != space.channels()) {
-            throw new IllegalArgumentException("a " + space + " linearization needs " + space.channels()
-                    + " curves, got " + list.size());
+        if (space == ProfileColorSpace.INK ? list.size() < 2 || list.size() > 15
+                : space == ProfileColorSpace.OTHER || list.size() != space.channels()) {
+            throw new IllegalArgumentException("a " + space + " linearization needs "
+                    + (space == ProfileColorSpace.INK ? "2 to 15" : space.channels()) + " curves, got " + list.size());
         }
         var encoded = new IccWriter.Curve[list.size()];
         for (var i = 0; i < encoded.length; i++) {
             encoded[i] = list.get(i).curve();
         }
-        return new ColorProfile(IccWriter.linearization("Linearization", signature(space), encoded));
+        return new ColorProfile(IccWriter.linearization("Linearization", signature(space, list.size()), encoded));
     }
 
     /**
@@ -527,7 +531,10 @@ public final class ColorProfile {
      * sampled from the transform's 16-bit conversion, 33 points per channel for up to three source channels, 17
      * for four and 7 for more (fewer for eight or more channels, so that the table holds at most 4194304 samples);
      * on the grid points it gives the transform's 16-bit values. Its rendering intent is the one of the transform's
-     * last link, and its media white the target's. The link of a proofing transform holds the simulation of the
+     * last link, and its media white the target's; the {@linkplain ColorTransform#inputColorants() colorants of
+     * the source channels} and of the {@linkplain ColorTransform#outputColorants() target channels} become its
+     * {@linkplain #colorants() colorant table} and its {@linkplain #outputColorants() output colorant table}, with
+     * L*a*b* values. The link of a proofing transform holds the simulation of the
      * proofing device without the {@linkplain ProofingOptions#gamutCheck() gamut check}: the alarm values are not
      * part of it. A transform from a named color profile becomes a named color profile instead, whose colors keep
      * their names and connection space values and get the transform's outputs as device coordinates.
@@ -587,10 +594,12 @@ public final class ColorProfile {
      * Returns the ICC signature of a color space.
      *
      * @param space the color space, not {@link ProfileColorSpace#OTHER}
+     * @param channels the number of channels, read for {@link ProfileColorSpace#INK} only
      * @return the four characters
      */
-    private static String signature(ProfileColorSpace space) {
+    private static String signature(ProfileColorSpace space, int channels) {
         return switch (space) {
+            case INK -> Character.toUpperCase(Character.forDigit(channels, 16)) + "CLR";
             case GRAY -> "GRAY";
             case RGB -> "RGB ";
             case CMYK -> "CMYK";
@@ -841,6 +850,57 @@ public final class ColorProfile {
             namedColors = colors;
         }
         return colors;
+    }
+
+    /**
+     * Returns the colorants of the profile's device channels ({@code clrt} tag), in channel order.
+     *
+     * <p>A multi-ink ({@link ProfileColorSpace#INK}) profile names its inks this way, as ICC.1:2022 requires of
+     * {@code xCLR} profiles; other profiles may also list their colorants. The values are in the
+     * {@linkplain #connectionSpace() connection space} of the profile, L*a*b* for a device link.
+     *
+     * @return the colorants, an unmodifiable list; empty when the profile has no colorant table
+     * @throws MediaException.Malformed if the {@code clrt} tag is damaged
+     */
+    public List<Colorant> colorants() {
+        return colorants(IccReader.signature("clrt"), icc.pcs == IccReader.signature("XYZ ")
+                && icc.deviceClass != IccReader.signature("link"));
+    }
+
+    /**
+     * Returns the colorants of a device link's output channels ({@code clot} tag), in channel order.
+     *
+     * <p>A device link whose output space is multi-ink names its inks this way; its {@link #colorants()} name its
+     * input channels.
+     *
+     * @return the colorants, with L*a*b* values, an unmodifiable list; empty unless the profile is a
+     * {@link ProfileClass#DEVICE_LINK} with a colorant table for its output
+     * @throws MediaException.Malformed if the {@code clot} tag is damaged
+     */
+    public List<Colorant> outputColorants() {
+        if (icc.deviceClass != IccReader.signature("link")) {
+            return List.of();
+        }
+        return colorants(IccReader.signature("clot"), false);
+    }
+
+    /**
+     * Decodes a colorant table.
+     *
+     * @param tag the tag signature
+     * @param xyz whether the values are XYZ rather than L*a*b*
+     * @return the colorants, empty when the tag is absent
+     */
+    private List<Colorant> colorants(int tag, boolean xyz) {
+        var table = icc.colorants(tag);
+        if (table == null) {
+            return List.of();
+        }
+        var list = new Colorant[table.count()];
+        for (var i = 0; i < list.length; i++) {
+            list[i] = Colorant.of(table, i, xyz);
+        }
+        return List.of(list);
     }
 
     /**

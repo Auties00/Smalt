@@ -1,6 +1,9 @@
 package com.github.auties00.smalt.fuzz;
 
 import com.code_intelligence.jazzer.junit.FuzzTest;
+import com.github.auties00.smalt.image.Channel8Picture;
+import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.PixelLayout;
 import com.github.auties00.smalt.image.color.BlackPreservation;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.color.ColorTransform;
@@ -9,16 +12,20 @@ import com.github.auties00.smalt.image.color.ProfileClass;
 import com.github.auties00.smalt.image.color.ProfileColorSpace;
 import com.github.auties00.smalt.image.color.ProofingOptions;
 import com.github.auties00.smalt.image.color.RenderingIntent;
+import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.testkit.fuzz.Fuzz;
 import com.github.auties00.smalt.testkit.fuzz.FuzzRun;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Fuzz target of the ICC profile parser and of the color transforms built from a parsed profile: to and from sRGB
  * for a device profile, alone for a device link, between two sRGB profiles for an abstract profile, and alone and
  * to sRGB for a named color profile, whose colors it also lists; a device profile is also the proofing profile of an
- * sRGB to sRGB soft proof, and a CMYK one the target of a black-preserving CMYK transform. Building a transform
+ * sRGB to sRGB soft proof, and a CMYK one the target of a black-preserving CMYK transform. The colorant tables are
+ * listed, and a multi-ink profile converts a small separation whose inks carry its colorants' names in reverse
+ * order, as {@code ImageOps.convertColor} matches them. Building a transform
  * evaluates the whole pipeline over a grid, so each input builds at most four: the last byte of the input picks the
  * rendering intent and the sample depth (8-bit, 16-bit or floating point), which mutations of that byte explore. The
  * profile's description is also replaced and the result parsed again.
@@ -46,6 +53,9 @@ class ColorFuzzTest {
         profile.colorInfo();
         profile.isHighDynamicRange();
         profile.isSrgb();
+        run.value("colorants", profile::colorants).ifPresent(colorants -> colorants.forEach(
+                colorant -> colorant.connectionSpaceValues()));
+        run.value("output colorants", profile::outputColorants);
         run.value("named colors", profile::namedColors).ifPresent(colors -> {
             for (var color : colors) {
                 profile.namedColor(color.rootName());
@@ -87,6 +97,9 @@ class ColorFuzzTest {
                     run.value("proof", () -> ColorTransform.createProofing(srgb, profile, srgb, options, proofing))
                             .ifPresent(transform -> convert(run, transform, (depth + 2) % 3));
                 }
+                if (profile.colorSpace() == ProfileColorSpace.INK) {
+                    run.value("separation", () -> separation(profile, options));
+                }
                 if (profile.colorSpace() == ProfileColorSpace.CMYK && profile.deviceClass() == ProfileClass.OUTPUT) {
                     var preserving = ColorTransformOptions.builder().intent(RenderingIntent.RELATIVE_COLORIMETRIC)
                             .blackPreservation(BlackPreservation.K_ONLY).build();
@@ -95,6 +108,25 @@ class ColorFuzzTest {
                 }
             }
         }
+    }
+
+    /**
+     * Converts a 4x4 separation of a multi-ink profile to sRGB, its inks named after the profile's colorants in
+     * reverse order.
+     */
+    private static Picture separation(ColorProfile profile, ColorTransformOptions options) {
+        var inks = profile.channels();
+        var colorants = profile.colorants();
+        var names = new ArrayList<String>(inks);
+        for (var c = inks - 1; c >= 0; c--) {
+            names.add(colorants.size() == inks ? colorants.get(c).name() : "");
+        }
+        var pixels = new byte[16 * inks];
+        for (var index = 0; index < pixels.length; index++) {
+            pixels[index] = (byte) (index * 37);
+        }
+        var picture = Channel8Picture.of(4, 4, 4 * inks, pixels, PixelLayout.ofInks(names));
+        return ImageOps.convertColor(picture, profile, ColorProfile.srgb(), options);
     }
 
     private static void convert(FuzzRun run, ColorTransform transform, int depth) {

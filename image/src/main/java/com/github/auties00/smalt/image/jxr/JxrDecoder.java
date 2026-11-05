@@ -51,10 +51,11 @@ import java.util.Optional;
  * with {@link ImageDecoderOptions#keepChannels()}); 10 and 16-bit ones to packed RGBA of 8 bits, or of 16 bits with
  * {@link ImageDecoderOptions#highBitDepth()}; fixed-point, floating-point and RGBE ones, linear-light (scRGB), to
  * packed RGBA, or to a {@link ChannelFloatPicture} with {@code keepChannels}; independent channels keep their
- * order as unnamed {@link ChannelType#INK} channels; raw YUV output decodes to a {@link YuvPicture} or
- * {@link Yuv16Picture}. Premultiplied alpha is reported as such. The orientation of the container (of the image
- * header for a bare codestream) is reported, not applied. The embedded ICC profile, EXIF and XMP metadata and the
- * resolution are reported.
+ * order as unnamed {@link ChannelType#INK} channels (without {@code keepChannels}, they convert to sRGB through an
+ * embedded multi-ink profile of one channel per channel, and are unsupported without one); raw YUV output
+ * decodes to a {@link YuvPicture} or {@link Yuv16Picture}. Premultiplied alpha is reported as such. The orientation
+ * of the container (of the image header for a bare codestream) is reported, not applied. The embedded ICC profile,
+ * EXIF and XMP metadata and the resolution are reported.
  *
  * <p>This class is thread-safe.
  */

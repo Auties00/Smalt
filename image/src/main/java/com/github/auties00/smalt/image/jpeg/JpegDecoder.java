@@ -22,6 +22,7 @@ import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.color.ColorTransform;
+import com.github.auties00.smalt.image.color.Colorant;
 import com.github.auties00.smalt.image.color.ProfileColorSpace;
 import com.github.auties00.smalt.image.exif.ExifReader;
 import com.github.auties00.smalt.image.gainmap.GainMap;
@@ -213,11 +214,12 @@ public final class JpegDecoder {
      * a precision {@code P} above 8, a {@link Channel16Picture} with every sample rescaled as
      * {@code round(v * 65535 / (2^P - 1))}. It has one channel per component in frame order, at the image
      * size: subsampled components are upsampled as the chroma of a Y'CbCr image is, replicated for a
-     * lossless image. The channels take their meaning from the embedded ICC profile: a profile of as
-     * many channels as the image has makes them unnamed inks ({@link ColorModel#INK}); a gray, RGB or
-     * CMYK profile of fewer channels names the leading ones (CMYK samples inverted when an Adobe
-     * {@code APP14} segment is present) and leaves the others {@link ChannelType#UNSPECIFIED}; with any
-     * other profile or none, the first channel is gray and the others unspecified. The result carries
+     * lossless image. The channels take their meaning from the embedded ICC profile: a multi-ink profile
+     * of as many channels as the image has makes them inks ({@link ColorModel#INK}) named by its colorant
+     * table (unnamed without one); a gray, RGB or CMYK profile of fewer channels names the leading ones
+     * (CMYK samples inverted when an Adobe {@code APP14} segment is present) and leaves the others
+     * {@link ChannelType#UNSPECIFIED}; with any other profile or none, the first channel is gray and the
+     * others unspecified. The result carries
      * the profile as its {@link DecodedImage#colorProfile()} when it describes the leading channels.
      * Without the option, such an image decodes to the picture {@link ImageOps#toRgba(Picture)} makes of
      * that channel picture ({@link ImageOps#toRgba16(Picture)} for a 16-bit one), the extra channels
@@ -680,10 +682,31 @@ public final class JpegDecoder {
     }
 
     /**
+     * Returns the names of the inks of a multi-ink profile.
+     *
+     * @param profile the embedded multi-ink profile
+     * @param count the number of inks
+     * @return the names of its colorant table, or empty names when it has none of {@code count} colorants or a
+     * damaged one
+     */
+    private static List<String> inkNames(ColorProfile profile, int count) {
+        List<Colorant> colorants;
+        try {
+            colorants = profile.colorants();
+        } catch (MediaException.Malformed exception) {
+            colorants = List.of();
+        }
+        if (colorants.size() != count) {
+            return Collections.nCopies(count, "");
+        }
+        return colorants.stream().map(Colorant::name).toList();
+    }
+
+    /**
      * Returns the layout of a frame of two or more than four components: as many leading channels
-     * as the embedded profile has, of its color model (gray, RGB, CMYK, or unnamed inks for an
-     * N-color profile of every component), followed by unspecified extra channels; the first
-     * component gray when no profile fits.
+     * as the embedded profile has, of its color model (gray, RGB, CMYK, or inks named by its colorant
+     * table for a multi-ink profile of every component), followed by unspecified extra channels; the
+     * first component gray when no profile fits.
      *
      * @param count the number of components
      * @param profile the embedded profile, or {@code null}
@@ -695,8 +718,8 @@ public final class JpegDecoder {
         }
         var colors = profile.channels();
         PixelLayout layout;
-        if (colors == count && profile.colorSpace() == ProfileColorSpace.OTHER) {
-            return PixelLayout.ofInks(Collections.nCopies(count, ""));
+        if (colors == count && profile.colorSpace() == ProfileColorSpace.INK) {
+            return PixelLayout.ofInks(inkNames(profile, count));
         } else if (colors < count && profile.colorSpace() == ProfileColorSpace.RGB) {
             layout = PixelLayout.RGB;
         } else if (colors < count && profile.colorSpace() == ProfileColorSpace.CMYK) {

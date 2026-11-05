@@ -42,7 +42,13 @@ public enum ProfileColorSpace {
     YCBCR(3),
 
     /**
-     * Any other space: CIE L*u*v*, Yxy, HSV, HLS, or a space of 2 to 15 generic colorants.
+     * 2 to 15 generic colorants ({@code 2CLR} to {@code FCLR}), named by the profile's
+     * {@linkplain ColorProfile#colorants() colorant table}: the inks of a multi-ink printing process.
+     */
+    INK(0),
+
+    /**
+     * Any other space: CIE L*u*v*, Yxy, HSV or HLS.
      */
     OTHER(0);
 
@@ -75,14 +81,14 @@ public enum ProfileColorSpace {
             case "Lab " -> LAB;
             case "XYZ " -> XYZ;
             case "YCbr" -> YCBCR;
-            default -> OTHER;
+            default -> IccReader.channels(signature) > 0 && IccReader.name(signature).endsWith("CLR") ? INK : OTHER;
         };
     }
 
     /**
      * Returns the number of channels of the space.
      *
-     * @return the channel count, or {@code 0} for {@link #OTHER}, whose profiles report theirs
+     * @return the channel count, or {@code 0} for {@link #INK} and {@link #OTHER}, whose profiles report theirs
      *         through {@link ColorProfile#channels()}
      */
     public int channels() {
