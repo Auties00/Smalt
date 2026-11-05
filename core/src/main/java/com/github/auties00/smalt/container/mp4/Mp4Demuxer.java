@@ -30,6 +30,7 @@ import com.github.auties00.smalt.internal.caption.QuickTimeCaptions;
 import com.github.auties00.smalt.internal.subtitle.QuickTimeText;
 import com.github.auties00.smalt.internal.subtitle.WebVttSamples;
 import com.github.auties00.smalt.internal.tags.Mp4ChapterTrack;
+import com.github.auties00.smalt.internal.tags.Mp4TimecodeTrack;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.metadata.StandardTag;
 import com.github.auties00.smalt.track.AudioTrack;
@@ -1100,7 +1101,7 @@ public final class Mp4Demuxer implements Demuxer {
             if (SourceBytes.readAvailable(from, track.samples.offsets[0], sample, 0, size) < size) {
                 continue;
             }
-            var timecode = TimecodeTrack.read(track.entries[0].config(), sample);
+            var timecode = Mp4TimecodeTrack.read(track.entries[0].config(), sample);
             if (timecode != null) {
                 return timecode;
             }

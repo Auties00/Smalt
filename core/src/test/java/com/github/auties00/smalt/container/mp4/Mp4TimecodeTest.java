@@ -3,6 +3,7 @@ package com.github.auties00.smalt.container.mp4;
 import com.github.auties00.smalt.container.ContainerProbe;
 import com.github.auties00.smalt.container.MuxSupport;
 import com.github.auties00.smalt.container.Timecode;
+import com.github.auties00.smalt.internal.tags.Mp4TimecodeTrack;
 import com.github.auties00.smalt.io.ByteArrayMediaSink;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
@@ -10,6 +11,9 @@ import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.metadata.TagEditor;
 import com.github.auties00.smalt.metadata.TagWriteOptions;
 import com.github.auties00.smalt.testkit.Fixtures;
+import com.github.auties00.smalt.testkit.validate.Findings;
+import com.github.auties00.smalt.testkit.validate.IsoBmffValidator;
+import com.github.auties00.smalt.testkit.validate.Validators;
 import com.github.auties00.smalt.track.DataTrack;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Track;
@@ -165,40 +169,456 @@ class Mp4TimecodeTest {
         }
     }
 
-    @Test
-    @DisplayName("reads a timecode iTunes item the tag editor writes when the file has no timecode track, the track winning otherwise")
-    void editedItem() {
-        var plain = Fixtures.read(video("mp4", "30000/1001", List.of()));
-        var edited = TagEditor.write(plain, MediaTags.builder().add("timecode", "00:10:00;00").build(),
-                TagWriteOptions.defaults());
-        assertEquals(Timecode.parse("00:10:00;00", 30), timecodeOf(edited));
-        var invalid = TagEditor.write(plain, MediaTags.builder().add("timecode", "00:01:00;00").build(),
-                TagWriteOptions.defaults());
-        try (var demuxer = new Mp4Demuxer(MediaSource.of(invalid))) {
-            assertTrue(demuxer.timecode().isEmpty(), "a frame number drop-frame counting skips");
+    /** Returns the offset and end of every {@code trak} of the movie whose handler is {@code tmcd}. */
+    private static List<int[]> timecodeTraks(byte[] file) {
+        var result = new ArrayList<int[]>();
+        for (var moov : FragmentedMp4MuxerTest.boxes(file)) {
+            if (!moov.type().equals("moov")) {
+                continue;
+            }
+            var buffer = ByteBuffer.wrap(file);
+            for (var trak = moov.offset() + 8; trak + 8 <= moov.offset() + moov.size(); trak += buffer.getInt(trak)) {
+                if (!new String(file, trak + 4, 4, StandardCharsets.ISO_8859_1).equals("trak")) {
+                    continue;
+                }
+                var text = new String(file, trak, buffer.getInt(trak), StandardCharsets.ISO_8859_1);
+                var hdlr = text.indexOf("hdlr");
+                if (hdlr >= 0 && text.startsWith("tmcd", hdlr + 12)) {
+                    result.add(new int[]{trak, trak + buffer.getInt(trak)});
+                }
+            }
         }
+        return result;
+    }
+
+    /** Writes a free-form {@code timecode} iTunes item, as files of other writers hold it, with no timecode track. */
+    private static byte[] withTimecodeItem(byte[] file, String text) {
+        var edited = TagEditor.write(file, MediaTags.builder().add("timecodx", text).build(), TagWriteOptions.defaults());
+        var bytes = new String(edited, StandardCharsets.ISO_8859_1);
+        var at = bytes.indexOf("timecodx");
+        assertTrue(at > 0 && bytes.indexOf("timecodx", at + 1) < 0);
+        edited[at + 7] = 'e';
+        return edited;
+    }
+
+    @Test
+    @DisplayName("reads a timecode iTunes item when the file has no timecode track, the track winning otherwise")
+    void editedItem() {
+        var plain = withTimecodeItem(Fixtures.read(video("mp4", "30000/1001", List.of())), "00:10:00;00");
+        assertEquals("00:10:00;00", MuxSupport.demux(plain).metadata().get("timecode"));
+        assertEquals(Timecode.parse("00:10:00;00", 30), timecodeOf(plain));
+        // an unchanged item stays an item
+        var kept = TagEditor.write(plain, TagEditor.read(MediaSource.of(plain)), TagWriteOptions.defaults());
+        assertEquals("00:10:00;00", MuxSupport.demux(kept).metadata().get("timecode"));
+        assertTrue(timecodeTraks(kept).isEmpty(), "no timecode track for an unchanged item");
         var tracked = Fixtures.read(video("mov", "25", List.of("-timecode", "10:00:00:00")));
         var retagged = TagEditor.write(tracked, MediaTags.builder().add("timecode", "11:00:00:00").build(),
                 TagWriteOptions.defaults());
-        assertEquals("10:00:00:00", timecodeOf(retagged).toString());
+        assertEquals("11:00:00:00", timecodeOf(retagged).toString());
+    }
+
+    @Nested
+    @DisplayName("tag edits")
+    class TagEdits {
+        private static byte[] edit(byte[] file, String timecode) {
+            var builder = TagEditor.read(MediaSource.of(file)).toBuilder().remove("timecode");
+            if (timecode != null) {
+                builder.add("timecode", timecode);
+            }
+            var edited = TagEditor.write(file, builder.build(), TagWriteOptions.defaults());
+            try {
+                Validators.assertValid("timecode-original.mov", file);
+            } catch (AssertionError exception) {
+                // MP4Box reports the 2 bytes ffmpeg writes after a tmcd sample entry, which an edit that keeps the
+                // track keeps too, so such a file is checked by the ISOBMFF validator alone
+                var findings = new Findings("timecode-edit");
+                IsoBmffValidator.validate(edited, findings, IsoBmffValidator.Kind.FILE, java.util.Map.of());
+                findings.assertNone("the ISOBMFF validator");
+                return edited;
+            }
+            return MuxSupport.validated("timecode-edit", edited);
+        }
+
+        private static void assertSameMedia(byte[] expected, byte[] actual) {
+            var before = withoutData(MuxSupport.demux(expected));
+            var after = withoutData(MuxSupport.demux(actual));
+            var map = new java.util.HashMap<Integer, Integer>();
+            for (var index = 0; index < before.tracks().size(); index++) {
+                map.put(before.tracks().get(index).id(), after.tracks().get(index).id());
+            }
+            assertEquals(before.tracks().size(), after.tracks().size());
+            MuxSupport.assertSamePayloads(before, after, map);
+        }
+
+        private static void assertProbed(String name, byte[] file, String text) {
+            var streams = probedTimecodes(MuxSupport.save(name, file));
+            assertTrue(streams.stream().anyMatch(line -> line.contains("codec_type=data") && line.contains("tmcd")
+                    && line.endsWith("timecode=" + text)), streams.toString());
+            assertTrue(streams.stream().anyMatch(line -> line.contains("codec_type=video")
+                    && line.endsWith("timecode=" + text)), "the video track references the timecode track: " + streams);
+        }
+
+        @ParameterizedTest
+        @CsvSource({"mov, 25, 10:00:00:00, 11:22:33:24", "mp4, 30000/1001, 01:00:00;00, 00:10:00;02",
+                "mov, 30000/1001, 01:00:00;00, 02:00:00:00", "mp4, 24000/1001, 00:00:00:00, 23:59:59:23",
+                "mov, 60000/1001, 00:59:59;59, 01:00:00;04"})
+        @DisplayName("replaces the timecode track of a file, read back by the demuxer, the tag editor and ffprobe")
+        void replace(String extension, String rate, String original, String text) {
+            var file = Fixtures.read(video(extension, rate, List.of("-timecode", original)));
+            assertEquals(original, TagEditor.read(MediaSource.of(file)).get("timecode").orElseThrow());
+            var edited = edit(file, text);
+            assertEquals(text, timecodeOf(edited).toString());
+            assertEquals(text, TagEditor.read(MediaSource.of(edited)).get("timecode").orElseThrow());
+            assertEquals(1, timecodeTraks(edited).size(), "one timecode track");
+            assertFalse(new String(edited, StandardCharsets.ISO_8859_1).contains("----"), "no freeform atom");
+            assertProbed("timecode-replace-" + extension + ".mov", edited, text);
+            assertSameMedia(file, edited);
+            MuxSupport.assertFfmpegClean("timecode-replace-clean." + extension, edited);
+        }
+
+        @ParameterizedTest
+        @CsvSource({"mov, 25, 10:11:12:13", "mp4, 30000/1001, 00:00:10;00"})
+        @DisplayName("adds a timecode track to a file without one, counted at the video's frame rate")
+        void add(String extension, String rate, String text) {
+            var file = Fixtures.read(video(extension, rate, List.of()));
+            var edited = edit(file, text);
+            assertEquals(text, timecodeOf(edited).toString());
+            assertEquals(1, timecodeTraks(edited).size());
+            assertProbed("timecode-add-" + extension + ".mov", edited, text);
+            assertSameMedia(file, edited);
+        }
+
+        @Test
+        @DisplayName("removes the timecode track and its references when the tag is removed")
+        void remove() {
+            var file = Fixtures.read(video("mov", "25", List.of("-timecode", "10:00:00:00")));
+            var edited = edit(file, null);
+            try (var demuxer = new Mp4Demuxer(MediaSource.of(edited))) {
+                assertTrue(demuxer.timecode().isEmpty());
+                assertTrue(demuxer.tracks().stream().noneMatch(track -> track instanceof DataTrack), demuxer.tracks().toString());
+            }
+            assertTrue(timecodeTraks(edited).isEmpty());
+            assertFalse(new String(edited, StandardCharsets.ISO_8859_1).contains("tmcd"), "no tmcd reference is left");
+            assertTrue(TagEditor.read(MediaSource.of(edited)).get("timecode").isEmpty());
+            assertSameMedia(file, edited);
+            MuxSupport.assertFfmpegClean("timecode-removed.mov", edited);
+        }
+
+        @Test
+        @DisplayName("keeps the timecode track byte for byte when the timecode is unchanged")
+        void unchanged() {
+            var file = Fixtures.read(video("mov", "25", List.of("-timecode", "10:00:00:00")));
+            var edited = edit(file, "10:00:00:00");
+            var before = timecodeTraks(file).getFirst();
+            var after = timecodeTraks(edited).getFirst();
+            assertTrue(java.util.Arrays.equals(file, before[0], before[1], edited, after[0], after[1]));
+            assertEquals("10:00:00:00", timecodeOf(edited).toString());
+        }
+
+        @Test
+        @DisplayName("keeps the track tags of a replaced timecode track")
+        void trackTags() {
+            var file = Fixtures.read(video("mov", "25", List.of("-timecode", "10:00:00:00")));
+            var tags = TagEditor.read(MediaSource.of(file));
+            var timecodeTrack = tags.tracks().stream().filter(track -> track.trackId() == 2).findFirst().orElseThrow();
+            var renamed = tags.toBuilder().track(timecodeTrack.withName("Reel 7")).set("timecode", "12:00:00:00").build();
+            var edited = MuxSupport.validated("timecode-named", TagEditor.write(file, renamed, TagWriteOptions.defaults()));
+            var reread = TagEditor.read(MediaSource.of(edited));
+            assertEquals("12:00:00:00", reread.get("timecode").orElseThrow());
+            assertEquals(java.util.Optional.of("Reel 7"), reread.tracks().stream().filter(track -> track.trackId() == 2)
+                    .findFirst().orElseThrow().name());
+        }
+
+        @Test
+        @DisplayName("rejects an address the video's rate cannot count, and one for a file without video")
+        void invalid() {
+            var file = Fixtures.read(video("mov", "25", List.of()));
+            var failure = assertThrows(com.github.auties00.smalt.MediaException.Unsupported.class,
+                    () -> edit(file, "00:00:00:29"));
+            assertTrue(failure.getMessage().contains("timecode"), failure.getMessage());
+            var tracked = Fixtures.read(video("mov", "25", List.of("-timecode", "10:00:00:00")));
+            assertThrows(com.github.auties00.smalt.MediaException.Unsupported.class, () -> edit(tracked, "00:00:01;00"));
+            var audio = Fixtures.read(Fixtures.tone("m4a", 440, 48000, 1, 1, List.of("-c:a", "aac")));
+            assertThrows(com.github.auties00.smalt.MediaException.Unsupported.class, () -> edit(audio, "00:00:01:00"));
+            var drop = edit(audio, "00:00:10;00");
+            assertEquals("00:00:10;00", timecodeOf(drop).toString());
+        }
+
+        @ParameterizedTest
+        @CsvSource({"25, 10:00:00:00, 11:22:33:24", "30000/1001, 01:00:00;00, 05:00:00:00",
+                "30000/1001, 01:00:00:00, 00:10:00;02"})
+        @DisplayName("writes the timecode of a fragmented file into the sample its first fragment holds")
+        void fragmented(String rate, String original, String text) {
+            var file = Fixtures.read(video("mp4", rate, List.of("-timecode", original, "-movflags", "frag_keyframe+empty_moov")));
+            assertEquals(original, TagEditor.read(MediaSource.of(file)).get("timecode").orElseThrow());
+            var edited = edit(file, text);
+            assertEquals(text, timecodeOf(edited).toString());
+            assertEquals(text, TagEditor.read(MediaSource.of(edited)).get("timecode").orElseThrow());
+            try (var demuxer = new Mp4Demuxer(MediaSource.of(new ByteArrayInputStream(edited), edited.length))) {
+                assertEquals(text, demuxer.timecode().orElseThrow().toString(), "read from a stream");
+            }
+            assertProbed("timecode-fragmented-edit.mp4", edited, text);
+            assertSameMedia(file, edited);
+        }
+
+        @Test
+        @DisplayName("writes and removes the timecode of a fragmented file Smalt muxed, in place")
+        void fragmentedMuxed() {
+            var source = withoutData(MuxSupport.demux(Fixtures.read(video("mov", "25", List.of()))));
+            var file = Fragmented.muxFragmented(source, MediaTags.builder().add("timecode", "10:00:00:00").build(),
+                    Fragmented.Output.SEEKABLE, FragmentedMp4MuxerOptions.Brand.MP4);
+            var edited = edit(file, "20:00:00:00");
+            assertEquals(file.length, edited.length, "the sample is written in place");
+            assertEquals("20:00:00:00", timecodeOf(edited).toString());
+            assertSameMedia(file, edited);
+            var removed = edit(file, null);
+            assertEquals(file.length, removed.length, "the track fragment becomes a free box in place");
+            assertRemoved(file, removed);
+        }
+
+        @Test
+        @DisplayName("corrects the data offsets of a track fragment that counted from the removed timecode track's data")
+        void fragmentedChained() {
+            var source = withoutData(MuxSupport.demux(Fixtures.read(video("mov", "25", List.of()))));
+            var muxed = Fragmented.muxFragmented(source, MediaTags.builder().add("timecode", "10:00:00:00").build(),
+                    Fragmented.Output.SEEKABLE, FragmentedMp4MuxerOptions.Brand.MP4);
+            var file = chainTimecodeFirst(muxed);
+            assertFalse(java.util.Arrays.equals(muxed, file), "the timecode track fragment was moved first");
+            assertSameMedia(muxed, file);
+            assertEquals("10:00:00:00", timecodeOf(file).toString());
+            var removed = edit(file, null);
+            assertEquals(file.length, removed.length, "the track fragment becomes a free box in place");
+            assertRemoved(file, removed);
+            assertValidFile("timecode-chained-removed", removed);
+            var compressed = compressFragments(file);
+            var compressedRemoved = TagEditor.write(compressed,
+                    TagEditor.read(MediaSource.of(compressed)).toBuilder().remove("timecode").build(),
+                    TagWriteOptions.defaults());
+            assertTrue(java.util.Arrays.equals(removed, decompressFragments(compressedRemoved)),
+                    "a compressed fragment gets the same correction");
+        }
+
+        // moves the timecode track fragment of the moof holding it in front of the others and makes every track
+        // fragment of that moof count its data from the end of the previous one's (no tfhd base flags), rewriting the
+        // trun data offsets so that every sample stays where it is
+        private static byte[] chainTimecodeFirst(byte[] file) {
+            var out = file.clone();
+            var buffer = ByteBuffer.wrap(out);
+            for (var at = 0; at + 8 <= out.length; at += buffer.getInt(at)) {
+                if (!new String(out, at + 4, 4, StandardCharsets.ISO_8859_1).equals("moof")) {
+                    continue;
+                }
+                var moofEnd = at + buffer.getInt(at);
+                var trafs = new ArrayList<int[]>();
+                for (var child = at + 8; child < moofEnd; child += buffer.getInt(child)) {
+                    if (new String(out, child + 4, 4, StandardCharsets.ISO_8859_1).equals("traf")) {
+                        trafs.add(new int[]{child, buffer.getInt(child)});
+                    }
+                }
+                var timecode = -1;
+                for (var index = 0; index < trafs.size(); index++) {
+                    if (buffer.getInt(trafs.get(index)[0] + 8 + 12) == 2) {
+                        timecode = index;
+                    }
+                }
+                if (timecode <= 0) {
+                    continue;
+                }
+                var order = new ArrayList<int[]>();
+                order.add(trafs.get(timecode));
+                for (var index = 0; index < trafs.size(); index++) {
+                    if (index != timecode) {
+                        order.add(trafs.get(index));
+                    }
+                }
+                var reordered = new ByteArrayOutputStream();
+                for (var traf : order) {
+                    reordered.write(file, traf[0], traf[1]);
+                }
+                var bytes = reordered.toByteArray();
+                System.arraycopy(bytes, 0, out, trafs.getFirst()[0], bytes.length);
+                var previousEnd = -1L;
+                for (var traf = trafs.getFirst()[0]; traf < trafs.getFirst()[0] + bytes.length; traf += buffer.getInt(traf)) {
+                    var tfhd = traf + 8;
+                    assertEquals(0x20000, buffer.getInt(tfhd + 8) & 0xFFFFFF, "default-base-is-moof only");
+                    buffer.putInt(tfhd + 8, buffer.getInt(tfhd + 8) & 0xFF000000);
+                    var base = previousEnd < 0 ? at : previousEnd;
+                    var trun = tfhd + buffer.getInt(tfhd);
+                    while (!new String(out, trun + 4, 4, StandardCharsets.ISO_8859_1).equals("trun")) {
+                        trun += buffer.getInt(trun);
+                    }
+                    var flags = buffer.getInt(trun + 8) & 0xFFFFFF;
+                    assertEquals(0x701, flags & 0x701, "a data offset, and durations, sizes and flags per sample");
+                    var count = buffer.getInt(trun + 12);
+                    var position = at + (long) buffer.getInt(trun + 16);
+                    buffer.putInt(trun + 16, Math.toIntExact(position - base));
+                    var entry = Integer.bitCount(flags & 0xF00) * 4;
+                    var cursor = trun + 20 + ((flags & 4) != 0 ? 4 : 0);
+                    for (var sample = 0; sample < count; sample++) {
+                        position += buffer.getInt(cursor + 4) & 0xFFFFFFFFL;
+                        cursor += entry;
+                    }
+                    previousEnd = position;
+                }
+            }
+            return out;
+        }
+
+        private static void assertRemoved(byte[] file, byte[] edited) {
+            try (var demuxer = new Mp4Demuxer(MediaSource.of(edited))) {
+                assertTrue(demuxer.timecode().isEmpty());
+                assertTrue(demuxer.tracks().stream().noneMatch(track -> track instanceof DataTrack),
+                        demuxer.tracks().toString());
+            }
+            assertTrue(TagEditor.read(MediaSource.of(edited)).get("timecode").isEmpty());
+            assertTrue(timecodeTraks(edited).isEmpty());
+            assertFalse(new String(edited, StandardCharsets.ISO_8859_1).contains("tmcd"), "no tmcd box is left");
+            assertSameMedia(file, edited);
+        }
+
+        private static void assertValidFile(String name, byte[] file) {
+            var findings = new Findings(name);
+            IsoBmffValidator.validate(file, findings, IsoBmffValidator.Kind.FILE, java.util.Map.of());
+            findings.assertNone("the ISOBMFF validator");
+        }
+
+        @ParameterizedTest
+        @CsvSource({"25, 10:00:00:00, 0", "30000/1001, 01:00:00;00, 0", "25, 10:00:00:00, 6000"})
+        @DisplayName("removes the timecode track of a fragmented file, its track fragments turned into free boxes")
+        void fragmentedRemove(String rate, String original, int titleLength) {
+            var file = Fixtures.read(video("mp4", rate, List.of("-timecode", original, "-movflags", "frag_keyframe+empty_moov")));
+            var tags = TagEditor.read(MediaSource.of(file)).toBuilder().remove("timecode");
+            if (titleLength > 0) {
+                // a title that does not fit the movie box moves every fragment and its explicit base data offsets
+                tags.set("title", "t".repeat(titleLength));
+            }
+            var edited = TagEditor.write(file, tags.build(), TagWriteOptions.defaults());
+            assertValidFile("timecode-fragmented-remove", edited);
+            if (titleLength == 0) {
+                assertEquals(file.length, edited.length, "the track fragments become free boxes in place");
+            } else {
+                assertTrue(edited.length > file.length + titleLength / 2, "the movie box grows");
+            }
+            assertRemoved(file, edited);
+            var streams = probedTimecodes(MuxSupport.save("timecode-fragmented-removed.mp4", edited));
+            assertTrue(streams.stream().noneMatch(line -> line.contains("timecode=") || line.contains("codec_type=data")),
+                    streams.toString());
+            MuxSupport.assertFfmpegClean("timecode-fragmented-removed-clean.mp4", edited);
+        }
+
+        @Test
+        @DisplayName("writes a fragmented file's timecode in place while a longer movie box moves the fragments")
+        void fragmentedMoved() {
+            var file = Fixtures.read(video("mp4", "25", List.of("-timecode", "10:00:00:00", "-movflags", "frag_keyframe+empty_moov")));
+            var tags = TagEditor.read(MediaSource.of(file)).toBuilder().set("timecode", "11:00:00:00")
+                    .set("title", "t".repeat(6000)).build();
+            var edited = TagEditor.write(file, tags, TagWriteOptions.defaults());
+            assertTrue(edited.length > file.length + 3000, "the movie box grows");
+            assertValidFile("timecode-fragmented-moved", edited);
+            assertEquals("11:00:00:00", timecodeOf(edited).toString());
+            assertEquals("11:00:00:00", TagEditor.read(MediaSource.of(edited)).get("timecode").orElseThrow());
+            assertProbed("timecode-fragmented-moved.mp4", edited, "11:00:00:00");
+            assertSameMedia(file, edited);
+        }
+
+        @Test
+        @DisplayName("removes the timecode track named by compressed movie fragments, recompressing them")
+        void compressedFragmentRemove() {
+            var file = Fixtures.read(video("mp4", "25", List.of("-timecode", "10:00:00:00", "-movflags", "frag_keyframe+empty_moov")));
+            var compressed = compressFragments(file);
+            assertEquals("10:00:00:00", TagEditor.read(MediaSource.of(compressed)).get("timecode").orElseThrow());
+            var edited = TagEditor.write(compressed,
+                    TagEditor.read(MediaSource.of(compressed)).toBuilder().remove("timecode").build(),
+                    TagWriteOptions.defaults());
+            var plain = TagEditor.write(file, TagEditor.read(MediaSource.of(file)).toBuilder().remove("timecode").build(),
+                    TagWriteOptions.defaults());
+            // the recompressed fragments decompress to the fragments of the same edit of the uncompressed file
+            assertTrue(java.util.Arrays.equals(plain, decompressFragments(edited)));
+            try (var demuxer = new Mp4Demuxer(MediaSource.of(edited))) {
+                assertTrue(demuxer.timecode().isEmpty());
+                assertTrue(demuxer.tracks().stream().noneMatch(track -> track instanceof DataTrack));
+            }
+            assertSameMedia(file, edited);
+        }
+
+        // replaces every top-level moof by a !mof box holding its gzip-compressed payload
+        private static byte[] compressFragments(byte[] file) {
+            var out = new ByteArrayOutputStream();
+            var buffer = ByteBuffer.wrap(file);
+            for (var at = 0; at + 8 <= file.length; ) {
+                var size = buffer.getInt(at);
+                if (new String(file, at + 4, 4, StandardCharsets.ISO_8859_1).equals("moof")) {
+                    var gzip = new ByteArrayOutputStream();
+                    try (var stream = new java.util.zip.GZIPOutputStream(gzip)) {
+                        stream.write(file, at + 8, size - 8);
+                    } catch (java.io.IOException exception) {
+                        throw new java.io.UncheckedIOException(exception);
+                    }
+                    out.writeBytes(ByteBuffer.allocate(8).putInt(8 + gzip.size())
+                            .put("!mof".getBytes(StandardCharsets.ISO_8859_1)).array());
+                    out.writeBytes(gzip.toByteArray());
+                } else {
+                    out.write(file, at, size);
+                }
+                at += size;
+            }
+            return out.toByteArray();
+        }
+
+        // replaces every top-level !mof box by the moof its payload decompresses to
+        private static byte[] decompressFragments(byte[] file) {
+            var out = new ByteArrayOutputStream();
+            var buffer = ByteBuffer.wrap(file);
+            for (var at = 0; at + 8 <= file.length; ) {
+                var size = buffer.getInt(at);
+                if (new String(file, at + 4, 4, StandardCharsets.ISO_8859_1).equals("!mof")) {
+                    byte[] payload;
+                    try (var stream = new java.util.zip.GZIPInputStream(new ByteArrayInputStream(file, at + 8, size - 8))) {
+                        payload = stream.readAllBytes();
+                    } catch (java.io.IOException exception) {
+                        throw new java.io.UncheckedIOException(exception);
+                    }
+                    out.writeBytes(ByteBuffer.allocate(8).putInt(8 + payload.length)
+                            .put("moof".getBytes(StandardCharsets.ISO_8859_1)).array());
+                    out.writeBytes(payload);
+                } else {
+                    out.write(file, at, size);
+                }
+                at += size;
+            }
+            return out.toByteArray();
+        }
+
+        @Test
+        @DisplayName("keeps the timecode of a CMAF track file an iTunes item")
+        void cmaf() {
+            var source = withoutData(MuxSupport.demux(Fixtures.read(video("mov", "25", List.of()))));
+            var file = Fragmented.muxFragmented(source, MediaTags.builder().add("timecode", "01:00:00:00").build(),
+                    Fragmented.Output.SEEKABLE, FragmentedMp4MuxerOptions.Brand.CMAF);
+            var edited = edit(file, "02:00:00:00");
+            try (var demuxer = new Mp4Demuxer(MediaSource.of(edited))) {
+                assertEquals(1, demuxer.tracks().size());
+                assertEquals("02:00:00:00", demuxer.metadata().get("timecode"));
+            }
+        }
     }
 
     @Test
     @DisplayName("ignores a counter timecode track and a truncated tmcd sample entry")
     void unreadable() {
-        var counter = new byte[TimecodeTrack.ENTRY_FIELDS];
-        counter[7] = TimecodeTrack.FLAG_COUNTER;
+        var counter = new byte[Mp4TimecodeTrack.ENTRY_FIELDS];
+        counter[7] = Mp4TimecodeTrack.FLAG_COUNTER;
         counter[11] = 30;
         counter[15] = 1;
         counter[16] = 30;
-        assertEquals(null, TimecodeTrack.read(counter, new byte[]{0, 0, 0, 1}));
-        assertEquals(null, TimecodeTrack.read(new byte[10], new byte[]{0, 0, 0, 1}));
-        assertEquals(null, TimecodeTrack.read(new byte[TimecodeTrack.ENTRY_FIELDS], new byte[]{0, 0, 0, 1}));
+        assertEquals(null, Mp4TimecodeTrack.read(counter, new byte[]{0, 0, 0, 1}));
+        assertEquals(null, Mp4TimecodeTrack.read(new byte[10], new byte[]{0, 0, 0, 1}));
+        assertEquals(null, Mp4TimecodeTrack.read(new byte[Mp4TimecodeTrack.ENTRY_FIELDS], new byte[]{0, 0, 0, 1}));
         var fields = counter.clone();
-        fields[7] = TimecodeTrack.FLAG_DROP_FRAME;
+        fields[7] = Mp4TimecodeTrack.FLAG_DROP_FRAME;
         fields[16] = 0;
         // the nominal rate falls back to the rounded-up rate when the frame count is zero
-        assertEquals(Timecode.parse("00:00:01;00", 30), TimecodeTrack.read(fields, new byte[]{0, 0, 0, 30}));
+        assertEquals(Timecode.parse("00:00:01;00", 30), Mp4TimecodeTrack.read(fields, new byte[]{0, 0, 0, 30}));
         assertTrue(Pattern.matches("\\d\\d:\\d\\d:\\d\\d;\\d\\d", Timecode.ofFrameNumber(-1, 30, true).toString()));
     }
 

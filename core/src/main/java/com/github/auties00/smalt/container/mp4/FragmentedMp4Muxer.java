@@ -6,6 +6,7 @@ import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.container.Segment;
 import com.github.auties00.smalt.container.SegmentSink;
 import com.github.auties00.smalt.internal.io.FourCc;
+import com.github.auties00.smalt.internal.tags.Mp4TimecodeTrack;
 import com.github.auties00.smalt.internal.tags.Mp4TrackMetadata;
 import com.github.auties00.smalt.internal.tags.MuxerTags;
 import com.github.auties00.smalt.io.MediaSink;
@@ -274,7 +275,7 @@ public final class FragmentedMp4Muxer implements Muxer {
     /**
      * The timecode track laid out when the first packet arrives, or {@code null} when there is none.
      */
-    private TimecodeTrack timecodeTrack;
+    private Mp4TimecodeTrack timecodeTrack;
 
     /**
      * Whether the sample of the timecode track was written in a fragment.
@@ -705,7 +706,7 @@ public final class FragmentedMp4Muxer implements Muxer {
                 break;
             }
         }
-        timecodeTrack = TimecodeTrack.of(timecodeText, rate);
+        timecodeTrack = Mp4TimecodeTrack.of(timecodeText, rate);
     }
 
     /**
@@ -788,7 +789,7 @@ public final class FragmentedMp4Muxer implements Muxer {
                     enabled[index], described.get(index));
         }
         if (timecodeTrack != null) {
-            timecodeTrack.writeFragmentedTrak(writer, timecodeId);
+            writer.bytes(timecodeTrack.fragmentedTrak(timecodeId));
         }
         writer.begin(BoxTypes.MVEX);
         if (patchable) {
@@ -856,7 +857,7 @@ public final class FragmentedMp4Muxer implements Muxer {
         MovieHeaderWriter.writeTrackHeader(writer, media, 0, enabled);
         if (timecodeId > 0) {
             writer.begin(BoxTypes.TREF);
-            TimecodeTrack.writeReference(writer, timecodeId);
+            writer.bytes(Mp4TimecodeTrack.reference(timecodeId));
             writer.end();
         }
         var mediaTime = track.mediaTime();

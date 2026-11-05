@@ -9,6 +9,7 @@ import com.github.auties00.smalt.internal.caption.QuickTimeCaptions;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.tags.Mp4ChapterTrack;
+import com.github.auties00.smalt.internal.tags.Mp4TimecodeTrack;
 import com.github.auties00.smalt.internal.tags.Mp4TrackMetadata;
 import com.github.auties00.smalt.internal.tags.MuxerTags;
 import com.github.auties00.smalt.io.MediaSink;
@@ -195,7 +196,7 @@ public final class Mp4Muxer implements Muxer {
     /**
      * The timecode track laid out by {@link #finish()}, or {@code null} when there is none.
      */
-    private TimecodeTrack timecodeTrack;
+    private Mp4TimecodeTrack timecodeTrack;
 
     /**
      * The offset of the timecode sample from the start of the media data.
@@ -1065,7 +1066,7 @@ public final class Mp4Muxer implements Muxer {
                     break;
                 }
             }
-            timecodeTrack = TimecodeTrack.of(timecodeText, rate);
+            timecodeTrack = Mp4TimecodeTrack.of(timecodeText, rate);
         }
         for (var text : textTracks) {
             text.finish();
@@ -1323,7 +1324,7 @@ public final class Mp4Muxer implements Muxer {
             writer.bytes(chapterTrack.trak(chapterId, movieTimescale, dataStart + chapterDataOffset, co64));
         }
         if (timecodeTrack != null) {
-            timecodeTrack.writeTrak(writer, timecodeId, movieTimescale, duration, dataStart + timecodeDataOffset, co64);
+            writer.bytes(timecodeTrack.trak(timecodeId, movieTimescale, duration, dataStart + timecodeDataOffset, co64));
         }
         writer.bytes(userData);
         writer.end();
@@ -1351,7 +1352,7 @@ public final class Mp4Muxer implements Muxer {
             if (chapterId > 0) {
                 writer.bytes(Mp4ChapterTrack.chapReference(chapterId));
             }
-            TimecodeTrack.writeReference(writer, timecodeId);
+            writer.bytes(Mp4TimecodeTrack.reference(timecodeId));
             writer.end();
         } else if (chapterId > 0) {
             writer.bytes(Mp4ChapterTrack.trackReference(chapterId));

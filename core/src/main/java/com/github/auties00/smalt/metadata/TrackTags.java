@@ -23,8 +23,10 @@ import java.util.Set;
  * <th scope="col">Dispositions</th></tr></thead>
  * <tbody>
  * <tr><td>MP4, MOV</td><td>the {@code name} box of the track's {@code udta}</td><td>an {@code ilst} in a
- * {@code meta} box of the track's {@code udta}, as the movie's tags</td><td>{@link TrackDisposition#DEFAULT}: the
- * enabled flag of {@code tkhd}; the others as {@code kind} boxes of scheme {@code urn:mpeg:dash:role:2011}:
+ * {@code meta} box of the track's {@code udta}, as the movie's tags, and QuickTime keyed metadata (a {@code meta}
+ * box of handler {@code mdta} in the {@code trak} or its {@code udta}), as the movie's</td><td>
+ * {@link TrackDisposition#DEFAULT}: the enabled flag of {@code tkhd}; the others as {@code kind} boxes of scheme
+ * {@code urn:mpeg:dash:role:2011}:
  * {@code dub} ({@link TrackDisposition#DUB}), {@code commentary} ({@link TrackDisposition#COMMENTARY}),
  * {@code forced-subtitle} ({@link TrackDisposition#FORCED}), {@code karaoke} ({@link TrackDisposition#KARAOKE}),
  * {@code caption} ({@link TrackDisposition#CAPTIONS} or {@link TrackDisposition#HEARING_IMPAIRED}, read as both)

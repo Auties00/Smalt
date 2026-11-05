@@ -327,13 +327,42 @@ class Mp4CompressedMovieTest {
         assertSamePackets(demux(file), demux(written));
     }
 
-    @Test
-    @DisplayName("writing tags that would move compressed fragments with explicit offsets is unsupported")
-    void tagsExplicitFragments() {
-        var compressed = compress(explicitFragments(), Set.of("moof"));
-        var failure = assertThrows(MediaException.Unsupported.class, () -> TagEditor.write(compressed,
-                MediaTags.builder().set(StandardTag.TITLE, "x".repeat(4096)).build(), TagWriteOptions.builder().build()));
-        assertEquals("mp4 compressed movie fragments", failure.format());
+    static Stream<Arguments> explicitCompressedCases() {
+        return Stream.of(Arguments.of(Set.of("moof"), 4096), Arguments.of(Set.of("moov", "moof"), 4096),
+                Arguments.of(Set.of("moof"), 300), Arguments.of(Set.of("moov", "moof"), 300));
+    }
+
+    @ParameterizedTest(name = "{0}, title of {1} characters")
+    @MethodSource("explicitCompressedCases")
+    @DisplayName("writing tags that move compressed fragments with explicit offsets recompresses them in their boxes")
+    void tagsExplicitFragments(Set<String> types, int titleLength) {
+        var file = explicitFragments();
+        var compressed = compress(file, types);
+        var title = "x".repeat(titleLength);
+        var written = TagEditor.write(compressed, MediaTags.builder().set(StandardTag.TITLE, title).build(),
+                TagWriteOptions.builder().build());
+        assertEquals(title, TagEditor.read(MediaSource.of(written)).get(StandardTag.TITLE).orElseThrow());
+        assertSamePackets(demux(file), demux(written));
+        for (var variant : List.of(IoVariant.READ_ONCE, IoVariant.UNKNOWN_LENGTH)) {
+            try (var source = variant.open(written)) {
+                assertSamePackets(demux(file), ContainerProbe.demuxAll(new Mp4Demuxer(source)));
+            }
+        }
+        var before = boxes(compressed).stream().filter(box -> box[2].equals("!mof")).toList();
+        var after = boxes(written).stream().filter(box -> box[2].equals("!mof")).toList();
+        assertEquals(before.size(), after.size(), "every fragment stays compressed");
+        assertFalse(after.isEmpty());
+        var changed = 0;
+        for (var index = 0; index < before.size(); index++) {
+            // a recompressed fragment keeps its size unless no zlib setting fits it, when it grows by a few bytes
+            assertTrue((int) after.get(index)[1] >= (int) before.get(index)[1]
+                    && (int) after.get(index)[1] <= (int) before.get(index)[1] + 16, "the size of fragment " + index);
+            changed += Arrays.equals(compressed, (int) before.get(index)[0], (int) before.get(index)[0]
+                    + (int) before.get(index)[1], written, (int) after.get(index)[0], (int) after.get(index)[0]
+                    + (int) after.get(index)[1]) ? 0 : 1;
+        }
+        assertEquals(before.size(), changed, "every fragment's offsets moved");
+        DemuxerAsserts.of("mp4/explicit-recompressed", written).noDump().run();
     }
 
     @ParameterizedTest(name = "{0}")

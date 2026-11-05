@@ -40,20 +40,21 @@ import java.util.Objects;
  *       audio and video tracks reference through {@code tref/chap}), which is kept while the
  *       chapters are unchanged and otherwise replaced in the space of the old one. A rewrite that
  *       moves media data past 4 GiB turns the 32-bit chunk offset tables it overflows into 64-bit
- *       ones. A {@code timecode} key is stored as a free-form atom, which {@code Mp4Demuxer} reads as the
- *       timecode of a file without timecode track; the timecode track of a file is kept as it is, and only
- *       the MP4 muxers write one. QuickTime keyed metadata (a {@code meta} box of handler {@code mdta} in
- *       {@code moov} or its {@code udta}, where phones store the make, model, creation date and location under keys
- *       such as {@code com.apple.quicktime.location.ISO6709}) is read under its key names, numbers as decimal text,
- *       after the {@code ilst} items, which take precedence for a key both hold; a write stores a key in the
- *       boxes that held it, and a reverse-DNS key the file lacks in its first keyed metadata box or a new one,
- *       keeping each item's data type and locale. The QuickTime user data text atoms ({@code \u00A9xyz},
- *       {@code \u00A9mak}, ...) are read under their codes and rewritten into the {@code ilst}; the 3GPP location
- *       information box ({@code loci}) is read as the key {@code loci}, its coordinates in ISO 6709 form
- *       ({@code +37.3349-122.009+30/}), and rewritten keeping its place name, role, body and notes. The XMP
- *       packet is read from the top-level {@code uuid} box of XMP Specification Part 3 or a {@code udta/XMP_} atom
- *       and written back to where the file had it (a new one to a {@code uuid} box, or to {@code udta/XMP_} in a
- *       QuickTime movie);</li>
+ *       ones. A {@code timecode} key is read from the file's QuickTime timecode track and written as one, counted at
+ *       the frame rate of the first video track, replacing the file's (a timecode track whose sample is in a movie
+ *       fragment gets the new address written into that sample); the timecode a file holds as a free-form atom only
+ *       stays one while it is unchanged, as does the timecode of a CMAF track file. QuickTime keyed metadata (a {@code
+ *       meta} box of handler {@code mdta} in {@code moov} or its {@code udta}, where phones store the make, model,
+ *       creation date and location under keys such as {@code com.apple.quicktime.location.ISO6709}) is read under its
+ *       key names, numbers as decimal text, after the {@code ilst} items, which take precedence for a key both hold; a
+ *       write stores a key in the boxes that held it, and a reverse-DNS key the file lacks in its first keyed metadata
+ *       box or a new one, keeping each item's data type and locale. The QuickTime user data text atoms ({@code
+ *       \u00A9xyz}, {@code \u00A9mak}, ...) are read under their codes and rewritten into the {@code ilst}; the 3GPP
+ *       location information box ({@code loci}) is read as the key {@code loci}, its coordinates in ISO 6709 form
+ *       ({@code +37.3349-122.009+30/}), and rewritten keeping its place name, role, body and notes. The XMP packet is
+ *       read from the top-level {@code uuid} box of XMP Specification Part 3 or a {@code udta/XMP_} atom and written
+ *       back to where the file had it (a new one to a {@code uuid} box, or to {@code udta/XMP_} in a QuickTime
+ *       movie);</li>
  *   <li>Matroska and WebM: global {@code Tags}, {@code Chapters} (every edition that is not hidden, with
  *       its nested chapters and localized titles) and {@code Attachments} (pictures, and the other files as
  *       {@linkplain MediaTags#attachments() attachments}); edition names raise the {@code DocTypeVersion} of
