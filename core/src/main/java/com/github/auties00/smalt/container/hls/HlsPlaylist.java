@@ -3,11 +3,16 @@ package com.github.auties00.smalt.container.hls;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.internal.Uris;
 
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -24,6 +29,14 @@ final class HlsPlaylist {
      * The most segments a media playlist may list.
      */
     private static final int MAX_SEGMENTS = 1 << 16;
+
+    /**
+     * The forms of an {@code EXT-X-PROGRAM-DATE-TIME}: an ISO 8601 offset date and time, and the same with an offset
+     * without a colon ({@code +0100}), which servers also write.
+     */
+    private static final List<DateTimeFormatter> DATE_FORMATS = List.of(DateTimeFormatter.ISO_OFFSET_DATE_TIME,
+            new DateTimeFormatterBuilder().append(DateTimeFormatter.ISO_LOCAL_DATE_TIME).appendOffset("+HHmm", "Z")
+                    .toFormatter(Locale.ROOT));
 
     private HlsPlaylist() {
         throw new AssertionError();
@@ -81,9 +94,19 @@ final class HlsPlaylist {
      * @param key the encryption in force, the {@code identity} key when several key formats apply, or
      * {@code null} for clear segments
      * @param sequence the media sequence number
+     * @param discontinuity the discontinuity sequence number: the {@code EXT-X-DISCONTINUITY-SEQUENCE} plus the
+     * {@code EXT-X-DISCONTINUITY} tags before the segment
+     * @param positionMicros the time of the segment on the playlist's timeline: the {@code EXTINF} durations of the
+     * segments before it, gaps included
+     * @param dateMicros the {@code EXT-X-PROGRAM-DATE-TIME} of the segment's first sample in microseconds since the
+     * epoch, given by a tag before it or by the last such tag and the durations since, or {@link #NO_DATE}
      */
     record Segment(String uri, long offset, long length, long durationMicros, Section section, Key key,
-                   long sequence) {
+                   long sequence, long discontinuity, long positionMicros, long dateMicros) {
+        /**
+         * The date of a segment that no {@code EXT-X-PROGRAM-DATE-TIME} dates.
+         */
+        static final long NO_DATE = Long.MIN_VALUE;
     }
 
     /**
@@ -191,6 +214,9 @@ final class HlsPlaylist {
         var segments = new ArrayList<Segment>();
         var ends = new HashMap<String, Long>();
         var sequence = 0L;
+        var discontinuity = 0L;
+        var position = 0L;
+        var date = Segment.NO_DATE;
         var duration = -1L;
         long[] range = null;
         Section section = null;
@@ -205,6 +231,16 @@ final class HlsPlaylist {
             }
             if (line.startsWith("#EXT-X-MEDIA-SEQUENCE:")) {
                 sequence = number(line.substring("#EXT-X-MEDIA-SEQUENCE:".length()), "EXT-X-MEDIA-SEQUENCE");
+            } else if (line.startsWith("#EXT-X-DISCONTINUITY-SEQUENCE:")) {
+                discontinuity = number(line.substring("#EXT-X-DISCONTINUITY-SEQUENCE:".length()),
+                        "EXT-X-DISCONTINUITY-SEQUENCE");
+            } else if (line.equals("#EXT-X-DISCONTINUITY")) {
+                if (discontinuity == Long.MAX_VALUE) {
+                    throw new MediaException.Malformed("an HLS discontinuity sequence number beyond 63 bits");
+                }
+                discontinuity++;
+            } else if (line.startsWith("#EXT-X-PROGRAM-DATE-TIME:")) {
+                date = date(line.substring("#EXT-X-PROGRAM-DATE-TIME:".length()).strip());
             } else if (line.startsWith("#EXTINF:")) {
                 var value = line.substring("#EXTINF:".length());
                 var comma = value.indexOf(',');
@@ -281,19 +317,48 @@ final class HlsPlaylist {
                     if (key == null && !keys.isEmpty()) {
                         key = keys.values().iterator().next();
                     }
-                    segments.add(new Segment(uri, offset, length, duration, section, key, sequence));
+                    segments.add(new Segment(uri, offset, length, duration, section, key, sequence, discontinuity,
+                            position, date));
                     if (segments.size() > MAX_SEGMENTS) {
                         throw new MediaException.LimitExceeded("an HLS media playlist of more than " + MAX_SEGMENTS
                                 + " segments");
                     }
                 }
                 sequence++;
+                try {
+                    position = Math.addExact(position, duration);
+                    if (date != Segment.NO_DATE) {
+                        date = Math.addExact(date, duration);
+                    }
+                } catch (ArithmeticException exception) {
+                    throw new MediaException.Malformed("an HLS media playlist longer than 2^63 microseconds");
+                }
                 duration = -1;
                 range = null;
                 gap = false;
             }
         }
         return new MediaPlaylist(segments, iFramesOnly);
+    }
+
+    /**
+     * Parses the date of an {@code EXT-X-PROGRAM-DATE-TIME} tag: an ISO 8601 date and time with a time zone (RFC 8216
+     * clause 4.3.2.6), its offset written with or without a colon. A date in another form, such as one without a time
+     * zone, dates nothing: the tag only informs, and a playlist that carries one is still read.
+     *
+     * @param text the date
+     * @return the microseconds since the epoch, or {@link Segment#NO_DATE} when the date is in another form
+     */
+    private static long date(String text) {
+        for (var format : DATE_FORMATS) {
+            try {
+                var instant = OffsetDateTime.parse(text, format).toInstant();
+                return Math.addExact(Math.multiplyExact(instant.getEpochSecond(), 1_000_000L), instant.getNano() / 1000);
+            } catch (DateTimeParseException | ArithmeticException ignored) {
+                // the next format, or no date
+            }
+        }
+        return Segment.NO_DATE;
     }
 
     /**

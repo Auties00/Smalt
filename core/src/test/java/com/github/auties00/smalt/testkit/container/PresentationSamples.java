@@ -16,6 +16,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -64,7 +65,7 @@ public final class PresentationSamples {
      */
     public static List<String> names() {
         return List.of("hls-ts", "hls-ts-ranges", "hls-cmaf", "hls-aes", "hls-iframes", "hls-cmaf-iframes",
-                "dash-template", "dash-list", "dash-base", "dash-live");
+                "hls-discontinuity", "hls-cmaf-discontinuity", "dash-template", "dash-list", "dash-base", "dash-live");
     }
 
     /**
@@ -75,6 +76,9 @@ public final class PresentationSamples {
      * @return the presentation
      */
     public static Sample of(String name, long maxMicros) {
+        if (name.endsWith("-discontinuity")) {
+            return discontinuity(name.startsWith("hls-cmaf"), maxMicros);
+        }
         var segment = PackagingOptions.hls().toBuilder().segmentMicros(500_000);
         var options = switch (name) {
             case "hls-ts", "hls-iframes" -> segment.trickPlay(true).build();
@@ -97,36 +101,7 @@ public final class PresentationSamples {
         };
         var subtitles = name.startsWith("dash") ? "cues.ttml" : name.equals("hls-cmaf") ? "cues.srt" : "cues.vtt";
         var files = new LinkedHashMap<String, byte[]>();
-        PackageOutput output = file -> new MediaSink() {
-            private final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-
-            @Override
-            public long position() {
-                return bytes.size();
-            }
-
-            @Override
-            public void position(long position) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public boolean isSeekable() {
-                return false;
-            }
-
-            @Override
-            public void write(ByteBuffer data) {
-                var copy = new byte[data.remaining()];
-                data.get(copy);
-                bytes.writeBytes(copy);
-            }
-
-            @Override
-            public void close() {
-                files.put(file, bytes.toByteArray());
-            }
-        };
+        var output = memory(files);
         var clip = read(SAMPLES.resolve("mp4").resolve("faststart.mp4"));
         var cues = read(SAMPLES.resolve("subtitle").resolve(subtitles));
         var renditions = new ArrayList<Rendition>();
@@ -175,6 +150,85 @@ public final class PresentationSamples {
         var manifest = name.startsWith("dash") ? "manifest.mpd" : name.equals("hls-iframes") ? "clip_iframes.m3u8"
                 : name.equals("hls-cmaf-iframes") ? "clip_video_iframes.m3u8" : "master.m3u8";
         return new Sample(manifest, files);
+    }
+
+    /**
+     * Packages the H.264 and AAC clip, then another encoding after a discontinuity, as one media playlist: transport
+     * stream segments followed by those of an HEVC clip ({@code samples/mp4/hevc.mp4}, a codec change), or the CMAF
+     * video segments followed by those of an H.264 4:4:4 clip ({@code samples/mp4/h264-444.mp4}, a change of
+     * initialization section and of codec configuration). Only the files the joined playlist names are kept.
+     */
+    private static Sample discontinuity(boolean cmaf, long maxMicros) {
+        var options = PackagingOptions.hls().toBuilder().segmentMicros(500_000).noTags();
+        if (cmaf) {
+            options.segmentFormat(PackagingOptions.SegmentFormat.CMAF);
+        }
+        var files = new LinkedHashMap<String, byte[]>();
+        var second = cmaf ? "h264-444.mp4" : "hevc.mp4";
+        for (var part : List.of(List.of("a", "faststart.mp4"), List.of("b", second))) {
+            var name = part.get(0);
+            var packets = new ArrayList<Packet>();
+            List<Track> tracks;
+            try (var source = MediaSource.of(read(SAMPLES.resolve("mp4").resolve(part.get(1))));
+                 var demuxer = Containers.openDemuxer(source)) {
+                tracks = demuxer.tracks();
+                packets.addAll(cut(demuxer, tracks, maxMicros));
+            }
+            try (var writer = Packager.open(List.of(Rendition.builder(tracks).name(name).build()), memory(files),
+                    options.masterPlaylistName(name + "-master.m3u8").build())) {
+                for (var packet : packets) {
+                    writer.writePacket(name, packet);
+                }
+                writer.finish();
+            }
+        }
+        var suffix = cmaf ? "_video.m3u8" : ".m3u8";
+        var joined = HlsStitch.join(List.of(new String(files.get("a" + suffix), StandardCharsets.UTF_8),
+                new String(files.get("b" + suffix), StandardCharsets.UTF_8)), true, List.of());
+        var kept = new LinkedHashMap<String, byte[]>();
+        kept.put("stitched.m3u8", joined.getBytes(StandardCharsets.UTF_8));
+        for (var line : HlsStitch.body(joined)) {
+            var uri = line.startsWith("#EXT-X-MAP:") ? line.substring(line.indexOf('"') + 1, line.lastIndexOf('"'))
+                    : line.startsWith("#") ? null : line;
+            if (uri != null) {
+                kept.put(uri, files.get(uri));
+            }
+        }
+        return new Sample("stitched.m3u8", kept);
+    }
+
+    /** Returns an output that keeps every file in memory, by name. */
+    private static PackageOutput memory(Map<String, byte[]> files) {
+        return file -> new MediaSink() {
+            private final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+
+            @Override
+            public long position() {
+                return bytes.size();
+            }
+
+            @Override
+            public void position(long position) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public boolean isSeekable() {
+                return false;
+            }
+
+            @Override
+            public void write(ByteBuffer data) {
+                var copy = new byte[data.remaining()];
+                data.get(copy);
+                bytes.writeBytes(copy);
+            }
+
+            @Override
+            public void close() {
+                files.put(file, bytes.toByteArray());
+            }
+        };
     }
 
     /** Reads the packets of a demuxer whose decoding times are below a bound. */

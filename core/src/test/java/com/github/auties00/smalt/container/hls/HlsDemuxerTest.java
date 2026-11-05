@@ -99,7 +99,8 @@ class HlsDemuxerTest {
                     """), "media/index.m3u8");
             var segments = playlist.segments();
             assertEquals(3, segments.size(), "the gap is skipped");
-            assertEquals(new HlsPlaylist.Segment("media/all.ts", 50, 100, 2_000_000, null, null, 7), segments.get(0));
+            assertEquals(new HlsPlaylist.Segment("media/all.ts", 50, 100, 2_000_000, null, null, 7, 0, 0,
+                    HlsPlaylist.Segment.NO_DATE), segments.get(0));
             assertEquals(150, segments.get(1).offset(), "a range without an offset continues the previous one");
             assertEquals(1_500_000, segments.get(1).durationMicros());
             assertEquals("media/sub/next.ts", segments.get(2).uri());

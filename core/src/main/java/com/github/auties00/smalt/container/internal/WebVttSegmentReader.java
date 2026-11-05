@@ -15,6 +15,7 @@ import com.github.auties00.smalt.subtitle.SubtitleCue;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
@@ -50,11 +51,39 @@ public final class WebVttSegmentReader {
      */
     public static Demuxer open(List<SegmentSource.Part> segments, DataReferenceResolver resolver,
                                DemuxerOptions options, long originTicks) {
+        var origins = new long[segments.size()];
+        Arrays.fill(origins, originTicks);
+        return open(segments, resolver, options, origins, new long[segments.size()]);
+    }
+
+    /**
+     * Reads segments that lie on several timelines, as the segments of an HLS subtitle rendition on either side of a
+     * discontinuity do: each segment's timestamp map refers to the media timestamps of its own timeline.
+     *
+     * @param segments the segments, in order
+     * @param resolver opens the segment files
+     * @param options the demuxing options of the presentation
+     * @param originTicks the 90 kHz media timestamp of each segment's timeline that its {@code shiftMicros} maps to
+     * @param shiftMicros the presentation time of each segment's {@code originTicks}, in microseconds
+     * @return a demuxer of one {@link com.github.auties00.smalt.track.Codec#WEBVTT} track, its header the first
+     * segment's without the timestamp map
+     * @throws IllegalArgumentException if the arrays do not hold one value per segment
+     * @throws MediaException.Malformed if a segment is not a WebVTT file or its timestamp map is invalid
+     * @throws MediaException.Unsupported if a segment file cannot be resolved
+     * @throws MediaException.LimitExceeded if the cues exceed the limits
+     * @throws MediaException.Io if reading fails
+     */
+    public static Demuxer open(List<SegmentSource.Part> segments, DataReferenceResolver resolver,
+                               DemuxerOptions options, long[] originTicks, long[] shiftMicros) {
+        if (originTicks.length != segments.size() || shiftMicros.length != segments.size()) {
+            throw new IllegalArgumentException("one origin and one shift per segment");
+        }
         String header = null;
         var cues = new ArrayList<SubtitleCue>();
         var seen = new HashSet<List<Object>>();
         var total = 0L;
-        for (var segment : segments) {
+        for (var index = 0; index < segments.size(); index++) {
+            var segment = segments.get(index);
             String text;
             try (var source = new SegmentSource(List.of(segment), resolver, options.limits())) {
                 var bytes = SourceBytes.readAll(source, options.limits(), false);
@@ -66,7 +95,7 @@ public final class WebVttSegmentReader {
                 text = text.substring(1);
             }
             var document = WebVttText.parse(text);
-            var offset = offset(document.header(), originTicks);
+            var offset = offset(document.header(), originTicks[index]) + shiftMicros[index];
             if (header == null) {
                 header = withoutMap(document.header());
             }

@@ -49,8 +49,9 @@ import java.util.Set;
  * demuxer fails with {@link MediaException.Unsupported}.
  *
  * <p>Every media playlist of a master playlist is a stream: the variants, then the renditions with a URI, each
- * read once even when several variants or groups name it. A stream's segments are read as one file: transport
- * stream segments joined, an initialization section ({@code EXT-X-MAP}) followed by its fragmented MP4 segments,
+ * read once even when several variants or groups name it. A stream's segments (those of each section, below) are
+ * read as one file: transport stream segments joined, an initialization section ({@code EXT-X-MAP}) followed by its
+ * fragmented MP4 segments,
  * the WebVTT segments of a subtitle rendition (cue times moved by each segment's {@code X-TIMESTAMP-MAP}, a cue
  * repeated in the segments it spans read once), or the segments of another container joined (packed audio
  * without the ID3 tag that opens each segment, timed by the MPEG-2 timestamp of the tag's
@@ -65,6 +66,25 @@ import java.util.Set;
  * keep their media times. A rendition's {@code LANGUAGE} becomes its tracks' language when they declare none, its
  * {@code NAME} their {@code title} metadata, and its {@code DEFAULT}, {@code FORCED} and accessibility
  * {@code CHARACTERISTICS} their dispositions.
+ *
+ * <p>A media playlist whose segments change encoding or timeline is read in sections (RFC 8216 clauses 4.3.2.3,
+ * 4.3.2.5 and 6.3.3): a section ends before an {@code EXT-X-DISCONTINUITY} or a change of {@code EXT-X-MAP}, and each
+ * is read with its own demuxer. Every track is listed when the demuxer opens. A track of a later section continues
+ * the first track of an earlier section with its kind and codec, behind that track's description (its duration then
+ * unknown) and with the section's codec configuration as the
+ * {@link com.github.auties00.smalt.track.PacketSideData#newCodecConfig() new codec configuration} of its first packet
+ * where it differs; any other track of a later section is a track of its own. A section after a change of
+ * initialization section alone continues the timeline of the one before. Each discontinuity sequence number
+ * ({@code EXT-X-DISCONTINUITY-SEQUENCE} plus the discontinuities before) starts on the presentation timeline where
+ * the first playlist that holds it in its first section starts, or else, in the first playlist that holds it, after
+ * that playlist's first section by the time between their {@code EXT-X-PROGRAM-DATE-TIME} dates when both are dated,
+ * or by the {@code EXTINF} durations between them; a section's earliest presentation time is moved there, so that the
+ * renditions of a master playlist change encoding together; the audio and data packets of a section that start at or
+ * after that place, the encoder padding past the section's {@code EXTINF} durations, are left out of a track the next
+ * section continues, so that its timestamps keep increasing. The {@code X-TIMESTAMP-MAP} of a WebVTT segment after a
+ * discontinuity refers to the media timestamps of the section of the same number. A seek lands in the last section
+ * that starts at least a quarter of a second before the requested time, so that the frames of the section before
+ * still shown at the boundary are read.
  *
  * <p>Segments encrypted with {@code METHOD=AES-128} are decrypted with the key their URI names; fragmented MP4
  * segments of {@code SAMPLE-AES} and {@code SAMPLE-AES-CTR} are decrypted with the
@@ -127,8 +147,8 @@ public final class HlsDemuxer implements Demuxer {
      *
      * @param source the playlist, master or media, not closed by the demuxer
      * @param options the limits, the resolver of the files the playlist names, and the decryption keys
-     * @throws MediaException.Unsupported if a file the playlist names cannot be resolved, a key method or format
-     * cannot be decrypted, or a media playlist changes its initialization section
+     * @throws MediaException.Unsupported if a file the playlist names cannot be resolved, or a key method or format
+     * cannot be decrypted
      * @throws MediaException.Malformed if a playlist or a segment is malformed
      * @throws MediaException.LimitExceeded if a playlist or a decrypted segment exceeds the limits
      * @throws MediaException.Io if reading fails
@@ -155,10 +175,12 @@ public final class HlsDemuxer implements Demuxer {
         } else {
             planned.add(new Planned("", HlsPlaylist.media(lines, ""), null));
         }
-        var streams = new ArrayList<StreamMerge.Stream>();
-        var opened = new ArrayList<Opened>();
+        var all = new ArrayList<Opened>();
+        var built = new ArrayList<StreamMerge.Stream>();
         var duration = 0L;
         try {
+            var opened = new ArrayList<OpenedStream>();
+            var keys = new HashMap<String, byte[]>();
             Long origin = null;
             for (var plan : planned) {
                 var segments = plan.playlist().segments();
@@ -170,41 +192,251 @@ public final class HlsDemuxer implements Demuxer {
                     total += segment.durationMicros();
                 }
                 duration = Math.max(duration, total);
-                var stream = open(plan, resolver, options);
-                opened.add(stream);
+                var sections = sections(segments);
+                var first = open(plan, sections.size() == 1 ? segments : sections.getFirst(), resolver, options, keys);
+                all.add(first);
+                if (first.demuxer() == null && sections.size() > 1) {
+                    // WebVTT segments are timed by their timestamp maps, whatever their sections
+                    first = open(plan, segments, resolver, options, keys);
+                    sections = List.of(segments);
+                }
+                var parts = new ArrayList<>(List.of(first));
+                for (var index = 1; index < sections.size(); index++) {
+                    var next = open(plan, sections.get(index), resolver, options, keys);
+                    all.add(next);
+                    if (next.demuxer() == null) {
+                        throw new MediaException.Malformed("an HLS media playlist of media segments followed by "
+                                + "WebVTT segments");
+                    }
+                    parts.add(next);
+                }
+                opened.add(new OpenedStream(plan, parts, sections));
                 if (origin == null) {
-                    origin = originOf(stream);
+                    origin = originOf(first);
                 }
             }
             var originTicks = origin == null ? 0 : origin;
-            for (var stream : opened) {
-                var demuxer = stream.demuxer();
-                var resources = new ArrayList<AutoCloseable>(stream.resources());
-                var offset = 0L;
-                if (demuxer == null) {
-                    demuxer = WebVttSegmentReader.open(stream.parts(), resolver, options, originTicks);
-                } else if (originOf(stream) != null) {
-                    var ticks = Math.floorMod(originOf(stream) - originTicks, 1L << 33);
-                    if (ticks >= 1L << 32) {
-                        ticks -= 1L << 33;
-                    }
-                    offset = ticks * 100 / 9;
-                }
-                streams.add(stream(demuxer, offset, stream.plan().media(), resources));
-            }
+            timeline(opened, originTicks, resolver, options, built);
         } catch (RuntimeException exception) {
-            for (var stream : opened) {
+            for (var stream : all) {
                 closeQuietly(stream.demuxer(), stream.resources());
             }
-            for (var stream : streams) {
-                if (opened.stream().noneMatch(candidate -> candidate.demuxer() == stream.demuxer())) {
+            for (var stream : built) {
+                if (!(stream.demuxer() instanceof DiscontinuityDemuxer)
+                        && all.stream().noneMatch(candidate -> candidate.demuxer() == stream.demuxer())) {
                     closeQuietly(stream.demuxer(), List.of());
                 }
             }
             throw exception;
         }
-        this.merge = new StreamMerge(streams);
+        this.merge = new StreamMerge(built);
         this.playlistDuration = duration;
+    }
+
+    /**
+     * Places the opened media playlists on one timeline (RFC 8216 clause 6.3.3) and adds their streams to the merge:
+     * each playlist's first section lies on the MPEG-2 timestamps it shares with the others or on its media times, as
+     * in a presentation without discontinuities, and every later discontinuity sequence number starts where the
+     * playlists put it. The earliest presentation time of a first section that holds the number puts it there;
+     * otherwise the first playlist that holds the number puts it after its first section by the time between their
+     * {@code EXT-X-PROGRAM-DATE-TIME} dates when both have one, or else by the {@code EXTINF} durations between them.
+     *
+     * @param opened the opened playlists, in order
+     * @param originTicks the 90 kHz MPEG-2 timestamp of presentation time zero
+     * @param resolver opens the WebVTT segments
+     * @param options the demuxing options
+     * @param streams receives the streams of the merge, in order, as each is made
+     */
+    private static void timeline(List<OpenedStream> opened, long originTicks, DataReferenceResolver resolver,
+                                 DemuxerOptions options, List<StreamMerge.Stream> streams) {
+        var needed = new HashSet<Long>();
+        var hasCues = false;
+        for (var stream : opened) {
+            if (stream.sections().getFirst().demuxer() == null) {
+                hasCues = true;
+                continue;
+            }
+            var sections = stream.segments();
+            for (var index = 1; index < sections.size(); index++) {
+                var number = sections.get(index).getFirst().discontinuity();
+                if (number != sections.getFirst().getFirst().discontinuity()) {
+                    needed.add(number);
+                }
+            }
+        }
+        var offsets = new long[opened.size()];
+        var demuxers = new Demuxer[opened.size()];
+        for (var position = 0; position < opened.size(); position++) {
+            var stream = opened.get(position);
+            var first = stream.sections().getFirst();
+            if (first.demuxer() == null) {
+                continue;
+            }
+            var firstOrigin = originOf(first);
+            if (firstOrigin != null) {
+                var ticks = Math.floorMod(firstOrigin - originTicks, 1L << 33);
+                if (ticks >= 1L << 32) {
+                    ticks -= 1L << 33;
+                }
+                offsets[position] = ticks * 100 / 9;
+            }
+            var d0 = stream.segments().getFirst().getFirst().discontinuity();
+            if (stream.sections().size() == 1 && !needed.contains(d0)) {
+                demuxers[position] = first.demuxer();
+                continue;
+            }
+            var sections = new ArrayList<DiscontinuityDemuxer.Section>();
+            for (var index = 0; index < stream.sections().size(); index++) {
+                var section = stream.sections().get(index);
+                var head = stream.segments().get(index).getFirst();
+                sections.add(new DiscontinuityDemuxer.Section(section.demuxer(), section.resources(),
+                        head.discontinuity(), head.positionMicros()));
+            }
+            demuxers[position] = new DiscontinuityDemuxer(sections);
+        }
+        // the earliest presentation time of a first section places its number before any duration does
+        var starts = new HashMap<Long, Long>();
+        for (var position = 0; position < opened.size(); position++) {
+            if (demuxers[position] instanceof DiscontinuityDemuxer joined) {
+                var d0 = opened.get(position).segments().getFirst().getFirst().discontinuity();
+                if (needed.contains(d0) && !starts.containsKey(d0)) {
+                    starts.put(d0, add(joined.startMicros(0), offsets[position]));
+                }
+            }
+        }
+        var cueTimelines = new HashMap<Long, long[]>();
+        for (var position = 0; position < opened.size(); position++) {
+            if (!(demuxers[position] instanceof DiscontinuityDemuxer joined)) {
+                continue;
+            }
+            var stream = opened.get(position);
+            var segments = stream.segments();
+            var head = segments.getFirst().getFirst();
+            var targets = new long[segments.size()];
+            for (var index = 1; index < segments.size(); index++) {
+                var segment = segments.get(index).getFirst();
+                var number = segment.discontinuity();
+                if (number == head.discontinuity() || continuesNumber(segments, index)) {
+                    continue;
+                }
+                var target = starts.get(number);
+                if (target == null) {
+                    var delta = segment.dateMicros() != HlsPlaylist.Segment.NO_DATE
+                            && head.dateMicros() != HlsPlaylist.Segment.NO_DATE
+                            ? subtract(segment.dateMicros(), head.dateMicros())
+                            : segment.positionMicros() - head.positionMicros();
+                    target = add(add(joined.startMicros(0), offsets[position]), delta);
+                    starts.put(number, target);
+                }
+                targets[index] = subtract(target, offsets[position]);
+            }
+            joined.targets(targets);
+            if (!hasCues) {
+                continue;
+            }
+            for (var index = 1; index < segments.size(); index++) {
+                var number = segments.get(index).getFirst().discontinuity();
+                if (number == head.discontinuity() || continuesNumber(segments, index)
+                        || cueTimelines.containsKey(number)) {
+                    continue;
+                }
+                var sectionOrigin = originOf(stream.sections().get(index));
+                cueTimelines.put(number, new long[]{sectionOrigin == null ? 0 : sectionOrigin,
+                        add(offsets[position], joined.offsetMicros(index))});
+            }
+        }
+        for (var position = 0; position < opened.size(); position++) {
+            var stream = opened.get(position);
+            var media = stream.plan().media();
+            if (demuxers[position] == null) {
+                var parts = stream.sections().getFirst().parts();
+                var segments = stream.segments().getFirst();
+                var origins = new long[parts.size()];
+                var shifts = new long[parts.size()];
+                for (var index = 0; index < parts.size(); index++) {
+                    var timeline = cueTimelines.get(segments.get(index).discontinuity());
+                    origins[index] = timeline == null ? originTicks : timeline[0];
+                    shifts[index] = timeline == null ? 0 : timeline[1];
+                }
+                streams.add(stream(WebVttSegmentReader.open(parts, resolver, options, origins, shifts), 0, media,
+                        List.of()));
+            } else if (demuxers[position] instanceof DiscontinuityDemuxer) {
+                streams.add(stream(demuxers[position], offsets[position], media, List.of()));
+            } else {
+                streams.add(stream(demuxers[position], offsets[position], media,
+                        stream.sections().getFirst().resources()));
+            }
+        }
+    }
+
+    /**
+     * Returns whether a section continues the discontinuity sequence number of an earlier section of its playlist,
+     * which it follows after a change of initialization section alone.
+     *
+     * @param segments the segments of each section
+     * @param index the section index
+     * @return {@code true} when an earlier section has its number
+     */
+    private static boolean continuesNumber(List<List<HlsPlaylist.Segment>> segments, int index) {
+        var number = segments.get(index).getFirst().discontinuity();
+        for (var earlier = 0; earlier < index; earlier++) {
+            if (segments.get(earlier).getFirst().discontinuity() == number) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Adds two times.
+     *
+     * @param left a time in microseconds
+     * @param right a time in microseconds
+     * @return the sum
+     * @throws MediaException.Malformed if it does not fit in a {@code long}
+     */
+    private static long add(long left, long right) {
+        try {
+            return Math.addExact(left, right);
+        } catch (ArithmeticException exception) {
+            throw new MediaException.Malformed("an HLS timeline beyond 63 bits of microseconds");
+        }
+    }
+
+    /**
+     * Subtracts two times.
+     *
+     * @param left a time in microseconds
+     * @param right a time in microseconds
+     * @return the difference
+     * @throws MediaException.Malformed if it does not fit in a {@code long}
+     */
+    private static long subtract(long left, long right) {
+        try {
+            return Math.subtractExact(left, right);
+        } catch (ArithmeticException exception) {
+            throw new MediaException.Malformed("an HLS timeline beyond 63 bits of microseconds");
+        }
+    }
+
+    /**
+     * Splits the segments of a media playlist into its sections: a section ends before a segment of another
+     * discontinuity sequence number or another initialization section.
+     *
+     * @param segments the segments, at least one
+     * @return the segments of each section, in order
+     */
+    private static List<List<HlsPlaylist.Segment>> sections(List<HlsPlaylist.Segment> segments) {
+        var sections = new ArrayList<List<HlsPlaylist.Segment>>();
+        var start = 0;
+        for (var index = 1; index <= segments.size(); index++) {
+            if (index == segments.size() || segments.get(index).discontinuity() != segments.get(start).discontinuity()
+                    || !Objects.equals(segments.get(index).section(), segments.get(start).section())) {
+                sections.add(segments.subList(start, index));
+                start = index;
+            }
+        }
+        return sections;
     }
 
     /**
@@ -283,6 +515,16 @@ public final class HlsDemuxer implements Demuxer {
     }
 
     /**
+     * A media playlist opened section by section.
+     *
+     * @param plan the playlist
+     * @param sections each section opened, in order; one for WebVTT segments
+     * @param segments the segments of each section
+     */
+    private record OpenedStream(Planned plan, List<Opened> sections, List<List<HlsPlaylist.Segment>> segments) {
+    }
+
+    /**
      * Reads a media playlist.
      *
      * @param uri the location of the playlist
@@ -302,30 +544,22 @@ public final class HlsDemuxer implements Demuxer {
     }
 
     /**
-     * Opens the demuxer of a media playlist's segments.
+     * Opens the demuxer of segments of a media playlist that share one initialization section.
      *
      * @param plan the playlist
+     * @param segments the segments, at least one
      * @param resolver opens the files
      * @param options the demuxing options
+     * @param keys the AES-128 keys read so far, by URI
      * @return the opened stream
      */
-    private static Opened open(Planned plan, DataReferenceResolver resolver, DemuxerOptions options) {
-        var segments = plan.playlist().segments();
-        HlsPlaylist.Section section = null;
+    private static Opened open(Planned plan, List<HlsPlaylist.Segment> segments, DataReferenceResolver resolver,
+                               DemuxerOptions options, Map<String, byte[]> keys) {
+        var section = segments.getFirst().section();
         HlsPlaylist.Key sampleKey = null;
         var parts = new ArrayList<SegmentSource.Part>();
         var segmentKeys = new ArrayList<HlsPlaylist.Key>();
-        var keys = new HashMap<String, byte[]>();
         for (var segment : segments) {
-            if (segment.section() != null) {
-                if (section != null && !section.equals(segment.section())) {
-                    // TODO: read a media playlist whose initialization section changes (a discontinuity to
-                    // another encoding), as a stream per section
-                    throw new MediaException.Unsupported("hls", "a media playlist whose initialization section "
-                            + "changes");
-                }
-                section = segment.section();
-            }
             var key = segment.key();
             byte[] aesKey = null;
             byte[] iv = null;

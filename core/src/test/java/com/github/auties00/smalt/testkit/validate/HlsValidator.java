@@ -532,6 +532,7 @@ public final class HlsValidator {
                     previousDate = programDate;
                 }
                 previousDuration = duration;
+                var discontinuous = discontinuity;
                 discontinuity = false;
                 programDate = null;
                 var file = resolve(playlist, line, at);
@@ -548,7 +549,7 @@ public final class HlsValidator {
                         lastRangeEnd.put(file, range[1] + range[0]);
                     }
                     findings.require(!iFrames || range != null, at, "an I-frame segment without EXT-X-BYTERANGE");
-                    segments.add(new Segment(file, range, duration, at, map, key, sequence));
+                    segments.add(new Segment(file, range, duration, at, map, key, sequence, discontinuous));
                     if (target >= 0) {
                         findings.require(Math.round(duration) <= target, at, "EXTINF " + duration
                                 + " rounds above EXT-X-TARGETDURATION " + target);
@@ -587,11 +588,13 @@ public final class HlsValidator {
      * @param map the initialization section, or {@code null} for transport stream segments
      * @param key the AES-128 key that encrypts the segment, or {@code null}
      * @param sequence the media sequence number of the segment
+     * @param discontinuity whether an {@code EXT-X-DISCONTINUITY} precedes the segment, whose timestamps then need
+     *                      not continue those of the segment before
      */
     private record Segment(Path file, long[] range, double duration, String where, Segment map, Key key,
-                           long sequence) {
+                           long sequence, boolean discontinuity) {
         Segment(Path file, long[] range, double duration, String where) {
-            this(file, range, duration, where, null, null, 0);
+            this(file, range, duration, where, null, null, 0, false);
         }
     }
 
@@ -633,6 +636,9 @@ public final class HlsValidator {
         Map<String, double[]> previousCues = null;
         for (var number = 0; number < segments.size(); number++) {
             var segment = segments.get(number);
+            if (segment.discontinuity()) {
+                nextDecode.clear();
+            }
             var windowStart = elapsed;
             elapsed += segment.duration();
             var stored = bytes(segment.file(), segment.range(), segment.where());
