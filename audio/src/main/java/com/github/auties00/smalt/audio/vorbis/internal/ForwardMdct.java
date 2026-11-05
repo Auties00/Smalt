@@ -61,20 +61,20 @@ public final class ForwardMdct {
      */
     public ForwardMdct(int n) {
         this.n = n;
-        this.log2n = (int) Math.rint(Math.log((float) n) / Math.log(2.f));
+        this.log2n = (int) Math.rint(StrictMath.log((float) n) / StrictMath.log(2.f));
         this.trig = new float[n + n / 4];
         this.bitrev = new int[n / 4];
         this.work = new float[n];
         var n2 = n >> 1;
         for (var i = 0; i < n / 4; i++) {
-            trig[i * 2] = (float) Math.cos((Math.PI / n) * (4 * i));
-            trig[i * 2 + 1] = (float) -Math.sin((Math.PI / n) * (4 * i));
-            trig[n2 + i * 2] = (float) Math.cos((Math.PI / (2 * n)) * (2 * i + 1));
-            trig[n2 + i * 2 + 1] = (float) Math.sin((Math.PI / (2 * n)) * (2 * i + 1));
+            trig[i * 2] = (float) StrictMath.cos((Math.PI / n) * (4 * i));
+            trig[i * 2 + 1] = (float) -StrictMath.sin((Math.PI / n) * (4 * i));
+            trig[n2 + i * 2] = (float) StrictMath.cos((Math.PI / (2 * n)) * (2 * i + 1));
+            trig[n2 + i * 2 + 1] = (float) StrictMath.sin((Math.PI / (2 * n)) * (2 * i + 1));
         }
         for (var i = 0; i < n / 8; i++) {
-            trig[n + i * 2] = (float) (Math.cos((Math.PI / n) * (4 * i + 2)) * .5);
-            trig[n + i * 2 + 1] = (float) (-Math.sin((Math.PI / n) * (4 * i + 2)) * .5);
+            trig[n + i * 2] = (float) (StrictMath.cos((Math.PI / n) * (4 * i + 2)) * .5);
+            trig[n + i * 2 + 1] = (float) (-StrictMath.sin((Math.PI / n) * (4 * i + 2)) * .5);
         }
         var mask = (1 << (log2n - 1)) - 1;
         var msb = 1 << (log2n - 2);

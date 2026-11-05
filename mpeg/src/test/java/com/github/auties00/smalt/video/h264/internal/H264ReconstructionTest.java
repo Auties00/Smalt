@@ -188,38 +188,42 @@ class H264ReconstructionTest {
             }
         }
 
-        @Test
-        @DisplayName("chroma DC prediction follows 8.3.4.1 to 8.3.4.3 per 4x4 block")
-        void chromaDc() {
-            var random = new Random(12);
+        @ParameterizedTest(name = "{0} rows")
+        @ValueSource(ints = {8, 16})
+        @DisplayName("chroma DC prediction follows 8.3.4.1 per 4x4 block, each 4-row group's left samples available apart")
+        void chromaDc(int rows) {
+            var random = new Random(12 + rows);
             var predictor = new IntraPredictor();
-            for (var availability = 0; availability < 4; availability++) {
-                var hasLeft = (availability & 1) != 0;
-                var hasTop = (availability & 2) != 0;
+            var groups = rows / 4;
+            for (var availability = 0; availability < 2 << groups; availability++) {
+                var hasTop = (availability & 1) != 0;
+                var leftBlocks = availability >> 1;
                 var plane = randomPlane(random);
-                var expected = new int[4];
-                for (var block = 0; block < 4; block++) {
-                    var bx = (block & 1) * 4;
-                    var by = (block >> 1) * 4;
+                var expected = new int[2 * groups];
+                for (var block = 0; block < 2 * groups; block++) {
+                    var xO = (block & 1) * 4;
+                    var yO = (block >> 1) * 4;
+                    var hasLeft = ((leftBlocks >> (block >> 1)) & 1) != 0;
                     var top = 0;
                     var left = 0;
                     for (var i = 0; i < 4; i++) {
-                        top += p(plane, bx + i, -1);
-                        left += p(plane, -1, by + i);
+                        top += p(plane, xO + i, -1);
+                        left += p(plane, -1, yO + i);
                     }
                     var both = (top + left + 4) >> 3;
                     var onlyTop = (top + 2) >> 2;
                     var onlyLeft = (left + 2) >> 2;
-                    if (block == 0 || block == 3) {
+                    if ((xO == 0 && yO == 0) || (xO > 0 && yO > 0)) {
                         expected[block] = hasLeft && hasTop ? both : hasLeft ? onlyLeft : hasTop ? onlyTop : 128;
-                    } else if (block == 1) {
+                    } else if (xO > 0) {
                         expected[block] = hasTop ? onlyTop : hasLeft ? onlyLeft : 128;
                     } else {
                         expected[block] = hasLeft ? onlyLeft : hasTop ? onlyTop : 128;
                     }
                 }
-                predictor.predictChroma(0, plane, ORIGIN, STRIDE, hasLeft, hasTop, hasLeft && hasTop);
-                for (var y = 0; y < 8; y++) {
+                predictor.predictChroma(0, plane, ORIGIN, STRIDE, rows, leftBlocks, hasTop,
+                        (leftBlocks & 1) != 0 && hasTop);
+                for (var y = 0; y < rows; y++) {
                     for (var x = 0; x < 8; x++) {
                         assertEquals(expected[(y >> 2) * 2 + (x >> 2)], p(plane, x, y), "sample " + x + "," + y);
                     }
@@ -227,33 +231,58 @@ class H264ReconstructionTest {
             }
         }
 
-        @Test
-        @DisplayName("chroma plane prediction follows 8.3.4.4 for 4:2:0")
-        void chromaPlane() {
-            var random = new Random(13);
+        @ParameterizedTest(name = "{0} rows")
+        @ValueSource(ints = {8, 16})
+        @DisplayName("chroma plane prediction follows 8.3.4.4 for 4:2:0 and 4:2:2")
+        void chromaPlane(int rows) {
+            var random = new Random(13 + rows);
             var predictor = new IntraPredictor();
+            var yCF = rows == 16 ? 4 : 0;
             for (var trial = 0; trial < 200; trial++) {
                 var plane = randomPlane(random);
                 var h = 0;
                 var v = 0;
-                for (var i = 0; i < 4; i++) {
+                for (var i = 0; i <= 3; i++) {
                     h += (i + 1) * (p(plane, 4 + i, -1) - p(plane, 2 - i, -1));
-                    v += (i + 1) * (p(plane, -1, 4 + i) - p(plane, -1, 2 - i));
                 }
-                var a = 16 * (p(plane, -1, 7) + p(plane, 7, -1));
+                for (var i = 0; i <= 3 + yCF; i++) {
+                    v += (i + 1) * (p(plane, -1, 4 + yCF + i) - p(plane, -1, 2 + yCF - i));
+                }
+                var a = 16 * (p(plane, -1, rows - 1) + p(plane, 7, -1));
                 var b = (34 * h + 32) >> 6;
-                var c = (34 * v + 32) >> 6;
-                var expected = new int[64];
-                for (var y = 0; y < 8; y++) {
+                var c = ((34 - 29 * (rows == 16 ? 1 : 0)) * v + 32) >> 6;
+                var expected = new int[8 * rows];
+                for (var y = 0; y < rows; y++) {
                     for (var x = 0; x < 8; x++) {
-                        expected[y * 8 + x] = clip((a + b * (x - 3) + c * (y - 3) + 16) >> 5);
+                        expected[y * 8 + x] = clip((a + b * (x - 3) + c * (y - 3 - yCF) + 16) >> 5);
                     }
                 }
-                predictor.predictChroma(3, plane, ORIGIN, STRIDE, true, true, true);
-                for (var i = 0; i < 64; i++) {
+                predictor.predictChroma(3, plane, ORIGIN, STRIDE, rows, (1 << (rows / 4)) - 1, true, true);
+                for (var i = 0; i < 8 * rows; i++) {
                     assertEquals(expected[i], p(plane, i & 7, i >> 3));
                 }
             }
+        }
+
+        @ParameterizedTest(name = "{0} rows")
+        @ValueSource(ints = {8, 16})
+        @DisplayName("chroma horizontal and vertical prediction fill every row of the block")
+        void chromaHorizontalVertical(int rows) {
+            var random = new Random(14 + rows);
+            var predictor = new IntraPredictor();
+            var plane = randomPlane(random);
+            var horizontal = plane.clone();
+            predictor.predictChroma(1, horizontal, ORIGIN, STRIDE, rows, (1 << (rows / 4)) - 1, true, true);
+            var vertical = plane.clone();
+            predictor.predictChroma(2, vertical, ORIGIN, STRIDE, rows, (1 << (rows / 4)) - 1, true, true);
+            for (var y = 0; y < rows; y++) {
+                for (var x = 0; x < 8; x++) {
+                    assertEquals(p(plane, -1, y), p(horizontal, x, y), "horizontal " + x + "," + y);
+                    assertEquals(p(plane, x, -1), p(vertical, x, y), "vertical " + x + "," + y);
+                }
+            }
+            assertEquals(p(plane, 0, rows), p(horizontal, 0, rows), "row below the block");
+            assertEquals(p(plane, 0, rows), p(vertical, 0, rows), "row below the block");
         }
     }
 

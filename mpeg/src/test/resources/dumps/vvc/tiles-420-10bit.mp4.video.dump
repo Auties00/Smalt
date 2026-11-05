@@ -1,0 +1,16 @@
+# video decode dump of vvc/tiles-420-10bit.mp4; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 320000
+seekable true
+track 1 VVC 256x128 timebase=1/90000
+0 pts=7200 dur=3600 key=false 256x128 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=1c9e81b9 u=1949fb4c v=c5192a20
+1 pts=10800 dur=3600 key=false 256x128 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=b6a97701 u=2565a9e8 v=554000a6
+2 pts=14400 dur=3600 key=false 256x128 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=3bdbaeb3 u=f04a3f52 v=61365c10
+3 pts=18000 dur=3600 key=true 256x128 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=f332dbfe u=1b6b8387 v=6f09198e
+4 pts=21600 dur=3600 key=false 256x128 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=011b87e8 u=1713e0e1 v=6e8dcc0b
+5 pts=25200 dur=3600 key=false 256x128 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=8142fb59 u=bd455b3e v=ffc25f86
+seek 0: @0
+seek 106666: @0
+seek 213333: @3
+seek 320000: end
+seek -1000000: @0

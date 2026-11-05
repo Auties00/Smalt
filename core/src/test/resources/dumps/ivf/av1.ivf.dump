@@ -1,0 +1,27 @@
+# demux dump of ivf/av1.ivf; regenerate with -Dsmalt.test.updateDumps=true
+format IVF
+duration 1000000
+seekable true
+track 0 VIDEO AV1 timebase=1/15 duration=? config=none
+  video 160x120 orientation=NORMAL rate=15/1
+packets 15
+0 t0 pts=0 dts=0 dur=? flags=KEY size=3433 crc=caf9efa6
+1 t0 pts=1 dts=1 dur=? flags=- size=506 crc=4fe653c9
+2 t0 pts=2 dts=2 dur=? flags=- size=329 crc=4cf96e20
+3 t0 pts=3 dts=3 dur=? flags=- size=285 crc=1fbc7842
+4 t0 pts=4 dts=4 dur=? flags=- size=418 crc=bdcd9f51
+5 t0 pts=5 dts=5 dur=? flags=KEY size=2972 crc=b2b19211
+6 t0 pts=6 dts=6 dur=? flags=- size=638 crc=b1701d5b
+7 t0 pts=7 dts=7 dur=? flags=- size=435 crc=89255483
+8 t0 pts=8 dts=8 dur=? flags=- size=428 crc=b970159c
+9 t0 pts=9 dts=9 dur=? flags=- size=763 crc=f7ebbb16
+10 t0 pts=10 dts=10 dur=? flags=KEY size=2826 crc=a6b052fd
+11 t0 pts=11 dts=11 dur=? flags=- size=686 crc=4f95db9f
+12 t0 pts=12 dts=12 dur=? flags=- size=667 crc=7a34ecd5
+13 t0 pts=13 dts=13 dur=? flags=- size=547 crc=ce00ba60
+14 t0 pts=14 dts=14 dur=? flags=- size=644 crc=869b0f8b
+seek 0: t0@0
+seek 333333: t0@0
+seek 666666: t0@5
+seek 1000000: end
+seek -1000000: t0@0
