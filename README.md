@@ -855,7 +855,7 @@ the same way. The `container.hls` and `container.dash` demuxers read the present
 
 | Output | Segments | Manifest | Source |
 |---|---|---|---|
-| HLS (`PackagingOptions.hls()`) | MPEG-TS, audio and video muxed, cut at video key frames | master playlist (one variant per rendition with peak and average bandwidth, `CODECS`, resolution, frame rate) and media playlists, on demand, as an event or live (below) | RFC 8216 |
+| HLS (`PackagingOptions.hls()`) | MPEG-TS, audio and video muxed, cut at video key frames | master playlist (one variant per rendition with peak and average bandwidth, `CODECS`, `SUPPLEMENTAL-CODECS` of Dolby Vision with a backward compatible base layer (`dvh1.08.06/db4h`, `dav1.10.09/db1p`), `VIDEO-RANGE` of PQ, HLG and Dolby Vision video, resolution, frame rate) and media playlists, on demand, as an event or live (below) | RFC 8216; Dolby Vision Streams Within the HTTP Live Streaming Format |
 | HLS with CMAF (`hlsCmaf()`) | CMAF tracks (`_init.mp4`, `.m4s`) | as above, CMAF audio as an `EXT-X-MEDIA` audio group, `EXT-X-MAP` | RFC 8216 |
 | DASH (`dash()`) | CMAF tracks | static MPD (dynamic for an event or live), one adaptation set per kind, codec, language and role, `SegmentTemplate` with `SegmentTimeline` | ISO/IEC 23009-1 |
 | HLS and DASH (`cmaf()`) | one set of CMAF tracks | both | |
@@ -872,7 +872,7 @@ language, a label, and the default and forced flags:
 | Alternate audio | one `EXT-X-MEDIA` audio group per codec that every variant names (`AUDIO`), the variants then video only; an audio-only presentation lists one variant per group | an adaptation set per codec, language and label, `Label`, roles `main`/`alternate` (and `commentary`, `dub`, `description`) |
 | Subtitles | WebVTT segments (`.vtt`) cut at the first video stream's segments, cues of the other codecs converted, spanning cues repeated, `X-TIMESTAMP-MAP` onto the segments' 90 kHz timeline; a `SUBTITLES` group with `FORCED` and `CHARACTERISTICS` | CMAF text tracks: `wvtt` (other codecs converted), TTML as `stpp` with its IMSC profile in `codecs`; `contentType="text"`, roles `subtitle`/`forced-subtitle`/`caption` |
 | Trick play (`trickPlay(true)`) | an I-frame playlist per video stream (`EXT-X-I-FRAME-STREAM-INF`): byte ranges of every key frame of transport stream segments behind the program tables of an `EXT-X-MAP`, or of each CMAF segment's first key frame | a trick-play adaptation set (`EssentialProperty` `http://dashif.org/guidelines/trickmode`) of the key frames alone, each lasting until the next, `maxPlayoutRate` and `codingDependency="false"` |
-| Events and live (`presentation(EVENT)`, `presentation(LIVE)`) | playlists rewritten after every segment, `EXT-X-PLAYLIST-TYPE:EVENT`, or a sliding window of `windowSegments` (grown to three target durations) whose expired segments `removeExpiredSegments` deletes once players cannot need them; `EXT-X-PROGRAM-DATE-TIME` from `programDateTime` | a dynamic manifest after every segment: `availabilityStartTime`, `publishTime`, `UTCTiming`, `minimumUpdatePeriod` until the end, `timeShiftBufferDepth` and windowed timelines for live |
+| Events and live (`presentation(EVENT)`, `presentation(LIVE)`) | playlists rewritten after every segment, `EXT-X-PLAYLIST-TYPE:EVENT`, or a sliding window of `windowSegments` (grown to three target durations) whose expired segments `removeExpiredSegments` deletes once players cannot need them; `EXT-X-PROGRAM-DATE-TIME` from `programDateTime`; an `EXT-X-TARGETDURATION` that never changes (`targetDuration`, or the first version's longest segment), a segment that would exceed it rejected | a dynamic manifest after every segment: `availabilityStartTime`, `publishTime`, `UTCTiming`, `minimumUpdatePeriod` until the end, `timeShiftBufferDepth` and windowed timelines for live |
 
 The transport stream segments of every rendition share one timeline (media time zero is the 700 ms
 multiplexing delay), so variants and alternate renditions stay in sync. The test kit's HLS and DASH
@@ -1377,8 +1377,11 @@ checks a FLAC source's MD5 signature on the way.
   across periods is not joined), does not resolve `xlink` references or `$SubNumber$`, and needs a `publishTime` to
   list the segments of a live representation addressed by duration. The packager writes HLS subtitles as WebVTT
   only (IMSC in fragmented MP4 is written for DASH), packages no bitmap subtitles or closed captions, addresses only
-  the first key frame of each CMAF segment in I-frame playlists, and declares a growing live playlist's target
-  duration as its longest segment so far, which changes if a later segment is longer.
+  the first key frame of each CMAF segment in I-frame playlists, and cuts segments only at key frames, so a segment
+  longer than the HLS target duration (`PackagingOptions.targetDuration`, or the longest segment of the first
+  version of an event or live playlist, which RFC 8216 forbids changing) is rejected with
+  `MediaException.Unsupported` rather than split. The `SUPPLEMENTAL-CODECS` of a backward compatible Dolby Vision
+  stream is written in HLS only; the DASH manifest names the base codec alone.
 - Encryption: keys are clear keys only; no digital rights management system is contacted and `pssh` data is not
   interpreted. Decryption is a demuxer and remuxer option (`DemuxerOptions.decryptionKeys`,
   `RemuxOptions.decryptionKeys`): `Media.probe`, the readers and the transcoder open protected files without keys

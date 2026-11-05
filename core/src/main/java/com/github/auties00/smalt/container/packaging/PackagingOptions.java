@@ -7,6 +7,7 @@ import com.github.auties00.smalt.metadata.TagMode;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalInt;
 
 /**
  * Holds the settings of a {@link Packager}: the manifests written, the segment format, the segment
@@ -74,7 +75,7 @@ public final class PackagingOptions {
      */
     private static final PackagingOptions HLS = new PackagingOptions(true, false, SegmentFormat.MPEG_TS,
             DEFAULT_SEGMENT_MICROS, false, false, "master.m3u8", "manifest.mpd", TagMode.COPY, null, null,
-            Presentation.ON_DEMAND, DEFAULT_WINDOW_SEGMENTS, false, null, false);
+            Presentation.ON_DEMAND, DEFAULT_WINDOW_SEGMENTS, false, null, false, 0);
 
     /**
      * The options of {@link #hlsCmaf()}.
@@ -128,11 +129,16 @@ public final class PackagingOptions {
 
     private final boolean trickPlay;
 
+    /**
+     * The declared target duration in seconds, or 0 to derive it from the segments.
+     */
+    private final int targetDuration;
+
     private PackagingOptions(boolean hls, boolean dash, SegmentFormat segmentFormat, long segmentMicros,
                              boolean byteRanges, boolean segmentIndex, String masterPlaylistName, String manifestName,
                              TagMode tagMode, MediaTags tags, PackagingEncryption encryption, Presentation presentation,
                              int windowSegments, boolean removeExpiredSegments, Instant programDateTime,
-                             boolean trickPlay) {
+                             boolean trickPlay, int targetDuration) {
         this.hls = hls;
         this.dash = dash;
         this.segmentFormat = segmentFormat;
@@ -149,6 +155,7 @@ public final class PackagingOptions {
         this.removeExpiredSegments = removeExpiredSegments;
         this.programDateTime = programDateTime;
         this.trickPlay = trickPlay;
+        this.targetDuration = targetDuration;
     }
 
     /**
@@ -322,11 +329,11 @@ public final class PackagingOptions {
      * <p>An event or live presentation rewrites each media playlist after each of its segments, the DASH manifest
      * after every segment, and the master playlist once every stream has a segment and again at the end; a
      * {@link PackageOutput} that serves the files replaces a file whenever it is opened again. The HLS target
-     * duration of a growing playlist is its longest segment so far, which stays constant when key frames are at
-     * most {@link #segmentMicros()} apart. The dynamic DASH manifest declares its {@code availabilityStartTime} at
-     * {@link #programDateTime()}, or at the time packaging started without one, and a {@code publishTime} and a
-     * {@code UTCTiming} of that time plus the media time reached, so it describes the presentation as a live
-     * source producing it in real time would.
+     * duration of a growing playlist never changes (RFC 8216 clause 4.3.3.1): it is {@link #targetDuration()}, or
+     * the longest segment of the first version of the playlist written. The dynamic DASH manifest declares its
+     * {@code availabilityStartTime} at {@link #programDateTime()}, or at the time packaging started without one,
+     * and a {@code publishTime} and a {@code UTCTiming} of that time plus the media time reached, so it describes
+     * the presentation as a live source producing it in real time would.
      */
     public Presentation presentation() {
         return presentation;
@@ -380,6 +387,24 @@ public final class PackagingOptions {
         return trickPlay;
     }
 
+    /**
+     * {@return the HLS target duration ({@code EXT-X-TARGETDURATION}) every media and I-frame playlist declares, in
+     * seconds, or empty to derive it from the segments; empty by default}
+     *
+     * <p>Without a declared target, a playlist on demand declares its longest segment rounded to whole seconds, and
+     * the playlists of an event or live presentation the longest segment of the first version written, which then
+     * stays: RFC 8216 clause 4.3.3.1 forbids changing the target duration of a playlist. Segments end at the first
+     * key frame after {@link #segmentMicros()}, so a later segment can run longer than that when key frames are
+     * sparse or irregular; an application that knows the spacing of its key frames bounds the target with
+     * {@link Builder#targetDuration(int)}. Either way, packaging fails with {@link
+     * com.github.auties00.smalt.MediaException.Unsupported} when a segment rounded to whole seconds would exceed the
+     * target, before the playlist listing it is written. The target also sets the three target durations a
+     * {@link Presentation#LIVE} window lasts. Without {@link #hlsEnabled() HLS} the declared target has no effect.
+     */
+    public OptionalInt targetDuration() {
+        return targetDuration == 0 ? OptionalInt.empty() : OptionalInt.of(targetDuration);
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof PackagingOptions that && hls == that.hls && dash == that.dash
@@ -392,14 +417,15 @@ public final class PackagingOptions {
                 && Objects.equals(encryption, that.encryption)
                 && presentation == that.presentation && windowSegments == that.windowSegments
                 && removeExpiredSegments == that.removeExpiredSegments
-                && Objects.equals(programDateTime, that.programDateTime) && trickPlay == that.trickPlay;
+                && Objects.equals(programDateTime, that.programDateTime) && trickPlay == that.trickPlay
+                && targetDuration == that.targetDuration;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(hls, dash, segmentFormat, segmentMicros, byteRanges, segmentIndex, masterPlaylistName,
                 manifestName, tagMode, tags, encryption, presentation, windowSegments, removeExpiredSegments,
-                programDateTime, trickPlay);
+                programDateTime, trickPlay, targetDuration);
     }
 
     @Override
@@ -411,7 +437,7 @@ public final class PackagingOptions {
                 + (tags == null ? "" : ", tags=" + tags) + (encryption == null ? "" : ", encryption=" + encryption)
                 + ", presentation=" + presentation + ", windowSegments=" + windowSegments + ", removeExpiredSegments="
                 + removeExpiredSegments + (programDateTime == null ? "" : ", programDateTime=" + programDateTime)
-                + ", trickPlay=" + trickPlay + "]";
+                + ", trickPlay=" + trickPlay + (targetDuration == 0 ? "" : ", targetDuration=" + targetDuration) + "]";
     }
 
     /**
@@ -438,6 +464,11 @@ public final class PackagingOptions {
         private Instant programDateTime;
         private boolean trickPlay;
 
+        /**
+         * The declared target duration in seconds, or {@code null} to derive it from the segments.
+         */
+        private Integer targetDuration;
+
         private Builder(PackagingOptions options) {
             this.hls = options.hls;
             this.dash = options.dash;
@@ -455,6 +486,7 @@ public final class PackagingOptions {
             this.removeExpiredSegments = options.removeExpiredSegments;
             this.programDateTime = options.programDateTime;
             this.trickPlay = options.trickPlay;
+            this.targetDuration = options.targetDuration == 0 ? null : options.targetDuration;
         }
 
         /**
@@ -684,6 +716,28 @@ public final class PackagingOptions {
         }
 
         /**
+         * Sets the HLS target duration every playlist declares; see {@link PackagingOptions#targetDuration()}.
+         *
+         * @param seconds the value, in seconds; {@link #build()} rejects a value that is not positive
+         * @return this builder
+         */
+        public Builder targetDuration(int seconds) {
+            this.targetDuration = seconds;
+            return this;
+        }
+
+        /**
+         * Derives the HLS target duration from the segments, the default; see
+         * {@link PackagingOptions#targetDuration()}.
+         *
+         * @return this builder
+         */
+        public Builder automaticTargetDuration() {
+            this.targetDuration = null;
+            return this;
+        }
+
+        /**
          * Builds the options.
          *
          * @return the options
@@ -697,7 +751,8 @@ public final class PackagingOptions {
          * master playlist or the manifest; or if the live window is not positive, an event or live presentation
          * asks for a single segment index, expired segments are removed outside a live presentation or from
          * byte-range files, or HLS trick play is asked of {@link PackagingEncryption.Method#AES_128} segments, whose
-         * key frames cannot be decrypted alone
+         * key frames cannot be decrypted alone; or if the declared target duration is not positive, or, with HLS,
+         * below the segment duration rounded to whole seconds, which every segment but the last lasts at least
          */
         public PackagingOptions build() {
             if (encryption != null) {
@@ -733,6 +788,13 @@ public final class PackagingOptions {
             if (trickPlay && hls && encryption != null && encryption.method() == PackagingEncryption.Method.AES_128) {
                 throw new IllegalArgumentException("I-frame playlists cannot address key frames of AES-128 segments");
             }
+            if (targetDuration != null) {
+                Checks.positive("target duration", targetDuration.intValue());
+                if (hls && segmentMicros > targetDuration * 1_000_000L + 499_999) {
+                    throw new IllegalArgumentException("segments of at least " + segmentMicros + " us exceed the "
+                            + "target duration of " + targetDuration + " s");
+                }
+            }
             if (!hls && !dash) {
                 throw new IllegalArgumentException("neither HLS nor DASH is requested");
             }
@@ -745,7 +807,8 @@ public final class PackagingOptions {
             return new PackagingOptions(hls, dash, segmentFormat, Checks.positive("segment duration", segmentMicros),
                     byteRanges, segmentIndex, checkName("master playlist name", masterPlaylistName),
                     checkName("manifest name", manifestName), tagMode, tags, encryption, presentation,
-                    windowSegments, removeExpiredSegments, programDateTime, trickPlay);
+                    windowSegments, removeExpiredSegments, programDateTime, trickPlay,
+                    targetDuration == null ? 0 : targetDuration);
         }
 
         /**

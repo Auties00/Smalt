@@ -23,8 +23,9 @@ import java.util.Set;
  * durations, every URI and byte range, every segment (as a transport stream, or as an fMP4 media segment against its
  * initialization segment), the continuity of the fragment timelines, independent segments starting with a sync
  * sample, and, in the master playlist, {@code BANDWIDTH} and {@code AVERAGE-BANDWIDTH} against the measured segment
- * bit rates, {@code CODECS} and {@code RESOLUTION} against the segments, and the rendition groups. WebVTT segments
- * are checked for their {@code X-TIMESTAMP-MAP} and cue timings, each cue placed on the timeline of the first
+ * bit rates, {@code CODECS} and {@code RESOLUTION} against the segments, the {@code SUPPLEMENTAL-CODECS} formats
+ * against {@code CODECS} and the segments, the {@code VIDEO-RANGE} of Dolby Vision segments, and the rendition
+ * groups. WebVTT segments are checked for their {@code X-TIMESTAMP-MAP} and cue timings, each cue placed on the timeline of the first
  * variant: it must first appear in the segment during which it starts and be repeated while it is shown (RFC 8216
  * clause 3.5). I-frame playlists ({@code EXT-X-I-FRAMES-ONLY}) must address key frames: a video PES packet at a
  * random access point, or a movie fragment starting with a sync sample. Event and live playlists follow the rules of
@@ -44,9 +45,11 @@ public final class HlsValidator {
      * @param width the picture width, or 0 when unknown
      * @param height the picture height, or 0 when unknown
      * @param startTicks the 90 kHz timestamp of the first segment's start, or -1 when unknown
+     * @param supplementalCodecs the HLS {@code SUPPLEMENTAL-CODECS} formats the segments call for: those of the
+     *                           Dolby Vision configurations with a backward compatible base layer they carry
      */
     public record Media(long peakBitrate, long averageBitrate, Set<String> codecs, int width, int height,
-                        long startTicks) {
+                        long startTicks, Set<String> supplementalCodecs) {
     }
 
     private final Findings findings;
@@ -203,6 +206,7 @@ public final class HlsValidator {
             var peak = measured.peakBitrate();
             var average = measured.averageBitrate();
             var codecs = new LinkedHashSet<>(measured.codecs());
+            var supplementals = new LinkedHashSet<>(measured.supplementalCodecs());
             for (var kind : List.of("AUDIO", "VIDEO", "SUBTITLES")) {
                 if (!attributes.containsKey(kind)) {
                     continue;
@@ -223,6 +227,7 @@ public final class HlsValidator {
                     groupPeak = Math.max(groupPeak, rendition.peakBitrate());
                     groupAverage = Math.max(groupAverage, rendition.averageBitrate());
                     codecs.addAll(rendition.codecs());
+                    supplementals.addAll(rendition.supplementalCodecs());
                 }
                 peak += groupPeak;
                 average += groupAverage;
@@ -242,6 +247,8 @@ public final class HlsValidator {
             } else {
                 findings.add(at, "EXT-X-STREAM-INF without CODECS");
             }
+            supplementalCodecs(attributes, supplementals, at);
+            videoRange(attributes, codecs, supplementals, at);
             if (measured.width() > 0) {
                 var resolution = attributes.get("RESOLUTION");
                 findings.require((measured.width() + "x" + measured.height()).equals(resolution), at, "RESOLUTION "
@@ -283,6 +290,8 @@ public final class HlsValidator {
         } else {
             findings.add(at, "EXT-X-I-FRAME-STREAM-INF without CODECS");
         }
+        supplementalCodecs(attributes, measured.supplementalCodecs(), at);
+        videoRange(attributes, measured.codecs(), measured.supplementalCodecs(), at);
         if (measured.width() > 0) {
             var resolution = attributes.get("RESOLUTION");
             findings.require((measured.width() + "x" + measured.height()).equals(resolution), at, "RESOLUTION "
@@ -302,6 +311,96 @@ public final class HlsValidator {
         for (var token : tokens) {
             findings.require(derived.stream().anyMatch(codec -> matches(token, codec)), at, "CODECS lists " + token
                     + ", which no segment carries (they carry " + derived + ")");
+        }
+    }
+
+    /**
+     * Checks a {@code SUPPLEMENTAL-CODECS} attribute (draft-pantos-hls-rfc8216bis clause 4.4.6.2): a quoted list of
+     * formats, each a codec followed by slash-separated four-character compatibility brands; a Dolby Vision format
+     * must have the two-digit profile and level form, name only the Dolby Vision base layer brands, and supplement
+     * a base codec {@code CODECS} lists. The Dolby Vision formats must be exactly those the segments call for (the
+     * configurations they carry with a backward compatible base layer).
+     */
+    private void supplementalCodecs(Map<String, String> attributes, Set<String> derived, String at) {
+        var value = attributes.get("SUPPLEMENTAL-CODECS");
+        if (value == null) {
+            findings.require(derived.isEmpty(), at, "no SUPPLEMENTAL-CODECS, the segments carry Dolby Vision "
+                    + derived);
+            return;
+        }
+        if (!value.startsWith("\"") || !value.endsWith("\"") || value.length() < 3) {
+            findings.add(at, "SUPPLEMENTAL-CODECS is not a non-empty quoted string");
+            return;
+        }
+        var codecs = attributes.containsKey("CODECS") ? List.of(unquote(attributes.get("CODECS")).split(","))
+                : List.<String>of();
+        for (var format : unquote(value).split(",", -1)) {
+            var parts = format.split("/", -1);
+            var codec = parts[0];
+            findings.require(!codec.isEmpty(), at, "SUPPLEMENTAL-CODECS has an empty format");
+            for (var index = 1; index < parts.length; index++) {
+                findings.require(parts[index].matches("[A-Za-z0-9 ]{4}"), at, "SUPPLEMENTAL-CODECS brand \""
+                        + parts[index] + "\" is not a four-character code");
+            }
+            var base = switch (codec.length() >= 4 ? codec.substring(0, 4) : codec) {
+                case "dvh1", "dvhe" -> List.of("hvc1", "hev1");
+                case "dva1", "dvav" -> List.of("avc1", "avc3");
+                case "dav1" -> List.of("av01");
+                default -> null;
+            };
+            if (base == null) {
+                continue;
+            }
+            findings.require(codec.matches("[a-z0-9]{4}\\.\\d{2}\\.\\d{2}"), at, "Dolby Vision format " + codec
+                    + " is not of the form <entry>.<profile>.<level> with two digits each");
+            for (var index = 1; index < parts.length; index++) {
+                findings.require(Set.of("db1p", "db2g", "db4h").contains(parts[index]), at, "Dolby Vision format "
+                        + format + " names " + parts[index] + ", not a base layer compatibility brand");
+            }
+            findings.require(codecs.stream().map(String::trim).anyMatch(entry -> base.stream()
+                    .anyMatch(prefix -> entry.equals(prefix) || entry.startsWith(prefix + "."))), at,
+                    "SUPPLEMENTAL-CODECS " + format + " supplements no " + base + " format of CODECS " + codecs);
+            findings.require(derived.stream().anyMatch(format::equalsIgnoreCase), at, "SUPPLEMENTAL-CODECS lists "
+                    + format + ", the segments call for " + derived);
+        }
+        var declared = List.of(unquote(value).split(",", -1));
+        for (var format : derived) {
+            findings.require(declared.stream().anyMatch(format::equalsIgnoreCase), at, "SUPPLEMENTAL-CODECS \""
+                    + unquote(value) + "\" does not list " + format + ", which the segments call for");
+        }
+    }
+
+    /**
+     * Checks a {@code VIDEO-RANGE} attribute (draft-pantos-hls-rfc8216bis clause 4.4.6.2): one of {@code SDR},
+     * {@code HLG} and {@code PQ}, and, for Dolby Vision segments, the range of their base layer: {@code PQ} for a
+     * Dolby Vision codec in {@code CODECS} (no backward compatible base layer), and the range a {@code db1p},
+     * {@code db2g} or {@code db4h} brand of the derived {@code SUPPLEMENTAL-CODECS} names. The attribute's absence
+     * means {@code SDR}.
+     */
+    private void videoRange(Map<String, String> attributes, Set<String> codecs, Set<String> supplementals,
+                            String at) {
+        var value = attributes.get("VIDEO-RANGE");
+        findings.require(value == null || Set.of("SDR", "HLG", "PQ").contains(value), at, "VIDEO-RANGE " + value
+                + " is not SDR, HLG or PQ");
+        var expected = new LinkedHashSet<String>();
+        for (var codec : codecs) {
+            if (codec.matches("(dvh1|dvhe|dva1|dvav|dav1)\\..*")) {
+                expected.add("PQ");
+            }
+        }
+        for (var format : supplementals) {
+            if (format.endsWith("/db1p")) {
+                expected.add("PQ");
+            } else if (format.endsWith("/db4h")) {
+                expected.add("HLG");
+            } else if (format.endsWith("/db2g")) {
+                expected.add("SDR");
+            }
+        }
+        var declared = value == null ? "SDR" : value;
+        for (var range : expected) {
+            findings.require(range.equals(declared), at, "VIDEO-RANGE " + declared + (value == null ? " (absent)"
+                    : "") + ", the Dolby Vision segments call for " + range);
         }
     }
 
@@ -523,6 +622,7 @@ public final class HlsValidator {
         var bits = 0.0;
         var seconds = 0.0;
         var codecs = new LinkedHashSet<String>();
+        var supplementals = new LinkedHashSet<String>();
         var width = 0;
         var height = 0;
         var startTicks = -1L;
@@ -553,7 +653,7 @@ public final class HlsValidator {
                 previousCues = webVtt(bytes, windowStart, elapsed, number + 1 == segments.size(), previousCues,
                         segmentFindings);
             } else if (iFrames) {
-                iFrame(bytes, segment, initializations, segmentFindings, codecs);
+                iFrame(bytes, segment, initializations, segmentFindings, codecs, supplementals);
                 if (segment.map() != null) {
                     var tracks = initializations.get(segment.map().file() + "@"
                             + (segment.map().range() == null ? "" : segment.map().range()[1]));
@@ -584,6 +684,9 @@ public final class HlsValidator {
                     for (var track : tracks.values()) {
                         if (!track.codecs().isEmpty()) {
                             codecs.add(track.codecs());
+                        }
+                        if (!track.supplementalCodecs().isEmpty()) {
+                            supplementals.add(track.supplementalCodecs());
                         }
                         if (track.width() > 0) {
                             width = track.width();
@@ -643,6 +746,7 @@ public final class HlsValidator {
                 var summary = TsValidator.validate(bytes, segmentFindings);
                 segmentFindings.require(summary.tablesFirst(), "/", "a PES packet before the PAT and the PMT");
                 codecs.addAll(TsCodecs.of(bytes, summary));
+                supplementals.addAll(TsCodecs.supplemental(summary));
                 if (startTicks < 0) {
                     startTicks = TsCodecs.firstPts(bytes, summary);
                 }
@@ -654,7 +758,7 @@ public final class HlsValidator {
             seconds += segment.duration();
         }
         return new Media(peak(sizes, target), seconds > 0 ? Math.round(bits / seconds) : 0, codecs, width, height,
-                startTicks);
+                startTicks, supplementals);
     }
 
     /**
@@ -821,7 +925,7 @@ public final class HlsValidator {
      * sample and end at or after that sample's data.
      */
     private void iFrame(byte[] bytes, Segment segment, Map<String, Map<Integer, IsoBmffValidator.Track>> inits,
-                        Findings segmentFindings, Set<String> codecs) {
+                        Findings segmentFindings, Set<String> codecs, Set<String> supplementals) {
         if (segment.map() == null) {
             segmentFindings.add("/", "an I-frame segment without EXT-X-MAP");
             return;
@@ -860,6 +964,7 @@ public final class HlsValidator {
                     codecs.add(codec);
                 }
             }
+            supplementals.addAll(TsCodecs.supplemental(summary));
             return;
         }
         var tracks = inits.get(key);
@@ -872,6 +977,9 @@ public final class HlsValidator {
         for (var track : tracks.values()) {
             if (!track.codecs().isEmpty()) {
                 codecs.add(track.codecs());
+            }
+            if (!track.supplementalCodecs().isEmpty()) {
+                supplementals.add(track.supplementalCodecs());
             }
         }
         var boxes = IsoBmff.parse(bytes, new Findings("i-frame"));
@@ -1091,6 +1199,25 @@ public final class HlsValidator {
                 }
             }
             return codecs;
+        }
+
+        /** {@return the SUPPLEMENTAL-CODECS formats of the DOVI video stream descriptors of a stream} */
+        static Set<String> supplemental(TsValidator.Summary summary) {
+            var formats = new LinkedHashSet<String>();
+            for (var entry : summary.doviDescriptors().entrySet()) {
+                var prefix = switch (summary.streamTypes().getOrDefault(entry.getKey(), -1)) {
+                    case 0x1B -> "dva1";
+                    case 0x24 -> "dvh1";
+                    case 0x06 -> "dav1";
+                    default -> null;
+                };
+                var format = prefix == null ? "" : SampleEntryCodecs.dolbyVisionSupplemental(prefix, entry.getValue(),
+                        0);
+                if (!format.isEmpty()) {
+                    formats.add(format);
+                }
+            }
+            return formats;
         }
 
         private static byte[] payload(byte[] data, int pid, int limit) {

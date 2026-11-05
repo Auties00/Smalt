@@ -1,9 +1,12 @@
 package com.github.auties00.smalt.container.packaging;
 
+import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.internal.codec.MpegVideoHeaders;
 import com.github.auties00.smalt.internal.nal.NalRecords;
 import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.track.DolbyVision;
 import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.VideoTrack;
 
@@ -15,7 +18,9 @@ import java.util.Locale;
  * manifests (RFC 6381, ISO/IEC 14496-15 Annex E, the VP codec, AV1, Opus and AC-3 ISOBMFF
  * bindings, the sample entry types of the other codecs a CMAF segment carries, the ISO/IEC 14496-30 text
  * tracks with the IMSC profile of a TTML track, and the Dolby Vision {@code dva1}, {@code dvh1} and {@code dav1}
- * strings with the two-digit profile and level of a track whose base layer is not backward compatible).
+ * strings with the two-digit profile and level of a track whose base layer is not backward compatible), and the
+ * HLS {@code SUPPLEMENTAL-CODECS} formats of Dolby Vision tracks whose base layer is (the Dolby specification of
+ * Dolby Vision streams within HLS), with the HLS {@code VIDEO-RANGE} of HDR and Dolby Vision video.
  */
 final class CodecStrings {
     private CodecStrings() {
@@ -33,19 +38,11 @@ final class CodecStrings {
      */
     static String of(Track track, byte[] keyFrame) {
         var config = track.codecConfig().orElse(null);
-        // TODO: the HLS SUPPLEMENTAL-CODECS of a backward compatible Dolby Vision track (dvh1.08.04/db4h)
         if (track instanceof VideoTrack video && video.dolbyVision().isPresent()
                 && !video.dolbyVision().get().isBackwardCompatible()) {
-            var prefix = switch (track.codec()) {
-                case H264 -> "dva1";
-                case HEVC -> "dvh1";
-                case AV1 -> "dav1";
-                default -> null;
-            };
-            if (prefix != null) {
-                var configuration = video.dolbyVision().get();
-                return String.format(Locale.ROOT, "%s.%02d.%02d", prefix, configuration.profile(),
-                        configuration.level());
+            var value = dolbyVision(track.codec(), video.dolbyVision().get());
+            if (value != null) {
+                return value;
             }
         }
         return switch (track.codec()) {
@@ -85,6 +82,92 @@ final class CodecStrings {
             case TTML -> ttml(config, keyFrame);
             default -> null;
         };
+    }
+
+    /**
+     * Returns the HLS {@code SUPPLEMENTAL-CODECS} format of a track: for a Dolby Vision track whose base layer is
+     * backward compatible, the Dolby Vision codec string ({@code dvh1}, {@code dva1} or {@code dav1} with the
+     * two-digit profile and level of its configuration) followed by the compatibility brand of its base layer
+     * ({@code db1p} for an HDR10 base layer, {@code db2g} for SDR, {@code db4h} for HLG; none for the other
+     * identifiers), for example {@code dvh1.08.06/db4h} for profile 8.4 at level 6.
+     *
+     * @param track the track to describe
+     * @return the format, or {@code null} when the track has no backward compatible Dolby Vision layer or its
+     * codec has no Dolby Vision string
+     */
+    static String supplemental(Track track) {
+        if (!(track instanceof VideoTrack video) || video.dolbyVision().isEmpty()
+                || !video.dolbyVision().get().isBackwardCompatible()) {
+            return null;
+        }
+        var configuration = video.dolbyVision().get();
+        var value = dolbyVision(track.codec(), configuration);
+        if (value == null) {
+            return null;
+        }
+        var brand = switch (configuration.baseLayerCompatibility()) {
+            case 1 -> "db1p";
+            case 2 -> "db2g";
+            case 4 -> "db4h";
+            default -> null;
+        };
+        return brand == null ? value : value + "/" + brand;
+    }
+
+    /**
+     * Returns the HLS {@code VIDEO-RANGE} of a video track (RFC 8216bis clause 4.4.6.2): for Dolby Vision, the range
+     * of its base layer ({@code PQ} for an HDR10 base layer or one that is not backward compatible, {@code HLG} for
+     * an HLG one, {@code SDR} for an SDR one), and otherwise {@code PQ} or {@code HLG} for an SMPTE ST 2084 or ARIB
+     * STD-B67 transfer.
+     *
+     * @param video the video track
+     * @return the range, or {@code null} for SDR video that is not Dolby Vision, which the absent attribute
+     * signals
+     */
+    static String videoRange(VideoTrack video) {
+        var configuration = video.dolbyVision().orElse(null);
+        if (configuration != null && dolbyVision(video.codec(), configuration) != null) {
+            if (!configuration.isBackwardCompatible()) {
+                return "PQ";
+            }
+            switch (configuration.baseLayerCompatibility()) {
+                case 1, 6 -> {
+                    return "PQ";
+                }
+                case 2 -> {
+                    return "SDR";
+                }
+                case 4 -> {
+                    return "HLG";
+                }
+                default -> {
+                }
+            }
+        }
+        var transfer = video.color().map(ColorInfo::transfer).orElse(null);
+        if (transfer == TransferCharacteristics.PQ) {
+            return "PQ";
+        }
+        return transfer == TransferCharacteristics.HLG ? "HLG" : null;
+    }
+
+    /**
+     * Returns the Dolby Vision codec string of a track: the sample entry type of its base codec, and the two-digit
+     * profile and level of its configuration.
+     *
+     * @param codec the base codec
+     * @param configuration the Dolby Vision configuration
+     * @return the codec string, or {@code null} when the codec is not H.264, HEVC or AV1
+     */
+    private static String dolbyVision(Codec codec, DolbyVision configuration) {
+        var prefix = switch (codec) {
+            case H264 -> "dva1";
+            case HEVC -> "dvh1";
+            case AV1 -> "dav1";
+            default -> null;
+        };
+        return prefix == null ? null : String.format(Locale.ROOT, "%s.%02d.%02d", prefix, configuration.profile(),
+                configuration.level());
     }
 
     /**

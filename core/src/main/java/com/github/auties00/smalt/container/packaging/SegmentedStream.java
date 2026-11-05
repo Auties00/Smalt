@@ -132,6 +132,12 @@ final class SegmentedStream {
     final List<Written> segments = new ArrayList<>();
 
     /**
+     * The target duration of the playlists of an event or live presentation, in seconds, once their first version
+     * fixed it, or 0.
+     */
+    long targetSeconds;
+
+    /**
      * The first key frame of the video track, or the first packet of a text track, kept for codec strings that
      * need it.
      */
@@ -606,6 +612,26 @@ final class SegmentedStream {
         var builder = new StringBuilder();
         for (var track : tracks) {
             var value = CodecStrings.of(track, track.kind() == TrackKind.AUDIO ? null : keyFrame);
+            if (value == null) {
+                continue;
+            }
+            if (!builder.isEmpty()) {
+                builder.append(',');
+            }
+            builder.append(value);
+        }
+        return builder.toString();
+    }
+
+    /**
+     * Returns the HLS {@code SUPPLEMENTAL-CODECS} value of the stream.
+     *
+     * @return the supplemental formats of its tracks, comma-separated, empty when none has one
+     */
+    String supplementalCodecString() {
+        var builder = new StringBuilder();
+        for (var track : tracks) {
+            var value = CodecStrings.supplemental(track);
             if (value == null) {
                 continue;
             }

@@ -21,8 +21,18 @@ public final class TsValidator {
     /** The longest PCR interval ISO/IEC 13818-1 section 2.7.2 allows, in 27 MHz ticks. */
     private static final long PCR_INTERVAL = 27_000_000L / 10;
 
-    /** What validation learned of a stream. */
-    public record Summary(int programs, Map<Integer, Integer> streamTypes, long packets, boolean tablesFirst) {
+    /**
+     * What validation learned of a stream.
+     *
+     * @param programs the number of programs the PAT lists
+     * @param streamTypes the stream type of each elementary PID
+     * @param packets the number of packets
+     * @param tablesFirst whether the PAT and the PMT precede the first PES packet
+     * @param doviDescriptors the body of the Dolby Vision video stream descriptor (tag {@code 0xB0}) of each
+     *                        elementary PID that has one
+     */
+    public record Summary(int programs, Map<Integer, Integer> streamTypes, long packets, boolean tablesFirst,
+                          Map<Integer, byte[]> doviDescriptors) {
     }
 
     private final byte[] data;
@@ -38,6 +48,7 @@ public final class TsValidator {
     private final Map<Integer, java.io.ByteArrayOutputStream> sections = new HashMap<>();
     private final Set<Integer> splicePids = new HashSet<>();
     private final Set<Integer> privateVideoPids = new HashSet<>();
+    private final Map<Integer, byte[]> doviDescriptors = new HashMap<>();
     private boolean patSeen;
     private boolean pmtSeen;
     private boolean pesBeforeTables;
@@ -152,7 +163,7 @@ public final class TsValidator {
         for (var pid : pcrPids) {
             findings.require(lastPcr.containsKey(pid), "/", "PCR PID " + pid + " carries no PCR");
         }
-        return new Summary(programs, Map.copyOf(streams), count, !pesBeforeTables);
+        return new Summary(programs, Map.copyOf(streams), count, !pesBeforeTables, Map.copyOf(doviDescriptors));
     }
 
     private void pcr(int pid, int at, String where) {
@@ -264,6 +275,10 @@ public final class TsValidator {
                 if (type == 0x06 && registered(raw, offset + 5, Math.min(offset + 5 + esInfo, length - 4), "AV01")) {
                     privateVideoPids.add(elementary);
                 }
+                var dovi = descriptor(raw, offset + 5, Math.min(offset + 5 + esInfo, length - 4), 0xB0);
+                if (dovi != null) {
+                    doviDescriptors.put(elementary, dovi);
+                }
                 var previous = streams.put(elementary, type);
                 findings.require(previous == null || previous == type, where, "PID " + elementary
                         + " changes its stream type");
@@ -271,6 +286,20 @@ public final class TsValidator {
             }
             findings.require(offset == length - 4, where, "PMT stream loop does not end at the CRC");
         }
+    }
+
+    /** {@return the body of the first descriptor of a tag in a descriptor loop, or {@code null}} */
+    private static byte[] descriptor(byte[] raw, int from, int to, int wanted) {
+        var position = from;
+        while (position + 2 <= to) {
+            var tag = raw[position] & 0xFF;
+            var size = raw[position + 1] & 0xFF;
+            if (tag == wanted && position + 2 + size <= to) {
+                return java.util.Arrays.copyOfRange(raw, position + 2, position + 2 + size);
+            }
+            position += 2 + size;
+        }
+        return null;
     }
 
     /** {@return whether a descriptor loop holds a registration descriptor with a format identifier} */

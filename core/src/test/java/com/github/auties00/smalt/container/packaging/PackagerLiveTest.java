@@ -1,11 +1,15 @@
 package com.github.auties00.smalt.container.packaging;
 
+import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.validate.Validators;
 import com.github.auties00.smalt.track.TrackKind;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -24,7 +28,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * validates each media playlist, master playlist and DASH manifest the moment it is written, against the segments on
  * disk at that moment: event playlists that grow, live windows that slide (RFC 8216 clause 6.2.2) and delete the
  * segments they dropped once players cannot need them, program dates, and dynamic DASH manifests with their
- * availability and publish times, update period and time-shift buffer.
+ * availability and publish times, update period and time-shift buffer; and the target duration of growing playlists,
+ * which never changes (RFC 8216 clause 4.3.3.1) and rejects a segment that would exceed it.
  */
 @DisplayName("Packager events and live presentations")
 class PackagerLiveTest {
@@ -230,6 +235,123 @@ class PackagerLiveTest {
         }
     }
 
+    /**
+     * Returns an H.264 encode of 10 seconds at 30 frames per second with key frames at 0 to 3 seconds and from 5
+     * seconds on, so that one-second segments are followed by a two-second one.
+     */
+    private static Path irregular() {
+        return Fixtures.ffmpeg("mp4", List.of("-f", "lavfi", "-i", "testsrc2=size=160x120:rate=30:duration=10"),
+                List.of("-c:v", "libx264", "-b:v", "150k", "-g", "300", "-keyint_min", "300", "-sc_threshold", "0",
+                        "-bf", "0", "-force_key_frames", "0,1,2,3,5,6,7,8,9"));
+    }
+
+    private static List<Integer> targets(List<String> versions) {
+        var targets = new ArrayList<Integer>();
+        for (var version : versions) {
+            var matcher = Pattern.compile("#EXT-X-TARGETDURATION:(\\d+)\n").matcher(version);
+            assertTrue(matcher.find(), version);
+            targets.add(Integer.parseInt(matcher.group(1)));
+        }
+        return targets;
+    }
+
+    private static double listed(String playlist) {
+        var matcher = Pattern.compile("#EXTINF:([0-9.]+),").matcher(playlist);
+        var total = 0.0;
+        while (matcher.find()) {
+            total += Double.parseDouble(matcher.group(1));
+        }
+        return total;
+    }
+
+    @Nested
+    @DisplayName("target durations")
+    class TargetDurations {
+        @ParameterizedTest(name = "{0}")
+        @EnumSource(value = PackagingOptions.Presentation.class, names = {"EVENT", "LIVE"})
+        @DisplayName("keep the declared target in every version when a later segment is the longest")
+        void declared(PackagingOptions.Presentation presentation) {
+            var directory = Presentations.directory("target-declared-" + presentation);
+            var output = recording(directory);
+            pack(output, PackagingOptions.hls().toBuilder().segmentMicros(1_000_000).presentation(presentation)
+                    .windowSegments(2).targetDuration(3).build(), irregular());
+            var versions = output.texts("v0.m3u8");
+            assertTrue(versions.size() >= 9, versions.size() + " versions");
+            assertEquals(List.of(3), targets(versions).stream().distinct().toList());
+            var last = versions.getLast();
+            assertTrue(last.contains("#EXTINF:2.000000,\nv0_00004.ts\n"), last);
+            if (presentation == PackagingOptions.Presentation.LIVE) {
+                // two segments are listed until they last the three target durations (nine seconds) of RFC 8216
+                // clause 6.2.2, which takes eight or nine of the ten seconds
+                var listed = count(last, "#EXTINF:");
+                assertTrue(listed == 8 || listed == 9, last);
+                assertTrue(listed(last) >= 8.9, last);
+                assertTrue(versions.get(2).contains("#EXT-X-MEDIA-SEQUENCE:0\n"), versions.get(2));
+            }
+        }
+
+        @Test
+        @DisplayName("fix an automatic target with the first version and reject the longer segment that follows")
+        void automatic() {
+            var directory = Presentations.directory("target-automatic");
+            var output = recording(directory);
+            var failure = assertThrows(MediaException.Unsupported.class, () -> pack(output, PackagingOptions.hls()
+                    .toBuilder().segmentMicros(1_000_000).presentation(PackagingOptions.Presentation.EVENT).build(),
+                    irregular()));
+            assertTrue(failure.getMessage().contains("segment 4 of stream v0"), failure.getMessage());
+            var versions = output.texts("v0.m3u8");
+            assertEquals(3, versions.size(), "the versions listing the one-second segments");
+            assertEquals(List.of(1, 1, 1), targets(versions));
+            for (var version : versions) {
+                assertFalse(version.contains("v0_00004.ts"), version);
+            }
+        }
+
+        @Test
+        @DisplayName("keep an automatic target that every segment fits, in media and I-frame playlists")
+        void automaticRegular() {
+            var directory = Presentations.directory("target-automatic-regular");
+            var output = recording(directory);
+            pack(output, PackagingOptions.hlsCmaf().toBuilder().segmentMicros(2_000_000)
+                    .presentation(PackagingOptions.Presentation.LIVE).trickPlay(true).build(),
+                    Presentations.video("320x240", "400k", 30, 8));
+            for (var name : List.of("v0_video.m3u8", "v0_video_iframes.m3u8")) {
+                var targets = targets(output.texts(name));
+                assertTrue(targets.size() >= 4, name);
+                assertEquals(List.of(2), targets.stream().distinct().toList(), name);
+            }
+        }
+
+        @Test
+        @DisplayName("leave the DASH live window of a presentation without HLS to the segments")
+        void dashOnly() {
+            var output = recording(Presentations.directory("target-dash-only"));
+            pack(output, PackagingOptions.dash().toBuilder().segmentMicros(1_000_000)
+                    .presentation(PackagingOptions.Presentation.LIVE).windowSegments(3).targetDuration(5)
+                    .programDateTime(START).build(), Presentations.video("320x240", "400k", 30, 12));
+            var last = output.texts("manifest.mpd").getLast();
+            // as without a declared target: three one-second segments, grown by one for the short last audio one;
+            // a five-second target would have kept fifteen seconds
+            assertTrue(last.contains("timeShiftBufferDepth=\"PT4.000S\""), last);
+        }
+
+        @Test
+        @DisplayName("reject a segment longer than the declared target on demand too, and declare it when it fits")
+        void onDemand() {
+            assertThrows(MediaException.Unsupported.class, () -> pack(recording(Presentations.directory(
+                    "target-on-demand-short")), PackagingOptions.hls().toBuilder().segmentMicros(1_000_000)
+                    .targetDuration(1).build(), irregular()));
+            var output = recording(Presentations.directory("target-on-demand"));
+            pack(output, PackagingOptions.hls().toBuilder().segmentMicros(1_000_000).targetDuration(4).trickPlay(true)
+                    .build(), irregular());
+            assertEquals(List.of(4), targets(output.texts("v0.m3u8")));
+            assertEquals(List.of(4), targets(output.texts("v0_iframes.m3u8")));
+            var automatic = recording(Presentations.directory("target-on-demand-automatic"));
+            pack(automatic, PackagingOptions.hls().toBuilder().segmentMicros(1_000_000).build(), irregular());
+            assertEquals(List.of(2), targets(automatic.texts("v0.m3u8")), "the longest segment on demand");
+        }
+    }
+
     @Test
     @DisplayName("reject settings a live presentation cannot honor")
     void validation() {
@@ -246,5 +368,26 @@ class PackagerLiveTest {
         assertEquals(options, options.toBuilder().build());
         assertEquals(START, options.programDateTime().orElseThrow());
         assertFalse(options.toBuilder().noProgramDateTime().build().programDateTime().isPresent());
+        assertTrue(options.targetDuration().isEmpty());
+        var bounded = options.toBuilder().targetDuration(6).build();
+        assertEquals(6, bounded.targetDuration().orElseThrow());
+        assertEquals(bounded, bounded.toBuilder().build());
+        assertFalse(bounded.equals(options));
+        assertTrue(bounded.toString().contains("targetDuration=6"), bounded.toString());
+        assertEquals(options, bounded.toBuilder().automaticTargetDuration().build());
+        assertThrows(IllegalArgumentException.class, () -> PackagingOptions.hls().toBuilder().targetDuration(0)
+                .build());
+        assertThrows(IllegalArgumentException.class, () -> PackagingOptions.hls().toBuilder().targetDuration(-2)
+                .build());
+        // segments of at least 2.5 s round to 3 s, above a target of 2 s; 2.4 s ones round to 2 s
+        assertThrows(IllegalArgumentException.class, () -> PackagingOptions.hls().toBuilder()
+                .segmentMicros(2_500_000).targetDuration(2).build());
+        assertEquals(2, PackagingOptions.hls().toBuilder().segmentMicros(2_499_999).targetDuration(2).build()
+                .targetDuration().orElseThrow());
+        // without HLS the target declares nothing, so it bounds no segment
+        assertEquals(2, PackagingOptions.dash().toBuilder().segmentMicros(2_500_000).targetDuration(2).build()
+                .targetDuration().orElseThrow());
+        assertThrows(IllegalArgumentException.class, () -> PackagingOptions.dash().toBuilder().targetDuration(0)
+                .build());
     }
 }

@@ -59,9 +59,12 @@ public final class IsoBmffValidator {
      * @param height the visual height of the sample entry, or 0 for a track without pictures
      * @param editOffset the media time the edit list skips before the presentation starts, in the media timescale:
      *                   the media time of a first edit that is not empty, 0 without one
+     * @param supplementalCodecs the HLS {@code SUPPLEMENTAL-CODECS} format the first sample entry calls for, or an
+     *                           empty string for none
      */
     public record Track(int id, String handler, long timescale, String sampleEntry, String codecs, long defaultDuration,
-                        long defaultSize, long defaultFlags, int width, int height, long editOffset) {
+                        long defaultSize, long defaultFlags, int width, int height, long editOffset,
+                        String supplementalCodecs) {
     }
 
     /**
@@ -406,6 +409,7 @@ public final class IsoBmffValidator {
         unique(stbl, stblWhere, "ctts", "stss", "stps", "sdtp", "cslg");
         var sampleEntry = "????";
         var codecs = "";
+        var supplementalCodecs = "";
         var width = 0;
         var height = 0;
         if (required(stbl, stblWhere, "stsd")) {
@@ -420,6 +424,7 @@ public final class IsoBmffValidator {
                 var first = stsd.children().getFirst();
                 sampleEntry = first.type();
                 codecs = SampleEntryCodecs.of(data, first, handler);
+                supplementalCodecs = SampleEntryCodecs.supplemental(data, first);
                 if (handler.equals("vide") && first.size() >= 8 + 78) {
                     width = u16(data, first.offset() + 32);
                     height = u16(data, first.offset() + 34);
@@ -431,7 +436,7 @@ public final class IsoBmffValidator {
         var summary = new Track(trackId, handler, timescale, sampleEntry, codecs,
                 trex != null ? u32(data, trex.payload() + 12) : 0, trex != null ? u32(data, trex.payload() + 16) : 0,
                 trex != null ? u32(data, trex.payload() + 20) : 0, width, height,
-                trak.child("edts").map(this::editOffset).orElse(0L));
+                trak.child("edts").map(this::editOffset).orElse(0L), supplementalCodecs);
         var expectedTrackDuration = timescale > 0 ? Math.round((double) mediaDuration * movieTimescale / timescale) : 0;
         var edts = trak.child("edts");
         var repeating = false;

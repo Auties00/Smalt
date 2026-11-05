@@ -14,7 +14,8 @@ import static com.github.auties00.smalt.testkit.validate.IsoBmff.u8;
  * Derives the RFC 6381 {@code codecs} parameter of an ISOBMFF sample entry from its configuration box, for checking
  * the {@code CODECS} of an HLS playlist and the {@code codecs} of a DASH manifest against the segments: ISO/IEC
  * 14496-15 Annex E for AVC and HEVC, the VP codec ISO media file format binding, the AV1 codec ISO media file format
- * binding, and RFC 6381 section 3.3 for MPEG-4 audio.
+ * binding, the Dolby Vision ISOBMFF binding for Dolby Vision sample entries, and RFC 6381 section 3.3 for MPEG-4
+ * audio.
  */
 public final class SampleEntryCodecs {
     private SampleEntryCodecs() {
@@ -53,6 +54,9 @@ public final class SampleEntryCodecs {
                     .map(box -> av1(data, box.payload())).orElse(format);
             case "mp4a" -> entry.child("esds").or(() -> entry.find("wave", "esds")).map(box -> mpeg4Audio(data, box))
                     .orElse(format);
+            case "dvh1", "dvhe", "dva1", "dvav", "dav1" -> entry.child("dvcC").or(() -> entry.child("dvvC"))
+                    .or(() -> entry.child("dvwC")).filter(box -> box.payloadSize() >= 4)
+                    .map(box -> dolbyVision(data, format, box.payload())).orElse(format);
             case "Opus", "fLaC", "ac-3", "ec-3", "ipcm", "fpcm", "alac", "wvtt", "stpp", "mp4v" -> format;
             default -> "";
         };
@@ -89,6 +93,71 @@ public final class SampleEntryCodecs {
             }
         }
         return true;
+    }
+
+    /**
+     * Returns the HLS {@code SUPPLEMENTAL-CODECS} format a sample entry calls for: for an AVC, HEVC or AV1 entry
+     * carrying a Dolby Vision configuration box whose base layer is present and backward compatible, the Dolby
+     * Vision codec string ({@code dva1}, {@code dvh1} or {@code dav1} with the two-digit profile and level) and the
+     * brand of the compatibility identifier ({@code db1p} for 1, {@code db2g} for 2, {@code db4h} for 4, none
+     * otherwise).
+     *
+     * @param data the file
+     * @param entry the sample entry
+     * @return the format, or an empty string when the entry calls for none
+     */
+    public static String supplemental(byte[] data, Box entry) {
+        var prefix = switch (entry.type()) {
+            case "avc1", "avc3" -> "dva1";
+            case "hvc1", "hev1" -> "dvh1";
+            case "av01" -> "dav1";
+            default -> null;
+        };
+        if (prefix == null) {
+            return "";
+        }
+        var box = entry.child("dvcC").or(() -> entry.child("dvvC")).or(() -> entry.child("dvwC"))
+                .filter(candidate -> candidate.payloadSize() >= 5).orElse(null);
+        return box == null ? "" : dolbyVisionSupplemental(prefix, data, (int) box.payload());
+    }
+
+    /**
+     * Returns the HLS {@code SUPPLEMENTAL-CODECS} format of a Dolby Vision configuration, laid out as a
+     * {@code DOVIDecoderConfigurationRecord} or as the body of a transport stream DOVI video stream descriptor (the
+     * two agree up to the compatibility identifier when a base layer is present; without one the descriptor holds a
+     * dependency PID first, and no format applies).
+     *
+     * @param prefix the Dolby Vision sample entry type of the base codec
+     * @param data the bytes
+     * @param p the offset of the configuration
+     * @return the format, or an empty string when the base layer is absent or not backward compatible
+     */
+    public static String dolbyVisionSupplemental(String prefix, byte[] data, int p) {
+        if (p + 5 > data.length || (data[p + 3] & 1) == 0) {
+            return "";
+        }
+        var compatibility = (data[p + 4] & 0xFF) >> 4;
+        if (compatibility == 0) {
+            return "";
+        }
+        var format = dolbyVision(data, prefix, p);
+        return switch (compatibility) {
+            case 1 -> format + "/db1p";
+            case 2 -> format + "/db2g";
+            case 4 -> format + "/db4h";
+            default -> format;
+        };
+    }
+
+    /**
+     * Returns the codecs parameter of a Dolby Vision sample entry from its {@code DOVIDecoderConfigurationRecord}:
+     * the entry type with the two-digit {@code dv_profile} (7 bits) and {@code dv_level} (6 bits) that follow the
+     * two version bytes.
+     */
+    private static String dolbyVision(byte[] data, String type, long p) {
+        var profile = u8(data, p + 2) >> 1;
+        var level = ((u8(data, p + 2) & 1) << 5) | (u8(data, p + 3) >> 3);
+        return String.format(Locale.ROOT, "%s.%02d.%02d", type, profile, level);
     }
 
     private static String hevc(byte[] data, String type, long p) {

@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.container.packaging;
 
+import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.internal.Languages;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Rational;
@@ -70,12 +71,62 @@ final class Manifests {
         for (var index = first; index < durations.length; index++) {
             length += durations[index];
         }
-        var needed = 3 * target(durations) * 1_000_000;
+        var needed = 3 * targetDuration(presentation, stream) * 1_000_000;
         while (first > 0 && length < needed) {
             first--;
             length += durations[first];
         }
         return first;
+    }
+
+    /**
+     * Returns the target duration the playlists of a stream declare (see {@link PackagingOptions#targetDuration()}):
+     * with HLS playlists, the options' target; otherwise the longest segment rounded to whole seconds, which for an
+     * event or live presentation with HLS playlists is taken once, from the segments of the first call that has
+     * any, and kept. Without HLS playlists, the value only sizes the live window of the DASH manifest, so the
+     * declared target is ignored.
+     *
+     * @param presentation the packaged presentation, its options and streams
+     * @param stream the segmented stream
+     * @return the target duration in seconds, at least one
+     */
+    static long targetDuration(Presentation presentation, SegmentedStream stream) {
+        var declared = presentation.options.targetDuration();
+        if (declared.isPresent() && presentation.options.hlsEnabled()) {
+            return declared.getAsInt();
+        }
+        var durations = durations(stream);
+        if (presentation.options.presentation() == PackagingOptions.Presentation.ON_DEMAND
+                || !presentation.options.hlsEnabled() || durations.length == 0) {
+            return target(durations);
+        }
+        if (stream.targetSeconds == 0) {
+            stream.targetSeconds = target(durations);
+        }
+        return stream.targetSeconds;
+    }
+
+    /**
+     * Checks that every duration a playlist lists, rounded to whole seconds, is at most its target duration (RFC
+     * 8216 clause 4.3.3.1).
+     *
+     * @param stream the segmented stream, for the message
+     * @param target the target duration in seconds
+     * @param durations the durations, in microseconds
+     * @param from the index of the first duration listed
+     * @param kind what the durations are, for the message
+     * @throws MediaException.Unsupported if a duration exceeds the target
+     */
+    private static void checkTarget(SegmentedStream stream, long target, long[] durations, int from, String kind) {
+        for (var index = from; index < durations.length; index++) {
+            if ((durations[index] + 500_000) / 1_000_000 > target) {
+                throw new MediaException.Unsupported("hls target duration", String.format(Locale.ROOT,
+                        "%s %d of stream %s lasts %.6f s, longer than the target duration of %d s the playlist "
+                                + "declares; key frames are too far apart for the segment duration, or the target "
+                                + "duration must be raised", kind, index + 1, stream.name,
+                        durations[index] / 1_000_000.0, target));
+            }
+        }
     }
 
     /**
@@ -93,22 +144,24 @@ final class Manifests {
     }
 
     /**
-     * Writes the media playlist of an output (RFC 8216 clause 4.3.3): the target duration, the playlist type of
+     * Writes the media playlist of an output (RFC 8216 clause 4.3.3): the target duration (see
+     * {@link #targetDuration(Presentation, SegmentedStream)}), the playlist type of
      * the presentation, the initialization segment of a CMAF stream as {@code EXT-X-MAP}, the encryption, and
      * every segment of the window with its program date, duration and byte range.
      *
      * @param presentation the packaged presentation, its options and streams
      * @param output the output the playlist describes
      * @return the playlist text
+     * @throws MediaException.Unsupported if a segment listed lasts longer than the target duration
      */
     static String mediaPlaylist(Presentation presentation, Presentation.Output output) {
         var stream = output.stream;
         var durations = durations(stream);
         var first = windowStart(presentation, stream);
+        var target = targetDuration(presentation, stream);
+        checkTarget(stream, target, durations, first, "segment");
         var text = new StringBuilder();
-        // TODO: keep the target duration of an event or live playlist fixed (RFC 8216 clause 4.3.3.1) when a later
-        // segment is longer than every earlier one, for example by declaring a target the application bounds
-        header(text, presentation, target(durations), first);
+        header(text, presentation, target, first);
         if (stream.independent()) {
             text.append("#EXT-X-INDEPENDENT-SEGMENTS\n");
         }
@@ -143,6 +196,7 @@ final class Manifests {
      * @param presentation the packaged presentation, its options and streams
      * @param output the output whose key frames the playlist addresses
      * @return the playlist text
+     * @throws MediaException.Unsupported if a key frame listed lasts longer than the target duration
      */
     static String iFramePlaylist(Presentation presentation, Presentation.Output output) {
         var stream = output.stream;
@@ -156,8 +210,12 @@ final class Manifests {
             }
         }
         var durations = keyFrameDurations(stream);
+        var target = presentation.options.targetDuration().isEmpty()
+                && presentation.options.presentation() == PackagingOptions.Presentation.ON_DEMAND
+                ? target(durations) : targetDuration(presentation, stream);
+        checkTarget(stream, target, durations, from, "key frame");
         var text = new StringBuilder();
-        header(text, presentation, target(durations), from);
+        header(text, presentation, target, from);
         text.append("#EXT-X-I-FRAMES-ONLY\n");
         if (stream.init != null) {
             text.append("#EXT-X-MAP:URI=\"").append(stream.init.uri()).append('"');
@@ -281,7 +339,10 @@ final class Manifests {
     /**
      * Writes the master playlist (RFC 8216 clause 4.3.4): the audio rendition groups, the subtitle group, one
      * {@code EXT-X-STREAM-INF} per variant (and per audio group, when the presentation has audio renditions) and
-     * one {@code EXT-X-I-FRAME-STREAM-INF} per I-frame playlist.
+     * one {@code EXT-X-I-FRAME-STREAM-INF} per I-frame playlist; a variant or I-frame playlist whose video is Dolby
+     * Vision with a backward compatible base layer names the base codec in {@code CODECS} and the Dolby Vision
+     * codec and compatibility brand in {@code SUPPLEMENTAL-CODECS}, and HDR or Dolby Vision video declares its
+     * {@code VIDEO-RANGE}.
      *
      * @param presentation the packaged presentation, its options and streams
      * @return the playlist text
@@ -421,6 +482,14 @@ final class Manifests {
             if (codec != null) {
                 text.append(",CODECS=\"").append(codec).append('"');
             }
+            var supplemental = video == null ? null : CodecStrings.supplemental(video);
+            if (supplemental != null) {
+                text.append(",SUPPLEMENTAL-CODECS=\"").append(supplemental).append('"');
+            }
+            var range = video == null ? null : CodecStrings.videoRange(video);
+            if (range != null) {
+                text.append(",VIDEO-RANGE=").append(range);
+            }
             if (video != null && video.width() > 0 && video.height() > 0) {
                 text.append(",RESOLUTION=").append(video.width()).append('x').append(video.height());
             }
@@ -491,7 +560,14 @@ final class Manifests {
         if (!codecs.isEmpty()) {
             text.append(",CODECS=\"").append(String.join(",", codecs)).append('"');
         }
+        if (main != null && !main.stream.supplementalCodecString().isEmpty()) {
+            text.append(",SUPPLEMENTAL-CODECS=\"").append(main.stream.supplementalCodecString()).append('"');
+        }
         var video = main == null ? null : main.stream.video();
+        var range = video == null ? null : CodecStrings.videoRange(video);
+        if (range != null) {
+            text.append(",VIDEO-RANGE=").append(range);
+        }
         if (video != null && video.width() > 0 && video.height() > 0) {
             text.append(",RESOLUTION=").append(video.width()).append('x').append(video.height());
         }
