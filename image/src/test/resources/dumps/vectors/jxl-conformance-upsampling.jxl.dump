@@ -1,0 +1,13 @@
+# image dump of vectors/jxl-conformance-upsampling.jxl; regenerate with -Dsmalt.test.updateDumps=true
+format JXL
+info ImageInfo[format=JXL, width=800, height=600, hasAlpha=true, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 800x600 rgba8 alpha=true crc=fe6da449
+  format=JXL orientation=NORMAL source=800x600
+  icc=512:5b447eb9 exif=none xmp=none
+  profile=ColorProfile[RGB_D65_SRG_Rel_SRG, RGB, DISPLAY, v4.4.0]
+scaled 200x150
+picture 800x600 rgba8 alpha=true crc=fe6da449
+  format=JXL orientation=NORMAL source=800x600
+  icc=512:5b447eb9 exif=none xmp=none
+  profile=ColorProfile[RGB_D65_SRG_Rel_SRG, RGB, DISPLAY, v4.4.0]
