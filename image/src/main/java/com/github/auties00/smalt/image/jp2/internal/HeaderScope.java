@@ -60,6 +60,18 @@ final class HeaderScope {
     final Quantization[] componentQuantizations;
 
     /**
+     * The quantization of each {@code QPD} segment, by {@link PrecinctQuantizations#key} of its resolution level and
+     * precinct.
+     */
+    final Map<Long, Quantization> precinctQuantizations = new HashMap<>();
+
+    /**
+     * The quantization of each {@code QPC} segment, by component and then by {@link PrecinctQuantizations#key} of its
+     * resolution level and precinct.
+     */
+    final Map<Integer, Map<Long, Quantization>> componentPrecinctQuantizations = new HashMap<>();
+
+    /**
      * The region-of-interest shift of each {@code RGN} segment of the maximum shift style, by component; {@code -1}
      * for components without one.
      */

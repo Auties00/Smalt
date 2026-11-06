@@ -68,10 +68,69 @@ class Part2FuzzSeeds {
                 Jp2Part2Test.image(random, 384, -50, 50)};
         var multiple = transforms.write(Jp2Part2Test.forward(transforms, planes, new long[3], Tree.dyadic(2), null));
 
+        var deadzone = new Part2Writer(32, 24, 1, 8, false);
+        deadzone.rsiz |= 0x0002;
+        deadzone.wavelet = 0;
+        deadzone.levels = 2;
+        deadzone.quantizationStyle = Quantization.DEADZONE_EXPOUNDED;
+        deadzone.bandDeadzones = new int[]{-8192, 9830, 9830, 16384, -16384, 0, 32767};
+        deadzone.exponent = 10;
+        deadzone.guardBits = 2;
+        var deadzoned = deadzone.write(new long[][]{Jp2Part2Test.image(random, 32 * 24, -60, 60)});
+
+        var trellis = new Part2Writer(32, 24, 1, 8, false);
+        trellis.rsiz |= 0x0004;
+        trellis.wavelet = 0;
+        trellis.levels = 2;
+        trellis.quantizationStyle = Quantization.TRELLIS_DERIVED;
+        trellis.exponent = 10;
+        var trellised = trellis.write(new float[][]{new float[32 * 24]},
+                (values, indices, w, h, stepSize, resolution, orientation, precinct) -> {
+                    var scaled = new double[values.length];
+                    for (var i = 0; i < scaled.length; i++) {
+                        scaled[i] = Math.sin(i * 0.37 + resolution) * 40;
+                    }
+                    var q = new long[values.length];
+                    Part2Tcq.quantize(scaled, w, h, q, new double[values.length]);
+                    for (var i = 0; i < q.length; i++) {
+                        indices[i] = (int) q[i];
+                    }
+                });
+
+        var precincts = new Part2Writer(32, 32, 2, 8, false);
+        precincts.rsiz |= Codestream.RSIZ_PRECINCT_QUANTIZATION;
+        precincts.wavelet = 0;
+        precincts.levels = 1;
+        precincts.quantizationStyle = Quantization.SCALAR_EXPOUNDED;
+        precincts.exponent = 10;
+        precincts.precinctSizes = new int[]{3, 4};
+        precincts.mainSegments.add(Jp2Part2QuantizationTest.qpd(false, 1, 1, 2 << 5 | 1, new byte[]{0x60, 0x10}));
+        precincts.mainSegments.add(Jp2Part2QuantizationTest.qpc(1, true, 0, 2, 2 << 5 | 2, new byte[]{0x58, 0x00}));
+        precincts.tileSegments.add(Jp2Part2QuantizationTest.qpd(false, 1, 3, 3 << 5 | 5,
+                new byte[]{0x20, 0x00, 0x60, 0x00, 0x20, 0x00, 0x60, 0x00, 0x20, 0x00, 0x60, 0x00}));
+        var overrides = new java.util.HashMap<Long, Quantization>();
+        overrides.put(PrecinctQuantizations.key(1, 1), Quantization.parse(new byte[]{0x41, 0x60, 0x10}, 0, 3));
+        overrides.put(PrecinctQuantizations.key(1, 3), Quantization.parse(new byte[]{0x65, 0x20, 0x00, 0x60, 0x00,
+                0x20, 0x00, 0x60, 0x00, 0x20, 0x00, 0x60, 0x00}, 0, 13));
+        var component1 = new java.util.HashMap<>(overrides);
+        component1.put(PrecinctQuantizations.key(0, 2), Quantization.parse(new byte[]{0x42, 0x58, 0x00}, 0, 3));
+        precincts.precinctQuantizations = new PrecinctQuantizations[]{
+                new PrecinctQuantizations(overrides, java.util.Map.of(), java.util.Map.of(), java.util.Map.of(), false),
+                new PrecinctQuantizations(component1, java.util.Map.of(), java.util.Map.of(), java.util.Map.of(),
+                        false)};
+        var precinctDependent = precincts.write(new long[][]{Jp2Part2Test.image(random, 1024, -40, 40),
+                Jp2Part2Test.image(random, 1024, -40, 40)});
+
         var samples = Path.of("src", "test", "resources", "samples", "jp2");
         for (var target : List.of("jp2", "jp2Channels")) {
             FuzzSeeds.write(FUZZ, target, "valid-part2-kernel.j2k", arbitrary);
             FuzzSeeds.write(FUZZ, target, "valid-part2-transforms.j2k", multiple);
+            FuzzSeeds.write(FUZZ, target, "valid-part2-deadzone.j2k", deadzoned);
+            FuzzSeeds.write(FUZZ, target, "valid-part2-trellis.j2k", trellised);
+            FuzzSeeds.write(FUZZ, target, "valid-part2-precincts.j2k", precinctDependent);
+            FuzzSeeds.write(FUZZ, target, "valid-part2-derived-one-direction.j2k",
+                    Fixtures.read(Path.of("src", "test", "resources", "com", "github", "auties00", "smalt",
+                            "image", "jp2", "kakadu-e5", "mixed.j2c")));
             FuzzSeeds.write(FUZZ, target, "valid-mct.j2k", Fixtures.read(samples.resolve("mct.j2k")));
             FuzzSeeds.write(FUZZ, target, "valid-layers.jpx",
                     Fixtures.read(samples.resolve("layers.jpx")));

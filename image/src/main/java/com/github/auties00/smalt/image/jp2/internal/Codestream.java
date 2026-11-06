@@ -190,6 +190,12 @@ public final class Codestream {
     static final int RSIZ_ROI = 0x0400;
 
     /**
+     * The {@code Rsiz} flag of ISO/IEC 15444-2 precinct-dependent quantization, which also widens the {@code TPsot} and
+     * {@code TNsot} fields of the {@code SOT} segment to 16 bits (A.2.2).
+     */
+    static final int RSIZ_PRECINCT_QUANTIZATION = 0x0800;
+
+    /**
      * The {@code Pcap} flag of ISO/IEC 15444-15 (HTJ2K): bit 15, counted from the most significant bit as 1.
      */
     static final int PCAP_PART15 = 1 << (32 - 15);
@@ -437,7 +443,10 @@ public final class Codestream {
                 }
                 break;
             }
-            if (end - position < 12 || u16(position + 2) != 10) {
+            var sotLength = end - position < 4 ? 0 : u16(position + 2);
+            var wideSot = sotLength == 12 && (capabilities & (RSIZ_PART2 | RSIZ_PRECINCT_QUANTIZATION))
+                    == (RSIZ_PART2 | RSIZ_PRECINCT_QUANTIZATION);
+            if (end - position < 2 + sotLength || sotLength != 10 && !wideSot) {
                 if (tilePart == 0) {
                     throw new MediaException.Malformed("invalid JPEG 2000 SOT segment");
                 }
@@ -448,7 +457,7 @@ public final class Codestream {
             if (index >= tiles.length) {
                 throw new MediaException.Malformed("invalid JPEG 2000 tile index " + index);
             }
-            if (partLength != 0 && partLength < 14) {
+            if (partLength != 0 && partLength < 4 + sotLength) {
                 if (tilePart == 0) {
                     throw new MediaException.Malformed("invalid JPEG 2000 tile-part length " + partLength);
                 }
@@ -459,7 +468,7 @@ public final class Codestream {
             if (tile == null) {
                 tile = tiles[index] = new TileData(precisions.length);
             }
-            var cursor = position + 12;
+            var cursor = position + 2 + sotLength;
             var bodyStart = -1;
             try {
                 while (end - cursor >= 2) {
@@ -736,12 +745,72 @@ public final class Codestream {
                 // TODO: apply the visual masking of ISO/IEC 15444-2 annex E (E.3) between dequantization and the
                 //  inverse wavelet transformation
                     throw new MediaException.Unsupported("JPEG 2000", "visual masking (VMS segments)");
-            case QPD, QPC ->
-                // TODO: dequantize with the precinct-dependent quantization of ISO/IEC 15444-2 (QPD and QPC)
-                    throw new MediaException.Unsupported("JPEG 2000", "precinct-dependent quantization");
+            case QPD -> readPrecinctQuantization(position, end, scope.precinctQuantizations, "QPD");
+            case QPC -> {
+                if (end - position < componentBytes) {
+                    throw new MediaException.Malformed("truncated JPEG 2000 QPC segment");
+                }
+                var component = component(position, componentBytes);
+                readPrecinctQuantization(position + componentBytes, end,
+                        scope.componentPrecinctQuantizations.computeIfAbsent(component, _ -> new HashMap<>()), "QPC");
+            }
             default -> {
                 // COM, TLM, PLM, PLT, CRG, CPF and RLT carry nothing the decoder needs
             }
+        }
+    }
+
+    /**
+     * Collects the {@code QPD} and {@code QPC} segments that apply to one tile-component.
+     *
+     * @param scope the tile's headers, or {@code null} when the tile has none
+     * @param component the component index
+     * @param tileQuantized whether the tile's headers carry a {@code QCD} or a {@code QCC} of the component
+     * @return the precinct-dependent quantization, or {@code null} when no segment applies
+     */
+    private PrecinctQuantizations precinctQuantizations(HeaderScope scope, int component, boolean tileQuantized) {
+        var tileComponent = scope == null ? Map.<Long, Quantization>of()
+                : scope.componentPrecinctQuantizations.getOrDefault(component, Map.of());
+        var tileDefault = scope == null ? Map.<Long, Quantization>of() : scope.precinctQuantizations;
+        var mainComponent = main.componentPrecinctQuantizations.getOrDefault(component, Map.of());
+        var mainDefault = main.precinctQuantizations;
+        if (tileComponent.isEmpty() && tileDefault.isEmpty() && (tileQuantized
+                || mainComponent.isEmpty() && mainDefault.isEmpty())) {
+            return null;
+        }
+        return new PrecinctQuantizations(tileComponent, tileDefault, mainComponent, mainDefault, tileQuantized);
+    }
+
+    /**
+     * Reads the {@code PLqpx}, {@code PPqpx}, {@code Sqpx} and {@code SPqpx} fields of a {@code QPD} or {@code QPC}
+     * segment (ISO/IEC 15444-2 A.3.11 and A.3.12).
+     *
+     * @param position the index of the {@code PLqpx} field
+     * @param end the end of the segment
+     * @param target receives the quantization by resolution level and precinct
+     * @param name the segment's name, for error messages
+     * @throws MediaException.Malformed if the segment is truncated, names a resolution level above 32, or repeats a
+     * resolution level and precinct of its header
+     */
+    private void readPrecinctQuantization(int position, int end, Map<Long, Quantization> target, String name) {
+        if (end - position < 1) {
+            throw new MediaException.Malformed("truncated JPEG 2000 " + name + " segment");
+        }
+        var level = data[position] & 0xFF;
+        var wide = level >= 128;
+        var resolution = wide ? level - 128 : level;
+        if (resolution >= ComponentCoding.MAX_RESOLUTIONS) {
+            throw new MediaException.Malformed("invalid JPEG 2000 " + name + " resolution level " + resolution);
+        }
+        var precinctBytes = wide ? 2 : 1;
+        if (end - position < 1 + precinctBytes + 1) {
+            throw new MediaException.Malformed("truncated JPEG 2000 " + name + " segment");
+        }
+        var precinct = wide ? u16(position + 1) : data[position + 1] & 0xFF;
+        var quantization = Quantization.parse(data, position + 1 + precinctBytes, end);
+        if (target.putIfAbsent(PrecinctQuantizations.key(resolution, precinct), quantization) != null) {
+            throw new MediaException.Malformed("duplicate JPEG 2000 " + name + " segment for resolution level "
+                    + resolution + " precinct " + precinct);
         }
     }
 
@@ -1051,7 +1120,8 @@ public final class Codestream {
             var componentStart = componentBytes == 1 ? data[at + 1] & 0xFF : u16(at + 1);
             var layerEnd = u16(at + 1 + componentBytes);
             var resolutionEnd = data[at + 3 + componentBytes] & 0xFF;
-            var componentEnd = componentBytes == 1 ? data[at + 4 + componentBytes] & 0xFF : u16(at + 4 + componentBytes);
+            var componentEnd = componentBytes == 1 ? data[at + 4 + componentBytes] & 0xFF
+                    : u16(at + 4 + componentBytes);
             if (componentEnd == 0) {
                 componentEnd = componentBytes == 1 ? 256 : MAX_COMPONENTS;
             }
@@ -1284,6 +1354,7 @@ public final class Codestream {
         var transform = tileCod ? scope.transform : main.transform;
         var codings = new ComponentCoding[components];
         var quantizations = new Quantization[components];
+        var precinctQuantizations = new PrecinctQuantizations[components];
         var roiShifts = new int[components];
         var kernels = new LiftingKernel[components];
         var decompositions = new Decomposition[components];
@@ -1306,6 +1377,9 @@ public final class Codestream {
                     throw new MediaException.Malformed("missing JPEG 2000 DFS segment "
                             + mainCoding.decompositionStyle());
                 }
+                // TODO: Kakadu 8.4.1 writes a DFS segment with fewer elements than the decomposition levels of
+                //  Clevels (the last element repeated, as Figure F.11 of ISO/IEC 15444-2 reuses it) and takes N_L
+                //  from the COD segment, which Table A.9 leaves to the DFS segment; decode such streams as it does
                 mainCoding = mainCoding.withLevels(resolutionSplits.length);
             }
             Decomposition decomposition = null;
@@ -1326,10 +1400,12 @@ public final class Codestream {
                 coding = coding.withLevels(mainCoding.resolutions() - 1);
                 decomposition = new Decomposition(resolutionSplits, style.levels(), style.structure());
             }
+            var tileQuantized = quantization != null;
             if (quantization == null) {
                 quantization = main.componentQuantizations[c] != null ? main.componentQuantizations[c]
                         : main.quantization;
             }
+            precinctQuantizations[c] = precinctQuantizations(scope, c, tileQuantized);
             if (roi < 0) {
                 roi = main.roiShifts[c] >= 0 ? main.roiShifts[c] : Math.max(main.defaultRoiShift, 0);
             }
@@ -1418,7 +1494,8 @@ public final class Codestream {
             extensions = new TileParameters.Extensions(kernels, decompositions, dcOffsets, stages, arrays,
                     allKernels, nonLinearities, List.copyOf(regions));
         }
-        return new TileParameters(flags, progression, layers, transform, codings, quantizations, roiShifts,
+        return new TileParameters(flags, progression, layers, transform, codings, quantizations,
+                precinctQuantizations, roiShifts,
                 List.copyOf(progressions), extensions);
     }
 

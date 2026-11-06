@@ -15,6 +15,9 @@ image/src/test/resources/samples/** -text
 # Fuzz seeds and saved findings are byte-exact inputs, text-looking ones (subtitles, XMP) included.
 **/src/test/resources/**/*Inputs/** -text -diff
 **/src/test/resources/fuzz-regressions/** -text -diff
+# The Kakadu JPEG 2000 fixtures and their PGM decodes are pinned by SHA256SUMS next to them; no checkout may rewrite
+# a PGM header's line feeds.
+image/src/test/resources/com/github/auties00/smalt/image/jp2/kakadu-e5/** -text -diff
 # Reference outputs stored as raw float32 samples are byte-exact.
 **/src/test/resources/**/*.f32 -text -diff
 # Little CMS reference outputs of the color tests are raw samples, byte-exact.

@@ -15,13 +15,15 @@ import java.util.Map;
  *                      wavelet-based (4) flags of ISO/IEC 15444-2
  * @param codings       the coding style of each component, with its decomposition level count resolved
  * @param quantizations the quantization of each component
+ * @param precinctQuantizations the precinct-dependent quantization of each component (ISO/IEC 15444-2 {@code QPD}
+ *                              and {@code QPC} segments), entries {@code null} for components without
  * @param roiShifts     the maximum shift region-of-interest shift of each component, 0 without
  * @param progressions  the progression changes, empty when the default order applies
  * @param extensions    the ISO/IEC 15444-2 parameters of the tile, or {@code null} when it uses none
  */
 record TileParameters(int codingFlags, int progression, int layers, int transform, ComponentCoding[] codings,
-                      Quantization[] quantizations, int[] roiShifts, List<ProgressionChange> progressions,
-                      Extensions extensions) {
+                      Quantization[] quantizations, PrecinctQuantizations[] precinctQuantizations, int[] roiShifts,
+                      List<ProgressionChange> progressions, Extensions extensions) {
     /**
      * Returns whether every packet starts with an {@code SOP} marker segment.
      *

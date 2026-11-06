@@ -375,6 +375,10 @@ public final class Jp2Sparse {
             var parts = new ArrayList<TilePart>();
             while (end - position >= 2) {
                 var marker = reader.u16(position);
+                if (marker == SOT && end - position >= 4 && reader.u16(position + 2) == 12) {
+                    // the 16-bit TPsot and TNsot of ISO/IEC 15444-2 precinct-dependent quantization (A.2.2)
+                    return null;
+                }
                 if (marker != SOT || end - position < 12 || reader.u16(position + 2) != 10) {
                     break;
                 }

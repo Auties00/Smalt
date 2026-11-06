@@ -205,7 +205,7 @@ final class PacketDecoder {
                             throw new MediaException.Malformed("invalid JPEG 2000 zero bit-plane count");
                         }
                     }
-                    block.bitPlanes = band.bitPlanes() + 1 - zero;
+                    block.bitPlanes = area.bitPlanes + 1 - zero;
                     block.lengthBits = 3;
                 }
                 block.newPasses = passCount();

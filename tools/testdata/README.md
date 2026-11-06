@@ -515,6 +515,21 @@ the source of its Huffman twin, so the two decode alike.
 jpeg> <that directory>` writes them, deterministically. No T.83 hierarchical stream exists: the T.83 compliance
 data lists them as not available.
 
+## JPEG 2000 derived quantization vectors
+
+`Jp2Part2QuantizationTest` (`smalt-image`) decodes seven JPEG 2000 Part 2 codestreams with derived quantization over
+decompositions that split sub-bands in one direction only (DFS resolution splits `H` and `V`, and ADS sub-band
+splits), in `image/src/test/resources/com/github/auties00/smalt/image/jp2/kakadu-e5/`, each next to Kakadu's own decode of it, and expects
+Smalt's decode within one sample and an RMS of 0.35 (Kakadu's 9-7 synthesis rounds unlike Smalt's single-precision
+one). ISO/IEC 15444-2 leaves the rounding of a half-integer `n_b` in equation E-5 open; Kakadu's codestreams settle
+it (the exponent counts from the LL band's `n_b`, the step size keeps the half-integer exponent, `M_b` takes the
+exponent of the step size written with an 11-bit mantissa). `bash tools/testdata/kakadu-e5/make-fixtures.sh <kakadu
+directory> <that directory>` writes them with the Kakadu demo executables v8.4.1
+(`KDU841_Demo_Apps_for_Win64_231117.msi`, free for non-commercial demonstration use; run only as black boxes,
+extracted with `msiexec /a` and never committed; the script lists their SHA-256) from a synthetic 96x80 gray image
+it generates, and `SHA256SUMS` pins every file. Kakadu writes neither variable deadzones, trellis coded quantization
+nor `QPD`/`QPC` segments, so those features are checked against codestreams the test writes from annexes C and D.
+
 ## JPEG XL feature vectors
 
 `JxlFeaturesTest` and the internal JPEG XL tests of `smalt-image` read small files with a preview frame, spot

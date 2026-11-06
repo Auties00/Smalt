@@ -1076,24 +1076,11 @@ class Jp2Part2Test {
         }
 
         @Test
-        @DisplayName("single sample overlap, visual masking and precinct quantization are rejected, not ignored")
+        @DisplayName("single sample overlap and visual masking are rejected, not ignored")
         void rejected() {
             assertThrows(MediaException.Unsupported.class, () -> decode(base(0x0010)));
             assertThrows(MediaException.Unsupported.class,
                     () -> decode(withSegment(base(0x0008), Part2Forward.segment(Codestream.VMS, new byte[]{0, 0}))));
-            assertThrows(MediaException.Unsupported.class,
-                    () -> decode(withSegment(base(0x0800), Part2Forward.segment(Codestream.QPD, new byte[]{0, 0}))));
-        }
-
-        @Test
-        @DisplayName("trellis coded and variable deadzone quantization are rejected")
-        void quantization() {
-            for (var style : new int[]{3, 9}) {
-                var data = base(0x0006);
-                var at = indexOf(data, Codestream.QCD);
-                data[at + 4] = (byte) ((data[at + 4] & 0xE0) | style);
-                assertThrows(MediaException.Unsupported.class, () -> decode(data), "style " + style);
-            }
         }
     }
 

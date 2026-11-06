@@ -89,6 +89,17 @@ final class TileComponent {
     private int bandIndex;
 
     /**
+     * The precinct-dependent quantization of the tile-component, or {@code null} when no {@code QPD} or {@code QPC}
+     * segment applies.
+     */
+    private final PrecinctQuantizations precinctQuantizations;
+
+    /**
+     * The quantization of the tile-component.
+     */
+    private final Quantization quantization;
+
+    /**
      * Constructs a tile-component of the dyadic decomposition with a wavelet of ISO/IEC 15444-1 and its whole
      * structure.
      *
@@ -106,7 +117,7 @@ final class TileComponent {
      */
     TileComponent(long x0, long y0, long x1, long y1, ComponentCoding coding, Quantization quantization,
                   int precision, int decodedResolutions, boolean encoder, MediaLimits limits) {
-        this(x0, y0, x1, y1, coding, quantization, precision, decodedResolutions, encoder, null, null, limits);
+        this(x0, y0, x1, y1, coding, quantization, precision, decodedResolutions, encoder, null, null, null, limits);
     }
 
     /**
@@ -123,16 +134,16 @@ final class TileComponent {
      * @param encoder whether the structure serves an encoder
      * @param kernel the {@code ATK} kernel of the wavelet, or {@code null}
      * @param decomposition the arbitrary decomposition, or {@code null} for the dyadic one
+     * @param precinctQuantizations the quantization of the precincts that {@code QPD} and {@code QPC} segments
+     * override, or {@code null} for none
      * @param limits the limits bounding the structure's size
      * @throws MediaException.Malformed if a precinct of an arbitrary decomposition is smaller than its sub-band
      * splits allow
-     * @throws MediaException.Unsupported if derived quantization meets a sub-band whose number of decomposition
-     * levels is not an integer
      * @throws MediaException.LimitExceeded if the structure would exceed the limits
      */
     TileComponent(long x0, long y0, long x1, long y1, ComponentCoding coding, Quantization quantization,
                   int precision, int decodedResolutions, boolean encoder, LiftingKernel kernel,
-                  Decomposition decomposition, MediaLimits limits) {
+                  Decomposition decomposition, PrecinctQuantizations precinctQuantizations, MediaLimits limits) {
         this.x0 = x0;
         this.y0 = y0;
         this.x1 = x1;
@@ -141,6 +152,8 @@ final class TileComponent {
         this.kernel = kernel;
         this.precision = precision;
         this.decodedResolutions = decodedResolutions;
+        this.quantization = quantization;
+        this.precinctQuantizations = precinctQuantizations;
         this.resolutions = new Resolution[coding.resolutions()];
         if (decomposition == null) {
             dyadic(quantization, encoder, limits);
@@ -200,13 +213,15 @@ final class TileComponent {
                 }
                 var reversibleOrEncoder = encoder || reversible() || kernel != null;
                 var gain = !reversibleOrEncoder || orientation == 0 ? 0 : orientation == 3 ? 2 : 1;
-                var exponent = quantization.exponent(bandIndex);
+                var doubledExponent = 2 * quantization.exponent(bandIndex);
                 var mantissa = quantization.mantissa(bandIndex);
                 var shift = r == 0 ? 0 : 1;
                 var offsetX = (orientation & 1) != 0 ? lower.width() : 0;
                 var offsetY = (orientation & 2) != 0 ? lower.height() : 0;
-                bands[b] = band(orientation, bx0, by0, bx1, by1, exponent, mantissa, gain, grid, pdx - shift,
-                        pdy - shift, shift, shift, offsetX, offsetY, quantization.guardBits(), encoder, limits);
+                var doubledDepth = 2 * (r == 0 ? count - 1 : count - r);
+                bands[b] = band(orientation, bx0, by0, bx1, by1, doubledExponent, mantissa, gain, grid, pdx - shift,
+                        pdy - shift, shift, shift, offsetX, offsetY, quantization.guardBits(), encoder, limits, r, b,
+                        2 * (count - 1), doubledDepth, quantization.deadzone(bandIndex));
             }
             resolutions[r] = new Resolution(rx0, ry0, rx1, ry1, pdx, pdy, grid.wide, grid.high, bands, level, level,
                     null);
@@ -238,7 +253,8 @@ final class TileComponent {
             depthsX[lev] = depthX;
             depthsY[lev] = depthY;
         }
-        var derived = quantization.style() == Quantization.SCALAR_DERIVED;
+        var derived = quantization.derived();
+        var lowDoubledDepth = shape.bands(0).getFirst().doubledDepth;
         var irreversibleKernel = kernel != null && !kernel.reversible;
         for (var r = 0; r <= levels; r++) {
             var node = placed.get(shape.resolutionNodes()[levels - r]);
@@ -250,8 +266,9 @@ final class TileComponent {
             for (var b = 0; b < bands.length; b++) {
                 var member = members.get(b);
                 var area = placed.get(member);
-                var exponent = derived ? quantization.derivedExponent(levels, member.doubledDepth)
-                        : quantization.exponent(bandIndex);
+                var doubledExponent = derived
+                        ? quantization.derivedDoubledExponent(lowDoubledDepth, member.doubledDepth)
+                        : 2 * quantization.exponent(bandIndex);
                 var mantissa = quantization.mantissa(bandIndex);
                 var gain = encoder || reversible() || irreversibleKernel ? member.gain : 0;
                 var splitsX = r == 0 ? 0 : member.splitsX;
@@ -260,9 +277,11 @@ final class TileComponent {
                     throw new MediaException.Malformed("JPEG 2000 precinct of 2^" + pdx + "x2^" + pdy
                             + " smaller than its sub-band splits");
                 }
-                bands[b] = band(member.primary, area.x0(), area.y0(), area.x1(), area.y1(), exponent, mantissa, gain,
+                bands[b] = band(member.primary, area.x0(), area.y0(), area.x1(), area.y1(), doubledExponent, mantissa,
+                        gain,
                         grid, pdx - splitsX, pdy - splitsY, splitsX, splitsY, area.offsetX(), area.offsetY(),
-                        quantization.guardBits(), encoder, limits);
+                        quantization.guardBits(), encoder, limits, r, b, lowDoubledDepth, member.doubledDepth,
+                        quantization.deadzone(bandIndex));
             }
             resolutions[r] = new Resolution(node.x0(), node.y0(), node.x1(), node.y1(), pdx, pdy, grid.wide,
                     grid.high, bands, depthsX[levels - r], depthsY[levels - r], node);
@@ -362,7 +381,7 @@ final class TileComponent {
      * @param by0 the top edge
      * @param bx1 the right edge
      * @param by1 the bottom edge
-     * @param exponent the step size exponent
+     * @param doubledExponent twice the step size exponent, odd for a half-integer exponent of derived quantization
      * @param mantissa the step size mantissa
      * @param gain the base-2 logarithm of the sub-band gain
      * @param grid the resolution's precinct partition
@@ -375,13 +394,22 @@ final class TileComponent {
      * @param guardBits the number of guard bits
      * @param encoder whether the structure serves an encoder
      * @param limits the resource bounds
+     * @param resolution the resolution level index
+     * @param member the index of the sub-band within its resolution level, which selects its step size in a
+     * {@code QPD} or {@code QPC} segment
+     * @param lowDoubledDepth twice the number of decomposition levels {@code n_LL} of the LL band
+     * @param doubledDepth twice the sub-band's number of decomposition levels {@code n_b}
+     * @param deadzone the deadzone adjustment of the sub-band
      * @return the sub-band
      */
-    private Band band(int orientation, long bx0, long by0, long bx1, long by1, int exponent, int mantissa, int gain,
+    private Band band(int orientation, long bx0, long by0, long bx1, long by1, int doubledExponent, int mantissa,
+                      int gain,
                       PrecinctGrid grid, int groupWidth, int groupHeight, int splitsX, int splitsY, int offsetX,
-                      int offsetY, int guardBits, boolean encoder, MediaLimits limits) {
-        var stepSize = (float) ((1.0 + mantissa / 2048.0) * StrictMath.pow(2.0, precision + gain - exponent));
-        var bitPlanes = exponent + guardBits - 1;
+                      int offsetY, int guardBits, boolean encoder, MediaLimits limits, int resolution, int member,
+                      int lowDoubledDepth, int doubledDepth, float deadzone) {
+        var stepSize = stepSize(mantissa, gain, doubledExponent);
+        var bitPlanes = planeExponent(doubledExponent, mantissa) + guardBits - 1;
+        var trellis = quantization.trellis();
         var empty = bx1 <= bx0 || by1 <= by0;
         var groupX0 = ceilDivPow2(grid.precinctX0, splitsX);
         var groupY0 = ceilDivPow2(grid.precinctY0, splitsY);
@@ -422,11 +450,56 @@ final class TileComponent {
                         codeBlocks[k] = new CodeBlock(cx0, cy0, cx1, cy1);
                     }
                 }
-                precincts[p] = new Precinct(wide, high, codeBlocks, encodedBlocks);
+                var override = precinctQuantizations == null ? null : precinctQuantizations.lookup(resolution, p);
+                if (override == null) {
+                    precincts[p] = new Precinct(wide, high, codeBlocks, encodedBlocks, stepSize, bitPlanes, deadzone,
+                            trellis);
+                } else {
+                    var precinctExponent = override.derived()
+                            ? override.derivedDoubledExponent(lowDoubledDepth, doubledDepth)
+                            : 2 * override.exponent(member);
+                    precincts[p] = new Precinct(wide, high, codeBlocks, encodedBlocks,
+                            stepSize(override.mantissa(member), gain, precinctExponent),
+                            planeExponent(precinctExponent, override.mantissa(member)) + override.guardBits() - 1,
+                            override.deadzone(member),
+                            override.trellis());
+                }
             }
         }
         return new Band(orientation, bx0, by0, bx1, by1, stepSize, bitPlanes, bandIndex++, precincts, offsetX,
                 offsetY);
+    }
+
+    /**
+     * Returns the step size of equation E-3.
+     *
+     * @param mantissa the 11-bit mantissa
+     * @param gain the base-2 logarithm of the sub-band gain
+     * @param doubledExponent twice the exponent
+     * @return the step size
+     */
+    private float stepSize(int mantissa, int gain, int doubledExponent) {
+        var power = (doubledExponent & 1) == 0 ? precision + gain - doubledExponent / 2
+                : precision + gain - doubledExponent / 2.0;
+        return (float) ((1.0 + mantissa / 2048.0) * StrictMath.pow(2.0, power));
+    }
+
+    /**
+     * Returns the exponent of a step size written with an 11-bit mantissa, the one {@code M_b} of equation E-2 counts
+     * from: half of an even doubled exponent, or for a half-integer exponent the exponent that keeps
+     * {@code sqrt(2) (1 + mantissa / 2^11)} in {@code [1, 2)}.
+     *
+     * @param doubledExponent twice the exponent
+     * @param mantissa the 11-bit mantissa
+     * @return the exponent
+     */
+    private static int planeExponent(int doubledExponent, int mantissa) {
+        var exponent = doubledExponent >> 1;
+        if ((doubledExponent & 1) == 0) {
+            return exponent;
+        }
+        var scaled = 2048L + mantissa;
+        return scaled * scaled < 2L * 2048 * 2048 ? exponent + 1 : exponent;
     }
 
     /**

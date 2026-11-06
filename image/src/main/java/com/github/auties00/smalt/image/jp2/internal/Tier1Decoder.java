@@ -64,6 +64,11 @@ final class Tier1Decoder {
     private final int[] data = new int[MAX_AREA];
 
     /**
+     * Whether the last code-block decoded reached the cleanup pass of its least significant bit-plane.
+     */
+    private boolean complete;
+
+    /**
      * The decoded coefficients of a code-block with more than 30 bit-planes, row-major; {@code null} until one
      * is decoded.
      */
@@ -182,6 +187,7 @@ final class Tier1Decoder {
         allocate(block.width(), block.height());
         zeroContexts = orientation << 9;
         resetContexts();
+        complete = bitPlane < 1;
         if (block.corrupted || block.chunkEntries == 0) {
             return;
         }
@@ -262,6 +268,17 @@ final class Tier1Decoder {
             buffer[end + 1] = saved1;
             offset = end;
         }
+        complete = bitPlane < 1;
+    }
+
+    /**
+     * Returns whether the last code-block decoded reached the cleanup pass of its least significant bit-plane, so that
+     * every coefficient holds its whole quantization index.
+     *
+     * @return whether it did
+     */
+    boolean complete() {
+        return complete;
     }
 
     /**

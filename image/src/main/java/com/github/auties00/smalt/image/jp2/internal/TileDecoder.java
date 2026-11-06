@@ -125,7 +125,8 @@ final class TileDecoder {
                     Math.ceilDiv(bounds[2], subsamplingX[c]), Math.ceilDiv(bounds[3], subsamplingY[c]),
                     coding, parameters.quantizations()[c], codestream.precision(c), decoded, false,
                     extensions == null ? null : extensions.kernels()[c],
-                    extensions == null ? null : extensions.decompositions()[c], limits);
+                    extensions == null ? null : extensions.decompositions()[c], parameters.precinctQuantizations()[c],
+                    limits);
         }
         var data = codestream.tile(tile);
         byte[] body = null;
@@ -450,6 +451,11 @@ final class TileDecoder {
         for (var resolution : component.resolutions) {
             for (var band : resolution.bands()) {
                 max = Math.max(max, band.bitPlanes() + 1);
+                for (var precinct : band.precincts()) {
+                    if (precinct != null) {
+                        max = Math.max(max, precinct.bitPlanes + 1);
+                    }
+                }
             }
         }
         return max;
@@ -584,7 +590,7 @@ final class TileDecoder {
                                     || block.y1 <= rect[1])) {
                                 continue;
                             }
-                            jobs.add(new Job(c, r, band, block));
+                            jobs.add(new Job(c, r, band, precinct, block));
                             work += (long) block.width() * block.height() * SAMPLE_WORK;
                         }
                     }
@@ -614,6 +620,7 @@ final class TileDecoder {
                 }
                 int[] decoded = null;
                 long[] wide = null;
+                boolean complete;
                 if (job.block.coder == CodeBlock.LEGACY) {
                     if (decoder == null) {
                         decoder = new Tier1Decoder();
@@ -621,16 +628,18 @@ final class TileDecoder {
                     decoder.decode(job.block, body, job.band.orientation(), roi, style);
                     decoded = decoder.data();
                     wide = decoder.wideData();
+                    complete = decoder.complete();
                 } else {
                     if (htDecoder == null) {
                         htDecoder = new HtDecoder();
                     }
-                    decodeHighThroughput(htDecoder, job.block, body, job.band, roi, style);
+                    complete = decodeHighThroughput(htDecoder, job.block, body, job.precinct.bitPlanes, roi, style);
                     decoded = htDecoder.data();
                     wide = htDecoder.wideData();
                 }
                 var size = job.block.width() * job.block.height();
-                if (mask != null || wide != null) {
+                var extended = floats[job.component] != null && (job.precinct.trellis || job.precinct.deadzone != 0);
+                if (mask != null || wide != null || extended) {
                     if (shifted == null || shifted.length < size) {
                         shifted = new long[Math.max(size, 4096)];
                     }
@@ -652,7 +661,7 @@ final class TileDecoder {
                         }
                     }
                     storeWide(shifted, job, component, integers[job.component],
-                            longs == null ? null : longs[job.component], floats[job.component]);
+                            longs == null ? null : longs[job.component], floats[job.component], complete);
                 } else {
                     store(decoded, job, component, roi, integers[job.component],
                             longs == null ? null : longs[job.component], floats[job.component]);
@@ -773,14 +782,16 @@ final class TileDecoder {
      * @param decoder the high-throughput block decoder
      * @param block the code-block with its codeword segments
      * @param body the tile body holding the codeword chunks
-     * @param band the sub-band
+     * @param bitPlanes the maximum number of magnitude bit-planes of the code-block's precinct
      * @param roi the region-of-interest shift
      * @param style the code-block style flags
+     * @return whether the decoded cleanup pass is the one of the least significant bit-plane, so that every
+     * coefficient holds its whole quantization index
      * @throws MediaException.Malformed if the HT set is invalid
      * @throws MediaException.Unsupported if the sub-band has more than 61 magnitude bit-planes
      */
-    private static void decodeHighThroughput(HtDecoder decoder, CodeBlock block, byte[] body, Band band, int roi,
-                                             int style) {
+    private static boolean decodeHighThroughput(HtDecoder decoder, CodeBlock block, byte[] body, int bitPlanes,
+                                                int roi, int style) {
         var width = block.width();
         var height = block.height();
         var segments = block.dataSegments;
@@ -795,10 +806,10 @@ final class TileDecoder {
             }
             offset += block.segmentLengths[s];
         }
-        var magnitudeBits = band.bitPlanes() + roi;
+        var magnitudeBits = bitPlanes + roi;
         if (cleanup < 0 || magnitudeBits == 0) {
             decoder.clear(width, height);
-            return;
+            return magnitudeBits == 0;
         }
         var set = (block.segmentStart[cleanup] + block.segmentDataPasses[cleanup] - 1) / 3;
         var refinement = 0;
@@ -808,7 +819,7 @@ final class TileDecoder {
             refinementPasses = block.segmentStart[s] + block.segmentDataPasses[s] - 1 - 3 * set;
         }
         var passes = refinement == 0 ? 1 : 1 + Math.min(refinementPasses, 2);
-        var skipped = band.bitPlanes() + 1 - block.bitPlanes + set;
+        var skipped = bitPlanes + 1 - block.bitPlanes + set;
         var total = 0;
         for (var i = 1; i < block.chunkEntries; i += 2) {
             total += block.chunks[i];
@@ -825,6 +836,7 @@ final class TileDecoder {
         }
         decoder.decode(cleanupLength, refinement, passes, magnitudeBits, skipped, width, height,
                 (style & ComponentCoding.VERTICALLY_CAUSAL) != 0);
+        return skipped == magnitudeBits;
     }
 
     /**
@@ -879,7 +891,7 @@ final class TileDecoder {
                 }
             }
         } else {
-            var step = 0.5f * band.stepSize();
+            var step = 0.5f * job.precinct.stepSize;
             for (var j = 0; j < height; j++) {
                 var target = (y + j) * stride + x;
                 var source = j * width;
@@ -900,9 +912,11 @@ final class TileDecoder {
      * @param integers the 32-bit buffer, or {@code null}
      * @param longs the 64-bit buffer, or {@code null}
      * @param floats the floating-point buffer, or {@code null}
+     * @param complete whether every coefficient holds its whole quantization index, which the trellis coded
+     * dequantization of ISO/IEC 15444-2 D.4.1 needs
      */
     private static void storeWide(long[] decoded, Job job, TileComponent component, int[] integers, long[] longs,
-                                  float[] floats) {
+                                  float[] floats, boolean complete) {
         var block = job.block;
         var band = job.band;
         var width = block.width();
@@ -910,7 +924,18 @@ final class TileDecoder {
         var x = (int) (block.x0 - band.x0()) + band.offsetX();
         var y = (int) (block.y0 - band.y0()) + band.offsetY();
         var stride = component.top().width();
-        var step = 0.5f * band.stepSize();
+        var precinct = job.precinct;
+        if (floats != null && precinct.trellis) {
+            Dequantization.trellis(decoded, width, height, complete, precinct.stepSize, floats, y * stride + x,
+                    stride);
+            return;
+        }
+        if (floats != null && precinct.deadzone != 0) {
+            Dequantization.deadzone(decoded, width, height, precinct.deadzone, precinct.stepSize, floats,
+                    y * stride + x, stride);
+            return;
+        }
+        var step = 0.5f * precinct.stepSize;
         for (var j = 0; j < height; j++) {
             var target = (y + j) * stride + x;
             var source = j * width;
@@ -933,8 +958,9 @@ final class TileDecoder {
      * @param component the component index
      * @param resolution the resolution level
      * @param band the sub-band
+     * @param precinct the precinct holding the code-block, which carries its quantization
      * @param block the code-block
      */
-    private record Job(int component, int resolution, Band band, CodeBlock block) {
+    private record Job(int component, int resolution, Band band, Precinct precinct, CodeBlock block) {
     }
 }
