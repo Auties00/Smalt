@@ -15,6 +15,7 @@ import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.internal.codec.ConsumerFailure;
+import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.plane.Narrow;
 import com.github.auties00.smalt.internal.plane.Planes;
 import com.github.auties00.smalt.internal.task.ParallelBands;
@@ -44,19 +45,23 @@ import java.util.function.Consumer;
  * motion, switchable and dual interpolation filters, every transform, the deblocking filter, CDEF,
  * loop restoration, super-resolution, scaled references, segmentation, quantizer and loop filter
  * deltas, skip mode, frame size from references, error resilient and switch frames, multiple tiles
- * and tile groups, and film grain synthesis. Output is bit-exact with the normative decoding
- * process. The large-scale tile decoding mode, which only an external application can select, is
- * not supported.
+ * and tile groups, and film grain synthesis, as well as the large scale tile decoding process of
+ * tile list OBUs ({@link #setAnchorFrames(List)}). Output is bit-exact with the normative decoding
+ * process.
  *
  * <p>Every packet holds one temporal unit: a sequence of OBUs (low-overhead bitstream format, as
- * stored in MP4, Matroska, WebM and IVF), with or without a temporal delimiter. When
- * {@link VideoTrack#codecConfig()} holds an {@code av1C} record, its configuration OBUs are decoded
- * at construction. The decoder follows operating point 0; for a scalable stream each temporal unit
- * yields only its highest spatial layer. Frames are never reordered: with the default
- * {@link Av1DecoderOptions#maxFrameDelay()} of 1, a packet yields its shown frame, carrying the
- * packet's timestamps, or none when it only holds hidden frames; with a larger frame delay, a
- * packet yields the frames of earlier packets whose decoding completed, each carrying the
- * timestamps of the packet that showed it, and {@link #flush(Consumer)} yields the rest. Which call
+ * stored in MP4, Matroska, WebM and IVF), with or without a temporal delimiter, or, with
+ * {@link Av1DecoderOptions#annexB()}, one length-delimited temporal unit of the specification's
+ * Annex B. When {@link VideoTrack#codecConfig()} holds an {@code av1C} record, its configuration
+ * OBUs are decoded at construction. The decoder follows the operating point of
+ * {@link Av1DecoderOptions#operatingPoint()}, 0 by default; for a scalable stream each temporal
+ * unit yields only its highest spatial layer unless {@link Av1DecoderOptions#allLayers()} asks for
+ * every layer. Frames are never reordered: with the default
+ * {@link Av1DecoderOptions#maxFrameDelay()} of 1, a packet yields its shown frame (its shown frames
+ * with every layer output), carrying the packet's timestamps, or none when it only holds hidden
+ * frames; with a larger frame delay, a packet yields the frames of earlier packets whose decoding
+ * completed, each carrying the timestamps of the packet that showed it, and
+ * {@link #flush(Consumer)} yields the rest. Which call
  * yields a frame depends only on the frame delay, never on the threads. A frame is a keyframe when
  * it is a shown key frame or the display of an existing key frame.
  *
@@ -174,6 +179,9 @@ public final class Av1Decoder implements VideoDecoder {
             context.threading(Av1Context.Threading.OFF);
         }
         context.frameDelay(options.maxFrameDelay());
+        context.operatingPoint(options.operatingPoint());
+        context.allLayers(options.allLayers());
+        context.annexB(options.annexB());
         var config = track.codecConfig().orElse(null);
         if (config != null && config.length > 4) {
             try {
@@ -204,11 +212,12 @@ public final class Av1Decoder implements VideoDecoder {
      * Decodes one packet holding one temporal unit.
      *
      * @param packet the next packet in decoding order
-     * @param output receives the frame the unit shows, if any, or with a frame delay above 1 the
+     * @param output receives the frames the unit shows, if any, or with a frame delay above 1 the
      * frames of earlier units that became due
      * @throws IllegalStateException if the decoder is closed
      * @throws MediaException.Malformed if the unit is corrupt or references a missing frame, or a
-     * frame of an earlier unit that became due is corrupt
+     * frame of an earlier unit that became due is corrupt, or a tile list of the unit uses an anchor
+     * frame whose size, chroma format or bit depth differs from the camera frame's
      * @throws MediaException.LimitExceeded if a frame exceeds the decoder's limits
      */
     @Override
@@ -260,8 +269,10 @@ public final class Av1Decoder implements VideoDecoder {
     private void emit(Consumer<VideoFrame> output) {
         try {
             for (var p : shown) {
+                // TODO: the 8-bit mode rounds YCgCo-Re and YCgCo-Ro samples, keeping only 6 or 7 bits of R'G'B';
+                // such frames could be output as 8-bit RGBA, as the AVIF decoder does
                 Picture frame = highBitDepth && p.bpc > 8 ? convertWide(p) : convert(p);
-                var keyframe = p.frameHdr.frameType == FrameHeader.KEY;
+                var keyframe = p.frameHdr != null && p.frameHdr.frameType == FrameHeader.KEY;
                 output.accept(new VideoFrame(frame, p.pts, p.duration > 0 ? p.duration : Track.UNKNOWN_DURATION,
                         keyframe));
             }
@@ -274,8 +285,141 @@ public final class Av1Decoder implements VideoDecoder {
     }
 
     /**
-     * Stops the frames still being decoded and releases them and the reference frames; closing
-     * twice has no effect.
+     * Sets the anchor frames of large scale tile decoding, which the tiles of tile list OBUs predict
+     * from, or returns to the general decoding process when {@code frames} is empty.
+     *
+     * <p>The frames are copied, so the caller may reuse them once this method returns; frame
+     * {@code i} answers {@code anchor_frame_idx} {@code i}. Each must be a {@link YuvPicture} for an
+     * 8-bit stream, or a {@link Yuv16Picture} of the stream's bit depth, in the stream's chroma
+     * format and at the frame size of the camera frame header; a tile list that uses a frame that
+     * does not match raises {@link MediaException.Malformed}. Frames the decoder output from the
+     * same stream qualify when they are 8-bit or decoded with
+     * {@link Av1DecoderOptions#highBitDepth()}.
+     *
+     * <p>While anchor frames are set, the decoder runs the large scale tile decoding process of the
+     * AV1 specification (section 7.3) on the packets that follow: a frame header OBU or frame OBU
+     * sets the camera frame header and yields no frame (the frame's tile data is not decoded), tile
+     * group OBUs are skipped, the reference frames are not updated, and every tile list OBU yields
+     * one frame. That frame is {@code output_frame_width_in_tiles} tiles wide and
+     * {@code output_frame_height_in_tiles} tiles tall, holds the listed tiles in raster order, each
+     * decoded from its anchor frame in place of the frame its camera frame header names first
+     * ({@code ref_frame_idx[0]}), and holds 0 in every sample no listed tile covers; it carries the
+     * timestamps of its packet, is not a keyframe and has no film grain. Without anchor frames, tile
+     * list OBUs are ignored. The camera frame header must code an inter frame without
+     * super-resolution or reference frame motion vectors, whose tiles all have one size; it stays in
+     * effect until the next one, a new sequence, or a call with no frames. A camera frame header that
+     * breaks these requirements, a tile list before any camera frame header, and a tile list entry
+     * that names an anchor frame or a tile that does not exist raise
+     * {@link MediaException.Malformed}.
+     *
+     * @apiNote This is the decoding side of the light field use case of the AV1 specification's
+     * Annex D: an application decodes the anchor frames of a stream as ordinary frames, sets them
+     * here, then decodes the camera frame header and the tile lists it built from the camera
+     * frames' tiles.
+     * @implNote This implementation decodes the tiles of tile lists without CDF adaptation whatever
+     * {@code disable_cdf_update} says, as libaom does, so that the camera frames libaom's light field
+     * encoder writes, which leave it 0, decode; on streams that set it to 1, as the specification
+     * requires, the output is the normative one.
+     * @param frames the anchor frames, at most 128
+     * @throws NullPointerException if a frame is {@code null}
+     * @throws IllegalArgumentException if there are more than 128 frames, or a frame is not a
+     * {@link YuvPicture} or {@link Yuv16Picture}, is 4:4:0 or has a bit depth other than 8, 10 or 12
+     * @throws IllegalStateException if the decoder is closed
+     * @throws MediaException.LimitExceeded if a frame exceeds the decoder's limits
+     */
+    public void setAnchorFrames(List<? extends Picture> frames) {
+        Objects.requireNonNull(frames, "frames");
+        if (closed) {
+            throw new IllegalStateException("decoder is closed");
+        }
+        if (frames.size() > Av1Context.MAX_ANCHOR_FRAMES) {
+            throw new IllegalArgumentException(frames.size() + " anchor frames exceed "
+                    + Av1Context.MAX_ANCHOR_FRAMES);
+        }
+        var copies = new Av1Picture[frames.size()];
+        for (var i = 0; i < copies.length; i++) {
+            var frame = Objects.requireNonNull(frames.get(i), "frames");
+            copies[i] = switch (frame) {
+                case YuvPicture yuv -> anchor(yuv.width(), yuv.height(), yuv.chromaFormat(), 8, i);
+                case Yuv16Picture yuv -> anchor(yuv.width(), yuv.height(), yuv.chromaFormat(), yuv.bitDepth(), i);
+                default -> throw new IllegalArgumentException("anchor frame " + i + " is not a YUV picture");
+            };
+            var copy = copies[i];
+            if (frame instanceof YuvPicture yuv) {
+                widen(yuv.y(), yuv.yStride(), copy.data[0], copy.stride[0], yuv.width(), yuv.height());
+                if (yuv.chromaFormat().hasChroma()) {
+                    widen(yuv.u(), yuv.uvStride(), copy.data[1], copy.stride[1], yuv.chromaWidth(),
+                            yuv.chromaHeight());
+                    widen(yuv.v(), yuv.uvStride(), copy.data[2], copy.stride[1], yuv.chromaWidth(),
+                            yuv.chromaHeight());
+                }
+            } else if (frame instanceof Yuv16Picture yuv) {
+                Planes.copy(yuv.y(), 0, yuv.yStride(), copy.data[0], 0, copy.stride[0], yuv.width(), yuv.height());
+                if (yuv.chromaFormat().hasChroma()) {
+                    Planes.copy(yuv.u(), 0, yuv.uvStride(), copy.data[1], 0, copy.stride[1], yuv.chromaWidth(),
+                            yuv.chromaHeight());
+                    Planes.copy(yuv.v(), 0, yuv.uvStride(), copy.data[2], 0, copy.stride[1], yuv.chromaWidth(),
+                            yuv.chromaHeight());
+                }
+            }
+        }
+        context.anchorFrames(copies);
+    }
+
+    /**
+     * {@return the number of anchor frames set with {@link #setAnchorFrames}, 0 while the decoder
+     * runs the general decoding process}
+     */
+    public int anchorFrameCount() {
+        return context.anchorFrameCount();
+    }
+
+    /**
+     * Copies a plane of 8-bit samples into a plane of 16-bit samples.
+     *
+     * @param src the source samples
+     * @param srcStride the source stride
+     * @param dst the destination samples
+     * @param dstStride the destination stride
+     * @param width the samples per row
+     * @param height the rows
+     */
+    private static void widen(byte[] src, int srcStride, short[] dst, int dstStride, int width, int height) {
+        for (var y = 0; y < height; y++) {
+            var in = y * srcStride;
+            var out = y * dstStride;
+            for (var x = 0; x < width; x++) {
+                dst[out + x] = (short) (src[in + x] & 0xFF);
+            }
+        }
+    }
+
+    /**
+     * Allocates the internal copy of an anchor frame, after checking its format and size.
+     *
+     * @param width the frame width
+     * @param height the frame height
+     * @param format the chroma format
+     * @param bitDepth the bits per sample
+     * @param index the anchor frame index, for the messages
+     * @return the copy, with unspecified samples
+     */
+    private Av1Picture anchor(int width, int height, ChromaFormat format, int bitDepth, int index) {
+        if (format == ChromaFormat.YUV440) {
+            throw new IllegalArgumentException("anchor frame " + index + " is 4:4:0, which AV1 cannot code");
+        }
+        if (bitDepth != 8 && bitDepth != 10 && bitDepth != 12) {
+            throw new IllegalArgumentException("anchor frame " + index + " has " + bitDepth + " bits per sample");
+        }
+        var layout = SequenceHeader.layoutOf(format);
+        LimitChecks.checkPicture(options.limits(), width, height);
+        LimitChecks.checkAllocation(options.limits(), Av1Picture.samples(width, height, layout) * 2);
+        return Av1Picture.allocate(width, height, layout, bitDepth);
+    }
+
+    /**
+     * Stops the frames still being decoded and releases them, the reference frames and the anchor
+     * frames; closing twice has no effect.
      */
     @Override
     public void close() {

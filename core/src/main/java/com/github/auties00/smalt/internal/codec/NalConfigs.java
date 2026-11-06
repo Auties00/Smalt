@@ -7,8 +7,9 @@ import java.util.List;
 
 /**
  * Builds and takes apart the configuration records of the NAL-unit video codecs: the H.264
- * {@code AVCDecoderConfigurationRecord} ({@code avcC}, ISO/IEC 14496-15 clause 5.3.3) and the HEVC
- * {@code HEVCDecoderConfigurationRecord} ({@code hvcC}, clause 8.3.3).
+ * {@code AVCDecoderConfigurationRecord} ({@code avcC}, ISO/IEC 14496-15 clause 5.3.3), the HEVC
+ * {@code HEVCDecoderConfigurationRecord} ({@code hvcC}, clause 8.3.3) and the VVC
+ * {@code VvcDecoderConfigurationRecord} ({@code vvcC}, clause 11.2.4.2).
  *
  * <p>Demuxers of Annex B streams (MPEG transport streams) build a record from the parameter sets
  * they find in band, so that a track describes itself like an MP4 or Matroska track does; muxers
@@ -320,6 +321,118 @@ public final class NalConfigs {
      */
     public static NalRecords.Parsed parseHevc(byte[] config) {
         return NalRecords.parseHevc(config);
+    }
+
+    /**
+     * Takes a {@code VvcDecoderConfigurationRecord} apart, tolerating damage, as
+     * {@link NalRecords#parseVvc(byte[])} does.
+     *
+     * @param config the record, with or without the {@code vvcC} full box header, or {@code null}
+     * @return the length prefix size and the parameter sets of every array, or {@code null} when the record is
+     * {@code null} or truncated
+     */
+    public static NalRecords.Parsed parseVvc(byte[] config) {
+        return NalRecords.parseVvc(config);
+    }
+
+    /**
+     * Builds a {@code VvcDecoderConfigurationRecord} (ISO/IEC 14496-15 clause 11.2.4.2), without the version and
+     * flags of the {@code vvcC} full box, from in-band parameter sets.
+     *
+     * <p>NAL unit lengths are declared as four bytes. When the first sequence parameter set carries a profile, tier
+     * and level structure, the record holds it as its {@code VvcPTLRecord} with {@code ols_idx} 0, the number of
+     * sublayers, chroma format and bit depth of that set, {@code constant_frame_rate} 1 when its timing information
+     * fixes the picture rate (0 otherwise), its maximum picture size and an {@code avg_frame_rate} of 0
+     * (unspecified); otherwise {@code ptl_present_flag} is zero. When the first video parameter set describes
+     * several layers, the record describes the output layer set with the most layers (the lowest index among equals,
+     * as {@code ols_idx}) instead: the profile, tier and level structure and number of sublayers the video parameter
+     * set assigns to it, the chroma format, bit depth and picture size of its decoded picture buffer when it has
+     * several layers (those of the sequence parameter set of its highest layer otherwise), and the timing of the
+     * sequence parameter set of its highest layer. The arrays (video, sequence and picture parameter
+     * sets, each present only when non-empty) are marked complete.
+     *
+     * @param vps the video parameter sets, each a whole NAL unit
+     * @param sps the sequence parameter sets, each a whole NAL unit; at least one
+     * @param pps the picture parameter sets, each a whole NAL unit
+     * @return the record, or {@code null} when there is no sequence parameter set, the first one does not parse, or a
+     * set is too short or too long to be stored
+     */
+    public static byte[] vvcConfig(List<byte[]> vps, List<byte[]> sps, List<byte[]> pps) {
+        if (sps.isEmpty() || vps.size() > 0xFFFF || sps.size() > 0xFFFF || pps.size() > 0xFFFF) {
+            return null;
+        }
+        var first = sps.getFirst();
+        var fields = VvcSyntax.sps(first, 0, first.length);
+        if (fields == null) {
+            return null;
+        }
+        var layered = vps.isEmpty() ? null : VvcSyntax.vps(vps.getFirst(), 0, vps.getFirst().length);
+        if (layered != null && layered.maxLayers() > 1) {
+            var top = layered.layerIds()[layered.layerIds().length - 1];
+            for (var unit : sps) {
+                if (unit.length >= 2 && VvcSyntax.layer(unit, 0) == top) {
+                    var parsed = VvcSyntax.sps(unit, 0, unit.length);
+                    if (parsed != null) {
+                        fields = parsed;
+                    }
+                    break;
+                }
+            }
+        } else {
+            layered = null;
+        }
+        var out = new java.io.ByteArrayOutputStream();
+        var ptl = layered != null ? layered.profileTierLevel() : fields.profileTierLevel();
+        out.write(0xF8 | (3 << 1) | (ptl != null ? 1 : 0));
+        if (ptl != null) {
+            var olsIndex = layered != null ? layered.olsIndex() : 0;
+            var sublayers = layered != null ? layered.maxSubLayers() : fields.maxSubLayers();
+            var constant = fields.constantRate() ? 1 : 0;
+            var multiLayerSet = layered != null && layered.chromaFormatIdc() >= 0;
+            var chroma = multiLayerSet ? layered.chromaFormatIdc() : fields.chromaFormatIdc();
+            var bitDepth = multiLayerSet ? layered.bitDepth() : fields.bitDepth();
+            var width = multiLayerSet ? layered.width() : fields.maxWidth();
+            var height = multiLayerSet ? layered.height() : fields.maxHeight();
+            var constraintBytes = layered != null ? layered.constraintBytes() : fields.constraintBytes();
+            out.write(olsIndex >> 1);
+            out.write(((olsIndex & 1) << 7) | (sublayers << 4) | (constant << 2) | chroma);
+            out.write(((bitDepth - 8) << 5) | 0x1F);
+            out.write(constraintBytes & 0x3F);
+            out.writeBytes(ptl);
+            out.write(width >> 8);
+            out.write(width);
+            out.write(height >> 8);
+            out.write(height);
+            out.write(0);
+            out.write(0);
+        }
+        var types = new int[]{VvcSyntax.VPS, VvcSyntax.SPS, VvcSyntax.PPS};
+        var lists = List.of(vps, sps, pps);
+        var arrays = 0;
+        for (var list : lists) {
+            if (!list.isEmpty()) {
+                arrays++;
+            }
+        }
+        out.write(arrays);
+        for (var index = 0; index < 3; index++) {
+            var list = lists.get(index);
+            if (list.isEmpty()) {
+                continue;
+            }
+            out.write(0x80 | types[index]);
+            out.write(list.size() >> 8);
+            out.write(list.size());
+            for (var unit : list) {
+                if (unit.length < 3 || unit.length > 0xFFFF) {
+                    return null;
+                }
+                out.write(unit.length >> 8);
+                out.write(unit.length);
+                out.writeBytes(unit);
+            }
+        }
+        return out.toByteArray();
     }
 
     /**

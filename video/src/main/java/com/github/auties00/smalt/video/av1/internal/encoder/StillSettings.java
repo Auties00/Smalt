@@ -42,6 +42,12 @@ public final class StillSettings {
     boolean screenContent;
 
     /**
+     * Whether a frame without {@link #screenContent} enables the screen content tools when its
+     * source looks like screen content, {@code true} by default.
+     */
+    boolean detectScreenContent = true;
+
+    /**
      * The base-2 logarithm of the tile columns requested, 0 by default.
      */
     int tileColsLog2;
@@ -60,6 +66,23 @@ public final class StillSettings {
      * Whether the sequence header is the reduced still picture header, {@code false} by default.
      */
     boolean reducedHeader;
+
+    /**
+     * Whether the sequence header signals film grain, {@code false} by default.
+     */
+    boolean filmGrain;
+
+    /**
+     * Sets whether the sequence header signals film grain, which the frames then carry
+     * ({@link StillFrameEncoder#filmGrain}); the reduced still picture header signals none.
+     *
+     * @param filmGrain whether film grain is signaled
+     * @return these settings
+     */
+    public StillSettings filmGrain(boolean filmGrain) {
+        this.filmGrain = filmGrain;
+        return this;
+    }
 
     /**
      * The smallest block size the partition search reaches: 4 or 8 samples.
@@ -380,6 +403,18 @@ public final class StillSettings {
         if (speed >= 3) {
             sgrFromWiener = screenContent ? 1 : 2;
         }
+        return this;
+    }
+
+    /**
+     * Sets whether a frame that does not enable the screen content tools whatever the source
+     * enables them when the source looks like screen content.
+     *
+     * @param detect whether the source is tested
+     * @return these settings
+     */
+    public StillSettings detectScreenContent(boolean detect) {
+        this.detectScreenContent = detect;
         return this;
     }
 

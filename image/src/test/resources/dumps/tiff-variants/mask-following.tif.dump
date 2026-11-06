@@ -1,0 +1,24 @@
+# image dump of tiff-variants/mask-following.tif; regenerate with -Dsmalt.test.updateDumps=true
+format TIFF
+info ImageInfo[format=TIFF, width=10, height=8, hasAlpha=true, animated=false, frameCount=2, orientation=NORMAL]
+decode
+picture 10x8 rgba8 alpha=true crc=4db4ad0a
+  format=TIFF orientation=NORMAL source=10x8
+  icc=none exif=none xmp=none
+  profile=none
+scaled 2x2
+picture 10x8 rgba8 alpha=true crc=4db4ad0a
+  format=TIFF orientation=NORMAL source=10x8
+  icc=none exif=none xmp=none
+  profile=none
+pages 2
+page 0 ImageInfo[format=TIFF, width=10, height=8, hasAlpha=true, animated=false, frameCount=2, orientation=NORMAL]
+picture 10x8 rgba8 alpha=true crc=4db4ad0a
+  format=TIFF orientation=NORMAL source=10x8
+  icc=none exif=none xmp=none
+  profile=none
+page 1 ImageInfo[format=TIFF, width=20, height=16, hasAlpha=false, animated=false, frameCount=2, orientation=NORMAL]
+picture 20x16 rgba8 alpha=false crc=c0b57abb
+  format=TIFF orientation=NORMAL source=20x16
+  icc=none exif=none xmp=none
+  profile=none
