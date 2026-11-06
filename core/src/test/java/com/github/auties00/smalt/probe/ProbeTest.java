@@ -491,6 +491,24 @@ class ProbeTest {
         var twelveBit = Media.probe(MediaSource.of(deep.build())).image().orElseThrow();
         assertEquals(12, twelveBit.bitDepth().orElse(-1));
         assertTrue(twelveBit.hasAlpha());
+        // a 4-bit palette index whose entries hold 10-bit red, green and blue and 8-bit alpha
+        var paletteComponents = java.util.List.of(com.github.auties00.smalt.testkit.UnciWriter.Component.of(10, 4));
+        var paletteDefinition = com.github.auties00.smalt.testkit.UnciWriter.definition(paletteComponents, 4, 5, 6, 7);
+        var entries = new java.math.BigInteger[][]{{java.math.BigInteger.ONE, java.math.BigInteger.ONE,
+                java.math.BigInteger.ONE, java.math.BigInteger.ONE}};
+        var paletteFile = com.github.auties00.smalt.testkit.UnciWriter.file(4, 2, new byte[4],
+                com.github.auties00.smalt.testkit.UnciWriter.uncC(paletteComponents,
+                        com.github.auties00.smalt.testkit.UnciWriter.Layout.of(0, 0), paletteDefinition),
+                com.github.auties00.smalt.testkit.UnciWriter.cmpd(paletteDefinition),
+                com.github.auties00.smalt.testkit.UnciWriter.cpal(java.util.List.of(
+                        new com.github.auties00.smalt.testkit.UnciWriter.PaletteComponent(4, 10, 0),
+                        new com.github.auties00.smalt.testkit.UnciWriter.PaletteComponent(5, 10, 0),
+                        new com.github.auties00.smalt.testkit.UnciWriter.PaletteComponent(6, 10, 0),
+                        new com.github.auties00.smalt.testkit.UnciWriter.PaletteComponent(7, 8, 0)),
+                        paletteDefinition, entries));
+        var palette = Media.probe(MediaSource.of(paletteFile)).image().orElseThrow();
+        assertEquals(10, palette.bitDepth().orElse(-1));
+        assertTrue(palette.hasAlpha());
         var avc = new HeifBuilder().brands("avci", "avci", "mif1");
         avc.primary(avc.item("avc1", new byte[]{1}, HeifBuilder.plain(HeifBuilder.ispe(40, 30)),
                 HeifBuilder.plain(HeifBuilder.pixi(10, 10, 10))));

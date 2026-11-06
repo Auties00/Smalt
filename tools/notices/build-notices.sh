@@ -1396,16 +1396,16 @@ License text: LICENSE at the root of the repository
 License:      MIT License
 
 Derived Smalt packages:
-  image.jxl.internal.brotli
   image.jxl.internal.encode
+  internal.compress
 
 Derivation: the Brotli decoder (RFC 7932) used for the jbrd and brob boxes
-of JPEG XL containers follows the reference Java decoder
-(java/org/brotli/dec): its Huffman table layout and builder, its command,
-context and transform tables. The static dictionary resource is a verbatim
-copy of c/common/dictionary.bin. The JPEG XL encoder's length-limited
-Huffman codes and their code-length run coding follow
-c/enc/entropy_encode.c, as libjxl's enc_huffman_tree.cc carries them.
+of JPEG XL containers and the brot compression of uncompressed HEIF items
+follows the reference Java decoder (java/org/brotli/dec): its Huffman table
+layout and builder, its command, context and transform tables. The static
+dictionary resource is a verbatim copy of c/common/dictionary.bin. The JPEG
+XL encoder's length-limited Huffman codes and their code-length run coding
+follow c/enc/entropy_encode.c, as libjxl's enc_huffman_tree.cc carries them.
 
 Copyright:
   Copyright (c) 2009, 2010, 2013-2016 by the Brotli Authors.

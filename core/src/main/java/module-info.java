@@ -166,6 +166,7 @@ module com.github.auties00.smalt {
             com.github.auties00.smalt.audio,
             com.github.auties00.smalt.mpeg,
             com.github.auties00.smalt.video;
+    exports com.github.auties00.smalt.internal.compress to com.github.auties00.smalt.image;
     exports com.github.auties00.smalt.internal.dsd to com.github.auties00.smalt.audio;
     exports com.github.auties00.smalt.internal.edit to com.github.auties00.smalt.image;
     exports com.github.auties00.smalt.internal.gainmap to

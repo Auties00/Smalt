@@ -220,19 +220,28 @@ class ImageBombTest {
     @Nested
     @DisplayName("an uncompressed HEIF item whose compressed data inflates beyond the buffer limit")
     class Inflated {
+        /** 64 MiB of zeros compressed by the brotli 1.2.0 CLI ({@code brotli -q 11 -w 24}). */
+        private static final byte[] BROTLI_ZEROS = {-49, -1, -1, 127, -8, 39, 0, -30, -79, 64, 32, -9, -2, -97, -1, -1,
+                -1, -16, 79, 0, -60, 97, 1, -128, -18, -3, 63, -1, -1, -1, -31, -97, 0, -120, -61, 34, 0, -35, -5, 127,
+                -2, -1, -1, -61, 63, 1, 16, -121, 5, 0, -70, -9, -1, 3};
+
         @ParameterizedTest(name = "{0}")
-        @org.junit.jupiter.params.provider.ValueSource(strings = {"zlib", "defl"})
+        @org.junit.jupiter.params.provider.ValueSource(strings = {"zlib", "defl", "brot"})
         @DisplayName("is rejected while inflating, before the inflated data is held")
         void decode(String type) {
-            var deflater = new java.util.zip.Deflater(9, type.equals("defl"));
-            deflater.setInput(new byte[64 << 20]);
-            deflater.finish();
             var compressed = new ByteArrayOutputStream();
-            var chunk = new byte[1 << 16];
-            while (!deflater.finished()) {
-                compressed.write(chunk, 0, deflater.deflate(chunk));
+            if (type.equals("brot")) {
+                compressed.writeBytes(BROTLI_ZEROS);
+            } else {
+                var deflater = new java.util.zip.Deflater(9, type.equals("defl"));
+                deflater.setInput(new byte[64 << 20]);
+                deflater.finish();
+                var chunk = new byte[1 << 16];
+                while (!deflater.finished()) {
+                    compressed.write(chunk, 0, deflater.deflate(chunk));
+                }
+                deflater.end();
             }
-            deflater.end();
             var builder = new HeifBuilder().brands("mif1", "mif1", "miaf");
             builder.primary(builder.item("unci", compressed.toByteArray(), HeifBuilder.plain(HeifBuilder.ispe(16, 16)),
                     HeifBuilder.essential(HeifBuilder.fullBox("uncC", 1, 0, new byte[]{'r', 'g', 'b', '3'})),

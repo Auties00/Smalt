@@ -11,8 +11,9 @@ import com.github.auties00.smalt.MediaException;
  * {@link LayeredImageIndexing}, the codec configurations {@link Av1Configuration},
  * {@link HevcConfiguration}, {@link AvcConfiguration}, {@link JpegConfiguration} and
  * {@link Jpeg2000Header}, the uncompressed image descriptions of ISO/IEC 23001-17
- * ({@link UncompressedConfiguration}, {@link ComponentDefinition}, {@link CompressionConfiguration}
- * and {@link ChromaLocation}) ({@link ColorOther} stands for color boxes of other types) and
+ * ({@link UncompressedConfiguration}, {@link ComponentDefinition}, {@link ComponentPalette},
+ * {@link ComponentPattern}, {@link CompressionConfiguration}, {@link CompressedUnits} and
+ * {@link ChromaLocation}) ({@link ColorOther} stands for color boxes of other types) and
  * {@link RequiredReferenceTypes}; the
  * transformative ones are {@link CleanAperture},
  * {@link Rotation} and {@link Mirror}; {@link OperatingPointSelector} and {@link LayerSelector}
@@ -391,15 +392,171 @@ public sealed interface HeifProperty {
      * data of an item.
      *
      * @param compressionType the four-character compression type, such as {@code "defl"}
-     * @param individualEntities {@code must_decompress_individual_entities}
-     * @param entityType {@code compressed_entity_type}: 0 when the whole item data is one
-     * compressed stream
+     * @param individualEntities {@code must_decompress_individual_entities}, the most significant bit
+     * of the unit type byte
+     * @param unitType {@code compressed_unit_type}, the seven other bits: 0 when the whole item data
+     * is one compressed stream, 1 for one stream per image, 2 per tile, 3 per row and 4 per pixel,
+     * the units of types 1 to 4 being located by a {@link CompressedUnits} property
      */
-    record CompressionConfiguration(String compressionType, boolean individualEntities, int entityType)
+    record CompressionConfiguration(String compressionType, boolean individualEntities, int unitType)
             implements HeifProperty {
         @Override
         public String type() {
             return "cmpC";
+        }
+    }
+
+    /**
+     * The generically compressed units information ({@code icef}, ISO/IEC 23001-17 Amendment 2):
+     * where each compressed unit of the data of an item starts and how long it is.
+     *
+     * @param offsets the byte offset of each unit from the start of the item data
+     * @param sizes the byte length of each unit
+     */
+    record CompressedUnits(long[] offsets, long[] sizes) implements HeifProperty {
+        /**
+         * Parses the box: a byte of offset and size codes, the unit count, then each unit's offset
+         * (implied by the previous units for code 0, otherwise of 2, 3, 4 or 8 bytes for codes 1 to
+         * 4) and size (of 1, 2, 3, 4 or 8 bytes for codes 0 to 4).
+         *
+         * @param box the cursor over the payload
+         * @return the units
+         * @throws MediaException.Malformed if the box is truncated, of a version other than 0, or
+         * uses a reserved code
+         */
+        static CompressedUnits parse(BoxCursor box) {
+            var version = box.fullBoxHeader() >>> 24;
+            if (version != 0) {
+                throw new MediaException.Malformed("heif: icef box of version " + version);
+            }
+            var codes = box.u8();
+            var offsetCode = codes >> 5;
+            var sizeCode = (codes >> 2) & 7;
+            if (offsetCode > 4 || sizeCode > 4) {
+                throw new MediaException.Malformed("heif: icef box with reserved unit offset code " + offsetCode
+                        + " or unit size code " + sizeCode);
+            }
+            var count = box.u32();
+            var offsetBytes = new int[]{0, 2, 3, 4, 8}[offsetCode];
+            var sizeBytes = new int[]{1, 2, 3, 4, 8}[sizeCode];
+            if (count > box.remaining() / (offsetBytes + sizeBytes)) {
+                throw box.truncated();
+            }
+            var offsets = new long[(int) count];
+            var sizes = new long[(int) count];
+            var implied = 0L;
+            for (var i = 0; i < offsets.length; i++) {
+                offsets[i] = offsetBytes == 0 ? implied : offsetBytes == 3 ? box.u24() : box.uN(offsetBytes);
+                sizes[i] = sizeBytes == 3 ? box.u24() : box.uN(sizeBytes);
+                if (offsets[i] < 0 || sizes[i] < 0) {
+                    throw new MediaException.Malformed("heif: icef unit " + i + " lies beyond 2^63 bytes");
+                }
+                implied = offsets[i] + sizes[i];
+                if (implied < 0) {
+                    throw new MediaException.Malformed("heif: icef unit " + i + " ends beyond 2^63 bytes");
+                }
+            }
+            return new CompressedUnits(offsets, sizes);
+        }
+
+        @Override
+        public String type() {
+            return "icef";
+        }
+    }
+
+    /**
+     * The component palette ({@code cpal}, ISO/IEC 23001-17 clause 6.1.3): the values a palette
+     * component of an uncompressed image indexes, one value per palette component for each entry.
+     *
+     * @param components the components each entry gives, with their index in the
+     * {@link ComponentDefinition}, bit depth and format; their {@code alignSize} is the number of
+     * bytes each value takes in {@link #values()}
+     * @param count the number of entries
+     * @param values the values, entry after entry and in each entry component after component, each
+     * one big-endian in the smallest of 1, 2, 4, 8, 16 or 32 bytes that holds its bit depth, with the
+     * value in the least significant bits
+     */
+    record ComponentPalette(java.util.List<UncompressedComponent> components, int count, byte[] values)
+            implements HeifProperty {
+        /**
+         * Parses the box.
+         *
+         * @param box the cursor over the payload
+         * @return the palette
+         * @throws MediaException.Malformed if the box is truncated
+         */
+        static ComponentPalette parse(BoxCursor box) {
+            box.fullBoxHeader();
+            var componentCount = box.u16();
+            if (componentCount > box.remaining() / 4) {
+                throw box.truncated();
+            }
+            var components = new java.util.ArrayList<UncompressedComponent>(componentCount);
+            var entryBytes = 0;
+            for (var i = 0; i < componentCount; i++) {
+                var index = box.u16();
+                var depth = box.u8() + 1;
+                var format = box.u8();
+                var bytes = depth <= 8 ? 1 : depth <= 16 ? 2 : depth <= 32 ? 4 : depth <= 64 ? 8 : depth <= 128 ? 16 : 32;
+                entryBytes += bytes;
+                components.add(new UncompressedComponent(index, depth, format, bytes));
+            }
+            var count = box.u32();
+            if (entryBytes == 0 ? count != 0 : count > box.remaining() / entryBytes) {
+                throw box.truncated();
+            }
+            var values = box.bytes((int) count * entryBytes);
+            return new ComponentPalette(java.util.List.copyOf(components), (int) count, values);
+        }
+
+        @Override
+        public String type() {
+            return "cpal";
+        }
+    }
+
+    /**
+     * The component pattern definition ({@code cpat}, ISO/IEC 23001-17 clause 6.1.4): the color
+     * filter array a filter array component samples, as a pattern repeated over the image.
+     *
+     * @param width the pattern width, at least 1
+     * @param height the pattern height, at least 1
+     * @param components the index in the {@link ComponentDefinition} of the component each position
+     * of the pattern samples, row by row
+     * @param gains the gain of each position of the pattern, row by row
+     */
+    record ComponentPattern(int width, int height, long[] components, float[] gains) implements HeifProperty {
+        /**
+         * Parses the box.
+         *
+         * @param box the cursor over the payload
+         * @return the pattern
+         * @throws MediaException.Malformed if the box is truncated or the pattern is empty
+         */
+        static ComponentPattern parse(BoxCursor box) {
+            box.fullBoxHeader();
+            var width = box.u16();
+            var height = box.u16();
+            if (width == 0 || height == 0) {
+                throw new MediaException.Malformed("heif: cpat box with an empty " + width + "x" + height + " pattern");
+            }
+            var count = (long) width * height;
+            if (count > box.remaining() / 8) {
+                throw box.truncated();
+            }
+            var components = new long[(int) count];
+            var gains = new float[(int) count];
+            for (var i = 0; i < count; i++) {
+                components[i] = box.u32();
+                gains[i] = Float.intBitsToFloat(box.s32());
+            }
+            return new ComponentPattern(width, height, components, gains);
+        }
+
+        @Override
+        public String type() {
+            return "cpat";
         }
     }
 

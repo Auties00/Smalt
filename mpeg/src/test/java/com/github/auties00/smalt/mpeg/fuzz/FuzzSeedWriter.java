@@ -21,6 +21,7 @@ import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.HeifBuilder;
 import com.github.auties00.smalt.testkit.HevcAccessUnit;
 import com.github.auties00.smalt.testkit.Skip;
+import com.github.auties00.smalt.testkit.UnciSeeds;
 import com.github.auties00.smalt.testkit.fuzz.FuzzPackets;
 import com.github.auties00.smalt.testkit.fuzz.FuzzSeeds;
 import com.github.auties00.smalt.track.Codec;
@@ -965,6 +966,14 @@ class FuzzSeedWriter {
         write(MpegFuzzTest.class, "heic", "valid-unci-zlib.heic", unci(Arrays.copyOf(compressed, size), 16, 8,
                 uncC(new int[]{0}, 8, 0, 0, 0, 0, 0), cmpd(0),
                 HeifBuilder.fullBox("cmpC", 0, 0, new byte[]{'z', 'l', 'i', 'b', 0})));
+    }
+
+    @Test
+    @DisplayName("writes the seeds of the HEIC target for the uncompressed items of ISO/IEC 23001-17 extensions")
+    void heicUncompressed() {
+        for (var seed : UnciSeeds.values()) {
+            write(MpegFuzzTest.class, "heic", seed.fileName(), seed.file());
+        }
     }
 
     /**

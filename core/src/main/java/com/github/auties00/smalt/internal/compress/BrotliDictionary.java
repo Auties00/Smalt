@@ -1,6 +1,6 @@
 /* Ports Brotli (java/org/brotli/dec, the transform table; c/common/dictionary.bin). Copyright the Brotli Authors;
    MIT License. Modified for Smalt. */
-package com.github.auties00.smalt.image.jxl.internal.brotli;
+package com.github.auties00.smalt.internal.compress;
 
 import com.github.auties00.smalt.MediaException;
 

@@ -76,7 +76,9 @@ import java.util.function.Supplier;
  *       {@code jpgC} property preceding its data); JPEG 2000-coded ({@code j2k1}, ISO/IEC
  *       15444-16, with the channel definition, component mapping and palette of its {@code j2kH}
  *       property); or uncompressed ({@code unci}, ISO/IEC 23001-17, with its {@code uncC},
- *       {@code cmpd} and {@code cmpC} properties). JPEG and JPEG 2000 items decode with the codecs
+ *       {@code cmpd}, {@code cpal}, {@code cpat}, {@code cmpC} and {@code icef} properties; CMYK
+ *       components become RGB without color management and a filter array its mosaic, a gray
+ *       picture of linear transfer). JPEG and JPEG 2000 items decode with the codecs
  *       of the {@code smalt-image} artifact and raise {@link MediaException.Unsupported} when it is
  *       not present. A derived image is an image grid ({@code grid}),
  *       whose coded tiles decode in parallel on the module's shared helper threads, an identity
@@ -106,7 +108,7 @@ import java.util.function.Supplier;
  *       specifies, together with the {@code clli} and {@code mdcv} properties (or the SEI messages
  *       of the stream); RGB payloads keep the identity matrix and full range whatever the
  *       {@code nclx} box says, and uncompressed components of fewer than 8 bits are rescaled to 8
- *       bits; an ICC
+ *       bits, and floating-point, complex and wider integer ones to 16 bits; an ICC
  *       profile ({@code colr} of type {@code prof} or {@code rICC}) is returned with the picture
  *       and as its {@link DecodedImage#colorProfile()}, which otherwise describes the
  *       {@code nclx} color when it is not sRGB; the EXIF item and the XMP item ({@code mime} item

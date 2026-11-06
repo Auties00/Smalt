@@ -1,6 +1,6 @@
 /* Ports Brotli (java/org/brotli/dec, the reference Java decoder). Copyright the Brotli Authors; MIT License.
    Modified for Smalt. */
-package com.github.auties00.smalt.image.jxl.internal.brotli;
+package com.github.auties00.smalt.internal.compress;
 
 import com.github.auties00.smalt.MediaException;
 
@@ -11,10 +11,11 @@ import java.util.Objects;
  * Decompresses a whole Brotli stream (RFC 7932) held in memory.
  *
  * <p>JPEG XL containers compress the JPEG reconstruction data ({@code jbrd}) and, optionally,
- * metadata boxes ({@code brob}) with Brotli. The decoder keeps the whole output, so a backward
- * reference reaches any earlier byte within the window; references beyond the window or before the
- * start of the output address the static dictionary. The large-window extension is rejected, as
- * RFC 7932 streams never use it.
+ * metadata boxes ({@code brob}) with Brotli, and the generic compression of ISO/IEC 23001-17
+ * ({@code brot}) compresses the data of uncompressed HEIF items with it. The decoder keeps the whole
+ * output, so a backward reference reaches any earlier byte within the window; references beyond the
+ * window or before the start of the output address the static dictionary. The large-window extension
+ * is rejected, as RFC 7932 streams never use it.
  *
  * <p>An invalid or truncated stream raises {@link MediaException.Malformed}; output beyond the
  * caller's bound raises {@link MediaException.LimitExceeded}.

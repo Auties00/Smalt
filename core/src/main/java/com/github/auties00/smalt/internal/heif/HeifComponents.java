@@ -57,6 +57,12 @@ public record HeifComponents(int width, int height, List<Plane> planes) {
     public static final int ALPHA = 7;
 
     /**
+     * The samples of a color filter array, each of the color its position in the filter pattern
+     * gives.
+     */
+    public static final int FILTER_ARRAY = 11;
+
+    /**
      * The cyan ink component: zero is no ink.
      */
     public static final int CYAN = 13;
@@ -155,7 +161,7 @@ public record HeifComponents(int width, int height, List<Plane> planes) {
 
     /**
      * {@return whether the components hold ink components or a plane deeper than 16 bits, which only a
-     * {@link com.github.auties00.smalt.image.ChannelPicture} represents}
+     * {@link com.github.auties00.smalt.image.ChannelPicture} represents without conversion}
      */
     public boolean needsChannels() {
         for (var plane : planes) {

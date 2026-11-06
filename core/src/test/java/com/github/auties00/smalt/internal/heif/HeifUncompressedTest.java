@@ -694,7 +694,7 @@ class HeifUncompressedTest {
             var compression = parsed.property(HeifProperty.CompressionConfiguration.class);
             assertEquals("defl", compression.compressionType());
             assertTrue(compression.individualEntities());
-            assertEquals(0, compression.entityType());
+            assertEquals(0, compression.unitType());
             assertEquals(2, parsed.property(HeifProperty.ChromaLocation.class).location());
         }
     }
@@ -741,24 +741,25 @@ class HeifUncompressedTest {
         }
 
         @Test
-        @DisplayName("floating-point components, palettes and Bayer filter arrays are unsupported")
+        @DisplayName("reserved component formats, interleavings, compression types and unit types are unsupported")
         void unsupported() {
-            var floats = new ByteArrayOutputStream();
-            HeifBuilder.u32(floats, 0);
-            HeifBuilder.u32(floats, 1);
-            HeifBuilder.u16(floats, 0);
-            floats.write(31);
-            floats.write(1);
-            floats.write(0);
-            floats.writeBytes(new byte[24]);
+            var reserved = new ByteArrayOutputStream();
+            HeifBuilder.u32(reserved, 0);
+            HeifBuilder.u32(reserved, 1);
+            HeifBuilder.u16(reserved, 0);
+            reserved.write(7);
+            reserved.write(4);
+            reserved.write(0);
+            reserved.writeBytes(new byte[24]);
             assertThrows(MediaException.Unsupported.class, () -> decode(1, 1, new byte[4],
-                    HeifBuilder.fullBox("uncC", 0, 0, floats.toByteArray()), cmpd(MONO)));
+                    HeifBuilder.fullBox("uncC", 0, 0, reserved.toByteArray()), cmpd(MONO)));
             assertThrows(MediaException.Unsupported.class, () -> decode(1, 1, new byte[1],
-                    uncC(Layout.of(0, 0), Comp.of(0, 8)), cmpd(10)));
+                    uncC(Layout.of(0, 6), Comp.of(0, 8)), cmpd(MONO)));
             assertThrows(MediaException.Unsupported.class, () -> decode(1, 1, new byte[1],
-                    uncC(Layout.of(0, 0), Comp.of(0, 8)), cmpd(11)));
+                    uncC(Layout.of(0, 0), Comp.of(0, 8)), cmpd(MONO), cmpC("zstd")));
+            var unitType = HeifBuilder.fullBox("cmpC", 0, 0, new byte[]{'z', 'l', 'i', 'b', 5});
             assertThrows(MediaException.Unsupported.class, () -> decode(1, 1, new byte[1],
-                    uncC(Layout.of(0, 0), Comp.of(0, 8)), cmpd(MONO), cmpC("brot")));
+                    uncC(Layout.of(0, 0), Comp.of(0, 8)), cmpd(MONO), unitType));
         }
     }
 

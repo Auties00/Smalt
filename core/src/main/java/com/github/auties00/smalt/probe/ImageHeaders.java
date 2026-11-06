@@ -942,26 +942,53 @@ final class ImageHeaders {
      *
      * @param config the layout of the image
      * @param properties the properties of the item, with its component definition
-     * @return the largest depth of its color components (monochrome, Y'CbCr or RGB), or the depth
-     * of its first component when none is a color component
+     * @return the largest depth of its color components (monochrome, Y'CbCr, RGB, filter array, CMYK, or
+     * the color components of the palette a palette component indexes), or the depth of its first component
+     * when none is a color component
      */
     private static int uncompressedDepth(HeifProperty.UncompressedConfiguration config, List<HeifProperty> properties) {
         HeifProperty.ComponentDefinition definition = null;
+        HeifProperty.ComponentPalette palette = null;
         for (var property : properties) {
-            if (property instanceof HeifProperty.ComponentDefinition found) {
+            if (property instanceof HeifProperty.ComponentDefinition found && definition == null) {
                 definition = found;
-                break;
+            } else if (property instanceof HeifProperty.ComponentPalette found && palette == null) {
+                palette = found;
             }
         }
         var depth = 0;
         for (var component : config.components()) {
-            var type = config.shorthand() ? component.index()
-                    : definition != null && component.index() < definition.types().length
-                    ? definition.types()[component.index()] : -1;
-            if (type >= 0 && type <= 6) {
+            var type = config.shorthand() ? component.index() : componentType(definition, component.index());
+            if (isColorComponent(type)) {
                 depth = Math.max(depth, component.bitDepth());
+            } else if (type == 10 && palette != null) {
+                for (var entry : palette.components()) {
+                    if (isColorComponent(componentType(definition, entry.index()))) {
+                        depth = Math.max(depth, entry.bitDepth());
+                    }
+                }
             }
         }
         return depth != 0 ? depth : config.components().getFirst().bitDepth();
+    }
+
+    /**
+     * {@return the component type a component definition gives an index, or -1 when it has no such entry}
+     *
+     * @param definition the component definition, or {@code null} when the item has none
+     * @param index the index into the definition
+     */
+    private static int componentType(HeifProperty.ComponentDefinition definition, int index) {
+        return definition != null && index < definition.types().length ? definition.types()[index] : -1;
+    }
+
+    /**
+     * {@return whether an uncompressed component type carries color: monochrome, Y'CbCr, RGB, filter array or
+     * CMYK}
+     *
+     * @param type the component type
+     */
+    private static boolean isColorComponent(int type) {
+        return (type >= 0 && type <= 6) || type == 11 || (type >= 13 && type <= 16);
     }
 }

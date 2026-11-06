@@ -96,8 +96,8 @@ public final class StillDecoder {
      * decodable.
      */
     static final Set<String> SUPPORTED_PROPERTIES = Set.of("ispe", "pixi", "hvcC", "avcC", "lhvC", "tols", "lsel",
-            "oinf", "jpgC", "j2kH", "uncC", "cmpd", "cmpC", "cloc", "colr", "pasp", "clap", "irot", "imir", "auxC",
-            "clli", "mdcv", "rref");
+            "oinf", "jpgC", "j2kH", "uncC", "cmpd", "cpal", "cpat", "cmpC", "icef", "cloc", "colr", "pasp", "clap",
+            "irot", "imir", "auxC", "clli", "mdcv", "rref");
 
     /**
      * The types of the coded items this decoder decodes.

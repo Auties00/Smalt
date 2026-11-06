@@ -22,7 +22,6 @@ import java.util.Random;
 import static com.github.auties00.smalt.testkit.HeifBuilder.essential;
 import static com.github.auties00.smalt.testkit.HeifBuilder.plain;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -263,17 +262,6 @@ class HeicUncompressedTest {
             shortData.primary(shortData.item("unci", new byte[11], plain(HeifBuilder.ispe(2, 2)),
                     essential(profile("rgb3"))));
             assertThrows(MediaException.Malformed.class, () -> HeicDecoder.decode(MediaSource.of(shortData.build())));
-        }
-
-        @Test
-        @DisplayName("a palette item is unsupported and is not mistaken for an image without alpha")
-        void unsupported() {
-            var builder = unif();
-            builder.primary(builder.item("unci", new byte[4], plain(HeifBuilder.ispe(2, 2)), essential(planar(0, 8, 1)),
-                    essential(cmpd(10))));
-            var bytes = builder.build();
-            assertThrows(MediaException.Unsupported.class, () -> HeicDecoder.decode(MediaSource.of(bytes)));
-            assertFalse(HeicDecoder.probe(MediaSource.of(bytes)).hasAlpha());
         }
     }
 }

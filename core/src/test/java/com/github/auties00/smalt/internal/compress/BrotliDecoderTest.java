@@ -1,4 +1,4 @@
-package com.github.auties00.smalt.image.jxl.internal.brotli;
+package com.github.auties00.smalt.internal.compress;
 
 import com.github.auties00.smalt.MediaException;
 import org.junit.jupiter.api.DisplayName;
@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class BrotliDecoderTest {
     static byte[] resource(String name) {
-        try (var in = BrotliDecoderTest.class.getResourceAsStream("/com/github/auties00/smalt/image/jxl/brotli/" + name)) {
+        try (var in = BrotliDecoderTest.class.getResourceAsStream("/com/github/auties00/smalt/internal/compress/brotli/" + name)) {
             assertNotNull(in, name);
             return in.readAllBytes();
         } catch (IOException exception) {

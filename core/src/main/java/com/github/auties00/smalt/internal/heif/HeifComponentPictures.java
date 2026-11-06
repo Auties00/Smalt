@@ -11,10 +11,12 @@ import com.github.auties00.smalt.image.ChannelType;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorModel;
+import com.github.auties00.smalt.image.ColorPrimaries;
 import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.PixelLayout;
+import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.internal.color.YcbcrModel;
@@ -30,14 +32,18 @@ import com.github.auties00.smalt.internal.task.ParallelBands;
  * the identity matrix (green in the luma plane, blue and red in the chroma planes, as H.273 codes
  * RGB); luma with both chroma components make a Y'CbCr picture in the chroma format their
  * subsampling gives, 4:1:1 being widened to 4:4:4 by repeating each chroma sample; luma or a
- * monochrome component alone makes a monochrome picture. An alpha component, straight or
- * premultiplied, becomes the alpha plane. Components of up to 8 bits make an 8-bit picture and
- * deeper ones a picture of the depth of the deepest color component; every plane of another depth
- * is rescaled to the picture depth, {@code (v * max + m / 2) / m} for a sample {@code v} of
- * largest value {@code m}, so that an exact 8-bit or deeper source keeps its samples.
+ * monochrome component alone makes a monochrome picture; cyan, magenta, yellow and an optional
+ * black make an RGB picture without color management, {@code R = round((M - C) * (M - K) / M)}
+ * (likewise G from magenta and B from yellow) for inks rescaled to the picture depth of largest
+ * value {@code M}; a filter array alone makes a monochrome picture of its mosaic, with linear
+ * transfer, full range and unspecified primaries. An alpha component, straight or premultiplied,
+ * becomes the alpha plane. Components of up to 8 bits make an 8-bit picture and deeper ones a
+ * picture of the depth of the deepest color component; every plane of another depth is rescaled to
+ * the picture depth, {@code (v * max + m / 2) / m} for a sample {@code v} of largest value
+ * {@code m}, so that an exact 8-bit or deeper source keeps its samples.
  *
- * <p>Components that a planar picture cannot hold ({@link HeifComponents#needsChannels()}: ink
- * components or planes deeper than 16 bits) are assembled into a {@link ChannelPicture} by
+ * <p>Planes deeper than 16 bits, which a planar picture cannot hold, and ink components that are to
+ * keep their stored meaning are assembled into a {@link ChannelPicture} by
  * {@link #toChannels(String, HeifComponents, boolean, ColorInfo, MediaLimits)} instead.
  */
 public final class HeifComponentPictures {
@@ -66,17 +72,18 @@ public final class HeifComponentPictures {
      * with the identity matrix and full range
      * @param limits the bounds of the picture
      * @return a {@link YuvPicture}, or a {@link Yuv16Picture} for components deeper than 8 bits
-     * @throws MediaException.Malformed if the planes do not fit the image size or a chroma
-     * component lacks its pair
-     * @throws IllegalArgumentException if the components need a channel picture
-     * ({@link HeifComponents#needsChannels()})
+     * @throws MediaException.Malformed if the planes do not fit the image size, a chroma
+     * component lacks its pair, or an ink lacks the other two
+     * @throws IllegalArgumentException if a plane is deeper than 16 bits
      * @throws MediaException.Unsupported if the components hold no color, or chroma of an
      * unsupported subsampling
      * @throws MediaException.LimitExceeded if the picture exceeds the limits
      */
     public static Picture toPicture(String name, HeifComponents components, ColorInfo color, MediaLimits limits) {
-        if (components.needsChannels()) {
-            throw new IllegalArgumentException("the components need a channel picture");
+        for (var plane : components.planes()) {
+            if (plane.deep()) {
+                throw new IllegalArgumentException("the components need a channel picture");
+            }
         }
         var width = components.width();
         var height = components.height();
@@ -122,8 +129,22 @@ public final class HeifComponentPictures {
         } else if (luma != null || components.plane(HeifComponents.MONOCHROME) != null) {
             first = luma != null ? luma : components.plane(HeifComponents.MONOCHROME);
             format = ChromaFormat.MONOCHROME;
+        } else if (components.plane(HeifComponents.CYAN) != null || components.plane(HeifComponents.MAGENTA) != null
+                || components.plane(HeifComponents.YELLOW) != null) {
+            var rgb = inks(name, components, limits);
+            first = rgb[1];
+            second = rgb[2];
+            third = rgb[0];
+            format = ChromaFormat.YUV444;
+            color = color.withMatrix(MatrixCoefficients.IDENTITY).withRange(ColorRange.FULL);
+        } else if (components.plane(HeifComponents.FILTER_ARRAY) != null) {
+            first = components.plane(HeifComponents.FILTER_ARRAY);
+            format = ChromaFormat.MONOCHROME;
+            color = new ColorInfo(MatrixCoefficients.UNSPECIFIED, ColorRange.FULL, ColorPrimaries.UNSPECIFIED,
+                    TransferCharacteristics.LINEAR);
         } else {
-            throw new MediaException.Unsupported(name, "images without luma, monochrome or RGB components");
+            throw new MediaException.Unsupported(name, "images without luma, monochrome, RGB, CMYK or filter array "
+                    + "components");
         }
         check(name, first, width, height, 1, 1);
         if (second != null) {
@@ -166,6 +187,59 @@ public final class HeifComponentPictures {
             builder.alpha(narrow(alpha, width, height), width);
         }
         return builder.build();
+    }
+
+    /**
+     * Converts cyan, magenta, yellow and optional black planes to red, green and blue planes, as the
+     * class describes.
+     *
+     * @param name the format name, for messages
+     * @param components the decoded planes of an item, with at least one ink
+     * @param limits the bound of the converted planes
+     * @return the red, green and blue planes, in this order, at the depth of the deepest ink
+     * @throws MediaException.Malformed if an ink lacks the other two or a plane does not cover
+     * the image
+     */
+    private static HeifComponents.Plane[] inks(String name, HeifComponents components, MediaLimits limits) {
+        var width = components.width();
+        var height = components.height();
+        var inks = new HeifComponents.Plane[]{components.plane(HeifComponents.CYAN),
+                components.plane(HeifComponents.MAGENTA), components.plane(HeifComponents.YELLOW)};
+        var black = components.plane(HeifComponents.BLACK);
+        var depth = 0;
+        for (var ink : inks) {
+            if (ink == null) {
+                throw new MediaException.Malformed(name + ": a CMYK image lacks one of cyan, magenta and yellow");
+            }
+            check(name, ink, width, height, 1, 1);
+            depth = Math.max(depth, ink.bitDepth());
+        }
+        if (black != null) {
+            check(name, black, width, height, 1, 1);
+            depth = Math.max(depth, black.bitDepth());
+        }
+        depth = Math.max(depth, 8);
+        LimitChecks.checkAllocation(limits, 6L * width * height);
+        var max = (1 << depth) - 1;
+        var count = width * height;
+        var k = black == null ? null : black.samples();
+        var kMax = black == null ? 1 : (1 << black.bitDepth()) - 1;
+        var out = new HeifComponents.Plane[3];
+        for (var c = 0; c < 3; c++) {
+            var ink = inks[c];
+            var src = ink.samples();
+            var inkMax = (1 << ink.bitDepth()) - 1;
+            var dst = new short[count];
+            for (var i = 0; i < count; i++) {
+                long v = Math.min(src[i] & 0xFFFF, inkMax);
+                var scaled = inkMax == max ? v : (v * max + inkMax / 2) / inkMax;
+                long b = k == null ? 0 : Math.min(k[i] & 0xFFFF, kMax);
+                var key = k == null || kMax == max ? b : (b * max + kMax / 2) / kMax;
+                dst[i] = (short) (((max - scaled) * (max - key) + max / 2) / max);
+            }
+            out[c] = new HeifComponents.Plane(HeifComponents.RED + c, width, height, 1, 1, depth, dst);
+        }
+        return out;
     }
 
     /**

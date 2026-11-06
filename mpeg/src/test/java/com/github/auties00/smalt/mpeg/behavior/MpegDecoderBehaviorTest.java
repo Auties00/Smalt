@@ -125,7 +125,9 @@ class MpegDecoderBehaviorTest {
 
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"valid-avc.heic", "valid-unci-rgb3.heic", "valid-unci-v210.heic", "valid-unci-zlib.heic",
-            "valid-lhv1.heic", "valid-collection.heic"})
+            "valid-lhv1.heic", "valid-collection.heic", "valid-unci-palette.heic", "valid-unci-float.heic",
+            "valid-unci-wide-blocks.heic", "valid-unci-cmyk.heic", "valid-unci-bayer.heic", "valid-unci-brot-units.heic",
+            "valid-unci-420-rows.heic", "valid-unci-420-multiy.heic"})
     @DisplayName("HEIF items decoded by region: identical pictures under every source behavior")
     void heifItemRegions(String name) throws IOException {
         RegionAsserts.behaviors("region/heif-items/" + name,
@@ -134,7 +136,9 @@ class MpegDecoderBehaviorTest {
 
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"valid-avc.heic", "valid-unci-rgb3.heic", "valid-unci-v210.heic", "valid-unci-zlib.heic",
-            "valid-lhv1.heic", "valid-collection.heic"})
+            "valid-lhv1.heic", "valid-collection.heic", "valid-unci-palette.heic", "valid-unci-float.heic",
+            "valid-unci-wide-blocks.heic", "valid-unci-cmyk.heic", "valid-unci-bayer.heic", "valid-unci-brot-units.heic",
+            "valid-unci-420-rows.heic", "valid-unci-420-multiy.heic"})
     @DisplayName("HEIF items of other codecs (the HEIC fuzz seeds): identical pictures under every source behavior")
     void heifItems(String name) throws IOException {
         ImageDecoderAsserts.of("heif-items/" + name, Files.readAllBytes(HEIF_SEEDS.resolve(name))).run();

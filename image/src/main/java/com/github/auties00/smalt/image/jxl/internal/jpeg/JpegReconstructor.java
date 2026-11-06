@@ -7,7 +7,7 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.jxl.internal.JxlCodestream;
 import com.github.auties00.smalt.image.jxl.internal.bitstream.JxlBitReader;
-import com.github.auties00.smalt.image.jxl.internal.brotli.BrotliDecoder;
+import com.github.auties00.smalt.internal.compress.BrotliDecoder;
 import com.github.auties00.smalt.image.jxl.internal.header.FrameHeader;
 import com.github.auties00.smalt.image.jxl.internal.vardct.HfPass;
 import com.github.auties00.smalt.image.jxl.internal.vardct.VarDctFrame;

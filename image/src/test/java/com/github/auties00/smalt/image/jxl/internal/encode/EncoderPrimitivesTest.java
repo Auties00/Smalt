@@ -2,7 +2,7 @@ package com.github.auties00.smalt.image.jxl.internal.encode;
 
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.jxl.internal.bitstream.JxlBitReader;
-import com.github.auties00.smalt.image.jxl.internal.brotli.BrotliDecoder;
+import com.github.auties00.smalt.internal.compress.BrotliDecoder;
 import com.github.auties00.smalt.image.jxl.internal.entropy.EntropyDecoder;
 import com.github.auties00.smalt.image.jxl.internal.header.BitDepth;
 import com.github.auties00.smalt.image.jxl.internal.header.ColorEncoding;

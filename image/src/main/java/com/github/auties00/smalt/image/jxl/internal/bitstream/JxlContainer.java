@@ -4,7 +4,7 @@ package com.github.auties00.smalt.image.jxl.internal.bitstream;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
-import com.github.auties00.smalt.image.jxl.internal.brotli.BrotliDecoder;
+import com.github.auties00.smalt.internal.compress.BrotliDecoder;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 

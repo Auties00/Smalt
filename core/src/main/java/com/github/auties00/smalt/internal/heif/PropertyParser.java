@@ -56,6 +56,9 @@ final class PropertyParser {
                 var flags = box.u8();
                 yield new HeifProperty.CompressionConfiguration(compressionType, (flags & 0x80) != 0, flags & 0x7F);
             }
+            case "icef" -> HeifProperty.CompressedUnits.parse(box);
+            case "cpal" -> HeifProperty.ComponentPalette.parse(box);
+            case "cpat" -> HeifProperty.ComponentPattern.parse(box);
             case "cloc" -> {
                 box.fullBoxHeader();
                 yield new HeifProperty.ChromaLocation(box.u8());
