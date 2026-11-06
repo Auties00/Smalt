@@ -1,0 +1,32 @@
+# audio decode dump of flv/h264-aac.flv; regenerate with -Dsmalt.test.updateDumps=true
+format FLV
+duration 2133000
+seekable true
+track 2 AAC rate=44100 layout=[FRONT_CENTER]
+0 frames=4096 crc16=b3743528
+1 frames=4096 crc16=8e048ee0
+2 frames=4096 crc16=a2931c1a
+3 frames=4096 crc16=56277ddb
+4 frames=4096 crc16=88c2a1bd
+5 frames=4096 crc16=5e5f9cba
+6 frames=4096 crc16=1dad8a89
+7 frames=4096 crc16=97b020e9
+8 frames=4096 crc16=26b9060d
+9 frames=4096 crc16=647abf13
+10 frames=4096 crc16=094906b0
+11 frames=4096 crc16=91e0cd74
+12 frames=4096 crc16=2c2346d4
+13 frames=4096 crc16=3ccf89df
+14 frames=4096 crc16=e661beae
+15 frames=4096 crc16=ae463986
+16 frames=4096 crc16=2624f13a
+17 frames=4096 crc16=2c1f7dd6
+18 frames=4096 crc16=a06a4416
+19 frames=4096 crc16=4c48aa82
+20 frames=4096 crc16=ca8a7839
+21 frames=4096 crc16=508176f4
+seek 0: @sample 0
+seek 711000: @sample 31355
+seek 1422000: @sample 62710
+seek 2133000: end
+seek -1000000: @sample 0

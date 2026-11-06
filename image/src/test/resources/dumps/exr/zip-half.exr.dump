@@ -1,0 +1,13 @@
+# image dump of exr/zip-half.exr; regenerate with -Dsmalt.test.updateDumps=true
+format EXR
+info ImageInfo[format=EXR, width=48, height=32, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 48x32 rgba8 alpha=false crc=1dc7b3e4
+  format=EXR orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=ColorProfile[RGB, RGB, DISPLAY, v4.3.0]
+scaled 12x8
+picture 48x32 rgba8 alpha=false crc=1dc7b3e4
+  format=EXR orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=ColorProfile[RGB, RGB, DISPLAY, v4.3.0]

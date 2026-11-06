@@ -1,0 +1,28 @@
+# demux dump of aiff/markers.aiff; regenerate with -Dsmalt.test.updateDumps=true
+format AIFF
+duration 1000000
+seekable true
+metadata COMT="first note; second"
+metadata inst:base_note="60"
+metadata inst:detune="-3"
+metadata inst:gain="-6"
+metadata inst:high_note="100"
+metadata inst:high_velocity="127"
+metadata inst:low_note="10"
+metadata inst:low_velocity="1"
+metadata inst:sustain_loop="1 4000 6000"
+chapter 0 250000 "Start"
+chapter 250000 875000
+chapter 875000 1000000 "Late"
+track 0 AUDIO PCM_S16BE timebase=1/8000 duration=8000 config=none
+  audio rate=8000 bits=16 skip=0 layout=[FRONT_CENTER]
+packets 4
+0 t0 pts=0 dts=0 dur=2048 flags=KEY size=4096 crc=17b64a95
+1 t0 pts=2048 dts=2048 dur=2048 flags=KEY size=4096 crc=fd667dc2
+2 t0 pts=4096 dts=4096 dur=2048 flags=KEY size=4096 crc=c2bcf5bb
+3 t0 pts=6144 dts=6144 dur=1856 flags=KEY size=3712 crc=32efea04
+seek 0: t0@0
+seek 333333: t0@pts=2666
+seek 666666: t0@pts=5333
+seek 1000000: end
+seek -1000000: t0@0
