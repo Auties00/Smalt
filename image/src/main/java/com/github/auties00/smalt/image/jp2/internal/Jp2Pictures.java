@@ -2,9 +2,23 @@ package com.github.auties00.smalt.image.jp2.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.Channel;
+import com.github.auties00.smalt.image.Channel16Picture;
+import com.github.auties00.smalt.image.Channel8Picture;
+import com.github.auties00.smalt.image.ChannelPicture;
+import com.github.auties00.smalt.image.ChannelType;
+import com.github.auties00.smalt.image.ChromaFormat;
+import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.ColorPrimaries;
+import com.github.auties00.smalt.image.ColorRange;
+import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.PixelLayout;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.image.TransferCharacteristics;
+import com.github.auties00.smalt.image.Yuv16Picture;
+import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.color.ProfileColorSpace;
 import com.github.auties00.smalt.image.jp2.Jp2ChannelType;
@@ -15,20 +29,25 @@ import com.github.auties00.smalt.internal.limits.LimitChecks;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
- * Converts the channels of a decoded JPEG 2000 image to a packed RGBA picture.
+ * Converts the channels of a decoded JPEG 2000 image to a packed RGBA picture, or the channels of
+ * a CMYK image to a channel picture.
  *
  * <p>The color channels are chosen by the channel definitions, or without them the first
  * channels the color space needs (one for gray, three for RGB-like spaces, four for CMYK), and
  * the opacity channel likewise (without channel definitions, the channel after the colors of a
  * two- or four-channel image). Subsampled channels are upsampled by replication, each image
  * sample taking the channel sample whose reference grid area covers it. sYCC and e-sYCC samples
- * are converted to RGB and CMYK samples with the naive formula; other color spaces are passed
- * through, one color channel as gray and three as RGB in the declared color space. Samples
+ * are converted to RGB, CMYK and YCCK samples with the naive formula, CMY samples by complement, the YCbCr,
+ * YPbPr and PhotoYCC spaces to R'G'B' with their matrices, and CIE L*a*b* and CIECAM97s J*a*b* samples to 16-bit
+ * sRGB (see {@code Jp2Colors}); bi-level samples are inverted (1 is black); other color spaces are passed through,
+ * one color channel as gray and three as RGB in the declared color space. Channels wider than 31 bits keep their
+ * 31 most significant bits. Samples
  * are scaled from their precision to 8 bits as {@code round(v * 255 / (2^p - 1))}, or to 16 bits
  * likewise, after signed samples are offset by {@code 2^(p-1)}; premultiplied opacity is divided
- * out.
+ * out (for CMYK, from the inks before the conversion).
  *
  * @implNote This implementation follows the color conversions of OpenJPEG's
  * {@code opj_decompress} ({@code color.c}): the per-sample formulas of {@code sycc_to_rgb},
@@ -47,14 +66,30 @@ public final class Jp2Pictures {
     }
 
     /**
-     * Returns the number of color channels of a color space, given the image's channel count.
+     * Returns the number of color channels of an image, given its color space, its ICC profile and
+     * its channel count: an ICC profile of a gray or CMYK color space decides 1 or 4 channels, and
+     * otherwise the color space decides: 1 for gray, 3 for RGB-like spaces and for an unspecified or ICC
+     * color space of at least three channels, 4 for CMYK.
      *
      * @param colorSpace the color space
+     * @param icc        the ICC profile, or {@code null}
      * @param channels   the number of channels
-     * @return the color channels: 1 for gray, 3 for RGB-like spaces, 4 for CMYK, at most
-     *         {@code channels}
+     * @return the color channels, at most {@code channels}
      */
-    public static int colorChannels(Jp2ColorSpace colorSpace, int channels) {
+    public static int colorChannels(Jp2ColorSpace colorSpace, byte[] icc, int channels) {
+        if (icc != null) {
+            try {
+                var profile = ColorProfile.parse(icc);
+                if (profile.colorSpace() == ProfileColorSpace.GRAY) {
+                    return Math.min(1, channels);
+                }
+                if (profile.colorSpace() == ProfileColorSpace.CMYK) {
+                    return Math.min(4, channels);
+                }
+            } catch (MediaException exception) {
+                // an unreadable profile leaves the color space to decide
+            }
+        }
         var colors = switch (colorSpace) {
             case BILEVEL, BILEVEL_INVERTED, GRAYSCALE -> 1;
             case CMYK, YCCK -> 4;
@@ -72,10 +107,10 @@ public final class Jp2Pictures {
      * @param limits       the limits
      * @return the picture: an {@link Rgba16Picture} when {@code highBitDepth} is set and a channel
      *         is wider than 8 bits, an {@link RgbaPicture} otherwise
-     * @throws MediaException.Unsupported   if the color space cannot be converted to RGB
      * @throws MediaException.LimitExceeded if the picture exceeds the limits
      */
     public static Picture toPicture(Jp2Image image, boolean highBitDepth, MediaLimits limits) {
+        image = narrow(image);
         var width = image.width();
         var height = image.height();
         LimitChecks.checkAllocation(limits, (long) width * height * 4 * (highBitDepth ? 4 : 2));
@@ -83,11 +118,8 @@ public final class Jp2Pictures {
         var colors = new ArrayList<Jp2Channel>();
         var alpha = select(image, colors);
         var space = effectiveColorSpace(image, colors);
-        if (space == Jp2ColorSpace.CIELAB || space == Jp2ColorSpace.CIEJAB || space == Jp2ColorSpace.YCCK
-                || space == Jp2ColorSpace.PHOTO_YCC) {
-            throw new MediaException.Unsupported("JPEG 2000", "converting " + space + " samples to RGB");
-        }
         var count = colors.size() >= 3 ? 3 : 1;
+        var inksStraight = false;
         var planes = new int[count][];
         var precisions = new int[count];
         var signed = new boolean[count];
@@ -104,21 +136,62 @@ public final class Jp2Pictures {
             planes[1] = cb;
             planes[2] = cr;
             precisions[0] = precisions[1] = precisions[2] = colors.get(0).precision();
-        } else if (space == Jp2ColorSpace.CMYK && colors.size() >= 4) {
+        } else if ((space == Jp2ColorSpace.CMYK || space == Jp2ColorSpace.YCCK) && colors.size() >= 4) {
             var cmyk = new int[4][];
             for (var i = 0; i < 4; i++) {
-                cmyk[i] = upsample(image, colors.get(i));
+                cmyk[i] = upsample(image, colors.get(i)).clone();
+            }
+            if (space == Jp2ColorSpace.YCCK) {
+                Jp2Colors.ycck(cmyk, colors.subList(0, 4).toArray(Jp2Channel[]::new));
+            }
+            if (alpha != null && alpha.type() == Jp2ChannelType.PREMULTIPLIED_OPACITY) {
+                var opacity = upsample(image, alpha);
+                for (var i = 0; i < 4; i++) {
+                    cmyk[i] = straightInks(cmyk[i], colors.get(i).precision(), opacity, alpha);
+                }
+                inksStraight = true;
             }
             cmyk(cmyk, colors);
             for (var i = 0; i < 3; i++) {
                 planes[i] = cmyk[i];
                 precisions[i] = 8;
             }
+        } else if (count == 3 && space == Jp2ColorSpace.E_SRGB) {
+            for (var i = 0; i < 3; i++) {
+                planes[i] = esrgb(upsample(image, colors.get(i)), colors.get(i));
+                precisions[i] = colors.get(i).precision();
+            }
+        } else if (count == 3 && converted(space)) {
+            var three = colors.subList(0, 3).toArray(Jp2Channel[]::new);
+            for (var i = 0; i < 3; i++) {
+                planes[i] = upsample(image, colors.get(i)).clone();
+            }
+            switch (space) {
+                case CIELAB -> Jp2Colors.lab(planes, three, image.colorParameters().orElse(null));
+                case CIEJAB -> Jp2Colors.jab(planes, three, image.colorParameters().orElse(null));
+                case PHOTO_YCC -> Jp2Colors.photoYcc(planes, three);
+                case CMY -> Jp2Colors.cmy(planes, three);
+                default -> Jp2Colors.ycc(planes, three, space);
+            }
+            var lab = space == Jp2ColorSpace.CIELAB || space == Jp2ColorSpace.CIEJAB;
+            for (var i = 0; i < 3; i++) {
+                precisions[i] = lab ? 16 : space == Jp2ColorSpace.CMY ? three[i].precision() : three[0].precision();
+            }
         } else {
             for (var i = 0; i < count; i++) {
                 planes[i] = upsample(image, colors.get(i));
                 precisions[i] = colors.get(i).precision();
                 signed[i] = colors.get(i).signed();
+            }
+            if (space == Jp2ColorSpace.BILEVEL && count == 1) {
+                var max = (int) ((1L << precisions[0]) - 1);
+                var inverted = new int[planes[0].length];
+                var offset = signed[0] ? 1 << (precisions[0] - 1) : 0;
+                for (var i = 0; i < inverted.length; i++) {
+                    inverted[i] = max - Math.clamp(planes[0][i] + offset, 0, max);
+                }
+                planes[0] = inverted;
+                signed[0] = false;
             }
         }
         var wide = alpha != null && alpha.precision() > 8;
@@ -133,7 +206,7 @@ public final class Jp2Pictures {
         int[] opacity = null;
         if (alpha != null) {
             opacity = scale(upsample(image, alpha), alpha.precision(), alpha.signed(), target);
-            if (alpha.type() == Jp2ChannelType.PREMULTIPLIED_OPACITY) {
+            if (alpha.type() == Jp2ChannelType.PREMULTIPLIED_OPACITY && !inksStraight) {
                 for (var plane : scaled) {
                     unpremultiply(plane, opacity, target);
                 }
@@ -161,6 +234,247 @@ public final class Jp2Pictures {
     }
 
     /**
+     * Returns whether the color channels of a color space are converted by {@code Jp2Colors}.
+     *
+     * @param space the color space
+     * @return whether it is CMY, a YCbCr or YPbPr space, PhotoYCC, CIE L*a*b* or CIECAM97s J*a*b*
+     */
+    private static boolean converted(Jp2ColorSpace space) {
+        return switch (space) {
+            case CMY, YCBCR_709, YCBCR_601_625, YCBCR_601_525, YPBPR_1125_60, YPBPR_1250_50, PHOTO_YCC, CIELAB,
+                 CIEJAB -> true;
+            default -> false;
+        };
+    }
+
+    /**
+     * Returns the color profile of the pixels a color space converts to.
+     *
+     * @param space the enumerated color space
+     * @return sRGB for the sRGB, e-sRGB, sYCC, e-sYCC, YCbCr(2), CIE L*a*b* and CIECAM97s J*a*b* spaces, the Rec.
+     * ITU-R BT.709 profile for YCbCr(1), the YPbPr spaces and PhotoYCC, the BT.601 525-line profile for YCbCr(3),
+     * ProPhoto RGB for ROMM-RGB, or empty
+     */
+    public static Optional<ColorProfile> profile(Jp2ColorSpace space) {
+        return switch (space) {
+            case SRGB, E_SRGB, SYCC, E_SYCC, YCBCR_601_625, CIELAB, CIEJAB -> Optional.of(ColorProfile.srgb());
+            case YCBCR_709, YPBPR_1125_60, YPBPR_1250_50, PHOTO_YCC -> Optional.of(ColorProfile.rec709());
+            case YCBCR_601_525 -> Optional.of(ColorProfile.of(new ColorInfo(MatrixCoefficients.IDENTITY,
+                    ColorRange.FULL, ColorPrimaries.SMPTE170M, TransferCharacteristics.BT709)));
+            case ROMM_RGB -> Optional.of(ColorProfile.proPhotoRgb());
+            default -> Optional.empty();
+        };
+    }
+
+    /**
+     * Narrows the channels wider than 31 bits to their 31 most significant bits.
+     *
+     * @param image the decoded image
+     * @return the image, itself when no channel is wider
+     */
+    private static Jp2Image narrow(Jp2Image image) {
+        var wide = false;
+        for (var channel : image.channels()) {
+            wide |= channel.wide();
+        }
+        if (!wide) {
+            return image;
+        }
+        var channels = new ArrayList<Jp2Channel>();
+        for (var channel : image.channels()) {
+            if (!channel.wide()) {
+                channels.add(channel);
+                continue;
+            }
+            var shift = channel.precision() - 31;
+            var source = channel.wideSamples();
+            var samples = new int[source.length];
+            for (var i = 0; i < samples.length; i++) {
+                samples[i] = (int) (source[i] >> shift);
+            }
+            channels.add(new Jp2Channel(channel.x0(), channel.y0(), channel.width(), channel.height(),
+                    channel.subsamplingX(), channel.subsamplingY(), 31, channel.signed(), channel.type(),
+                    channel.association(), samples));
+        }
+        return new Jp2Image(image.x0(), image.y0(), image.width(), image.height(), image.fullWidth(),
+                image.fullHeight(), image.reduction(), channels, image.colorSpace(), image.colorParameters(),
+                image.iccProfile(), image.exif(), image.xmp());
+    }
+
+    /**
+     * Returns the samples of a gray or Y'CbCr image as a planar picture, without any color conversion.
+     *
+     * <p>The image qualifies when it has one unsigned color channel and a grayscale or unspecified color space, or
+     * three unsigned color channels that the declared sYCC color space, or an unspecified color space with
+     * subsampled chroma, makes Y'CbCr, with an unsubsampled luma channel and chroma channels both subsampled by
+     * 1x1, 2x1 or 2x2; every channel must be of one precision of at most 16 bits and hold exactly the samples the
+     * picture's planes hold. Samples of a precision {@code P} other than 8 are scaled to 8 bits as
+     * {@code round(v * 255 / (2^P - 1))}, unless {@code highBitDepth} is set and {@code P} exceeds 8, which keeps
+     * them as they are in a {@link Yuv16Picture} of bit depth {@code P}.
+     *
+     * @param image the decoded image
+     * @param highBitDepth whether samples wider than 8 bits keep their depth
+     * @param color the color description of the picture
+     * @param limits the limits checked before allocating
+     * @return the picture, a {@link YuvPicture} or a {@link Yuv16Picture}, or {@code null} when the image does
+     * not qualify
+     * @throws MediaException.LimitExceeded if the picture exceeds the limits
+     */
+    public static Picture toYuv(Jp2Image image, boolean highBitDepth, ColorInfo color, MediaLimits limits) {
+        var channels = image.channels();
+        var space = image.colorSpace();
+        ChromaFormat format;
+        if (channels.size() == 1) {
+            if (space != Jp2ColorSpace.GRAYSCALE && space != Jp2ColorSpace.UNSPECIFIED) {
+                return null;
+            }
+            format = ChromaFormat.MONOCHROME;
+        } else if (channels.size() == 3) {
+            if (space != Jp2ColorSpace.SYCC && (space != Jp2ColorSpace.UNSPECIFIED
+                    || effectiveColorSpace(image, channels) != Jp2ColorSpace.SYCC)) {
+                return null;
+            }
+            var luma = channels.get(0);
+            var cb = channels.get(1);
+            var cr = channels.get(2);
+            if (luma.subsamplingX() != 1 || luma.subsamplingY() != 1 || cb.subsamplingX() != cr.subsamplingX()
+                    || cb.subsamplingY() != cr.subsamplingY()) {
+                return null;
+            }
+            var dx = cb.subsamplingX();
+            var dy = cb.subsamplingY();
+            format = dx == 1 && dy == 1 ? ChromaFormat.YUV444 : dx == 2 && dy == 1 ? ChromaFormat.YUV422
+                    : dx == 2 && dy == 2 ? ChromaFormat.YUV420 : null;
+            if (format == null) {
+                return null;
+            }
+        } else {
+            return null;
+        }
+        var width = image.width();
+        var height = image.height();
+        var precision = channels.getFirst().precision();
+        for (var c = 0; c < channels.size(); c++) {
+            var channel = channels.get(c);
+            var planeWidth = c == 0 ? width : format.chromaWidth(width);
+            var planeHeight = c == 0 ? height : format.chromaHeight(height);
+            if (channel.wide() || channel.signed() || channel.precision() != precision || precision > 16
+                    || channel.type() != Jp2ChannelType.COLOR || channel.width() != planeWidth
+                    || channel.height() != planeHeight) {
+                return null;
+            }
+        }
+        var lumaSize = (long) width * height;
+        var chromaSize = format.hasChroma() ? (long) format.chromaWidth(width) * format.chromaHeight(height) : 0;
+        var wide = highBitDepth && precision > 8;
+        LimitChecks.checkAllocation(limits, (lumaSize + 2 * chromaSize) * (wide ? 2 : 1));
+        if (wide) {
+            var planes = new short[channels.size()][];
+            for (var c = 0; c < planes.length; c++) {
+                var samples = channels.get(c).samples();
+                var plane = new short[samples.length];
+                for (var i = 0; i < samples.length; i++) {
+                    plane[i] = (short) samples[i];
+                }
+                planes[c] = plane;
+            }
+            var builder = Yuv16Picture.builder().size(width, height).chromaFormat(format).bitDepth(precision)
+                    .color(color).luma(planes[0], width);
+            if (format.hasChroma()) {
+                builder.chroma(planes[1], planes[2], format.chromaWidth(width));
+            }
+            return builder.build();
+        }
+        var planes = new byte[channels.size()][];
+        for (var c = 0; c < planes.length; c++) {
+            var samples = channels.get(c).samples();
+            var plane = new byte[samples.length];
+            if (precision == 8) {
+                for (var i = 0; i < samples.length; i++) {
+                    plane[i] = (byte) samples[i];
+                }
+            } else {
+                var max = (1L << precision) - 1;
+                for (var i = 0; i < samples.length; i++) {
+                    plane[i] = (byte) ((Math.clamp(samples[i], 0, max) * 510 + max) / (2 * max));
+                }
+            }
+            planes[c] = plane;
+        }
+        var builder = YuvPicture.builder().size(width, height).chromaFormat(format).color(color)
+                .luma(planes[0], width);
+        if (format.hasChroma()) {
+            builder.chroma(planes[1], planes[2], format.chromaWidth(width));
+        }
+        return builder.build();
+    }
+
+    /**
+     * Converts the channels of a CMYK image to a channel picture, keeping the inks.
+     *
+     * <p>The cyan, magenta, yellow and black channels are chosen as {@link #toPicture} chooses
+     * them, upsampled as it upsamples them, and followed by the opacity channel when there is one,
+     * straight or premultiplied as the channel definitions declare. The samples keep their stored
+     * meaning, 0 being no ink, and are scaled to 8 bits as {@code round(v * 255 / (2^p - 1))}, or to
+     * 16 bits likewise when {@code highBitDepth} is set and a kept channel is wider than 8 bits,
+     * after signed samples are offset by {@code 2^(p-1)}.
+     *
+     * @param image        the decoded image
+     * @param highBitDepth whether an image with channels wider than 8 bits keeps 16 bits
+     * @param limits       the resource bounds checked before the allocation
+     * @return the picture of the {@link PixelLayout#CMYK} layout, followed by alpha when the image
+     *         has an opacity channel, or {@code null} when the color channels are not CMYK
+     * @throws MediaException.LimitExceeded if the picture exceeds the limits
+     */
+    public static ChannelPicture toChannels(Jp2Image image, boolean highBitDepth, MediaLimits limits) {
+        image = narrow(image);
+        var colors = new ArrayList<Jp2Channel>();
+        var alpha = select(image, colors);
+        if (effectiveColorSpace(image, colors) != Jp2ColorSpace.CMYK || colors.size() < 4) {
+            return null;
+        }
+        var kept = new ArrayList<>(colors.subList(0, 4));
+        var layout = PixelLayout.CMYK;
+        if (alpha != null) {
+            kept.add(alpha);
+            layout = layout.withChannel(Channel.of(alpha.type() == Jp2ChannelType.PREMULTIPLIED_OPACITY
+                    ? ChannelType.PREMULTIPLIED_ALPHA : ChannelType.ALPHA));
+        }
+        var wide = false;
+        for (var channel : kept) {
+            wide |= channel.precision() > 8;
+        }
+        var target = highBitDepth && wide ? 65535 : 255;
+        var width = image.width();
+        var height = image.height();
+        var count = kept.size();
+        LimitChecks.checkAllocation(limits, (long) width * height * count * (target == 65535 ? 6 : 5));
+        var length = width * height;
+        if (target == 65535) {
+            var picture = Channel16Picture.allocate(width, height, layout);
+            var pixels = picture.pixels();
+            for (var c = 0; c < count; c++) {
+                var channel = kept.get(c);
+                var plane = scale(upsample(image, channel), channel.precision(), channel.signed(), target);
+                for (var i = 0; i < length; i++) {
+                    pixels[i * count + c] = (short) plane[i];
+                }
+            }
+            return picture;
+        }
+        var picture = Channel8Picture.allocate(width, height, layout);
+        var pixels = picture.pixels();
+        for (var c = 0; c < count; c++) {
+            var channel = kept.get(c);
+            var plane = scale(upsample(image, channel), channel.precision(), channel.signed(), target);
+            for (var i = 0; i < length; i++) {
+                pixels[i * count + c] = (byte) plane[i];
+            }
+        }
+        return picture;
+    }
+
+    /**
      * Chooses the color channels and the opacity channel.
      *
      * @param image  the decoded image
@@ -179,20 +493,7 @@ public final class Jp2Pictures {
                 }
             }
         }
-        var wanted = colorChannels(image.colorSpace(), channels.size());
-        var icc = image.iccProfile();
-        if (icc.isPresent()) {
-            try {
-                var profile = ColorProfile.parse(icc.get());
-                if (profile.colorSpace() == ProfileColorSpace.GRAY) {
-                    wanted = 1;
-                } else if (profile.colorSpace() == ProfileColorSpace.CMYK) {
-                    wanted = Math.min(4, channels.size());
-                }
-            } catch (MediaException exception) {
-                // an unreadable profile leaves the channel count to decide
-            }
-        }
+        var wanted = colorChannels(image.colorSpace(), image.iccProfile().orElse(null), channels.size());
         for (var channel : channels) {
             if (channel.type() == Jp2ChannelType.COLOR && colors.size() < wanted) {
                 colors.add(channel);
@@ -297,6 +598,30 @@ public final class Jp2Pictures {
     }
 
     /**
+     * Decodes an e-sRGB plane (PIMA 7667) to sRGB at the plane's precision {@code n}: the code
+     * {@code 255 * 2^(n - 9) * R' + 3 * 2^(n - 3)} of a nonlinear value {@code R'} is read back and
+     * clipped to the sRGB range [0, 1], which drops the values below black and above white that e-sRGB
+     * extends sRGB with.
+     *
+     * @param samples the e-sRGB samples, not modified
+     * @param channel the channel, for its precision and signedness
+     * @return the sRGB samples at the same precision, in a new array
+     */
+    private static int[] esrgb(int[] samples, Jp2Channel channel) {
+        var precision = channel.precision();
+        var black = 3 * Math.scalb(1.0, precision - 3);
+        var scale = 255 * Math.scalb(1.0, precision - 9);
+        var max = (1L << precision) - 1;
+        var offset = channel.signed() ? 1L << (precision - 1) : 0;
+        var result = new int[samples.length];
+        for (var i = 0; i < samples.length; i++) {
+            var value = Math.clamp((samples[i] + offset - black) / scale, 0.0, 1.0);
+            result[i] = (int) Math.round(value * max);
+        }
+        return result;
+    }
+
+    /**
      * Converts e-sYCC planes to RGB in place, as {@code color_esycc_to_rgb} does.
      *
      * @param y      the luma plane, replaced by red
@@ -321,6 +646,30 @@ public final class Jp2Pictures {
             cb[i] = Math.clamp(g, 0, max);
             cr[i] = Math.clamp(b, 0, max);
         }
+    }
+
+    /**
+     * Divides premultiplied opacity out of an ink plane at the inks' precision, so that the naive
+     * conversion reads the inks of the color rather than the inks scaled by the opacity.
+     *
+     * @param inks      the ink samples
+     * @param precision the precision of the inks
+     * @param opacity   the opacity samples, upsampled to the image
+     * @param alpha     the opacity channel, for its precision and signedness
+     * @return the straight inks, {@code min(max, round(v * A / a))} for an opacity {@code a} of
+     *         largest value {@code A}, 0 where {@code a} is 0; in a new array
+     */
+    private static int[] straightInks(int[] inks, int precision, int[] opacity, Jp2Channel alpha) {
+        var max = (1L << precision) - 1;
+        var alphaMax = (1L << alpha.precision()) - 1;
+        var offset = alpha.signed() ? 1L << (alpha.precision() - 1) : 0;
+        var result = new int[inks.length];
+        for (var i = 0; i < inks.length; i++) {
+            var a = Math.clamp(opacity[i] + offset, 0, alphaMax);
+            var value = Math.clamp(inks[i], 0, max);
+            result[i] = a == 0 ? 0 : (int) Math.min(max, (value * alphaMax + a / 2) / a);
+        }
+        return result;
     }
 
     /**

@@ -26,12 +26,27 @@ final class MatroskaStructure {
     final Map<Long, Long> seeks = new HashMap<>();
     final List<long[]> cues = new ArrayList<>();
     final List<long[]> blocks = new ArrayList<>();
+    final List<List<Element>> tracks = new ArrayList<>();
     long segmentStart;
     long segmentSize;
     double duration = -1;
     long timestampScale = 1_000_000;
     String docType;
     boolean unknownClusters;
+
+    /** One child of a {@code TrackEntry}: its id, absolute offset and payload. */
+    record Element(long id, int offset, byte[] payload) {
+    }
+
+    /** Returns the first child of a track entry with an id, or {@code null}. */
+    static Element child(List<Element> entry, long id) {
+        for (var element : entry) {
+            if (element.id() == id) {
+                return element;
+            }
+        }
+        return null;
+    }
 
     private MatroskaStructure(byte[] data) {
         this.data = data;
@@ -120,6 +135,8 @@ final class MatroskaStructure {
                 readSeekHead(body, end);
             } else if (element == EbmlIds.INFO) {
                 readInfo(body, end);
+            } else if (element == EbmlIds.TRACKS) {
+                readTracks(body, end);
             } else if (element == EbmlIds.CUES) {
                 readCues(body, end);
             } else if (element == EbmlIds.CLUSTER) {
@@ -162,6 +179,25 @@ final class MatroskaStructure {
                 position[0] += (int) length;
             }
             seeks.put(target, where);
+        }
+    }
+
+    private void readTracks(int body, long end) {
+        var position = new int[]{body};
+        while (position[0] < end) {
+            assertEquals(EbmlIds.TRACK_ENTRY, id(position));
+            var entrySize = (int) size(position);
+            var entryEnd = position[0] + entrySize;
+            var entry = new ArrayList<Element>();
+            while (position[0] < entryEnd) {
+                var offset = position[0];
+                var child = id(position);
+                var length = size(position);
+                entry.add(new Element(child, offset, java.util.Arrays.copyOfRange(data, position[0], position[0] + (int) length)));
+                position[0] += (int) length;
+            }
+            assertEquals(entryEnd, position[0], "TrackEntry content overruns");
+            tracks.add(entry);
         }
     }
 
