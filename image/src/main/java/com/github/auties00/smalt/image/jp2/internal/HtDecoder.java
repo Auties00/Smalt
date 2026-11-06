@@ -18,7 +18,11 @@ import java.util.Arrays;
  * @implNote This implementation follows OpenJPEG's {@code opj_t1_ht_decode_cblk} sample for sample; its readers
  * consume the byte-streams one byte at a time where OpenJPEG reads aligned 32-bit words, which gives the same bits.
  * Code-blocks of more than 30 magnitude bit-planes, which OpenJPEG rejects, decode in 64-bit arithmetic as OpenJPH's
- * 64-bit block decoder decodes them.
+ * 64-bit block decoder decodes them, and code-blocks of 62 to 74, which only a region-of-interest shift reaches
+ * (ISO/IEC 15444-15 A.5 bounds the shift by 37 and 8.7.3 the magnitudes by {@code 2^74}) and which OpenJPH rejects,
+ * in 128-bit sign-magnitude arithmetic over two words per sample, the region of interest being removed by the
+ * caller. The U-VLC extensions of exponents above 32 (ISO/IEC 15444-15 7.3.6), which only code-blocks of more than
+ * 30 magnitude bit-planes reach and OpenJPEG does not read, are read after the suffixes of their quad pair.
  */
 final class HtDecoder {
     /**
@@ -47,6 +51,12 @@ final class HtDecoder {
     private static final int MAX_AREA = 4096;
 
     /**
+     * The largest number of magnitude bit-planes of an HT code-block: its magnitudes are below {@code 2^74}
+     * (ISO/IEC 15444-15 8.7.3), the 37 bit-planes of {@code Mb} plus a region-of-interest shift of at most 37.
+     */
+    static final int MAX_MAGNITUDE_BITS = 74;
+
+    /**
      * The MEL exponents of each state (Table 2 of ISO/IEC 15444-15).
      */
     private static final int[] MEL_EXPONENTS = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5};
@@ -67,14 +77,26 @@ final class HtDecoder {
 
     /**
      * The decoded coefficients of a code-block of more than 30 magnitude bit-planes, row-major, sign in bit 63 until
-     * the end of the decode.
+     * the end of the decode; for more than 61, the low words of the magnitudes whose high words {@link #highData}
+     * holds.
      */
     private long[] wideData;
+
+    /**
+     * The high words of the decoded magnitudes of a code-block of more than 61 magnitude bit-planes, row-major, the
+     * sign in bit 63; {@link #wideData} then holds the low words.
+     */
+    private long[] highData;
 
     /**
      * Whether the last code-block's coefficients are in {@link #wideData}.
      */
     private boolean wide;
+
+    /**
+     * Whether the last code-block's coefficients are 128-bit magnitudes in {@link #highData} and {@link #wideData}.
+     */
+    private boolean huge;
 
     /**
      * The significance and SigProp membership words: four arrays of 132 words, each word holding four rows of eight
@@ -124,6 +146,12 @@ final class HtDecoder {
     private final int[] u = new int[2];
 
     /**
+     * The quads of the last quad pair whose U-VLC suffix is followed by an extension: bit 0 for the first, bit 1
+     * for the second.
+     */
+    private int extensions;
+
+    /**
      * The exponent of the last magnitude {@link #magnitude} decoded, the bit length of {@code 2 * mu - 1}.
      */
     private int exponent;
@@ -154,6 +182,21 @@ final class HtDecoder {
     }
 
     /**
+     * Returns the high words of the decoded magnitudes of the last code-block when it has more than 61 magnitude
+     * bit-planes, whose low words {@link #wideData()} then returns.
+     *
+     * <p>Each sample is a 128-bit magnitude in sign-magnitude form, with the layout of {@link #data()}: bits 0-62
+     * of the high word above the 64 bits of the low word, and the sign in bit 63 of the high word. No magnitude
+     * reaches bit 77.
+     *
+     * @return the high words, row-major with the code-block's width as stride, or {@code null} when the
+     * coefficients are in {@link #data()} or two's complement in {@link #wideData()}
+     */
+    long[] highData() {
+        return huge ? highData : null;
+    }
+
+    /**
      * Returns a buffer able to hold a code-block's segments, valid until the next call.
      *
      * @param length the number of bytes
@@ -174,6 +217,7 @@ final class HtDecoder {
      */
     void clear(int width, int height) {
         wide = false;
+        huge = false;
         Arrays.fill(data, 0, width * height, 0);
     }
 
@@ -190,23 +234,28 @@ final class HtDecoder {
      * @param width the code-block width
      * @param height the code-block height
      * @param causal whether vertically causal context formation is selected
-     * @throws MediaException.Malformed if the segments are not a valid HT set
-     * @throws MediaException.Unsupported if the sub-band has more than 61 magnitude bit-planes
+     * @throws MediaException.Malformed if the segments are not a valid HT set, or the sub-band has more than 74
+     * magnitude bit-planes (ISO/IEC 15444-15 8.7.3)
      */
     void decode(int cleanup, int refinement, int passes, int magnitudeBits, int skipped, int width, int height,
                 boolean causal) {
-        if (magnitudeBits > 61) {
-            // TODO: decode HT code-blocks of 62 to 74 magnitude bit-planes, which only a region-of-interest shift
-            // reaches, in arithmetic wider than 64 bits
-            throw new MediaException.Unsupported("JPEG 2000", "HT code-blocks of " + magnitudeBits
-                    + " magnitude bit-planes");
+        if (magnitudeBits > MAX_MAGNITUDE_BITS) {
+            throw new MediaException.Malformed("JPEG 2000 HT code-block of " + magnitudeBits
+                    + " magnitude bit-planes, more than " + MAX_MAGNITUDE_BITS);
         }
         wide = magnitudeBits > 30;
+        huge = magnitudeBits > 61;
         if (wide) {
             if (wideData == null) {
                 wideData = new long[MAX_AREA];
             }
             Arrays.fill(wideData, 0, width * height, 0);
+            if (huge) {
+                if (highData == null) {
+                    highData = new long[MAX_AREA];
+                }
+                Arrays.fill(highData, 0, width * height, 0);
+            }
         } else {
             Arrays.fill(data, 0, width * height, 0);
         }
@@ -290,10 +339,11 @@ final class HtDecoder {
                 }
             }
             var consumed = initialUvlc(vlcValue, mode);
+            vlc.advance(consumed);
+            uvlcExtensions();
             if (u[0] > bound || u[1] > bound) {
                 throw new MediaException.Malformed("JPEG 2000 HT exponent bound above the skipped bit-planes");
             }
-            vlc.advance(consumed);
             var locs = 0xFF;
             if (x + 4 > width) {
                 locs >>>= (x + 4 - width) << 1;
@@ -351,6 +401,7 @@ final class HtDecoder {
                 var mode = ((q0 & 0x8) >>> 3) | ((q1 & 0x8) >>> 2);
                 var consumed = nonInitialUvlc(vlcValue, mode);
                 vlc.advance(consumed);
+                uvlcExtensions();
                 if (((q0 & 0xF0) & ((q0 & 0xF0) - 1)) != 0) {
                     var e = Math.max(ls0 & 0x7F, lines[lsp + 1] & 0x7F);
                     u[0] += e > 2 ? e - 2 : 0;
@@ -415,6 +466,9 @@ final class HtDecoder {
             }
         }
         var size = width * height;
+        if (huge) {
+            return;
+        }
         if (wide) {
             var values = wideData;
             for (var i = 0; i < size; i++) {
@@ -548,13 +602,12 @@ final class HtDecoder {
         var data = wideData;
         var lines = lineState;
         if ((q0 & 0x10) != 0) {
-            data[sp] = magnitudeWide(q0, u0, 12, 8, p);
+            wideSample(sp, q0, u0, 12, 8, p);
         } else if ((locs & 0x1) != 0) {
             data[sp] = 0;
         }
         if ((q0 & 0x20) != 0) {
-            var value = magnitudeWide(q0, u0, 13, 9, p);
-            data[sp + stride] = value;
+            wideSample(sp + stride, q0, u0, 13, 9, p);
             var t = lines[lsp] & 0x7F;
             var e = exponent;
             lines[lsp] = (byte) (0x80 | Math.max(t, e));
@@ -564,25 +617,25 @@ final class HtDecoder {
         lsp++;
         sp++;
         if ((q0 & 0x40) != 0) {
-            data[sp] = magnitudeWide(q0, u0, 14, 10, p);
+            wideSample(sp, q0, u0, 14, 10, p);
         } else if ((locs & 0x4) != 0) {
             data[sp] = 0;
         }
         lines[lsp] = 0;
         if ((q0 & 0x80) != 0) {
-            data[sp + stride] = magnitudeWide(q0, u0, 15, 11, p);
+            wideSample(sp + stride, q0, u0, 15, 11, p);
             lines[lsp] = (byte) (0x80 | exponent);
         } else if ((locs & 0x8) != 0) {
             data[sp + stride] = 0;
         }
         sp++;
         if ((q1 & 0x10) != 0) {
-            data[sp] = magnitudeWide(q1, u1, 12, 8, p);
+            wideSample(sp, q1, u1, 12, 8, p);
         } else if ((locs & 0x10) != 0) {
             data[sp] = 0;
         }
         if ((q1 & 0x20) != 0) {
-            data[sp + stride] = magnitudeWide(q1, u1, 13, 9, p);
+            wideSample(sp + stride, q1, u1, 13, 9, p);
             var t = lines[lsp] & 0x7F;
             lines[lsp] = (byte) (0x80 | Math.max(t, exponent));
         } else if ((locs & 0x20) != 0) {
@@ -591,19 +644,123 @@ final class HtDecoder {
         lsp++;
         sp++;
         if ((q1 & 0x40) != 0) {
-            data[sp] = magnitudeWide(q1, u1, 14, 10, p);
+            wideSample(sp, q1, u1, 14, 10, p);
         } else if ((locs & 0x40) != 0) {
             data[sp] = 0;
         }
         lines[lsp] = 0;
         if ((q1 & 0x80) != 0) {
-            data[sp + stride] = magnitudeWide(q1, u1, 15, 11, p);
+            wideSample(sp + stride, q1, u1, 15, 11, p);
             lines[lsp] = (byte) (0x80 | exponent);
         } else if ((locs & 0x80) != 0) {
             data[sp + stride] = 0;
         }
         sp++;
         return sp;
+    }
+
+    /**
+     * Decodes one significant sample of a code-block of more than 30 magnitude bit-planes into {@link #wideData},
+     * and for more than 61 into {@link #highData}.
+     *
+     * @param index the sample's index
+     * @param q the VLC information of the quad
+     * @param uq the quad's exponent bound
+     * @param ekBit the position of the sample's {@code e_k} bit in {@code q}
+     * @param e1Bit the position of the sample's {@code e_1} bit in {@code q}
+     * @param p the shift placing the magnitude
+     */
+    private void wideSample(int index, int q, int uq, int ekBit, int e1Bit, int p) {
+        if (huge) {
+            magnitudeHuge(index, q, uq, ekBit, e1Bit, p);
+        } else {
+            wideData[index] = magnitudeWide(q, uq, ekBit, e1Bit, p);
+        }
+    }
+
+    /**
+     * Decodes one significant sample's magnitude and sign, of up to 77 bits, from the MagSgn bit-stream into
+     * {@link #highData} and {@link #wideData}.
+     *
+     * @param index the sample's index
+     * @param q the VLC information of the quad
+     * @param uq the quad's exponent bound, at most 75
+     * @param ekBit the position of the sample's {@code e_k} bit in {@code q}
+     * @param e1Bit the position of the sample's {@code e_1} bit in {@code q}
+     * @param p the shift placing the magnitude
+     */
+    private void magnitudeHuge(int index, int q, int uq, int ekBit, int e1Bit, int p) {
+        var m = uq - ((q >>> ekBit) & 1);
+        var low = 0L;
+        var high = 0L;
+        var read = 0;
+        while (read < m) {
+            var n = Math.min(32, m - read);
+            var bits = magSgn.fetch() & ((1L << n) - 1);
+            magSgn.advance(n);
+            if (read < 64) {
+                low |= bits << read;
+                if (read + n > 64) {
+                    high |= bits >>> (64 - read);
+                }
+            } else {
+                high |= bits << (read - 64);
+            }
+            read += n;
+        }
+        var sign = low & 1;
+        var e1 = (long) ((q >>> e1Bit) & 1);
+        if (m < 64) {
+            low |= e1 << m;
+        } else {
+            high |= e1 << (m - 64);
+        }
+        low |= 1;
+        exponent = high != 0 ? 128 - Long.numberOfLeadingZeros(high) : 64 - Long.numberOfLeadingZeros(low);
+        var sum = low + 2;
+        if (Long.compareUnsigned(sum, low) < 0) {
+            high++;
+        }
+        low = sum;
+        var shift = p - 1;
+        if (shift >= 64) {
+            high = low << (shift - 64);
+            low = 0;
+        } else if (shift > 0) {
+            high = (high << shift) | (low >>> (64 - shift));
+            low <<= shift;
+        }
+        wideData[index] = low;
+        highData[index] = high | (sign << 63);
+    }
+
+    /**
+     * Flips a magnitude bit of a sample of {@link #highData} and {@link #wideData}.
+     *
+     * @param index the sample's index
+     * @param bit the bit's position, 0 to 126
+     * @param value 1 to flip the bit, 0 to leave it
+     */
+    private void flipHuge(int index, int bit, long value) {
+        if (bit < 64) {
+            wideData[index] ^= value << bit;
+        } else {
+            highData[index] ^= value << (bit - 64);
+        }
+    }
+
+    /**
+     * Sets a magnitude bit of a sample of {@link #highData} and {@link #wideData}.
+     *
+     * @param index the sample's index
+     * @param bit the bit's position, 0 to 126
+     */
+    private void setHuge(int index, int bit) {
+        if (bit < 64) {
+            wideData[index] |= 1L << bit;
+        } else {
+            highData[index] |= 1L << (bit - 64);
+        }
     }
 
     /**
@@ -636,7 +793,8 @@ final class HtDecoder {
     }
 
     /**
-     * Decodes the U-VLC of a quad pair of the initial quad row into {@link #u}.
+     * Decodes the U-VLC prefixes and suffixes of a quad pair of the initial quad row into {@link #u}, noting the
+     * extensions that follow in {@link #extensions}.
      *
      * @param vlcValue the head of the VLC bit-stream
      * @param mode the {@code u_off} bits of the two quads, plus one when both are set and the MEL event is 1
@@ -644,6 +802,7 @@ final class HtDecoder {
      */
     private int initialUvlc(int vlcValue, int mode) {
         var consumed = 0;
+        extensions = 0;
         if (mode == 0) {
             u[0] = 1;
             u[1] = 1;
@@ -653,7 +812,7 @@ final class HtDecoder {
             consumed += d & 0x3;
             var suffix = (d >>> 2) & 0x7;
             consumed += suffix;
-            d = (d >>> 5) + (vlcValue & ((1 << suffix) - 1));
+            d = (d >>> 5) + suffix(vlcValue, suffix, mode == 1 ? 0 : 1);
             u[0] = mode == 1 ? d + 1 : 1;
             u[1] = mode == 1 ? 1 : d + 1;
         } else if (mode == 3) {
@@ -666,7 +825,7 @@ final class HtDecoder {
                 vlcValue >>>= 1;
                 var suffix = (d1 >>> 2) & 0x7;
                 consumed += suffix;
-                d1 = (d1 >>> 5) + (vlcValue & ((1 << suffix) - 1));
+                d1 = (d1 >>> 5) + suffix(vlcValue, suffix, 0);
                 u[0] = d1 + 1;
             } else {
                 var d2 = UVLC_PREFIX[vlcValue & 0x7];
@@ -674,12 +833,12 @@ final class HtDecoder {
                 consumed += d2 & 0x3;
                 var suffix = (d1 >>> 2) & 0x7;
                 consumed += suffix;
-                d1 = (d1 >>> 5) + (vlcValue & ((1 << suffix) - 1));
+                d1 = (d1 >>> 5) + suffix(vlcValue, suffix, 0);
                 u[0] = d1 + 1;
                 vlcValue >>>= suffix;
                 suffix = (d2 >>> 2) & 0x7;
                 consumed += suffix;
-                d2 = (d2 >>> 5) + (vlcValue & ((1 << suffix) - 1));
+                d2 = (d2 >>> 5) + suffix(vlcValue, suffix, 1);
                 u[1] = d2 + 1;
             }
         } else {
@@ -691,19 +850,20 @@ final class HtDecoder {
             consumed += d2 & 0x3;
             var suffix = (d1 >>> 2) & 0x7;
             consumed += suffix;
-            d1 = (d1 >>> 5) + (vlcValue & ((1 << suffix) - 1));
+            d1 = (d1 >>> 5) + suffix(vlcValue, suffix, 0);
             u[0] = d1 + 3;
             vlcValue >>>= suffix;
             suffix = (d2 >>> 2) & 0x7;
             consumed += suffix;
-            d2 = (d2 >>> 5) + (vlcValue & ((1 << suffix) - 1));
+            d2 = (d2 >>> 5) + suffix(vlcValue, suffix, 1);
             u[1] = d2 + 3;
         }
         return consumed;
     }
 
     /**
-     * Decodes the U-VLC of a quad pair of a non-initial quad row into {@link #u}.
+     * Decodes the U-VLC prefixes and suffixes of a quad pair of a non-initial quad row into {@link #u}, noting
+     * the extensions that follow in {@link #extensions}.
      *
      * @param vlcValue the head of the VLC bit-stream
      * @param mode the {@code u_off} bits of the two quads
@@ -711,6 +871,7 @@ final class HtDecoder {
      */
     private int nonInitialUvlc(int vlcValue, int mode) {
         var consumed = 0;
+        extensions = 0;
         if (mode == 0) {
             u[0] = 1;
             u[1] = 1;
@@ -720,7 +881,7 @@ final class HtDecoder {
             consumed += d & 0x3;
             var suffix = (d >>> 2) & 0x7;
             consumed += suffix;
-            d = (d >>> 5) + (vlcValue & ((1 << suffix) - 1));
+            d = (d >>> 5) + suffix(vlcValue, suffix, mode == 1 ? 0 : 1);
             u[0] = mode == 1 ? d + 1 : 1;
             u[1] = mode == 1 ? 1 : d + 1;
         } else {
@@ -732,15 +893,54 @@ final class HtDecoder {
             consumed += d2 & 0x3;
             var suffix = (d1 >>> 2) & 0x7;
             consumed += suffix;
-            d1 = (d1 >>> 5) + (vlcValue & ((1 << suffix) - 1));
+            d1 = (d1 >>> 5) + suffix(vlcValue, suffix, 0);
             u[0] = d1 + 1;
             vlcValue >>>= suffix;
             suffix = (d2 >>> 2) & 0x7;
             consumed += suffix;
-            d2 = (d2 >>> 5) + (vlcValue & ((1 << suffix) - 1));
+            d2 = (d2 >>> 5) + suffix(vlcValue, suffix, 1);
             u[1] = d2 + 1;
         }
         return consumed;
+    }
+
+    /**
+     * Returns a U-VLC suffix, noting in {@link #extensions} that an extension follows the suffixes of the quad pair
+     * when it is 28 or more (ISO/IEC 15444-15 7.3.6).
+     *
+     * @param bits the VLC bits holding the suffix, first bit lowest
+     * @param length the suffix length, 0 to 5
+     * @param quad the quad, 0 or 1
+     * @return the suffix
+     */
+    private int suffix(int bits, int length, int quad) {
+        var value = bits & ((1 << length) - 1);
+        if (value >= 28) {
+            extensions |= 1 << quad;
+        }
+        return value;
+    }
+
+    /**
+     * Reads the U-VLC extensions of the last quad pair, which follow its suffixes, the first quad's first, and adds
+     * four times each to its quad's value in {@link #u}.
+     */
+    private void uvlcExtensions() {
+        if (extensions == 0) {
+            return;
+        }
+        var bits = vlc.fetch();
+        var consumed = 0;
+        if ((extensions & 1) != 0) {
+            u[0] += 4 * (bits & 0xF);
+            bits >>>= 4;
+            consumed += 4;
+        }
+        if ((extensions & 2) != 0) {
+            u[1] += 4 * (bits & 0xF);
+            consumed += 4;
+        }
+        vlc.advance(consumed);
     }
 
     /**
@@ -787,7 +987,8 @@ final class HtDecoder {
     }
 
     /**
-     * Applies the HT MagRef pass to one four-row stripe of a code-block of more than 30 magnitude bit-planes.
+     * Applies the HT MagRef pass to one four-row stripe of a code-block of more than 30 magnitude bit-planes, in
+     * {@link #highData} and {@link #wideData} for more than 61.
      *
      * @param sigma the offset of the stripe's significance words
      * @param row the index of the stripe's first sample
@@ -811,8 +1012,13 @@ final class HtDecoder {
                             if ((sig & sampleMask) != 0) {
                                 var at = dp + r * stride;
                                 var symbol = cwd & 1;
-                                data[at] ^= (long) (1 - symbol) << (p - 1);
-                                data[at] |= half;
+                                if (huge) {
+                                    flipHuge(at, p - 1, 1 - symbol);
+                                    setHuge(at, p - 2);
+                                } else {
+                                    data[at] ^= (long) (1 - symbol) << (p - 1);
+                                    data[at] |= half;
+                                }
                                 cwd >>>= 1;
                             }
                             sampleMask += sampleMask;
@@ -951,7 +1157,12 @@ final class HtDecoder {
                             var sampleMask = 0x11111111 & columnMask;
                             for (var r = 0; r < 4; r++) {
                                 if ((newSig & sampleMask) != 0) {
-                                    if (wideValues != null) {
+                                    if (huge) {
+                                        var at = dq + r * stride;
+                                        highData[at] |= (long) (cwd & 1) << 63;
+                                        setHuge(at, p - 1);
+                                        setHuge(at, p - 2);
+                                    } else if (wideValues != null) {
                                         wideValues[dq + r * stride] |= ((long) (cwd & 1) << 63) | wideValue;
                                     } else {
                                         data[dq + r * stride] |= ((cwd & 1) << 31) | value;

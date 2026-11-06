@@ -621,6 +621,7 @@ final class TileDecoder {
                 int[] decoded = null;
                 long[] wide = null;
                 boolean complete;
+                long[] high = null;
                 if (job.block.coder == CodeBlock.LEGACY) {
                     if (decoder == null) {
                         decoder = new Tier1Decoder();
@@ -636,10 +637,18 @@ final class TileDecoder {
                     complete = decodeHighThroughput(htDecoder, job.block, body, job.precinct.bitPlanes, roi, style);
                     decoded = htDecoder.data();
                     wide = htDecoder.wideData();
+                    high = htDecoder.highData();
                 }
                 var size = job.block.width() * job.block.height();
                 var extended = floats[job.component] != null && (job.precinct.trellis || job.precinct.deadzone != 0);
-                if (mask != null || wide != null || extended) {
+                if (high != null) {
+                    if (shifted == null || shifted.length < size) {
+                        shifted = new long[Math.max(size, 4096)];
+                    }
+                    descaleHuge(high, wide, shifted, mask, component, job, minimum, roi);
+                    storeWide(shifted, job, component, integers[job.component],
+                            longs == null ? null : longs[job.component], floats[job.component], complete);
+                } else if (mask != null || wide != null || extended) {
                     if (shifted == null || shifted.length < size) {
                         shifted = new long[Math.max(size, 4096)];
                     }
@@ -776,6 +785,61 @@ final class TileDecoder {
     }
 
     /**
+     * Removes the region of interest from the 128-bit sign-magnitude coefficients of a high-throughput code-block of
+     * more than 61 magnitude bit-planes, giving its 64-bit coefficients: with arbitrary regions, each is shifted by
+     * its scaling value less the code-block's smallest; with the maximum shift method, each whose magnitude is at
+     * least {@code 2^roi} is shifted by {@code roi}. A magnitude that the shift leaves wider than 63 bits, which
+     * only a codestream breaking the bounds of ISO/IEC 15444-15 8.7.3 holds, saturates.
+     *
+     * @param high the high words of the magnitudes, the sign in bit 63
+     * @param low the low words of the magnitudes
+     * @param values receives the coefficients, with one extra fractional bit
+     * @param mask the scaling values of the tile-component, or {@code null} for the maximum shift method
+     * @param component the tile-component
+     * @param job the code-block
+     * @param minimum the code-block's smallest scaling value, with a mask
+     * @param roi the maximum shift, without a mask
+     */
+    private static void descaleHuge(long[] high, long[] low, long[] values, byte[] mask, TileComponent component,
+                                    Job job, int minimum, int roi) {
+        var stride = component.resolutions[component.resolutions.length - 1].width();
+        var x = (int) (job.block.x0 - job.band.x0()) + job.band.offsetX();
+        var y = (int) (job.block.y0 - job.band.y0()) + job.band.offsetY();
+        var width = job.block.width();
+        for (var j = 0; j < job.block.height(); j++) {
+            var base = (y + j) * stride + x;
+            for (var i = 0; i < width; i++) {
+                var index = j * width + i;
+                var hi = high[index] & Long.MAX_VALUE;
+                var lo = low[index];
+                int shift;
+                if (mask != null) {
+                    shift = (mask[base + i] & 0xFF) - minimum;
+                } else if (roi >= 128) {
+                    shift = 0;
+                } else if (roi >= 64) {
+                    shift = (hi >>> (roi - 64)) != 0 ? roi : 0;
+                } else {
+                    shift = hi != 0 || (lo >>> roi) != 0 ? roi : 0;
+                }
+                long magnitude;
+                if (shift >= 128) {
+                    magnitude = 0;
+                } else if (shift >= 64) {
+                    magnitude = hi >>> (shift - 64);
+                } else {
+                    var remaining = shift == 0 ? hi : hi >>> shift;
+                    magnitude = remaining != 0 ? -1 : shift == 0 ? lo : (lo >>> shift) | (hi << (64 - shift));
+                }
+                if (magnitude < 0) {
+                    magnitude = Long.MAX_VALUE;
+                }
+                values[index] = high[index] < 0 ? -magnitude : magnitude;
+            }
+        }
+    }
+
+    /**
      * Decodes a high-throughput code-block: the last HT set whose cleanup segment holds data, with the refinement
      * passes of that set that were read ({@code Z_blk} and {@code S_blk} of ISO/IEC 15444-15 B.3).
      *
@@ -787,8 +851,8 @@ final class TileDecoder {
      * @param style the code-block style flags
      * @return whether the decoded cleanup pass is the one of the least significant bit-plane, so that every
      * coefficient holds its whole quantization index
-     * @throws MediaException.Malformed if the HT set is invalid
-     * @throws MediaException.Unsupported if the sub-band has more than 61 magnitude bit-planes
+     * @throws MediaException.Malformed if the HT set is invalid or the sub-band has more than 74 magnitude
+     * bit-planes
      */
     private static boolean decodeHighThroughput(HtDecoder decoder, CodeBlock block, byte[] body, int bitPlanes,
                                                 int roi, int style) {

@@ -14,10 +14,14 @@ import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.tiff.TiffExif;
+import com.github.auties00.smalt.io.DataReference;
+import com.github.auties00.smalt.io.DataReferenceResolver;
+import com.github.auties00.smalt.io.MediaSource;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 
 /**
@@ -90,6 +94,11 @@ public final class Jp2Boxes {
      * The resource bounds checked before a fragmented codestream is assembled.
      */
     private final MediaLimits limits;
+
+    /**
+     * The resolver of the files the data references of fragment tables name.
+     */
+    private final DataReferenceResolver resolver;
 
     /**
      * The number of boxes examined so far.
@@ -342,11 +351,13 @@ public final class Jp2Boxes {
      * @param data the input bytes
      * @param length the number of valid bytes
      * @param limits the resource bounds
+     * @param resolver the resolver of the files that fragment tables reference
      */
-    private Jp2Boxes(byte[] data, int length, MediaLimits limits) {
+    private Jp2Boxes(byte[] data, int length, MediaLimits limits, DataReferenceResolver resolver) {
         this.data = data;
         this.length = length;
         this.limits = limits;
+        this.resolver = resolver;
     }
 
     /**
@@ -372,7 +383,23 @@ public final class Jp2Boxes {
      * @throws MediaException.LimitExceeded if the file holds more codestreams or layers than the frame limit
      */
     public static Jp2Boxes read(byte[] data, int length, MediaLimits limits) {
-        var boxes = new Jp2Boxes(data, length, limits);
+        return read(data, length, limits, DataReferenceResolver.none());
+    }
+
+    /**
+     * Reads the boxes of a JP2 or JPX file, or locates a raw codestream, reading the codestream fragments that
+     * fragment tables place in other files from the files a resolver supplies.
+     *
+     * @param data the input bytes
+     * @param length the number of valid bytes
+     * @param limits the resource bounds of the codestream and layer counts
+     * @param resolver the resolver of the files the data reference box names
+     * @return the boxes read
+     * @throws MediaException.Malformed if the input is neither a JP2/JPX file nor a codestream, or a box is invalid
+     * @throws MediaException.LimitExceeded if the file holds more codestreams or layers than the frame limit
+     */
+    public static Jp2Boxes read(byte[] data, int length, MediaLimits limits, DataReferenceResolver resolver) {
+        var boxes = new Jp2Boxes(data, length, limits, resolver);
         if (length >= 4 && (data[0] & 0xFF) == 0xFF && (data[1] & 0xFF) == 0x4F && (data[2] & 0xFF) == 0xFF
                 && (data[3] & 0xFF) == 0x51) {
             boxes.codestreams.add(new Stream(0, length, null));
@@ -381,7 +408,16 @@ public final class Jp2Boxes {
         if (length < SIGNATURE.length || !Arrays.equals(data, 0, SIGNATURE.length, SIGNATURE, 0, SIGNATURE.length)) {
             throw new MediaException.Malformed("not a JPEG 2000 file");
         }
-        boxes.readTop(new View(data, SIGNATURE.length, length), 0);
+        var top = new View(data, SIGNATURE.length, length);
+        // the cross-references of the header boxes are joined as they are read, so the data reference box they
+        // may name is read first wherever it lies
+        boxes.forEach(top, box -> {
+            if (box.type.equals("dtbl") && boxes.references.isEmpty()) {
+                boxes.readReferences(top, box);
+            }
+        });
+        boxes.steps = 0;
+        boxes.readTop(top, 0);
         if (boxes.codestreams.isEmpty()) {
             throw new MediaException.Malformed("the JPEG 2000 file has no codestream");
         }
@@ -495,7 +531,11 @@ public final class Jp2Boxes {
                 case "jp2c" -> codestreams.add(new Stream(box.content, box.end, null));
                 case "ftbl" -> codestreams.add(new Stream(0, 0, readFragmentTable(view.contents(box))));
                 case "j2cx" -> readTop(view.contents(box), depth + 1);
-                case "dtbl" -> readReferences(view, box);
+                case "dtbl" -> {
+                    if (depth > 0 && references.isEmpty()) {
+                        readReferences(view, box);
+                    }
+                }
                 case "comp" -> {
                     if (composition == null) {
                         composition = readComposition(view.contents(box));
@@ -752,24 +792,26 @@ public final class Jp2Boxes {
     }
 
     /**
-     * Joins the fragments of a fragment list.
+     * Joins the fragments of a fragment list, reading those in other files from the files the resolver supplies for
+     * the URLs of the data reference box (M.11.2), each opened once and closed when the fragments are read.
      *
      * @param fragments the fragments, in stream order
      * @return their bytes, in order
-     * @throws MediaException.Malformed if a fragment lies outside the file
-     * @throws MediaException.Unsupported if a fragment is in another file
+     * @throws MediaException.Malformed if a fragment lies outside its file or names a data reference the file does
+     * not have
+     * @throws MediaException.Unsupported if a fragment is in another file the resolver does not supply
      * @throws MediaException.LimitExceeded if the joined size exceeds the allocation limit
+     * @throws MediaException.Io if reading another file fails
      */
     private byte[] assemble(List<Fragment> fragments) {
         var total = 0L;
         for (var fragment : fragments) {
-            if (fragment.reference() != 0) {
-                var url = fragment.reference() <= references.size() ? references.get(fragment.reference() - 1)
-                        : "data reference " + fragment.reference();
-                // TODO: read fragments in other files through the DataReferenceResolver of ImageDecoderOptions
-                throw new MediaException.Unsupported("JPEG 2000", "codestream fragments in another file (" + url + ")");
+            if (fragment.reference() > references.size()) {
+                throw new MediaException.Malformed("JPEG 2000 fragment in data reference " + fragment.reference()
+                        + " of a data reference box of " + references.size() + " entries");
             }
-            if (fragment.offset() < 0 || fragment.offset() > length - fragment.length()) {
+            if (fragment.reference() == 0
+                    && (fragment.offset() < 0 || fragment.offset() > length - fragment.length())) {
                 throw new MediaException.Malformed("JPEG 2000 fragment outside the file");
             }
             total += fragment.length();
@@ -779,12 +821,72 @@ public final class Jp2Boxes {
             throw new MediaException.LimitExceeded("JPEG 2000 codestream of " + total + " bytes");
         }
         var result = new byte[(int) total];
-        var position = 0;
-        for (var fragment : fragments) {
-            System.arraycopy(data, (int) fragment.offset(), result, position, (int) fragment.length());
-            position += (int) fragment.length();
+        var sources = new HashMap<Integer, MediaSource>();
+        try {
+            var position = 0;
+            for (var fragment : fragments) {
+                if (fragment.reference() == 0) {
+                    System.arraycopy(data, (int) fragment.offset(), result, position, (int) fragment.length());
+                } else {
+                    var source = sources.get(fragment.reference());
+                    if (source == null) {
+                        source = open(fragment.reference());
+                        sources.put(fragment.reference(), source);
+                    }
+                    var size = source.size();
+                    if (fragment.offset() < 0 || (size >= 0 && fragment.offset() > size - fragment.length())) {
+                        throw new MediaException.Malformed("JPEG 2000 fragment outside the file "
+                                + references.get(fragment.reference() - 1));
+                    }
+                    source.readFully(fragment.offset(), result, position, (int) fragment.length());
+                }
+                position += (int) fragment.length();
+            }
+        } finally {
+            close(sources.values());
         }
         return result;
+    }
+
+    /**
+     * Opens the file a data reference names through the resolver.
+     *
+     * @param reference the data reference index, from 1
+     * @return the source, which the caller closes
+     * @throws MediaException.Unsupported if the resolver does not supply the file
+     */
+    private MediaSource open(int reference) {
+        var url = references.get(reference - 1);
+        var resolved = resolver.resolve(new DataReference(DataReference.Kind.URL, url, ""));
+        var source = resolved == null ? null : resolved.orElse(null);
+        if (source == null) {
+            throw new MediaException.Unsupported("JPEG 2000", "codestream fragments in another file (" + url
+                    + "), which the data reference resolver does not supply");
+        }
+        return source;
+    }
+
+    /**
+     * Closes the sources of other files, rethrowing the first failure with the others suppressed.
+     *
+     * @param sources the opened sources of the other files
+     */
+    private static void close(Iterable<MediaSource> sources) {
+        RuntimeException failure = null;
+        for (var source : sources) {
+            try {
+                source.close();
+            } catch (RuntimeException exception) {
+                if (failure == null) {
+                    failure = exception;
+                } else {
+                    failure.addSuppressed(exception);
+                }
+            }
+        }
+        if (failure != null) {
+            throw failure;
+        }
     }
 
     /**
@@ -1236,9 +1338,11 @@ public final class Jp2Boxes {
      *
      * @param index the codestream index
      * @return the codestream
-     * @throws MediaException.Malformed if the index does not exist or a fragment lies outside the file
-     * @throws MediaException.Unsupported if a fragment is in another file
+     * @throws MediaException.Malformed if the index does not exist, a fragment lies outside its file or names a
+     * data reference the file does not have
+     * @throws MediaException.Unsupported if a fragment is in another file the resolver does not supply
      * @throws MediaException.LimitExceeded if a fragmented codestream exceeds the allocation limit
+     * @throws MediaException.Io if reading another file fails
      */
     public CodestreamBytes codestream(int index) {
         if (index < 0 || index >= codestreams.size()) {

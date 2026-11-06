@@ -3,6 +3,7 @@ package com.github.auties00.smalt.image.jp2;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.ops.Region;
 import com.github.auties00.smalt.internal.check.Checks;
+import com.github.auties00.smalt.io.DataReferenceResolver;
 
 import java.util.Objects;
 import java.util.Optional;
@@ -32,12 +33,15 @@ public final class Jp2DecoderOptions {
 
     private final Region region;
 
+    private final DataReferenceResolver dataReferences;
+
     private Jp2DecoderOptions(Builder builder) {
         this.limits = builder.limits;
         this.reduction = builder.reduction;
         this.qualityLayers = builder.allQualityLayers ? 0 : builder.qualityLayers;
         this.compositingLayer = builder.compositingLayer;
         this.region = builder.region;
+        this.dataReferences = builder.dataReferences;
     }
 
     /**
@@ -125,6 +129,21 @@ public final class Jp2DecoderOptions {
         return Optional.ofNullable(region);
     }
 
+    /**
+     * {@return the resolver of the data references that name other files; {@link DataReferenceResolver#none()}
+     * by default}
+     *
+     * <p>The fragment table of a JPX file may place fragments of a codestream in other files, which the URLs of its
+     * data reference box name (ISO/IEC 15444-2 M.11.2 and M.11.3). The decoder asks this resolver for each such
+     * file, with a {@link com.github.auties00.smalt.io.DataReference.Kind#URL URL} reference, whenever it joins
+     * the fragments of a codestream, and closes the source once they are read; a codestream with a fragment in a
+     * file the resolver does not supply raises {@link com.github.auties00.smalt.MediaException.Unsupported}. A
+     * fragment outside the file supplied is {@link com.github.auties00.smalt.MediaException.Malformed}.
+     */
+    public DataReferenceResolver dataReferences() {
+        return dataReferences;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof Jp2DecoderOptions that
@@ -132,19 +151,20 @@ public final class Jp2DecoderOptions {
                 && reduction == that.reduction
                 && qualityLayers == that.qualityLayers
                 && compositingLayer == that.compositingLayer
-                && Objects.equals(region, that.region);
+                && Objects.equals(region, that.region)
+                && dataReferences.equals(that.dataReferences);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(limits, reduction, qualityLayers, compositingLayer, region);
+        return Objects.hash(limits, reduction, qualityLayers, compositingLayer, region, dataReferences);
     }
 
     @Override
     public String toString() {
         return "Jp2DecoderOptions[limits=" + limits + ", reduction=" + reduction + ", qualityLayers="
                 + (qualityLayers == 0 ? "all" : qualityLayers) + ", compositingLayer=" + compositingLayer
-                + ", region=" + (region == null ? "whole" : region) + "]";
+                + ", region=" + (region == null ? "whole" : region) + ", dataReferences=" + dataReferences + "]";
     }
 
     /**
@@ -166,6 +186,8 @@ public final class Jp2DecoderOptions {
 
         private Region region;
 
+        private DataReferenceResolver dataReferences = DataReferenceResolver.none();
+
         private Builder() {
         }
 
@@ -176,6 +198,7 @@ public final class Jp2DecoderOptions {
             this.allQualityLayers = options.qualityLayers == 0;
             this.compositingLayer = options.compositingLayer;
             this.region = options.region;
+            this.dataReferences = options.dataReferences;
         }
 
         /**
@@ -266,6 +289,28 @@ public final class Jp2DecoderOptions {
          */
         public Builder compositingLayer(int compositingLayer) {
             this.compositingLayer = compositingLayer;
+            return this;
+        }
+
+        /**
+         * Sets the resolver of the data references that name other files; see
+         * {@link Jp2DecoderOptions#dataReferences()}.
+         *
+         * @param dataReferences the resolver
+         * @return this builder
+         */
+        public Builder dataReferences(DataReferenceResolver dataReferences) {
+            this.dataReferences = Objects.requireNonNull(dataReferences, "dataReferences");
+            return this;
+        }
+
+        /**
+         * Resolves no data reference, the default; see {@link Jp2DecoderOptions#dataReferences()}.
+         *
+         * @return this builder
+         */
+        public Builder noDataReferences() {
+            this.dataReferences = DataReferenceResolver.none();
             return this;
         }
 

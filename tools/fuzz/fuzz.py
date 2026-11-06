@@ -77,6 +77,7 @@ SEED_EXTENSIONS = {
     'image:ImageFuzzTest.jxr': ['.jxr', '.wdp', '.hdp'],
     'image:ImageFuzzTest.dds': ['.dds'],
     'image:ImageFuzzTest.jp2Channels': ['.jp2', '.j2k', '.j2c', '.jpx', '.jpf'],
+    'image:ImageFuzzTest.jp2Fragments': ['.jpx', '.jpf'],
     'image:ImageFuzzTest.jxlFloat': ['.jxl'],
     'image:ImageFuzzTest.jxlJpeg': ['.jxl'],
     'image:ImageMetadataFuzzTest.webpContainer': ['.webp'],

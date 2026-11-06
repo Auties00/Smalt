@@ -1,11 +1,13 @@
 package com.github.auties00.smalt.image.jp2;
 
 import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.io.DataReferenceResolver;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
@@ -13,6 +15,7 @@ import com.github.auties00.smalt.image.exif.ExifData;
 import com.github.auties00.smalt.image.metadata.IptcData;
 import com.github.auties00.smalt.metadata.XmpPacket;
 
+import java.nio.file.Path;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -219,6 +222,22 @@ class Jp2OptionsTest {
             assertEquals(Jp2DecoderOptions.defaults(), options);
             assertEquals(2, Jp2DecoderOptions.builder().qualityLayers(2).build().qualityLayers().orElseThrow());
             assertThrows(IllegalArgumentException.class, () -> Jp2DecoderOptions.builder().qualityLayers(0).build());
+        }
+
+        @Test
+        @DisplayName("dataReferences survives toBuilder, joins equality and resets with noDataReferences()")
+        void dataReferences(@TempDir Path directory) {
+            assertEquals(DataReferenceResolver.none(),
+                    Jp2DecoderOptions.defaults().dataReferences());
+            var resolver = DataReferenceResolver.directory(directory);
+            var options = Jp2DecoderOptions.builder().dataReferences(resolver).qualityLayers(1).build();
+            assertEquals(resolver, options.dataReferences());
+            assertEquals(options, options.toBuilder().build());
+            assertEquals(resolver, options.toBuilder().qualityLayers(3).build().dataReferences());
+            assertNotEquals(Jp2DecoderOptions.builder().qualityLayers(1).build(), options);
+            assertEquals(Jp2DecoderOptions.builder().qualityLayers(1).build(),
+                    options.toBuilder().noDataReferences().build());
+            assertThrows(NullPointerException.class, () -> Jp2DecoderOptions.builder().dataReferences(null));
         }
 
         @ParameterizedTest

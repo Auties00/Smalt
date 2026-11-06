@@ -87,11 +87,14 @@ import java.util.Optional;
  * compositing layer of a JPX file as a page, and {@link #openAnimation(MediaSource, ImageDecoderOptions)} renders its
  * composition. Motion JPEG 2000 video is decoded by {@link Mj2Decoder}.
  *
- * <p>Unsupported, and rejected with {@link MediaException.Unsupported} naming the feature: HTJ2K
- * code-blocks of sub-bands with more than 61 magnitude bit-planes; the Part 2 coding extensions of variable deadzone
- * and trellis coded quantization, visual masking, single sample overlap transformations, precinct-dependent
- * quantization, code-block anchor points and block coder extensions; derived quantization of sub-bands split in one
- * direction only; and codestream fragments stored in another file.
+ * <p>The fragment table of a JPX file may store fragments of a codestream in other files, which are read from the
+ * files {@link ImageDecoderOptions#dataReferences()} (or {@link Jp2DecoderOptions#dataReferences()}) supplies.
+ *
+ * <p>Unsupported, and rejected with {@link MediaException.Unsupported} naming the feature: the Part 2 coding
+ * extensions of variable deadzone and trellis coded quantization, visual masking, single sample overlap
+ * transformations, precinct-dependent quantization, code-block anchor points and block coder extensions; derived
+ * quantization of sub-bands split in one direction only; and codestream fragments in another file that the data
+ * reference resolver does not supply.
  *
  * <p>Damaged codestreams decode as far as their data goes: a truncated tile leaves its missing
  * code-block data at zero, and a missing tile is uniformly mid-gray. An invalid main header, or an
@@ -218,7 +221,7 @@ public final class Jp2Decoder {
                 if (data == null) {
                     data = SourceBytes.readAll(source, options.limits(), true);
                 }
-                var headers = Jp2Reader.headers(data, options.limits());
+                var headers = Jp2Reader.headers(data, options.limits(), options.dataReferences());
                 if (frames(headers, options.limits()) > 0) {
                     var animation = animation(headers, options);
                     var frame = animation.read();
@@ -246,7 +249,7 @@ public final class Jp2Decoder {
      * of several codestreams
      */
     private static boolean[] neededTiles(byte[] headersOnly, ImageDecoderOptions options, Region region) {
-        var headers = Jp2Reader.headers(headersOnly, options.limits());
+        var headers = Jp2Reader.headers(headersOnly, options.limits(), options.dataReferences());
         if (frames(headers, options.limits()) > 0 || !Jp2Reader.windowable(headers, 0)) {
             return null;
         }
@@ -453,7 +456,7 @@ public final class Jp2Decoder {
                 var data = region == null || layer != 0 ? null : Jp2Sparse.read(source, options.limits(),
                         headersOnly -> neededTiles(headersOnly, options, region));
                 return Jp2Reader.headers(data != null ? data : SourceBytes.readAll(source, options.limits(), true),
-                        options.limits());
+                        options.limits(), options.dataReferences());
             });
             Objects.checkIndex(layer, headers.boxes().layerCount());
             return Guards.malformed(WHAT, () -> {
@@ -486,7 +489,7 @@ public final class Jp2Decoder {
      * @return whether each tile is needed, or {@code null} when the file decodes whole
      */
     private static boolean[] neededTiles(byte[] headersOnly, Jp2DecoderOptions options, Region region) {
-        var headers = Jp2Reader.headers(headersOnly, options.limits());
+        var headers = Jp2Reader.headers(headersOnly, options.limits(), options.dataReferences());
         if (!Jp2Reader.windowable(headers, 0)) {
             return null;
         }
@@ -537,7 +540,7 @@ public final class Jp2Decoder {
         Jp2Reader.Headers headers;
         try (var _ = ParallelBands.operation()) {
             headers = Guards.malformed(WHAT, () -> Jp2Reader.headers(
-                    SourceBytes.readAll(source, options.limits(), true), options.limits()));
+                    SourceBytes.readAll(source, options.limits(), true), options.limits(), options.dataReferences()));
         }
         var count = headers.boxes().layerCount();
         return new PageReader() {
@@ -614,7 +617,7 @@ public final class Jp2Decoder {
         Objects.requireNonNull(options, "options");
         try (var _ = ParallelBands.operation()) {
             var headers = Guards.malformed(WHAT, () -> Jp2Reader.headers(
-                    SourceBytes.readAll(source, options.limits(), true), options.limits()));
+                    SourceBytes.readAll(source, options.limits(), true), options.limits(), options.dataReferences()));
             return SeekableAnimationReader.of(() -> {
                 var animation = Guards.malformed(WHAT, () -> animation(headers, options));
                 return new AnimationReader() {

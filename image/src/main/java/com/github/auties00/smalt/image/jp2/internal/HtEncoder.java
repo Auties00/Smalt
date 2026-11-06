@@ -548,15 +548,20 @@ final class HtEncoder {
                 uvlcPrefix(uq1 - 2);
                 uvlcSuffix(uq0 - 2);
                 uvlcSuffix(uq1 - 2);
+                uvlcExtension(uq0 - 2);
+                uvlcExtension(uq1 - 2);
             } else if (uq0 > 2 && uq1 > 0) {
                 uvlcPrefix(uq0);
                 vlcEncode(uq1 - 1, 1);
                 uvlcSuffix(uq0);
+                uvlcExtension(uq0);
             } else {
                 uvlcPrefix(uq0);
                 uvlcPrefix(uq1);
                 uvlcSuffix(uq0);
                 uvlcSuffix(uq1);
+                uvlcExtension(uq0);
+                uvlcExtension(uq1);
             }
             cq0 = (rho1 >> 1) | (rho1 & 1);
         }
@@ -634,6 +639,8 @@ final class HtEncoder {
                 uvlcPrefix(uq1);
                 uvlcSuffix(uq0);
                 uvlcSuffix(uq1);
+                uvlcExtension(uq0);
+                uvlcExtension(uq1);
                 cq0 |= ((rho1 & 4) >> 1) | ((rho1 & 8) >> 2);
             }
         }
@@ -723,6 +730,17 @@ final class HtEncoder {
     private void uvlcSuffix(int u) {
         var code = HtTables.UVLC[u];
         vlcEncode((code >> 5) & 0x1F, (code >> 10) & 0x7);
+    }
+
+    /**
+     * Writes the U-VLC extension of a value, which follows the suffixes of its quad pair (ISO/IEC 15444-15 7.3.6);
+     * values below 33 have none.
+     *
+     * @param u the value
+     */
+    private void uvlcExtension(int u) {
+        var code = HtTables.UVLC[u];
+        vlcEncode((code >> 13) & 0xF, (code >> 17) & 0x7);
     }
 
     /**

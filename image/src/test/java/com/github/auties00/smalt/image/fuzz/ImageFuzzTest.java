@@ -20,6 +20,7 @@ import com.github.auties00.smalt.image.jpeg.JpegDecoder;
 import com.github.auties00.smalt.image.jxl.JxlDecoder;
 import com.github.auties00.smalt.image.jxl.JxlEncoder;
 import com.github.auties00.smalt.image.jxl.JxlEncoderOptions;
+import com.github.auties00.smalt.io.DataReferenceResolver;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.fuzz.Fuzz;
 import com.github.auties00.smalt.testkit.fuzz.FuzzGainMaps;
@@ -135,6 +136,17 @@ class ImageFuzzTest {
     @FuzzTest
     void jxr(byte[] data) {
         FuzzMedia.image(ImageFormat.JXR, data);
+    }
+
+    @FuzzTest
+    void jp2Fragments(byte[] data) {
+        var run = Fuzz.start("jp2Fragments");
+        // every data reference names the input itself, so mutations of a fragment table reach fragments in other
+        // files, and of the media data boxes their contents
+        DataReferenceResolver self = reference -> Optional.of(MediaSource.of(data));
+        var options = Jp2DecoderOptions.builder().limits(Fuzz.LIMITS).dataReferences(self).build();
+        run.value("channels", () -> Jp2Decoder.decodeChannels(MediaSource.of(data), options))
+                .ifPresent(image -> run.output());
     }
 
     @FuzzTest

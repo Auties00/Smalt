@@ -8,14 +8,26 @@ import com.github.auties00.smalt.image.jp2.Jp2ColorSpace;
 import com.github.auties00.smalt.image.jp2.Jp2Decoder;
 import com.github.auties00.smalt.image.jp2.Jp2DecoderOptions;
 import com.github.auties00.smalt.image.jp2.Jp2Image;
+import com.github.auties00.smalt.io.DataReference;
+import com.github.auties00.smalt.io.DataReferenceResolver;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.image.ImageDecoderAsserts;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
+import java.util.Optional;
 import java.util.Random;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static com.github.auties00.smalt.image.jp2.internal.JpxBuilder.box;
 import static com.github.auties00.smalt.image.jp2.internal.JpxBuilder.cdef;
@@ -116,6 +128,191 @@ class JpxFileTest {
             assertThrows(MediaException.Malformed.class, () -> channels(truncated, 0));
             var empty = concat(signature(), ftyp(), header(8, 8, 1, 17), box("ftbl", box("free")));
             assertThrows(MediaException.Malformed.class, () -> channels(empty, 0));
+        }
+
+        /** A data reference box of URL entries. */
+        static byte[] dtbl(String... urls) {
+            var entries = new byte[urls.length][];
+            for (var i = 0; i < urls.length; i++) {
+                entries[i] = box("url ", new byte[]{0, 0, 0, 0}, (urls[i] + "\0").getBytes(StandardCharsets.UTF_8));
+            }
+            return box("dtbl", new byte[]{(byte) (urls.length >> 8), (byte) urls.length}, concat(entries));
+        }
+
+        static byte[] padded(Random random, int before, byte[] chunk, int after) {
+            var padding = new byte[before + after];
+            random.nextBytes(padding);
+            return concat(Arrays.copyOf(padding, before), chunk, Arrays.copyOfRange(padding, before, before + after));
+        }
+
+        /**
+         * A three-component image whose codestream is split into four fragments: one in a media data box of the
+         * file and three in two other files ({@code part1.bin}, and {@code sub/part2.j2c} under a percent-escaped
+         * relative URL), the data reference box after the fragment table.
+         */
+        record Split(byte[] whole, byte[] file, byte[] part1, byte[] part2, long[][] planes) {
+        }
+
+        static Split split() {
+            var random = new Random(4);
+            var planes = new long[][]{Jp2Part2Test.smooth(random, 41, 23, 0, 255),
+                    Jp2Part2Test.smooth(random, 41, 23, 0, 255), Jp2Part2Test.smooth(random, 41, 23, 0, 255)};
+            var stream = codestream(41, 23, 8, planes);
+            var a = Arrays.copyOfRange(stream, 0, 90);
+            var b = Arrays.copyOfRange(stream, 90, 250);
+            var c = Arrays.copyOfRange(stream, 250, 400);
+            var d = Arrays.copyOfRange(stream, 400, stream.length);
+            // part1.bin holds c then a, behind padding; part2 holds d
+            var part1 = padded(random, 17, concat(c, a), 33);
+            var part2 = padded(random, 1, d, 0);
+            var layout = new JpxBuilder.Layout();
+            layout.add(signature()).add(ftyp()).add(header(41, 23, 3, 16));
+            layout.add(box("ftbl", flst(new long[]{0, 0, 0}, new long[]{0, 0, 0}, new long[]{0, 0, 0},
+                    new long[]{0, 0, 0})));
+            layout.media(b);
+            layout.add(dtbl("part1.bin", "./sub/part%32.j2c"));
+            var offset = layout.offsets()[0];
+            layout.boxes.set(3, box("ftbl", flst(new long[]{17 + c.length, a.length, 1},
+                    new long[]{offset, b.length, 0}, new long[]{17, c.length, 1}, new long[]{1, d.length, 2})));
+            var whole = concat(signature(), ftyp(), header(41, 23, 3, 16), box("jp2c", stream));
+            return new Split(whole, layout.build(), part1, part2, planes);
+        }
+
+        static Path write(Path directory, Split split) throws IOException {
+            Files.write(directory.resolve("part1.bin"), split.part1());
+            Files.createDirectories(directory.resolve("sub"));
+            Files.write(directory.resolve("sub").resolve("part2.j2c"), split.part2());
+            var file = directory.resolve("image.jpx");
+            Files.write(file, split.file());
+            return file;
+        }
+
+        @Test
+        @DisplayName("fragments in other files read through a directory resolver decode as the single-file image")
+        void otherFiles(@TempDir Path directory) throws IOException {
+            var split = split();
+            write(directory, split);
+            var resolver = DataReferenceResolver.directory(directory);
+            var image = Jp2Decoder.decodeChannels(MediaSource.of(split.file()),
+                    Jp2DecoderOptions.builder().dataReferences(resolver).build());
+            var whole = channels(split.whole(), 0);
+            for (var i = 0; i < 3; i++) {
+                assertArrayEquals(Arrays.stream(split.planes()[i]).mapToInt(v -> (int) v).toArray(),
+                        image.channels().get(i).samples(), "channel " + i);
+                assertArrayEquals(whole.channels().get(i).samples(), image.channels().get(i).samples());
+            }
+            var picture = Jp2Decoder.decode(MediaSource.of(split.file()),
+                    ImageDecoderOptions.builder().dataReferences(resolver).build());
+            var reference = Jp2Decoder.decode(MediaSource.of(split.whole()));
+            assertArrayEquals(((RgbaPicture) reference.picture()).pixels(),
+                    ((RgbaPicture) picture.picture()).pixels());
+            try (var pages = Jp2Decoder.openPages(MediaSource.of(split.file()),
+                    ImageDecoderOptions.builder().dataReferences(resolver).build())) {
+                assertArrayEquals(((RgbaPicture) reference.picture()).pixels(),
+                        ((RgbaPicture) pages.read(0).picture()).pixels());
+            }
+            var region = Jp2Decoder.decodeChannels(MediaSource.of(split.file()),
+                    Jp2DecoderOptions.builder().dataReferences(resolver).region(5, 3, 20, 11).build());
+            var wholeRegion = Jp2Decoder.decodeChannels(MediaSource.of(split.whole()),
+                    Jp2DecoderOptions.builder().region(5, 3, 20, 11).build());
+            assertArrayEquals(wholeRegion.channels().get(1).samples(), region.channels().get(1).samples());
+            // without a resolver the fragments in other files are unsupported, naming the file
+            var failure = assertThrows(MediaException.Unsupported.class, () -> channels(split.file(), 0));
+            assertTrue(failure.getMessage().contains("part1.bin"), failure.getMessage());
+        }
+
+        @Test
+        @DisplayName("each other file is opened once per codestream and closed after its fragments are read")
+        void opensOnce() {
+            var split = split();
+            var opened = new ArrayList<DataReference>();
+            var closed = new AtomicInteger();
+            DataReferenceResolver resolver = reference -> {
+                opened.add(reference);
+                var bytes = reference.location().equals("part1.bin") ? split.part1() : split.part2();
+                var source = MediaSource.of(bytes);
+                return Optional.of(new MediaSource() {
+                    @Override
+                    public long size() {
+                        return source.size();
+                    }
+
+                    @Override
+                    public int read(long position, byte[] buffer, int offset, int length) {
+                        return source.read(position, buffer, offset, length);
+                    }
+
+                    @Override
+                    public void close() {
+                        closed.incrementAndGet();
+                    }
+                });
+            };
+            Jp2Decoder.decodeChannels(MediaSource.of(split.file()),
+                    Jp2DecoderOptions.builder().dataReferences(resolver).build());
+            assertEquals(List.of(new DataReference(DataReference.Kind.URL, "part1.bin", ""),
+                    new DataReference(DataReference.Kind.URL, "./sub/part%32.j2c", "")), opened);
+            assertEquals(2, closed.get());
+        }
+
+        @Test
+        @DisplayName("a missing, short or unnamed other file fails cleanly")
+        void missing(@TempDir Path directory) throws IOException {
+            var split = split();
+            Files.write(directory.resolve("part1.bin"), split.part1());
+            var options = Jp2DecoderOptions.builder().dataReferences(DataReferenceResolver.directory(directory))
+                    .build();
+            var failure = assertThrows(MediaException.Unsupported.class,
+                    () -> Jp2Decoder.decodeChannels(MediaSource.of(split.file()), options));
+            assertTrue(failure.getMessage().contains("part%32.j2c"), failure.getMessage());
+            // a file shorter than its fragment
+            Files.createDirectories(directory.resolve("sub"));
+            Files.write(directory.resolve("sub").resolve("part2.j2c"),
+                    Arrays.copyOf(split.part2(), split.part2().length - 1));
+            var shortFile = assertThrows(MediaException.Malformed.class,
+                    () -> Jp2Decoder.decodeChannels(MediaSource.of(split.file()), options));
+            assertTrue(shortFile.getMessage().contains("fragment outside the file"), shortFile.getMessage());
+            // a source of unknown length that ends early
+            DataReferenceResolver streaming = reference -> Optional.of(MediaSource.of(
+                    new ByteArrayInputStream(reference.location().equals("part1.bin") ? split.part1()
+                            : Arrays.copyOf(split.part2(), 5)), -1));
+            assertThrows(MediaException.Malformed.class, () -> Jp2Decoder.decodeChannels(MediaSource.of(split.file()),
+                    Jp2DecoderOptions.builder().dataReferences(streaming).build()));
+            // a fragment naming a data reference the box does not have
+            var stream = codestream(8, 8, 8, solid(64, 9));
+            var unnamed = concat(signature(), ftyp(), header(8, 8, 1, 17), dtbl("a.j2c"),
+                    box("ftbl", flst(new long[]{0, stream.length, 2})));
+            assertThrows(MediaException.Malformed.class, () -> Jp2Decoder.decodeChannels(MediaSource.of(unnamed),
+                    Jp2DecoderOptions.builder().dataReferences(reference -> Optional.of(MediaSource.of(stream)))
+                            .build()));
+            // a resolver failure is reported as it is
+            DataReferenceResolver failing = reference -> {
+                throw new MediaException.Io("unreachable", new IOException("unreachable"));
+            };
+            assertThrows(MediaException.Io.class, () -> Jp2Decoder.decodeChannels(MediaSource.of(split.file()),
+                    Jp2DecoderOptions.builder().dataReferences(failing).build()));
+        }
+
+        @Test
+        @DisplayName("a cross-reference into another file reads the box there, the data reference box last")
+        void crossReferenceToOtherFile() {
+            var indices = new long[]{0, 1, 2, 1, 0, 2, 2, 2, 0};
+            var stream = codestream(3, 3, 8, indices);
+            var palette = JpxBuilder.pclr(3, 255, 0, 0, 0, 255, 0, 0, 0, 255);
+            var contents = Arrays.copyOfRange(palette, 8, palette.length);
+            var other = concat(new byte[]{1, 2, 3}, contents);
+            var file = concat(signature(), ftyp(), header(3, 3, 3, 16),
+                    box("jpch", JpxBuilder.cref("pclr", flst(new long[]{3, contents.length, 1})),
+                            JpxBuilder.cmap(new int[]{0, 1, 0}, new int[]{0, 1, 1}, new int[]{0, 1, 2})),
+                    box("jp2c", stream), dtbl("palette.bin"));
+            var image = Jp2Decoder.decodeChannels(MediaSource.of(file), Jp2DecoderOptions.builder()
+                    .dataReferences(reference -> reference.location().equals("palette.bin")
+                            ? Optional.of(MediaSource.of(other)) : Optional.empty())
+                    .build());
+            assertEquals(255, image.channels().get(0).sample(0, 0));
+            assertEquals(255, image.channels().get(1).sample(1, 0));
+            assertEquals(255, image.channels().get(2).sample(2, 0));
+            assertEquals(0, image.channels().get(2).sample(1, 0));
         }
     }
 

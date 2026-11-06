@@ -11,6 +11,7 @@ import com.github.auties00.smalt.image.jp2.Jp2Image;
 import com.github.auties00.smalt.image.ops.Region;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.task.ParallelBands;
+import com.github.auties00.smalt.io.DataReferenceResolver;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -63,7 +64,46 @@ public final class Jp2Reader {
      * @throws MediaException.LimitExceeded if the component count exceeds the channel limit
      */
     public static Headers headers(byte[] data, int length, MediaLimits limits) {
-        var boxes = Jp2Boxes.read(data, length, limits);
+        return headers(data, length, limits, DataReferenceResolver.none());
+    }
+
+    /**
+     * Parses the boxes and the main header of the first codestream of the first compositing layer of a file,
+     * without decoding packets, reading the codestream fragments a fragment table places in other files, then and
+     * whenever another codestream is joined, from the files a resolver supplies.
+     *
+     * @param data the whole file
+     * @param limits the limits bounding the tile, component, codestream and layer counts
+     * @param resolver the resolver of the files the data reference box names
+     * @return the boxes and the codestream's main header
+     * @throws MediaException.Malformed if the file or codestream headers are invalid
+     * @throws MediaException.Unsupported if the file uses a feature this decoder does not implement, or the
+     * resolver does not supply a file holding fragments of the codestream
+     * @throws MediaException.LimitExceeded if the component count exceeds the channel limit
+     * @throws MediaException.Io if reading another file fails
+     */
+    public static Headers headers(byte[] data, MediaLimits limits, DataReferenceResolver resolver) {
+        return headers(data, data.length, limits, resolver);
+    }
+
+    /**
+     * Parses the boxes and the main header of the first codestream of the first compositing layer of a file held
+     * in the leading bytes of an array, without decoding packets, reading the codestream fragments a fragment table
+     * places in other files from the files a resolver supplies.
+     *
+     * @param data the array holding the file from its first byte
+     * @param length the length of the file
+     * @param limits the limits bounding the tile, component, codestream and layer counts
+     * @param resolver the resolver of the files the data reference box names
+     * @return the boxes and the codestream's main header
+     * @throws MediaException.Malformed if the file or codestream headers are invalid
+     * @throws MediaException.Unsupported if the file uses a feature this decoder does not implement, or the
+     * resolver does not supply a file holding fragments of the codestream
+     * @throws MediaException.LimitExceeded if the component count exceeds the channel limit
+     * @throws MediaException.Io if reading another file fails
+     */
+    public static Headers headers(byte[] data, int length, MediaLimits limits, DataReferenceResolver resolver) {
+        var boxes = Jp2Boxes.read(data, length, limits, resolver);
         var layer = boxes.layer(0);
         var bytes = boxes.codestream(layer.codestreams()[0]);
         var codestream = Codestream.parse(bytes.data(), bytes.start(), bytes.end(), limits);

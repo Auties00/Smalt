@@ -183,8 +183,11 @@ public final class ImageDecoderOptions {
      *
      * <p>A HEIF file (HEIC, AVIF) may store the data of an item in another file, which the data reference box of
      * its {@code meta} box names. The HEIC and AVIF decoders ask this resolver for that file; an item whose
-     * reference it does not resolve raises {@link com.github.auties00.smalt.MediaException.Unsupported}. Other
-     * decoders do not use it.
+     * reference it does not resolve raises {@link com.github.auties00.smalt.MediaException.Unsupported}. The
+     * fragment table of a JPEG 2000 JPX file may likewise place fragments of a codestream in files its data
+     * reference box names, which the JPEG 2000 decoder asks this resolver for, a codestream with a fragment in a
+     * file it does not supply raising {@link com.github.auties00.smalt.MediaException.Unsupported}. Other decoders
+     * do not use it.
      */
     public DataReferenceResolver dataReferences() {
         return dataReferences;
