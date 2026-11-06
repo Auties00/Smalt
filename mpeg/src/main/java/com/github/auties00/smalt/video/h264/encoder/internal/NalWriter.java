@@ -91,6 +91,34 @@ final class NalWriter {
     }
 
     /**
+     * Appends {@code cabac_zero_word}s to a slice unit already assembled, each as the escaped bytes
+     * {@code 00 00 03}, moving the units after it and updating its length prefix.
+     *
+     * <p>The unit must end with its {@code rbsp_slice_trailing_bits}, or with words appended
+     * before; either way the bytes appended are those emulation prevention gives the words.
+     *
+     * @param index the unit's position, from 0
+     * @param words the number of words, at least 1
+     */
+    void appendZeroWords(int index, int words) {
+        var extra = 3 * words;
+        ensure(extra);
+        var end = unitStarts[index] + unitLengths[index];
+        System.arraycopy(buffer, end, buffer, end + extra, size - end);
+        for (var i = 0; i < extra; i += 3) {
+            buffer[end + i] = 0;
+            buffer[end + i + 1] = 0;
+            buffer[end + i + 2] = 3;
+        }
+        size += extra;
+        unitLengths[index] += extra;
+        writePrefix(unitStarts[index] - 4, unitLengths[index]);
+        for (var i = index + 1; i < units; i++) {
+            unitStarts[i] += extra;
+        }
+    }
+
+    /**
      * Records the position of a unit just appended.
      *
      * @param start the index of its header byte

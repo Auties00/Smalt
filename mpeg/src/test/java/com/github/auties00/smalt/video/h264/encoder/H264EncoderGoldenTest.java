@@ -97,7 +97,7 @@ class H264EncoderGoldenTest {
                         "647c14e5ac58151570f554d764d294643dd568e5060dfb82b9a75d8898c1ee94"),
                 Arguments.of("high 4:4:4, lossless, field pictures", new H264Setup(176, 144, quality
                         .profile(H264Profile.HIGH_444_PREDICTIVE).chromaFormat(ChromaFormat.YUV444).cavlc(false)
-                        .fieldCoding(H264FieldCoding.FIELD_PICTURES).lossless(true).build()), 6, "eb08657f03a65d66288b76a03b33ab696359b87177f11081add7ac5e4a842379"),
+                        .fieldCoding(H264FieldCoding.FIELD_PICTURES).lossless(true).build()), 6, "02986192e7a6371d1553ade6d212250c88936a30be52d75894e397d47ffba52e"),
                 Arguments.of("high, 4:0:0", new H264Setup(176, 144, quality.profile(H264Profile.HIGH).bitDepth(8)
                         .chromaFormat(ChromaFormat.MONOCHROME).fieldOrder(FieldOrder.PROGRESSIVE).lossless(false).build()),
                         8, "fcd2154de9ec11d8f57ee71c6e2eec989b85b4f702eb6c719accc2ba09991b38"));

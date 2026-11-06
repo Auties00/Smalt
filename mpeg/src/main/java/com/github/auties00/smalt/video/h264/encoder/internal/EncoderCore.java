@@ -633,14 +633,9 @@ public final class EncoderCore implements EncoderEngine {
     private int sliceBase;
 
     /**
-     * The CABAC bins of the slices of the picture closed so far.
+     * The {@code cabac_zero_word}s of the picture being coded.
      */
-    private long pictureBins;
-
-    /**
-     * The slice data bytes of the slices of the picture closed so far.
-     */
-    private long pictureBytes;
+    private final CabacZeroWords zeroWords = new CabacZeroWords();
 
     /**
      * Constructs a core.
@@ -898,6 +893,13 @@ public final class EncoderCore implements EncoderEngine {
      */
     public long lastComplexity() {
         return lastComplexity;
+    }
+
+    /**
+     * {@return the CABAC bins of the last coded picture, 0 for CAVLC; a test hook}
+     */
+    public long lastPictureBins() {
+        return zeroWords.bins();
     }
 
     /**
@@ -1778,17 +1780,18 @@ public final class EncoderCore implements EncoderEngine {
      * <p>Without helper participants or with a slice size limit the calling thread decides and
      * codes each macroblock in turn; otherwise the picture is coded by
      * {@link #codeSliceParallel(int)}. With a size limit, a macroblock that makes the slice's NAL
-     * unit too large is undone, the slice is closed before it, and the macroblock is decided again
-     * as the first of a new slice.
+     * unit too large, or leaves the picture's slices too little room for the
+     * {@code cabac_zero_word}s it would need, is undone, the slice is closed before it, and the
+     * macroblock is decided again as the first of a new slice. The words are appended once the
+     * last slice is closed.
      */
     private void codeSlice() {
         var context = picture;
         writer.startPicture();
-        pictureBins = 0;
-        pictureBytes = 0;
         sliceStart = 0;
         writer.start(context, 0);
         var limit = settings.maxSliceBytes();
+        zeroWords.startPicture(settings.cabac(), limit, 3072L * settings.mbCount());
         var helpers = limit > 0 ? 0 : helpers(workers);
         for (var i = 0; i <= helpers; i++) {
             analyzers[i].startPicture(context);
@@ -1820,7 +1823,7 @@ public final class EncoderCore implements EncoderEngine {
                     }
                     writer.endMacroblock(false);
                     writer.writeData(mb, address);
-                    if (limit > 0 && writer.sizeBound() > limit) {
+                    if (limit > 0 && !fitsLimit(limit)) {
                         writer.restore();
                         startSlice(address);
                         analyzer.startSlice();
@@ -1831,7 +1834,21 @@ public final class EncoderCore implements EncoderEngine {
             }
         }
         writer.endMacroblock(true);
-        closeSlice(true);
+        closeSlice();
+        zeroWords.finishPicture(nal);
+    }
+
+    /**
+     * Returns whether the slice being written may keep the macroblock written last: its NAL unit
+     * stays within the size limit, and the picture's slices keep the room for the
+     * {@code cabac_zero_word}s the picture would need if it ended there.
+     *
+     * @param limit the slice size limit in bytes
+     * @return whether the macroblock stays in the slice
+     */
+    private boolean fitsLimit(int limit) {
+        var bound = writer.sizeBound();
+        return bound <= limit && zeroWords.fits(writer.binCount(), 1 + writer.payloadLength(), bound);
     }
 
     /**
@@ -1852,7 +1869,7 @@ public final class EncoderCore implements EncoderEngine {
      */
     private void startSlice(int address) {
         writer.endMacroblock(true);
-        closeSlice(false);
+        closeSlice();
         sliceStart = address;
         writer.start(picture, address);
     }
@@ -1877,26 +1894,12 @@ public final class EncoderCore implements EncoderEngine {
 
     /**
      * Finishes the slice being written and appends it to the access unit, preceded by its prefix
-     * NAL unit when the stream has temporal layers.
-     *
-     * <p>The last slice of a picture carries the {@code cabac_zero_word}s the picture needs.
-     *
-     * @param last whether the slice is the picture's last
+     * NAL unit when the stream has temporal layers, and records it for the picture's
+     * {@code cabac_zero_word}s.
      */
-    private void closeSlice(boolean last) {
+    private void closeSlice() {
         var payload = writer.finish();
         var length = writer.payloadLength();
-        pictureBins += writer.binCount();
-        pictureBytes += length;
-        if (last) {
-            // TODO: with maxSliceBytes, the cabac_zero_words a picture needs can push its last slice past the
-            //  limit; spread them over the picture's slices within the limit
-            var zeroWords = cabacZeroWords(pictureBins, pictureBytes);
-            if (zeroWords > 0) {
-                payload = Arrays.copyOf(payload, length + 2 * zeroWords);
-                length += 2 * zeroWords;
-            }
-        }
         var nalRefIdc = picture.nalRefIdc;
         if (temporalLayers > 1) {
             var prefix = prefixPayload;
@@ -1907,6 +1910,7 @@ public final class EncoderCore implements EncoderEngine {
             nal.appendUnit(nalRefIdc, H264Nal.PREFIX, prefix, nalRefIdc != 0 ? 4 : 3);
         }
         nal.appendUnit(nalRefIdc, picture.idr ? H264Nal.IDR_SLICE : H264Nal.SLICE, payload, length);
+        zeroWords.closed(nal, writer.binCount());
     }
 
     /**
@@ -2209,27 +2213,6 @@ public final class EncoderCore implements EncoderEngine {
             case Error error -> throw error;
             default -> throw new IllegalStateException(failure);
         }
-    }
-
-    /**
-     * Returns the number of {@code cabac_zero_word}s the picture needs to satisfy the bin count
-     * constraint of clause 7.4.2.10.
-     *
-     * @param bins the number of CABAC bins of the picture
-     * @param bytes the number of slice data bytes of the picture
-     * @return the number of zero words to append
-     */
-    private int cabacZeroWords(long bins, long bytes) {
-        if (!settings.cabac()) {
-            return 0;
-        }
-        var rawBits = 3072L * settings.mbCount();
-        var allowed = 32 * bytes / 3 + rawBits / 32;
-        if (bins <= allowed) {
-            return 0;
-        }
-        var neededBytes = ((bins - rawBits / 32) * 3 + 31) / 32 - bytes;
-        return (int) Math.max(0, (neededBytes + 2) / 3);
     }
 
     /**

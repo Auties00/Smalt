@@ -321,14 +321,14 @@ public final class WideCore implements EncoderEngine {
     private final WideSliceWriter.Picture header = new WideSliceWriter.Picture();
 
     /**
-     * The CABAC bins of the slice closed last.
+     * The {@code cabac_zero_word}s of the picture being coded.
      */
-    private long sliceBins;
+    private final CabacZeroWords zeroWords = new CabacZeroWords();
 
     /**
-     * The slice data bytes of the slice closed last.
+     * The CABAC bins of the last coded picture of each structure: frame, top field, bottom field.
      */
-    private long sliceBytes;
+    private final long[] pictureBins = new long[3];
 
     /**
      * Constructs an engine.
@@ -418,6 +418,16 @@ public final class WideCore implements EncoderEngine {
      */
     public short[][] lastReconstruction() {
         return frameCount == 0 ? new short[][]{new short[0], new short[0], new short[0]} : crop(lastDecoded);
+    }
+
+    /**
+     * Returns the CABAC bins of the last coded picture of a structure; a test hook.
+     *
+     * @param structure 0 for a frame, 1 for the top field, 2 for the bottom field
+     * @return the bins, 0 for CAVLC or before a picture of the structure
+     */
+    public long lastPictureBins(int structure) {
+        return pictureBins[structure];
     }
 
     /**
@@ -894,7 +904,9 @@ public final class WideCore implements EncoderEngine {
     /**
      * Codes the macroblocks of the current picture as the configured slices, dividing
      * them further at the slice size limit: a macroblock (or pair) that makes the slice's NAL unit
-     * too large is undone and coded again as the first of a new slice.
+     * too large, or leaves the picture's slices too little room for the {@code cabac_zero_word}s it
+     * would need, is undone and coded again as the first of a new slice. The words are appended once
+     * the last slice is closed.
      *
      * @param header the picture header
      * @param pairs whether the picture is a frame of macroblock pairs
@@ -906,8 +918,9 @@ public final class WideCore implements EncoderEngine {
         var units = width * rows;
         var slices = settings.sliceRows();
         var limit = config.maxSliceBytes();
-        var bins = 0L;
-        var bytes = 0L;
+        var raw = (long) (256 * settings.bitDepth() + 2 * settings.mbWidthC() * settings.mbHeightC()
+                * settings.bitDepth()) * settings.mbCount() / (header.structure == 0 ? 1 : 2);
+        zeroWords.startPicture(settings.cabac(), limit, raw);
         var sliceStart = 0;
         var nextFixed = 1;
         writer.start(header, 0);
@@ -917,9 +930,7 @@ public final class WideCore implements EncoderEngine {
                     && u / width == (int) ((long) nextFixed * rows / slices)) {
                 nextFixed++;
                 writer.endMacroblock(true, address - 1);
-                closeSlice(header, false, 0, 0);
-                bins += sliceBins;
-                bytes += sliceBytes;
+                closeSlice(header);
                 sliceStart = address;
                 writer.start(header, address);
             }
@@ -930,19 +941,32 @@ public final class WideCore implements EncoderEngine {
                 writer.endMacroblock(false, address - 1);
             }
             codeUnit(address, pairs, header.sliceQp, sliceStart);
-            if (limit > 0 && address != sliceStart && writer.sizeBound() > limit) {
+            if (limit > 0 && address != sliceStart && !fitsLimit(limit)) {
                 writer.restore();
                 writer.endMacroblock(true, address - 1);
-                closeSlice(header, false, 0, 0);
-                bins += sliceBins;
-                bytes += sliceBytes;
+                closeSlice(header);
                 sliceStart = address;
                 writer.start(header, address);
                 codeUnit(address, pairs, header.sliceQp, sliceStart);
             }
         }
         writer.endMacroblock(true, units * unit - 1);
-        closeSlice(header, true, bins, bytes);
+        closeSlice(header);
+        zeroWords.finishPicture(nal);
+        pictureBins[header.structure] = zeroWords.bins();
+    }
+
+    /**
+     * Returns whether the slice being written may keep the macroblock (or pair) written last: its
+     * NAL unit stays within the size limit, and the picture's slices keep the room for the
+     * {@code cabac_zero_word}s the picture would need if it ended there.
+     *
+     * @param limit the slice size limit in bytes
+     * @return whether the macroblock stays in the slice
+     */
+    private boolean fitsLimit(int limit) {
+        var bound = writer.sizeBound();
+        return bound <= limit && zeroWords.fits(writer.binCount(), 1 + writer.payloadLength(), bound);
     }
 
     /**
@@ -1042,33 +1066,14 @@ public final class WideCore implements EncoderEngine {
     }
 
     /**
-     * Finishes the slice being written and appends it, with its prefix NAL unit for temporal layers.
+     * Finishes the slice being written and appends it, with its prefix NAL unit for temporal layers,
+     * and records it for the picture's {@code cabac_zero_word}s.
      *
      * @param header the picture header
-     * @param last whether the slice is the picture's last, which carries the picture's
-     * {@code cabac_zero_word}s
-     * @param bins the CABAC bins of the picture's earlier slices
-     * @param bytes the slice data bytes of the picture's earlier slices
      */
-    private void closeSlice(WideSliceWriter.Picture header, boolean last, long bins, long bytes) {
+    private void closeSlice(WideSliceWriter.Picture header) {
         var payload = writer.finish();
         var length = writer.payloadLength();
-        sliceBins = writer.binCount();
-        sliceBytes = length;
-        if (last && settings.cabac()) {
-            // TODO: with maxSliceBytes, the cabac_zero_words a picture needs can push its last slice past the
-            //  limit; spread them over the picture's slices within the limit
-            var raw = (long) (256 * settings.bitDepth() + 2 * settings.mbWidthC() * settings.mbHeightC()
-                    * settings.bitDepth()) * settings.mbCount() / (header.structure == 0 ? 1 : 2);
-            var totalBins = bins + sliceBins;
-            var totalBytes = bytes + length;
-            if (totalBins > 32 * totalBytes / 3 + raw / 32) {
-                var needed = ((totalBins - raw / 32) * 3 + 31) / 32 - totalBytes;
-                var words = (int) Math.max(0, (needed + 2) / 3);
-                payload = Arrays.copyOf(payload, length + 2 * words);
-                length += 2 * words;
-            }
-        }
         var nalRefIdc = header.nalRefIdc;
         if (temporalLayers > 1) {
             prefix[0] = (byte) (0x80 | (header.idr ? 0x40 : 0));
@@ -1078,6 +1083,7 @@ public final class WideCore implements EncoderEngine {
             nal.appendUnit(nalRefIdc, H264Nal.PREFIX, prefix, nalRefIdc != 0 ? 4 : 3);
         }
         nal.appendUnit(nalRefIdc, header.idr ? H264Nal.IDR_SLICE : H264Nal.SLICE, payload, length);
+        zeroWords.closed(nal, writer.binCount());
     }
 
     /**

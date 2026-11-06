@@ -631,7 +631,10 @@ public final class H264EncoderOptions {
      * <p>A slice ends before the macroblock that would make its NAL unit larger, counting the NAL
      * unit header and the emulation prevention bytes but not the length prefix or start code, and the
      * next slice starts with that macroblock; only a slice of a single macroblock can exceed the limit.
-     * The limit suits transports that carry each NAL unit in one datagram. With a limit, the
+     * The {@code cabac_zero_word}s a CABAC picture needs to meet the bin count constraint of ITU-T
+     * H.264 clause 7.4.2.10 count toward the limit: they fill the room the limit leaves in the
+     * picture's slices, and a slice ends early when that room would otherwise run short. The limit
+     * suits transports that carry each NAL unit in one datagram. With a limit, the
      * macroblocks of a picture are decided on the calling thread as they are coded, whatever
      * {@link #threads()} says.
      */
