@@ -76,6 +76,28 @@ public final class Annotations {
     }
 
     /**
+     * {@return whether a chapter has been collected, from the container or from Vorbis comments}
+     */
+    public boolean hasChapters() {
+        return !chapters.isEmpty() || !vorbisChapters.isEmpty();
+    }
+
+    /**
+     * Discards the pictures collected so far.
+     */
+    public void clearPictures() {
+        pictures.clear();
+    }
+
+    /**
+     * Discards the chapters collected so far, those of Vorbis comments included.
+     */
+    public void clearChapters() {
+        chapters.clear();
+        vorbisChapters.clear();
+    }
+
+    /**
      * Returns the chapters collected, in start order, with every missing end resolved.
      *
      * @param durationMicros the presentation duration, or {@code -1} when unknown, which ends the last chapter at its

@@ -11,7 +11,8 @@ import java.util.Objects;
  * that range are legal intermediate results and are clipped only by encoders that need to.
  * A float holds every integer sample of up to 24 bits exactly, so samples decoded from such
  * sources convert back without loss; samples of wider integer sources (32-bit PCM, FLAC or ALAC)
- * are rounded to 24 significant bits. Decoders reuse one buffer across calls, so a buffer handed
+ * are rounded to 24 significant bits, and a decoder's {@link IntegerAudioBuffer} or
+ * {@link DoubleAudioBuffer} output keeps them exactly. Decoders reuse one buffer across calls, so a buffer handed
  * to a consumer is valid only until the consumer returns; {@link #copy()} keeps its samples.
  *
  * <p>Instances are not thread-safe; confine a buffer to one thread at a time or synchronize
