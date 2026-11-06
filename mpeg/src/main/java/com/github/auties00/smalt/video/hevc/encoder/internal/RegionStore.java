@@ -79,7 +79,8 @@ final class RegionStore {
          */
         Slot(int size) {
             var luma = size * size;
-            var chroma = luma / 4;
+            // large enough for 4:4:4
+            var chroma = luma;
             var blocks = luma / 16;
             reconY = new short[luma];
             reconCb = new short[chroma];
@@ -116,12 +117,16 @@ final class RegionStore {
             var height = Math.min(size, s.codedHeight - y0);
             plane(d.frame.y, s.codedWidth, y0 * s.codedWidth + x0, reconY, size, width, height, save);
             plane(d.levelY, s.codedWidth, y0 * s.codedWidth + x0, levelY, size, width, height, save);
-            var cOffset = (y0 >> 1) * s.chromaWidth + (x0 >> 1);
-            var half = size >> 1;
-            plane(d.frame.cb, s.chromaWidth, cOffset, reconCb, half, width >> 1, height >> 1, save);
-            plane(d.frame.cr, s.chromaWidth, cOffset, reconCr, half, width >> 1, height >> 1, save);
-            plane(d.levelCb, s.chromaWidth, cOffset, levelCb, half, width >> 1, height >> 1, save);
-            plane(d.levelCr, s.chromaWidth, cOffset, levelCr, half, width >> 1, height >> 1, save);
+            var sx = s.chromaShiftX;
+            var sy = s.chromaShiftY;
+            var cOffset = (y0 >> sy) * s.chromaWidth + (x0 >> sx);
+            var cStride = size >> sx;
+            var cw = width >> sx;
+            var ch = height >> sy;
+            plane(d.frame.cb, s.chromaWidth, cOffset, reconCb, cStride, cw, ch, save);
+            plane(d.frame.cr, s.chromaWidth, cOffset, reconCr, cStride, cw, ch, save);
+            plane(d.levelCb, s.chromaWidth, cOffset, levelCb, cStride, cw, ch, save);
+            plane(d.levelCr, s.chromaWidth, cOffset, levelCr, cStride, cw, ch, save);
             var w4 = d.pic.width4;
             var origin = (y0 >> 2) * w4 + (x0 >> 2);
             var bw = width >> 2;

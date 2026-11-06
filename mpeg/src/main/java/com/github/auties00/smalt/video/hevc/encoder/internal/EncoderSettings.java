@@ -36,12 +36,12 @@ public final class EncoderSettings {
     final HevcEncoderOptions options;
 
     /**
-     * The picture width the decoder outputs, the input width rounded up to an even number.
+     * The picture width the decoder outputs, the input width rounded up to a multiple of {@code SubWidthC}.
      */
     final int width;
 
     /**
-     * The picture height the decoder outputs, the input height rounded up to an even number.
+     * The picture height the decoder outputs, the input height rounded up to a multiple of {@code SubHeightC}.
      */
     final int height;
 
@@ -64,6 +64,26 @@ public final class EncoderSettings {
      * {@code pic_height_in_luma_samples}, a multiple of 8.
      */
     final int codedHeight;
+
+    /**
+     * {@code chroma_format_idc}, 1 to 3.
+     */
+    final int chromaFormatIdc;
+
+    /**
+     * The binary logarithm of {@code SubWidthC}.
+     */
+    final int chromaShiftX;
+
+    /**
+     * The binary logarithm of {@code SubHeightC}.
+     */
+    final int chromaShiftY;
+
+    /**
+     * Whether every coding unit is coded with {@code cu_transquant_bypass_flag}.
+     */
+    final boolean lossless;
 
     /**
      * The width of the chroma planes of a coded picture.
@@ -191,12 +211,21 @@ public final class EncoderSettings {
         this.options = options;
         this.inputWidth = inputWidth;
         this.inputHeight = inputHeight;
-        this.width = (inputWidth + 1) & ~1;
-        this.height = (inputHeight + 1) & ~1;
+        var format = options.chromaFormat();
+        this.chromaShiftX = format.shiftX();
+        this.chromaShiftY = format.shiftY();
+        this.chromaFormatIdc = switch (format) {
+            case YUV422 -> 2;
+            case YUV444 -> 3;
+            default -> 1;
+        };
+        this.lossless = options.lossless();
+        this.width = (inputWidth + (1 << chromaShiftX) - 1) & -(1 << chromaShiftX);
+        this.height = (inputHeight + (1 << chromaShiftY) - 1) & -(1 << chromaShiftY);
         this.codedWidth = (inputWidth + 7) & ~7;
         this.codedHeight = (inputHeight + 7) & ~7;
-        this.chromaWidth = codedWidth >> 1;
-        this.chromaHeight = codedHeight >> 1;
+        this.chromaWidth = codedWidth >> chromaShiftX;
+        this.chromaHeight = codedHeight >> chromaShiftY;
         this.bitDepth = options.bitDepth();
         this.log2CtbSize = 6;
         this.widthInCtbs = (codedWidth + 63) >> 6;
@@ -206,7 +235,7 @@ public final class EncoderSettings {
         this.stillPicture = options.profile().stillPicture();
         this.levelIdc = levelIdc;
         this.highTier = highTier;
-        this.rateControl = stillPicture ? HevcRateControl.CONSTANT_QUALITY : options.rateControl();
+        this.rateControl = stillPicture || lossless ? HevcRateControl.CONSTANT_QUALITY : options.rateControl();
         this.bitrate = bitrate;
         this.maxBitrate = maxBitrate;
         this.bufferBits = bufferBits;
@@ -246,7 +275,7 @@ public final class EncoderSettings {
         var codedWidth = (width + 7) & ~7;
         var codedHeight = (height + 7) & ~7;
         var still = options.profile().stillPicture();
-        var quality = still || options.rateControl() == HevcRateControl.CONSTANT_QUALITY;
+        var quality = still || options.lossless() || options.rateControl() == HevcRateControl.CONSTANT_QUALITY;
         var bitrate = quality ? 0 : (int) options.bitrate();
         var maxBitrate = quality ? 0 : (int) options.maxBitrate().orElse(
                 options.rateControl() == HevcRateControl.CONSTANT_BITRATE ? bitrate

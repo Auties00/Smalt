@@ -37,11 +37,13 @@ import java.util.List;
  * of a grid) as HEVC still pictures and lays out the file's items, properties and references with
  * {@link HeifWriter}.
  *
- * <p>Every image is 4:2:0. An image of odd width or height is coded one sample wider or taller, the last column
- * or row repeated, and an essential clean aperture ({@code clap}) property crops it back; the tiles of a grid
- * are even, and the grid's output size crops their canvas instead. The alpha image is a 4:2:0 picture whose luma
- * holds the alpha samples, with neutral chroma and full-range samples, whose {@code auxC} property names the
- * HEVC alpha type {@code urn:mpeg:hevc:2015:auxid:1}.
+ * <p>Lossy images are 4:2:0; lossless images keep the chroma format of a planar picture and code RGB as 4:4:4
+ * with the identity matrix. An image of odd width or height whose chroma format halves that dimension is coded
+ * one sample wider or taller, the last column or row repeated, and an essential clean aperture ({@code clap})
+ * property crops it back; the tiles of a grid are even, and the grid's output size crops their canvas instead. The
+ * alpha image is a picture of the color image's chroma format whose luma holds the alpha samples, with neutral
+ * chroma and full-range samples, whose {@code auxC} property names the HEVC alpha type
+ * {@code urn:mpeg:hevc:2015:auxid:1}.
  */
 public final class HeicStillEncoder {
     /**
@@ -71,8 +73,8 @@ public final class HeicStillEncoder {
      *
      * @param data the length-prefixed NAL units of the picture
      * @param hvcC the {@code HEVCDecoderConfigurationRecord} of the picture
-     * @param width the reconstructed width, even
-     * @param height the reconstructed height, even
+     * @param width the reconstructed width, even unless the chroma format is 4:4:4
+     * @param height the reconstructed height, even for 4:2:0
      */
     record Coded(byte[] data, byte[] hvcC, int width, int height) {
     }
@@ -107,19 +109,34 @@ public final class HeicStillEncoder {
     }
 
     /**
-     * Prepares a picture: 4:2:0 at the coded depth, RGB converted with the options' color description.
+     * Prepares a picture at the coded depth: 4:2:0, RGB converted with the options' color description, or for
+     * lossless coding the chroma format of a planar picture (monochrome becoming 4:2:0) and 4:4:4 RGB with the
+     * identity matrix.
      *
      * @param picture the picture to code, in any representation
      * @param options the encoder settings
      * @return the prepared image
-     * @throws MediaException.Unsupported if the picture's color description needs 4:4:4 chroma
+     * @throws MediaException.Unsupported if the picture's color description cannot be coded: a YCgCo-R matrix, or
+     * the identity matrix on a lossy or not 4:4:4 image
      */
     static EncodeImage prepare(Picture picture, HeicEncoderOptions options) {
-        var image = EncodeImage.of("heic", picture, ChromaFormat.YUV420, bitDepth(picture, options),
-                options.color(), false, options.premultipliedAlpha());
+        var lossless = options.lossless();
+        ChromaFormat format = ChromaFormat.YUV420;
+        if (lossless) {
+            format = switch (picture) {
+                case YuvPicture yuv when yuv.chromaFormat() == ChromaFormat.MONOCHROME -> ChromaFormat.YUV420;
+                case Yuv16Picture yuv when yuv.chromaFormat() == ChromaFormat.MONOCHROME -> ChromaFormat.YUV420;
+                default -> null;
+            };
+        }
+        var image = EncodeImage.of("heic", picture, format, bitDepth(picture, options), options.color(), lossless,
+                options.premultipliedAlpha());
         var matrix = image.color().matrix();
-        if (matrix == MatrixCoefficients.IDENTITY || YcgcoR.applies(matrix)) {
-            throw new MediaException.Unsupported("heic", "the " + matrix + " matrix needs 4:4:4 chroma");
+        if (YcgcoR.applies(matrix)) {
+            throw new MediaException.Unsupported("heic", "the HEIC encoder does not code the " + matrix + " matrix");
+        }
+        if (matrix == MatrixCoefficients.IDENTITY && (!lossless || image.format() != ChromaFormat.YUV444)) {
+            throw new MediaException.Unsupported("heic", "the identity matrix needs lossless 4:4:4 coding");
         }
         return image;
     }
@@ -135,14 +152,15 @@ public final class HeicStillEncoder {
     }
 
     /**
-     * Returns the 4:2:0 picture of a prepared image, or of its alpha plane with neutral chroma.
+     * Returns the picture of a prepared image, or the picture of its alpha plane with neutral chroma in the
+     * image's chroma format, so that both reconstruct to the same size.
      *
-     * @param image the prepared image, 4:2:0
+     * @param image the prepared image
      * @param alpha whether to return the alpha plane's picture
      * @return the picture, at the image's depth
      */
     static Yuv16Picture picture(EncodeImage image, boolean alpha) {
-        var builder = Yuv16Picture.builder().size(image.width(), image.height()).chromaFormat(ChromaFormat.YUV420)
+        var builder = Yuv16Picture.builder().size(image.width(), image.height()).chromaFormat(image.format())
                 .bitDepth(image.bitDepth());
         var cw = image.chromaWidth();
         if (alpha) {
@@ -156,22 +174,48 @@ public final class HeicStillEncoder {
     }
 
     /**
+     * Returns the HEVC profile of a still image.
+     *
+     * @param depth the bit depth, 8 or 10
+     * @param format the chroma format
+     * @return the profile
+     */
+    static HevcProfile stillProfile(int depth, ChromaFormat format) {
+        if (format == ChromaFormat.YUV420) {
+            return depth == 8 ? HevcProfile.MAIN_STILL_PICTURE : HevcProfile.MAIN_10_STILL_PICTURE;
+        }
+        return depth == 8 ? HevcProfile.MAIN_444_STILL_PICTURE : HevcProfile.MAIN_444_10;
+    }
+
+    /**
+     * Returns the size an HEVC encoder of a chroma format reconstructs: a dimension the format halves rounded up
+     * to an even number.
+     *
+     * @param size the picture width or height
+     * @param shift the format's subsampling shift of that dimension
+     * @return the reconstructed size
+     */
+    static int codedSize(int size, int shift) {
+        return (size + (1 << shift) - 1) & -(1 << shift);
+    }
+
+    /**
      * Returns the HEVC settings of a still image.
      *
      * @param depth the bit depth, 8 or 10
+     * @param format the chroma format
      * @param quality the quality, from 0 to 100
      * @param color the color description the stream signals
      * @param threads the encoder threads, from 1 to 64
-     * @param options the encoder settings
+     * @param options the encoder settings, whose {@link HeicEncoderOptions#lossless()} applies
      * @return the settings
      */
-    static HevcEncoderOptions stillOptions(int depth, int quality, ColorInfo color, int threads,
+    static HevcEncoderOptions stillOptions(int depth, ChromaFormat format, int quality, ColorInfo color, int threads,
                                            HeicEncoderOptions options) {
-        return HevcEncoderOptions.builder()
-                .profile(depth == 8 ? HevcProfile.MAIN_STILL_PICTURE : HevcProfile.MAIN_10_STILL_PICTURE)
+        return HevcEncoderOptions.builder().profile(stillProfile(depth, format)).chromaFormat(format)
                 .bitDepth(depth).rateControl(HevcRateControl.CONSTANT_QUALITY).quality(quantizer(quality))
-                .speed(options.speed()).color(color).threads(threads).packetFormat(HevcPacketFormat.LENGTH_PREFIXED)
-                .limits(options.limits()).bFrames(0).build();
+                .lossless(options.lossless()).speed(options.speed()).color(color).threads(threads)
+                .packetFormat(HevcPacketFormat.LENGTH_PREFIXED).limits(options.limits()).bFrames(0).build();
     }
 
     /**
@@ -186,8 +230,9 @@ public final class HeicStillEncoder {
         try (var encoder = new HevcEncoder(picture.width(), picture.height(), settings)) {
             encoder.encode(new VideoFrame(picture, 0, 1, true), packets::add);
             encoder.flush(packets::add);
+            var format = settings.chromaFormat();
             return new Coded(packets.getFirst().data(), encoder.codecConfig().orElseThrow(),
-                    (picture.width() + 1) & ~1, (picture.height() + 1) & ~1);
+                    codedSize(picture.width(), format.shiftX()), codedSize(picture.height(), format.shiftY()));
         }
     }
 
@@ -257,8 +302,9 @@ public final class HeicStillEncoder {
         var threads = threads(options);
         List<Coded> colorImages;
         List<Coded> alphaImages = List.of();
-        var color = stillOptions(depth, options.quality(), image.color(), threads, options);
-        var alphaSettings = stillOptions(depth, options.alphaQuality(), alphaColor(), threads, options);
+        var color = stillOptions(depth, image.format(), options.quality(), image.color(), threads, options);
+        var alphaSettings = stillOptions(depth, image.format(), options.alphaQuality(), alphaColor(), threads,
+                options);
         if (tileSize > 0) {
             cols = (image.width() + tileSize - 1) / tileSize;
             rows = (image.height() + tileSize - 1) / tileSize;
@@ -290,7 +336,8 @@ public final class HeicStillEncoder {
                 alphaImages = List.of(code(picture(image, true), alphaSettings));
             }
         }
-        var writer = new HeifWriter("heic", depth == 8 ? "heic" : "heix", brands(depth));
+        var extended = depth != 8 || image.format() != ChromaFormat.YUV420;
+        var writer = new HeifWriter("heic", extended ? "heix" : "heic", brands(extended));
         var colorProps = new ArrayList<HeifWriter.Property>();
         colorProps.addAll(HeifWriter.colorProperties(image.color(), options.colorProfile().orElse(null)));
         colorProps.addAll(HeifWriter.orientation(options.orientation()));
@@ -340,11 +387,12 @@ public final class HeicStillEncoder {
     /**
      * Returns the compatible brands of a still image file.
      *
-     * @param depth the coded bit depth
+     * @param extended whether the image needs the {@code heix} brand: 10-bit samples or a format range
+     * extensions profile
      * @return the brands
      */
-    static List<String> brands(int depth) {
-        return List.of("mif1", depth == 8 ? "heic" : "heix", "miaf");
+    static List<String> brands(boolean extended) {
+        return List.of("mif1", extended ? "heix" : "heic", "miaf");
     }
 
     /**

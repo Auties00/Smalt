@@ -74,6 +74,8 @@ public final class HeicEncoderOptions {
 
     private final boolean interFrames;
 
+    private final boolean lossless;
+
     private HeicEncoderOptions(Builder builder) {
         this.quality = builder.quality;
         this.alphaQuality = builder.alphaQuality;
@@ -90,6 +92,7 @@ public final class HeicEncoderOptions {
         this.limits = builder.limits;
         this.loopCount = builder.loopCount;
         this.interFrames = builder.interFrames;
+        this.lossless = builder.lossless;
     }
 
     /**
@@ -126,6 +129,15 @@ public final class HeicEncoderOptions {
     }
 
     /**
+     * Returns the {@link #defaults()} with {@linkplain #lossless() lossless} coding.
+     *
+     * @return the options
+     */
+    public static HeicEncoderOptions forLossless() {
+        return new Builder().lossless(true).build();
+    }
+
+    /**
      * Returns a builder initialized with {@link #defaults()}.
      *
      * @return the builder
@@ -147,7 +159,8 @@ public final class HeicEncoderOptions {
      * {@return the quality, from 0 (smallest) to 100 (best); 50 by default}
      *
      * <p>The quality maps to the HEVC quantizer {@code (100 - quality) * 51 / 100}, rounded to nearest, every
-     * image coded at that constant quantizer. Quality 100 is the finest quantization, not lossless.
+     * image coded at that constant quantizer. Quality 100 is the finest quantization, not lossless; see
+     * {@link #lossless()}. Lossless coding ignores the quality.
      */
     public int quality() {
         return quality;
@@ -174,6 +187,9 @@ public final class HeicEncoderOptions {
      * <p>Automatic is 8 for 8-bit pictures and 10 for deeper ones. 8-bit images are coded in the Main Still
      * Picture profile and announced by the {@code heic} brand, 10-bit images in the Main 10 Still Picture
      * profile and announced by the {@code heix} brand; image sequences use the Main and Main 10 profiles.
+     * {@linkplain #lossless() Lossless} 4:2:2 and 4:4:4 images use the Main 4:4:4 Still Picture profile at 8 bits
+     * and the Main 4:4:4 10 profile at 10 bits, sequences the Main 4:4:4 and Main 4:4:4 10 profiles, all announced
+     * by the {@code heix} brand.
      */
     public OptionalInt bitDepth() {
         return bitDepth;
@@ -183,9 +199,9 @@ public final class HeicEncoderOptions {
      * {@return the color description RGB pictures are converted with and the file signals for them;
      * {@link ColorInfo#JPEG} by default}
      *
-     * <p>Planar pictures keep their own description. The identity matrix and the YCgCo-R matrices
-     * ({@link MatrixCoefficients#YCGCO_RE}, {@link MatrixCoefficients#YCGCO_RO}), which need 4:4:4 chroma,
-     * cannot be used.
+     * <p>Planar pictures keep their own description. The YCgCo-R matrices ({@link MatrixCoefficients#YCGCO_RE},
+     * {@link MatrixCoefficients#YCGCO_RO}) cannot be used, and the identity matrix only with {@link #lossless()},
+     * which codes RGB pictures with it whatever the matrix of this description.
      */
     public ColorInfo color() {
         return color;
@@ -274,6 +290,21 @@ public final class HeicEncoderOptions {
         return interFrames;
     }
 
+    /**
+     * {@return whether the images are coded losslessly; {@code false} by default}
+     *
+     * <p>Lossless images code every block with {@code cu_transquant_bypass_flag}, so a decoder reconstructs
+     * exactly the samples the encoder coded. RGB pictures are coded as 4:4:4 with the identity matrix and full
+     * range, G, B and R becoming the Y, Cb and Cr planes, with the primaries and transfer of {@link #color()};
+     * planar pictures keep their own chroma format (4:4:0 becomes 4:4:4, and monochrome 4:2:0 with neutral
+     * chroma) and color description; alpha is lossless too. The samples are exactly those of the picture at the
+     * coded {@linkplain #bitDepth() bit depth}: a picture deeper than the coded depth, such as a 16-bit RGB
+     * picture coded at 10 bits, is first rescaled to it.
+     */
+    public boolean lossless() {
+        return lossless;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof HeicEncoderOptions that
@@ -291,14 +322,15 @@ public final class HeicEncoderOptions {
                 && threads == that.threads
                 && limits.equals(that.limits)
                 && loopCount == that.loopCount
-                && interFrames == that.interFrames;
+                && interFrames == that.interFrames
+                && lossless == that.lossless;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(quality, alphaQuality, speed, bitDepth, color, colorProfile, orientation,
                 Arrays.hashCode(exif), Arrays.hashCode(xmp), premultipliedAlpha, gridTileSize, threads, limits,
-                loopCount, interFrames);
+                loopCount, interFrames, lossless);
     }
 
     @Override
@@ -309,7 +341,8 @@ public final class HeicEncoderOptions {
                 + ", orientation=" + orientation + (exif == null ? "" : ", exif=" + exif.length + " bytes")
                 + (xmp == null ? "" : ", xmp=" + xmp.length + " bytes") + ", premultipliedAlpha=" + premultipliedAlpha
                 + ", gridTileSize=" + (gridTileSize.isEmpty() ? "auto" : gridTileSize.getAsInt()) + ", threads="
-                + threads + ", limits=" + limits + ", loopCount=" + loopCount + ", interFrames=" + interFrames + "]";
+                + threads + ", limits=" + limits + ", loopCount=" + loopCount + ", interFrames=" + interFrames
+                + ", lossless=" + lossless + "]";
     }
 
     /**
@@ -348,6 +381,8 @@ public final class HeicEncoderOptions {
 
         private boolean interFrames = true;
 
+        private boolean lossless;
+
         private Builder() {
         }
 
@@ -367,6 +402,7 @@ public final class HeicEncoderOptions {
             this.limits = o.limits;
             this.loopCount = o.loopCount;
             this.interFrames = o.interFrames;
+            this.lossless = o.lossless;
         }
 
         /**
@@ -598,12 +634,24 @@ public final class HeicEncoderOptions {
         }
 
         /**
+         * Sets whether the images are coded losslessly; see {@link HeicEncoderOptions#lossless()}.
+         *
+         * @param lossless the value
+         * @return this builder
+         */
+        public Builder lossless(boolean lossless) {
+            this.lossless = lossless;
+            return this;
+        }
+
+        /**
          * Returns the options holding the settings of this builder.
          *
          * @return the options
          * @throws IllegalArgumentException if the quality or the alpha quality is not in [0, 100], the bit depth
          * is not 8 or 10, the grid image side is not an even number in [64, 5970], the thread count is negative,
-         * the loop count is negative, or the color description uses the identity or a YCgCo-R matrix
+         * the loop count is negative, or the color description uses a YCgCo-R matrix, or the identity matrix
+         * without lossless coding
          */
         public HeicEncoderOptions build() {
             Checks.inRange("quality", quality, 0, 100);
@@ -617,9 +665,12 @@ public final class HeicEncoderOptions {
                     throw new IllegalArgumentException("grid image side " + side + " is not even");
                 }
             }
-            if (color.matrix() == MatrixCoefficients.IDENTITY || YcgcoR.applies(color.matrix())) {
-                throw new IllegalArgumentException("the " + color.matrix() + " matrix needs 4:4:4 chroma, which the "
-                        + "HEIC encoder does not code");
+            if (YcgcoR.applies(color.matrix())) {
+                throw new IllegalArgumentException("the HEIC encoder does not code the " + color.matrix() + " matrix");
+            }
+            if (color.matrix() == MatrixCoefficients.IDENTITY && !lossless) {
+                throw new IllegalArgumentException("the identity matrix needs 4:4:4 chroma, which the HEIC encoder "
+                        + "codes for lossless images only");
             }
             Checks.nonNegative("thread count", threads);
             Checks.nonNegative("loop count", loopCount);

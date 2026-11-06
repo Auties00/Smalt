@@ -147,6 +147,9 @@ public final class Oracle {
         /** {@code tools/testdata/mpeg2-oracle}'s build of the MPEG-2 video reference encoder of ISO/IEC 13818-5. */
         MPEG2ENC("smalt-mpeg2enc"),
 
+        /** TAppDecoder, the decoder of the HEVC reference software HM 18.0, built by {@code oracles.py}. */
+        HMDEC("smalt-hmdec"),
+
         /** {@code tools/testdata/gif-oracle}'s driver of giflib 5.2.2's GIF encoder. */
         GIFENC("smalt-gifenc"),
 

@@ -104,11 +104,14 @@ final class ParameterSets {
         w.writeBit(1);
         profileTierLevel(w, s);
         w.writeUe(0);
-        w.writeUe(1);
+        w.writeUe(s.chromaFormatIdc);
+        if (s.chromaFormatIdc == 3) {
+            w.writeBit(0);
+        }
         w.writeUe(s.codedWidth);
         w.writeUe(s.codedHeight);
-        var cropRight = (s.codedWidth - s.width) >> 1;
-        var cropBottom = (s.codedHeight - s.height) >> 1;
+        var cropRight = (s.codedWidth - s.width) >> s.chromaShiftX;
+        var cropBottom = (s.codedHeight - s.height) >> s.chromaShiftY;
         if (cropRight != 0 || cropBottom != 0) {
             w.writeBit(1);
             w.writeUe(0);
@@ -149,6 +152,8 @@ final class ParameterSets {
     /**
      * Writes the picture parameter set.
      *
+     * <p>A lossless stream sets {@code transquant_bypass_enabled_flag} and {@code pps_deblocking_filter_disabled_flag}.
+     *
      * @param s the settings
      * @param signHiding {@code sign_data_hiding_enabled_flag}
      * @param cuQpDelta {@code cu_qp_delta_enabled_flag}, with {@code diff_cu_qp_delta_depth} 1
@@ -177,11 +182,17 @@ final class ParameterSets {
         w.writeBit(0);
         w.writeBit(0);
         w.writeBit(0);
-        w.writeBit(0);
+        w.writeBit(s.lossless ? 1 : 0);
         w.writeBit(0);
         w.writeBit(1);
         w.writeBit(0);
-        w.writeBit(0);
+        // deblocking_filter_control_present_flag, then deblocking_filter_override_enabled_flag 0 and
+        // pps_deblocking_filter_disabled_flag 1 for a lossless stream
+        w.writeBit(s.lossless ? 1 : 0);
+        if (s.lossless) {
+            w.writeBit(0);
+            w.writeBit(1);
+        }
         w.writeBit(0);
         w.writeBit(0);
         w.writeUe(0);
@@ -202,25 +213,49 @@ final class ParameterSets {
         w.write(0, 2);
         w.writeBit(s.highTier ? 1 : 0);
         w.write(profile.profileIdc(), 5);
-        var compatibility = 0;
-        switch (profile) {
-            case MAIN -> compatibility = (1 << 1) | (1 << 2);
-            case MAIN_10, MAIN_10_STILL_PICTURE -> compatibility = 1 << 2;
-            case MAIN_STILL_PICTURE -> compatibility = (1 << 1) | (1 << 2) | (1 << 3);
-        }
+        var compatibility = compatibility(profile);
         for (var j = 0; j < 32; j++) {
             w.writeBit((compatibility >>> j) & 1);
         }
-        w.writeBit(1);
-        w.writeBit(0);
-        w.writeBit(0);
-        w.writeBit(1);
-        // general_reserved_zero_7bits, general_one_picture_only_constraint_flag, general_reserved_zero_35bits
-        w.write(0, 7);
-        w.writeBit(profile == HevcProfile.MAIN_10_STILL_PICTURE ? 1 : 0);
-        w.writeLong(0, 35);
-        w.writeBit(0);
+        w.writeLong(constraints(profile), 48);
         w.write(s.levelIdc, 8);
+    }
+
+    /**
+     * Returns the {@code general_profile_compatibility_flag} values of a profile, flag {@code j} at bit {@code j}.
+     *
+     * @param profile the profile the stream signals
+     * @return the flags
+     */
+    private static int compatibility(HevcProfile profile) {
+        return switch (profile) {
+            case MAIN -> (1 << 1) | (1 << 2);
+            case MAIN_10, MAIN_10_STILL_PICTURE -> 1 << 2;
+            case MAIN_STILL_PICTURE -> (1 << 1) | (1 << 2) | (1 << 3);
+            case MAIN_422_10, MAIN_444, MAIN_444_10, MAIN_444_STILL_PICTURE -> 1 << 4;
+        };
+    }
+
+    /**
+     * Returns the 48 bits of {@code profile_tier_level} from {@code general_progressive_source_flag} to
+     * {@code general_inbld_flag}, the first in the most significant bit: a progressive, frame-only source and the
+     * constraint flags of the profile (Table A.2 for the format range extensions profiles).
+     *
+     * @param profile the profile the stream signals
+     * @return the bits
+     */
+    static long constraints(HevcProfile profile) {
+        // general_max_12bit, max_10bit, max_8bit, max_422chroma, max_420chroma, max_monochrome, intra,
+        // one_picture_only and lower_bit_rate constraint flags, in that order from bit 8 down to bit 0
+        var flags = switch (profile) {
+            case MAIN, MAIN_10, MAIN_STILL_PICTURE -> 0;
+            case MAIN_10_STILL_PICTURE -> 0b000000010;
+            case MAIN_422_10 -> 0b110100001;
+            case MAIN_444 -> 0b111000001;
+            case MAIN_444_10 -> 0b110000001;
+            case MAIN_444_STILL_PICTURE -> 0b111000111;
+        };
+        return (0b1001L << 44) | ((long) flags << 35);
     }
 
     /**
@@ -388,29 +423,20 @@ final class ParameterSets {
         var profile = s.profile();
         out.write(1);
         out.write((s.highTier ? 0x20 : 0) | profile.profileIdc());
-        var compatibility = switch (profile) {
-            case MAIN -> (1 << 1) | (1 << 2);
-            case MAIN_10, MAIN_10_STILL_PICTURE -> 1 << 2;
-            case MAIN_STILL_PICTURE -> (1 << 1) | (1 << 2) | (1 << 3);
-        };
-        var flags = Integer.reverse(compatibility);
+        var flags = Integer.reverse(compatibility(profile));
         out.write(flags >>> 24);
         out.write(flags >>> 16);
         out.write(flags >>> 8);
         out.write(flags);
-        // general_progressive_source_flag and general_frame_only_constraint_flag, then the reserved bits and
-        // general_one_picture_only_constraint_flag
-        out.write(0x90);
-        out.write(profile == HevcProfile.MAIN_10_STILL_PICTURE ? 0x10 : 0x00);
-        out.write(0);
-        out.write(0);
-        out.write(0);
-        out.write(0);
+        var constraints = constraints(profile);
+        for (var shift = 40; shift >= 0; shift -= 8) {
+            out.write((int) (constraints >>> shift) & 0xFF);
+        }
         out.write(s.levelIdc);
         out.write(0xF0);
         out.write(0x00);
         out.write(0xFC);
-        out.write(0xFC | 1);
+        out.write(0xFC | s.chromaFormatIdc);
         out.write(0xF8 | (s.bitDepth - 8));
         out.write(0xF8 | (s.bitDepth - 8));
         out.write(0);

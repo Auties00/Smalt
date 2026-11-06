@@ -25,9 +25,12 @@ import java.util.Objects;
  * split into an image grid of separately coded images. Exif and XMP metadata become items that describe the
  * primary item. The file's brands are {@code heic} (or {@code heix} at 10 bits), {@code mif1} and {@code miaf}.
  *
- * <p>Every coded image is 4:2:0: RGB pictures are converted with the options' color description, and planar
+ * <p>Lossy images are 4:2:0: RGB pictures are converted with the options' color description, and planar
  * pictures keep their own description, their chroma resampled to 4:2:0 and their depth rescaled to 8 or 10 bits.
- * A picture of odd width or height is coded one sample larger and cropped back by a clean aperture property.
+ * {@linkplain HeicEncoderOptions#lossless() Lossless} images reproduce their samples exactly: RGB pictures are
+ * coded as 4:4:4 with the identity matrix and planar pictures in their own chroma format, in the Main 4:4:4 Still
+ * Picture or Main 4:4:4 10 profile where the format is not 4:2:0. A picture of odd width or height whose chroma
+ * format halves that dimension is coded one sample larger and cropped back by a clean aperture property.
  *
  * <p>Encoding runs on the module's shared helper threads, the calling thread taking part, unless the options ask
  * for one thread; the file does not depend on the threading.
@@ -65,8 +68,8 @@ public final class HeicEncoder {
      * @return the HEIC file
      * @throws MediaException.LimitExceeded if the picture exceeds the options' limits, needs a grid of more than
      * 256 images per side or more images than the file's 65535 items hold, or the file would exceed 2 GiB
-     * @throws MediaException.Unsupported if the picture's color description needs 4:4:4 chroma (the identity
-     * or a YCgCo-R matrix)
+     * @throws MediaException.Unsupported if the picture's color description cannot be coded: a YCgCo-R matrix, or
+     * the identity matrix without lossless 4:4:4 coding
      */
     public static byte[] encode(Picture picture, HeicEncoderOptions options) {
         Objects.requireNonNull(picture, "picture");

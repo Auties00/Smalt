@@ -23,7 +23,8 @@ final class PictureData {
     static final int CU_PART_MASK = 7;
 
     /**
-     * The shift of the field of {@link #cuInfo} holding {@code intra_chroma_pred_mode}, 0 to 4.
+     * The shift of the field of {@link #cuInfo} holding {@code intra_chroma_pred_mode}, 0 to 4, of the chroma
+     * prediction block covering the 4x4 block.
      */
     static final int CU_CHROMA_SHIFT = 3;
 
@@ -39,7 +40,9 @@ final class PictureData {
 
     /**
      * The {@link #tuInfo} flag of a Cb transform block with coefficients: of the leaf's own chroma block, or
-     * for 4x4 luma leaves of 4:2:0 pictures, of the chroma block of their 8x8 parent.
+     * for 4x4 luma leaves of 4:2:0 and 4:2:2 pictures, of the chroma block of their 8x8 parent. The two stacked
+     * chroma blocks of a 4:2:2 transform unit keep their flags in the 4x4 blocks of the upper and of the lower
+     * half of the luma area.
      */
     static final int TU_CBF_CB = 8;
 
@@ -181,7 +184,7 @@ final class PictureData {
     PictureData(EncoderSettings s, HevcSps sps) {
         this.s = s;
         this.sps = sps;
-        this.frame = new HevcFrame(s.codedWidth, s.codedHeight, 1, false);
+        this.frame = new HevcFrame(s.codedWidth, s.codedHeight, s.chromaFormatIdc, false);
         this.pic = new PictureState(sps);
         var luma = s.codedWidth * s.codedHeight;
         var chroma = s.chromaWidth * s.chromaHeight;

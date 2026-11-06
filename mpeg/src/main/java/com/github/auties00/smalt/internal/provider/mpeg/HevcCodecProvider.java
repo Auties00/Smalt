@@ -1,5 +1,8 @@
 package com.github.auties00.smalt.internal.provider.mpeg;
 
+import com.github.auties00.smalt.image.ChromaFormat;
+import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.internal.codec.SampleAspects;
 import com.github.auties00.smalt.spi.VideoCodecProvider;
 import com.github.auties00.smalt.track.Codec;
@@ -36,7 +39,9 @@ import com.github.auties00.smalt.video.hevc.encoder.HevcProfile;
  *             <li>a color description: {@link HevcEncoderOptions.Builder#color};</li>
  *             <li>a sample aspect ratio: {@link HevcEncoderOptions.Builder#sampleAspectRatio}, in lowest
  *                 terms, or the closest ratio of 16-bit terms when the terms do not fit the VUI;</li>
- *             <li>a bit depth above 8: the {@link HevcProfile#MAIN_10} profile at 10 bits.</li>
+ *             <li>a bit depth above 8: the {@link HevcProfile#MAIN_10} profile at 10 bits;</li>
+ *             <li>the identity matrix, which needs 4:4:4 chroma: the {@link HevcProfile#MAIN_444} profile
+ *                 ({@link HevcProfile#MAIN_444_10} at 10 bits) with {@link ChromaFormat#YUV444} pictures.</li>
  *           </ul>
  */
 public final class HevcCodecProvider implements VideoCodecProvider {
@@ -92,8 +97,12 @@ public final class HevcCodecProvider implements VideoCodecProvider {
         }
         options.color().ifPresent(builder::color);
         options.sampleAspectRatio().ifPresent(sar -> builder.sampleAspectRatio(SampleAspects.fit(sar, 65535)));
-        if (options.bitDepth() > 8) {
+        var deep = options.bitDepth() > 8;
+        if (deep) {
             builder.profile(HevcProfile.MAIN_10).bitDepth(10);
+        }
+        if (options.color().map(ColorInfo::matrix).orElse(null) == MatrixCoefficients.IDENTITY) {
+            builder.profile(deep ? HevcProfile.MAIN_444_10 : HevcProfile.MAIN_444).chromaFormat(ChromaFormat.YUV444);
         }
         return new HevcEncoder(options.width(), options.height(), builder.build());
     }

@@ -14,6 +14,7 @@ import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.heic.HeicDecoder;
 import com.github.auties00.smalt.image.heic.HeicEncoder;
 import com.github.auties00.smalt.image.heic.HeicEncoderOptions;
+import com.github.auties00.smalt.internal.check.LosslessDepth;
 import com.github.auties00.smalt.internal.codec.EncodeMetadata;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
@@ -24,8 +25,10 @@ import java.util.Optional;
 /**
  * Provides {@link HeicDecoder} to {@link Images} for HEIC images and image sequences, and {@link HeicEncoder} for
  * encoding them: still images at the requested quality ({@link HeicEncoderOptions#defaults()} when the options
- * leave it to the format), and animations the same way with the requested loop count. A lossless request raises
- * {@link MediaException.Unsupported}.
+ * leave it to the format) or, for a lossless request, with {@link HeicEncoderOptions#forLossless()}, which codes
+ * RGB pictures as 4:4:4 with the identity matrix, and animations the same way with the requested loop count. A
+ * lossless request for a picture deeper than the 10 bits HEIC holds raises {@link MediaException.Unsupported} unless
+ * its samples are exactly 8-bit.
  */
 public final class HeicCodecProvider implements ImageCodecProvider {
     /**
@@ -72,11 +75,15 @@ public final class HeicCodecProvider implements ImageCodecProvider {
     @Override
     public void encode(Picture picture, ImageFormat format, ImageEncoderOptions options, MediaSink sink) {
         var prepared = EncodeMetadata.color(picture, options, EncodeMetadata::rgbOnly);
+        picture = prepared.picture();
+        if (options.isLossless()) {
+            picture = LosslessDepth.fit(picture, 10, "heic");
+        }
         var builder = metadata(settings(options).toBuilder(), options);
         if (prepared.profile() != null) {
             builder.colorProfile(prepared.profile());
         }
-        HeicEncoder.encode(prepared.picture(), builder.build(), sink);
+        HeicEncoder.encode(picture, builder.build(), sink);
     }
 
     @Override
@@ -116,13 +123,10 @@ public final class HeicCodecProvider implements ImageCodecProvider {
      *
      * @param options the generic options
      * @return the HEIC options
-     * @throws MediaException.Unsupported if the options ask for lossless coding
      */
     private static HeicEncoderOptions settings(ImageEncoderOptions options) {
         if (options.isLossless()) {
-            // TODO: lossless HEIC needs a lossless mode of the HEVC encoder (cu_transquant_bypass, and 4:4:4 in a
-            //  range extension profile for RGB pictures)
-            throw new MediaException.Unsupported("heic", "the HEIC encoder codes lossy images only");
+            return HeicEncoderOptions.forLossless();
         }
         var quality = options.quality();
         return quality.isPresent() ? HeicEncoderOptions.ofQuality(quality.getAsInt()) : HeicEncoderOptions.defaults();

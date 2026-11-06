@@ -210,6 +210,40 @@ class HeicEncoderInteropTest {
             assertTrue(info.contains("64x48"), info);
             assertSame("sequence primary", decode(path), bytes, false);
         }
+
+        @ParameterizedTest(name = "{0}")
+        @EnumSource(value = Sample.class, names = {"SINGLE", "ODD", "ALPHA", "ALPHA_GRID"})
+        @DisplayName("heif-dec decodes a lossless 4:4:4 identity-matrix image to the source pixels exactly")
+        void lossless(Sample sample) {
+            var source = noisy(sample.width, sample.height, sample.alpha);
+            var options = HeicEncoderOptions.forLossless().toBuilder().speed(HevcEncoderSpeed.FASTEST).threads(1);
+            if (sample.tile > 0) {
+                options.gridTileSize(sample.tile);
+            }
+            var bytes = HeicEncoder.encode(source, options.build());
+            var path = save(sample.name().toLowerCase(Locale.ROOT) + "-lossless.heic", bytes);
+            var reference = rgbaOf(Images.decode(decode(path)).picture());
+            var expected = rgbaOf(source);
+            if (!sample.alpha) {
+                for (var i = 3; i < reference.length; i += 4) {
+                    reference[i] = (byte) 255;
+                }
+            }
+            Tolerance.exact().assertWithin(sample + " lossless libheif", expected, reference);
+        }
+    }
+
+    /** Returns an 8-bit picture of noise and hard edges, which only lossless coding keeps exactly. */
+    static RgbaPicture noisy(int width, int height, boolean alpha) {
+        var random = new java.util.Random(width * 131L + height);
+        var pixels = new byte[width * height * 4];
+        for (var i = 0; i < pixels.length; i += 4) {
+            pixels[i] = (byte) random.nextInt(256);
+            pixels[i + 1] = (byte) ((i / 4) % 7 == 0 ? 255 : random.nextInt(40));
+            pixels[i + 2] = (byte) (i / 4 * 3);
+            pixels[i + 3] = (byte) (alpha ? random.nextInt(256) : 255);
+        }
+        return RgbaPicture.of(width, height, width * 4, pixels, alpha);
     }
 
     @Nested

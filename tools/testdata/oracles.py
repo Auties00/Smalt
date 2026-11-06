@@ -632,6 +632,27 @@ def build(row, target):
             build_all(build_dir, target, env, 'avifgainmaputil', 'avifdec')
             for tool in ('avifgainmaputil', 'avifdec'):
                 shutil.copy2(find_file(build_dir, tool + EXE), os.path.join(out, tool + EXE))
+        elif name == 'smalt-hmdec':
+            tree = source_tree(row, work)
+            build_dir = os.path.join(work, 'build')
+            # HM builds with every warning as an error, which newer compilers than its own CI's turn into failures,
+            # and with -msse4.1 on every GCC or Clang target, which arm64 compilers reject; neither changes the
+            # decoder's arithmetic, which is integer.
+            lists = os.path.join(tree, 'CMakeLists.txt')
+            with open(lists, encoding='utf-8') as file:
+                text = file.read()
+            for old, new in ((' warnings-as-errors', ''),
+                             ('add_compile_options( "-msse4.1" )',
+                              'if( CMAKE_SYSTEM_PROCESSOR MATCHES "x86|AMD64|amd64|i.86" )\n'
+                              '    add_compile_options( "-msse4.1" )\n  endif()')):
+                if old not in text:
+                    raise SystemExit('HM CMakeLists.txt has no ' + old.strip())
+                text = text.replace(old, new)
+            with open(lists, 'w', encoding='utf-8') as file:
+                file.write(text)
+            run(configure(tree, build_dir, target), env=env)
+            build_all(build_dir, target, env, 'TAppDecoder')
+            shutil.copy2(find_file(tree, 'TAppDecoder' + EXE), executable)
         elif name == 'mkvalidator':
             tree = source_tree(row, work)
             build_dir = os.path.join(work, 'build')

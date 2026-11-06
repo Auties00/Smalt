@@ -3,6 +3,8 @@ package com.github.auties00.smalt.image.heic.internal;
 import com.github.auties00.smalt.image.AnimationWriter;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.ColorRange;
+import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.heic.HeicEncoderOptions;
@@ -31,15 +33,18 @@ import java.util.function.Consumer;
  * animations, and the first frame as the primary image item for readers of still images.
  *
  * <p>The color and alpha sequences are coded by {@link HevcEncoder} at constant quality in the Main or Main 10
- * profile. With {@link HeicEncoderOptions#interFrames()} they hold P and B pictures between IDR pictures, so their
- * samples are stored in decoding order with composition offsets ({@code ctts}), only the IDR pictures are sync
- * samples, and an edit starts the presentation at the first frame; otherwise every frame is an IDR picture. Every
+ * profile, or with {@link HeicEncoderOptions#lossless()} losslessly, the color frames as 4:4:4 with the identity
+ * matrix in the Main 4:4:4 or Main 4:4:4 10 profile, and the alpha frames as 4:4:4 too. With
+ * {@link HeicEncoderOptions#interFrames()} they hold P and B pictures between IDR pictures, so their samples are
+ * stored in decoding order with composition offsets ({@code ctts}), only the IDR pictures are sync samples, and an
+ * edit starts the presentation at the first frame; otherwise every frame is an IDR picture. Every
  * sample lasts its frame's duration, also when the samples are reordered.
  * Frames are coded as they arrive and their samples kept in memory; {@link #finish()} lays out the file and writes
  * it to the sink. Frame durations are kept to the microsecond: the sequence's timescale is one million. Frames
  * that report alpha but are opaque, and the frames before the first transparent one, have an opaque alpha
- * picture. A canvas of odd width or height is coded one sample larger, and a clean aperture ({@code clap}) in the
- * sample entry and on the primary item crops it back. Instances are not thread-safe.
+ * picture. A canvas of odd width or height is coded one sample larger (except in lossless 4:4:4 color frames), and
+ * a clean aperture ({@code clap}) in the sample entry and on the primary item crops it back. Instances are not
+ * thread-safe.
  */
 public final class HeicAnimationWriter implements AnimationWriter {
     /**
@@ -147,8 +152,13 @@ public final class HeicAnimationWriter implements AnimationWriter {
         this.sink = sink;
         this.depth = options.bitDepth().orElse(8);
         this.frameOptions = options.toBuilder().bitDepth(depth).build();
-        this.color = new HevcEncoder(width, height, sequenceOptions(options.quality(), options.color()));
-        this.alphaSettings = sequenceOptions(options.alphaQuality(), HeicStillEncoder.alphaColor());
+        var lossless = options.lossless();
+        var colorDescription = lossless ? new ColorInfo(MatrixCoefficients.IDENTITY, ColorRange.FULL,
+                options.color().primaries(), options.color().transfer()) : options.color();
+        this.color = new HevcEncoder(width, height, sequenceOptions(options.quality(), colorDescription,
+                lossless ? ChromaFormat.YUV444 : ChromaFormat.YUV420));
+        this.alphaSettings = sequenceOptions(options.alphaQuality(), HeicStillEncoder.alphaColor(),
+                lossless ? ChromaFormat.YUV444 : ChromaFormat.YUV420);
     }
 
     @Override
@@ -166,11 +176,14 @@ public final class HeicAnimationWriter implements AnimationWriter {
      *
      * @param quality the quality, from 0 to 100
      * @param color the color description the stream signals
+     * @param format the chroma format, 4:4:4 only for lossless frames
      * @return the settings
      */
-    private HevcEncoderOptions sequenceOptions(int quality, ColorInfo color) {
-        var builder = HevcEncoderOptions.builder().profile(depth == 8 ? HevcProfile.MAIN : HevcProfile.MAIN_10)
-                .bitDepth(depth).rateControl(HevcRateControl.CONSTANT_QUALITY)
+    private HevcEncoderOptions sequenceOptions(int quality, ColorInfo color, ChromaFormat format) {
+        var profile = format == ChromaFormat.YUV420 ? depth == 8 ? HevcProfile.MAIN : HevcProfile.MAIN_10
+                : depth == 8 ? HevcProfile.MAIN_444 : HevcProfile.MAIN_444_10;
+        var builder = HevcEncoderOptions.builder().profile(profile).chromaFormat(format)
+                .bitDepth(depth).rateControl(HevcRateControl.CONSTANT_QUALITY).lossless(options.lossless())
                 .quality(HeicStillEncoder.quantizer(quality)).speed(options.speed()).color(color)
                 .threads(HeicStillEncoder.threads(options)).packetFormat(HevcPacketFormat.LENGTH_PREFIXED)
                 .limits(options.limits()).timeBase(Rational.MICROSECONDS);
@@ -227,7 +240,7 @@ public final class HeicAnimationWriter implements AnimationWriter {
      */
     private Yuv16Picture opaque() {
         if (opaque == null) {
-            var picture = Yuv16Picture.allocate(width, height, ChromaFormat.YUV420, depth, false,
+            var picture = Yuv16Picture.allocate(width, height, alphaSettings.chromaFormat(), depth, false,
                     HeicStillEncoder.alphaColor());
             Arrays.fill(picture.y(), (short) ((1 << depth) - 1));
             opaque = picture;
@@ -275,12 +288,12 @@ public final class HeicAnimationWriter implements AnimationWriter {
             samples.bytes(packet.data());
         }
         var data = samples.toByteArray();
-        var tenBit = depth != 8;
-        var image = tenBit ? "heix" : "heic";
-        var brands = List.of(image, "mif1", "miaf", "msf1", tenBit ? "hevx" : "hevc", "iso8");
+        var extended = depth != 8 || options.lossless();
+        var image = extended ? "heix" : "heic";
+        var brands = List.of(image, "mif1", "miaf", "msf1", extended ? "hevx" : "hevc", "iso8");
         var writer = new HeifWriter("heic", image, brands);
-        var codedWidth = (width + 1) & ~1;
-        var codedHeight = (height + 1) & ~1;
+        var codedWidth = options.lossless() ? width : (width + 1) & ~1;
+        var codedHeight = options.lossless() ? height : (height + 1) & ~1;
         var props = new ArrayList<HeifWriter.Property>();
         props.addAll(HeifWriter.colorProperties(frameColor, options.colorProfile().orElse(null)));
         props.addAll(HeifWriter.orientation(options.orientation()));

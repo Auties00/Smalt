@@ -946,6 +946,16 @@ behaviors of the decoder shape those streams: it reads ahead of the last macrobl
 ticks rather than in field periods of the frame period, so only the streams whose VOP times count frames are
 compared with it.
 
+## HEVC reference software
+
+`oracles.py install` builds `TAppDecoder`, the decoder of the HEVC reference software HM 18.0 (BSD 3-Clause, the
+JVET GitLab archive of the `HM-18.0` tag, pinned by SHA-256), as `smalt-hmdec` on every platform with CMake, without
+HM's warnings-as-errors (newer compilers than HM's own CI warn where it does not) and, off x86, without its
+`-msse4.1` flag; neither touches the decoder's integer arithmetic. `HevcEncoderRangeExtensionTest` decodes the HEVC
+encoder's Main 4:2:2 10, Main 4:4:4 and Main 4:4:4 10 streams and its lossless streams with it (`-d 0` writes the
+native bit depth), requires every MD5 decoded picture hash SEI message to verify and its output to equal Smalt's
+decode and, for lossless streams, the source.
+
 ## MPEG-2 video reference software
 
 `mpeg2-oracle/build.py` builds the MPEG Software Simulation Group's MPEG-2 video decoder and encoder of the

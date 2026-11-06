@@ -194,6 +194,12 @@ final class MpegWorkloads {
                 file("hevc-encode-slow-main10-t2", () -> hevcEncode("hevc-encode-slow-main10-t2",
                         hevcFileOptions(HevcEncoderSpeed.SLOW, 2).toBuilder().profile(HevcProfile.MAIN_10)
                                 .bitDepth(10).pictureHash(HevcPictureHash.MD5).build())),
+                file("hevc-encode-444-lossless-t1", () -> hevcEncode("hevc-encode-444-lossless-t1",
+                        hevcFileOptions(HevcEncoderSpeed.FAST, 1).toBuilder().profile(HevcProfile.MAIN_444)
+                                .chromaFormat(ChromaFormat.YUV444).lossless(true).build())),
+                file("hevc-encode-422-main10-t2", () -> hevcEncode("hevc-encode-422-main10-t2",
+                        hevcFileOptions(HevcEncoderSpeed.BALANCED, 2).toBuilder().profile(HevcProfile.MAIN_422_10)
+                                .chromaFormat(ChromaFormat.YUV422).bitDepth(10).build())),
                 file("hevc-encode-still", MpegWorkloads::hevcStillEncode),
                 file("heic-encode", MpegWorkloads::heicEncode),
                 file("heic-decode", MpegWorkloads::heicDecode),
@@ -301,7 +307,7 @@ final class MpegWorkloads {
 
     /**
      * Returns a workload that encodes HEIC images: a 384x256 picture with alpha, the same picture as a 10-bit
-     * grid of 128-sample images on two threads, and an animation with alpha and predicted frames.
+     * grid of 128-sample images on two threads and losslessly, and an animation with alpha and predicted frames.
      *
      * @return the workload
      */
@@ -313,6 +319,7 @@ final class MpegWorkloads {
         return TrainingWorkload.of("heic-encode", () -> {
             Blackhole.consume(HeicEncoder.encode(alpha, HeicEncoderOptions.defaults()).length);
             Blackhole.consume(HeicEncoder.encode(alpha, grid).length);
+            Blackhole.consume(HeicEncoder.encode(alpha, HeicEncoderOptions.forLossless()).length);
             var sink = MediaSink.memory();
             try (var writer = HeicEncoder.openAnimationWriter(128, 96, animation, sink)) {
                 for (var frame : frames) {

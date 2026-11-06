@@ -105,7 +105,8 @@ class LosslessImageTest {
 
     static Stream<Arguments> eightBitFormats() {
         var arguments = new ArrayList<Arguments>();
-        for (var format : List.of(ImageFormat.AVIF, ImageFormat.ICO, ImageFormat.ANI, ImageFormat.BMP)) {
+        for (var format : List.of(ImageFormat.AVIF, ImageFormat.HEIC, ImageFormat.ICO, ImageFormat.ANI,
+                ImageFormat.BMP)) {
             eightBit().forEach(test -> arguments.add(Arguments.of(format, test)));
         }
         return arguments.stream();
@@ -114,7 +115,7 @@ class LosslessImageTest {
     static Stream<Arguments> shallowFormats() {
         var arguments = new ArrayList<Arguments>();
         for (var format : List.of(ImageFormat.WEBP, ImageFormat.ICO, ImageFormat.ANI, ImageFormat.GIF, ImageFormat.AVIF,
-                ImageFormat.BMP)) {
+                ImageFormat.HEIC, ImageFormat.BMP)) {
             sixteenBit().forEach(test -> arguments.add(Arguments.of(format, test)));
         }
         return arguments.stream();

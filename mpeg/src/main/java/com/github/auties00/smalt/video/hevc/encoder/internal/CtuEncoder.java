@@ -93,14 +93,24 @@ final class CtuEncoder implements NeighborAvailability {
     private final MotionPredictor.PuMotion probe = new MotionPredictor.PuMotion();
 
     /**
-     * {@code QpC} of Table 8-10 for {@code qPi} 30 to 43.
-     */
-    private static final int[] QPC_TABLE = {29, 30, 31, 32, 33, 33, 34, 34, 35, 35, 36, 36, 37, 37};
-
-    /**
      * The motion search.
      */
     private MotionSearch search;
+
+    /**
+     * {@code ChromaArrayType}, 1 to 3.
+     */
+    private final int chromaFormat;
+
+    /**
+     * The binary logarithm of {@code SubWidthC}.
+     */
+    private final int shiftX;
+
+    /**
+     * The binary logarithm of {@code SubHeightC}.
+     */
+    private final int shiftY;
 
     /**
      * The picture.
@@ -228,6 +238,11 @@ final class CtuEncoder implements NeighborAvailability {
     private final int[] mpm = new int[3];
 
     /**
+     * The luma modes of the four prediction blocks of an NxN intra coding unit.
+     */
+    private final int[] lumaModes = new int[4];
+
+    /**
      * The merge candidates: {@code predFlagL0 | predFlagL1 << 1}.
      */
     private final int[] candDir = new int[MERGE_CANDIDATES];
@@ -306,7 +321,7 @@ final class CtuEncoder implements NeighborAvailability {
      * The prediction of a coding unit while its residual choices are tried: the luma block, then the two
      * chroma blocks.
      */
-    private final short[] savedPrediction = new short[64 * 64 + 2 * 32 * 32];
+    private final short[] savedPrediction = new short[3 * 64 * 64];
 
     /**
      * Constructs an encoder.
@@ -315,6 +330,9 @@ final class CtuEncoder implements NeighborAvailability {
      */
     CtuEncoder(EncoderSettings s) {
         this.s = s;
+        this.chromaFormat = s.chromaFormatIdc;
+        this.shiftX = s.chromaShiftX;
+        this.shiftY = s.chromaShiftY;
     }
 
     /**
@@ -336,8 +354,7 @@ final class CtuEncoder implements NeighborAvailability {
         this.qpY = header.sliceQp;
         var bdOffset = 6 * (s.bitDepth - 8);
         this.qpLuma = qpY + bdOffset;
-        var qPi = Math.clamp(qpY + pps.cbQpOffset + header.cbQpOffset, -bdOffset, 57);
-        var qpC = qPi < 30 ? qPi : qPi > 43 ? qPi - 6 : QPC_TABLE[qPi - 30];
+        var qpC = EncoderEngine.chromaQp(qpY + pps.cbQpOffset + header.cbQpOffset, s);
         this.qpChroma = qpC + bdOffset;
         this.lambda = lambdaFactor * StrictMath.pow(2.0, (qpY + bdOffset - 12) / 3.0);
         this.sqrtLambda = Math.sqrt(lambda);
@@ -499,7 +516,12 @@ final class CtuEncoder implements NeighborAvailability {
         syntax.setCoder(counter);
         syntax.codingUnit(x0, y0, log2Size);
         var bits = counter.bits / (double) CabacCounter.ONE_BIT;
-        return distortion(x0, y0, size) + lambda * bits;
+        var distortion = distortion(x0, y0, size);
+        if (s.lossless && distortion != 0) {
+            // a lossless stream keeps only candidates that reconstruct the source exactly
+            return Double.MAX_VALUE;
+        }
+        return distortion + lambda * bits;
     }
 
     /**
@@ -514,10 +536,11 @@ final class CtuEncoder implements NeighborAvailability {
         var w = s.codedWidth;
         var luma = Distortion.sse(d.sourceY, y0 * w + x0, w, d.frame.y, y0 * w + x0, w, size, size);
         var cw = s.chromaWidth;
-        var offset = (y0 >> 1) * cw + (x0 >> 1);
-        var half = size >> 1;
-        var chroma = Distortion.sse(d.sourceCb, offset, cw, d.frame.cb, offset, cw, half, half)
-                + Distortion.sse(d.sourceCr, offset, cw, d.frame.cr, offset, cw, half, half);
+        var offset = (y0 >> shiftY) * cw + (x0 >> shiftX);
+        var width = size >> shiftX;
+        var height = size >> shiftY;
+        var chroma = Distortion.sse(d.sourceCb, offset, cw, d.frame.cb, offset, cw, width, height)
+                + Distortion.sse(d.sourceCr, offset, cw, d.frame.cr, offset, cw, width, height);
         return luma + chromaWeight * chroma;
     }
 
@@ -533,6 +556,9 @@ final class CtuEncoder implements NeighborAvailability {
      * @param trafoDepth the transform tree depth of every leaf
      */
     private void markCu(int x0, int y0, int size, int depth, int flags, int partMode, int trafoDepth) {
+        if (s.lossless) {
+            flags |= PictureState.BYPASS;
+        }
         var w4 = pic.width4;
         var start = d.block(x0, y0);
         var blocks = size >> 2;
@@ -565,12 +591,27 @@ final class CtuEncoder implements NeighborAvailability {
      * @param set the bits to set
      */
     private void setBits(byte[] array, int x0, int y0, int size, int clear, int set) {
+        setBits(array, x0, y0, size, size, clear, set);
+    }
+
+    /**
+     * Sets a field of the {@link PictureData#tuInfo} or {@link PictureData#cuInfo} of a rectangle.
+     *
+     * @param array the per-4x4 information array to change
+     * @param x0 the luma x
+     * @param y0 the luma y
+     * @param width the width in luma samples, a multiple of 4
+     * @param height the height in luma samples, a multiple of 4
+     * @param clear the bits to clear
+     * @param set the bits to set
+     */
+    private void setBits(byte[] array, int x0, int y0, int width, int height, int clear, int set) {
         var w4 = pic.width4;
         var start = d.block(x0, y0);
-        var blocks = size >> 2;
-        for (var j = 0; j < blocks; j++) {
+        var columns = width >> 2;
+        for (var j = 0; j < height >> 2; j++) {
             var row = start + j * w4;
-            for (var i = 0; i < blocks; i++) {
+            for (var i = 0; i < columns; i++) {
                 array[row + i] = (byte) ((array[row + i] & ~clear) | set);
             }
         }
@@ -607,7 +648,7 @@ final class CtuEncoder implements NeighborAvailability {
         var size = 1 << log2Size;
         markCu(x0, y0, size, depth, PictureState.INTRA, SyntaxCoder.PART_2Nx2N, 0);
         var lumaMode = decideLuma(x0, y0, log2Size, 0);
-        decideChroma(x0, y0, log2Size, lumaMode, x0 >> 1, y0 >> 1, log2Size - 1);
+        decideChroma(x0, y0, log2Size, lumaMode, 0);
         return cuCost(x0, y0, log2Size, depth);
     }
 
@@ -621,14 +662,17 @@ final class CtuEncoder implements NeighborAvailability {
      */
     private double intraNxN(int x0, int y0, int depth) {
         markCu(x0, y0, 8, depth, PictureState.INTRA, SyntaxCoder.PART_NxN, 1);
-        var first = 0;
+        var modes = lumaModes;
         for (var i = 0; i < 4; i++) {
-            var mode = decideLuma(x0 + (i & 1) * 4, y0 + (i >> 1) * 4, 2, 1);
-            if (i == 0) {
-                first = mode;
-            }
+            modes[i] = decideLuma(x0 + (i & 1) * 4, y0 + (i >> 1) * 4, 2, 1);
         }
-        decideChroma(x0, y0, 3, first, x0 >> 1, y0 >> 1, 2);
+        if (chromaFormat == 3) {
+            for (var i = 0; i < 4; i++) {
+                decideChroma(x0 + (i & 1) * 4, y0 + (i >> 1) * 4, 2, modes[i], 1);
+            }
+        } else {
+            decideChroma(x0, y0, 3, modes[0], 0);
+        }
         return cuCost(x0, y0, 3, depth);
     }
 
@@ -781,31 +825,31 @@ final class CtuEncoder implements NeighborAvailability {
         counter.bypassBins(0, index < 0 ? 5 : index == 0 ? 1 : 2);
         counter.bin(CabacTables.CBF_LUMA + (trafoDepth == 0 ? 1 : 0), cbf ? 1 : 0);
         if (cbf) {
-            syntax.residual(d.levelY, w, y0 * w + x0, log2Size, 0, SyntaxCoder.scanIndex(log2Size, 0, mode));
+            syntax.residual(d.levelY, w, y0 * w + x0, log2Size, 0,
+                    SyntaxCoder.scanIndex(log2Size, 0, mode, chromaFormat));
         }
         syntax.mpmIndex(x0, y0, -1, mpm);
         return dist + lambda * counter.bits / CabacCounter.ONE_BIT;
     }
 
     /**
-     * Decides and reconstructs the chroma intra mode of an intra coding unit.
+     * Decides and reconstructs the chroma intra mode of a chroma prediction block: the whole coding unit, or one
+     * of the four prediction blocks of an NxN coding unit of 4:4:4 video.
      *
-     * @param x0 the luma x of the coding block
-     * @param y0 the luma y of the coding block
-     * @param log2Size the coding block size as a power of two
-     * @param lumaMode {@code IntraPredModeY} of the first prediction block
-     * @param xc the chroma x of the chroma block
-     * @param yc the chroma y of the chroma block
-     * @param log2SizeC the chroma block size as a power of two
+     * @param x0 the luma x of the block
+     * @param y0 the luma y of the block
+     * @param log2Size the luma size of the block as a power of two
+     * @param lumaMode {@code IntraPredModeY} the chroma mode derives from
+     * @param trafoDepth the transform tree depth of the chroma blocks
      */
-    private void decideChroma(int x0, int y0, int log2Size, int lumaMode, int xc, int yc, int log2SizeC) {
+    private void decideChroma(int x0, int y0, int log2Size, int lumaMode, int trafoDepth) {
         var candidates = s.speed.compareTo(HevcEncoderSpeed.BALANCED) >= 0 ? 5 : 1;
         var bestSyntax = 4;
         var bestCost = Double.MAX_VALUE;
         var last = -1;
         for (var k = 0; k < candidates && candidates > 1; k++) {
             var syntaxValue = k == 0 ? 4 : k - 1;
-            var cost = chromaCost(x0, y0, log2Size, lumaMode, syntaxValue, xc, yc, log2SizeC);
+            var cost = chromaCost(x0, y0, log2Size, lumaMode, syntaxValue, trafoDepth);
             last = syntaxValue;
             if (cost < bestCost) {
                 bestCost = cost;
@@ -813,56 +857,79 @@ final class CtuEncoder implements NeighborAvailability {
             }
         }
         if (last != bestSyntax) {
-            chromaCost(x0, y0, log2Size, lumaMode, bestSyntax, xc, yc, log2SizeC);
+            chromaCost(x0, y0, log2Size, lumaMode, bestSyntax, trafoDepth);
         }
     }
 
     /**
-     * Reconstructs the chroma blocks of an intra coding unit with one chroma mode and returns their cost.
+     * Reconstructs the chroma blocks of a chroma prediction block with one chroma mode and returns their cost.
      *
-     * @param x0 the luma x of the coding block
-     * @param y0 the luma y of the coding block
-     * @param log2Size the coding block size as a power of two
-     * @param lumaMode {@code IntraPredModeY} of the first prediction block
+     * <p>Each component has one square transform block, or for 4:2:2 video two stacked ones, the second
+     * predicted from the reconstruction of the first; their coded block flags go to the upper and the lower half
+     * of the block's luma area.
+     *
+     * @param x0 the luma x of the block
+     * @param y0 the luma y of the block
+     * @param log2Size the luma size of the block as a power of two
+     * @param lumaMode {@code IntraPredModeY} the chroma mode derives from
      * @param syntaxValue {@code intra_chroma_pred_mode}
-     * @param xc the chroma x
-     * @param yc the chroma y
-     * @param log2SizeC the chroma block size as a power of two
+     * @param trafoDepth the transform tree depth of the chroma blocks
      * @return the chroma distortion plus lambda times the bits of the mode, the flags and the residuals
      */
-    private double chromaCost(int x0, int y0, int log2Size, int lumaMode, int syntaxValue, int xc, int yc,
-                              int log2SizeC) {
+    private double chromaCost(int x0, int y0, int log2Size, int lumaMode, int syntaxValue, int trafoDepth) {
         var size = 1 << log2Size;
+        var log2SizeC = log2Size - shiftX;
         var sizeC = 1 << log2SizeC;
-        var mode = SyntaxCoder.chromaPredMode(syntaxValue, lumaMode);
+        var blocks = chromaFormat == 2 ? 2 : 1;
+        var mode = SyntaxCoder.chromaPredMode(syntaxValue, lumaMode, chromaFormat);
         setBits(d.cuInfo, x0, y0, size, 7 << PictureData.CU_CHROMA_SHIFT, syntaxValue << PictureData.CU_CHROMA_SHIFT);
-        var xl = xc << 1;
-        var yl = yc << 1;
-        predictIntra(xl, yl, log2SizeC, 1, mode, pred, sizeC);
-        var cbfCb = codeBlock(xc, yc, log2SizeC, 1, true, false, mode);
-        predictIntra(xl, yl, log2SizeC, 2, mode, pred, sizeC);
-        var cbfCr = codeBlock(xc, yc, log2SizeC, 2, true, false, mode);
-        var flags = (cbfCb ? PictureData.TU_CBF_CB : 0) | (cbfCr ? PictureData.TU_CBF_CR : 0);
-        setBits(d.tuInfo, x0, y0, size, PictureData.TU_CBF_CB | PictureData.TU_CBF_CR, flags);
+        var xc = x0 >> shiftX;
+        var yc = y0 >> shiftY;
+        var cbf = cbfScratch;
+        for (var c = 1; c <= 2; c++) {
+            for (var k = 0; k < blocks; k++) {
+                var y = yc + k * sizeC;
+                predictIntra(x0, y << shiftY, log2SizeC, c, mode, pred, sizeC);
+                cbf[(c - 1) * 2 + k] = codeBlock(xc, y, log2SizeC, c, true, false, mode);
+            }
+        }
+        var partHeight = size / blocks;
+        for (var k = 0; k < blocks; k++) {
+            var flags = (cbf[k] ? PictureData.TU_CBF_CB : 0) | (cbf[2 + k] ? PictureData.TU_CBF_CR : 0);
+            setBits(d.tuInfo, x0, y0 + k * partHeight, size, partHeight, PictureData.TU_CBF_CB | PictureData.TU_CBF_CR,
+                    flags);
+        }
         var cw = s.chromaWidth;
         var offset = yc * cw + xc;
-        var dist = Distortion.sse(d.sourceCb, offset, cw, d.frame.cb, offset, cw, sizeC, sizeC)
-                + Distortion.sse(d.sourceCr, offset, cw, d.frame.cr, offset, cw, sizeC, sizeC);
+        var height = sizeC * blocks;
+        var dist = Distortion.sse(d.sourceCb, offset, cw, d.frame.cb, offset, cw, sizeC, height)
+                + Distortion.sse(d.sourceCr, offset, cw, d.frame.cr, offset, cw, sizeC, height);
+        if (s.lossless && dist != 0) {
+            return Double.MAX_VALUE;
+        }
         counter.loadStates(ctuStates, 0);
         counter.bits = 0;
         syntax.setCoder(counter);
         syntax.chromaMode(syntaxValue);
-        counter.bin(CabacTables.CBF_CHROMA, cbfCb ? 1 : 0);
-        counter.bin(CabacTables.CBF_CHROMA, cbfCr ? 1 : 0);
-        var scan = SyntaxCoder.scanIndex(log2SizeC, 1, mode);
-        if (cbfCb) {
-            syntax.residual(d.levelCb, cw, offset, log2SizeC, 1, scan);
+        for (var k = 0; k < 2 * blocks; k++) {
+            counter.bin(CabacTables.CBF_CHROMA + trafoDepth, cbf[(k / blocks) * 2 + k % blocks] ? 1 : 0);
         }
-        if (cbfCr) {
-            syntax.residual(d.levelCr, cw, offset, log2SizeC, 2, scan);
+        var scan = SyntaxCoder.scanIndex(log2SizeC, 1, mode, chromaFormat);
+        for (var c = 1; c <= 2; c++) {
+            for (var k = 0; k < blocks; k++) {
+                if (cbf[(c - 1) * 2 + k]) {
+                    syntax.residual(d.levels(c), cw, offset + k * sizeC * cw, log2SizeC, c, scan);
+                }
+            }
         }
         return chromaWeight * dist + lambda * counter.bits / CabacCounter.ONE_BIT;
     }
+
+    /**
+     * The coded block flags of the chroma blocks of {@link #chromaCost} and {@link #interBlock}, indexed
+     * {@code (cIdx - 1) * 2 + block}.
+     */
+    private final boolean[] cbfScratch = new boolean[4];
 
     /**
      * Predicts an intra block from its reconstructed neighbors (8.4.4.2) into a buffer.
@@ -877,11 +944,12 @@ final class CtuEncoder implements NeighborAvailability {
      */
     private void predictIntra(int xLuma, int yLuma, int log2Size, int cIdx, int mode, short[] out, int stride) {
         var size = 1 << log2Size;
-        var shift = cIdx == 0 ? 0 : 1;
+        var shiftX = cIdx == 0 ? 0 : this.shiftX;
+        var shiftY = cIdx == 0 ? 0 : this.shiftY;
         var plane = d.recon(cIdx);
         var planeStride = d.stride(cIdx);
-        var xc = xLuma >> shift;
-        var yc = yLuma >> shift;
+        var xc = xLuma >> shiftX;
+        var yc = yLuma >> shiftY;
         var count = 4 * size + 1;
         var corner = 2 * size;
         var all = true;
@@ -889,10 +957,10 @@ final class CtuEncoder implements NeighborAvailability {
         var avail = false;
         for (var y = 2 * size - 1; y >= -1; y--) {
             var index = corner - 1 - y;
-            var yNb = (yc + y) << shift;
+            var yNb = (yc + y) << shiftY;
             if (yNb >> 2 != block) {
                 block = yNb >> 2;
-                avail = available(xLuma, yLuma, (xc - 1) << shift, yNb);
+                avail = available(xLuma, yLuma, (xc - 1) << shiftX, yNb);
             }
             boundaryAvailable[index] = avail;
             if (avail) {
@@ -904,10 +972,10 @@ final class CtuEncoder implements NeighborAvailability {
         block = Integer.MIN_VALUE;
         for (var x = 0; x < 2 * size; x++) {
             var index = corner + 1 + x;
-            var xNb = (xc + x) << shift;
+            var xNb = (xc + x) << shiftX;
             if (xNb >> 2 != block) {
                 block = xNb >> 2;
-                avail = available(xLuma, yLuma, xNb, (yc - 1) << shift);
+                avail = available(xLuma, yLuma, xNb, (yc - 1) << shiftY);
             }
             boundaryAvailable[index] = avail;
             if (avail) {
@@ -919,8 +987,8 @@ final class CtuEncoder implements NeighborAvailability {
         if (!all) {
             IntraPredictor.substitute(boundary, boundaryAvailable, count, s.bitDepth);
         }
-        intra.predict(boundary, log2Size, mode, cIdx == 0, cIdx == 0, true, cIdx == 0, true, s.bitDepth, out, 0,
-                stride);
+        intra.predict(boundary, log2Size, mode, cIdx == 0, cIdx == 0 || chromaFormat == 3, true, cIdx == 0, true,
+                s.bitDepth, out, 0, stride);
     }
 
     /**
@@ -943,6 +1011,9 @@ final class CtuEncoder implements NeighborAvailability {
         var source = d.source(cIdx);
         var recon = d.recon(cIdx);
         var levels = d.levels(cIdx);
+        if (s.lossless) {
+            return bypassBlock(source, recon, levels, offset, stride, size);
+        }
         for (var j = 0; j < size; j++) {
             var row = offset + j * stride;
             for (var i = 0; i < size; i++) {
@@ -951,7 +1022,8 @@ final class CtuEncoder implements NeighborAvailability {
         }
         forward.forward(residual, log2Size, dst, s.bitDepth, coeffs);
         var qp = cIdx == 0 ? qpLuma : qpChroma;
-        var scanIdx = pps.signDataHiding ? SyntaxCoder.scanIndex(log2Size, cIdx, intraBlock ? mode : -1) : -1;
+        var scanIdx = pps.signDataHiding
+                ? SyntaxCoder.scanIndex(log2Size, cIdx, intraBlock ? mode : -1, chromaFormat) : -1;
         var sum = ForwardTransform.quantize(coeffs, log2Size, qp, s.bitDepth, intraBlock, levels, offset, stride,
                 scanIdx, deltaU);
         if (sum == 0) {
@@ -972,6 +1044,32 @@ final class CtuEncoder implements NeighborAvailability {
             }
         }
         return true;
+    }
+
+    /**
+     * Codes a transform block whose prediction is in {@link #pred} with {@code cu_transquant_bypass_flag}: the
+     * residual becomes the levels and the reconstruction equals the source.
+     *
+     * @param source the source plane of the component
+     * @param recon the reconstruction plane of the component
+     * @param levels the level plane of the component
+     * @param offset the index of the block's top-left sample in the planes
+     * @param stride the row stride of the planes
+     * @param size the block side
+     * @return whether the block has non-zero levels
+     */
+    private boolean bypassBlock(short[] source, short[] recon, short[] levels, int offset, int stride, int size) {
+        var any = false;
+        for (var j = 0; j < size; j++) {
+            var row = offset + j * stride;
+            for (var i = 0; i < size; i++) {
+                var value = source[row + i] - pred[j * size + i];
+                levels[row + i] = (short) value;
+                any |= value != 0;
+            }
+            System.arraycopy(source, row, recon, row, size);
+        }
+        return any;
     }
 
     /**
@@ -1083,18 +1181,19 @@ final class CtuEncoder implements NeighborAvailability {
     private void copyBlock(int x0, int y0, int size, boolean save) {
         var position = 0;
         for (var cIdx = 0; cIdx < 3; cIdx++) {
-            var side = cIdx == 0 ? size : size >> 1;
-            var x = cIdx == 0 ? x0 : x0 >> 1;
-            var y = cIdx == 0 ? y0 : y0 >> 1;
+            var width = cIdx == 0 ? size : size >> shiftX;
+            var height = cIdx == 0 ? size : size >> shiftY;
+            var x = cIdx == 0 ? x0 : x0 >> shiftX;
+            var y = cIdx == 0 ? y0 : y0 >> shiftY;
             var plane = d.recon(cIdx);
             var stride = d.stride(cIdx);
-            for (var j = 0; j < side; j++) {
+            for (var j = 0; j < height; j++) {
                 if (save) {
-                    System.arraycopy(plane, (y + j) * stride + x, savedPrediction, position, side);
+                    System.arraycopy(plane, (y + j) * stride + x, savedPrediction, position, width);
                 } else {
-                    System.arraycopy(savedPrediction, position, plane, (y + j) * stride + x, side);
+                    System.arraycopy(savedPrediction, position, plane, (y + j) * stride + x, width);
                 }
-                position += side;
+                position += width;
             }
         }
     }
@@ -1111,16 +1210,28 @@ final class CtuEncoder implements NeighborAvailability {
         var size = 1 << log2Size;
         copyPrediction(0, x0, y0, size);
         var cbfY = codeBlock(x0, y0, log2Size, 0, false, false, -1);
-        var xc = x0 >> 1;
-        var yc = y0 >> 1;
-        copyPrediction(1, xc, yc, size >> 1);
-        var cbfCb = codeBlock(xc, yc, log2Size - 1, 1, false, false, -1);
-        copyPrediction(2, xc, yc, size >> 1);
-        var cbfCr = codeBlock(xc, yc, log2Size - 1, 2, false, false, -1);
-        var flags = (cbfY ? PictureData.TU_CBF_Y : 0) | (cbfCb ? PictureData.TU_CBF_CB : 0)
-                | (cbfCr ? PictureData.TU_CBF_CR : 0);
-        setBits(d.tuInfo, x0, y0, size, PictureData.TU_CBF_Y | PictureData.TU_CBF_CB | PictureData.TU_CBF_CR, flags);
-        return flags != 0;
+        var xc = x0 >> shiftX;
+        var yc = y0 >> shiftY;
+        var log2SizeC = log2Size - shiftX;
+        var sizeC = 1 << log2SizeC;
+        var blocks = chromaFormat == 2 ? 2 : 1;
+        var cbf = cbfScratch;
+        for (var c = 1; c <= 2; c++) {
+            for (var k = 0; k < blocks; k++) {
+                copyPrediction(c, xc, yc + k * sizeC, sizeC);
+                cbf[(c - 1) * 2 + k] = codeBlock(xc, yc + k * sizeC, log2SizeC, c, false, false, -1);
+            }
+        }
+        var any = cbfY;
+        var partHeight = size / blocks;
+        for (var k = 0; k < blocks; k++) {
+            var flags = (cbfY ? PictureData.TU_CBF_Y : 0) | (cbf[k] ? PictureData.TU_CBF_CB : 0)
+                    | (cbf[2 + k] ? PictureData.TU_CBF_CR : 0);
+            setBits(d.tuInfo, x0, y0 + k * partHeight, size, partHeight,
+                    PictureData.TU_CBF_Y | PictureData.TU_CBF_CB | PictureData.TU_CBF_CR, flags);
+            any |= flags != 0;
+        }
+        return any;
     }
 
     /**

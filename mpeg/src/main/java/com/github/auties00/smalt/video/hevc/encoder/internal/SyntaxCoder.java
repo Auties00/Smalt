@@ -50,6 +50,14 @@ final class SyntaxCoder implements NeighborAvailability {
     }
 
     /**
+     * {@code IntraPredModeC} of Table 8-3 for 4:2:2 video, indexed by the mode of Table 8-2.
+     */
+    private static final int[] MODE_422 = {
+            0, 1, 2, 2, 2, 2, 3, 5, 7, 8, 10, 12, 13, 15, 17, 18, 19, 20,
+            21, 22, 23, 23, 24, 24, 25, 25, 26, 27, 27, 28, 28, 29, 29, 30, 31
+    };
+
+    /**
      * The partitioning mode {@code PART_2Nx2N}.
      */
     static final int PART_2Nx2N = 0;
@@ -98,6 +106,21 @@ final class SyntaxCoder implements NeighborAvailability {
      * The coder bins go to.
      */
     private BinCoder coder;
+
+    /**
+     * {@code ChromaArrayType}, 1 to 3.
+     */
+    private int chromaFormat;
+
+    /**
+     * The binary logarithm of {@code SubWidthC}.
+     */
+    private int shiftX;
+
+    /**
+     * The binary logarithm of {@code SubHeightC}.
+     */
+    private int shiftY;
 
     /**
      * Whether the coding unit being coded is intra.
@@ -161,6 +184,9 @@ final class SyntaxCoder implements NeighborAvailability {
         this.sps = header.sps;
         this.pps = header.pps;
         this.pic = data.pic;
+        this.chromaFormat = sps.chromaArrayType;
+        this.shiftX = sps.chromaShiftX;
+        this.shiftY = sps.chromaShiftY;
     }
 
     /**
@@ -346,6 +372,9 @@ final class SyntaxCoder implements NeighborAvailability {
         var block = d.block(x0, y0);
         var flags = pic.flags[block];
         var skip = (flags & PictureState.SKIP) != 0;
+        if (pps.transquantBypassEnabled) {
+            coder.bin(CabacTables.TRANSQUANT_BYPASS, (flags & PictureState.BYPASS) != 0 ? 1 : 0);
+        }
         if (header.sliceType != HevcSliceHeader.I) {
             coder.bin(CabacTables.CU_SKIP + skipContext(x0, y0), skip ? 1 : 0);
         }
@@ -366,7 +395,7 @@ final class SyntaxCoder implements NeighborAvailability {
         puPartitioned = !cuIntra && partMode != PART_2Nx2N;
         var mergeAll = false;
         if (cuIntra) {
-            intraModes(x0, y0, log2Size, partMode, info >> PictureData.CU_CHROMA_SHIFT);
+            intraModes(x0, y0, log2Size, partMode);
         } else {
             var half = size >> 1;
             switch (partMode) {
@@ -390,7 +419,7 @@ final class SyntaxCoder implements NeighborAvailability {
         if (rootCbf) {
             maxTrafoDepth = cuIntra ? sps.maxTransformHierarchyDepthIntra + (intraSplit ? 1 : 0)
                     : sps.maxTransformHierarchyDepthInter;
-            transformTree(x0, y0, x0, y0, log2Size, 0, 0, true, true);
+            transformTree(x0, y0, x0, y0, log2Size, 0, 0, 1, 1);
         }
     }
 
@@ -404,25 +433,26 @@ final class SyntaxCoder implements NeighborAvailability {
      */
     private boolean anyCoded(int x0, int y0, int size) {
         var mask = PictureData.TU_CBF_Y | PictureData.TU_CBF_CB | PictureData.TU_CBF_CR;
-        return (orTuFlags(x0, y0, size) & mask) != 0;
+        return (orTuFlags(x0, y0, size, size) & mask) != 0;
     }
 
     /**
-     * Returns the union of the {@link PictureData#tuInfo} flags over a square block.
+     * Returns the union of the {@link PictureData#tuInfo} flags over a block.
      *
      * @param x0 the luma x
      * @param y0 the luma y
-     * @param size the block size
+     * @param width the block width, a multiple of 4
+     * @param height the block height, a multiple of 4
      * @return the flags
      */
-    private int orTuFlags(int x0, int y0, int size) {
+    private int orTuFlags(int x0, int y0, int width, int height) {
         var w4 = pic.width4;
         var start = d.block(x0, y0);
-        var blocks = size >> 2;
+        var columns = width >> 2;
         var flags = 0;
-        for (var j = 0; j < blocks; j++) {
+        for (var j = 0; j < height >> 2; j++) {
             var row = start + j * w4;
-            for (var i = 0; i < blocks; i++) {
+            for (var i = 0; i < columns; i++) {
                 flags |= d.tuInfo[row + i];
             }
         }
@@ -463,15 +493,14 @@ final class SyntaxCoder implements NeighborAvailability {
     /**
      * Codes the intra prediction modes of a coding unit (7.3.8.5): the luma modes of its prediction blocks,
      * whose candidates are derived from the modes already in {@link PictureState#intraMode}, then the chroma
-     * mode.
+     * mode, one per prediction block for 4:4:4 video.
      *
      * @param x0 the luma x of the coding block
      * @param y0 the luma y of the coding block
      * @param log2Size the coding block size as a power of two
      * @param partMode the partitioning mode
-     * @param chromaSyntax {@code intra_chroma_pred_mode}, 0 to 4
      */
-    private void intraModes(int x0, int y0, int log2Size, int partMode, int chromaSyntax) {
+    private void intraModes(int x0, int y0, int log2Size, int partMode) {
         var size = 1 << log2Size;
         var count = partMode == PART_NxN ? 4 : 1;
         var offset = partMode == PART_NxN ? size >> 1 : size;
@@ -497,7 +526,12 @@ final class SyntaxCoder implements NeighborAvailability {
                 coder.bypassBins(remainingMode(modes[i], candidates), 5);
             }
         }
-        chromaMode(chromaSyntax);
+        var chromaCount = chromaFormat == 3 ? count : 1;
+        for (var i = 0; i < chromaCount; i++) {
+            var xPb = x0 + (i & 1) * offset;
+            var yPb = y0 + (i >> 1) * offset;
+            chromaMode(d.cuInfo[d.block(xPb, yPb)] >> PictureData.CU_CHROMA_SHIFT);
+        }
     }
 
     /**
@@ -611,18 +645,23 @@ final class SyntaxCoder implements NeighborAvailability {
     }
 
     /**
-     * Returns {@code IntraPredModeC} of 4:2:0 video (8.4.3, Table 8-2).
+     * Returns {@code IntraPredModeC} (8.4.3, Tables 8-2 and 8-3).
      *
      * @param syntax {@code intra_chroma_pred_mode}
-     * @param luma {@code IntraPredModeY} of the first prediction block
+     * @param luma {@code IntraPredModeY} of the prediction block the chroma block belongs to: the first of the
+     * coding unit, or for 4:4:4 video the one at the same position
+     * @param chromaFormat {@code ChromaArrayType}, 1 to 3
      * @return the chroma mode
      */
-    static int chromaPredMode(int syntax, int luma) {
+    static int chromaPredMode(int syntax, int luma, int chromaFormat) {
+        int mode;
         if (syntax == 4) {
-            return luma;
+            mode = luma;
+        } else {
+            var candidate = syntax == 0 ? 0 : syntax == 1 ? 26 : syntax == 2 ? 10 : 1;
+            mode = candidate == luma ? 34 : candidate;
         }
-        var candidate = syntax == 0 ? 0 : syntax == 1 ? 26 : syntax == 2 ? 10 : 1;
-        return candidate == luma ? 34 : candidate;
+        return chromaFormat == 2 ? MODE_422[mode] : mode;
     }
 
     /**
@@ -783,11 +822,11 @@ final class SyntaxCoder implements NeighborAvailability {
      * @param log2Size the block size as a power of two
      * @param trafoDepth the depth
      * @param blkIdx the index within the parent
-     * @param parentCb whether the parent's {@code cbf_cb} is set
-     * @param parentCr whether the parent's {@code cbf_cr} is set
+     * @param parentCb the parent's {@code cbf_cb} flags, bit 1 for the second chroma block of 4:2:2 video
+     * @param parentCr the parent's {@code cbf_cr} flags, as {@code parentCb}
      */
     private void transformTree(int x0, int y0, int xBase, int yBase, int log2Size, int trafoDepth, int blkIdx,
-                               boolean parentCb, boolean parentCr) {
+                               int parentCb, int parentCr) {
         var size = 1 << log2Size;
         var block = d.block(x0, y0);
         boolean split;
@@ -800,19 +839,17 @@ final class SyntaxCoder implements NeighborAvailability {
                     && puPartitioned;
             split = log2Size > sps.log2MaxTbSize || (intraSplit && trafoDepth == 0) || interSplit;
         }
-        boolean cbfCb;
-        boolean cbfCr;
-        if (log2Size > 2) {
-            var flags = orTuFlags(x0, y0, size);
-            cbfCb = false;
-            cbfCr = false;
-            if (trafoDepth == 0 || parentCb) {
-                cbfCb = (flags & PictureData.TU_CBF_CB) != 0;
-                coder.bin(CabacTables.CBF_CHROMA + trafoDepth, cbfCb ? 1 : 0);
+        int cbfCb;
+        int cbfCr;
+        if (log2Size > 2 || chromaFormat == 3) {
+            var second = chromaFormat == 2 && (!split || log2Size == 3);
+            cbfCb = 0;
+            cbfCr = 0;
+            if (trafoDepth == 0 || parentCb != 0) {
+                cbfCb = chromaFlags(x0, y0, size, trafoDepth, PictureData.TU_CBF_CB, second);
             }
-            if (trafoDepth == 0 || parentCr) {
-                cbfCr = (flags & PictureData.TU_CBF_CR) != 0;
-                coder.bin(CabacTables.CBF_CHROMA + trafoDepth, cbfCr ? 1 : 0);
+            if (trafoDepth == 0 || parentCr != 0) {
+                cbfCr = chromaFlags(x0, y0, size, trafoDepth, PictureData.TU_CBF_CR, second);
             }
         } else {
             cbfCb = parentCb;
@@ -827,32 +864,74 @@ final class SyntaxCoder implements NeighborAvailability {
             return;
         }
         var cbfLuma = (d.tuInfo[block] & PictureData.TU_CBF_Y) != 0;
-        if (cuIntra || trafoDepth != 0 || cbfCb || cbfCr) {
+        if (cuIntra || trafoDepth != 0 || cbfCb != 0 || cbfCr != 0) {
             coder.bin(CabacTables.CBF_LUMA + (trafoDepth == 0 ? 1 : 0), cbfLuma ? 1 : 0);
         }
         if (cbfLuma) {
             residual(d.levelY, d.s.codedWidth, y0 * d.s.codedWidth + x0, log2Size, 0,
-                    scanIndex(log2Size, 0, cuIntra ? pic.intraMode[block] : -1));
+                    scanIndex(log2Size, 0, cuIntra ? pic.intraMode[block] : -1, chromaFormat));
         }
-        var chromaModeHere = cuIntra ? chromaModeAt(block) : -1;
-        if (log2Size > 2) {
-            var offset = (y0 >> 1) * d.s.chromaWidth + (x0 >> 1);
-            var scan = scanIndex(log2Size - 1, 1, chromaModeHere);
-            if (cbfCb) {
-                residual(d.levelCb, d.s.chromaWidth, offset, log2Size - 1, 1, scan);
-            }
-            if (cbfCr) {
-                residual(d.levelCr, d.s.chromaWidth, offset, log2Size - 1, 2, scan);
-            }
+        if (log2Size > 2 || chromaFormat == 3) {
+            var log2SizeC = chromaFormat == 3 ? log2Size : log2Size - 1;
+            chromaResiduals(x0, y0, log2SizeC, cuIntra ? chromaModeAt(block) : -1, cbfCb, cbfCr);
         } else if (blkIdx == 3) {
-            var offset = (yBase >> 1) * d.s.chromaWidth + (xBase >> 1);
-            var scan = scanIndex(2, 1, cuIntra ? chromaModeAt(d.block(xBase, yBase)) : -1);
-            if (cbfCb) {
-                residual(d.levelCb, d.s.chromaWidth, offset, 2, 1, scan);
-            }
-            if (cbfCr) {
-                residual(d.levelCr, d.s.chromaWidth, offset, 2, 2, scan);
-            }
+            chromaResiduals(xBase, yBase, 2, cuIntra ? chromaModeAt(d.block(xBase, yBase)) : -1, cbfCb, cbfCr);
+        }
+    }
+
+    /**
+     * Codes the {@code cbf_cb} or {@code cbf_cr} flags of a transform tree node and returns them.
+     *
+     * @param x0 the luma x of the node
+     * @param y0 the luma y of the node
+     * @param size the node size in luma samples
+     * @param trafoDepth the depth of the node
+     * @param flag {@link PictureData#TU_CBF_CB} or {@link PictureData#TU_CBF_CR}
+     * @param second whether the node codes a flag for each of the two chroma blocks of 4:2:2 video, kept in the
+     * upper and the lower half of its area
+     * @return bit 0 for the first chroma block, bit 1 for the second
+     */
+    private int chromaFlags(int x0, int y0, int size, int trafoDepth, int flag, boolean second) {
+        if (!second) {
+            var cbf = (orTuFlags(x0, y0, size, size) & flag) != 0 ? 1 : 0;
+            coder.bin(CabacTables.CBF_CHROMA + trafoDepth, cbf);
+            return cbf;
+        }
+        var half = size >> 1;
+        var top = (orTuFlags(x0, y0, size, half) & flag) != 0 ? 1 : 0;
+        var bottom = (orTuFlags(x0, y0 + half, size, half) & flag) != 0 ? 1 : 0;
+        coder.bin(CabacTables.CBF_CHROMA + trafoDepth, top);
+        coder.bin(CabacTables.CBF_CHROMA + trafoDepth, bottom);
+        return top | (bottom << 1);
+    }
+
+    /**
+     * Codes the chroma residuals of a transform unit: the Cb blocks, then the Cr blocks, two stacked blocks
+     * per component for 4:2:2 video.
+     *
+     * @param x0 the luma x of the first chroma block
+     * @param y0 the luma y of the first chroma block
+     * @param log2SizeC the chroma block size as a power of two
+     * @param predModeC {@code IntraPredModeC}, or -1 for inter blocks
+     * @param cbfCb the Cb flags, bit 0 for the first block and bit 1 for the second
+     * @param cbfCr the Cr flags, as {@code cbfCb}
+     */
+    private void chromaResiduals(int x0, int y0, int log2SizeC, int predModeC, int cbfCb, int cbfCr) {
+        var cw = d.s.chromaWidth;
+        var offset = (y0 >> shiftY) * cw + (x0 >> shiftX);
+        var below = offset + (1 << log2SizeC) * cw;
+        var scan = scanIndex(log2SizeC, 1, predModeC, chromaFormat);
+        if ((cbfCb & 1) != 0) {
+            residual(d.levelCb, cw, offset, log2SizeC, 1, scan);
+        }
+        if ((cbfCb & 2) != 0) {
+            residual(d.levelCb, cw, below, log2SizeC, 1, scan);
+        }
+        if ((cbfCr & 1) != 0) {
+            residual(d.levelCr, cw, offset, log2SizeC, 2, scan);
+        }
+        if ((cbfCr & 2) != 0) {
+            residual(d.levelCr, cw, below, log2SizeC, 2, scan);
         }
     }
 
@@ -864,8 +943,8 @@ final class SyntaxCoder implements NeighborAvailability {
      */
     private int chromaModeAt(int block) {
         var syntax = d.cuInfo[block] >> PictureData.CU_CHROMA_SHIFT;
-        var first = firstLumaMode(block);
-        return chromaPredMode(syntax, first);
+        var luma = chromaFormat == 3 ? pic.intraMode[block] : firstLumaMode(block);
+        return chromaPredMode(syntax, luma, chromaFormat);
     }
 
     /**
@@ -891,10 +970,11 @@ final class SyntaxCoder implements NeighborAvailability {
      * @param log2Size the transform block size of the component as a power of two
      * @param cIdx the component
      * @param predMode the intra prediction mode of the block, or -1 for inter blocks
+     * @param chromaFormat {@code ChromaArrayType}, 1 to 3
      * @return 0 diagonal, 1 horizontal, 2 vertical
      */
-    static int scanIndex(int log2Size, int cIdx, int predMode) {
-        if (predMode >= 0 && (log2Size == 2 || (log2Size == 3 && cIdx == 0))) {
+    static int scanIndex(int log2Size, int cIdx, int predMode, int chromaFormat) {
+        if (predMode >= 0 && (log2Size == 2 || (log2Size == 3 && (cIdx == 0 || chromaFormat == 3)))) {
             if (predMode >= 6 && predMode <= 14) {
                 return 2;
             }

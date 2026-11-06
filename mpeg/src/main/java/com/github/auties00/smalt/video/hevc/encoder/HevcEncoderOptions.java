@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.video.hevc.encoder;
 
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.internal.check.Checks;
@@ -86,6 +87,10 @@ public final class HevcEncoderOptions {
 
     private final int bitDepth;
 
+    private final ChromaFormat chromaFormat;
+
+    private final boolean lossless;
+
     private final HevcRateControl rateControl;
 
     private final long bitrate;
@@ -132,6 +137,8 @@ public final class HevcEncoderOptions {
         this.profile = builder.profile;
         this.level = builder.level;
         this.bitDepth = builder.bitDepth;
+        this.chromaFormat = builder.chromaFormat;
+        this.lossless = builder.lossless;
         this.rateControl = builder.rateControl;
         this.bitrate = builder.bitrate;
         this.maxBitrate = builder.maxBitrate;
@@ -250,8 +257,8 @@ public final class HevcEncoderOptions {
     }
 
     /**
-     * {@return the profile, which bounds the bit depth and the number of pictures; {@link HevcProfile#MAIN} by
-     * default}
+     * {@return the profile, which bounds the bit depth, the chroma format and the number of pictures;
+     * {@link HevcProfile#MAIN} by default}
      *
      * <p>A still picture profile codes the first frame given to the encoder as the only picture of the
      * stream; {@link #bFrames()}, {@link #keyframeInterval()} and the bitrate settings do not apply.
@@ -274,6 +281,31 @@ public final class HevcEncoderOptions {
      */
     public int bitDepth() {
         return bitDepth;
+    }
+
+    /**
+     * {@return the chroma format of the coded pictures, {@link ChromaFormat#YUV420}, {@link ChromaFormat#YUV422} or
+     * {@link ChromaFormat#YUV444}, one the {@linkplain HevcProfile#supportsChromaFormat(ChromaFormat) profile
+     * supports}; {@link ChromaFormat#YUV420} by default}
+     *
+     * <p>Input pictures of another chroma format are resampled to it.
+     */
+    public ChromaFormat chromaFormat() {
+        return chromaFormat;
+    }
+
+    /**
+     * {@return whether every picture is coded losslessly; {@code false} by default}
+     *
+     * <p>A lossless stream codes every coding unit with {@code cu_transquant_bypass_flag}, so a decoder
+     * reconstructs exactly the Y'CbCr samples the encoder coded: the input's own samples when it is Y'CbCr of the
+     * stream's chroma format and bit depth, otherwise the result of converting it to them, which is lossless for
+     * 8-bit RGB input with the {@link com.github.auties00.smalt.image.MatrixCoefficients#IDENTITY identity}
+     * matrix, full range and 4:4:4 chroma. The loop filters are off, and {@link #rateControl()}, the bitrate
+     * settings, {@link #quality()} and the quantizer window do not apply.
+     */
+    public boolean lossless() {
+        return lossless;
     }
 
     /**
@@ -367,8 +399,8 @@ public final class HevcEncoderOptions {
      * ImageOps.toYuv16} converts it with this description. The range, primaries, transfer and matrix are
      * written to the video usability information, the chroma siting, when specified, as its
      * {@code chroma_sample_loc_type}, and the mastering display and content light level, when present, as
-     * SEI messages of every IDR access unit. The identity matrix, which codes G, B and R as Y, Cb and Cr, is
-     * not available for 4:2:0 pictures.
+     * SEI messages of every IDR access unit. The identity matrix, which codes G, B and R as Y, Cb and Cr, needs
+     * {@link ChromaFormat#YUV444} pictures.
      */
     public ColorInfo color() {
         return color;
@@ -477,6 +509,8 @@ public final class HevcEncoderOptions {
                 && profile == that.profile
                 && level == that.level
                 && bitDepth == that.bitDepth
+                && chromaFormat == that.chromaFormat
+                && lossless == that.lossless
                 && rateControl == that.rateControl
                 && bitrate == that.bitrate
                 && maxBitrate == that.maxBitrate
@@ -498,16 +532,17 @@ public final class HevcEncoderOptions {
 
     @Override
     public int hashCode() {
-        return Objects.hash(frameRate, timeBase, profile, level, bitDepth, rateControl, bitrate, maxBitrate, bufferSize,
-                quality, keyframeInterval, speed, color, threads, packetFormat, minQuantizer, maxQuantizer, realtime,
-                bFrames, limits, pictureHash, sampleAspectRatio);
+        return Objects.hash(frameRate, timeBase, profile, level, bitDepth, chromaFormat, lossless, rateControl, bitrate,
+                maxBitrate, bufferSize, quality, keyframeInterval, speed, color, threads, packetFormat, minQuantizer,
+                maxQuantizer, realtime, bFrames, limits, pictureHash, sampleAspectRatio);
     }
 
     @Override
     public String toString() {
         return "HevcEncoderOptions[frameRate=" + frameRate + ", timeBase=" + timeBase + ", profile=" + profile
-                + ", level=" + (level == null ? "automatic" : level) + ", bitDepth=" + bitDepth + ", rateControl="
-                + rateControl + ", bitrate=" + bitrate + ", maxBitrate=" + (maxBitrate == 0 ? "default" : maxBitrate)
+                + ", level=" + (level == null ? "automatic" : level) + ", bitDepth=" + bitDepth + ", chromaFormat="
+                + chromaFormat + ", lossless=" + lossless + ", rateControl=" + rateControl + ", bitrate=" + bitrate
+                + ", maxBitrate=" + (maxBitrate == 0 ? "default" : maxBitrate)
                 + ", bufferSize=" + (bufferSize == null ? "default" : bufferSize) + ", quality=" + quality
                 + ", keyframeInterval=" + keyframeInterval + ", speed=" + speed + ", color=" + color + ", threads="
                 + threads + ", packetFormat=" + packetFormat + ", quantizers=" + minQuantizer + ".." + maxQuantizer
@@ -532,6 +567,10 @@ public final class HevcEncoderOptions {
         private HevcLevel level;
 
         private int bitDepth;
+
+        private ChromaFormat chromaFormat;
+
+        private boolean lossless;
 
         private HevcRateControl rateControl;
 
@@ -574,6 +613,7 @@ public final class HevcEncoderOptions {
             timeBase = new Rational(1, 90_000);
             profile = HevcProfile.MAIN;
             bitDepth = 8;
+            chromaFormat = ChromaFormat.YUV420;
             rateControl = HevcRateControl.AVERAGE_BITRATE;
             bitrate = 1_000_000;
             quality = 28;
@@ -596,6 +636,8 @@ public final class HevcEncoderOptions {
             profile = from.profile;
             level = from.level;
             bitDepth = from.bitDepth;
+            chromaFormat = from.chromaFormat;
+            lossless = from.lossless;
             rateControl = from.rateControl;
             bitrate = from.bitrate;
             maxBitrate = from.maxBitrate;
@@ -679,6 +721,28 @@ public final class HevcEncoderOptions {
          */
         public Builder bitDepth(int bitDepth) {
             this.bitDepth = bitDepth;
+            return this;
+        }
+
+        /**
+         * Sets the chroma format of the coded pictures; see {@link HevcEncoderOptions#chromaFormat()}.
+         *
+         * @param chromaFormat the value
+         * @return this builder
+         */
+        public Builder chromaFormat(ChromaFormat chromaFormat) {
+            this.chromaFormat = Objects.requireNonNull(chromaFormat, "chromaFormat");
+            return this;
+        }
+
+        /**
+         * Sets whether the pictures are coded losslessly; see {@link HevcEncoderOptions#lossless()}.
+         *
+         * @param lossless the value
+         * @return this builder
+         */
+        public Builder lossless(boolean lossless) {
+            this.lossless = lossless;
             return this;
         }
 
@@ -906,7 +970,8 @@ public final class HevcEncoderOptions {
          * is not in [0, 51], the key frame interval is not positive, the thread count is not in [1, 64], the B
          * picture count is not in [0, 7], the quantizer window is not inside [0, 51] or is empty, the bit depth
          * is not in [8, {@link HevcProfile#maxBitDepth()}] of the profile, the sample aspect ratio is not
-         * positive or a term exceeds 65535, or the color matrix is {@link MatrixCoefficients#IDENTITY}
+         * positive or a term exceeds 65535, the profile does not support the chroma format, or the color matrix is
+         * {@link MatrixCoefficients#IDENTITY} and the chroma format is not {@link ChromaFormat#YUV444}
          */
         public HevcEncoderOptions build() {
             var rate = frameRate.toDouble();
@@ -949,7 +1014,11 @@ public final class HevcEncoderOptions {
                 throw new IllegalArgumentException("sample aspect ratio " + sampleAspectRatio
                         + " is not positive with terms of at most 65535");
             }
-            if (color.matrix() == MatrixCoefficients.IDENTITY) {
+            if (!profile.supportsChromaFormat(chromaFormat)) {
+                throw new IllegalArgumentException("the " + profile + " profile does not code " + chromaFormat
+                        + " pictures");
+            }
+            if (color.matrix() == MatrixCoefficients.IDENTITY && chromaFormat != ChromaFormat.YUV444) {
                 throw new IllegalArgumentException("the identity color matrix needs 4:4:4 pictures");
             }
             return new HevcEncoderOptions(this);

@@ -657,6 +657,9 @@ class HevcEncoderTest {
                     option("profile", b -> b.profile(HevcProfile.MAIN)),
                     option("level", b -> b.level(HevcLevel.LEVEL_5)),
                     option("bit depth", b -> b.bitDepth(10)),
+                    option("chroma format", b -> b.profile(HevcProfile.MAIN_444_10)
+                            .chromaFormat(com.github.auties00.smalt.image.ChromaFormat.YUV444)),
+                    option("lossless", b -> b.lossless(true)),
                     option("rate control", b -> b.rateControl(HevcRateControl.CONSTANT_BITRATE)),
                     option("bitrate", b -> b.bitrate(1_500_000)),
                     option("maximum bitrate", b -> b.maxBitrate(3_000_000)),

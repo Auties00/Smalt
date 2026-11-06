@@ -431,14 +431,6 @@ class HeicEncoderTest {
             assertEquals(Orientation.ROTATE_90, read.orientation());
             assertTrue(new String(read.xmp().orElseThrow(), StandardCharsets.UTF_8).contains("xmpmeta"));
         }
-
-        @Test
-        @DisplayName("a lossless request is rejected, as the HEVC encoder codes lossy images only")
-        void lossless() {
-            var error = assertThrows(MediaException.Unsupported.class,
-                    () -> Images.encode(rgba(16, 16, 0, false), ImageFormat.HEIC, ImageEncoderOptions.lossless()));
-            assertTrue(error.getMessage().contains("lossy"), error.getMessage());
-        }
     }
 
     @Nested

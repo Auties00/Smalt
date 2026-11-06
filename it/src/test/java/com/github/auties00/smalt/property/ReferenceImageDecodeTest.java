@@ -642,6 +642,27 @@ class ReferenceImageDecodeTest {
                     planes(yuv));
         }
 
+        @Test
+        @DisplayName("lossless HEIC decodes in ffmpeg's HEVC decoder to the source's G, B and R planes")
+        void heicLossless() {
+            var source = source(false);
+            var bytes = Images.encode(source, ImageFormat.HEIC, ImageEncoderOptions.lossless());
+            var file = HeifFile.parse(MediaSource.of(bytes), MediaLimits.DEFAULT, true);
+            var item = file.primaryItem();
+            var hvcC = item.property(HeifProperty.HevcConfiguration.class).record();
+            var stream = save("lossless-heic.hevc", annexB(hvcC, file.readItem(MediaSource.of(bytes), item,
+                    MediaLimits.DEFAULT)));
+            var raw = Oracle.decodeVideo(stream, List.of("-f", "hevc"), "gbrp", 1);
+            var gbr = new byte[WIDTH * HEIGHT * 3];
+            for (var i = 0; i < WIDTH * HEIGHT; i++) {
+                gbr[i] = source.pixels()[i * 4 + 1];
+                gbr[WIDTH * HEIGHT + i] = source.pixels()[i * 4 + 2];
+                gbr[2 * WIDTH * HEIGHT + i] = source.pixels()[i * 4];
+            }
+            EXACT.assertWithin("ffmpeg hevc gbrp", gbr, raw);
+            EXACT.assertWithin("Smalt", gbr, planes((YuvPicture) Images.decode(MediaSource.of(bytes)).picture()));
+        }
+
         @ParameterizedTest(name = "{0}")
         @EnumSource(value = ImageFormat.class, names = {"PNG", "GIF"})
         @DisplayName("animated PNG and GIF decode in ffmpeg frame by frame exactly as in Smalt")

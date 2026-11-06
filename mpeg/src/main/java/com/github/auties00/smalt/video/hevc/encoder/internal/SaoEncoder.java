@@ -146,14 +146,14 @@ final class SaoEncoder {
      * @param ry the coding tree block row
      */
     private void statistics(PictureData d, int c, int rx, int ry) {
-        var shift = c == 0 ? 0 : 1;
-        var ctbSize = d.sps.ctbSize >> shift;
+        var ctbWidth = d.sps.ctbSize >> (c == 0 ? 0 : d.s.chromaShiftX);
+        var ctbHeight = d.sps.ctbSize >> (c == 0 ? 0 : d.s.chromaShiftY);
         var width = c == 0 ? d.s.codedWidth : d.s.chromaWidth;
         var height = c == 0 ? d.s.codedHeight : d.s.chromaHeight;
-        var x0 = rx * ctbSize;
-        var y0 = ry * ctbSize;
-        var x1 = Math.min(x0 + ctbSize, width);
-        var y1 = Math.min(y0 + ctbSize, height);
+        var x0 = rx * ctbWidth;
+        var y0 = ry * ctbHeight;
+        var x1 = Math.min(x0 + ctbWidth, width);
+        var y1 = Math.min(y0 + ctbHeight, height);
         var rec = d.recon(c);
         var src = d.source(c);
         var bandShift = d.s.bitDepth - 5;

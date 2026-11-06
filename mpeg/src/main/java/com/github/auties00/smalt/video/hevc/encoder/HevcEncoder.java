@@ -16,21 +16,21 @@ import java.util.function.Consumer;
 /**
  * Encodes pictures into an HEVC / H.265 elementary stream.
  *
- * <p>The stream has the {@linkplain HevcEncoderOptions#profile() profile}, {@linkplain
- * HevcEncoderOptions#bitDepth() bit depth}, level and rate control mode of its {@link HevcEncoderOptions}, 4:2:0
- * chroma, 64x64 coding tree blocks and one slice per picture whose rows of coding tree blocks are wavefront
- * substreams, so that decoders may decode them in parallel. The deblocking filter and the sample adaptive
- * offset are on. Without {@linkplain HevcEncoderOptions#bFrames() B pictures} the encoder codes I and P
- * pictures only: every packet's presentation and decoding timestamps are equal and each input frame produces
- * its packet before {@link #encode(VideoFrame, Consumer)} returns. With B pictures it holds each group of
- * frames until the frame after them arrives, codes that one first as a P picture and the group after it, so
- * packets leave in decoding order with a decoding timestamp before the presentation timestamp, and
- * {@link #flush(Consumer)} emits what is still held. No frame is ever dropped. In the
- * {@link HevcPacketFormat#LENGTH_PREFIXED} format, packets hold the frame's NAL units, each preceded by its
- * four-byte big-endian length, and parameter sets travel out of band in {@link #codecConfig()}, an
- * {@code HEVCDecoderConfigurationRecord} with a four-byte NAL length size. In the {@link HevcPacketFormat#ANNEX_B}
- * format, packets are Annex B access units with four-byte start codes, every IDR access unit starts with the
- * video, sequence and picture parameter sets, and {@link #codecConfig()} is empty:
+ * <p>The stream has the {@linkplain HevcEncoderOptions#profile() profile}, {@linkplain HevcEncoderOptions#bitDepth()
+ * bit depth}, {@linkplain HevcEncoderOptions#chromaFormat() chroma format}, level and rate control mode of its {@link
+ * HevcEncoderOptions}, 64x64 coding tree blocks and one slice per picture whose rows of coding tree blocks are
+ * wavefront substreams, so that decoders may decode them in parallel. The deblocking filter and the sample adaptive
+ * offset are on, except in a {@linkplain HevcEncoderOptions#lossless() lossless} stream, whose coding units all bypass
+ * the transform and quantization. Without {@linkplain HevcEncoderOptions#bFrames() B pictures} the encoder codes I and
+ * P pictures only: every packet's presentation and decoding timestamps are equal and each input frame produces its
+ * packet before {@link #encode(VideoFrame, Consumer)} returns. With B pictures it holds each group of frames until the
+ * frame after them arrives, codes that one first as a P picture and the group after it, so packets leave in decoding
+ * order with a decoding timestamp before the presentation timestamp, and {@link #flush(Consumer)} emits what is still
+ * held. No frame is ever dropped. In the {@link HevcPacketFormat#LENGTH_PREFIXED} format, packets hold the frame's NAL
+ * units, each preceded by its four-byte big-endian length, and parameter sets travel out of band in {@link
+ * #codecConfig()}, an {@code HEVCDecoderConfigurationRecord} with a four-byte NAL length size. In the {@link
+ * HevcPacketFormat#ANNEX_B} format, packets are Annex B access units with four-byte start codes, every IDR access unit
+ * starts with the video, sequence and picture parameter sets, and {@link #codecConfig()} is empty:
  * {@snippet :
  * IDR packet:     00 00 00 01 40 01 <VPS> 00 00 00 01 42 01 <SPS> 00 00 00 01 44 01 <PPS>
  *                 00 00 00 01 26 01 <IDR slice>
@@ -43,14 +43,14 @@ import java.util.function.Consumer;
  * level of the {@linkplain HevcEncoderOptions#color() color description} precede the slice of every IDR picture
  * in a prefix SEI message.
  *
- * <p>Frames may be given in any {@link com.github.auties00.smalt.image.Picture} representation of exactly the
- * encoder's size. 4:2:0 Y'CbCr samples of the stream's depth are coded as they are; other Y'CbCr layouts are
- * resampled to 4:2:0 and other depths are scaled to the stream's without converting their range or matrix
- * (the stream signals the configured ones, so Y'CbCr input is expected to use them); RGB is converted with the
- * configured color matrix and range, ignoring alpha. Timestamps are in {@link #timeBase()} units and must
- * increase; a frame whose timestamp is {@link Packet#NO_TIMESTAMP} is placed one nominal frame after the
- * previous one. In {@link HevcEncoderOptions#realtime()} mode a timestamp that does not increase is accepted:
- * the packet is stamped one time base unit after the previous one.
+ * <p>Frames may be given in any {@link com.github.auties00.smalt.image.Picture} representation of exactly the encoder's
+ * size. Y'CbCr samples of the stream's chroma format and depth are coded as they are; other Y'CbCr layouts are
+ * resampled to the stream's chroma format and other depths are scaled to the stream's without converting their range or
+ * matrix (the stream signals the configured ones, so Y'CbCr input is expected to use them); RGB is converted with the
+ * configured color matrix and range, ignoring alpha. Timestamps are in {@link #timeBase()} units and must increase; a
+ * frame whose timestamp is {@link Packet#NO_TIMESTAMP} is placed one nominal frame after the previous one. In {@link
+ * HevcEncoderOptions#realtime()} mode a timestamp that does not increase is accepted: the packet is stamped one time
+ * base unit after the previous one.
  *
  * <p>The reconstruction of every picture equals the output of a conforming decoder of the stream, which a
  * decoder can check against the decoded picture hash. The output depends only on the picture size, the
@@ -91,8 +91,9 @@ public final class HevcEncoder implements VideoEncoder {
      * Constructs an encoder for a picture size.
      *
      * <p>Any positive size is accepted. The coded picture is rounded up to whole 8x8 coding blocks and the
-     * conformance window restores the display size, in units of two samples; a side that is not even is
-     * displayed rounded up to the next even number, the extra column or row repeating the last one.
+     * conformance window restores the display size, in units of the chroma subsampling: a side that the chroma
+     * format halves (both for 4:2:0, the width for 4:2:2) and that is not even is displayed rounded up to the next
+     * even number, the extra column or row repeating the last one; 4:4:4 keeps the exact size.
      *
      * @param width the picture width in pixels, from 1 to 16888
      * @param height the picture height in pixels, from 1 to 16888
@@ -217,8 +218,8 @@ public final class HevcEncoder implements VideoEncoder {
      * @param bitsPerSecond the new target bitrate in bits per second, from 1 to {@link Integer#MAX_VALUE}
      * @throws IllegalArgumentException if {@code bitsPerSecond} is not positive or exceeds
      * {@link Integer#MAX_VALUE}
-     * @throws IllegalStateException if the encoder uses {@link HevcRateControl#CONSTANT_QUALITY} or a still
-     * picture profile
+     * @throws IllegalStateException if the encoder uses {@link HevcRateControl#CONSTANT_QUALITY}, a still picture
+     * profile or {@linkplain HevcEncoderOptions#lossless() lossless} coding
      */
     @Override
     public void setTargetBitrate(long bitsPerSecond) {
@@ -226,8 +227,10 @@ public final class HevcEncoder implements VideoEncoder {
             throw new IllegalArgumentException("bitrate must be between 1 and " + Integer.MAX_VALUE + ", got "
                     + bitsPerSecond);
         }
-        if (options.rateControl() == HevcRateControl.CONSTANT_QUALITY || options.profile().stillPicture()) {
-            throw new IllegalStateException("a constant quality or still picture encoder has no target bitrate");
+        if (options.rateControl() == HevcRateControl.CONSTANT_QUALITY || options.profile().stillPicture()
+                || options.lossless()) {
+            throw new IllegalStateException("a constant quality, still picture or lossless encoder has no target "
+                    + "bitrate");
         }
         engine.setTargetBitrate(bitsPerSecond);
     }

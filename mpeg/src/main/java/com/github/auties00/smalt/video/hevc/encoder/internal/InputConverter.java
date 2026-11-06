@@ -2,7 +2,9 @@ package com.github.auties00.smalt.video.hevc.encoder.internal;
 
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorRange;
+import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.ops.ImageOps;
@@ -10,13 +12,15 @@ import com.github.auties00.smalt.image.ops.ImageOps;
 import java.util.Arrays;
 
 /**
- * Copies an input picture into the source planes of a {@link PictureData}: 4:2:0 at the stream's bit depth,
- * the area beyond the picture filled by repeating its last column and row up to the coded size.
+ * Copies an input picture into the source planes of a {@link PictureData}: the stream's chroma format at its bit
+ * depth, the area beyond the picture filled by repeating its last column and row up to the coded size.
  *
- * <p>Y'CbCr input is taken to use the stream's color description: 4:2:0 pictures keep their samples, an 8-bit
- * limited-range or same-depth picture shifted to the stream's depth, and every other picture is converted by
- * {@link ImageOps#toYuv16(Picture, ChromaFormat, com.github.auties00.smalt.image.ColorInfo, int)}, RGB with
- * the stream's color description. Instances are not thread-safe.
+ * <p>Y'CbCr input is taken to use the stream's color description: pictures of the stream's chroma format keep
+ * their samples, an 8-bit limited-range or same-depth picture shifted to the stream's depth, and every other
+ * picture is converted by
+ * {@link ImageOps#toYuv16(Picture, ChromaFormat, com.github.auties00.smalt.image.ColorInfo, int)}, RGB with the
+ * stream's color description. 8-bit RGB with the full-range identity matrix of an 8-bit 4:4:4 stream is copied
+ * exactly, G, B and R becoming Y, Cb and Cr. Instances are not thread-safe.
  */
 final class InputConverter {
     /**
@@ -25,12 +29,18 @@ final class InputConverter {
     private final EncoderSettings s;
 
     /**
+     * The chroma format of the stream.
+     */
+    private final ChromaFormat format;
+
+    /**
      * Constructs a converter.
      *
      * @param s the settings
      */
     InputConverter(EncoderSettings s) {
         this.s = s;
+        this.format = s.options.chromaFormat();
     }
 
     /**
@@ -42,24 +52,27 @@ final class InputConverter {
     void convert(Picture picture, PictureData d) {
         var depth = s.bitDepth;
         switch (picture) {
-            case YuvPicture yuv when yuv.chromaFormat() == ChromaFormat.YUV420
+            case YuvPicture yuv when yuv.chromaFormat() == format
                     && (depth == 8 || yuv.color().range() == ColorRange.LIMITED) -> copy8(yuv, d, depth - 8);
-            case Yuv16Picture yuv when yuv.chromaFormat() == ChromaFormat.YUV420 && (yuv.bitDepth() == depth
+            case Yuv16Picture yuv when yuv.chromaFormat() == format && (yuv.bitDepth() == depth
                     || (yuv.color().range() == ColorRange.LIMITED && yuv.bitDepth() <= depth)) ->
                     copy16(yuv, d, depth - yuv.bitDepth());
-            case YuvPicture yuv -> copy16(ImageOps.toYuv16(yuv, ChromaFormat.YUV420, yuv.color(), depth), d, 0);
-            case Yuv16Picture yuv -> copy16(ImageOps.toYuv16(yuv, ChromaFormat.YUV420, yuv.color(), depth), d, 0);
-            default -> copy16(ImageOps.toYuv16(picture, ChromaFormat.YUV420, s.color, depth), d, 0);
+            case YuvPicture yuv -> copy16(ImageOps.toYuv16(yuv, format, yuv.color(), depth), d, 0);
+            case Yuv16Picture yuv -> copy16(ImageOps.toYuv16(yuv, format, yuv.color(), depth), d, 0);
+            case RgbaPicture rgba when depth == 8 && format == ChromaFormat.YUV444
+                    && s.color.matrix() == MatrixCoefficients.IDENTITY && s.color.range() == ColorRange.FULL ->
+                    identity(rgba, d);
+            default -> copy16(ImageOps.toYuv16(picture, format, s.color, depth), d, 0);
         }
         extend(d.sourceY, s.codedWidth, s.codedHeight, s.inputWidth, s.inputHeight);
-        var cw = (s.inputWidth + 1) >> 1;
-        var ch = (s.inputHeight + 1) >> 1;
+        var cw = format.chromaWidth(s.inputWidth);
+        var ch = format.chromaHeight(s.inputHeight);
         extend(d.sourceCb, s.chromaWidth, s.chromaHeight, cw, ch);
         extend(d.sourceCr, s.chromaWidth, s.chromaHeight, cw, ch);
     }
 
     /**
-     * Copies an 8-bit 4:2:0 picture, shifting its samples left.
+     * Copies an 8-bit Y'CbCr picture of the stream's chroma format, shifting its samples left.
      *
      * @param yuv the picture
      * @param d the destination
@@ -72,7 +85,7 @@ final class InputConverter {
     }
 
     /**
-     * Copies a 16-bit 4:2:0 picture, shifting its samples left.
+     * Copies a 16-bit Y'CbCr picture of the stream's chroma format, shifting its samples left.
      *
      * @param yuv the picture
      * @param d the destination
@@ -82,6 +95,28 @@ final class InputConverter {
         plane16(yuv.y(), yuv.yStride(), d.sourceY, s.codedWidth, yuv.width(), yuv.height(), shift);
         plane16(yuv.u(), yuv.uvStride(), d.sourceCb, s.chromaWidth, yuv.chromaWidth(), yuv.chromaHeight(), shift);
         plane16(yuv.v(), yuv.uvStride(), d.sourceCr, s.chromaWidth, yuv.chromaWidth(), yuv.chromaHeight(), shift);
+    }
+
+    /**
+     * Copies the G, B and R samples of an 8-bit RGB picture into the Y, Cb and Cr planes, ignoring alpha.
+     *
+     * @param rgba the picture
+     * @param d the destination
+     */
+    private void identity(RgbaPicture rgba, PictureData d) {
+        var pixels = rgba.pixels();
+        var stride = rgba.stride();
+        var w = s.codedWidth;
+        for (var y = 0; y < rgba.height(); y++) {
+            var from = y * stride;
+            var to = y * w;
+            for (var x = 0; x < rgba.width(); x++) {
+                var at = from + 4 * x;
+                d.sourceCr[to + x] = (short) (pixels[at] & 0xFF);
+                d.sourceY[to + x] = (short) (pixels[at + 1] & 0xFF);
+                d.sourceCb[to + x] = (short) (pixels[at + 2] & 0xFF);
+            }
+        }
     }
 
     /**

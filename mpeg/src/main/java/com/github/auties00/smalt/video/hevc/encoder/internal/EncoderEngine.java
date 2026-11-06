@@ -346,8 +346,8 @@ public final class EncoderEngine {
     public EncoderEngine(EncoderSettings s) {
         this.s = s;
         this.vps = ParameterSets.vps(s);
-        this.sps = ParameterSets.sps(s, true);
-        this.pps = ParameterSets.pps(s, true, false);
+        this.sps = ParameterSets.sps(s, !s.lossless);
+        this.pps = ParameterSets.pps(s, !s.lossless, false);
         this.staticSei = ParameterSets.staticSei(s.color);
         HevcVps.parse(reader(vps, HevcNal.VPS));
         this.parsedSps = HevcSps.parse(reader(sps, HevcNal.SPS));
@@ -916,9 +916,9 @@ public final class EncoderEngine {
             p.positiveCount++;
         }
         p.temporalMvp = !s.stillPicture;
-        p.saoEnabled = true;
-        p.saoLuma = true;
-        p.saoChroma = true;
+        p.saoEnabled = !s.lossless;
+        p.saoLuma = p.saoEnabled;
+        p.saoChroma = p.saoEnabled;
         p.numRefIdx[0] = l0.size();
         p.numRefIdx[1] = sliceType == HevcSliceHeader.B ? l1.size() : 0;
         p.collocatedFromL0 = sliceType != HevcSliceHeader.B;
@@ -957,16 +957,18 @@ public final class EncoderEngine {
         }
         var sliceIndex = f.addSlice(pocs, longTerm, ids);
         analyze(d, sliceIndex, refPlanes, lambdaFactor);
-        deblocker.filterRows(f, d.pic, 0, s.heightInCtbs);
-        var lambda = lambdaFactor * StrictMath.pow(2.0, (qp + 6 * (s.bitDepth - 8) - 12) / 3.0);
-        var chromaLambda = lambda / chromaWeight(qp);
-        var used = saoEncoder.decide(d, lambda, chromaLambda);
-        header.saoLuma = (used & 1) != 0;
-        header.saoChroma = (used & 2) != 0;
-        p.saoLuma = header.saoLuma;
-        p.saoChroma = header.saoChroma;
-        if (used != 0) {
-            saoFilter.filterLines(f, d.pic, 0, f.height, false);
+        if (!s.lossless) {
+            deblocker.filterRows(f, d.pic, 0, s.heightInCtbs);
+            var lambda = lambdaFactor * StrictMath.pow(2.0, (qp + 6 * (s.bitDepth - 8) - 12) / 3.0);
+            var chromaLambda = lambda / chromaWeight(qp);
+            var used = saoEncoder.decide(d, lambda, chromaLambda);
+            header.saoLuma = (used & 1) != 0;
+            header.saoChroma = (used & 2) != 0;
+            p.saoLuma = header.saoLuma;
+            p.saoChroma = header.saoChroma;
+            if (used != 0) {
+                saoFilter.filterLines(f, d.pic, 0, f.height, false);
+            }
         }
         var sizes = writeSlice(d);
         var headerBytes = SliceHeaderWriter.write(s, p, sizes);
@@ -998,10 +1000,24 @@ public final class EncoderEngine {
      * @return the weight
      */
     private double chromaWeight(int qp) {
+        return StrictMath.pow(2.0, (qp - chromaQp(qp, s)) / 3.0);
+    }
+
+    /**
+     * Returns {@code QpC} of a chroma component without offsets (8.6.1): Table 8-10 for 4:2:0 and
+     * {@code Min(qPi, 51)} for the other formats.
+     *
+     * @param qp {@code QpY}
+     * @param s the settings
+     * @return {@code QpC}, without the bit depth offset
+     */
+    static int chromaQp(int qp, EncoderSettings s) {
         var bdOffset = 6 * (s.bitDepth - 8);
         var qPi = Math.clamp(qp, -bdOffset, 57);
-        var qpC = qPi < 30 ? qPi : qPi > 43 ? qPi - 6 : QPC_TABLE[qPi - 30];
-        return StrictMath.pow(2.0, (qp - qpC) / 3.0);
+        if (s.chromaFormatIdc != 1) {
+            return Math.min(qPi, 51);
+        }
+        return qPi < 30 ? qPi : qPi > 43 ? qPi - 6 : QPC_TABLE[qPi - 30];
     }
 
     /**
