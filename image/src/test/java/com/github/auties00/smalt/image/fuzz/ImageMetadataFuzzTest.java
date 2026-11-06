@@ -46,8 +46,6 @@ class ImageMetadataFuzzTest {
     private static final List<JpegTransformOptions> TRANSFORMS = List.of(
             JpegTransformOptions.builder().transform(Orientation.ROTATE_90).trim(true).build(),
             JpegTransformOptions.builder().transform(Orientation.TRANSVERSE).build(),
-            JpegTransformOptions.builder().crop(new Region(3, 5, 17, 9)).progressive(true).optimizeHuffman(true)
-                    .build(),
             JpegTransformOptions.builder().grayscale(true).restartInterval(1).transformThumbnail(true).build(),
             JpegTransformOptions.jpegtran()
     );
@@ -196,6 +194,10 @@ class ImageMetadataFuzzTest {
             // the geometry of the extensions follows the image, so none of them is an argument error
             var width = info.get().width();
             var height = info.get().height();
+            if (width >= 20 && height >= 14) {
+                options.add(JpegTransformOptions.builder().crop(new Region(3, 5, 17, 9)).progressive(true)
+                        .optimizeHuffman(true).build());
+            }
             options.add(JpegTransformOptions.builder().crop(new Region(16, 8, width + 32, height + 16))
                     .fill(JpegFill.REFLECT).arithmetic(true).restartRows(1).build());
             options.add(JpegTransformOptions.builder().wipe(new Region(0, 0, Math.max(1, width / 2), height))

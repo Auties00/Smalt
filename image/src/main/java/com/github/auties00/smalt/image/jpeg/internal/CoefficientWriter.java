@@ -23,7 +23,9 @@ import java.util.List;
  * progressive Huffman encoder (jcphuff.c), the pass sequence of jcmaster.c (an optimization pass
  * before every scan's output pass, skipped for DC refinement scans) and the scan script of
  * {@code jpeg_simple_progression} (jcparam.c), so its output is byte-identical to
- * {@code jpegtran}'s for the same parameters.
+ * {@code jpegtran}'s for the same parameters. Components that cannot share one interleaved scan
+ * (more than four, or more than {@value #MAX_BLOCKS_IN_MCU} blocks per MCU), which libjpeg-turbo
+ * refuses to write, get one scan per component wherever its script interleaves them.
  */
 final class CoefficientWriter {
     /**
@@ -276,7 +278,7 @@ final class CoefficientWriter {
      *
      * @param width the image width
      * @param height the image height
-     * @param components the components, at most four
+     * @param components the components in frame order, of any count
      * @param quantTables the natural-order quantization table of each slot the components use
      * @param restartInterval the number of MCUs between restart markers, or {@code 0}
      * @param precision the sample precision in bits, 8 or 12
@@ -291,7 +293,7 @@ final class CoefficientWriter {
      *
      * @param width the image width
      * @param height the image height
-     * @param components the components, at most four
+     * @param components the components in frame order, of any count
      * @param quantTables the natural-order quantization table of each slot the components use
      * @param restartInterval the number of MCUs between restart markers, or {@code 0}; ignored when
      * {@code restartRows} is not {@code 0}
@@ -336,8 +338,27 @@ final class CoefficientWriter {
      */
     byte[] write(Header header, List<MarkerSegment> markers, boolean progressive, boolean arithmetic,
                  boolean optimize, boolean ycbcr) {
-        var scans = progressive ? progressiveScript(components.length, ycbcr) : List.of(sequentialScan());
+        var interleave = interleavable();
+        var scans = progressive ? progressiveScript(components.length, ycbcr, interleave)
+                : sequentialScans(interleave);
         return write(header, markers, scans, progressive, arithmetic, optimize);
+    }
+
+    /**
+     * Returns whether every component fits one interleaved scan: at most four components whose MCU holds at
+     * most {@value #MAX_BLOCKS_IN_MCU} blocks (T.81 B.2.3).
+     *
+     * @return whether the components can be interleaved
+     */
+    private boolean interleavable() {
+        if (components.length > 4) {
+            return false;
+        }
+        var blocks = 0;
+        for (var component : components) {
+            blocks += component.samplingX * component.samplingY;
+        }
+        return components.length == 1 || blocks <= MAX_BLOCKS_IN_MCU;
     }
 
     /**
@@ -450,21 +471,36 @@ final class CoefficientWriter {
     }
 
     /**
-     * Returns the single scan of a sequential file.
+     * Returns the scans of a sequential file: one interleaved scan over every component, or one scan per
+     * component when they cannot be interleaved.
      *
-     * @return the scan over every component
-     * @throws MediaException.Unsupported if there are more than four components
+     * @param interleave whether the components fit one interleaved scan
+     * @return the scans
      */
-    private Scan sequentialScan() {
-        if (components.length > 4) {
-            throw new MediaException.Unsupported("jpeg with " + components.length + " components",
-                    "a sequential scan holds at most 4 components");
+    private List<Scan> sequentialScans(boolean interleave) {
+        var scans = new ArrayList<Scan>();
+        if (interleave) {
+            var all = new int[components.length];
+            for (var i = 0; i < all.length; i++) {
+                all[i] = i;
+            }
+            scans.add(new Scan(all, 0, 63, 0, 0));
+        } else {
+            componentScans(scans, components.length, 0, 63, 0, 0);
         }
-        var all = new int[components.length];
-        for (var i = 0; i < all.length; i++) {
-            all[i] = i;
-        }
-        return new Scan(all, 0, 63, 0, 0);
+        return scans;
+    }
+
+    /**
+     * Returns the progressive scan script of {@code jpeg_simple_progression}, whose DC scans are interleaved
+     * when there are at most four components.
+     *
+     * @param count the number of components
+     * @param ycbcr whether the components are YCbCr
+     * @return the scans
+     */
+    static List<Scan> progressiveScript(int count, boolean ycbcr) {
+        return progressiveScript(count, ycbcr, count <= 4);
     }
 
     /**
@@ -472,42 +508,46 @@ final class CoefficientWriter {
      *
      * @param count the number of components
      * @param ycbcr whether the components are YCbCr
+     * @param interleave whether the DC scans are interleaved over every component rather than split into one
+     * scan per component; only valid for at most four components whose MCU holds at most
+     * {@value #MAX_BLOCKS_IN_MCU} blocks
      * @return the scans
      */
-    static List<Scan> progressiveScript(int count, boolean ycbcr) {
+    static List<Scan> progressiveScript(int count, boolean ycbcr, boolean interleave) {
         var scans = new ArrayList<Scan>();
         if (count == 3 && ycbcr) {
-            dcScans(scans, count, 0, 1);
+            dcScans(scans, count, 0, 1, interleave);
             scans.add(new Scan(new int[]{0}, 1, 5, 0, 2));
             scans.add(new Scan(new int[]{2}, 1, 63, 0, 1));
             scans.add(new Scan(new int[]{1}, 1, 63, 0, 1));
             scans.add(new Scan(new int[]{0}, 6, 63, 0, 2));
             scans.add(new Scan(new int[]{0}, 1, 63, 2, 1));
-            dcScans(scans, count, 1, 0);
+            dcScans(scans, count, 1, 0, interleave);
             scans.add(new Scan(new int[]{2}, 1, 63, 1, 0));
             scans.add(new Scan(new int[]{1}, 1, 63, 1, 0));
             scans.add(new Scan(new int[]{0}, 1, 63, 1, 0));
         } else {
-            dcScans(scans, count, 0, 1);
+            dcScans(scans, count, 0, 1, interleave);
             componentScans(scans, count, 1, 5, 0, 2);
             componentScans(scans, count, 6, 63, 0, 2);
             componentScans(scans, count, 1, 63, 2, 1);
-            dcScans(scans, count, 1, 0);
+            dcScans(scans, count, 1, 0, interleave);
             componentScans(scans, count, 1, 63, 1, 0);
         }
         return scans;
     }
 
     /**
-     * Adds one interleaved DC scan, or one per component when there are more than four.
+     * Adds one interleaved DC scan, or one per component when the components cannot be interleaved.
      *
      * @param scans the script
      * @param count the number of components
      * @param ah the previous bit position
      * @param al the bit position
+     * @param interleave whether the components fit one interleaved scan
      */
-    private static void dcScans(List<Scan> scans, int count, int ah, int al) {
-        if (count <= 4) {
+    private static void dcScans(List<Scan> scans, int count, int ah, int al, boolean interleave) {
+        if (interleave) {
             var all = new int[count];
             for (var i = 0; i < all.length; i++) {
                 all[i] = i;

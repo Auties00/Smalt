@@ -477,6 +477,19 @@ libjpeg-turbo 3.1.3), pinned in `variants.sha256`; the test class `LosslessVecto
 test encoder and the test DCT writer and with `cjpeg` on `PATH`, when run with
 `-Dsmalt.jpeg.writeLosslessVectors=<directory>` (`-Dtest=LosslessVectorWriter`), and the output is deterministic.
 
+## IJG jpegtran 9f vectors
+
+libjpeg-turbo reads no scan of a component after the fourth, so `JpegTransformComponentsTest` of `smalt-image`
+checks the lossless transforms of frames of five to seven components against IJG libjpeg 9f, whose `jpegtran`
+transforms them (in progressive output only). `image/src/test/resources/com/github/auties00/smalt/image/jpeg/ijg9f/`
+holds the sources (baseline frames written by `tools/testdata/jpeg-ijg9f/sources.py` with the encoder of
+`tools/fuzz/make-jpeg-component-seeds.py`, with sampling factors up to 3), the `jpegtran` outputs of the cases in
+`cases.tsv`, and `ijg9f.sha256`, which pins every file and which the test checks. `bash
+tools/testdata/jpeg-ijg9f/make-vectors.sh <jpeg-9f source directory> <checkout>` builds `jpegtran` with gcc from the
+IJG release `jpegsrc.v9f.tar.gz` (IJG license; SHA-256
+`04705c110cb2469caa79fb71fba3d7bf834914706e9641a4589485c1f832565b`) and regenerates them; the output is
+deterministic.
+
 ## JPEG-LS vectors
 
 `JpegLsConformanceTest` of `smalt-image` decodes the streams of the ITU-T T.87 | ISO/IEC 14495-1 conformance data

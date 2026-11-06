@@ -112,6 +112,10 @@ The MP4 tag seeds of track keyed metadata, fragmented timecode tracks and compre
 (`valid-track-keyed.mov`, `valid-timecode-fragmented.mp4`, `valid-compressed-fragments.mp4`) are written by
 `make-mp4-tag-seeds.py`, from ffmpeg-made files with the boxes added by the script.
 
+The JPEG transform seeds of frames that no libjpeg-turbo tool writes (`two-components-12-blocks.jpg`, with an
+MCU too large for one interleaved scan, and `six-components.jpg`) are written by
+`make-jpeg-component-seeds.py`.
+
 The camera raw seeds are CC0 samples from raw.pixls.us cut by `RawSeedReducer` to their first 12 sensor rows,
 with every large embedded JPEG replaced by a tiny one; the reducer checks that the cut file decodes, renders and
 yields a preview exactly as the uncut one does.

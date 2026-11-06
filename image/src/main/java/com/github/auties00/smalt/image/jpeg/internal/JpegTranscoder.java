@@ -18,7 +18,10 @@ import java.util.List;
 /**
  * Transforms a JPEG file losslessly: decodes its quantized DCT coefficients, rotates, flips, crops,
  * extends, wipes, replaces or drops them, and writes a new file from them with the source's
- * quantization tables (or, for a drop, tables that also fit the dropped image).
+ * quantization tables (or, for a drop, tables that also fit the dropped image). Frames of any number of
+ * components are transformed, each component on the grid of its own sampling factors; a frame of two or
+ * more than four components, which has no color space, is written without a JFIF or Adobe header and with
+ * every component on Huffman tables 0, as {@code jpegtran} writes it.
  *
  * @implNote This implementation follows the sequence of jpegtran: the marker segments of
  * {@code jcopy_markers_setup}, the parameters of {@code jpeg_copy_critical_parameters} and
@@ -93,11 +96,6 @@ public final class JpegTranscoder {
         var colorSpace = reader.colorSpace();
         var frameComponents = frame.components;
         var count = frameComponents.length;
-        if (colorSpace == JpegColorSpace.UNKNOWN) {
-            // TODO: transform frames of two or more than four components, which jpegtran passes through
-            throw new MediaException.Unsupported("jpeg with " + count + " components",
-                    "lossless transforms of JPEG frames with " + count + " components are not supported");
-        }
         var transform = options.transform();
         var grayscale = options.grayscale();
         var outputCount = grayscale && colorSpace == JpegColorSpace.YCBCR && count == 3 ? 1 : count;

@@ -911,8 +911,9 @@ class LosslessVariantsTest {
             assertEquals(picture.pixels()[0], rgba.pixels()[0]);
             var plain = assertInstanceOf(RgbaPicture.class, decode(jpeg, ImageDecoderOptions.defaults()).picture());
             assertArrayEquals(rgba.pixels(), plain.pixels());
-            assertEquals("jpeg with " + count + " components", assertThrows(MediaException.Unsupported.class,
-                    () -> JpegTransforms.transform(MediaSource.of(jpeg), JpegTransformOptions.defaults())).format());
+            // the lossless transforms keep the coefficients, so the transcoded frame decodes to the same channels
+            var transcoded = JpegTransforms.transform(MediaSource.of(jpeg), JpegTransformOptions.defaults());
+            assertArrayEquals(picture.pixels(), ((Channel8Picture) decode(transcoded, KEEP).picture()).pixels());
         }
 
         @Test
@@ -941,6 +942,16 @@ class LosslessVariantsTest {
             }
             assertInstanceOf(Channel8Picture.class, decode(jpeg, KEEP).picture());
             assertInstanceOf(com.github.auties00.smalt.image.Rgba16Picture.class, decode(jpeg, WIDE).picture());
+            // two half turns give back the 12-bit coefficients of the five components
+            var half = JpegTransformOptions.of(com.github.auties00.smalt.image.Orientation.ROTATE_180);
+            var turned = JpegTransforms.transform(MediaSource.of(
+                    JpegTransforms.transform(MediaSource.of(jpeg), half)), half);
+            var original = new JpegReader(jpeg, 0, jpeg.length, MediaLimits.DEFAULT).decodeCoefficients();
+            var back = new JpegReader(turned, 0, turned.length, MediaLimits.DEFAULT).decodeCoefficients();
+            assertEquals(12, back.frame().precision());
+            for (var c = 0; c < count; c++) {
+                assertArrayEquals(original.coefficients(c), back.coefficients(c));
+            }
         }
 
         @Test

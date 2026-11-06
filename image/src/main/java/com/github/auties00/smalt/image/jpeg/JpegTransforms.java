@@ -30,14 +30,17 @@ import java.util.Objects;
  * {@link JpegTransformOptions#perfect()} rejects such images instead.
  *
  * <p>The source may be baseline, extended or progressive, 8-bit or 12-bit, Huffman or arithmetic
- * coded, gray, YCbCr, RGB, CMYK or YCCK, with any subsampling; the output has the source's precision
- * and is Huffman coded (with optimized tables when it is 12-bit) or, on request, arithmetic coded.
+ * coded, gray, YCbCr, RGB, CMYK or YCCK, or of any other number of components (whose meaning JPEG leaves
+ * open), with any sampling factors; the output has the source's precision, components and sampling
+ * factors, and is Huffman coded (with optimized tables when it is 12-bit) or, on request, arithmetic coded.
  * Every DCT-coded image the {@link JpegDecoder} decodes can be transformed, except a hierarchical one.
  * The marker segments the output keeps (EXIF, XMP, ICC, comments) are chosen by
  * {@link JpegTransformOptions#markerCopy()}; an EXIF thumbnail is transformed with the image and
  * {@link #autoOrient(MediaSource)} resets the EXIF orientation.
  * Under {@link JpegTransformOptions#jpegtran()} the output is byte-identical to libjpeg-turbo's
- * {@code jpegtran} given the same transformation.
+ * {@code jpegtran} given the same transformation. Components that cannot share one interleaved scan
+ * (more than four, or an MCU of more than 10 blocks), which {@code jpegtran} refuses to write, are
+ * written one scan per component where its scan script would interleave them.
  *
  * <p>This class is thread-safe.
  */

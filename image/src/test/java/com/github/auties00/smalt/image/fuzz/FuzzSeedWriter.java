@@ -432,6 +432,10 @@ class FuzzSeedWriter {
                 VECTORS.resolve("jpeg/cjpeg/33x65-yuv422-progressive-arithmetic.jpg"));
         copy(ImageMetadataFuzzTest.class, "jpegTransform", "valid-baseline-411-restart.jpg",
                 VECTORS.resolve("jpeg/cjpeg/227x149-yuv411-baseline-rst3.jpg"));
+        copy(ImageMetadataFuzzTest.class, "jpegTransform", "five-components.jpg",
+                VECTORS.resolve("jpeg/lossless/variants/23x17-5ch-baseline.jpg"));
+        // two-components-12-blocks.jpg and six-components.jpg are written by
+        // tools/fuzz/make-jpeg-component-seeds.py
     }
 
     @Test
