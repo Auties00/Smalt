@@ -15,9 +15,11 @@ package com.github.auties00.smalt.image.jp2.internal;
  * @param precincts the precincts, row-major over the resolution's precinct grid; shared, not copied
  * @param offsetX the column of the sub-band's first sample in the tile-component's coefficient buffer
  * @param offsetY the row of the sub-band's first sample in the tile-component's coefficient buffer
+ * @param gain the base-2 logarithm of the sub-band gain its step size carries: that of ISO/IEC 15444-1 Table E.1 and
+ * ISO/IEC 15444-2 annex F, or 0 for every sub-band of the unit-gain convention of the 9-7 decoder
  */
 record Band(int orientation, long x0, long y0, long x1, long y1, float stepSize, int bitPlanes, int index,
-            Precinct[] precincts, int offsetX, int offsetY) {
+            Precinct[] precincts, int offsetX, int offsetY, int gain) {
     /**
      * {@return whether the sub-band holds no sample}
      */

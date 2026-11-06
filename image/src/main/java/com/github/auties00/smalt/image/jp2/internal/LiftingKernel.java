@@ -19,7 +19,7 @@ final class LiftingKernel {
      * The reversible 5-3 kernel of ISO/IEC 15444-1 in the form of Table G.2.
      */
     static final LiftingKernel REVERSIBLE_53 = new LiftingKernel(true, 1, new int[]{1, 0}, new int[]{0, -1},
-            new double[][]{{-1, -1}, {1, 1}}, new int[]{1, 2}, new double[]{1, 2}, true);
+            new double[][]{{-1, -1}, {1, 1}}, new int[]{1, 2}, new double[]{1, 2}, true, true);
 
     /**
      * The irreversible 9-7 kernel of ISO/IEC 15444-1 in the form of Table G.6, with the exact coefficients of F.4.8.2.
@@ -28,12 +28,24 @@ final class LiftingKernel {
             new int[]{0, -1, 0, -1},
             new double[][]{{-1.586134342059924, -1.586134342059924}, {-0.052980118572961, -0.052980118572961},
                     {0.882911075530934, 0.882911075530934}, {0.443506852043971, 0.443506852043971}},
-            new int[4], new double[4], true);
+            new int[4], new double[4], true, true);
 
     /**
      * Whether the kernel is reversible ({@code WT_Typ = REV}).
      */
     final boolean reversible;
+
+    /**
+     * Whether the kernel belongs to the whole-sample symmetric category ({@code Filt_Cat = WS}), the only one the
+     * single sample overlap transformation of ISO/IEC 15444-2 I.3 applies to.
+     */
+    final boolean wholeSample;
+
+    /**
+     * The factor {@code 1 / B_s} of equation I-13 of each lifting step of an irreversible kernel, which scales the
+     * samples on the cell boundaries of the single sample overlap transformation instead of the step's update.
+     */
+    private final double[] boundaryScales;
 
     /**
      * The scaling factor {@code K} of an irreversible kernel, 1 for a reversible one.
@@ -92,9 +104,10 @@ final class LiftingKernel {
      * @param exponents the scaling exponent of each step
      * @param residues the additive residue of each step
      * @param symmetric whether the signal is extended symmetrically
+     * @param wholeSample whether the kernel is of the whole-sample symmetric category
      */
     LiftingKernel(boolean reversible, double scale, int[] updates, int[] offsets, double[][] coefficients,
-                  int[] exponents, double[] residues, boolean symmetric) {
+                  int[] exponents, double[] residues, boolean symmetric, boolean wholeSample) {
         this.reversible = reversible;
         this.scale = reversible ? 1 : scale;
         this.updates = updates;
@@ -103,6 +116,20 @@ final class LiftingKernel {
         this.exponents = exponents;
         this.residues = residues;
         this.symmetric = symmetric;
+        this.wholeSample = wholeSample;
+        this.boundaryScales = new double[coefficients.length];
+        var previous = 1.0;
+        var beforePrevious = 1.0;
+        for (var s = 0; s < coefficients.length; s++) {
+            var sum = 0.0;
+            for (var alpha : coefficients[s]) {
+                sum += alpha;
+            }
+            var current = sum * previous + beforePrevious;
+            boundaryScales[s] = 1 / current;
+            beforePrevious = previous;
+            previous = current;
+        }
         long[][] integers = null;
         long[] integerResidues = null;
         if (reversible) {
@@ -204,7 +231,7 @@ final class LiftingKernel {
             throw new MediaException.Malformed("invalid JPEG 2000 ATK scaling factor " + scale);
         }
         return new Indexed(index, new LiftingKernel(reversible, scale, updates, offsets, coefficients, exponents,
-                residues, symmetricFilter || symmetricExtension));
+                residues, symmetricFilter || symmetricExtension, symmetricFilter));
     }
 
     /**
@@ -337,6 +364,158 @@ final class LiftingKernel {
                     var sum = 0f;
                     for (var k = 0; k < count; k++) {
                         sum += (float) alpha[k] * buffer[extend(base + 2L * k, i0, i1) * lanes + lane];
+                    }
+                    buffer[target + lane] -= sum;
+                }
+            }
+        }
+    }
+
+    /**
+     * Returns whether a signal holds a cell boundary of the single sample overlap transformation that a lifting step
+     * updates.
+     *
+     * @param i0 the index of the first position
+     * @param i1 the index after the last position
+     * @param parity the parity {@code m_s} the step updates
+     * @param period the cell size, a power of two
+     * @return whether some index in {@code [i0, i1)} of that parity is a multiple of {@code period}
+     */
+    private static boolean holdsBoundary(long i0, long i1, int parity, long period) {
+        var first = Math.ceilDiv(i0, period) * period;
+        for (var index = first; index < i1 && index < first + 2 * period; index += period) {
+            if (Math.floorMod(index, 2) == parity) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Reconstructs reversible signals in place with the single sample overlap procedure {@code 1D_FILTR_SSO} of
+     * ISO/IEC 15444-2 I.3.1.6.1.
+     *
+     * <p>The indices that are multiples of {@code period} split the signal into intervals that share their end
+     * points. Every lifting step leaves the samples on those end points unchanged and updates every other sample from
+     * the samples of its own interval, extended symmetrically at the interval's ends (equation I-12).
+     *
+     * @param buffer the interleaved signals: low-pass samples at the positions of even indices, high-pass samples
+     * at the odd ones
+     * @param n the number of positions
+     * @param i0 the index of the first position, on the signal's coordinate axis
+     * @param lanes the number of signals
+     * @param period the cell size {@code dC} on the signal's axis, a power of two; 1 leaves every sample unchanged
+     */
+    void inverseOverlapped(long[] buffer, int n, long i0, int lanes, long period) {
+        if (n <= 1) {
+            inverse(buffer, n, i0, lanes);
+            return;
+        }
+        var i1 = i0 + n;
+        for (var s = updates.length - 1; s >= 0; s--) {
+            var m = updates[s];
+            var count = coefficients[s].length;
+            var first = (int) Math.floorMod(m - i0, 2);
+            var divisor = exponents[s];
+            var power = Math.scalb(1.0, divisor);
+            for (var p = first; p < n; p += 2) {
+                var index = i0 + p;
+                var cell = Math.floorDiv(index, period) * period;
+                if (cell == index) {
+                    continue;
+                }
+                var start = Math.max(i0, cell);
+                var end = Math.min(i1, cell + period + 1);
+                var shift = start - i0;
+                var base = index + 1 - 2 * m + 2L * offsets[s];
+                var target = p * lanes;
+                for (var lane = 0; lane < lanes; lane++) {
+                    if (integerCoefficients != null) {
+                        var alpha = integerCoefficients[s];
+                        var sum = integerResidues[s];
+                        for (var k = 0; k < count; k++) {
+                            sum += alpha[k] * buffer[(int) (extend(base + 2L * k, start, end) + shift) * lanes
+                                    + lane];
+                        }
+                        buffer[target + lane] -= divisor >= 63 ? (sum < 0 ? -1 : 0) : sum >> divisor;
+                    } else {
+                        var alpha = coefficients[s];
+                        var sum = residues[s];
+                        for (var k = 0; k < count; k++) {
+                            sum += alpha[k] * buffer[(int) (extend(base + 2L * k, start, end) + shift) * lanes
+                                    + lane];
+                        }
+                        buffer[target + lane] -= (long) Math.floor(sum / power);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Reconstructs irreversible signals in place with the single sample overlap procedure {@code 1D_FILTR_SSO} of
+     * ISO/IEC 15444-2 I.3.1.6.2, in single precision.
+     *
+     * <p>As {@link #inverseOverlapped(long[], int, long, int, long)}, except that each lifting step multiplies the
+     * samples on the interval end points it would update by {@code 1 / B_s} (equation I-13) instead of leaving them
+     * unchanged; the scaling steps are those of the whole signal.
+     *
+     * @implNote This implementation applies equation I-13 at a lifting step only to the end points of the parity the
+     * step updates, as the forward example of I.3.4.3 does for the 9-7 wavelet; the factors are those of equation G-1,
+     * where that informative example writes factors that differ from them.
+     * @param buffer the interleaved signals: low-pass samples at the positions of even indices, high-pass samples
+     * at the odd ones
+     * @param n the number of positions
+     * @param i0 the index of the first position, on the signal's coordinate axis
+     * @param lanes the number of signals
+     * @param period the cell size {@code dC} on the signal's axis, a power of two
+     * @throws MediaException.Malformed if a lifting step whose {@code B_s} of equation G-1 is zero updates a cell
+     * boundary of the signal, which equation I-13 leaves undefined; the 5-3 wavelet, whose {@code B_0} is zero, meets
+     * one only with cells of a single sample
+     */
+    void inverseOverlapped(float[] buffer, int n, long i0, int lanes, long period) {
+        if (n <= 1) {
+            inverse(buffer, n, i0, lanes);
+            return;
+        }
+        var low = (float) scale;
+        var high = (float) (1 / scale);
+        for (var p = 0; p < n; p++) {
+            var factor = ((i0 + p) & 1) == 0 ? low : high;
+            for (var lane = 0; lane < lanes; lane++) {
+                buffer[p * lanes + lane] *= factor;
+            }
+        }
+        var i1 = i0 + n;
+        for (var s = updates.length - 1; s >= 0; s--) {
+            var m = updates[s];
+            var alpha = coefficients[s];
+            var count = alpha.length;
+            var first = (int) Math.floorMod(m - i0, 2);
+            var boundary = (float) boundaryScales[s];
+            if (!Float.isFinite(boundary) && holdsBoundary(i0, i1, m, period)) {
+                throw new MediaException.Malformed("JPEG 2000 single sample overlap transformation whose boundary "
+                        + "scaling of equation I-13 is undefined");
+            }
+            for (var p = first; p < n; p += 2) {
+                var index = i0 + p;
+                var cell = Math.floorDiv(index, period) * period;
+                var target = p * lanes;
+                if (cell == index) {
+                    for (var lane = 0; lane < lanes; lane++) {
+                        buffer[target + lane] *= boundary;
+                    }
+                    continue;
+                }
+                var start = Math.max(i0, cell);
+                var end = Math.min(i1, cell + period + 1);
+                var shift = start - i0;
+                var base = index + 1 - 2 * m + 2L * offsets[s];
+                for (var lane = 0; lane < lanes; lane++) {
+                    var sum = 0f;
+                    for (var k = 0; k < count; k++) {
+                        sum += (float) alpha[k] * buffer[(int) (extend(base + 2L * k, start, end) + shift) * lanes
+                                + lane];
                     }
                     buffer[target + lane] -= sum;
                 }

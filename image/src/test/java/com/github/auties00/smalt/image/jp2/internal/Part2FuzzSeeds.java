@@ -17,8 +17,8 @@ import static com.github.auties00.smalt.image.jp2.internal.Part2Forward.VERTICAL
 
 /**
  * Writes the ISO/IEC 15444-2 and JPX seeds of the JPEG 2000 fuzz targets (tools/fuzz/README.md): codestreams with an
- * arbitrary kernel, decomposition and region of interest, and with multiple component and non-linear
- * transformations, written by {@link Part2Writer}, and the JPX and Part 2 behavior samples. Runs only with
+ * arbitrary kernel, decomposition and region of interest, with multiple component and non-linear
+ * transformations, the Part 2 quantizers, visual masking and the single sample overlap transformations, written by {@link Part2Writer}, and the JPX and Part 2 behavior samples. Runs only with
  * {@code -Dsmalt.fuzz.writeSeeds=true}.
  */
 @EnabledIfSystemProperty(named = "smalt.fuzz.writeSeeds", matches = "true",
@@ -121,6 +121,56 @@ class Part2FuzzSeeds {
         var precinctDependent = precincts.write(new long[][]{Jp2Part2Test.image(random, 1024, -40, 40),
                 Jp2Part2Test.image(random, 1024, -40, 40)});
 
+        var masking = new Part2Writer(32, 24, 1, 8, false);
+        masking.rsiz |= 0x0008;
+        masking.wavelet = 0;
+        masking.levels = 2;
+        masking.quantizationStyle = Quantization.SCALAR_EXPOUNDED;
+        masking.exponent = 10;
+        masking.codeBlock = 3;
+        masking.mainSegments.add(Jp2Part2OverlapMaskingTest.vms(65535, 1, false, 3, 9, 90, 26));
+        masking.tileSegments.add(Jp2Part2OverlapMaskingTest.vms(0, 0, true, 2, 4, 128, 64));
+        var noise = new float[32 * 24];
+        for (var i = 0; i < noise.length; i++) {
+            noise[i] = (float) (random.nextGaussian() * 30);
+        }
+        var masked = masking.write(new float[][]{noise});
+
+        var overlap = new Part2Writer(37, 29, 1, 8, false);
+        overlap.rsiz |= Codestream.RSIZ_SSO;
+        overlap.overlap = Jp2Part2OverlapMaskingTest.sso(4, 3);
+        overlap.x0 = 3;
+        overlap.y0 = 1;
+        overlap.levels = 3;
+        var overlapPlane = Jp2Part2Test.smooth(random, 37, 29, 0, 255);
+        for (var i = 0; i < overlapPlane.length; i++) {
+            overlapPlane[i] -= 128;
+        }
+        Part2Forward.decomposeOverlapped(overlapPlane, 37, 0, 0, 3, 1, 40, 30, Tree.dyadic(3), Part2Forward.LE_GALL,
+                4, 3, 0, 0);
+        var overlapped = overlap.write(new long[][]{overlapPlane});
+
+        var tiles = new Part2Writer(40, 32, 1, 8, false);
+        tiles.rsiz |= Codestream.RSIZ_SSO;
+        tiles.overlap = ComponentCoding.OVERLAP_TILES | ComponentCoding.OVERLAP_HORIZONTAL;
+        tiles.tileWidth = 16;
+        tiles.tileHeight = 16;
+        tiles.levels = 2;
+        var tilePlane = Jp2Part2Test.smooth(random, 40, 32, 0, 255);
+        var tileOverlap = tiles.writeTiles((tile, bounds) -> {
+            var width = (int) (bounds[2] - bounds[0]);
+            var height = (int) (bounds[3] - bounds[1]);
+            var data = new long[width * height];
+            for (var y = 0; y < height; y++) {
+                for (var x = 0; x < width; x++) {
+                    data[y * width + x] = tilePlane[(int) ((bounds[1] + y) * 40 + bounds[0] + x)] - 128;
+                }
+            }
+            Part2Forward.decompose(data, width, 0, 0, bounds[0], bounds[1], bounds[2], bounds[3], Tree.dyadic(2),
+                    null);
+            return new long[][]{data};
+        }, 10);
+
         var samples = Path.of("src", "test", "resources", "samples", "jp2");
         for (var target : List.of("jp2", "jp2Channels")) {
             FuzzSeeds.write(FUZZ, target, "valid-part2-kernel.j2k", arbitrary);
@@ -128,6 +178,9 @@ class Part2FuzzSeeds {
             FuzzSeeds.write(FUZZ, target, "valid-part2-deadzone.j2k", deadzoned);
             FuzzSeeds.write(FUZZ, target, "valid-part2-trellis.j2k", trellised);
             FuzzSeeds.write(FUZZ, target, "valid-part2-precincts.j2k", precinctDependent);
+            FuzzSeeds.write(FUZZ, target, "valid-part2-masking.j2k", masked);
+            FuzzSeeds.write(FUZZ, target, "valid-part2-overlap.j2k", overlapped);
+            FuzzSeeds.write(FUZZ, target, "valid-part2-tile-overlap.j2k", tileOverlap);
             FuzzSeeds.write(FUZZ, target, "valid-part2-derived-one-direction.j2k",
                     Fixtures.read(Path.of("src", "test", "resources", "com", "github", "auties00", "smalt",
                             "image", "jp2", "kakadu-e5", "mixed.j2c")));

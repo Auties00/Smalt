@@ -467,7 +467,7 @@ final class TileComponent {
             }
         }
         return new Band(orientation, bx0, by0, bx1, by1, stepSize, bitPlanes, bandIndex++, precincts, offsetX,
-                offsetY);
+                offsetY, gain);
     }
 
     /**

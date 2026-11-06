@@ -418,6 +418,14 @@ public final class Codestream {
         if (main.quantization == null) {
             throw new MediaException.Malformed("the JPEG 2000 main header has no QCD segment");
         }
+        if (main.coding.tileBasedTransform()) {
+            // TODO: decode the TBDWT flag of ISO/IEC 15444-2 Table A.11 once a specification defines its
+            //  transformation; neither the 2002 nor the 2021 edition of the standard does
+            throw new MediaException.Unsupported("JPEG 2000", "the TBDWT flag of the single sample overlap parameters");
+        }
+        for (var coding : main.componentCodings) {
+            checkTileOverlap(coding);
+        }
         tiles = new TileData[tilesWide * tilesHigh];
         readTileParts(position, end);
         outputs = resolveOutputs();
@@ -569,10 +577,6 @@ public final class Codestream {
             throw new MediaException.Malformed("invalid JPEG 2000 SIZ segment length");
         }
         capabilities = u16(position);
-        if ((capabilities & RSIZ_PART2) != 0 && (capabilities & RSIZ_SSO) != 0) {
-            // TODO: decode the single sample overlap transformations of ISO/IEC 15444-2 annex I
-            throw new MediaException.Unsupported("JPEG 2000", "single sample overlap transformations");
-        }
         x1 = u32(position + 2);
         y1 = u32(position + 6);
         x0 = u32(position + 10);
@@ -655,7 +659,8 @@ public final class Codestream {
                 if (transform > 1 && transform != 2 && transform != 4 && transform != 6) {
                     throw new MediaException.Malformed("invalid JPEG 2000 component transform " + transform);
                 }
-                var coding = ComponentCoding.parse(data, position + 5, end, (flags & 1) != 0, extended());
+                var coding = ComponentCoding.parse(data, position + 5, end, (flags & 1) != 0, extended(),
+                        overlapped());
                 scope.codingFlags = flags;
                 scope.progression = progression;
                 scope.layers = layers;
@@ -670,7 +675,7 @@ public final class Codestream {
                 var flags = data[position + componentBytes] & 0xFF;
                 checkCodingFlags(flags);
                 scope.componentCodings[component] = ComponentCoding.parse(data, position + componentBytes + 1, end,
-                        (flags & 1) != 0, extended());
+                        (flags & 1) != 0, extended(), overlapped());
             }
             case QCD -> scope.quantization = Quantization.parse(data, position, end);
             case QCC -> {
@@ -741,10 +746,22 @@ public final class Codestream {
                 }
                 readDfs(position, end, scope);
             }
-            case VMS ->
-                // TODO: apply the visual masking of ISO/IEC 15444-2 annex E (E.3) between dequantization and the
-                //  inverse wavelet transformation
-                    throw new MediaException.Unsupported("JPEG 2000", "visual masking (VMS segments)");
+            case VMS -> {
+                var masking = VisualMasking.parse(data, position, end);
+                if (masking.component() == VisualMasking.ALL_COMPONENTS) {
+                    if (scope.defaultMasking != null) {
+                        throw new MediaException.Malformed("duplicate JPEG 2000 VMS segment for every component");
+                    }
+                    scope.defaultMasking = masking;
+                } else if (masking.component() < precisions.length) {
+                    if (scope.maskings.putIfAbsent(masking.component(), masking) != null) {
+                        throw new MediaException.Malformed("duplicate JPEG 2000 VMS segment for component "
+                                + masking.component());
+                    }
+                } else {
+                    throw new MediaException.Malformed("invalid JPEG 2000 VMS component " + masking.component());
+                }
+            }
             case QPD -> readPrecinctQuantization(position, end, scope.precinctQuantizations, "QPD");
             case QPC -> {
                 if (end - position < componentBytes) {
@@ -821,6 +838,16 @@ public final class Codestream {
      */
     boolean extended() {
         return (capabilities & RSIZ_PART2) != 0;
+    }
+
+    /**
+     * Returns whether the codestream declares the single sample overlap capability of ISO/IEC 15444-2, which adds the
+     * SSO field to every coding style segment (A.2.3).
+     *
+     * @return whether it does
+     */
+    private boolean overlapped() {
+        return (capabilities & (RSIZ_PART2 | RSIZ_SSO)) == (RSIZ_PART2 | RSIZ_SSO);
     }
 
     /**
@@ -1253,7 +1280,12 @@ public final class Codestream {
     }
 
     /**
-     * Returns the reference grid area of a tile, clipped to the image.
+     * Returns the reference grid area of a tile, clipped to the image: the samples of the image the tile reconstructs.
+     *
+     * <p>Without the tile overlap of ISO/IEC 15444-2 I.4 this is the area the tile codes. With it, the tile codes
+     * one more column and row ({@link #codingBounds(int)}), and of the samples two or four tiles reconstruct the rule
+     * of I.4.3 takes the one of the tile whose area this method returns: the left (top) tile when {@code Hovlp}
+     * ({@code Vovlp}) is 0, the right (bottom) one when it is 1.
      *
      * @param tile the tile index
      * @return the left, top, right and bottom edges
@@ -1266,6 +1298,42 @@ public final class Codestream {
         return new long[]{
                 Math.max(left, x0), Math.max(top, y0), Math.min(left + tileWidth, x1), Math.min(top + tileHeight, y1)
         };
+    }
+
+    /**
+     * Returns the reference grid area a tile codes, clipped to the image: its {@link #tileBounds(int)}, grown by the
+     * column and the row the tiles of ISO/IEC 15444-2 I.4 overlap by (equations I-46 to I-49).
+     *
+     * @param tile the tile index
+     * @return the left, top, right and bottom edges
+     */
+    long[] codingBounds(int tile) {
+        if (!main.coding.tileOverlap()) {
+            return tileBounds(tile);
+        }
+        var column = tile % tilesWide;
+        var row = tile / tilesWide;
+        var right = main.coding.horizontalOverlap() ? 1 : 0;
+        var bottom = main.coding.verticalOverlap() ? 1 : 0;
+        var left = tileX0 + column * tileWidth - (1 - right);
+        var top = tileY0 + row * tileHeight - (1 - bottom);
+        return new long[]{
+                Math.max(left, x0), Math.max(top, y0), Math.min(left + tileWidth + 1, x1),
+                Math.min(top + tileHeight + 1, y1)
+        };
+    }
+
+    /**
+     * Checks that a coding style segment declares the tile overlap of the main header's {@code COD} segment, which
+     * ISO/IEC 15444-2 Table A.11 requires of every one.
+     *
+     * @param coding the coding style, or {@code null}
+     * @throws MediaException.Malformed if its TSSO, {@code Vovlp}, {@code Hovlp} or TBDWT flag differs
+     */
+    private void checkTileOverlap(ComponentCoding coding) {
+        if (coding != null && coding.tileOverlapFlags() != main.coding.tileOverlapFlags()) {
+            throw new MediaException.Malformed("JPEG 2000 coding style segments with different tile overlaps");
+        }
     }
 
     /**
@@ -1358,6 +1426,7 @@ public final class Codestream {
         var roiShifts = new int[components];
         var kernels = new LiftingKernel[components];
         var decompositions = new Decomposition[components];
+        var maskings = new VisualMasking[components];
         var extended = false;
         for (var c = 0; c < components; c++) {
             ComponentCoding coding = null;
@@ -1412,11 +1481,29 @@ public final class Codestream {
             if (coding.transform() > 1) {
                 kernels[c] = kernel(scope, coding.transform());
             }
+            checkTileOverlap(coding);
+            if (coding.sampleOverlap()) {
+                kernels[c] = overlapKernel(coding, kernels[c]);
+            }
+            VisualMasking masking = null;
+            if (scope != null) {
+                masking = scope.maskings.get(c);
+                if (masking == null) {
+                    masking = scope.defaultMasking;
+                }
+            }
+            if (masking == null) {
+                masking = main.maskings.get(c);
+            }
+            if (masking == null) {
+                masking = main.defaultMasking;
+            }
             codings[c] = coding;
             quantizations[c] = quantization;
             roiShifts[c] = roi;
             decompositions[c] = decomposition;
-            extended |= kernels[c] != null || decomposition != null;
+            maskings[c] = masking;
+            extended |= kernels[c] != null || decomposition != null || masking != null || coding.tileOverlap();
         }
         var progressions = new ArrayList<ProgressionChange>();
         if (scope != null && !scope.progressions.isEmpty()) {
@@ -1492,7 +1579,7 @@ public final class Codestream {
         if (extended || dcOffsets != null || !stages.isEmpty() || anyNonLinearity || anyRegion
                 || transformedPrecisions != null || maxPrecision() > 31) {
             extensions = new TileParameters.Extensions(kernels, decompositions, dcOffsets, stages, arrays,
-                    allKernels, nonLinearities, List.copyOf(regions));
+                    allKernels, nonLinearities, List.copyOf(regions), maskings);
         }
         return new TileParameters(flags, progression, layers, transform, codings, quantizations,
                 precinctQuantizations, roiShifts,
@@ -1514,6 +1601,28 @@ public final class Codestream {
         }
         if (kernel == null) {
             throw new MediaException.Malformed("missing JPEG 2000 ATK segment " + index);
+        }
+        return kernel;
+    }
+
+    /**
+     * Returns the kernel a tile-component using the single sample overlap transformation reconstructs with: the
+     * wavelets of ISO/IEC 15444-1 in their lifting form, whose sub-bands then carry their gain in their step sizes, or
+     * the component's whole-sample symmetric {@code ATK} kernel.
+     *
+     * @param coding the coding style
+     * @param kernel the component's {@code ATK} kernel, or {@code null} for a wavelet of ISO/IEC 15444-1
+     * @return the lifting kernel
+     * @throws MediaException.Malformed if the {@code ATK} kernel is not whole-sample symmetric, the only category
+     * ISO/IEC 15444-2 I.3 defines the transformation for
+     */
+    private static LiftingKernel overlapKernel(ComponentCoding coding, LiftingKernel kernel) {
+        if (kernel == null) {
+            return coding.transform() == 1 ? LiftingKernel.REVERSIBLE_53 : LiftingKernel.IRREVERSIBLE_97;
+        }
+        if (!kernel.wholeSample) {
+            throw new MediaException.Malformed("JPEG 2000 single sample overlap transformation with an ATK kernel "
+                    + "that is not whole-sample symmetric");
         }
         return kernel;
     }

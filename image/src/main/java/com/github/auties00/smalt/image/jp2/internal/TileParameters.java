@@ -45,7 +45,9 @@ record TileParameters(int codingFlags, int progression, int layers, int transfor
     /**
      * Holds the ISO/IEC 15444-2 parameters in force for one tile.
      *
-     * @param kernels the {@code ATK} kernel of each component, {@code null} for the wavelets of ISO/IEC 15444-1
+     * @param kernels the {@code ATK} kernel of each component, {@code null} for the wavelets of ISO/IEC 15444-1; a
+     *                component using the single sample overlap transformation carries the lifting form of its
+     *                wavelet
      * @param decompositions the arbitrary decomposition of each component, {@code null} for the dyadic one
      * @param dcOffsets the variable DC offset of each component, or {@code null} for the level shift of ISO/IEC
      *                  15444-1
@@ -55,10 +57,11 @@ record TileParameters(int codingFlags, int progression, int layers, int transfor
      * @param allKernels every {@code ATK} kernel in force, by index
      * @param nonLinearities the non-linear transformation of each decoded image component, {@code null} for none
      * @param regions the arbitrary regions of interest of each component
+     * @param maskings the visual masking of each component (annex E), {@code null} for none
      */
     record Extensions(LiftingKernel[] kernels, Decomposition[] decompositions, double[] dcOffsets,
                       List<ComponentTransforms.Collection[]> stages, Map<Integer, double[]> arrays,
                       Map<Integer, LiftingKernel> allKernels, NonLinearity[] nonLinearities,
-                      List<List<HeaderScope.RoiRegion>> regions) {
+                      List<List<HeaderScope.RoiRegion>> regions, VisualMasking[] maskings) {
     }
 }

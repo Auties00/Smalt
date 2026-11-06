@@ -1055,35 +1055,6 @@ class Jp2Part2Test {
         }
     }
 
-    @Nested
-    @DisplayName("extensions this decoder does not implement")
-    class Unsupported {
-        private byte[] base(int rsiz) {
-            var writer = new Part2Writer(16, 16, 1, 8, false);
-            writer.rsiz = Codestream.RSIZ_PART2 | rsiz;
-            return writer.write(new long[][]{new long[256]});
-        }
-
-        private byte[] withSegment(byte[] data, byte[] segment) {
-            var at = indexOf(data, Codestream.QCD);
-            var length = ((data[at + 2] & 0xFF) << 8) | (data[at + 3] & 0xFF);
-            var end = at + 2 + length;
-            var result = new byte[data.length + segment.length];
-            System.arraycopy(data, 0, result, 0, end);
-            System.arraycopy(segment, 0, result, end, segment.length);
-            System.arraycopy(data, end, result, end + segment.length, data.length - end);
-            return result;
-        }
-
-        @Test
-        @DisplayName("single sample overlap and visual masking are rejected, not ignored")
-        void rejected() {
-            assertThrows(MediaException.Unsupported.class, () -> decode(base(0x0010)));
-            assertThrows(MediaException.Unsupported.class,
-                    () -> decode(withSegment(base(0x0008), Part2Forward.segment(Codestream.VMS, new byte[]{0, 0}))));
-        }
-    }
-
     static int indexOf(byte[] data, int marker) {
         for (var i = 0; i + 1 < data.length; i++) {
             if ((data[i] & 0xFF) == marker >> 8 && (data[i + 1] & 0xFF) == (marker & 0xFF)) {

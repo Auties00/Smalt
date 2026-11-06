@@ -58,6 +58,36 @@ public final class ComponentCoding {
     public static final int MAX_RESOLUTIONS = 33;
 
     /**
+     * The SSO field flag selecting the single sample overlap wavelet transformation (ISO/IEC 15444-2 Table A.11).
+     */
+    static final int OVERLAP_SSO = 0x8000;
+
+    /**
+     * The SSO field flag selecting tiles that overlap by one row and one column.
+     */
+    static final int OVERLAP_TILES = 0x4000;
+
+    /**
+     * The SSO field flag {@code Vovlp}.
+     */
+    static final int OVERLAP_VERTICAL = 0x2000;
+
+    /**
+     * The SSO field flag {@code Hovlp}.
+     */
+    static final int OVERLAP_HORIZONTAL = 0x1000;
+
+    /**
+     * The SSO field flag TBDWT.
+     */
+    static final int OVERLAP_TILE_BASED = 0x0800;
+
+    /**
+     * The reserved bits of the SSO field.
+     */
+    private static final int OVERLAP_RESERVED = 0x0700;
+
+    /**
      * The number of resolution levels, one more than the number of decomposition levels; 0 while a decomposition
      * style index stands for the level count.
      */
@@ -102,6 +132,11 @@ public final class ComponentCoding {
     private final int[] precinctHeights;
 
     /**
+     * The single sample overlap parameters of ISO/IEC 15444-2 Table A.11, or 0 when the segment carries none.
+     */
+    private final int overlap;
+
+    /**
      * Constructs a coding style of the dyadic decomposition with a wavelet of ISO/IEC 15444-1.
      *
      * @param resolutions     the number of resolution levels
@@ -115,7 +150,7 @@ public final class ComponentCoding {
     public ComponentCoding(int resolutions, int codeBlockWidth, int codeBlockHeight, int codeBlockStyle,
                            boolean reversible, int[] precinctWidths, int[] precinctHeights) {
         this(resolutions, codeBlockWidth, codeBlockHeight, codeBlockStyle, reversible ? 1 : 0, 0, precinctWidths,
-                precinctHeights);
+                precinctHeights, 0);
     }
 
     /**
@@ -130,9 +165,10 @@ public final class ComponentCoding {
      * @param precinctWidths     the precinct width exponents, one per resolution (as many as the segment holds while
      *                           the resolution count is unknown), or {@code null} for the maximal precincts
      * @param precinctHeights    the precinct height exponents, or {@code null}
+     * @param overlap            the single sample overlap parameters of ISO/IEC 15444-2 Table A.11, or 0
      */
     ComponentCoding(int resolutions, int codeBlockWidth, int codeBlockHeight, int codeBlockStyle, int transform,
-                    int decompositionStyle, int[] precinctWidths, int[] precinctHeights) {
+                    int decompositionStyle, int[] precinctWidths, int[] precinctHeights, int overlap) {
         this.resolutions = resolutions;
         this.codeBlockWidth = codeBlockWidth;
         this.codeBlockHeight = codeBlockHeight;
@@ -141,6 +177,7 @@ public final class ComponentCoding {
         this.decompositionStyle = decompositionStyle;
         this.precinctWidths = precinctWidths;
         this.precinctHeights = precinctHeights;
+        this.overlap = overlap;
     }
 
     /**
@@ -153,11 +190,15 @@ public final class ComponentCoding {
      *                       {@code Scoc} bit 0)
      * @param extended       whether the codestream uses the extensions of ISO/IEC 15444-2, which allow
      *                       decomposition style indices and {@code ATK} kernels
+     * @param overlapped     whether the codestream declares the single sample overlap capability of ISO/IEC 15444-2,
+     *                       which adds the 16-bit SSO field after the transformation field (Table A.7)
      * @return the coding style
      * @throws MediaException.Malformed if a field is out of range or the segment is too short
      */
-    static ComponentCoding parse(byte[] data, int offset, int end, boolean userPrecincts, boolean extended) {
-        if (end - offset < 5) {
+    static ComponentCoding parse(byte[] data, int offset, int end, boolean userPrecincts, boolean extended,
+                                 boolean overlapped) {
+        var fixed = overlapped ? 7 : 5;
+        if (end - offset < fixed) {
             throw new MediaException.Malformed("truncated JPEG 2000 coding style");
         }
         var levels = data[offset] & 0xFF;
@@ -179,17 +220,24 @@ public final class ComponentCoding {
         if (transform > 1 && !extended) {
             throw new MediaException.Malformed("invalid JPEG 2000 wavelet transform " + transform);
         }
+        var overlap = 0;
+        if (overlapped) {
+            overlap = ((data[offset + 5] & 0xFF) << 8) | (data[offset + 6] & 0xFF);
+            if ((overlap & OVERLAP_RESERVED) != 0) {
+                throw new MediaException.Malformed("invalid JPEG 2000 single sample overlap parameters " + overlap);
+            }
+        }
         int[] widths = null;
         int[] heights = null;
         if (userPrecincts) {
-            var count = resolutions == 0 ? end - offset - 5 : resolutions;
-            if (end - offset < 5 + count) {
+            var count = resolutions == 0 ? end - offset - fixed : resolutions;
+            if (end - offset < fixed + count) {
                 throw new MediaException.Malformed("truncated JPEG 2000 precinct sizes");
             }
             widths = new int[count];
             heights = new int[count];
             for (var i = 0; i < count; i++) {
-                var value = data[offset + 5 + i] & 0xFF;
+                var value = data[offset + fixed + i] & 0xFF;
                 if (i != 0 && ((value & 0xF) == 0 || (value >> 4) == 0)) {
                     throw new MediaException.Malformed("invalid JPEG 2000 precinct size at resolution " + i);
                 }
@@ -197,7 +245,8 @@ public final class ComponentCoding {
                 heights[i] = value >> 4;
             }
         }
-        return new ComponentCoding(resolutions, width, height, blockStyle, transform, style, widths, heights);
+        return new ComponentCoding(resolutions, width, height, blockStyle, transform, style, widths, heights,
+                overlap);
     }
 
     /**
@@ -216,7 +265,7 @@ public final class ComponentCoding {
             throw new MediaException.Malformed("truncated JPEG 2000 precinct sizes");
         }
         return new ComponentCoding(levels + 1, codeBlockWidth, codeBlockHeight, codeBlockStyle, transform,
-                decompositionStyle, precinctWidths, precinctHeights);
+                decompositionStyle, precinctWidths, precinctHeights, overlap);
     }
 
     /**
@@ -227,6 +276,79 @@ public final class ComponentCoding {
      */
     int length(boolean userPrecincts) {
         return 5 + (userPrecincts ? resolutions : 0);
+    }
+
+    /**
+     * Returns whether the single sample overlap wavelet transformation of ISO/IEC 15444-2 I.3 is used.
+     *
+     * @return whether the SSO flag of the SSO field is set
+     */
+    boolean sampleOverlap() {
+        return (overlap & OVERLAP_SSO) != 0;
+    }
+
+    /**
+     * Returns the tile overlap parameters every coding style segment of a codestream must share (ISO/IEC 15444-2
+     * Table A.11): the TSSO, {@code Vovlp}, {@code Hovlp} and TBDWT flags.
+     *
+     * @return the four flags in their positions of the SSO field
+     */
+    int tileOverlapFlags() {
+        return overlap & (OVERLAP_TILES | OVERLAP_VERTICAL | OVERLAP_HORIZONTAL | OVERLAP_TILE_BASED);
+    }
+
+    /**
+     * Returns whether the tiles overlap by one row and one column (ISO/IEC 15444-2 I.4).
+     *
+     * @return whether the TSSO flag is set
+     */
+    boolean tileOverlap() {
+        return (overlap & OVERLAP_TILES) != 0;
+    }
+
+    /**
+     * Returns whether an overlapping tile takes the extra row below its nominal area rather than above it.
+     *
+     * @return {@code Vovlp}
+     */
+    boolean verticalOverlap() {
+        return (overlap & OVERLAP_VERTICAL) != 0;
+    }
+
+    /**
+     * Returns whether an overlapping tile takes the extra column right of its nominal area rather than left of it.
+     *
+     * @return {@code Hovlp}
+     */
+    boolean horizontalOverlap() {
+        return (overlap & OVERLAP_HORIZONTAL) != 0;
+    }
+
+    /**
+     * Returns whether the TBDWT flag of the SSO field is set.
+     *
+     * @return whether it is
+     */
+    boolean tileBasedTransform() {
+        return (overlap & OVERLAP_TILE_BASED) != 0;
+    }
+
+    /**
+     * Returns the base-2 logarithm of the cell width {@code XC} of the single sample overlap transformation.
+     *
+     * @return the exponent, from 0 to 15
+     */
+    int cellWidthExponent() {
+        return overlap & 0xF;
+    }
+
+    /**
+     * Returns the base-2 logarithm of the cell height {@code YC} of the single sample overlap transformation.
+     *
+     * @return the exponent, from 0 to 15
+     */
+    int cellHeightExponent() {
+        return (overlap >> 4) & 0xF;
     }
 
     /**

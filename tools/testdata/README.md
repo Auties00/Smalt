@@ -543,6 +543,18 @@ extracted with `msiexec /a` and never committed; the script lists their SHA-256)
 it generates, and `SHA256SUMS` pins every file. Kakadu writes neither variable deadzones, trellis coded quantization
 nor `QPD`/`QPC` segments, so those features are checked against codestreams the test writes from annexes C and D.
 
+## JPEG 2000 visual masking and single sample overlap samples
+
+No encoder or decoder this project can run writes or reads ISO/IEC 15444-2 visual masking (`VMS`), the single
+sample overlap wavelet transformations or overlapping tiles (TSSO), so `Jp2Part2OverlapMaskingTest`
+(`smalt-image`) checks them against codestreams it writes from the equations of annexes E and I. The three samples in
+`image/src/test/resources/com/github/auties00/smalt/image/jp2/part2/` (`masking.j2k`: a 9-7 codestream with a main
+and a tile-part `VMS` segment; `overlap.j2k`: a 5-3 codestream with the overlap transformation and cells of 16x8;
+`tile-overlap.j2k`: six 5-3 tiles of 16x16 overlapping by one column and row, `Hovlp` 1 and `Vovlp` 0) are byte for byte the
+`valid-part2-masking`, `valid-part2-overlap` and `valid-part2-tile-overlap` fuzz seeds, which `Part2FuzzSeeds`
+writes deterministically with `-Dsmalt.fuzz.writeSeeds=true`; `SHA256SUMS` pins them, and the image behavior
+harness runs them against their golden dumps.
+
 ## JPEG XL feature vectors
 
 `JxlFeaturesTest` and the internal JPEG XL tests of `smalt-image` read small files with a preview frame, spot

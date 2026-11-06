@@ -46,6 +46,8 @@ final class Part2Writer {
     int droppedPasses;
     /** The code-block style flags ({@link ComponentCoding#TERMINATE_ALL} makes every truncation point exact). */
     int codeBlockStyle;
+    /** The SSO field of Table A.11, written after the transformation byte when {@link #rsiz} declares SSO. */
+    int overlap;
     LiftingKernel kernel;
     Decomposition decomposition;
     final List<byte[]> mainSegments = new ArrayList<>();
@@ -97,7 +99,8 @@ final class Part2Writer {
                 widths[r] = precinctSizes[Math.min(r, precinctSizes.length - 1)];
             }
         }
-        return new ComponentCoding(resolutions, codeBlock, codeBlock, codeBlockStyle, wavelet, style, widths, widths);
+        return new ComponentCoding(resolutions, codeBlock, codeBlock, codeBlockStyle, wavelet, style, widths, widths,
+                overlap);
     }
 
     private boolean derived() {
@@ -136,10 +139,104 @@ final class Part2Writer {
         return new Quantization(quantizationStyle, guardBits, exponents, mantissas, deadzones);
     }
 
-    private TileComponent structure(int c, Quantization quantization) {
-        return new TileComponent(componentX0(c), componentY0(c), componentX0(c) + componentWidth(c),
-                componentY0(c) + componentHeight(c), coding(), quantization, precisions[c], levels + 1, true, kernel,
-                decomposition, precinctQuantizations == null ? null : precinctQuantizations[c], MediaLimits.DEFAULT);
+    private TileComponent structure(int c, Quantization quantization, long[] bounds) {
+        return new TileComponent(Math.ceilDiv(bounds[0], subsamplingX[c]), Math.ceilDiv(bounds[1], subsamplingY[c]),
+                Math.ceilDiv(bounds[2], subsamplingX[c]), Math.ceilDiv(bounds[3], subsamplingY[c]), coding(),
+                quantization, precisions[c], levels + 1, true, kernel, decomposition,
+                precinctQuantizations == null ? null : precinctQuantizations[c], MediaLimits.DEFAULT);
+    }
+
+    /**
+     * Returns the encoder's structure of a component of the tile covering the image: its sub-bands with the encoder's
+     * step sizes (sub-band gains included), bit-plane counts and buffer layout.
+     */
+    TileComponent encoderStructure(int c) {
+        return structure(c, quantization(exponent), new long[]{x0, y0, x0 + width, y0 + height});
+    }
+
+    /** The nominal tile width and height, or 0 for one tile covering the image. */
+    long tileWidth;
+    long tileHeight;
+
+    private boolean tiled() {
+        return tileWidth > 0;
+    }
+
+    private int tilesWide() {
+        return tiled() ? (int) Math.ceilDiv(x0 + width, tileWidth) : 1;
+    }
+
+    private int tilesHigh() {
+        return tiled() ? (int) Math.ceilDiv(y0 + height, tileHeight) : 1;
+    }
+
+    /**
+     * Returns the reference grid area a tile codes: its nominal area, grown by the column and row of the tile overlap
+     * of ISO/IEC 15444-2 I.4 (equations I-46 to I-49) when {@link #overlap} sets TSSO.
+     */
+    long[] codingBounds(int tile) {
+        if (!tiled()) {
+            return new long[]{x0, y0, x0 + width, y0 + height};
+        }
+        var p = tile % tilesWide();
+        var q = tile / tilesWide();
+        var tsso = (overlap & 0x4000) != 0;
+        var hovlp = (overlap & 0x1000) != 0 ? 1 : 0;
+        var vovlp = (overlap & 0x2000) != 0 ? 1 : 0;
+        long tx0 = p * tileWidth;
+        long ty0 = q * tileHeight;
+        long tx1 = (p + 1) * tileWidth;
+        long ty1 = (q + 1) * tileHeight;
+        if (tsso) {
+            tx0 -= 1 - hovlp;
+            ty0 -= 1 - vovlp;
+            tx1 += hovlp;
+            ty1 += vovlp;
+        }
+        return new long[]{Math.max(tx0, x0), Math.max(ty0, y0), Math.min(tx1, x0 + width),
+                Math.min(ty1, y0 + height)};
+    }
+
+    /**
+     * Writes a reversible codestream of {@link #tileWidth} by {@link #tileHeight} tiles; {@code coefficients} gives the
+     * coefficients of each component of a tile, row-major over the tile-component, from the tile's index and coding
+     * area (left, top, right and bottom on the reference grid).
+     */
+    byte[] writeTiles(java.util.function.BiFunction<Integer, long[], long[][]> coefficients, int exponent) {
+        var quantization = quantization(exponent);
+        var bodies = new ArrayList<byte[]>();
+        for (var t = 0; t < tilesWide() * tilesHigh(); t++) {
+            var bounds = codingBounds(t);
+            var planes = coefficients.apply(t, bounds);
+            var integers = new int[planes.length][];
+            for (var c = 0; c < planes.length; c++) {
+                integers[c] = new int[planes[c].length];
+                for (var i = 0; i < integers[c].length; i++) {
+                    integers[c][i] = Math.toIntExact(planes[c][i]);
+                }
+            }
+            bodies.add(tileBody(integers, null, null, quantization, bounds));
+        }
+        return assemble(bodies, bandCount(quantization), exponent);
+    }
+
+    /** The irreversible counterpart of {@link #writeTiles(java.util.function.BiFunction, int)}. */
+    byte[] writeIrreversibleTiles(java.util.function.BiFunction<Integer, long[], float[][]> coefficients) {
+        var quantization = quantization(exponent);
+        var bodies = new ArrayList<byte[]>();
+        for (var t = 0; t < tilesWide() * tilesHigh(); t++) {
+            var bounds = codingBounds(t);
+            bodies.add(tileBody(null, coefficients.apply(t, bounds), null, quantization, bounds));
+        }
+        return assemble(bodies, bandCount(quantization), exponent);
+    }
+
+    private int bandCount(Quantization quantization) {
+        var bands = 0;
+        for (var resolution : structure(0, quantization, codingBounds(0)).resolutions) {
+            bands += resolution.bands().length;
+        }
+        return bands;
     }
 
     /** Writes a reversible codestream from integer coefficients. */
@@ -200,22 +297,23 @@ final class Part2Writer {
     }
 
     private byte[] write(int[][] integers, float[][] floats, BlockQuantizer quantizer, int exponent) {
-        var count = components();
         var quantization = quantization(exponent);
+        var bounds = new long[]{x0, y0, x0 + width, y0 + height};
+        return assemble(List.of(tileBody(integers, floats, quantizer, quantization, bounds)),
+                bandCount(quantization), exponent);
+    }
+
+    private byte[] tileBody(int[][] integers, float[][] floats, BlockQuantizer quantizer, Quantization quantization,
+                            long[] bounds) {
+        var count = components();
         var structures = new TileComponent[count];
-        var bands = 0;
         for (var c = 0; c < count; c++) {
-            structures[c] = structure(c, quantization);
-            if (c == 0) {
-                for (var resolution : structures[c].resolutions) {
-                    bands += resolution.bands().length;
-                }
-            }
+            structures[c] = structure(c, quantization, bounds);
         }
         var coder = new Tier1Encoder();
         for (var c = 0; c < count; c++) {
             var component = structures[c];
-            var stride = componentWidth(c);
+            var stride = (int) (component.x1 - component.x0);
             for (var r = 0; r < component.resolutions.length; r++) {
                 for (var band : component.resolutions[r].bands()) {
                     if (band.empty()) {
@@ -256,7 +354,6 @@ final class Part2Writer {
                 }
             }
         }
-        var bounds = new long[]{x0, y0, x0 + width, y0 + height};
         var order = new PacketOrder(bounds, structures, subsamplingX, subsamplingY, 1, false, MediaLimits.DEFAULT);
         var packets = new PacketEncoder(false, false);
         var body = new ByteArrayOutputStream();
@@ -265,7 +362,7 @@ final class Part2Writer {
                     packets.write(structures[component], resolution, precinct, layer, body);
                     return true;
                 });
-        return assemble(body.toByteArray(), bands, exponent);
+        return body.toByteArray();
     }
 
     private static void quantizeBlock(BlockQuantizer quantizer, float[] plane, int[] indices, int offset, int stride,
@@ -311,7 +408,7 @@ final class Part2Writer {
         return max - min;
     }
 
-    private byte[] assemble(byte[] packets, int bands, int exponent) {
+    private byte[] assemble(List<byte[]> bodies, int bands, int exponent) {
         var out = new ByteArrayOutputStream();
         Part2Forward.u16(out, Codestream.SOC);
         var siz = new ByteArrayOutputStream();
@@ -320,10 +417,10 @@ final class Part2Writer {
         Part2Forward.u32(siz, y0 + height);
         Part2Forward.u32(siz, x0);
         Part2Forward.u32(siz, y0);
-        Part2Forward.u32(siz, width);
-        Part2Forward.u32(siz, height);
-        Part2Forward.u32(siz, x0);
-        Part2Forward.u32(siz, y0);
+        Part2Forward.u32(siz, tiled() ? tileWidth : width);
+        Part2Forward.u32(siz, tiled() ? tileHeight : height);
+        Part2Forward.u32(siz, tiled() ? 0 : x0);
+        Part2Forward.u32(siz, tiled() ? 0 : y0);
         Part2Forward.u16(siz, components());
         for (var c = 0; c < components(); c++) {
             siz.write((precisions[c] - 1) | (signed[c] ? 0x80 : 0));
@@ -341,6 +438,9 @@ final class Part2Writer {
         cod.write(codeBlock - 2);
         cod.write(codeBlockStyle);
         cod.write(wavelet);
+        if ((rsiz & Codestream.RSIZ_SSO) != 0) {
+            Part2Forward.u16(cod, overlap);
+        }
         if (precinctSizes != null) {
             for (var r = 0; r <= levels; r++) {
                 var size = precinctSizes[Math.min(r, precinctSizes.length - 1)];
@@ -373,15 +473,18 @@ final class Part2Writer {
         for (var segment : tileSegments) {
             header.writeBytes(segment);
         }
-        Part2Forward.u16(out, Codestream.SOT);
-        Part2Forward.u16(out, 10);
-        Part2Forward.u16(out, 0);
-        Part2Forward.u32(out, 12L + header.size() + 2 + packets.length);
-        out.write(0);
-        out.write(1);
-        out.writeBytes(header.toByteArray());
-        Part2Forward.u16(out, Codestream.SOD);
-        out.writeBytes(packets);
+        for (var t = 0; t < bodies.size(); t++) {
+            var packets = bodies.get(t);
+            Part2Forward.u16(out, Codestream.SOT);
+            Part2Forward.u16(out, 10);
+            Part2Forward.u16(out, t);
+            Part2Forward.u32(out, 12L + header.size() + 2 + packets.length);
+            out.write(0);
+            out.write(1);
+            out.writeBytes(header.toByteArray());
+            Part2Forward.u16(out, Codestream.SOD);
+            out.writeBytes(packets);
+        }
         Part2Forward.u16(out, Codestream.EOC);
         return out.toByteArray();
     }

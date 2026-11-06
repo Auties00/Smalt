@@ -125,6 +125,220 @@ final class Part2Forward {
             new Step(1, -1, new double[]{-3, -1}, 2, 1),
             new Step(0, 0, new double[]{1, 1}, 2, 2));
 
+    /** The steps of {@link #WIDE_REVERSIBLE} with symmetric extension: a whole-sample symmetric kernel of four taps. */
+    static final Kernel WIDE_SYMMETRIC = new Kernel(true, 1, true, WIDE_REVERSIBLE.steps());
+
+    /**
+     * Returns the cell size {@code dC} of the single sample overlap transformation for the one-dimensional
+     * transforms of a signal decomposed {@code depth} times in their direction: {@code XC / 2^lev} at level
+     * {@code lev = depth + 1}, as the normative IDWT_SSO procedure of ISO/IEC 15444-2 Figure I.3 sets it, and 1 when
+     * that falls below 1.
+     */
+    static long cell(int exponent, int depth) {
+        var e = exponent - depth - 1;
+        return e <= 0 ? 1 : 1L << e;
+    }
+
+    /** Returns the factors {@code B_s} of ISO/IEC 15444-2 equation G-1 (irreversible form) of each lifting step. */
+    static double[] boundaryFactors(Kernel kernel) {
+        var steps = kernel.steps();
+        var factors = new double[steps.length];
+        var previous = 1.0;
+        var beforePrevious = 1.0;
+        for (var s = 0; s < steps.length; s++) {
+            var d = 0.0;
+            for (var alpha : steps[s].alphas()) {
+                d += alpha;
+            }
+            factors[s] = d * previous + beforePrevious;
+            beforePrevious = previous;
+            previous = factors[s];
+        }
+        return factors;
+    }
+
+    /**
+     * Decomposes one interleaved signal with a reversible kernel and the single sample overlap procedure
+     * {@code 1D_FILTD_SSO} (ISO/IEC 15444-2 I.3.2.6.1): the samples whose index is a multiple of {@code period} keep
+     * their value, every other one is lifted from the samples of its interval {@code [n_p, n_p+1]} extended
+     * symmetrically (equation I-15).
+     */
+    static void forwardOverlapped(long[] x, long i0, Kernel kernel, long period) {
+        var n = x.length;
+        if (n == 1) {
+            forward(x, i0, kernel);
+            return;
+        }
+        var i1 = i0 + n;
+        for (var step : kernel.steps()) {
+            var update = new long[n];
+            for (var p = 0; p < n; p++) {
+                var index = i0 + p;
+                if (Math.floorMod(index, 2) != step.m() || Math.floorMod(index, period) == 0) {
+                    continue;
+                }
+                var start = Math.max(i0, Math.floorDiv(index, period) * period);
+                var end = Math.min(i1, Math.floorDiv(index, period) * period + period + 1);
+                var sum = step.beta();
+                var alphas = step.alphas();
+                for (var k = 0; k < alphas.length; k++) {
+                    var tap = index + 1 - 2L * step.m() + 2L * (k + step.offset());
+                    sum += alphas[k] * x[(int) (extend(tap, start, end, true) + start - i0)];
+                }
+                update[p] = (long) Math.floor(sum / Math.scalb(1.0, step.epsilon()));
+            }
+            for (var p = 0; p < n; p++) {
+                if (Math.floorMod(i0 + p, 2) == step.m()) {
+                    x[p] += update[p];
+                }
+            }
+        }
+    }
+
+    /**
+     * Decomposes one interleaved signal with an irreversible kernel and the single sample overlap procedure
+     * {@code 1D_FILTD_SSO} (I.3.2.6.2): at each lifting step the samples of the step's parity whose index is a
+     * multiple of {@code period} are multiplied by {@code B_s} (equation I-16), every other one is lifted inside its
+     * interval (equation I-17); the scaling is that of the whole signal.
+     */
+    static void forwardOverlapped(double[] x, long i0, Kernel kernel, long period) {
+        var n = x.length;
+        if (n == 1) {
+            forward(x, i0, kernel);
+            return;
+        }
+        var factors = boundaryFactors(kernel);
+        var i1 = i0 + n;
+        var steps = kernel.steps();
+        for (var s = 0; s < steps.length; s++) {
+            var step = steps[s];
+            var next = x.clone();
+            for (var p = 0; p < n; p++) {
+                var index = i0 + p;
+                if (Math.floorMod(index, 2) != step.m()) {
+                    continue;
+                }
+                if (Math.floorMod(index, period) == 0) {
+                    next[p] = x[p] * factors[s];
+                    continue;
+                }
+                var start = Math.max(i0, Math.floorDiv(index, period) * period);
+                var end = Math.min(i1, Math.floorDiv(index, period) * period + period + 1);
+                var sum = 0.0;
+                var alphas = step.alphas();
+                for (var k = 0; k < alphas.length; k++) {
+                    var tap = index + 1 - 2L * step.m() + 2L * (k + step.offset());
+                    sum += alphas[k] * x[(int) (extend(tap, start, end, true) + start - i0)];
+                }
+                next[p] = x[p] + sum;
+            }
+            System.arraycopy(next, 0, x, 0, n);
+        }
+        for (var p = 0; p < n; p++) {
+            x[p] = Math.floorMod(i0 + p, 2) == 0 ? x[p] / kernel.k() : x[p] * kernel.k();
+        }
+    }
+
+    /**
+     * Decomposes a tile-component in place like {@link #decompose(long[], int, int, int, long, long, long, long, Tree,
+     * Kernel)}, every one-dimensional transform with the single sample overlap procedure and the cell size
+     * {@link #cell(int, int)} gives the depth of the signal it splits.
+     */
+    static void decomposeOverlapped(long[] data, int stride, int left, int top, long x0, long y0, long x1, long y1,
+                                    Tree tree, Kernel kernel, int cellX, int cellY, int depthX, int depthY) {
+        if (tree.split() == LEAF) {
+            return;
+        }
+        var width = (int) (x1 - x0);
+        var height = (int) (y1 - y0);
+        var lowWidth = (int) (ceilDiv2(x1, 1) - ceilDiv2(x0, 1));
+        var lowHeight = (int) (ceilDiv2(y1, 1) - ceilDiv2(y0, 1));
+        if (width > 0 && height > 0) {
+            if (tree.split() != HORIZONTAL) {
+                for (var u = 0; u < width; u++) {
+                    var column = new long[height];
+                    for (var v = 0; v < height; v++) {
+                        column[v] = data[(top + v) * stride + left + u];
+                    }
+                    forwardOverlapped(column, y0, kernel, cell(cellY, depthY));
+                    var split = deinterleave(column, y0);
+                    for (var v = 0; v < height; v++) {
+                        data[(top + v) * stride + left + u] = split[v];
+                    }
+                }
+            }
+            if (tree.split() != VERTICAL) {
+                for (var v = 0; v < height; v++) {
+                    var row = Arrays.copyOfRange(data, (top + v) * stride + left, (top + v) * stride + left + width);
+                    forwardOverlapped(row, x0, kernel, cell(cellX, depthX));
+                    System.arraycopy(deinterleave(row, x0), 0, data, (top + v) * stride + left, width);
+                }
+            }
+        }
+        var childX = depthX + (tree.split() != VERTICAL ? 1 : 0);
+        var childY = depthY + (tree.split() != HORIZONTAL ? 1 : 0);
+        var children = tree.children();
+        for (var j = 0; j < children.length; j++) {
+            var horizontal = tree.split() == JOINT ? j & 1 : tree.split() == HORIZONTAL ? j : -1;
+            var vertical = tree.split() == JOINT ? j >> 1 : tree.split() == VERTICAL ? j : -1;
+            var cx0 = horizontal < 0 ? x0 : horizontal == 0 ? ceilDiv2(x0, 1) : Math.floorDiv(x0, 2);
+            var cx1 = horizontal < 0 ? x1 : horizontal == 0 ? ceilDiv2(x1, 1) : Math.floorDiv(x1, 2);
+            var cy0 = vertical < 0 ? y0 : vertical == 0 ? ceilDiv2(y0, 1) : Math.floorDiv(y0, 2);
+            var cy1 = vertical < 0 ? y1 : vertical == 0 ? ceilDiv2(y1, 1) : Math.floorDiv(y1, 2);
+            decomposeOverlapped(data, stride, left + (horizontal == 1 ? lowWidth : 0),
+                    top + (vertical == 1 ? lowHeight : 0), cx0, cy0, cx1, cy1, children[j], kernel, cellX, cellY,
+                    childX, childY);
+        }
+    }
+
+    /** The irreversible counterpart of the reversible {@code decomposeOverlapped}. */
+    static void decomposeOverlapped(double[] data, int stride, int left, int top, long x0, long y0, long x1, long y1,
+                                    Tree tree, Kernel kernel, int cellX, int cellY, int depthX, int depthY) {
+        if (tree.split() == LEAF) {
+            return;
+        }
+        var width = (int) (x1 - x0);
+        var height = (int) (y1 - y0);
+        var lowWidth = (int) (ceilDiv2(x1, 1) - ceilDiv2(x0, 1));
+        var lowHeight = (int) (ceilDiv2(y1, 1) - ceilDiv2(y0, 1));
+        if (width > 0 && height > 0) {
+            if (tree.split() != HORIZONTAL) {
+                for (var u = 0; u < width; u++) {
+                    var column = new double[height];
+                    for (var v = 0; v < height; v++) {
+                        column[v] = data[(top + v) * stride + left + u];
+                    }
+                    forwardOverlapped(column, y0, kernel, cell(cellY, depthY));
+                    var split = deinterleave(column, y0);
+                    for (var v = 0; v < height; v++) {
+                        data[(top + v) * stride + left + u] = split[v];
+                    }
+                }
+            }
+            if (tree.split() != VERTICAL) {
+                for (var v = 0; v < height; v++) {
+                    var row = Arrays.copyOfRange(data, (top + v) * stride + left, (top + v) * stride + left + width);
+                    forwardOverlapped(row, x0, kernel, cell(cellX, depthX));
+                    System.arraycopy(deinterleave(row, x0), 0, data, (top + v) * stride + left, width);
+                }
+            }
+        }
+        var childX = depthX + (tree.split() != VERTICAL ? 1 : 0);
+        var childY = depthY + (tree.split() != HORIZONTAL ? 1 : 0);
+        var children = tree.children();
+        for (var j = 0; j < children.length; j++) {
+            var horizontal = tree.split() == JOINT ? j & 1 : tree.split() == HORIZONTAL ? j : -1;
+            var vertical = tree.split() == JOINT ? j >> 1 : tree.split() == VERTICAL ? j : -1;
+            var cx0 = horizontal < 0 ? x0 : horizontal == 0 ? ceilDiv2(x0, 1) : Math.floorDiv(x0, 2);
+            var cx1 = horizontal < 0 ? x1 : horizontal == 0 ? ceilDiv2(x1, 1) : Math.floorDiv(x1, 2);
+            var cy0 = vertical < 0 ? y0 : vertical == 0 ? ceilDiv2(y0, 1) : Math.floorDiv(y0, 2);
+            var cy1 = vertical < 0 ? y1 : vertical == 0 ? ceilDiv2(y1, 1) : Math.floorDiv(y1, 2);
+            decomposeOverlapped(data, stride, left + (horizontal == 1 ? lowWidth : 0),
+                    top + (vertical == 1 ? lowHeight : 0), cx0, cy0, cx1, cy1, children[j], kernel, cellX, cellY,
+                    childX, childY);
+        }
+    }
+
     /** Writes a marker segment: marker, length and body. */
     static byte[] segment(int marker, byte[] body) {
         var out = new ByteArrayOutputStream();

@@ -44,7 +44,7 @@ final class HtRoiWriter {
 
     private TileComponent structure() {
         var style = ComponentCoding.HIGH_THROUGHPUT | (causal ? ComponentCoding.VERTICALLY_CAUSAL : 0);
-        var coding = new ComponentCoding(levels + 1, codeBlock, codeBlock, style, 1, 0, null, null);
+        var coding = new ComponentCoding(levels + 1, codeBlock, codeBlock, style, 1, 0, null, null, 0);
         var exponents = new int[4096];
         Arrays.fill(exponents, exponent);
         var quantization = new Quantization(Quantization.NONE, guardBits, exponents, new int[4096]);

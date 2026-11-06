@@ -14,8 +14,10 @@ import java.util.Arrays;
  *
  * <p>A tile using the extensions of ISO/IEC 15444-2 also goes through the multiple component transformations
  * (annex J), the variable DC offset (annex B) and the non-linear point transformations (annex K), in that order,
- * and may carry arbitrary wavelet kernels (annexes G and H), arbitrary decompositions (annex F) and arbitrarily
- * shaped regions of interest (annex L).
+ * and may carry arbitrary wavelet kernels (annexes G and H), arbitrary decompositions (annex F), arbitrarily
+ * shaped regions of interest (annex L), visual masking (annex E), undone between dequantization and the inverse
+ * wavelet transformation, and the single sample overlap transformations (annex I): cell-based wavelet
+ * transformations, and tiles that code one more column and row than they reconstruct.
  *
  * @implNote This implementation follows OpenJPEG's {@code opj_tcd_decode_tile} for whole tiles:
  * the dequantization of {@code opj_t1_clbl_decode_processor}, the region-of-interest descaling,
@@ -110,7 +112,7 @@ final class TileDecoder {
                             long[][] windows) {
         var parameters = codestream.parameters(tile);
         var extensions = parameters.extensions();
-        var bounds = codestream.tileBounds(tile);
+        var bounds = codestream.codingBounds(tile);
         var count = codestream.components();
         var components = new TileComponent[count];
         var subsamplingX = new int[count];
@@ -140,7 +142,57 @@ final class TileDecoder {
             return reconstruct(codestream, parameters, components, body, limits,
                     windows == null ? null : interest(components, windows));
         }
-        return reconstructExtended(codestream, parameters, components, body, bounds, reduction, limits);
+        var samples = reconstructExtended(codestream, parameters, components, body, bounds, reduction, limits);
+        var owned = codestream.tileBounds(tile);
+        return Arrays.equals(owned, bounds) ? samples : crop(codestream, samples, owned, reduction);
+    }
+
+    /**
+     * Keeps, of the samples of a tile that overlaps its neighbours (ISO/IEC 15444-2 I.4), those of its own area: the
+     * samples the rule of I.4.3 takes from this tile.
+     *
+     * @param codestream the parsed codestream
+     * @param samples the samples of each decoded image component over the area the tile codes
+     * @param owned the tile's own area on the reference grid, from {@link Codestream#tileBounds(int)}
+     * @param reduction the number of resolution levels discarded
+     * @return the samples of each decoded image component over the tile's own area
+     */
+    private static Samples[] crop(Codestream codestream, Samples[] samples, long[] owned, int reduction) {
+        var outputs = codestream.outputs();
+        var result = new Samples[samples.length];
+        for (var j = 0; j < samples.length; j++) {
+            var source = samples[j];
+            var dx = outputs.subsamplingX()[j];
+            var dy = outputs.subsamplingY()[j];
+            var depths = codestream.reductionDepths(j, reduction);
+            var x0 = Math.max(source.x0(), TileComponent.ceilDivPow2(Math.ceilDiv(owned[0], dx), depths[0]));
+            var y0 = Math.max(source.y0(), TileComponent.ceilDivPow2(Math.ceilDiv(owned[1], dy), depths[1]));
+            var x1 = Math.min(source.x0() + source.width(),
+                    TileComponent.ceilDivPow2(Math.ceilDiv(owned[2], dx), depths[0]));
+            var y1 = Math.min(source.y0() + source.height(),
+                    TileComponent.ceilDivPow2(Math.ceilDiv(owned[3], dy), depths[1]));
+            var width = (int) Math.max(0, x1 - x0);
+            var height = (int) Math.max(0, y1 - y0);
+            var skipX = (int) (x0 - source.x0());
+            var skipY = (int) (y0 - source.y0());
+            int[] narrow = null;
+            long[] wide = null;
+            if (source.samples() != null) {
+                narrow = new int[width * height];
+            } else {
+                wide = new long[width * height];
+            }
+            for (var y = 0; y < height; y++) {
+                var from = (skipY + y) * source.width() + skipX;
+                if (narrow != null) {
+                    System.arraycopy(source.samples(), from, narrow, y * width, width);
+                } else {
+                    System.arraycopy(source.wide(), from, wide, y * width, width);
+                }
+            }
+            result[j] = new Samples(x0, y0, width, height, narrow, wide);
+        }
+        return result;
     }
 
     /**
@@ -309,6 +361,12 @@ final class TileDecoder {
         }
         if (body != null) {
             decodeBlocks(body, parameters, components, integers, longs, floats, masks, null);
+        }
+        for (var c = 0; c < count; c++) {
+            var masking = extensions.maskings()[c];
+            if (masking != null && floats[c] != null) {
+                masking.apply(floats[c], components[c].top().width(), components[c], codestream.precision(c));
+            }
         }
         for (var c = 0; c < count; c++) {
             var stride = components[c].top().width();

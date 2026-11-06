@@ -140,6 +140,17 @@ final class HeaderScope {
     final Map<Integer, int[]> downsamplingStyles = new HashMap<>();
 
     /**
+     * The visual masking of the {@code VMS} segment applying to every component (ISO/IEC 15444-2 A.3.2), or
+     * {@code null}.
+     */
+    VisualMasking defaultMasking;
+
+    /**
+     * The visual masking of each component's {@code VMS} segment, by component.
+     */
+    final Map<Integer, VisualMasking> maskings = new HashMap<>();
+
+    /**
      * Constructs an empty scope.
      *
      * @param components the number of image components

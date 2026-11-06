@@ -90,11 +90,9 @@ import java.util.Optional;
  * <p>The fragment table of a JPX file may store fragments of a codestream in other files, which are read from the
  * files {@link ImageDecoderOptions#dataReferences()} (or {@link Jp2DecoderOptions#dataReferences()}) supplies.
  *
- * <p>Unsupported, and rejected with {@link MediaException.Unsupported} naming the feature: the Part 2 coding
- * extensions of variable deadzone and trellis coded quantization, visual masking, single sample overlap
- * transformations, precinct-dependent quantization, code-block anchor points and block coder extensions; derived
- * quantization of sub-bands split in one direction only; and codestream fragments in another file that the data
- * reference resolver does not supply.
+ * <p>Unsupported, and rejected with {@link MediaException.Unsupported} naming the feature: the Part 2 code-block
+ * anchor points, block coder extensions and the TBDWT flag of the single sample overlap parameters; and codestream
+ * fragments in another file that the data reference resolver does not supply.
  *
  * <p>Damaged codestreams decode as far as their data goes: a truncated tile leaves its missing
  * code-block data at zero, and a missing tile is uniformly mid-gray. An invalid main header, or an
