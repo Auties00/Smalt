@@ -315,9 +315,9 @@ class DdsDecoderTest {
         void rejects() {
             assertThrows(MediaException.Malformed.class, () -> DdsDecoder.decode(MediaSource.of(new byte[64])));
             assertThrows(MediaException.Unsupported.class, () -> DdsDecoder.decode(MediaSource.of(
-                    DdsFiles.dx10(4, 4, 45, new byte[64]))));
+                    DdsFiles.dx10(4, 4, 106, new byte[64]))));
             assertThrows(MediaException.Unsupported.class, () -> DdsDecoder.decode(MediaSource.of(
-                    DdsFiles.fourCcFile("YUY2", 4, 4, new byte[64]))));
+                    DdsFiles.fourCcFile("CTX1", 4, 4, new byte[64]))));
             assertThrows(MediaException.Unsupported.class, () -> DdsDecoder.decode(MediaSource.of(DdsFiles.legacy(1,
                     1, 1, DdsFiles.DDPF_RGB, 0, 32, new long[]{0x0F0F, 0, 0, 0}, 0, 1, new byte[4]))));
             assertThrows(MediaException.Malformed.class, () -> DdsDecoder.decode(MediaSource.of(

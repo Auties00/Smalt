@@ -227,8 +227,9 @@ final class ImageFormatWorkloads {
     /**
      * Returns a workload that decodes DDS textures: a 256x256 texture of 32-bit texels with its mipmap levels, and
      * 256x256 surfaces of the block-compressed formats BC1 to BC7 (DXT1, DXT5 and ATI2 legacy codes and the DX10
-     * formats BC4, BC6H unsigned and signed, and BC7) and of half float, 10-bit and 11-bit float texels, to packed
-     * RGBA and the float ones also to float channels.
+     * formats BC4, BC6H unsigned and signed, and BC7), of half float, 10-bit and 11-bit float texels, of 24-bit depth
+     * with stencil, and of the YUV formats AYUV, Y416, P010, YUY2 and Y216, to packed RGBA and the float ones also to
+     * float channels.
      *
      * @return the workload
      */
@@ -243,7 +244,13 @@ final class ImageFormatWorkloads {
                 SyntheticImageFiles.ddsDx10(256, 256, 98, 16, true, 7),
                 SyntheticImageFiles.ddsDx10(256, 256, 10, 8, false, 8),
                 SyntheticImageFiles.ddsDx10(256, 256, 24, 4, false, 9),
-                SyntheticImageFiles.ddsDx10(256, 256, 26, 4, false, 10));
+                SyntheticImageFiles.ddsDx10(256, 256, 26, 4, false, 10),
+                SyntheticImageFiles.ddsDx10(256, 256, 45, 4, false, 11),
+                SyntheticImageFiles.ddsDx10(256, 256, 100, 4, false, 12),
+                SyntheticImageFiles.ddsDx10(256, 256, 102, 8, false, 13),
+                SyntheticImageFiles.ddsDx10(256, 256, 104, 3, false, 14),
+                SyntheticImageFiles.ddsDx10(256, 256, 107, 2, false, 15),
+                SyntheticImageFiles.ddsDx10(256, 256, 109, 4, false, 16));
         var channels = ImageDecoderOptions.builder().keepChannels(true).build();
         return TrainingWorkload.of("dds-decode", () -> {
             for (var file : files) {

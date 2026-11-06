@@ -25,14 +25,20 @@ import java.util.Objects;
  * Decodes DirectDraw Surface (DDS) textures.
  *
  * <p>Supported: the legacy header with pixel formats described by channel masks (RGB, luminance, alpha and bump
- * map {@code DUDV} formats of 8 to 32 bits per texel), the four-character codes {@code DXT1} to {@code DXT5},
- * {@code ATI1}, {@code BC4U}, {@code BC4S}, {@code ATI2}, {@code BC5U}, {@code BC5S}, {@code RGBG} and
- * {@code GRGB}, the Direct3D 9 numbers of the 16-bit and floating-point formats (36, 110 to 116); and the DX10
+ * map {@code DUDV} formats of 8 to 32 bits per texel, and YUV formats whose masks select Y, U, V and alpha fields
+ * of one width from 8 to 16 bits), 8-bit palette indices with or without an alpha byte (followed by their
+ * 256-entry palette), the four-character codes {@code DXT1} to {@code DXT5}, {@code ATI1}, {@code BC4U},
+ * {@code BC4S}, {@code ATI2}, {@code BC5U}, {@code BC5S}, {@code RGBG}, {@code GRGB}, {@code YUY2} and
+ * {@code UYVY}, the Direct3D 9 numbers of the 16-bit and floating-point formats (36, 110 to 116); and the DX10
  * header with the DXGI formats BC1 to BC7 (BC6H signed and unsigned), the 32, 16 and 8-bit float, normalized and
  * integer formats of one to four channels, {@code R10G10B10A2}, {@code R11G11B10_FLOAT},
  * {@code R9G9B9E5_SHAREDEXP}, {@code R10G10B10_XR_BIAS_A2}, {@code B5G6R5}, {@code B5G5R5A1}, {@code B4G4R4A4},
- * {@code B8G8R8A8}, {@code B8G8R8X8}, {@code A8} and the RGB pair formats; texture arrays, cube maps (the faces a
- * legacy header lists) and volume textures, with their mipmap levels. YUV, depth, palette and video formats are
+ * {@code B8G8R8A8}, {@code B8G8R8X8}, {@code A8}, {@code R1_UNORM}, the RGB pair formats, the depth-stencil formats
+ * ({@code D32_FLOAT_S8X24_UINT}, {@code D32_FLOAT}, {@code D24_UNORM_S8_UINT}, {@code D16_UNORM} and their typeless
+ * views), the palette index formats {@code P8}, {@code A8P8}, {@code AI44} and {@code IA44}, and the video formats
+ * {@code AYUV}, {@code Y410}, {@code Y416}, {@code YUY2}, {@code Y210}, {@code Y216}, {@code NV12}, {@code P010},
+ * {@code P016}, {@code NV11}, {@code P208}, {@code V208} and {@code V408}; texture arrays, cube maps (the faces a
+ * legacy header lists) and volume textures, with their mipmap levels. The opaque {@code 420_OPAQUE} format is
  * unsupported. Block-compressed formats decode bit for bit as the reference decoder {@code bcdec} decodes them, the
  * BC4 and BC5 channels with its precise interpolation.
  *
@@ -46,7 +52,15 @@ import java.util.Objects;
  * mapped from -1..1 to 0..1 as {@code (v + 1) / 2}. Single-channel formats (BC4, {@code R8}, {@code R16},
  * {@code R32}, luminance) decode to gray, two-channel ones (BC5, {@code R8G8}, {@code R16G16}, {@code R32G32}) to
  * red and green with zero blue ({@code ATI2} holds green in its first block and red in its second, the order of ATI's
- * 3Dc), alpha-only ones to black with alpha. Premultiplied alpha ({@code DXT2},
+ * 3Dc), alpha-only ones to black with alpha. Depth-stencil formats decode the depth to red and the stencil to
+ * green, scaled from 0..255 to the full range like any integer field; a format of only the stencil decodes it to
+ * green with zero red. {@code R1_UNORM} decodes to black and white gray, the most significant bit of each byte
+ * first. The palette index formats, whose DX10 files carry no palette, decode their indices to gray, scaled to the
+ * full range, with their alpha ({@code AI44} holds alpha in its high nibble, {@code IA44} in its low one); the legacy
+ * palettes decode to RGBA, a palette whose every alpha byte is zero as opaque. YUV texels convert to RGB with the
+ * limited-range video coefficients and the integer arithmetic of DirectXTex, 8-bit samples to 8-bit RGB and 10 and
+ * 16-bit samples to 16-bit RGB, each subsampled chroma sample replicated over the texels it covers; YUV mask fields
+ * other than 8 or 10 bits wide are aligned to 16 bits first. Premultiplied alpha ({@code DXT2},
  * {@code DXT4}, and a DX10 header whose alpha mode is 2) is divided out. Pixels of up to 8 bits decode to packed
  * RGBA; deeper integer ones to packed RGBA of 8 bits, or 16 bits with {@link ImageDecoderOptions#highBitDepth()};
  * floating-point ones (BC6H, the float formats, and 32-bit integers) to packed RGBA as well, clamped to 0..1, or to

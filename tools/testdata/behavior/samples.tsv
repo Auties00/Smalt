@@ -198,8 +198,15 @@ image/src/test/resources/samples/bmp/rgb24.bmp	4662	d444648257e0d4e33b3f30bafa15
 image/src/test/resources/samples/dds/bc6h.dds	1684	7245869e4f395c6dcc4d441ea26866ae21271c35713100e99e58d4404476d702	make-raster-samples.py
 image/src/test/resources/samples/dds/bc7.dds	1684	b0fb50ac02a58d0c171167cfee0e8a31c15ebb83354e08e7dcb5b045cb7fb2da	make-raster-samples.py
 image/src/test/resources/samples/dds/cube-bgra.dds	6272	4681c0e4c89ce4b278f9366b247060254dac2ccff85b9eca147c0dac7c1df097	make-raster-samples.py
+image/src/test/resources/samples/dds/d24s8.dds	1684	dbeb8cc00ca5677a3b1c780c25a71d693e8cebf745938d40810fea9c8f652b1c	make-raster-samples.py
 image/src/test/resources/samples/dds/dxt1-mipmaps.dds	1168	e0df824f6153b5b202ab65a9b54cb347ffe5c1394b7cd93a7c2e4ba13de936a8	make-raster-samples.py
 image/src/test/resources/samples/dds/dxt5.dds	1664	f47fdb5c52318a1b79e42cbf03a728a4841cb124ca0c5fe4be936d1446af2b9b	make-raster-samples.py
+image/src/test/resources/samples/dds/nv12-mipmaps.dds	3224	f7b7e41af443dd01c69b9b62ac992f281945c598d55901fa1035319720e3268b	make-raster-samples.py
+image/src/test/resources/samples/dds/p8-palette.dds	1536	6c19c865bf8eb5263260a20140ef32e3ccfb400521d76ac26e7536bc5bd35d68	make-raster-samples.py
+image/src/test/resources/samples/dds/r1.dds	175	ff81ba81c3f24a98f94f33f4145a721b190c060b1b1b02ff322110731991e01a	make-raster-samples.py
+image/src/test/resources/samples/dds/uyvy.dds	896	da263bf1aa37a1f4b688763a3d0165f224c043ebfd3ba3ae01823481662c94d6	make-raster-samples.py
+image/src/test/resources/samples/dds/y410.dds	1684	818957dafcd60af26bc97717b8f49cc32dcbbece62bc40fab96d9c7565e242e7	make-raster-samples.py
+image/src/test/resources/samples/dds/yuv-masks.dds	1664	752d54b7bc5af4b84dae94ee5347986b59d3c5b677d0bc6322cfdac6d3d7b013	make-raster-samples.py
 image/src/test/resources/samples/exr/rle-float.exr	21326	85dddfc0ae15d6d064f3762ba50203176e73bf88e7b9e2558c53fb1dee0cb2f9	make-raster-samples.sh
 image/src/test/resources/samples/exr/zip-half.exr	8888	ad59cd23f7538ed9013d938670611f08e2baf9cd3f68109597c649a68db35dc8	make-raster-samples.sh
 image/src/test/resources/samples/gif/animated.gif	1745	2f2e69f8839196d42c5d051e1d888466a2e3dc37a56c7a54f4bf73982c76b981	make-image-samples.sh

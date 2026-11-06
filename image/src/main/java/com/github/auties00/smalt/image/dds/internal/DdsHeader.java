@@ -27,6 +27,7 @@ public record DdsHeader(int width, int height, int depth, int mipmaps, int[] fac
     private static final int DDPF_ALPHAPIXELS = 0x1;
     private static final int DDPF_ALPHA = 0x2;
     private static final int DDPF_FOURCC = 0x4;
+    private static final int DDPF_PALETTEINDEXED8 = 0x20;
     private static final int DDPF_YUV = 0x200;
     private static final int DDPF_RGB = 0x40;
     private static final int DDPF_LUMINANCE = 0x20000;
@@ -38,6 +39,12 @@ public record DdsHeader(int width, int height, int depth, int mipmaps, int[] fac
      * The most mipmap levels a texture can have.
      */
     private static final int MAX_LEVELS = 32;
+
+    /**
+     * The size of the palette of a legacy palette format: 256 entries of red, green, blue and alpha bytes, between
+     * the header and the first surface.
+     */
+    private static final int PALETTE_BYTES = 1024;
 
     /**
      * One surface of the file.
@@ -123,9 +130,11 @@ public record DdsHeader(int width, int height, int depth, int mipmaps, int[] fac
             offset = 148;
         } else if ((pixelFlags & DDPF_FOURCC) != 0) {
             format = fourCcFormat(fourCc);
+        } else if ((pixelFlags & DDPF_PALETTEINDEXED8) != 0) {
+            format = palette(data, pixelFlags, bitCount);
+            offset += PALETTE_BYTES;
         } else if ((pixelFlags & DDPF_YUV) != 0) {
-            // TODO: decode the legacy YUV pixel formats (DDPF_YUV with channel masks)
-            throw new MediaException.Unsupported("dds", "YUV pixel formats");
+            format = yuv(pixelFlags, bitCount, masks);
         } else {
             format = masked(pixelFlags, bitCount, masks);
         }
@@ -213,6 +222,8 @@ public record DdsHeader(int width, int height, int depth, int mipmaps, int[] fac
                     case "BC5S" -> DdsFormat.of(name, Kind.BC5, true);
                     case "RGBG" -> DdsFormat.of(name, Kind.RGBG, false);
                     case "GRGB" -> DdsFormat.of(name, Kind.GRGB, false);
+                    case "YUY2" -> DdsFormat.yuv422(name, 1, 0, 8, false);
+                    case "UYVY" -> DdsFormat.yuv422(name, 1, 0, 8, true);
                     default -> throw new MediaException.Unsupported("dds", "DDS pixel format "
                             + (name.chars().allMatch(c -> c >= 32 && c < 127) ? name : Integer.toString(code)));
                 };
@@ -245,6 +256,59 @@ public record DdsHeader(int width, int height, int depth, int mipmaps, int[] fac
             throw new MediaException.Malformed("the DDS pixel format has no channel mask");
         }
         return DdsFormat.plain("masks", bitCount / 8, fields.toArray(Field[]::new));
+    }
+
+    /**
+     * Maps a legacy YUV pixel format, whose red, green and blue masks select the Y, U and V samples, to a format.
+     */
+    private static DdsFormat yuv(int flags, int bitCount, long[] masks) {
+        if (bitCount != 8 && bitCount != 16 && bitCount != 24 && bitCount != 32) {
+            throw new MediaException.Malformed("invalid DDS bit count " + bitCount);
+        }
+        if (masks[0] == 0 || masks[1] == 0 || masks[2] == 0) {
+            throw new MediaException.Malformed("the DDS YUV pixel format lacks a Y, U or V mask");
+        }
+        for (var mask : masks) {
+            if (mask >>> bitCount != 0) {
+                throw new MediaException.Malformed("a DDS YUV mask exceeds the " + bitCount + "-bit texel");
+            }
+        }
+        var fields = new ArrayList<Field>();
+        for (var channel = 0; channel < 3; channel++) {
+            addMask(fields, channel, masks[channel], Type.UNORM);
+        }
+        if ((flags & DDPF_ALPHAPIXELS) != 0) {
+            addMask(fields, 3, masks[3], Type.UNORM);
+        }
+        return DdsFormat.yuv444("YUV masks", bitCount / 8, fields.toArray(Field[]::new));
+    }
+
+    /**
+     * Maps a legacy palette format to a format, reading the palette that follows the header.
+     *
+     * <p>A palette whose every alpha byte is zero, as writers that leave the entries' flags byte unset produce, is
+     * opaque.
+     */
+    private static DdsFormat palette(byte[] data, int flags, int bitCount) {
+        var alphaBytes = (flags & DDPF_ALPHAPIXELS) != 0;
+        if (bitCount != (alphaBytes ? 16 : 8)) {
+            throw new MediaException.Malformed("invalid DDS palette bit count " + bitCount);
+        }
+        if (data.length < 128 + PALETTE_BYTES) {
+            throw new MediaException.Malformed("the DDS palette is truncated");
+        }
+        var palette = new int[256];
+        var translucent = false;
+        for (var index = 0; index < 256; index++) {
+            palette[index] = (int) ByteArrays.u32le(data, 128 + 4 * index);
+            translucent |= palette[index] >>> 24 != 0;
+        }
+        if (!translucent) {
+            for (var index = 0; index < 256; index++) {
+                palette[index] |= 0xFF000000;
+            }
+        }
+        return DdsFormat.palette(alphaBytes ? "A8P8" : "P8", palette, alphaBytes);
     }
 
     /**
@@ -287,6 +351,10 @@ public record DdsHeader(int width, int height, int depth, int mipmaps, int[] fac
             case 15, 16 -> DdsFormat.plain("R32G32_FLOAT", 8, f(0, 0, 32, Type.FLOAT), f(1, 32, 32, Type.FLOAT));
             case 17 -> DdsFormat.plain("R32G32_UINT", 8, f(0, 0, 32, Type.UINT), f(1, 32, 32, Type.UINT));
             case 18 -> DdsFormat.plain("R32G32_SINT", 8, f(0, 0, 32, Type.SINT), f(1, 32, 32, Type.SINT));
+            case 19, 20 -> DdsFormat.plain(code == 19 ? "R32G8X24_TYPELESS" : "D32_FLOAT_S8X24_UINT", 8,
+                    f(0, 0, 32, Type.FLOAT), f(1, 32, 8, Type.UINT));
+            case 21 -> DdsFormat.plain("R32_FLOAT_X8X24_TYPELESS", 8, f(0, 0, 32, Type.FLOAT));
+            case 22 -> DdsFormat.plain("X32_TYPELESS_G8X24_UINT", 8, f(1, 32, 8, Type.UINT));
             case 23, 24 -> rgb10a2("R10G10B10A2_UNORM", Type.UNORM);
             case 25 -> rgb10a2("R10G10B10A2_UINT", Type.UINT);
             case 26 -> DdsFormat.plain("R11G11B10_FLOAT", 4, f(0, 0, 11, Type.FLOAT), f(1, 11, 11, Type.FLOAT),
@@ -301,13 +369,19 @@ public record DdsHeader(int width, int height, int depth, int mipmaps, int[] fac
             case 37 -> two("R16G16_SNORM", 16, Type.SNORM);
             case 38 -> two("R16G16_SINT", 16, Type.SINT);
             case 39, 41 -> DdsFormat.plain("R32_FLOAT", 4, f(0, 0, 32, Type.FLOAT));
+            case 40 -> DdsFormat.plain("D32_FLOAT", 4, f(0, 0, 32, Type.FLOAT));
             case 42 -> DdsFormat.plain("R32_UINT", 4, f(0, 0, 32, Type.UINT));
             case 43 -> DdsFormat.plain("R32_SINT", 4, f(0, 0, 32, Type.SINT));
+            case 44, 45 -> DdsFormat.plain(code == 44 ? "R24G8_TYPELESS" : "D24_UNORM_S8_UINT", 4,
+                    f(0, 0, 24, Type.UNORM), f(1, 24, 8, Type.UINT));
+            case 46 -> DdsFormat.plain("R24_UNORM_X8_TYPELESS", 4, f(0, 0, 24, Type.UNORM));
+            case 47 -> DdsFormat.plain("X24_TYPELESS_G8_UINT", 4, f(1, 24, 8, Type.UINT));
             case 48, 49 -> two("R8G8_UNORM", 8, Type.UNORM);
             case 50 -> two("R8G8_UINT", 8, Type.UINT);
             case 51 -> two("R8G8_SNORM", 8, Type.SNORM);
             case 52 -> two("R8G8_SINT", 8, Type.SINT);
             case 53, 54 -> DdsFormat.plain("R16_FLOAT", 2, f(0, 0, 16, Type.FLOAT));
+            case 55 -> DdsFormat.plain("D16_UNORM", 2, f(0, 0, 16, Type.UNORM));
             case 56 -> DdsFormat.plain("R16_UNORM", 2, f(0, 0, 16, Type.UNORM));
             case 57 -> DdsFormat.plain("R16_UINT", 2, f(0, 0, 16, Type.UINT));
             case 58 -> DdsFormat.plain("R16_SNORM", 2, f(0, 0, 16, Type.SNORM));
@@ -317,6 +391,7 @@ public record DdsHeader(int width, int height, int depth, int mipmaps, int[] fac
             case 63 -> DdsFormat.plain("R8_SNORM", 1, f(0, 0, 8, Type.SNORM));
             case 64 -> DdsFormat.plain("R8_SINT", 1, f(0, 0, 8, Type.SINT));
             case 65 -> DdsFormat.plain("A8_UNORM", 1, f(3, 0, 8, Type.UNORM));
+            case 66 -> DdsFormat.of("R1_UNORM", Kind.BITS, false);
             case 67 -> DdsFormat.plain("R9G9B9E5_SHAREDEXP", 4, f(0, 0, 32, Type.SHARED_EXPONENT));
             case 68 -> DdsFormat.of("R8G8_B8G8_UNORM", Kind.RGBG, false);
             case 69 -> DdsFormat.of("G8R8_G8B8_UNORM", Kind.GRGB, false);
@@ -340,10 +415,28 @@ public record DdsHeader(int width, int height, int depth, int mipmaps, int[] fac
             case 94, 95 -> DdsFormat.of("BC6H_UF16", Kind.BC6H, false);
             case 96 -> DdsFormat.of("BC6H_SF16", Kind.BC6H, true);
             case 97, 98, 99 -> DdsFormat.of("BC7_UNORM", Kind.BC7, false);
+            case 100 -> DdsFormat.yuv444("AYUV", 4, f(2, 0, 8, Type.UNORM), f(1, 8, 8, Type.UNORM),
+                    f(0, 16, 8, Type.UNORM), f(3, 24, 8, Type.UNORM));
+            case 101 -> DdsFormat.yuv444("Y410", 4, f(1, 0, 10, Type.UNORM), f(0, 10, 10, Type.UNORM),
+                    f(2, 20, 10, Type.UNORM), f(3, 30, 2, Type.UNORM));
+            case 102 -> DdsFormat.yuv444("Y416", 8, f(1, 0, 16, Type.UNORM), f(0, 16, 16, Type.UNORM),
+                    f(2, 32, 16, Type.UNORM), f(3, 48, 16, Type.UNORM));
+            case 103 -> DdsFormat.planar("NV12", 1, 0, 8, 2, 2, true);
+            case 104 -> DdsFormat.planar("P010", 2, 6, 10, 2, 2, true);
+            case 105 -> DdsFormat.planar("P016", 2, 0, 16, 2, 2, true);
+            case 107 -> DdsFormat.yuv422("YUY2", 1, 0, 8, false);
+            case 108 -> DdsFormat.yuv422("Y210", 2, 6, 10, false);
+            case 109 -> DdsFormat.yuv422("Y216", 2, 0, 16, false);
+            case 110 -> DdsFormat.planar("NV11", 1, 0, 8, 4, 1, true);
+            case 111 -> DdsFormat.plain("AI44", 1, f(0, 0, 4, Type.UINT), f(3, 4, 4, Type.UNORM));
+            case 112 -> DdsFormat.plain("IA44", 1, f(0, 4, 4, Type.UINT), f(3, 0, 4, Type.UNORM));
+            case 113 -> DdsFormat.plain("P8", 1, f(0, 0, 8, Type.UINT));
+            case 114 -> DdsFormat.plain("A8P8", 2, f(0, 0, 8, Type.UINT), f(3, 8, 8, Type.UNORM));
             case 115 -> DdsFormat.plain("B4G4R4A4_UNORM", 2, f(2, 0, 4, Type.UNORM), f(1, 4, 4, Type.UNORM),
                     f(0, 8, 4, Type.UNORM), f(3, 12, 4, Type.UNORM));
-            // TODO: decode the depth-stencil, R1_UNORM, palette (P8, A8P8, AI44, IA44) and video (AYUV, Y410, Y416,
-            // NV12, P010, P016, YUY2, Y210, Y216, NV11) DXGI formats
+            case 130 -> DdsFormat.planar("P208", 1, 0, 8, 2, 1, true);
+            case 131 -> DdsFormat.planar("V208", 1, 0, 8, 1, 2, false);
+            case 132 -> DdsFormat.planar("V408", 1, 0, 8, 1, 1, false);
             default -> throw new MediaException.Unsupported("dds", "DXGI format " + code);
         };
     }

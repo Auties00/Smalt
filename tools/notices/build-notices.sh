@@ -129,6 +129,7 @@ Contents
   72. LibAtrac9
   73. MPEG-4 Audio error protection tool reference software (NTT DoCoMo)
   74. SVT-JPEG-XS
+  75. DirectXTex
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -2536,6 +2537,28 @@ Copyright:
 EOF
 license_start "SVT-JPEG-XS license (LICENSE.md)"
 cat "$LIC/svt-jpeg-xs-LICENSE.md"
+
+section "75. DirectXTex"
+cat <<'EOF'
+Project:      DirectXTex, Microsoft's texture processing library (commit
+              c0cb977, 2026-11-03)
+Home:         https://github.com/microsoft/DirectXTex
+Source:       https://github.com/microsoft/DirectXTex (DirectXTex)
+License text: LICENSE at the root of the repository
+License:      MIT
+
+Derived Smalt packages:
+  image.dds.internal (DdsFormat: the integer YUV to RGB conversions of the
+  AYUV, Y410, Y416, YUY2, Y210 and Y216 scanline loaders of
+  DirectXTexConvert.cpp)
+
+Derivation: C++ arithmetic translated to Java.
+
+Copyright:
+  Copyright (c) Microsoft Corporation.
+EOF
+license_start "DirectXTex license (LICENSE)"
+cat "$LIC/directxtex-LICENSE"
 
 } > "$OUT"
 

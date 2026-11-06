@@ -50,6 +50,25 @@ def dds(out):
     write('cube-bgra.dds', dds_header(16, 16, 1, 0x41, 0, 32, (0xFF0000, 0xFF00, 0xFF, 0xFF000000), cube)
           + rng.randbytes(6 * 16 * 16 * 4))
 
+    def dx10(width, height, mipmaps, dxgi):
+        return (dds_header(width, height, mipmaps, 0x4, code('DX10'), 0, (0, 0, 0, 0))
+                + struct.pack('<5I', dxgi, 3, 0, 1, 0))
+
+    # NV12 levels: a pitch of the width rounded up to even bytes, the Y rows, then half the rows (rounded up) of
+    # interleaved U and V
+    payload = b''.join(rng.randbytes(((w + 1) // 2 * 2) * (h + (h + 1) // 2)) for w, h in sizes)
+    write('nv12-mipmaps.dds', dx10(48, 32, len(sizes), 103) + payload)
+    write('y410.dds', dx10(24, 16, 1, 101) + rng.randbytes(24 * 16 * 4))
+    write('d24s8.dds', dx10(24, 16, 1, 45) + rng.randbytes(24 * 16 * 4))
+    write('r1.dds', dx10(21, 9, 1, 66) + rng.randbytes(3 * 9))
+    write('uyvy.dds', dds_header(23, 16, 1, 0x4, code('UYVY'), 0, (0, 0, 0, 0)) + rng.randbytes(12 * 4 * 16))
+    # DDPF_YUV | DDPF_ALPHAPIXELS with the masks of AYUV (V, U, Y and alpha bytes)
+    write('yuv-masks.dds', dds_header(24, 16, 1, 0x201, 0, 32, (0xFF0000, 0xFF00, 0xFF, 0xFF000000))
+          + rng.randbytes(24 * 16 * 4))
+    # DDPF_PALETTEINDEXED8: 256 palette entries of red, green, blue and alpha bytes before the indices
+    write('p8-palette.dds', dds_header(24, 16, 1, 0x20, 0, 8, (0, 0, 0, 0)) + rng.randbytes(1024)
+          + rng.randbytes(24 * 16))
+
 
 def packbits(row):
     out = bytearray()

@@ -12,7 +12,9 @@ final class DdsFiles {
     static final int DDPF_ALPHAPIXELS = 0x1;
     static final int DDPF_ALPHA = 0x2;
     static final int DDPF_FOURCC = 0x4;
+    static final int DDPF_PALETTEINDEXED8 = 0x20;
     static final int DDPF_RGB = 0x40;
+    static final int DDPF_YUV = 0x200;
     static final int DDPF_LUMINANCE = 0x20000;
     static final int DDPF_BUMPDUDV = 0x80000;
 
