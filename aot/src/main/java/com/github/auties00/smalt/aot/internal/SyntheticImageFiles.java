@@ -10,7 +10,8 @@ import java.util.zip.Deflater;
 
 /**
  * Writes the files of the image formats Smalt decodes but does not encode, for the training workloads of their
- * decoders: Photoshop documents and DirectDraw Surface textures, deterministically, from a synthetic picture.
+ * decoders: Photoshop documents (with a merged image, or with layers only) and DirectDraw Surface textures,
+ * deterministically, from a synthetic picture.
  */
 final class SyntheticImageFiles {
     /**
@@ -133,6 +134,145 @@ final class SyntheticImageFiles {
             }
         }
         return out.toByteArray();
+    }
+
+    /**
+     * Writes an 8-bit RGB Photoshop document saved without a merged image, whose decoder renders its composite from
+     * the layers: a background holding the picture's colors, a pass-through group at reduced opacity holding a
+     * multiply layer with the picture's alpha as transparency and a masked hue layer, a soft light layer and a
+     * screen layer clipped to it, each layer PackBits-compressed.
+     *
+     * @return the document
+     */
+    static byte[] psdLayered(RgbaPicture picture) {
+        var width = picture.width();
+        var height = picture.height();
+        var count = width * height;
+        var pixels = picture.pixels();
+        var colors = new byte[3][count];
+        var alpha = new byte[count];
+        var inverse = new byte[3][count];
+        var mask = new byte[count];
+        for (var y = 0; y < height; y++) {
+            for (var x = 0; x < width; x++) {
+                var at = y * picture.stride() + x * 4;
+                var index = y * width + x;
+                for (var channel = 0; channel < 3; channel++) {
+                    colors[channel][index] = pixels[at + channel];
+                    inverse[channel][index] = (byte) ~pixels[at + (channel + 1) % 3];
+                }
+                alpha[index] = pixels[at + 3];
+                mask[index] = (byte) (x * 255 / Math.max(1, width - 1));
+            }
+        }
+        var records = new ByteArrayOutputStream();
+        var data = new ByteArrayOutputStream();
+        var full = new int[]{0, 0, height, width};
+        var none = new int[]{0, 0, 0, 0};
+        layer(records, data, full, new byte[][]{colors[0], colors[1], colors[2]}, null, "norm", 255, false, null, 0);
+        layer(records, data, none, new byte[0][], null, "norm", 255, false, null, 3);
+        layer(records, data, full, new byte[][]{inverse[0], inverse[1], inverse[2]}, alpha, "mul ", 255, false, null,
+                0);
+        layer(records, data, full, new byte[][]{colors[2], colors[0], colors[1]}, null, "hue ", 200, false, mask, 0);
+        layer(records, data, none, new byte[0][], null, "pass", 180, false, null, 1);
+        layer(records, data, full, new byte[][]{inverse[1], colors[1], inverse[2]}, alpha, "sLit", 255, false, null,
+                0);
+        layer(records, data, full, new byte[][]{colors[1], inverse[0], colors[0]}, null, "scrn", 160, true, null, 0);
+        var info = new ByteArrayOutputStream();
+        info.writeBytes(ByteBuffer.allocate(2).putShort((short) -7).array());
+        info.writeBytes(records.toByteArray());
+        info.writeBytes(data.toByteArray());
+        if ((info.size() & 1) != 0) {
+            info.write(0);
+        }
+        var out = new ByteArrayOutputStream();
+        var header = ByteBuffer.allocate(26);
+        header.put("8BPS".getBytes(java.nio.charset.StandardCharsets.US_ASCII)).putShort((short) 1);
+        header.put(new byte[6]).putShort((short) 4).putInt(height).putInt(width).putShort((short) 8);
+        header.putShort((short) PSD_RGB);
+        out.writeBytes(header.array());
+        out.writeBytes(ByteBuffer.allocate(4).putInt(0).array());
+        // the version information resource (1057), saying the document has no merged image
+        var resource = ByteBuffer.allocate(30).put("8BIM".getBytes(java.nio.charset.StandardCharsets.US_ASCII))
+                .putShort((short) 1057).putShort((short) 0).putInt(18).putInt(1).put((byte) 0).putInt(0).putInt(0)
+                .putInt(1).put((byte) 0);
+        out.writeBytes(ByteBuffer.allocate(4).putInt(resource.capacity()).array());
+        out.writeBytes(resource.array());
+        out.writeBytes(ByteBuffer.allocate(8).putInt(4 + info.size() + 4).putInt(info.size()).array());
+        out.writeBytes(info.toByteArray());
+        out.writeBytes(ByteBuffer.allocate(4).putInt(0).array());
+        out.writeBytes(ByteBuffer.allocate(2).putShort((short) 0).array());
+        out.writeBytes(new byte[4 * count]);
+        return out.toByteArray();
+    }
+
+    /**
+     * Writes one layer record and its PackBits channel data: the colors, then the transparency and a user mask over
+     * the layer rectangle when given, with the section divider type of a group record (1 to open, 3 to close) and
+     * its blend key.
+     */
+    private static void layer(ByteArrayOutputStream records, ByteArrayOutputStream data, int[] rect, byte[][] colors,
+                              byte[] alpha, String blend, int opacity, boolean clipping, byte[] mask, int divider) {
+        var width = rect[3] - rect[1];
+        var height = rect[2] - rect[0];
+        var planes = new java.util.ArrayList<byte[]>();
+        var ids = new java.util.ArrayList<Integer>();
+        for (var channel = 0; channel < colors.length; channel++) {
+            planes.add(colors[channel]);
+            ids.add(channel);
+        }
+        if (alpha != null) {
+            planes.add(alpha);
+            ids.add(-1);
+        }
+        if (mask != null) {
+            planes.add(mask);
+            ids.add(-2);
+        }
+        var encoded = new java.util.ArrayList<byte[]>();
+        for (var plane : planes) {
+            var channel = new ByteArrayOutputStream();
+            channel.writeBytes(ByteBuffer.allocate(2).putShort((short) 1).array());
+            var rows = new byte[height][];
+            for (var y = 0; y < height; y++) {
+                rows[y] = packBits(plane, y * width, width);
+                channel.writeBytes(ByteBuffer.allocate(2).putShort((short) rows[y].length).array());
+            }
+            for (var row : rows) {
+                channel.writeBytes(row);
+            }
+            encoded.add(channel.toByteArray());
+        }
+        var record = ByteBuffer.allocate(18 + 6 * planes.size() + 16);
+        record.putInt(rect[0]).putInt(rect[1]).putInt(rect[2]).putInt(rect[3]).putShort((short) planes.size());
+        for (var index = 0; index < planes.size(); index++) {
+            record.putShort((short) (int) ids.get(index)).putInt(encoded.get(index).length);
+        }
+        var groupBlend = divider == 1 ? blend : "norm";
+        record.put("8BIM".getBytes(java.nio.charset.StandardCharsets.US_ASCII))
+                .put((divider == 0 ? blend : "norm").getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        record.put((byte) opacity).put((byte) (clipping ? 1 : 0)).put((byte) 8).put((byte) 0);
+        var extra = new ByteArrayOutputStream();
+        if (mask != null) {
+            extra.writeBytes(ByteBuffer.allocate(24).putInt(20).putInt(rect[0]).putInt(rect[1]).putInt(rect[2])
+                    .putInt(rect[3]).put((byte) 0).put((byte) 0).putShort((short) 0).array());
+        } else {
+            extra.writeBytes(ByteBuffer.allocate(4).putInt(0).array());
+        }
+        extra.writeBytes(ByteBuffer.allocate(4).putInt(0).array());
+        extra.writeBytes(new byte[]{0, 0, 0, 0});
+        if (divider != 0) {
+            extra.writeBytes("8BIMlsct".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            extra.writeBytes(ByteBuffer.allocate(16).putInt(12).putInt(divider)
+                    .put("8BIM".getBytes(java.nio.charset.StandardCharsets.US_ASCII))
+                    .put(groupBlend.getBytes(java.nio.charset.StandardCharsets.US_ASCII)).array());
+        }
+        record.putInt(extra.size());
+        records.writeBytes(record.array());
+        records.writeBytes(extra.toByteArray());
+        for (var channel : encoded) {
+            data.writeBytes(channel);
+        }
     }
 
     /**

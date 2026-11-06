@@ -329,7 +329,13 @@ class PsdDecoderTest {
             assertThrows(MediaException.Unsupported.class, () -> PsdDecoder.decode(MediaSource.of(badCompression)));
             var noMerged = new PsdFiles(1, 4, 4, 8, 3).resource(1057, new byte[]{0, 0, 0, 1, 0})
                     .build(0, new byte[3][16]);
-            assertThrows(MediaException.Unsupported.class, () -> PsdDecoder.decode(MediaSource.of(noMerged)));
+            var empty = RasterTesting.tight(PsdDecoder.decode(MediaSource.of(noMerged)).picture());
+            for (var sample : empty) {
+                assertEquals((byte) 255, sample, "a document without a merged image or layers renders white");
+            }
+            var noMergedLab = new PsdFiles(1, 4, 4, 8, 9).resource(1057, new byte[]{0, 0, 0, 1, 0})
+                    .build(0, new byte[3][16]);
+            assertThrows(MediaException.Unsupported.class, () -> PsdDecoder.decode(MediaSource.of(noMergedLab)));
             assertThrows(MediaException.Malformed.class, () -> PsdDecoder.decode(MediaSource.of(
                     java.util.Arrays.copyOf(good, 30))));
             assertThrows(MediaException.Malformed.class, () -> PsdDecoder.decode(MediaSource.of(

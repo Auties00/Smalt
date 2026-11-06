@@ -42,6 +42,7 @@ Contents
   65. OpenEXR
   66. jxrlib
   75. DirectXTex
+  76. psd-tools
 
 
 ===============================================================================
@@ -2166,3 +2167,51 @@ DirectXTex license (LICENSE)
     LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE
+
+
+===============================================================================
+76. psd-tools
+===============================================================================
+
+Project:      psd-tools, a Python package for Adobe Photoshop documents
+              (main branch, commit 9a2e523)
+Home:         https://github.com/psd-tools/psd-tools
+Source:       https://github.com/psd-tools/psd-tools (src/psd_tools/composite)
+License text: LICENSE at the root of the repository
+License:      MIT License
+
+Derived Smalt packages:
+  image.psd (PsdBlend: the blend functions of composite/blend.py, with their
+  CMYK and gray rules for the non-separable modes and darker and lighter
+  color, the special cases of vivid light, soft light and hard mix;
+  PsdCompositor: the non-isolated group result and the pass-through group
+  mix of composite/composite.py)
+
+Derivation: algorithms and special cases followed closely.
+
+Copyright:
+  Copyright (c) 2019 Kota Yamaguchi
+
+-------------------------------------------------------------------------------
+psd-tools license (LICENSE)
+-------------------------------------------------------------------------------
+
+Copyright (c) 2019 Kota Yamaguchi
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.

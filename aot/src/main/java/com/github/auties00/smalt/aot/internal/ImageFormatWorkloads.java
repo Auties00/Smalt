@@ -201,8 +201,9 @@ final class ImageFormatWorkloads {
 
     /**
      * Returns a workload that decodes 320x180 Photoshop documents: RGB of 8 bits in PackBits rows, of 16 bits with
-     * ZIP and prediction and as a large document, gray with ZIP and raw CMYK, each with a transparency channel, to
-     * packed RGBA, to 16 bits and to every channel.
+     * ZIP and prediction and as a large document, gray with ZIP and raw CMYK, each with a transparency channel, and
+     * an RGB document saved without a merged image, whose composite is rendered from separable and non-separable
+     * blends, a masked pass-through group and a clipping group; to packed RGBA, to 16 bits and to every channel.
      *
      * @return the workload
      */
@@ -212,7 +213,8 @@ final class ImageFormatWorkloads {
                 SyntheticImageFiles.psd(picture, SyntheticImageFiles.PSD_RGB, 16, 3, false),
                 SyntheticImageFiles.psd(picture, SyntheticImageFiles.PSD_RGB, 8, 2, true),
                 SyntheticImageFiles.psd(picture, SyntheticImageFiles.PSD_GRAY, 8, 2, false),
-                SyntheticImageFiles.psd(picture, SyntheticImageFiles.PSD_CMYK, 8, 0, false));
+                SyntheticImageFiles.psd(picture, SyntheticImageFiles.PSD_CMYK, 8, 0, false),
+                SyntheticImageFiles.psdLayered(picture));
         var options = List.of(ImageDecoderOptions.defaults(), ImageDecoderOptions.builder().highBitDepth(true).build(),
                 ImageDecoderOptions.builder().keepChannels(true).build());
         return TrainingWorkload.of("psd-decode", () -> {

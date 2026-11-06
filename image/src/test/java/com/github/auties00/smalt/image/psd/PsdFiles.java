@@ -213,6 +213,61 @@ final class PsdFiles {
         return out;
     }
 
+    /**
+     * Returns a copy of a document whose version information resource (1057) says it has no merged image, adding the
+     * resource when the document has none, so that decoders render the composite from the layers.
+     */
+    static byte[] withoutComposite(byte[] psd) {
+        var position = 26;
+        var colorLength = (int) u32(psd, position);
+        position += 4 + colorLength;
+        var resourcesLength = (int) u32(psd, position);
+        var resourcesStart = position + 4;
+        var at = resourcesStart;
+        var end = resourcesStart + resourcesLength;
+        while (at + 12 <= end) {
+            var id = (psd[at + 4] & 0xFF) << 8 | (psd[at + 5] & 0xFF);
+            var nameBytes = (1 + (psd[at + 6] & 0xFF) + 1) & ~1;
+            var sizeAt = at + 6 + nameBytes;
+            var size = (int) u32(psd, sizeAt);
+            if (id == 1057 && size >= 5) {
+                var copy = psd.clone();
+                copy[sizeAt + 4 + 4] = 0;
+                return copy;
+            }
+            at = sizeAt + 4 + ((size + 1) & ~1);
+        }
+        try {
+            var resource = new ByteArrayOutputStream();
+            var out = new DataOutputStream(resource);
+            out.writeBytes("8BIM");
+            out.writeShort(1057);
+            out.writeShort(0);
+            out.writeInt(17);
+            out.writeInt(1);
+            out.writeByte(0);
+            out.writeInt(0);
+            out.writeInt(0);
+            out.writeInt(1);
+            out.writeByte(0);
+            var added = resource.toByteArray();
+            var result = new ByteArrayOutputStream();
+            result.write(psd, 0, resourcesStart - 4);
+            new DataOutputStream(result).writeInt(resourcesLength + added.length);
+            result.write(psd, resourcesStart, resourcesLength);
+            result.write(added);
+            result.write(psd, end, psd.length - end);
+            return result.toByteArray();
+        } catch (IOException exception) {
+            throw new UncheckedIOException(exception);
+        }
+    }
+
+    private static long u32(byte[] data, int at) {
+        return (data[at] & 0xFFL) << 24 | (data[at + 1] & 0xFFL) << 16 | (data[at + 2] & 0xFFL) << 8
+                | (data[at + 3] & 0xFFL);
+    }
+
     /** PackBits: runs of three or more equal bytes as run packets, the rest as literal packets. */
     static byte[] packBits(byte[] data, int offset, int length) {
         var out = new ByteArrayOutputStream();

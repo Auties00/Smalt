@@ -26,7 +26,8 @@ class RasterProbeParityTest {
             "icns/stored.icns", "jxr/bgra8-q40-a2.jxr", "jxr/cmyk8-ic-q80.jxr", "jxr/gray16-q40.jxr",
             "jxr/rgb8-q40.jxr", "jxr/rgbaf-q40-a3.jxr", "pnm/float.pfm", "pnm/gray16.pgm", "pnm/mono.pbm",
             "pnm/rgb.ppm", "pnm/rgba.pam", "psd/cmyk-zip.psd", "psd/gray16-raw.psd", "psd/rgb-rle.psb",
-            "psd/rgba-rle.psd", "qoi/rgba.qoi", "tga/raw-bgr.tga", "tga/rle-bgra.tga", "tga/rle-pal8.tga"})
+            "psd/rgba-rle.psd", "psd/layers-no-composite.psd", "qoi/rgba.qoi", "tga/raw-bgr.tga", "tga/rle-bgra.tga",
+            "tga/rle-pal8.tga"})
     @DisplayName("Media.probe agrees with the decoder's probe and the decoded picture")
     void samples(String name) {
         var file = sample(name);

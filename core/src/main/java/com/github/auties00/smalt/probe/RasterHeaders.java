@@ -302,7 +302,14 @@ final class RasterHeaders {
             if (sectionLength >= (large ? 10 : 6)) {
                 var infoLength = large ? reader.u64be() : reader.u32be();
                 if (infoLength >= 2) {
-                    result.alpha |= (short) reader.u16be() < 0;
+                    var count = (short) reader.u16be();
+                    if (count != 0) {
+                        result.alpha |= count < 0;
+                    } else {
+                        // 16 and 32-bit documents keep their layers in the Lr16 or Lr32 block, after an empty info
+                        reader.skip(infoLength - 2);
+                        result.alpha |= psdTaggedLayerCount(reader, sectionEnd, large) < 0;
+                    }
                 } else if (infoLength >= 0) {
                     reader.skip(infoLength);
                     result.alpha |= psdTaggedLayerCount(reader, sectionEnd, large) < 0;

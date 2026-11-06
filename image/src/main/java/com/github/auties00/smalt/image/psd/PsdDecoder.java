@@ -39,9 +39,22 @@ import java.util.zip.Inflater;
  *
  * <p>Supported: versions 1 (PSD) and 2 (PSB, the large document format); the bitmap, grayscale, indexed, RGB, CMYK,
  * multichannel, duotone and L*a*b* color modes at their depths (1 bit for bitmap, 8, 16 and 32 bits otherwise); raw,
- * PackBits run-length, ZIP and ZIP-with-prediction compression of the image data. Layers are not composited: a
- * document that declares it has no merged image (its version information resource says so) is unsupported, since
- * its composite would have to be rendered from its layers.
+ * PackBits run-length, ZIP and ZIP-with-prediction compression of the image data and of the layers.
+ *
+ * <p>A document that declares it has no merged image (its version information resource says so, as Photoshop writes
+ * it with compatibility maximizing turned off) has its composite rendered from its layers, in the gray, duotone, RGB
+ * and CMYK modes: the pixels of its layers (type, shape, fill and smart object layers included, through the pixels
+ * Photoshop stores for them) with their opacity, fill opacity, user mask and its density, and the stored rendering of
+ * their vector mask; every Photoshop blend mode; clipping groups; isolated and pass-through groups with their
+ * opacity and masks; and artboards with their background. Colors composite in floating point, CMYK on the stored
+ * complements of the ink amounts, and round once, so a sample may differ from Photoshop's own composite by about a
+ * unit; dissolve scatters its pixels in a pattern of its own. A visible layer that needs an adjustment, a layer
+ * effect, knockout, Blend If ranges, channel restrictions, a feathered mask, mask densities beside both a user and a
+ * vector mask, a fill opacity below 100% in one of the modes that apply it inside the blend (color burn, linear
+ * burn, color dodge, linear dodge, vivid light, linear light, hard mix, difference), or pixels Photoshop did not
+ * store (the fill and shape layers of 16 and 32-bit documents) makes the document unsupported. The rendered
+ * composite has the channels a stored one would have: the transparency channel when the layer count declares one
+ * (see below), and otherwise its colors flattened onto white, as Photoshop stores them.
  *
  * <p>The composite has one channel per color of its mode followed by extra channels. The first extra channel is the
  * transparency of the merged image when the layer section's layer count is negative, as the specification defines;
@@ -111,9 +124,9 @@ public final class PsdDecoder {
      *
      * @param source the input, read from offset zero
      * @return the decoded image
-     * @throws MediaException.Malformed if the headers or the image data are invalid
+     * @throws MediaException.Malformed if the headers, the layers or the image data are invalid
      * @throws MediaException.Unsupported if the color mode, depth or compression is unsupported, or the document
-     * has no merged image
+     * has no merged image and its layers need a feature that is not composited
      * @throws MediaException.LimitExceeded if the image exceeds the default limits
      * @throws MediaException.Io if reading the source fails
      * @see #decode(MediaSource, ImageDecoderOptions)
@@ -131,9 +144,9 @@ public final class PsdDecoder {
      * @param options the limits, the region, the bit depth, the channel and the sRGB conversion choices
      * @return the decoded image
      * @throws IllegalArgumentException if the region does not lie inside the image
-     * @throws MediaException.Malformed if the headers or the image data are invalid
+     * @throws MediaException.Malformed if the headers, the layers or the image data are invalid
      * @throws MediaException.Unsupported if the color mode, depth or compression is unsupported, or the document
-     * has no merged image
+     * has no merged image and its layers need a feature that is not composited
      * @throws MediaException.LimitExceeded if the image exceeds the limits of {@code options}
      * @throws MediaException.Io if reading the source fails
      */
@@ -169,10 +182,18 @@ public final class PsdDecoder {
         List<String> alphaNames = new ArrayList<>();
         PixelDensity density;
         int imageOffset;
+        List<PsdLayers.Layer> layers = List.of();
 
         boolean hasAlpha() {
             return (mergedAlpha && channels > colors())
                     || (mode == INDEXED && transparentIndex >= 0 && transparentIndex < 256);
+        }
+
+        /**
+         * Returns whether the color mode is one whose composite can be rendered from the layers.
+         */
+        boolean composited() {
+            return mode == GRAYSCALE || mode == DUOTONE || mode == RGB || mode == CMYK;
         }
 
         int colors() {
@@ -244,16 +265,28 @@ public final class PsdDecoder {
             position += 4 + resourcesLength;
             var sectionLength = document.large ? u64(data, position) : u32(data, position);
             var sectionStart = position + (document.large ? 8 : 4);
+            long infoStart = -1;
+            long infoEnd = -1;
             if (sectionLength >= (document.large ? 10 : 6)) {
                 var lengthSize = document.large ? 8 : 4;
                 var infoLength = document.large ? u64(data, sectionStart) : u32(data, sectionStart);
-                if (infoLength >= 2) {
-                    var count = (short) ByteArrays.u16be(data, (int) (sectionStart + lengthSize));
-                    document.mergedAlpha = count < 0;
+                if (infoLength >= 2 && ByteArrays.u16be(data, (int) (sectionStart + lengthSize)) != 0) {
+                    infoStart = sectionStart + lengthSize;
+                    infoEnd = Math.min(infoStart + infoLength, Math.min(data.length, sectionStart + sectionLength));
                 } else {
-                    document.mergedAlpha = taggedLayerCount(data, sectionStart + lengthSize + infoLength,
-                            Math.min(data.length, sectionStart + sectionLength), document.large) < 0;
+                    var block = taggedLayerInfo(data, sectionStart + lengthSize + infoLength,
+                            Math.min(data.length, sectionStart + sectionLength), document.large);
+                    if (block != null) {
+                        infoStart = block[0];
+                        infoEnd = block[1];
+                    }
                 }
+                if (infoStart >= 0 && infoStart + 2 <= infoEnd) {
+                    document.mergedAlpha = (short) ByteArrays.u16be(data, (int) infoStart) < 0;
+                }
+            }
+            if (!document.mergedData && document.composited() && infoStart >= 0 && infoStart + 2 <= infoEnd) {
+                document.layers = PsdLayers.parse(data, infoStart, infoEnd, document.large, document.colors());
             }
             position = sectionStart + sectionLength;
             if (position + 2 > data.length) {
@@ -264,40 +297,36 @@ public final class PsdDecoder {
         }
 
         /**
-         * Returns the layer count of the 16 or 32-bit layer info ({@code Lr16} or {@code Lr32}) of the additional
-         * layer information that follows the global layer mask, where documents of those depths keep their layers,
-         * or 0 when there is none.
+         * Returns the bounds of the 16 or 32-bit layer info ({@code Lr16} or {@code Lr32}) of the additional layer
+         * information that follows the global layer mask, where documents of those depths keep their layers, or
+         * {@code null} when there is none.
          *
          * @param data the document
          * @param position the offset of the global layer mask information
          * @param end the end of the layer and mask information section
          * @param large whether the document is a PSB, whose long blocks have 8-byte lengths
-         * @return the signed layer count, negative when the composite's first extra channel is its transparency
+         * @return the offset of the layer info's signed layer count and the end of the layer info
          */
-        private static int taggedLayerCount(byte[] data, long position, long end, boolean large) {
+        private static long[] taggedLayerInfo(byte[] data, long position, long end, boolean large) {
             if (position + 4 > end) {
-                return 0;
+                return null;
             }
             position += 4 + u32(data, position);
             while (position + 12 <= end) {
                 var signature = new String(data, (int) position, 4, StandardCharsets.ISO_8859_1);
                 if (!signature.equals("8BIM") && !signature.equals("8B64")) {
-                    return 0;
+                    return null;
                 }
                 var key = new String(data, (int) position + 4, 4, StandardCharsets.ISO_8859_1);
-                var wide = large && switch (key) {
-                    case "LMsk", "Lr16", "Lr32", "Layr", "Mt16", "Mt32", "Mtrn", "Alph", "FMsk", "lnk2", "FEid",
-                         "FXid", "PxSD" -> true;
-                    default -> false;
-                };
+                var wide = large && wideKey(key);
                 var length = wide ? u64(data, position + 8) : u32(data, position + 8);
                 var body = position + 8 + (wide ? 8 : 4);
                 if (key.equals("Lr16") || key.equals("Lr32")) {
-                    return length >= 2 && body + 2 <= end ? (short) ByteArrays.u16be(data, (int) body) : 0;
+                    return length >= 2 && body + 2 <= end ? new long[]{body, Math.min(end, body + length)} : null;
                 }
                 position = body + ((length + 1) & ~1L);
             }
-            return 0;
+            return null;
         }
 
         private static long u32(byte[] data, long position) {
@@ -406,13 +435,25 @@ public final class PsdDecoder {
     }
 
     /**
+     * Returns whether a tagged block key of a PSB has an 8-byte length.
+     *
+     * @param key the block key
+     * @return whether its length field is 8 bytes long in a PSB
+     */
+    static boolean wideKey(String key) {
+        return switch (key) {
+            case "LMsk", "Lr16", "Lr32", "Layr", "Mt16", "Mt32", "Mtrn", "Alph", "FMsk", "lnk2", "lnk3", "lnkE",
+                 "FEid", "FXid", "PxSD", "pths", "extd", "extn", "cinf", "artd" -> true;
+            default -> false;
+        };
+    }
+
+    /**
      * Decodes the composite.
      */
     private static DecodedImage decode(byte[] data, Document document, ImageDecoderOptions options) {
         if (!document.mergedData) {
-            // TODO: render the composite of a document saved without one by compositing its layers
-            throw new MediaException.Unsupported("psd", "documents without a merged image, which would need their"
-                    + " layers composited");
+            return composite(data, document, options);
         }
         var limits = options.limits();
         var width = document.width;
@@ -445,6 +486,86 @@ public final class PsdDecoder {
                 decoded.iccProfile(), Optional.ofNullable(document.exif), Optional.ofNullable(document.xmp),
                 decoded.colorProfile(), Optional.ofNullable(document.density));
         return decoded;
+    }
+
+    /**
+     * Renders the composite of a document saved without one from its layers, and decodes it as a stored composite
+     * with the same channels.
+     */
+    private static DecodedImage composite(byte[] data, Document document, ImageDecoderOptions options) {
+        if (!document.composited()) {
+            throw new MediaException.Unsupported("psd", "compositing the layers of Photoshop documents of color"
+                    + " mode " + document.mode);
+        }
+        var limits = options.limits();
+        var width = document.width;
+        var height = document.height;
+        LimitChecks.checkPicture(limits, width, height);
+        LimitChecks.checkChannels(limits, document.channels + 1);
+        var colors = document.colors();
+        var canvas = new PsdCompositor(data, document.large, width, height, document.depth, colors, limits)
+                .composite(document.layers);
+        var alpha = document.hasAlpha();
+        if (!alpha) {
+            // Without a transparency channel the composite is flattened onto white, as Photoshop stores it.
+            var color = canvas.color;
+            for (var index = 0; index < canvas.alpha.length; index++) {
+                var a = canvas.alpha[index];
+                for (var channel = 0; channel < colors; channel++) {
+                    color[index * colors + channel] = color[index * colors + channel] * a + 1 - a;
+                }
+            }
+        }
+        var extra = Math.max(0, document.channels - colors - (alpha ? 1 : 0));
+        var keepExtra = options.keepChannels() && !options.convertToSrgb() && extra > 0;
+        var rowBytes = width * (document.depth / 8);
+        LimitChecks.checkAllocation(limits, (long) rowBytes * height * (colors + 1 + (keepExtra ? extra : 0)));
+        var planes = new byte[colors + (alpha ? 1 : 0) + (keepExtra ? extra : 0)][];
+        for (var channel = 0; channel < colors; channel++) {
+            planes[channel] = plane(canvas.color, channel, colors, document.depth, width * height);
+        }
+        if (alpha) {
+            planes[colors] = plane(canvas.alpha, 0, 1, document.depth, width * height);
+        }
+        if (keepExtra) {
+            var stored = planes(data, document, rowBytes);
+            System.arraycopy(stored, document.channels - extra, planes, planes.length - extra, extra);
+        }
+        document.channels = planes.length;
+        var image = channels(planes, document, options);
+        ColorProfile profile;
+        if (document.icc != null) {
+            profile = parse(document.icc);
+        } else if (document.depth == 32 && document.mode != CMYK) {
+            profile = RasterOutput.linearFor(document.mode == RGB ? PixelLayout.RGB : PixelLayout.GRAY);
+        } else {
+            profile = null;
+        }
+        var decoded = RasterOutput.finish(image, ImageFormat.PSD, Orientation.NORMAL, profile, document.icc, options);
+        return new DecodedImage(decoded.picture(), ImageFormat.PSD, Orientation.NORMAL, width, height,
+                decoded.iccProfile(), Optional.ofNullable(document.exif), Optional.ofNullable(document.xmp),
+                decoded.colorProfile(), Optional.ofNullable(document.density));
+    }
+
+    /**
+     * Stores one channel of interleaved composite values as a plane of big-endian samples of the document's depth,
+     * 8 and 16-bit values clamped into range and rounded.
+     */
+    private static byte[] plane(float[] values, int channel, int stride, int depth, int count) {
+        var plane = new byte[count * (depth / 8)];
+        for (var index = 0; index < count; index++) {
+            var value = values[index * stride + channel];
+            switch (depth) {
+                case 8 -> plane[index] = (byte) Math.round(Math.clamp(value, 0f, 1f) * 255);
+                case 16 -> {
+                    var sample = Math.round(Math.clamp(value, 0f, 1f) * 65535);
+                    plane[2 * index] = (byte) (sample >>> 8);
+                    plane[2 * index + 1] = (byte) sample;
+                }
+                default -> ByteArrays.put32be(plane, 4 * index, Float.floatToRawIntBits(value));
+            }
+        }
+        return plane;
     }
 
     /**
@@ -533,7 +654,7 @@ public final class PsdDecoder {
     /**
      * Unpacks one PackBits row; a row that ends early leaves the rest zero.
      */
-    private static void unpack(byte[] data, int position, int end, byte[] out, int offset, int length) {
+    static void unpack(byte[] data, int position, int end, byte[] out, int offset, int length) {
         var written = 0;
         while (position < end && written < length) {
             var header = data[position++];
@@ -557,7 +678,7 @@ public final class PsdDecoder {
      * Undoes the prediction of ZIP-with-prediction data: horizontal differences of 8 and 16-bit samples, and of the
      * bytes of 32-bit rows, whose four byte planes are stored one after another.
      */
-    private static void unpredict(byte[] plane, int rowBytes, int height, int depth, int width) {
+    static void unpredict(byte[] plane, int rowBytes, int height, int depth, int width) {
         var row = new byte[rowBytes];
         for (var y = 0; y < height; y++) {
             var base = y * rowBytes;

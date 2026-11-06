@@ -243,6 +243,7 @@ image/src/test/resources/samples/pnm/rgb.ppm	4621	aedadf455c7a35c42505fe3f55a4ab
 image/src/test/resources/samples/pnm/rgba.pam	6211	576e2ccc29bfbe47f5c332e8f21f5994a4c57cccedc792422390ea54ff4b095d	make-raster-samples.sh
 image/src/test/resources/samples/psd/cmyk-zip.psd	3319	49863e774ab9ac2b2d98f43b124a79c76e096630a0d7603419cd090f85e60baa	make-raster-samples.py
 image/src/test/resources/samples/psd/gray16-raw.psd	3112	401bf00215fab4e11657c90598610f41862c6b61a147c672e7f28ad75edcc4d6	make-raster-samples.py
+image/src/test/resources/samples/psd/layers-no-composite.psd	15771	56e3bae7517f3ff948236a3b3489e4b54c011ad82157872d5105a9e1e86eade7	make-raster-samples.py
 image/src/test/resources/samples/psd/rgb-rle.psb	5132	df59d1496c7b32fc3e944d7863d74973684890fb70c200e4c6af04e152d6a8de	make-raster-samples.py
 image/src/test/resources/samples/psd/rgba-rle.psd	6580	aad0c5dc29b1507ff8b7d0cfbf6b56ce651185a60fd5910d5c42ef51a4c2171f	make-raster-samples.py
 image/src/test/resources/samples/qoi/rgba.qoi	1185	8d70c4124ba703ccc05d0d0fb1bb1e36222fd78ba170097d4f1bda676815f06c	make-raster-samples.sh

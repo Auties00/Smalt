@@ -130,6 +130,7 @@ Contents
   73. MPEG-4 Audio error protection tool reference software (NTT DoCoMo)
   74. SVT-JPEG-XS
   75. DirectXTex
+  76. psd-tools
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -2560,6 +2561,30 @@ Copyright:
 EOF
 license_start "DirectXTex license (LICENSE)"
 cat "$LIC/directxtex-LICENSE"
+
+section "76. psd-tools"
+cat <<'EOF'
+Project:      psd-tools, a Python package for Adobe Photoshop documents
+              (main branch, commit 9a2e523)
+Home:         https://github.com/psd-tools/psd-tools
+Source:       https://github.com/psd-tools/psd-tools (src/psd_tools/composite)
+License text: LICENSE at the root of the repository
+License:      MIT License
+
+Derived Smalt packages:
+  image.psd (PsdBlend: the blend functions of composite/blend.py, with their
+  CMYK and gray rules for the non-separable modes and darker and lighter
+  color, the special cases of vivid light, soft light and hard mix;
+  PsdCompositor: the non-isolated group result and the pass-through group
+  mix of composite/composite.py)
+
+Derivation: algorithms and special cases followed closely.
+
+Copyright:
+  Copyright (c) 2019 Kota Yamaguchi
+EOF
+license_start "psd-tools license (LICENSE)"
+cat "$LIC/psd-tools-LICENSE"
 
 } > "$OUT"
 

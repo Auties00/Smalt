@@ -127,6 +127,77 @@ def psd_file(width, height, depth, mode, planes, compression, layer_count=0, ver
     return out
 
 
+def psd_layer(rect, channels, blend=b'norm', opacity=255, clipping=0, mask=None, blocks=(), name=b'Layer'):
+    """Returns a layer record and its channel data; channels maps a channel id to its plane over rect (or the mask
+    rectangle for -2), every plane PackBits-compressed."""
+    top, left, bottom, right = rect
+    data = []
+    for channel_id, plane in channels:
+        width = right - left
+        rows = bottom - top
+        if channel_id == -2:
+            width = mask[3] - mask[1]
+            rows = mask[2] - mask[0]
+        packed = [packbits(plane[y * width:(y + 1) * width]) for y in range(rows)]
+        data.append(struct.pack('>H', 1) + b''.join(struct.pack('>H', len(r)) for r in packed) + b''.join(packed))
+    record = struct.pack('>4iH', top, left, bottom, right, len(channels))
+    record += b''.join(struct.pack('>hI', channel_id, len(d)) for (channel_id, _), d in zip(channels, data))
+    record += b'8BIM' + blend + struct.pack('>BBBB', opacity, clipping, 8, 0)
+    extra = b''
+    if mask is None:
+        extra += struct.pack('>I', 0)
+    else:
+        extra += struct.pack('>I', 20) + struct.pack('>4iBB', *mask, 0, 0) + b'\0\0'
+    ranges = b'\0\0\xff\xff' * 8
+    extra += struct.pack('>I', len(ranges)) + ranges
+    padded = (1 + len(name) + 3) & ~3
+    extra += bytes([len(name)]) + name + b'\0' * (padded - 1 - len(name))
+    for key, body in blocks:
+        body += b'\0' * (len(body) & 1)
+        extra += b'8BIM' + key + struct.pack('>I', len(body)) + body
+    record += struct.pack('>I', len(extra)) + extra
+    return record, b''.join(data)
+
+
+def psd_layered(width, height):
+    """An RGB document saved without a merged image: a background, a pass-through group at 200 holding a multiply
+    layer with soft transparency and a masked screen layer, and a soft-light base with a clipped layer."""
+    count = width * height
+    background = [(c, bytes(((x * 6 + y * 4 + c * 70) % 256) for y in range(height) for x in range(width)))
+                  for c in range(3)]
+    inner = [(c, bytes(((x * 11 + c * 90) % 256) for y in range(height) for x in range(width))) for c in range(3)]
+    inner.append((-1, bytes((y * 255 // max(1, height - 1)) for y in range(height) for x in range(width))))
+    mask = (2, 4, height - 2, width - 4)
+    mask_plane = bytes(((x * 9) % 256) for y in range(mask[2] - mask[0]) for x in range(mask[3] - mask[1]))
+    screen = [(c, bytes([200 - c * 60]) * count) for c in range(3)] + [(-2, mask_plane)]
+    small = (4, 6, height - 4, width - 6)
+    small_count = (small[2] - small[0]) * (small[3] - small[1])
+    base = [(c, bytes([90 + c * 50]) * small_count) for c in range(3)]
+    base.append((-1, bytes((x * 20) % 256 for y in range(small[2] - small[0]) for x in range(small[3] - small[1]))))
+    clipped = [(c, bytes(((x + y) * 7 + c * 40) % 256 for y in range(height) for x in range(width)))
+               for c in range(3)]
+    full = (0, 0, height, width)
+    empty = (0, 0, 0, 0)
+    layers = [
+        psd_layer(full, background, name=b'Background'),
+        psd_layer(empty, [], blocks=[(b'lsct', struct.pack('>I', 3))], name=b'</Layer group>'),
+        psd_layer(full, inner, blend=b'mul '),
+        psd_layer(full, screen, blend=b'scrn', mask=mask),
+        psd_layer(empty, [], opacity=200, blocks=[(b'lsct', struct.pack('>I', 1) + b'8BIMpass')], name=b'Group'),
+        psd_layer(small, base, blend=b'sLit'),
+        psd_layer(full, clipped, opacity=128, clipping=1),
+    ]
+    info = struct.pack('>h', -len(layers)) + b''.join(r for r, _ in layers) + b''.join(d for _, d in layers)
+    info += b'\0' * (len(info) & 1)
+    resource = b'8BIM' + struct.pack('>HHI', 1057, 0, 18) + struct.pack('>IBIIIBB', 1, 0, 0, 0, 1, 0, 0)
+    out = b'8BPS' + struct.pack('>H', 1) + b'\0' * 6 + struct.pack('>HIIHH', 4, height, width, 8, 3)
+    out += struct.pack('>I', 0) + struct.pack('>I', len(resource)) + resource
+    section = struct.pack('>I', len(info)) + info + struct.pack('>I', 0)
+    out += struct.pack('>I', len(section)) + section
+    out += struct.pack('>H', 0) + b'\xff' * (count * 3) + b'\0' * count
+    return out
+
+
 def psd(out):
     rng = random.Random(8)
     os.makedirs(os.path.join(out, 'psd'), exist_ok=True)
@@ -139,6 +210,7 @@ def psd(out):
     write('gray16-raw.psd', psd_file(48, 32, 16, 1, gradient_planes(48, 32, 1, 16, rng), 0))
     write('cmyk-zip.psd', psd_file(48, 32, 8, 4, gradient_planes(48, 32, 4, 8, rng), 2))
     write('rgb-rle.psb', psd_file(48, 32, 8, 3, gradient_planes(48, 32, 3, 8, rng), 1, 0, 2))
+    write('layers-no-composite.psd', psd_layered(40, 24))
 
 
 def icns_rle(plane):
