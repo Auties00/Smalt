@@ -237,6 +237,7 @@ final class ModularTransform {
                             throw new MediaException.Malformed("channel squeezed too much");
                         }
                         var residual = channel.copyInfo();
+                        residual.residual = true;
                         if (horizontal) {
                             var w = channel.width;
                             channel.width = (w + 1) / 2;

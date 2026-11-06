@@ -3,9 +3,14 @@ package com.github.auties00.smalt.video.av1.internal.encoder;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
-import com.github.auties00.smalt.internal.plane.Planes;
+import com.github.auties00.smalt.video.av1.internal.SequenceHeader;
 import com.github.auties00.smalt.internal.task.ParallelBands;
+import com.github.auties00.smalt.video.av1.Av1FilmGrain;
+import com.github.auties00.smalt.video.av1.Av1ScreenContent;
+import com.github.auties00.smalt.video.av1.internal.FilmGrainData;
 import com.github.auties00.smalt.video.av1.internal.FrameHeader;
 import com.github.auties00.smalt.video.av1.internal.Obu;
 
@@ -141,7 +146,7 @@ public final class Av1GoodEncoder implements Av1Engine {
         /**
          * The picture, owned by the lookahead.
          */
-        final YuvPicture picture;
+        final Picture picture;
 
         /**
          * The timestamp.
@@ -179,6 +184,11 @@ public final class Av1GoodEncoder implements Av1Engine {
         int qindex;
 
         /**
+         * The film grain the frame signals, in the decoder's model, or {@code null} for none.
+         */
+        FilmGrainData grain;
+
+        /**
          * Creates a lookahead entry.
          *
          * @param picture the picture, owned by the lookahead
@@ -187,7 +197,7 @@ public final class Av1GoodEncoder implements Av1Engine {
          * @param forceKey whether a key frame is requested
          * @param display the display index
          */
-        Source(YuvPicture picture, long pts, long duration, boolean forceKey, int display) {
+        Source(Picture picture, long pts, long duration, boolean forceKey, int display) {
             this.picture = picture;
             this.pts = pts;
             this.duration = duration;
@@ -227,6 +237,23 @@ public final class Av1GoodEncoder implements Av1Engine {
     private final MediaLimits limits;
 
     /**
+     * When the frames use the screen content tools.
+     */
+    private final Av1ScreenContent screenContent;
+
+    /**
+     * Whether the frames since the last key frame use the screen content tools, as the key frame
+     * decided.
+     */
+    private boolean screenFrames;
+
+    /**
+     * The whole-sample motion decision of screen content frames, or {@code null} when no frame
+     * uses the screen content tools.
+     */
+    private final IntegerMvDecision integerMv;
+
+    /**
      * The rate control.
      */
     private final GoodRateControl rc = new GoodRateControl();
@@ -264,7 +291,7 @@ public final class Av1GoodEncoder implements Av1Engine {
     /**
      * The picture each reference slot's frame was coded from.
      */
-    private final YuvPicture[] slotPicture = new YuvPicture[FrameEncoder.SLOTS];
+    private final Picture[] slotPicture = new Picture[FrameEncoder.SLOTS];
 
     /**
      * The quantizer index of the frame in each reference slot.
@@ -324,6 +351,11 @@ public final class Av1GoodEncoder implements Av1Engine {
     private int lastKeyDisplay = -1;
 
     /**
+     * The display index of the next key frame a group found past its end, or -1 for none.
+     */
+    private int cutDisplay = -1;
+
+    /**
      * The boost of the group being coded.
      */
     private int gfuBoost = 100;
@@ -337,7 +369,7 @@ public final class Av1GoodEncoder implements Av1Engine {
      * The temporally filtered picture of the frame being coded, or {@code null} to code its
      * source.
      */
-    private YuvPicture filtered;
+    private Picture filtered;
 
     /**
      * Whether the current group's alternate reference is shown through
@@ -392,10 +424,34 @@ public final class Av1GoodEncoder implements Av1Engine {
      * @param limits the allocation limits
      */
     public Av1GoodEncoder(int width, int height, ColorInfo color, MediaLimits limits) {
+        this(width, height, StreamFormat.of(color), limits);
+    }
+
+    /**
+     * Creates the loop of a picture size and stream format.
+     *
+     * @param width the picture width
+     * @param height the picture height
+     * @param format the format of the coded pictures and the sequence-level tools
+     * @param limits the allocation limits
+     */
+    public Av1GoodEncoder(int width, int height, StreamFormat format, MediaLimits limits) {
         this.width = width;
         this.height = height;
-        var seq = FrameEncoder.sequenceHeader(width, height, color, ObuWriter.level(width, height), true, true);
-        this.frame = new FrameEncoder(width, height, seq, limits);
+        var seq = FrameEncoder.sequenceHeader(width, height, format.color(), ObuWriter.level(width, height), true,
+                true, SequenceHeader.layoutOf(format.format()), format.bitDepth());
+        seq.filmGrainPresent = format.filmGrain();
+        this.screenContent = format.screenContent();
+        if (screenContent != Av1ScreenContent.NEVER) {
+            seq.screenContentTools = SequenceHeader.ADAPTIVE;
+        }
+        this.integerMv = screenContent != Av1ScreenContent.NEVER ? new IntegerMvDecision(width, height) : null;
+        format.timing().apply(seq);
+        // TODO: choose the super-resolution denominator per frame (libaom's qthresh and auto modes) and
+        // code the key frames with it; the inter frames take the fixed denominator, the key frames none
+        seq.superRes = format.superresDenominator() > 8;
+        this.frame = new FrameEncoder(width, height, format.superresDenominator(), seq, limits);
+        frame.timing(format.timing());
         this.limits = limits;
         Arrays.fill(slotDisplay, -1);
     }
@@ -441,20 +497,36 @@ public final class Av1GoodEncoder implements Av1Engine {
     /**
      * Adds a picture to the lookahead and codes every group the lookahead completes.
      *
-     * @param picture the 4:2:0 picture of the configured size; it is copied
+     * @param picture the picture of the configured size, chroma format and bit depth, a
+     * {@code YuvPicture} at 8 bits and a {@code Yuv16Picture} above; it is copied
      * @param pts the timestamp
      * @param duration the duration, in the time base
      * @param forceKey whether the frame must be a key frame
      * @param output the receiver of the coded temporal units
      */
-    public void encode(YuvPicture picture, long pts, long duration, boolean forceKey, Consumer<Unit> output) {
-        var copy = YuvPicture.allocate(width, height, ChromaFormat.YUV420, false, picture.color());
-        Planes.copy(picture.y(), 0, picture.yStride(), copy.y(), 0, width, width, height);
-        var cw = (width + 1) >> 1;
-        var ch = (height + 1) >> 1;
-        Planes.copy(picture.u(), 0, picture.uvStride(), copy.u(), 0, cw, cw, ch);
-        Planes.copy(picture.v(), 0, picture.uvStride(), copy.v(), 0, cw, cw, ch);
-        var source = new Source(copy, pts, duration, forceKey, nextDisplay++);
+    public void encode(Picture picture, long pts, long duration, boolean forceKey, Consumer<Unit> output) {
+        encode(picture, pts, duration, forceKey, null, output);
+    }
+
+    /**
+     * Adds a picture and the film grain it signals to the lookahead and codes every group the
+     * lookahead completes.
+     *
+     * @param picture the picture of the configured size, chroma format and bit depth, a
+     * {@code YuvPicture} at 8 bits and a {@code Yuv16Picture} above; it is copied
+     * @param pts the timestamp
+     * @param duration the duration, in the time base
+     * @param forceKey whether the frame must be a key frame
+     * @param grain the film grain of the frame, or {@code null} for none; ignored unless the stream
+     * signals film grain
+     * @param output the receiver of the coded temporal units
+     * @throws IllegalArgumentException if the grain cannot be coded in the stream's chroma format
+     */
+    public void encode(Picture picture, long pts, long duration, boolean forceKey, Av1FilmGrain grain,
+                       Consumer<Unit> output) {
+        var source = new Source(SourcePlanes.copy(picture), pts, duration, forceKey, nextDisplay++);
+        var seq = frame.sequenceHeader();
+        source.grain = grain == null || !seq.filmGrainPresent ? null : FilmGrains.toData(grain, seq);
         measure(source);
         queue.add(source);
         while (queue.size() >= lookahead) {
@@ -479,8 +551,19 @@ public final class Av1GoodEncoder implements Av1Engine {
      * @param source the new picture
      */
     private void measure(Source source) {
-        // TODO: a true two-pass mode that measures the whole stream before coding it, for files
-        // whose length is known; the statistics now cover the lookahead only.
+        if (source.display < firstPassFrames) {
+            source.stats = FirstPassAnalyzer.read(firstPass, source.display * FirstPassAnalyzer.VALUES);
+            rc.observe(source.stats.codedError);
+            // the frames right before the end of the measurements give their luma to those after
+            if (source.display + 2 >= firstPassFrames) {
+                source.luma = FirstPass.luma(source.picture);
+                recent.add(source);
+                while (recent.size() > 2) {
+                    recent.removeFirst().luma = null;
+                }
+            }
+            return;
+        }
         source.luma = FirstPass.luma(source.picture);
         var last = recent.peekLast();
         Source second = null;
@@ -509,18 +592,18 @@ public final class Av1GoodEncoder implements Av1Engine {
      */
     private boolean keyAt(int index, int sinceKey) {
         var s = get(index);
-        if (lastKeyDisplay < 0 && index == 0 || s.forceKey) {
+        if (lastKeyDisplay < 0 && index == 0 || s.forceKey || s.display == cutDisplay) {
             return true;
         }
         if (keyInterval > 0 && sinceKey >= keyInterval) {
             return true;
         }
-        if (index == 0 || index + 1 >= queue.size() || sinceKey < 3) {
+        if (index == 0 || !available(index + 1) || sinceKey < 3) {
             return false;
         }
         var last = get(index - 1).stats;
         var cur = s.stats;
-        var next = get(index + 1).stats;
+        var next = stats(index + 1);
         var thresh = 0.085 + Math.min(sinceKey, 31) / 31.0 * 0.035;
         var pcntIntra = 1.0 - cur.pcntInter;
         var modifiedInter = cur.pcntInter - cur.pcntNeutral;
@@ -538,8 +621,8 @@ public final class Av1GoodEncoder implements Av1Engine {
         var boost = 0.0;
         var oldBoost = 0.0;
         var tested = 0;
-        for (var i = 1; i <= 16 && index + i < queue.size(); i++) {
-            var f = get(index + i).stats;
+        for (var i = 1; i <= 16 && available(index + i); i++) {
+            var f = stats(index + i);
             var ii = Math.min(12.5 * f.intraError / Math.max(f.codedError, 1e-6), 128.0);
             decay *= f.pcntInter > 0.85 ? f.pcntInter : (0.85 + f.pcntInter) / 2.0;
             boost += decay * ii;
@@ -594,6 +677,8 @@ public final class Av1GoodEncoder implements Av1Engine {
         for (var i = start + 1; i < queue.size(); i++) {
             if (keyAt(i, sinceKey + i)) {
                 nextKey = i;
+                // the group ends before the key frame, which heads a later group
+                cutDisplay = head.display + i;
                 break;
             }
         }
@@ -802,7 +887,63 @@ public final class Av1GoodEncoder implements Av1Engine {
             err += get(k).stats.codedError;
         }
         rc.planGroup(types, depths, frames, err / Math.max(1, frames), gfuBoost, kfBoost, blocks(),
-                (long) width * height, lastStreamFrame());
+                (long) width * height, lastStreamFrame(), queue.peekFirst().display);
+    }
+
+    /**
+     * The first-pass values of the frames of the stream, {@link FirstPassAnalyzer#VALUES} per frame,
+     * or {@code null} in a single pass.
+     */
+    private double[] firstPass;
+
+    /**
+     * The number of frames {@link #firstPass} measures.
+     */
+    private int firstPassFrames;
+
+    /**
+     * Makes the encode the second pass over first-pass measurements of the stream: the statistics
+     * of the measured frames are taken from them, key frames are placed and boosts computed with
+     * the frames beyond the lookahead, and a variable bitrate is spent over the whole stream. Call
+     * it before the first picture.
+     *
+     * @param values the measurements of every frame in display order, {@link FirstPassAnalyzer#VALUES}
+     * per frame
+     * @param frames the number of measured frames
+     * @param totalBits the bits the measured frames may take
+     */
+    public void twoPass(double[] values, int frames, long totalBits) {
+        this.firstPass = values;
+        this.firstPassFrames = frames;
+        var errors = new double[frames];
+        for (var i = 0; i < frames; i++) {
+            errors[i] = values[i * FirstPassAnalyzer.VALUES + 1];
+        }
+        rc.twoPass(errors, totalBits);
+    }
+
+    /**
+     * Returns whether the statistics of a lookahead position are known: it is in the lookahead,
+     * or measured by the first pass.
+     *
+     * @param index the position, from the head of the lookahead
+     * @return {@code true} when known
+     */
+    private boolean available(int index) {
+        return index < queue.size() || queue.peekFirst().display + index < firstPassFrames;
+    }
+
+    /**
+     * Returns the statistics of a lookahead position, from the lookahead or the first pass.
+     *
+     * @param index the position, {@link #available} for it
+     * @return the statistics
+     */
+    private FirstPass.Stats stats(int index) {
+        if (index < queue.size()) {
+            return get(index).stats;
+        }
+        return FirstPassAnalyzer.read(firstPass, (queue.peekFirst().display + index) * FirstPassAnalyzer.VALUES);
     }
 
     /**
@@ -836,8 +977,8 @@ public final class Av1GoodEncoder implements Av1Engine {
         var correction = Math.min(0.5 + leafQ * 0.015, 1.5);
         var boost = 100.0;
         var decay = 1.0;
-        for (var i = 0; i < MAX_GF_INTERVAL && offset + i < queue.size(); i++) {
-            var s = get(offset + i).stats;
+        for (var i = 0; i < MAX_GF_INTERVAL && available(offset + i); i++) {
+            var s = stats(offset + i);
             decay = Math.max(decay * decayRate(s), 0.01);
             boost += decay * frameBoost(s, correction);
         }
@@ -914,8 +1055,8 @@ public final class Av1GoodEncoder implements Av1Engine {
         var zeroMotion = 1.0;
         var boost = 0.0;
         var frames = 0;
-        for (var i = 1; i < queue.size(); i++) {
-            var s = get(i).stats;
+        for (var i = 1; available(i); i++) {
+            var s = stats(i);
             if (s.pcntInter < 0.05 && i > 1) {
                 break;
             }
@@ -949,18 +1090,20 @@ public final class Av1GoodEncoder implements Av1Engine {
         var codedOverlay = step.type == OVERLAY && !showArf;
         if (step.type == INTERNAL_OVERLAY || (step.type == OVERLAY && !codedOverlay)) {
             var slot = slotOf(step.display);
-            unit.writeBytes(frame.showExisting(slot, startUnit));
+            unit.writeBytes(frame.showExisting(slot, startUnit, source.pts));
             emit(source, false, slotQindex[slot], output);
             return;
         }
         var key = step.type == KEY;
         var p = params;
+        p.pts = source.pts;
         // TODO: search every inter mode and interpolation filter by the coded residual's real cost
         // (libaom's rdopt.c; only the few best single-reference modes and the motion mode are measured
         // now), add AB and four-way partitions, wedge and difference compound masks, inter-intra,
         // OBMC and global motion parameters, and refine the vector of a local warp.
         // TODO: per-superblock quantizer offsets from the dependency model (deltaq-mode) and loop
         // restoration searches on inter frames.
+        rc.replan();
         var q = rc.qindex(step.type, step.depth, rc.leafQindex(), gfuBoost, kfBoost, (long) width * height,
                 lastStreamFrame());
         p.key = key;
@@ -986,13 +1129,20 @@ public final class Av1GoodEncoder implements Av1Engine {
         p.refFrameMvs = !key;
         p.loopFilterSearch = !key;
         p.cdefSearch = key ? 0 : speed <= 3 ? 4 : speed <= 5 ? 3 : 2;
+        p.grain = source.grain;
+        p.screenContent = !key && screenFrames;
+        p.integerMv = false;
+        if (p.screenContent) {
+            integerMv.advance(source.picture);
+            p.integerMv = integerMv.decide();
+        }
         var boostIndex = Math.min(15, gfuBoost / 100);
         var rdScale = key ? 128 : LAYER_RD_FACTOR[Math.min(step.depth, LEAF_DEPTH)];
         if (!key) {
             rdScale += (rdScale * BOOST_RD_FACTOR[boostIndex]) >> 7;
         }
         p.rdmultScale = rdScale * LAMBDA_PERCENT / 100;
-        Av1RtEncoder.filterModel(p, key, q);
+        Av1RtEncoder.filterModel(p, key, q, frame.bitDepth);
         if (p.loopFilterSearch && p.lfLevelY[0] == 0) {
             p.lfLevelY[0] = 1;
             p.lfLevelY[1] = 1;
@@ -1005,7 +1155,7 @@ public final class Av1GoodEncoder implements Av1Engine {
             case INTERNAL_ARF -> step.depth;
             case LEAF, OVERLAY, INTERNAL_OVERLAY -> LEAF_DEPTH;
         };
-        YuvPicture previous = null;
+        Picture previous = null;
         if (key) {
             p.refreshFlags = 0xFF;
             p.refSearch = 0;
@@ -1027,7 +1177,10 @@ public final class Av1GoodEncoder implements Av1Engine {
         filtered = null;
         byte[] data;
         if (key) {
-            data = codeKey(picture, step.display, q, startUnit);
+            data = codeKey(picture, step.display, q, startUnit, source.grain, source.pts);
+            if (screenFrames) {
+                integerMv.advance(source.picture);
+            }
         } else {
             frame.load(picture, previous);
             data = frame.encode(p);
@@ -1061,15 +1214,44 @@ public final class Av1GoodEncoder implements Av1Engine {
      * @param display the display index
      * @param q the quantizer index
      * @param startUnit whether the frame starts a temporal unit
+     * @param grain the film grain of the frame, or {@code null} for none
+     * @param pts the timestamp of the frame, in time base units
      * @return the temporal delimiter when starting a unit, the sequence header OBU and the frame
      * OBU
      */
-    private byte[] codeKey(YuvPicture picture, int display, int q, boolean startUnit) {
-        var settings = StillSettings.of(q, keyStillSpeed()).tiles(tileColsLog2, 0).threads(threads).forGoodKey();
+    private byte[] codeKey(Picture picture, int display, int q, boolean startUnit, FilmGrainData grain, long pts) {
+        var settings = StillSettings.of(q, keyStillSpeed()).tiles(tileColsLog2, 0).threads(threads).forGoodKey()
+                .screenContent(screenContent == Av1ScreenContent.ALWAYS);
         try (var still = new StillFrameEncoder(width, height, frame.sequenceHeader(), settings, limits)) {
-            var obu = still.encodeKeyFrame(new byte[][]{picture.y(), picture.u(), picture.v()},
-                    new int[]{picture.yStride(), picture.uvStride(), picture.uvStride()}, display);
+            var seq = frame.sequenceHeader();
+            if (seq.filmGrainPresent) {
+                var seed = frame.grainSeed(grain);
+                if (grain != null) {
+                    var signaled = new FilmGrainData();
+                    signaled.copyFrom(grain);
+                    signaled.seed = seed;
+                    still.filmGrain(signaled);
+                }
+                frame.advanceGrainSeed(seed);
+            }
+            var timing = frame.timing();
+            if (timing != null) {
+                still.timing(timing, pts);
+            }
+            byte[] obu;
+            if (picture instanceof YuvPicture yuv) {
+                obu = still.encodeKeyFrame(new byte[][]{yuv.y(), yuv.u(), yuv.v()},
+                        new int[]{yuv.yStride(), yuv.uvStride(), yuv.uvStride()}, display);
+            } else {
+                var yuv = (Yuv16Picture) picture;
+                obu = still.encodeKeyFrame(new short[][]{yuv.y(), yuv.u(), yuv.v()},
+                        new int[]{yuv.yStride(), yuv.uvStride(), yuv.uvStride()}, display);
+            }
             frame.installKeyFrame(still.reconstruction(), still.header());
+            if (timing != null) {
+                timing.advance(true, pts);
+            }
+            screenFrames = still.header().allowScreenContentTools;
             var seqObu = frame.sequenceHeaderObu();
             var out = new ByteArrayOutputStream(obu.length + seqObu.length + 8);
             if (startUnit) {
@@ -1158,7 +1340,7 @@ public final class Av1GoodEncoder implements Av1Engine {
         if (before + after == 0) {
             return;
         }
-        var pictures = new ArrayList<YuvPicture>(before + after + 1);
+        var pictures = new ArrayList<Picture>(before + after + 1);
         for (var i = index - before; i <= index + after; i++) {
             pictures.add(get(i).picture);
         }

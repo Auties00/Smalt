@@ -105,7 +105,7 @@ class OpusApiTest {
             assertThrows(IllegalArgumentException.class, () -> {
                 switch (field) {
                     case "rate" -> OpusEncoderOptions.builder().format(44100, 2).build();
-                    case "channels" -> OpusEncoderOptions.builder().format(48000, 3).build();
+                    case "channels" -> OpusEncoderOptions.builder().format(48000, 256).build();
                     case "bitrate low" -> OpusEncoderOptions.builder().bitrate(499).build();
                     case "bitrate high" -> OpusEncoderOptions.builder().bitrate(600_001).build();
                     case "complexity" -> OpusEncoderOptions.builder().complexity(11).build();

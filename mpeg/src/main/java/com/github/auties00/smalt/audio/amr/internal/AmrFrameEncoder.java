@@ -15,10 +15,11 @@ public sealed interface AmrFrameEncoder permits NbEncoder, WbEncoder {
      *
      * @param wideband {@code true} for AMR-WB, {@code false} for AMR-NB
      * @param dtx whether voice activity detection and discontinuous transmission are on
+     * @param vad2 whether an AMR-NB encoder detects voice activity with VAD option 2 instead of option 1
      * @return the encoder
      */
-    static AmrFrameEncoder create(boolean wideband, boolean dtx) {
-        return wideband ? new WbEncoder(dtx) : new NbEncoder(dtx);
+    static AmrFrameEncoder create(boolean wideband, boolean dtx, boolean vad2) {
+        return wideband ? new WbEncoder(dtx) : new NbEncoder(dtx, vad2);
     }
 
     /**

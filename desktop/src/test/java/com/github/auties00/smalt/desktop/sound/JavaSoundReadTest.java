@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.desktop.sound;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.audio.AudioReader;
 import com.github.auties00.smalt.audio.AudioReaderOptions;
 import com.github.auties00.smalt.audio.ChannelLayout;
@@ -35,7 +36,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 @DisplayName("Java Sound reading")
 class JavaSoundReadTest {
@@ -48,23 +48,51 @@ class JavaSoundReadTest {
         MP3("mp3", 44_100, List.of("-c:a", "libmp3lame", "-b:a", "128k"), SmaltAudioFormats.MP3, "MP3"),
         M4A("m4a", 48_000, List.of("-c:a", "aac", "-b:a", "128k"), SmaltAudioFormats.MPEG4, "AAC"),
         ADTS("aac", 48_000, List.of("-c:a", "aac", "-b:a", "128k"), SmaltAudioFormats.AAC, "AAC"),
-        MATROSKA("mka", 48_000, List.of("-c:a", "libopus"), SmaltAudioFormats.MATROSKA, "OPUS");
+        MATROSKA("mka", 48_000, List.of("-c:a", "libopus"), SmaltAudioFormats.MATROSKA, "OPUS"),
+        AC3("ac3", 48_000, List.of("-c:a", "ac3", "-b:a", "192k"), SmaltAudioFormats.AC3, "AC3"),
+        EAC3("eac3", 48_000, List.of("-c:a", "eac3", "-b:a", "192k"), SmaltAudioFormats.EAC3, "EAC3"),
+        DTS("dts", 48_000, List.of("-c:a", "dca", "-strict", "-2"), SmaltAudioFormats.DTS, "DTS"),
+        LOAS("latm", 48_000, List.of("-c:a", "aac", "-b:a", "128k"), SmaltAudioFormats.LOAS, "AAC"),
+        CAF_ALAC("caf", 44_100, List.of("-c:a", "alac"), SmaltAudioFormats.CAF, "ALAC"),
+        WAVPACK("wv", 44_100, List.of("-c:a", "wavpack"), SmaltAudioFormats.WAVPACK, "WAVPACK"),
+        W64("w64", 44_100, List.of("-c:a", "pcm_s16le"), SmaltAudioFormats.W64, "PCM_SIGNED"),
+        RF64("wav", 44_100, List.of("-c:a", "pcm_s16le", "-rf64", "always"), AudioFileFormat.Type.WAVE, "PCM_SIGNED"),
+        WAV_ADPCM("wav", 44_100, List.of("-c:a", "adpcm_ms"), AudioFileFormat.Type.WAVE, "ADPCM_MS"),
+        AIFC_SOWT("aifc", 44_100, List.of("-c:a", "pcm_s16le"), AudioFileFormat.Type.AIFC, "PCM_SIGNED"),
+        AIFC_FLOAT("aifc", 44_100, List.of("-c:a", "pcm_f32be"), AudioFileFormat.Type.AIFC, "PCM_FLOAT"),
+        AIFC_ALAW("aifc", 8_000, List.of("-c:a", "pcm_alaw"), AudioFileFormat.Type.AIFC, "ALAW"),
+        AVI("avi", 48_000, List.of("-c:v", "mjpeg", "-c:a", "libmp3lame", "-ac", "2"), SmaltAudioFormats.AVI, "MP3",
+                true),
+        MPEG_TS("ts", 48_000, List.of("-c:v", "mpeg2video", "-c:a", "aac", "-ac", "2"), SmaltAudioFormats.MPEG_TS,
+                "AAC", true),
+        MPEG_PS("mpg", 48_000, List.of("-c:v", "mpeg1video", "-c:a", "mp2", "-ac", "2"), SmaltAudioFormats.MPEG_PS,
+                "MP2", true);
 
         final String extension;
         final int sampleRate;
         final List<String> options;
         final AudioFileFormat.Type type;
         final String encoding;
+        final boolean video;
 
         Clip(String extension, int sampleRate, List<String> options, AudioFileFormat.Type type, String encoding) {
+            this(extension, sampleRate, options, type, encoding, false);
+        }
+
+        Clip(String extension, int sampleRate, List<String> options, AudioFileFormat.Type type, String encoding,
+             boolean video) {
             this.extension = extension;
             this.sampleRate = sampleRate;
             this.options = options;
             this.type = type;
             this.encoding = encoding;
+            this.video = video;
         }
 
         Path path() {
+            if (video) {
+                return Fixtures.testVideo(extension, 160, 120, 1.5, options);
+            }
             return Fixtures.tone(extension, 440, sampleRate, 2, 1.5, options);
         }
     }
@@ -142,10 +170,43 @@ class JavaSoundReadTest {
         }
     }
 
+    static boolean pcm(Clip clip) {
+        return clip.encoding.startsWith("PCM_") || clip.encoding.equals("ALAW") || clip.encoding.equals("ULAW");
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @EnumSource(Clip.class)
+    @DisplayName("a PCM track is returned in its own format, its bytes those of AudioReader's samples")
+    void pcmTracks(Clip clip) throws Exception {
+        if (!pcm(clip)) {
+            return;
+        }
+        var expected = reference(clip.path(), AudioReaderOptions.defaults());
+        try (var stream = AudioSystem.getAudioInputStream(clip.path().toFile())) {
+            var format = stream.getFormat();
+            assertEquals(clip.encoding, format.getEncoding().toString());
+            var channels = format.getChannels();
+            var frames = expected.length / channels;
+            var planes = new float[channels][frames];
+            for (var i = 0; i < frames; i++) {
+                for (var c = 0; c < channels; c++) {
+                    planes[c][i] = expected[i * channels + c];
+                }
+            }
+            var bytes = new byte[frames * format.getFrameSize()];
+            SampledAudio.write(planes, 0, frames, format, bytes, 0);
+            assertArrayEquals(bytes, stream.readAllBytes());
+        }
+    }
+
+    // The JDK converts a PCM track's own format, so these compare compressed tracks, which Smalt decodes
     @ParameterizedTest(name = "{0}")
     @EnumSource(Clip.class)
     @DisplayName("float PCM through Java Sound is bit-identical to AudioReader's output")
     void floatExact(Clip clip) throws Exception {
+        if (pcm(clip)) {
+            return;
+        }
         var expected = reference(clip.path(), AudioReaderOptions.defaults());
         try (var encoded = AudioSystem.getAudioInputStream(clip.path().toFile());
              var pcm = AudioSystem.getAudioInputStream(float32(encoded.getFormat()), encoded)) {
@@ -158,6 +219,9 @@ class JavaSoundReadTest {
     @EnumSource(Clip.class)
     @DisplayName("PCM_SIGNED decodes to 16-bit little-endian samples rounded from AudioReader's output")
     void signed16(Clip clip) throws Exception {
+        if (pcm(clip)) {
+            return;
+        }
         var expected = quantize(reference(clip.path(), AudioReaderOptions.defaults()));
         try (var encoded = AudioSystem.getAudioInputStream(clip.path().toFile());
              var pcm = AudioSystem.getAudioInputStream(AudioFormat.Encoding.PCM_SIGNED, encoded)) {
@@ -207,12 +271,12 @@ class JavaSoundReadTest {
         try (var encoded = AudioSystem.getAudioInputStream(Clip.MP3.path().toFile());
              var pcm = AudioSystem.getAudioInputStream(AudioFormat.Encoding.PCM_SIGNED, encoded)) {
             var info = new DataLine.Info(SourceDataLine.class, pcm.getFormat());
-            assumeTrue(AudioSystem.isLineSupported(info), "no audio output on this machine");
+            Skip.unlessDevice(AudioSystem.isLineSupported(info), "audio-output", "no audio output on this machine");
             try (var line = (SourceDataLine) AudioSystem.getLine(info)) {
                 line.open(pcm.getFormat());
                 assertEquals(pcm.getFormat(), line.getFormat());
             } catch (LineUnavailableException | IllegalArgumentException exception) {
-                assumeTrue(false, "the audio output is unavailable: " + exception.getMessage());
+                Skip.unlessDevice(false, "audio-output", "the audio output is unavailable: " + exception.getMessage());
             }
         }
     }

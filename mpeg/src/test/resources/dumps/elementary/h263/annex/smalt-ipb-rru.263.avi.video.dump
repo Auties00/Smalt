@@ -1,0 +1,17 @@
+# video decode dump of elementary/h263/annex/smalt-ipb-rru.263.avi; regenerate with -Dsmalt.test.updateDumps=true
+format AVI
+duration 233333
+seekable true
+track 1 H263 176x144 timebase=1/30
+0 pts=0 dur=1 key=true 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=2df85464 u=e446b67f v=e5effc06
+1 pts=1 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=18cd46f9 u=d3f442c1 v=f5a69779
+2 pts=2 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=837a2103 u=96519db5 v=8ddbf441
+3 pts=3 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=9a3504ff u=bb983b9f v=6e14d6e4
+4 pts=4 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=062544f7 u=adabbac6 v=c47c2e40
+5 pts=5 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=efc74de1 u=3b093bdc v=df3f6439
+6 pts=6 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=38c31e6a u=3b82b698 v=ca2d2952
+seek 0: @0
+seek 77777: @2
+seek 155555: @4
+seek 233333: @6
+seek -1000000: @0
