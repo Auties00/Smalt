@@ -10,7 +10,8 @@ import java.util.List;
 
 /**
  * Walks the top-level boxes of an ISO base media file without reading their payloads, recording
- * where the {@code ftyp}, {@code moov}, {@code moof} and {@code mdat} boxes are.
+ * where the {@code ftyp}, {@code moov}, {@code moof} and {@code mdat} boxes are, and the compressed
+ * boxes of ISO/IEC 14496-12 clause 8.20 ({@code !mov}, {@code !mof}, {@code !six}, {@code !ssx}).
  *
  * <p>Only box headers are read, so a scan of a multi-gigabyte file touches a few kilobytes; the
  * bytes a header read brings in beyond the header are used for the next header or the
@@ -19,10 +20,11 @@ import java.util.List;
  * end of the file. The walk stops at trailing bytes too short for a header, at a box that runs
  * past the end of the file, and after {@value #MAX_BOXES} boxes.
  *
- * <p>A scan given a prefetch budget also reads the payloads of the first {@code moov} and of the
- * {@code moof} boxes as it meets them, straight after their headers, while their total stays
- * within the budget: a file or network source is then read forwards once, instead of being
- * walked for headers and read again, backwards, for the payloads. A payload is prefetched only
+ * <p>A scan given a prefetch budget also reads the payloads of the first {@code moov} (or
+ * {@code !mov}) and of the movie fragment boxes ({@code moof}, {@code !mof}) as it meets them,
+ * straight after their headers, while their total stays within the budget: a file or network
+ * source is then read forwards once, instead of being walked for headers and read again,
+ * backwards, for the payloads. A payload is prefetched only
  * when reading it later could not fail on its size or position, and a payload whose read comes
  * up short or fails is dropped and stops prefetching, so the caller reads it again and meets the
  * same failure at the same point.
@@ -59,13 +61,30 @@ final class TopLevelScan {
     long moovSize;
 
     /**
+     * The absolute offset, header size and total size of the first compressed movie box ({@code !mov}), or
+     * {@code null}.
+     */
+    long[] compressedMoov;
+
+    /**
+     * The prefetched payload of the first compressed movie box, or {@code null} when it was not prefetched.
+     */
+    byte[] compressedMoovPayload;
+
+    /**
+     * The absolute offsets, header sizes, total sizes and types of the compressed segment index boxes
+     * ({@code !six}, {@code !ssx}), four values per box, in file order.
+     */
+    final List<long[]> compressedIndexes = new ArrayList<>();
+
+    /**
      * The absolute offset of the first {@code mdat} box, or {@code -1}.
      */
     long firstMdat = -1;
 
     /**
-     * The absolute offsets, header sizes and total sizes of the {@code moof} boxes, three values
-     * per box.
+     * The absolute offsets, header sizes, total sizes and types of the movie fragment boxes, four
+     * values per box: {@link BoxTypes#MOOF} or {@link BoxTypes#COMPRESSED_MOOF}.
      */
     final List<long[]> fragments = new ArrayList<>();
 
@@ -82,7 +101,7 @@ final class TopLevelScan {
     byte[] moovPayload;
 
     /**
-     * The prefetched payloads of the {@code moof} boxes, in the order of {@link #fragments}, with
+     * The prefetched payloads of the movie fragment boxes, in the order of {@link #fragments}, with
      * {@code null} for every payload that was not prefetched.
      */
     final List<byte[]> fragmentPayloads = new ArrayList<>();
@@ -112,8 +131,8 @@ final class TopLevelScan {
     }
 
     /**
-     * Scans a source, prefetching the payloads of the first {@code moov} and of the
-     * {@code moof} boxes within a budget.
+     * Scans a source, prefetching the payloads of the first {@code moov} (or {@code !mov}) and of
+     * the movie fragment boxes within a budget.
      *
      * @param source the source to scan
      * @param stopEarly whether to stop once the order of {@code moov} and the first {@code mdat} is
@@ -193,8 +212,17 @@ final class TopLevelScan {
                         scan.moovPayload = scan.prefetch(source, size, position, headerSize, boxSize, header, read);
                     }
                 }
-                case BoxTypes.MOOF -> {
-                    scan.fragments.add(new long[]{position, headerSize, boxSize});
+                case BoxTypes.COMPRESSED_MOOV -> {
+                    if (scan.compressedMoov == null) {
+                        scan.compressedMoov = new long[]{position, headerSize, boxSize};
+                        scan.compressedMoovPayload = scan.prefetch(source, size, position, headerSize, boxSize, header,
+                                read);
+                    }
+                }
+                case BoxTypes.COMPRESSED_SIDX, BoxTypes.COMPRESSED_SSIX ->
+                        scan.compressedIndexes.add(new long[]{position, headerSize, boxSize, type});
+                case BoxTypes.MOOF, BoxTypes.COMPRESSED_MOOF -> {
+                    scan.fragments.add(new long[]{position, headerSize, boxSize, type});
                     scan.fragmentPayloads.add(scan.prefetch(source, size, position, headerSize, boxSize, header, read));
                 }
                 case BoxTypes.MDAT -> {
@@ -206,7 +234,7 @@ final class TopLevelScan {
                 }
             }
             var end = position + boxSize;
-            if (stopEarly && scan.moovOffset >= 0 && scan.firstMdat >= 0) {
+            if (stopEarly && (scan.moovOffset >= 0 || scan.compressedMoov != null) && scan.firstMdat >= 0) {
                 scan.next = end <= position || end == Long.MAX_VALUE || (size >= 0 && end > size) ? -1 : end;
                 break;
             }
@@ -303,11 +331,13 @@ final class TopLevelScan {
     }
 
     /**
-     * Returns whether the {@code moov} box precedes the first {@code mdat} box.
+     * Returns whether the movie box, or the compressed movie box when there is no {@code moov},
+     * precedes the first {@code mdat} box.
      *
-     * @return {@code true} when a {@code moov} exists and no {@code mdat} comes before it
+     * @return {@code true} when a movie box exists and no {@code mdat} comes before it
      */
     boolean isFastStart() {
-        return moovOffset >= 0 && (firstMdat < 0 || moovOffset < firstMdat);
+        var movie = moovOffset >= 0 ? moovOffset : compressedMoov != null ? compressedMoov[0] : -1;
+        return movie >= 0 && (firstMdat < 0 || movie < firstMdat);
     }
 }
