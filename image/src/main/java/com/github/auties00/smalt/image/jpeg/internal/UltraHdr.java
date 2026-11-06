@@ -33,6 +33,16 @@ public final class UltraHdr {
      */
     private static final int BASELINE_PRIMARY = 0x030000;
 
+    /**
+     * The start of the {@code rdf:Description} element of {@link XmpPacket#toXml()}.
+     */
+    private static final String DESCRIPTION_START = "  <rdf:Description ";
+
+    /**
+     * The end of the {@code rdf:Description} element of {@link XmpPacket#toXml()}, its line feed included.
+     */
+    private static final String DESCRIPTION_END = "  </rdf:Description>\n";
+
     private UltraHdr() {
         throw new AssertionError();
     }
@@ -172,17 +182,30 @@ public final class UltraHdr {
      * an XMP packet with the {@code hdrgm} metadata (when the metadata applies in the base color space, which
      * the XMP form cannot otherwise say) and an ISO 21496-1 {@code APP2} segment with the full metadata.
      *
-     * @param primary the JPEG file of the primary image
-     * @param gainMap the JPEG file of the gain map image
+     * <p>A packet of the caller is written in the XMP packet of its image, as a description of its own after
+     * the Ultra HDR one, without its {@code hdrgm} and {@code Container} properties, which the Ultra HDR
+     * description replaces. When the packet of an image does not fit one segment, the largest properties of
+     * the caller move to an Extended XMP packet; the Ultra HDR description stays in the main packet, where
+     * readers look for it.
+     *
+     * @param primary the JPEG file of the primary image, without an XMP segment
+     * @param gainMap the JPEG file of the gain map image, without an XMP segment
      * @param metadata the gain map metadata
+     * @param primaryXmp the caller's XMP packet of the primary image, or {@code null}
+     * @param gainMapXmp the caller's XMP packet of the gain map image, or {@code null}
      * @return the file
+     * @throws MediaException.LimitExceeded if a packet cannot be split to fit its segments
      */
-    public static byte[] write(byte[] primary, byte[] gainMap, GainMapMetadata metadata) {
+    public static byte[] write(byte[] primary, byte[] gainMap, GainMapMetadata metadata, XmpPacket primaryXmp,
+                               XmpPacket gainMapXmp) {
         var secondary = new ByteArrayOutputStream(gainMap.length + 1024);
         var gainMapHeader = insertionPoint(gainMap);
         secondary.write(gainMap, 0, gainMapHeader);
+        var callerGainMap = callerPacket(gainMapXmp);
         if (metadata.useBaseColorSpace()) {
-            segment(secondary, 0xE1, JpegXmp.XMP_ID, secondaryXmp(metadata).getBytes(StandardCharsets.UTF_8));
+            xmp(secondary, secondaryDescription(metadata), callerGainMap);
+        } else if (callerGainMap != null) {
+            xmp(secondary, "", callerGainMap);
         }
         segment(secondary, 0xE2, JpegContainer.ISO_ID, metadata.toByteArray());
         secondary.write(gainMap, gainMapHeader, gainMap.length - gainMapHeader);
@@ -190,7 +213,7 @@ public final class UltraHdr {
         var head = new ByteArrayOutputStream();
         var primaryHeader = insertionPoint(primary);
         head.write(primary, 0, primaryHeader);
-        segment(head, 0xE1, JpegXmp.XMP_ID, primaryXmp(gainMapFile.length).getBytes(StandardCharsets.UTF_8));
+        xmp(head, primaryDescription(gainMapFile.length), callerPacket(primaryXmp));
         segment(head, 0xE2, JpegContainer.ISO_ID, new byte[4]);
         var mpfMarker = head.size();
         var mpf = new byte[JpegContainer.MPF_ID.length + 8 + 2 + 3 * 12 + 4 + 2 * 16];
@@ -204,6 +227,108 @@ public final class UltraHdr {
         out.write(primary, primaryHeader, primary.length - primaryHeader);
         out.writeBytes(gainMapFile);
         return out.toByteArray();
+    }
+
+    /**
+     * {@return the properties of a caller's packet that an Ultra HDR file can carry: all but its {@code hdrgm}
+     * and {@code Container} properties and its stale {@code xmpNote:HasExtendedXMP}; {@code null} when none
+     * remain}
+     *
+     * @param packet the caller's packet, or {@code null}
+     */
+    private static XmpPacket callerPacket(XmpPacket packet) {
+        if (packet == null) {
+            return null;
+        }
+        var kept = packet.withoutNamespace(GainMapMetadata.XMP_NAMESPACE).withoutNamespace(JpegContainer.CONTAINER)
+                .without(XmpPacket.XMP_NOTE, JpegXmp.HAS_EXTENDED);
+        return kept.isEmpty() ? null : kept;
+    }
+
+    /**
+     * Writes the XMP segments of an image: its Ultra HDR description, followed by a description of the
+     * caller's properties.
+     *
+     * @param out the output
+     * @param description the Ultra HDR {@code rdf:Description} element, or an empty string for none
+     * @param caller the caller's properties, or {@code null}
+     * @throws MediaException.LimitExceeded if the packet cannot be split to fit its segments
+     */
+    private static void xmp(ByteArrayOutputStream out, String description, XmpPacket caller) {
+        if (caller == null) {
+            segment(out, 0xE1, JpegXmp.XMP_ID, packet(description).getBytes(StandardCharsets.UTF_8));
+            return;
+        }
+        var payloads = JpegXmp.payloads(caller, properties -> packet(description + description(properties))
+                .getBytes(StandardCharsets.UTF_8));
+        for (var payload : payloads) {
+            segment(out, 0xE1, new byte[0], payload);
+        }
+    }
+
+    /**
+     * {@return the {@code rdf:Description} element of a packet's canonical serialization, which declares the
+     * namespaces of its properties, or an empty string for a packet without properties}
+     *
+     * <p>A prefix of the Ultra HDR description ({@code hdrgm}, {@code Container}, {@code Item}) that the
+     * packet binds to another namespace is renamed, since readers of Ultra HDR files match these prefixes
+     * literally.
+     *
+     * @param packet the packet to describe
+     */
+    private static String description(XmpPacket packet) {
+        if (packet.isEmpty()) {
+            return "";
+        }
+        var xml = packet.toXml();
+        var start = xml.indexOf(DESCRIPTION_START);
+        var end = xml.lastIndexOf(DESCRIPTION_END);
+        if (start < 0 || end < start) {
+            throw new IllegalStateException("unexpected XMP serialization");
+        }
+        var text = xml.substring(start, end + DESCRIPTION_END.length());
+        text = renamePrefix(text, "hdrgm", GainMapMetadata.XMP_NAMESPACE);
+        text = renamePrefix(text, "Container", JpegContainer.CONTAINER);
+        return renamePrefix(text, "Item", JpegContainer.ITEM);
+    }
+
+    /**
+     * {@return a canonical {@code rdf:Description} element with a prefix renamed to an unused one when the
+     * element binds it to a namespace other than {@code namespace}}
+     *
+     * <p>The canonical form declares every prefix on the start tag and names properties only in element
+     * tags, and it escapes {@code <} in text, so the prefix appears nowhere else.
+     *
+     * @param description the element, as {@link #description(XmpPacket)} cuts it
+     * @param prefix the reserved prefix
+     * @param namespace the namespace the prefix stands for in an Ultra HDR file
+     */
+    private static String renamePrefix(String description, String prefix, String namespace) {
+        var declaration = "xmlns:" + prefix + "=\"";
+        var startTag = description.substring(0, description.indexOf(">\n") + 1);
+        var at = startTag.indexOf(declaration);
+        if (at < 0 || startTag.startsWith(namespace + "\"", at + declaration.length())) {
+            return description;
+        }
+        var counter = 1;
+        while (startTag.contains("xmlns:" + prefix + counter + "=\"")) {
+            counter++;
+        }
+        var renamed = prefix + counter;
+        return description.replace(declaration, "xmlns:" + renamed + "=\"")
+                .replace("<" + prefix + ":", "<" + renamed + ":")
+                .replace("</" + prefix + ":", "</" + renamed + ":");
+    }
+
+    /**
+     * {@return an XMP packet of {@code rdf:Description} elements}
+     *
+     * @param descriptions the elements, each ending with a line feed
+     */
+    private static String packet(String descriptions) {
+        return "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"Smalt\">\n"
+                + " <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n" + descriptions
+                + " </rdf:RDF>\n</x:xmpmeta>";
     }
 
     /**
@@ -285,12 +410,12 @@ public final class UltraHdr {
     }
 
     /**
-     * {@return the XMP packet of the primary image}
+     * {@return the Ultra HDR {@code rdf:Description} element of the primary image}
+     *
+     * @param gainMapLength the size of the gain map image
      */
-    private static String primaryXmp(int gainMapLength) {
-        return "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"Smalt\">\n"
-                + " <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n"
-                + "  <rdf:Description rdf:about=\"\" xmlns:Container=\"" + JpegContainer.CONTAINER + "\"\n"
+    private static String primaryDescription(int gainMapLength) {
+        return "  <rdf:Description rdf:about=\"\" xmlns:Container=\"" + JpegContainer.CONTAINER + "\"\n"
                 + "    xmlns:Item=\"" + JpegContainer.ITEM + "\" xmlns:hdrgm=\"" + GainMapMetadata.XMP_NAMESPACE
                 + "\"\n    hdrgm:Version=\"1.0\">\n"
                 + "   <Container:Directory>\n    <rdf:Seq>\n"
@@ -301,13 +426,15 @@ public final class UltraHdr {
                 + "      <Container:Item Item:Semantic=\"GainMap\" Item:Mime=\"image/jpeg\" Item:Length=\""
                 + gainMapLength + "\"/>\n"
                 + "     </rdf:li>\n"
-                + "    </rdf:Seq>\n   </Container:Directory>\n  </rdf:Description>\n </rdf:RDF>\n</x:xmpmeta>";
+                + "    </rdf:Seq>\n   </Container:Directory>\n  </rdf:Description>\n";
     }
 
     /**
-     * {@return the XMP packet of the gain map image}
+     * {@return the Ultra HDR {@code rdf:Description} element of the gain map image}
+     *
+     * @param metadata the gain map metadata
      */
-    private static String secondaryXmp(GainMapMetadata metadata) {
+    private static String secondaryDescription(GainMapMetadata metadata) {
         var baseIsHdr = metadata.isBaseBrighter();
         var attributes = new StringBuilder();
         var elements = new StringBuilder();
@@ -324,14 +451,11 @@ public final class UltraHdr {
                 .append("\"\n    hdrgm:HDRCapacityMax=\"")
                 .append(format(Math.max(metadata.baseHeadroom(), metadata.alternateHeadroom())))
                 .append("\"\n    hdrgm:BaseRenditionIsHDR=\"").append(baseIsHdr ? "True" : "False").append('"');
-        var description = elements.isEmpty()
+        return elements.isEmpty()
                 ? "  <rdf:Description rdf:about=\"\" xmlns:hdrgm=\"" + GainMapMetadata.XMP_NAMESPACE + "\"\n    "
                 + attributes + "/>\n"
                 : "  <rdf:Description rdf:about=\"\" xmlns:hdrgm=\"" + GainMapMetadata.XMP_NAMESPACE + "\"\n    "
                 + attributes + ">\n" + elements + "  </rdf:Description>\n";
-        return "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"Smalt\">\n"
-                + " <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n" + description
-                + " </rdf:RDF>\n</x:xmpmeta>";
     }
 
     /**

@@ -260,7 +260,7 @@ class EncodedMetadataTest {
         }
 
         @Test
-        @DisplayName("rejects a JPEG EXIF block larger than a segment, an Ultra HDR XMP packet and a GIF packet with a zero byte")
+        @DisplayName("rejects a JPEG EXIF block larger than a segment and a GIF packet with a zero byte, and keeps Ultra HDR XMP")
         void limits() {
             var tooLarge = new byte[JpegEncoderOptions.MAX_EXIF + 1];
             System.arraycopy(ExifBlockBuilder.camera(true, 1).build(), 0, tooLarge, 0, 64);
@@ -284,10 +284,17 @@ class EncodedMetadataTest {
                             Optional.empty(), Optional.empty(), Optional.of(pq)),
                     com.github.auties00.smalt.image.gainmap.GainMapComputeOptions.builder().build());
             var withXmp = JpegEncoderOptions.builder().xmp(xmp()).build();
+            var merged = XmpPacket.parse(decode(JpegEncoder.encode(base, gainMap, withXmp,
+                    JpegEncoderOptions.defaults()), false).xmp().orElseThrow());
+            for (var property : XmpPacket.parse(xmp()).properties()) {
+                assertEquals(property.value(), merged.get(property.namespace(), property.name()).orElseThrow());
+            }
+            assertEquals("1.0", merged.text("http://ns.adobe.com/hdr-gain-map/1.0/", "Version").orElseThrow());
+            var broken = JpegEncoderOptions.builder().xmp("<x:xmpmeta".getBytes(StandardCharsets.UTF_8)).build();
             assertThrows(IllegalArgumentException.class,
-                    () -> JpegEncoder.encode(base, gainMap, withXmp, JpegEncoderOptions.defaults()));
+                    () -> JpegEncoder.encode(base, gainMap, broken, JpegEncoderOptions.defaults()));
             assertThrows(IllegalArgumentException.class,
-                    () -> JpegEncoder.encode(base, gainMap, JpegEncoderOptions.defaults(), withXmp));
+                    () -> JpegEncoder.encode(base, gainMap, JpegEncoderOptions.defaults(), broken));
             var exif = ExifBlockBuilder.camera(true, 1).build();
             var ultraHdr = JpegEncoder.encode(base, gainMap, JpegEncoderOptions.builder().exif(exif).build(),
                     JpegEncoderOptions.defaults());

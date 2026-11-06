@@ -15,6 +15,7 @@ import com.github.auties00.smalt.image.jpeg.internal.JpegEncoding;
 import com.github.auties00.smalt.image.jpeg.internal.UltraHdr;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.io.MediaSink;
+import com.github.auties00.smalt.metadata.XmpPacket;
 
 import java.util.Objects;
 
@@ -141,8 +142,10 @@ public final class JpegEncoder {
      * @param gainMapOptions the settings of the gain map image
      * @param sink the output; not closed
      * @throws IllegalArgumentException if a picture is wider or taller than 65535 pixels, the settings do not
-     * fit a picture, or a metadata value is too large for a 32-bit fraction
-     * @throws MediaException.LimitExceeded if a color profile needs more than 255 {@code APP2} segments
+     * fit a picture, a metadata value is too large for a 32-bit fraction, or an XMP packet of the options does
+     * not parse
+     * @throws MediaException.LimitExceeded if a color profile needs more than 255 {@code APP2} segments, or an
+     * XMP packet cannot be split into Extended XMP segments
      * @throws MediaException.Io if writing the sink fails
      */
     public static void encode(Picture picture, GainMap gainMap, JpegEncoderOptions options,
@@ -167,6 +170,17 @@ public final class JpegEncoder {
      * {@code APP2} segment with the metadata. The gain map image follows the primary image. The output does
      * not depend on the number of threads.
      *
+     * <p>The {@linkplain JpegEncoderOptions#xmp() XMP packet} of {@code options} joins the XMP packet of the
+     * primary image, and that of {@code gainMapOptions} the XMP packet of the gain map image (written alone
+     * when that image has no {@code hdrgm} metadata), as an {@code rdf:Description} of its own after the
+     * Ultra HDR one. Its {@code hdrgm} properties and its {@code Container} properties (namespace
+     * {@code http://ns.google.com/photos/1.0/container/}) are left out, since the file states its own; its other
+     * properties are written in the canonical form of {@link XmpPacket#toXml()} (with the prefixes
+     * {@code hdrgm}, {@code Container} and {@code Item} renamed when the packet binds them to other namespaces,
+     * since Ultra HDR readers match them literally), and a packet left without
+     * properties adds nothing. When a packet does not fit one segment, the largest of these properties move to
+     * an Extended XMP packet, and the Ultra HDR properties stay in the main packet.
+     *
      * @param picture the picture, the base rendition; its alpha channel, if any, is ignored
      * @param gainMap the gain map of the picture
      * @param options the settings of the picture
@@ -174,9 +188,9 @@ public final class JpegEncoder {
      * @return the JPEG file
      * @throws IllegalArgumentException if a picture is wider or taller than 65535 pixels, the settings do not
      * fit a picture as {@link #encode(Picture, JpegEncoderOptions)} describes, a metadata value is too large
-     * for a 32-bit fraction, or either options carry an XMP packet, which would compete with the packets of
-     * the Ultra HDR file
-     * @throws MediaException.LimitExceeded if a color profile needs more than 255 {@code APP2} segments
+     * for a 32-bit fraction, or an XMP packet of the options does not parse
+     * @throws MediaException.LimitExceeded if a color profile needs more than 255 {@code APP2} segments, or an
+     * XMP packet cannot be split into Extended XMP segments
      */
     public static byte[] encode(Picture picture, GainMap gainMap, JpegEncoderOptions options,
                                 JpegEncoderOptions gainMapOptions) {
@@ -184,10 +198,8 @@ public final class JpegEncoder {
         Objects.requireNonNull(gainMap, "gainMap");
         Objects.requireNonNull(options, "options");
         Objects.requireNonNull(gainMapOptions, "gainMapOptions");
-        // TODO: merge a caller's XMP packet into the container packet of the Ultra HDR primary image
-        if (options.xmp().isPresent() || gainMapOptions.xmp().isPresent()) {
-            throw new IllegalArgumentException("an Ultra HDR file carries its own XMP packets");
-        }
+        var primaryXmp = parseXmp(options);
+        var gainMapXmp = parseXmp(gainMapOptions);
         try (var _ = ParallelBands.operation()) {
             var image = gainMap.image();
             var gray = switch (image) {
@@ -196,12 +208,34 @@ public final class JpegEncoder {
                 case ChannelPicture channels -> channels.layout().colorModel() == ColorModel.GRAY;
                 default -> false;
             };
-            var builder = gainMapOptions.toBuilder().chromaFormat(gray ? ChromaFormat.MONOCHROME : ChromaFormat.YUV444);
+            var builder = gainMapOptions.toBuilder().noXmp()
+                    .chromaFormat(gray ? ChromaFormat.MONOCHROME : ChromaFormat.YUV444);
             gainMap.alternateProfile().filter(profile -> profile.colorSpace() == ProfileColorSpace.RGB)
                     .ifPresent(builder::colorProfile);
-            var primary = JpegEncoding.encode(picture, options);
+            var primary = JpegEncoding.encode(picture, primaryXmp == null ? options : options.toBuilder().noXmp()
+                    .build());
             var secondary = JpegEncoding.encode(image, builder.build());
-            return UltraHdr.write(primary, secondary, gainMap.metadata());
+            return UltraHdr.write(primary, secondary, gainMap.metadata(), primaryXmp, gainMapXmp);
+        }
+    }
+
+    /**
+     * Parses the XMP packet of the settings of an Ultra HDR image.
+     *
+     * @param options the settings
+     * @return the packet, or {@code null} when the settings carry none
+     * @throws IllegalArgumentException if the packet does not parse
+     */
+    private static XmpPacket parseXmp(JpegEncoderOptions options) {
+        var xmp = options.xmp();
+        if (xmp.isEmpty()) {
+            return null;
+        }
+        try {
+            return XmpPacket.parse(xmp.get());
+        } catch (MediaException.Malformed exception) {
+            throw new IllegalArgumentException("the XMP packet of an Ultra HDR image does not parse: "
+                    + exception.getMessage(), exception);
         }
     }
 

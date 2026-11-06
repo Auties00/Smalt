@@ -17,6 +17,7 @@ import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Function;
 
 /**
  * Recognizes the XMP {@code APP1} segments of a JPEG stream, merges a main packet with its Extended XMP
@@ -228,8 +229,26 @@ public final class JpegXmp {
      * @throws MediaException.LimitExceeded if the packet cannot be split to fit
      */
     public static List<byte[]> payloads(XmpPacket packet) {
+        return payloads(packet, XmpPacket::toBytes);
+    }
+
+    /**
+     * Serializes a packet into the payloads of JPEG {@code APP1} segments, identifiers included, writing the
+     * main packet through a serializer that may add content of its own, and splitting the packet when the
+     * main packet exceeds one segment.
+     *
+     * <p>The largest properties of {@code packet} move to the extended packet, the fewest that make the
+     * main packet, which then names the extended one, fit a segment; the content the serializer adds always
+     * stays in the main packet.
+     *
+     * @param packet the XMP packet
+     * @param serializer serializes the properties that stay in the main packet into the bytes of that packet
+     * @return the payloads, the main one first
+     * @throws MediaException.LimitExceeded if the packet cannot be split to fit
+     */
+    public static List<byte[]> payloads(XmpPacket packet, Function<XmpPacket, byte[]> serializer) {
         var cleaned = packet.without(XmpPacket.XMP_NOTE, HAS_EXTENDED);
-        var full = cleaned.toBytes();
+        var full = serializer.apply(cleaned);
         if (full.length <= MAX_MAIN) {
             return List.of(concat(XMP_ID, full, 0, full.length));
         }
@@ -242,7 +261,7 @@ public final class JpegXmp {
         var high = properties.size();
         while (low < high) {
             var middle = (low + high) >>> 1;
-            if (fits(withoutLargest(cleaned, properties, middle))) {
+            if (fits(withoutLargest(cleaned, properties, middle), serializer)) {
                 high = middle;
             } else {
                 low = middle + 1;
@@ -256,7 +275,7 @@ public final class JpegXmp {
         }
         var extendedBytes = extended.toBytes();
         var guid = md5(extendedBytes);
-        var mainBytes = main.with(XmpPacket.XMP_NOTE, HAS_EXTENDED, guid).toBytes();
+        var mainBytes = serializer.apply(main.with(XmpPacket.XMP_NOTE, HAS_EXTENDED, guid));
         if (mainBytes.length > MAX_MAIN) {
             throw new MediaException.LimitExceeded("XMP packet cannot be split to fit a JPEG segment");
         }
@@ -294,11 +313,12 @@ public final class JpegXmp {
      * Returns whether a main packet, once it names an extended packet, fits a segment.
      *
      * @param main the main packet
+     * @param serializer serializes the main packet
      * @return whether its serialization fits
      */
-    private static boolean fits(XmpPacket main) {
-        return main.with(XmpPacket.XMP_NOTE, HAS_EXTENDED, "00000000000000000000000000000000").toBytes().length
-                <= MAX_MAIN;
+    private static boolean fits(XmpPacket main, Function<XmpPacket, byte[]> serializer) {
+        return serializer.apply(main.with(XmpPacket.XMP_NOTE, HAS_EXTENDED, "00000000000000000000000000000000"))
+                .length <= MAX_MAIN;
     }
 
     /**
