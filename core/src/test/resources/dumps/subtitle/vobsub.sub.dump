@@ -1,0 +1,19 @@
+# demux dump of subtitle/vobsub.sub; regenerate with -Dsmalt.test.updateDumps=true
+format VOBSUB
+duration 4296444
+seekable true
+track 1 DATA DVD_SUBTITLE timebase=1/90000 duration=341680 config=none
+track 2 DATA DVD_SUBTITLE timebase=1/90000 duration=386680 config=none
+packets 6
+0 t1 pts=90000 dts=90000 dur=51200 flags=KEY size=166 crc=e2f06b0c
+1 t2 pts=135000 dts=135000 dur=51200 flags=KEY size=190 crc=f044dee9
+2 t1 pts=180000 dts=180000 dur=61440 flags=KEY size=3874 crc=84638ae4
+3 t2 pts=225000 dts=225000 dur=61440 flags=KEY size=220 crc=bc1cc701
+4 t1 pts=270000 dts=270000 dur=71680 flags=KEY size=218 crc=6dc7ac37
+5 t2 pts=315000 dts=315000 dur=71680 flags=KEY size=249 crc=07e7c860
+seek 0: t1@0 t2@0
+seek 1432148: t1@0 t2@0
+seek 2864296: t1@1 t2@1
+seek 4296445: end
+seek 4296444: end
+seek -1000000: t1@0 t2@0

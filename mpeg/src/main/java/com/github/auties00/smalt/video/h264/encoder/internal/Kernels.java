@@ -33,12 +33,12 @@ final class Kernels {
     /**
      * The transform kernels every frame uses.
      */
-    private static final TransformKernels TRANSFORM = Simd.ENABLED ? VectorKernelsHolder.transform() : SCALAR_TRANSFORM;
+    private static final TransformKernels TRANSFORM = Simd.WIDE ? VectorKernelsHolder.transform() : SCALAR_TRANSFORM;
 
     /**
      * The interpolation kernels every frame uses.
      */
-    private static final InterpolationKernels INTERPOLATION = Simd.ENABLED
+    private static final InterpolationKernels INTERPOLATION = Simd.WIDE
             ? VectorKernelsHolder.interpolation() : SCALAR_INTERPOLATION;
 
     private Kernels() {

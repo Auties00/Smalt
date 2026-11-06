@@ -12,20 +12,10 @@ import static com.github.auties00.smalt.audio.voice.internal.aec3.Aec3.FFT_LENGT
  * configuration when the canceller leaves its initial state.
  *
  * @implNote This implementation ports WebRTC's
- * {@code modules/audio_processing/aec3/coarse_filter_update_gain.cc} with the default
- * {@code filter.coarse_initial} and {@code filter.coarse} tunings.
+ * {@code modules/audio_processing/aec3/coarse_filter_update_gain.cc}; the tunings come from an
+ * {@link Aec3Config}.
  */
 final class CoarseFilterUpdateGain {
-    /**
-     * {@code filter.coarse}: rate, noise gate.
-     */
-    static final float[] COARSE = {0.7f, 20075344.f};
-
-    /**
-     * {@code filter.coarse_initial}: rate, noise gate.
-     */
-    static final float[] COARSE_INITIAL = {0.9f, 20075344.f};
-
     /**
      * The current tuning: rate, noise gate.
      */
@@ -68,9 +58,11 @@ final class CoarseFilterUpdateGain {
 
     /**
      * Creates a gain with the initial tuning.
+     *
+     * @param initial the initial tuning: rate, noise gate
      */
-    CoarseFilterUpdateGain() {
-        setConfig(COARSE_INITIAL, true);
+    CoarseFilterUpdateGain(float[] initial) {
+        setConfig(initial, true);
     }
 
     /**
