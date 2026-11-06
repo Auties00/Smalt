@@ -3,14 +3,17 @@ package com.github.auties00.smalt.video.mpeg4.internal;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.ChromaFormat;
+import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.internal.codec.ConsumerFailure;
 import com.github.auties00.smalt.internal.plane.Planes;
 import com.github.auties00.smalt.internal.task.ParallelBands;
+import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.VideoTrack;
+import com.github.auties00.smalt.video.FrameSideData;
 import com.github.auties00.smalt.video.VideoFrame;
 
 import java.util.Objects;
@@ -64,18 +67,33 @@ public final class DecoderCore {
      * @param limits the resource bounds checked against every picture size
      * @param threads the thread count of the options: 0 for the shared pool, 1 for the calling
      * thread, or the most threads to use
-     * @param h263 whether the track is H.263
+     * @param h263 whether the track is H.263, or Sorenson H.263 when its codec is {@link Codec#FLV1}
+     * @param highBitDepth whether pictures of more than 8 bits keep their depth
      * @throws MediaException.Malformed if the track's configuration is corrupt
      * @throws MediaException.Unsupported if the configuration uses a tool the decoder lacks
      */
-    public DecoderCore(VideoTrack track, MediaLimits limits, int threads, boolean h263) {
-        this.name = h263 ? "H.263" : "MPEG-4";
+    public DecoderCore(VideoTrack track, MediaLimits limits, int threads, boolean h263, boolean highBitDepth) {
+        var sorenson = h263 && track.codec() == Codec.FLV1;
+        this.name = sorenson ? "Sorenson H.263" : h263 ? "H.263" : "MPEG-4";
         var timeBase = track.timeBase();
         var frameDuration = track.frameRate()
                 .map(rate -> Math.max(0, rate.invert().rescale(1, timeBase)))
                 .orElse(0L);
-        this.engine = new Mpeg4DecoderEngine(limits, h263, threads == 0 ? ParallelBands.THREADS : threads,
-                threads > 1, frameDuration, (ticks, resolution) -> rescale(ticks, resolution, timeBase), this::emit);
+        var sink = new Mpeg4DecoderEngine.Output() {
+            @Override
+            public void emit(Frame frame, VideoObjectLayer layer, long pts, long duration) {
+                DecoderCore.this.emit(frame, layer, pts, duration);
+            }
+
+            @Override
+            public void emitPicture(Picture picture, VideoObjectLayer layer, long pts, long duration,
+                                    boolean keyframe, FrameSideData sideData) {
+                DecoderCore.this.emitPicture(picture, pts, duration, keyframe, sideData);
+            }
+        };
+        this.engine = new Mpeg4DecoderEngine(limits, h263, sorenson, threads == 0 ? ParallelBands.THREADS : threads,
+                threads > 1, frameDuration, (ticks, resolution) -> rescale(ticks, resolution, timeBase),
+                track.width(), track.height(), highBitDepth, sink);
         var config = track.codecConfig().orElse(null);
         if (config != null && config.length > 0 && !h263) {
             try {
@@ -190,6 +208,28 @@ public final class DecoderCore {
             try {
                 consumer.accept(new VideoFrame(target, pts == Long.MIN_VALUE ? Packet.NO_TIMESTAMP : pts,
                         duration > 0 ? duration : Track.UNKNOWN_DURATION, frame.keyframe));
+            } catch (RuntimeException exception) {
+                output = null;
+                throw exception;
+            }
+        }
+    }
+
+    /**
+     * Hands a picture of the object decoder or the H.263 annex decoder to the consumer.
+     *
+     * @param picture the decoded picture, valid until the call returns
+     * @param pts its timestamp, or {@code Long.MIN_VALUE}
+     * @param duration its duration, zero or less when unknown
+     * @param keyframe whether it comes from an intra VOP or picture
+     * @param sideData its side data
+     */
+    private void emitPicture(Picture picture, long pts, long duration, boolean keyframe, FrameSideData sideData) {
+        var consumer = output;
+        if (consumer != null) {
+            try {
+                consumer.accept(new VideoFrame(picture, pts == Long.MIN_VALUE ? Packet.NO_TIMESTAMP : pts,
+                        duration > 0 ? duration : Track.UNKNOWN_DURATION, keyframe, sideData));
             } catch (RuntimeException exception) {
                 output = null;
                 throw exception;

@@ -23,6 +23,12 @@ import java.util.concurrent.TimeUnit;
  * {@code spec} parameter, for example
  * {@code -p spec=h264dec:threads=1:input=clip.h264}; {@code -prof gc} reports the allocation
  * per round, which is large whenever a kernel runs its allocating Vector API fallback.
+ *
+ * <p>CI runs it on the synthetic workloads of the {@code hot-paths} row of
+ * {@code tools/bench/benchmarks.tsv}: timed in the weekly A/B, and gated on the bytes allocated
+ * per round on every pull request. The video and audio workloads keep their codec open across
+ * rounds, so a round's allocation is what the codec allocates per batch of frames or samples; the
+ * image workloads code whole images in every round.
  */
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.AverageTime)
