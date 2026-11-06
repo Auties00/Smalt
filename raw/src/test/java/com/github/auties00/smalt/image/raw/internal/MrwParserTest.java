@@ -7,8 +7,10 @@ import com.github.auties00.smalt.image.raw.RawDecoderOptions;
 import com.github.auties00.smalt.image.raw.RawFormat;
 import com.github.auties00.smalt.image.raw.RawSamples;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.testkit.fuzz.FuzzSeeds;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -30,12 +32,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Checks the Minolta MRW parser on synthetic files built from the block layout the CC0 samples
- * show (both sample storage methods, the crop, the white balance and ISO blocks, damaged and
+ * show (both sample storage methods, both Bayer patterns, the crop, the white balance and ISO blocks, damaged and
  * unsupported headers, random damage), and the metadata of two sample files: a DiMAGE 5, whose EXIF block gives
  * the shot in APEX units and whose preview is a maker note value, and a Dynax 7D, whose preview
  * the maker note points to and letterboxes the image.
  */
 class MrwParserTest {
+    /** The fuzz test class whose seeds the synthetic files feed. */
+    private static final String FUZZ_TARGET = "com.github.auties00.smalt.image.raw.fuzz.RawFuzzTest";
+
     // a synthetic MRW file: the header blocks, then the sensor data
     private static final class Mrw {
         int sensorWidth = 16;
@@ -194,17 +199,35 @@ class MrwParserTest {
     }
 
     @Test
+    @DisplayName("decodes the green-first pattern: its filter array, its crop one row higher and its white balance "
+            + "levels in the pattern's order")
+    void greenFirst() {
+        var mrw = new Mrw();
+        mrw.sensorHeight = 8;
+        mrw.pattern = 4;
+        // green, blue, red, green
+        mrw.balance = new int[]{2, 2, 2, 2, 256, 512, 400, 256};
+        var file = parse(mrw.samples(11).write());
+        assertNotNull(file.sensor, file.unsupported);
+        assertEquals("GBRG", file.sensor.cfa.toString());
+        assertArrayEquals(mrw.samples, decode(file));
+        // centered at row 2, moved up to row 1 where the crop starts on a red photosite
+        assertArrayEquals(new double[]{4, 1, 8, 4}, file.sensor.defaultCrop);
+        assertArrayEquals(new double[]{256.0 / 400, 1, 256.0 / 512}, file.color.asShotNeutral, 1e-12);
+    }
+
+    @Test
     @DisplayName("rejects variants no sample has shown as unsupported")
     void unsupported() {
-        var gbrg = new Mrw();
-        gbrg.pattern = 4;
+        var other = new Mrw();
+        other.pattern = 2;
         var words16 = new Mrw();
         words16.storage = 0x52;
         words16.stored = 16;
         words16.bits = 16;
         var sony = new Mrw();
         sony.make = "SONY";
-        for (var mrw : new Mrw[]{gbrg, words16, sony}) {
+        for (var mrw : new Mrw[]{other, words16, sony}) {
             var bytes = mrw.samples(4).write();
             var info = RawDecoder.info(MediaSource.of(bytes));
             assertEquals(RawFormat.MRW, info.format());
@@ -314,5 +337,13 @@ class MrwParserTest {
             assertEquals(640, hinted.width());
             assertEquals(425, hinted.height());
         }
+    }
+
+    @Test
+    @EnabledIfSystemProperty(named = "smalt.fuzz.writeSeeds", matches = "true",
+            disabledReason = "[opt-in:fuzz-seeds] runs only with -Dsmalt.fuzz.writeSeeds=true")
+    @DisplayName("writes the seeds of the MRW fuzz target")
+    void fuzzSeeds() {
+        FuzzSeeds.write(FUZZ_TARGET, "mrw", "valid-synthetic.mrw", new Mrw().samples(1).write());
     }
 }

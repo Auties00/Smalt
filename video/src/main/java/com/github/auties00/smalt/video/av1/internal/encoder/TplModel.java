@@ -1,6 +1,6 @@
 package com.github.auties00.smalt.video.av1.internal.encoder;
 
-import com.github.auties00.smalt.image.YuvPicture;
+import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.video.av1.internal.McDsp;
 
@@ -81,7 +81,7 @@ final class TplModel {
         /**
          * The picture the frame is coded from.
          */
-        final YuvPicture picture;
+        final Picture picture;
 
         /**
          * The model positions of the frame's references, duplicates removed.
@@ -142,7 +142,7 @@ final class TplModel {
          * @param refs the model positions of its references
          * @param coded whether the frame is coded in the group
          */
-        Frame(YuvPicture picture, int[] refs, boolean coded) {
+        Frame(Picture picture, int[] refs, boolean coded) {
             this.picture = picture;
             this.refs = refs;
             this.coded = coded;

@@ -8,17 +8,20 @@ import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.internal.bits.MsbBitReader;
+import com.github.auties00.smalt.internal.nal.NalRecords;
 import com.github.auties00.smalt.internal.nal.NalUnits;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Rational;
+import com.github.auties00.smalt.track.VideoTrack;
 
 import java.util.Arrays;
 
 /**
  * Parses the out-of-band configuration records of video codecs and the sequence-level headers
  * they carry: the H.264 {@code avcC} record and its sequence parameter set, the HEVC
- * {@code hvcC} record, the AV1 {@code av1C} record and sequence header OBU, and the VP9
- * {@code vpcC} record and uncompressed key frame header.
+ * {@code hvcC} record, the VVC {@code vvcC} record and its sequence parameter set, the AV1
+ * {@code av1C} record and sequence header OBU, the VP9 {@code vpcC} record and uncompressed
+ * key frame header, and the MPEG-1 and MPEG-2 video sequence header ({@link MpegVideoHeaders}).
  *
  * <p>Every parser returns {@code null} instead of throwing when the bytes do not hold what it
  * needs, so a caller can fall back to the container's own description. The results feed the
@@ -101,6 +104,22 @@ public final class VideoConfigs {
     }
 
     /**
+     * Returns the sample aspect ratio a player applies to a video track: the one the track
+     * declares, else the one its configuration record signals.
+     *
+     * @param track the video track whose container declaration and configuration record are read
+     * @return the ratio in lowest terms, or {@code null} when neither declares one
+     */
+    public static Rational sampleAspect(VideoTrack track) {
+        var declared = track.sampleAspectRatio();
+        if (declared.isPresent()) {
+            return declared.get();
+        }
+        var info = describe(track.codec(), track.codecConfig().orElse(null));
+        return info == null || info.sampleAspect() == null ? null : info.sampleAspect().reduce();
+    }
+
+    /**
      * Describes the configuration record of a video track.
      *
      * @param codec the codec of the track
@@ -115,9 +134,11 @@ public final class VideoConfigs {
             return switch (codec) {
                 case H264 -> avc(config);
                 case HEVC -> hevc(config);
+                case VVC -> vvc(config);
                 case AV1 -> av1(config);
                 case VP9 -> vp9(config);
                 case VP8 -> new Info("0", -1, 8, ChromaFormat.YUV420, null, 0, 0, null, null);
+                case MPEG1_VIDEO, MPEG2_VIDEO -> MpegVideoHeaders.describe(config);
                 default -> null;
             };
         } catch (RuntimeException exception) {
@@ -288,6 +309,17 @@ public final class VideoConfigs {
      */
     private static final int[][] SAR_TABLE = {{0, 0}, {1, 1}, {12, 11}, {10, 11}, {16, 11}, {40, 33}, {24, 11},
             {20, 11}, {32, 11}, {80, 33}, {18, 11}, {15, 11}, {64, 33}, {160, 99}, {4, 3}, {3, 2}, {2, 1}};
+
+    /**
+     * Returns the sample aspect ratio of an {@code aspect_ratio_idc} of ITU-T H.264 table E-1 (also H.265 table E.1
+     * and Rec. ITU-T H.273 table 1, which H.266 and H.274 use).
+     *
+     * @param idc the value, from 1 to 16 for a ratio of the table
+     * @return the ratio, or {@code null} for 0 (unspecified), 255 (signalled explicitly) and the reserved values
+     */
+    public static Rational aspectRatioOf(int idc) {
+        return idc > 0 && idc < SAR_TABLE.length ? new Rational(SAR_TABLE[idc][0], SAR_TABLE[idc][1]) : null;
+    }
 
     /**
      * Skips one scaling list of a sequence parameter set.
@@ -631,6 +663,102 @@ public final class VideoConfigs {
             case 3 -> "Main Still Picture";
             case 4 -> "Rext";
             case 9 -> "SCC";
+            default -> Integer.toString(profileIdc);
+        };
+    }
+
+    /**
+     * Parses a {@code VvcDecoderConfigurationRecord} (ISO/IEC 14496-15 clause 11.2.4.2), with or without the
+     * {@code vvcC} full box header, and the first sequence parameter set among its arrays.
+     *
+     * <p>The profile, level, bit depth and chroma format come from the record's {@code VvcPTLRecord} and fields when
+     * {@code ptl_present_flag} is set, and from the sequence parameter set otherwise; the picture size, color, sample
+     * aspect ratio and frame rate come from the sequence parameter set.
+     *
+     * @param config the record
+     * @return the description, or {@code null} when the record is truncated
+     */
+    static Info vvc(byte[] config) {
+        var parsed = NalRecords.parseVvc(config);
+        if (parsed == null) {
+            return null;
+        }
+        Info sps = null;
+        for (var unit : parsed.parameterSets()) {
+            if (unit.length > 2 && VvcSyntax.type(unit, 0) == VvcSyntax.SPS) {
+                sps = vvcSps(unit);
+                if (sps != null) {
+                    break;
+                }
+            }
+        }
+        var record = NalRecords.withoutVvcBoxHeader(config);
+        if ((record[0] & 1) != 0 && record.length >= 7) {
+            var chromaIdc = record[2] & 3;
+            var bitDepth = ((record[3] & 0xFF) >> 5) + 8;
+            var profileIdc = (record[5] & 0xFF) >> 1;
+            var level = record[6] & 0xFF;
+            var chroma = switch (chromaIdc) {
+                case 0 -> ChromaFormat.MONOCHROME;
+                case 2 -> ChromaFormat.YUV422;
+                case 3 -> ChromaFormat.YUV444;
+                default -> ChromaFormat.YUV420;
+            };
+            if (sps != null) {
+                return new Info(vvcProfile(profileIdc), level, bitDepth, chroma, sps.color(), sps.width(),
+                        sps.height(), sps.sampleAspect(), sps.frameRate());
+            }
+            return new Info(vvcProfile(profileIdc), level, bitDepth, chroma, null, 0, 0, null, null);
+        }
+        return sps;
+    }
+
+    /**
+     * Parses a VVC sequence parameter set NAL unit (ITU-T H.266 clause 7.3.2.4) through its VUI.
+     *
+     * <p>The frame rate is the picture rate of the timing information, halved for a sequence of fields.
+     *
+     * @param nal the NAL unit, two-byte header included, with emulation prevention bytes
+     * @return the description, or {@code null} when the unit is truncated or invalid
+     */
+    public static Info vvcSps(byte[] nal) {
+        var sps = VvcSyntax.sps(nal, 0, nal.length);
+        if (sps == null) {
+            return null;
+        }
+        var rate = sps.pictureRate();
+        if (rate != null && sps.fieldSeq()) {
+            rate = new Rational(rate.numerator(), 2L * rate.denominator()).reduce();
+        }
+        return new Info(sps.profileIdc() == 0 ? null : vvcProfile(sps.profileIdc()),
+                sps.profileTierLevel() == null ? -1 : sps.levelIdc(), sps.bitDepth(), sps.chroma(), sps.color(),
+                sps.width(), sps.height(), sps.sampleAspect(), rate);
+    }
+
+    /**
+     * Names a VVC profile (ITU-T H.266 clause A.3) the way ffprobe does for the profiles it names, and by the
+     * specification's name otherwise.
+     *
+     * @param profileIdc {@code general_profile_idc}
+     * @return the name
+     */
+    static String vvcProfile(int profileIdc) {
+        return switch (profileIdc) {
+            case 1 -> "Main 10";
+            case 2 -> "Main 12";
+            case 10 -> "Main 12 Intra";
+            case 17 -> "Multilayer Main 10";
+            case 33 -> "Main 10 4:4:4";
+            case 34 -> "Main 12 4:4:4";
+            case 35 -> "Main 16 4:4:4";
+            case 42 -> "Main 12 4:4:4 Intra";
+            case 43 -> "Main 16 4:4:4 Intra";
+            case 49 -> "Multilayer Main 10 4:4:4";
+            case 65 -> "Main 10 Still Picture";
+            case 66 -> "Main 12 Still Picture";
+            case 97 -> "Main 10 4:4:4 Still Picture";
+            case 98 -> "Main 12 4:4:4 Still Picture";
+            case 99 -> "Main 16 4:4:4 Still Picture";
             default -> Integer.toString(profileIdc);
         };
     }

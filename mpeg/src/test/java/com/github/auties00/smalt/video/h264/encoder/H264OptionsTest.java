@@ -125,8 +125,15 @@ class H264OptionsTest {
             assertThrows(IllegalArgumentException.class, () -> options.toBuilder().quantizers(30, 20).build());
             assertThrows(IllegalArgumentException.class, () -> options.toBuilder().quantizers(0, 52).build());
             assertThrows(IllegalArgumentException.class, () -> options.toBuilder().frameRate(new Rational(2000, 1)).build());
-            assertThrows(IllegalArgumentException.class,
-                    () -> options.toBuilder().color(ColorInfo.BT709_LIMITED.withMatrix(MatrixCoefficients.YCGCO)).build());
+            for (var matrix : MatrixCoefficients.values()) {
+                var color = ColorInfo.BT709_LIMITED.withMatrix(matrix);
+                if (matrix == MatrixCoefficients.IDENTITY) {
+                    // the identity matrix needs 4:4:4, which the encoder does not code
+                    assertThrows(IllegalArgumentException.class, () -> options.toBuilder().color(color).build());
+                } else {
+                    assertEquals(color, options.toBuilder().color(color).build().color());
+                }
+            }
             assertThrows(NullPointerException.class, () -> options.toBuilder().level(null).build());
             assertThrows(NullPointerException.class, () -> options.toBuilder().bufferSize(null).build());
             assertThrows(NullPointerException.class, () -> options.toBuilder().speed(null).build());

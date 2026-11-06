@@ -114,6 +114,16 @@ final class Com {
     private static final MethodHandle P_II = shape(JAVA_INT, ADDRESS, JAVA_INT, JAVA_INT);
 
     /**
+     * Invokes {@code HRESULT f(this, LONG, LONG, LONG)}.
+     */
+    private static final MethodHandle P_III = shape(JAVA_INT, ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT);
+
+    /**
+     * Invokes {@code HRESULT f(this, LONG, void*, void*, void*, void*, void*)}.
+     */
+    private static final MethodHandle P_IPPPPP = shape(JAVA_INT, ADDRESS, JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS);
+
+    /**
      * Invokes {@code HRESULT f(this, UINT, void*)}.
      */
     private static final MethodHandle P_IP = shape(JAVA_INT, ADDRESS, JAVA_INT, ADDRESS);
@@ -500,6 +510,41 @@ final class Com {
     static int call(MemorySegment self, int slot, int a) {
         try {
             return (int) P_I.invokeExact(method(self, slot), self, a);
+        } catch (Throwable throwable) {
+            throw Native.rethrow(throwable);
+        }
+    }
+
+    /**
+     * Invokes a method taking three 32-bit integers.
+     *
+     * @param self the interface pointer
+     * @param slot the vtable slot
+     * @param a the first argument
+     * @param b the second argument
+     * @param c the third argument
+     * @return the {@code HRESULT}
+     */
+    static int call(MemorySegment self, int slot, int a, int b, int c) {
+        try {
+            return (int) P_III.invokeExact(method(self, slot), self, a, b, c);
+        } catch (Throwable throwable) {
+            throw Native.rethrow(throwable);
+        }
+    }
+
+    /**
+     * Invokes a method taking a 32-bit integer and five pointers.
+     *
+     * @param self the interface pointer
+     * @param slot the vtable slot
+     * @param a the first argument
+     * @return the {@code HRESULT}
+     */
+    static int call(MemorySegment self, int slot, int a, MemorySegment b, MemorySegment c, MemorySegment d,
+                    MemorySegment e, MemorySegment f) {
+        try {
+            return (int) P_IPPPPP.invokeExact(method(self, slot), self, a, b, c, d, e, f);
         } catch (Throwable throwable) {
             throw Native.rethrow(throwable);
         }

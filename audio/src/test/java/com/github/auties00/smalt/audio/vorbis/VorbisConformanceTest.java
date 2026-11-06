@@ -2,7 +2,7 @@ package com.github.auties00.smalt.audio.vorbis;
 
 import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Oracle;
-import com.github.auties00.smalt.testkit.Quality;
+import com.github.auties00.smalt.testkit.Tolerance;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -31,6 +31,12 @@ import static org.junit.jupiter.api.Assertions.*;
  * and silence.
  */
 class VorbisConformanceTest {
+    /** Both decoders compute in float, so they differ only by rounding: at least 90 dB of SNR per link. */
+    private static final Tolerance TOLERANCE = Tolerance.snr(90);
+
+    /** A silent link has no SNR: it decodes to the same silence, -0.0 equal to 0.0. */
+    private static final Tolerance SILENCE = Tolerance.exact();
+
     private static final String BASE = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/";
 
     /**
@@ -135,11 +141,13 @@ class VorbisConformanceTest {
             var reference = Oracle.decodeAudio(file);
             var ours = decoded.interleaved();
             var length = checkLength(vector, index, decoded, reference.length, ours.length);
-            var snr = Quality.snr(java.util.Arrays.copyOf(reference, length), java.util.Arrays.copyOf(ours, length));
-            if (Double.isNaN(snr)) {
-                assertArrayEquals(reference, ours, 1e-6f, vector + " silent link " + index);
+            var difference = Tolerance.Difference.ofPcm(java.util.Arrays.copyOf(reference, length),
+                    java.util.Arrays.copyOf(ours, length));
+            if (difference.signalSquares() == 0) {
+                // a silent link compares by value
+                SILENCE.assertPcm(vector + " silent link " + index, reference, ours);
             } else {
-                assertTrue(snr >= 90, vector + " link " + index + " SNR " + snr);
+                TOLERANCE.check(vector + " link " + index, difference);
             }
         }
     }

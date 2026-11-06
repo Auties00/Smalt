@@ -1,7 +1,11 @@
 package com.github.auties00.smalt.image.raw.internal;
 
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.raw.CfaLayout;
 import com.github.auties00.smalt.image.raw.CfaPattern;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Describes the sensor image of a raw file the way DNG does, whatever the file's format: its
@@ -18,12 +22,26 @@ final class Sensor {
     @FunctionalInterface
     interface Reader {
         /**
-         * Reads the samples.
+         * Reads the samples as stored.
          *
          * @param plane the plane to fill, of the sensor's stored size
          * @param limits the resource bounds
          */
         void read(SensorPlane plane, MediaLimits limits);
+
+        /**
+         * Reads the samples, optionally with the corrections the file records for its sensor
+         * (bad pixels) applied.
+         *
+         * @implSpec The default implementation reads the samples as stored, whatever
+         * {@code corrections} is.
+         * @param plane the plane to fill, of the sensor's stored size
+         * @param limits the resource bounds
+         * @param corrections whether the file's sensor corrections are applied
+         */
+        default void read(SensorPlane plane, MediaLimits limits, boolean corrections) {
+            read(plane, limits);
+        }
     }
 
     /**
@@ -37,8 +55,10 @@ final class Sensor {
     int height;
 
     /**
-     * The samples of each pixel: 1 for a color filter array or monochrome sensor, 3 for linear
-     * raw data.
+     * The samples of each pixel: 1 for a color filter array or monochrome sensor, 2 for a color
+     * filter array whose photosites each hold two readings of the same light (two photodiodes of
+     * different sensitivity, or two exposures), which {@link DualSamples} merges before
+     * rendering, 3 for linear raw data.
      */
     int samplesPerPixel = 1;
 
@@ -46,6 +66,12 @@ final class Sensor {
      * The bits of each stored sample.
      */
     int bitsPerSample = 16;
+
+    /**
+     * Whether the reader stores integer samples of more than 16 bits as such, in
+     * {@link SensorPlane#wide}; only {@link TiffSamples} readers do.
+     */
+    boolean wide;
 
     /**
      * Whether the samples are floating-point.
@@ -57,6 +83,12 @@ final class Sensor {
      * data.
      */
     CfaPattern cfa;
+
+    /**
+     * The spatial layout of the color filter array's photosites, relative to the top-left photosite
+     * of the active area.
+     */
+    CfaLayout layout = CfaLayout.RECTANGULAR;
 
     /**
      * The color plane each CFA color code maps to ({@code CFAPlaneColor}), indexed by code; the
@@ -74,6 +106,25 @@ final class Sensor {
      * area, or {@code null} for the whole active area.
      */
     double[] defaultCrop;
+
+    /**
+     * The default user crop, as top, left, bottom and right relative to the default crop, or
+     * {@code null} for none.
+     */
+    double[] userCrop;
+
+    /**
+     * Where the active area of this image lies in the active area of the main raw image, as left,
+     * top, width and height relative to it: the whole of it, except for a reduced-resolution
+     * preview of its default crop.
+     */
+    double[] frame = {0, 0, 1, 1};
+
+    /**
+     * The factor the stored values were multiplied by relative to the main raw image
+     * ({@code RawToPreviewGain} of a linear raw preview), divided out after linearization.
+     */
+    double gain = 1;
 
     /**
      * The horizontal default scale.
@@ -138,6 +189,24 @@ final class Sensor {
     byte[] opcodes3;
 
     /**
+     * The lens corrections the file's vendor data records, applied when rendering like an opcode list 3 of
+     * their own, or {@code null} for none.
+     */
+    LensCorrection lens;
+
+    /**
+     * Whether {@link #opcodes2} applies to the image of two samples per pixel this staggered image interleaves (the
+     * diagonal pairs of a two-sample DNG image), two adjacent columns holding the samples of one of its pixels.
+     */
+    boolean pairedOpcodes2;
+
+    /**
+     * The frames a pixel-shift image merges, each a sensor image of one sample per photosite in the order
+     * the file stores them, or {@code null} for an image of one exposure.
+     */
+    List<Sensor> frames;
+
+    /**
      * Whether the as-shot white balance, which the file does not record readably, is estimated
      * from the embedded preview.
      */
@@ -147,6 +216,11 @@ final class Sensor {
      * Describes the compression, for {@link com.github.auties00.smalt.image.raw.RawInfo}.
      */
     String compression = "uncompressed";
+
+    /**
+     * The entries of a DNG image's directory that a DNG file converted from it carries over.
+     */
+    final List<DngTag> tags = new ArrayList<>();
 
     /**
      * Reads the samples.
@@ -168,6 +242,6 @@ final class Sensor {
      * @return {@code 2^bitsPerSample - 1}, or 1 for floating-point samples
      */
     double maximum() {
-        return floating ? 1.0 : (1L << Math.min(bitsPerSample, 16)) - 1;
+        return floating ? 1.0 : (1L << Math.min(bitsPerSample, 32)) - 1;
     }
 }

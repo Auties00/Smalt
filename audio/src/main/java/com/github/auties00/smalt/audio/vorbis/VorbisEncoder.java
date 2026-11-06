@@ -4,7 +4,6 @@ package com.github.auties00.smalt.audio.vorbis;
 import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.AudioEncoder;
 import com.github.auties00.smalt.audio.ChannelLayout;
-import com.github.auties00.smalt.audio.vorbis.internal.CodecSetup;
 import com.github.auties00.smalt.audio.vorbis.internal.HeaderWriter;
 import com.github.auties00.smalt.audio.vorbis.internal.VorbisAnalyzer;
 import com.github.auties00.smalt.internal.header.VorbisChannelOrder;
@@ -42,17 +41,26 @@ import java.util.stream.IntStream;
  * the input order. Other channel counts are coded in input order. NaN and infinite samples are
  * coded as silence.
  *
+ * <p>A {@linkplain VorbisEncoderOptions#isBitrateManaged() bitrate managed} stream codes every
+ * block at several rates and keeps, through a bit reservoir, the
+ * {@linkplain VorbisEncoderOptions#averageBitrate() average},
+ * {@linkplain VorbisEncoderOptions#minimumBitrate() minimum} and
+ * {@linkplain VorbisEncoderOptions#maximumBitrate() maximum} bitrates of its options; the
+ * identification header carries the minimum, nominal and maximum bitrates.
+ *
  * <p>Encoding is deterministic: the same samples and options produce the same packets, however
  * the input is split across {@link #encode(AudioBuffer, Consumer)} calls. The packets are
- * byte-identical to those of libvorbis 1.3.7 for the same input and quality fed in 1024-sample
- * chunks, as {@code oggenc} feeds it, given a libvorbis build whose {@code rint} rounds exact halves
- * to even.
+ * byte-identical to those of libvorbis 1.3.7 for the same input fed in 1024-sample chunks, as
+ * {@code oggenc} feeds it, and the same settings, bitrate management included (an unset limit given
+ * to libvorbis as 0, and bitrates in whole kilobits per second, the unit of part of libvorbis's
+ * interface), given a libvorbis build whose {@code rint} rounds exact halves to even. The one
+ * exception is a maximum so low that libvorbis truncates a packet to nothing: an empty packet does
+ * not decode, so this encoder keeps one byte.
  *
  * <p>Instances are not thread-safe.
  *
- * @implNote This implementation ports the libvorbis encoder in its quality mode, with the aoTuV
- * tuning merged into libvorbis; bitrate management (hard minimum and maximum bitrates) is not
- * ported.
+ * @implNote This implementation ports the libvorbis encoder, with the aoTuV tuning merged into
+ * libvorbis, in its quality and bitrate managed modes.
  */
 public final class VorbisEncoder implements AudioEncoder {
     /**
@@ -136,9 +144,7 @@ public final class VorbisEncoder implements AudioEncoder {
     public VorbisEncoder(VorbisEncoderOptions options) {
         this.options = Objects.requireNonNull(options, "options");
         var channels = options.layout().channels();
-        var setup = options.nominalBitrate().isPresent()
-                ? CodecSetup.nominalBitrate(channels, options.sampleRate(), options.nominalBitrate().getAsInt())
-                : CodecSetup.variableBitrate(channels, options.sampleRate(), options.quality() / 10);
+        var setup = options.codecSetup();
         this.analyzer = new VorbisAnalyzer(setup);
         this.codecConfig = XiphLacing.lace(List.of(
                 HeaderWriter.identification(setup),

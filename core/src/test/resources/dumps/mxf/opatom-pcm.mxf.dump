@@ -1,0 +1,37 @@
+# demux dump of mxf/opatom-pcm.mxf; regenerate with -Dsmalt.test.updateDumps=true
+format MXF
+duration 240000
+seekable true
+metadata application_platform="Lavf (mingw32)"
+metadata company_name="FFmpeg"
+metadata material_package_umid="060a2b340101010501010d0013397d925294713420397d920052947134203900"
+metadata operational_pattern="OPAtom"
+metadata product_name="OPAtom Muxer"
+metadata product_version="61.7.100"
+timecode 00:00:00:00 fps=25
+track 2 AUDIO PCM_S24LE timebase=1/48000 duration=11520 config=none
+  audio rate=48000 bits=24 skip=0 layout=[FRONT_CENTER]
+packets 3
+0 t2 pts=0 dts=0 dur=4096 flags=KEY size=12288 crc=0b336abf
+1 t2 pts=4096 dts=4096 dur=4096 flags=KEY size=12288 crc=d94d6ce3
+2 t2 pts=8192 dts=8192 dur=3328 flags=KEY size=9984 crc=92d2dc9c
+seek 0: t2@0
+seek 80000: t2@pts=3840
+seek 160000: t2@pts=7680
+seek 240000: end
+seek -1000000: t2@0
+header over READ_ONCE, READ_ONCE_UNKNOWN_LENGTH:
+  format MXF
+  duration 240000
+  seekable false
+  metadata application_platform="Lavf (mingw32)"
+  metadata company_name="FFmpeg"
+  metadata material_package_umid="060a2b340101010501010d0013397d925294713420397d920052947134203900"
+  metadata operational_pattern="OPAtom"
+  metadata product_name="OPAtom Muxer"
+  metadata product_version="61.7.100"
+  timecode 00:00:00:00 fps=25
+  track 2 AUDIO PCM_S24LE timebase=1/48000 duration=11520 config=none
+    audio rate=48000 bits=24 skip=0 layout=[FRONT_CENTER]
+not seekable over READ_ONCE
+not seekable over READ_ONCE_UNKNOWN_LENGTH
