@@ -29,7 +29,9 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 @DisplayName("Resize")
 class ResizeTest {
-    static final List<ResizeFilter> FILTERED = List.of(ResizeFilter.BILINEAR, ResizeFilter.BICUBIC, ResizeFilter.LANCZOS3, ResizeFilter.AREA);
+    static final List<ResizeFilter> FILTERED = List.of(ResizeFilter.BOX, ResizeFilter.BILINEAR, ResizeFilter.HAMMING,
+            ResizeFilter.BICUBIC, ResizeFilter.MITCHELL, ResizeFilter.LANCZOS2, ResizeFilter.LANCZOS3, ResizeFilter.LANCZOS4,
+            ResizeFilter.AREA);
 
     static final int[][] SIZE_PAIRS = {
             {1, 1}, {1, 7}, {7, 1}, {2, 3}, {3, 2}, {5, 4}, {4, 5}, {16, 7}, {7, 16}, {100, 33}, {33, 100}, {64, 32}, {63, 32},
@@ -118,6 +120,81 @@ class ResizeTest {
             assertEquals(0.6079271, ResizeFilter.LANCZOS3.kernel(0.5), 1e-6);
             assertEquals(0, ResizeFilter.LANCZOS3.kernel(3), 1e-12);
             assertEquals(0.5, ResizeFilter.BILINEAR.kernel(0.5), 1e-12);
+            assertEquals(1, ResizeFilter.BOX.kernel(0), 1e-12);
+            assertEquals(1, ResizeFilter.BOX.kernel(0.4999), 1e-12);
+            assertEquals(0.5, ResizeFilter.BOX.kernel(0.5), 1e-12);
+            assertEquals(0, ResizeFilter.BOX.kernel(0.5001), 1e-12);
+            assertEquals(1, ResizeFilter.HAMMING.kernel(0), 1e-12);
+            // sinc(1/2) * (0.54 + 0.46 * cos(pi / 2)) = (2 / pi) * 0.54
+            assertEquals(2 / Math.PI * 0.54, ResizeFilter.HAMMING.kernel(0.5), 1e-12);
+            assertEquals(0, ResizeFilter.HAMMING.kernel(1), 1e-12);
+            // Mitchell-Netravali with B = C = 1/3: k(0) = (6 - 2B) / 6 = 8/9, k(1) = B / 6 = 1/18, k(1.5) = -5/144
+            assertEquals(8.0 / 9, ResizeFilter.MITCHELL.kernel(0), 1e-12);
+            assertEquals(1.0 / 18, ResizeFilter.MITCHELL.kernel(1), 1e-12);
+            assertEquals(1.0 / 18, ResizeFilter.MITCHELL.kernel(Math.nextDown(1.0)), 1e-9);
+            assertEquals(0, ResizeFilter.MITCHELL.kernel(2), 1e-12);
+            assertEquals(-5.0 / 144, ResizeFilter.MITCHELL.kernel(1.5), 1e-12);
+            assertEquals(1, ResizeFilter.LANCZOS2.kernel(0), 1e-12);
+            assertEquals(0, ResizeFilter.LANCZOS2.kernel(1), 1e-12);
+            assertEquals(8 * Math.sin(Math.PI / 4) / (Math.PI * Math.PI), ResizeFilter.LANCZOS2.kernel(0.5), 1e-12);
+            assertEquals(0, ResizeFilter.LANCZOS2.kernel(2), 1e-12);
+            assertEquals(16 * Math.sin(Math.PI / 8) / (Math.PI * Math.PI), ResizeFilter.LANCZOS4.kernel(0.5), 1e-12);
+            assertEquals(0, ResizeFilter.LANCZOS4.kernel(3), 1e-12);
+            assertEquals(0, ResizeFilter.LANCZOS4.kernel(4), 1e-12);
+            assertNotEquals(0, ResizeFilter.LANCZOS4.kernel(3.5), 1e-6);
+        }
+
+        @Test
+        @DisplayName("box taps average whole blocks, and half-weight the samples exactly at the edge of the box")
+        void boxTaps() {
+            var reduce = ResampleWeights.compute(ResizeFilter.BOX, 9, 3, 0, 9, 1, 22);
+            for (var i = 0; i < 3; i++) {
+                assertEquals(3, reduce.counts()[i]);
+                assertEquals(3 * i, reduce.starts()[i]);
+            }
+            // 2 -> 3: the middle output center lies exactly on the boundary between the two pixels,
+            // half a pixel from both, and averages them
+            var enlarge = ResampleWeights.compute(ResizeFilter.BOX, 2, 3, 0, 2, 1, 22);
+            assertArrayEquals(new int[]{0, 0, 1}, enlarge.starts());
+            assertArrayEquals(new int[]{1, 2, 1}, enlarge.counts());
+            assertEquals(1 << 21, enlarge.weights()[enlarge.stride()]);
+            assertEquals(1 << 21, enlarge.weights()[enlarge.stride() + 1]);
+            // 5 -> 2: the inner edges of the two 2.5-pixel boxes fall on the center of sample 2,
+            // which both outputs weight by half: 2/5, 2/5, 1/5 and its mirror
+            var reduce5 = ResampleWeights.compute(ResizeFilter.BOX, 5, 2, 0, 5, 1, 22);
+            assertArrayEquals(new int[]{0, 2}, reduce5.starts());
+            assertArrayEquals(new int[]{3, 3}, reduce5.counts());
+            assertEquals(0.4 * (1 << 22), reduce5.weights()[0], 1);
+            assertEquals(0.4 * (1 << 22), reduce5.weights()[1], 1);
+            assertEquals(0.2 * (1 << 22), reduce5.weights()[2], 1);
+            assertEquals(0.2 * (1 << 22), reduce5.weights()[reduce5.stride()], 1);
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @EnumSource(value = ResizeFilter.class, mode = EnumSource.Mode.EXCLUDE, names = "NEAREST")
+        @DisplayName("positive and negative tap sums stay within the fixed-point headroom of 1.55")
+        void headroom(ResizeFilter filter) {
+            // the 8-bit passes size their fractional bits so that 255 * 1.55 * 2^22 fits an int
+            var worst = 0.0;
+            for (var in = 1; in <= 64; in++) {
+                for (var out : new int[]{1, 2, 3, 5, 7, 13, 31, 64, 97, 200}) {
+                    var weights = ResampleWeights.compute(filter, in, out, 0, in, 1, Resampler.FIRST_BITS);
+                    for (var i = 0; i < out; i++) {
+                        long positive = 0;
+                        long negative = 0;
+                        for (var k = 0; k < weights.counts()[i]; k++) {
+                            var weight = weights.weights()[i * weights.stride() + k];
+                            if (weight > 0) {
+                                positive += weight;
+                            } else {
+                                negative -= weight;
+                            }
+                        }
+                        worst = Math.max(worst, Math.max(positive, negative) / (double) (1 << Resampler.FIRST_BITS));
+                    }
+                }
+            }
+            assertTrue(worst <= 1.55, filter + " reaches " + worst);
         }
     }
 
@@ -223,7 +300,7 @@ class ResizeTest {
         }
 
         @ParameterizedTest(name = "{0}")
-        @EnumSource(value = ResizeFilter.class, names = {"BILINEAR", "BICUBIC", "LANCZOS3", "AREA"})
+        @EnumSource(value = ResizeFilter.class, mode = EnumSource.Mode.EXCLUDE, names = "NEAREST")
         @DisplayName("symmetric pictures resize to symmetric pictures")
         void symmetric(ResizeFilter filter) {
             var random = new SplittableRandom(4);
@@ -254,7 +331,7 @@ class ResizeTest {
         }
 
         @ParameterizedTest(name = "{0}")
-        @EnumSource(value = ResizeFilter.class, names = {"BILINEAR", "BICUBIC", "LANCZOS3", "AREA"})
+        @EnumSource(value = ResizeFilter.class, mode = EnumSource.Mode.EXCLUDE, names = "NEAREST")
         @DisplayName("resampling preserves the mean of smooth pictures")
         void meanPreserved(ResizeFilter filter) {
             var picture = Pictures.patternRgba(240, 160, false);
@@ -283,7 +360,7 @@ class ResizeTest {
     @DisplayName("alpha")
     class Alpha {
         @ParameterizedTest(name = "{0}")
-        @EnumSource(value = ResizeFilter.class, names = {"BILINEAR", "BICUBIC", "LANCZOS3", "AREA"})
+        @EnumSource(value = ResizeFilter.class, mode = EnumSource.Mode.EXCLUDE, names = "NEAREST")
         @DisplayName("transparent color never bleeds into visible pixels")
         void noBleeding(ResizeFilter filter) {
             var picture = RgbaPicture.allocate(64, 48, true);
@@ -310,7 +387,9 @@ class ResizeTest {
                         }
                     }
                 }
-                assertTrue(partial > 0 || filter == ResizeFilter.AREA, "no semi-transparent pixels to check");
+                // the area and box filters replicate pixels when enlarging, which makes no partial alpha
+                assertTrue(partial > 0 || filter == ResizeFilter.AREA || filter == ResizeFilter.BOX,
+                        "no semi-transparent pixels to check");
             }
         }
 
@@ -478,6 +557,9 @@ class ResizeTest {
         static Stream<Arguments> cases() {
             var arguments = new ArrayList<Arguments>();
             for (var filter : FILTERED) {
+                if (flags(filter) == null) {
+                    continue;
+                }
                 arguments.add(Arguments.of(filter, 640, 480, 213, 160));
                 arguments.add(Arguments.of(filter, 640, 480, 320, 240));
                 arguments.add(Arguments.of(filter, 400, 300, 147, 211));
@@ -497,6 +579,9 @@ class ResizeTest {
         static Stream<Arguments> evenCases() {
             var arguments = new ArrayList<Arguments>();
             for (var filter : FILTERED) {
+                if (flags(filter) == null) {
+                    continue;
+                }
                 arguments.add(Arguments.of(filter, 640, 480, 214, 160));
                 arguments.add(Arguments.of(filter, 640, 480, 320, 240));
                 arguments.add(Arguments.of(filter, 400, 300, 148, 212));
@@ -508,13 +593,18 @@ class ResizeTest {
             return arguments.stream();
         }
 
+        /** Returns the swscale flags of the same kernel, or {@code null} when swscale has none (box, Hamming). */
         static String flags(ResizeFilter filter) {
             return switch (filter) {
                 case BILINEAR -> "flags=bilinear+accurate_rnd+full_chroma_int";
                 case BICUBIC -> "flags=bicubic+accurate_rnd+full_chroma_int:param0=0:param1=0.5";
+                case MITCHELL -> "flags=bicubic+accurate_rnd+full_chroma_int:param0=0.333333333333:param1=0.333333333333";
+                case LANCZOS2 -> "flags=lanczos+accurate_rnd+full_chroma_int:param0=2";
                 case LANCZOS3 -> "flags=lanczos+accurate_rnd+full_chroma_int:param0=3";
+                case LANCZOS4 -> "flags=lanczos+accurate_rnd+full_chroma_int:param0=4";
                 case AREA -> "flags=area+accurate_rnd+full_chroma_int";
                 case NEAREST -> "flags=neighbor";
+                case BOX, HAMMING -> null;
             };
         }
 

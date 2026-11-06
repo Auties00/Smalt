@@ -13,8 +13,11 @@ import java.util.Objects;
  * {@link Subtitles#convertText(String, SubtitleMarkup, SubtitleMarkup)} rewrites the markup for
  * another format.
  *
- * <p>The identifier and the settings are the WebVTT cue identifier and cue settings list
- * ({@code align:start line:10%}); they are empty for cues of other formats and when absent.
+ * <p>The identifier is the WebVTT cue identifier, empty for cues of other formats and when absent. The settings
+ * are the WebVTT cue settings list ({@code align:start line:10%}) of a WebVTT cue and the event fields of an ASS
+ * cue, {@code Layer,Style,Name,MarginL,MarginR,MarginV,Effect} ({@code 0,Default,Bob,0,0,0,}), and empty for the
+ * other formats and when absent (an ASS cue without settings is an event of layer 0 in the {@code Default}
+ * style).
  *
  * <p>Instances are immutable and thread-safe.
  *
@@ -22,7 +25,7 @@ import java.util.Objects;
  * @param endMicros the time the cue disappears, in microseconds; not before {@code startMicros}
  * @param text the text, with its markup
  * @param identifier the WebVTT cue identifier, empty when absent
- * @param settings the WebVTT cue settings list, empty when absent
+ * @param settings the WebVTT cue settings list or the ASS event fields, empty when absent
  */
 public record SubtitleCue(long startMicros, long endMicros, String text, String identifier, String settings) {
     /**

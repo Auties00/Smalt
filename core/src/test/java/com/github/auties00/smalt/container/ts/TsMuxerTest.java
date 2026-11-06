@@ -263,6 +263,52 @@ class TsMuxerTest {
         }
 
         @Test
+        @DisplayName("maps the timestamp origin, not the first decoding time, to the delay when one is set")
+        void timestampOrigin() {
+            for (var origin : new Long[]{null, 0L, 500_000L}) {
+                var origins = new ArrayList<Long>();
+                for (var startSeconds = 1; startSeconds <= 2; startSeconds++) {
+                    var builder = TsMuxerOptions.builder();
+                    if (origin != null) {
+                        builder.timestampOriginMicros(origin);
+                    }
+                    var bytes = aacStream(startSeconds * 48_000L, builder.build());
+                    try (var source = MediaSource.of(bytes);
+                         var demuxer = new TsDemuxer(source, TsDemuxerOptions.defaults())) {
+                        origins.add(demuxer.originTicks());
+                        var first = demuxer.read();
+                        assertEquals(0, first.pts(), "the demuxer reports its origin as zero");
+                    }
+                }
+                if (origin == null) {
+                    // each stream starts at the delay, 700 ms
+                    assertEquals(List.of(63_000L, 63_000L), origins);
+                } else {
+                    // streams given one origin share their timestamps: one second of input apart
+                    var zero = 63_000L - origin * 9 / 100;
+                    assertEquals(List.of(zero + 90_000, zero + 180_000), origins);
+                }
+            }
+        }
+
+        /** Returns a transport stream of 50 AAC frames whose first starts at a time, in 1/48000 s. */
+        private static byte[] aacStream(long start, TsMuxerOptions options) {
+            var audio = AudioTrack.builder().id(1).codec(Codec.AAC).timeBase(Rational.timeBaseOf(48_000))
+                    .codecConfig(new byte[]{0x11, (byte) 0x90}).sampleRate(48_000)
+                    .layout(com.github.auties00.smalt.audio.ChannelLayout.STEREO).build();
+            var sink = MediaSink.memory();
+            try (var muxer = new TsMuxer(sink, options)) {
+                muxer.addTrack(audio);
+                for (var frame = 0; frame < 50; frame++) {
+                    var time = start + frame * 1024L;
+                    muxer.writePacket(new Packet(1, silentAacFrame(), time, time, 1024, true));
+                }
+                muxer.finish();
+            }
+            return sink.toByteArray();
+        }
+
+        @Test
         @DisplayName("writes M2TS packets with increasing arrival time stamps")
         void m2ts() {
             var bytes = remux(input(), sink -> new TsMuxer(sink, TsMuxerOptions.m2ts()));

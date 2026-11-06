@@ -91,6 +91,11 @@ public final class SlicedSource implements MediaSource, LocalSource, ForwardOnly
     }
 
     @Override
+    public boolean keeps(long from, long to) {
+        return from >= to || ForwardOnlySource.keeps(parent, start + from, start + to);
+    }
+
+    @Override
     public void close() {
     }
 }
