@@ -5,16 +5,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.UncheckedIOException;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
-import java.util.HexFormat;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
@@ -40,9 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @DisplayName("Voice processor against the WebRTC APM oracle")
 class VoiceProcessorOracleTest {
     static final int SECONDS = 15;
-    static final int MOBILE_DELAY_MS = 40;
-    static final int INITIAL_ANALOG_LEVEL = 128;
-    private static final Map<String, String> GOLDENS = loadGoldens();
+    private static final Map<String, String> GOLDENS = OracleHarness.loadGoldens("oracle-goldens.txt");
     private static List<VoiceScenarios.Scenario> suite;
 
     private static synchronized List<VoiceScenarios.Scenario> suite() {
@@ -111,7 +100,7 @@ class VoiceProcessorOracleTest {
 
     private static Stream<Arguments> group(String group) {
         return cases().stream().filter(c -> c.group().equals(group))
-                .map(c -> Arguments.of(describe(c.options()), c.scenario()));
+                .map(c -> Arguments.of(OracleHarness.describe(c.options()), c.scenario()));
     }
 
     static Stream<Arguments> voip() {
@@ -182,146 +171,19 @@ class VoiceProcessorOracleTest {
 
     private static void verify(String group, String description, String name) {
         var match = cases().stream()
-                .filter(c -> c.group().equals(group) && c.scenario().equals(name) && describe(c.options()).equals(description))
+                .filter(c -> c.group().equals(group) && c.scenario().equals(name)
+                        && OracleHarness.describe(c.options()).equals(description))
                 .findFirst().orElseThrow();
-        var scenario = scenarioOf(name);
-        var result = run(match.options(), scenario);
+        var streams = RateScenarios.of(scenarioOf(name));
+        var result = OracleHarness.run(match.options(), streams);
         assertEquals(0.0, result.maxDifference(), () -> "max |java - oracle| = " + result.maxDifference()
-                + " (identical samples " + result.identical() + " of " + result.samples() + ")");
+                + " (identical samples " + result.identical() + " of " + result.samples() + ", first mismatch in frame "
+                + result.firstMismatchFrame() + ")");
         assertEquals(result.oracleDigest(), result.javaDigest(), "digest of the Java output");
         assertEquals(0, result.levelMismatches(), "frames whose recommended analog level differs");
         assertTrue(result.flushedMaxDifference() <= 1e-10,
                 () -> "max |java - oracle| with flushing = " + result.flushedMaxDifference());
-        var key = key(match.options(), scenario);
+        var key = OracleHarness.key(match.options(), streams);
         assertEquals(GOLDENS.get(key), result.oracleDigest(), "golden digest of the oracle output for " + key);
-    }
-
-    record Result(double maxDifference, long identical, long samples, String javaDigest, String oracleDigest,
-                  double flushedMaxDifference, int levelMismatches) {
-    }
-
-    static String describe(VoiceProcessorOptions options) {
-        var echo = switch (options.echoCancellation()) {
-            case OFF -> "noaec";
-            case STANDARD -> "aec3";
-            case MOBILE -> "aecm-" + options.mobileEchoRoute() + (options.comfortNoise() ? "-cng" : "");
-        };
-        var description = echo + "|" + options.noiseSuppression();
-        if (options.gainControl() != GainControl.OFF) {
-            description += "|agc-" + options.gainControl() + "-" + options.targetLevelDbfs() + "-"
-                    + options.compressionGainDb() + "-" + (options.limiter() ? "limiter" : "nolimiter");
-        }
-        return description;
-    }
-
-    static String key(VoiceProcessorOptions options, VoiceScenarios.Scenario scenario) {
-        return describe(options) + "|" + scenario.name() + "|" + scenario.frames();
-    }
-
-    static Result run(VoiceProcessorOptions options, VoiceScenarios.Scenario scenario) {
-        var mobile = options.echoCancellation() == EchoCancellation.MOBILE;
-        var analog = options.gainControl() == GainControl.ADAPTIVE_ANALOG;
-        var delay = mobile ? MOBILE_DELAY_MS : 0;
-        var java = new VoiceProcessor(options, false, false);
-        java.setStreamDelayMs(delay);
-        var flushed = new VoiceProcessor(options, false, true);
-        flushed.setStreamDelayMs(delay);
-        var flushedMaxDifference = 0.0;
-        var javaDigest = sha256();
-        var oracleDigest = sha256();
-        var maxDifference = 0.0;
-        long identical = 0;
-        var levelMismatches = 0;
-        try (var oracle = WasmApmOracle.of(options)) {
-            oracle.setStreamDelayMs(delay);
-            var level = INITIAL_ANALOG_LEVEL;
-            var flushedLevel = INITIAL_ANALOG_LEVEL;
-            var render = new float[VoiceScenarios.FRAME];
-            var javaFrame = new float[VoiceScenarios.FRAME];
-            var oracleFrame = new float[VoiceScenarios.FRAME];
-            var flushedFrame = new float[VoiceScenarios.FRAME];
-            var bytes = new byte[4 * VoiceScenarios.FRAME];
-            for (var f = 0; f < scenario.frames(); f++) {
-                for (var i = 0; i < VoiceScenarios.FRAME; i++) {
-                    render[i] = scenario.render()[f * VoiceScenarios.FRAME + i] / 32768f;
-                    javaFrame[i] = scenario.capture()[f * VoiceScenarios.FRAME + i] / 32768f;
-                    oracleFrame[i] = javaFrame[i];
-                    flushedFrame[i] = javaFrame[i];
-                }
-                java.processRender(render, 0);
-                flushed.processRender(render, 0);
-                oracle.processRender(render, 0);
-                if (mobile) {
-                    oracle.setStreamDelayMs(delay);
-                }
-                if (analog) {
-                    java.setAnalogLevel(level);
-                    flushed.setAnalogLevel(flushedLevel);
-                    oracle.setAnalogLevel(level);
-                }
-                java.processCapture(javaFrame, 0, javaFrame, 0);
-                flushed.processCapture(flushedFrame, 0, flushedFrame, 0);
-                oracle.processCapture(oracleFrame, 0);
-                if (analog) {
-                    level = oracle.recommendedAnalogLevel();
-                    if (java.recommendedAnalogLevel() != level) {
-                        levelMismatches++;
-                    }
-                    flushedLevel = flushed.recommendedAnalogLevel();
-                }
-                for (var i = 0; i < VoiceScenarios.FRAME; i++) {
-                    maxDifference = Math.max(maxDifference, Math.abs((double) javaFrame[i] - oracleFrame[i]));
-                    flushedMaxDifference = Math.max(flushedMaxDifference, Math.abs((double) flushedFrame[i] - oracleFrame[i]));
-                    if (Float.floatToRawIntBits(javaFrame[i]) == Float.floatToRawIntBits(oracleFrame[i])) {
-                        identical++;
-                    }
-                }
-                javaDigest.update(littleEndian(javaFrame, bytes));
-                oracleDigest.update(littleEndian(oracleFrame, bytes));
-            }
-        }
-        return new Result(maxDifference, identical, (long) scenario.frames() * VoiceScenarios.FRAME,
-                HexFormat.of().formatHex(javaDigest.digest()), HexFormat.of().formatHex(oracleDigest.digest()),
-                flushedMaxDifference, levelMismatches);
-    }
-
-    private static MessageDigest sha256() {
-        try {
-            return MessageDigest.getInstance("SHA-256");
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException(exception);
-        }
-    }
-
-    private static byte[] littleEndian(float[] frame, byte[] bytes) {
-        for (var i = 0; i < frame.length; i++) {
-            var bits = Float.floatToRawIntBits(frame[i]);
-            bytes[4 * i] = (byte) bits;
-            bytes[4 * i + 1] = (byte) (bits >>> 8);
-            bytes[4 * i + 2] = (byte) (bits >>> 16);
-            bytes[4 * i + 3] = (byte) (bits >>> 24);
-        }
-        return bytes;
-    }
-
-    private static Map<String, String> loadGoldens() {
-        var goldens = new LinkedHashMap<String, String>();
-        try (var in = VoiceProcessorOracleTest.class.getResourceAsStream("oracle-goldens.txt")) {
-            if (in == null) {
-                return goldens;
-            }
-            var reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (line.isBlank() || line.startsWith("#")) {
-                    continue;
-                }
-                var separator = line.lastIndexOf(' ');
-                goldens.put(line.substring(0, separator), line.substring(separator + 1));
-            }
-        } catch (IOException exception) {
-            throw new UncheckedIOException(exception);
-        }
-        return goldens;
     }
 }

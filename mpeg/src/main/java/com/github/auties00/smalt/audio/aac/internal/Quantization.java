@@ -81,7 +81,7 @@ public final class Quantization {
      * @return the binary logarithm
      */
     public static double log2(double x) {
-        return Math.log(x) * (1 / Math.log(2));
+        return StrictMath.log(x) * (1 / StrictMath.log(2));
     }
 
     /**
@@ -91,7 +91,7 @@ public final class Quantization {
      * @return the quantizer gain
      */
     private static float inverseStepUnchecked(int scalefactor) {
-        return (float) Math.pow(2, -3.0 / 16.0 * (scalefactor - 100));
+        return (float) StrictMath.pow(2, -3.0 / 16.0 * (scalefactor - 100));
     }
 
     /**

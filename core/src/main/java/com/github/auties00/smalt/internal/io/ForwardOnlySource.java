@@ -67,6 +67,17 @@ public interface ForwardOnlySource {
     boolean fitsInMemory(long end);
 
     /**
+     * Returns whether every byte of a range can still be read: it was taken from the input and
+     * this source has not dropped it, although it may lie below the watermark.
+     *
+     * @param from the offset of the first byte of the range
+     * @param to   the offset just past its last byte
+     * @return {@code true} when reading the range succeeds without reaching the input, and for an
+     *         empty range
+     */
+    boolean keeps(long from, long to);
+
+    /**
      * Raises the watermark of a source that reads its input once, front to back; does nothing for
      * any other source.
      *
@@ -124,6 +135,21 @@ public interface ForwardOnlySource {
      */
     static boolean isCheapToReach(MediaSource source, long end) {
         return !(source instanceof ForwardOnlySource forward) || forward.fitsInMemory(end);
+    }
+
+    /**
+     * Returns whether a parser can read a range of a source again: always for a source with
+     * random access, and for a source that reads its input once when it still keeps the range, as
+     * {@link #keeps(long, long)} tells.
+     *
+     * @param source the source whose range is read again
+     * @param from   the offset of the first byte of the range
+     * @param to     the offset just past its last byte
+     * @return {@code false} only for a source that reads its input once and no longer keeps, or
+     *         has not yet taken, every byte of the range
+     */
+    static boolean keeps(MediaSource source, long from, long to) {
+        return !(source instanceof ForwardOnlySource forward) || forward.keeps(from, to);
     }
 
     /**

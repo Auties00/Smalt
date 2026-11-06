@@ -12,6 +12,7 @@ import java.util.OptionalInt;
 import java.util.OptionalLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -124,6 +125,73 @@ class TrackApiTest {
         void rejects() {
             assertThrows(IllegalArgumentException.class, () -> Rational.timeBaseOf(0));
             assertThrows(IllegalArgumentException.class, () -> Rational.timeBaseOf(-48_000));
+        }
+    }
+
+    @Nested
+    @DisplayName("VideoTrack sample aspect ratio and scan")
+    class AspectAndScan {
+        private static VideoTrack.Builder video() {
+            return VideoTrack.builder().id(1).codec(Codec.H264).timeBase(new Rational(1, 90_000)).width(720).height(576);
+        }
+
+        @Test
+        @DisplayName("are undeclared by default and kept through toBuilder")
+        void defaults() {
+            var plain = video().build();
+            assertEquals(java.util.Optional.empty(), plain.sampleAspectRatio());
+            assertEquals(java.util.Optional.empty(), plain.interlacing());
+            var declared = video().sampleAspectRatio(new Rational(64, 45)).interlacing(Interlacing.TOP_FIELD_FIRST).build();
+            assertEquals(declared, declared.toBuilder().build());
+            assertEquals(declared.hashCode(), declared.toBuilder().build().hashCode());
+            assertEquals(java.util.Optional.of(new Rational(64, 45)), declared.sampleAspectRatio());
+            assertEquals(java.util.Optional.of(Interlacing.TOP_FIELD_FIRST), declared.interlacing());
+            assertTrue(declared.toString().contains("sampleAspectRatio=64/45"), declared.toString());
+        }
+
+        @Test
+        @DisplayName("store the ratio in lowest terms and take part in equality")
+        void equality() {
+            var reduced = video().sampleAspectRatio(new Rational(128, 90)).build();
+            assertEquals(new Rational(64, 45), reduced.sampleAspectRatio().orElseThrow());
+            assertEquals(video().sampleAspectRatio(new Rational(64, 45)).build(), reduced);
+            assertFalse(video().build().equals(reduced));
+            assertFalse(video().interlacing(Interlacing.PROGRESSIVE).build().equals(video().build()));
+            assertFalse(video().interlacing(Interlacing.TOP_FIELD_FIRST).build()
+                    .equals(video().interlacing(Interlacing.TOP_FIELD_FIRST_SEPARATED).build()));
+        }
+
+        @Test
+        @DisplayName("reject null and reset through the named setters")
+        void resets() {
+            assertThrows(NullPointerException.class, () -> video().sampleAspectRatio(null));
+            assertThrows(NullPointerException.class, () -> video().interlacing(null));
+            var declared = video().sampleAspectRatio(new Rational(4, 3)).interlacing(Interlacing.INTERLACED).build();
+            var cleared = declared.toBuilder().noSampleAspectRatio().noInterlacing().build();
+            assertEquals(video().build(), cleared);
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @EnumSource(Interlacing.class)
+        @DisplayName("map every scan to its field order value and back")
+        void codes(Interlacing interlacing) {
+            assertEquals(interlacing, Interlacing.ofCode(interlacing.code()));
+            assertEquals(interlacing != Interlacing.PROGRESSIVE, interlacing.isInterlaced());
+        }
+
+        @Test
+        @DisplayName("name the shared fiel and FieldOrder values")
+        void values() {
+            assertEquals(1, Interlacing.TOP_FIELD_FIRST_SEPARATED.code());
+            assertEquals(6, Interlacing.BOTTOM_FIELD_FIRST_SEPARATED.code());
+            assertEquals(9, Interlacing.TOP_FIELD_FIRST.code());
+            assertEquals(14, Interlacing.BOTTOM_FIELD_FIRST.code());
+            assertEquals(Interlacing.INTERLACED, Interlacing.ofCode(5));
+            assertEquals(Interlacing.INTERLACED, Interlacing.ofCode(-1));
+            assertTrue(Interlacing.TOP_FIELD_FIRST.isTopFieldFirst());
+            assertTrue(Interlacing.TOP_FIELD_FIRST_SEPARATED.isTopFieldFirst());
+            assertFalse(Interlacing.BOTTOM_FIELD_FIRST.isTopFieldFirst());
+            assertFalse(Interlacing.INTERLACED.isTopFieldFirst());
         }
     }
 }

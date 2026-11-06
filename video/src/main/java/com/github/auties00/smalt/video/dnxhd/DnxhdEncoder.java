@@ -2,6 +2,7 @@ package com.github.auties00.smalt.video.dnxhd;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.ChromaFormat;
+import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -28,13 +29,17 @@ import java.util.function.Consumer;
  * or one frame of adaptive field and frame macroblocks for ID 1260) at 8 or 10 bits, choosing the
  * compression ID from the picture size, scan, bit depth and {@link DnxhdEncoderOptions#bitrate()}
  * unless {@link DnxhdEncoderOptions#compressionId()} names one. With
- * {@link DnxhdEncoderOptions#alpha()} every frame also carries the picture's alpha channel. Every
- * frame takes exactly the size of its compression ID. Pictures of any representation are accepted
- * and converted as needed.
+ * {@link DnxhdEncoderOptions#alpha()} every frame also carries the picture's alpha channel, in band
+ * or after the video as {@link DnxhdEncoderOptions#alphaStorage()} chooses. Every frame takes
+ * exactly the size of its compression ID, plus the alpha and its four-byte trailer when the alpha
+ * is stored out of band, so that all frames of a stream have one size. Pictures of any
+ * representation are accepted and converted as needed.
  *
  * <p>Every frame is independent: each {@link #encode(VideoFrame, Consumer)} emits one key-frame
  * packet carrying the frame's timestamp and duration, and {@link #flush(Consumer)} has nothing to
- * drain. {@link #codecConfig()} is the QuickTime sample entry type, {@code AVdn} or {@code AVdh}.
+ * drain. {@link #codecConfig()} is the QuickTime sample entry type, {@code AVdn} or {@code AVdh},
+ * followed for alpha stored out of band by the {@code AALP} extension of Avid's sample
+ * descriptions, which QuickTime muxers write into the sample entry.
  *
  * <p>Instances are not thread-safe. Large frames are encoded in parallel macroblock rows on the
  * module's shared helper threads unless {@link DnxhdEncoderOptions#threads()} is {@code 1}; the
@@ -44,6 +49,11 @@ import java.util.function.Consumer;
  * project's format documentation before distributing files made with this encoder.
  */
 public final class DnxhdEncoder implements VideoEncoder {
+    /**
+     * The size of the {@code AALP} atom of an Avid sample description.
+     */
+    private static final int ALPHA_ATOM_SIZE = 28;
+
     private final int width;
 
     private final int height;
@@ -115,15 +125,17 @@ public final class DnxhdEncoder implements VideoEncoder {
         if (chroma == ChromaFormat.YUV420 && (height & 1) != 0) {
             throw new IllegalArgumentException("4:2:0 DNxHR needs an even height, got " + height);
         }
-        if (options.alpha() && !compression.permitsAlpha()) {
-            throw new IllegalArgumentException("compression ID " + compression.cid() + " does not code alpha");
+        if (options.alpha() && options.alphaStorage() == DnxhdEncoderOptions.AlphaStorage.IN_BAND
+                && !compression.permitsAlpha()) {
+            throw new IllegalArgumentException("compression ID " + compression.cid() + " does not code alpha in band");
         }
         if (options.losslessAlpha() && !compression.permitsLosslessAlpha()) {
             throw new IllegalArgumentException("only DNxHR 444 and compression ID 1256 code lossless alpha");
         }
         var frames = new Vc3FrameEncoder(width, height, compression, depth, options.rgb(),
                 options.rgb() && options.alternateColorSpace(), options.color(), chroma, options.alpha(),
-                options.losslessAlpha(), options.threads(), options.limits());
+                options.losslessAlpha(), options.alphaStorage(), options.premultipliedAlpha(), options.threads(),
+                options.limits());
         this.core = new IntraEncoderCore(width, height, options.frameRate(), options.timeBase(), frames::encode);
     }
 
@@ -236,11 +248,32 @@ public final class DnxhdEncoder implements VideoEncoder {
     /**
      * {@inheritDoc}
      *
-     * @return the profile's sample entry type in ASCII: {@code AVdh} for DNxHR, {@code AVdn} for DNxHD
+     * <p>For alpha stored out of band the type is followed by an {@code AALP} atom, 28 bytes
+     * that name the storage of the alpha: {@code AUA8} for 8-bit samples, {@code AUAX} for 8-bit
+     * samples in an area sized for 10-bit ones, or the sample entry type for coded alpha.
+     * {@snippet :
+     * u32 size = 28, 'AALP', 'AALP', '0001', u32 1, fourcc storage, u32 0
+     * }
+     *
+     * @return the profile's sample entry type in ASCII ({@code AVdh} for DNxHR, {@code AVdn} for
+     * DNxHD), with the alpha atom for alpha stored out of band
      */
     @Override
     public Optional<byte[]> codecConfig() {
-        return Optional.of(options.profile().fourCc().getBytes(StandardCharsets.US_ASCII));
+        var fourCc = options.profile().fourCc();
+        if (!options.alpha() || options.alphaStorage() == DnxhdEncoderOptions.AlphaStorage.IN_BAND) {
+            return Optional.of(fourCc.getBytes(StandardCharsets.US_ASCII));
+        }
+        var storage = options.alphaStorage() == DnxhdEncoderOptions.AlphaStorage.AVID_CODED ? fourCc
+                : depth == 8 ? "AUA8" : "AUAX";
+        var config = new byte[4 + ALPHA_ATOM_SIZE];
+        ByteArrays.put32be(config, 4, ALPHA_ATOM_SIZE);
+        var text = "AALPAALP0001".getBytes(StandardCharsets.US_ASCII);
+        System.arraycopy(fourCc.getBytes(StandardCharsets.US_ASCII), 0, config, 0, 4);
+        System.arraycopy(text, 0, config, 8, text.length);
+        ByteArrays.put32be(config, 20, 1);
+        System.arraycopy(storage.getBytes(StandardCharsets.US_ASCII), 0, config, 24, 4);
+        return Optional.of(config);
     }
 
     /**
@@ -251,7 +284,7 @@ public final class DnxhdEncoder implements VideoEncoder {
      * @throws IllegalArgumentException if the picture size differs from the encoder's or the
      * timestamp does not follow the previous one
      * @throws MediaException.Unsupported if the picture is RGB, the encoder codes Y'CbCr and the
-     * matrix of {@link DnxhdEncoderOptions#color()} is not defined by two luma weights
+     * matrix of {@link DnxhdEncoderOptions#color()} is the identity matrix
      */
     @Override
     public void encode(VideoFrame frame, Consumer<Packet> output) {
@@ -268,7 +301,7 @@ public final class DnxhdEncoder implements VideoEncoder {
      * @throws IllegalArgumentException if the picture size differs from the encoder's or the
      * timestamp does not follow the previous one
      * @throws MediaException.Unsupported if the picture is RGB, the encoder codes Y'CbCr and the
-     * matrix of {@link DnxhdEncoderOptions#color()} is not defined by two luma weights
+     * matrix of {@link DnxhdEncoderOptions#color()} is the identity matrix
      */
     public Packet encodeFrame(VideoFrame frame) {
         return core.encode(frame);

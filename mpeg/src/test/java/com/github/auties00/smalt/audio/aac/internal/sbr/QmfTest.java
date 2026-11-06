@@ -155,4 +155,53 @@ class QmfTest {
         var snr = 10 * Math.log10(energy / error);
         assertTrue(snr > 55, "reconstruction SNR " + snr + " dB");
     }
+
+    @Test
+    @DisplayName("the low delay analysis followed by the 32-band low delay synthesis reconstructs the input")
+    void lowDelayRoundTrip() {
+        // the low delay banks pair their own rotations; any other pairing of the CLD prototype aliases
+        var bands = 32;
+        var frames = 8;
+        var input = tones(1024 * frames);
+        var analysis = new QmfAnalysis(SbrKernels.scalar(), true);
+        var synthesis = new QmfSynthesis(bands, SbrKernels.scalar(), true);
+        var outLength = 32 * bands;
+        var output = new float[outLength * frames];
+        var lowRe = new float[32 * 32];
+        var lowIm = new float[32 * 32];
+        var re = new float[32 * 64];
+        var im = new float[32 * 64];
+        var frame = new float[1024];
+        var out = new float[outLength];
+        for (var f = 0; f < frames; f++) {
+            System.arraycopy(input, f * 1024, frame, 0, 1024);
+            analysis.analyze(frame, 32, lowRe, lowIm, 0);
+            for (var s = 0; s < 32; s++) {
+                System.arraycopy(lowRe, s * 32, re, s * 64, 32);
+                System.arraycopy(lowIm, s * 32, im, s * 64, 32);
+            }
+            synthesis.synthesize(re, im, 32, out, 0);
+            System.arraycopy(out, 0, output, f * outLength, outLength);
+        }
+        var ratio = bands / 32;
+        var best = Double.NEGATIVE_INFINITY;
+        var bestDelay = -1;
+        for (var delay = 0; delay < 1200; delay++) {
+            double error = 0;
+            double energy = 0;
+            for (var i = 3000; i < 6000; i++) {
+                var d = output[i * ratio + delay] - input[i];
+                error += d * d;
+                energy += input[i] * input[i];
+            }
+            var snr = 10 * Math.log10(energy / error);
+            if (snr > best) {
+                best = snr;
+                bestDelay = delay;
+            }
+        }
+        assertTrue(best > 50, "reconstruction SNR " + best + " dB at delay " + bestDelay);
+        // the CLD prototype has a much shorter delay than the 640-tap prototype of the standard bank
+        assertTrue(bestDelay < 289, "delay " + bestDelay);
+    }
 }
