@@ -188,7 +188,7 @@ final class TileComponent {
             var ry1 = ceilDivPow2(y1, level);
             var pdx = coding.precinctWidth(r);
             var pdy = coding.precinctHeight(r);
-            var grid = PrecinctGrid.of(rx0, ry0, rx1, ry1, pdx, pdy, limits);
+            var grid = PrecinctGrid.of(rx0, ry0, rx1, ry1, pdx, pdy, coding.anchorX(), coding.anchorY(), limits);
             var bandCount = r == 0 ? 1 : 3;
             var bands = new Band[bandCount];
             var lower = r == 0 ? null : resolutions[r - 1];
@@ -220,7 +220,8 @@ final class TileComponent {
                 var offsetY = (orientation & 2) != 0 ? lower.height() : 0;
                 var doubledDepth = 2 * (r == 0 ? count - 1 : count - r);
                 bands[b] = band(orientation, bx0, by0, bx1, by1, doubledExponent, mantissa, gain, grid, pdx - shift,
-                        pdy - shift, shift, shift, offsetX, offsetY, quantization.guardBits(), encoder, limits, r, b,
+                        pdy - shift, shift, shift, (orientation & 1) != 0, (orientation & 2) != 0, offsetX, offsetY,
+                        quantization.guardBits(), encoder, limits, r, b,
                         2 * (count - 1), doubledDepth, quantization.deadzone(bandIndex));
             }
             resolutions[r] = new Resolution(rx0, ry0, rx1, ry1, pdx, pdy, grid.wide, grid.high, bands, level, level,
@@ -260,7 +261,8 @@ final class TileComponent {
             var node = placed.get(shape.resolutionNodes()[levels - r]);
             var pdx = coding.precinctWidth(r);
             var pdy = coding.precinctHeight(r);
-            var grid = PrecinctGrid.of(node.x0(), node.y0(), node.x1(), node.y1(), pdx, pdy, limits);
+            var grid = PrecinctGrid.of(node.x0(), node.y0(), node.x1(), node.y1(), pdx, pdy, coding.anchorX(),
+                    coding.anchorY(), limits);
             var members = shape.bands(r);
             var bands = new Band[members.size()];
             for (var b = 0; b < bands.length; b++) {
@@ -279,7 +281,8 @@ final class TileComponent {
                 }
                 bands[b] = band(member.primary, area.x0(), area.y0(), area.x1(), area.y1(), doubledExponent, mantissa,
                         gain,
-                        grid, pdx - splitsX, pdy - splitsY, splitsX, splitsY, area.offsetX(), area.offsetY(),
+                        grid, pdx - splitsX, pdy - splitsY, splitsX, splitsY, r != 0 && member.highX,
+                        r != 0 && member.highY, area.offsetX(), area.offsetY(),
                         quantization.guardBits(), encoder, limits, r, b, lowDoubledDepth, member.doubledDepth,
                         quantization.deadzone(bandIndex));
             }
@@ -347,10 +350,13 @@ final class TileComponent {
      * @param precinctY0 the top edge of the first precinct row
      * @param wide the number of precinct columns
      * @param high the number of precinct rows
+     * @param anchorX the column the partition is anchored at, {@code zx} of ISO/IEC 15444-2 I.2
+     * @param anchorY the row the partition is anchored at, {@code zy}
      */
-    private record PrecinctGrid(long precinctX0, long precinctY0, int wide, int high) {
+    private record PrecinctGrid(long precinctX0, long precinctY0, int wide, int high, int anchorX, int anchorY) {
         /**
-         * Computes the precinct partition of a resolution (B.6).
+         * Computes the precinct partition of a resolution (B.6, and equations I-1 and I-2 of ISO/IEC 15444-2 for an
+         * anchored partition).
          *
          * @param rx0 the resolution's left edge
          * @param ry0 the resolution's top edge
@@ -358,19 +364,35 @@ final class TileComponent {
          * @param ry1 the resolution's bottom edge
          * @param pdx the base-2 logarithm of the precinct width
          * @param pdy the base-2 logarithm of the precinct height
+         * @param anchorX the horizontal anchor point, 0 or 1
+         * @param anchorY the vertical anchor point, 0 or 1
          * @param limits the resource bounds
          * @return the partition
          */
-        static PrecinctGrid of(long rx0, long ry0, long rx1, long ry1, int pdx, int pdy, MediaLimits limits) {
-            var precinctX0 = (rx0 >> pdx) << pdx;
-            var precinctY0 = (ry0 >> pdy) << pdy;
-            var precinctX1 = ceilDivPow2(rx1, pdx) << pdx;
-            var precinctY1 = ceilDivPow2(ry1, pdy) << pdy;
+        static PrecinctGrid of(long rx0, long ry0, long rx1, long ry1, int pdx, int pdy, int anchorX, int anchorY,
+                               MediaLimits limits) {
+            var precinctX0 = floorTo(rx0, anchorX, pdx);
+            var precinctY0 = floorTo(ry0, anchorY, pdy);
+            var precinctX1 = (ceilDivPow2(rx1 - anchorX, pdx) << pdx) + anchorX;
+            var precinctY1 = (ceilDivPow2(ry1 - anchorY, pdy) << pdy) + anchorY;
             var wide = rx0 == rx1 ? 0 : (int) ((precinctX1 - precinctX0) >> pdx);
             var high = ry0 == ry1 ? 0 : (int) ((precinctY1 - precinctY0) >> pdy);
             LimitChecks.checkAllocation(limits, (long) wide * high * 3 * 8);
-            return new PrecinctGrid(precinctX0, precinctY0, wide, high);
+            return new PrecinctGrid(precinctX0, precinctY0, wide, high, anchorX, anchorY);
         }
+    }
+
+    /**
+     * Returns the start of the partition element holding a position, in a partition of elements {@code 2^shift}
+     * wide anchored at {@code anchor}.
+     *
+     * @param value the position
+     * @param anchor the anchor point, 0 or 1
+     * @param shift the base-2 logarithm of the element size
+     * @return {@code anchor + floor((value - anchor) / 2^shift) * 2^shift}
+     */
+    private static long floorTo(long value, int anchor, int shift) {
+        return (((value - anchor) >> shift) << shift) + anchor;
     }
 
     /**
@@ -389,6 +411,9 @@ final class TileComponent {
      * @param groupHeight the base-2 logarithm of the precinct height in the sub-band
      * @param splitsX the number of horizontal splits from the resolution to the sub-band
      * @param splitsY the number of vertical splits from the resolution to the sub-band
+     * @param highX whether a horizontal split from the resolution to the sub-band is high-pass, which moves the
+     * sub-band's partitions to the anchor point 0
+     * @param highY whether a vertical split from the resolution to the sub-band is high-pass
      * @param offsetX the buffer column of the first sample
      * @param offsetY the buffer row of the first sample
      * @param guardBits the number of guard bits
@@ -404,15 +429,18 @@ final class TileComponent {
      */
     private Band band(int orientation, long bx0, long by0, long bx1, long by1, int doubledExponent, int mantissa,
                       int gain,
-                      PrecinctGrid grid, int groupWidth, int groupHeight, int splitsX, int splitsY, int offsetX,
+                      PrecinctGrid grid, int groupWidth, int groupHeight, int splitsX, int splitsY, boolean highX,
+                      boolean highY, int offsetX,
                       int offsetY, int guardBits, boolean encoder, MediaLimits limits, int resolution, int member,
                       int lowDoubledDepth, int doubledDepth, float deadzone) {
         var stepSize = stepSize(mantissa, gain, doubledExponent);
         var bitPlanes = planeExponent(doubledExponent, mantissa) + guardBits - 1;
         var trellis = quantization.trellis();
         var empty = bx1 <= bx0 || by1 <= by0;
-        var groupX0 = ceilDivPow2(grid.precinctX0, splitsX);
-        var groupY0 = ceilDivPow2(grid.precinctY0, splitsY);
+        var anchorX = highX ? 0 : grid.anchorX;
+        var anchorY = highY ? 0 : grid.anchorY;
+        var groupX0 = ((grid.precinctX0 - grid.anchorX) >> splitsX) + anchorX;
+        var groupY0 = ((grid.precinctY0 - grid.anchorY) >> splitsY) + anchorY;
         var blockWidth = Math.min(coding.codeBlockWidth(), groupWidth);
         var blockHeight = Math.min(coding.codeBlockHeight(), groupHeight);
         var precincts = new Precinct[grid.wide * grid.high];
@@ -426,11 +454,13 @@ final class TileComponent {
                 var py1 = Math.min(groupStartY + (1L << groupHeight), by1);
                 var wide = 0;
                 var high = 0;
+                var blockX0 = floorTo(px0, anchorX, blockWidth);
+                var blockY0 = floorTo(py0, anchorY, blockHeight);
                 if (px1 > px0 && py1 > py0) {
-                    var blockX0 = (px0 >> blockWidth) << blockWidth;
-                    var blockY0 = (py0 >> blockHeight) << blockHeight;
-                    wide = (int) ((ceilDivPow2(px1, blockWidth) << blockWidth) - blockX0 >> blockWidth);
-                    high = (int) ((ceilDivPow2(py1, blockHeight) << blockHeight) - blockY0 >> blockHeight);
+                    wide = (int) ((ceilDivPow2(px1 - anchorX, blockWidth) << blockWidth) + anchorX - blockX0
+                            >> blockWidth);
+                    high = (int) ((ceilDivPow2(py1 - anchorY, blockHeight) << blockHeight) + anchorY - blockY0
+                            >> blockHeight);
                 }
                 blocks += (long) wide * high;
                 LimitChecks.checkAllocation(limits, blocks * BLOCK_COST);
@@ -438,8 +468,8 @@ final class TileComponent {
                 var codeBlocks = encoder ? NO_CODE_BLOCKS : new CodeBlock[blockCount];
                 var encodedBlocks = encoder ? new EncodedBlock[blockCount] : NO_ENCODED_BLOCKS;
                 for (var k = 0; k < blockCount; k++) {
-                    var startX = ((px0 >> blockWidth) << blockWidth) + (long) (k % wide) * (1 << blockWidth);
-                    var startY = ((py0 >> blockHeight) << blockHeight) + (long) (k / wide) * (1 << blockHeight);
+                    var startX = blockX0 + (long) (k % wide) * (1 << blockWidth);
+                    var startY = blockY0 + (long) (k / wide) * (1 << blockHeight);
                     var cx0 = Math.max(startX, px0);
                     var cy0 = Math.max(startY, py0);
                     var cx1 = Math.min(startX + (1 << blockWidth), px1);

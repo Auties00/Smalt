@@ -88,6 +88,23 @@ public final class ComponentCoding {
     private static final int OVERLAP_RESERVED = 0x0700;
 
     /**
+     * The bits of the {@code SXcod} and {@code SXcoc} fields that select where the selective arithmetic coding bypass
+     * starts (ISO/IEC 15444-2 Table A.11bis); the other bits are reserved.
+     */
+    static final int EXTENSION_BYPASS = 0x0003;
+
+    /**
+     * The anchor flag moving the precinct and code-block partitions one column right (ISO/IEC 15444-2 I.2,
+     * {@code zx}).
+     */
+    static final int ANCHOR_X = 0x1;
+
+    /**
+     * The anchor flag moving the precinct and code-block partitions one row down ({@code zy}).
+     */
+    static final int ANCHOR_Y = 0x2;
+
+    /**
      * The number of resolution levels, one more than the number of decomposition levels; 0 while a decomposition
      * style index stands for the level count.
      */
@@ -137,6 +154,18 @@ public final class ComponentCoding {
     private final int overlap;
 
     /**
+     * The block coder extensions of ISO/IEC 15444-2 annex P: the {@code SXcod} or {@code SXcoc} field, or 0 when the
+     * segment carries none.
+     */
+    private final int extensions;
+
+    /**
+     * The code-block anchor point of ISO/IEC 15444-2 I.2: {@link #ANCHOR_X} for {@code zx = 1} and {@link #ANCHOR_Y}
+     * for {@code zy = 1}.
+     */
+    private final int anchor;
+
+    /**
      * Constructs a coding style of the dyadic decomposition with a wavelet of ISO/IEC 15444-1.
      *
      * @param resolutions     the number of resolution levels
@@ -169,6 +198,29 @@ public final class ComponentCoding {
      */
     ComponentCoding(int resolutions, int codeBlockWidth, int codeBlockHeight, int codeBlockStyle, int transform,
                     int decompositionStyle, int[] precinctWidths, int[] precinctHeights, int overlap) {
+        this(resolutions, codeBlockWidth, codeBlockHeight, codeBlockStyle, transform, decompositionStyle,
+                precinctWidths, precinctHeights, overlap, 0, 0);
+    }
+
+    /**
+     * Constructs a coding style with the block coder extensions and code-block anchor point of ISO/IEC 15444-2.
+     *
+     * @param resolutions        the number of resolution levels, or 0 when {@code decompositionStyle} gives it
+     * @param codeBlockWidth     the base-2 logarithm of the code-block width
+     * @param codeBlockHeight    the base-2 logarithm of the code-block height
+     * @param codeBlockStyle     the code-block style flags
+     * @param transform          the wavelet transformation: 0, 1 or an {@code ATK} index
+     * @param decompositionStyle the {@code DFS} or {@code ADS} index, or 0
+     * @param precinctWidths     the precinct width exponents, or {@code null} for the maximal precincts
+     * @param precinctHeights    the precinct height exponents, or {@code null}
+     * @param overlap            the single sample overlap parameters of ISO/IEC 15444-2 Table A.11, or 0
+     * @param extensions         the {@code SXcod} field of ISO/IEC 15444-2 Table A.11bis, or 0
+     * @param anchor             the code-block anchor point: a combination of {@link #ANCHOR_X} and
+     *                           {@link #ANCHOR_Y}
+     */
+    ComponentCoding(int resolutions, int codeBlockWidth, int codeBlockHeight, int codeBlockStyle, int transform,
+                    int decompositionStyle, int[] precinctWidths, int[] precinctHeights, int overlap, int extensions,
+                    int anchor) {
         this.resolutions = resolutions;
         this.codeBlockWidth = codeBlockWidth;
         this.codeBlockHeight = codeBlockHeight;
@@ -178,6 +230,8 @@ public final class ComponentCoding {
         this.precinctWidths = precinctWidths;
         this.precinctHeights = precinctHeights;
         this.overlap = overlap;
+        this.extensions = extensions;
+        this.anchor = anchor;
     }
 
     /**
@@ -192,13 +246,17 @@ public final class ComponentCoding {
      *                       decomposition style indices and {@code ATK} kernels
      * @param overlapped     whether the codestream declares the single sample overlap capability of ISO/IEC 15444-2,
      *                       which adds the 16-bit SSO field after the transformation field (Table A.7)
+     * @param extensions     whether the style byte declares block coder extensions ({@code Scod} or {@code Scoc}
+     *                       bit 5 of ISO/IEC 15444-2), which add the 16-bit {@code SXcod} or {@code SXcoc} field
+     *                       after the precinct sizes (Figure A.1bis)
      * @return the coding style
      * @throws MediaException.Malformed if a field is out of range or the segment is too short
      */
     static ComponentCoding parse(byte[] data, int offset, int end, boolean userPrecincts, boolean extended,
-                                 boolean overlapped) {
+                                 boolean overlapped, boolean extensions) {
         var fixed = overlapped ? 7 : 5;
-        if (end - offset < fixed) {
+        var trailing = extensions ? 2 : 0;
+        if (end - offset < fixed + trailing) {
             throw new MediaException.Malformed("truncated JPEG 2000 coding style");
         }
         var levels = data[offset] & 0xFF;
@@ -229,11 +287,13 @@ public final class ComponentCoding {
         }
         int[] widths = null;
         int[] heights = null;
+        var precincts = 0;
         if (userPrecincts) {
-            var count = resolutions == 0 ? end - offset - fixed : resolutions;
-            if (end - offset < fixed + count) {
+            var count = resolutions == 0 ? end - offset - fixed - trailing : resolutions;
+            if (end - offset < fixed + count + trailing) {
                 throw new MediaException.Malformed("truncated JPEG 2000 precinct sizes");
             }
+            precincts = count;
             widths = new int[count];
             heights = new int[count];
             for (var i = 0; i < count; i++) {
@@ -245,8 +305,30 @@ public final class ComponentCoding {
                 heights[i] = value >> 4;
             }
         }
+        var blockCoderExtensions = 0;
+        if (extensions) {
+            var at = offset + fixed + precincts;
+            blockCoderExtensions = ((data[at] & 0xFF) << 8) | (data[at + 1] & 0xFF);
+            if ((blockCoderExtensions & ~EXTENSION_BYPASS) != 0) {
+                throw new MediaException.Malformed("invalid JPEG 2000 block coder extensions " + blockCoderExtensions);
+            }
+        }
         return new ComponentCoding(resolutions, width, height, blockStyle, transform, style, widths, heights,
-                overlap);
+                overlap, blockCoderExtensions, 0);
+    }
+
+    /**
+     * Returns this coding style with a code-block anchor point.
+     *
+     * @param anchor the anchor point: a combination of {@link #ANCHOR_X} and {@link #ANCHOR_Y}
+     * @return the coding style
+     */
+    ComponentCoding withAnchor(int anchor) {
+        if (anchor == this.anchor) {
+            return this;
+        }
+        return new ComponentCoding(resolutions, codeBlockWidth, codeBlockHeight, codeBlockStyle, transform,
+                decompositionStyle, precinctWidths, precinctHeights, overlap, extensions, anchor);
     }
 
     /**
@@ -265,7 +347,7 @@ public final class ComponentCoding {
             throw new MediaException.Malformed("truncated JPEG 2000 precinct sizes");
         }
         return new ComponentCoding(levels + 1, codeBlockWidth, codeBlockHeight, codeBlockStyle, transform,
-                decompositionStyle, precinctWidths, precinctHeights, overlap);
+                decompositionStyle, precinctWidths, precinctHeights, overlap, extensions, anchor);
     }
 
     /**
@@ -434,5 +516,44 @@ public final class ComponentCoding {
      */
     public int precinctHeight(int resolution) {
         return precinctHeights == null ? 15 : precinctHeights[resolution];
+    }
+
+    /**
+     * Returns the number of significant bit-planes whose significance propagation and magnitude refinement passes are
+     * arithmetic coded before the selective arithmetic coding bypass starts: 4 for the bypass of ISO/IEC 15444-1
+     * D.6, fewer when the block coder extensions of ISO/IEC 15444-2 annex P start it earlier.
+     *
+     * @return the bit-plane count, from 1 to 4
+     */
+    int bypassPlanes() {
+        var start = extensions & EXTENSION_BYPASS;
+        return start == 0 ? 4 : start;
+    }
+
+    /**
+     * Returns the block coder extensions of ISO/IEC 15444-2 annex P.
+     *
+     * @return the {@code SXcod} or {@code SXcoc} field, 0 when the segment carries none
+     */
+    int extensions() {
+        return extensions;
+    }
+
+    /**
+     * Returns the horizontal code-block anchor point {@code zx} of ISO/IEC 15444-2 I.2.
+     *
+     * @return 0 or 1
+     */
+    int anchorX() {
+        return anchor & ANCHOR_X;
+    }
+
+    /**
+     * Returns the vertical code-block anchor point {@code zy} of ISO/IEC 15444-2 I.2.
+     *
+     * @return 0 or 1
+     */
+    int anchorY() {
+        return (anchor & ANCHOR_Y) >> 1;
     }
 }

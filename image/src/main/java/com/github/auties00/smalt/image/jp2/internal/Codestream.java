@@ -196,6 +196,18 @@ public final class Codestream {
     static final int RSIZ_PRECINCT_QUANTIZATION = 0x0800;
 
     /**
+     * The {@code Scod} and {@code Scoc} flag of ISO/IEC 15444-2 block coder extensions, which adds the {@code SXcod}
+     * or {@code SXcoc} field to the segment (Table A.5).
+     */
+    static final int BLOCK_CODER_EXTENSIONS = 0x20;
+
+    /**
+     * The {@code Scod} flags of the ISO/IEC 15444-2 code-block anchor point: bit 3 {@code zx}, bit 4 {@code zy}
+     * (Table A.5).
+     */
+    static final int ANCHOR_FLAGS = 0x18;
+
+    /**
      * The {@code Pcap} flag of ISO/IEC 15444-15 (HTJ2K): bit 15, counted from the most significant bit as 1.
      */
     static final int PCAP_PART15 = 1 << (32 - 15);
@@ -660,7 +672,7 @@ public final class Codestream {
                     throw new MediaException.Malformed("invalid JPEG 2000 component transform " + transform);
                 }
                 var coding = ComponentCoding.parse(data, position + 5, end, (flags & 1) != 0, extended(),
-                        overlapped());
+                        overlapped(), (flags & BLOCK_CODER_EXTENSIONS) != 0);
                 scope.codingFlags = flags;
                 scope.progression = progression;
                 scope.layers = layers;
@@ -675,7 +687,7 @@ public final class Codestream {
                 var flags = data[position + componentBytes] & 0xFF;
                 checkCodingFlags(flags);
                 scope.componentCodings[component] = ComponentCoding.parse(data, position + componentBytes + 1, end,
-                        (flags & 1) != 0, extended(), overlapped());
+                        (flags & 1) != 0, extended(), overlapped(), (flags & BLOCK_CODER_EXTENSIONS) != 0);
             }
             case QCD -> scope.quantization = Quantization.parse(data, position, end);
             case QCC -> {
@@ -851,23 +863,17 @@ public final class Codestream {
     }
 
     /**
-     * Checks the {@code Scod} or {@code Scoc} flags of a coding style segment.
+     * Checks the {@code Scod} or {@code Scoc} flags of a coding style segment: bits 0 to 2 of ISO/IEC 15444-1, and
+     * with the extensions of ISO/IEC 15444-2 the code-block anchor point (bits 3 and 4, which only {@code Scod}
+     * defines: an {@code Scoc} copy of them is ignored, the tile's anchor point coming from its {@code COD} segment)
+     * and the block coder extensions (bit 5, Table A.5).
      *
      * @param flags the {@code Scod} or {@code Scoc} field
      * @throws MediaException.Malformed if a reserved flag is set
-     * @throws MediaException.Unsupported if the flags select code-block anchor points or block coder extensions
      */
     private void checkCodingFlags(int flags) {
         if ((flags & ~(extended() ? 0x3F : 0x07)) != 0) {
             throw new MediaException.Malformed("invalid JPEG 2000 coding style " + flags);
-        }
-        if ((flags & 0x18) != 0) {
-            // TODO: decode the code-block anchor points of ISO/IEC 15444-2 (Scod bits 3 and 4)
-            throw new MediaException.Unsupported("JPEG 2000", "code-block anchor points");
-        }
-        if ((flags & 0x20) != 0) {
-            // TODO: decode the block coder extensions of ISO/IEC 15444-2 annex P (SXcod)
-            throw new MediaException.Unsupported("JPEG 2000", "block coder extensions");
         }
     }
 
@@ -1498,7 +1504,7 @@ public final class Codestream {
             if (masking == null) {
                 masking = main.defaultMasking;
             }
-            codings[c] = coding;
+            codings[c] = coding.withAnchor((flags & ANCHOR_FLAGS) >> 3);
             quantizations[c] = quantization;
             roiShifts[c] = roi;
             decompositions[c] = decomposition;

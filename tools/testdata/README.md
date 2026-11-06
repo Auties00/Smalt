@@ -543,6 +543,22 @@ extracted with `msiexec /a` and never committed; the script lists their SHA-256)
 it generates, and `SHA256SUMS` pins every file. Kakadu writes neither variable deadzones, trellis coded quantization
 nor `QPD`/`QPC` segments, so those features are checked against codestreams the test writes from annexes C and D.
 
+## JPEG 2000 code-block anchor point and block coder extension vectors
+
+`Jp2Part2AnchorBypassTest` (`smalt-image`) decodes thirteen reversible JPEG 2000 Part 2 codestreams Kakadu wrote, in
+`image/src/test/resources/com/github/auties00/smalt/image/jp2/kakadu-cbap/`, and expects each to decode to its source
+exactly: code-block anchor points (`Calign_blk_last`, `Scod` bits 3 and 4) under every progression order, with tiles,
+an image origin, subsampled components, precincts per resolution and component and arbitrary decompositions, and the
+block coder extensions of annex P (`Cmodes` `BYPASS_E1` and `BYPASS_E2`, in `SXcod` and per component in `SXcoc`)
+with the other code-block styles. Two of them are also checked at a reduced resolution against Kakadu's decodes
+(`*-reduced-*.pgm`). ISO/IEC 15444-2 equations I-3 to I-7 are not consistent as printed; the codestreams settle how an
+anchored precinct maps into a sub-band filtered high-pass and where a position-driven progression reaches it. `bash
+tools/testdata/kakadu-cbap/make-fixtures.sh <kakadu directory> <that directory>` writes them with the Kakadu demo
+executables v8.4.1 (as for the derived quantization vectors above; run only as black boxes, never committed; the
+script lists their SHA-256) from synthetic 61x47, 31x24 and 61x24 gray images it generates, checks that Kakadu
+decodes each codestream to its sources, and `SHA256SUMS` pins every file. The test also codes the bypass extensions
+with its own block coder, written from ISO/IEC 15444-1 annexes C and D and ISO/IEC 15444-2 annex P.
+
 ## JPEG 2000 visual masking and single sample overlap samples
 
 No encoder or decoder this project can run writes or reads ISO/IEC 15444-2 visual masking (`VMS`), the single

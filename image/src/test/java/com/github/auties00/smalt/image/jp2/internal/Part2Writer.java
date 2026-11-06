@@ -48,6 +48,15 @@ final class Part2Writer {
     int codeBlockStyle;
     /** The SSO field of Table A.11, written after the transformation byte when {@link #rsiz} declares SSO. */
     int overlap;
+    /** The code-block anchor point of ISO/IEC 15444-2 I.2, {@link ComponentCoding#ANCHOR_X} and {@code ANCHOR_Y}. */
+    int anchor;
+    /** The {@code SXcod} field of Table A.11bis, written after the precinct sizes, or -1 for none. */
+    int extensions = -1;
+    /**
+     * Whether the code-blocks are coded with {@link Part2BlockCoder}, the tests' own block coder, rather than the
+     * encoder's; it codes the bypass extensions of annex P.
+     */
+    boolean independentCoder;
     LiftingKernel kernel;
     Decomposition decomposition;
     final List<byte[]> mainSegments = new ArrayList<>();
@@ -100,7 +109,7 @@ final class Part2Writer {
             }
         }
         return new ComponentCoding(resolutions, codeBlock, codeBlock, codeBlockStyle, wavelet, style, widths, widths,
-                overlap);
+                overlap, Math.max(extensions, 0), anchor);
     }
 
     private boolean derived() {
@@ -311,6 +320,10 @@ final class Part2Writer {
             structures[c] = structure(c, quantization, bounds);
         }
         var coder = new Tier1Encoder();
+        var independent = new Part2BlockCoder();
+        if (independentCoder && (droppedPasses > 0 || integers == null)) {
+            throw new IllegalStateException("the test's block coder codes whole reversible code-blocks only");
+        }
         for (var c = 0; c < count; c++) {
             var component = structures[c];
             var stride = (int) (component.x1 - component.x0);
@@ -333,9 +346,14 @@ final class Part2Writer {
                             if (regionScales != null && regionScales[c] != null) {
                                 shift = scaleBlock(integers[c], regionScales[c], offset, stride, block);
                             }
-                            coder.encode(block, integers == null ? null : integers[c], null,
-                                    integers != null ? null : floats[c], offset, stride, band.orientation(), 0,
-                                    precinct.stepSize, integers != null, codeBlockStyle, 1.0, null, 0, 0);
+                            if (independentCoder) {
+                                independent.encode(block, integers[c], offset, stride, band.orientation(),
+                                        codeBlockStyle, component.coding.bypassPlanes());
+                            } else {
+                                coder.encode(block, integers == null ? null : integers[c], null,
+                                        integers != null ? null : floats[c], offset, stride, band.orientation(), 0,
+                                        precinct.stepSize, integers != null, codeBlockStyle, 1.0, null, 0, 0);
+                            }
                             if (block.bitPlanes - shift > precinct.bitPlanes) {
                                 throw new IllegalStateException("a code-block has " + block.bitPlanes
                                         + " bit-planes, more than the " + precinct.bitPlanes + " of its precinct");
@@ -429,7 +447,7 @@ final class Part2Writer {
         }
         out.writeBytes(Part2Forward.segment(Codestream.SIZ, siz.toByteArray()));
         var cod = new ByteArrayOutputStream();
-        cod.write(precinctSizes != null ? 1 : 0);
+        cod.write((precinctSizes != null ? 1 : 0) | anchor << 3 | (extensions >= 0 ? 0x20 : 0));
         cod.write(ProgressionChange.LRCP);
         Part2Forward.u16(cod, 1);
         cod.write(mct);
@@ -446,6 +464,9 @@ final class Part2Writer {
                 var size = precinctSizes[Math.min(r, precinctSizes.length - 1)];
                 cod.write(size | (size << 4));
             }
+        }
+        if (extensions >= 0) {
+            Part2Forward.u16(cod, extensions);
         }
         out.writeBytes(Part2Forward.segment(Codestream.COD, cod.toByteArray()));
         var qcd = new ByteArrayOutputStream();

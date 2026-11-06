@@ -59,8 +59,9 @@ import java.util.Optional;
  *       arbitrary decompositions ({@code DFS} and {@code ADS}), arbitrary wavelet kernels ({@code ATK}),
  *       array-based and wavelet-based multiple component transformations with any number of stages
  *       ({@code MCT}, {@code MCC}, {@code MCO} and {@code CBD}), non-linear point transformations
- *       ({@code NLT}, OpenJPH's experimental type 4 included), and rectangular and elliptic regions of
- *       interest coded with the scaling method ({@code RGN});</li>
+ *       ({@code NLT}, OpenJPH's experimental type 4 included), rectangular and elliptic regions of
+ *       interest coded with the scaling method ({@code RGN}), code-block anchor points, and the block coder
+ *       extensions of annex P, which start the selective arithmetic coding bypass at an earlier bit-plane;</li>
  *   <li>the whole of HTJ2K coding: HT code-blocks with their cleanup, SigProp and MagRef passes,
  *       placeholder passes and any number of HT sets (the last one is decoded), HT and ISO/IEC
  *       15444-1 code-blocks mixed in one tile-component, regions of interest, and JPH files,
@@ -90,9 +91,9 @@ import java.util.Optional;
  * <p>The fragment table of a JPX file may store fragments of a codestream in other files, which are read from the
  * files {@link ImageDecoderOptions#dataReferences()} (or {@link Jp2DecoderOptions#dataReferences()}) supplies.
  *
- * <p>Unsupported, and rejected with {@link MediaException.Unsupported} naming the feature: the Part 2 code-block
- * anchor points, block coder extensions and the TBDWT flag of the single sample overlap parameters; and codestream
- * fragments in another file that the data reference resolver does not supply.
+ * <p>Unsupported, and rejected with {@link MediaException.Unsupported} naming the feature: the TBDWT flag of the
+ * single sample overlap parameters, which ISO/IEC 15444-2 does not define; and codestream fragments in another file
+ * that the data reference resolver does not supply.
  *
  * <p>Damaged codestreams decode as far as their data goes: a truncated tile leaves its missing
  * code-block data at zero, and a missing tile is uniformly mid-gray. An invalid main header, or an

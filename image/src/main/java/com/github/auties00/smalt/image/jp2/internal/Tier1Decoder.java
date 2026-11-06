@@ -173,9 +173,11 @@ final class Tier1Decoder {
      * @param orientation the sub-band orientation, 0 to 3
      * @param roiShift the region-of-interest shift
      * @param style the code-block style flags
+     * @param bypassPlanes the significant bit-planes arithmetic coded before the selective arithmetic coding bypass
+     * starts, 4 unless the block coder extensions of ISO/IEC 15444-2 annex P start it earlier
      * @throws MediaException.Malformed if the block declares more than 61 bit-planes
      */
-    void decode(CodeBlock block, byte[] body, int orientation, int roiShift, int style) {
+    void decode(CodeBlock block, byte[] body, int orientation, int roiShift, int style, int bypassPlanes) {
         var bitPlane = roiShift + block.bitPlanes;
         if (bitPlane >= 62) {
             throw new MediaException.Malformed("JPEG 2000 code-block with " + bitPlane + " bit-planes");
@@ -210,7 +212,8 @@ final class Tier1Decoder {
         var vsc = (style & ComponentCoding.VERTICALLY_CAUSAL) != 0;
         for (var segment = 0; segment < block.dataSegments; segment++) {
             var segmentLength = block.segmentLengths[segment];
-            var raw = bitPlane <= block.bitPlanes - 4 && passType < 2 && (style & ComponentCoding.BYPASS) != 0;
+            var raw = bitPlane <= block.bitPlanes - bypassPlanes && passType < 2
+                    && (style & ComponentCoding.BYPASS) != 0;
             var end = offset + segmentLength;
             if (end > total) {
                 break;

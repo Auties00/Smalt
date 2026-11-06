@@ -18,7 +18,9 @@ import static com.github.auties00.smalt.image.jp2.internal.Part2Forward.VERTICAL
 /**
  * Writes the ISO/IEC 15444-2 and JPX seeds of the JPEG 2000 fuzz targets (tools/fuzz/README.md): codestreams with an
  * arbitrary kernel, decomposition and region of interest, with multiple component and non-linear
- * transformations, the Part 2 quantizers, visual masking and the single sample overlap transformations, written by {@link Part2Writer}, and the JPX and Part 2 behavior samples. Runs only with
+ * transformations, the Part 2 quantizers, visual masking, the single sample overlap transformations, code-block
+ * anchor points and the block coder extensions, written by {@link Part2Writer} or Kakadu, and the JPX and Part 2
+ * behavior samples. Runs only with
  * {@code -Dsmalt.fuzz.writeSeeds=true}.
  */
 @EnabledIfSystemProperty(named = "smalt.fuzz.writeSeeds", matches = "true",
@@ -171,6 +173,18 @@ class Part2FuzzSeeds {
             return new long[][]{data};
         }, 10);
 
+        var bypass = new Part2Writer(30, 22, 1, 10, false);
+        bypass.levels = 2;
+        bypass.codeBlock = 3;
+        bypass.codeBlockStyle = ComponentCoding.BYPASS | ComponentCoding.VERTICALLY_CAUSAL;
+        bypass.extensions = 1;
+        bypass.anchor = ComponentCoding.ANCHOR_X | ComponentCoding.ANCHOR_Y;
+        bypass.precinctSizes = new int[]{3, 4, 4};
+        bypass.independentCoder = true;
+        var bypassed = bypass.write(Jp2Part2Test.forward(bypass,
+                new long[][]{Jp2Part2Test.smooth(random, 30, 22, 0, 1023)}, Jp2Part2Test.levelShifts(bypass),
+                Tree.dyadic(2), null));
+
         var samples = Path.of("src", "test", "resources", "samples", "jp2");
         for (var target : List.of("jp2", "jp2Channels")) {
             FuzzSeeds.write(FUZZ, target, "valid-part2-kernel.j2k", arbitrary);
@@ -184,6 +198,13 @@ class Part2FuzzSeeds {
             FuzzSeeds.write(FUZZ, target, "valid-part2-derived-one-direction.j2k",
                     Fixtures.read(Path.of("src", "test", "resources", "com", "github", "auties00", "smalt",
                             "image", "jp2", "kakadu-e5", "mixed.j2c")));
+            FuzzSeeds.write(FUZZ, target, "valid-part2-anchors.j2k", Fixtures.read(Path.of("src", "test",
+                    "resources", "com", "github", "auties00", "smalt", "image", "jp2", "kakadu-cbap",
+                    "anchor-pcrl-3c.j2c")));
+            FuzzSeeds.write(FUZZ, target, "valid-part2-bypass.j2k", Fixtures.read(Path.of("src", "test",
+                    "resources", "com", "github", "auties00", "smalt", "image", "jp2", "kakadu-cbap",
+                    "anchor-bypass.j2c")));
+            FuzzSeeds.write(FUZZ, target, "valid-part2-bypass-written.j2k", bypassed);
             FuzzSeeds.write(FUZZ, target, "valid-mct.j2k", Fixtures.read(samples.resolve("mct.j2k")));
             FuzzSeeds.write(FUZZ, target, "valid-layers.jpx",
                     Fixtures.read(samples.resolve("layers.jpx")));

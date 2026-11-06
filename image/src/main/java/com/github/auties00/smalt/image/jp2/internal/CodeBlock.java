@@ -183,8 +183,9 @@ final class CodeBlock {
      * Starts a segment, setting how many passes it can hold.
      *
      * <p>A block coded with {@link ComponentCoding#TERMINATE_ALL} has one pass per segment; with
-     * {@link ComponentCoding#BYPASS} the first segment holds the first ten passes and later
-     * segments alternate between two raw passes and one arithmetic-coded pass; otherwise one
+     * {@link ComponentCoding#BYPASS} the first segment holds the passes of the arithmetic-coded bit-planes (ten for
+     * the four of ISO/IEC 15444-1 D.6, fewer when the block coder extensions of ISO/IEC 15444-2 annex P start the
+     * bypass earlier) and later segments alternate between two raw passes and one arithmetic-coded pass; otherwise one
      * segment holds every pass (D.4.1).
      *
      * @implNote This implementation follows OpenJPEG's {@code opj_t2_init_seg}, except that a
@@ -194,8 +195,9 @@ final class CodeBlock {
      * @param index the segment index
      * @param style the code-block style flags
      * @param first whether this is the block's first segment
+     * @param bypassPlanes the significant bit-planes arithmetic coded before the bypass starts, from 1 to 4
      */
-    void startSegment(int index, int style, boolean first) {
+    void startSegment(int index, int style, boolean first, int bypassPlanes) {
         if (index >= segmentLengths.length) {
             var capacity = Math.max(index + 1, segmentLengths.length * 2);
             segmentLengths = Arrays.copyOf(segmentLengths, capacity);
@@ -216,10 +218,9 @@ final class CodeBlock {
             max = 1;
         } else if ((style & ComponentCoding.BYPASS) != 0) {
             if (first) {
-                max = 10;
+                max = 3 * bypassPlanes - 2;
             } else {
-                var previous = segmentMaxPasses[index - 1];
-                max = previous == 1 || previous == 10 ? 2 : 1;
+                max = index == 1 || segmentMaxPasses[index - 1] == 1 ? 2 : 1;
             }
         } else {
             max = Integer.MAX_VALUE;
@@ -235,7 +236,7 @@ final class CodeBlock {
      * @param start the index of the segment's first coding pass
      */
     void startHtSegment(int index, int start) {
-        startSegment(index, 0, index == 0);
+        startSegment(index, 0, index == 0, 4);
         segmentMaxPasses[index] = Integer.MAX_VALUE;
         segmentStart[index] = start;
     }

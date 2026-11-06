@@ -684,7 +684,8 @@ final class TileDecoder {
                     if (decoder == null) {
                         decoder = new Tier1Decoder();
                     }
-                    decoder.decode(job.block, body, job.band.orientation(), roi, style);
+                    decoder.decode(job.block, body, job.band.orientation(), roi, style,
+                            component.coding.bypassPlanes());
                     decoded = decoder.data();
                     wide = decoder.wideData();
                     complete = decoder.complete();

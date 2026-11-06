@@ -105,6 +105,7 @@ final class PacketDecoder {
     void read(TileComponent component, int resolution, int precinct, int layer, boolean skip) {
         var level = component.resolutions[resolution];
         var style = component.coding.codeBlockStyle();
+        var bypassPlanes = component.coding.bypassPlanes();
         if (layer == 0) {
             for (var band : level.bands()) {
                 if (band.empty()) {
@@ -138,7 +139,7 @@ final class PacketDecoder {
         var present = bits.bit() != 0;
         if (present) {
             var mixed = mixable && (style & ComponentCoding.MIXED) == ComponentCoding.MIXED;
-            readHeader(level, precinct, layer, style, mixed);
+            readHeader(level, precinct, layer, style, bypassPlanes, mixed);
         }
         bits.align();
         var end = start + bits.consumed();
@@ -175,9 +176,11 @@ final class PacketDecoder {
      * @param precinct the precinct index
      * @param layer the quality layer, from 0
      * @param style the code-block style flags
+     * @param bypassPlanes the significant bit-planes arithmetic coded before the bypass starts
      * @param mixed whether high-throughput and legacy code-blocks may be mixed
      */
-    private void readHeader(Resolution level, int precinct, int layer, int style, boolean mixed) {
+    private void readHeader(Resolution level, int precinct, int layer, int style, int bypassPlanes,
+                            boolean mixed) {
         for (var band : level.bands()) {
             if (band.empty()) {
                 continue;
@@ -218,9 +221,9 @@ final class PacketDecoder {
                 }
                 block.lengthBits += increment;
                 if (block.coder == CodeBlock.LEGACY) {
-                    readLegacyLengths(block, style);
+                    readLegacyLengths(block, style, bypassPlanes);
                 } else {
-                    readHtLengths(block, style, mixed);
+                    readHtLengths(block, style, bypassPlanes, mixed);
                 }
             }
         }
@@ -231,16 +234,17 @@ final class PacketDecoder {
      *
      * @param block the code-block, with its new pass count read
      * @param style the code-block style flags
+     * @param bypassPlanes the significant bit-planes arithmetic coded before the bypass starts
      */
-    private void readLegacyLengths(CodeBlock block, int style) {
+    private void readLegacyLengths(CodeBlock block, int style, int bypassPlanes) {
         var segment = 0;
         if (block.segments == 0) {
-            block.startSegment(0, style, true);
+            block.startSegment(0, style, true, bypassPlanes);
         } else {
             segment = block.segments - 1;
             if (block.segmentPasses[segment] == block.segmentMaxPasses[segment]) {
                 segment++;
-                block.startSegment(segment, style, false);
+                block.startSegment(segment, style, false, bypassPlanes);
             }
         }
         block.firstNewSegment = segment;
@@ -252,7 +256,7 @@ final class PacketDecoder {
             remaining -= passes;
             if (remaining > 0) {
                 segment++;
-                block.startSegment(segment, style, false);
+                block.startSegment(segment, style, false, bypassPlanes);
             }
         } while (remaining > 0);
         block.newSegments = segment - block.firstNewSegment + 1;
@@ -269,10 +273,12 @@ final class PacketDecoder {
      *
      * @param block the code-block, with its new pass count read
      * @param style the code-block style flags
+     * @param bypassPlanes the significant bit-planes arithmetic coded before the bypass starts, for a block that
+     * turns out to be a legacy one
      * @param mixed whether the block may be a legacy one
      * @throws MediaException.Malformed if placeholder passes have data or a first cleanup segment is too short
      */
-    private void readHtLengths(CodeBlock block, int style, boolean mixed) {
+    private void readHtLengths(CodeBlock block, int style, int bypassPlanes, boolean mixed) {
         var start = block.passes;
         var count = block.newPasses;
         var segment = block.segments;
@@ -286,7 +292,7 @@ final class PacketDecoder {
             if (passes < 1) {
                 length = bits.read(lengthBits(full));
                 if (length != 0) {
-                    becomeLegacy(block, style, mixed, count, length);
+                    becomeLegacy(block, style, bypassPlanes, mixed, count, length);
                     return;
                 }
                 addHtSegment(block, segment, start, count, 0);
@@ -300,7 +306,7 @@ final class PacketDecoder {
                     length = (length << 1) | bits.bit();
                 }
                 if (length != 0) {
-                    becomeLegacy(block, style, mixed, count, length);
+                    becomeLegacy(block, style, bypassPlanes, mixed, count, length);
                     return;
                 }
                 addHtSegment(block, segment, start, count, 0);
@@ -311,7 +317,7 @@ final class PacketDecoder {
                 for (var w = width; w < full; w++) {
                     length = (length << 1) | bits.bit();
                 }
-                becomeLegacy(block, style, true, count, length);
+                becomeLegacy(block, style, bypassPlanes, true, count, length);
                 return;
             }
             if (length < 2) {
@@ -348,13 +354,15 @@ final class PacketDecoder {
      *
      * @param block the code-block
      * @param style the code-block style flags
+     * @param bypassPlanes the significant bit-planes arithmetic coded before the bypass starts
      * @param mixed whether the block may be a legacy one
      * @param count the current contribution's pass count
      * @param length the current contribution's length
      * @throws MediaException.Malformed if the block may not be a legacy one, or its passes exceed one codeword
      * segment
      */
-    private static void becomeLegacy(CodeBlock block, int style, boolean mixed, int count, int length) {
+    private static void becomeLegacy(CodeBlock block, int style, int bypassPlanes, boolean mixed, int count,
+                                     int length) {
         if (!mixed) {
             throw new MediaException.Malformed("JPEG 2000 HT placeholder passes with " + length + " bytes");
         }
@@ -363,7 +371,7 @@ final class PacketDecoder {
         block.segments = 0;
         block.dataSegments = 0;
         block.chunkEntries = 0;
-        block.startSegment(0, style, true);
+        block.startSegment(0, style, true, bypassPlanes);
         if (earlier + count > block.segmentMaxPasses[0]) {
             throw new MediaException.Malformed("JPEG 2000 codeword segment of " + (earlier + count) + " passes");
         }

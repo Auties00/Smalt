@@ -105,6 +105,16 @@ final class PacketOrder {
     private final int maxPrecincts;
 
     /**
+     * The horizontal code-block anchor point {@code zx} of ISO/IEC 15444-2 I.2, 0 or 1.
+     */
+    private final int anchorX;
+
+    /**
+     * The vertical code-block anchor point {@code zy}, 0 or 1.
+     */
+    private final int anchorY;
+
+    /**
      * The packets already listed, as a bit set, or {@code null} without progression changes.
      */
     private final long[] listed;
@@ -140,6 +150,8 @@ final class PacketOrder {
         }
         this.maxResolutions = resolutions;
         this.maxPrecincts = precincts;
+        this.anchorX = components.length == 0 ? 0 : components[0].coding.anchorX();
+        this.anchorY = components.length == 0 ? 0 : components[0].coding.anchorY();
         if (changes) {
             var total = (long) (layers + 1) * resolutions * components.length * Math.max(precincts, 1);
             LimitChecks.checkAllocation(limits, total / 8 + 8);
@@ -412,6 +424,7 @@ final class PacketOrder {
         var values = new long[16];
         var count = 0;
         values[count++] = start;
+        var anchor = horizontal ? anchorX : anchorY;
         for (var c = componentStart; c < componentEnd; c++) {
             var component = components[c];
             var resolutions = component.resolutions.length;
@@ -425,6 +438,19 @@ final class PacketOrder {
                 }
                 var size = (long) subsampling << shift;
                 if (size > 0xFFFFFFFFL) {
+                    continue;
+                }
+                if (anchor != 0) {
+                    var position = start + Math.floorMod(anchor - start, size);
+                    if (position == start) {
+                        position += size;
+                    }
+                    for (; position < end; position += size) {
+                        if (count == values.length) {
+                            values = Arrays.copyOf(values, count * 2);
+                        }
+                        values[count++] = position;
+                    }
                     continue;
                 }
                 var multiple = lcm(size, step);
@@ -507,21 +533,40 @@ final class PacketOrder {
                 || (dy << rpy) <= 0) {
             return true;
         }
-        if (!(y % (dy << rpy) == 0 || (y == ty0 && ((try0 << levelY) % (1L << rpy)) != 0))) {
-            return true;
+        long column;
+        long row;
+        if (anchorX == 0 && anchorY == 0) {
+            if (!(y % (dy << rpy) == 0 || (y == ty0 && ((try0 << levelY) % (1L << rpy)) != 0))) {
+                return true;
+            }
+            if (!(x % (dx << rpx) == 0 || (x == tx0 && ((trx0 << levelX) % (1L << rpx)) != 0))) {
+                return true;
+            }
+            if (resolution.precinctsWide() == 0 || resolution.precinctsHigh() == 0 || trx0 == trx1
+                    || try0 == try1) {
+                return true;
+            }
+            column = (Math.ceilDiv(x, dx << levelX) >> resolution.precinctWidth())
+                    - (trx0 >> resolution.precinctWidth());
+            row = (Math.ceilDiv(y, dy << levelY) >> resolution.precinctHeight())
+                    - (try0 >> resolution.precinctHeight());
+        } else {
+            if (!reaches(y, ty0, try0, dy << rpy, anchorY, resolution.precinctHeight())
+                    || !reaches(x, tx0, trx0, dx << rpx, anchorX, resolution.precinctWidth())) {
+                return true;
+            }
+            if (resolution.precinctsWide() == 0 || resolution.precinctsHigh() == 0 || trx0 == trx1
+                    || try0 == try1) {
+                return true;
+            }
+            column = ((Math.ceilDiv(x, dx << levelX) - anchorX) >> resolution.precinctWidth())
+                    - ((trx0 - anchorX) >> resolution.precinctWidth());
+            row = ((Math.ceilDiv(y, dy << levelY) - anchorY) >> resolution.precinctHeight())
+                    - ((try0 - anchorY) >> resolution.precinctHeight());
         }
-        if (!(x % (dx << rpx) == 0 || (x == tx0 && ((trx0 << levelX) % (1L << rpx)) != 0))) {
-            return true;
-        }
-        if (resolution.precinctsWide() == 0 || resolution.precinctsHigh() == 0 || trx0 == trx1 || try0 == try1) {
-            return true;
-        }
-        var column = (Math.ceilDiv(x, dx << levelX) >> resolution.precinctWidth())
-                - (trx0 >> resolution.precinctWidth());
-        var row = (Math.ceilDiv(y, dy << levelY) >> resolution.precinctHeight())
-                - (try0 >> resolution.precinctHeight());
         var precinct = (int) (column + row * resolution.precinctsWide());
-        if (column < 0 || row < 0 || precinct >= resolution.precinctsWide() * resolution.precinctsHigh()) {
+        if (column < 0 || row < 0 || column >= resolution.precinctsWide()
+                || precinct >= resolution.precinctsWide() * resolution.precinctsHigh()) {
             return true;
         }
         for (var l = 0; l < layerEnd; l++) {
@@ -530,6 +575,28 @@ final class PacketOrder {
             }
         }
         return true;
+    }
+
+    /**
+     * Returns whether a position-driven order reaches, at a reference grid position along one axis, a precinct of an
+     * anchored partition (ISO/IEC 15444-2 I.2.3 to I.2.5): a precinct whose index {@code m} counts from the anchor is
+     * reached at {@code z + m} times its size on the reference grid, {@code z} being the anchor point, and the precinct
+     * holding the tile's first sample, when that position falls before the tile, at the tile's edge.
+     *
+     * @param position the reference grid position
+     * @param start the tile's edge on the reference grid
+     * @param resolutionStart the tile-component's edge in the resolution, {@code trx0} or {@code try0}
+     * @param size the precinct size on the reference grid
+     * @param anchor the anchor point, 0 or 1
+     * @param precinctSize the base-2 logarithm of the precinct size in the resolution
+     * @return whether the position reaches a precinct
+     */
+    private static boolean reaches(long position, long start, long resolutionStart, long size, int anchor,
+                                   int precinctSize) {
+        if (Math.floorMod(position - anchor, size) == 0) {
+            return true;
+        }
+        return position == start && anchor + ((resolutionStart - anchor) >> precinctSize) * size < start;
     }
 
     /**

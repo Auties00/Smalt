@@ -141,6 +141,16 @@ final class Decomposition {
         final int splitsY;
 
         /**
+         * Whether a horizontal split from the level's resolution node to this node is high-pass.
+         */
+        final boolean highX;
+
+        /**
+         * Whether a vertical split from the level's resolution node to this node is high-pass.
+         */
+        final boolean highY;
+
+        /**
          * Whether this node is a resolution node {@code R(lev)}.
          */
         boolean resolution;
@@ -156,9 +166,11 @@ final class Decomposition {
          * @param doubledDepth twice {@code n_b}
          * @param splitsX the horizontal splits from the resolution node
          * @param splitsY the vertical splits from the resolution node
+         * @param highX whether a horizontal split from the resolution node is high-pass
+         * @param highY whether a vertical split from the resolution node is high-pass
          */
         Node(int horizontal, int vertical, int level, int primary, int gain, int doubledDepth, int splitsX,
-             int splitsY) {
+             int splitsY, boolean highX, boolean highY) {
             this.horizontal = horizontal;
             this.vertical = vertical;
             this.level = level;
@@ -167,6 +179,8 @@ final class Decomposition {
             this.doubledDepth = doubledDepth;
             this.splitsX = splitsX;
             this.splitsY = splitsY;
+            this.highX = highX;
+            this.highY = highY;
         }
 
         /**
@@ -182,18 +196,28 @@ final class Decomposition {
             var gainBase = resolutionSplit ? 0 : gain;
             var baseX = resolutionSplit ? 0 : splitsX;
             var baseY = resolutionSplit ? 0 : splitsY;
+            var highBaseX = !resolutionSplit && highX;
+            var highBaseY = !resolutionSplit && highY;
             children = switch (kind) {
                 case JOINT -> new Node[]{
-                        child(LOW, LOW, level, resolutionSplit ? 0 : primary, gainBase, 2, baseX + 1, baseY + 1),
-                        child(HIGH, LOW, level, resolutionSplit ? 1 : primary, gainBase + 1, 2, baseX + 1, baseY + 1),
-                        child(LOW, HIGH, level, resolutionSplit ? 0 : primary, gainBase + 1, 2, baseX + 1, baseY + 1),
-                        child(HIGH, HIGH, level, resolutionSplit ? 3 : primary, gainBase + 2, 2, baseX + 1, baseY + 1)};
+                        child(LOW, LOW, level, resolutionSplit ? 0 : primary, gainBase, 2, baseX + 1, baseY + 1,
+                                highBaseX, highBaseY),
+                        child(HIGH, LOW, level, resolutionSplit ? 1 : primary, gainBase + 1, 2, baseX + 1, baseY + 1,
+                                highBaseX, highBaseY),
+                        child(LOW, HIGH, level, resolutionSplit ? 0 : primary, gainBase + 1, 2, baseX + 1, baseY + 1,
+                                highBaseX, highBaseY),
+                        child(HIGH, HIGH, level, resolutionSplit ? 3 : primary, gainBase + 2, 2, baseX + 1, baseY + 1,
+                                highBaseX, highBaseY)};
                 case HORIZONTAL -> new Node[]{
-                        child(LOW, NONE, level, resolutionSplit ? 0 : primary, gainBase, 1, baseX + 1, baseY),
-                        child(HIGH, NONE, level, resolutionSplit ? 1 : primary, gainBase + 1, 1, baseX + 1, baseY)};
+                        child(LOW, NONE, level, resolutionSplit ? 0 : primary, gainBase, 1, baseX + 1, baseY,
+                                highBaseX, highBaseY),
+                        child(HIGH, NONE, level, resolutionSplit ? 1 : primary, gainBase + 1, 1, baseX + 1, baseY,
+                                highBaseX, highBaseY)};
                 default -> new Node[]{
-                        child(NONE, LOW, level, resolutionSplit ? 0 : primary, gainBase, 1, baseX, baseY + 1),
-                        child(NONE, HIGH, level, resolutionSplit ? 0 : primary, gainBase + 1, 1, baseX, baseY + 1)};
+                        child(NONE, LOW, level, resolutionSplit ? 0 : primary, gainBase, 1, baseX, baseY + 1,
+                                highBaseX, highBaseY),
+                        child(NONE, HIGH, level, resolutionSplit ? 0 : primary, gainBase + 1, 1, baseX, baseY + 1,
+                                highBaseX, highBaseY)};
             };
         }
 
@@ -208,11 +232,14 @@ final class Decomposition {
          * @param depthStep the increase of twice {@code n_b}: 2 for a joint split, 1 for a split in one direction
          * @param splitsX the horizontal splits from the resolution node
          * @param splitsY the vertical splits from the resolution node
+         * @param highBaseX whether a horizontal split from the resolution node to this node is high-pass
+         * @param highBaseY whether a vertical split from the resolution node to this node is high-pass
          * @return the child
          */
         private Node child(int horizontal, int vertical, int level, int primary, int gain, int depthStep, int splitsX,
-                           int splitsY) {
-            return new Node(horizontal, vertical, level, primary, gain, doubledDepth + depthStep, splitsX, splitsY);
+                           int splitsY, boolean highBaseX, boolean highBaseY) {
+            return new Node(horizontal, vertical, level, primary, gain, doubledDepth + depthStep, splitsX, splitsY,
+                    highBaseX || horizontal == HIGH, highBaseY || vertical == HIGH);
         }
     }
 
@@ -283,7 +310,7 @@ final class Decomposition {
             }
             depths[lev] = last;
         }
-        var root = new Node(LOW, LOW, 0, 0, 0, 0, 0, 0);
+        var root = new Node(LOW, LOW, 0, 0, 0, 0, 0, 0, false, false);
         root.resolution = true;
         var resolutionNodes = new Node[levels + 1];
         resolutionNodes[0] = root;
