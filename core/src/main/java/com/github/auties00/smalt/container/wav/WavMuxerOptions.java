@@ -10,12 +10,17 @@ public final class WavMuxerOptions {
     /**
      * The options of {@link #defaults()}.
      */
-    private static final WavMuxerOptions DEFAULTS = new WavMuxerOptions(Rf64.AUTO);
+    private static final WavMuxerOptions DEFAULTS = new WavMuxerOptions(Rf64.AUTO, Encapsulation.NATIVE);
 
     /**
      * The options of {@link #rf64()}.
      */
-    private static final WavMuxerOptions RF64 = new WavMuxerOptions(Rf64.ALWAYS);
+    private static final WavMuxerOptions RF64 = new WavMuxerOptions(Rf64.ALWAYS, Encapsulation.NATIVE);
+
+    /**
+     * The options of {@link #forIec61937()}.
+     */
+    private static final WavMuxerOptions IEC61937 = new WavMuxerOptions(Rf64.AUTO, Encapsulation.IEC61937_PCM);
 
     /**
      * Enumerates the policies for the 64-bit RF64 header.
@@ -42,10 +47,41 @@ public final class WavMuxerOptions {
         NEVER
     }
 
-    private final Rf64 rf64;
+    /**
+     * Enumerates how coded audio is stored in the {@code data} chunk.
+     *
+     * <p>This enum may gain constants in later releases; a {@code switch} over it needs a
+     * {@code default} branch.
+     */
+    public enum Encapsulation {
+        /**
+         * Stores coded audio under the format tag of its codec, in the framing {@link WavDemuxer}
+         * reads back packet for packet; PCM is stored as it is.
+         */
+        NATIVE,
 
-    private WavMuxerOptions(Rf64 rf64) {
+        /**
+         * Stores coded audio as IEC 61937 data bursts in the samples of 16-bit PCM declared as
+         * {@code WAVE_FORMAT_PCM} (or, for the 8 channels of the high bit rate formats, as
+         * {@code WAVE_FORMAT_EXTENSIBLE} PCM), the form S/PDIF and HDMI pass-through players and
+         * DTS and AC-3 audio CDs carry; PCM is stored as it is.
+         */
+        IEC61937_PCM,
+
+        /**
+         * Stores coded audio as IEC 61937 data bursts declared by a {@code WAVEFORMATEXTENSIBLE_IEC61937}
+         * structure with the {@code KSDATAFORMAT_SUBTYPE_IEC61937} sub-format of the codec, the form
+         * Windows pass-through audio uses; PCM is stored as it is.
+         */
+        IEC61937_EXTENSIBLE
+    }
+
+    private final Rf64 rf64;
+    private final Encapsulation encapsulation;
+
+    private WavMuxerOptions(Rf64 rf64, Encapsulation encapsulation) {
         this.rf64 = rf64;
+        this.encapsulation = encapsulation;
     }
 
     /**
@@ -64,6 +100,16 @@ public final class WavMuxerOptions {
      */
     public static WavMuxerOptions rf64() {
         return RF64;
+    }
+
+    /**
+     * Returns the options that store coded audio as IEC 61937 data bursts in 16-bit PCM samples
+     * ({@link Encapsulation#IEC61937_PCM}), switching to RF64 only when needed.
+     *
+     * @return the options
+     */
+    public static WavMuxerOptions forIec61937() {
+        return IEC61937;
     }
 
     /**
@@ -97,19 +143,32 @@ public final class WavMuxerOptions {
         return rf64;
     }
 
+    /**
+     * {@return how coded audio is stored; {@link Encapsulation#NATIVE} by default}
+     *
+     * <p>{@link Encapsulation#NATIVE} stores each codec under its own format tag. The two IEC 61937
+     * forms wrap AC-3, E-AC-3, MPEG audio, AAC, DTS (with DTS-HD) and Dolby TrueHD in the data
+     * bursts of IEC 61937-2 to -6 and -9, which a receiver decodes from what looks like 16-bit PCM;
+     * see {@link WavMuxer} for the data types and rates. Other coded audio cannot be carried in
+     * bursts and is rejected, and PCM is stored as it is in every form.
+     */
+    public Encapsulation encapsulation() {
+        return encapsulation;
+    }
+
     @Override
     public boolean equals(Object other) {
-        return other instanceof WavMuxerOptions that && rf64 == that.rf64;
+        return other instanceof WavMuxerOptions that && rf64 == that.rf64 && encapsulation == that.encapsulation;
     }
 
     @Override
     public int hashCode() {
-        return rf64.hashCode();
+        return 31 * rf64.hashCode() + encapsulation.hashCode();
     }
 
     @Override
     public String toString() {
-        return "WavMuxerOptions[rf64=" + rf64 + "]";
+        return "WavMuxerOptions[rf64=" + rf64 + ", encapsulation=" + encapsulation + "]";
     }
 
     /**
@@ -120,9 +179,11 @@ public final class WavMuxerOptions {
      */
     public static final class Builder {
         private Rf64 rf64;
+        private Encapsulation encapsulation;
 
         private Builder(WavMuxerOptions options) {
             this.rf64 = options.rf64;
+            this.encapsulation = options.encapsulation;
         }
 
         /**
@@ -137,12 +198,23 @@ public final class WavMuxerOptions {
         }
 
         /**
+         * Sets how coded audio is stored; see {@link WavMuxerOptions#encapsulation()}.
+         *
+         * @param encapsulation the value
+         * @return this builder
+         */
+        public Builder encapsulation(Encapsulation encapsulation) {
+            this.encapsulation = Objects.requireNonNull(encapsulation, "encapsulation");
+            return this;
+        }
+
+        /**
          * Builds the options.
          *
          * @return the options
          */
         public WavMuxerOptions build() {
-            return new WavMuxerOptions(rf64);
+            return new WavMuxerOptions(rf64, encapsulation);
         }
     }
 }

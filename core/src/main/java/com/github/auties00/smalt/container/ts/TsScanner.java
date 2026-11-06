@@ -10,7 +10,6 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiConsumer;
 
 /**
  * Reads the transport packets of a stream in order from an offset, reassembles the PES packets of
@@ -99,14 +98,30 @@ final class TsScanner {
     private final PidState[] byPid = new PidState[0x2000];
 
     /**
-     * The section reassembly state of each watched PSI PID.
+     * The section reassembly state of each watched PSI PID and of each section-carried stream.
      */
     private final Map<Integer, SectionState> sections = new HashMap<>();
 
     /**
-     * Receives the sections of the watched PIDs, or {@code null}.
+     * The parsers of the section-carried streams, in the order they were added.
      */
-    private BiConsumer<Integer, byte[]> sectionListener;
+    private final List<ElementaryParser> sectionParsers = new ArrayList<>();
+
+    /**
+     * Receives the complete sections of a watched PSI PID.
+     */
+    @FunctionalInterface
+    interface SectionListener {
+        /**
+         * Receives one section.
+         *
+         * @param pid the PID
+         * @param section the section, its {@code CRC_32} verified
+         * @param fileOffset the offset of the transport packet in which the section started
+         * @param sink the sink of the scan step that completed the section
+         */
+        void section(int pid, byte[] section, long fileOffset, ElementaryParser.UnitSink sink);
+    }
 
     /**
      * The bytes of the current packet.
@@ -156,28 +171,93 @@ final class TsScanner {
     }
 
     /**
-     * Sets the parser of an elementary PID.
+     * Sets the parser of the PID its program map entry names.
      *
-     * @param parser the parser; its PID is the one parsed
+     * @param parser the parser of an elementary stream
      */
     void parse(ElementaryParser parser) {
-        var state = new PidState(parser);
-        if (byPid[parser.pid()] != null) {
-            pids.remove(byPid[parser.pid()]);
+        parse(parser.entry.pid(), parser);
+    }
+
+    /**
+     * Sets the parser of an elementary PID, replacing the one it had.
+     *
+     * @param pid the PID
+     * @param parser the parser; a section-carried parser receives the sections of the PID
+     */
+    void parse(int pid, ElementaryParser parser) {
+        unparse(pid);
+        if (parser.sectionCarried()) {
+            sections.put(pid, new SectionState(parser, null));
+            sectionParsers.add(parser);
+            return;
         }
-        byPid[parser.pid()] = state;
+        var state = new PidState(parser);
+        byPid[pid] = state;
         pids.add(state);
     }
 
     /**
-     * Starts collecting the sections of a PSI PID.
+     * Stops parsing an elementary PID, without flushing its parser.
      *
      * @param pid the PID
-     * @param listener receives every complete section of every watched PID
+     * @return the parser the PID had, or {@code null}
      */
-    void watch(int pid, BiConsumer<Integer, byte[]> listener) {
-        sections.putIfAbsent(pid, new SectionState());
-        this.sectionListener = listener;
+    ElementaryParser unparse(int pid) {
+        return unparse(pid, null);
+    }
+
+    /**
+     * Stops parsing an elementary PID, first passing its parser the PES packet in progress.
+     *
+     * @param pid the PID
+     * @param sink receives the packets the parser completes with that PES packet, or {@code null} to drop it
+     * @return the parser the PID had, or {@code null}
+     */
+    ElementaryParser unparse(int pid, ElementaryParser.UnitSink sink) {
+        var state = byPid[pid];
+        if (state != null && state.active && sink != null) {
+            deliver(state, sink);
+        }
+        if (state != null) {
+            byPid[pid] = null;
+            pids.remove(state);
+            return state.parser;
+        }
+        var section = sections.get(pid);
+        if (section != null && section.parser != null) {
+            sections.remove(pid);
+            sectionParsers.remove(section.parser);
+            return section.parser;
+        }
+        return null;
+    }
+
+    /**
+     * Starts collecting the sections of a PSI PID; a PID already watched gets the new listener.
+     *
+     * @param pid the PID
+     * @param listener receives every complete section of the PID
+     */
+    void watch(int pid, SectionListener listener) {
+        var state = sections.get(pid);
+        if (state == null) {
+            sections.put(pid, new SectionState(null, listener));
+        } else if (state.parser == null) {
+            state.listener = listener;
+        }
+    }
+
+    /**
+     * Stops collecting the sections of a PSI PID.
+     *
+     * @param pid the PID
+     */
+    void unwatch(int pid) {
+        var section = sections.get(pid);
+        if (section != null && section.parser == null) {
+            sections.remove(pid);
+        }
     }
 
     /**
@@ -228,6 +308,9 @@ final class TsScanner {
         for (var state : pids) {
             state.parser.flush(clock, sink);
         }
+        for (var parser : sectionParsers) {
+            parser.flush(clock, sink);
+        }
     }
 
     /**
@@ -273,15 +356,28 @@ final class TsScanner {
         if (state != null) {
             elementary(state, offset, error, unitStart, scrambled, counter, (control & 1) != 0, discontinuity,
                     randomAccess, hasPayload ? payload : limit, limit, sink);
-        } else if (!error && hasPayload) {
+            if (!sectionParsers.isEmpty()) {
+                for (var index = 0; index < sectionParsers.size(); index++) {
+                    sectionParsers.get(index).tick(clock, sink);
+                }
+            }
+        } else if (!error && hasPayload && !scrambled) {
             var continuous = section.counter < 0 || discontinuity || counter == ((section.counter + 1) & 0x0F)
                     || counter == section.counter;
             if (counter == section.counter && !unitStart && section.counter >= 0) {
                 return;
             }
             section.counter = counter;
-            section.assembler.accept(packet, payload, limit, unitStart, continuous,
-                    bytes -> sectionListener.accept(pid, bytes));
+            if (unitStart) {
+                section.started = offset;
+            }
+            section.assembler.accept(packet, payload, limit, unitStart, continuous, bytes -> {
+                if (section.parser != null) {
+                    section.parser.section(bytes, section.started, clock, sink);
+                } else {
+                    section.listener.section(pid, bytes, section.started, sink);
+                }
+            });
         }
     }
 
@@ -563,11 +659,38 @@ final class TsScanner {
         /**
          * The section assembler.
          */
-        final Psi.SectionAssembler assembler = new Psi.SectionAssembler();
+        final Psi.SectionAssembler assembler;
+
+        /**
+         * The parser of a section-carried stream, or {@code null} for a PSI PID.
+         */
+        final ElementaryParser parser;
+
+        /**
+         * The listener of a PSI PID, or {@code null} for a section-carried stream.
+         */
+        SectionListener listener;
 
         /**
          * The last continuity counter, or {@code -1}.
          */
         int counter = -1;
+
+        /**
+         * The offset of the last transport packet with the payload unit start indicator.
+         */
+        long started;
+
+        /**
+         * Constructs the state of a PID.
+         *
+         * @param parser the parser of a section-carried stream, or {@code null}
+         * @param listener the listener of a PSI PID, or {@code null}
+         */
+        SectionState(ElementaryParser parser, SectionListener listener) {
+            this.parser = parser;
+            this.listener = listener;
+            this.assembler = new Psi.SectionAssembler(parser != null);
+        }
     }
 }

@@ -7,8 +7,9 @@ import java.util.Optional;
  * {@code colour_primaries} field of H.264, H.265, VP9 and AV1 streams).
  *
  * <p>{@link #red()}, {@link #green()}, {@link #blue()} and {@link #white()} give the CIE 1931
- * chromaticities H.273 defines for each set of primaries; they are empty for {@link #UNSPECIFIED}
- * and for {@link #SMPTE428}, whose primaries are the CIE XYZ axes rather than chromaticities.
+ * chromaticities H.273 defines for each set of primaries; they are empty for {@link #UNSPECIFIED}.
+ * The primaries of {@link #SMPTE428} are the CIE XYZ axes, X as red at {@code (1, 0)}, Y as green at
+ * {@code (0, 1)} and Z as blue at {@code (0, 0)}, with the equal-energy white {@code (1/3, 1/3)}.
  *
  * <p>Instances are immutable and thread-safe.
  */
@@ -54,7 +55,7 @@ public enum ColorPrimaries {
     BT2020(9),
 
     /**
-     * SMPTE ST 428-1 CIE XYZ (code point 10).
+     * SMPTE ST 428-1 CIE XYZ, with X, Y and Z in place of red, green and blue (code point 10).
      */
     SMPTE428(10),
 
@@ -97,32 +98,28 @@ public enum ColorPrimaries {
     }
 
     /**
-     * {@return the chromaticity of the red primary, or empty for {@link #UNSPECIFIED} and
-     * {@link #SMPTE428}}
+     * {@return the chromaticity of the red primary, or empty for {@link #UNSPECIFIED}}
      */
     public Optional<Chromaticity> red() {
         return chromaticity(0);
     }
 
     /**
-     * {@return the chromaticity of the green primary, or empty for {@link #UNSPECIFIED} and
-     * {@link #SMPTE428}}
+     * {@return the chromaticity of the green primary, or empty for {@link #UNSPECIFIED}}
      */
     public Optional<Chromaticity> green() {
         return chromaticity(1);
     }
 
     /**
-     * {@return the chromaticity of the blue primary, or empty for {@link #UNSPECIFIED} and
-     * {@link #SMPTE428}}
+     * {@return the chromaticity of the blue primary, or empty for {@link #UNSPECIFIED}}
      */
     public Optional<Chromaticity> blue() {
         return chromaticity(2);
     }
 
     /**
-     * {@return the chromaticity of the white point, or empty for {@link #UNSPECIFIED} and
-     * {@link #SMPTE428}}
+     * {@return the chromaticity of the white point, or empty for {@link #UNSPECIFIED}}
      */
     public Optional<Chromaticity> white() {
         return chromaticity(3);
@@ -145,7 +142,8 @@ public enum ColorPrimaries {
             case SMPTE431 -> new double[]{0.680, 0.320, 0.265, 0.690, 0.150, 0.060, 0.314, 0.351};
             case SMPTE432 -> new double[]{0.680, 0.320, 0.265, 0.690, 0.150, 0.060, 0.3127, 0.3290};
             case EBU3213 -> new double[]{0.630, 0.340, 0.295, 0.605, 0.155, 0.077, 0.3127, 0.3290};
-            case UNSPECIFIED, SMPTE428 -> null;
+            case SMPTE428 -> new double[]{1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0 / 3, 1.0 / 3};
+            case UNSPECIFIED -> null;
         };
         return table == null ? Optional.empty()
                 : Optional.of(new Chromaticity(table[index * 2], table[index * 2 + 1]));

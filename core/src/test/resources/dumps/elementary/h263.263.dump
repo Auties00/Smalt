@@ -1,0 +1,27 @@
+# demux dump of elementary/h263.263; regenerate with -Dsmalt.test.updateDumps=true
+format H263
+duration -1
+seekable true
+track 1 VIDEO H263 timebase=1001/30000 duration=? config=none
+  video 0x0 orientation=NORMAL
+packets 15
+0 t1 pts=0 dts=0 dur=? flags=KEY size=4795 crc=74fe5f36
+1 t1 pts=1 dts=1 dur=? flags=- size=1318 crc=3e3ca8c3
+2 t1 pts=3 dts=3 dur=? flags=- size=1605 crc=f7680bc5
+3 t1 pts=5 dts=5 dur=? flags=- size=1405 crc=76907764
+4 t1 pts=7 dts=7 dur=? flags=- size=1519 crc=228b930a
+5 t1 pts=9 dts=9 dur=? flags=KEY size=5262 crc=da579fd0
+6 t1 pts=11 dts=11 dur=? flags=- size=1649 crc=aae8a93f
+7 t1 pts=13 dts=13 dur=? flags=- size=1153 crc=b164e83e
+8 t1 pts=15 dts=15 dur=? flags=- size=1044 crc=e358541b
+9 t1 pts=17 dts=17 dur=? flags=- size=1125 crc=0c1a8585
+10 t1 pts=19 dts=19 dur=? flags=KEY size=5510 crc=252c6cbd
+11 t1 pts=21 dts=21 dur=? flags=- size=1280 crc=eafda3a3
+12 t1 pts=23 dts=23 dur=? flags=- size=1396 crc=35400ce9
+13 t1 pts=25 dts=25 dur=? flags=- size=1148 crc=deb88918
+14 t1 pts=27 dts=27 dur=? flags=- size=1527 crc=def9db24
+seek 0: t1@0
+seek 322544: t1@5
+seek 645089: t1@10
+seek 967634: end
+seek -1000000: t1@0

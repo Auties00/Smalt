@@ -126,8 +126,8 @@ final class Floor0 extends Floor {
      * @return the Bark value
      */
     private static double toBark(float frequency) {
-        return 13.1f * Math.atan(0.00074f * frequency)
-                + 2.24f * Math.atan(frequency * frequency * 1.85e-8f)
+        return 13.1f * StrictMath.atan(0.00074f * frequency)
+                + 2.24f * StrictMath.atan(frequency * frequency * 1.85e-8f)
                 + 1e-4f * frequency;
     }
 
@@ -184,7 +184,7 @@ final class Floor0 extends Floor {
         var lsp = data.coefficients;
         var m = order;
         for (var i = 0; i < m; i++) {
-            lsp[i] = (float) (2.0f * Math.cos(lsp[i]));
+            lsp[i] = (float) (2.0f * StrictMath.cos(lsp[i]));
         }
         var amplitude = data.amplitude;
         var offset = (float) amplitudeOffset;
@@ -194,7 +194,7 @@ final class Floor0 extends Floor {
             var k = map[i];
             var p = 0.5f;
             var q = 0.5f;
-            var w = (float) (2.0f * Math.cos(step * k));
+            var w = (float) (2.0f * StrictMath.cos(step * k));
             var j = 1;
             for (; j < m; j += 2) {
                 q *= w - lsp[j - 1];
@@ -208,7 +208,7 @@ final class Floor0 extends Floor {
                 p *= p * (2.0f - w);
                 q *= q * (2.0f + w);
             }
-            var linear = (float) Math.exp((amplitude / Math.sqrt(p + q) - offset) * 0.11512925f);
+            var linear = (float) StrictMath.exp((amplitude / Math.sqrt(p + q) - offset) * 0.11512925f);
             spectrum[i] *= linear;
             while (map[++i] == k) {
                 spectrum[i] *= linear;

@@ -7,31 +7,47 @@ import java.util.Arrays;
  * packets contribute and where their bytes are.
  *
  * <p>Segments hold the passes coded between two terminations of the arithmetic coder (one
- * segment unless a code-block style terminates passes early).
+ * segment unless a code-block style terminates passes early). A high-throughput block has one segment per packet
+ * contribution and segment boundary of ISO/IEC 15444-15 B.2, so one of its HT segments may span several.
  *
  * @implNote This implementation follows OpenJPEG's {@code opj_tcd_cblk_dec_t} and
  * {@code opj_tcd_seg_t}, with the segment fields held in parallel arrays.
  */
 final class CodeBlock {
     /**
+     * The {@link #coder} of a block coded with the block coder of ISO/IEC 15444-1.
+     */
+    static final int LEGACY = 0;
+
+    /**
+     * The {@link #coder} of a high-throughput block whose first HT cleanup pass has not been read yet.
+     */
+    static final int HT_PLACEHOLDER = 1;
+
+    /**
+     * The {@link #coder} of a high-throughput block whose first HT cleanup pass has been read.
+     */
+    static final int HT = 2;
+
+    /**
      * The left edge in sub-band coordinates.
      */
-    final int x0;
+    final long x0;
 
     /**
      * The top edge in sub-band coordinates.
      */
-    final int y0;
+    final long y0;
 
     /**
      * The right edge in sub-band coordinates (exclusive).
      */
-    final int x1;
+    final long x1;
 
     /**
      * The bottom edge in sub-band coordinates (exclusive).
      */
-    final int y1;
+    final long y1;
 
     /**
      * The number of magnitude bit-planes coded, once the block is first included.
@@ -62,6 +78,31 @@ final class CodeBlock {
      * Whether a packet of this block could not be read completely; its data is then ignored.
      */
     boolean corrupted;
+
+    /**
+     * The block coder: {@link #LEGACY}, {@link #HT_PLACEHOLDER} or {@link #HT}.
+     */
+    int coder;
+
+    /**
+     * The number of coding passes the packet headers read so far contribute, placeholder passes included.
+     */
+    int passes;
+
+    /**
+     * The index of the segment receiving the current packet's first new passes.
+     */
+    int firstNewSegment;
+
+    /**
+     * The number of segments the current packet contributes to.
+     */
+    int newSegments;
+
+    /**
+     * The index of the first coding pass of each segment; kept for high-throughput blocks only.
+     */
+    int[] segmentStart = new int[1];
 
     /**
      * The byte length of each segment.
@@ -113,7 +154,7 @@ final class CodeBlock {
      * @param x1 the right edge
      * @param y1 the bottom edge
      */
-    CodeBlock(int x0, int y0, int x1, int y1) {
+    CodeBlock(long x0, long y0, long x1, long y1) {
         this.x0 = x0;
         this.y0 = y0;
         this.x1 = x1;
@@ -126,7 +167,7 @@ final class CodeBlock {
      * @return the width in samples
      */
     int width() {
-        return x1 - x0;
+        return (int) (x1 - x0);
     }
 
     /**
@@ -135,7 +176,7 @@ final class CodeBlock {
      * @return the height in samples
      */
     int height() {
-        return y1 - y0;
+        return (int) (y1 - y0);
     }
 
     /**
@@ -159,6 +200,7 @@ final class CodeBlock {
             segmentMaxPasses = Arrays.copyOf(segmentMaxPasses, capacity);
             segmentNewPasses = Arrays.copyOf(segmentNewPasses, capacity);
             segmentNewLengths = Arrays.copyOf(segmentNewLengths, capacity);
+            segmentStart = Arrays.copyOf(segmentStart, capacity);
         }
         segmentLengths[index] = 0;
         segmentPasses[index] = 0;
@@ -179,6 +221,19 @@ final class CodeBlock {
             max = 109;
         }
         segmentMaxPasses[index] = max;
+    }
+
+    /**
+     * Starts a codeword segment of a high-throughput block, which holds the passes of one packet that end at or
+     * before a segment boundary of ISO/IEC 15444-15 B.2.
+     *
+     * @param index the segment index
+     * @param start the index of the segment's first coding pass
+     */
+    void startHtSegment(int index, int start) {
+        startSegment(index, 0, index == 0);
+        segmentMaxPasses[index] = Integer.MAX_VALUE;
+        segmentStart[index] = start;
     }
 
     /**
