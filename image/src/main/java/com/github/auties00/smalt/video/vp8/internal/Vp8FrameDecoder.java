@@ -605,6 +605,12 @@ public final class Vp8FrameDecoder {
     private int threads = 1;
 
     /**
+     * The number of pixel rows of a key frame decoded, from the top; the rows below are neither parsed nor
+     * reconstructed.
+     */
+    private int rowLimit = Integer.MAX_VALUE;
+
+    /**
      * The worker of the calling thread.
      */
     private final Worker main = new Worker();
@@ -666,6 +672,31 @@ public final class Vp8FrameDecoder {
      */
     public static YuvPicture decodeKeyFrame(byte[] data, int offset, int length, MediaLimits limits,
                                             boolean parallel) {
+        return decodeKeyFrame(data, offset, length, limits, parallel, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Decodes the top rows of one key frame, as {@link #decodeKeyFrame(byte[], int, int, MediaLimits, boolean)}
+     * decodes the whole frame.
+     *
+     * <p>The picture holds the first {@code rows} rows of the frame, or every row of a shorter frame; the
+     * macroblock rows below them are neither parsed nor reconstructed, so damage there goes undetected, and the
+     * limits bound the rows decoded. Every row equals the same row of the whole decode except the last three of
+     * the last macroblock row decoded, which the loop filter of the macroblock row below would change.
+     *
+     * @param data the array holding the frame
+     * @param offset the index of the frame's first byte
+     * @param length the frame size in bytes
+     * @param limits the bounds checked before allocating
+     * @param parallel whether the frame may be decoded as a pipeline
+     * @param rows the number of pixel rows to decode, positive
+     * @return the picture of the rows
+     * @throws MediaException.Malformed if the frame is not a key frame, is truncated, or is corrupt
+     * @throws MediaException.Unsupported if the frame is flagged as not displayable
+     * @throws MediaException.LimitExceeded if the rows exceed {@code limits}
+     */
+    public static YuvPicture decodeKeyFrame(byte[] data, int offset, int length, MediaLimits limits,
+                                            boolean parallel, int rows) {
         if (length == 0) {
             throw new MediaException.Malformed("empty vp8 frame");
         }
@@ -674,6 +705,7 @@ public final class Vp8FrameDecoder {
                 throw new MediaException.Malformed("vp8 frame is not a key frame");
             }
             var decoder = new Vp8FrameDecoder(limits, true);
+            decoder.rowLimit = rows;
             decoder.setThreads(parallel ? 0 : 1);
             decoder.decode(data, offset, length);
             return decoder.copyPicture(null);
@@ -905,6 +937,7 @@ public final class Vp8FrameDecoder {
             if (w == 0 || h == 0) {
                 throw new MediaException.Malformed("invalid vp8 frame size " + w + "x" + h);
             }
+            h = Math.min(h, rowLimit);
             LimitChecks.checkPicture(limits, w, h);
             horizontalScale = (data[pos + 4] & 0xFF) >> 6;
             verticalScale = (data[pos + 6] & 0xFF) >> 6;
