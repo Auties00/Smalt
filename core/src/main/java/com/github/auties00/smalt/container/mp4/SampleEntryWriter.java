@@ -3,6 +3,7 @@ package com.github.auties00.smalt.container.mp4;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.Speaker;
+import com.github.auties00.smalt.container.internal.CoreAudioAmbisonics;
 import com.github.auties00.smalt.container.internal.DvTags;
 import com.github.auties00.smalt.container.internal.SphericalBoxes;
 import com.github.auties00.smalt.internal.header.DifProfile;
@@ -852,16 +853,31 @@ final class SampleEntryWriter {
     /**
      * Writes a QuickTime {@code chan} box listing each speaker of a layout by its channel label.
      *
+     * <p>An {@linkplain ChannelLayout#ambisonics() ambisonic} layout that a higher-order ambisonics or B-format
+     * layout tag describes gets that tag; any other ambisonic layout labels its ambisonic channels with their
+     * components ({@link CoreAudioAmbisonics}).
+     *
      * @param writer the destination, inside the sample entry
      * @param layout the channel layout
      */
     private static void writeChan(BoxWriter writer, ChannelLayout layout) {
         writer.beginFull(BoxTypes.CHAN, 0, 0);
+        var tag = CoreAudioAmbisonics.tagOf(layout);
+        if (tag >= 0) {
+            writer.u32(tag);
+            writer.u32(0);
+            writer.u32(0);
+            writer.end();
+            return;
+        }
+        var ambisonicLabels = CoreAudioAmbisonics.labelsOf(layout);
         writer.u32(0);
         writer.u32(0);
         writer.u32(layout.channels());
-        for (var speaker : layout.speakers()) {
-            var label = speaker == Speaker.UNKNOWN ? 0xFFFFFFFFL : QUICKTIME_LABELS[speaker.ordinal()];
+        for (var channel = 0; channel < layout.channels(); channel++) {
+            var speaker = layout.speakers().get(channel);
+            var label = speaker != Speaker.UNKNOWN ? QUICKTIME_LABELS[speaker.ordinal()]
+                    : ambisonicLabels != null ? Integer.toUnsignedLong(ambisonicLabels[channel]) : 0xFFFFFFFFL;
             writer.u32(label);
             writer.u32(0);
             writer.zeros(12);

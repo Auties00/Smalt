@@ -84,6 +84,7 @@ core/src/test/resources/samples/mp3/cbr.mp3	16320	31d01dbcaaca53513b3cbca0e80130
 core/src/test/resources/samples/mp3/mp2-id3v1.mp2	16256	f1ea5ce2d6d0635840ad39de502fa10ca5498cc5c87bd63da2e1d2b0b0617dd1	make-samples.sh
 core/src/test/resources/samples/mp3/vbr-xing.mp3	16291	a2ca147138148b6847109c3ac5a45491a4b3f4c73404c35633675884ed69b4a4	make-samples.sh
 core/src/test/resources/samples/mp4/alac.m4a	46897	c357835c07fc39aad0099889fbb94816e600f792c647e3609ea5ad7e0dd310ba	make-samples.sh
+core/src/test/resources/samples/mp4/ambisonic-aac.mp4	7639	08dc2ad419a4f9a8b02ae254d0b2bb09b023af219d11ba61d5962ab1490f388e	make-ambisonic-samples.py
 core/src/test/resources/samples/mp4/ambisonic.mov	144705	733aebf085b021146c497b235034936b23447eb2a1a9644c775793229dc44960	make-ambisonic-samples.py
 core/src/test/resources/samples/mp4/cfhd.mov	22997	62f29bf02b9f78fa2415589550fd8cc9c2de2edfaef3daaa263ae93115683090	make-intermediate-samples.sh
 core/src/test/resources/samples/mp4/dnxhr.mov	25367	ea7de6628b1331cef28828e4154db4e48d812c428b5f338ea685e0835245a384	make-samples.sh
@@ -171,6 +172,10 @@ core/src/test/resources/samples/w64/ima.w64	3216	bef154ce0d95a9fa36bee804aaa63e6
 core/src/test/resources/samples/w64/s24.w64	79512	01eec072f4902d82bc3f9125e38171a23ec636eee786659e4a1cf8054003f3d4	make-audio-container-samples.py
 core/src/test/resources/samples/wav/aac-raw.wav	8082	ced6abefd6ca5a8e4e315de9b087bdc5c62fff7eb740031901becf99c426867b	make-wav-samples.py
 core/src/test/resources/samples/wav/ac3.wav	16476	b76cc7668502a43cd91534ccef394cc8a67c247dfa57f76caa2fd9ffbf88c9d1	make-wav-samples.py
+core/src/test/resources/samples/wav/adm-hoa-order1-fuma.wav	25122	f27ebe4019dc201a4fe1e2adc3400535447e9cad901c9cb0cafbe3b6307cdda7	make-adm-samples.py
+core/src/test/resources/samples/wav/adm-hoa-order1-sn3d.wav	25122	a071010851bb74b5c99f820d2aed9492b118ffcc48ccb2a5f899f139eedcff69	make-adm-samples.py
+core/src/test/resources/samples/wav/adm-hoa-order2-n3d-chna.wav	43652	71bd438955f51712084b615b89ecb5523f11f7afddbbf2474302506441441988	make-adm-samples.py
+core/src/test/resources/samples/wav/adm-hoa-order3-sn3d-chna.wav	77532	ba99fc22be82a3d7ddeaf27e2595acb674c5570fc56acaec1f0356a38b65de16	make-adm-samples.py
 core/src/test/resources/samples/wav/ambisonic-bformat.wav	96068	be1f071aaa716603d3b68b3079b44e7d307af88f4d2b0869be0a019cd082240f	make-ambisonic-samples.py
 core/src/test/resources/samples/wav/amr.wav	1118	edb864115c08bd6a0cb0919b6b713d359819a44db0e89c20b39c67741a3f228d	make-wav-samples.py
 core/src/test/resources/samples/wav/atrac9.at9	7816	8f9ebe2dbfcbe76a12bcd77694def718cff07a9d3f1d80affbac5100357c8d9f	audio Atrac9VectorWriter (-Dsmalt.atrac9.writeVectors=true)

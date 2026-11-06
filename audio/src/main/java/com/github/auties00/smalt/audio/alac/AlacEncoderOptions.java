@@ -130,7 +130,10 @@ public final class AlacEncoderOptions {
      *
      * <p>ALAC codes each channel count in one fixed speaker arrangement, the one {@link AlacDecoder}
      * reports. An input channel whose speaker belongs to that arrangement is coded as that speaker;
-     * the other input channels take the remaining speakers of the arrangement in input order.
+     * the other input channels take the remaining speakers of the arrangement in input order, in the
+     * WAVE order of those speakers, so that the decoder returns them in input order. Every channel of an
+     * {@linkplain ChannelLayout#ambisonics() ambisonic} layout, its non-diegetic speakers included, takes
+     * the speaker of its index in WAVE order, so that the layout keeps its channel order.
      */
     public ChannelLayout layout() {
         return layout;

@@ -15,8 +15,10 @@ import com.github.auties00.smalt.track.Rational;
 
 import java.lang.reflect.Array;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Consumer;
 
 /**
@@ -65,9 +67,17 @@ import java.util.function.Consumer;
  * the first presenting packet is not filled: the output starts with the first sample the track
  * presents.
  *
- * <p>The codec's layout is the default output layout, except that a PCM or FLAC track whose container declares an
- * {@linkplain ChannelLayout#ambisonics() ambisonic} layout of as many channels (the MP4 spatial audio box, the
- * WAVE B-format sub-format) outputs that layout, the codec's channels taken in coded order.
+ * <p>The codec's layout is the default output layout, except that a PCM, FLAC, AAC, ALAC or Vorbis track whose
+ * container declares an {@linkplain ChannelLayout#ambisonics() ambisonic} layout of as many channels (the MP4
+ * spatial audio box, a QuickTime or CAF higher-order ambisonics layout, the WAVE B-format sub-format, BW64 ADM
+ * metadata) outputs that layout. The declared layout names the stream's channels in the order the codec's decoder
+ * outputs them when the codec gives every channel a speaker: AAC, ALAC and Vorbis decoders reorder their coded
+ * channels to the WAVE order of their speakers, the order their encoders take as input, so that an AAC file coded
+ * from ambisonic PCM and given a spatial audio box reads back in the PCM's order. It names them in coded order when
+ * the codec does not give every channel a speaker (an AAC program configuration with channels of no position), and
+ * the decoder's reordering ({@link AudioDecoder#codedChannelOrder()}) is then undone: float output is mixed to the
+ * declared layout, and integer and double output keep the codec's channel order and report the declared components
+ * in that order.
  *
  * <p>The output is 32-bit floats unless {@link AudioStreamDecoderOptions#sampleFormat()} asks for
  * another {@link SampleFormat}: {@link SampleFormat#INTEGER} outputs the codec's own integer
@@ -140,10 +150,22 @@ public final class AudioStreamDecoder implements AutoCloseable {
     private final ChannelLayout outputLayout;
 
     /**
-     * The ambisonic layout the container declares for the codec's output channels, or {@code null} when the
-     * codec's own layout stands.
+     * The ambisonic layout the container declares for the stream's channels in stream order, or {@code null} when
+     * the codec's own layout stands.
      */
     private final ChannelLayout declared;
+
+    /**
+     * The layout the codec's output channels carry under {@link #declared}: {@link #declared} itself, or its
+     * channels in the codec's output order when the stream order is the coded order the codec reorders; {@code null}
+     * when {@link #declared} is.
+     */
+    private final ChannelLayout relabeled;
+
+    /**
+     * The codec's output layout {@link #relabeled} applies to.
+     */
+    private final ChannelLayout codecLayout;
 
     /**
      * The converted samples not yet read, or {@code null} unless the output is float.
@@ -491,9 +513,12 @@ public final class AudioStreamDecoder implements AutoCloseable {
         this.decoder = decoder;
         this.decoderOptions = decoderOptions;
         this.config = track.codecConfig().orElse(null);
-        this.declared = declaredAmbisonics(track, decoder.layout());
+        this.codecLayout = decoder.layout();
+        this.declared = declaredAmbisonics(track, codecLayout);
+        this.relabeled = declared == null ? null : streamOrder(declared, codecLayout, decoder.codedChannelOrder());
         this.outputRate = options.sampleRate().orElse(decoder.sampleRate());
-        this.outputLayout = options.layout().orElse(relabel(decoder.layout()));
+        this.outputLayout = options.layout().orElse(options.sampleFormat() == SampleFormat.FLOAT && declared != null
+                ? declared : relabel(codecLayout));
         this.mixing = options.mixing();
         this.customMatrix = mixing.matrix().isPresent();
         this.format = options.sampleFormat();
@@ -549,32 +574,98 @@ public final class AudioStreamDecoder implements AutoCloseable {
     }
 
     /**
-     * Returns the ambisonic layout a container declares for a codec whose output keeps the coded channel order.
+     * Returns the ambisonic layout a container declares for a codec whose channel order is known.
      *
      * @param track the track, whose layout the container declares
      * @param codec the codec's output layout
-     * @return the track's ambisonic layout when the codec is PCM or FLAC, its output has no ambisonics and has as
-     * many channels, otherwise {@code null}
+     * @return the track's ambisonic layout when the codec is PCM, FLAC, AAC, ALAC or Vorbis, its output has no
+     * ambisonics and has as many channels, otherwise {@code null}
      */
     private static ChannelLayout declaredAmbisonics(AudioTrack track, ChannelLayout codec) {
-        // TODO: AAC, ALAC and Vorbis decoders reorder their coded channels to speaker order, so a container's
-        // ambisonic layout (SA3D of an AAC track) would need that reordering undone before it applies
-        var keepsOrder = track.codec().isPcm() || track.codec() == Codec.FLAC;
+        var known = track.codec().isPcm() || switch (track.codec()) {
+            case FLAC, AAC, ALAC, VORBIS -> true;
+            default -> false;
+        };
         var layout = track.layout().orElse(null);
-        return keepsOrder && layout != null && layout.ambisonics().isPresent() && codec.ambisonics().isEmpty()
+        return known && layout != null && layout.ambisonics().isPresent() && codec.ambisonics().isEmpty()
                 && layout.channels() == codec.channels() ? layout : null;
     }
 
     /**
+     * Returns the layout a codec's output channels carry when a container declares a layout for the stream's
+     * channels.
+     *
+     * <p>The stream order is the codec's output order when the codec gives every channel a speaker, which for AAC,
+     * ALAC and Vorbis is the WAVE order their decoders reorder the coded channels to, the order in which their
+     * encoders take their input; otherwise, as for an AAC program configuration with channels of no position, it
+     * is the coded order, and the codec's reordering is undone.
+     *
+     * @param declared the declared layout, in stream order
+     * @param codec the codec's output layout, of as many channels
+     * @param coded the coded channel of each output channel, from {@link AudioDecoder#codedChannelOrder()}
+     * @return {@code declared}, or its channels in the codec's output order
+     */
+    static ChannelLayout streamOrder(ChannelLayout declared, ChannelLayout codec, int[] coded) {
+        if (!codec.speakers().contains(Speaker.UNKNOWN) || !isReordering(coded, declared.channels())) {
+            return declared;
+        }
+        var ambisonics = declared.ambisonics().orElseThrow();
+        var componentOf = new int[declared.channels()];
+        var next = 0;
+        for (var channel = 0; channel < componentOf.length; channel++) {
+            componentOf[channel] = declared.speakers().get(channel) == Speaker.UNKNOWN
+                    ? ambisonics.components().get(next++) : -1;
+        }
+        var speakers = new ArrayList<Speaker>(coded.length);
+        var components = new ArrayList<Integer>(ambisonics.channels());
+        for (var source : coded) {
+            speakers.add(declared.speakers().get(source));
+            if (componentOf[source] >= 0) {
+                components.add(componentOf[source]);
+            }
+        }
+        return new ChannelLayout(speakers, Optional.of(new Ambisonics(ambisonics.normalization(), components)));
+    }
+
+    /**
+     * Returns whether an order is a permutation of the channels other than the identity.
+     *
+     * @param order the coded channel of each output channel
+     * @param channels the channel count
+     * @return {@code true} for a valid order that moves a channel
+     */
+    private static boolean isReordering(int[] order, int channels) {
+        if (order == null || order.length != channels) {
+            return false;
+        }
+        var seen = new boolean[channels];
+        var moves = false;
+        for (var channel = 0; channel < channels; channel++) {
+            var source = order[channel];
+            if (source < 0 || source >= channels || seen[source]) {
+                return false;
+            }
+            seen[source] = true;
+            moves |= source != channel;
+        }
+        return moves;
+    }
+
+    /**
      * Returns the layout a codec block is mixed from: the container's ambisonic layout in place of a codec layout
-     * of as many channels.
+     * of as many channels, in the codec's output order.
      *
      * @param layout the codec block's layout
      * @return the layout to mix from
      */
     private ChannelLayout relabel(ChannelLayout layout) {
-        return declared != null && layout.channels() == declared.channels() && layout.ambisonics().isEmpty()
-                ? declared : layout;
+        if (declared == null || layout.channels() != declared.channels() || layout.ambisonics().isPresent()) {
+            return layout;
+        }
+        if (relabeled == declared) {
+            return declared;
+        }
+        return layout.equals(codecLayout) ? relabeled : layout;
     }
 
     /**

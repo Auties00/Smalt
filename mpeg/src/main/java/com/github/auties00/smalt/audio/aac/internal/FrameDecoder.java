@@ -703,6 +703,25 @@ public final class FrameDecoder {
     }
 
     /**
+     * Returns the coded channel each output channel of {@link #layout()} carries.
+     *
+     * @return a new array holding, for every output channel, the coded channel index: the inverse of the active
+     * mapping, or the identity while no mapping is known, mono is output as stereo or an MPEG Surround upmix is
+     * output
+     */
+    public int[] codedChannelOrder() {
+        var layout = layout();
+        if (mapping != null && layout == mapping.layout()) {
+            return mapping.codedOrder();
+        }
+        var order = new int[layout.channels()];
+        for (var channel = 0; channel < order.length; channel++) {
+            order[channel] = channel;
+        }
+        return order;
+    }
+
+    /**
      * Returns whether a layout outputs two channels through parametric stereo.
      *
      * <p>A mono layout stays mono while MPEG Surround upmixes a mono downmix, which takes the place of

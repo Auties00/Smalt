@@ -328,6 +328,19 @@ public final class ChannelMapping {
     }
 
     /**
+     * Returns the coded channel each output channel receives.
+     *
+     * @return a new array holding, for every output channel, the coded channel index
+     */
+    public int[] codedOrder() {
+        var coded = new int[outputIndex.length];
+        for (var channel = 0; channel < outputIndex.length; channel++) {
+            coded[outputIndex[channel]] = channel;
+        }
+        return coded;
+    }
+
+    /**
      * Returns the output channel that receives a coded channel.
      *
      * @param codedChannel the coded channel index

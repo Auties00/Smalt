@@ -61,7 +61,13 @@ import java.util.Objects;
  * left-justified 32-bit samples. The Ambisonic B-format sub-formats (integer and float) read as PCM
  * whose layout is the Furse-Malham B-format of {@link
  * com.github.auties00.smalt.audio.Ambisonics#ofFurseMalham(int)} for the channel counts it defines, and
- * channels of {@link Speaker#UNKNOWN} position without ambisonics for other counts.
+ * channels of {@link Speaker#UNKNOWN} position without ambisonics for other counts. The Audio Definition Model
+ * metadata of a BW64 file (ITU-R BS.2076 and BS.2088) overrides the format's layout of PCM samples when its
+ * {@code chna} chunk and, where they are not common definitions of ITU-R BS.2094, the formats of its {@code axml}
+ * chunk give every track an HOA component of one normalization ({@code SN3D}, {@code N3D} or {@code FuMa}), or the
+ * front left or right speaker of a head-locked pair: the track's layout is then those
+ * {@linkplain com.github.auties00.smalt.audio.ChannelLayout#ambisonics() ambisonics}, in track order. Metadata that
+ * describes objects or other speakers leaves the format's layout.
  *
  * <p>The ADPCM and telephony formats are read by this demuxer, in the packets their {@link Codec} constant defines:
  * <table class="striped">
@@ -432,6 +438,12 @@ public final class WavDemuxer implements Demuxer {
                 return;
             }
             this.coded = null;
+            if (header.payload == Payload.PCM) {
+                var adm = AdmLayouts.layout(header.chna, header.axml, header.channels, !header.bigEndian);
+                if (adm != null) {
+                    header.layout = adm;
+                }
+            }
             this.metadata = Collections.unmodifiableMap(header.metadata);
             this.frameSize = header.blockAlign;
             this.channels = header.channels;
@@ -620,6 +632,16 @@ public final class WavDemuxer implements Demuxer {
          * The payload of the first {@code cue } chunk, or {@code null}.
          */
         private byte[] cue;
+
+        /**
+         * The payload of the first {@code chna} chunk, or {@code null}.
+         */
+        private byte[] chna;
+
+        /**
+         * The payload of the first {@code axml} chunk, or {@code null}.
+         */
+        private byte[] axml;
 
         /**
          * The payload of the first {@code LIST} chunk of form {@code adtl}, or {@code null}.
@@ -932,7 +954,6 @@ public final class WavDemuxer implements Demuxer {
         header.format = format;
         header.channels = channels;
         header.sampleRate = (int) sampleRate;
-        // TODO: the ambisonic layouts that BW64 ADM metadata (chna and axml HOA type definitions) declares
         header.layout = format.layout();
         header.hasFormat = true;
         var payload = payload(format);
@@ -1520,8 +1541,18 @@ public final class WavDemuxer implements Demuxer {
         switch (id) {
             case 0x62657874 -> RiffMetadataChunks.decodeBext(body, little, entries);
             case 0x69584D4C -> RiffMetadataChunks.decodeXml("iXML", body, entries);
-            case 0x61786D6C -> RiffMetadataChunks.decodeXml("axml", body, entries);
-            case 0x63686E61 -> RiffMetadataChunks.decodeChna(body, little, entries);
+            case 0x61786D6C -> {
+                if (header.axml == null) {
+                    header.axml = body;
+                }
+                RiffMetadataChunks.decodeXml("axml", body, entries);
+            }
+            case 0x63686E61 -> {
+                if (header.chna == null) {
+                    header.chna = body;
+                }
+                RiffMetadataChunks.decodeChna(body, little, entries);
+            }
             case 0x736D706C -> RiffMetadataChunks.decodeSmpl(body, little, entries);
             default -> {
                 if (header.cue == null) {

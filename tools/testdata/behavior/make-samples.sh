@@ -155,6 +155,8 @@ printf 'WEBVTT\n\nNOTE a comment block\n\n00:00.000 --> 00:00.400 align:start\nH
 
 python -I "$(dirname "$0")/make-wav-samples.py" "$out"
 python -I "$(dirname "$0")/make-ambisonic-samples.py" "$out"
+# needs the EBU ADM Renderer (pip install ear); see make-adm-samples.py
+python -I "$(dirname "$0")/make-adm-samples.py" "$out" "${EAR_UTILS:-ear-utils}"
 
 bitmap="$(dirname "$0")/make-bitmap-caption-samples.py"
 python -I "$bitmap" sup "$out/subtitle/pgs.sup"

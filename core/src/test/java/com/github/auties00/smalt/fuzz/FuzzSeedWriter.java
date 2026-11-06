@@ -11,6 +11,7 @@ import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.container.aiff.AiffMuxer;
 import com.github.auties00.smalt.container.dsd.DsdSamples;
 import com.github.auties00.smalt.container.matroska.MatroskaMuxer;
+import com.github.auties00.smalt.container.caf.CafMuxer;
 import com.github.auties00.smalt.container.mp4.Mp4Muxer;
 import com.github.auties00.smalt.container.mp4.Mp4MuxerOptions;
 import com.github.auties00.smalt.container.raw.RawMuxer;
@@ -903,7 +904,8 @@ class FuzzSeedWriter {
     }
 
     @Test
-    @DisplayName("writes ambisonic seeds: SA3D in MP4, the B-format WAVE sub-format and Opus mapping family 2")
+    @DisplayName("writes ambisonic seeds: SA3D and chan in MP4 and QuickTime, CAF labels, the B-format WAVE "
+            + "sub-format, BW64 ADM and Opus mapping family 2")
     void ambisonic() throws IOException {
         var foa = ffmpeg("wav", tone(8000, 0.05), "-c:a", "pcm_s16le", "-ac", "6");
         try (var demuxer = Containers.openDemuxer(MediaSource.of(foa))) {
@@ -929,6 +931,23 @@ class FuzzSeedWriter {
         }
         copy(DemuxerFuzzTest.class, "ogg", "valid-opus-ambisonic.opus", ffmpeg("opus", tone(48000, 0.1),
                 "-ac", "4", "-c:a", "libopus", "-mapping_family", "2", "-b:a", "48k"));
+        copy(DemuxerFuzzTest.class, "wav", "valid-adm-hoa.wav", Path.of("src", "test", "resources", "samples", "wav",
+                "adm-hoa-order1-sn3d.wav"));
+        try (var demuxer = Containers.openDemuxer(MediaSource.of(bFormat))) {
+            var packets = new java.util.ArrayList<com.github.auties00.smalt.track.Packet>();
+            for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                packets.add(packet);
+            }
+            var track = (com.github.auties00.smalt.track.AudioTrack) demuxer.tracks().getFirst();
+            // a Core Audio higher-order ambisonics tag in a QuickTime chan atom, and HOA channel labels in CAF
+            write(DemuxerFuzzTest.class, "mp4", "valid-ambisonic-chan.mov", mux(List.of(track.toBuilder()
+                    .layout(ChannelLayout.ofAmbisonics(Ambisonics.of(1, Ambisonics.Normalization.N3D))).build()),
+                    packets, sink -> new Mp4Muxer(sink, Mp4MuxerOptions.builder()
+                            .brand(Mp4MuxerOptions.Brand.QUICKTIME).build())));
+            write(DemuxerFuzzTest.class, "caf", "valid-ambisonic-labels.caf", mux(List.of(track.toBuilder()
+                    .layout(ChannelLayout.ofAmbisonics(new Ambisonics(Ambisonics.Normalization.N3D,
+                            List.of(3, 1, 2, 0)))).build()), packets, CafMuxer::new));
+        }
     }
 
     /** Muxes packets into memory. */

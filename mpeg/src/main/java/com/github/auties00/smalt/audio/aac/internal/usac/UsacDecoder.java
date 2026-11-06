@@ -295,6 +295,17 @@ public final class UsacDecoder {
     }
 
     /**
+     * {@return a new array holding the coded channel each output channel of {@link #layout()} carries}
+     */
+    public int[] codedChannelOrder() {
+        var coded = new int[outputOrder.length];
+        for (var channel = 0; channel < outputOrder.length; channel++) {
+            coded[outputOrder[channel]] = channel;
+        }
+        return coded;
+    }
+
+    /**
      * {@return whether the output includes a replicated high band}
      */
     public boolean sbrActive() {

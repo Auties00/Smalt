@@ -44,6 +44,24 @@ public interface AudioDecoder extends AutoCloseable {
     ChannelLayout layout();
 
     /**
+     * Returns the coded channel each output channel of {@link #layout()} carries: the decoders of codecs that code
+     * their channels in an order of their own (AAC, ALAC and Vorbis) reorder them to the WAVE order of their
+     * speakers, and this order undoes that reordering.
+     *
+     * @implSpec The default implementation returns {@code 0, 1, ..., layout().channels() - 1}, for a decoder that
+     * outputs its channels in coded order.
+     * @return a new array holding, for every output channel, the index of the channel in the order the stream codes
+     * them; a permutation of {@code 0} to {@code layout().channels() - 1}
+     */
+    default int[] codedChannelOrder() {
+        var order = new int[layout().channels()];
+        for (var channel = 0; channel < order.length; channel++) {
+            order[channel] = channel;
+        }
+        return order;
+    }
+
+    /**
      * Decodes one packet and hands every block of samples it completes to {@code output}.
      *
      * @param packet the next packet in decoding order

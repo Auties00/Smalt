@@ -4,6 +4,7 @@ linux-arm64-vector-full	audio	com.github.auties00.smalt.audio.alac.AlacEncoderIn
 linux-arm64-vector-full	audio	com.github.auties00.smalt.audio.opus.OpusEncoderAllocationTest	simd:enabled	12
 linux-arm64-vector-full	audio	com.github.auties00.smalt.audio.opus.OpusDnnAllocationTest	simd:enabled	10
 linux-arm64-vector-full	audio	com.github.auties00.smalt.audio.opus.internal.dnn.OpusDnnKernelAllocationTest	simd:enabled	4
+linux-arm64-vector-full	core	com.github.auties00.smalt.container.caf.CafAmbisonicAppleTest	platform:macos	10
 linux-arm64-vector-full	core	com.github.auties00.smalt.container.caf.CafAppleTest	platform:macos	29
 linux-arm64-vector-full	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
 linux-arm64-vector-full	core	com.github.auties00.smalt.container.hls.HlsSampleAesStreamTest	opt-in:sample-aes-stream	1
@@ -67,6 +68,7 @@ linux-arm64-vector-smoke	capture	com.github.auties00.smalt.capture.internal.wind
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.audio.loudness.LoudnessFfmpegTest	data:vector	8
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.container.ConformanceTest	data:vector	8
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.container.FileFormatConformanceTest	data:vector	144
+linux-arm64-vector-smoke	core	com.github.auties00.smalt.container.caf.CafAmbisonicAppleTest	platform:macos	10
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.container.caf.CafAppleTest	platform:macos	29
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.container.mxf.MxfThirdPartyTest	data:vector	2
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.container.packaging.DashTestVectorsTest	data:vector	2
@@ -249,6 +251,7 @@ linux-x64-scalar-smoke	core	com.github.auties00.smalt.audio.loudness.LoudnessFfm
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.audio.loudness.TruePeakKernelTest	simd:disabled	4
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.ConformanceTest	data:vector	8
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.FileFormatConformanceTest	data:vector	144
+linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.caf.CafAmbisonicAppleTest	platform:macos	10
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.caf.CafAppleTest	platform:macos	29
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.mxf.MxfThirdPartyTest	data:vector	2
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.ogg.OggCrcTest	simd:disabled	16
@@ -419,6 +422,7 @@ linux-x64-vector-full	capture	com.github.auties00.smalt.capture.internal.linux.W
 linux-x64-vector-full	capture	com.github.auties00.smalt.capture.internal.windows.WasapiAudioTest	platform:windows	5
 linux-x64-vector-full	capture	com.github.auties00.smalt.capture.internal.windows.WindowsCaptureTest	platform:windows	3
 linux-x64-vector-full	capture	com.github.auties00.smalt.capture.internal.windows.WindowsWindowCaptureTest	platform:windows	2
+linux-x64-vector-full	core	com.github.auties00.smalt.container.caf.CafAmbisonicAppleTest	platform:macos	10
 linux-x64-vector-full	core	com.github.auties00.smalt.container.caf.CafAppleTest	platform:macos	29
 linux-x64-vector-full	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
 linux-x64-vector-full	core	com.github.auties00.smalt.container.hls.HlsSampleAesStreamTest	opt-in:sample-aes-stream	1
@@ -480,6 +484,7 @@ linux-x64-vector-smoke	capture	com.github.auties00.smalt.capture.internal.window
 linux-x64-vector-smoke	core	com.github.auties00.smalt.audio.loudness.LoudnessFfmpegTest	data:vector	8
 linux-x64-vector-smoke	core	com.github.auties00.smalt.container.ConformanceTest	data:vector	8
 linux-x64-vector-smoke	core	com.github.auties00.smalt.container.FileFormatConformanceTest	data:vector	144
+linux-x64-vector-smoke	core	com.github.auties00.smalt.container.caf.CafAmbisonicAppleTest	platform:macos	10
 linux-x64-vector-smoke	core	com.github.auties00.smalt.container.caf.CafAppleTest	platform:macos	29
 linux-x64-vector-smoke	core	com.github.auties00.smalt.container.mxf.MxfThirdPartyTest	data:vector	2
 linux-x64-vector-smoke	core	com.github.auties00.smalt.container.packaging.DashTestVectorsTest	data:vector	2
@@ -817,6 +822,7 @@ windows-x64-vector-full	audio	com.github.auties00.smalt.audio.opus.OpusEncoderAl
 windows-x64-vector-full	audio	com.github.auties00.smalt.audio.opus.OpusDnnAllocationTest	simd:enabled	10
 windows-x64-vector-full	audio	com.github.auties00.smalt.audio.opus.internal.dnn.OpusDnnKernelAllocationTest	simd:enabled	4
 windows-x64-vector-full	core	com.github.auties00.smalt.SkipTest	platform:unix	1
+windows-x64-vector-full	core	com.github.auties00.smalt.container.caf.CafAmbisonicAppleTest	platform:macos	10
 windows-x64-vector-full	core	com.github.auties00.smalt.container.caf.CafAppleTest	platform:macos	29
 windows-x64-vector-full	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
 windows-x64-vector-full	core	com.github.auties00.smalt.container.hls.HlsSampleAesStreamTest	opt-in:sample-aes-stream	1
@@ -872,6 +878,7 @@ windows-x64-vector-smoke	core	com.github.auties00.smalt.SkipTest	platform:unix	1
 windows-x64-vector-smoke	core	com.github.auties00.smalt.audio.loudness.LoudnessFfmpegTest	data:vector	8
 windows-x64-vector-smoke	core	com.github.auties00.smalt.container.ConformanceTest	data:vector	8
 windows-x64-vector-smoke	core	com.github.auties00.smalt.container.FileFormatConformanceTest	data:vector	144
+windows-x64-vector-smoke	core	com.github.auties00.smalt.container.caf.CafAmbisonicAppleTest	platform:macos	10
 windows-x64-vector-smoke	core	com.github.auties00.smalt.container.caf.CafAppleTest	platform:macos	29
 windows-x64-vector-smoke	core	com.github.auties00.smalt.container.mxf.MxfThirdPartyTest	data:vector	2
 windows-x64-vector-smoke	core	com.github.auties00.smalt.container.packaging.DashTestVectorsTest	data:vector	2

@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.audio.alac;
 
+import com.github.auties00.smalt.audio.Ambisonics;
 import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.AudioEncoderOptions;
 import com.github.auties00.smalt.audio.AudioEncoders;
@@ -388,7 +389,11 @@ class AlacEncoderTest {
                     Arguments.of(ChannelLayout.defaultFor(4), List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT,
                             Speaker.FRONT_CENTER, Speaker.BACK_CENTER)),
                     Arguments.of(new ChannelLayout(Collections.nCopies(3, Speaker.UNKNOWN)),
-                            List.of(AlacDecoder.BITSTREAM_ORDER[2])),
+                            List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.FRONT_CENTER)),
+                    Arguments.of(ChannelLayout.ofAmbisonics(1), List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT,
+                            Speaker.FRONT_CENTER, Speaker.BACK_CENTER)),
+                    Arguments.of(ChannelLayout.ofAmbisonics(Ambisonics.of(1), List.of(Speaker.FRONT_LEFT,
+                            Speaker.FRONT_RIGHT)), ChannelLayout.SURROUND_5_1.speakers()),
                     Arguments.of(ChannelLayout.MONO, ChannelLayout.MONO.speakers()),
                     Arguments.of(new ChannelLayout(List.of(Speaker.FRONT_RIGHT, Speaker.FRONT_LEFT)),
                             List.of(Speaker.FRONT_RIGHT, Speaker.FRONT_LEFT)));
@@ -396,7 +401,7 @@ class AlacEncoderTest {
 
         @ParameterizedTest(name = "{0}")
         @MethodSource("layouts")
-        @DisplayName("an input channel decodes as its speaker, or as the free speaker it takes in input order")
+        @DisplayName("an input channel decodes as its speaker, or as the free speaker it takes in input order, in WAVE order")
         void assignment(ChannelLayout layout, List<Speaker> decodedAs) {
             var channels = layout.channels();
             var samples = new int[channels][3000];

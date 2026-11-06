@@ -1,8 +1,8 @@
 package com.github.auties00.smalt.container.caf;
 
-import com.github.auties00.smalt.audio.Ambisonics;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.Speaker;
+import com.github.auties00.smalt.container.internal.CoreAudioAmbisonics;
 import com.github.auties00.smalt.container.internal.WaveFormat;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.io.ByteWriter;
@@ -40,24 +40,9 @@ final class CafChannelLayouts {
     private static final int DISCRETE_IN_ORDER = 147 << 16;
 
     /**
-     * The tag of Higher Order Ambisonics in ACN order with SN3D normalization; the channel count is added.
-     */
-    private static final int HOA_ACN_SN3D = 190 << 16;
-
-    /**
-     * The tag of Higher Order Ambisonics in ACN order with N3D normalization; the channel count is added.
-     */
-    private static final int HOA_ACN_N3D = 191 << 16;
-
-    /**
-     * The tag of first-order Furse-Malham B-format, {@code W X Y Z}.
-     */
-    private static final int AMBISONIC_B_FORMAT = 107 << 16 | 4;
-
-    /**
      * The label of a channel of unknown role.
      */
-    private static final int LABEL_UNKNOWN = 0xFFFFFFFF;
+    private static final int LABEL_UNKNOWN = CoreAudioAmbisonics.LABEL_UNKNOWN;
 
     /**
      * The speakers of the layout tags this class reads, by tag.
@@ -210,17 +195,11 @@ final class CafChannelLayouts {
         if (known != null) {
             return new ChannelLayout(known);
         }
-        if (tag == AMBISONIC_B_FORMAT) {
-            return ChannelLayout.ofAmbisonics(Ambisonics.ofFurseMalham(4));
+        var ambisonic = CoreAudioAmbisonics.fromTag(tag);
+        if (ambisonic != null) {
+            return ambisonic;
         }
         var family = tag & 0xFFFF0000;
-        if ((family == HOA_ACN_SN3D || family == HOA_ACN_N3D) && isSquare(channels)) {
-            var order = (int) Math.round(Math.sqrt(channels)) - 1;
-            if (order <= Ambisonics.MAX_ORDER) {
-                return ChannelLayout.ofAmbisonics(Ambisonics.of(order, family == HOA_ACN_SN3D
-                        ? Ambisonics.Normalization.SN3D : Ambisonics.Normalization.N3D));
-            }
-        }
         if (family == DISCRETE_IN_ORDER || family == 0xFFFF0000) {
             return new ChannelLayout(Collections.nCopies(channels, Speaker.UNKNOWN));
         }
@@ -228,22 +207,12 @@ final class CafChannelLayouts {
     }
 
     /**
-     * Returns whether a count is the square of an integer.
-     *
-     * @param count the count, positive
-     * @return {@code true} for 1, 4, 9, 16 and so on
-     */
-    private static boolean isSquare(int count) {
-        var root = (int) Math.round(Math.sqrt(count));
-        return root * root == count;
-    }
-
-    /**
      * Returns the layout of channels described by their labels.
      *
      * @param labels the label of every channel, in order
      * @return the layout; a label that names no speaker gives {@link Speaker#UNKNOWN}, as does a speaker a previous
-     * channel already took
+     * channel already took, and the channels with ambisonic labels are the layout's ambisonics
+     * ({@link CoreAudioAmbisonics#withAmbisonics(int[], List)})
      */
     private static ChannelLayout fromLabels(int[] labels) {
         var sides = false;
@@ -265,14 +234,15 @@ final class CafChannelLayouts {
             };
             speakers.add(speaker != Speaker.UNKNOWN && speakers.contains(speaker) ? Speaker.UNKNOWN : speaker);
         }
-        return new ChannelLayout(speakers);
+        return CoreAudioAmbisonics.withAmbisonics(labels, speakers);
     }
 
     /**
      * Writes the body of a {@code chan} chunk for a layout.
      *
      * <p>A layout that a tag describes gets the tag, preferring the first one of the table; one whose speakers are in
-     * WAVE mask order gets the bitmap; any other gets one description per channel, with the unknown label for the
+     * WAVE mask order gets the bitmap; any other gets one description per channel, with the ambisonic label of each
+     * ambisonic channel ({@link CoreAudioAmbisonics#labelsOf(ChannelLayout)}) and the unknown label for the other
      * channels of no position.
      *
      * @param layout the channel layout to describe
@@ -280,21 +250,9 @@ final class CafChannelLayouts {
      */
     static byte[] write(ChannelLayout layout) {
         var channels = layout.channels();
-        var tag = -1;
+        var tag = CoreAudioAmbisonics.tagOf(layout);
         var ambisonics = layout.ambisonics().orElse(null);
-        if (ambisonics != null && ambisonics.channels() == channels) {
-            if (layout.equals(ChannelLayout.ofAmbisonics(Ambisonics.ofFurseMalham(4)))) {
-                tag = AMBISONIC_B_FORMAT;
-            } else if (isSquare(channels) && channels <= (Ambisonics.MAX_ORDER + 1) * (Ambisonics.MAX_ORDER + 1)) {
-                var order = (int) Math.round(Math.sqrt(channels)) - 1;
-                if (layout.equals(ChannelLayout.ofAmbisonics(Ambisonics.of(order, Ambisonics.Normalization.SN3D)))) {
-                    tag = HOA_ACN_SN3D | channels;
-                } else if (layout.equals(ChannelLayout.ofAmbisonics(Ambisonics.of(order,
-                        Ambisonics.Normalization.N3D)))) {
-                    tag = HOA_ACN_N3D | channels;
-                }
-            }
-        }
+        var ambisonicLabels = CoreAudioAmbisonics.labelsOf(layout);
         if (tag < 0 && ambisonics == null) {
             for (var entry : TAGS.entrySet()) {
                 if (entry.getValue().equals(layout.speakers())) {
@@ -313,7 +271,7 @@ final class CafChannelLayouts {
             writer.u32be(USE_BITMAP);
             writer.u32be(bitmap);
             writer.u32be(0);
-        } else if (layout.speakers().stream().allMatch(speaker -> speaker == Speaker.UNKNOWN)) {
+        } else if (ambisonics == null && layout.speakers().stream().allMatch(speaker -> speaker == Speaker.UNKNOWN)) {
             writer.u32be(DISCRETE_IN_ORDER | channels);
             writer.u32be(0);
             writer.u32be(0);
@@ -321,8 +279,10 @@ final class CafChannelLayouts {
             writer.u32be(USE_DESCRIPTIONS);
             writer.u32be(0);
             writer.u32be(channels);
-            for (var speaker : layout.speakers()) {
-                writer.u32be(label(speaker));
+            for (var channel = 0; channel < channels; channel++) {
+                var speaker = layout.speakers().get(channel);
+                writer.u32be(speaker == Speaker.UNKNOWN && ambisonicLabels != null ? ambisonicLabels[channel]
+                        : label(speaker));
                 writer.u32be(0);
                 writer.zeros(12);
             }

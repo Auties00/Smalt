@@ -172,6 +172,23 @@ public final class VorbisDecoder implements AudioDecoder {
     }
 
     /**
+     * {@inheritDoc}
+     *
+     * <p>The coded order is the Vorbis I channel order for three to eight channels (5.1 is coded as front left,
+     * center, front right, back left, back right, LFE) and the WAVE order for any other count.
+     */
+    @Override
+    public int[] codedChannelOrder() {
+        var channels = layout.channels();
+        var order = VorbisChannelOrder.toWave(channels);
+        var coded = new int[channels];
+        for (var channel = 0; channel < channels; channel++) {
+            coded[order != null ? order[channel] : channel] = channel;
+        }
+        return coded;
+    }
+
+    /**
      * Decodes one audio packet and hands the samples it completes to {@code output}.
      *
      * <p>The first packet after construction or {@link #flush(Consumer)} yields nothing; every

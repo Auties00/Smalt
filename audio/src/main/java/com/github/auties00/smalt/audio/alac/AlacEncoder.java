@@ -222,7 +222,10 @@ public final class AlacEncoder implements AudioEncoder {
 
     /**
      * Assigns each input channel its bitstream channel: channels whose speaker belongs to ALAC's
-     * arrangement take its position, and the others take the free positions in input order.
+     * arrangement take its position, and the others take the free positions in the WAVE order of their
+     * speakers, in input order, so that the decoder returns them in input order. Every channel of an
+     * ambisonic layout takes the position of its index in WAVE order, so that the decoder returns the whole
+     * layout, its non-diegetic speakers included, in input order.
      *
      * @param layout the input layout
      * @return the bitstream channel of each input channel
@@ -233,18 +236,20 @@ public final class AlacEncoder implements AudioEncoder {
         var slotOf = new int[count];
         Arrays.fill(slotOf, -1);
         var taken = new boolean[count];
-        for (var slot = 0; slot < count; slot++) {
+        for (var slot = 0; slot < count && layout.ambisonics().isEmpty(); slot++) {
             var input = layout.indexOf(speakers[slot]);
             if (input >= 0 && slotOf[input] < 0) {
                 slotOf[input] = slot;
                 taken[slot] = true;
             }
         }
-        var free = 0;
         for (var input = 0; input < count; input++) {
             if (slotOf[input] < 0) {
-                while (taken[free]) {
-                    free++;
+                var free = -1;
+                for (var slot = 0; slot < count; slot++) {
+                    if (!taken[slot] && (free < 0 || speakers[slot].ordinal() < speakers[free].ordinal())) {
+                        free = slot;
+                    }
                 }
                 slotOf[input] = free;
                 taken[free] = true;

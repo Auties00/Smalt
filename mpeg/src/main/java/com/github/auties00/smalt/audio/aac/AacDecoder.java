@@ -589,6 +589,16 @@ public final class AacDecoder implements AudioDecoder {
     }
 
     /**
+     * {@inheritDoc}
+     *
+     * <p>A mono core output as stereo and an MPEG Surround upmix report the identity order.
+     */
+    @Override
+    public int[] codedChannelOrder() {
+        return usac != null ? usac.codedChannelOrder() : decoder.codedChannelOrder();
+    }
+
+    /**
      * {@return the number of samples per channel each raw data block decodes to: 1024, or 960 when
      * the configuration sets the frame length flag (512 or 480 for AAC-LD and AAC-ELD), doubled
      * when spectral band replication doubles the rate}

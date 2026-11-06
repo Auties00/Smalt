@@ -24,6 +24,7 @@ import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
 import com.github.auties00.smalt.internal.codec.IntermediateFrames;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.header.OpusHeader;
+import com.github.auties00.smalt.container.internal.CoreAudioAmbisonics;
 import com.github.auties00.smalt.internal.heif.BoxCursor;
 import com.github.auties00.smalt.internal.heif.DataReferences;
 import com.github.auties00.smalt.internal.io.FourCc;
@@ -108,6 +109,12 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
      * The QuickTime {@code kAudioChannelLayoutTag_UseChannelBitmap} tag.
      */
     private static final int LAYOUT_USE_BITMAP = 1 << 16;
+
+    /**
+     * The largest number of channel descriptions read from a {@code chan} atom: the 227 channels of a fourteenth-order
+     * sound field with a head-locked pair fit.
+     */
+    private static final int MAX_CHANNEL_DESCRIPTIONS = 256;
 
     /**
      * The 3GPP timed text sample entry type ({@code tx3g}).
@@ -1372,6 +1379,9 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
     /**
      * Parses a QuickTime {@code chan} atom.
      *
+     * <p>The higher-order ambisonics tags and the ambisonic channel labels give a layout with
+     * {@linkplain ChannelLayout#ambisonics() ambisonics} ({@link CoreAudioAmbisonics}).
+     *
      * @param body the atom payload
      * @return the layout, or {@code null} when it is not one this parser maps
      */
@@ -1382,14 +1392,16 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         var descriptions = body.u32();
         var speakers = new ArrayList<Speaker>();
         if (tag == LAYOUT_USE_DESCRIPTIONS) {
-            if (descriptions > 64 || descriptions * 20 > body.remaining()) {
+            if (descriptions > MAX_CHANNEL_DESCRIPTIONS || descriptions * 20 > body.remaining()) {
                 return null;
             }
+            var labels = new int[(int) descriptions];
             for (var index = 0; index < descriptions; index++) {
-                var label = body.s32();
+                labels[index] = body.s32();
                 body.skip(16);
-                speakers.add(quickTimeLabel(label));
+                speakers.add(quickTimeLabel(labels[index]));
             }
+            return speakers.isEmpty() ? null : CoreAudioAmbisonics.withAmbisonics(labels, speakers);
         } else if (tag == LAYOUT_USE_BITMAP) {
             var speakerValues = Speaker.values();
             for (var bit = 0; bit < 18; bit++) {
@@ -1398,8 +1410,10 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                 }
             }
         } else {
-            // TODO: the higher-order ambisonics layout tags (ACN with SN3D or N3D scaling) and channel labels, once
-            // their values are confirmed against a specification or a sample file
+            var ambisonic = CoreAudioAmbisonics.fromTag(tag);
+            if (ambisonic != null) {
+                return ambisonic;
+            }
             return switch (tag >>> 16) {
                 case 100 -> ChannelLayout.MONO;
                 case 101, 102 -> ChannelLayout.STEREO;

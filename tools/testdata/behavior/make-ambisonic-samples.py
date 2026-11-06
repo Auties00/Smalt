@@ -8,7 +8,10 @@
   writes it;
 - wav/ambisonic-bformat.wav: four channels of 16-bit PCM in the Ambisonic B-format WAVE sub-format
   (WAVE_FORMAT_EXTENSIBLE, KSDATAFORMAT_SUBTYPE_AMBISONIC_B_FORMAT_PCM, channel mask 0), written around the
-  samples ffmpeg makes.
+  samples ffmpeg makes;
+- mp4/ambisonic-aac.mp4: first-order ambisonics coded by ffmpeg's AAC encoder (four channels, channel configuration
+  4) with the spatial audio box the spatial media injector writes (ambisonic type 0, ACN, SN3D, channel map 0 to 3),
+  added by this script.
 
 As for make-samples.sh, the committed files are the reference their golden dumps are tied to.
 
@@ -92,6 +95,12 @@ def main():
         with open(mov, "rb") as handle:
             data = inject(handle.read(), sa3d_box(0x80, 1, list(range(6))))
         with open(os.path.join(out, "mp4", "ambisonic.mov"), "wb") as handle:
+            handle.write(data)
+        aac = os.path.join(scratch, "ambisonic-aac.mp4")
+        ffmpeg(*noise, "-af", pan(4).replace("4C", "4.0", 1), "-c:a", "aac", "-b:a", "192k", "-f", "mp4", aac)
+        with open(aac, "rb") as handle:
+            data = inject(handle.read(), sa3d_box(0, 1, list(range(4))))
+        with open(os.path.join(out, "mp4", "ambisonic-aac.mp4"), "wb") as handle:
             handle.write(data)
         raw = os.path.join(scratch, "ambisonic.raw")
         ffmpeg(*noise, "-af", pan(4), "-f", "s16le", "-c:a", "pcm_s16le", raw)

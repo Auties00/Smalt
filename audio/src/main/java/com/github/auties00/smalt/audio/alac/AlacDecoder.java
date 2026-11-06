@@ -400,6 +400,20 @@ public final class AlacDecoder implements AudioDecoder {
         return layout;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The coded order is ALAC's bitstream order: the center first for three to eight channels.
+     */
+    @Override
+    public int[] codedChannelOrder() {
+        var coded = new int[planeOf.length];
+        for (var channel = 0; channel < planeOf.length; channel++) {
+            coded[planeOf[channel]] = channel;
+        }
+        return coded;
+    }
+
     @Override
     public void decode(Packet packet, Consumer<AudioBuffer> output) {
         Objects.requireNonNull(packet, "packet");
