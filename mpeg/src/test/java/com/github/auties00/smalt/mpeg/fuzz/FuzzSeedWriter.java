@@ -914,6 +914,45 @@ class FuzzSeedWriter {
         write(MpegFuzzTest.class, "heic", "valid-encoder-sequence.heic", sink.toByteArray());
     }
 
+    @Test
+    @DisplayName("writes the HEIC seed of a sequence whose alpha track is timed unlike its color track")
+    void heicSequenceAlpha() {
+        var color = ffmpeg("mp4", video(32, 32, 6), "-c:v", "libx265", "-preset", "ultrafast", "-x265-params",
+                "keyint=3:min-keyint=3:bframes=0:scenecut=0:log-level=error", "-tag:v", "hvc1");
+        var alpha = ffmpeg("mp4", List.of("-f", "lavfi", "-i",
+                        "nullsrc=size=32x32:rate=10:duration=0.6,geq=lum='40+N*30':cb=128:cr=128,format=gray"),
+                "-pix_fmt", "gray", "-c:v", "libx265", "-preset", "ultrafast", "-x265-params",
+                "keyint=2:min-keyint=2:bframes=0:scenecut=0:log-level=error", "-tag:v", "hvc1");
+        var builder = new com.github.auties00.smalt.testkit.HeifSequenceBuilder("msf1", 1000, "msf1", "iso8", "mif1");
+        var colorTrack = sequenceTrack(builder, color, 100);
+        var alphaTrack = sequenceTrack(builder, alpha, 35,
+                com.github.auties00.smalt.testkit.HeifSequenceBuilder.auxi("urn:mpeg:mpegB:cicp:systems:auxiliary:alpha"));
+        builder.reference("auxl", alphaTrack, colorTrack);
+        write(MpegFuzzTest.class, "heic", "valid-sequence-alpha-timing.heic", builder.build());
+    }
+
+    /** Adds the HEVC track of an MP4 file to a sequence, with its sync samples and a duration of its own per sample. */
+    private static int sequenceTrack(com.github.auties00.smalt.testkit.HeifSequenceBuilder builder, Path mp4, int delta,
+                                     byte[]... entryChildren) {
+        try (var source = MediaSource.of(mp4); var demuxer = Containers.openDemuxer(source)) {
+            var track = (VideoTrack) demuxer.tracks().getFirst();
+            var samples = new ArrayList<byte[]>();
+            var sync = new ArrayList<Integer>();
+            for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                if (packet.keyframe()) {
+                    sync.add(samples.size());
+                }
+                samples.add(packet.data());
+            }
+            var children = new ArrayList<byte[]>();
+            children.add(HeifBuilder.box("hvcC", track.codecConfig().orElseThrow()));
+            children.addAll(List.of(entryChildren));
+            var id = builder.track("hvc1", track.width(), track.height(), delta, samples, children.toArray(byte[][]::new));
+            builder.syncSamples(id, sync.stream().mapToInt(Integer::intValue).toArray());
+            return id;
+        }
+    }
+
     /** Returns a picture of gradients that moves with {@code frame}, more transparent to the left when asked. */
     private static RgbaPicture gradient(int width, int height, int frame, boolean transparent) {
         var pixels = new byte[width * height * 4];

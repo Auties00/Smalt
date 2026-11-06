@@ -10,9 +10,11 @@ import org.junit.jupiter.params.provider.EnumSource;
 
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -106,6 +108,47 @@ class TrackApiTest {
             assertEquals(Packet.UNKNOWN_DURATION, new Packet(1, data, 0, 0, 5, true)
                     .withTiming(0, 0, Packet.UNKNOWN_DURATION).duration());
             assertThrows(IllegalArgumentException.class, () -> new Packet(1, data, 0, 0, -2, true));
+        }
+    }
+
+    @Nested
+    @DisplayName("Packet sample index")
+    class PacketSampleIndex {
+        @Test
+        @DisplayName("is unknown through the constructors that do not take it")
+        void unknownByDefault() {
+            var data = new byte[1];
+            assertEquals(-1, Packet.NO_SAMPLE_INDEX);
+            assertEquals(Packet.NO_SAMPLE_INDEX, new Packet(1, data, 0, 0, 0, true).sampleIndex());
+            assertEquals(Packet.NO_SAMPLE_INDEX, new Packet(1, data, 0, 0, 0, Set.of(), PacketSideData.NONE)
+                    .sampleIndex());
+        }
+
+        @Test
+        @DisplayName("survives every copy method and joins equality")
+        void keptByCopies() {
+            var data = new byte[1];
+            var packet = new Packet(1, data, 0, 0, 0, Set.of(PacketFlag.KEY), PacketSideData.NONE, 7);
+            assertEquals(7, packet.sampleIndex());
+            assertEquals(7, packet.withTrackId(2).sampleIndex());
+            assertEquals(7, packet.withData(new byte[2]).sampleIndex());
+            assertEquals(7, packet.withTiming(1, 1, 1).sampleIndex());
+            assertEquals(7, packet.withFlags(Set.of()).sampleIndex());
+            assertEquals(7, packet.withSideData(PacketSideData.builder().discard(1, 0).build()).sampleIndex());
+            assertEquals(9, packet.withSampleIndex(9).sampleIndex());
+            assertEquals(Packet.NO_SAMPLE_INDEX, packet.withSampleIndex(Packet.NO_SAMPLE_INDEX).sampleIndex());
+            assertEquals(packet, packet.withSampleIndex(7));
+            assertNotEquals(packet, packet.withSampleIndex(8));
+        }
+
+        @Test
+        @DisplayName("rejects negative indexes other than the unknown value")
+        void validates() {
+            var data = new byte[1];
+            assertThrows(IllegalArgumentException.class,
+                    () -> new Packet(1, data, 0, 0, 0, Set.of(), PacketSideData.NONE, -2));
+            var packet = new Packet(1, data, 0, 0, 0, true);
+            assertThrows(IllegalArgumentException.class, () -> packet.withSampleIndex(Long.MIN_VALUE));
         }
     }
 

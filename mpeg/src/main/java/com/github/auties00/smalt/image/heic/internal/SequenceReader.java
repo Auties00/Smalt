@@ -42,8 +42,9 @@ import java.util.function.Supplier;
  * reference); the alpha track is the first such track that references it with {@code auxl} and
  * whose {@code auxi} box, when present, names an alpha URN. The samples are read through
  * {@link Mp4Demuxer} and decoded in output order, so sequences with inter prediction and
- * reordering play in display order; the n-th alpha picture is the alpha plane of the n-th color
- * picture. Pictures the stream marks as not output, and pictures whose presentation time falls
+ * reordering play in display order. The alpha plane of the picture of the n-th color sample, in
+ * decoding order, is the picture of the n-th alpha sample, whatever the timing of the two tracks.
+ * Color pictures the stream marks as not output, and color pictures whose presentation time falls
  * before the start of the edit list, are skipped.
  *
  * <p>Each frame is converted to RGBA: 16-bit RGBA when the reader keeps a source depth above 8
@@ -56,14 +57,20 @@ import java.util.function.Supplier;
  *
  * <p>The reader seeks: it restarts both tracks at their last sync samples at or before the
  * requested time, decodes the pictures up to the one shown then, which is the picture a decode
- * from the start shows, and pairs it with the alpha picture that starts last at or before it.
- * That is the alpha picture a read from the start pairs it with whenever the n-th alpha picture
- * starts when the n-th color picture does; for an alpha track timed otherwise the two can differ.
- * Instances are not thread-safe.
+ * from the start shows, and pairs it with the picture of the alpha sample of the same index, so
+ * a seek returns the frames a read from the start does. When the alpha track restarts after that
+ * sample, or its picture cannot be decoded from where the alpha track restarts, the reader
+ * restarts both tracks at earlier times, down to the start, until it can. Instances are not
+ * thread-safe.
  */
 public final class SequenceReader implements AnimationReader {
-    // TODO: pair the color and alpha pictures by their index after a seek too, which needs the sample index of the
-    //  packets the demuxer returns, so that an alpha track timed unlike its color track seeks as it reads
+    /**
+     * How far, in samples, the index of a picture output may lie from the index of the last sample fed to its
+     * decoder: the 16 pictures a decoded picture buffer holds at most (ITU-T H.264 and H.265 Annex A), with
+     * margin, plus the samples the frame-threaded engine takes ahead of its output.
+     */
+    private static final int WINDOW = 32 + 2 * ParallelBands.THREADS;
+
     /**
      * Accepts the sample entries of HEVC and AVC tracks.
      */
@@ -147,17 +154,6 @@ public final class SequenceReader implements AnimationReader {
     private long colorBase = Packet.NO_TIMESTAMP;
 
     /**
-     * The presentation time of the first alpha picture, in track time base units, or
-     * {@link Packet#NO_TIMESTAMP} until it is known.
-     */
-    private long alphaBase = Packet.NO_TIMESTAMP;
-
-    /**
-     * The alpha track, or {@code null}.
-     */
-    private final VideoTrack alphaTrack;
-
-    /**
      * The frame a seek decoded, which the next {@link #read()} returns, or {@code null}.
      */
     private AnimationFrame pending;
@@ -174,14 +170,27 @@ public final class SequenceReader implements AnimationReader {
     private int frames;
 
     /**
+     * A decoded picture and the sample that carried it.
+     */
+    private sealed interface Decoded permits ColorPicture, AlphaPicture {
+        /**
+         * {@return the index of the sample that carried the picture in its track, or
+         * {@link Packet#NO_SAMPLE_INDEX} when no sample fed to the decoder has the presentation time it returned}
+         */
+        long index();
+    }
+
+    /**
      * One decoded color picture, waiting for its alpha plane.
      *
      * @param canvas the planes
      * @param color the color description
      * @param pts the presentation time of the sample that carried it, in track time base units
      * @param duration the duration of the sample that carried it, in track time base units
+     * @param index the index of the sample that carried it, or {@link Packet#NO_SAMPLE_INDEX}
      */
-    private record ColorPicture(HeifCanvas canvas, ColorInfo color, long pts, long duration) {
+    private record ColorPicture(HeifCanvas canvas, ColorInfo color, long pts, long duration, long index)
+            implements Decoded {
     }
 
     /**
@@ -189,17 +198,21 @@ public final class SequenceReader implements AnimationReader {
      *
      * @param picture the picture whose luma plane is the alpha plane
      * @param limited whether its samples are limited range
-     * @param pts the presentation time of the sample that carried it, in track time base units
+     * @param index the index of the sample that carried it, or {@link Packet#NO_SAMPLE_INDEX}
      */
-    private record AlphaPicture(Picture picture, boolean limited, long pts) {
+    private record AlphaPicture(Picture picture, boolean limited, long index) implements Decoded {
     }
 
     /**
      * Decodes the samples of one track into the pictures it holds until they are read.
      *
+     * <p>The lane remembers the presentation time and the index of the last {@code 2 * WINDOW}
+     * samples it fed, so that a decoded picture, which carries the presentation time of its
+     * sample, learns the index of that sample.
+     *
      * @param <T> the type of the pictures
      */
-    private static final class Lane<T> {
+    private static final class Lane<T extends Decoded> {
         /**
          * The decoder of the track.
          */
@@ -211,9 +224,39 @@ public final class SequenceReader implements AnimationReader {
         private final Supplier<Packet> samples;
 
         /**
+         * The bounds of the pictures held.
+         */
+        private final MediaLimits limits;
+
+        /**
          * The pictures decoded and not yet read.
          */
         private final ArrayDeque<T> pictures = new ArrayDeque<>();
+
+        /**
+         * The presentation times of the samples fed last, in a ring indexed by the feed count.
+         */
+        private final long[] fedPts = new long[2 * WINDOW];
+
+        /**
+         * The indexes of the samples fed last, in the ring of {@link #fedPts}.
+         */
+        private final long[] fedIndexes = new long[2 * WINDOW];
+
+        /**
+         * Whether the decoder output the picture of each sample fed last, in the ring of {@link #fedPts}.
+         */
+        private final boolean[] fedOutput = new boolean[2 * WINDOW];
+
+        /**
+         * The number of samples fed since the decoder was last opened.
+         */
+        private int fed;
+
+        /**
+         * The index of the last sample fed, or {@link Packet#NO_SAMPLE_INDEX} before the first.
+         */
+        private long lastFed = Packet.NO_SAMPLE_INDEX;
 
         /**
          * Whether the decoder was flushed.
@@ -235,10 +278,12 @@ public final class SequenceReader implements AnimationReader {
          *
          * @param decoder the decoder of the track
          * @param samples supplies the next sample of the track, or {@code null} at its end
+         * @param limits the bounds; at most {@link MediaLimits#maxFrames()} pictures are held
          */
-        private Lane(ItemDecoder decoder, Supplier<Packet> samples) {
+        private Lane(ItemDecoder decoder, Supplier<Packet> samples, MediaLimits limits) {
             this.decoder = decoder;
             this.samples = samples;
+            this.limits = limits;
         }
 
         /**
@@ -263,6 +308,8 @@ public final class SequenceReader implements AnimationReader {
             decoder.configure(configuration);
             pictures.clear();
             flushed = false;
+            fed = 0;
+            lastFed = Packet.NO_SAMPLE_INDEX;
         }
 
         /**
@@ -281,9 +328,79 @@ public final class SequenceReader implements AnimationReader {
          * Keeps a decoded picture until it is read.
          *
          * @param picture the decoded picture
+         * @throws MediaException.LimitExceeded if more than {@link MediaLimits#maxFrames()} pictures
+         * would be held
          */
         private void add(T picture) {
+            if (pictures.size() >= limits.maxFrames()) {
+                throw new MediaException.LimitExceeded("heic: the color and alpha pictures are too far apart");
+            }
             pictures.add(picture);
+        }
+
+        /**
+         * Returns the index of the sample a decoded picture came from, and marks the picture of
+         * that sample output.
+         *
+         * @param pts the presentation time the decoder returned with the picture
+         * @return the index of the oldest sample fed with that presentation time whose picture was
+         * not output yet, or {@link Packet#NO_SAMPLE_INDEX} when there is none
+         */
+        private long indexOf(long pts) {
+            for (var count = Math.max(0, fed - fedPts.length); count < fed; count++) {
+                var slot = count % fedPts.length;
+                if (!fedOutput[slot] && fedPts[slot] == pts) {
+                    fedOutput[slot] = true;
+                    return fedIndexes[slot];
+                }
+            }
+            return Packet.NO_SAMPLE_INDEX;
+        }
+
+        /**
+         * {@return the lowest index of the samples whose pictures the lane may still return: the
+         * pictures it holds and the samples it fed whose picture was not output yet, or
+         * {@link Long#MAX_VALUE} when there are none}
+         */
+        private long lowestPending() {
+            var lowest = Long.MAX_VALUE;
+            for (var picture : pictures) {
+                if (picture.index() >= 0) {
+                    lowest = Math.min(lowest, picture.index());
+                }
+            }
+            for (var count = Math.max(0, fed - fedPts.length); count < fed; count++) {
+                var slot = count % fedPts.length;
+                if (!fedOutput[slot] && fedIndexes[slot] >= 0) {
+                    lowest = Math.min(lowest, fedIndexes[slot]);
+                }
+            }
+            return lowest;
+        }
+
+        /**
+         * Feeds the next sample to the decoder, or flushes the decoder at the end of the track.
+         *
+         * @return {@code false} when the decoder was already flushed
+         */
+        private boolean step() {
+            if (flushed) {
+                return false;
+            }
+            var packet = samples.get();
+            if (packet == null) {
+                flushed = true;
+                decoder.flush();
+                return true;
+            }
+            var slot = fed % fedPts.length;
+            fedPts[slot] = packet.pts();
+            fedIndexes[slot] = packet.sampleIndex();
+            fedOutput[slot] = false;
+            fed++;
+            lastFed = packet.sampleIndex();
+            decoder.feed(packet.data(), packet.pts(), packet.duration());
+            return true;
         }
 
         /**
@@ -291,16 +408,46 @@ public final class SequenceReader implements AnimationReader {
          * end of the track}
          */
         private T next() {
-            while (pictures.isEmpty() && !flushed) {
-                var packet = samples.get();
-                if (packet == null) {
-                    flushed = true;
-                    decoder.flush();
-                } else {
-                    decoder.feed(packet.data(), packet.pts(), packet.duration());
-                }
+            var more = true;
+            while (pictures.isEmpty() && more) {
+                more = step();
             }
             return pictures.poll();
+        }
+
+        /**
+         * Takes the picture of a sample, decoding samples until it is output, and drops the
+         * pictures of samples more than {@link #WINDOW} samples before it, which no later picture
+         * of the other track asks for, since a picture is output within that many samples of its
+         * own.
+         *
+         * @param index the sample index, or {@link Packet#NO_SAMPLE_INDEX} to take the next picture
+         * @return the picture, or {@code null} when the track ends, or its decoder moves more than
+         * {@link #WINDOW} samples past it, without outputting it
+         */
+        private T take(long index) {
+            if (index < 0) {
+                return next();
+            }
+            while (true) {
+                T found = null;
+                var iterator = pictures.iterator();
+                while (iterator.hasNext()) {
+                    var picture = iterator.next();
+                    if (picture.index() == index && found == null) {
+                        found = picture;
+                        iterator.remove();
+                    } else if (picture.index() < index - WINDOW) {
+                        iterator.remove();
+                    }
+                }
+                if (found != null) {
+                    return found;
+                }
+                if (lastFed > index + WINDOW || !step()) {
+                    return null;
+                }
+            }
         }
 
         /**
@@ -346,13 +493,12 @@ public final class SequenceReader implements AnimationReader {
             LimitChecks.checkPicture(limits, width, height);
             this.samples = new HeifSequence(demuxer, colorTrack.id(), alphaTrack == null ? -1 : alphaTrack.id(), limits,
                     "heic");
-            this.alphaTrack = alphaTrack;
             colorDecoder = ItemDecoder.of(colorTrack.codec() == Codec.H264, limits, ParallelBands.THREADS);
-            this.color = new Lane<>(colorDecoder, samples::nextColor);
+            this.color = new Lane<>(colorDecoder, samples::nextColor, limits);
             color.start(this::acceptColor, colorTrack.codecConfig().orElse(null));
             if (alphaTrack != null) {
                 alphaDecoder = ItemDecoder.of(alphaTrack.codec() == Codec.H264, limits, ParallelBands.THREADS);
-                this.alpha = new Lane<>(alphaDecoder, samples::nextAlpha);
+                this.alpha = new Lane<>(alphaDecoder, samples::nextAlpha, limits);
                 alpha.start(this::acceptAlpha, alphaTrack.codecConfig().orElse(null));
             } else {
                 this.alpha = null;
@@ -445,26 +591,26 @@ public final class SequenceReader implements AnimationReader {
      * @param frame the decoded picture
      */
     private void acceptColor(CodedFrame frame) {
+        var index = color.indexOf(frame.pts());
         if (hidden(frame)) {
             return;
         }
         var canvas = frame.canvas(limits, frame.width(), frame.height(), wide, alpha != null);
         canvas.writeColor(frame, 0, 0, canvas.width(), canvas.height(), true);
-        color.add(new ColorPicture(canvas, Colors.override(frame.color(), info), frame.pts(), frame.duration()));
+        color.add(new ColorPicture(canvas, Colors.override(frame.color(), info), frame.pts(), frame.duration(), index));
     }
 
     /**
-     * Copies a decoded alpha picture out of the decoder.
+     * Copies a decoded alpha picture out of the decoder. Pictures hidden by the alpha track's
+     * edit list are kept too, since a color picture pairs with its alpha picture by sample index.
      *
      * @param frame the decoded picture
      */
     private void acceptAlpha(CodedFrame frame) {
-        if (hidden(frame)) {
-            return;
-        }
+        var index = alpha.indexOf(frame.pts());
         var canvas = frame.canvas(limits, frame.width(), frame.height(), true, false);
         canvas.writeColor(frame, 0, 0, canvas.width(), canvas.height(), true);
-        alpha.add(new AlphaPicture(canvas.toPicture(frame.color()), frame.limitedAlpha(alphaNclx), frame.pts()));
+        alpha.add(new AlphaPicture(canvas.toPicture(frame.color()), frame.limitedAlpha(alphaNclx), index));
     }
 
     @Override
@@ -511,14 +657,7 @@ public final class SequenceReader implements AnimationReader {
                 return null;
             }
             LimitChecks.checkFrames(limits, frames + 1L);
-            var plane = alpha == null ? null : alpha.next();
-            if (alpha != null && plane == null) {
-                throw new MediaException.Malformed("heic: the alpha track has fewer pictures than the color track");
-            }
-            if (plane != null && alphaBase == Packet.NO_TIMESTAMP) {
-                alphaBase = plane.pts();
-            }
-            var frame = frame(next, plane);
+            var frame = frame(next, alphaOf(next));
             frames++;
             return frame;
         } catch (MediaException exception) {
@@ -528,6 +667,25 @@ public final class SequenceReader implements AnimationReader {
         } catch (RuntimeException exception) {
             throw new MediaException.Malformed("malformed HEIC sequence", exception);
         }
+    }
+
+    /**
+     * Returns the alpha picture of a color picture: the picture of the alpha sample of the same
+     * index.
+     *
+     * @param next the color picture
+     * @return the alpha picture, or {@code null} without an alpha track
+     * @throws MediaException.Malformed if the alpha track has no picture for that sample
+     */
+    private AlphaPicture alphaOf(ColorPicture next) {
+        if (alpha == null) {
+            return null;
+        }
+        var plane = alpha.take(next.index());
+        if (plane == null) {
+            throw new MediaException.Malformed("heic: the alpha track has no picture for color sample " + next.index());
+        }
+        return plane;
     }
 
     /**
@@ -573,8 +731,8 @@ public final class SequenceReader implements AnimationReader {
     /**
      * {@inheritDoc}
      *
-     * <p>The frame then returned equals the one a decode from the start returns at that time, for
-     * an alpha track timed like the color track (see the class description).
+     * <p>The frame then returned equals the one a decode from the start returns at that time
+     * (see the class description).
      *
      * @throws MediaException.Malformed if a picture decoded while seeking is corrupt, or the alpha
      * track has no picture for the frame
@@ -583,7 +741,7 @@ public final class SequenceReader implements AnimationReader {
     @Override
     public void seek(long micros) {
         try {
-            seek(Math.max(0, micros), false);
+            seekFrom(Math.max(0, micros));
         } catch (MediaException exception) {
             throw exception;
         } catch (OutOfMemoryError error) {
@@ -596,11 +754,16 @@ public final class SequenceReader implements AnimationReader {
     /**
      * Seeks to a time at or after the first picture.
      *
+     * <p>The color picture shown at the target is found from the last sync samples at or before
+     * it. The alpha track must restart at or before the lowest sample of the color pictures shown
+     * from then on, which with reordering can come before the sample of the picture shown first.
+     * When it restarts later, or its decoder cannot output the alpha picture of that sample from
+     * there, both tracks restart at half the time, then a quarter, down to the start of the
+     * tracks, and the color track is decoded again up to the same sample.
+     *
      * @param target the time relative to the first picture shown, in microseconds, at least zero
-     * @param fromStart whether to restart at the first sample rather than at the last sync sample
-     * before the target, which a seek does when the alpha track restarts after its color track
      */
-    private void seek(long target, boolean fromStart) {
+    private void seekFrom(long target) {
         pending = null;
         exhausted = false;
         wide = highBitDepth;
@@ -612,60 +775,95 @@ public final class SequenceReader implements AnimationReader {
             }
             colorBase = first.pts();
         }
-        if (alpha != null && alphaBase == Packet.NO_TIMESTAMP) {
-            var first = alpha.peek();
-            if (first != null) {
-                alphaBase = first.pts();
+        var base = colorTrack.timeBase().toMicros(colorBase);
+        restart(base + target);
+        ColorPicture next;
+        while (true) {
+            next = color.next();
+            if (next == null) {
+                exhausted = true;
+                return;
+            }
+            if (relative(next.pts() + Math.max(0, next.duration())) > target) {
+                break;
             }
         }
-        samples.seek(colorTrack.timeBase().toMicros(colorBase) + (fromStart ? 0 : target));
+        AlphaPicture plane = null;
+        if (alpha != null) {
+            var index = next.index();
+            var needed = Math.min(index, color.lowestPending());
+            var time = target;
+            var fromStart = false;
+            while (true) {
+                if (alphaRestartsBy(needed)) {
+                    plane = alpha.take(index);
+                    if (plane != null) {
+                        break;
+                    }
+                    if (alpha.flushed && alpha.lastFed < index) {
+                        fromStart = true;
+                    }
+                }
+                if (fromStart) {
+                    throw new MediaException.Malformed("heic: the alpha track has no picture for color sample " + index);
+                }
+                do {
+                    time /= 2;
+                    fromStart = time == 0;
+                    // the last attempt restarts every track at its first sync sample, which an alpha track timed
+                    // faster than its color track may hold before the first color picture shown
+                    restart(fromStart ? Math.min(0, base) : base + time);
+                } while (!fromStart && !alphaRestartsBy(needed));
+                next = colorPicture(index);
+            }
+        }
+        pending = frame(next, plane);
+    }
+
+    /**
+     * Seeks the demuxer and restarts the decoding lanes.
+     *
+     * @param micros the presentation time the demuxer seeks to, in microseconds
+     */
+    private void restart(long micros) {
+        samples.seek(micros);
         color.restart();
         if (alpha != null) {
             alpha.restart();
         }
         frames = 0;
-        while (true) {
-            var next = color.next();
-            if (next == null) {
-                exhausted = true;
-                return;
-            }
-            var start = relative(next.pts());
-            var shown = relative(next.pts() + Math.max(0, next.duration())) > target;
-            AlphaPicture plane = null;
-            if (alpha != null) {
-                plane = alphaAt(start);
-                if (plane == null && shown) {
-                    if (!fromStart) {
-                        seek(target, true);
-                        return;
-                    }
-                    throw new MediaException.Malformed("heic: the alpha track has no picture at " + start + " us");
-                }
-            }
-            if (shown) {
-                pending = frame(next, plane);
-                return;
-            }
-        }
     }
 
     /**
-     * Takes the alpha picture shown with the color picture that starts at a time: the last alpha
-     * picture that starts at or before it, dropping the ones before it.
+     * {@return whether the alpha samples the lane has not fed yet start at or before a sample, so
+     * that its picture can be decoded}
      *
-     * @param start the start of the color picture relative to the first color picture shown, in
-     * microseconds
-     * @return the alpha picture, or {@code null} when the next one starts later
+     * @param index the index of the sample
      */
-    private AlphaPicture alphaAt(long start) {
-        AlphaPicture chosen = null;
+    private boolean alphaRestartsBy(long index) {
+        if (alpha.lastFed != Packet.NO_SAMPLE_INDEX) {
+            return true;
+        }
+        var first = samples.peekAlpha();
+        return first != null && (index < 0 || first.sampleIndex() <= index);
+    }
+
+    /**
+     * Decodes color pictures until the one of a sample, dropping the pictures output before it.
+     *
+     * @param index the index of the sample
+     * @return the picture
+     * @throws MediaException.Malformed if the color track ends without outputting it
+     */
+    private ColorPicture colorPicture(long index) {
         while (true) {
-            var next = alpha.peek();
-            if (next == null || alphaTrack.timeBase().toMicros(next.pts() - alphaBase) > start) {
-                return chosen;
+            var next = color.next();
+            if (next == null) {
+                throw new MediaException.Malformed("heic: color sample " + index + " shows no picture");
             }
-            chosen = alpha.next();
+            if (next.index() == index) {
+                return next;
+            }
         }
     }
 
@@ -682,11 +880,7 @@ public final class SequenceReader implements AnimationReader {
         if (next == null) {
             throw new MediaException.Malformed("heic: the sequence has no frame");
         }
-        var plane = alpha == null ? null : alpha.next();
-        if (alpha != null && plane == null) {
-            throw new MediaException.Malformed("heic: the alpha track has fewer pictures than the color track");
-        }
-        var picture = combine(next, plane);
+        var picture = combine(next, alphaOf(next));
         return premultiplied ? HeifPictures.unpremultiply(picture) : picture;
     }
 

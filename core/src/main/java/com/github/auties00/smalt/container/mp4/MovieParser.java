@@ -1280,6 +1280,7 @@ final class MovieParser {
                     }
                     table.add(offset, (int) bytes, frame, frames, 0, true);
                     table.setDescription(table.count - 1, description);
+                    table.setNumber(table.count - 1, frame, frames);
                     offset += bytes;
                     frame += frames;
                     inChunk -= frames;

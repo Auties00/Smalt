@@ -82,6 +82,18 @@ final class SampleTable {
     int[] crypto;
 
     /**
+     * The number of each entry among the samples of the track in decoding order, or {@code null} while every
+     * entry's number is its index: an entry of a table that groups uncompressed frames is numbered by its first
+     * frame, and an entry of an edit list's presentation index by the media sample it presents.
+     */
+    long[] numbers;
+
+    /**
+     * The number the next appended entry takes.
+     */
+    long nextNumber;
+
+    /**
      * The number of samples stored.
      */
     int count;
@@ -141,6 +153,9 @@ final class SampleTable {
         if (descriptions != null) {
             descriptions = Arrays.copyOf(descriptions, capacity);
         }
+        if (numbers != null) {
+            numbers = Arrays.copyOf(numbers, capacity);
+        }
         if (crypto != null) {
             var grown = Arrays.copyOf(crypto, capacity);
             Arrays.fill(grown, crypto.length, capacity, -1);
@@ -170,6 +185,44 @@ final class SampleTable {
         durations[index] = duration;
         ctsOffsets[index] = ctsOffset;
         flags[index] = keyframe ? KEYFRAME : 0;
+        if (numbers != null) {
+            numbers[index] = nextNumber;
+        }
+        nextNumber++;
+    }
+
+    /**
+     * Records the number of an entry among the samples of the track, when it differs from its index, and
+     * numbers the entries appended after it from the one that follows its last sample.
+     *
+     * @param index the entry index, below the count
+     * @param number the zero-based number of the entry's first sample
+     * @param samples the number of samples the entry spans, one or more
+     */
+    void setNumber(int index, long number, long samples) {
+        if (index == count - 1) {
+            nextNumber = number + samples;
+        }
+        if (numbers == null) {
+            if (number == index && samples == 1) {
+                return;
+            }
+            numbers = new long[offsets.length];
+            for (var i = 0; i < count; i++) {
+                numbers[i] = i;
+            }
+        }
+        numbers[index] = number;
+    }
+
+    /**
+     * Returns the number of an entry among the samples of the track in decoding order.
+     *
+     * @param index the entry index
+     * @return the zero-based sample number
+     */
+    long number(int index) {
+        return numbers == null ? index : numbers[index];
     }
 
     /**

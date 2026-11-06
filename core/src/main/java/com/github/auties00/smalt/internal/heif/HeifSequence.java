@@ -159,6 +159,38 @@ public final class HeifSequence {
     }
 
     /**
+     * {@return the next sample of the color track without taking it, or {@code null} at its end}
+     *
+     * @throws MediaException.LimitExceeded if more than {@link MediaLimits#maxFrames()} samples
+     * would be held back
+     */
+    public Packet peekColor() {
+        var packet = next(colorPackets);
+        if (packet != null) {
+            colorPackets.addFirst(packet);
+        }
+        return packet;
+    }
+
+    /**
+     * {@return the next sample of the alpha track without taking it, or {@code null} at its end or without an
+     * alpha track}
+     *
+     * @throws MediaException.LimitExceeded if more than {@link MediaLimits#maxFrames()} samples
+     * would be held back
+     */
+    public Packet peekAlpha() {
+        if (alphaTrack < 0) {
+            return null;
+        }
+        var packet = next(alphaPackets);
+        if (packet != null) {
+            alphaPackets.addFirst(packet);
+        }
+        return packet;
+    }
+
+    /**
      * Drops the samples held back.
      */
     public void clear() {

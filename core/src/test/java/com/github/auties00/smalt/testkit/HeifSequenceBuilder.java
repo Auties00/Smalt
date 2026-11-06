@@ -27,6 +27,8 @@ public final class HeifSequenceBuilder {
         List<byte[]> entryChildren = new ArrayList<>();
         List<byte[]> samples;
         int delta;
+        int[] durations;
+        int[] compositionOffsets;
         Map<String, int[]> references = new TreeMap<>();
         int[] syncSamples;
     }
@@ -100,6 +102,40 @@ public final class HeifSequenceBuilder {
     }
 
     /**
+     * Gives the samples of a track durations of their own in its {@code stts} box, in place of the
+     * duration every sample of {@link #track} has.
+     *
+     * @param track the track identifier
+     * @param durations the duration of each sample, in timescale units, one per sample
+     * @return this builder
+     */
+    public HeifSequenceBuilder durations(int track, int... durations) {
+        var target = tracks.get(track - 1);
+        if (durations.length != target.samples.size()) {
+            throw new IllegalArgumentException("one duration per sample");
+        }
+        target.durations = durations.clone();
+        return this;
+    }
+
+    /**
+     * Gives the samples of a track composition offsets with a {@code ctts} box (version 1 when one is
+     * negative), so that they are presented in another order than they are decoded.
+     *
+     * @param track the track identifier
+     * @param offsets the composition offset of each sample, in timescale units, one per sample
+     * @return this builder
+     */
+    public HeifSequenceBuilder compositionOffsets(int track, int... offsets) {
+        var target = tracks.get(track - 1);
+        if (offsets.length != target.samples.size()) {
+            throw new IllegalArgumentException("one offset per sample");
+        }
+        target.compositionOffsets = offsets.clone();
+        return this;
+    }
+
+    /**
      * {@return an {@code auxi} box naming an auxiliary track type}
      *
      * @param urn the URN, such as {@code "urn:mpeg:mpegB:cicp:systems:auxiliary:alpha"}
@@ -157,6 +193,13 @@ public final class HeifSequenceBuilder {
     }
 
     private long duration(Track track) {
+        if (track.durations != null) {
+            var total = 0L;
+            for (var duration : track.durations) {
+                total += duration;
+            }
+            return total;
+        }
         return (long) track.delta * track.samples.size();
     }
 
@@ -235,9 +278,27 @@ public final class HeifSequenceBuilder {
         u32(stsd, 1);
         stsd.writeBytes(box(track.entry, entry.toByteArray()));
         var stts = new ByteArrayOutputStream();
-        u32(stts, 1);
-        u32(stts, track.samples.size());
-        u32(stts, track.delta);
+        if (track.durations != null) {
+            u32(stts, track.durations.length);
+            for (var duration : track.durations) {
+                u32(stts, 1);
+                u32(stts, duration);
+            }
+        } else {
+            u32(stts, 1);
+            u32(stts, track.samples.size());
+            u32(stts, track.delta);
+        }
+        var ctts = new ByteArrayOutputStream();
+        var negative = false;
+        if (track.compositionOffsets != null) {
+            u32(ctts, track.compositionOffsets.length);
+            for (var offset : track.compositionOffsets) {
+                u32(ctts, 1);
+                u32(ctts, offset & 0xFFFFFFFFL);
+                negative |= offset < 0;
+            }
+        }
         var stsc = new ByteArrayOutputStream();
         u32(stsc, 1);
         u32(stsc, 1);
@@ -262,6 +323,7 @@ public final class HeifSequenceBuilder {
             }
         }
         return box("stbl", concat(fullBox("stsd", 0, 0, stsd.toByteArray()), fullBox("stts", 0, 0, stts.toByteArray()),
+                track.compositionOffsets == null ? new byte[0] : fullBox("ctts", negative ? 1 : 0, 0, ctts.toByteArray()),
                 track.syncSamples == null ? new byte[0] : fullBox("stss", 0, 0, stss.toByteArray()),
                 fullBox("stsc", 0, 0, stsc.toByteArray()), fullBox("stsz", 0, 0, stsz.toByteArray()),
                 fullBox("stco", 0, 0, stco.toByteArray())));

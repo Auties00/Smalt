@@ -160,6 +160,12 @@ import java.util.Set;
  * codec raises {@link MediaException.Unsupported}, and one that does not parse
  * {@link MediaException.Malformed}, when a sample using it is read.
  *
+ * <p>Every packet carries the {@link Packet#sampleIndex()} of its sample: the zero-based position of the
+ * sample among the samples of its track in decoding order, those of movie fragments included. A packet
+ * that groups several samples of uncompressed audio carries the index of its first, a packet of an edit
+ * list's presentation the index of the media sample it presents (the same index each time several edits
+ * present it), and the WebVTT cues of one sample the index of that sample.
+ *
  * <p>An AAC track whose sample entry declares the rate of the AAC core while spectral band
  * replication doubles it (HE-AAC, signaled explicitly or only inside the raw data blocks), or
  * whose parametric stereo turns a mono core into stereo, is described by the format its first
@@ -1606,7 +1612,7 @@ public final class Mp4Demuxer implements Demuxer {
                 for (var cue : WebVttSamples.decode(packet.data())) {
                     var sideData = WebVttSamples.sideData(PacketSideData.NONE, cue.identifier(), cue.settings());
                     pendingCues.addLast(new Packet(packet.trackId(), cue.payload().getBytes(StandardCharsets.UTF_8),
-                            packet.pts(), packet.dts(), packet.duration(), KEY_FLAGS, sideData));
+                            packet.pts(), packet.dts(), packet.duration(), KEY_FLAGS, sideData, packet.sampleIndex()));
                 }
             }
         } catch (MediaException exception) {
@@ -1656,7 +1662,8 @@ public final class Mp4Demuxer implements Demuxer {
         var config = configChange(trackIndex, index);
         var trim = track.trimOf(index);
         if (config == null && trim < 0 && !samples.isDiscarded(index)) {
-            return new Packet(track.id, data, pts, dts, duration, samples.isKeyframe(index));
+            return new Packet(track.id, data, pts, dts, duration, samples.isKeyframe(index) ? KEY_FLAGS : Set.of(),
+                    PacketSideData.NONE, samples.number(index));
         }
         var flags = samples.isKeyframe(index) ? samples.isDiscarded(index) ? KEY_DISCARD_FLAGS : KEY_FLAGS
                 : samples.isDiscarded(index) ? DISCARD_FLAGS : Set.<PacketFlag>of();
@@ -1664,7 +1671,7 @@ public final class Mp4Demuxer implements Demuxer {
         if (trim >= 0) {
             sideData.discard(track.trimAmounts[trim * 2], track.trimAmounts[trim * 2 + 1]);
         }
-        return new Packet(track.id, data, pts, dts, duration, flags, sideData.build());
+        return new Packet(track.id, data, pts, dts, duration, flags, sideData.build(), samples.number(index));
     }
 
     /**

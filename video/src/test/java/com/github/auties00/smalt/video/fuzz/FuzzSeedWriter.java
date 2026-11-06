@@ -88,6 +88,49 @@ class FuzzSeedWriter {
     }
 
     @Test
+    @DisplayName("writes the AVIF seed of a sequence whose alpha track is timed unlike its color track")
+    void avifSequenceAlpha() {
+        var color = ffmpeg("avif", video(16, 16, 5), "-c:v", "libaom-av1", "-cpu-used", "8", "-g", "2",
+                "-keyint_min", "2");
+        var alpha = ffmpeg("avif", java.util.List.of("-f", "lavfi", "-i",
+                        "nullsrc=size=16x16:rate=10:duration=0.5,geq=lum='40+N*30':cb=128:cr=128,format=gray"),
+                "-pix_fmt", "gray", "-c:v", "libaom-av1", "-cpu-used", "8", "-g", "3", "-keyint_min", "3");
+        var builder = new com.github.auties00.smalt.testkit.HeifSequenceBuilder("avis", 1000, "avis", "msf1", "iso8",
+                "mif1", "miaf");
+        var colorTrack = sequenceTrack(builder, color, 100);
+        var alphaTrack = sequenceTrack(builder, alpha, 35,
+                com.github.auties00.smalt.testkit.HeifSequenceBuilder.auxi("urn:mpeg:mpegB:cicp:systems:auxiliary:alpha"));
+        builder.reference("auxl", alphaTrack, colorTrack);
+        write(VideoFuzzTest.class, "avif", "valid-sequence-alpha-timing.avifs", builder.build());
+    }
+
+    /** Adds the AV1 track of an AVIF sequence to a sequence, with its sync samples and a duration of its own per sample. */
+    private static int sequenceTrack(com.github.auties00.smalt.testkit.HeifSequenceBuilder builder, Path file, int delta,
+                                     byte[]... entryChildren) {
+        try (var source = com.github.auties00.smalt.io.MediaSource.of(file);
+             var demuxer = new com.github.auties00.smalt.container.mp4.Mp4Demuxer(source)) {
+            var track = (com.github.auties00.smalt.track.VideoTrack) demuxer.tracks().getFirst();
+            var samples = new ArrayList<byte[]>();
+            var sync = new ArrayList<Integer>();
+            for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                if (packet.trackId() != track.id()) {
+                    continue;
+                }
+                if (packet.keyframe()) {
+                    sync.add(samples.size());
+                }
+                samples.add(packet.data());
+            }
+            var children = new ArrayList<byte[]>();
+            children.add(com.github.auties00.smalt.testkit.HeifBuilder.av1C(track.codecConfig().orElseThrow()));
+            children.addAll(java.util.List.of(entryChildren));
+            var id = builder.track("av01", track.width(), track.height(), delta, samples, children.toArray(byte[][]::new));
+            builder.syncSamples(id, sync.stream().mapToInt(Integer::intValue).toArray());
+            return id;
+        }
+    }
+
+    @Test
     @DisplayName("writes the DNxHD alpha seeds: premultiplied in-band alpha and Avid's out-of-band alpha, which Smalt writes")
     void dnxhdAlpha() {
         var picture = com.github.auties00.smalt.image.Yuv16Picture.allocate(32, 16,

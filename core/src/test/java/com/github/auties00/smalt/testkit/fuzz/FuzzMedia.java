@@ -150,12 +150,24 @@ public final class FuzzMedia {
     private static void animation(FuzzRun run, byte[] data, ImageDecoderOptions plain) {
         run.step("animation", () -> {
             try (var animation = Images.openAnimation(MediaSource.of(data), plain)) {
+                var last = -1L;
                 for (var index = 0; index < Fuzz.LIMITS.maxFrames(); index++) {
                     var frame = animation.read();
                     if (frame == null) {
                         break;
                     }
                     touch(run, frame.picture(), index == 0);
+                    last = frame.timestampMicros();
+                }
+                // seeks back into the last frame and to the start, so that the seek paths see every input too
+                if (last >= 0 && animation.isSeekable()) {
+                    for (var target : new long[]{last, 0}) {
+                        animation.seek(target);
+                        var frame = animation.read();
+                        if (frame != null) {
+                            touch(run, frame.picture(), false);
+                        }
+                    }
                 }
             }
         });

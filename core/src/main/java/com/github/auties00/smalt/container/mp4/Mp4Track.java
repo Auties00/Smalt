@@ -637,6 +637,7 @@ final class Mp4Track {
                 var added = out.count - 1;
                 out.setDescription(added, source.description(index));
                 out.setCrypto(added, source.crypto(index));
+                out.setNumber(added, source.number(index), 1);
                 if (discard) {
                     out.flags[added] |= SampleTable.DISCARD;
                 } else if (trimStart > 0 || trimEnd > 0) {
