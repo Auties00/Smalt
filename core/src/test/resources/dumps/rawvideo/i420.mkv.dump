@@ -1,0 +1,21 @@
+# demux dump of rawvideo/i420.mkv; regenerate with -Dsmalt.test.updateDumps=true
+format MATROSKA
+duration 400000
+seekable true
+metadata ENCODER="Lavf61.7.100"
+track 1 VIDEO RAW_VIDEO timebase=1/1000 duration=400 config=19:277d04ed
+  video 64x48 orientation=NORMAL rate=500000000/33333333 interlacing=PROGRESSIVE
+  metadata DURATION="00:00:00.400000000"
+  metadata ENCODER="Lavc61.19.100 rawvideo"
+packets 6
+0 t1 pts=0 dts=0 dur=67 flags=KEY size=4608 crc=a09f3ea1
+1 t1 pts=67 dts=67 dur=67 flags=KEY size=4608 crc=a09f3ea1
+2 t1 pts=133 dts=133 dur=67 flags=KEY size=4608 crc=dcf1c67a
+3 t1 pts=200 dts=200 dur=67 flags=KEY size=4608 crc=dcf1c67a
+4 t1 pts=267 dts=267 dur=67 flags=KEY size=4608 crc=d07f7d71
+5 t1 pts=333 dts=333 dur=67 flags=KEY size=4608 crc=d07f7d71
+seek 0: t1@0
+seek 133333: t1@2
+seek 266666: t1@3
+seek 400000: end
+seek -1000000: t1@0

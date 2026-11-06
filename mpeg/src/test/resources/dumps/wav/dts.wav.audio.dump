@@ -1,0 +1,22 @@
+# audio decode dump of wav/dts.wav; regenerate with -Dsmalt.test.updateDumps=true
+format WAV
+duration 1002667
+seekable true
+track 0 DTS rate=48000 layout=[FRONT_LEFT, FRONT_RIGHT]
+0 frames=4096 crc16=fc95aaa5
+1 frames=4096 crc16=0c5e10bf
+2 frames=4096 crc16=d4cbf221
+3 frames=4096 crc16=a2688574
+4 frames=4096 crc16=d28798a3
+5 frames=4096 crc16=f67cb9de
+6 frames=4096 crc16=79181c02
+7 frames=4096 crc16=020850e0
+8 frames=4096 crc16=8964acf1
+9 frames=4096 crc16=3d2d850f
+10 frames=4096 crc16=d845a9ae
+11 frames=3072 crc16=a99a0012
+seek 0: @sample 0
+seek 334222: @sample 16043
+seek 668444: @sample 32085
+seek 1002667: end
+seek -1000000: @sample 0

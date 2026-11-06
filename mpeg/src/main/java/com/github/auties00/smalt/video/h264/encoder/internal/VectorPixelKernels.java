@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.video.h264.encoder.internal;
 
+import com.github.auties00.smalt.internal.simd.Simd;
 import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.IntVector;
 import jdk.incubator.vector.ShortVector;
@@ -12,7 +13,8 @@ import jdk.incubator.vector.VectorSpecies;
 /**
  * Implements {@link PixelKernels} with the Vector API; the results equal the scalar kernels exactly.
  *
- * <p>Rows of 16 and 8 samples are one vector each; other widths fall back to the scalar kernels.
+ * <p>Rows of 16 and 8 samples are one vector each; other widths fall back to the scalar kernels, and so do the
+ * methods written for 256-bit vectors unless {@link Simd#WIDE} holds.
  *
  * @implNote This implementation follows the kernel rules of {@link com.github.auties00.smalt.internal.simd.Simd Simd}
  * and computes the 4x4 Hadamard transforms of four (or two) adjacent blocks together, exchanging neighboring lanes by
@@ -179,6 +181,9 @@ final class VectorPixelKernels extends PixelKernels {
 
     @Override
     int sad(byte[] a, int aOffset, int aStride, byte[] b, int bOffset, int bStride, int width, int height) {
+        if (!Simd.WIDE) {
+            return super.sad(a, aOffset, aStride, b, bOffset, bStride, width, height);
+        }
         if (width == 16) {
             var acc = SHORTS_16.cast(ShortVector.zero(S256));
             for (var y = 0; y < height; y++) {
@@ -208,6 +213,9 @@ final class VectorPixelKernels extends PixelKernels {
 
     @Override
     long ssd(byte[] a, int aOffset, int aStride, byte[] b, int bOffset, int bStride, int width, int height) {
+        if (!Simd.WIDE) {
+            return super.ssd(a, aOffset, aStride, b, bOffset, bStride, width, height);
+        }
         if (width != 16 && width != 8) {
             return super.ssd(a, aOffset, aStride, b, bOffset, bStride, width, height);
         }
@@ -239,6 +247,9 @@ final class VectorPixelKernels extends PixelKernels {
 
     @Override
     int satd(byte[] a, int aOffset, int aStride, byte[] b, int bOffset, int bStride, int width, int height) {
+        if (!Simd.WIDE) {
+            return super.satd(a, aOffset, aStride, b, bOffset, bStride, width, height);
+        }
         if (width == 16) {
             return satd16(a, aOffset, aStride, b, bOffset, bStride, height);
         }
@@ -256,6 +267,9 @@ final class VectorPixelKernels extends PixelKernels {
      */
     @Override
     long satdQuadrants(byte[] a, int aOffset, int aStride, byte[] b, int bOffset, int bStride, short[] scratch) {
+        if (!Simd.WIDE) {
+            return super.satdQuadrants(a, aOffset, aStride, b, bOffset, bStride, scratch);
+        }
         differenceRows16(a, aOffset, aStride, b, bOffset, bStride, 16, scratch);
         return hadamardQuadrants(scratch, 2);
     }
@@ -270,6 +284,9 @@ final class VectorPixelKernels extends PixelKernels {
     @Override
     long satdAverageQuadrants(byte[] src, int srcOffset, int srcStride, byte[] a, int aOffset, byte[] b, int bOffset,
                               int stride, short[] scratch) {
+        if (!Simd.WIDE) {
+            return super.satdAverageQuadrants(src, srcOffset, srcStride, a, aOffset, b, bOffset, stride, scratch);
+        }
         averageDifferenceRows16(src, srcOffset, srcStride, a, aOffset, b, bOffset, stride, 16, scratch);
         return hadamardQuadrants(scratch, 2);
     }
@@ -284,6 +301,9 @@ final class VectorPixelKernels extends PixelKernels {
     @Override
     int satdAverage16(byte[] src, int srcOffset, int srcStride, byte[] a, int aOffset, byte[] b, int bOffset,
                       int stride, int height, short[] scratch) {
+        if (!Simd.WIDE) {
+            return super.satdAverage16(src, srcOffset, srcStride, a, aOffset, b, bOffset, stride, height, scratch);
+        }
         if ((height & 7) != 0 || height > 16) {
             return super.satdAverage16(src, srcOffset, srcStride, a, aOffset, b, bOffset, stride, height, scratch);
         }
@@ -758,6 +778,10 @@ final class VectorPixelKernels extends PixelKernels {
     @Override
     void downscale(byte[] src, int srcOffset, int srcStride, byte[] dst, int dstOffset, int dstStride, int width,
                    int rows) {
+        if (!Simd.WIDE) {
+            super.downscale(src, srcOffset, srcStride, dst, dstOffset, dstStride, width, rows);
+            return;
+        }
         for (var y = 0; y < rows; y++) {
             var s0 = srcOffset + 2 * y * srcStride;
             var s1 = s0 + srcStride;
@@ -864,6 +888,9 @@ final class VectorPixelKernels extends PixelKernels {
 
     @Override
     long sumAndSquares(byte[] src, int offset, int stride, int width, int height) {
+        if (!Simd.WIDE) {
+            return super.sumAndSquares(src, offset, stride, width, height);
+        }
         if (width != 8 && width != 16) {
             return super.sumAndSquares(src, offset, stride, width, height);
         }
@@ -896,6 +923,10 @@ final class VectorPixelKernels extends PixelKernels {
 
     @Override
     void planePrediction(byte[] dst, int offset, int stride, int size, int a, int b, int c, int center) {
+        if (!Simd.WIDE) {
+            super.planePrediction(dst, offset, stride, size, a, b, c, center);
+            return;
+        }
         if (size == 16) {
             var ramp = IOTA_S256.lanewise(VectorOperators.MUL, ShortVector.broadcast(S256, (short) b));
             for (var y = 0; y < 16; y++) {

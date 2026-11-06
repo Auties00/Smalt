@@ -1,0 +1,78 @@
+# demux dump of mxf/op1a-h264.mxf; regenerate with -Dsmalt.test.updateDumps=true
+format MXF
+duration 800000
+seekable true
+metadata application_platform="Lavf (mingw32)"
+metadata company_name="FFmpeg"
+metadata material_package_umid="060a2b340101010501010d001320055a529471348520055a0052947134852000"
+metadata operational_pattern="OP1a"
+metadata product_name="OP1a Muxer"
+metadata product_version="61.7.100"
+timecode 00:00:00:00 fps=25
+track 2 VIDEO H264 timebase=1/25 duration=20 config=40:15f4f904
+  video 160x120 orientation=NORMAL rate=25/1 interlacing=PROGRESSIVE
+track 3 AUDIO PCM_S16LE timebase=1/48000 duration=38400 config=none
+  audio rate=48000 bits=16 skip=0 layout=[FRONT_CENTER]
+packets 40
+0 t2 pts=0 dts=-1 dur=1 flags=KEY size=3099 crc=5cea7630
+1 t3 pts=0 dts=0 dur=1920 flags=KEY size=3840 crc=7947b0f4
+2 t2 pts=3 dts=0 dur=1 flags=- size=688 crc=aeb325bc
+3 t3 pts=1920 dts=1920 dur=1920 flags=KEY size=3840 crc=a358284a
+4 t2 pts=1 dts=1 dur=1 flags=- size=415 crc=9abb4ddd
+5 t3 pts=3840 dts=3840 dur=1920 flags=KEY size=3840 crc=7744db6f
+6 t2 pts=2 dts=2 dur=1 flags=- size=224 crc=ace9f630
+7 t3 pts=5760 dts=5760 dur=1920 flags=KEY size=3840 crc=559a940a
+8 t2 pts=6 dts=3 dur=1 flags=- size=760 crc=6d2046c1
+9 t3 pts=7680 dts=7680 dur=1920 flags=KEY size=3840 crc=7767111a
+10 t2 pts=4 dts=4 dur=1 flags=- size=373 crc=29316777
+11 t3 pts=9600 dts=9600 dur=1920 flags=KEY size=3840 crc=ccda617c
+12 t2 pts=5 dts=5 dur=1 flags=- size=315 crc=bd0a2dc9
+13 t3 pts=11520 dts=11520 dur=1920 flags=KEY size=3840 crc=c9a0b54b
+14 t2 pts=9 dts=6 dur=1 flags=- size=1005 crc=89dfd22d
+15 t3 pts=13440 dts=13440 dur=1920 flags=KEY size=3840 crc=a25500e6
+16 t2 pts=7 dts=7 dur=1 flags=- size=392 crc=eb958040
+17 t3 pts=15360 dts=15360 dur=1920 flags=KEY size=3840 crc=c598c8e0
+18 t2 pts=8 dts=8 dur=1 flags=- size=280 crc=a98f4279
+19 t3 pts=17280 dts=17280 dur=1920 flags=KEY size=3840 crc=ac955bc4
+20 t2 pts=10 dts=9 dur=1 flags=KEY size=2592 crc=4ad1983d
+21 t3 pts=19200 dts=19200 dur=1920 flags=KEY size=3840 crc=5edf6942
+22 t2 pts=13 dts=10 dur=1 flags=- size=624 crc=59780a74
+23 t3 pts=21120 dts=21120 dur=1920 flags=KEY size=3840 crc=a04b4768
+24 t2 pts=11 dts=11 dur=1 flags=- size=369 crc=885038ef
+25 t3 pts=23040 dts=23040 dur=1920 flags=KEY size=3840 crc=d6bf87a9
+26 t2 pts=12 dts=12 dur=1 flags=- size=188 crc=6293a8a9
+27 t3 pts=24960 dts=24960 dur=1920 flags=KEY size=3840 crc=f97fd59d
+28 t2 pts=16 dts=13 dur=1 flags=- size=696 crc=f6775df7
+29 t3 pts=26880 dts=26880 dur=1920 flags=KEY size=3840 crc=1fce3ac1
+30 t2 pts=14 dts=14 dur=1 flags=- size=325 crc=00448bb4
+31 t3 pts=28800 dts=28800 dur=1920 flags=KEY size=3840 crc=aa8db30b
+32 t2 pts=15 dts=15 dur=1 flags=- size=240 crc=17cd2cf3
+33 t3 pts=30720 dts=30720 dur=1920 flags=KEY size=3840 crc=cfe5428f
+34 t2 pts=19 dts=16 dur=1 flags=- size=1056 crc=6e16cc2c
+35 t3 pts=32640 dts=32640 dur=1920 flags=KEY size=3840 crc=760e8a7c
+36 t2 pts=17 dts=17 dur=1 flags=- size=429 crc=81079720
+37 t3 pts=34560 dts=34560 dur=1920 flags=KEY size=3840 crc=5d238143
+38 t2 pts=18 dts=18 dur=1 flags=- size=351 crc=05e4587f
+39 t3 pts=36480 dts=36480 dur=1920 flags=KEY size=3840 crc=34da2d62
+seek 0: t2@0 t3@0
+seek 266666: t2@0 t3@6
+seek 533333: t2@10 t3@13
+seek 800000: end
+seek -1000000: t2@0 t3@0
+header over READ_ONCE, READ_ONCE_UNKNOWN_LENGTH:
+  format MXF
+  duration 800000
+  seekable false
+  metadata application_platform="Lavf (mingw32)"
+  metadata company_name="FFmpeg"
+  metadata material_package_umid="060a2b340101010501010d001320055a529471348520055a0052947134852000"
+  metadata operational_pattern="OP1a"
+  metadata product_name="OP1a Muxer"
+  metadata product_version="61.7.100"
+  timecode 00:00:00:00 fps=25
+  track 2 VIDEO H264 timebase=1/25 duration=20 config=40:15f4f904
+    video 160x120 orientation=NORMAL rate=25/1 interlacing=PROGRESSIVE
+  track 3 AUDIO PCM_S16LE timebase=1/48000 duration=38400 config=none
+    audio rate=48000 bits=16 skip=0 layout=[FRONT_CENTER]
+not seekable over READ_ONCE
+not seekable over READ_ONCE_UNKNOWN_LENGTH
