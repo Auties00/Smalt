@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.internal.provider.video;
 
+import com.github.auties00.smalt.internal.codec.SampleAspects;
 import com.github.auties00.smalt.spi.VideoCodecProvider;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.VideoTrack;
@@ -20,7 +21,9 @@ import com.github.auties00.smalt.video.ffv1.Ffv1EncoderOptions;
  * @implNote This implementation passes the decoder options on unchanged. It encodes version 3 4:2:0 Y'CbCr at
  *           the requested depth, frame rate and thread count, with {@link Ffv1EncoderOptions#forSpeed()} for
  *           real-time tuning and {@link Ffv1EncoderOptions#defaults()} otherwise; the requested color description
- *           converts RGB pictures, a key frame interval applies when periodic key frames are requested, and the
+ *           converts RGB pictures, the requested sample aspect ratio is declared in lowest terms (the closest ratio
+ *           of 31-bit terms when they are larger), a key frame interval applies when periodic key frames are
+ *           requested, and the
  *           bitrate does not apply, since FFV1 is lossless.
  */
 public final class Ffv1CodecProvider implements VideoCodecProvider {
@@ -52,6 +55,8 @@ public final class Ffv1CodecProvider implements VideoCodecProvider {
                 .frameRate(options.frameRate())
                 .threads(options.threads());
         options.color().ifPresent(builder::color);
+        options.sampleAspectRatio()
+                .ifPresent(sar -> builder.sampleAspectRatio(SampleAspects.fit(sar, Integer.MAX_VALUE)));
         if (options.periodicKeyframes()) {
             options.keyframeInterval().ifPresent(builder::keyframeInterval);
         }

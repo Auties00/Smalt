@@ -9,6 +9,7 @@ import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Oracle;
 import com.github.auties00.smalt.testkit.Quality;
+import com.github.auties00.smalt.testkit.Scratch;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
@@ -174,6 +175,61 @@ class TheoraEncoderTest {
         assertEquals(0, java.nio.ByteBuffer.wrap(cleared).getInt(29) & 0xFFFFFF);
         assertEquals(0, java.nio.ByteBuffer.wrap(cleared).getInt(32) & 0xFFFFFF);
         assertTrue(TheoraEncoderOptions.defaults().sampleAspectRatio().isEmpty());
+    }
+
+    @ParameterizedTest(name = "requested [{0}]")
+    @MethodSource("aspects")
+    @DisplayName("declares the sample aspect ratio of the codec-independent options in the identification header")
+    void registryAspect(String requested, String expected) throws IOException {
+        var options = VideoEncoderOptions.of(32, 32, new Rational(25, 1), 500_000).toBuilder();
+        if (!requested.isEmpty()) {
+            var terms = requested.split(":");
+            options.sampleAspectRatio(new Rational(Long.parseLong(terms[0]), Long.parseLong(terms[1])));
+        }
+        var packets = new ArrayList<Packet>();
+        VideoTrack track;
+        try (var encoder = VideoEncoders.create(Codec.THEORA, options.build())) {
+            encoder.encode(new VideoFrame(picture(32, 32, ChromaFormat.YUV420, 0), 0, 1, true), packets::add);
+            encoder.flush(packets::add);
+            track = VideoTrack.builder().id(1).codec(Codec.THEORA).timeBase(encoder.timeBase()).width(32).height(32)
+                    .codecConfig(encoder.codecConfig().orElseThrow()).build();
+        }
+        var header = java.nio.ByteBuffer.wrap(com.github.auties00.smalt.internal.header.XiphLacing.unlace(
+                track.codecConfig().orElseThrow())[0]);
+        var terms = expected.isEmpty() ? new long[]{0, 0}
+                : Arrays.stream(expected.split(":")).mapToLong(Long::parseLong).toArray();
+        assertEquals(terms[0], header.getInt(29) & 0xFFFFFF);
+        assertEquals(terms[1], header.getInt(32) & 0xFFFFFF);
+        var sink = MediaSink.memory();
+        var muxer = new OggMuxer(sink);
+        muxer.addTrack(track);
+        for (var packet : packets) {
+            muxer.writePacket(new Packet(1, packet.data(), packet.pts(), packet.dts(), packet.duration(),
+                    packet.flags(), packet.sideData()));
+        }
+        muxer.finish();
+        try (var demuxer = Containers.openDemuxer(MediaSource.of(sink.toByteArray()))) {
+            var read = ((VideoTrack) demuxer.tracks().getFirst()).sampleAspectRatio();
+            assertEquals(expected.isEmpty() ? java.util.Optional.empty()
+                    : java.util.Optional.of(new Rational(terms[0], terms[1])), read);
+        }
+        if (expected.isEmpty()) {
+            return;
+        }
+        Oracle.assume(Oracle.Tool.FFPROBE);
+        var file = Scratch.directory("theora-aspect").resolve(terms[0] + "x" + terms[1] + ".ogv");
+        Files.write(file, sink.toByteArray());
+        var probed = new String(Oracle.run(Oracle.Tool.FFPROBE, java.time.Duration.ofMinutes(1), List.of("-v",
+                "error", "-select_streams", "v:0", "-show_entries", "stream=sample_aspect_ratio", "-of",
+                "default=noprint_wrappers=1:nokey=1", file.toString())), java.nio.charset.StandardCharsets.UTF_8)
+                .strip();
+        assertEquals(expected, probed);
+    }
+
+    static Stream<Arguments> aspects() {
+        // The identification header terms are 24-bit, so 33554432:1 is fitted to the largest 24-bit term.
+        return Stream.of(Arguments.of("", ""), Arguments.of("4:3", "4:3"), Arguments.of("40:33", "40:33"),
+                Arguments.of("1:1", "1:1"), Arguments.of("80:66", "40:33"), Arguments.of("33554432:1", "16777215:1"));
     }
 
     @Test

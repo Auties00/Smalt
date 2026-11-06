@@ -119,7 +119,8 @@ public final class Mpeg4Encoder implements VideoEncoder {
                 options.dataPartitioning(), options.reversibleVlc(), options.searchRange(), threads, options.bitrate(),
                 options.frameRate(),
                 options.fixedQuantizer().orElse(0), options.minQuantizer(), options.maxQuantizer(),
-                options.keyframeInterval().orElse(0), options.timeBase(), timeResolution(options), color));
+                options.keyframeInterval().orElse(0), options.timeBase(), timeResolution(options), color,
+                options.sampleAspectRatio()));
     }
 
     /**

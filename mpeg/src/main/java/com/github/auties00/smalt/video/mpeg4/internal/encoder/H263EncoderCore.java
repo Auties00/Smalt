@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.video.mpeg4.internal.encoder;
 
 import com.github.auties00.smalt.image.YuvPicture;
+import com.github.auties00.smalt.internal.codec.SampleAspects;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.PacketFlag;
 import com.github.auties00.smalt.track.PacketSideData;
@@ -28,6 +29,9 @@ public final class H263EncoderCore {
      * @param width the picture width
      * @param height the picture height
      * @param extendedType whether the pictures carry the extended picture type
+     * @param customFormat whether the extended picture type signals a custom picture format, as every size but the
+     * standard source formats needs
+     * @param pixelAspect the pixel aspect ratio of a custom picture format, in lowest terms with terms from 1 to 255
      * @param unrestrictedVectors whether the Unrestricted Motion Vector mode (Annex D) is on
      * @param advancedPrediction whether the Advanced Prediction mode (Annex F) is on
      * @param advancedIntra whether the Advanced INTRA Coding mode (Annex I) is on
@@ -49,7 +53,8 @@ public final class H263EncoderCore {
      * @param keyframeInterval the most pictures from one I-picture to the next, or 0 for none but the first
      * @param timeBase the unit of the timestamps
      */
-    public record Settings(int width, int height, boolean extendedType, boolean unrestrictedVectors,
+    public record Settings(int width, int height, boolean extendedType, boolean customFormat, Rational pixelAspect,
+                           boolean unrestrictedVectors,
                            boolean advancedPrediction, boolean advancedIntra, boolean deblocking,
                            boolean modifiedQuantization, boolean groupHeaders, int sliceMacroblocks,
                            int clockConversion, int clockDivisor,
@@ -104,7 +109,7 @@ public final class H263EncoderCore {
      */
     public H263EncoderCore(Settings settings) {
         this.settings = settings;
-        this.format = formatOf(settings.width(), settings.height());
+        this.format = settings.customFormat() ? 6 : formatOf(settings.width(), settings.height());
         // TODO: check the overlapped motion compensation of Annex F against an independent decoder (the ITU-T TMN
         //  decoder); ffmpeg's decode of the encoder's Advanced Prediction streams drifts to about 40 dB PSNR.
         var fourVectors = settings.advancedPrediction() || settings.deblocking();
@@ -253,10 +258,16 @@ public final class H263EncoderCore {
         out.write(0b001, 3);
         out.bit(0);
         if (format == 6) {
-            out.write(1, 4);
+            var aspect = settings.pixelAspect();
+            var code = SampleAspects.pixelAspectCode(aspect);
+            out.write(code, 4);
             out.write(settings.width() / 4 - 1, 9);
             out.bit(1);
             out.write(settings.height() / 4, 9);
+            if (code == SampleAspects.EXTENDED_PIXEL_ASPECT) {
+                out.write((int) aspect.numerator(), 8);
+                out.write((int) aspect.denominator(), 8);
+            }
         }
         if (customClock) {
             out.bit(settings.clockConversion() == 1001 ? 1 : 0);

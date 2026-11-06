@@ -4,6 +4,7 @@ import com.github.auties00.smalt.image.Chromaticity;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.internal.bits.MsbBitWriter;
+import com.github.auties00.smalt.internal.codec.SampleAspects;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.video.hevc.encoder.HevcProfile;
 import com.github.auties00.smalt.video.hevc.internal.HevcNal;
@@ -39,6 +40,20 @@ final class ParameterSets {
      * The {@code payloadType} of the content light level information.
      */
     private static final int SEI_CONTENT_LIGHT_LEVEL = 144;
+
+    /**
+     * The sample aspect ratios of {@code aspect_ratio_idc} 1 to 16 (ITU-T H.265 Table E.1), as numerator and
+     * denominator.
+     */
+    private static final int[][] ASPECT_RATIOS = {
+            {1, 1}, {12, 11}, {10, 11}, {16, 11}, {40, 33}, {24, 11}, {20, 11}, {32, 11}, {80, 33},
+            {18, 11}, {15, 11}, {64, 33}, {160, 99}, {4, 3}, {3, 2}, {2, 1}
+    };
+
+    /**
+     * The {@code aspect_ratio_idc} of an explicit ratio.
+     */
+    private static final int EXTENDED_SAR = 255;
 
     /**
      * Prevents instantiation.
@@ -216,13 +231,16 @@ final class ParameterSets {
      * @param s the settings
      */
     private static void vui(MsbBitWriter w, EncoderSettings s) {
-        var sar = s.options.sampleAspectRatio();
+        var sar = s.options.sampleAspectRatio().reduce();
         var square = sar.numerator() == sar.denominator();
         w.writeBit(square ? 0 : 1);
         if (!square) {
-            w.write(255, 8);
-            w.write((int) sar.numerator(), 16);
-            w.write((int) sar.denominator(), 16);
+            var index = SampleAspects.indexOf(sar, ASPECT_RATIOS);
+            w.write(index >= 0 ? index + 1 : EXTENDED_SAR, 8);
+            if (index < 0) {
+                w.write((int) sar.numerator(), 16);
+                w.write((int) sar.denominator(), 16);
+            }
         }
         w.writeBit(0);
         ColorInfo color = s.color;

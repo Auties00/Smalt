@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.internal.provider.mpeg;
 
+import com.github.auties00.smalt.internal.codec.SampleAspects;
 import com.github.auties00.smalt.spi.VideoCodecProvider;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.VideoTrack;
@@ -27,6 +28,8 @@ import com.github.auties00.smalt.video.mpeg4.Mpeg4EncoderOptions;
  *                 timestamp is its index;</li>
  *             <li>a key frame interval and no periodic key frames in place of the preset's;</li>
  *             <li>the thread count and the color description unchanged;</li>
+ *             <li>a sample aspect ratio: {@link Mpeg4EncoderOptions.Builder#sampleAspectRatio}, in lowest
+ *                 terms, or the closest ratio of 8-bit terms when the terms do not fit the extended PAR;</li>
  *             <li>a bit depth above 8 is coded at 8 bits, the only depth of the two profiles.</li>
  *           </ul>
  */
@@ -65,6 +68,7 @@ public final class Mpeg4CodecProvider implements VideoCodecProvider {
             options.keyframeInterval().ifPresent(builder::keyframeInterval);
         }
         options.color().ifPresent(builder::color);
+        options.sampleAspectRatio().ifPresent(sar -> builder.sampleAspectRatio(SampleAspects.fit(sar, 255)));
         return new Mpeg4Encoder(options.width(), options.height(), builder.build());
     }
 }

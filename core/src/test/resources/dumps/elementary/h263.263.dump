@@ -3,7 +3,7 @@ format H263
 duration -1
 seekable true
 track 1 VIDEO H263 timebase=1001/30000 duration=? config=none
-  video 0x0 orientation=NORMAL
+  video 0x0 orientation=NORMAL sar=12/11
 packets 15
 0 t1 pts=0 dts=0 dur=? flags=KEY size=4795 crc=74fe5f36
 1 t1 pts=1 dts=1 dur=? flags=- size=1318 crc=3e3ca8c3

@@ -32,9 +32,10 @@ import java.util.function.Consumer;
  * picture, every {@link H263EncoderOptions#keyframeInterval()}-th picture and the picture after a
  * {@link #requestKeyframe()} are I-pictures. A picture of one of the standard source formats (sub-QCIF 128x96, QCIF
  * 176x144, CIF 352x288, 4CIF 704x576 and 16CIF 1408x1152) without the modes of the second version, at up to 30
- * frames per second, has the baseline picture header; any other picture has the extended picture type, with a
- * custom picture format of 1:1 pixels for any other size and, when the frame rate is a whole fraction of one or
- * above 30, a custom picture clock frequency.
+ * frames per second, has the baseline picture header unless its {@linkplain H263EncoderOptions#sampleAspectRatio()
+ * pixel aspect ratio} is not the 12:11 those formats imply; any other picture has the extended picture type, with a
+ * custom picture format for any other size or pixel aspect ratio (1:1 pixels unless the options request a ratio)
+ * and, when the frame rate is a whole fraction of one or above 30, a custom picture clock frequency.
  *
  * <p>Each packet holds one picture, starting with its picture start code; every frame gives its packet before
  * {@link #encode(VideoFrame, Consumer)} returns, with equal presentation and decoding timestamps. Frames may be
@@ -52,6 +53,16 @@ import java.util.function.Consumer;
  * time.
  */
 public final class H263Encoder implements VideoEncoder {
+    /**
+     * The pixel aspect ratio the standard source formats imply.
+     */
+    private static final Rational STANDARD_PIXEL_ASPECT = new Rational(12, 11);
+
+    /**
+     * The pixel aspect ratio of a custom picture format without a requested ratio.
+     */
+    private static final Rational SQUARE = new Rational(1, 1);
+
     private final H263EncoderOptions options;
     private final int width;
     private final int height;
@@ -100,7 +111,9 @@ public final class H263Encoder implements VideoEncoder {
         this.color = width > 1024 || height > 576 ? ColorInfo.BT709_LIMITED : ColorInfo.BT601_LIMITED;
         this.converter = YuvConverter.create(ChromaFormat.YUV420, color);
         this.clock = new FrameClock(options.frameRate(), options.timeBase());
-        var standard = H263EncoderCore.formatOf(width, height) != 6;
+        var aspect = options.sampleAspectRatio().orElse(null);
+        var standard = H263EncoderCore.formatOf(width, height) != 6
+                && (aspect == null || aspect.equals(STANDARD_PIXEL_ASPECT));
         this.extendedType = !standard || aboveBaselineRate(options.frameRate()) || options.unrestrictedVectors()
                 || options.advancedIntraCoding() || options.deblockingFilter() || options.modifiedQuantization()
                 || options.sliceSize().isPresent();
@@ -112,7 +125,8 @@ public final class H263Encoder implements VideoEncoder {
             divisor = custom[1];
         }
         var threads = options.threads() == 0 ? ParallelBands.THREADS : options.threads();
-        this.core = new H263EncoderCore(new H263EncoderCore.Settings(width, height, extendedType,
+        this.core = new H263EncoderCore(new H263EncoderCore.Settings(width, height, extendedType, !standard,
+                aspect == null ? SQUARE : aspect,
                 options.unrestrictedVectors(), options.advancedPrediction(), options.advancedIntraCoding(),
                 options.deblockingFilter(), options.modifiedQuantization(), options.groupOfBlocksHeaders(),
                 options.sliceSize().orElse(0), conversion,

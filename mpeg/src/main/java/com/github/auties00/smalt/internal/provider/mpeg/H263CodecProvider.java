@@ -1,7 +1,9 @@
 package com.github.auties00.smalt.internal.provider.mpeg;
 
+import com.github.auties00.smalt.internal.codec.SampleAspects;
 import com.github.auties00.smalt.spi.VideoCodecProvider;
 import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.VideoTrack;
 import com.github.auties00.smalt.video.VideoDecoder;
 import com.github.auties00.smalt.video.VideoDecoderOptions;
@@ -27,10 +29,17 @@ import com.github.auties00.smalt.video.h263.H263EncoderOptions;
  *                 frame's timestamp is its index;</li>
  *             <li>a key frame interval and no periodic key frames in place of the preset's;</li>
  *             <li>the thread count unchanged; the color description is ignored, since H.263 signals none,
- *                 and a bit depth above 8 is coded at 8 bits.</li>
+ *                 and a bit depth above 8 is coded at 8 bits;</li>
+ *             <li>a sample aspect ratio other than 1:1: {@link H263EncoderOptions.Builder#sampleAspectRatio},
+ *                 in lowest terms, or the closest ratio of 8-bit terms when the terms do not fit the extended
+ *                 PAR; square samples, like no ratio, keep the ratio the picture format implies.</li>
  *           </ul>
- *           The baseline syntax is kept for the standard source formats up to 30 frames per second; any
- *           other size the custom formats code, and a faster frame rate, gets the extended picture type.
+ *           The baseline syntax is kept for the standard source formats up to 30 frames per second, unless the
+ *           sample aspect ratio is neither square nor the 12:11 they imply; any other size the custom formats
+ *           code, and a faster frame rate, gets the extended picture type. Square samples are not signaled in a
+ *           custom format of a standard size because many H.263 decoders, those of the 3GPP baseline profile among
+ *           them, read only the baseline picture header, and a transcode hands on the square samples many
+ *           sources declare.
  */
 public final class H263CodecProvider implements VideoCodecProvider {
     /**
@@ -66,6 +75,8 @@ public final class H263CodecProvider implements VideoCodecProvider {
         } else {
             options.keyframeInterval().ifPresent(builder::keyframeInterval);
         }
+        options.sampleAspectRatio().map(Rational::reduce).filter(sar -> sar.numerator() != sar.denominator())
+                .ifPresent(sar -> builder.sampleAspectRatio(SampleAspects.fit(sar, 255)));
         return new H263Encoder(options.width(), options.height(), builder.build());
     }
 }

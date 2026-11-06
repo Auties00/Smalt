@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.internal.provider.video;
 
+import com.github.auties00.smalt.internal.codec.SampleAspects;
 import com.github.auties00.smalt.spi.VideoCodecProvider;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.VideoTrack;
@@ -18,7 +19,8 @@ import com.github.auties00.smalt.video.theora.TheoraEncoderOptions;
  * {@link VideoEncoders}.
  *
  * @implNote This implementation passes the decoder options on unchanged. It encodes 4:2:0 intra frames at the
- *           {@link TheoraEncoderOptions#defaults()} quality, with the requested frame rate and color description;
+ *           {@link TheoraEncoderOptions#defaults()} quality, with the requested frame rate, color description and
+ *           sample aspect ratio (in lowest terms, or the closest ratio of 24-bit terms);
  *           the bitrate, the key frame interval and the real-time request do not apply, every frame being a key
  *           frame of one quality.
  */
@@ -48,6 +50,7 @@ public final class TheoraCodecProvider implements VideoCodecProvider {
     public VideoEncoder createEncoder(Codec codec, VideoEncoderOptions options) {
         var builder = TheoraEncoderOptions.builder().frameRate(options.frameRate());
         options.color().ifPresent(builder::color);
+        options.sampleAspectRatio().ifPresent(sar -> builder.sampleAspectRatio(SampleAspects.fit(sar, 0xFFFFFF)));
         return new TheoraEncoder(options.width(), options.height(), builder.build());
     }
 }

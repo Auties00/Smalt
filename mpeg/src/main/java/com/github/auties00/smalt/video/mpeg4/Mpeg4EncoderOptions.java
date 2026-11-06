@@ -66,6 +66,7 @@ public final class Mpeg4EncoderOptions {
     private final int searchRange;
     private final int threads;
     private final Optional<ColorInfo> color;
+    private final Rational sampleAspectRatio;
     private final MediaLimits limits;
 
     private Mpeg4EncoderOptions(Builder builder) {
@@ -90,6 +91,7 @@ public final class Mpeg4EncoderOptions {
         this.searchRange = builder.searchRange;
         this.threads = Math.min(builder.threads, MAX_THREADS);
         this.color = builder.color;
+        this.sampleAspectRatio = builder.sampleAspectRatio.reduce();
         this.limits = builder.limits;
     }
 
@@ -339,6 +341,17 @@ public final class Mpeg4EncoderOptions {
     }
 
     /**
+     * {@return the sample aspect ratio the video object layer signals, the width of a sample over its height, in
+     * lowest terms with each term from 1 to 255; 1:1 by default}
+     *
+     * <p>The ratios 1:1, 12:11, 10:11, 16:11 and 40:33 are signaled by their {@code aspect_ratio_info} code, any
+     * other as an extended pixel aspect ratio (ISO/IEC 14496-2 table 6-12).
+     */
+    public Rational sampleAspectRatio() {
+        return sampleAspectRatio;
+    }
+
+    /**
      * {@return the limits the picture size is checked against; {@link MediaLimits#DEFAULT} by default}
      */
     public MediaLimits limits() {
@@ -357,7 +370,7 @@ public final class Mpeg4EncoderOptions {
                 && acPrediction == that.acPrediction && videoPacketSize.equals(that.videoPacketSize)
                 && dataPartitioning == that.dataPartitioning && reversibleVlc == that.reversibleVlc
                 && searchRange == that.searchRange && threads == that.threads && color.equals(that.color)
-                && limits.equals(that.limits);
+                && sampleAspectRatio.equals(that.sampleAspectRatio) && limits.equals(that.limits);
     }
 
     @Override
@@ -365,8 +378,7 @@ public final class Mpeg4EncoderOptions {
         return Objects.hash(profile, frameRate, timeBase, bitrate, fixedQuantizer, minQuantizer, maxQuantizer,
                 keyframeInterval, bFrames, quarterSample, mpegQuantization, Arrays.hashCode(intraMatrix),
                 Arrays.hashCode(interMatrix), fourMotionVectors, acPrediction, videoPacketSize, dataPartitioning,
-                reversibleVlc, searchRange, threads,
-                color, limits);
+                reversibleVlc, searchRange, threads, color, sampleAspectRatio, limits);
     }
 
     @Override
@@ -379,7 +391,7 @@ public final class Mpeg4EncoderOptions {
                 + ", fourMotionVectors=" + fourMotionVectors + ", acPrediction=" + acPrediction
                 + ", videoPacketSize=" + videoPacketSize + ", dataPartitioning=" + dataPartitioning
                 + ", reversibleVlc=" + reversibleVlc + ", searchRange=" + searchRange + ", threads=" + threads
-                + ", color=" + color + ", limits=" + limits + "]";
+                + ", color=" + color + ", sampleAspectRatio=" + sampleAspectRatio + ", limits=" + limits + "]";
     }
 
     /**
@@ -408,6 +420,7 @@ public final class Mpeg4EncoderOptions {
         private int searchRange = 16;
         private int threads;
         private Optional<ColorInfo> color = Optional.empty();
+        private Rational sampleAspectRatio = new Rational(1, 1);
         private MediaLimits limits = MediaLimits.DEFAULT;
 
         private Builder() {
@@ -435,6 +448,7 @@ public final class Mpeg4EncoderOptions {
             searchRange = from.searchRange;
             threads = from.threads;
             color = from.color;
+            sampleAspectRatio = from.sampleAspectRatio;
             limits = from.limits;
         }
 
@@ -714,6 +728,17 @@ public final class Mpeg4EncoderOptions {
         }
 
         /**
+         * Sets the sample aspect ratio; see {@link Mpeg4EncoderOptions#sampleAspectRatio()}.
+         *
+         * @param sampleAspectRatio the value
+         * @return this builder
+         */
+        public Builder sampleAspectRatio(Rational sampleAspectRatio) {
+            this.sampleAspectRatio = Objects.requireNonNull(sampleAspectRatio, "sampleAspectRatio");
+            return this;
+        }
+
+        /**
          * Sets the limits; see {@link Mpeg4EncoderOptions#limits()}.
          *
          * @param limits the value
@@ -732,9 +757,9 @@ public final class Mpeg4EncoderOptions {
          * positive, the bitrate is not positive, the fixed quantizer is not in [1, 31], the smallest quantizer is
          * not in [1, 31] or the largest not in [smallest, 31], the key frame interval is not positive, the B-VOPs
          * are not in [0, 4], a matrix does not hold 64 values from 1 to 255, the video packet size is not in [32,
-         * 65536], the search range is not in [1, 256], the thread count is negative, reversible codes are asked
-         * for without data partitioning, or the Simple profile is combined with B-VOPs, quarter samples or MPEG
-         * quantization
+         * 65536], the search range is not in [1, 256], the thread count is negative, a term of the sample aspect
+         * ratio in lowest terms is above 255, reversible codes are asked for without data partitioning, or the
+         * Simple profile is combined with B-VOPs, quarter samples or MPEG quantization
          */
         public Mpeg4EncoderOptions build() {
             Checks.inRange("frame rate", frameRate.toDouble(), 0.1, 1000);
@@ -757,6 +782,11 @@ public final class Mpeg4EncoderOptions {
             }
             Checks.inRange("search range", searchRange, 1, MAX_SEARCH_RANGE);
             Checks.nonNegative("thread count", threads);
+            var aspect = sampleAspectRatio.reduce();
+            if (aspect.numerator() > 255 || aspect.denominator() > 255) {
+                throw new IllegalArgumentException("sample aspect ratio " + sampleAspectRatio
+                        + " has a term above 255 in lowest terms");
+            }
             if (reversibleVlc && !dataPartitioning) {
                 throw new IllegalArgumentException("reversible codes need data partitioning");
             }

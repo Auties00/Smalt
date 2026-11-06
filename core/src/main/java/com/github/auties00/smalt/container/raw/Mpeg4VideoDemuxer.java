@@ -7,6 +7,7 @@ import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.container.internal.SeekTimes;
 import com.github.auties00.smalt.internal.bits.MsbBitReader;
+import com.github.auties00.smalt.internal.codec.SampleAspects;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.Codec;
@@ -35,7 +36,10 @@ import java.util.PriorityQueue;
  * for a stream of picture start codes, {@link Codec#H263}. Every packet ends where the next picture's headers begin:
  * the configuration headers and group of VOP headers that precede a VOP belong to the packet of that VOP, so the
  * first packet carries the stream headers. The headers before the first VOP are also the track's
- * {@linkplain VideoTrack#codecConfig() codec configuration}.
+ * {@linkplain VideoTrack#codecConfig() codec configuration}. The track declares the
+ * {@linkplain VideoTrack#sampleAspectRatio() sample aspect ratio} of the first video object layer header's
+ * {@code aspect_ratio_info}, or of the first H.263 picture header: the pixel aspect ratio of its custom picture
+ * format, or 12:11 for a standard source format.
  *
  * <p>Every packet carries the presentation time of its picture, from the stream's own clock. An MPEG-4 stream is
  * timed in units of its video object layer's {@code vop_time_increment_resolution} (the track's time base is its
@@ -70,6 +74,11 @@ public final class Mpeg4VideoDemuxer implements Demuxer {
      * The H.263 picture clock without a custom picture clock frequency, 30000/1001 hertz.
      */
     private static final Rational H263_CLOCK = new Rational(1001, 30_000);
+
+    /**
+     * The pixel aspect ratio the standard H.263 source formats imply.
+     */
+    private static final Rational STANDARD_ASPECT = new Rational(12, 11);
 
     /**
      * The number of bytes read from the source at once.
@@ -254,6 +263,7 @@ public final class Mpeg4VideoDemuxer implements Demuxer {
         shortHeader = (head[2] & 0xFC) == 0x80;
         byte[] config = null;
         Rational timeBase;
+        Rational aspect;
         if (shortHeader) {
             firstLayer = null;
             while (first.end - first.start < 16 && !first.exhausted) {
@@ -262,6 +272,7 @@ public final class Mpeg4VideoDemuxer implements Demuxer {
             var picture = h263Picture(first.buffer, first.start, first.end - first.start, false, first.bits);
             timeBase = picture == null || picture.clock == null ? H263_CLOCK : picture.clock;
             reordered = picture != null && picture.extended;
+            aspect = picture == null ? null : picture.aspect;
         } else {
             var vop = first.findPicture(first.start);
             var searched = Math.min(limits.maxBytes(), MAX_HEADERS);
@@ -275,13 +286,17 @@ public final class Mpeg4VideoDemuxer implements Demuxer {
             firstLayer = config == null ? null : Layer.find(config, 0, config.length);
             timeBase = firstLayer == null ? UNTIMED : new Rational(1, firstLayer.resolution);
             reordered = firstLayer == null || !firstLayer.lowDelay;
+            aspect = firstLayer == null ? null : firstLayer.aspect;
         }
-        this.track = VideoTrack.builder()
+        var builder = VideoTrack.builder()
                 .id(1)
                 .codec(shortHeader ? Codec.H263 : Codec.MPEG4_PART2)
                 .timeBase(timeBase)
-                .codecConfig(config)
-                .build();
+                .codecConfig(config);
+        if (aspect != null) {
+            builder.sampleAspectRatio(aspect);
+        }
+        this.track = builder.build();
         this.reader = first;
     }
 
@@ -388,7 +403,7 @@ public final class Mpeg4VideoDemuxer implements Demuxer {
      * @param fixedIncrement {@code fixed_vop_time_increment}, or 0 when the VOP rate is not fixed
      * @param lowDelay {@code low_delay}: whether the layer holds no B-VOPs
      */
-    private record Layer(int resolution, int incrementBits, int fixedIncrement, boolean lowDelay) {
+    private record Layer(int resolution, int incrementBits, int fixedIncrement, boolean lowDelay, Rational aspect) {
         /**
          * Finds and reads the first video object layer header in a range.
          *
@@ -432,8 +447,14 @@ public final class Mpeg4VideoDemuxer implements Demuxer {
                 verid = bits.read(4);
                 bits.skip(3);
             }
-            if (bits.read(4) == 15) {
-                bits.skip(16);
+            Rational aspect;
+            var aspectInfo = bits.read(4);
+            if (aspectInfo == SampleAspects.EXTENDED_PIXEL_ASPECT) {
+                var parWidth = bits.read(8);
+                var parHeight = bits.read(8);
+                aspect = parWidth > 0 && parHeight > 0 ? new Rational(parWidth, parHeight).reduce() : null;
+            } else {
+                aspect = SampleAspects.pixelAspectOf(aspectInfo);
             }
             var lowDelay = false;
             if (bits.readFlag()) {
@@ -456,7 +477,7 @@ public final class Mpeg4VideoDemuxer implements Demuxer {
             if (bits.overrun() || resolution <= 0) {
                 return null;
             }
-            return new Layer(resolution, incrementBits, increment, lowDelay);
+            return new Layer(resolution, incrementBits, increment, lowDelay, aspect);
         }
     }
 
@@ -469,9 +490,11 @@ public final class Mpeg4VideoDemuxer implements Demuxer {
      * @param extended whether the header has an extended picture type (PLUSPTYPE)
      * @param customClock whether a custom picture clock frequency is in use after this header
      * @param clock the period of the custom picture clock this header sets, or {@code null}
+     * @param aspect the pixel aspect ratio this header signals or its standard source format implies, or
+     * {@code null} when it has neither
      */
     private record H263Picture(int temporalReference, int modulus, boolean bPicture, boolean extended,
-                               boolean customClock, Rational clock) {
+                               boolean customClock, Rational clock, Rational aspect) {
     }
 
     /**
@@ -492,7 +515,7 @@ public final class Mpeg4VideoDemuxer implements Demuxer {
         bits.skip(5);
         var format = bits.read(3);
         if (format != EXTENDED_FORMAT) {
-            return bits.overrun() ? null : new H263Picture(tr, 256, false, false, false, null);
+            return bits.overrun() ? null : new H263Picture(tr, 256, false, false, false, null, standardAspect(format));
         }
         var ufep = bits.read(UFEP_BITS);
         var custom = customClock;
@@ -508,13 +531,20 @@ public final class Mpeg4VideoDemuxer implements Demuxer {
             bits.skip(2);
         }
         Rational clock = null;
+        Rational aspect = null;
         if (ufep == 1) {
             if (sourceFormat == 6) {
-                var aspect = bits.read(4);
+                var code = bits.read(4);
                 bits.skip(19);
-                if (aspect == 15) {
-                    bits.skip(16);
+                if (code == SampleAspects.EXTENDED_PIXEL_ASPECT) {
+                    var parWidth = bits.read(8);
+                    var parHeight = bits.read(8);
+                    aspect = parWidth > 0 && parHeight > 0 ? new Rational(parWidth, parHeight).reduce() : null;
+                } else {
+                    aspect = SampleAspects.pixelAspectOf(code);
                 }
+            } else {
+                aspect = standardAspect(sourceFormat);
             }
             if (custom) {
                 var conversion = bits.read(1);
@@ -530,7 +560,17 @@ public final class Mpeg4VideoDemuxer implements Demuxer {
         if (bits.overrun()) {
             return null;
         }
-        return new H263Picture(tr, custom ? 1024 : 256, type == H263_B_PICTURE, true, custom, clock);
+        return new H263Picture(tr, custom ? 1024 : 256, type == H263_B_PICTURE, true, custom, clock, aspect);
+    }
+
+    /**
+     * {@return the pixel aspect ratio of an H.263 source format code, 12:11 for the five standard formats, or
+     * {@code null} for any other code}
+     *
+     * @param format the source format code
+     */
+    private static Rational standardAspect(int format) {
+        return format >= 1 && format <= 5 ? STANDARD_ASPECT : null;
     }
 
     /**

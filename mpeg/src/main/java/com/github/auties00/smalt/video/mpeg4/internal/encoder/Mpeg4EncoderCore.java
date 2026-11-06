@@ -3,6 +3,7 @@ package com.github.auties00.smalt.video.mpeg4.internal.encoder;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.YuvPicture;
+import com.github.auties00.smalt.internal.codec.SampleAspects;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.PacketFlag;
 import com.github.auties00.smalt.track.PacketSideData;
@@ -54,13 +55,14 @@ public final class Mpeg4EncoderCore {
      * @param timeBase the unit of the timestamps
      * @param timeResolution the {@code vop_time_increment_resolution}, from 1 to 65535
      * @param color the color description the stream signals
+     * @param sampleAspect the sample aspect ratio the stream signals, in lowest terms with terms from 1 to 255
      */
     public record Settings(int width, int height, boolean advancedSimple, int bFrames, boolean quarterSample,
                            boolean mpegQuantization, int[] intraMatrix, int[] interMatrix, boolean fourVectors,
                            boolean acPrediction, int packetBytes, boolean dataPartitioned, boolean reversibleVlc,
                            int searchRange, int threads, long bitrate,
                            Rational frameRate, int fixedQuant, int minQuant, int maxQuant, int keyframeInterval,
-                           Rational timeBase, int timeResolution, ColorInfo color) {
+                           Rational timeBase, int timeResolution, ColorInfo color, Rational sampleAspect) {
     }
 
     /**
@@ -402,7 +404,7 @@ public final class Mpeg4EncoderCore {
         out.bit(1);
         out.write(verid, 4);
         out.write(1, 3);
-        out.write(1, 4);
+        writeAspectRatio(out, settings.sampleAspect());
         out.bit(1);
         out.write(1, 2);
         out.flag(settings.bFrames() == 0);
@@ -441,6 +443,22 @@ public final class Mpeg4EncoderCore {
         }
         out.bit(0);
         out.stuffing();
+    }
+
+    /**
+     * Writes {@code aspect_ratio_info} and, for an extended pixel aspect ratio, {@code par_width} and
+     * {@code par_height}.
+     *
+     * @param out the stream
+     * @param aspect the ratio, in lowest terms with terms from 1 to 255
+     */
+    private static void writeAspectRatio(BitWriter out, Rational aspect) {
+        var code = SampleAspects.pixelAspectCode(aspect);
+        out.write(code, 4);
+        if (code == SampleAspects.EXTENDED_PIXEL_ASPECT) {
+            out.write((int) aspect.numerator(), 8);
+            out.write((int) aspect.denominator(), 8);
+        }
     }
 
     /**

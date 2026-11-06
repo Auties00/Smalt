@@ -5,6 +5,7 @@ import com.github.auties00.smalt.internal.check.Checks;
 import com.github.auties00.smalt.track.Rational;
 
 import java.util.Objects;
+import java.util.Optional;
 import java.util.OptionalInt;
 
 /**
@@ -13,8 +14,8 @@ import java.util.OptionalInt;
  *
  * <p>Every optional mode is off by default, which gives the baseline syntax every H.263 decoder supports; turning on
  * any mode of the second version of ITU-T H.263 (Annexes D, I, J, K or T) makes the pictures carry the extended picture
- * type, as a picture size other than the five standard formats does. The picture size is not an option: it is given
- * to the {@link H263Encoder} constructor.
+ * type, as a picture size other than the five standard formats or a pixel aspect ratio other than the 12:11 they imply
+ * does. The picture size is not an option: it is given to the {@link H263Encoder} constructor.
  */
 public final class H263EncoderOptions {
     /**
@@ -51,6 +52,7 @@ public final class H263EncoderOptions {
     private final OptionalInt sliceSize;
     private final int searchRange;
     private final int threads;
+    private final Rational sampleAspectRatio;
     private final MediaLimits limits;
 
     private H263EncoderOptions(Builder builder) {
@@ -70,6 +72,7 @@ public final class H263EncoderOptions {
         this.sliceSize = builder.sliceSize;
         this.searchRange = builder.searchRange;
         this.threads = Math.min(builder.threads, MAX_THREADS);
+        this.sampleAspectRatio = builder.sampleAspectRatio == null ? null : builder.sampleAspectRatio.reduce();
         this.limits = builder.limits;
     }
 
@@ -266,6 +269,19 @@ public final class H263EncoderOptions {
     }
 
     /**
+     * {@return the pixel aspect ratio the pictures signal, the width of a pixel over its height, in lowest terms with
+     * each term from 1 to 255, or empty for the ratio the picture format implies; empty by default}
+     *
+     * <p>The five standard source formats imply 12:11 and the custom formats of this encoder default to 1:1. Any
+     * other ratio is signaled by a custom picture format, so a picture of a standard source format then carries the
+     * extended picture type; the ratios 1:1, 12:11, 10:11, 16:11 and 40:33 are signaled by their pixel aspect ratio
+     * code, any other as an extended pixel aspect ratio (the {@code CPFMT} and {@code EPAR} fields of ITU-T H.263).
+     */
+    public Optional<Rational> sampleAspectRatio() {
+        return Optional.ofNullable(sampleAspectRatio);
+    }
+
+    /**
      * {@return the limits the picture size is checked against; {@link MediaLimits#DEFAULT} by default}
      */
     public MediaLimits limits() {
@@ -283,14 +299,16 @@ public final class H263EncoderOptions {
                 && modifiedQuantization == that.modifiedQuantization
                 && groupOfBlocksHeaders == that.groupOfBlocksHeaders && sliceSize.equals(that.sliceSize)
                 && searchRange == that.searchRange
-                && threads == that.threads && limits.equals(that.limits);
+                && threads == that.threads && Objects.equals(sampleAspectRatio, that.sampleAspectRatio)
+                && limits.equals(that.limits);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(frameRate, timeBase, bitrate, fixedQuantizer, minQuantizer, maxQuantizer,
                 keyframeInterval, unrestrictedVectors, advancedPrediction, advancedIntraCoding, deblockingFilter,
-                modifiedQuantization, groupOfBlocksHeaders, sliceSize, searchRange, threads, limits);
+                modifiedQuantization, groupOfBlocksHeaders, sliceSize, searchRange, threads, sampleAspectRatio,
+                limits);
     }
 
     @Override
@@ -302,7 +320,7 @@ public final class H263EncoderOptions {
                 + ", deblockingFilter=" + deblockingFilter + ", modifiedQuantization=" + modifiedQuantization
                 + ", groupOfBlocksHeaders=" + groupOfBlocksHeaders + ", sliceSize=" + sliceSize
                 + ", searchRange=" + searchRange
-                + ", threads=" + threads + ", limits=" + limits + "]";
+                + ", threads=" + threads + ", sampleAspectRatio=" + sampleAspectRatio + ", limits=" + limits + "]";
     }
 
     /**
@@ -326,6 +344,7 @@ public final class H263EncoderOptions {
         private OptionalInt sliceSize = OptionalInt.empty();
         private int searchRange = 16;
         private int threads;
+        private Rational sampleAspectRatio;
         private MediaLimits limits = MediaLimits.DEFAULT;
 
         private Builder() {
@@ -348,6 +367,7 @@ public final class H263EncoderOptions {
             sliceSize = from.sliceSize;
             searchRange = from.searchRange;
             threads = from.threads;
+            sampleAspectRatio = from.sampleAspectRatio;
             limits = from.limits;
         }
 
@@ -552,6 +572,28 @@ public final class H263EncoderOptions {
         }
 
         /**
+         * Sets the pixel aspect ratio; see {@link H263EncoderOptions#sampleAspectRatio()}.
+         *
+         * @param sampleAspectRatio the value
+         * @return this builder
+         */
+        public Builder sampleAspectRatio(Rational sampleAspectRatio) {
+            this.sampleAspectRatio = Objects.requireNonNull(sampleAspectRatio, "sampleAspectRatio");
+            return this;
+        }
+
+        /**
+         * Signals the pixel aspect ratio the picture format implies; see
+         * {@link H263EncoderOptions#sampleAspectRatio()}.
+         *
+         * @return this builder
+         */
+        public Builder automaticSampleAspectRatio() {
+            this.sampleAspectRatio = null;
+            return this;
+        }
+
+        /**
          * Sets the limits; see {@link H263EncoderOptions#limits()}.
          *
          * @param limits the value
@@ -569,8 +611,8 @@ public final class H263EncoderOptions {
          * @throws IllegalArgumentException if the frame rate is not in [0.1, 1000], a time base term is not
          * positive, the bitrate is not positive, the fixed quantizer is not in [1, 31], the smallest quantizer is
          * not in [1, 31] or the largest not in [smallest, 31], the key frame interval is not positive, the slice size
-         * is not positive or is combined with group of blocks headers, the search range is not in [1, 256] or the
-         * thread count is negative
+         * is not positive or is combined with group of blocks headers, the search range is not in [1, 256], the
+         * thread count is negative, or a term of the pixel aspect ratio in lowest terms is above 255
          */
         public H263EncoderOptions build() {
             Checks.inRange("frame rate", frameRate.toDouble(), 0.1, 1000);
@@ -593,6 +635,13 @@ public final class H263EncoderOptions {
             }
             Checks.inRange("search range", searchRange, 1, 256);
             Checks.nonNegative("thread count", threads);
+            if (sampleAspectRatio != null) {
+                var aspect = sampleAspectRatio.reduce();
+                if (aspect.numerator() > 255 || aspect.denominator() > 255) {
+                    throw new IllegalArgumentException("pixel aspect ratio " + sampleAspectRatio
+                            + " has a term above 255 in lowest terms");
+                }
+            }
             return new H263EncoderOptions(this);
         }
     }

@@ -21,7 +21,9 @@ public enum SampleAspectMode {
      * output declares the sample aspect ratio that keeps the displayed shape, scaled by any uneven
      * scaling; square samples stay square, so a resize that changes the shape of square-sampled
      * video changes its displayed shape too. For a container that cannot record one, the ratio is
-     * lost and the video plays stretched or squeezed.
+     * kept only by an encoder that signals it in the bitstream
+     * ({@link com.github.auties00.smalt.video.VideoEncoderOptions#sampleAspectRatio()}); otherwise
+     * it is lost and the video plays stretched or squeezed.
      */
     PRESERVE,
 

@@ -3,7 +3,7 @@ format MPEG4_VIDEO
 duration -1
 seekable true
 track 1 VIDEO MPEG4_PART2 timebase=1/15 duration=? config=55:79d3b409
-  video 0x0 orientation=NORMAL
+  video 0x0 orientation=NORMAL sar=1/1
 packets 30
 0 t1 pts=0 dts=-3 dur=? flags=KEY size=3613 crc=9583f35a
 1 t1 pts=3 dts=0 dur=? flags=- size=1665 crc=66ff2709

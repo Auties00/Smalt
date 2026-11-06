@@ -460,6 +460,10 @@ public final class HevcEncoderOptions {
     /**
      * {@return the sample aspect ratio, the width of a sample over its height, written to the video
      * usability information; 1:1 by default}
+     *
+     * <p>Both terms are from 1 to 65535. A square ratio is written as no ratio, which a decoder reads as
+     * unspecified; a ratio of ITU-T H.265 Table E.1 in lowest terms as its {@code aspect_ratio_idc}, any other in
+     * lowest terms as {@code EXTENDED_SAR}.
      */
     public Rational sampleAspectRatio() {
         return sampleAspectRatio;

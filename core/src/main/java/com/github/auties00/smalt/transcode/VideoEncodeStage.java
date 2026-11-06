@@ -889,9 +889,6 @@ final class VideoEncodeStage implements Stage {
                 builder.interlacing(outputScan);
             }
             if (aspect != null) {
-                // TODO: signal the ratio in the H.264 VUI (it writes 1:1) and in the other encoders that signal one in
-                //  band from VideoEncoderOptions.sampleAspectRatio, so that a later remux into a container without the
-                //  field keeps it
                 builder.sampleAspectRatio(aspect);
             }
             declared = builder.build();

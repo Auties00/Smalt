@@ -236,9 +236,14 @@ public final class VideoEncoderOptions {
      * {@return the sample aspect ratio of the pictures, the ratio of the width of a sample to its height, or empty
      * when the samples are square or unknown; empty by default}
      *
-     * <p>A codec that signals the shape of the picture in its bitstream signals it from this ratio; the others ignore
-     * it. DV signals a 16:9 display when the displayed picture, its width times this ratio over its height, is wider
-     * than 14:9, and a 4:3 display otherwise.
+     * <p>A codec that signals the shape of the samples in its bitstream signals this ratio, so that the stream keeps
+     * it in a container that does not record one: H.264 and HEVC in the video usability information, MPEG-4 Part 2 in
+     * the video object layer, H.263 in a custom picture format (but for square samples, which keep the ratio of the
+     * picture format), Theora in the identification header and FFV1 version 3 in every slice header, each in lowest
+     * terms or, when the terms are larger than the field holds, as the closest ratio whose terms fit it. DV signals a
+     * 16:9 display when the displayed picture, its width times this ratio over its height, is wider than 14:9, and a
+     * 4:3 display otherwise. The other codecs, AV1, VP8 and VP9 among them, have no such field and ignore the ratio;
+     * the container of the track carries it.
      */
     public Optional<Rational> sampleAspectRatio() {
         return Optional.ofNullable(sampleAspectRatio);
