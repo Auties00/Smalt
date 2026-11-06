@@ -11,6 +11,7 @@ import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.container.DemuxerOptions;
+import com.github.auties00.smalt.container.dv.DvFormat;
 import com.github.auties00.smalt.container.mp4.Mp4Muxer;
 import com.github.auties00.smalt.container.mp4.Mp4MuxerOptions;
 import com.github.auties00.smalt.container.mp4.Mp4Remuxer;
@@ -1116,9 +1117,10 @@ final class AvTranscode {
      * @param applyOrientation whether the orientation is applied to the pixels
      * @param applyAspect whether non-square samples are resampled to square ones
      * @param frameRate the constant output rate, or {@code null} to keep the source timing
+     * @param raster the raster of the DV format an encoded stream is fitted to, or {@code null} for other outputs
      */
     private record VideoPlan(VideoTrack track, boolean copy, Codec codec, boolean applyOrientation, boolean applyAspect,
-                             Rational frameRate) {
+                             Rational frameRate, DvRaster raster) {
     }
 
     /**
@@ -1136,7 +1138,17 @@ final class AvTranscode {
      */
     private final class Output {
         private final MediaSink sink;
-        private final TranscodeOptions options;
+
+        /**
+         * The options, which a raw DV output replaces with the frame rate, color and audio its DV format imposes once
+         * the streams are planned.
+         */
+        private TranscodeOptions options;
+
+        /**
+         * The DV format of a raw DV output with video, once planned, or {@code null}.
+         */
+        private DvFormat dvFormat;
 
         /**
          * The subtitle track whose packets the video stage receives as they arrive, or {@code null}.
@@ -1202,7 +1214,14 @@ final class AvTranscode {
             if (video == null && audio.isEmpty() && subtitles.isEmpty()) {
                 throw new IllegalArgumentException("the options select no stream of the input");
             }
+            var dv = options.container() == OutputContainer.DV;
+            if (dv && video == null) {
+                throw new IllegalArgumentException("raw DV files need a video stream, and the options select none");
+            }
             videoPlan = video == null ? null : planVideo(video);
+            if (dv) {
+                options = options.toBuilder().audio(DvOutput.audio(options.audio(), dvFormat, audio)).build();
+            }
             for (var track : audio) {
                 audioPlans.add(planAudio(track));
             }
@@ -1738,6 +1757,34 @@ final class AvTranscode {
         }
 
         /**
+         * Returns the DV format of a DV track copied into a raw DV stream. The SD picture sizes are shared by DV,
+         * DVCPRO and DVCPRO50, which carry different audio, so the format of those is read from the track's first
+         * frame with a second demuxer of the inputs.
+         *
+         * @param track the copied DV track
+         * @return the format, or {@code null} when the track's size and first frame name none
+         */
+        private DvFormat copiedDvFormat(VideoTrack track) {
+            var format = DvOutput.formatOf(track);
+            if (!DvOutput.ambiguous(format)) {
+                return format;
+            }
+            try (var demuxer = openDemuxer()) {
+                if (demuxer instanceof MergedDemuxer selecting) {
+                    selecting.select(Set.of(track.id()));
+                }
+                for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                    cancellation.check();
+                    if (packet.trackId() == track.id()) {
+                        var detected = DvOutput.formatOf(packet.data());
+                        return detected != null ? detected : format;
+                    }
+                }
+            }
+            return format;
+        }
+
+        /**
          * Plans the video stream.
          *
          * @param track the input track
@@ -1773,15 +1820,28 @@ final class AvTranscode {
                 default -> reason == null;
             };
             if (copy) {
-                return new VideoPlan(track, true, track.codec(), false, false, null);
+                if (container == OutputContainer.DV) {
+                    dvFormat = copiedDvFormat(track);
+                }
+                return new VideoPlan(track, true, track.codec(), false, false, null, null);
             }
             for (var file : fileTracks(track)) {
                 if (!VideoDecoders.isSupported(file.codec())) {
                     throw Artifacts.unsupported(file.codec().displayName(), "decodable", Artifacts.decoderOf(file.codec()));
                 }
             }
-            return new VideoPlan(track, false, pickEncoder(settings.codec(), container.videoCodecs(),
-                    VideoEncoders::isSupported, "video"), apply, applyAspect, frameRate);
+            var codec = pickEncoder(settings.codec(), container.videoCodecs(), VideoEncoders::isSupported, "video");
+            DvRaster raster = null;
+            if (container == OutputContainer.DV) {
+                dvFormat = DvOutput.resolve(settings, track, speed);
+                settings = DvOutput.video(settings, dvFormat);
+                options = options.toBuilder().video(settings).build();
+                raster = new DvRaster(dvFormat);
+                apply = true;
+                applyAspect = true;
+                frameRate = settings.effectiveFrameRate(track.frameRate().orElse(null));
+            }
+            return new VideoPlan(track, false, codec, apply, applyAspect, frameRate, raster);
         }
 
         /**
@@ -1803,6 +1863,9 @@ final class AvTranscode {
             }
             if (container.format() == ContainerFormat.Y4M && !Y4mMuxer.supports(track)) {
                 return "YUV4MPEG2 cannot carry the track's raw video format";
+            }
+            if (container == OutputContainer.DV && settings.dvFormat().isPresent()) {
+                return "the options name a DV format";
             }
             if (settings.codec().isPresent() && settings.codec().get() != codec) {
                 return "the options ask for " + settings.codec().get().displayName();
@@ -1979,7 +2042,7 @@ final class AvTranscode {
             var stage = new VideoEncodeStage(plan.track(), decoder, decoderOptions, plan.codec(), settings,
                     plan.applyOrientation(), plan.applyAspect(), plan.frameRate(), keepsAlpha(plan.codec()), outputId,
                     muxer, start, end, cancellation, cues, markup, burnTrack,
-                    new VideoEncodeStage.Timing(speed, expected));
+                    new VideoEncodeStage.Timing(speed, expected), plan.raster());
             if (shares) {
                 sharedVideo = stage;
             }
@@ -2185,6 +2248,7 @@ final class AvTranscode {
             }
             var codec = pickEncoder(settings.codec(), container.videoCodecs(), VideoEncoders::isSupported, "video");
             var input = firstSource();
+            var dv = container == OutputContainer.DV;
             try (var reader = Images.openAnimation(input, ImageDecoderOptions.builder().limits(shared.limits()).build())) {
                 var first = reader.read();
                 if (first == null) {
@@ -2192,6 +2256,14 @@ final class AvTranscode {
                 }
                 var firstDuration = displayTime(first.durationMicros());
                 var rate = settings.frameRate().orElse(new Rational(Math.max(1, Math.round(1_000_000.0 / firstDuration)), 1));
+                DvRaster raster = null;
+                if (dv) {
+                    var animation = VideoTrack.builder().id(0).codec(Codec.GIF).timeBase(Rational.MICROSECONDS)
+                            .width(reader.width()).height(reader.height()).frameRate(rate).build();
+                    var format = DvOutput.resolve(settings, animation, new Rational(1, 1));
+                    settings = DvOutput.video(settings, format);
+                    raster = new DvRaster(format);
+                }
                 var frameRate = settings.effectiveFrameRate(rate);
                 var track = VideoTrack.builder()
                         .id(0)
@@ -2214,7 +2286,7 @@ final class AvTranscode {
                             keepsAlpha(codec), muxer.reserve(),
                             muxer, start, end, cancellation, burnIn == null ? null : new ArrayList<>(burnIn.cues().get()),
                             burnIn == null ? SubtitleMarkup.SUBRIP : burnIn.markup(), null,
-                            new VideoEncodeStage.Timing(speed, expected));
+                            new VideoEncodeStage.Timing(speed, expected), raster);
                     try (stage) {
                         stages.add(stage);
                         var pts = 0L;

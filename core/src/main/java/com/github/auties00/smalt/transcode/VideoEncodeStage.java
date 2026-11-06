@@ -5,9 +5,11 @@ import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.container.internal.DiscardedFrames;
 import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
+import com.github.auties00.smalt.image.ops.Region;
 import com.github.auties00.smalt.internal.codec.DecodeOrderTimestamps;
 import com.github.auties00.smalt.internal.codec.VideoConfigs;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
@@ -52,6 +54,8 @@ import java.util.List;
  * signals) and the {@link VideoColor} conversion, the constant-rate conversion ({@link RateStep}),
  * the overlays ({@link OverlayStep}) and telecine ({@link TelecineStep}). The scan of a frame is the
  * field order its decoder reports, else the one the options assume, else the one the track declares.
+ * A stage writing a DV format fits the pictures to its raster with a {@link DvRaster} in place of the planned
+ * scaling, and moves the frames whose field order differs from the format's just before encoding them.
  * When the stage may keep transparency and the first kept picture has an alpha plane, the pictures are
  * not flattened, the encoder codes the alpha planes as a second stream and the output track carries
  * alpha.
@@ -166,6 +170,11 @@ final class VideoEncodeStage implements Stage {
     private final OutputMuxer output;
 
     private final Cancellation cancellation;
+
+    /**
+     * The raster of the DV format written, or {@code null} for any other codec.
+     */
+    private final DvRaster raster;
 
     /**
      * The time base of the times on the output timeline: the input time base divided by the speed and by
@@ -302,13 +311,15 @@ final class VideoEncodeStage implements Stage {
      * @param burnTrack the subtitle track whose packets {@link #acceptSubtitle(Packet)} receives, or
      * {@code null}
      * @param timing the timing changes
+     * @param raster the raster of the DV format written, or {@code null} for any other codec
      */
     VideoEncodeStage(VideoTrack source, VideoDecoder decoder, VideoDecoderOptions decoderOptions, Codec codec,
                      VideoTranscodeOptions options, boolean applyOrientation, boolean applyAspect, Rational frameRate,
                      boolean keepAlpha, int outputId, OutputMuxer output, long startMicros, long endMicros,
                      Cancellation cancellation, List<SubtitleCue> burnCues, SubtitleMarkup burnMarkup, Track burnTrack,
-                     Timing timing) {
+                     Timing timing, DvRaster raster) {
         this.source = source;
+        this.raster = raster;
         this.timing = timing;
         this.decoder = decoder;
         this.decoderOptions = decoderOptions;
@@ -564,6 +575,9 @@ final class VideoEncodeStage implements Stage {
         } else {
             outputScan = source.interlacing().orElse(null);
         }
+        if (raster != null) {
+            outputScan = raster.format().interlacing();
+        }
         FrameSink sink = new EncodeSink();
         if (pulldown == Pulldown.TELECINE) {
             sink = new TelecineStep(sink, encodedRate, timeBase);
@@ -700,6 +714,11 @@ final class VideoEncodeStage implements Stage {
 
         private VideoColor color;
 
+        /**
+         * Whether the pictures are scaled one field at a time, for a DV raster.
+         */
+        private boolean fields;
+
         PictureStep(FrameSink next) {
             this.next = next;
         }
@@ -712,6 +731,10 @@ final class VideoEncodeStage implements Stage {
          */
         @Override
         public void accept(Picture picture, long time, long duration, FieldOrder scan) {
+            if (raster != null) {
+                acceptRaster(picture, time, duration, scan);
+                return;
+            }
             if (ops == null) {
                 var aspect = VideoConfigs.sampleAspect(source);
                 ops = PictureOps.plan(picture.width(), picture.height(), source.orientation(), applyOrientation,
@@ -728,6 +751,53 @@ final class VideoEncodeStage implements Stage {
             next.accept(color.apply(ops.apply(picture)), time, duration, scan);
         }
 
+        /**
+         * Fits a picture to the DV raster, one field at a time when it is interlaced, the format too, and the
+         * scaling changes its height.
+         *
+         * @param picture the picture, valid during the call
+         * @param time the presentation time on the output timeline
+         * @param duration the display duration
+         * @param scan the scan of the frame
+         */
+        private void acceptRaster(Picture picture, long time, long duration, FieldOrder scan) {
+            if (ops == null) {
+                var aspect = VideoConfigs.sampleAspect(source);
+                var region = options.crop().orElse(null);
+                var background = options.background();
+                ops = PictureOps.plan(picture.width(), picture.height(), source.orientation(), true, region,
+                        (width, height) -> raster.plan(width, height, false), options.filter(), background, null,
+                        null, aspect, true);
+                LimitChecks.checkPicture(decoderOptions != null ? decoderOptions.limits() : MediaLimits.DEFAULT,
+                        ops.resampledWidth(), ops.resampledHeight());
+                var croppedHeight = region != null ? region.height() : picture.height();
+                fields = scan.isInterlaced() && raster.format().interlacing() != Interlacing.PROGRESSIVE
+                        && source.orientation() == Orientation.NORMAL && DvRaster.splittable(picture)
+                        && ops.outputHeight() != croppedHeight
+                        && (region == null || region.y() % 2 == 0 && region.height() % 2 == 0);
+                if (fields) {
+                    var square = aspect != null ? aspect : new Rational(1, 1);
+                    var fieldAspect = new Rational(square.numerator(), Math.multiplyExact(square.denominator(), 2));
+                    var fieldRegion = region == null ? null
+                            : new Region(region.x(), region.y() / 2, region.width(), region.height() / 2);
+                    ops = PictureOps.plan(picture.width(), picture.height() / 2, Orientation.NORMAL, true,
+                            fieldRegion, (width, height) -> raster.plan(width, height, true), options.filter(),
+                            background, null, null, fieldAspect, true);
+                }
+                color = new VideoColor(options.color().orElse(null), options.chromaFormat().orElse(null),
+                        8, options.colorConversion(), source.color().orElse(null));
+            }
+            Picture fitted;
+            if (fields && DvRaster.splittable(picture)) {
+                var top = color.apply(ops.apply(DvRaster.field(picture, 0)));
+                var bottom = color.apply(ops.apply(DvRaster.field(picture, 1)));
+                fitted = DvRaster.weave(top, bottom);
+            } else {
+                fitted = color.apply(ops.apply(picture));
+            }
+            next.accept(raster.place(fitted, 0), time, duration, scan);
+        }
+
         @Override
         public void finish(long end) {
             next.finish(end);
@@ -740,6 +810,9 @@ final class VideoEncodeStage implements Stage {
     private final class EncodeSink implements FrameSink {
         @Override
         public void accept(Picture picture, long time, long duration, FieldOrder scan) {
+            if (raster != null) {
+                picture = raster.place(picture, raster.shift(scan));
+            }
             if (encoder == null) {
                 start(picture);
             }
@@ -783,6 +856,13 @@ final class VideoEncodeStage implements Stage {
             if (pictureColor != null) {
                 encoderBuilder.color(pictureColor);
             }
+            var aspect = raster != null ? raster.sampleAspectRatio() : pictureStep.ops.outputSampleAspect();
+            if (aspect != null) {
+                encoderBuilder.sampleAspectRatio(aspect);
+            }
+            if (raster != null) {
+                encoderBuilder.dvFormat(raster.format());
+            }
             if (!options.periodicKeyframes()) {
                 encoderBuilder.noPeriodicKeyframes();
             } else {
@@ -808,10 +888,10 @@ final class VideoEncodeStage implements Stage {
             if (outputScan != null) {
                 builder.interlacing(outputScan);
             }
-            var aspect = pictureStep.ops.outputSampleAspect();
             if (aspect != null) {
-                // TODO: hand the ratio to encoders that signal one in band (the H.264 VUI writes 1:1) once
-                //  VideoEncoderOptions carries it, so that a later remux into a container without the field keeps it
+                // TODO: signal the ratio in the H.264 VUI (it writes 1:1) and in the other encoders that signal one in
+                //  band from VideoEncoderOptions.sampleAspectRatio, so that a later remux into a container without the
+                //  field keeps it
                 builder.sampleAspectRatio(aspect);
             }
             declared = builder.build();

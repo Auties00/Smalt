@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.video;
 
+import com.github.auties00.smalt.container.dv.DvFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.internal.check.Checks;
 import com.github.auties00.smalt.track.Rational;
@@ -14,10 +15,10 @@ import java.util.OptionalInt;
  * {@link #of(int, int, Rational, long)}.
  *
  * @apiNote There is no {@code defaults()}, because a picture size has no sensible default. These
- * options carry only what every video codec understands; a codec maps them onto its own
- * configuration and reports the time base its frames are stamped in through
- * {@link VideoEncoder#timeBase()}, and a caller that needs a codec's other parameters constructs that
- * codec's encoder directly.
+ * options carry what every video codec understands, plus the {@linkplain #dvFormat() DV format}, which a
+ * picture size and rate do not decide; a codec maps them onto its own configuration and reports the time
+ * base its frames are stamped in through {@link VideoEncoder#timeBase()}, and a caller that needs a
+ * codec's other parameters constructs that codec's encoder directly.
  */
 public final class VideoEncoderOptions {
     private final int width;
@@ -38,6 +39,16 @@ public final class VideoEncoderOptions {
 
     private final boolean alpha;
 
+    /**
+     * The sample aspect ratio signaled, or {@code null} for none.
+     */
+    private final Rational sampleAspectRatio;
+
+    /**
+     * The DV format coded, or {@code null} to pick it from the size and rate.
+     */
+    private final DvFormat dvFormat;
+
     private VideoEncoderOptions(Builder builder) {
         this.width = builder.width;
         this.height = builder.height;
@@ -50,6 +61,8 @@ public final class VideoEncoderOptions {
         this.color = builder.color;
         this.bitDepth = builder.bitDepth;
         this.alpha = builder.alpha;
+        this.sampleAspectRatio = builder.sampleAspectRatio;
+        this.dvFormat = builder.dvFormat;
     }
 
     /**
@@ -219,6 +232,30 @@ public final class VideoEncoderOptions {
         return alpha;
     }
 
+    /**
+     * {@return the sample aspect ratio of the pictures, the ratio of the width of a sample to its height, or empty
+     * when the samples are square or unknown; empty by default}
+     *
+     * <p>A codec that signals the shape of the picture in its bitstream signals it from this ratio; the others ignore
+     * it. DV signals a 16:9 display when the displayed picture, its width times this ratio over its height, is wider
+     * than 14:9, and a 4:3 display otherwise.
+     */
+    public Optional<Rational> sampleAspectRatio() {
+        return Optional.ofNullable(sampleAspectRatio);
+    }
+
+    /**
+     * {@return the DV format a {@link com.github.auties00.smalt.track.Codec#DV} encoder codes, or empty to pick the
+     * format of the picture size (the IEC 61834 formats for 720 by 480 and 720 by 576, DVCPRO HD for 1280 by 1080,
+     * 1440 by 1080 and 960 by 720, 720/50p below 55 frames per second); empty by default}
+     *
+     * <p>The pictures must have the format's size, and the frames are stamped at its rate. Other codecs ignore the
+     * setting.
+     */
+    public Optional<DvFormat> dvFormat() {
+        return Optional.ofNullable(dvFormat);
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof VideoEncoderOptions that
@@ -232,13 +269,15 @@ public final class VideoEncoderOptions {
                 && periodicKeyframes == that.periodicKeyframes
                 && Objects.equals(color, that.color)
                 && bitDepth == that.bitDepth
-                && alpha == that.alpha;
+                && alpha == that.alpha
+                && Objects.equals(sampleAspectRatio, that.sampleAspectRatio)
+                && dvFormat == that.dvFormat;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(width, height, frameRate, bitrate, realtime, threads, keyframeInterval, periodicKeyframes,
-                color, bitDepth, alpha);
+                color, bitDepth, alpha, sampleAspectRatio, dvFormat);
     }
 
     @Override
@@ -246,7 +285,8 @@ public final class VideoEncoderOptions {
         return "VideoEncoderOptions[width=" + width + ", height=" + height + ", frameRate=" + frameRate
                 + ", bitrate=" + bitrate + ", realtime=" + realtime + ", threads=" + threads + ", keyframeInterval="
                 + keyframeInterval + ", periodicKeyframes=" + periodicKeyframes + ", color=" + color() + ", bitDepth="
-                + bitDepth + ", alpha=" + alpha + "]";
+                + bitDepth + ", alpha=" + alpha + ", sampleAspectRatio=" + sampleAspectRatio() + ", dvFormat="
+                + dvFormat() + "]";
     }
 
     /**
@@ -269,6 +309,8 @@ public final class VideoEncoderOptions {
         private ColorInfo color;
         private int bitDepth = 8;
         private boolean alpha;
+        private Rational sampleAspectRatio;
+        private DvFormat dvFormat;
         private boolean sizeSet;
         private boolean bitrateSet;
 
@@ -287,6 +329,8 @@ public final class VideoEncoderOptions {
             this.color = options.color;
             this.bitDepth = options.bitDepth;
             this.alpha = options.alpha;
+            this.sampleAspectRatio = options.sampleAspectRatio;
+            this.dvFormat = options.dvFormat;
             this.sizeSet = true;
             this.bitrateSet = true;
         }
@@ -434,12 +478,54 @@ public final class VideoEncoderOptions {
         }
 
         /**
+         * Sets the sample aspect ratio of the pictures; see {@link VideoEncoderOptions#sampleAspectRatio()}.
+         *
+         * @param sampleAspectRatio the value
+         * @return this builder
+         */
+        public Builder sampleAspectRatio(Rational sampleAspectRatio) {
+            this.sampleAspectRatio = Objects.requireNonNull(sampleAspectRatio, "sampleAspectRatio");
+            return this;
+        }
+
+        /**
+         * Declares square or unknown samples; see {@link VideoEncoderOptions#sampleAspectRatio()}.
+         *
+         * @return this builder
+         */
+        public Builder noSampleAspectRatio() {
+            this.sampleAspectRatio = null;
+            return this;
+        }
+
+        /**
+         * Sets the DV format a DV encoder codes; see {@link VideoEncoderOptions#dvFormat()}.
+         *
+         * @param dvFormat the value
+         * @return this builder
+         */
+        public Builder dvFormat(DvFormat dvFormat) {
+            this.dvFormat = Objects.requireNonNull(dvFormat, "dvFormat");
+            return this;
+        }
+
+        /**
+         * Lets a DV encoder pick the format of the picture size; see {@link VideoEncoderOptions#dvFormat()}.
+         *
+         * @return this builder
+         */
+        public Builder automaticDvFormat() {
+            this.dvFormat = null;
+            return this;
+        }
+
+        /**
          * Returns options holding the settings of this builder.
          *
          * @return the options
-         * @throws IllegalArgumentException if the width, the height, the frame rate, the bitrate or
-         * the key frame interval is not positive, the thread count is negative, or the bit depth is
-         * outside 8 to 16
+         * @throws IllegalArgumentException if the width, the height, the frame rate, the bitrate,
+         * the key frame interval or a term of the sample aspect ratio is not positive, the thread count
+         * is negative, or the bit depth is outside 8 to 16
          * @throws IllegalStateException if the picture size, the frame rate or the bitrate was never
          * set
          */
@@ -455,6 +541,10 @@ public final class VideoEncoderOptions {
             Checks.inRange("bit depth", bitDepth, 8, 16);
             if (keyframeInterval.isPresent()) {
                 Checks.positive("key frame interval", keyframeInterval.getAsInt());
+            }
+            if (sampleAspectRatio != null) {
+                Checks.positive("sample aspect ratio numerator", sampleAspectRatio.numerator());
+                Checks.positive("sample aspect ratio denominator", sampleAspectRatio.denominator());
             }
             return new VideoEncoderOptions(this);
         }

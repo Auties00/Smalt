@@ -1,6 +1,6 @@
 /**
  * Reading and writing raw DV streams, the DIF frames of DV, DVCPRO, DVCPRO50 and DVCPRO HD with their audio
- * ({@link DvDemuxer}, {@link DvMuxer}).
+ * ({@link DvDemuxer}, {@link DvMuxer}), and the formats they come in ({@link DvFormat}).
  *
  * <p>Unless otherwise noted, passing a {@code null} argument to a constructor or method in any class or
  * interface in this package will cause a {@link NullPointerException} to be thrown. The {@code @param}

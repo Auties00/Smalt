@@ -28,6 +28,7 @@ import java.util.regex.Pattern;
  *   <li>MPEG program streams and MPEG-1 system streams: {@link PsValidator};</li>
  *   <li>MXF: {@link MxfValidator};</li>
  *   <li>Flash Video: {@link FlvValidator};</li>
+ *   <li>raw DV: {@link DvValidator};</li>
  *   <li>HLS: {@link HlsValidator}, which validates every segment with the validators above;</li>
  *   <li>MPEG-DASH: {@link DashValidator}, likewise, with the MPD schema of ISO/IEC 23009-1.</li>
  * </ul>
@@ -54,6 +55,8 @@ public final class Validators {
         MXF,
         /** A Flash Video file. */
         FLV,
+        /** A raw DV stream. */
+        DV,
         /** An HLS playlist. */
         HLS,
         /** A DASH manifest. */
@@ -124,6 +127,9 @@ public final class Validators {
         if (data.length >= 9 && data[0] == 'F' && data[1] == 'L' && data[2] == 'V') {
             return Format.FLV;
         }
+        if (isDv(data)) {
+            return Format.DV;
+        }
         var head = new String(data, 0, Math.min(data.length, 512), StandardCharsets.ISO_8859_1);
         if (head.startsWith("#EXTM3U")) {
             return Format.HLS;
@@ -132,6 +138,26 @@ public final class Validators {
             return Format.DASH;
         }
         return Format.OTHER;
+    }
+
+    /**
+     * Returns whether a file starts like a raw DV stream: a header DIF block of DIF sequence 0, then the two subcode
+     * blocks and the three VAUX blocks of the sequence.
+     *
+     * @param data the file
+     * @return whether it is a raw DV stream
+     */
+    private static boolean isDv(byte[] data) {
+        if (data.length < 6 * 80 || (data[0] & 0xE0) != 0 || (data[1] & 0xF0) != 0 || data[2] != 0) {
+            return false;
+        }
+        for (var block = 1; block < 6; block++) {
+            var section = block < 3 ? 1 : 2;
+            if ((data[80 * block] & 0xE0) >>> 5 != section || (data[80 * block + 1] & 0xF0) != 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -169,6 +195,7 @@ public final class Validators {
             case PROGRAM_STREAM -> programStream(file.toString(), data, false);
             case MXF -> assertValidMxf(file.toString(), data);
             case FLV -> assertValidFlv(file.toString(), data);
+            case DV -> assertValidDv(file.toString(), data);
             case HLS -> assertValidHls(file);
             case DASH -> assertValidDash(file);
             case OTHER -> {
@@ -232,6 +259,20 @@ public final class Validators {
         var findings = new Findings(name);
         var summary = MxfValidator.validate(data, findings);
         findings.assertNone("MxfValidator");
+        return summary;
+    }
+
+    /**
+     * Validates a raw DV stream.
+     *
+     * @param name the name of the stream, for the failure message
+     * @param data the stream
+     * @return what validation learned of the stream
+     */
+    public static DvValidator.Summary assertValidDv(String name, byte[] data) {
+        var findings = new Findings(name);
+        var summary = DvValidator.validate(data, findings);
+        findings.assertNone("DvValidator");
         return summary;
     }
 

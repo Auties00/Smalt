@@ -8,7 +8,9 @@ import com.github.auties00.smalt.track.Rational;
  *
  * <p>The SD formats code 720 samples per line at 13.5 MHz, interlaced with the bottom field first; the DVCPRO HD
  * formats code horizontally subsampled 1080-line interlaced (top field first) or 720-line progressive pictures,
- * displayed at 16:9. A frame of each format has a fixed size, which {@link #frameSize()} gives.
+ * displayed at 16:9. A frame of each format has a fixed size, which {@link #frameSize()} gives. Each constant is the
+ * {@link com.github.auties00.smalt.container.dv.DvFormat} of the same name, which encoders created through
+ * {@code VideoEncoders} and transcodes into raw DV take.
  */
 public enum DvProfile {
     /**

@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.transcode;
 
+import com.github.auties00.smalt.container.dv.DvFormat;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.Picture;
@@ -58,7 +59,8 @@ import java.util.OptionalInt;
  * The encoder is the one {@link com.github.auties00.smalt.video.VideoEncoders} finds for
  * {@link #codec()}, configured through {@link com.github.auties00.smalt.video.VideoEncoderOptions}
  * with {@link #bitrate()}, {@link #threads()}, {@link #keyframeInterval()} and
- * {@link #periodicKeyframes()}.
+ * {@link #periodicKeyframes()}. A transcode into {@link OutputContainer#DV} fits the pictures to the DV format of
+ * {@link #dvFormat()} in the scaling step.
  */
 public final class VideoTranscodeOptions {
     /**
@@ -176,6 +178,11 @@ public final class VideoTranscodeOptions {
     private final List<Fade> fades;
     private final int fadeColor;
 
+    /**
+     * The DV format a raw DV output is written in, or {@code null} to pick it from the source.
+     */
+    private final DvFormat dvFormat;
+
     private VideoTranscodeOptions(Builder builder, int trackId, int bitrate, int keyframeInterval,
                                   ResizeSettings resize) {
         this.mode = builder.mode;
@@ -208,6 +215,7 @@ public final class VideoTranscodeOptions {
         this.input = builder.input;
         this.fades = builder.fades;
         this.fadeColor = builder.fadeColor;
+        this.dvFormat = builder.dvFormat;
     }
 
     /**
@@ -599,6 +607,39 @@ public final class VideoTranscodeOptions {
     }
 
     /**
+     * {@return the DV format a transcode into {@link OutputContainer#DV} writes, or empty to pick the format of the
+     * source; empty by default}
+     *
+     * <p>When empty, the transcode picks DVCPRO HD 1080-line video ({@link DvFormat#DVCPRO_HD_1080I60} or
+     * {@link DvFormat#DVCPRO_HD_1080I50}) for a displayed picture at least 900 lines tall, 720-line DVCPRO HD for one
+     * at least 650 lines tall and the IEC 61834 consumer DV ({@link DvFormat#DV_525} or {@link DvFormat#DV_625})
+     * otherwise, in the 50 Hz system when the output frame rate ({@link #frameRate()}, else the source's), halved or
+     * doubled into the range of 17.5 to 35 frames per second, is nearer to 25 than to 24 or 30 (or their 1000/1001
+     * rates), and in the 60 Hz system otherwise.
+     * A DV source is copied when this setting is empty and the other settings change nothing.
+     *
+     * <p>An encoded DV stream goes through the operations of the other settings, except that the format fixes its
+     * size, rate and color: the displayed picture, made of square samples, is scaled to fit the format's display,
+     * 16:9 when it is wider than 14:9 or the format is DVCPRO HD and 4:3 otherwise, centered between black bars, then
+     * coded at the format's size and sample aspect ratio; it is converted to the format's frame rate (with
+     * {@link Pulldown#TELECINE}, from four fifths of it), and to BT.601 limited-range Y'CbCr (BT.709 for DVCPRO HD).
+     * Interlaced pictures keep their fields apart: when their height changes, each field is scaled on its own, and
+     * when their field order differs from the format's ({@link DvFormat#interlacing()}) the picture moves by one line
+     * so that the earlier field is still shown first.
+     *
+     * <p>The audio is coded as 16-bit PCM at 48 kHz, or at the rate {@link AudioTranscodeOptions#sampleRate()} names
+     * when the format carries it ({@link DvFormat#maxAudioChannels(int)}). A single audio track keeps its channels up
+     * to the format's capacity, mixed down to that capacity otherwise, except that a consumer format carries two
+     * channels unless the audio options ask for more ({@link AudioTranscodeOptions#layout()},
+     * {@link AudioTranscodeOptions#maxChannels()}, or 32 kHz), which it then carries as four channels at 32 kHz;
+     * several audio tracks are mixed down to stereo each and take one pair each. The 720-line formats carry at most
+     * four channels in one track.
+     */
+    public Optional<DvFormat> dvFormat() {
+        return Optional.ofNullable(dvFormat);
+    }
+
+    /**
      * {@return the watermark without copying it, or {@code null} for none}
      */
     Picture watermarkPicture() {
@@ -709,7 +750,7 @@ public final class VideoTranscodeOptions {
         return new Object[]{mode, trackId, codec, bitrate, threads, keyframeInterval, periodicKeyframes, resize,
                 evenDimensions, orientation, sampleAspect, frameRate, maxFrameRate, chromaFormat, color, background,
                 flatten, colorConversion, bitDepth, deinterlacer, fieldRate, fieldOrder, frameRateConversion, pulldown,
-                subtitleBurnIn, watermark, watermarkOptions, input, fades, fadeColor};
+                subtitleBurnIn, watermark, watermarkOptions, input, fades, fadeColor, dvFormat};
     }
 
     @Override
@@ -736,7 +777,7 @@ public final class VideoTranscodeOptions {
                 + fieldRate + ", fieldOrder=" + fieldOrder() + ", frameRateConversion=" + frameRateConversion
                 + ", pulldown=" + pulldown + ", subtitleBurnIn=" + subtitleBurnIn() + ", watermark="
                 + (watermark != null) + ", watermarkOptions=" + watermarkOptions + ", input=" + input() + ", fades="
-                + fades + ", fadeColor=0x" + Integer.toHexString(fadeColor) + "]";
+                + fades + ", fadeColor=0x" + Integer.toHexString(fadeColor) + ", dvFormat=" + dvFormat() + "]";
     }
 
     /**
@@ -819,6 +860,7 @@ public final class VideoTranscodeOptions {
         private int input = -1;
         private List<Fade> fades = List.of();
         private int fadeColor;
+        private DvFormat dvFormat;
 
         private Builder() {
         }
@@ -868,6 +910,7 @@ public final class VideoTranscodeOptions {
             this.input = options.input;
             this.fades = options.fades;
             this.fadeColor = options.fadeColor;
+            this.dvFormat = options.dvFormat;
         }
 
         /**
@@ -911,6 +954,27 @@ public final class VideoTranscodeOptions {
          */
         public Builder noFades() {
             this.fades = List.of();
+            return this;
+        }
+
+        /**
+         * Sets the DV format a raw DV output is written in; see {@link VideoTranscodeOptions#dvFormat()}.
+         *
+         * @param dvFormat the value
+         * @return this builder
+         */
+        public Builder dvFormat(DvFormat dvFormat) {
+            this.dvFormat = Objects.requireNonNull(dvFormat, "dvFormat");
+            return this;
+        }
+
+        /**
+         * Picks the DV format of a raw DV output from the source; see {@link VideoTranscodeOptions#dvFormat()}.
+         *
+         * @return this builder
+         */
+        public Builder automaticDvFormat() {
+            this.dvFormat = null;
             return this;
         }
 

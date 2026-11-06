@@ -42,7 +42,9 @@ class ProbeConsistencyTest {
                 continue;
             }
             for (var codec : Catalog.allCodecs()) {
-                if (container.supports(codec) && codec.kind() != TrackKind.DATA) {
+                // a raw DV stream carries audio only in the frames of a video track
+                if (container.supports(codec) && codec.kind() != TrackKind.DATA
+                        && (container != OutputContainer.DV || codec.kind() == TrackKind.VIDEO)) {
                     arguments.add(Arguments.of(container, codec, false));
                     arguments.add(Arguments.of(container, codec, true));
                 }

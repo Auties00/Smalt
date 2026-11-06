@@ -252,7 +252,8 @@ class LosslessAudioTest {
                 continue;
             }
             for (var container : OutputContainer.values()) {
-                if (container.supports(codec)) {
+                // a raw DV stream carries audio only in the frames of a video track
+                if (container.supports(codec) && container != OutputContainer.DV) {
                     arguments.add(Arguments.of(codec, container, bits));
                 }
             }

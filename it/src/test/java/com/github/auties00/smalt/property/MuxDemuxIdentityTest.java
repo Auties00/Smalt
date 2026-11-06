@@ -48,6 +48,12 @@ class MuxDemuxIdentityTest {
     private static final Set<OutputContainer> WRITE_ONLY = EnumSet.of(OutputContainer.H264, OutputContainer.HEVC,
             OutputContainer.AV1);
 
+    /**
+     * Raw DV, which lays the audio into the video frames and keeps only the audio the frames hold (core's
+     * DvContainerTest and DvMuxerAudioTest check its round trip), so it is checked with its video alone.
+     */
+    private static final OutputContainer FRAMED_AUDIO = OutputContainer.DV;
+
     static Stream<Arguments> singleTrack() {
         var arguments = new ArrayList<Arguments>();
         for (var container : OutputContainer.values()) {
@@ -55,7 +61,7 @@ class MuxDemuxIdentityTest {
                 continue;
             }
             for (var codec : Catalog.allCodecs()) {
-                if (container.supports(codec)) {
+                if (container.supports(codec) && (container != FRAMED_AUDIO || codec.kind() == TrackKind.VIDEO)) {
                     arguments.add(Arguments.of(container, codec));
                 }
             }
@@ -66,7 +72,7 @@ class MuxDemuxIdentityTest {
     static Stream<Arguments> twoTracks() {
         var arguments = new ArrayList<Arguments>();
         for (var container : OutputContainer.values()) {
-            if (WRITE_ONLY.contains(container)) {
+            if (WRITE_ONLY.contains(container) || container == FRAMED_AUDIO) {
                 continue;
             }
             var video = Catalog.smaltCodecs().stream()

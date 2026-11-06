@@ -170,8 +170,14 @@ public enum OutputContainer {
      */
     Y4M(ContainerFormat.Y4M, "y4m", "video/x-yuv4mpeg", List.of(Codec.RAW_VIDEO), List.of()),
 
-    // TODO: a raw DV output (DvMuxer), which needs the transcode to scale and retime the video to the raster and frame
-    //  rate of a DV format and to resample the audio to 48 kHz
+    /**
+     * A raw DV stream ({@code .dv}) of DIF frames, holding one DV video stream and the audio laid into its frames: a
+     * transcode encodes the video in the DV format {@link VideoTranscodeOptions#dvFormat()} names or picks, scaled to
+     * its picture size and display shape and converted to its frame rate, and resamples the audio to 16-bit PCM at
+     * 48 kHz (see {@link VideoTranscodeOptions#dvFormat()} for the channels and the other rates). A DV stream is copied
+     * when no format is named and the options change nothing.
+     */
+    DV(ContainerFormat.DV, "dv", "video/x-dv", List.of(Codec.DV), List.of(Codec.PCM_S16LE)),
 
     /**
      * An MPEG audio elementary stream (MP3 or MP2).
@@ -488,12 +494,13 @@ public enum OutputContainer {
      * and the track names in AVI and MXF files; the track names and some audio dispositions in a transport stream;
      * and the title, artist and album in an LRC file.
      *
-     * @return {@code false} for IVF, YUV4MPEG2, LOAS, ADIF, MPEG program streams, the video elementary streams
-     * and the subtitle files other than LRC
+     * @return {@code false} for IVF, YUV4MPEG2, raw DV, LOAS, ADIF, MPEG program streams, the video elementary
+     * streams and the subtitle files other than LRC
      */
     public boolean supportsTags() {
         return switch (this) {
-            case IVF, H264, HEVC, VVC, AV1, Y4M, LOAS, ADIF, MPEG_PS, SRT, WEBVTT, ASS, SSA, TTML, SAMI, MICRODVD -> false;
+            case IVF, H264, HEVC, VVC, AV1, Y4M, DV, LOAS, ADIF, MPEG_PS, SRT, WEBVTT, ASS, SSA, TTML, SAMI, MICRODVD ->
+                    false;
             default -> true;
         };
     }
@@ -501,13 +508,13 @@ public enum OutputContainer {
     /**
      * Returns whether the file can hold more than one audio track.
      *
-     * @return {@code true} for the MP4 family, Matroska, WebM, Ogg, MPEG transport streams, MPEG program streams and
-     * MXF
+     * @return {@code true} for the MP4 family, Matroska, WebM, Ogg, MPEG transport streams, MPEG program streams, MXF
+     * and raw DV
      */
     boolean carriesSeveralTracks() {
         return format == ContainerFormat.MP4 || format == ContainerFormat.MATROSKA || format == ContainerFormat.OGG
                 || format == ContainerFormat.MPEG_TS || format == ContainerFormat.MPEG_PS
-                || format == ContainerFormat.MXF;
+                || format == ContainerFormat.MXF || format == ContainerFormat.DV;
     }
 
     /**
@@ -561,8 +568,8 @@ public enum OutputContainer {
      * {@code ivf}, {@code mp3}, {@code flac}, {@code amr}, {@code ac3} and {@code avi} to their constants,
      * {@code ec3} and {@code eac3} to {@link #EAC3}, {@code h264} and {@code 264} to {@link #H264},
      * {@code h265}, {@code 265} and {@code hevc} to {@link #HEVC}, {@code h266}, {@code 266} and {@code vvc} to
-     * {@link #VVC}, {@code obu} to {@link #AV1}, {@code y4m} to
-     * {@link #Y4M}, {@code ts} to {@link #MPEG_TS}, {@code mpg}, {@code mpeg}, {@code m2p}, {@code ps} and
+     * {@link #VVC}, {@code obu} to {@link #AV1}, {@code y4m} to {@link #Y4M}, {@code dv} and {@code dif} to
+     * {@link #DV}, {@code ts} to {@link #MPEG_TS}, {@code mpg}, {@code mpeg}, {@code m2p}, {@code ps} and
      * {@code vob} to {@link #MPEG_PS}, {@code mxf} to {@link #MXF}, {@code srt} to {@link #SRT}, {@code vtt} to
      * {@link #WEBVTT}, {@code ass} and {@code ssa} to {@link #ASS} and {@link #SSA}, {@code ttml},
      * {@code dfxp} and {@code xml} to {@link #TTML}, {@code smi} and {@code sami} to {@link #SAMI},
@@ -594,6 +601,7 @@ public enum OutputContainer {
             case "au", "snd" -> AU;
             case "ivf" -> IVF;
             case "y4m" -> Y4M;
+            case "dv", "dif" -> DV;
             case "mp3" -> MP3;
             case "flac" -> FLAC;
             case "amr" -> AMR;
