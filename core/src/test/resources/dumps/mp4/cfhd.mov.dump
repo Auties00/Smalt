@@ -1,0 +1,21 @@
+# demux dump of mp4/cfhd.mov; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 500000
+seekable true
+metadata compatible_brands="qt  "
+metadata encoder="Lavf61.7.100"
+metadata major_brand="qt  "
+metadata minor_version="512"
+track 1 VIDEO CFHD timebase=1/10240 duration=5120 config=none
+  video 64x48 orientation=NORMAL rate=10/1 sar=1/1 interlacing=PROGRESSIVE
+packets 5
+0 t1 pts=0 dts=0 dur=1024 flags=KEY size=4440 crc=76a1efa4
+1 t1 pts=1024 dts=1024 dur=1024 flags=KEY size=4444 crc=2caf8700
+2 t1 pts=2048 dts=2048 dur=1024 flags=KEY size=4448 crc=c22d4c2d
+3 t1 pts=3072 dts=3072 dur=1024 flags=KEY size=4452 crc=c7004e35
+4 t1 pts=4096 dts=4096 dur=1024 flags=KEY size=4452 crc=dfff1ec6
+seek 0: t1@0
+seek 166666: t1@1
+seek 333333: t1@3
+seek 500000: end
+seek -1000000: t1@0

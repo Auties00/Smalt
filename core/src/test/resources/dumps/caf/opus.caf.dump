@@ -1,0 +1,44 @@
+# demux dump of caf/opus.caf; regenerate with -Dsmalt.test.updateDumps=true
+format CAF
+duration 620000
+seekable true
+metadata encoder="Lavf61.7.100"
+track 0 AUDIO OPUS timebase=1/48000 duration=29760 config=19:5829bd7d
+  audio rate=48000 bits=0 skip=0 layout=[FRONT_CENTER]
+packets 31
+0 t0 pts=0 dts=0 dur=960 flags=KEY size=84 crc=3fff91a8
+1 t0 pts=960 dts=960 dur=960 flags=KEY size=80 crc=11f6a442
+2 t0 pts=1920 dts=1920 dur=960 flags=KEY size=76 crc=5bf37058
+3 t0 pts=2880 dts=2880 dur=960 flags=KEY size=73 crc=2662618a
+4 t0 pts=3840 dts=3840 dur=960 flags=KEY size=76 crc=016ca9e8
+5 t0 pts=4800 dts=4800 dur=960 flags=KEY size=73 crc=8c990a91
+6 t0 pts=5760 dts=5760 dur=960 flags=KEY size=76 crc=8d46881d
+7 t0 pts=6720 dts=6720 dur=960 flags=KEY size=80 crc=3c1c0617
+8 t0 pts=7680 dts=7680 dur=960 flags=KEY size=80 crc=365e3375
+9 t0 pts=8640 dts=8640 dur=960 flags=KEY size=77 crc=468aac53
+10 t0 pts=9600 dts=9600 dur=960 flags=KEY size=75 crc=f069ee76
+11 t0 pts=10560 dts=10560 dur=960 flags=KEY size=75 crc=eddc8da7
+12 t0 pts=11520 dts=11520 dur=960 flags=KEY size=77 crc=c3f281f7
+13 t0 pts=12480 dts=12480 dur=960 flags=KEY size=80 crc=a65e2307
+14 t0 pts=13440 dts=13440 dur=960 flags=KEY size=75 crc=8fdf1d6e
+15 t0 pts=14400 dts=14400 dur=960 flags=KEY size=77 crc=45f74464
+16 t0 pts=15360 dts=15360 dur=960 flags=KEY size=76 crc=2e16e703
+17 t0 pts=16320 dts=16320 dur=960 flags=KEY size=77 crc=dbd085cb
+18 t0 pts=17280 dts=17280 dur=960 flags=KEY size=74 crc=ee30d11b
+19 t0 pts=18240 dts=18240 dur=960 flags=KEY size=77 crc=552d4aa5
+20 t0 pts=19200 dts=19200 dur=960 flags=KEY size=78 crc=2566c60b
+21 t0 pts=20160 dts=20160 dur=960 flags=KEY size=77 crc=29e5e9d5
+22 t0 pts=21120 dts=21120 dur=960 flags=KEY size=76 crc=e6b0d18b
+23 t0 pts=22080 dts=22080 dur=960 flags=KEY size=70 crc=553cdbb2
+24 t0 pts=23040 dts=23040 dur=960 flags=KEY size=73 crc=db382155
+25 t0 pts=24000 dts=24000 dur=960 flags=KEY size=75 crc=c107aaf5
+26 t0 pts=24960 dts=24960 dur=960 flags=KEY size=71 crc=e83e4360
+27 t0 pts=25920 dts=25920 dur=960 flags=KEY size=70 crc=60b1e74e
+28 t0 pts=26880 dts=26880 dur=960 flags=KEY size=75 crc=d0b4c555
+29 t0 pts=27840 dts=27840 dur=960 flags=KEY size=75 crc=77f6e586
+30 t0 pts=28800 dts=28800 dur=960 flags=KEY size=60 crc=7a4cef01
+seek 0: t0@0
+seek 206666: t0@10
+seek 413333: t0@20
+seek 620000: end
+seek -1000000: t0@0

@@ -3,6 +3,7 @@ package com.github.auties00.smalt.image.metadata;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.ImageFormat;
+import com.github.auties00.smalt.image.Images;
 import com.github.auties00.smalt.internal.limits.Guards;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.io.MediaSource;
@@ -37,7 +38,7 @@ final class ImageFiles {
      */
     static ImageFile open(MediaSource source, MediaLimits limits) {
         var header = readAvailable(source, 0, ImageFormat.DETECTION_LENGTH);
-        var format = ImageFormat.detect(header, header.length)
+        var format = Images.detect(source)
                 .orElseThrow(() -> new MediaException.Unsupported("unknown", "the input is not a recognized image"));
         return switch (format) {
             case JPEG -> new JpegFile(source, limits);
@@ -46,8 +47,11 @@ final class ImageFiles {
             case GIF -> new GifFile(source, limits);
             case HEIC, AVIF -> new HeifImageFile(source, limits, format);
             case TIFF -> new TiffFile(source, limits);
-            case BMP -> new BmpFile(source);
+            case DNG -> new TiffFile(source, limits, ImageFormat.DNG, null);
+            case RAW -> RawImageFile.open(source, limits, header);
+            case BMP -> new BmpFile(source, limits);
             case JXL -> new JxlFile(source, limits);
+            case JP2 -> new Jp2File(source, limits);
             default -> throw new MediaException.Unsupported(format.name().toLowerCase(Locale.ROOT),
                     "metadata of " + format.name().toLowerCase(Locale.ROOT) + " files cannot be read");
         };
