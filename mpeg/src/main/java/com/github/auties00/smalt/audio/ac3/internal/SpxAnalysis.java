@@ -270,11 +270,11 @@ final class SpxAnalysis {
                 var error = 0.0;
                 var total = 0.0;
                 for (var band = 0; band < bands; band++) {
-                    var log = Math.log(candidate[band] / effective[band]);
+                    var log = StrictMath.log(candidate[band] / effective[band]);
                     error += energy[band] * log * log;
                     total += energy[band];
                 }
-                var limit = Math.log(DRIFT);
+                var limit = StrictMath.log(DRIFT);
                 var send = b == 0 || error > total * limit * limit;
                 sent[b][ch] = send;
                 if (send) {
@@ -331,11 +331,11 @@ final class SpxAnalysis {
         for (var bin = from; bin < to; bin++) {
             var value = values[copied ? source[bin] : bin];
             var power = (double) value * value + 1e-20;
-            logSum += Math.log(power);
+            logSum += StrictMath.log(power);
             sum += power;
         }
         var count = to - from;
-        return Math.exp(logSum / count) / (sum / count);
+        return StrictMath.exp(logSum / count) / (sum / count);
     }
 
     /**

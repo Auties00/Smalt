@@ -71,12 +71,22 @@ public final class NbEncoder implements AmrFrameEncoder {
     private int prevFt;
 
     /**
-     * Creates an encoder.
+     * Creates an encoder that detects voice activity with VAD option 1.
      *
      * @param dtx whether voice activity detection and discontinuous transmission are on
      */
     public NbEncoder(boolean dtx) {
-        this.core = new EncoderCore(dtx);
+        this(dtx, false);
+    }
+
+    /**
+     * Creates an encoder.
+     *
+     * @param dtx whether voice activity detection and discontinuous transmission are on
+     * @param vad2 whether voice activity is detected with VAD option 2 instead of option 1
+     */
+    public NbEncoder(boolean dtx, boolean vad2) {
+        this.core = new EncoderCore(dtx, vad2);
         resetSidSync();
     }
 

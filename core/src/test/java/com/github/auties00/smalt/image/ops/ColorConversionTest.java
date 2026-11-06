@@ -246,19 +246,20 @@ class ColorConversionTest {
         }
 
         @Test
-        @DisplayName("unspecified matrices convert as BT.601 and unsupported ones are rejected")
-        void unsupported() {
-            var picture = pixel(10, 200, 30);
+        @DisplayName("unspecified matrices convert as BT.601 and every other matrix converts")
+        void everyMatrix() {
+            var picture = pixel(90, 160, 120);
             var bt601 = ImageOps.toYuv(picture, ChromaFormat.YUV444, color(MatrixCoefficients.BT601, ColorRange.LIMITED));
             var unspecified = ImageOps.toYuv(picture, ChromaFormat.YUV444, color(MatrixCoefficients.UNSPECIFIED, ColorRange.LIMITED));
             assertArrayEquals(Pictures.raw(bt601), Pictures.raw(unspecified));
-            for (var matrix : List.of(MatrixCoefficients.BT2020_CL, MatrixCoefficients.ICTCP, MatrixCoefficients.SMPTE2085,
-                    MatrixCoefficients.CHROMA_DERIVED_CL, MatrixCoefficients.CHROMA_DERIVED_NCL)) {
-                var exception = assertThrows(MediaException.Unsupported.class,
-                        () -> ImageOps.toYuv(picture, ChromaFormat.YUV420, color(matrix, ColorRange.FULL)));
-                assertTrue(exception.format().startsWith("matrix"));
-                var yuv = YuvPicture.allocate(2, 2, ChromaFormat.YUV420, false, color(matrix, ColorRange.FULL));
-                assertThrows(MediaException.Unsupported.class, () -> ImageOps.toRgba(yuv));
+            for (var matrix : MatrixCoefficients.values()) {
+                var yuv = ImageOps.toYuv(picture, ChromaFormat.YUV420, color(matrix, ColorRange.FULL));
+                assertEquals(matrix, yuv.color().matrix());
+                var back = ImageOps.toRgba(yuv);
+                assertEquals(1, back.width());
+                assertEquals(160, back.pixels()[1] & 0xFF, 4, matrix.toString());
+                var empty = YuvPicture.allocate(2, 2, ChromaFormat.YUV420, false, color(matrix, ColorRange.FULL));
+                assertEquals(2, ImageOps.toRgba(empty).width());
             }
         }
     }
@@ -374,7 +375,7 @@ class ColorConversionTest {
 
         @ParameterizedTest(name = "{0}")
         @EnumSource(value = ChromaFormat.class, names = {"YUV420", "YUV422"})
-        @DisplayName("triangle upsampling reproduces libjpeg's fancy upsampling at every size")
+        @DisplayName("triangle upsampling reproduces libjpeg's fancy upsampling at every size, narrow planes replicated")
         void libjpegFancy(ChromaFormat format) {
             var random = new SplittableRandom(5);
             for (var width = 1; width <= 21; width++) {
@@ -386,7 +387,15 @@ class ColorConversionTest {
                         int[] cb;
                         int[] cr;
                         var cw = yuv.chromaWidth();
-                        if (format == ChromaFormat.YUV422) {
+                        if (cw <= 2) {
+                            // jdsample.c jinit_upsampler picks h2v1_upsample or h2v2_upsample, which replicate
+                            cb = new int[width];
+                            cr = new int[width];
+                            for (var x = 0; x < width; x++) {
+                                cb[x] = yuv.u()[(y >> format.shiftY()) * yuv.uvStride() + (x >> 1)] & 0xFF;
+                                cr[x] = yuv.v()[(y >> format.shiftY()) * yuv.uvStride() + (x >> 1)] & 0xFF;
+                            }
+                        } else if (format == ChromaFormat.YUV422) {
                             cb = h2v1(row(yuv.u(), y * yuv.uvStride(), cw), width);
                             cr = h2v1(row(yuv.v(), y * yuv.uvStride(), cw), width);
                         } else {

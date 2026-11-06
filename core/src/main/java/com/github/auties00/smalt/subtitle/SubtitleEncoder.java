@@ -1,6 +1,9 @@
 package com.github.auties00.smalt.subtitle;
 
 import com.github.auties00.smalt.internal.subtitle.AssEvents;
+import com.github.auties00.smalt.internal.subtitle.AssScript;
+import com.github.auties00.smalt.internal.subtitle.Markup;
+import com.github.auties00.smalt.internal.subtitle.TextFiles;
 import com.github.auties00.smalt.internal.subtitle.TimedText;
 import com.github.auties00.smalt.internal.subtitle.WebVttSamples;
 import com.github.auties00.smalt.internal.subtitle.WebVttText;
@@ -19,15 +22,15 @@ import java.util.Set;
 /**
  * Turns {@link SubtitleCue}s into the packets of a text subtitle track.
  *
- * <p>The cue text is converted from the markup it is written in to the markup of the track's
- * codec ({@link Subtitles#convert(SubtitleCue, SubtitleMarkup, SubtitleMarkup)}: bold, italic and underline
- * survive every conversion), then packed in the codec's packet form: UTF-8 text for
- * {@link Codec#SUBRIP}, the payload with the identifier and settings as side data for
- * {@link Codec#WEBVTT}, a 3GPP text sample with {@code styl} records for {@link Codec#MOV_TEXT},
- * and an event in the {@code Default} style, numbered in encoding order, for {@link Codec#ASS}. A
- * SubRip {@code {\anN}} placement becomes the matching WebVTT {@code line} and {@code align}
- * settings when a cue without settings is written to a WebVTT track. The packet starts at the
- * cue start and lasts until its end, in the track's time base.
+ * <p>The cue is converted from the markup it is written in to the markup of the track's codec
+ * ({@link Subtitles#convert(SubtitleCue, SubtitleMarkup, SubtitleMarkup)}), then packed in the codec's
+ * packet form: UTF-8 text for {@link Codec#SUBRIP}, the payload with the identifier and settings as side
+ * data for {@link Codec#WEBVTT}, a 3GPP text sample for {@link Codec#MOV_TEXT} (its styles, colors,
+ * fonts the track's font table names, sizes, highlight and karaoke as {@code styl}, {@code hlit},
+ * {@code hclr} and {@code krok} boxes), and an event for {@link Codec#ASS}, numbered in encoding order: an
+ * ASS cue keeps its event fields (its settings), a cue of another markup goes to the {@code Default}
+ * style, its speaker in the {@code Name} field, its placement and font sizes scaled to the script
+ * resolution. The packet starts at the cue start and lasts until its end, in the track's time base.
  *
  * <p>An instance is not thread-safe.
  */
@@ -48,6 +51,16 @@ public final class SubtitleEncoder {
     private final Track track;
 
     /**
+     * The script of an ASS track, or {@code null}.
+     */
+    private final AssScript script;
+
+    /**
+     * The sample entry of a 3GPP timed text track, or {@code null}.
+     */
+    private final TimedText.Config timedText;
+
+    /**
      * The read order of the next ASS event.
      */
     private long readOrder;
@@ -56,7 +69,6 @@ public final class SubtitleEncoder {
      * Constructs an encoder for a track.
      *
      * @param track the track whose packets are produced; its codec must be a text subtitle codec
-     * @throws NullPointerException     if {@code track} is {@code null}
      * @throws IllegalArgumentException if the track's codec is not a text subtitle codec
      */
     public SubtitleEncoder(Track track) {
@@ -64,6 +76,11 @@ public final class SubtitleEncoder {
         if (!track.codec().isSubtitle()) {
             throw new IllegalArgumentException(track.codec().displayName() + " is not a text subtitle codec");
         }
+        var config = track.codecConfig().orElse(null);
+        this.script = track.codec() == Codec.ASS
+                ? AssScript.parse(TextFiles.decode(config == null ? AssEvents.DEFAULT_HEADER.getBytes(StandardCharsets.UTF_8)
+                : config)) : null;
+        this.timedText = track.codec() == Codec.MOV_TEXT ? TimedText.Config.parse(config) : null;
     }
 
     /**
@@ -77,7 +94,6 @@ public final class SubtitleEncoder {
      * @param codec the text subtitle codec
      * @param id    the track identifier
      * @return the track
-     * @throws NullPointerException     if {@code codec} is {@code null}
      * @throws IllegalArgumentException if {@code codec} is not a text subtitle codec
      */
     public static DataTrack track(Codec codec, int id) {
@@ -113,8 +129,6 @@ public final class SubtitleEncoder {
         Objects.requireNonNull(cue, "cue");
         Objects.requireNonNull(markup, "markup");
         var codec = track.codec();
-        var converted = Subtitles.convert(cue, markup, Subtitles.markupOf(codec));
-        var text = converted.text();
         var timeBase = track.timeBase();
         var pts = Rational.MICROSECONDS.rescale(cue.startMicros(), timeBase);
         var duration = Math.max(0, Rational.MICROSECONDS.rescale(cue.endMicros(), timeBase) - pts);
@@ -122,12 +136,27 @@ public final class SubtitleEncoder {
         byte[] data;
         switch (codec) {
             case WEBVTT -> {
+                var converted = Subtitles.convert(cue, markup, SubtitleMarkup.WEBVTT);
                 sideData = WebVttSamples.sideData(sideData, converted.identifier(), converted.settings());
-                data = SubtitleDecoder.bytes(text);
+                data = SubtitleDecoder.bytes(converted.text());
             }
-            case MOV_TEXT -> data = TimedText.encodeText(text);
-            case ASS -> data = SubtitleDecoder.bytes(AssEvents.event(readOrder++, text));
-            default -> data = SubtitleDecoder.bytes(text);
+            case MOV_TEXT -> {
+                var styled = Markup.parseCue(cue, markup, Markup.Context.of(cue));
+                data = TimedText.encode(styled, timedText, timeBase, cue.durationMicros());
+            }
+            case ASS -> {
+                SubtitleCue converted;
+                if (markup == SubtitleMarkup.ASS) {
+                    converted = cue;
+                } else {
+                    var styled = Markup.parseCue(cue, markup, Markup.Context.of(cue));
+                    converted = Markup.toCue(styled, cue.startMicros(), cue.endMicros(), SubtitleMarkup.ASS,
+                            Markup.Context.NONE.withScript(script, ""));
+                }
+                var event = AssEvents.withFields(readOrder++, converted.settings(), converted.text().replace("\n", "\\N"));
+                data = SubtitleDecoder.bytes(event.block());
+            }
+            default -> data = SubtitleDecoder.bytes(Subtitles.convert(cue, markup, SubtitleMarkup.SUBRIP).text());
         }
         return new Packet(track.id(), data, pts, pts, duration, KEY, sideData);
     }

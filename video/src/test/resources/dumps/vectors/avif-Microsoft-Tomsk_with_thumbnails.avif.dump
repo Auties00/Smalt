@@ -1,0 +1,19 @@
+# image dump of vectors/avif-Microsoft-Tomsk_with_thumbnails.avif; regenerate with -Dsmalt.test.updateDumps=true
+format AVIF
+info ImageInfo[format=AVIF, width=1280, height=720, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 1280x720 yuv8 YUV420 color=BT709/LIMITED/BT709/SRGB y=aa2750e0 u=95cbf4cf v=d8b14893
+  format=AVIF orientation=NORMAL source=1280x720
+  icc=none exif=58:8c5ec556 xmp=none
+  profile=none
+scaled 320x180
+picture 320x180 yuv8 YUV420 color=BT709/LIMITED/BT709/SRGB y=ebdb8501 u=05ca1f08 v=1d7e622c
+  format=AVIF orientation=NORMAL source=1280x720
+  icc=none exif=58:8c5ec556 xmp=none
+  profile=none
+pages 1
+page 0 ImageInfo[format=AVIF, width=1280, height=720, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+picture 1280x720 yuv8 YUV420 color=BT709/LIMITED/BT709/SRGB y=aa2750e0 u=95cbf4cf v=d8b14893
+  format=AVIF orientation=NORMAL source=1280x720
+  icc=none exif=58:8c5ec556 xmp=none
+  profile=none

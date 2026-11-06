@@ -1,0 +1,19 @@
+# image dump of gainmap/libavif-seine_sdr_gainmap_srgb.jpg; regenerate with -Dsmalt.test.updateDumps=true
+format JPEG
+info ImageInfo[format=JPEG, width=400, height=300, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 400x300 yuv8 YUV444 color=BT601/FULL/BT709/SRGB y=ff57fe4b u=9aa54ab5 v=ab35c9bb
+  format=JPEG orientation=NORMAL source=400x300
+  icc=3144:182ea552 exif=15691:b2e55efb xmp=42292:95cfe0fb
+  profile=ColorProfile[sRGB IEC61966-2.1, RGB, DISPLAY, v2.1.0]
+  density=DOTS_PER_INCH 300.0x300.0
+scaled 100x75
+picture 100x75 yuv8 YUV444 color=BT601/FULL/BT709/SRGB y=7e7dde6e u=17098df7 v=74fb8798
+  format=JPEG orientation=NORMAL source=400x300
+  icc=3144:182ea552 exif=15691:b2e55efb xmp=42292:95cfe0fb
+  profile=ColorProfile[sRGB IEC61966-2.1, RGB, DISPLAY, v2.1.0]
+  density=DOTS_PER_INCH 300.0x300.0
+decoder gain map
+picture 400x300 yuv8 YUV444 color=BT601/FULL/BT709/SRGB y=77cc985a u=1a04ac6c v=4d98c020
+decoder auxiliary images
+[AuxiliaryImage[index=0, type=GAIN_MAP, identifier=mpf:000000, width=400, height=300]]

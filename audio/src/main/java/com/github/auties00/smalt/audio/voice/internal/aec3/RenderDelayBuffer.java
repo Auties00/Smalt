@@ -6,9 +6,9 @@ import static com.github.auties00.smalt.audio.voice.internal.aec3.Aec3.FFT_LENGT
 /**
  * Buffers the render blocks of AEC3, at full rate for the echo remover and decimated for the
  * delay estimator, and aligns the read positions with the capture signal by the estimated
- * delay.
+ * delay. The delay estimator sees the render channel an {@link AlignmentMixer} selects.
  *
- * <p>{@link #insert(float[], int)} returns {@link #EVENT_NONE} or {@link #EVENT_RENDER_OVERRUN};
+ * <p>{@link #insert(float[])} returns {@link #EVENT_NONE} or {@link #EVENT_RENDER_OVERRUN};
  * {@link #prepareCaptureProcessing()} additionally returns {@link #EVENT_RENDER_UNDERRUN}.
  *
  * @implNote This implementation ports {@code RenderDelayBufferImpl} of WebRTC's
@@ -52,7 +52,7 @@ final class RenderDelayBuffer {
     /**
      * The full-rate rings.
      */
-    final RenderBuffer buffer = new RenderBuffer();
+    final RenderBuffer buffer;
 
     /**
      * The decimated ring, most recent sample first within each sub-block, followed by a mirror
@@ -85,6 +85,16 @@ final class RenderDelayBuffer {
      * The scratch buffer of a decimated sub-block.
      */
     private final float[] renderDs = new float[SUB_BLOCK_SIZE];
+
+    /**
+     * The selector of the render channel the delay estimator sees.
+     */
+    private final AlignmentMixer renderMixer;
+
+    /**
+     * The scratch buffer of the selected render channel.
+     */
+    private final float[] downmixedRender = new float[BLOCK_SIZE];
 
     /**
      * The current delay in blocks, or {@code -1} when none has been set since the last reset.
@@ -120,10 +130,14 @@ final class RenderDelayBuffer {
     /**
      * Creates a buffer and resets it.
      *
+     * @param numBands the number of bands of a block
+     * @param numChannels the number of render channels
      * @param flushTiny whether the decimator zeroes tiny filter states and samples; {@code false}
      *                  reproduces the reference bit for bit
      */
-    RenderDelayBuffer(boolean flushTiny) {
+    RenderDelayBuffer(int numBands, int numChannels, boolean flushTiny) {
+        this.buffer = new RenderBuffer(numBands, numChannels);
+        this.renderMixer = new AlignmentMixer(numChannels, true);
         this.decimator = new Decimator(flushTiny);
         reset();
     }
@@ -156,20 +170,19 @@ final class RenderDelayBuffer {
     /**
      * Inserts a render block.
      *
-     * @param block  the samples
-     * @param offset the index of the first of the 64 samples
+     * @param block the bands of every channel, band by band, 64 samples each
      * @return {@link #EVENT_RENDER_OVERRUN} when the buffer overran and was reset, otherwise
      *         {@link #EVENT_NONE}
      */
-    int insert(float[] block, int offset) {
+    int insert(float[] block) {
         var previousWrite = buffer.blockWrite;
         incrementWriteIndices();
         var event = renderOverrun() ? EVENT_RENDER_OVERRUN : EVENT_NONE;
         if (!renderActivity) {
-            renderActivityCounter += detectActiveRender(block, offset) ? 1 : 0;
+            renderActivityCounter += detectActiveRender(block, 0) ? 1 : 0;
             renderActivity = renderActivityCounter >= 20;
         }
-        insertBlock(block, offset, previousWrite);
+        insertBlock(block, previousWrite);
         if (event != EVENT_NONE) {
             reset();
         }
@@ -265,31 +278,35 @@ final class RenderDelayBuffer {
     }
 
     /**
-     * Writes a block, its decimation, its spectrum and its power spectrum at the write
-     * positions.
+     * Writes a block at the write position, with its decimated selected channel and the spectrum
+     * and power spectrum of every channel's lowest band.
      *
-     * @param block         the samples
-     * @param offset        the index of the first sample
-     * @param previousWrite the block ring index of the previous block
+     * @param block the bands of every channel
+     * @param previousWrite the slot of the previous block
      */
-    private void insertBlock(float[] block, int offset, int previousWrite) {
+    private void insertBlock(float[] block, int previousWrite) {
         var b = buffer;
-        var writeOffset = b.blockWrite * BLOCK_SIZE;
-        System.arraycopy(block, offset, b.blocks, writeOffset, BLOCK_SIZE);
-        decimator.decimate(b.blocks, writeOffset, renderDs);
+        var slotSize = b.numBands * b.numChannels * BLOCK_SIZE;
+        var writeOffset = b.blockWrite * slotSize;
+        System.arraycopy(block, 0, b.blocks, writeOffset, slotSize);
+        renderMixer.produceOutput(b.blocks, writeOffset, BLOCK_SIZE, downmixedRender);
+        decimator.decimate(downmixedRender, 0, renderDs);
         for (var i = 0; i < SUB_BLOCK_SIZE; i++) {
             lowRate[lowRateWrite + i] = renderDs[SUB_BLOCK_SIZE - 1 - i];
         }
         if (lowRateWrite < MatchedFilter.FILTER_LENGTH) {
             System.arraycopy(lowRate, lowRateWrite, lowRate, LOW_RATE_SIZE + lowRateWrite, SUB_BLOCK_SIZE);
         }
-        var spectrumOffset = b.fftWrite * FFT_LENGTH_BY_2_PLUS_1;
-        fft.paddedFft(b.blocks, writeOffset, b.blocks, previousWrite * BLOCK_SIZE, b.fftRe, b.fftIm, spectrumOffset);
-        var powerOffset = b.spectrumWrite * FFT_LENGTH_BY_2_PLUS_1;
-        for (var k = 0; k < FFT_LENGTH_BY_2_PLUS_1; k++) {
-            var re = b.fftRe[spectrumOffset + k];
-            var im = b.fftIm[spectrumOffset + k];
-            b.spectra[powerOffset + k] = re * re + im * im;
+        for (var ch = 0; ch < b.numChannels; ch++) {
+            var spectrumOffset = (b.fftWrite * b.numChannels + ch) * FFT_LENGTH_BY_2_PLUS_1;
+            fft.paddedFft(b.blocks, b.blockSlotOffset(b.blockWrite, 0, ch), b.blocks,
+                    b.blockSlotOffset(previousWrite, 0, ch), b.fftRe, b.fftIm, spectrumOffset);
+            var powerOffset = (b.spectrumWrite * b.numChannels + ch) * FFT_LENGTH_BY_2_PLUS_1;
+            for (var k = 0; k < FFT_LENGTH_BY_2_PLUS_1; k++) {
+                var re = b.fftRe[spectrumOffset + k];
+                var im = b.fftIm[spectrumOffset + k];
+                b.spectra[powerOffset + k] = re * re + im * im;
+            }
         }
     }
 

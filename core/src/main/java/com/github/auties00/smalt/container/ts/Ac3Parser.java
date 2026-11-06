@@ -20,6 +20,10 @@ import java.util.Arrays;
  * rate and the layout of program zero with its channel extensions, and timestamps count samples at
  * that rate (256 per audio block). The track carries no configuration: the frames describe
  * themselves.
+ *
+ * <p>The frames of a {@code SAMPLE-AES} stream ({@code stream_type 0xC1} or {@code 0xC2}) are decrypted before they
+ * are read, so they describe themselves as clear frames do; the priming of its audio setup information gives the
+ * track's {@link AudioTrack#skipSamples() skipped samples}.
  */
 final class Ac3Parser extends FrameParser {
     /**
@@ -32,9 +36,25 @@ final class Ac3Parser extends FrameParser {
         super(entry, limits);
     }
 
+    /**
+     * Constructs a parser of a stream that may be encrypted.
+     *
+     * @param entry the program map entry of the stream
+     * @param limits the resource bounds
+     * @param sampleAes the decryptor of a {@code SAMPLE-AES} stream, or {@code null} for a clear one
+     */
+    Ac3Parser(Psi.StreamEntry entry, MediaLimits limits, SampleAesDecryptor sampleAes) {
+        super(entry, limits, sampleAes);
+    }
+
     @Override
     ElementaryParser fresh() {
-        return inheritTiming(new Ac3Parser(entry, limits));
+        return inheritTiming(new Ac3Parser(entry, limits, sampleAes));
+    }
+
+    @Override
+    void decrypt(byte[] data, int offset, int length, long fileOffset, boolean corrupt) {
+        sampleAes.ac3(data, offset, length, fileOffset, corrupt);
     }
 
     @Override
@@ -86,17 +106,19 @@ final class Ac3Parser extends FrameParser {
         }
         if (track == null) {
             var stream = Ac3Configs.describe(data, offset, length);
+            var setup = entry.sampleAes();
             if (stream == null || stream.sampleRate() <= 0) {
                 return;
             }
             timestampRate = stream.sampleRate();
             track = AudioTrack.builder()
-                    .id(pid())
+                    .id(trackId())
                     .codec(stream.codec())
                     .timeBase(Rational.timeBaseOf(stream.sampleRate()))
                     .language(entry.language())
                     .sampleRate(stream.sampleRate())
                     .layout(stream.layout())
+                    .skipSamples(setup != null ? setup.priming() : 0)
                     .build();
         }
         var samples = 256 * header.blocks();
