@@ -372,6 +372,102 @@ class JxlEncoderTest {
             assertTrue(decoded.extraChannel(JxlChannelType.DEPTH).isPresent());
         }
 
+        @ParameterizedTest(name = "{0}, effort {1}")
+        @CsvSource({"ramp,1", "ramp,3", "ramp,5", "ramp,7", "ramp,9", "signed,1", "signed,3", "signed,5", "signed,7",
+                "signed,9"})
+        @DisplayName("keeps floating-point samples whose bit patterns span 32 bits, as libjxl decodes them")
+        void wideFloatResiduals(String content, int effort) throws IOException {
+            // ramp: 1024 distinct values from 0 to 1 give a palette whose bit patterns jump by about 2^30, so the
+            // hybrid integer tokens of its residuals must stay below the first LZ77 length symbol; signed: -0.0,
+            // the smallest negative subnormal, huge and negative values among values from 0 to 1, whose W + N - NW
+            // overflows 32 bits, which libjxl's gradient lookup table computes without wrap-around
+            var w = 32;
+            var h = 32;
+            var pixels = new float[w * h];
+            var random = new Random(4);
+            for (var i = 0; i < pixels.length; i++) {
+                var base = random.nextInt(65536);
+                pixels[i] = content.equals("ramp") ? i / 1024f : switch (random.nextInt(12)) {
+                    case 0 -> -0.0f;
+                    case 1 -> -Float.MIN_VALUE;
+                    case 2 -> base * 1.0e6f;
+                    case 3 -> -base / 3000f;
+                    default -> base / 65535f;
+                };
+            }
+            var source = ChannelFloatPicture.of(w, h, w, pixels, PixelLayout.GRAY);
+            var file = JxlEncoder.encode(source, JxlEncoderOptions.lossless().toBuilder().effort(effort).build());
+            var plane = JxlDecoder.decodeFloat(MediaSource.of(file)).plane(0);
+            for (var i = 0; i < pixels.length; i++) {
+                assertEquals(Float.floatToRawIntBits(pixels[i]), Float.floatToRawIntBits(plane[i]), "sample " + i);
+            }
+            Oracle.assume(Oracle.Tool.DJXL);
+            var directory = Scratch.directory("jxl-wide-floats");
+            var input = directory.resolve("wide-" + content + "-e" + effort + ".jxl");
+            var output = directory.resolve("wide-" + content + "-e" + effort + ".pfm");
+            Files.write(input, file);
+            Oracle.run(Oracle.Tool.DJXL, Duration.ofMinutes(2), List.of(input.toString(), output.toString(), "--quiet"));
+            var pfm = Files.readAllBytes(output);
+            // PFM: "Pf" or "PF", the size and a scale whose sign gives the byte order, then rows bottom to top
+            var header = new String(pfm, 0, 32, StandardCharsets.US_ASCII).split("\\s+");
+            var channels = header[0].equals("PF") ? 3 : 1;
+            var order = Double.parseDouble(header[3]) < 0 ? java.nio.ByteOrder.LITTLE_ENDIAN
+                    : java.nio.ByteOrder.BIG_ENDIAN;
+            var data = java.nio.ByteBuffer.wrap(pfm, pfm.length - w * h * channels * 4, w * h * channels * 4).slice()
+                    .order(order);
+            for (var y = 0; y < h; y++) {
+                for (var x = 0; x < w; x++) {
+                    var value = data.getFloat((((h - 1 - y) * w + x) * channels) * 4);
+                    assertEquals(Float.floatToRawIntBits(pixels[y * w + x]), Float.floatToRawIntBits(value),
+                            "djxl sample " + x + "," + y);
+                }
+            }
+        }
+
+        @ParameterizedTest(name = "cjxl effort {0}")
+        @ValueSource(ints = {1, 2, 3, 5, 7, 9})
+        @DisplayName("decodes cjxl's lossless files of floating-point samples whose W + N - NW overflows 32 bits")
+        void libjxlWideFloats(int effort) throws IOException {
+            Oracle.assume(Oracle.Tool.CJXL);
+            // effort 2 codes with libjxl's fixed gradient tree, which its decoder reads through the saturating
+            // gradient lookup table: -0.0, negative and huge values among values from 0 to 1 make the property
+            // overflow, so a decoder computing it with 32-bit wrap-around picks other contexts
+            var w = 40;
+            var h = 24;
+            var pixels = new float[w * h];
+            var random = new Random(11);
+            for (var i = 0; i < pixels.length; i++) {
+                var base = random.nextInt(65536);
+                pixels[i] = switch (random.nextInt(10)) {
+                    case 0 -> -0.0f;
+                    case 1 -> -Float.MIN_VALUE;
+                    case 2 -> base * 1.0e6f;
+                    case 3 -> -base / 3000f;
+                    default -> base / 65535f;
+                };
+            }
+            // PFM: a negative scale marks little-endian samples, rows from bottom to top
+            var header = ("Pf\n" + w + " " + h + "\n-1.0\n").getBytes(StandardCharsets.US_ASCII);
+            var pfm = java.nio.ByteBuffer.allocate(header.length + pixels.length * 4)
+                    .order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            pfm.put(header);
+            for (var y = h - 1; y >= 0; y--) {
+                for (var x = 0; x < w; x++) {
+                    pfm.putFloat(pixels[y * w + x]);
+                }
+            }
+            var directory = Scratch.directory("jxl-libjxl-wide-floats");
+            var input = directory.resolve("wide-e" + effort + ".pfm");
+            var output = directory.resolve("wide-e" + effort + ".jxl");
+            Files.write(input, pfm.array());
+            Oracle.run(Oracle.Tool.CJXL, Duration.ofMinutes(2), List.of(input.toString(), output.toString(), "-d", "0",
+                    "-e", Integer.toString(effort), "--quiet"));
+            var plane = JxlDecoder.decodeFloat(MediaSource.of(Files.readAllBytes(output))).plane(0);
+            for (var i = 0; i < pixels.length; i++) {
+                assertEquals(Float.floatToRawIntBits(pixels[i]), Float.floatToRawIntBits(plane[i]), "sample " + i);
+            }
+        }
+
         @Test
         @DisplayName("keeps CMYK inks and their profile")
         void cmyk() {

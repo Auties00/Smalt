@@ -323,8 +323,8 @@ final class RawWorkloads {
 
     /**
      * Returns a workload that writes DNG files: the sensor image of a 1024x768 Bayer DNG with lossless JPEG tiles
-     * and a preview and uncompressed without one, the linear raw image of a 640x480 DNG, and the conversion of a
-     * 1024x768 MRW file.
+     * and a preview, and uncompressed and with JPEG XL tiles without one, the linear raw image of a 640x480 DNG,
+     * and the conversion of a 1024x768 MRW file.
      *
      * @return the workload
      */
@@ -335,9 +335,11 @@ final class RawWorkloads {
                 SyntheticImages.rgba(SyntheticVideo.natural(640, 480, 1).getFirst(), false))));
         var mrw = SyntheticVendorRaw.mrw(picture, true);
         var uncompressed = DngEncoderOptions.builder().compression(DngCompression.UNCOMPRESSED).preview(false).build();
+        var jpegXl = DngEncoderOptions.builder().compression(DngCompression.JPEG_XL).preview(false).build();
         return TrainingWorkload.of("raw-encode-dng", () -> {
             Blackhole.consume(DngEncoder.encode(bayer).length);
             Blackhole.consume(DngEncoder.encode(bayer, uncompressed).length);
+            Blackhole.consume(DngEncoder.encode(bayer, jpegXl).length);
             Blackhole.consume(DngEncoder.encode(linear).length);
             Blackhole.consume(DngEncoder.convert(MediaSource.of(mrw)).length);
         });

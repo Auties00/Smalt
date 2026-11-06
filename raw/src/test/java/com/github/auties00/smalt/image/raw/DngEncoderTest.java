@@ -213,8 +213,7 @@ class DngEncoderTest {
             return IntStream.range(0, 48).mapToObj(index -> {
                 var kind = random.nextInt(4);
                 return Arguments.of(index, kind, 1 + random.nextInt(90), 1 + random.nextInt(70),
-                        16 * (1 + random.nextInt(4)), random.nextBoolean() ? DngCompression.LOSSLESS_JPEG
-                                : DngCompression.UNCOMPRESSED, random.nextLong());
+                        16 * (1 + random.nextInt(4)), DngCompression.values()[random.nextInt(3)], random.nextLong());
             });
         }
 

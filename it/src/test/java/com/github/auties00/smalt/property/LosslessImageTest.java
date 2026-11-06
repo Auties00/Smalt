@@ -170,6 +170,24 @@ class LosslessImageTest {
             }
             assertIdentity("TIFF planar " + test, picture, TiffEncoder.encode(picture, options.build()), true);
         }
+
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("com.github.auties00.smalt.property.LosslessImageTest#allDepths")
+        @DisplayName("TIFF JPEG XL returns every sample of every layout and depth, interleaved or in planes, under "
+                + "both codes and every effort")
+        void tiffJpegXl(Case test) {
+            var picture = picture(test);
+            var options = TiffEncoderOptions.builder().compression(TiffCompression.JPEG_XL)
+                    .jpegXlOptions(com.github.auties00.smalt.image.jxl.JxlEncoderOptions.lossless().toBuilder()
+                            .effort(1 + (int) (test.seed() % 9)).build())
+                    .dngJpegXlCode(test.seed() % 2 == 0).planar(test.seed() % 3 == 0).bigEndian(test.seed() % 5 == 0);
+            if (test.seed() % 4 == 0) {
+                options.tiles(16, 16);
+            } else {
+                options.strips(1 + (int) (test.seed() % 7));
+            }
+            assertIdentity("TIFF JPEG XL " + test, picture, TiffEncoder.encode(picture, options.build()), true);
+        }
     }
 
     @Nested

@@ -1049,7 +1049,7 @@ final class ImageWorkloads {
 
     /**
      * Returns a workload that encodes a 640x480 picture as TIFF with LZW, Deflate with the
-     * horizontal predictor, PackBits, Zstandard, and Deflate, Zstandard, WebP and JPEG 2000 in tiles, as
+     * horizontal predictor, PackBits, Zstandard, and Deflate, Zstandard, WebP, JPEG 2000 and JPEG XL in tiles, as
      * JPEG in strips and tiles, as CMYK in separate planes, as palette, Y'CbCr 4:2:0 and dithered bilevel
      * pages under the CCITT codings, a 16-bit picture with alpha, and CMYK, floating-point (with the
      * floating-point predictor) and extra-sample channel pictures, and decodes every file back, the channel
@@ -1075,6 +1075,7 @@ final class ImageWorkloads {
                 TiffEncoderOptions.zstd().toBuilder().compressionLevel(9).tiles(256, 256).build(),
                 TiffEncoderOptions.builder().compression(TiffCompression.WEBP).tiles(256, 256).build(),
                 TiffEncoderOptions.builder().compression(TiffCompression.JPEG_2000).tiles(256, 256).build(),
+                TiffEncoderOptions.builder().compression(TiffCompression.JPEG_XL).tiles(256, 256).build(),
                 TiffEncoderOptions.jpeg(),
                 TiffEncoderOptions.jpeg().toBuilder().tiles(256, 256).jpegOptions(JpegEncoderOptions.builder()
                         .optimizeHuffman(false).build()).build(),

@@ -16,10 +16,11 @@ import java.util.Objects;
  *
  * <p>The raw image is stored as it is: a color filter array image (one or two samples per photosite, any
  * pattern and layout), a linear raw image of three samples per pixel, or a monochrome image, in 16-bit tiles,
- * uncompressed or as lossless JPEG ({@link DngEncoderOptions#compression()}). Its samples are the file's linear
- * reference values: {@link RawDecoder#decodeRaw(MediaSource, RawDecoderOptions)} of the written file returns
- * them unchanged, with the same color filter array, layout, neutral and, to within the precision of the file's
- * rationals, the same white-balanced camera to XYZ matrix. The color description is the camera's neutral and a
+ * uncompressed, as lossless JPEG or as lossless JPEG XL ({@link DngEncoderOptions#compression()}; JPEG XL only for
+ * one or three samples per pixel). Its samples are the file's linear reference values:
+ * {@link RawDecoder#decodeRaw(MediaSource, RawDecoderOptions)} of the written file returns them unchanged, with
+ * the same color filter array, layout, neutral and, to within the precision of the file's rationals, the same
+ * white-balanced camera to XYZ matrix. The color description is the camera's neutral and a
  * matrix pair derived from {@link RawImage#balancedToXyz()}: the forward matrix it is, and the color matrix that
  * maps the D50 white to the neutral, for the D50 calibration illuminant. The specification requires a forward
  * matrix to map a white-balanced neutral to the D50 white; a matrix that maps it more than 0.01 away from D50 in
@@ -48,6 +49,8 @@ public final class DngEncoder {
      * @return the file
      * @throws IllegalArgumentException if the image is neither monochrome nor has a color matrix, or its matrix
      * is singular or maps a white-balanced neutral to a white with a component that is not positive
+     * @throws MediaException.Unsupported if the compression is {@link DngCompression#JPEG_XL} and the image has two
+     * samples per photosite
      * @throws MediaException.LimitExceeded if the file would exceed 4 GiB
      */
     public static byte[] encode(RawImage image) {
@@ -62,6 +65,8 @@ public final class DngEncoder {
      * @return the file
      * @throws IllegalArgumentException if the image is neither monochrome nor has a color matrix, or its matrix
      * is singular or maps a white-balanced neutral to a white with a component that is not positive
+     * @throws MediaException.Unsupported if the compression is {@link DngCompression#JPEG_XL} and the image has two
+     * samples per photosite
      * @throws MediaException.LimitExceeded if the file would exceed 4 GiB
      */
     public static byte[] encode(RawImage image, DngEncoderOptions options) {
@@ -81,6 +86,8 @@ public final class DngEncoder {
      * @param sink the output, written from its position; not closed
      * @throws IllegalArgumentException if the image is neither monochrome nor has a color matrix, or its matrix
      * is singular or maps a white-balanced neutral to a white with a component that is not positive
+     * @throws MediaException.Unsupported if the compression is {@link DngCompression#JPEG_XL} and the image has two
+     * samples per photosite
      * @throws MediaException.LimitExceeded if the file would exceed 4 GiB
      * @throws MediaException.Io if writing the sink fails
      */
@@ -100,7 +107,8 @@ public final class DngEncoder {
      * @return the DNG file
      * @throws MediaException.Malformed if the file is corrupt
      * @throws MediaException.Unsupported if the input is not a recognized raw format, its sensor data uses a
-     * feature the decoder lacks, or it is a four-color image whose color matrices are not of four colors
+     * feature the decoder lacks, it is a four-color image whose color matrices are not of four colors, or the
+     * compression is {@link DngCompression#JPEG_XL} and the image has two samples per photosite
      * @throws MediaException.LimitExceeded if the image exceeds the default limits or the file would exceed 4 GiB
      * @throws MediaException.Io if reading the source fails
      */
@@ -117,7 +125,8 @@ public final class DngEncoder {
      * @return the DNG file
      * @throws MediaException.Malformed if the file is corrupt
      * @throws MediaException.Unsupported if the input is not a recognized raw format, its sensor data uses a
-     * feature the decoder lacks, or it is a four-color image whose color matrices are not of four colors
+     * feature the decoder lacks, it is a four-color image whose color matrices are not of four colors, or the
+     * compression is {@link DngCompression#JPEG_XL} and the image has two samples per photosite
      * @throws MediaException.LimitExceeded if the image exceeds the limits or the file would exceed 4 GiB
      * @throws MediaException.Io if reading the source fails
      */
@@ -153,7 +162,8 @@ public final class DngEncoder {
      * @param sink the output, written from its position; not closed
      * @throws MediaException.Malformed if the file is corrupt
      * @throws MediaException.Unsupported if the input is not a recognized raw format, its sensor data uses a
-     * feature the decoder lacks, or it is a four-color image whose color matrices are not of four colors
+     * feature the decoder lacks, it is a four-color image whose color matrices are not of four colors, or the
+     * compression is {@link DngCompression#JPEG_XL} and the image has two samples per photosite
      * @throws MediaException.LimitExceeded if the image exceeds the limits or the file would exceed 4 GiB
      * @throws MediaException.Io if reading the source or writing the sink fails
      */

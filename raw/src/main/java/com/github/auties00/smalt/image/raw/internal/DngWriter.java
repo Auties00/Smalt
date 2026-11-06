@@ -1,16 +1,20 @@
 /* Ports the Digital Negative (DNG) Specification 1.7.1.0, Adobe. This product includes DNG technology under license
    by Adobe. The NewRawImageDigest computation ports the Adobe DNG SDK 1.7.1 build 2768 (dng_negative.cpp,
-   dng_find_new_raw_image_digest_task). Copyright 2006-2019 Adobe Systems Incorporated; DNG SDK License Agreement.
-   Modified for Smalt. */
+   dng_find_new_raw_image_digest_task; dng_jpeg_image.cpp, dng_lossy_compressed_image::FindDigest). Copyright
+   2006-2019 Adobe Systems Incorporated; DNG SDK License Agreement. Modified for Smalt. */
 package com.github.auties00.smalt.image.raw.internal;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.Channel16Picture;
 import com.github.auties00.smalt.image.ChromaFormat;
+import com.github.auties00.smalt.image.PixelLayout;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.exif.ExifData;
 import com.github.auties00.smalt.image.exif.ExifValue;
 import com.github.auties00.smalt.image.jpeg.JpegEncoder;
 import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions;
+import com.github.auties00.smalt.image.jxl.JxlEncoder;
+import com.github.auties00.smalt.image.jxl.JxlEncoderOptions;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.ops.ResizeFilter;
 import com.github.auties00.smalt.image.raw.DngCompression;
@@ -64,6 +68,21 @@ final class DngWriter {
      * The tile width and height of the {@code NewRawImageDigest}.
      */
     private static final int DIGEST_TILE = 256;
+
+    /**
+     * The settings of JPEG XL raw tiles: lossless, at the default effort.
+     */
+    private static final JxlEncoderOptions JXL_TILE_OPTIONS = JxlEncoderOptions.lossless();
+
+    /**
+     * The DNG 1.7 {@code JXLDistance} tag, the distance JPEG XL data was coded at.
+     */
+    private static final int JXL_DISTANCE = 52553;
+
+    /**
+     * The DNG 1.7 {@code JXLEffort} tag, the effort JPEG XL data was coded at, 1 to 9.
+     */
+    private static final int JXL_EFFORT = 52554;
 
     /**
      * The largest difference from the D50 white of each component of the white a forward matrix written as it is
@@ -203,7 +222,7 @@ final class DngWriter {
         } else {
             first = raw;
         }
-        metadata(first, content, backward);
+        metadata(first, content, tiles, backward);
         var position = 8 + first.size();
         var rawOffset = 8L;
         var previewOffset = 0L;
@@ -273,17 +292,23 @@ final class DngWriter {
         var tiles = new byte[count][];
         var work = (long) content.width * content.height * content.channels * SAMPLE_WORK;
         var bands = ParallelBands.bands(count, work);
-        var lossless = content.compression == DngCompression.LOSSLESS_JPEG;
+        var compression = content.compression;
+        if (compression == DngCompression.JPEG_XL && content.channels == 2) {
+            throw new MediaException.Unsupported("dng jpeg xl two samples",
+                    "JPEG XL raw data holds one or three samples per pixel, not two");
+        }
         ParallelBands.run(bands, band -> {
-            var writer = lossless ? new LosslessJpegWriter() : null;
+            var writer = compression == DngCompression.LOSSLESS_JPEG ? new LosslessJpegWriter() : null;
             var last = ParallelBands.start(band + 1, bands, count);
             for (var tile = ParallelBands.start(band, bands, count); tile < last; tile++) {
                 var left = (tile % across) * size;
                 var top = (tile / across) * size;
-                tiles[tile] = lossless
-                        ? writer.encode(content.samples, content.width, content.height, content.channels, left, top,
-                        size, size)
-                        : uncompressed(content, left, top, size);
+                tiles[tile] = switch (compression) {
+                    case LOSSLESS_JPEG -> writer.encode(content.samples, content.width, content.height,
+                            content.channels, left, top, size, size);
+                    case JPEG_XL -> jpegXl(content, left, top, size);
+                    case UNCOMPRESSED -> uncompressed(content, left, top, size);
+                };
             }
         });
         return tiles;
@@ -337,6 +362,26 @@ final class DngWriter {
     }
 
     /**
+     * Returns the {@code NewRawImageDigest} of a raw image stored with a compression DNG readers treat as lossy,
+     * JPEG XL among them whatever its distance: the MD5 digest of the MD5 digests of the coded tiles, in row
+     * order, each over the tile's bytes as stored.
+     *
+     * @param tiles the coded tiles, row by row
+     * @return the 16 digest bytes
+     */
+    static byte[] codedDigest(byte[][] tiles) {
+        var md5 = md5();
+        var hashes = new byte[tiles.length][];
+        for (var i = 0; i < tiles.length; i++) {
+            hashes[i] = md5.digest(tiles[i]);
+        }
+        for (var hash : hashes) {
+            md5.update(hash);
+        }
+        return md5.digest();
+    }
+
+    /**
      * Returns an MD5 digest, which every Java runtime provides.
      *
      * @return a new digest
@@ -347,6 +392,34 @@ final class DngWriter {
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("the Java runtime has no MD5 digest", exception);
         }
+    }
+
+    /**
+     * Codes a tile as a lossless JPEG XL image of 16-bit samples, gray for one sample per pixel and RGB for three,
+     * the last column and row repeated past the image's edges.
+     *
+     * @param content the content holding the raw image
+     * @param left the left column of the tile
+     * @param top the top row of the tile
+     * @param size the tile width and height
+     * @return the codestream, or a container when its conformance level needs one
+     */
+    private static byte[] jpegXl(DngContent content, int left, int top, int size) {
+        var spp = content.channels;
+        var line = size * spp;
+        var pixels = new short[line * size];
+        var available = Math.min(size, content.width - left) * spp;
+        for (var row = 0; row < size; row++) {
+            var y = Math.min(top + row, content.height - 1);
+            var base = (y * content.width + left) * spp;
+            var target = row * line;
+            System.arraycopy(content.samples, base, pixels, target, available);
+            for (var k = available; k < line; k++) {
+                pixels[target + k] = content.samples[base + available - spp + k % spp];
+            }
+        }
+        var layout = spp == 1 ? PixelLayout.GRAY : PixelLayout.RGB;
+        return JxlEncoder.encode(Channel16Picture.of(size, size, line, pixels, layout), JXL_TILE_OPTIONS);
     }
 
     /**
@@ -431,6 +504,11 @@ final class DngWriter {
         if (content.opcodes3 != null) {
             raw.undefined(51022, content.opcodes3);
         }
+        if (content.compression == DngCompression.JPEG_XL) {
+            // a distance of 0 tells DNG readers the tiles are lossless, which they otherwise cannot know
+            raw.raw(JXL_DISTANCE, TiffTypes.FLOAT, 1, floats(new float[]{0}));
+            raw.longs(JXL_EFFORT, JXL_TILE_OPTIONS.effort());
+        }
         return raw;
     }
 
@@ -466,9 +544,10 @@ final class DngWriter {
      *
      * @param first the first directory
      * @param content the content holding the metadata
+     * @param tiles the coded tiles of the raw image, row by row
      * @param backward the {@code DNGBackwardVersion} bytes
      */
-    private static void metadata(IfdBuilder first, DngContent content, byte[] backward) {
+    private static void metadata(IfdBuilder first, DngContent content, byte[][] tiles, byte[] backward) {
         for (var tag : content.firstTags) {
             first.raw(tag.tag(), tag.type(), tag.count(), tag.value());
         }
@@ -483,7 +562,8 @@ final class DngWriter {
         }
         first.shorts(274, content.orientation);
         first.ascii(305, APPLICATION);
-        first.raw(51111, TiffTypes.BYTE, 16, newRawImageDigest(content));
+        first.raw(51111, TiffTypes.BYTE, 16, content.compression == DngCompression.JPEG_XL ? codedDigest(tiles)
+                : newRawImageDigest(content));
         first.raw(50706, TiffTypes.BYTE, 4, new byte[]{1, 7, 1, 0});
         first.raw(50707, TiffTypes.BYTE, 4, backward);
         first.ascii(50708, content.uniqueCameraModel);
@@ -643,8 +723,8 @@ final class DngWriter {
 
     /**
      * Returns the DNG version the file is compatible back to: 1.1 (lossless JPEG as T.81 specifies it at 16 bits),
-     * 1.3 for the CFA layouts 6 to 9, 1.6 for a calibration illuminant given by its chromaticity, and the version
-     * of every required opcode of opcode list 3.
+     * 1.3 for the CFA layouts 6 to 9, 1.6 for a calibration illuminant given by its chromaticity, 1.7 for JPEG XL
+     * raw data, and the version of every required opcode of opcode list 3.
      *
      * @param content the content written
      * @return the four version bytes
@@ -657,6 +737,9 @@ final class DngWriter {
         var color = content.calibration;
         if (color != null && (color.illuminant[0] == OTHER_ILLUMINANT || color.illuminant[1] == OTHER_ILLUMINANT)) {
             version = Math.max(version, 0x01060000);
+        }
+        if (content.compression == DngCompression.JPEG_XL) {
+            version = Math.max(version, 0x01070000);
         }
         if (content.opcodes3 != null) {
             version = Math.max(version, 0x01030000);

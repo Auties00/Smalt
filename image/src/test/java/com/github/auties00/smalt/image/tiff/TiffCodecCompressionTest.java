@@ -459,8 +459,6 @@ class TiffCodecCompressionTest {
             assertThrows(IllegalArgumentException.class, () -> webp.layout(TiffEncoderOptions.Layout.GRAY_ALPHA).build());
             assertThrows(IllegalArgumentException.class, () -> TiffEncoderOptions.builder()
                     .compression(TiffCompression.WEBP).depth(TiffEncoderOptions.Depth.SIXTEEN).build());
-            assertThrows(IllegalArgumentException.class, () -> TiffEncoderOptions.builder()
-                    .compression(TiffCompression.JPEG_XL).build());
             var floats = ChannelFloatPicture.of(2, 2, 2, new float[4], PixelLayout.GRAY);
             var jp2 = TiffEncoderOptions.builder().compression(TiffCompression.JPEG_2000).build();
             assertThrows(IllegalArgumentException.class, () -> TiffEncoder.encode(floats, jp2));

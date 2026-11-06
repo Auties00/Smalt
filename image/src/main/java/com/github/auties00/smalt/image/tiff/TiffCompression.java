@@ -6,7 +6,8 @@ package com.github.auties00.smalt.image.tiff;
  * <p>{@link TiffDecoder} decodes every scheme but {@link #OTHER} ({@link #OLD_JPEG} when its stream
  * or tables can be read); {@link TiffEncoder} writes {@link #NONE}, {@link #PACKBITS}, {@link #LZW},
  * {@link #DEFLATE}, {@link #ZSTD}, {@link #CCITT_RLE}, {@link #CCITT_RLEW}, {@link #CCITT_T4},
- * {@link #CCITT_T6}, {@link #JPEG}, {@link #WEBP} and {@link #JPEG_2000}.
+ * {@link #CCITT_T6}, {@link #JPEG}, {@link #WEBP}, {@link #JPEG_2000} and {@link #JPEG_XL} (under either of its
+ * codes, see {@link TiffEncoderOptions#isDngJpegXlCode()}).
  *
  * <p>Constants may be added in minor releases, so a {@code switch} over this type needs a
  * {@code default} branch.

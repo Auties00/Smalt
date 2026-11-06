@@ -1,15 +1,18 @@
 package com.github.auties00.smalt.image.tiff;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.Channel;
 import com.github.auties00.smalt.image.Channel16Picture;
 import com.github.auties00.smalt.image.Channel8Picture;
 import com.github.auties00.smalt.image.ChannelFloatPicture;
 import com.github.auties00.smalt.image.ChannelPicture;
+import com.github.auties00.smalt.image.ChannelType;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ChromaSiting;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorModel;
 import com.github.auties00.smalt.image.ColorRange;
+import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.PixelLayout;
@@ -28,6 +31,8 @@ import com.github.auties00.smalt.image.jp2.Jp2EncoderOptions;
 import com.github.auties00.smalt.image.jp2.Jp2Format;
 import com.github.auties00.smalt.image.jp2.Jp2Image;
 import com.github.auties00.smalt.image.jpeg.internal.JpegWriter;
+import com.github.auties00.smalt.image.jxl.JxlEncoder;
+import com.github.auties00.smalt.image.jxl.JxlEncoderOptions;
 import com.github.auties00.smalt.image.ops.Dithering;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.ops.ImageQuantization;
@@ -59,7 +64,7 @@ import java.util.Optional;
  * color map; bilevel pixels of one bit; or Y'CbCr, subsampled or not. Samples are interleaved
  * ({@code PlanarConfiguration} 1) or, with {@link TiffEncoderOptions#isPlanar()}, in separate
  * planes, in strips or tiles, compressed with no compression, PackBits, LZW, Deflate, Zstandard,
- * the CCITT fax codings (bilevel pages), JPEG (TIFF Technical Note 2), WebP or JPEG 2000, as
+ * the CCITT fax codings (bilevel pages), JPEG (TIFF Technical Note 2), WebP, JPEG 2000 or JPEG XL, as
  * {@link TiffEncoderOptions#compression()} describes, and, for LZW, Deflate and Zstandard, the
  * horizontal or floating-point predictor. Every page records its pixel density (72 dots per inch
  * unless the options or the EXIF metadata give one), the orientation when one is given, and the
@@ -93,7 +98,7 @@ import java.util.Optional;
  *
  * @implNote This implementation's LZW coder follows libtiff's code-width schedule (see
  * {@code LzwEncoder}); the Deflate streams are zlib streams from {@link ZlibDeflater}, as libtiff
- * writes them under compression 8. The pixels of a partial WebP, JPEG or JPEG 2000 tile beyond the
+ * writes them under compression 8. The pixels of a partial WebP, JPEG, JPEG 2000 or JPEG XL tile beyond the
  * image repeat its last column and row, which keeps lossy coding from ringing at the image edges.
  */
 public final class TiffEncoder {
@@ -106,6 +111,11 @@ public final class TiffEncoder {
      * The largest side of a WebP image, which bounds the height of an automatic WebP strip.
      */
     private static final int WEBP_MAX_SIDE = 16383;
+
+    /**
+     * The DNG 1.7 compression code of JPEG XL, which {@link TiffEncoderOptions#isDngJpegXlCode()} selects.
+     */
+    private static final int DNG_JPEG_XL = 52546;
 
     /**
      * The 8x8 Bayer threshold matrix of ordered bilevel dithering, values 0 to 63.
@@ -1164,7 +1174,7 @@ public final class TiffEncoder {
         var compression = pageOptions.compression();
         var tiled = pageOptions.tileWidth().isPresent();
         var codec = compression == TiffCompression.WEBP || compression == TiffCompression.JPEG_2000
-                || compression == TiffCompression.JPEG;
+                || compression == TiffCompression.JPEG || compression == TiffCompression.JPEG_XL;
         int chunkWidth;
         int chunkHeight;
         if (tiled) {
@@ -1203,6 +1213,10 @@ public final class TiffEncoder {
         var webpOptions = pageOptions.webpOptions().toBuilder().colorProfile(null).build();
         var jpeg2000Options = pageOptions.jpeg2000Options().toBuilder().format(Jp2Format.CODESTREAM).colorProfile(null)
                 .build();
+        var jpegXlOptions = pageOptions.jpegXlOptions().toBuilder().container(false).noColorProfile().noExif()
+                .noXmp().orientation(Orientation.NORMAL).build();
+        var jpegXlLayout = compression != TiffCompression.JPEG_XL ? null
+                : page.planes().length > 1 ? PixelLayout.GRAY : jpegXlLayout(page);
         var fax = switch (compression) {
             case CCITT_RLE -> CcittFaxEncoder.RLE;
             case CCITT_RLEW -> CcittFaxEncoder.RLEW;
@@ -1260,6 +1274,7 @@ public final class TiffEncoder {
                     case CCITT_RLE, CCITT_RLEW, CCITT_T4, CCITT_T6 -> faxEncoder.encode(chunk, 0, chunkRow, units, rows);
                     case WEBP -> webp(chunk, units, rows, page.channels(), webpOptions);
                     case JPEG_2000 -> jpeg2000(chunk, units, rows, page, jpeg2000Options);
+                    case JPEG_XL -> jpegXl(chunk, units, rows, page, jpegXlLayout, jpegXlOptions);
                     case JPEG -> JpegWriter.encodeAbbreviated(rgba(chunk, units, rows, page.channels()), jpeg.quality(),
                             page.jpeg(), jpeg.optimizeHuffman(), jpeg.restartInterval());
                     default -> chunk;
@@ -1361,6 +1376,78 @@ public final class TiffEncoder {
     }
 
     /**
+     * Returns the channels of the JPEG XL images of an interleaved page, as GDAL writes them: the
+     * gray or RGB color channels of a gray or RGB page, otherwise one gray channel for the first
+     * sample, then one extra channel per remaining sample, alpha for the first alpha sample.
+     *
+     * @param page the interleaved page
+     * @return the layout of the samples of a pixel
+     */
+    private static PixelLayout jpegXlLayout(Samples page) {
+        var count = page.channels();
+        var extras = page.extras();
+        var firstExtra = count - extras.length;
+        var rgb = page.photometric() == 2 && firstExtra >= 3;
+        var channels = new ArrayList<Channel>(count);
+        if (rgb) {
+            channels.add(Channel.of(ChannelType.RED));
+            channels.add(Channel.of(ChannelType.GREEN));
+            channels.add(Channel.of(ChannelType.BLUE));
+        } else {
+            channels.add(Channel.of(ChannelType.GRAY));
+        }
+        var alpha = false;
+        for (var i = channels.size(); i < count; i++) {
+            var code = i >= firstExtra ? extras[i - firstExtra] : 0;
+            var type = alpha || code == 0 ? ChannelType.UNSPECIFIED
+                    : code == 1 ? ChannelType.PREMULTIPLIED_ALPHA : ChannelType.ALPHA;
+            alpha |= type != ChannelType.UNSPECIFIED;
+            channels.add(Channel.of(type));
+        }
+        return new PixelLayout(channels);
+    }
+
+    /**
+     * Codes one strip or tile as a JPEG XL image, one channel per sample.
+     *
+     * @param chunk the samples: interleaved, or those of one plane
+     * @param width the width of the strip or tile
+     * @param rows the number of rows
+     * @param page the page, whose depth and byte order the samples have
+     * @param layout the channels of the image, one per sample of the chunk
+     * @param jpegXlOptions the JPEG XL settings, without a color profile or metadata
+     * @return the codestream, or a container when its conformance level needs one
+     */
+    private byte[] jpegXl(byte[] chunk, int width, int rows, Samples page, PixelLayout layout,
+                          JxlEncoderOptions jpegXlOptions) {
+        var count = layout.count();
+        var values = width * rows * count;
+        Picture picture;
+        if (page.floating()) {
+            var pixels = new float[values];
+            for (int i = 0, at = 0; i < values; i++, at += 4) {
+                var bits = little
+                        ? (chunk[at] & 0xFF) | (chunk[at + 1] & 0xFF) << 8 | (chunk[at + 2] & 0xFF) << 16
+                        | chunk[at + 3] << 24
+                        : chunk[at] << 24 | (chunk[at + 1] & 0xFF) << 16 | (chunk[at + 2] & 0xFF) << 8
+                        | (chunk[at + 3] & 0xFF);
+                pixels[i] = Float.intBitsToFloat(bits);
+            }
+            picture = ChannelFloatPicture.of(width, rows, width * count, pixels, layout);
+        } else if (page.bits() == 16) {
+            var pixels = new short[values];
+            for (int i = 0, at = 0; i < values; i++, at += 2) {
+                pixels[i] = (short) (little ? (chunk[at] & 0xFF) | chunk[at + 1] << 8
+                        : chunk[at] << 8 | (chunk[at + 1] & 0xFF));
+            }
+            picture = Channel16Picture.of(width, rows, width * count, pixels, layout);
+        } else {
+            picture = Channel8Picture.of(width, rows, width * count, chunk, layout);
+        }
+        return JxlEncoder.encode(picture, jpegXlOptions);
+    }
+
+    /**
      * Returns the vertical resolution a page records, in rows per inch, as the CCITT
      * two-dimensional parameter reads it.
      *
@@ -1405,7 +1492,9 @@ public final class TiffEncoder {
         var bits = new int[page.channels()];
         Arrays.fill(bits, page.bits());
         directory.shorts(TiffTags.BITS_PER_SAMPLE, bits);
-        directory.shorts(TiffTags.COMPRESSION, pageOptions.compression().code());
+        var compressionCode = pageOptions.compression() == TiffCompression.JPEG_XL && pageOptions.isDngJpegXlCode()
+                ? DNG_JPEG_XL : pageOptions.compression().code();
+        directory.shorts(TiffTags.COMPRESSION, compressionCode);
         directory.shorts(TiffTags.PHOTOMETRIC, page.photometric());
         var orientation = pageOptions.orientation();
         if (orientation.isPresent()) {

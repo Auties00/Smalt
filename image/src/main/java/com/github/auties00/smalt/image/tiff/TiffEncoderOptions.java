@@ -7,6 +7,7 @@ import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.exif.ExifData;
 import com.github.auties00.smalt.image.jp2.Jp2EncoderOptions;
 import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions;
+import com.github.auties00.smalt.image.jxl.JxlEncoderOptions;
 import com.github.auties00.smalt.image.metadata.IptcData;
 import com.github.auties00.smalt.image.ops.Dithering;
 import com.github.auties00.smalt.image.ops.QuantizeOptions;
@@ -117,6 +118,10 @@ public final class TiffEncoderOptions {
     private final WebpEncoderOptions webpOptions;
 
     private final Jp2EncoderOptions jpeg2000Options;
+
+    private final JxlEncoderOptions jpegXlOptions;
+
+    private final boolean dngJpegXlCode;
 
     private final JpegEncoderOptions jpegOptions;
 
@@ -260,6 +265,8 @@ public final class TiffEncoderOptions {
         this.iptc = builder.iptc;
         this.webpOptions = builder.webpOptions;
         this.jpeg2000Options = builder.jpeg2000Options;
+        this.jpegXlOptions = builder.jpegXlOptions;
+        this.dngJpegXlCode = builder.dngJpegXlCode;
         this.jpegOptions = builder.jpegOptions;
         this.iccBytes = builder.colorProfile == null ? null : builder.colorProfile.toByteArray();
     }
@@ -347,7 +354,8 @@ public final class TiffEncoderOptions {
      * {@link TiffCompression#LZW}, {@link TiffCompression#DEFLATE}, {@link TiffCompression#ZSTD},
      * {@link TiffCompression#CCITT_RLE}, {@link TiffCompression#CCITT_RLEW},
      * {@link TiffCompression#CCITT_T4}, {@link TiffCompression#CCITT_T6}, {@link TiffCompression#JPEG},
-     * {@link TiffCompression#WEBP} or {@link TiffCompression#JPEG_2000}; {@code LZW} by default}
+     * {@link TiffCompression#WEBP}, {@link TiffCompression#JPEG_2000} or {@link TiffCompression#JPEG_XL};
+     * {@code LZW} by default}
      *
      * <p>The first five are lossless, so they decide only the size and the compatibility of the
      * file; {@code ZSTD} writes each strip or tile as one Zstandard frame. The CCITT schemes code
@@ -365,7 +373,14 @@ public final class TiffEncoderOptions {
      * {@code JPEG_2000} codes each strip or tile as a JPEG 2000 codestream under
      * {@link #jpeg2000Options()}, with the samples of any layout but {@code PALETTE},
      * {@code BILEVEL} and {@code YCBCR} at any integer depth; it cannot code floating-point samples.
-     * WebP and JPEG 2000 are lossless under their default settings. JPEG, WebP and JPEG 2000 write
+     * {@code JPEG_XL} codes each strip or tile as a JPEG XL codestream under {@link #jpegXlOptions()},
+     * tagged with code 50002 or, under {@link #isDngJpegXlCode()}, DNG's 52546, with the samples of any
+     * layout but {@code PALETTE}, {@code BILEVEL} and {@code YCBCR} at 8 or 16 bits or as 32-bit floating
+     * point, interleaved or in separate planes. As GDAL writes these pages, the image of a strip or tile
+     * holds the gray or RGB color channels of a gray or RGB page and its extra samples as extra channels
+     * (alpha for an alpha sample), the inks of a CMYK or named-ink page as a gray channel and extra channels
+     * holding their values unchanged, and, for separate planes, the one sample of its plane as a gray image.
+     * WebP, JPEG 2000 and JPEG XL are lossless under their default settings. JPEG, WebP and JPEG 2000 write
      * interleaved samples only.
      */
     public TiffCompression compression() {
@@ -617,6 +632,30 @@ public final class TiffEncoderOptions {
     }
 
     /**
+     * {@return the JPEG XL settings of each strip or tile when the compression is
+     * {@link TiffCompression#JPEG_XL}; {@link JxlEncoderOptions#lossless()} by default}
+     *
+     * <p>Each strip or tile is a bare codestream, or a container when its conformance level needs one (as
+     * {@link JxlEncoderOptions#container()} lists), whatever that setting says; their color profile,
+     * EXIF, XMP and orientation are ignored, since the page's are {@link #colorProfile()},
+     * {@link #exif()}, {@link #xmp()} and {@link #orientation()}.
+     */
+    public JxlEncoderOptions jpegXlOptions() {
+        return jpegXlOptions;
+    }
+
+    /**
+     * {@return whether JPEG XL pages are tagged with the DNG 1.7 compression code 52546 rather than
+     * the code 50002 of GDAL's libtiff; {@code false} by default}
+     *
+     * <p>Both codes store the same strips and tiles, and {@link TiffDecoder} reads both; DNG readers
+     * know only 52546, GDAL only 50002.
+     */
+    public boolean isDngJpegXlCode() {
+        return dngJpegXlCode;
+    }
+
+    /**
      * {@return the JPEG settings of each strip or tile when the compression is
      * {@link TiffCompression#JPEG}; {@link JpegEncoderOptions#defaults()} by default}
      *
@@ -662,6 +701,7 @@ public final class TiffEncoderOptions {
                 && Objects.equals(colorProfile, that.colorProfile) && Objects.equals(exif, that.exif)
                 && Objects.equals(xmp, that.xmp) && Objects.equals(iptc, that.iptc)
                 && webpOptions.equals(that.webpOptions) && jpeg2000Options.equals(that.jpeg2000Options)
+                && jpegXlOptions.equals(that.jpegXlOptions) && dngJpegXlCode == that.dngJpegXlCode
                 && jpegOptions.equals(that.jpegOptions);
     }
 
@@ -670,7 +710,7 @@ public final class TiffEncoderOptions {
         return Objects.hash(compression, predictor, compressionLevel, layout, depth, planar, chromaFormat,
                 quantizeOptions, bilevelDithering, rowsPerStrip, tileWidth, tileHeight, bigEndian, bigTiff,
                 faxTwoDimensional, faxFillBits, density, orientation, colorProfile, exif, xmp, iptc, webpOptions,
-                jpeg2000Options, jpegOptions);
+                jpeg2000Options, jpegXlOptions, dngJpegXlCode, jpegOptions);
     }
 
     @Override
@@ -693,6 +733,8 @@ public final class TiffEncoderOptions {
                 + (iptc == null ? "" : ", iptc")
                 + (compression == TiffCompression.WEBP ? ", webpOptions=" + webpOptions : "")
                 + (compression == TiffCompression.JPEG_2000 ? ", jpeg2000Options=" + jpeg2000Options : "")
+                + (compression == TiffCompression.JPEG_XL ? ", jpegXlOptions=" + jpegXlOptions
+                + (dngJpegXlCode ? ", dngJpegXlCode" : "") : "")
                 + (compression == TiffCompression.JPEG ? ", jpegOptions=" + jpegOptions : "")
                 + "]";
     }
@@ -753,6 +795,10 @@ public final class TiffEncoderOptions {
 
         private Jp2EncoderOptions jpeg2000Options = Jp2EncoderOptions.lossless();
 
+        private JxlEncoderOptions jpegXlOptions = JxlEncoderOptions.lossless();
+
+        private boolean dngJpegXlCode;
+
         private JpegEncoderOptions jpegOptions = JpegEncoderOptions.defaults();
 
         /**
@@ -795,6 +841,8 @@ public final class TiffEncoderOptions {
             this.iptc = options.iptc;
             this.webpOptions = options.webpOptions;
             this.jpeg2000Options = options.jpeg2000Options;
+            this.jpegXlOptions = options.jpegXlOptions;
+            this.dngJpegXlCode = options.dngJpegXlCode;
             this.jpegOptions = options.jpegOptions;
             this.stripsSet = options.rowsPerStrip > 0;
             this.tilesSet = options.tileWidth > 0;
@@ -1133,6 +1181,29 @@ public final class TiffEncoderOptions {
         }
 
         /**
+         * Sets the JPEG XL settings of each strip or tile; see {@link TiffEncoderOptions#jpegXlOptions()}.
+         *
+         * @param jpegXlOptions the value
+         * @return this builder
+         */
+        public Builder jpegXlOptions(JxlEncoderOptions jpegXlOptions) {
+            this.jpegXlOptions = Objects.requireNonNull(jpegXlOptions, "jpegXlOptions");
+            return this;
+        }
+
+        /**
+         * Chooses the DNG 1.7 compression code for JPEG XL pages; see
+         * {@link TiffEncoderOptions#isDngJpegXlCode()}.
+         *
+         * @param dngJpegXlCode the value
+         * @return this builder
+         */
+        public Builder dngJpegXlCode(boolean dngJpegXlCode) {
+            this.dngJpegXlCode = dngJpegXlCode;
+            return this;
+        }
+
+        /**
          * Sets the JPEG settings of each strip or tile; see {@link TiffEncoderOptions#jpegOptions()}.
          *
          * @param jpegOptions the value
@@ -1159,10 +1230,9 @@ public final class TiffEncoderOptions {
          * JPEG settings ask for more than {@link TiffEncoderOptions#jpegOptions()} takes
          */
         public TiffEncoderOptions build() {
-            // TODO: JPEG XL pages, once Smalt has a JPEG XL encoder
             switch (compression) {
                 case NONE, PACKBITS, LZW, DEFLATE, ZSTD, CCITT_RLE, CCITT_RLEW, CCITT_T4, CCITT_T6, JPEG, WEBP,
-                     JPEG_2000 -> {
+                     JPEG_2000, JPEG_XL -> {
                 }
                 default -> throw new IllegalArgumentException("TIFF compression " + compression + " cannot be written");
             }
@@ -1214,6 +1284,12 @@ public final class TiffEncoderOptions {
                             || depth == Depth.FLOAT || planar) {
                         throw new IllegalArgumentException("JPEG 2000-compressed TIFF pages hold interleaved integer"
                                 + " samples of the gray, RGB and CMYK layouts only");
+                    }
+                }
+                case JPEG_XL -> {
+                    if (layout == Layout.PALETTE || layout == Layout.BILEVEL || layout == Layout.YCBCR) {
+                        throw new IllegalArgumentException("JPEG XL-compressed TIFF pages hold samples of the gray,"
+                                + " RGB and CMYK layouts only");
                     }
                 }
                 default -> {

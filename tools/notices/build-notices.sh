@@ -2236,7 +2236,7 @@ Source:       https://android.googlesource.com/platform/external/dng_sdk
               (source/dng_bad_pixels.cpp, source/dng_gain_map.cpp,
               source/dng_image.cpp);
               https://download.adobe.com/pub/adobe/dng/dng_sdk_1_7_1_2768_20261013.zip
-              (dng_sdk/source/dng_negative.cpp)
+              (dng_sdk/source/dng_negative.cpp, dng_sdk/source/dng_jpeg_image.cpp)
 License text: https://android.googlesource.com/platform/external/dng_sdk/+/refs/heads/main/LICENSE
 License:      DNG SDK License Agreement (royalty-free license to use,
               reproduce, modify, distribute and sublicense, keeping Adobe's
@@ -2249,8 +2249,9 @@ Derivation: C++ code translated to Java: the interpolation of the bad
 rectangles of opcode FixBadPixelsList with the edge repeat of dng_image::Get,
 and the gain map interpolator of opcode GainMap, which Adobe DNG Converter
 applies to the calibration of Hasselblad CCD files (version 1.4); the
-NewRawImageDigest computation of the DNG writer, which the DNG specification
-defines by the SDK's source (version 1.7.1).
+NewRawImageDigest computation of the DNG writer, for uncompressed and lossless
+JPEG raw data and, over the coded tiles, for JPEG XL raw data, which the DNG
+specification defines by the SDK's source (version 1.7.1).
 
 Copyright:
   Copyright 2006-2009 Adobe Systems Incorporated. All Rights Reserved.

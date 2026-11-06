@@ -528,6 +528,8 @@ public final class ModularEncoder {
         props[0] = index;
         props[1] = streamId;
         var weighted = usesWp ? new WeightedPredictor(WpHeader.DEFAULT, width) : null;
+        var lookup = Predictors.usesGradientLookup(treeProperty, treeValue, treeLeft, treeRight, treeMultiplier, root,
+                index, streamId);
         for (var y = 0; y < height; y++) {
             var row = y * width;
             var prevGrad = 0;
@@ -552,7 +554,7 @@ public final class ModularEncoder {
                 props[6] = n;
                 props[7] = w;
                 props[8] = w - prevGrad;
-                props[9] = grad;
+                props[9] = lookup ? Predictors.lookupGradient(n, w, nw) : grad;
                 props[10] = w - nw;
                 props[11] = nw - n;
                 props[12] = n - ne;

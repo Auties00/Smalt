@@ -1,6 +1,10 @@
 package com.github.auties00.smalt.image.fuzz;
 
+import com.github.auties00.smalt.image.Channel16Picture;
+import com.github.auties00.smalt.image.Channel8Picture;
+import com.github.auties00.smalt.image.ChannelFloatPicture;
 import com.github.auties00.smalt.image.Orientation;
+import com.github.auties00.smalt.image.PixelLayout;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.bmp.BmpEncoder;
 import com.github.auties00.smalt.image.bmp.BmpEncoderOptions;
@@ -21,6 +25,9 @@ import com.github.auties00.smalt.image.metadata.ImageMetadataEdit;
 import com.github.auties00.smalt.image.metadata.ImageMetadataEditor;
 import com.github.auties00.smalt.image.metadata.IptcData;
 import com.github.auties00.smalt.image.metadata.MetadataSeeds;
+import com.github.auties00.smalt.image.tiff.TiffCompression;
+import com.github.auties00.smalt.image.tiff.TiffEncoder;
+import com.github.auties00.smalt.image.tiff.TiffEncoderOptions;
 import com.github.auties00.smalt.image.tiff.TiffVariantSamples;
 import com.github.auties00.smalt.image.webp.WebpContainer;
 import com.github.auties00.smalt.internal.io.ByteArrays;
@@ -340,6 +347,37 @@ class FuzzSeedWriter {
         for (var file : TiffVariantSamples.files().entrySet()) {
             write(ImageFuzzTest.class, "tiff", "valid-" + file.getKey(), file.getValue());
         }
+    }
+
+    @Test
+    @DisplayName("writes the seeds of the TIFF target for the JPEG XL pages Smalt's TIFF encoder writes")
+    void tiffJpegXl() {
+        var random = new Random(20261106L);
+        var jxl = TiffEncoderOptions.builder().compression(TiffCompression.JPEG_XL).build();
+        var rgba = new byte[24 * 20 * 4];
+        for (var i = 0; i < rgba.length; i++) {
+            rgba[i] = (byte) ((i * 7 + (i / 96) * 13) ^ random.nextInt(8));
+        }
+        write(ImageFuzzTest.class, "tiff", "valid-jxl-rgba8-tiles.tif", TiffEncoder.encode(
+                Channel8Picture.of(24, 20, 24 * 4, rgba, PixelLayout.RGBA), jxl.toBuilder().tiles(16, 16).build()));
+        var cmyk = new short[20 * 12 * 4];
+        for (var i = 0; i < cmyk.length; i++) {
+            cmyk[i] = (short) (i * 211 + random.nextInt(64));
+        }
+        write(ImageFuzzTest.class, "tiff", "valid-jxl-cmyk16-planar-be.tif", TiffEncoder.encode(
+                Channel16Picture.of(20, 12, 20 * 4, cmyk, PixelLayout.CMYK),
+                jxl.toBuilder().planar(true).bigEndian(true).strips(6).build()));
+        var gray = new float[18 * 14];
+        for (var i = 0; i < gray.length; i++) {
+            gray[i] = switch (i % 5) {
+                case 0 -> -0.0f;
+                case 1 -> -i / 7f;
+                default -> i * 0.01f + random.nextFloat();
+            };
+        }
+        write(ImageFuzzTest.class, "tiff", "valid-jxl-float32-dng-code.tif", TiffEncoder.encode(
+                ChannelFloatPicture.of(18, 14, 18, gray, PixelLayout.GRAY),
+                jxl.toBuilder().dngJpegXlCode(true).strips(8).build()));
     }
 
     @Test

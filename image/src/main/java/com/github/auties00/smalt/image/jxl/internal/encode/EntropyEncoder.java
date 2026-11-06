@@ -261,7 +261,7 @@ public final class EntropyEncoder {
             clustered = new ArrayList<>(List.of(histograms[0]));
         }
         var numClusters = clustered.size();
-        var configs = chooseConfigs(params, streams, contextMap, clustered, usePrefix);
+        var configs = chooseConfigs(params, streams, contextMap, clustered, usePrefix, rewritten != null);
         for (var h : clustered) {
             h.clear();
         }
@@ -573,8 +573,23 @@ public final class EntropyEncoder {
         return 31 - Integer.numberOfLeadingZeros(x);
     }
 
+    /**
+     * Chooses the hybrid integer configuration of each cluster.
+     *
+     * <p>With LZ77 copies, a value token must stay below {@link #LZ77_MIN_SYMBOL}, where the length symbols
+     * start: a configuration that splits wide values (the 32-bit samples of floating-point images) into tokens
+     * past it is not chosen.
+     *
+     * @param params the search parameters
+     * @param streams the token streams
+     * @param contextMap the cluster of each context
+     * @param clustered the distributions of the clusters, reused as scratch
+     * @param usePrefix whether the distributions are prefix codes
+     * @param lz77 whether the streams hold LZ77 copies
+     * @return the configuration of each cluster
+     */
     private static int[][] chooseConfigs(Params params, List<Tokens> streams, int[] contextMap,
-                                         List<Histogram> clustered, boolean usePrefix) {
+                                         List<Histogram> clustered, boolean usePrefix, boolean lz77) {
         var n = clustered.size();
         var result = new int[n][];
         var fallback = switch (params.uintMethod()) {
@@ -595,7 +610,7 @@ public final class EntropyEncoder {
         Arrays.fill(costs, Double.MAX_VALUE);
         var extra = new long[n];
         var valid = new boolean[n];
-        var maxAlpha = usePrefix ? PREFIX_MAX_ALPHABET : ANS_MAX_ALPHABET;
+        var maxAlpha = lz77 ? LZ77_MIN_SYMBOL : usePrefix ? PREFIX_MAX_ALPHABET : ANS_MAX_ALPHABET;
         for (var config : candidates) {
             Arrays.fill(valid, true);
             Arrays.fill(extra, 0);
