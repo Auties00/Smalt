@@ -560,6 +560,7 @@ class PackagerTest {
             assertEquals("vvc1", CodecStrings.of(video(Codec.VVC, null), null));
             assertEquals("mp4v.6C", CodecStrings.of(video(Codec.MJPEG, null), null));
             assertEquals("mjp2", CodecStrings.of(video(Codec.JPEG2000, null), null));
+            assertEquals("uncv", CodecStrings.of(video(Codec.UNCOMPRESSED_23001_17, null), null));
             assertEquals("apch", CodecStrings.of(video(Codec.PRORES, "apch".getBytes(StandardCharsets.US_ASCII)), null));
             var prores = new byte[32];
             System.arraycopy("icpf".getBytes(StandardCharsets.US_ASCII), 0, prores, 4, 4);

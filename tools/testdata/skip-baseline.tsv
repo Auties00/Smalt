@@ -824,6 +824,7 @@ windows-x64-vector-full	audio	com.github.auties00.smalt.audio.opus.internal.dnn.
 windows-x64-vector-full	core	com.github.auties00.smalt.SkipTest	platform:unix	1
 windows-x64-vector-full	core	com.github.auties00.smalt.container.caf.CafAmbisonicAppleTest	platform:macos	10
 windows-x64-vector-full	core	com.github.auties00.smalt.container.caf.CafAppleTest	platform:macos	29
+windows-x64-vector-full	core	com.github.auties00.smalt.container.mp4.Mp4UncompressedVideoTest	oracle:mp4box	1
 windows-x64-vector-full	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
 windows-x64-vector-full	core	com.github.auties00.smalt.container.hls.HlsSampleAesStreamTest	opt-in:sample-aes-stream	1
 windows-x64-vector-full	image	com.github.auties00.smalt.image.icns.IcnsAppleTest	platform:macos	17
@@ -881,6 +882,7 @@ windows-x64-vector-smoke	core	com.github.auties00.smalt.container.FileFormatConf
 windows-x64-vector-smoke	core	com.github.auties00.smalt.container.caf.CafAmbisonicAppleTest	platform:macos	10
 windows-x64-vector-smoke	core	com.github.auties00.smalt.container.caf.CafAppleTest	platform:macos	29
 windows-x64-vector-smoke	core	com.github.auties00.smalt.container.mxf.MxfThirdPartyTest	data:vector	2
+windows-x64-vector-smoke	core	com.github.auties00.smalt.container.mp4.Mp4UncompressedVideoTest	oracle:mp4box	1
 windows-x64-vector-smoke	core	com.github.auties00.smalt.container.packaging.DashTestVectorsTest	data:vector	2
 windows-x64-vector-smoke	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
 windows-x64-vector-smoke	core	com.github.auties00.smalt.container.hls.HlsSampleAesStreamTest	opt-in:sample-aes-stream	1

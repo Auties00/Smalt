@@ -46,7 +46,8 @@
  * @uses com.github.auties00.smalt.spi.ContainerProvider the containers of other artifacts and applications, which
  * {@code Containers}, the readers, {@code Media.probe}, {@code TagEditor} and the transcoder handle like core's own
  * @provides com.github.auties00.smalt.spi.AudioCodecProvider the PCM decoders and encoders
- * @provides com.github.auties00.smalt.spi.VideoCodecProvider the uncompressed video decoder and encoder
+ * @provides com.github.auties00.smalt.spi.VideoCodecProvider the raw and ISO/IEC 23001-17 uncompressed video decoders
+ * and encoders
  */
 module com.github.auties00.smalt {
     // Vector API: optional, selected at runtime by internal.simd.Simd
@@ -240,5 +241,6 @@ module com.github.auties00.smalt {
     provides com.github.auties00.smalt.spi.AudioCodecProvider with
             com.github.auties00.smalt.internal.provider.PcmCodecProvider;
     provides com.github.auties00.smalt.spi.VideoCodecProvider with
-            com.github.auties00.smalt.internal.provider.RawVideoCodecProvider;
+            com.github.auties00.smalt.internal.provider.RawVideoCodecProvider,
+            com.github.auties00.smalt.internal.provider.UncompressedVideoCodecProvider;
 }

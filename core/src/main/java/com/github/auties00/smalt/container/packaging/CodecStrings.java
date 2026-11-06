@@ -65,6 +65,7 @@ final class CodecStrings {
             case MJPEG -> "mp4v.6C";
             case JPEG2000 -> "mjp2";
             case JPEG_XS -> "jxsm";
+            case UNCOMPRESSED_23001_17 -> "uncv";
             case PRORES, DNXHD -> fourCc(CodecConfigs.quickTimeVisualType(track.codec() == Codec.PRORES, config, keyFrame));
             case AAC -> "mp4a.40." + aacObjectType(config);
             case MP3 -> "mp4a.40.34";

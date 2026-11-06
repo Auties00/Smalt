@@ -1,10 +1,12 @@
 package com.github.auties00.smalt.container.mp4;
 
 import com.github.auties00.smalt.internal.subtitle.bitmap.VobSubHeader;
+import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
+import com.github.auties00.smalt.internal.heif.HeifUncompressed;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.DataTrack;
@@ -75,6 +77,15 @@ final class MovieHeaderWriter {
             AudioConfigs.parseAac(track.codecConfig().orElseThrow());
         } else if (codec == Codec.FLAC) {
             AudioConfigs.parseFlac(track.codecConfig().orElseThrow());
+        } else if (codec == Codec.UNCOMPRESSED_23001_17) {
+            var config = track.codecConfig().filter(bytes -> bytes.length > 0).orElseThrow(
+                    () -> new IllegalArgumentException("uncv track " + track.id() + " needs its codec configuration"));
+            try {
+                HeifUncompressed.checkTrackConfig("uncv", config);
+            } catch (MediaException.Malformed exception) {
+                throw new IllegalArgumentException("uncv track " + track.id() + " has a malformed configuration: "
+                        + exception.getMessage(), exception);
+            }
         } else if (codec == Codec.DNXHD) {
             track.codecConfig().filter(config -> config.length > 4).ifPresent(CodecConfigs::dnxhdExtensions);
         }

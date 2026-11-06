@@ -159,6 +159,11 @@ final class SampleEntryWriter {
             case H263 -> writeH263(writer, track, (VideoTrack) described);
             case JPEG2000 -> writeMotionJpeg2000(writer, track, (VideoTrack) described, config);
             case JPEG_XS -> writeJpegXs(writer, track, (VideoTrack) described, config);
+            case UNCOMPRESSED_23001_17 -> {
+                writeVisualHeader(writer, BoxTypes.UNCV, (VideoTrack) described, null);
+                writer.bytes(config);
+                writeVisualTrailer(writer, (VideoTrack) described);
+            }
             case PRORES, DNXHD -> writeQuickTimeVisual(writer, track, (VideoTrack) described, config);
             case DV -> writeDv(writer, track, (VideoTrack) described);
             case PNG, TIFF, GIF, QTRLE, CFHD, HAP -> writeIntermediate(writer, track, (VideoTrack) described, config);

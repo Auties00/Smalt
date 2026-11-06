@@ -31,6 +31,8 @@ def generator(root, relative):
         return "audio Atrac9VectorWriter (-Dsmalt.atrac9.writeVectors=true)"
     if relative == "mp4/motion.mj2":
         return "make-mj2-sample.py"
+    if relative.startswith("mp4/uncv-"):
+        return "make-uncv-samples.py"
     if relative in ("amr/nb-stereo.amr", "amr/wb-3ch.awb"):
         return "make-amr-mc-samples.py"
     if relative == "ts/av1-scte35.ts":

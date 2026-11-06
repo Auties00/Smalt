@@ -28,8 +28,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 /**
  * Elementary streams and uncompressed video whose headers declare a picture over the limits: H.264 and HEVC Annex B
  * streams, AV1 OBU streams in both formats and YUV4MPEG2 files must be rejected with
- * {@link MediaException.LimitExceeded} when the demuxer reads their sequence header, and a raw video track over the
- * limits when its decoder is created, before a picture or frame buffer is allocated.
+ * {@link MediaException.LimitExceeded} when the demuxer reads their sequence header, and raw and ISO/IEC 23001-17
+ * uncompressed video tracks over the limits when their decoder is created, before a picture or frame buffer is
+ * allocated.
  */
 @DisplayName("Elementary streams declaring pictures over the limits")
 class ElementaryBombTest {
@@ -137,6 +138,23 @@ class ElementaryBombTest {
         var track = VideoTrack.builder().id(1).codec(Codec.RAW_VIDEO).timeBase(new Rational(1, 25)).width(5008)
                 .height(16).codecConfig(RawVideoFormat.of(RawPixelFormat.YUV444P, 16).toCodecConfig()).build();
         assertRejected("raw video 5008x16", MediaException.LimitExceeded.class, () -> {
+            try (var decoder = VideoDecoders.create(track, VideoDecoderOptions.builder().limits(LIMITS).build())) {
+                decoder.decode(new Packet(1, new byte[16], 0, 0, 1, true), frame -> {
+                });
+            }
+        });
+    }
+
+    @Test
+    @DisplayName("an ISO/IEC 23001-17 uncompressed video track over the limits is rejected when its decoder is created")
+    void uncompressedVideo() {
+        var config = com.github.auties00.smalt.video.UncompressedVideoFormat.ofYCbCr(
+                com.github.auties00.smalt.image.ChromaFormat.YUV444, 16).withAlpha(true)
+                .withCompression(com.github.auties00.smalt.video.UncompressedVideoFormat.Compression.ZLIB)
+                .toCodecConfig();
+        var track = VideoTrack.builder().id(1).codec(Codec.UNCOMPRESSED_23001_17).timeBase(new Rational(1, 25))
+                .width(4096).height(1024).codecConfig(config).build();
+        assertRejected("uncv 4096x1024", MediaException.LimitExceeded.class, () -> {
             try (var decoder = VideoDecoders.create(track, VideoDecoderOptions.builder().limits(LIMITS).build())) {
                 decoder.decode(new Packet(1, new byte[16], 0, 0, 1, true), frame -> {
                 });

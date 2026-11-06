@@ -82,6 +82,12 @@ class ReferenceDecodeTest {
     /** The reference decoder of JPEG XS, which runs outside ffmpeg. */
     private static final String JPEG_XS_REFERENCE = "smalt-jxsdec";
 
+    /**
+     * The reference reading of ISO/IEC 23001-17 uncompressed video, which ffmpeg does not decode: the packets of the
+     * component-interleaved 4:2:0 layout {@code VideoEncoders} writes, read by ffmpeg as {@code yuv420p} raw frames.
+     */
+    private static final String UNCV_REFERENCE = "rawvideo-yuv420p";
+
     /** Normative reconstruction: every decoder conforming to the standard produces the same samples. */
     private static final Tolerance NORMATIVE = Tolerance.exact();
 
@@ -127,6 +133,9 @@ class ReferenceDecodeTest {
             // codestream; the reconstruction is integer arithmetic that ISO/IEC 21122-1 specifies exactly
             entry(Codec.JPEG_XS, new Reference("ts", sink -> Containers.openMuxer(ContainerFormat.MPEG_TS, sink),
                     JPEG_XS_REFERENCE, NORMATIVE, List.of())),
+            // the samples are stored as they are, so every reader of the layout reads the same values
+            entry(Codec.UNCOMPRESSED_23001_17, new Reference("mp4", sink -> new Mp4Muxer(sink, Mp4MuxerOptions.mp4()),
+                    UNCV_REFERENCE, NORMATIVE, List.of())),
             // the float synthesis of both decoders differs only by rounding
             entry(Codec.AAC, of(OutputContainer.M4A, "aac", Tolerance.snr(110))),
             entry(Codec.MP3, of(OutputContainer.MP3, "mp3float", Tolerance.snr(110)
@@ -221,6 +230,10 @@ class ReferenceDecodeTest {
             matchesJpegXsReference(reference);
             return;
         }
+        if (reference.decoder().equals(UNCV_REFERENCE)) {
+            matchesUncompressedReference(reference);
+            return;
+        }
         Oracle.assume(Oracle.Tool.FFMPEG);
         var stream = Catalog.stream(codec);
         var file = write(codec, reference, stream);
@@ -308,6 +321,29 @@ class ReferenceDecodeTest {
         assertEquals("yuv422p", ours.pixelFormat(), what + ": pixel format");
         assertEquals(stream.packets().size(), ours.frames(), what + ": frame count");
         reference.tolerance().assertFrames(what, expected.toByteArray(), ours.data(), ours.frameSize());
+    }
+
+    // Each packet is one frame of the component-interleaved 4:2:0 layout, which is ffmpeg's yuv420p byte for byte.
+    private static void matchesUncompressedReference(Reference reference) {
+        Oracle.assume(Oracle.Tool.FFMPEG);
+        var stream = Catalog.stream(Codec.UNCOMPRESSED_23001_17);
+        var file = write(Codec.UNCOMPRESSED_23001_17, reference, stream);
+        Validators.assertValid(file);
+        var ours = smaltVideo(file);
+        var frames = new ByteArrayOutputStream();
+        try (var demuxer = Containers.openDemuxer(MediaSource.of(file))) {
+            for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                frames.writeBytes(packet.data());
+            }
+        }
+        var track = (com.github.auties00.smalt.track.VideoTrack) stream.track();
+        var expected = Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(1), frames.toByteArray(), List.of("-v", "error",
+                "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", track.width() + "x" + track.height(), "-i", "pipe:0",
+                "-f", "rawvideo", "-pix_fmt", "yuv420p", "-"));
+        var what = "UNCOMPRESSED_23001_17 in mp4 against ffmpeg's yuv420p reading";
+        assertEquals("yuv420p", ours.pixelFormat(), what + ": pixel format");
+        assertEquals(stream.packets().size(), ours.frames(), what + ": frame count");
+        reference.tolerance().assertFrames(what, expected, ours.data(), ours.frameSize());
     }
 
     private static Path write(Codec codec, Reference reference, Streams.Encoded stream) {

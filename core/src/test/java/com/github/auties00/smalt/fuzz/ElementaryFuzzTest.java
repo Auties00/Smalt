@@ -13,8 +13,9 @@ import java.util.Arrays;
 
 /**
  * Fuzz targets of the raw PCM demuxer, whose first three input bytes choose the sample format, the channel count
- * and the sample rate, and of the uncompressed video decoder, whose input is in the
- * {@link com.github.auties00.smalt.testkit.fuzz.FuzzPackets} format (the configuration a raw video format).
+ * and the sample rate, and of the uncompressed video decoders, whose input is in the
+ * {@link com.github.auties00.smalt.testkit.fuzz.FuzzPackets} format (the configuration a raw video format, or the
+ * ISO/IEC 23001-17 boxes of an {@code uncv} sample entry).
  */
 class ElementaryFuzzTest {
     /** The PCM codecs, chosen by the first byte modulo their count. */
@@ -52,5 +53,10 @@ class ElementaryFuzzTest {
     @FuzzTest
     void rawVideo(byte[] data) {
         FuzzMedia.video(Codec.RAW_VIDEO, data);
+    }
+
+    @FuzzTest
+    void uncompressedVideo(byte[] data) {
+        FuzzMedia.video(Codec.UNCOMPRESSED_23001_17, data);
     }
 }

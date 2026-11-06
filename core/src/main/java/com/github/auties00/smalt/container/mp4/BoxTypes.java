@@ -494,6 +494,61 @@ final class BoxTypes {
     static final int JXPL = 0x6A78706C;
 
     /**
+     * The uncompressed video sample entry ({@code uncv}, ISO/IEC 23001-17).
+     */
+    static final int UNCV = 0x756E6376;
+
+    /**
+     * The uncompressed frame configuration box ({@code uncC}, ISO/IEC 23001-17).
+     */
+    static final int UNCC = 0x756E6343;
+
+    /**
+     * The component definition box ({@code cmpd}, ISO/IEC 23001-17).
+     */
+    static final int CMPD = 0x636D7064;
+
+    /**
+     * The generic compression configuration box ({@code cmpC}, ISO/IEC 23001-17 Amendment 2).
+     */
+    static final int CMPC = 0x636D7043;
+
+    /**
+     * The generically compressed units information box ({@code icef}, ISO/IEC 23001-17 Amendment 2).
+     */
+    static final int ICEF = 0x69636566;
+
+    /**
+     * The component palette box ({@code cpal}, ISO/IEC 23001-17).
+     */
+    static final int CPAL = 0x6370616C;
+
+    /**
+     * The component pattern definition box ({@code cpat}, ISO/IEC 23001-17).
+     */
+    static final int CPAT = 0x63706174;
+
+    /**
+     * The chroma location box ({@code cloc}, ISO/IEC 23001-17).
+     */
+    static final int CLOC = 0x636C6F63;
+
+    /**
+     * The polarization pattern definition box ({@code splz}, ISO/IEC 23001-17).
+     */
+    static final int SPLZ = 0x73706C7A;
+
+    /**
+     * The sensor bad pixels map box ({@code sbpm}, ISO/IEC 23001-17).
+     */
+    static final int SBPM = 0x7362706D;
+
+    /**
+     * The sensor non-uniformity correction box ({@code snuc}, ISO/IEC 23001-17).
+     */
+    static final int SNUC = 0x736E7563;
+
+    /**
      * The simple profile brand of a Motion JPEG 2000 file ({@code mj2s}).
      */
     static final int MJ2S = 0x6D6A3273;

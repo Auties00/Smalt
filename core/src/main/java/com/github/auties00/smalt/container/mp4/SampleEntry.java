@@ -381,6 +381,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         DolbyVision dolbyVision = null;
         ByteArrayOutputStream avid = null;
         var jxs = new ByteArrayOutputStream();
+        var uncompressed = new ByteArrayOutputStream();
         for (var box : children(payload)) {
             var body = box;
             switch (box.type()) {
@@ -404,6 +405,9 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                 case BoxTypes.DVC1 -> dvc1 = body.rest();
                 case BoxTypes.JP2H -> jp2h = withHeader(BoxTypes.JP2H, body.rest());
                 case BoxTypes.JPVI, BoxTypes.JXPL -> jxs.writeBytes(withHeader(box.type(), body.rest()));
+                case BoxTypes.UNCC, BoxTypes.CMPD, BoxTypes.CMPC, BoxTypes.ICEF, BoxTypes.CPAL, BoxTypes.CPAT,
+                     BoxTypes.CLOC, BoxTypes.SPLZ, BoxTypes.SBPM, BoxTypes.SNUC ->
+                        uncompressed.writeBytes(withHeader(box.type(), body.rest()));
                 case BoxTypes.ESDS -> esds = parseEsds(body);
                 case BoxTypes.COLR -> {
                     if (color == null) {
@@ -513,6 +517,10 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                 codec = Codec.PRORES;
                 config = fourCc(format);
             }
+            case BoxTypes.UNCV -> {
+                codec = Codec.UNCOMPRESSED_23001_17;
+                config = uncompressed.size() > 0 ? uncompressed.toByteArray() : null;
+            }
             case BoxTypes.FFV1 -> {
                 codec = Codec.FFV1;
                 config = glbl;
@@ -551,7 +559,6 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                         color = ColorInfo.BT601_LIMITED.withRange(ColorRange.FULL);
                     }
                 } else {
-                    // TODO: ISO/IEC 23001-17 uncompressed video ('uncv' with its 'uncC' and 'cmpd' boxes)
                     codec = Codec.UNKNOWN_VIDEO;
                 }
             }

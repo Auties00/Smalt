@@ -18,6 +18,9 @@ import com.github.auties00.smalt.container.raw.RawMuxer;
 import com.github.auties00.smalt.container.wav.WavMuxer;
 import com.github.auties00.smalt.container.wav.Wave64Muxer;
 import com.github.auties00.smalt.container.ts.TsMuxer;
+import com.github.auties00.smalt.image.ChromaFormat;
+import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
@@ -37,11 +40,15 @@ import com.github.auties00.smalt.testkit.subtitle.BitmapStreams;
 import com.github.auties00.smalt.testkit.subtitle.CaptionScript;
 import com.github.auties00.smalt.testkit.subtitle.TeletextWriter;
 import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.SphericalVideo;
 import com.github.auties00.smalt.track.StereoMode;
 import com.github.auties00.smalt.track.TrackDisposition;
 import com.github.auties00.smalt.video.RawPixelFormat;
 import com.github.auties00.smalt.video.RawVideoFormat;
+import com.github.auties00.smalt.video.UncompressedVideoEncoder;
+import com.github.auties00.smalt.video.UncompressedVideoFormat;
+import com.github.auties00.smalt.video.VideoFrame;
 import com.github.auties00.smalt.track.VideoTrack;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -1225,6 +1232,44 @@ class FuzzSeedWriter {
         return ("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<tt xmlns=\"http://www.w3.org/ns/ttml\" "
                 + "xmlns:smpte=\"http://www.smpte-ra.org/schemas/2052-1/2010/smpte-tt\" xml:lang=\"en\"><body>" + divs
                 + "</body></tt>\n").getBytes(StandardCharsets.UTF_8);
+    }
+
+    @Test
+    @DisplayName("writes the seeds of the uncompressed video target and the uncv demuxer seed")
+    void uncompressedVideo() throws IOException {
+        var formats = List.of(
+                UncompressedVideoFormat.ofYCbCr(ChromaFormat.YUV420, 8),
+                UncompressedVideoFormat.ofRgb(8).withAlpha(true).withCompression(UncompressedVideoFormat.Compression.ZLIB),
+                UncompressedVideoFormat.ofYCbCr(ChromaFormat.YUV422, 10)
+                        .withInterleave(UncompressedVideoFormat.Interleave.MULTI_Y).withAlignedComponents(true)
+                        .withLittleEndian(true).withRowAlignment(16),
+                UncompressedVideoFormat.ofMonochrome(5).withInterleave(UncompressedVideoFormat.Interleave.ROW)
+                        .withTiles(2, 1));
+        var names = List.of("valid-yuv420.bin", "valid-rgba-zlib.bin", "valid-yuv422-10-multi-y.bin",
+                "valid-gray5-tiles.bin");
+        for (var index = 0; index < formats.size(); index++) {
+            var format = formats.get(index);
+            var parts = new ArrayList<FuzzPackets.Part>();
+            try (var encoder = new UncompressedVideoEncoder(format, 8, 4, new Rational(25, 1), null)) {
+                for (var frame = 0; frame < 2; frame++) {
+                    var picture = YuvPicture.allocate(8, 4, format.chromaFormat() == ChromaFormat.MONOCHROME
+                            ? ChromaFormat.MONOCHROME : format.chromaFormat(), format.alpha(), ColorInfo.BT601_LIMITED);
+                    for (var plane : new byte[][]{picture.y(), picture.u(), picture.v(), picture.alpha()}) {
+                        if (plane != null) {
+                            for (var i = 0; i < plane.length; i++) {
+                                plane[i] = (byte) (i * 29 + frame * 71);
+                            }
+                        }
+                    }
+                    encoder.encode(new VideoFrame(picture, frame, 1, true),
+                            packet -> parts.add(new FuzzPackets.Part(packet.data(), true)));
+                }
+                write(ElementaryFuzzTest.class, "uncompressedVideo", names.get(index),
+                        FuzzPackets.video(0, 8, 4, encoder.codecConfig().orElseThrow(), parts));
+            }
+        }
+        write(DemuxerFuzzTest.class, "mp4", "valid-uncv-rgba-zlib.mp4", java.nio.file.Files.readAllBytes(Path.of("src",
+                "test", "resources", "samples", "mp4", "uncv-rgba-zlib.mp4")));
     }
 
     private static byte[] cues(int codec, String config, String... texts) {

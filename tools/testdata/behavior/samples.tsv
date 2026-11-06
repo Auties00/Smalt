@@ -113,6 +113,9 @@ core/src/test/resources/samples/mp4/qtrle-argb.mov	58562	383f8d8f5505905c3292781
 core/src/test/resources/samples/mp4/quicktime.mov	65138	aa49fbc8e1940cb53ce15527fcb2b4e8f6204f0c628824655c7178227c9001ae	make-samples.sh
 core/src/test/resources/samples/mp4/tiff.mov	48261	e6bed083327a70c45d9dd6bb1ad09edafccc5840c3df53f1f010d94c15f9cf79	make-intermediate-samples.sh
 core/src/test/resources/samples/mp4/timecode-spherical.mov	16384	45ecc9d0b26f2948bcbf18aee14ad74dfec237c399b63bb258c5b571cdeda227	make-descriptive-samples.py
+core/src/test/resources/samples/mp4/uncv-rgba-zlib.mp4	1679	fce566eb80057f1ce05a5e81057e312b572ff58d80c392ef23ed1339caa77b1d	make-uncv-samples.py
+core/src/test/resources/samples/mp4/uncv-yuv420.mp4	3768	35019c903c729e6fe9c7d81047b69f31957fe7dd618b1db4c6a2900f85dbf4fe	make-uncv-samples.py
+core/src/test/resources/samples/mp4/uncv-yuv422-10.mp4	2156	2c24cc0ab09acf9fd9df17254e2a5b3f2438cf9b980165f6bef0e42b1bb335a1	make-uncv-samples.py
 core/src/test/resources/samples/mp4/vc1.mp4	1571	e3645e28abf6b0526fbeec6f4f9e3362d6bb02b77832c9515f76f1924e9b9e70	make-vc1-samples.sh
 core/src/test/resources/samples/mp4/vobsub.mp4	6344	764945832252bf06f3b6819a9cadcda14147a18adba3f0c9c3d897a10f4d7ded	make-samples.sh, make-bitmap-caption-samples.py
 core/src/test/resources/samples/musepack/musepack.mpc	8457	911b9ac94f5512d4ff83baa982b266c29121a7f3c1076ad992961626fa8d777e	make-lossless-dsd-samples.py

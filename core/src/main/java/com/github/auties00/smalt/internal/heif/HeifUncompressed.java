@@ -3,19 +3,22 @@ package com.github.auties00.smalt.internal.heif;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.internal.compress.BrotliDecoder;
+import com.github.auties00.smalt.internal.io.FourCc;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.zip.DataFormatException;
 import java.util.zip.Inflater;
 
 /**
- * Decodes the data of an uncompressed image item ({@code unci}, ISO/IEC 23001-17) into its
- * component planes.
+ * Decodes the data of an uncompressed image item ({@code unci}, ISO/IEC 23001-17) or the frames of an
+ * uncompressed video track ({@code uncv}) into their component planes.
  *
- * <p>The layout comes from the item's {@code uncC} property, the meaning of each component from its
- * {@code cmpd} property (implied by the profile of a version 1 {@code uncC}). Supported:
+ * <p>The layout comes from the {@code uncC} property or box, the meaning of each component from the
+ * {@code cmpd} one (implied by the profile of a version 1 {@code uncC}). A decoder made by
+ * {@link #forTrack} decodes frame after frame into the same planes. Supported:
  * <ul>
  *   <li>every interleaving: component, pixel, mixed (planar luma followed by interleaved chroma),
  *       row, tile-component and multi-Y (for 4:2:2, 4:2:0 and 4:1:1);</li>
@@ -49,7 +52,7 @@ import java.util.zip.Inflater;
  * complex values contribute their magnitude, mapped the same way.
  * Palette indexes are replaced by their entries, converted the same way. Padding components
  * ({@code cmpd} type 12) are skipped; components other than monochrome, Y'CbCr, RGB, alpha, filter
- * array and CMYK are read and discarded.
+ * array and CMYK are read and discarded. Instances are not thread-safe.
  */
 public final class HeifUncompressed {
     /**
@@ -123,14 +126,87 @@ public final class HeifUncompressed {
     private final String name;
 
     /**
-     * The item data, decompressed.
+     * What the data belongs to, for messages, such as {@code "uncompressed item 1"}.
      */
-    private final byte[] data;
+    private final String subject;
 
     /**
      * The layout.
      */
     private final HeifProperty.UncompressedConfiguration config;
+
+    /**
+     * The generic compression of the data, or {@code null} for none.
+     */
+    private final HeifProperty.CompressionConfiguration compression;
+
+    /**
+     * The compressed units of the data, or {@code null} when it is one stream.
+     */
+    private final HeifProperty.CompressedUnits units;
+
+    /**
+     * The image width.
+     */
+    private final int width;
+
+    /**
+     * The image height.
+     */
+    private final int height;
+
+    /**
+     * The H.273 chroma sample location of the {@code cloc} property, or -1 when there is none.
+     */
+    private int chromaLocation;
+
+    /**
+     * The decoded components, sharing the arrays of {@link #planes}.
+     */
+    private HeifComponents components;
+
+    /**
+     * The data of the frame being decoded, decompressed.
+     */
+    private byte[] data;
+
+    /**
+     * The number of bytes of {@link #data} that hold the frame.
+     */
+    private long limit;
+
+    /**
+     * The bytes the layout reads from one frame, or -1 until {@link #measure()} has run.
+     */
+    private long frameBytes = -1;
+
+    /**
+     * Whether the layout is walked without data, to measure {@link #frameBytes}.
+     */
+    private boolean measuring;
+
+    /**
+     * The decompressor of frames compressed as one {@code defl} or {@code zlib} stream, created on
+     * first use and ended by {@link #close()}.
+     */
+    private Inflater inflater;
+
+    /**
+     * The buffer frames compressed as one {@code defl} or {@code zlib} stream are decompressed into,
+     * kept from frame to frame.
+     */
+    private byte[] inflated;
+
+    /**
+     * The scratch buffer the data a compressed frame holds past its layout is inflated into and discarded, created
+     * the first time a frame holds such data.
+     */
+    private byte[] excess;
+
+    /**
+     * The size of {@link #excess}.
+     */
+    private static final int EXCESS_CHUNK = 1 << 16;
 
     /**
      * The component type of each component of the layout.
@@ -291,15 +367,25 @@ public final class HeifUncompressed {
      * Constructs a decoder.
      *
      * @param name the format name, for messages
-     * @param data the decompressed item data
+     * @param subject what the data belongs to, for messages
      * @param config the layout
      * @param types the component type of each component of the layout
+     * @param compression the generic compression, or {@code null}
+     * @param units the compressed units, or {@code null}
+     * @param width the image width
+     * @param height the image height
      */
-    private HeifUncompressed(String name, byte[] data, HeifProperty.UncompressedConfiguration config, int[] types) {
+    private HeifUncompressed(String name, String subject, HeifProperty.UncompressedConfiguration config, int[] types,
+                             HeifProperty.CompressionConfiguration compression, HeifProperty.CompressedUnits units,
+                             int width, int height) {
         this.name = name;
-        this.data = data;
+        this.subject = subject;
         this.config = config;
         this.types = types;
+        this.compression = compression;
+        this.units = units;
+        this.width = width;
+        this.height = height;
         this.depths = new int[types.length];
         this.formats = new int[types.length];
         this.aligns = new int[types.length];
@@ -392,33 +478,127 @@ public final class HeifUncompressed {
      */
     public static HeifComponents decode(String name, byte[] payload, HeifItem item, int width, int height,
                                         MediaLimits limits) {
-        var config = item.property(HeifProperty.UncompressedConfiguration.class);
+        var decoder = prepare(name, "uncompressed item " + item.id(), item.properties(), width, height, limits);
+        try {
+            return decoder.decodeFrame(payload, limits);
+        } finally {
+            decoder.close();
+        }
+    }
+
+    /**
+     * Prepares the decoding of the frames of an uncompressed video track ({@code uncv} sample
+     * entry), whose configuration is the ISO/IEC 23001-17 boxes of its sample entry.
+     *
+     * @param name the format name, for messages, such as {@code "uncv"}
+     * @param boxes the boxes of the sample entry, each whole with its header
+     * @param width the frame width
+     * @param height the frame height
+     * @param limits the bounds of the planes and of the decompressed data
+     * @return the decoder, which the caller closes
+     * @throws MediaException.Malformed if a box is truncated, missing or inconsistent
+     * @throws MediaException.Unsupported if the layout uses a feature this decoder lacks
+     * @throws MediaException.LimitExceeded if the frame exceeds the limits
+     */
+    public static HeifUncompressed forTrack(String name, byte[] boxes, int width, int height, MediaLimits limits) {
+        var properties = new ArrayList<HeifProperty>();
+        var cursor = BoxCursor.of(boxes, FourCc.of("uncv"));
+        while (cursor.hasBox()) {
+            properties.add(PropertyParser.parse(cursor.nextBox()));
+        }
+        if (cursor.remaining() != 0) {
+            throw new MediaException.Malformed(name + ": the configuration of an uncompressed video track ends in "
+                    + cursor.remaining() + " bytes that are not a box");
+        }
+        return prepare(name, "uncompressed video track", properties, width, height, limits);
+    }
+
+    /**
+     * Checks that the configuration of an uncompressed video track is well formed, whether or not
+     * this decoder supports its layout: whole boxes, an {@code uncC} box and, for a version 0
+     * {@code uncC}, a {@code cmpd} box holding every component it names.
+     *
+     * @param name the format name, for messages
+     * @param boxes the boxes of the sample entry, each whole with its header
+     * @throws MediaException.Malformed if the configuration is not well formed
+     */
+    public static void checkTrackConfig(String name, byte[] boxes) {
+        var properties = new ArrayList<HeifProperty>();
+        var cursor = BoxCursor.of(boxes, FourCc.of("uncv"));
+        while (cursor.hasBox()) {
+            properties.add(PropertyParser.parse(cursor.nextBox()));
+        }
+        if (cursor.remaining() != 0) {
+            throw new MediaException.Malformed(name + ": the configuration ends in " + cursor.remaining()
+                    + " bytes that are not a box");
+        }
+        var config = find(properties, HeifProperty.UncompressedConfiguration.class);
         if (config == null) {
-            for (var property : item.properties()) {
+            for (var property : properties) {
+                if (property instanceof HeifProperty.Unknown unknown && unknown.type().equals("uncC")) {
+                    return;
+                }
+            }
+            throw new MediaException.Malformed(name + ": the configuration has no uncC box");
+        }
+        if (config.components().isEmpty()) {
+            throw new MediaException.Malformed(name + ": the uncC box has no component");
+        }
+        if (config.shorthand()) {
+            return;
+        }
+        var definition = find(properties, HeifProperty.ComponentDefinition.class);
+        if (definition == null) {
+            throw new MediaException.Malformed(name + ": the configuration has no cmpd box");
+        }
+        for (var component : config.components()) {
+            if (component.index() >= definition.types().length) {
+                throw new MediaException.Malformed(name + ": an uncC component names cmpd entry " + component.index()
+                        + " of " + definition.types().length);
+            }
+        }
+    }
+
+    /**
+     * Validates a layout and allocates the planes its frames decode into.
+     *
+     * @param name the format name, for messages
+     * @param subject what the data belongs to, for messages
+     * @param properties the properties of the item or the boxes of the sample entry
+     * @param width the image width
+     * @param height the image height
+     * @param limits the bounds of the planes
+     * @return the decoder
+     */
+    private static HeifUncompressed prepare(String name, String subject, List<HeifProperty> properties, int width,
+                                            int height, MediaLimits limits) {
+        var config = find(properties, HeifProperty.UncompressedConfiguration.class);
+        if (config == null) {
+            for (var property : properties) {
                 if (property instanceof HeifProperty.Unknown unknown && unknown.type().equals("uncC")) {
                     throw new MediaException.Unsupported(name, "uncC boxes of a version or profile other than "
                             + "version 0 and the version 1 profiles rgb3, rgba and abgr");
                 }
             }
-            throw new MediaException.Malformed(name + ": uncompressed item " + item.id() + " has no uncC property");
+            throw new MediaException.Malformed(name + ": " + subject + " has no uncC property");
         }
         if (width <= 0 || height <= 0) {
-            throw new MediaException.Malformed(name + ": uncompressed item " + item.id() + " has no size");
+            throw new MediaException.Malformed(name + ": " + subject + " has no size");
         }
         LimitChecks.checkPicture(limits, width, height);
         var components = config.components();
         if (components.isEmpty()) {
-            throw new MediaException.Malformed(name + ": uncompressed item " + item.id() + " has no component");
+            throw new MediaException.Malformed(name + ": " + subject + " has no component");
         }
         var types = new int[components.size()];
-        var definition = item.property(HeifProperty.ComponentDefinition.class);
+        var definition = find(properties, HeifProperty.ComponentDefinition.class);
         for (var i = 0; i < types.length; i++) {
             var component = components.get(i);
             if (config.shorthand()) {
                 types[i] = component.index();
             } else {
                 if (definition == null) {
-                    throw new MediaException.Malformed(name + ": uncompressed item " + item.id() + " has no cmpd property");
+                    throw new MediaException.Malformed(name + ": " + subject + " has no cmpd property");
                 }
                 if (component.index() >= definition.types().length) {
                     throw new MediaException.Malformed(name + ": uncC component " + i + " names cmpd entry "
@@ -436,13 +616,116 @@ public final class HeifUncompressed {
                         + " bits is aligned to " + component.alignSize() + " bytes");
             }
             if (types[i] == HeifComponents.FILTER_ARRAY) {
-                checkPattern(name, item, definition);
+                checkPattern(name, subject, properties, definition);
             }
         }
-        var data = decompress(name, payload, item, limits);
-        var decoder = new HeifUncompressed(name, data, config, types);
-        decoder.palette(item, definition, limits);
-        return decoder.run(width, height, limits);
+        var compression = find(properties, HeifProperty.CompressionConfiguration.class);
+        var units = find(properties, HeifProperty.CompressedUnits.class);
+        if (compression != null) {
+            var kind = compression.compressionType();
+            if (!kind.equals("defl") && !kind.equals("zlib") && !kind.equals("brot")) {
+                throw new MediaException.Unsupported(name, "uncompressed data compressed with '" + kind + "'");
+            }
+            if (compression.unitType() > 4) {
+                throw new MediaException.Unsupported(name, "uncompressed data compressed in units of type "
+                        + compression.unitType());
+            }
+            if (units == null && compression.unitType() > 1) {
+                throw new MediaException.Malformed(name + ": " + subject + " is compressed in units of type "
+                        + compression.unitType() + " without an icef property");
+            }
+        }
+        var decoder = new HeifUncompressed(name, subject, config, types, compression, units, width, height);
+        var location = find(properties, HeifProperty.ChromaLocation.class);
+        decoder.chromaLocation = location == null ? -1 : location.location();
+        decoder.palette(properties, definition, limits);
+        decoder.validate();
+        decoder.allocate(limits);
+        return decoder;
+    }
+
+    /**
+     * {@return the first property of a kind, or {@code null}}
+     *
+     * @param properties the properties to search
+     * @param kind the class of the property
+     * @param <T> the property type
+     */
+    private static <T extends HeifProperty> T find(List<HeifProperty> properties, Class<T> kind) {
+        for (var property : properties) {
+            if (kind.isInstance(property)) {
+                return kind.cast(property);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * {@return the chroma sample location of the {@code cloc} property or box, from 0 to 6, or -1 when there is
+     * none}
+     */
+    public int chromaLocation() {
+        return chromaLocation;
+    }
+
+    /**
+     * {@return the components of every frame, whose plane arrays each {@link #decodeFrame} overwrites; their
+     * samples are zero before the first frame}
+     */
+    public HeifComponents components() {
+        return components;
+    }
+
+    /**
+     * Decodes one frame into the planes of {@link #components()}.
+     *
+     * @param payload the frame data as stored
+     * @param limits the bound of the decompressed data
+     * @return {@link #components()}, holding the frame until the next call
+     * @throws MediaException.Malformed if the data is too short for the layout, its compression is corrupt, or a
+     * palette index has no entry
+     * @throws MediaException.LimitExceeded if the decompressed data exceeds the limits
+     */
+    public HeifComponents decodeFrame(byte[] payload, MediaLimits limits) {
+        decompress(payload, limits);
+        traverse();
+        return components;
+    }
+
+    /**
+     * {@return the bytes the layout reads from one frame, after decompression}
+     */
+    public long frameBytes() {
+        if (frameBytes < 0) {
+            measure();
+        }
+        return frameBytes;
+    }
+
+    /**
+     * Walks the layout without data, setting {@link #frameBytes}.
+     */
+    private void measure() {
+        measuring = true;
+        data = null;
+        limit = Long.MAX_VALUE;
+        try {
+            traverse();
+            frameBytes = pos;
+        } finally {
+            measuring = false;
+        }
+    }
+
+    /**
+     * Releases the decompressor, if a frame was compressed; a later compressed frame creates a
+     * new one.
+     */
+    public void close() {
+        if (inflater != null) {
+            inflater.end();
+            inflater = null;
+        }
     }
 
     /**
@@ -479,15 +762,17 @@ public final class HeifUncompressed {
      * Checks the pattern a filter array component samples.
      *
      * @param name the format name, for messages
-     * @param item the filter array item, with its {@code cpat} property
+     * @param subject what the data belongs to, for messages
+     * @param properties the properties of the item or the boxes of the sample entry, with the {@code cpat} one
      * @param definition the component definition the pattern refers to
-     * @throws MediaException.Malformed if the item has no {@code cpat} property or the pattern names
-     * a component the definition lacks
+     * @throws MediaException.Malformed if there is no {@code cpat} property or the pattern names a
+     * component the definition lacks
      */
-    private static void checkPattern(String name, HeifItem item, HeifProperty.ComponentDefinition definition) {
-        var pattern = item.property(HeifProperty.ComponentPattern.class);
+    private static void checkPattern(String name, String subject, List<HeifProperty> properties,
+                                     HeifProperty.ComponentDefinition definition) {
+        var pattern = find(properties, HeifProperty.ComponentPattern.class);
         if (pattern == null) {
-            throw new MediaException.Malformed(name + ": filter array item " + item.id() + " has no cpat property");
+            throw new MediaException.Malformed(name + ": filter array " + subject + " has no cpat property");
         }
         for (var index : pattern.components()) {
             if (index >= definition.types().length) {
@@ -498,34 +783,32 @@ public final class HeifUncompressed {
     }
 
     /**
-     * Undoes the generic compression of the item data, if any.
+     * Undoes the generic compression of the frame data, if any, setting {@link #data} and
+     * {@link #limit}.
      *
-     * @param name the format name, for messages
-     * @param payload the item data as stored
-     * @param item the uncompressed item, with its optional {@code cmpC} and {@code icef} properties
+     * <p>Data compressed as one {@code defl} or {@code zlib} stream is inflated into a buffer of
+     * {@link #frameBytes()} kept from frame to frame, and whatever the stream holds past the frame is
+     * inflated and discarded; Brotli data and the units of an {@code icef} property are decompressed
+     * whole.
+     *
+     * @param payload the frame data as stored
      * @param limits the bound of the decompressed size
-     * @return the decompressed data
      */
-    private static byte[] decompress(String name, byte[] payload, HeifItem item, MediaLimits limits) {
-        var compression = item.property(HeifProperty.CompressionConfiguration.class);
+    private void decompress(byte[] payload, MediaLimits limits) {
         if (compression == null) {
-            return payload;
+            data = payload;
+            limit = payload.length;
+            return;
         }
         var kind = compression.compressionType();
-        if (!kind.equals("defl") && !kind.equals("zlib") && !kind.equals("brot")) {
-            throw new MediaException.Unsupported(name, "uncompressed data compressed with '" + kind + "'");
+        if (units == null && !kind.equals("brot")) {
+            inflateFrame(kind, payload, limits);
+            return;
         }
-        if (compression.unitType() > 4) {
-            throw new MediaException.Unsupported(name, "uncompressed data compressed in units of type "
-                    + compression.unitType());
-        }
-        var units = item.property(HeifProperty.CompressedUnits.class);
         if (units == null) {
-            if (compression.unitType() > 1) {
-                throw new MediaException.Malformed(name + ": item " + item.id() + " is compressed in units of type "
-                        + compression.unitType() + " without an icef property");
-            }
-            return decompress(name, kind, payload, 0, payload.length, item, limits.maxBytes());
+            data = decompress(kind, payload, 0, payload.length, limits.maxBytes());
+            limit = data.length;
+            return;
         }
         var parts = new byte[units.offsets().length][];
         var total = 0L;
@@ -533,10 +816,10 @@ public final class HeifUncompressed {
             var offset = units.offsets()[i];
             var size = units.sizes()[i];
             if (offset > payload.length || size > payload.length - offset) {
-                throw new MediaException.Malformed(name + ": compressed unit " + i + " of item " + item.id()
+                throw new MediaException.Malformed(name + ": compressed unit " + i + " of " + subject
                         + " lies outside its " + payload.length + " bytes of data");
             }
-            parts[i] = decompress(name, kind, payload, (int) offset, (int) size, item, limits.maxBytes() - total);
+            parts[i] = decompress(kind, payload, (int) offset, (int) size, limits.maxBytes() - total);
             total += parts[i].length;
         }
         LimitChecks.checkAllocation(limits, total);
@@ -546,54 +829,120 @@ public final class HeifUncompressed {
             System.arraycopy(part, 0, out, at, part.length);
             at += part.length;
         }
-        return out;
+        data = out;
+        limit = total;
     }
 
     /**
-     * Decompresses one compressed stream.
+     * Inflates a frame compressed as one {@code defl} or {@code zlib} stream into {@link #inflated}.
      *
-     * @param name the format name, for messages
+     * @param kind the compression type: {@code defl} or {@code zlib}
+     * @param payload the frame data as stored
+     * @param limits the bound of the decompressed size
+     */
+    private void inflateFrame(String kind, byte[] payload, MediaLimits limits) {
+        if (inflater == null) {
+            inflater = new Inflater(kind.equals("defl"));
+        } else {
+            inflater.reset();
+        }
+        if (inflated == null) {
+            var bytes = frameBytes();
+            LimitChecks.checkAllocation(limits, bytes);
+            inflated = new byte[(int) bytes];
+        }
+        try {
+            inflater.setInput(payload);
+            var size = 0;
+            while (size < inflated.length && !inflater.finished()) {
+                var count = inflater.inflate(inflated, size, inflated.length - size);
+                if (count == 0 && (inflater.needsInput() || inflater.needsDictionary())) {
+                    throw new MediaException.Malformed(name + ": the compressed data of " + subject + " is truncated");
+                }
+                size += count;
+            }
+            discardExcess(size, limits);
+            data = inflated;
+            limit = size;
+        } catch (DataFormatException exception) {
+            throw new MediaException.Malformed(name + ": the compressed data of " + subject + " is corrupt", exception);
+        }
+    }
+
+    /**
+     * Inflates and discards whatever the compressed data holds past the frame, so a stream that expands beyond the
+     * buffer limit is rejected as it would be if it were held, without holding it.
+     *
+     * @param size the number of bytes already inflated into {@link #inflated}
+     * @param limits the bound of the decompressed size
+     * @throws DataFormatException if the excess data is corrupt
+     * @throws MediaException.Malformed if the compressed data ends before its end marker
+     * @throws MediaException.LimitExceeded if the decompressed data exceeds {@link MediaLimits#maxBytes()}
+     */
+    private void discardExcess(long size, MediaLimits limits) throws DataFormatException {
+        var total = size;
+        if (total > limits.maxBytes()) {
+            throw new MediaException.LimitExceeded(name + ": the compressed data of " + subject
+                    + " inflates past " + limits.maxBytes() + " bytes");
+        }
+        while (!inflater.finished()) {
+            if (excess == null) {
+                excess = new byte[EXCESS_CHUNK];
+            }
+            var count = inflater.inflate(excess);
+            if (count == 0 && (inflater.needsInput() || inflater.needsDictionary())) {
+                throw new MediaException.Malformed(name + ": the compressed data of " + subject + " is truncated");
+            }
+            total += count;
+            if (total > limits.maxBytes()) {
+                throw new MediaException.LimitExceeded(name + ": the compressed data of " + subject
+                        + " inflates past " + limits.maxBytes() + " bytes");
+            }
+        }
+    }
+
+    /**
+     * Decompresses one compressed stream whole.
+     *
      * @param kind the compression type: {@code defl}, {@code zlib} or {@code brot}
-     * @param payload the item data
+     * @param payload the frame data
      * @param offset the start of the stream in the data
      * @param length the length of the stream
-     * @param item the item, for messages
      * @param maxBytes the largest output accepted
      * @return the decompressed bytes
      */
-    private static byte[] decompress(String name, String kind, byte[] payload, int offset, int length, HeifItem item,
-                                     long maxBytes) {
+    private byte[] decompress(String kind, byte[] payload, int offset, int length, long maxBytes) {
         if (kind.equals("brot")) {
             return BrotliDecoder.decompress(payload, offset, length, Math.max(0, maxBytes));
         }
         var inflater = new Inflater(kind.equals("defl"));
         try {
             inflater.setInput(payload, offset, length);
-            var limit = Math.min(maxBytes, Integer.MAX_VALUE - 64);
-            var out = new byte[(int) Math.max(1024, Math.min(length * 4L, Math.min(1 << 24, limit)))];
+            var cap = Math.min(maxBytes, Integer.MAX_VALUE - 64);
+            var out = new byte[(int) Math.max(1024, Math.min(length * 4L, Math.min(1 << 24, cap)))];
             var size = 0;
             while (!inflater.finished()) {
                 if (size == out.length) {
-                    if (out.length >= limit) {
-                        throw new MediaException.LimitExceeded(name + ": the compressed data of item " + item.id()
+                    if (out.length >= cap) {
+                        throw new MediaException.LimitExceeded(name + ": the compressed data of " + subject
                                 + " inflates past " + maxBytes + " bytes");
                     }
-                    out = Arrays.copyOf(out, (int) Math.min(2L * out.length, limit));
+                    out = Arrays.copyOf(out, (int) Math.min(2L * out.length, cap));
                 }
                 var count = inflater.inflate(out, size, out.length - size);
                 if (count == 0 && (inflater.needsInput() || inflater.needsDictionary())) {
-                    throw new MediaException.Malformed(name + ": the compressed data of item " + item.id()
+                    throw new MediaException.Malformed(name + ": the compressed data of " + subject
                             + " is truncated");
                 }
                 size += count;
             }
             if (size > maxBytes) {
-                throw new MediaException.LimitExceeded(name + ": the compressed data of item " + item.id()
+                throw new MediaException.LimitExceeded(name + ": the compressed data of " + subject
                         + " inflates past " + maxBytes + " bytes");
             }
             return Arrays.copyOf(out, size);
         } catch (DataFormatException exception) {
-            throw new MediaException.Malformed(name + ": the compressed data of item " + item.id() + " is corrupt",
+            throw new MediaException.Malformed(name + ": the compressed data of " + subject + " is corrupt",
                     exception);
         } finally {
             inflater.end();
@@ -601,13 +950,13 @@ public final class HeifUncompressed {
     }
 
     /**
-     * Reads the palette of the item, when a component of the layout indexes one.
+     * Reads the palette, when a component of the layout indexes one.
      *
-     * @param item the item, with its {@code cpal} property
+     * @param properties the properties of the item or the boxes of the sample entry, with the {@code cpal} one
      * @param definition the component definition the palette refers to
      * @param limits the bound of the converted palette
      */
-    private void palette(HeifItem item, HeifProperty.ComponentDefinition definition, MediaLimits limits) {
+    private void palette(List<HeifProperty> properties, HeifProperty.ComponentDefinition definition, MediaLimits limits) {
         var indexed = false;
         for (var type : types) {
             indexed |= type == PALETTE;
@@ -615,9 +964,9 @@ public final class HeifUncompressed {
         if (!indexed) {
             return;
         }
-        var palette = item.property(HeifProperty.ComponentPalette.class);
+        var palette = find(properties, HeifProperty.ComponentPalette.class);
         if (palette == null) {
-            throw new MediaException.Malformed(name + ": palette item " + item.id() + " has no cpal property");
+            throw new MediaException.Malformed(name + ": palette " + subject + " has no cpal property");
         }
         var components = palette.components();
         var count = components.size();
@@ -691,14 +1040,9 @@ public final class HeifUncompressed {
     }
 
     /**
-     * Decodes every tile.
-     *
-     * @param width the image width
-     * @param height the image height
-     * @param limits the bounds of the planes
-     * @return the components
+     * Checks that the tiles divide the image and that the interleaving suits the sampling.
      */
-    private HeifComponents run(int width, int height, MediaLimits limits) {
+    private void validate() {
         var columns = config.tileColumns();
         var rows = config.tileRows();
         if (columns > width || rows > height || width % columns != 0 || height % rows != 0) {
@@ -732,14 +1076,26 @@ public final class HeifUncompressed {
             }
             default -> throw new MediaException.Unsupported(name, "uncompressed interleave type " + interleave);
         }
-        allocate(width, height, limits);
-        var tileCount = columns * rows;
+    }
+
+    /**
+     * Reads every tile of the frame in {@link #data} into the planes.
+     */
+    private void traverse() {
+        pos = 0;
+        bit = 0;
+        blockEnd = 0;
+        var columns = (int) config.tileColumns();
+        var tileCount = columns * (int) config.tileRows();
+        var tileWidth = width / columns;
+        var tileHeight = (int) (height / config.tileRows());
+        var interleave = config.interleaveType();
         if (interleave == TILE_COMPONENT) {
             for (var c = 0; c < types.length; c++) {
                 for (var t = 0; t < tileCount; t++) {
                     var start = pos;
-                    var x0 = (int) (t % columns) * tileWidth;
-                    var y0 = (int) (t / columns) * tileHeight;
+                    var x0 = (t % columns) * tileWidth;
+                    var y0 = (t / columns) * tileHeight;
                     componentPlane(c, x0, y0, tileWidth, tileHeight);
                     alignTo(start, config.tileAlignSize());
                 }
@@ -747,8 +1103,8 @@ public final class HeifUncompressed {
         } else {
             for (var t = 0; t < tileCount; t++) {
                 var start = pos;
-                var x0 = (int) (t % columns) * tileWidth;
-                var y0 = (int) (t / columns) * tileHeight;
+                var x0 = (t % columns) * tileWidth;
+                var y0 = (t / columns) * tileHeight;
                 switch (interleave) {
                     case COMPONENT -> {
                         for (var c = 0; c < types.length; c++) {
@@ -763,25 +1119,15 @@ public final class HeifUncompressed {
                 alignTo(start, config.tileAlignSize());
             }
         }
-        var result = new ArrayList<HeifComponents.Plane>();
-        for (var type = 0; type < planes.length; type++) {
-            if (planes[type] != null) {
-                var chroma = subsampled(type);
-                result.add(new HeifComponents.Plane(type, planeWidths[type], planeHeights[type], chroma ? sx : 1,
-                        chroma ? sy : 1, planeDepths[type], planes[type]));
-            }
-        }
-        return new HeifComponents(width, height, result);
     }
 
     /**
-     * Allocates the output planes of the decoded component types.
+     * Allocates the output planes of the decoded component types and the components that share
+     * them.
      *
-     * @param width the image width
-     * @param height the image height
      * @param limits the bound of the allocation
      */
-    private void allocate(int width, int height, MediaLimits limits) {
+    private void allocate(MediaLimits limits) {
         for (var i = 0; i < types.length; i++) {
             var type = types[i];
             if (decoded(type) && fullResolution[type]) {
@@ -802,12 +1148,18 @@ public final class HeifUncompressed {
             }
         }
         LimitChecks.checkAllocation(limits, 2 * total);
+        var result = new ArrayList<HeifComponents.Plane>();
         for (var type = 0; type < TYPES; type++) {
             if (planeDepths[type] != 0) {
                 planes[type] = new short[planeWidths[type] * planeHeights[type]];
+                var chroma = subsampled(type);
+                result.add(new HeifComponents.Plane(type, planeWidths[type], planeHeights[type], chroma ? sx : 1,
+                        chroma ? sy : 1, planeDepths[type], planes[type]));
             }
         }
+        components = new HeifComponents(width, height, result);
     }
+
 
     /**
      * {@return whether a component type is a chroma type, subsampled by the sampling type}
@@ -1041,7 +1393,7 @@ public final class HeifUncompressed {
     private void readStore(int c, int x, int y) {
         var type = types[c];
         readRaw(c);
-        if (x < 0) {
+        if (x < 0 || measuring) {
             return;
         }
         if (type == PALETTE) {
@@ -1168,6 +1520,11 @@ public final class HeifUncompressed {
      */
     private long readBytes(int count, boolean littleEndian) {
         require(count);
+        if (measuring) {
+            pos += count;
+            Arrays.fill(wide, 0);
+            return 0;
+        }
         var at = (int) pos;
         pos += count;
         if (count <= 8) {
@@ -1198,6 +1555,13 @@ public final class HeifUncompressed {
      * @param count the number of bits, from 1 to 256
      */
     private void readBits(int count) {
+        if (measuring) {
+            var end = bit + count;
+            pos += end >> 3;
+            bit = end & 7;
+            Arrays.fill(wide, 0);
+            return;
+        }
         if (count <= 64) {
             long value = 0;
             var left = count;
@@ -1330,7 +1694,9 @@ public final class HeifUncompressed {
             block = readBytes(config.blockSize(), config.blockLittleEndian());
         } else {
             require(blockBytes.length);
-            System.arraycopy(data, (int) pos, blockBytes, 0, blockBytes.length);
+            if (!measuring) {
+                System.arraycopy(data, (int) pos, blockBytes, 0, blockBytes.length);
+            }
             pos += blockBytes.length;
         }
         blockEnd = index;
@@ -1345,9 +1711,9 @@ public final class HeifUncompressed {
      * @throws MediaException.Malformed if the data ends before them
      */
     private void require(int count) {
-        if (pos + count > data.length) {
+        if (pos + count > limit) {
             throw new MediaException.Malformed(name + ": the uncompressed data is shorter than its layout ("
-                    + data.length + " bytes)");
+                    + limit + " bytes)");
         }
     }
 

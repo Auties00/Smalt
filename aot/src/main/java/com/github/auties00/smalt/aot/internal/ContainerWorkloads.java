@@ -19,6 +19,9 @@ import com.github.auties00.smalt.container.subtitle.VobSubDemuxer;
 import com.github.auties00.smalt.container.subtitle.VobSubMuxer;
 import com.github.auties00.smalt.container.wav.WavMuxer;
 import com.github.auties00.smalt.container.wav.WavMuxerOptions;
+import com.github.auties00.smalt.image.ChromaFormat;
+import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.io.ByteArrayMediaSink;
 import com.github.auties00.smalt.io.DataReference;
 import com.github.auties00.smalt.io.DataReferenceResolver;
@@ -41,6 +44,9 @@ import com.github.auties00.smalt.transcode.TranscodeInput;
 import com.github.auties00.smalt.transcode.TranscodeOptions;
 import com.github.auties00.smalt.transcode.Transcoder;
 import com.github.auties00.smalt.transcode.VideoTranscodeOptions;
+import com.github.auties00.smalt.video.UncompressedVideoEncoder;
+import com.github.auties00.smalt.video.UncompressedVideoFormat;
+import com.github.auties00.smalt.video.VideoDecoders;
 import com.github.auties00.smalt.video.VideoFrame;
 import com.github.auties00.smalt.video.dv.DvEncoder;
 import com.github.auties00.smalt.video.dv.DvEncoderOptions;
@@ -60,8 +66,8 @@ import static com.github.auties00.smalt.aot.internal.WorkloadFactory.file;
 
 /**
  * Creates the {@link TrainingFamily#TRANSCODE} workloads of the containers the other workloads leave out: the PCM,
- * AAC, IEC 61937 and elementary audio files, AVI, FLV, DV, Ogg, IVF and ASF, merged and concatenated inputs, the
- * text, PGS and VobSub subtitle files, and HLS and DASH presentations.
+ * AAC, IEC 61937 and elementary audio files, AVI, FLV, DV, Ogg, IVF and ASF, ISO/IEC 23001-17 uncompressed video in
+ * MP4, merged and concatenated inputs, the text, PGS and VobSub subtitle files, and HLS and DASH presentations.
  */
 final class ContainerWorkloads {
     /**
@@ -85,6 +91,7 @@ final class ContainerWorkloads {
         return List.of(
                 file("containers-audio", ContainerWorkloads::audio),
                 file("containers-video", ContainerWorkloads::video),
+                file("uncompressed-video", ContainerWorkloads::uncompressedVideo),
                 file("asf-files", ContainerWorkloads::asfFiles),
                 file("joined-inputs", ContainerWorkloads::joinedInputs),
                 file("subtitle-files", ContainerWorkloads::subtitles),
@@ -164,6 +171,49 @@ final class ContainerWorkloads {
             Transcoder.transcode(List.of(TranscodeInput.concat(List.of(MediaSource.of(mp4), MediaSource.of(mp4)))),
                     sink, concat);
             readAll(sink.toByteArray());
+        });
+    }
+
+    /**
+     * Returns a workload that encodes synthetic pictures as ISO/IEC 23001-17 uncompressed video in the layouts that
+     * select different paths (8-bit 4:2:0 planes, 10-bit 4:2:2 multi-Y units of aligned little-endian values, and
+     * zlib-compressed RGBA pixels of 4-bit values), writes each stream as MP4, and reads and decodes it back.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload uncompressedVideo() {
+        var formats = List.of(UncompressedVideoFormat.ofYCbCr(ChromaFormat.YUV420, 8),
+                UncompressedVideoFormat.ofYCbCr(ChromaFormat.YUV422, 10)
+                        .withInterleave(UncompressedVideoFormat.Interleave.MULTI_Y).withAlignedComponents(true)
+                        .withLittleEndian(true),
+                UncompressedVideoFormat.ofRgb(4).withAlpha(true)
+                        .withCompression(UncompressedVideoFormat.Compression.ZLIB));
+        var picture = YuvPicture.allocate(320, 180, ChromaFormat.YUV444, true, ColorInfo.BT601_LIMITED);
+        for (var plane : new byte[][]{picture.y(), picture.u(), picture.v(), picture.alpha()}) {
+            for (var i = 0; i < plane.length; i++) {
+                plane[i] = (byte) (i * 7 + i / 320);
+            }
+        }
+        return TrainingWorkload.of("uncompressed-video", () -> {
+            for (var format : formats) {
+                var packets = new ArrayList<Packet>();
+                VideoTrack track;
+                try (var encoder = new UncompressedVideoEncoder(format, 320, 180, new Rational(25, 1), null)) {
+                    for (var frame = 0; frame < 3; frame++) {
+                        encoder.encode(new VideoFrame(picture, frame, 1, true),
+                                packet -> packets.add(packet.withTrackId(1)));
+                    }
+                    track = VideoTrack.builder().id(1).codec(encoder.codec()).timeBase(encoder.timeBase())
+                            .width(320).height(180).codecConfig(encoder.codecConfig().orElseThrow()).build();
+                }
+                var file = write(ContainerFormat.MP4, new Tracks(List.of(track), packets));
+                var read = read(file);
+                try (var decoder = VideoDecoders.create((VideoTrack) read.tracks().getFirst())) {
+                    for (var packet : read.packets()) {
+                        decoder.decode(packet, decoded -> Blackhole.consume(decoded.picture().width()));
+                    }
+                }
+            }
         });
     }
 

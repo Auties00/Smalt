@@ -240,6 +240,19 @@ public enum Codec {
     RAW_VIDEO(TrackKind.VIDEO, "rawvideo"),
 
     /**
+     * Uncompressed video of ISO/IEC 23001-17, the MP4 {@code uncv} sample entry.
+     *
+     * <p>A packet holds one frame, every frame a key frame, laid out as the configuration describes, and compressed
+     * as a whole when the configuration holds a generic compression box ({@code cmpC} of ISO/IEC 23001-17
+     * Amendment 2). The configuration is the ISO/IEC 23001-17 boxes of the sample entry, each whole with its box
+     * header, in the order the sample entry stores them: the component definition ({@code cmpd}) unless the frame
+     * configuration names a profile, the frame configuration ({@code uncC}), and the optional {@code cmpC}, chroma
+     * location ({@code cloc}) and other boxes of the standard.
+     * {@link com.github.auties00.smalt.video.UncompressedVideoFormat} builds one.
+     */
+    UNCOMPRESSED_23001_17(TrackKind.VIDEO, "uncv"),
+
+    /**
      * A video codec the demuxer could not identify.
      */
     UNKNOWN_VIDEO(TrackKind.VIDEO, "unknown video"),
