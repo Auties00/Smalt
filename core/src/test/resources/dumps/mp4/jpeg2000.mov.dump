@@ -1,0 +1,22 @@
+# demux dump of mp4/jpeg2000.mov; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 400000
+seekable true
+metadata compatible_brands="qt  "
+metadata encoder="Lavf61.7.100"
+metadata major_brand="qt  "
+metadata minor_version="512"
+track 1 VIDEO JPEG2000 timebase=1/15360 duration=6144 config=none
+  video 64x48 orientation=NORMAL rate=15/1 sar=1/1 interlacing=PROGRESSIVE
+packets 6
+0 t1 pts=0 dts=0 dur=1024 flags=KEY size=3556 crc=0b81e67c
+1 t1 pts=1024 dts=1024 dur=1024 flags=KEY size=3556 crc=0b81e67c
+2 t1 pts=2048 dts=2048 dur=1024 flags=KEY size=3541 crc=17569381
+3 t1 pts=3072 dts=3072 dur=1024 flags=KEY size=3541 crc=17569381
+4 t1 pts=4096 dts=4096 dur=1024 flags=KEY size=3542 crc=9ffcc5fb
+5 t1 pts=5120 dts=5120 dur=1024 flags=KEY size=3542 crc=9ffcc5fb
+seek 0: t1@0
+seek 133333: t1@1
+seek 266666: t1@3
+seek 400000: end
+seek -1000000: t1@0

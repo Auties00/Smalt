@@ -1,0 +1,13 @@
+# image dump of qoi/rgba.qoi; regenerate with -Dsmalt.test.updateDumps=true
+format QOI
+info ImageInfo[format=QOI, width=48, height=32, hasAlpha=true, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 48x32 rgba8 alpha=true crc=d7400316
+  format=QOI orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=none
+scaled 12x8
+picture 48x32 rgba8 alpha=true crc=d7400316
+  format=QOI orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=none

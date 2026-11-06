@@ -7,7 +7,8 @@ package com.github.auties00.smalt.audio.mp3;
  * <p>Every 32 input samples produce one sample per subband: the last 512 input samples are
  * weighted by the analysis window {@code C[i]} and folded into 64 partial sums {@code Y[i]}, and
  * the matrixing {@code S[k] = sum_i cos((2k + 1)(i - 16) pi / 64) Y[i]} gives the subband samples.
- * One call processes a granule of 576 input samples into 18 samples per subband.
+ * One call processes up to 18 time slots of 32 input samples: a Layer III granule of 576 samples, or
+ * a Layer I and II block of 384.
  *
  * @implNote This implementation folds the 64-point matrixing into a 32-point one: the cosine is
  * even in {@code i - 16} and changes sign at {@code i - 16 = 32}, so
@@ -42,7 +43,7 @@ final class Mp3AnalysisFilterbank {
         }
         for (var n = 0; n < 32; n++) {
             for (var k = 0; k < 32; k++) {
-                MATRIX[n * 32 + k] = (float) Math.cos((2 * k + 1) * n * Math.PI / 64);
+                MATRIX[n * 32 + k] = (float) StrictMath.cos((2 * k + 1) * n * Math.PI / 64);
             }
         }
     }
@@ -56,6 +57,12 @@ final class Mp3AnalysisFilterbank {
      * The input: {@value #HISTORY} samples of history followed by the current granule.
      */
     private final float[] buffer = new float[HISTORY + 576];
+
+    /**
+     * The number of input samples of the previous call, whose last {@value #HISTORY} are the
+     * history of the next.
+     */
+    private int previous = 576;
 
     /**
      * The window sums of one slot, in reverse order ({@code Y[63 - q]} at index {@code q}).
@@ -90,13 +97,30 @@ final class Mp3AnalysisFilterbank {
      *               index {@code k * 18 + t}
      */
     void process(float[] input, int offset, float[] output) {
+        process(input, offset, 18, output, 0, 18);
+    }
+
+    /**
+     * Filters a run of time slots of input.
+     *
+     * @param input  the samples
+     * @param offset the index of the first sample
+     * @param slots  the number of time slots, from 1 to 18, each taking 32 samples
+     * @param output receives the subband samples, subband {@code k}, time slot {@code t} at
+     *               index {@code base + k * stride + t}
+     * @param base   the index of the first output sample
+     * @param stride the distance between the outputs of consecutive subbands
+     */
+    void process(float[] input, int offset, int slots, float[] output, int base, int stride) {
         var buf = buffer;
-        System.arraycopy(buf, 576, buf, 0, HISTORY);
-        System.arraycopy(input, offset, buf, HISTORY, 576);
+        var count = 32 * slots;
+        System.arraycopy(buf, previous, buf, 0, HISTORY);
+        System.arraycopy(input, offset, buf, HISTORY, count);
+        previous = count;
         var y = sums;
         var a = folded;
         var s = slot;
-        for (var t = 0; t < 18; t++) {
+        for (var t = 0; t < slots; t++) {
             kernel.window(buf, 32 * t, WINDOW, y);
             a[0] = y[47];
             for (var n = 1; n <= 16; n++) {
@@ -107,7 +131,7 @@ final class Mp3AnalysisFilterbank {
             }
             kernel.matrix(a, MATRIX, s);
             for (var k = 0; k < 32; k++) {
-                output[k * 18 + t] = s[k];
+                output[base + k * stride + t] = s[k];
             }
         }
     }
@@ -117,5 +141,6 @@ final class Mp3AnalysisFilterbank {
      */
     void reset() {
         java.util.Arrays.fill(buffer, 0);
+        previous = 576;
     }
 }

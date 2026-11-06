@@ -1,10 +1,11 @@
 /* Ports libopus 1.5.2 (silk/init_decoder.c). Copyright Skype Limited; BSD 3-Clause License. Modified for Smalt. */
 package com.github.auties00.smalt.audio.opus.internal.silk;
 
+import com.github.auties00.smalt.audio.opus.internal.dnn.Osce;
+
 /**
  * Initializes and resets the state of one SILK decoder channel.
  *
- * @implNote This implementation omits the OSCE reset.
  */
 public final class InitDecoder {
     private InitDecoder() {
@@ -26,6 +27,9 @@ public final class InitDecoder {
         psDec.prev_gain_Q16 = 65536;
         Cng.cngReset(psDec);
         Plc.plcReset(psDec);
+        if (psDec.osce != null) {
+            psDec.osce.reset(Osce.METHOD_NOLACE);
+        }
         return 0;
     }
 

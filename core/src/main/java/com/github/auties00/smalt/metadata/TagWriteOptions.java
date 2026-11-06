@@ -26,7 +26,7 @@ public final class TagWriteOptions {
      * The options of {@link #defaults()}.
      */
     private static final TagWriteOptions DEFAULTS = new TagWriteOptions(null, Id3v1Mode.UPDATE_EXISTING,
-            DEFAULT_PADDING, true, true, MediaLimits.DEFAULT);
+            ApeMode.UPDATE_EXISTING, DEFAULT_PADDING, true, true, MediaLimits.DEFAULT);
 
     /**
      * The ID3v2 version to write, or {@code null} to keep the file's.
@@ -34,15 +34,17 @@ public final class TagWriteOptions {
     private final Id3Version id3Version;
 
     private final Id3v1Mode id3v1Mode;
+    private final ApeMode apeMode;
     private final int padding;
     private final boolean inPlace;
     private final boolean preserveUnknown;
     private final MediaLimits limits;
 
-    private TagWriteOptions(Id3Version id3Version, Id3v1Mode id3v1Mode, int padding, boolean inPlace,
+    private TagWriteOptions(Id3Version id3Version, Id3v1Mode id3v1Mode, ApeMode apeMode, int padding, boolean inPlace,
                             boolean preserveUnknown, MediaLimits limits) {
         this.id3Version = id3Version;
         this.id3v1Mode = id3v1Mode;
+        this.apeMode = apeMode;
         this.padding = padding;
         this.inPlace = inPlace;
         this.preserveUnknown = preserveUnknown;
@@ -51,8 +53,9 @@ public final class TagWriteOptions {
 
     /**
      * Returns the default options: keep the ID3v2 version of the file (2.4 for a new tag), update
-     * an existing ID3v1 tag, reserve {@value #DEFAULT_PADDING} bytes of padding when a tag grows,
-     * edit in place when possible, keep items {@link MediaTags} cannot represent, and enforce
+     * an existing ID3v1 tag and an existing APE tag, reserve {@value #DEFAULT_PADDING} bytes of
+     * padding when a tag grows, edit in place when possible, keep items {@link MediaTags} cannot
+     * represent, and enforce
      * {@link MediaLimits#defaults()}.
      *
      * @return the default options
@@ -89,11 +92,27 @@ public final class TagWriteOptions {
     }
 
     /**
-     * {@return what happens to the ID3v1 tag at the end of an MP3 or ADTS file;
+     * {@return what happens to the ID3v1 tag at the end of an MP3, ADTS, raw AC-3 or FLAC file;
      * {@link Id3v1Mode#UPDATE_EXISTING} by default}
      */
     public Id3v1Mode id3v1Mode() {
         return id3v1Mode;
+    }
+
+    /**
+     * {@return what happens to the APEv1 or APEv2 tag at the end of an MP3, ADTS, raw AC-3 or FLAC file;
+     * {@link ApeMode#UPDATE_EXISTING} by default}
+     *
+     * <p>The APE tag written is an APEv2 tag with header and footer that mirrors the new tags: every entry whose key
+     * APE can store (2 to 255 printable ASCII characters, other than {@code ID3}, {@code TAG}, {@code OggS} and
+     * {@code MP+}) under the usual APE key of a standard tag ({@code Title}, {@code Album Artist}, {@code Year},
+     * {@code Track}, ...), and the first picture of each
+     * {@link com.github.auties00.smalt.container.AttachedPicture.Type} as a {@code "Cover Art (...)"} item.
+     * Binary and external-locator items are kept when {@link #preserveUnknown()} is on. No tag is written when there
+     * is nothing to store.
+     */
+    public ApeMode apeMode() {
+        return apeMode;
     }
 
     /**
@@ -124,9 +143,13 @@ public final class TagWriteOptions {
     /**
      * {@return whether items that {@link MediaTags} cannot represent are kept; {@code true} by default}
      *
-     * <p>These items are binary ID3v2 frames ({@code PRIV}, {@code GEOB}, {@code POPM}, ...), FLAC
-     * {@code APPLICATION} and {@code CUESHEET} blocks, non-text MP4 atoms, track-level Matroska tags
-     * and non-picture attachments.
+     * <p>These items are binary ID3v2 frames ({@code PRIV}, {@code GEOB}, the {@code POPM} frames after the
+     * first, ...), binary and external-locator APE items, FLAC
+     * {@code APPLICATION} and {@code CUESHEET} blocks, non-text MP4 atoms (in the movie's and the tracks'
+     * {@code ilst}), QuickTime keyed metadata items that hold no text or number (such as artwork) while the values
+     * of their key are unchanged, Matroska tags that target several tracks, an edition, a chapter or an attachment,
+     * and Matroska attachments that are not pictures. The Matroska tags of one track are
+     * {@link MediaTags#tracks() track tags}, kept whatever this option.
      */
     public boolean preserveUnknown() {
         return preserveUnknown;
@@ -143,18 +166,19 @@ public final class TagWriteOptions {
     @Override
     public boolean equals(Object other) {
         return other instanceof TagWriteOptions that && id3Version == that.id3Version && id3v1Mode == that.id3v1Mode
-                && padding == that.padding && inPlace == that.inPlace && preserveUnknown == that.preserveUnknown
-                && limits.equals(that.limits);
+                && apeMode == that.apeMode && padding == that.padding && inPlace == that.inPlace
+                && preserveUnknown == that.preserveUnknown && limits.equals(that.limits);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(id3Version, id3v1Mode, padding, inPlace, preserveUnknown, limits);
+        return Objects.hash(id3Version, id3v1Mode, apeMode, padding, inPlace, preserveUnknown, limits);
     }
 
     @Override
     public String toString() {
-        return "TagWriteOptions[id3Version=" + id3Version + ", id3v1Mode=" + id3v1Mode + ", padding=" + padding
+        return "TagWriteOptions[id3Version=" + id3Version + ", id3v1Mode=" + id3v1Mode + ", apeMode=" + apeMode
+                + ", padding=" + padding
                 + ", inPlace=" + inPlace + ", preserveUnknown=" + preserveUnknown + ", limits=" + limits + "]";
     }
 
@@ -174,7 +198,7 @@ public final class TagWriteOptions {
     }
 
     /**
-     * Names what happens to the 128-byte ID3v1 tag at the end of an MP3 or ADTS file.
+     * Names what happens to the 128-byte ID3v1 tag at the end of an MP3, ADTS, raw AC-3 or FLAC file.
      */
     public enum Id3v1Mode {
         /**
@@ -194,6 +218,27 @@ public final class TagWriteOptions {
     }
 
     /**
+     * Names what happens to the APE tag at the end of an MP3, ADTS, raw AC-3 or FLAC file.
+     */
+    public enum ApeMode {
+        /**
+         * Removes an existing APE tag.
+         */
+        REMOVE,
+
+        /**
+         * Rewrites an existing APEv1 or APEv2 tag as an APEv2 tag from the new tags and adds none to a file without
+         * one.
+         */
+        UPDATE_EXISTING,
+
+        /**
+         * Writes an APEv2 tag from the new tags, adding one when the file has none.
+         */
+        ALWAYS
+    }
+
+    /**
      * Assembles {@link TagWriteOptions} setting by setting.
      *
      * <p>Setters reject {@code null} and store numbers unchecked; {@link #build()} checks the ranges.
@@ -202,6 +247,7 @@ public final class TagWriteOptions {
     public static final class Builder {
         private Id3Version id3Version;
         private Id3v1Mode id3v1Mode;
+        private ApeMode apeMode;
         private int padding;
         private boolean inPlace;
         private boolean preserveUnknown;
@@ -210,6 +256,7 @@ public final class TagWriteOptions {
         private Builder(TagWriteOptions options) {
             this.id3Version = options.id3Version;
             this.id3v1Mode = options.id3v1Mode;
+            this.apeMode = options.apeMode;
             this.padding = options.padding;
             this.inPlace = options.inPlace;
             this.preserveUnknown = options.preserveUnknown;
@@ -245,6 +292,17 @@ public final class TagWriteOptions {
          */
         public Builder id3v1Mode(Id3v1Mode id3v1Mode) {
             this.id3v1Mode = Objects.requireNonNull(id3v1Mode, "id3v1Mode");
+            return this;
+        }
+
+        /**
+         * Sets the APE policy; see {@link TagWriteOptions#apeMode()}.
+         *
+         * @param apeMode the value
+         * @return this builder
+         */
+        public Builder apeMode(ApeMode apeMode) {
+            this.apeMode = Objects.requireNonNull(apeMode, "apeMode");
             return this;
         }
 
@@ -299,8 +357,8 @@ public final class TagWriteOptions {
          * @throws IllegalArgumentException if the padding is negative or above {@link #MAX_PADDING}
          */
         public TagWriteOptions build() {
-            return new TagWriteOptions(id3Version, id3v1Mode, Checks.inRange("padding", padding, 0, MAX_PADDING),
-                    inPlace, preserveUnknown, limits);
+            return new TagWriteOptions(id3Version, id3v1Mode, apeMode,
+                    Checks.inRange("padding", padding, 0, MAX_PADDING), inPlace, preserveUnknown, limits);
         }
     }
 }
