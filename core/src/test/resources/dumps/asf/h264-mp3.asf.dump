@@ -1,0 +1,148 @@
+# demux dump of asf/h264-mp3.asf; regenerate with -Dsmalt.test.updateDumps=true
+format ASF
+duration 2133000
+seekable true
+metadata creation_time="1970-01-01T00:00:00Z"
+metadata encoder="Lavf61.7.100"
+track 1 VIDEO H264 timebase=1/1000 duration=? config=40:a59e7e8a
+  video 160x120 orientation=NORMAL sar=1/1
+  metadata AspectRatioX="1"
+  metadata AspectRatioY="1"
+track 2 AUDIO MP3 timebase=1/1000 duration=? config=none
+  audio rate=48000 bits=0 skip=0 layout=[FRONT_CENTER]
+packets 115
+0 t1 pts=0 dts=0 dur=? flags=KEY size=3267 crc=3febcc6f
+1 t1 pts=66 dts=66 dur=? flags=- size=1070 crc=828d1d1d
+2 t2 pts=110 dts=110 dur=24 flags=KEY size=96 crc=4fd54cbb
+3 t1 pts=133 dts=133 dur=? flags=- size=668 crc=a78f5e4d
+4 t2 pts=134 dts=134 dur=24 flags=KEY size=96 crc=769eccb7
+5 t2 pts=158 dts=158 dur=24 flags=KEY size=96 crc=550d2412
+6 t2 pts=182 dts=182 dur=24 flags=KEY size=96 crc=92bfa8ec
+7 t1 pts=200 dts=200 dur=? flags=- size=549 crc=d434bd42
+8 t2 pts=206 dts=206 dur=24 flags=KEY size=96 crc=f7f9985f
+9 t2 pts=230 dts=230 dur=24 flags=KEY size=96 crc=af11bc98
+10 t2 pts=254 dts=254 dur=24 flags=KEY size=96 crc=2fd12c4a
+11 t1 pts=266 dts=266 dur=? flags=- size=1338 crc=535e4a81
+12 t2 pts=278 dts=278 dur=24 flags=KEY size=96 crc=384f2ea6
+13 t2 pts=302 dts=302 dur=24 flags=KEY size=96 crc=d8103ab7
+14 t2 pts=326 dts=326 dur=24 flags=KEY size=96 crc=24216177
+15 t1 pts=333 dts=333 dur=? flags=- size=718 crc=c50a7926
+16 t2 pts=350 dts=350 dur=24 flags=KEY size=96 crc=06b9a3e8
+17 t2 pts=374 dts=374 dur=24 flags=KEY size=96 crc=7d6a9f03
+18 t2 pts=398 dts=398 dur=24 flags=KEY size=96 crc=ce49de7f
+19 t1 pts=400 dts=400 dur=? flags=- size=517 crc=7e61ddcd
+20 t2 pts=422 dts=422 dur=24 flags=KEY size=96 crc=5ab1acf7
+21 t2 pts=446 dts=446 dur=24 flags=KEY size=96 crc=28da348d
+22 t1 pts=466 dts=466 dur=? flags=- size=1113 crc=c1a053e3
+23 t2 pts=470 dts=470 dur=24 flags=KEY size=96 crc=0d4950b4
+24 t2 pts=494 dts=494 dur=24 flags=KEY size=96 crc=51a5fcd6
+25 t2 pts=518 dts=518 dur=24 flags=KEY size=96 crc=b53cf158
+26 t1 pts=533 dts=533 dur=? flags=- size=768 crc=b2d90076
+27 t2 pts=542 dts=542 dur=24 flags=KEY size=96 crc=4fb30a5c
+28 t2 pts=566 dts=566 dur=24 flags=KEY size=96 crc=54dbd4be
+29 t2 pts=590 dts=590 dur=24 flags=KEY size=96 crc=4fbf6015
+30 t1 pts=600 dts=600 dur=? flags=- size=479 crc=13982229
+31 t2 pts=614 dts=614 dur=24 flags=KEY size=96 crc=d47801c0
+32 t2 pts=638 dts=638 dur=24 flags=KEY size=96 crc=1309849c
+33 t2 pts=662 dts=662 dur=24 flags=KEY size=96 crc=df81a408
+34 t1 pts=666 dts=666 dur=? flags=KEY size=3157 crc=f8973586
+35 t2 pts=686 dts=686 dur=24 flags=KEY size=96 crc=2e2e907f
+36 t2 pts=710 dts=710 dur=24 flags=KEY size=96 crc=b5b22939
+37 t1 pts=733 dts=733 dur=? flags=- size=924 crc=9107cbf0
+38 t2 pts=734 dts=734 dur=24 flags=KEY size=96 crc=40c38e25
+39 t2 pts=758 dts=758 dur=24 flags=KEY size=96 crc=04ac84ec
+40 t2 pts=782 dts=782 dur=24 flags=KEY size=96 crc=d698c24a
+41 t1 pts=800 dts=800 dur=? flags=- size=907 crc=926df828
+42 t2 pts=806 dts=806 dur=24 flags=KEY size=96 crc=0476194f
+43 t2 pts=830 dts=830 dur=24 flags=KEY size=96 crc=164a0293
+44 t2 pts=854 dts=854 dur=24 flags=KEY size=96 crc=d3fab7aa
+45 t1 pts=866 dts=866 dur=? flags=- size=621 crc=4f9320fb
+46 t2 pts=878 dts=878 dur=24 flags=KEY size=96 crc=32f61cae
+47 t2 pts=902 dts=902 dur=24 flags=KEY size=96 crc=0699f097
+48 t2 pts=926 dts=926 dur=24 flags=KEY size=96 crc=3899b291
+49 t1 pts=933 dts=933 dur=? flags=- size=1223 crc=4a8d50a8
+50 t2 pts=950 dts=950 dur=24 flags=KEY size=96 crc=4cb2b142
+51 t2 pts=974 dts=974 dur=24 flags=KEY size=96 crc=e07332e9
+52 t2 pts=998 dts=998 dur=24 flags=KEY size=96 crc=e8b3bed9
+53 t1 pts=1000 dts=1000 dur=? flags=- size=565 crc=77887816
+54 t2 pts=1022 dts=1022 dur=24 flags=KEY size=96 crc=5a2fe360
+55 t2 pts=1046 dts=1046 dur=24 flags=KEY size=96 crc=fab1f1d7
+56 t1 pts=1066 dts=1066 dur=? flags=- size=733 crc=a0f0dbef
+57 t2 pts=1070 dts=1070 dur=24 flags=KEY size=96 crc=6654c3b8
+58 t2 pts=1094 dts=1094 dur=24 flags=KEY size=96 crc=af2d5048
+59 t2 pts=1118 dts=1118 dur=24 flags=KEY size=96 crc=5bcabfa1
+60 t1 pts=1133 dts=1133 dur=? flags=- size=1238 crc=bb900809
+61 t2 pts=1142 dts=1142 dur=24 flags=KEY size=96 crc=b57613cf
+62 t2 pts=1166 dts=1166 dur=24 flags=KEY size=96 crc=4d2c4e5f
+63 t2 pts=1190 dts=1190 dur=24 flags=KEY size=96 crc=a9b7feb0
+64 t1 pts=1200 dts=1200 dur=? flags=- size=602 crc=cf34dc59
+65 t2 pts=1214 dts=1214 dur=24 flags=KEY size=96 crc=26651d75
+66 t2 pts=1238 dts=1238 dur=24 flags=KEY size=96 crc=59845f64
+67 t2 pts=1262 dts=1262 dur=24 flags=KEY size=96 crc=c1f5cdd4
+68 t1 pts=1266 dts=1266 dur=? flags=- size=427 crc=87312770
+69 t2 pts=1286 dts=1286 dur=24 flags=KEY size=96 crc=83c08f8f
+70 t2 pts=1310 dts=1310 dur=24 flags=KEY size=96 crc=f1437e89
+71 t1 pts=1333 dts=1333 dur=? flags=KEY size=3297 crc=0cb69f3d
+72 t2 pts=1334 dts=1334 dur=24 flags=KEY size=96 crc=e6fde3ad
+73 t2 pts=1358 dts=1358 dur=24 flags=KEY size=96 crc=49814432
+74 t2 pts=1382 dts=1382 dur=24 flags=KEY size=96 crc=b3b30052
+75 t1 pts=1400 dts=1400 dur=? flags=- size=1050 crc=a219f1b9
+76 t2 pts=1406 dts=1406 dur=24 flags=KEY size=96 crc=6ad08cea
+77 t2 pts=1430 dts=1430 dur=24 flags=KEY size=96 crc=695355da
+78 t2 pts=1454 dts=1454 dur=24 flags=KEY size=96 crc=629e2197
+79 t1 pts=1466 dts=1466 dur=? flags=- size=537 crc=2d988cd8
+80 t2 pts=1478 dts=1478 dur=24 flags=KEY size=96 crc=53cb8d2f
+81 t2 pts=1502 dts=1502 dur=24 flags=KEY size=96 crc=38fbf70a
+82 t2 pts=1526 dts=1526 dur=24 flags=KEY size=96 crc=35f0973f
+83 t1 pts=1533 dts=1533 dur=? flags=- size=547 crc=3c1fdd01
+84 t2 pts=1550 dts=1550 dur=24 flags=KEY size=96 crc=1ac9c658
+85 t2 pts=1574 dts=1574 dur=24 flags=KEY size=96 crc=ac23eb99
+86 t2 pts=1598 dts=1598 dur=24 flags=KEY size=96 crc=be2bac42
+87 t1 pts=1600 dts=1600 dur=? flags=- size=1056 crc=07ec09d4
+88 t2 pts=1622 dts=1622 dur=24 flags=KEY size=96 crc=87e4ac7f
+89 t2 pts=1646 dts=1646 dur=24 flags=KEY size=96 crc=eb6a87a8
+90 t1 pts=1666 dts=1666 dur=? flags=- size=772 crc=30e053a8
+91 t2 pts=1670 dts=1670 dur=24 flags=KEY size=96 crc=5cda8c5f
+92 t2 pts=1694 dts=1694 dur=24 flags=KEY size=96 crc=8a8f580a
+93 t2 pts=1718 dts=1718 dur=24 flags=KEY size=96 crc=0a47c78d
+94 t1 pts=1733 dts=1733 dur=? flags=- size=519 crc=43230a0d
+95 t2 pts=1742 dts=1742 dur=24 flags=KEY size=96 crc=ed6501b2
+96 t2 pts=1766 dts=1766 dur=24 flags=KEY size=96 crc=f7876c2d
+97 t2 pts=1790 dts=1790 dur=24 flags=KEY size=96 crc=8c427c8e
+98 t1 pts=1800 dts=1800 dur=? flags=- size=1309 crc=0b5733ed
+99 t2 pts=1814 dts=1814 dur=24 flags=KEY size=96 crc=9233fbd1
+100 t2 pts=1838 dts=1838 dur=24 flags=KEY size=96 crc=3890a389
+101 t2 pts=1862 dts=1862 dur=24 flags=KEY size=96 crc=8010dcc5
+102 t1 pts=1866 dts=1866 dur=? flags=- size=624 crc=91dc0eb6
+103 t2 pts=1886 dts=1886 dur=24 flags=KEY size=96 crc=719dba08
+104 t2 pts=1910 dts=1910 dur=24 flags=KEY size=96 crc=a00ba7a3
+105 t1 pts=1933 dts=1933 dur=? flags=- size=607 crc=4697bd78
+106 t2 pts=1934 dts=1934 dur=24 flags=KEY size=96 crc=4ddbd284
+107 t2 pts=1958 dts=1958 dur=24 flags=KEY size=96 crc=b1fdf9ff
+108 t2 pts=1982 dts=1982 dur=24 flags=KEY size=96 crc=cdfd2b16
+109 t2 pts=2006 dts=2006 dur=24 flags=KEY size=96 crc=9b77d359
+110 t2 pts=2030 dts=2030 dur=24 flags=KEY size=96 crc=3aced6ea
+111 t2 pts=2054 dts=2054 dur=24 flags=KEY size=96 crc=9f4ee39e
+112 t2 pts=2078 dts=2078 dur=24 flags=KEY size=96 crc=448a3464
+113 t2 pts=2102 dts=2102 dur=24 flags=KEY size=96 crc=4439bd4f
+114 t2 pts=2126 dts=2126 dur=24 flags=KEY size=96 crc=faba3f4a
+seek 0: t1@0 t2@0
+seek 711000: t1@10 t2@25
+seek 1422000: t1@20 t2@54
+seek 2150000: end
+seek 2133000: t1@end t2@84
+seek -1000000: t1@0 t2@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format ASF
+  duration 2133000
+  seekable false
+  metadata creation_time="1970-01-01T00:00:00Z"
+  metadata encoder="Lavf61.7.100"
+  track 1 VIDEO H264 timebase=1/1000 duration=? config=40:a59e7e8a
+    video 160x120 orientation=NORMAL sar=1/1
+    metadata AspectRatioX="1"
+    metadata AspectRatioY="1"
+  track 2 AUDIO MP3 timebase=1/1000 duration=? config=none
+    audio rate=48000 bits=0 skip=0 layout=[FRONT_CENTER]
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH
