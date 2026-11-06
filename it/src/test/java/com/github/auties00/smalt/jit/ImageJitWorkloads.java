@@ -66,11 +66,11 @@ final class ImageJitWorkloads {
      * Runs the send path of a camera photo: a 2560x1440 JPEG decoded at half size through the
      * size hint, fitted within 1200 pixels with Lanczos and re-encoded at quality 80.
      */
-    static JitWorkload.Workload jpegSend(long bound, int count) {
+    static JitWorkload.Workload jpegSend(int count) {
         var photo = JpegEncoder.encode(JitWorkload.synthesize(2560, 1440, 1).getFirst(), JpegEncoderOptions.ofQuality(92));
         var hint = ImageDecoderOptions.builder().minSize(1200, 1200 * 1440 / 2560).build();
         var output = JpegEncoderOptions.ofQuality(80);
-        return JitWorkload.named("jpegsend", bound, () -> {
+        return JitWorkload.named("jpegsend", () -> {
             for (var i = 0; i < count; i++) {
                 var decoded = JpegDecoder.decode(MediaSource.of(photo), hint).picture();
                 var fitted = ImageOps.fitWithin(decoded, 1200, ResizeFilter.LANCZOS3);
@@ -86,12 +86,12 @@ final class ImageJitWorkloads {
      * the module's encoder writes it (adaptive filtering, which chooses Paeth for nearly every row
      * of this smooth content).
      */
-    static JitWorkload.Workload pngDecode(long bound, int count) {
+    static JitWorkload.Workload pngDecode(int count) {
         var photoPicture = rgba(JitWorkload.synthesize(1024, 768, 1).getFirst(), false);
         var photo = cycledFilterPng(photoPicture);
         var sticker = cycledFilterPng(rgba(JitWorkload.synthesize(512, 512, 1).getFirst(), true));
         var adaptive = PngEncoder.encode(photoPicture, PngEncoderOptions.defaults());
-        return JitWorkload.named("pngdec", bound, () -> {
+        return JitWorkload.named("pngdec", () -> {
             for (var i = 0; i < count; i++) {
                 sink += PngDecoder.decode(MediaSource.of(photo), ImageDecoderOptions.defaults()).picture().width();
                 sink += PngDecoder.decode(MediaSource.of(sticker), ImageDecoderOptions.defaults()).picture().width();
@@ -181,15 +181,15 @@ final class ImageJitWorkloads {
      * times per round, so that a round lasts long enough for the allocation of the threads of the
      * workload before it to be negligible.
      */
-    static JitWorkload.Workload gifDecode(long bound, int count) {
+    static JitWorkload.Workload gifDecode(int count) {
         var gif = animatedGif(480, 270, 12);
-        return JitWorkload.named("gifdec", bound, () -> {
+        return JitWorkload.named("gifdec", () -> {
             var frames = 0;
             for (var i = 0; i < count; i++) {
                 try (var reader = GifDecoder.openAnimation(MediaSource.of(gif), ImageDecoderOptions.defaults())) {
                     for (var current = reader.read(); current != null; current = reader.read()) {
                         frames++;
-                        sink += current.picture().pixels()[frames * 4099 % (480 * 270 * 4)];
+                        sink += ((RgbaPicture) current.picture()).pixels()[frames * 4099 % (480 * 270 * 4)];
                     }
                 }
             }
@@ -201,10 +201,10 @@ final class ImageJitWorkloads {
      * Converts a 1280x720 4:2:0 picture to RGBA and back, and rotates the RGBA picture a quarter
      * turn, as the image and video preparation paths do.
      */
-    static JitWorkload.Workload convert(long bound, int count) {
+    static JitWorkload.Workload convert(int count) {
         var yuv = JitWorkload.synthesize(1280, 720, 1).getFirst();
         var rgba = rgba(yuv, false);
-        return JitWorkload.named("convert", bound, () -> {
+        return JitWorkload.named("convert", () -> {
             for (var i = 0; i < count; i++) {
                 sink += ImageOps.toRgba(yuv).pixels()[4097];
                 sink += ImageOps.toYuv(rgba, ChromaFormat.YUV420, ColorInfo.BT709_LIMITED).y()[4097];
@@ -219,11 +219,11 @@ final class ImageJitWorkloads {
      * an unsharp mask, a sepia tone, compositing with two blend modes and bilinear and bicubic
      * rotations, which together exercise every method of the effects and warp kernel families.
      */
-    static JitWorkload.Workload effects(long bound, int count) {
+    static JitWorkload.Workload effects(int count) {
         var yuv = JitWorkload.synthesize(640, 360, 1).getFirst();
         var opaque = rgba(yuv, false);
         var mask = rgba(yuv, true);
-        return JitWorkload.named("effects", bound, () -> {
+        return JitWorkload.named("effects", () -> {
             for (var i = 0; i < count; i++) {
                 sink += ImageFilters.gaussianBlur(opaque, 2, BlurMethod.EXACT).width();
                 sink += ImageFilters.gaussianBlur(opaque, 6, BlurMethod.BOX).width();

@@ -1,0 +1,18 @@
+# audio decode dump of ogg/speex.spx; regenerate with -Dsmalt.test.updateDumps=true
+format OGG
+duration 591063
+seekable true
+track 0 SPEEX rate=16000 layout=[FRONT_CENTER]
+0 frames=4096 crc16=5c8b0029
+1 frames=4096 crc16=1efe0c29
+2 frames=1265 crc16=4e8bc316
+seek 0: @sample 0
+seek 197021: @sample 3152
+seek 394042: @sample 6305
+seek 591063: end
+seek -1000000: @sample 0
+header over READ_ONCE_UNKNOWN_LENGTH:
+  format OGG
+  duration -1
+  seekable false
+  track 0 SPEEX rate=16000 layout=[FRONT_CENTER]

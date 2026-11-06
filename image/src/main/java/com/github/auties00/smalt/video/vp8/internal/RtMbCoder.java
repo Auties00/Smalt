@@ -73,23 +73,23 @@ final class RtMbCoder {
     /**
      * The row stride of the macroblock work buffers.
      */
-    private static final int BPS = Vp8EncDsp.BPS;
+    static final int BPS = Vp8EncDsp.BPS;
 
     /**
      * The offset of U in a work buffer.
      */
-    private static final int U_OFF = 16;
+    static final int U_OFF = 16;
 
     /**
      * The offset of V in a work buffer.
      */
-    private static final int V_OFF = 24;
+    static final int V_OFF = 24;
 
     /**
      * The largest full-pixel distance of a searched motion vector from its predictor, libvpx's
      * {@code MAX_FULL_PEL_VAL}.
      */
-    private static final int MAX_FULL_PEL_VAL = 255;
+    static final int MAX_FULL_PEL_VAL = 255;
 
     /**
      * The width in bits of long motion vector components, libvpx's {@code mvlong_width}.
@@ -99,12 +99,30 @@ final class RtMbCoder {
     /**
      * The lowest threshold multiplier, libvpx's {@code MIN_THRESHMULT}.
      */
-    private static final int MIN_THRESHMULT = 32;
+    static final int MIN_THRESHMULT = 32;
 
     /**
      * The highest threshold multiplier, libvpx's {@code MAX_THRESHMULT}.
      */
-    private static final int MAX_THRESHMULT = 512;
+    static final int MAX_THRESHMULT = 512;
+
+    /**
+     * The widening of the zero bins of zero motion from the golden or alternate reference, in
+     * 1/128 of the AC step, libvpx's {@code GF_ZEROMV_ZBIN_BOOST}.
+     */
+    private static final int GF_ZEROMV_ZBIN_BOOST = 12;
+
+    /**
+     * The widening of the zero bins of zero motion from the last frame, libvpx's
+     * {@code LF_ZEROMV_ZBIN_BOOST}.
+     */
+    private static final int LF_ZEROMV_ZBIN_BOOST = 6;
+
+    /**
+     * The widening of the zero bins of the other inter modes but split motion, libvpx's
+     * {@code MV_ZBIN_BOOST}.
+     */
+    private static final int MV_ZBIN_BOOST = 4;
 
     /**
      * The offsets of the hexagon around the best point, libvpx's {@code hex} as row, column
@@ -149,92 +167,92 @@ final class RtMbCoder {
     /**
      * The encoder whose frame is being coded.
      */
-    private final RtEncoder enc;
+    final RtEncoder enc;
 
     /**
      * The decoder kernels used for prediction and reconstruction.
      */
-    private final Vp8Dsp dsp = Vp8Dsp.INSTANCE;
+    final Vp8Dsp dsp = Vp8Dsp.INSTANCE;
 
     /**
      * The forward transform and quantization kernels.
      */
-    private final Vp8EncDsp encDsp = Vp8EncDsp.INSTANCE;
+    final Vp8EncDsp encDsp = Vp8EncDsp.INSTANCE;
 
     /**
      * The block metric kernels.
      */
-    private final RtDsp rtDsp = RtDsp.INSTANCE;
+    final RtDsp rtDsp = RtDsp.INSTANCE;
 
     /**
      * The chroma source samples of the current macroblock (U at {@link #U_OFF}, V at
      * {@link #V_OFF}), and its luma samples during the subblock search, rows {@link #BPS} bytes
      * apart.
      */
-    private final byte[] src = new byte[BPS * 16];
+    final byte[] src = new byte[BPS * 16];
 
     /**
      * The plane holding the luma source samples of the current macroblock.
      */
-    private byte[] srcY;
+    byte[] srcY;
 
     /**
      * The index of the current macroblock's top-left luma source sample in {@link #srcY}.
      */
-    private int srcYOff;
+    int srcYOff;
 
     /**
      * The row stride of {@link #srcY}.
      */
-    private int srcYStride;
+    int srcYStride;
 
     /**
      * The prediction of the current macroblock.
      */
-    private final byte[] pred = new byte[BPS * 16];
+    final byte[] pred = new byte[BPS * 16];
 
     /**
      * The source samples of the current macroblock in three interleaved groups of eight 4x4
      * blocks (see {@link RtDsp#forwardDct8}): the upper and lower halves of luma, then chroma.
      */
-    private final byte[] srcGroups = new byte[3 * RtDsp.GROUP];
+    final byte[] srcGroups = new byte[3 * RtDsp.GROUP];
 
     /**
      * The prediction of the current macroblock, grouped like {@link #srcGroups}.
      */
-    private final byte[] predGroups = new byte[3 * RtDsp.GROUP];
+    final byte[] predGroups = new byte[3 * RtDsp.GROUP];
 
     /**
      * The reconstruction of the current macroblock, grouped like {@link #srcGroups}.
      */
-    private final byte[] reconGroups = new byte[3 * RtDsp.GROUP];
+    final byte[] reconGroups = new byte[3 * RtDsp.GROUP];
 
     /**
      * The coefficients of the three groups, dequantized after quantization.
      */
-    private final int[] coefGroups = new int[3 * RtDsp.GROUP];
+    final int[] coefGroups = new int[3 * RtDsp.GROUP];
 
     /**
      * The Y2 block's coefficients in raster order, dequantized after quantization.
      */
-    private final short[] y2Coef = new short[16];
+    final short[] y2Coef = new short[16];
 
     /**
      * The quantized levels of the 25 blocks: zigzag position {@code n} of block {@code b} is at
      * {@code n * RtDsp.LEVEL_STRIDE + b}; blocks 0 to 15 are luma, 16 to 23 chroma, 24 is Y2.
      */
-    private final short[] levels = new short[16 * RtDsp.LEVEL_STRIDE];
+    final short[] levels = new short[16 * RtDsp.LEVEL_STRIDE];
 
     /**
      * The end-of-block position of each block: one past its last nonzero level.
      */
-    private final int[] eob = new int[32];
+    final int[] eob = new int[32];
 
     /**
      * The DC coefficients of the 16 luma blocks the inverse Walsh-Hadamard transform of the Y2
      * block gives.
      */
-    private final short[] dcs = new short[16];
+    final short[] dcs = new short[16];
 
     /**
      * The intermediate rows of the inverse Walsh-Hadamard transform.
@@ -244,7 +262,7 @@ final class RtMbCoder {
     /**
      * The scratch of the motion compensation kernels.
      */
-    private final byte[] mcScratch = new byte[Vp8Dsp.SCRATCH_SIZE];
+    final byte[] mcScratch = new byte[Vp8Dsp.SCRATCH_SIZE];
 
     /**
      * The scratch of the loop filter kernels when this coder's thread filters rows.
@@ -254,7 +272,7 @@ final class RtMbCoder {
     /**
      * The scratch of the sub-pixel variance kernels.
      */
-    private final short[] subpelScratch = new short[RtDsp.SCRATCH_SIZE];
+    final short[] subpelScratch = new short[RtDsp.SCRATCH_SIZE];
 
     /**
      * The scratch of the sub-pixel variances {@link #subpelAt} measures with one zero offset,
@@ -272,7 +290,7 @@ final class RtMbCoder {
     /**
      * The candidate predictors of {@link #calSad} sorted by their sums.
      */
-    private final int[] nearSadIdx = new int[8];
+    final int[] nearSadIdx = new int[8];
 
     /**
      * The candidate vectors of {@link #mvPred}.
@@ -297,12 +315,12 @@ final class RtMbCoder {
     /**
      * The reference counts of {@link NearMvs#find}: intra, nearest, near and split.
      */
-    private final int[] mdCounts = new int[4];
+    final int[] mdCounts = new int[4];
 
     /**
      * The vectors found by {@link NearMvs#find}: best, nearest and near.
      */
-    private final int[] nearResult = new int[3];
+    final int[] nearResult = new int[3];
 
     /**
      * The motion vector of each mode during the mode search, by mode.
@@ -310,139 +328,229 @@ final class RtMbCoder {
     private final int[] modeMv = new int[10];
 
     /**
+     * The clamped nearest vector of the current macroblock for each sign bias.
+     */
+    final int[] nearestSb = new int[2];
+
+    /**
+     * The clamped near vector of the current macroblock for each sign bias.
+     */
+    final int[] nearSb = new int[2];
+
+    /**
+     * The clamped best reference vector of the current macroblock for each sign bias.
+     */
+    final int[] bestSb = new int[2];
+
+    /**
      * The order in which the enabled references are searched, intra first.
      */
-    private final int[] refMap = new int[4];
+    final int[] refMap = new int[4];
 
     /**
      * The subblock modes chosen by the subblock search of the current macroblock.
      */
-    private final int[] subModes = new int[16];
+    final int[] subModes = new int[16];
 
     /**
      * The levels of the subblocks chosen by the subblock search, kept for the encode.
      */
-    private final short[] subLevels = new short[16 * 16];
+    final short[] subLevels = new short[16 * 16];
 
     /**
      * The end-of-block positions of the subblocks chosen by the subblock search.
      */
-    private final int[] subEobs = new int[16];
+    final int[] subEobs = new int[16];
 
     /**
      * The coefficient scratch of the subblock search.
      */
-    private final short[] subCoef = new short[16];
+    final short[] subCoef = new short[16];
 
     /**
      * The motion vector found by the last full-pixel search, packed.
      */
-    private int searchMv;
+    int searchMv;
 
     /**
      * The distortion found by the last fractional search.
      */
-    private int searchDistortion;
+    int searchDistortion;
 
     /**
      * The sum of squared differences found by the last fractional search.
      */
-    private int searchSse;
+    int searchSse;
 
     /**
      * The search window of motion vectors, in full pixels: smallest column.
      */
-    private int mvColMin;
+    int mvColMin;
 
     /**
      * The largest column of the search window.
      */
-    private int mvColMax;
+    int mvColMax;
 
     /**
      * The smallest row of the search window.
      */
-    private int mvRowMin;
+    int mvRowMin;
 
     /**
      * The largest row of the search window.
      */
-    private int mvRowMax;
+    int mvRowMax;
 
     /**
      * The distance of the macroblock from the left frame edge, in 1/8 pixel, negative.
      */
-    private int mbToLeftEdge;
+    int mbToLeftEdge;
 
     /**
      * The distance of the macroblock from the right frame edge, in 1/8 pixel.
      */
-    private int mbToRightEdge;
+    int mbToRightEdge;
 
     /**
      * The distance of the macroblock from the top frame edge, in 1/8 pixel, negative.
      */
-    private int mbToTopEdge;
+    int mbToTopEdge;
 
     /**
      * The distance of the macroblock from the bottom frame edge, in 1/8 pixel.
      */
-    private int mbToBottomEdge;
+    int mbToBottomEdge;
 
     /**
      * The index of the current macroblock's luma samples in the frame planes.
      */
-    private int yOff;
+    int yOff;
 
     /**
      * The index of the current macroblock's chroma samples in the frame planes.
      */
-    private int uvOff;
+    int uvOff;
 
     /**
      * The mode info index of the current macroblock.
      */
-    private int idx;
+    int idx;
 
     /**
      * The map index of the current macroblock.
      */
-    private int mapIdx;
+    int mapIdx;
 
     /**
      * The macroblock row.
      */
-    private int mbRow;
+    int mbRow;
 
     /**
      * The macroblock column.
      */
-    private int mbCol;
+    int mbCol;
 
     /**
      * The reference frame of the current inter mode.
      */
-    private FrameBuffer preFrame;
+    FrameBuffer preFrame;
 
     /**
      * The luma plane searched by the current inter mode.
      */
-    private byte[] preY;
+    byte[] preY;
 
     /**
      * The quantization matrices of the current macroblock's segment: luma.
      */
-    private QuantMatrix y1Matrix;
+    QuantMatrix y1Matrix;
 
     /**
      * The Y2 quantization matrix of the current macroblock's segment.
      */
-    private QuantMatrix y2Matrix;
+    QuantMatrix y2Matrix;
 
     /**
      * The chroma quantization matrix of the current macroblock's segment.
      */
-    private QuantMatrix uvMatrix;
+    QuantMatrix uvMatrix;
+
+    /**
+     * The regular luma quantizer of the current macroblock's segment.
+     */
+    private RegularQuantizer y1Regular;
+
+    /**
+     * The regular Y2 quantizer of the current macroblock's segment.
+     */
+    private RegularQuantizer y2Regular;
+
+    /**
+     * The regular chroma quantizer of the current macroblock's segment.
+     */
+    private RegularQuantizer uvRegular;
+
+    /**
+     * Whether blocks are quantized with the regular quantizers, which the good-quality speeds 0
+     * to 2 code with and speed 0 also decides with; the fast quantizer of the matrices
+     * otherwise.
+     */
+    boolean regular;
+
+    /**
+     * The zero-bin extra of the luma blocks of the current macroblock.
+     */
+    private int zbinY;
+
+    /**
+     * The zero-bin extra of the chroma blocks of the current macroblock.
+     */
+    private int zbinUv;
+
+    /**
+     * The zero-bin extra of the Y2 block of the current macroblock.
+     */
+    private int zbinY2;
+
+    /**
+     * The trellis of the coefficient optimization of the good-quality speed 0.
+     */
+    private final CoefficientOptimizer optimizer;
+
+    /**
+     * The coefficients of the current macroblock's groups before quantization, for the
+     * coefficient optimization.
+     */
+    private final int[] origGroups = new int[3 * RtDsp.GROUP];
+
+    /**
+     * The coefficients of a block before quantization, or the dequantized coefficients of a
+     * block being optimized, in raster order.
+     */
+    private final int[] blockScratch = new int[32];
+
+    /**
+     * The Y2 quantizer steps of the current macroblock's segment, in raster order.
+     */
+    private final int[] y2Steps = new int[16];
+
+    /**
+     * The above contexts the coefficient optimization updates as it goes through the
+     * macroblock's blocks.
+     */
+    private final int[] trellisAbove = new int[9];
+
+    /**
+     * The left contexts the coefficient optimization updates.
+     */
+    private final int[] trellisLeft = new int[9];
+
+    /**
+     * The state of the row of the macroblock being coded.
+     */
+    private RtRow row;
 
     /**
      * Whether the current macroblock was examined for dot artifacts, which restarts its count of
@@ -457,7 +565,14 @@ final class RtMbCoder {
      */
     RtMbCoder(RtEncoder enc) {
         this.enc = enc;
+        this.rd = new RdMbCoder(this);
+        this.optimizer = new CoefficientOptimizer(enc.rdCosts);
     }
+
+    /**
+     * The rate-distortion mode decision of the good-quality speeds 0 to 3.
+     */
+    private final RdMbCoder rd;
 
     /**
      * Codes one macroblock: chooses its modes, codes and reconstructs it, and records its tokens.
@@ -468,6 +583,7 @@ final class RtMbCoder {
      * @param mbCol  the macroblock column
      */
     void code(RtRow row, RtStats stats, int mbRow, int mbCol) {
+        this.row = row;
         setup(mbRow, mbCol);
         var segment = 0;
         if (enc.segmentationEnabled) {
@@ -477,19 +593,40 @@ final class RtMbCoder {
             }
         }
         setSegment(segment);
+        var rdMode = enc.good && enc.speed <= 3;
+        var regularCoding = enc.good && enc.speed <= 2;
+        regular = regularCoding && enc.speed == 0;
+        if (regularCoding) {
+            setZbinBoost(0);
+        }
         if (enc.keyFrame) {
-            stats.totalRate += pickIntraMode();
+            stats.totalRate += rdMode ? rd.pickIntraKey(row) : pickIntraMode();
+            if (regularCoding) {
+                regular = true;
+                setZbinBoost(0);
+            }
             encodeIntra(stats);
         } else {
-            stats.totalRate += pickInterMode(row, stats);
+            if (rdMode) {
+                stats.totalRate += rd.pickInter(row, stats);
+                breakout = rd.skipped();
+            } else {
+                stats.totalRate += pickInterMode(row, stats);
+            }
             if (enc.segmentationEnabled && enc.cyclicRefreshEnabled && enc.currentLayer == 0 && segment == 1
                     && (enc.mbRef[idx] != LAST_FRAME || enc.mbMode[idx] != ZEROMV)) {
                 setSegment(0);
+            }
+            if (regularCoding) {
+                regular = true;
+                setZbinBoost(modeBoost(enc.mbRef[idx], enc.mbMode[idx]));
             }
             var ref = enc.mbRef[idx];
             stats.refUsage[ref]++;
             if (ref == INTRA_FRAME) {
                 encodeIntra(stats);
+            } else if (enc.mbMode[idx] == SPLITMV) {
+                rd.encodeSplit(stats);
             } else {
                 predictInter();
                 if (breakout) {
@@ -553,7 +690,7 @@ final class RtMbCoder {
      * @param stride the chroma row stride
      * @param groups the grouped buffer
      */
-    private static void groupChroma(byte[] u, byte[] v, int off, int stride, byte[] groups) {
+    static void groupChroma(byte[] u, byte[] v, int off, int stride, byte[] groups) {
         for (var r = 0; r < 4; r++) {
             var upper = off + r * stride;
             var lower = upper + 4 * stride;
@@ -575,7 +712,7 @@ final class RtMbCoder {
      * @param off    the index of the macroblock's top-left sample
      * @param stride the row stride
      */
-    private static void ungroupLuma(byte[] groups, int h, byte[] plane, int off, int stride) {
+    static void ungroupLuma(byte[] groups, int h, byte[] plane, int off, int stride) {
         for (var r = 0; r < 4; r++) {
             var upper = off + (8 * h + r) * stride;
             var lower = upper + 4 * stride;
@@ -597,7 +734,7 @@ final class RtMbCoder {
      * @param off    the index of the macroblock's top-left chroma sample
      * @param stride the chroma row stride
      */
-    private static void ungroupChroma(byte[] groups, byte[] u, byte[] v, int off, int stride) {
+    static void ungroupChroma(byte[] groups, byte[] u, byte[] v, int off, int stride) {
         for (var r = 0; r < 4; r++) {
             var upper = off + r * stride;
             var lower = upper + 4 * stride;
@@ -619,13 +756,217 @@ final class RtMbCoder {
         y1Matrix = enc.y1Matrices[segment];
         y2Matrix = enc.y2Matrices[segment];
         uvMatrix = enc.uvMatrices[segment];
+        y1Regular = enc.y1Regular[segment];
+        y2Regular = enc.y2Regular[segment];
+        uvRegular = enc.uvRegular[segment];
+    }
+
+    /**
+     * Returns the widening of the zero bins of a macroblock coded with a mode, libvpx's
+     * {@code zbin_mode_boost}: zero motion from the golden or alternate reference widens them
+     * most, other inter modes but split motion a little, intra modes not at all.
+     *
+     * @param ref the reference frame
+     * @param mode the luma prediction mode
+     * @return the widening in 1/128 of the AC step
+     */
+    int modeBoost(int ref, int mode) {
+        if (!enc.zbinModeBoostEnabled || ref == INTRA_FRAME) {
+            return 0;
+        }
+        if (mode == ZEROMV) {
+            return ref != LAST_FRAME ? GF_ZEROMV_ZBIN_BOOST : LF_ZEROMV_ZBIN_BOOST;
+        }
+        return mode == SPLITMV ? 0 : MV_ZBIN_BOOST;
+    }
+
+    /**
+     * Sets the zero-bin extras of the regular quantizers from the frame's over-quantization and
+     * a mode's widening, libvpx's {@code vp8_update_zbin_extra}.
+     *
+     * @param modeBoost the widening of the mode, from {@link #modeBoost}
+     */
+    void setZbinBoost(int modeBoost) {
+        var overQuant = enc.goodZbinOverQuant;
+        zbinY = y1Regular.zbinExtra(overQuant + modeBoost);
+        zbinUv = uvRegular.zbinExtra(overQuant + modeBoost);
+        zbinY2 = y2Regular.zbinExtra(overQuant / 2 + modeBoost);
+    }
+
+    /**
+     * Quantizes one luma group of the current macroblock, whose DCs the Y2 block codes, with the
+     * quantizer {@link #regular} selects.
+     *
+     * @param group the group, {@code 0} or {@code 1}
+     * @param maxima the largest magnitudes {@link RtDsp#forwardDct8} returned for the group
+     */
+    void quantizeLumaGroup(int group, int maxima) {
+        if (!regular) {
+            quantizeGroup(group, 1, y1Matrix, maxima);
+            return;
+        }
+        zeroGroups[group] = false;
+        for (var j = 0; j < 8; j++) {
+            var block = 8 * group + j;
+            eob[block] = y1Regular.quantize(coefGroups, group * RtDsp.GROUP + j, 8, 1, zbinY, levels, block,
+                    RtDsp.LEVEL_STRIDE);
+        }
+    }
+
+    /**
+     * Quantizes the chroma group of the current macroblock with the quantizer {@link #regular}
+     * selects.
+     *
+     * @param maxima the largest magnitudes {@link RtDsp#forwardDct8} returned for the group
+     */
+    void quantizeChromaGroup(int maxima) {
+        if (!regular) {
+            quantizeGroup(2, 0, uvMatrix, maxima);
+            return;
+        }
+        zeroGroups[2] = false;
+        for (var j = 0; j < 8; j++) {
+            eob[16 + j] = uvRegular.quantize(coefGroups, 2 * RtDsp.GROUP + j, 8, 0, zbinUv, levels, 16 + j,
+                    RtDsp.LEVEL_STRIDE);
+        }
+    }
+
+    /**
+     * Quantizes the Y2 block of the current macroblock with the quantizer {@link #regular}
+     * selects, like {@link #quantizeY2}.
+     *
+     * @return the end-of-block position
+     */
+    int quantizeY2Block() {
+        if (!regular) {
+            return quantizeY2(y2Coef, y2Matrix);
+        }
+        return y2Regular.quantize(y2Coef, 0, 1, 0, zbinY2, levels, 24, RtDsp.LEVEL_STRIDE);
+    }
+
+    /**
+     * Quantizes one 4x4 luma block that codes its DC with the quantizer {@link #regular} selects,
+     * replacing its coefficients with their dequantized values.
+     *
+     * @param coef the coefficients in raster order
+     * @param out receives the levels in zigzag order
+     * @param outOff the index of the first level
+     * @return the end-of-block position
+     */
+    int quantizeSubblock(short[] coef, short[] out, int outOff) {
+        if (!regular) {
+            return encDsp.quantizeBlock(coef, 0, out, outOff, y1Matrix) == 0 ? 0 : eobOf(out, outOff);
+        }
+        return y1Regular.quantize(coef, 0, 1, 0, zbinY, out, outOff, 1);
+    }
+
+    /**
+     * Returns whether the coding of the current macroblock optimizes its quantized levels,
+     * libvpx's {@code optimize} of the good-quality speed 0.
+     *
+     * @return whether it does
+     */
+    private boolean optimizing() {
+        return regular && enc.good && enc.speed == 0;
+    }
+
+    /**
+     * Loads the contexts the coefficient optimization starts the current macroblock from.
+     */
+    void loadTrellisContexts() {
+        var ctxOff = mbCol * 9;
+        for (var i = 0; i < 9; i++) {
+            trellisAbove[i] = enc.aboveContext[ctxOff + i];
+            trellisLeft[i] = row.left[i];
+        }
+    }
+
+    /**
+     * Quantizes one 4x4 luma block of a {@code SPLITMV} macroblock, coding its DC, and optimizes
+     * its levels at the good-quality speed 0 ({@code optimize_mb} for the block), in raster
+     * order after {@link #loadTrellisContexts}.
+     *
+     * @param coef the coefficients in raster order, replaced with their dequantized values
+     * @param block the block, from 0 to 15
+     * @return the end-of-block position
+     */
+    int quantizeSplitBlock(short[] coef, int block) {
+        if (!optimizing()) {
+            return quantizeSubblock(coef, subLevels, block * 16);
+        }
+        var s = blockScratch;
+        for (var k = 0; k < 16; k++) {
+            s[k] = coef[k];
+        }
+        var e = quantizeSubblock(coef, subLevels, block * 16);
+        for (var k = 0; k < 16; k++) {
+            s[16 + k] = coef[k];
+        }
+        var a = block & 3;
+        var l = block >> 2;
+        e = optimizer.optimize(subLevels, block * 16, 1, s, 16, 1, s, 0, 1, y1Regular.q, e,
+                CoefficientOptimizer.TYPE_Y_WITH_DC, trellisAbove[a] + trellisLeft[l], enc.rdMult, enc.rdDiv, false);
+        for (var k = 0; k < 16; k++) {
+            coef[k] = (short) s[16 + k];
+        }
+        trellisAbove[a] = trellisLeft[l] = e > 0 ? 1 : 0;
+        return e;
+    }
+
+    /**
+     * Optimizes the levels of the luma and Y2 blocks of a macroblock with a Y2 block, whose
+     * coefficients before quantization are in {@link #origGroups} and {@link #blockScratch}
+     * ({@code optimize_mb}, {@code check_reset_2nd_coeffs}).
+     */
+    private void optimizeLuma() {
+        var intra = enc.mbRef[idx] == INTRA_FRAME;
+        for (var b = 0; b < 16; b++) {
+            var at = (b >> 3) * RtDsp.GROUP + (b & 7);
+            var a = b & 3;
+            var l = b >> 2;
+            var e = optimizer.optimize(levels, b, RtDsp.LEVEL_STRIDE, coefGroups, at, 8, origGroups, at, 8,
+                    y1Regular.q, eob[b], CoefficientOptimizer.TYPE_Y_NO_DC, trellisAbove[a] + trellisLeft[l],
+                    enc.rdMult, enc.rdDiv, intra);
+            eob[b] = e;
+            trellisAbove[a] = trellisLeft[l] = e > 1 ? 1 : 0;
+        }
+        var s = blockScratch;
+        for (var k = 0; k < 16; k++) {
+            s[16 + k] = y2Coef[k];
+        }
+        var e = optimizer.optimize(levels, 24, RtDsp.LEVEL_STRIDE, s, 16, 1, s, 0, 1, y2Regular.q, eob[24],
+                CoefficientOptimizer.TYPE_Y2, trellisAbove[8] + trellisLeft[8], enc.rdMult, enc.rdDiv, intra);
+        for (var k = 0; k < 16; k++) {
+            y2Coef[k] = (short) s[16 + k];
+        }
+        eob[24] = CoefficientOptimizer.resetY2(levels, 24, RtDsp.LEVEL_STRIDE, y2Coef, 0, y2Regular.q, e);
+        trellisAbove[8] = trellisLeft[8] = eob[24] > 0 ? 1 : 0;
+    }
+
+    /**
+     * Optimizes the levels of the chroma blocks, whose coefficients before quantization are in
+     * {@link #origGroups} ({@code vp8_optimize_mbuv}).
+     */
+    private void optimizeChroma() {
+        var intra = enc.mbRef[idx] == INTRA_FRAME;
+        for (var b = 16; b < 24; b++) {
+            var at = 2 * RtDsp.GROUP + (b - 16);
+            var plane = b > 19 ? 2 : 0;
+            var a = 4 + plane + (b & 1);
+            var l = 4 + plane + ((b & 3) > 1 ? 1 : 0);
+            var e = optimizer.optimize(levels, b, RtDsp.LEVEL_STRIDE, coefGroups, at, 8, origGroups, at, 8,
+                    uvRegular.q, eob[b], CoefficientOptimizer.TYPE_UV, trellisAbove[a] + trellisLeft[l], enc.rdMult,
+                    enc.rdDiv, intra);
+            eob[b] = e;
+            trellisAbove[a] = trellisLeft[l] = e > 0 ? 1 : 0;
+        }
     }
 
     /**
      * Updates the cyclic refresh and zero-motion maps after the modes of an inter macroblock
      * are final, the bookkeeping of libvpx's {@code encode_mb_row}.
      */
-    private void updateMaps() {
+    void updateMaps() {
         if (enc.currentLayer != 0) {
             return;
         }
@@ -666,7 +1007,7 @@ final class RtMbCoder {
      * @param distortion the sum of squared errors
      * @return the score
      */
-    private int rdCost(int rate, int distortion) {
+    int rdCost(int rate, int distortion) {
         return (int) (((128 + (long) rate * enc.rdMult) >> 8) + (long) enc.rdDiv * distortion);
     }
 
@@ -887,7 +1228,7 @@ final class RtMbCoder {
      * @param i the subblock
      * @return the mode
      */
-    private int aboveBlockMode(int i) {
+    int aboveBlockMode(int i) {
         if (i >= 4) {
             return subModes[i - 4];
         }
@@ -903,7 +1244,7 @@ final class RtMbCoder {
      * @param i the subblock
      * @return the mode
      */
-    private int leftBlockMode(int i) {
+    int leftBlockMode(int i) {
         if ((i & 3) != 0) {
             return subModes[i - 1];
         }
@@ -931,12 +1272,26 @@ final class RtMbCoder {
         }
         var c = subCoef;
         encDsp.fTransform(src, bpsOff, pred, bpsOff, c, 0);
-        var e = encDsp.quantizeBlock(c, 0, subLevels, i * 16, y1Matrix) == 0 ? 0 : eobOf(subLevels, i * 16);
+        var e = quantizeSubblock(c, subLevels, i * 16);
         subEobs[i] = e;
         if (e > 1) {
             dsp.idctAdd(c, 0, y, blockOff, yStride);
         } else {
             dsp.dcOnlyAdd(c[0], y, blockOff, yStride);
+        }
+    }
+
+    /**
+     * Codes the 16 luma subblocks of the current {@code B_PRED} macroblock again with their
+     * chosen modes and the regular quantizer, libvpx's {@code vp8_encode_intra4x4mby} after a
+     * decision made with the fast quantizer.
+     */
+    private void reencodeSubblocks() {
+        for (var r = 0; r < 16; r++) {
+            System.arraycopy(srcY, srcYOff + r * srcYStride, src, r * BPS, 16);
+        }
+        for (var i = 0; i < 16; i++) {
+            encodeSubblock(i, enc.bModes[idx * 16 + i]);
         }
     }
 
@@ -947,7 +1302,7 @@ final class RtMbCoder {
      * @param off the index of the block's first level
      * @return the end-of-block position, {@code 0} when every level is zero
      */
-    private static int eobOf(short[] l, int off) {
+    static int eobOf(short[] l, int off) {
         for (var n = 15; n >= 0; n--) {
             if (l[off + n] != 0) {
                 return n + 1;
@@ -1052,13 +1407,16 @@ final class RtMbCoder {
      *
      * @param stats the statistics of the coding thread
      */
-    private void encodeIntra(RtStats stats) {
+    void encodeIntra(RtStats stats) {
         var cur = enc.cur;
         var mode = enc.mbMode[idx];
         var uvMode = enc.mbUvMode[idx];
         IntraPredictor.predictBlock(uvMode, cur.u, uvOff, cur.uvStride, 8, mbRow > 0, mbCol > 0);
         IntraPredictor.predictBlock(uvMode, cur.v, uvOff, cur.uvStride, 8, mbRow > 0, mbCol > 0);
         if (mode == B_PRED) {
+            if (regular && enc.speed > 0) {
+                reencodeSubblocks();
+            }
             for (var i = 0; i < 16; i++) {
                 for (var n = 0; n < 16; n++) {
                     levels[n * RtDsp.LEVEL_STRIDE + i] = subLevels[i * 16 + n];
@@ -1084,28 +1442,47 @@ final class RtMbCoder {
      *
      * @param subblocks whether the luma blocks were coded as subblocks
      */
-    private void encodeResidual(boolean subblocks) {
+    void encodeResidual(boolean subblocks) {
         var cur = enc.cur;
         var yStride = cur.yStride;
         var uvStride = cur.uvStride;
         var coefs = coefGroups;
+        var optimize = optimizing();
+        if (optimize) {
+            loadTrellisContexts();
+        }
         if (!subblocks) {
             rtDsp.groupMacroblock(cur.y, yOff, yStride, cur.u, cur.v, uvOff, uvStride, predGroups);
             var upper = rtDsp.forwardDct8(srcGroups, 0, predGroups, 0, coefs, 0);
             var lower = rtDsp.forwardDct8(srcGroups, RtDsp.GROUP, predGroups, RtDsp.GROUP, coefs, RtDsp.GROUP);
             forwardWht(coefs, y2Coef);
-            quantizeGroup(0, 1, y1Matrix, upper);
-            quantizeGroup(1, 1, y1Matrix, lower);
-            eob[24] = quantizeY2(y2Coef, y2Matrix);
+            if (optimize) {
+                System.arraycopy(coefs, 0, origGroups, 0, 2 * RtDsp.GROUP);
+                for (var k = 0; k < 16; k++) {
+                    blockScratch[k] = y2Coef[k];
+                }
+            }
+            quantizeLumaGroup(0, upper);
+            quantizeLumaGroup(1, lower);
+            eob[24] = quantizeY2Block();
+            if (optimize) {
+                optimizeLuma();
+            }
         }
         if (subblocks) {
             groupChroma(cur.u, cur.v, uvOff, uvStride, predGroups);
         }
         var chromaMax = rtDsp.forwardDct8(srcGroups, 2 * RtDsp.GROUP, predGroups, 2 * RtDsp.GROUP, coefs,
                 2 * RtDsp.GROUP);
-        quantizeGroup(2, 0, uvMatrix, chromaMax);
+        if (optimize) {
+            System.arraycopy(coefs, 2 * RtDsp.GROUP, origGroups, 2 * RtDsp.GROUP, RtDsp.GROUP);
+        }
+        quantizeChromaGroup(chromaMax);
+        if (optimize) {
+            optimizeChroma();
+        }
         if (!subblocks) {
-            inverseWht(y2Coef, eob[24]);
+            inverseWht(y2Coef, eob[24], dcs, whtScratch);
             var dc = dcs;
             for (var h = 0; h < 2; h++) {
                 var any = false;
@@ -1138,7 +1515,7 @@ final class RtMbCoder {
      * Whether each group's levels are all zero after {@link #quantizeGroup}, which then leaves
      * the group's coefficients and levels as they are.
      */
-    private final boolean[] zeroGroups = new boolean[3];
+    final boolean[] zeroGroups = new boolean[3];
 
     /**
      * Quantizes one group of eight blocks with {@link RtDsp#quantize8}, or, when every level is
@@ -1155,7 +1532,7 @@ final class RtMbCoder {
      * @param m      the quantization matrix
      * @param maxima the largest magnitudes {@link RtDsp#forwardDct8} returned for the group
      */
-    private void quantizeGroup(int group, int first, QuantMatrix m, int maxima) {
+    void quantizeGroup(int group, int first, QuantMatrix m, int maxima) {
         var coefOff = group * RtDsp.GROUP;
         if ((maxima & 0xFFFF) <= m.zthresh[1] && (first > 0 || (maxima >>> 16) <= m.zthresh[0])) {
             zeroGroups[group] = true;
@@ -1174,7 +1551,7 @@ final class RtMbCoder {
      *              {@code (b >> 3) * RtDsp.GROUP + (b & 7)}
      * @param out   receives the 16 Y2 coefficients in raster order
      */
-    private void forwardWht(int[] coefs, short[] out) {
+    void forwardWht(int[] coefs, short[] out) {
         var tmp = whtScratch;
         for (var i = 0; i < 4; i++) {
             var base = (i >> 1) * RtDsp.GROUP + (i & 1) * 4;
@@ -1210,7 +1587,7 @@ final class RtMbCoder {
      * @param m the Y2 quantization matrix
      * @return the end-of-block position
      */
-    private int quantizeY2(short[] c, QuantMatrix m) {
+    int quantizeY2(short[] c, QuantMatrix m) {
         var last = 0;
         for (var n = 0; n < 16; n++) {
             var j = RtDsp.ZIGZAG[n];
@@ -1235,17 +1612,17 @@ final class RtMbCoder {
     }
 
     /**
-     * Applies the inverse Walsh-Hadamard transform to the dequantized Y2 block, storing the DC
-     * coefficients of the 16 luma blocks in {@link #dcs}, exactly as the decoder does
+     * Applies the inverse Walsh-Hadamard transform to a dequantized Y2 block, storing the DC
+     * coefficients of the 16 luma blocks, exactly as the decoder does
      * (libvpx's {@code vp8_short_inv_walsh4x4_c} with its 16-bit intermediate values).
      *
      * @param c the dequantized Y2 coefficients in raster order
      * @param e the Y2 block's end-of-block position
+     * @param dc receives the 16 luma DC coefficients in raster block order
+     * @param t 16 values of scratch
      */
-    private void inverseWht(short[] c, int e) {
-        var dc = dcs;
+    static void inverseWht(short[] c, int e, short[] dc, int[] t) {
         if (e > 1) {
-            var t = whtScratch;
             for (var i = 0; i < 4; i++) {
                 var a1 = c[i] + c[12 + i];
                 var b1 = c[4 + i] + c[8 + i];
@@ -1277,8 +1654,8 @@ final class RtMbCoder {
      * Forms the inter prediction of the current macroblock in the frame being coded, from its
      * reference and motion vector, like the decoder's prediction of an unsplit macroblock.
      */
-    private void predictInter() {
-        var ref = enc.refs[enc.mbRef[idx]];
+    void predictInter() {
+        var ref = enc.refBuffer(enc.mbRef[idx]);
         var cur = enc.cur;
         var mv = enc.mbMv[idx];
         var row = Mv.row(mv);
@@ -1308,7 +1685,7 @@ final class RtMbCoder {
      * @param col    the horizontal displacement in 1/8 pixel
      * @param size   the block side
      */
-    private void predictBlock(byte[] ref, byte[] dst, int off, int stride, int row, int col, int size) {
+    void predictBlock(byte[] ref, byte[] dst, int off, int stride, int row, int col, int size) {
         var srcOff = off + (row >> 3) * stride + (col >> 3);
         var mx = col & 7;
         var my = row & 7;
@@ -1326,8 +1703,8 @@ final class RtMbCoder {
      * @param row   the state of the macroblock's row
      * @param stats the statistics of the coding thread
      */
-    private void tokenize(RtRow row, RtStats stats) {
-        var hasY2 = enc.mbMode[idx] != B_PRED;
+    void tokenize(RtRow row, RtStats stats) {
+        var hasY2 = enc.mbMode[idx] != B_PRED && enc.mbMode[idx] != SPLITMV;
         var skip = true;
         if (hasY2) {
             for (var i = 0; i < 16; i++) {
@@ -1571,12 +1948,28 @@ final class RtMbCoder {
         for (; n < 4; n++) {
             refs[n] = -1;
         }
+        var biasMask = enc.signBiasMask();
+        var bias = 0;
         if (refs[1] > 0) {
-            NearMvs.find(enc.mbRef, enc.mbMv, idx, enc.miStride, mdCounts, nearResult);
-            modeMv[NEARESTMV] = clampMv2(nearResult[1]);
-            modeMv[NEARMV] = clampMv2(nearResult[2]);
-            bestRefMv = clampMv2(nearResult[0]);
+            NearMvs.find(enc.mbRef, enc.mbMv, enc.mbMode, idx, enc.miStride, biasMask, 0, mdCounts, nearResult);
+            nearestSb[0] = clampMv2(nearResult[1]);
+            nearSb[0] = clampMv2(nearResult[2]);
+            bestSb[0] = clampMv2(nearResult[0]);
+            if (biasMask != 0) {
+                NearMvs.find(enc.mbRef, enc.mbMv, enc.mbMode, idx, enc.miStride, biasMask, 1, mdCounts, nearResult);
+                nearestSb[1] = clampMv2(nearResult[1]);
+                nearSb[1] = clampMv2(nearResult[2]);
+                bestSb[1] = clampMv2(nearResult[0]);
+            } else {
+                nearestSb[1] = nearestSb[0];
+                nearSb[1] = nearSb[0];
+                bestSb[1] = bestSb[0];
+            }
+            modeMv[NEARESTMV] = nearestSb[0];
+            modeMv[NEARMV] = nearSb[0];
+            bestRefMv = bestSb[0];
         }
+        var zeroAltRefOnly = enc.srcFrameAltRef && enc.forceZeroAltRef;
         row.mbsTested++;
         srcStatsValid = false;
         var rdAdjustment = 100;
@@ -1611,6 +2004,18 @@ final class RtMbCoder {
             var thisMode = RtTables.MODE_ORDER[modeIndex];
             if (thisMode == SPLITMV) {
                 continue;
+            }
+            if (zeroAltRefOnly && (thisMode != ZEROMV || thisRef != ALTREF_FRAME)) {
+                continue;
+            }
+            if (thisRef != INTRA_FRAME) {
+                var refBias = (biasMask >> thisRef) & 1;
+                if (refBias != bias) {
+                    bias = refBias;
+                    modeMv[NEARESTMV] = nearestSb[bias];
+                    modeMv[NEARMV] = nearSb[bias];
+                    bestRefMv = bestSb[bias];
+                }
             }
             if (hits[modeIndex] != 0 && checkFreq[modeIndex] > 1
                     && row.mbsTested <= checkFreq[modeIndex] * hits[modeIndex]) {
@@ -1715,14 +2120,22 @@ final class RtMbCoder {
             thresholds[bestModeIndex] = threshold(baseline[bestModeIndex], mults[bestModeIndex]);
         }
         stats.errorBins[Math.min(returnDistortion >> 7, RtStats.ERROR_BINS - 1)]++;
+        if (enc.srcFrameAltRef && (bestMode != ZEROMV || bestRef != ALTREF_FRAME)) {
+            enc.mbMode[idx] = (byte) ZEROMV;
+            enc.mbRef[idx] = (byte) ALTREF_FRAME;
+            enc.mbMv[idx] = 0;
+            enc.mbUvMode[idx] = (byte) DC_PRED;
+            return returnRate;
+        }
         enc.mbMode[idx] = (byte) bestMode;
         enc.mbRef[idx] = (byte) bestRef;
         enc.mbMv[idx] = bestRef == INTRA_FRAME ? 0 : bestMv;
         if (bestRef == INTRA_FRAME) {
             pickIntraUvMode(RtDsp.SCALAR);
         } else if (bestMode == NEWMV) {
-            var rowIdx = RtStats.MV_MAX + ((Mv.row(bestMv) - Mv.row(bestRefMv)) >> 1);
-            var colIdx = RtStats.MV_MAX + ((Mv.col(bestMv) - Mv.col(bestRefMv)) >> 1);
+            var best = bestSb[(biasMask >> bestRef) & 1];
+            var rowIdx = RtStats.MV_MAX + ((Mv.row(bestMv) - Mv.row(best)) >> 1);
+            var colIdx = RtStats.MV_MAX + ((Mv.col(bestMv) - Mv.col(best)) >> 1);
             if (rowIdx >= 0 && rowIdx < RtStats.MV_VALS && colIdx >= 0 && colIdx < RtStats.MV_VALS) {
                 stats.mvCounts[rowIdx]++;
                 stats.mvCounts[RtStats.MV_VALS + colIdx]++;
@@ -1764,7 +2177,7 @@ final class RtMbCoder {
      * @param mv the packed luma vector, in 1/8 pixel
      * @return the sum over both chroma planes
      */
-    private long chromaSse(int mv) {
+    long chromaSse(int mv) {
         var ref = preFrame;
         var row = Mv.row(mv);
         var col = Mv.col(mv);
@@ -1825,7 +2238,7 @@ final class RtMbCoder {
      * @param mult     the multiplier in 1/128
      * @return the threshold, at most {@link Integer#MAX_VALUE}
      */
-    private static int threshold(int baseline, int mult) {
+    static int threshold(int baseline, int mult) {
         return (int) Math.min((long) (baseline >> 7) * mult, Integer.MAX_VALUE);
     }
 
@@ -1965,7 +2378,7 @@ final class RtMbCoder {
      * @param mv the packed vector
      * @return the clamped packed vector
      */
-    private int clampMv2(int mv) {
+    int clampMv2(int mv) {
         return Mv.clamp(mv, mbToLeftEdge, mbToRightEdge, mbToTopEdge, mbToBottomEdge);
     }
 
@@ -1976,7 +2389,7 @@ final class RtMbCoder {
      * @param mode the mode: {@code NEARESTMV}, {@code NEARMV}, {@code ZEROMV} or {@code NEWMV}
      * @return the cost in 1/256 bit
      */
-    private int costMvRef(int mode) {
+    int costMvRef(int mode) {
         var mc = Vp8Tables.MODE_CONTEXTS;
         var cnt = mdCounts;
         var p0 = mc[cnt[0] * 4];
@@ -2004,7 +2417,7 @@ final class RtMbCoder {
      * @param ref the packed reference vector
      * @return the cost in 1/256 bit
      */
-    private int mvBitCost(int mv, int ref) {
+    int mvBitCost(int mv, int ref) {
         var cost = enc.mvCost;
         var r = Math.clamp((Mv.row(mv) - Mv.row(ref)) >> 1, -RtStats.MV_MAX, RtStats.MV_MAX);
         var c = Math.clamp((Mv.col(mv) - Mv.col(ref)) >> 1, -RtStats.MV_MAX, RtStats.MV_MAX);
@@ -2019,7 +2432,7 @@ final class RtMbCoder {
      * @param ref the packed reference vector
      * @return the cost
      */
-    private int mvErrCost(int mv, int ref) {
+    int mvErrCost(int mv, int ref) {
         return (int) (((long) mvBitCost(mv, ref) * enc.errorPerBit + 128) >> 8);
     }
 
@@ -2034,7 +2447,7 @@ final class RtMbCoder {
      * @param sadPerBit the cost of a bit in SAD units
      * @return the cost
      */
-    private int mvSadErrCost(int row, int col, int centerRow, int centerCol, int sadPerBit) {
+    int mvSadErrCost(int row, int col, int centerRow, int centerCol, int sadPerBit) {
         var cost = enc.mvSadCost;
         var r = Math.clamp(row - centerRow, -RtEncoder.MVFP_MAX, RtEncoder.MVFP_MAX);
         var c = Math.clamp(col - centerCol, -RtEncoder.MVFP_MAX, RtEncoder.MVFP_MAX);
@@ -2143,14 +2556,14 @@ final class RtMbCoder {
     /**
      * The search range suggested by the last {@link #mvPred}.
      */
-    private int predictedRange;
+    int predictedRange;
 
     /**
      * Computes the sums of absolute differences between the source macroblock and its
      * reconstructed neighbors in the frame being coded and in the last frame, and sorts the
      * candidates by them, libvpx's {@code vp8_cal_sad}.
      */
-    private void calSad() {
+    void calSad() {
         var sad = nearSad;
         var order = nearSadIdx;
         for (var i = 0; i < 8; i++) {
@@ -2260,7 +2673,7 @@ final class RtMbCoder {
      * @param ref the reference
      * @return the packed predicted vector, clamped
      */
-    private int mvPred(int ref) {
+    int mvPred(int ref) {
         var mvs = nearMvs;
         var refs = nearRefs;
         for (var i = 0; i < 8; i++) {
@@ -2269,22 +2682,24 @@ final class RtMbCoder {
         }
         var mbRef = enc.mbRef;
         var mbMv = enc.mbMv;
+        var mask = enc.signBiasMask();
+        var bias = (mask >> ref) & 1;
         var above = idx - enc.miStride;
         var left = idx - 1;
         var aboveLeft = above - 1;
         var vcnt = 0;
         if (mbRef[above] != INTRA_FRAME) {
-            mvs[vcnt] = mbMv[above];
+            mvs[vcnt] = NearMvs.biased(mbMv[above], mbRef[above], mask, bias);
             refs[vcnt] = mbRef[above];
         }
         vcnt++;
         if (mbRef[left] != INTRA_FRAME) {
-            mvs[vcnt] = mbMv[left];
+            mvs[vcnt] = NearMvs.biased(mbMv[left], mbRef[left], mask, bias);
             refs[vcnt] = mbRef[left];
         }
         vcnt++;
         if (mbRef[aboveLeft] != INTRA_FRAME) {
-            mvs[vcnt] = mbMv[aboveLeft];
+            mvs[vcnt] = NearMvs.biased(mbMv[aboveLeft], mbRef[aboveLeft], mask, bias);
             refs[vcnt] = mbRef[aboveLeft];
         }
         vcnt++;
@@ -2293,11 +2708,11 @@ final class RtMbCoder {
             var offset = (mbRow + 1) * lfStride + mbCol + 1;
             var lfRef = enc.lfRef;
             var lfMv = enc.lfMv;
-            vcnt = lastFrameCandidate(lfRef, lfMv, offset, vcnt);
-            vcnt = lastFrameCandidate(lfRef, lfMv, offset - lfStride, vcnt);
-            vcnt = lastFrameCandidate(lfRef, lfMv, offset - 1, vcnt);
-            vcnt = lastFrameCandidate(lfRef, lfMv, offset + 1, vcnt);
-            vcnt = lastFrameCandidate(lfRef, lfMv, offset + lfStride, vcnt);
+            vcnt = lastFrameCandidate(lfRef, lfMv, offset, vcnt, bias);
+            vcnt = lastFrameCandidate(lfRef, lfMv, offset - lfStride, vcnt, bias);
+            vcnt = lastFrameCandidate(lfRef, lfMv, offset - 1, vcnt, bias);
+            vcnt = lastFrameCandidate(lfRef, lfMv, offset + 1, vcnt, bias);
+            vcnt = lastFrameCandidate(lfRef, lfMv, offset + lfStride, vcnt, bias);
         }
         var order = nearSadIdx;
         for (var i = 0; i < vcnt; i++) {
@@ -2324,11 +2739,13 @@ final class RtMbCoder {
      * @param lfMv   the last frame's vectors
      * @param offset the candidate's index in the last frame arrays
      * @param vcnt   the number of candidates so far
+     * @param bias   the sign bias of the reference predicted, which negates candidates of the other
      * @return the number of candidates after this one
      */
-    private int lastFrameCandidate(byte[] lfRef, int[] lfMv, int offset, int vcnt) {
+    private int lastFrameCandidate(byte[] lfRef, int[] lfMv, int offset, int vcnt, int bias) {
         if (offset >= 0 && offset < lfRef.length && lfRef[offset] != INTRA_FRAME) {
-            nearMvs[vcnt] = lfMv[offset];
+            var mv = lfMv[offset];
+            nearMvs[vcnt] = enc.lfSignBias[offset] != bias ? Mv.pack(-Mv.row(mv), -Mv.col(mv)) : mv;
             nearRefs[vcnt] = lfRef[offset];
         }
         return vcnt + 1;
@@ -2342,7 +2759,7 @@ final class RtMbCoder {
      * @param col the vector's column in full pixels
      * @return the sum
      */
-    private int sadAt(int row, int col) {
+    int sadAt(int row, int col) {
         var stride = enc.cur.yStride;
         return rtDsp.sad16(srcY, srcYOff, srcYStride, preY, yOff + row * stride + col, stride);
     }
@@ -2471,7 +2888,7 @@ final class RtMbCoder {
     /**
      * The number of steps of the last {@link #diamondSearch} that did not move from its start.
      */
-    private int diamondNum00;
+    int diamondNum00;
 
     /**
      * Searches the full-pixel vector with the lowest SAD plus vector cost by shrinking
@@ -2485,7 +2902,7 @@ final class RtMbCoder {
      * @param center     the packed reference vector the costs are measured from
      * @return the variance at the result plus its vector cost
      */
-    private int diamondSearch(int startRow, int startCol, int stepParam, int sadPerBit, int center) {
+    int diamondSearch(int startRow, int startCol, int stepParam, int sadPerBit, int center) {
         var centerRow = Mv.row(center) >> 3;
         var centerCol = Mv.col(center) >> 3;
         var refRow = Math.clamp(startRow, mvRowMin, mvRowMax);
@@ -2607,7 +3024,7 @@ final class RtMbCoder {
      *
      * @param ref the packed reference vector the costs are measured from
      */
-    private void subpelIterative(int ref) {
+    void subpelIterative(int ref) {
         var bounds = iterativeBounds;
         var maxDistance = (1 << MV_LONG_WIDTH) - 1;
         bounds[0] = Math.max(mvColMin * 4, (Mv.col(ref) >> 1) - maxDistance);

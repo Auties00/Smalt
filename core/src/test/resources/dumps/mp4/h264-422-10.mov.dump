@@ -1,0 +1,31 @@
+# demux dump of mp4/h264-422-10.mov; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 1000000
+seekable true
+metadata compatible_brands="qt  "
+metadata encoder="Lavf61.7.100"
+metadata major_brand="qt  "
+metadata minor_version="512"
+track 1 VIDEO H264 timebase=1/15360 duration=15360 config=47:e6f058d0
+  video 160x120 orientation=NORMAL rate=15/1 sar=1/1
+packets 15
+0 t1 pts=0 dts=-2048 dur=1024 flags=KEY size=2719 crc=3ba9f8b9
+1 t1 pts=3072 dts=-1024 dur=1024 flags=- size=887 crc=494703eb
+2 t1 pts=1024 dts=0 dur=1024 flags=- size=473 crc=d82da449
+3 t1 pts=2048 dts=1024 dur=1024 flags=- size=516 crc=a592c898
+4 t1 pts=5120 dts=2048 dur=1024 flags=- size=832 crc=98eddfb5
+5 t1 pts=4096 dts=3072 dur=1024 flags=- size=362 crc=f652591d
+6 t1 pts=8192 dts=4096 dur=1024 flags=- size=814 crc=76079762
+7 t1 pts=6144 dts=5120 dur=1024 flags=- size=347 crc=e524a485
+8 t1 pts=7168 dts=6144 dur=1024 flags=- size=292 crc=31c07a29
+9 t1 pts=9216 dts=7168 dur=1024 flags=- size=545 crc=404da87a
+10 t1 pts=10240 dts=8192 dur=1024 flags=KEY size=2811 crc=e1e787e6
+11 t1 pts=13312 dts=9216 dur=1024 flags=- size=743 crc=91475419
+12 t1 pts=11264 dts=10240 dur=1024 flags=- size=605 crc=9593674f
+13 t1 pts=12288 dts=11264 dur=1024 flags=- size=465 crc=847ac3ac
+14 t1 pts=14336 dts=12288 dur=1024 flags=- size=389 crc=a9a66e9a
+seek 0: t1@0
+seek 333333: t1@0
+seek 666666: t1@0
+seek 1000000: end
+seek -1000000: t1@0

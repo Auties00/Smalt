@@ -1,0 +1,40 @@
+# demux dump of ts/mpeg2.ts; regenerate with -Dsmalt.test.updateDumps=true
+format MPEG_TS
+duration 800000
+seekable true
+track 256 VIDEO MPEG2_VIDEO timebase=1/90000 duration=? config=22:5405cf3f
+  video 160x120 orientation=NORMAL rate=25/1 sar=1/1
+packets 20
+0 t256 pts=0 dts=-3600 dur=3600 flags=KEY size=3475 crc=5ed69d2a
+1 t256 pts=10800 dts=0 dur=3600 flags=- size=1838 crc=724f4323
+2 t256 pts=3600 dts=3600 dur=3600 flags=- size=1164 crc=1feb31f7
+3 t256 pts=7200 dts=7200 dur=3600 flags=- size=962 crc=21b50bc5
+4 t256 pts=21600 dts=10800 dur=3600 flags=- size=1855 crc=1e5dd221
+5 t256 pts=14400 dts=14400 dur=3600 flags=- size=1121 crc=c9015b9c
+6 t256 pts=18000 dts=18000 dur=3600 flags=- size=1030 crc=5067be8b
+7 t256 pts=32400 dts=21600 dur=3600 flags=- size=1967 crc=6da321f7
+8 t256 pts=25200 dts=25200 dur=3600 flags=- size=1284 crc=09d9865c
+9 t256 pts=28800 dts=28800 dur=3600 flags=- size=1168 crc=fb5fe720
+10 t256 pts=43200 dts=32400 dur=3600 flags=KEY size=3873 crc=efe23f2b
+11 t256 pts=36000 dts=36000 dur=3600 flags=- size=1113 crc=1994e3c0
+12 t256 pts=39600 dts=39600 dur=3600 flags=- size=1183 crc=3fca7bcb
+13 t256 pts=54000 dts=43200 dur=3600 flags=- size=1944 crc=8b7d7685
+14 t256 pts=46800 dts=46800 dur=3600 flags=- size=1175 crc=e7db1507
+15 t256 pts=50400 dts=50400 dur=3600 flags=- size=1173 crc=d2dc89c1
+16 t256 pts=64800 dts=54000 dur=3600 flags=- size=1727 crc=ae058bc2
+17 t256 pts=57600 dts=57600 dur=3600 flags=- size=943 crc=db84c47c
+18 t256 pts=61200 dts=61200 dur=3600 flags=- size=1046 crc=0c78c132
+19 t256 pts=68400 dts=64800 dur=3600 flags=- size=1727 crc=a36a2024
+seek 0: t256@0
+seek 266666: t256@0
+seek 533333: t256@10
+seek 800000: end
+seek -1000000: t256@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format MPEG_TS
+  duration -1
+  seekable false
+  track 256 VIDEO MPEG2_VIDEO timebase=1/90000 duration=? config=22:5405cf3f
+    video 160x120 orientation=NORMAL rate=25/1 sar=1/1
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH

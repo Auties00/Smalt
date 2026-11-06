@@ -495,11 +495,14 @@ public final class SigProcFlp {
      * @param warping  the warping coefficient
      * @param length   the number of samples
      * @param order    the correlation order, even
+     * @param state    a work array of at least {@code order + 1} values, overwritten
+     * @param c        a work array of at least {@code order + 1} values, overwritten
      */
-    static void warpedAutocorrelationFlp(float[] corr, float[] input, int inputOff, float warping, int length, int order) {
+    static void warpedAutocorrelationFlp(float[] corr, float[] input, int inputOff, float warping, int length, int order,
+                                         double[] state, double[] c) {
         double tmp1, tmp2;
-        var state = new double[25];
-        var c = new double[25];
+        Arrays.fill(state, 0, order + 1, 0);
+        Arrays.fill(c, 0, order + 1, 0);
         for (var n = 0; n < length; n++) {
             tmp1 = input[inputOff + n];
             for (var i = 0; i < order; i += 2) {
