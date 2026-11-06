@@ -2,6 +2,10 @@ package com.github.auties00.smalt.image.heic.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.Channel16Picture;
+import com.github.auties00.smalt.image.Channel8Picture;
+import com.github.auties00.smalt.image.ChannelFloatPicture;
+import com.github.auties00.smalt.image.ChannelPicture;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorRange;
@@ -14,6 +18,7 @@ import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.ops.Region;
 import com.github.auties00.smalt.internal.heif.HeifCanvas;
+import com.github.auties00.smalt.internal.heif.HeifComponentPictures;
 import com.github.auties00.smalt.internal.heif.HeifFile;
 import com.github.auties00.smalt.internal.heif.HeifGeometry;
 import com.github.auties00.smalt.internal.heif.HeifGrid;
@@ -51,13 +56,18 @@ import java.util.concurrent.atomic.AtomicLong;
  *       ({@code lsel}) or else of its highest output layer, with the picture of the AVC-coded item
  *       it references with {@code exbl} as the external base layer when it has one; a JPEG
  *       ({@code jpeg}), JPEG 2000 ({@code j2k1}) or uncompressed ({@code unci}) item as
- *       {@link PictureItems} decodes it, with the alpha plane it carries itself;</li>
+ *       {@link PictureItems} decodes it, with the alpha plane it carries itself; a JPEG 2000 item whose
+ *       components only a channel picture represents (ink components, or components deeper than 16
+ *       bits) as the {@link ChannelPicture} of its {@link ChannelTile}, with its own alpha channel,
+ *       straight or premultiplied, which an alpha auxiliary image replaces;</li>
  *   <li>for an image grid ({@code grid}), its input images placed edge to edge and cropped to the
  *       output size. Inputs that are coded items without transformative properties, the grids of
  *       cameras, decode in parallel on the module's shared helper threads, each written straight
  *       into its region of the picture; other inputs are reconstructed one after the other. When
  *       an input is packed RGBA (an overlay or a premultiplied image), the grid is packed RGBA
- *       too, its planar inputs converted;</li>
+ *       too, its planar and channel inputs converted; when the inputs are channel pictures, the
+ *       grid is a channel picture of the layout of its first input and the deepest sample type of
+ *       its inputs;</li>
  *   <li>for an identity derivation ({@code iden}), its input image;</li>
  *   <li>for an image overlay ({@code iovl}), its input images placed over a canvas filled with
  *       the fill color, each over the ones before it, as straight-alpha RGBA (16-bit when a
@@ -233,14 +243,20 @@ public final class StillDecoder {
      * @param limits the bounds of every item and picture
      * @param highBitDepth whether a source of more than 8 bits keeps its depth
      * @param depth the number of derived images reconstructed on the way to the item
-     * @return the picture
+     * @return the picture: planar, or packed RGBA for an overlay, a premultiplied image and an image that
+     * reconstructs to a channel picture (converted with {@link ImageOps#toRgba16(Picture)} when
+     * {@code highBitDepth} is set and it is deeper than 8 bits, {@link ImageOps#toRgba(Picture)} otherwise)
      * @throws MediaException.Malformed if the item is corrupt or nested deeper than {@value #MAX_DEPTH}
      * @throws MediaException.Unsupported if the item uses a feature this decoder lacks
      * @throws MediaException.LimitExceeded if the image exceeds the limits
      */
     public static Picture reconstructInput(MediaSource source, HeifFile file, HeifItem item, MediaLimits limits,
                                            boolean highBitDepth, int depth) {
-        return new StillDecoder(source, file, limits).reconstruct(item, highBitDepth, depth);
+        var picture = new StillDecoder(source, file, limits).reconstruct(item, highBitDepth, depth);
+        if (picture instanceof ChannelPicture channels) {
+            return highBitDepth && channels.bitDepth() > 8 ? ImageOps.toRgba16(channels) : ImageOps.toRgba(channels);
+        }
+        return picture;
     }
 
     /**
@@ -388,7 +404,7 @@ public final class StillDecoder {
      * @param item the item to reconstruct
      * @param wide whether a source of more than 8 bits keeps its depth
      * @param depth the number of derived images being reconstructed on the way to this one
-     * @return the picture: planar, or RGBA for an overlay and for premultiplied alpha
+     * @return the picture: planar, RGBA for an overlay and for premultiplied alpha, or a channel picture
      */
     private Picture reconstruct(HeifItem item, boolean wide, int depth) {
         if (depth > MAX_DEPTH) {
@@ -446,6 +462,13 @@ public final class StillDecoder {
         var alpha = alphaOf(source, file, item, limits);
         var frame = decodeCoded(decoders, item);
         var extent = extent(item, frame);
+        if (frame instanceof ChannelTile tile) {
+            var picture = tile.picture(wide);
+            if (picture.width() != extent[0] || picture.height() != extent[1]) {
+                picture = (ChannelPicture) ImageOps.crop(picture, 0, 0, extent[0], extent[1]);
+            }
+            return alpha == null ? picture : withAlpha(picture, alpha, item.references("prem", alpha.id()), depth);
+        }
         var own = frame.alpha();
         var canvas = frame.canvas(limits, extent[0], extent[1], wide, alpha != null || own != null);
         var color = Colors.of(frame, item);
@@ -459,6 +482,24 @@ public final class StillDecoder {
         }
         var picture = canvas.toPicture(color);
         return premultiplied ? HeifPictures.unpremultiply(picture) : picture;
+    }
+
+    /**
+     * Gives a channel picture the alpha of an alpha auxiliary image, replacing the alpha channel it has.
+     *
+     * @param picture the channel picture of the item
+     * @param alpha the alpha item
+     * @param premultiplied whether the color is premultiplied by the alpha
+     * @param depth the nesting depth of the item
+     * @return the picture with the alpha channel, {@link com.github.auties00.smalt.image.ChannelType#ALPHA} or
+     * {@link com.github.auties00.smalt.image.ChannelType#PREMULTIPLIED_ALPHA}
+     */
+    private ChannelPicture withAlpha(ChannelPicture picture, HeifItem alpha, boolean premultiplied, int depth) {
+        var deep = picture.bitDepth() > 8;
+        var plane = new HeifCanvas(FORMAT, limits, picture.width(), picture.height(), ChromaFormat.MONOCHROME,
+                deep ? 16 : 8, deep, true);
+        attachAlpha(plane, alpha, depth);
+        return HeifComponentPictures.withAlpha(picture, plane.toPicture(ColorInfo.JPEG), premultiplied);
     }
 
     /**
@@ -715,12 +756,38 @@ public final class StillDecoder {
             }
             return;
         }
-        var picture = output(alpha, true, depth + 1);
+        var picture = alphaPlane(output(alpha, true, depth + 1));
         var limited = switch (picture) {
             case RgbaPicture _, Rgba16Picture _ -> false;
             default -> HeifPictures.colorOf(picture).range() == ColorRange.LIMITED;
         };
         canvas.writeAlpha(HeifPictures.resampleAlpha(picture, canvas.width(), canvas.height()), limited);
+    }
+
+    /**
+     * Presents the reconstructed image of an alpha item as the planar picture the alpha plane is read from.
+     *
+     * @param picture the reconstructed alpha image
+     * @return the picture itself, or for a channel picture (an alpha image deeper than 16 bits) a full-range
+     * 16-bit monochrome picture of its first channel, rescaled as {@link ImageOps#toChannel16(Picture)} rescales it
+     */
+    private static Picture alphaPlane(Picture picture) {
+        if (!(picture instanceof ChannelPicture channels)) {
+            return picture;
+        }
+        var sixteen = ImageOps.toChannel16(channels);
+        var width = sixteen.width();
+        var height = sixteen.height();
+        var count = sixteen.channelCount();
+        var luma = new short[width * height];
+        for (var y = 0; y < height; y++) {
+            var in = y * sixteen.stride();
+            for (var x = 0; x < width; x++) {
+                luma[y * width + x] = sixteen.pixels()[in + x * count];
+            }
+        }
+        return Yuv16Picture.builder().size(width, height).chromaFormat(ChromaFormat.MONOCHROME).bitDepth(16)
+                .color(ColorInfo.JPEG).luma(luma, width).build();
     }
 
     /**
@@ -742,7 +809,7 @@ public final class StillDecoder {
                 var grid = HeifStills.readGrid(FORMAT, source, file, alpha, limits);
                 if (grid.outputWidth() == width && grid.outputHeight() == height) {
                     var placed = grid(alpha, true, depth + 1, area);
-                    var picture = placed.picture();
+                    var picture = alphaPlane(placed.picture());
                     var limited = switch (picture) {
                         case RgbaPicture _, Rgba16Picture _ -> false;
                         default -> HeifPictures.colorOf(picture).range() == ColorRange.LIMITED;
@@ -762,7 +829,7 @@ public final class StillDecoder {
             limited = frame.limitedAlpha(alpha.property(HeifProperty.ColorNclx.class));
             picture = frame.lumaPicture();
         } else {
-            picture = output(alpha, true, depth + 1);
+            picture = alphaPlane(output(alpha, true, depth + 1));
             limited = switch (picture) {
                 case RgbaPicture _, Rgba16Picture _ -> false;
                 default -> HeifPictures.colorOf(picture).range() == ColorRange.LIMITED;
@@ -815,14 +882,21 @@ public final class StillDecoder {
         var alpha = alphaOf(source, file, item, limits);
         Placed placed;
         if (plain) {
-            placed = codedGrid(item, grid, tiles, alpha, width, height, wide, depth, area);
+            try {
+                placed = codedGrid(item, grid, tiles, alpha, width, height, wide, depth, area);
+            } catch (ChannelTiles signal) {
+                if (area != null) {
+                    LimitChecks.checkPicture(limits, width, height);
+                }
+                placed = new Placed(derivedGrid(item, grid, tiles, alpha, width, height, wide, depth), 0, 0);
+            }
         } else {
             if (area != null) {
                 LimitChecks.checkPicture(limits, width, height);
             }
             placed = new Placed(derivedGrid(item, grid, tiles, alpha, width, height, wide, depth), 0, 0);
         }
-        if (alpha != null && item.references("prem", alpha.id())) {
+        if (alpha != null && item.references("prem", alpha.id()) && !(placed.picture() instanceof ChannelPicture)) {
             return new Placed(HeifPictures.unpremultiply(placed.picture()), placed.x(), placed.y());
         }
         return placed;
@@ -842,6 +916,7 @@ public final class StillDecoder {
      * @param area the left, top, right and bottom edges of the rectangle needed, or {@code null} for the whole
      * grid
      * @return the window of the grid images that intersect the rectangle, or the whole grid
+     * @throws ChannelTiles if a tile decodes to a channel picture, which the grid stitches as derived inputs
      */
     private Placed codedGrid(HeifItem item, HeifGrid grid, List<HeifItem> tiles, HeifItem alpha, int width,
                              int height, boolean wide, int depth, int[] area) {
@@ -889,6 +964,9 @@ public final class StillDecoder {
             }
         }
         decodeTiles(tiles, indices, (index, tileDecoders, frame) -> {
+            if (frame instanceof ChannelTile) {
+                throw new ChannelTiles();
+            }
             if (frame.width() != tileWidth || frame.height() != tileHeight) {
                 throw new MediaException.Malformed("heic: a grid tile decodes to " + frame.width() + "x"
                         + frame.height() + ", not the " + tileWidth + "x" + tileHeight + " its grid declares");
@@ -949,6 +1027,18 @@ public final class StillDecoder {
             }
         }
         return new Placed(canvas.toPicture(Colors.override(state.color, item)), windowX, windowY);
+    }
+
+    /**
+     * Signals that a grid of coded tiles holds a tile that decodes to a channel picture.
+     */
+    private static final class ChannelTiles extends RuntimeException {
+        /**
+         * Constructs the signal, without a stack trace.
+         */
+        private ChannelTiles() {
+            super(null, null, false, false);
+        }
     }
 
     /**
@@ -1055,11 +1145,12 @@ public final class StillDecoder {
      * Reconstructs a grid whose inputs are derived images or carry transformative properties, one
      * input after the other.
      *
-     * <p>Planar inputs are stitched into a planar picture. When an input is reconstructed as packed
-     * RGBA, an overlay or a premultiplied image, the grid is a packed straight-alpha RGBA picture
-     * instead: each planar input is converted to RGBA on its own, with the grid's color properties
-     * applied, each input replaces the pixels it covers, and the picture is 16-bit when
-     * {@code wide} and an input has more than 8 bits.
+     * <p>Planar inputs are stitched into a planar picture, and channel inputs into a channel picture of
+     * the layout of the first input and the deepest sample type of the inputs, the others widened to it. When an
+     * input is reconstructed as packed RGBA, an overlay or a premultiplied image, the grid is a packed
+     * straight-alpha RGBA picture instead: each planar or channel input is converted to RGBA on its own,
+     * with the grid's color properties applied to planar inputs, each input replaces the pixels it
+     * covers, and the picture is 16-bit when {@code wide} and an input has more than 8 bits.
      *
      * @param item the grid item
      * @param grid the parsed grid payload
@@ -1078,6 +1169,7 @@ public final class StillDecoder {
             packedGrid |= reconstructsPacked(tile, depth + 1);
         }
         HeifCanvas canvas = null;
+        ChannelPicture channels = null;
         Picture packed = null;
         if (packedGrid) {
             LimitChecks.checkAllocation(limits, (wide ? 12L : 4L) * width * height);
@@ -1101,10 +1193,29 @@ public final class StillDecoder {
             var w = Math.min(tileWidth, width - x);
             var h = Math.min(tileHeight, height - y);
             if (packed != null) {
+                if (picture instanceof ChannelPicture input && !wide) {
+                    picture = ImageOps.toRgba(input);
+                }
                 var input = HeifPictures.isPacked(picture) ? picture
                         : HeifPictures.withColor(picture, Colors.override(HeifPictures.colorOf(picture), item));
                 packed = HeifPictures.place(packed, input, x, y, w, h);
                 continue;
+            }
+            if (picture instanceof ChannelPicture input) {
+                if (canvas != null) {
+                    throw new MediaException.Malformed("heic: grid item " + item.id()
+                            + " mixes planar and channel inputs");
+                }
+                if (channels == null || rank(input) > rank(channels)) {
+                    LimitChecks.checkAllocation(limits, (long) width * height * input.channelCount()
+                            * Math.max(1, input.bitDepth() / 8));
+                    channels = channels == null ? allocate(input, width, height) : widen(channels, input);
+                }
+                place(item, channels, input, x, y, w, h);
+                continue;
+            }
+            if (channels != null) {
+                throw new MediaException.Malformed("heic: grid item " + item.id() + " mixes planar and channel inputs");
             }
             if (canvas == null) {
                 var format = switch (picture) {
@@ -1128,6 +1239,10 @@ public final class StillDecoder {
             }
             return canvas.toPicture(color);
         }
+        if (channels != null) {
+            return alpha == null ? channels
+                    : withAlpha(channels, alpha, item.references("prem", alpha.id()), depth);
+        }
         if (alpha != null) {
             var deep = packed instanceof Rgba16Picture;
             var plane = new HeifCanvas(FORMAT, limits, width, height, ChromaFormat.MONOCHROME, deep ? 16 : 8, deep, true);
@@ -1135,6 +1250,92 @@ public final class StillDecoder {
             HeifPictures.replaceAlpha(packed, plane.toPicture(ColorInfo.JPEG));
         }
         return packed;
+    }
+
+    /**
+     * Allocates the canvas of a grid of channel inputs.
+     *
+     * @param first the first input, whose sample type and layout the canvas takes
+     * @param width the output width
+     * @param height the output height
+     * @return the zero-filled canvas
+     */
+    private static ChannelPicture allocate(ChannelPicture first, int width, int height) {
+        return switch (first) {
+            case Channel8Picture _ -> Channel8Picture.allocate(width, height, first.layout());
+            case Channel16Picture _ -> Channel16Picture.allocate(width, height, first.layout());
+            case ChannelFloatPicture _ -> ChannelFloatPicture.allocate(width, height, first.layout());
+        };
+    }
+
+    /**
+     * {@return the rank of the sample type of a channel picture: 0 for 8 bits, 1 for 16 bits, 2 for floating point}
+     *
+     * @param picture the canvas or input of a grid
+     */
+    private static int rank(ChannelPicture picture) {
+        return switch (picture) {
+            case Channel8Picture _ -> 0;
+            case Channel16Picture _ -> 1;
+            case ChannelFloatPicture _ -> 2;
+        };
+    }
+
+    /**
+     * Converts the canvas of a grid of channel inputs to the deeper sample type of an input, so that the input
+     * and the ones placed before it keep their samples.
+     *
+     * @param canvas the canvas holding the inputs placed so far
+     * @param input the deeper input
+     * @return the converted canvas, as {@link ImageOps#toChannel16(Picture)} or
+     * {@link ImageOps#toChannelFloat(Picture)} converts it
+     */
+    private static ChannelPicture widen(ChannelPicture canvas, ChannelPicture input) {
+        return input instanceof ChannelFloatPicture ? ImageOps.toChannelFloat(canvas) : ImageOps.toChannel16(canvas);
+    }
+
+    /**
+     * Copies the top-left region of a channel input into a region of a grid canvas, converting it to the
+     * canvas's sample type.
+     *
+     * @param item the grid item, for messages
+     * @param canvas the grid canvas
+     * @param input the decoded input, at least {@code w} by {@code h}
+     * @param x the left edge of the region
+     * @param y the top edge of the region
+     * @param w the region width
+     * @param h the region height
+     * @throws MediaException.Malformed if the input has another layout than the canvas
+     */
+    private static void place(HeifItem item, ChannelPicture canvas, ChannelPicture input, int x, int y, int w,
+                              int h) {
+        if (!input.layout().equals(canvas.layout())) {
+            throw new MediaException.Malformed("heic: the inputs of grid item " + item.id() + " differ in channels");
+        }
+        var count = canvas.channelCount();
+        switch (canvas) {
+            case Channel8Picture target -> {
+                var source = ImageOps.toChannel8(input);
+                for (var row = 0; row < h; row++) {
+                    System.arraycopy(source.pixels(), row * source.stride(), target.pixels(),
+                            (y + row) * target.stride() + x * count, w * count);
+                }
+            }
+            case Channel16Picture target -> {
+                var source = ImageOps.toChannel16(input);
+                for (var row = 0; row < h; row++) {
+                    System.arraycopy(source.pixels(), row * source.stride(), target.pixels(),
+                            (y + row) * target.stride() + x * count, w * count);
+                }
+            }
+            case ChannelFloatPicture target -> {
+                var source = ImageOps.toChannelFloat(input);
+                for (var row = 0; row < h; row++) {
+                    System.arraycopy(source.pixels(), row * source.stride(), target.pixels(),
+                            (y + row) * target.stride() + x * count, w * count);
+                }
+            }
+        }
     }
 
     /**

@@ -5,6 +5,8 @@ import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.AnimationFrame;
 import com.github.auties00.smalt.image.AnimationReader;
 import com.github.auties00.smalt.image.AuxiliaryImage;
+import com.github.auties00.smalt.image.ChannelPicture;
+import com.github.auties00.smalt.image.ColorModel;
 import com.github.auties00.smalt.image.DecodedImage;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.ImageFormat;
@@ -13,6 +15,7 @@ import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.Yuv16Picture;
+import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.gainmap.GainMap;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.ops.Region;
@@ -415,6 +418,30 @@ public final class HeicFiles {
     }
 
     /**
+     * Converts a channel picture to packed RGBA without color management, as
+     * {@link ImageOps#toRgba(Picture)} describes.
+     *
+     * @param channels the picture
+     * @param highBitDepth whether a picture deeper than 8 bits keeps 16 bits
+     * @return an {@link Rgba16Picture} when {@code highBitDepth} is set and the picture is deeper than 8 bits,
+     * an {@link com.github.auties00.smalt.image.RgbaPicture} otherwise
+     */
+    private static Picture packed(ChannelPicture channels, boolean highBitDepth) {
+        return highBitDepth && channels.bitDepth() > 8 ? ImageOps.toRgba16(channels) : ImageOps.toRgba(channels);
+    }
+
+    /**
+     * {@return a picture converted with {@link #packed(ChannelPicture, boolean)} when it is a channel picture,
+     * the picture itself otherwise}
+     *
+     * @param picture the decoded picture
+     * @param highBitDepth whether a picture deeper than 8 bits keeps 16 bits
+     */
+    private static Picture unchanneled(Picture picture, boolean highBitDepth) {
+        return picture instanceof ChannelPicture channels ? packed(channels, highBitDepth) : picture;
+    }
+
+    /**
      * Converts a decoded image to sRGB when the options ask, then crops its picture to the region.
      *
      * @param still the decoded image and the rectangle to keep
@@ -572,7 +599,19 @@ public final class HeicFiles {
         var sourceHeight = full == null ? result.geometry().height() : full.height();
         var orientation = full == null ? result.geometry().orientation() : full.orientation();
         var icc = icc(file, primary);
-        var profile = HeifPictures.colorProfile(icc, picture);
+        Optional<ColorProfile> profile;
+        if (picture instanceof ChannelPicture channels) {
+            profile = HeifPictures.colorProfile(icc, channels, Colors.override(Colors.MIAF_DEFAULT, primary));
+            var inks = channels.layout().colorModel() == ColorModel.CMYK;
+            if (!options.keepChannels() && !(inks && options.convertToSrgb() && profile.isPresent())) {
+                picture = packed(channels, options.highBitDepth());
+                if (inks) {
+                    profile = Optional.empty();
+                }
+            }
+        } else {
+            profile = HeifPictures.colorProfile(icc, picture);
+        }
         var image = new DecodedImage(picture, ImageFormat.HEIC, orientation, sourceWidth, sourceHeight,
                 Optional.ofNullable(icc == null ? null : icc.clone()), Optional.ofNullable(exif(source, file, primary, limits)),
                 Optional.ofNullable(file.xmpOf(source, primary, limits)), profile);
@@ -720,7 +759,8 @@ public final class HeicFiles {
         var toneMap = HeifToneMaps.find(source, file, primary, limits, false);
         if (toneMap != null) {
             var still = StillDecoder.decode(source, file, toneMap.gainMap(), limits, options.highBitDepth());
-            return Optional.of(new GainMap(toneMap.metadata(), still.picture(), toneMap.alternateProfile(),
+            return Optional.of(new GainMap(toneMap.metadata(), unchanneled(still.picture(), options.highBitDepth()),
+                    toneMap.alternateProfile(),
                     toneMap.alternateLightLevel()));
         }
         for (var item : file.auxiliariesOf(primary.id())) {
@@ -732,7 +772,8 @@ public final class HeicFiles {
             xmp.add(packet(file.xmpOf(source, item, limits)));
             xmp.add(packet(file.xmpOf(source, primary, limits)));
             var still = StillDecoder.decode(source, file, item, limits, options.highBitDepth());
-            return AppleGainMaps.convert(still.picture(), exif(source, file, primary, limits), xmp);
+            return AppleGainMaps.convert(unchanneled(still.picture(), options.highBitDepth()),
+                    exif(source, file, primary, limits), xmp);
         }
         return Optional.empty();
     }
@@ -796,9 +837,21 @@ public final class HeicFiles {
         var picture = still.picture();
         var icc = item.property(HeifProperty.ColorIcc.class);
         var profile = icc == null ? null : icc.profile();
+        Optional<ColorProfile> colorProfile;
+        if (picture instanceof ChannelPicture channels) {
+            colorProfile = HeifPictures.colorProfile(profile, channels, Colors.override(Colors.MIAF_DEFAULT, item));
+            if (!options.keepChannels()) {
+                picture = packed(channels, options.highBitDepth());
+                if (channels.layout().colorModel() == ColorModel.CMYK) {
+                    colorProfile = Optional.empty();
+                }
+            }
+        } else {
+            colorProfile = HeifPictures.colorProfile(profile, picture);
+        }
         return new DecodedImage(picture, ImageFormat.HEIC, still.geometry().orientation(), picture.width(),
                 picture.height(), Optional.ofNullable(profile == null ? null : profile.clone()), Optional.empty(),
-                Optional.empty(), HeifPictures.colorProfile(profile, picture));
+                Optional.empty(), colorProfile);
     }
 
     /**
@@ -868,8 +921,12 @@ public final class HeicFiles {
             public Picture get() {
                 if (decoded == null) {
                     var picture = decodeShown(source, file, primary, limits, highBitDepth, null).picture();
-                    decoded = picture instanceof Yuv16Picture || picture instanceof Rgba16Picture
-                            ? ImageOps.toRgba16(picture) : ImageOps.toRgba(picture);
+                    if (picture instanceof ChannelPicture channels) {
+                        decoded = packed(channels, highBitDepth);
+                    } else {
+                        decoded = picture instanceof Yuv16Picture || picture instanceof Rgba16Picture
+                                ? ImageOps.toRgba16(picture) : ImageOps.toRgba(picture);
+                    }
                 }
                 return decoded;
             }

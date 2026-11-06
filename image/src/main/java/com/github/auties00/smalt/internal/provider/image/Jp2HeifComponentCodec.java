@@ -6,6 +6,8 @@ import com.github.auties00.smalt.image.jp2.Jp2Channel;
 import com.github.auties00.smalt.image.jp2.Jp2ChannelType;
 import com.github.auties00.smalt.image.jp2.Jp2Decoder;
 import com.github.auties00.smalt.image.jp2.Jp2DecoderOptions;
+import com.github.auties00.smalt.image.jp2.Jp2Image;
+import com.github.auties00.smalt.image.jp2.internal.Jp2Pictures;
 import com.github.auties00.smalt.internal.heif.HeifComponentCodec;
 import com.github.auties00.smalt.internal.heif.HeifComponents;
 import com.github.auties00.smalt.internal.heif.HeifItem;
@@ -24,23 +26,42 @@ import java.util.Comparator;
  * <p>The item data is a JPEG 2000 codestream; the channel definition, component mapping and
  * palette boxes of the item's {@code j2kH} property apply to it as they would in a JP2 header, so
  * a palette expands an index component into the channels its component mapping lists. Without a
- * channel definition, the first three channels are colors when there are at least three, and the
- * first one otherwise. One color channel is monochrome. Three color channels are RGB when the codestream applies a
+ * channel definition, the first four channels are colors when a color specification box of the
+ * {@code j2kH} property declares CMYK or YCCK, or an ICC profile of the {@code j2kH} property or of
+ * the item's {@code colr} property has a CMYK color space, and there are at least four; otherwise
+ * the first three channels are colors when there are at least three, and the first one otherwise.
+ * One color channel is monochrome. Three color channels are RGB when the codestream applies a
  * multiple component transformation, when a color specification box of the {@code j2kH}
  * property declares sRGB, or when the item's {@code nclx} color property has the identity matrix;
  * they are Y'CbCr when a color specification declares sYCC, when the second and third channels
  * are subsampled, or when the {@code nclx} property has another matrix; otherwise they are RGB.
+ * Four color channels are cyan, magenta, yellow and black inks, 0 being no ink; when a color
+ * specification declares YCCK, the first three are Y'CbCr (BT.601) and are converted to the cyan,
+ * magenta and yellow inks that complement their R'G'B' values, at the precision of the luma.
+ *
+ * <p>Signed samples are offset by {@code 2^(n-1)} for a precision of {@code n} bits, so that their
+ * range maps onto the unsigned one; components of more than 16 bits are reported as deep planes,
+ * keeping their 31 most significant bits when they are wider.
  *
  * @implNote This implementation wraps the codestream and the boxes of the {@code j2kH} property in
  * a JP2 file and decodes its channels with {@link Jp2Decoder#decodeChannels(MediaSource,
  * Jp2DecoderOptions)}.
  */
 public final class Jp2HeifComponentCodec implements HeifComponentCodec {
-    // TODO: decode signed samples, samples above 16 bits and four color channels (CMYK)
     /**
      * The JP2 signature box.
      */
     private static final byte[] SIGNATURE = {0, 0, 0, 12, 'j', 'P', ' ', ' ', 0x0D, 0x0A, (byte) 0x87, 0x0A};
+
+    /**
+     * The enumerated color space of CMYK.
+     */
+    private static final int CMYK = 12;
+
+    /**
+     * The enumerated color space of YCCK.
+     */
+    private static final int YCCK = 13;
 
     /**
      * The enumerated color space of sRGB.
@@ -58,6 +79,11 @@ public final class Jp2HeifComponentCodec implements HeifComponentCodec {
     private static final int SYCC = 18;
 
     /**
+     * The precision above which a component is reported as a deep plane.
+     */
+    private static final int SHORT_BITS = 16;
+
+    /**
      * Constructs the codec.
      */
     public Jp2HeifComponentCodec() {
@@ -73,6 +99,7 @@ public final class Jp2HeifComponentCodec implements HeifComponentCodec {
         var header = item.property(HeifProperty.Jpeg2000Header.class);
         var codestream = Codestream.parse(name, payload);
         var declared = 0;
+        var inkProfile = isCmykProfile(item.property(HeifProperty.ColorIcc.class));
         var jp2h = new ByteArrayOutputStream();
         writeBox(jp2h, "ihdr", ihdr(codestream));
         var extra = new ByteArrayOutputStream();
@@ -87,9 +114,13 @@ public final class Jp2HeifComponentCodec implements HeifComponentCodec {
                         channelCount = (box.length - 8) / 4;
                     }
                     case "colr" -> {
-                        if (declared == 0 && box.length >= 15 && box[8] == 1) {
-                            declared = ((box[11] & 0xFF) << 24) | ((box[12] & 0xFF) << 16) | ((box[13] & 0xFF) << 8)
-                                    | (box[14] & 0xFF);
+                        if (box.length >= 15 && box[8] == 1) {
+                            if (declared == 0) {
+                                declared = ((box[11] & 0xFF) << 24) | ((box[12] & 0xFF) << 16)
+                                        | ((box[13] & 0xFF) << 8) | (box[14] & 0xFF);
+                            }
+                        } else if (box.length >= 31 && (box[8] == 2 || box[8] == 3)) {
+                            inkProfile |= box[27] == 'C' && box[28] == 'M' && box[29] == 'Y' && box[30] == 'K';
                         }
                     }
                     default -> {
@@ -97,9 +128,10 @@ public final class Jp2HeifComponentCodec implements HeifComponentCodec {
                 }
             }
         }
+        var inks = channelCount >= 4 && (declared == CMYK || declared == YCCK || inkProfile);
         var colr = new byte[7];
         colr[0] = 1;
-        var space = channelCount >= 3 ? SRGB : GRAY;
+        var space = inks ? (declared == YCCK ? YCCK : CMYK) : channelCount >= 3 ? SRGB : GRAY;
         colr[6] = (byte) space;
         writeBox(jp2h, "colr", colr);
         jp2h.writeBytes(extra.toByteArray());
@@ -129,9 +161,9 @@ public final class Jp2HeifComponentCodec implements HeifComponentCodec {
             }
         }
         colors.sort(Comparator.comparingInt(Jp2Channel::association));
-        int[] types;
+        var planes = new ArrayList<HeifComponents.Plane>();
         switch (colors.size()) {
-            case 1 -> types = new int[]{HeifComponents.MONOCHROME};
+            case 1 -> planes.add(plane(name, colors.getFirst(), HeifComponents.MONOCHROME, image));
             case 3 -> {
                 var subsampled = colors.get(1).subsamplingX() != colors.getFirst().subsamplingX()
                         || colors.get(1).subsamplingY() != colors.getFirst().subsamplingY();
@@ -146,53 +178,111 @@ public final class Jp2HeifComponentCodec implements HeifComponentCodec {
                 } else {
                     ycc = nclx != null && nclx.matrix() != 0;
                 }
-                types = ycc ? new int[]{HeifComponents.Y, HeifComponents.CB, HeifComponents.CR}
+                var types = ycc ? new int[]{HeifComponents.Y, HeifComponents.CB, HeifComponents.CR}
                         : new int[]{HeifComponents.RED, HeifComponents.GREEN, HeifComponents.BLUE};
+                for (var i = 0; i < 3; i++) {
+                    planes.add(plane(name, colors.get(i), types[i], image));
+                }
+            }
+            case 4 -> {
+                var types = new int[]{HeifComponents.CYAN, HeifComponents.MAGENTA, HeifComponents.YELLOW,
+                        HeifComponents.BLACK};
+                if (space == YCCK) {
+                    var converted = Jp2Pictures.ycckInks(image, colors);
+                    var depth = Math.min(colors.getFirst().precision(), HeifComponents.MAX_BIT_DEPTH);
+                    for (var i = 0; i < 3; i++) {
+                        planes.add(fullPlane(types[i], image, depth, converted[i]));
+                    }
+                    planes.add(plane(name, colors.get(3), types[3], image));
+                } else {
+                    for (var i = 0; i < 4; i++) {
+                        planes.add(plane(name, colors.get(i), types[i], image));
+                    }
+                }
             }
             default -> throw new MediaException.Unsupported(name, "JPEG 2000 items with " + colors.size()
                     + " color channels");
         }
-        var planes = new ArrayList<HeifComponents.Plane>();
-        for (var i = 0; i < colors.size(); i++) {
-            planes.add(plane(name, colors.get(i), types[i], image.x0(), image.y0()));
-        }
         if (opacity != null) {
             planes.add(plane(name, opacity, premultiplied ? HeifComponents.PREMULTIPLIED_ALPHA : HeifComponents.ALPHA,
-                    image.x0(), image.y0()));
+                    image));
         }
         return new HeifComponents(image.width(), image.height(), planes);
     }
 
     /**
-     * Converts a decoded channel into a component plane.
+     * {@return whether an ICC profile property has the CMYK data color space}
+     *
+     * @param icc the property, or {@code null}
+     */
+    private static boolean isCmykProfile(HeifProperty.ColorIcc icc) {
+        if (icc == null) {
+            return false;
+        }
+        var profile = icc.profile();
+        return profile.length >= 20 && profile[16] == 'C' && profile[17] == 'M' && profile[18] == 'Y'
+                && profile[19] == 'K';
+    }
+
+    /**
+     * Converts a decoded channel into a component plane, signed samples offset to the unsigned
+     * range.
      *
      * @param name the format name, for messages
      * @param channel the decoded JPEG 2000 channel
      * @param type the component type
-     * @param x0 the left edge of the image on the reference grid
-     * @param y0 the top edge of the image on the reference grid
-     * @return the plane
+     * @param image the decoded image, for its offset on the reference grid
+     * @return the plane: of up to 16 bits in {@link HeifComponents.Plane#samples()}, deeper in
+     * {@link HeifComponents.Plane#values()}, keeping the 31 most significant bits of a wider channel
      */
-    private static HeifComponents.Plane plane(String name, Jp2Channel channel,
-                                              int type, long x0, long y0) {
-        if (channel.signed()) {
-            throw new MediaException.Unsupported(name, "JPEG 2000 items with signed samples");
-        }
-        if (channel.precision() > 16) {
-            throw new MediaException.Unsupported(name, "JPEG 2000 items with " + channel.precision() + "-bit samples");
-        }
-        if (x0 % channel.subsamplingX() != 0 || y0 % channel.subsamplingY() != 0) {
+    private static HeifComponents.Plane plane(String name, Jp2Channel channel, int type, Jp2Image image) {
+        if (image.x0() % channel.subsamplingX() != 0 || image.y0() % channel.subsamplingY() != 0) {
             throw new MediaException.Unsupported(name, "JPEG 2000 items whose image offset splits the subsampled "
                     + "chroma");
         }
+        var precision = channel.precision();
+        var offset = channel.signed() ? 1L << (precision - 1) : 0;
+        var max = (1L << precision) - 1;
+        var shift = Math.max(0, precision - HeifComponents.MAX_BIT_DEPTH);
+        var depth = precision - shift;
+        var count = channel.width() * channel.height();
         var samples = channel.samples();
-        var out = new short[samples.length];
-        var max = (1 << channel.precision()) - 1;
-        for (var i = 0; i < samples.length; i++) {
-            out[i] = (short) Math.clamp(samples[i], 0, max);
+        var wide = channel.wideSamples();
+        if (depth <= SHORT_BITS) {
+            var out = new short[count];
+            for (var i = 0; i < count; i++) {
+                out[i] = (short) Math.clamp(samples[i] + offset, 0, max);
+            }
+            return new HeifComponents.Plane(type, channel.width(), channel.height(), channel.subsamplingX(),
+                    channel.subsamplingY(), depth, out);
+        }
+        var out = new int[count];
+        for (var i = 0; i < count; i++) {
+            var value = samples != null ? samples[i] : wide[i];
+            out[i] = (int) (Math.clamp(value + offset, 0, max) >>> shift);
         }
         return new HeifComponents.Plane(type, channel.width(), channel.height(), channel.subsamplingX(),
-                channel.subsamplingY(), channel.precision(), out);
+                channel.subsamplingY(), depth, null, out);
+    }
+
+    /**
+     * Wraps unsigned samples of the image size into a component plane.
+     *
+     * @param type the component type
+     * @param image the decoded image, for its size
+     * @param depth the precision of the samples, at most {@link HeifComponents#MAX_BIT_DEPTH}
+     * @param samples the samples, row-major, within the precision
+     * @return the plane
+     */
+    private static HeifComponents.Plane fullPlane(int type, Jp2Image image, int depth, int[] samples) {
+        if (depth > SHORT_BITS) {
+            return new HeifComponents.Plane(type, image.width(), image.height(), 1, 1, depth, null, samples);
+        }
+        var out = new short[samples.length];
+        for (var i = 0; i < samples.length; i++) {
+            out[i] = (short) samples[i];
+        }
+        return new HeifComponents.Plane(type, image.width(), image.height(), 1, 1, depth, out);
     }
 
     /**

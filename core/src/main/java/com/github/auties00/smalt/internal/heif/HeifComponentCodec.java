@@ -24,7 +24,9 @@ public interface HeifComponentCodec {
      * Decodes the data of an item.
      *
      * <p>Implementations must report a component of each color and alpha channel with the types
-     * of {@link HeifComponents}, deciding the color model from the item's properties.
+     * of {@link HeifComponents}, deciding the color model from the item's properties: unsigned
+     * samples (signed ones offset by half their range), planes of more than 16 bits in
+     * {@link HeifComponents.Plane#values()}, and ink components for CMYK.
      *
      * @param name the format name, for messages, such as {@code "heic"}
      * @param payload the item data

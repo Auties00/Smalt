@@ -45,6 +45,23 @@ import java.util.function.Supplier;
  * of more than 8 bits, to a straight-alpha {@link com.github.auties00.smalt.image.Rgba16Picture}
  * (an overlay composed at 16 bits).
  *
+ * <p>Signed JPEG 2000 samples are offset by {@code 2^(n-1)} for a precision of {@code n} bits. An image
+ * whose JPEG 2000 items hold samples deeper than 16 bits, or four color channels (CMYK inks, YCCK
+ * converted to them), decodes with {@link ImageDecoderOptions#keepChannels()} to a
+ * {@link com.github.auties00.smalt.image.ChannelPicture}: a
+ * {@link com.github.auties00.smalt.image.ChannelFloatPicture} of gray or RGB channels (Y'CbCr converted
+ * with the item's matrix and range), CMYK inks deeper than 16 bits included, holding {@code v / (2^n - 1)}
+ * for a sample {@code v}, or otherwise a CMYK channel picture of 8 bits, or of 16 bits under
+ * {@link ImageDecoderOptions#highBitDepth()} when an ink is deeper than 8 bits, the inks keeping their
+ * stored meaning (0 being no ink), each followed by the alpha channel, straight or premultiplied as stored. Without
+ * {@code keepChannels} (and unless {@link ImageDecoderOptions#convertToSrgb()} converts the inks through
+ * their ICC profile) such an image is converted to RGBA without color management, as
+ * {@link com.github.auties00.smalt.image.ops.ImageOps#toRgba(com.github.auties00.smalt.image.Picture)}
+ * converts a channel picture, 16-bit
+ * under {@code highBitDepth} when it is deeper than 8 bits. A grid of such items is a channel picture of
+ * the layout of its first tile and the deepest sample type of its tiles, unless a tile's color is premultiplied
+ * by an alpha auxiliary image or by its own opacity channel, which makes the grid packed RGBA.
+ *
  * <p>The file structure follows ISO/IEC 23008-12 (HEIF) and MIAF (ISO/IEC 23000-22):
  * <ul>
  *   <li>the primary item is a coded item, or a derived image. A coded item is HEVC-coded

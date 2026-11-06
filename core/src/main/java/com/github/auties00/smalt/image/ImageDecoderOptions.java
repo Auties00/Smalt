@@ -165,7 +165,9 @@ public final class ImageDecoderOptions {
      *   <li>JPEG XL decodes CMYK images, floating-point images, and images with extra channels other than
      *       one alpha channel to a channel picture likewise;</li>
      *   <li>JPEG 2000 decodes CMYK images to a CMYK channel picture, followed by alpha when the image has an
-     *       opacity channel, of 8 or 16 bits as {@link #highBitDepth()} selects.</li>
+     *       opacity channel, of 8 or 16 bits as {@link #highBitDepth()} selects;</li>
+     *   <li>HEIC decodes images of JPEG 2000 items with CMYK inks to a CMYK channel picture likewise, and those
+     *       with samples deeper than 16 bits to a {@link ChannelFloatPicture}.</li>
      * </ul>
      * <p>The decoded image of a channel picture keeps its embedded profile in
      * {@link DecodedImage#colorProfile()}, which describes the color channels. Other sources are unaffected,

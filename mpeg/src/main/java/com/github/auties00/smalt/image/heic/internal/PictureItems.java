@@ -25,7 +25,9 @@ import com.github.auties00.smalt.io.MediaSource;
  * item follows the bytes of its {@code jpgC} property, if any, to form the JPEG stream. Samples
  * keep their depth; Y'CbCr and monochrome samples of JPEG 2000 and uncompressed items take the
  * MIAF default color, which the item's color properties then override, and RGB samples are
- * coded with the identity matrix.
+ * coded with the identity matrix. A JPEG 2000 item with ink components or components deeper than
+ * 16 bits decodes to a {@link ChannelTile}, its Y'CbCr and monochrome samples read with the MIAF
+ * default color overridden by the item's {@code nclx} property.
  */
 final class PictureItems {
     /**
@@ -47,12 +49,13 @@ final class PictureItems {
      * @param file the parsed file
      * @param item the item, of type {@code jpeg}, {@code j2k1} or {@code unci}
      * @param limits the bounds of the item data and of the picture
-     * @return the decoded picture
+     * @return the decoded picture: a {@link ChannelTile} for a JPEG 2000 item whose components only a
+     * channel picture represents, a {@link PictureTile} otherwise
      * @throws MediaException.Malformed if the item data is corrupt
      * @throws MediaException.Unsupported if the item uses a feature no decoder at hand implements
      * @throws MediaException.LimitExceeded if the picture exceeds the limits
      */
-    static PictureTile decode(MediaSource source, HeifFile file, HeifItem item, MediaLimits limits) {
+    static CodedFrame decode(MediaSource source, HeifFile file, HeifItem item, MediaLimits limits) {
         if (!item.isLocated()) {
             throw new MediaException.Malformed(FORMAT + ": item " + item.id() + " has no data");
         }
@@ -65,6 +68,9 @@ final class PictureItems {
                     throw new MediaException.Unsupported(FORMAT, "JPEG 2000 items need the smalt-image artifact");
                 }
                 var components = codec.decode(FORMAT, data, item, limits);
+                if (components.needsChannels()) {
+                    yield new ChannelTile(components, Colors.override(Colors.MIAF_DEFAULT, item), limits);
+                }
                 var picture = HeifComponentPictures.toPicture(FORMAT, components, Colors.MIAF_DEFAULT, limits);
                 yield PictureTile.of(picture, HeifComponentPictures.premultiplied(components));
             }

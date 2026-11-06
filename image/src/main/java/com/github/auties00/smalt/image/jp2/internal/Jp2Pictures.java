@@ -104,7 +104,7 @@ public final class Jp2Pictures {
      *
      * @param image        the decoded image
      * @param highBitDepth whether an image with channels wider than 8 bits keeps 16 bits
-     * @param limits       the limits
+     * @param limits       the bounds of the picture
      * @return the picture: an {@link Rgba16Picture} when {@code highBitDepth} is set and a channel
      *         is wider than 8 bits, an {@link RgbaPicture} otherwise
      * @throws MediaException.LimitExceeded if the picture exceeds the limits
@@ -282,23 +282,32 @@ public final class Jp2Pictures {
         }
         var channels = new ArrayList<Jp2Channel>();
         for (var channel : image.channels()) {
-            if (!channel.wide()) {
-                channels.add(channel);
-                continue;
-            }
-            var shift = channel.precision() - 31;
-            var source = channel.wideSamples();
-            var samples = new int[source.length];
-            for (var i = 0; i < samples.length; i++) {
-                samples[i] = (int) (source[i] >> shift);
-            }
-            channels.add(new Jp2Channel(channel.x0(), channel.y0(), channel.width(), channel.height(),
-                    channel.subsamplingX(), channel.subsamplingY(), 31, channel.signed(), channel.type(),
-                    channel.association(), samples));
+            channels.add(narrow(channel));
         }
         return new Jp2Image(image.x0(), image.y0(), image.width(), image.height(), image.fullWidth(),
                 image.fullHeight(), image.reduction(), channels, image.colorSpace(), image.colorParameters(),
                 image.iccProfile(), image.exif(), image.xmp());
+    }
+
+    /**
+     * Narrows a channel wider than 31 bits to its 31 most significant bits.
+     *
+     * @param channel a decoded channel of any precision
+     * @return the channel, itself when it is not wider
+     */
+    private static Jp2Channel narrow(Jp2Channel channel) {
+        if (!channel.wide()) {
+            return channel;
+        }
+        var shift = channel.precision() - 31;
+        var source = channel.wideSamples();
+        var samples = new int[source.length];
+        for (var i = 0; i < samples.length; i++) {
+            samples[i] = (int) (source[i] >> shift);
+        }
+        return new Jp2Channel(channel.x0(), channel.y0(), channel.width(), channel.height(),
+                channel.subsamplingX(), channel.subsamplingY(), 31, channel.signed(), channel.type(),
+                channel.association(), samples);
     }
 
     /**
@@ -541,7 +550,7 @@ public final class Jp2Pictures {
      * clamped to the channel.
      *
      * @param image   the decoded image
-     * @param channel the channel
+     * @param channel the channel to upsample, one of the image's
      * @return the samples, {@code width * height} of them; the channel's own array when it is not
      *         subsampled
      */
@@ -572,6 +581,26 @@ public final class Jp2Pictures {
             }
         }
         return result;
+    }
+
+    /**
+     * Converts the YCCK channels of an image to cyan, magenta and yellow ink planes, as the RGBA conversion of a
+     * YCCK image reads them before its naive CMYK conversion.
+     *
+     * @param image the decoded image, whose size the planes take
+     * @param colors the Y, Cb, Cr and K channels
+     * @return the cyan, magenta and yellow planes, upsampled to the image and at the precision of the luma channel,
+     * at most 31 bits
+     */
+    public static int[][] ycckInks(Jp2Image image, List<Jp2Channel> colors) {
+        var channels = new Jp2Channel[4];
+        var planes = new int[4][];
+        for (var i = 0; i < 4; i++) {
+            channels[i] = narrow(colors.get(i));
+            planes[i] = upsample(image, channels[i]).clone();
+        }
+        Jp2Colors.ycck(planes, channels);
+        return new int[][]{planes[0], planes[1], planes[2]};
     }
 
     /**
@@ -708,7 +737,7 @@ public final class Jp2Pictures {
     /**
      * Scales samples to 8 or 16 bits.
      *
-     * @param samples   the samples
+     * @param samples   the stored samples, not modified
      * @param precision their precision
      * @param signed    whether they are signed
      * @param target    the largest output value, 255 or 65535

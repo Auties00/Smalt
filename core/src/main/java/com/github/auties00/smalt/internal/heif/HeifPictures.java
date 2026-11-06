@@ -1,9 +1,13 @@
 package com.github.auties00.smalt.internal.heif;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.ChannelPicture;
 import com.github.auties00.smalt.image.Chromaticity;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.ColorModel;
+import com.github.auties00.smalt.image.ColorRange;
+import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
@@ -340,7 +344,8 @@ public final class HeifPictures {
      * @param picture the decoded or composed picture
      */
     public static boolean isDeep(Picture picture) {
-        return picture instanceof Yuv16Picture || picture instanceof Rgba16Picture;
+        return picture instanceof Yuv16Picture || picture instanceof Rgba16Picture
+                || picture instanceof ChannelPicture channels && channels.bitDepth() > 8;
     }
 
     /**
@@ -534,6 +539,42 @@ public final class HeifPictures {
         }
         try {
             var profile = ColorProfile.of(color);
+            return profile.isSrgb() ? Optional.empty() : Optional.of(profile);
+        } catch (MediaException exception) {
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Returns the color space the color channels of a decoded channel picture are in.
+     *
+     * <p>An ICC profile that parses and has as many channels as the picture has color channels
+     * describes it. Without one, gray and RGB channels are in the primaries and transfer
+     * characteristics of {@code color} (described through {@link ColorProfile#of(ColorInfo)} unless
+     * that is sRGB or cannot be expressed as a profile), and CMYK inks have no profile.
+     *
+     * @param icc the ICC profile bytes, or {@code null}
+     * @param picture the decoded channel picture
+     * @param color the color description of the item, whose matrix and range are ignored
+     * @return the profile, or empty for sRGB or for inks without a profile
+     */
+    public static Optional<ColorProfile> colorProfile(byte[] icc, ChannelPicture picture, ColorInfo color) {
+        var colors = picture.layout().colorChannels();
+        if (icc != null) {
+            try {
+                var profile = ColorProfile.parse(icc);
+                if (profile.channels() == colors) {
+                    return Optional.of(profile);
+                }
+            } catch (MediaException exception) {
+                // an unreadable profile leaves the color description to decide
+            }
+        }
+        if (picture.layout().colorModel() == ColorModel.CMYK || picture.layout().colorModel() == ColorModel.INK) {
+            return Optional.empty();
+        }
+        try {
+            var profile = ColorProfile.of(color.withMatrix(MatrixCoefficients.IDENTITY).withRange(ColorRange.FULL));
             return profile.isSrgb() ? Optional.empty() : Optional.of(profile);
         } catch (MediaException exception) {
             return Optional.empty();

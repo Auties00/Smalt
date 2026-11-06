@@ -8,7 +8,8 @@ import java.util.List;
  *
  * <p>Component types use the codes of the ISO/IEC 23001-17 component definition box
  * ({@code cmpd}), with {@link #PREMULTIPLIED_ALPHA} added for alpha that the color is
- * premultiplied by. The record holds its arrays itself, not copies.
+ * premultiplied by. Planes of up to 16 bits hold their samples in {@link Plane#samples()}, deeper
+ * planes (up to 31 bits) in {@link Plane#values()}. The record holds its arrays itself, not copies.
  *
  * @param width the image width in pixels
  * @param height the image height in pixels
@@ -56,6 +57,31 @@ public record HeifComponents(int width, int height, List<Plane> planes) {
     public static final int ALPHA = 7;
 
     /**
+     * The cyan ink component: zero is no ink.
+     */
+    public static final int CYAN = 13;
+
+    /**
+     * The magenta ink component: zero is no ink.
+     */
+    public static final int MAGENTA = 14;
+
+    /**
+     * The yellow ink component: zero is no ink.
+     */
+    public static final int YELLOW = 15;
+
+    /**
+     * The black ink component (key): zero is no ink.
+     */
+    public static final int BLACK = 16;
+
+    /**
+     * The deepest plane, in bits.
+     */
+    public static final int MAX_BIT_DEPTH = 31;
+
+    /**
      * Alpha the color components are premultiplied by.
      */
     public static final int PREMULTIPLIED_ALPHA = 0x10007;
@@ -68,11 +94,52 @@ public record HeifComponents(int width, int height, List<Plane> planes) {
      * @param height the plane height in samples
      * @param subsamplingX the horizontal subsampling factor, 1 for a full-resolution plane
      * @param subsamplingY the vertical subsampling factor, 1 for a full-resolution plane
-     * @param bitDepth the bits per sample, from 1 to 16
-     * @param samples the unsigned samples, row-major without padding
+     * @param bitDepth the bits per sample, from 1 to {@link #MAX_BIT_DEPTH}
+     * @param samples the unsigned samples of a plane of up to 16 bits, row-major without padding, or
+     * {@code null} for a deeper plane
+     * @param values the unsigned samples of a plane of more than 16 bits, row-major without padding,
+     * or {@code null} for a plane of up to 16 bits
      */
     public record Plane(int type, int width, int height, int subsamplingX, int subsamplingY, int bitDepth,
-                        short[] samples) {
+                        short[] samples, int[] values) {
+        /**
+         * Constructs a plane of up to 16 bits.
+         *
+         * @param type the component type, one of the constants of {@link HeifComponents}
+         * @param width the plane width in samples
+         * @param height the plane height in samples
+         * @param subsamplingX the horizontal subsampling factor, 1 for a full-resolution plane
+         * @param subsamplingY the vertical subsampling factor, 1 for a full-resolution plane
+         * @param bitDepth the bits per sample, from 1 to 16
+         * @param samples the unsigned samples, row-major without padding
+         */
+        public Plane(int type, int width, int height, int subsamplingX, int subsamplingY, int bitDepth,
+                     short[] samples) {
+            this(type, width, height, subsamplingX, subsamplingY, bitDepth, samples, null);
+        }
+
+        /**
+         * {@return whether the plane is deeper than 16 bits and holds its samples in {@link #values()}}
+         */
+        public boolean deep() {
+            return values != null;
+        }
+
+        /**
+         * {@return the number of samples the plane holds}
+         */
+        public int length() {
+            return values != null ? values.length : samples.length;
+        }
+
+        /**
+         * {@return one unsigned sample}
+         *
+         * @param index the row-major index
+         */
+        public int sample(int index) {
+            return values != null ? values[index] : samples[index] & 0xFFFF;
+        }
     }
 
     /**
@@ -84,6 +151,19 @@ public record HeifComponents(int width, int height, List<Plane> planes) {
      */
     public HeifComponents {
         planes = List.copyOf(planes);
+    }
+
+    /**
+     * {@return whether the components hold ink components or a plane deeper than 16 bits, which only a
+     * {@link com.github.auties00.smalt.image.ChannelPicture} represents}
+     */
+    public boolean needsChannels() {
+        for (var plane : planes) {
+            if (plane.deep() || plane.type() >= CYAN && plane.type() <= BLACK) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

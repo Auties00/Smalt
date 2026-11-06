@@ -4,7 +4,6 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
-import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.internal.io.FourCc;
 
@@ -130,7 +129,7 @@ public record HeifOverlay(int[] fill, long outputWidth, long outputHeight, long[
          * @param top the canvas row of the input's top edge
          */
         public void draw(Picture input, long left, long top) {
-            var deepInput = input instanceof Yuv16Picture || input instanceof Rgba16Picture;
+            var deepInput = HeifPictures.isDeep(input);
             if (canvas16 == null && touched != null && deepInput) {
                 promote();
             }
