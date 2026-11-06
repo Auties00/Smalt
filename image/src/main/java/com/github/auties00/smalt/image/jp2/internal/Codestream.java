@@ -1577,7 +1577,7 @@ public final class Codestream {
         }
         TileParameters.Extensions extensions = null;
         if (extended || dcOffsets != null || !stages.isEmpty() || anyNonLinearity || anyRegion
-                || transformedPrecisions != null || maxPrecision() > 31) {
+                || transformedPrecisions != null || maxPrecision() > 31 || deep(codings, quantizations)) {
             extensions = new TileParameters.Extensions(kernels, decompositions, dcOffsets, stages, arrays,
                     allKernels, nonLinearities, List.copyOf(regions), maskings);
         }
@@ -1656,6 +1656,29 @@ public final class Codestream {
             depthY += split == Decomposition.HORIZONTAL ? 0 : 1;
         }
         return new int[]{depthX, depthY};
+    }
+
+    /**
+     * Returns whether a reversible tile-component has a sub-band of more than 30 magnitude bit-planes, whose
+     * coefficients, with the fractional bit the block decoder reconstructs, do not fit 32-bit integers.
+     *
+     * @param codings the coding style of each component
+     * @param quantizations the quantization of each component
+     * @return whether the tile needs the 64-bit reconstruction
+     */
+    private static boolean deep(ComponentCoding[] codings, Quantization[] quantizations) {
+        for (var c = 0; c < codings.length; c++) {
+            if (!codings[c].reversible() || quantizations[c] == null) {
+                continue;
+            }
+            var bands = 3 * (codings[c].resolutions() - 1) + 1;
+            for (var b = 0; b < bands; b++) {
+                if (quantizations[c].exponent(b) + quantizations[c].guardBits() - 1 > 30) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**

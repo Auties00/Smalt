@@ -50,10 +50,14 @@ import java.util.Objects;
  * opacity channel the JP2 channel definitions declare. The JP2 file declares sRGB (or grayscale or CMYK),
  * or embeds the options' color profile, and holds the options' EXIF, XMP and IPTC-IIM metadata in
  * {@code uuid} boxes. {@link #encode(Jp2Image, Jp2EncoderOptions)} codes
- * channels of any precision from 1 to 31 bits, signed or unsigned and subsampled, at the image's
+ * channels of any precision from 1 to 38 bits, signed or unsigned and subsampled, at the image's
  * origin on the reference grid, such as the channels {@link Jp2Decoder#decodeChannels} returns; the
  * high-throughput block coder takes channels whose sub-bands need at most 30 magnitude bit-planes,
- * as lossless channels of up to 27 bits do.
+ * as lossless channels of up to 27 bits do. Lossless channels deeper than 29 bits raise the guard
+ * bits, up to the seven a codestream holds, so that a channel of up to 34 bits keeps every bit-plane
+ * its coefficients can need; a deeper channel's sub-bands keep at most 37 magnitude bit-planes, and
+ * it is coded losslessly when its wavelet coefficients fit them, as those of images with any
+ * spatial correlation do.
  *
  * <p>Under a codestream profile ({@link Jp2EncoderOptions#profile()}) the image must meet the
  * profile: its component count, precision, subsampling and size, and the decomposition levels and
@@ -216,7 +220,7 @@ public final class Jp2Encoder {
      * tile does not reach it, the options' tiles divide the image into more than 65535 tiles or a
      * tile into more than 255 tile-parts, the image does not meet the options' profile, a progression
      * change starts at a component the image does not have, the options' region of interest names a
-     * component the image does not have or scales a coefficient beyond 25
+     * component the image does not have or scales a coefficient beyond 55
      * magnitude bit-planes, the options' guard bits leave a lossless sub-band fewer bit-planes than
      * its coefficients need, or the options select the high-throughput block coder and a sub-band of
      * a channel needs more than 30 magnitude bit-planes (lossless channels deeper than 27 bits, or 29
@@ -238,6 +242,7 @@ public final class Jp2Encoder {
         var dx = new int[count];
         var dy = new int[count];
         var planes = new int[count][];
+        long[][] widePlanes = null;
         var alpha = -1;
         for (var c = 0; c < count; c++) {
             var channel = channels.get(c);
@@ -245,7 +250,7 @@ public final class Jp2Encoder {
             signed[c] = channel.signed();
             dx[c] = channel.subsamplingX();
             dy[c] = channel.subsamplingY();
-            if (precisions[c] < 1 || precisions[c] > 31) {
+            if (precisions[c] < 1 || precisions[c] > 38) {
                 throw new IllegalArgumentException("unsupported precision " + precisions[c]);
             }
             var cx0 = Math.ceilDiv(x0, dx[c]);
@@ -257,13 +262,26 @@ public final class Jp2Encoder {
             }
             var min = signed[c] ? -(1L << (precisions[c] - 1)) : 0;
             var max = signed[c] ? (1L << (precisions[c] - 1)) - 1 : (1L << precisions[c]) - 1;
-            for (var sample : channel.samples()) {
-                if (sample < min || sample > max) {
-                    throw new IllegalArgumentException("sample " + sample + " of channel " + c
-                            + " exceeds its precision");
+            if (channel.wide()) {
+                for (var sample : channel.wideSamples()) {
+                    if (sample < min || sample > max) {
+                        throw new IllegalArgumentException("sample " + sample + " of channel " + c
+                                + " exceeds its precision");
+                    }
                 }
+                if (widePlanes == null) {
+                    widePlanes = new long[count][];
+                }
+                widePlanes[c] = channel.wideSamples();
+            } else {
+                for (var sample : channel.samples()) {
+                    if (sample < min || sample > max) {
+                        throw new IllegalArgumentException("sample " + sample + " of channel " + c
+                                + " exceeds its precision");
+                    }
+                }
+                planes[c] = channel.samples();
             }
-            planes[c] = channel.samples();
             if (alpha < 0 && (channel.type() == Jp2ChannelType.OPACITY
                     || channel.type() == Jp2ChannelType.PREMULTIPLIED_OPACITY)) {
                 alpha = c;
@@ -279,7 +297,7 @@ public final class Jp2Encoder {
         var exif = options.exif().map(ExifData::toBytes).orElse(image.exif().orElse(null));
         var xmp = options.xmp().map(XmpPacket::toBytes).orElse(image.xmp().orElse(null));
         try (var _ = ParallelBands.operation()) {
-            return write(x0, y0, image.width(), image.height(), precisions, signed, dx, dy, planes,
+            return write(x0, y0, image.width(), image.height(), precisions, signed, dx, dy, planes, widePlanes,
                     count >= 3 && !subsampled && colorSpace != Jp2ColorSpace.SYCC.code(), colorSpace, icc,
                     alpha, alpha >= 0 && channels.get(alpha).type() == Jp2ChannelType.PREMULTIPLIED_OPACITY, exif,
                     xmp, options);
@@ -343,7 +361,7 @@ public final class Jp2Encoder {
         Arrays.fill(ones, 1);
         var icc = options.colorProfile().map(ColorProfile::toByteArray).orElse(null);
         return write(options.imageOriginX(), options.imageOriginY(), width, height, precisions, new boolean[count],
-                ones, ones, planes, !gray, gray ? Jp2ColorSpace.GRAYSCALE.code() : Jp2ColorSpace.SRGB.code(), icc,
+                ones, ones, planes, null, !gray, gray ? Jp2ColorSpace.GRAYSCALE.code() : Jp2ColorSpace.SRGB.code(), icc,
                 alpha ? count - 1 : -1, false, options.exif().map(ExifData::toBytes).orElse(null),
                 options.xmp().map(XmpPacket::toBytes).orElse(null), options);
     }
@@ -413,7 +431,7 @@ public final class Jp2Encoder {
         Arrays.fill(ones, 1);
         var icc = options.colorProfile().map(ColorProfile::toByteArray).orElse(null);
         return write(options.imageOriginX(), options.imageOriginY(), width, height, precisions, new boolean[count],
-                ones, ones, planes, false, Jp2ColorSpace.CMYK.code(), icc, alphaIndex >= 0 ? 4 : -1,
+                ones, ones, planes, null, false, Jp2ColorSpace.CMYK.code(), icc, alphaIndex >= 0 ? 4 : -1,
                 layout.isAlphaPremultiplied(), options.exif().map(ExifData::toBytes).orElse(null),
                 options.xmp().map(XmpPacket::toBytes).orElse(null), options);
     }
@@ -559,7 +577,9 @@ public final class Jp2Encoder {
      * @param signed whether each component is signed
      * @param dx the horizontal subsampling of each component
      * @param dy the vertical subsampling of each component
-     * @param planes the samples of each component
+     * @param planes the samples of each component held in 32-bit integers
+     * @param widePlanes the samples of each component held in 64-bit integers, or {@code null} when
+     * {@code planes} holds them all; a component's entry is {@code null} when {@code planes} holds it
      * @param transform whether the first three components may go through the component transform
      * @param colorSpace the enumerated color space of a JP2 file
      * @param icc the ICC profile of a JP2 file, or {@code null}
@@ -571,7 +591,8 @@ public final class Jp2Encoder {
      * @return the JP2 file or codestream
      */
     private static byte[] write(long x0, long y0, int width, int height, int[] precisions, boolean[] signed, int[] dx,
-                                int[] dy, int[][] planes, boolean transform, int colorSpace, byte[] icc, int alpha,
+                                int[] dy, int[][] planes, long[][] widePlanes, boolean transform, int colorSpace,
+                                byte[] icc, int alpha,
                                 boolean premultiplied, byte[] exif, byte[] xmp, Jp2EncoderOptions options) {
         LimitChecks.checkPicture(options.limits(), width, height);
         var count = precisions.length;
@@ -638,7 +659,7 @@ public final class Jp2Encoder {
                 options.maxComponentBytes().orElse(0), transform && options.colorTransform(),
                 region(options, x0, y0, width, height, count), options.profileCode(), options.sopMarkers(),
                 options.ephMarkers(), options.tlmMarkers(), options.pltMarkers(), options.comment().orElse(null));
-        var codestream = Jp2Writer.codestream(config, planes, options.limits());
+        var codestream = Jp2Writer.codestream(config, planes, widePlanes, options.limits());
         if (options.format() == Jp2Format.CODESTREAM) {
             return codestream;
         }

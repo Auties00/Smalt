@@ -12,7 +12,8 @@ import java.util.Objects;
  * {@code (x0 + x) * subsamplingX}, {@code (y0 + y) * subsamplingY} of the (reduced) image.
  *
  * <p>A channel holds its samples in {@link #samples()}, except a decoded codestream component wider than 31 bits
- * (up to 38 bits), which holds them in {@link #wideSamples()}. Exactly one of the two arrays is present.
+ * (up to 38 bits), which holds them in {@link #wideSamples()}. Exactly one of the two arrays is present; the
+ * encoder takes a channel of any precision in either.
  *
  * <p>The record holds the sample array itself, not a copy, and compares it by identity.
  *

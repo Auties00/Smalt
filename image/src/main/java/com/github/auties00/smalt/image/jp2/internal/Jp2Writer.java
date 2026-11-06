@@ -85,10 +85,22 @@ public final class Jp2Writer {
     private static final int TLM_WIDE_ENTRIES = (65535 - 4) / 6;
 
     /**
-     * The largest number of magnitude bit-planes a coefficient scaled by a region of interest keeps, the most the
-     * fixed-point form of {@link Tier1Encoder} holds.
+     * The largest number of magnitude bit-planes a coefficient scaled by a region of interest keeps: the most whose
+     * {@code 3 * n - 2} coding passes one packet signals (164, Table B.4), below the
+     * {@value Tier1Encoder#MAX_BIT_PLANES} the fixed-point form of {@link Tier1Encoder} holds.
      */
-    private static final int ROI_MAX_BIT_PLANES = 31 - Tier1Tables.NMSEDEC_FRACBITS;
+    private static final int ROI_MAX_BIT_PLANES = Math.min(Tier1Encoder.MAX_BIT_PLANES, (164 + 2) / 3);
+
+    /**
+     * The largest exponent of a quantization step size, the range of the five-bit field of {@code QCD} and
+     * {@code QCC} (A.6.4).
+     */
+    private static final int MAX_EXPONENT = 31;
+
+    /**
+     * The largest number of guard bits, the range of the three-bit field of {@code QCD} and {@code QCC}.
+     */
+    private static final int MAX_GUARD_BITS = 7;
 
     /**
      * An empty array.
@@ -112,10 +124,31 @@ public final class Jp2Writer {
      * @return the codestream
      * @throws IllegalArgumentException if the high-throughput block coder is selected and a sub-band needs more
      * than 30 magnitude bit-planes, a tile is divided into more than 255 tile-parts, a region of interest scales a
-     * coefficient beyond 25 magnitude bit-planes, or the guard bits leave a reversible sub-band fewer bit-planes
+     * coefficient beyond 55 magnitude bit-planes, or the guard bits leave a reversible sub-band fewer bit-planes
      * than its coefficients need
      */
     public static byte[] codestream(EncoderConfig config, int[][] planes, MediaLimits limits) {
+        return codestream(config, planes, null, limits);
+    }
+
+    /**
+     * Encodes components into a codestream, the samples of each component in 32-bit or 64-bit integers.
+     *
+     * @param config the encoding parameters
+     * @param planes the samples of each component held in 32-bit integers, row-major over its sample grid (from
+     * {@code ceil(x0 / dx)} to {@code ceil(x1 / dx)} by {@code ceil(y0 / dy)} to {@code ceil(y1 / dy)}); a
+     * component's entry is {@code null} when {@code widePlanes} holds its samples
+     * @param widePlanes the samples of each component held in 64-bit integers, in the layout of {@code planes}, or
+     * {@code null} when {@code planes} holds every component; a component's entry is {@code null} when
+     * {@code planes} holds its samples
+     * @param limits the limits bounding the allocations
+     * @return the codestream
+     * @throws IllegalArgumentException if the high-throughput block coder is selected and a sub-band needs more
+     * than 30 magnitude bit-planes, a tile is divided into more than 255 tile-parts, a region of interest scales a
+     * coefficient beyond 55 magnitude bit-planes, or the guard bits leave a reversible sub-band fewer bit-planes
+     * than its coefficients need
+     */
+    public static byte[] codestream(EncoderConfig config, int[][] planes, long[][] widePlanes, MediaLimits limits) {
         var components = config.components();
         var quantizations = new Quantization[components];
         for (var c = 0; c < components; c++) {
@@ -144,8 +177,8 @@ public final class Jp2Writer {
         var budgets = budgets(config, out.size(), plans);
         var outputs = new TileOutput[tiles];
         for (var t = 0; t < tiles; t++) {
-            outputs[t] = encodeTile(config, coding, quantizations, planes, t, plans[t], progressions, budgets[t],
-                    limits);
+            outputs[t] = encodeTile(config, coding, quantizations, planes, widePlanes, t, plans[t], progressions,
+                    budgets[t], limits);
             ParallelBands.checkpoint();
         }
         var lengths = new long[(int) totalParts];
@@ -441,9 +474,14 @@ public final class Jp2Writer {
      * no quantization for the 5-3 wavelet, the inverse of each sub-band's 9-7 synthesis norm for
      * the 9-7 one.
      *
+     * <p>An exponent beyond the {@value #MAX_EXPONENT} that {@code QCD} holds, which deep components reach, is
+     * capped: for the 9-7 wavelet the step size grows to the smallest one the field expresses, and for the 5-3
+     * wavelet, whose exponents only bound the magnitude bit-planes {@code Mb} (E-2), the guard bits grow by the
+     * excess, up to {@value #MAX_GUARD_BITS}, so that every sub-band keeps its bit-planes.
+     *
      * @param config the parameters
      * @param precision the component precision
-     * @return the quantization, with the configured guard bits
+     * @return the quantization, with the configured guard bits or more
      */
     static Quantization stepSizes(EncoderConfig config, int precision) {
         var resolutions = config.resolutions();
@@ -463,8 +501,17 @@ public final class Jp2Writer {
             mantissas[band] = (n < 0 ? value >> -n : value << n) & 0x7FF;
             exponents[band] = precision + gain - p;
         }
+        var guardBits = config.guardBits();
+        var excess = 0;
+        for (var band = 0; band < bands; band++) {
+            excess = Math.max(excess, exponents[band] - MAX_EXPONENT);
+            exponents[band] = Math.min(exponents[band], MAX_EXPONENT);
+        }
+        if (config.reversible()) {
+            guardBits = Math.min(MAX_GUARD_BITS, guardBits + excess);
+        }
         return new Quantization(config.reversible() ? Quantization.NONE : Quantization.SCALAR_EXPOUNDED,
-                config.guardBits(), exponents, mantissas);
+                guardBits, exponents, mantissas);
     }
 
     /**
@@ -523,7 +570,8 @@ public final class Jp2Writer {
         writeQuantization(out, quantizations[0], config.resolutions());
         var componentBytes = components <= 256 ? 1 : 2;
         for (var c = 1; c < components; c++) {
-            if (Arrays.equals(exponents(quantizations[c], config.resolutions()),
+            if (quantizations[c].guardBits() == quantizations[0].guardBits()
+                    && Arrays.equals(exponents(quantizations[c], config.resolutions()),
                     exponents(quantizations[0], config.resolutions()))) {
                 continue;
             }
@@ -890,7 +938,8 @@ public final class Jp2Writer {
      * @param config the parameters
      * @param coding the coding style
      * @param quantizations the quantization of each component
-     * @param planes the component samples
+     * @param planes the component samples in 32-bit integers
+     * @param widePlanes the component samples in 64-bit integers, or {@code null}
      * @param tile the tile index
      * @param plan the tile's tile-part plan
      * @param progressions the progressions of the tile
@@ -899,13 +948,24 @@ public final class Jp2Writer {
      * @return the tile-parts
      */
     private static TileOutput encodeTile(EncoderConfig config, ComponentCoding coding, Quantization[] quantizations,
-                                         int[][] planes, int tile, TilePartPlan plan,
+                                         int[][] planes, long[][] widePlanes, int tile, TilePartPlan plan,
                                          List<ProgressionChange> progressions, float[] budgets, MediaLimits limits) {
         var count = config.components();
         var bounds = config.tileBounds(tile);
         var components = new TileComponent[count];
         var integers = new int[count][];
+        var longs = new long[count][];
         var floats = new float[count][];
+        var transform = config.transform() && count >= 3;
+        var wide = new boolean[count];
+        if (config.reversible()) {
+            for (var c = 0; c < count; c++) {
+                wide[c] = wide(config, quantizations[c], transform && c < 3);
+            }
+            if (transform && (wide[0] || wide[1] || wide[2])) {
+                wide[0] = wide[1] = wide[2] = true;
+            }
+        }
         for (var c = 0; c < count; c++) {
             var dx = config.subsamplingX()[c];
             var dy = config.subsamplingY()[c];
@@ -917,54 +977,84 @@ public final class Jp2Writer {
                     coding.resolutions(), true, limits);
             var width = (int) (cx1 - cx0);
             var height = (int) (cy1 - cy0);
-            LimitChecks.checkAllocation(limits, (long) width * height * 4);
+            LimitChecks.checkAllocation(limits, (long) width * height * (wide[c] ? 8 : 4));
             var planeX0 = Math.ceilDiv(config.x0(), dx);
             var planeY0 = Math.ceilDiv(config.y0(), dy);
             var planeWidth = (int) (Math.ceilDiv(config.x1(), dx) - planeX0);
-            var shift = config.signed()[c] ? 0 : 1 << (config.precisions()[c] - 1);
+            var shift = config.signed()[c] ? 0 : 1L << (config.precisions()[c] - 1);
             var plane = planes[c];
+            var widePlane = plane == null ? widePlanes[c] : null;
             var left = (int) (cx0 - planeX0);
             var top = (int) (cy0 - planeY0);
-            if (config.reversible()) {
-                var samples = integers[c] = new int[width * height];
+            if (wide[c]) {
+                var samples = longs[c] = new long[width * height];
                 for (var y = 0; y < height; y++) {
                     var source = (top + y) * planeWidth + left;
                     for (var x = 0; x < width; x++) {
-                        samples[y * width + x] = plane[source + x] - shift;
+                        samples[y * width + x] = (plane != null ? plane[source + x] : widePlane[source + x]) - shift;
+                    }
+                }
+            } else if (config.reversible()) {
+                var samples = integers[c] = new int[width * height];
+                var narrow = (int) shift;
+                for (var y = 0; y < height; y++) {
+                    var source = (top + y) * planeWidth + left;
+                    if (plane != null) {
+                        for (var x = 0; x < width; x++) {
+                            samples[y * width + x] = plane[source + x] - narrow;
+                        }
+                    } else {
+                        for (var x = 0; x < width; x++) {
+                            samples[y * width + x] = (int) (widePlane[source + x] - shift);
+                        }
                     }
                 }
             } else {
                 var samples = floats[c] = new float[width * height];
                 for (var y = 0; y < height; y++) {
                     var source = (top + y) * planeWidth + left;
-                    for (var x = 0; x < width; x++) {
-                        samples[y * width + x] = (float) (plane[source + x] - shift);
+                    if (plane != null) {
+                        for (var x = 0; x < width; x++) {
+                            samples[y * width + x] = (float) (plane[source + x] - shift);
+                        }
+                    } else {
+                        for (var x = 0; x < width; x++) {
+                            samples[y * width + x] = (float) (widePlane[source + x] - shift);
+                        }
                     }
                 }
             }
         }
-        var transform = config.transform() && count >= 3;
         if (transform) {
-            forwardTransform(integers, floats, config.reversible());
+            if (wide[0]) {
+                forwardTransform(longs[0], longs[1], longs[2]);
+            } else {
+                forwardTransform(integers, floats, config.reversible());
+            }
         }
         for (var c = 0; c < count; c++) {
             var stride = (int) (components[c].x1 - components[c].x0);
             if (stride == 0 || components[c].y1 == components[c].y0) {
                 continue;
             }
-            if (config.reversible()) {
+            if (wide[c]) {
+                Wavelet.forwardWide(longs[c], stride, components[c]);
+            } else if (config.reversible()) {
                 Wavelet.forward53(integers[c], stride, components[c]);
             } else {
                 Wavelet.forward97(floats[c], stride, components[c]);
             }
         }
-        var region = regionOfInterest(config, components, integers, floats, limits);
+        var highThroughput = (config.codeBlockStyle() & ComponentCoding.HIGH_THROUGHPUT) != 0;
+        if (highThroughput) {
+            narrow(integers, longs);
+        }
+        var region = regionOfInterest(config, components, integers, longs, floats, limits);
         var order = new PacketOrder(bounds, components, config.subsamplingX(), config.subsamplingY(), config.layers(),
                 progressions.size() > 1, limits);
-        var highThroughput = (config.codeBlockStyle() & ComponentCoding.HIGH_THROUGHPUT) != 0;
         var blocks = highThroughput
                 ? encodeHighThroughput(config, components, integers, floats, transform, order, progressions, budgets)
-                : encodeBlocks(config, components, integers, floats, transform, region);
+                : encodeBlocks(config, components, integers, longs, floats, transform, region);
         var distortion = 0.0;
         for (var value : blocks) {
             distortion += value;
@@ -1048,14 +1138,15 @@ public final class Jp2Writer {
      *
      * @param config the parameters
      * @param components the tile-components, after the wavelet transform
-     * @param integers the integer coefficients
+     * @param integers the integer coefficients held in 32-bit integers
+     * @param longs the integer coefficients held in 64-bit integers
      * @param floats the floating-point coefficients
      * @param limits the resource bounds checked before every allocation
      * @return the region of the tile, or {@code null} for none
-     * @throws IllegalArgumentException if a scaled coefficient would need more than 25 magnitude bit-planes
+     * @throws IllegalArgumentException if a scaled coefficient would need more than 55 magnitude bit-planes
      */
     private static TileRegion regionOfInterest(EncoderConfig config, TileComponent[] components, int[][] integers,
-                                               float[][] floats, MediaLimits limits) {
+                                               long[][] longs, float[][] floats, MediaLimits limits) {
         var region = config.region();
         if (region == null) {
             return null;
@@ -1090,11 +1181,9 @@ public final class Jp2Writer {
             if (!inside) {
                 continue;
             }
-            var magnitudes = magnitudes(component, integers[c], floats[c], mask, config.reversible());
+            var magnitudes = magnitudes(component, integers[c], longs[c], floats[c], mask, config.reversible());
             if (magnitudes[0] > 0) {
                 var shift = bits(magnitudes[0]) + 1;
-                // TODO: code the blocks a rectangle covers in part with fewer fractional bits, as HtEncoder does, so
-                // that deeper channels take a rectangle (decoders hold at most 30 bit-planes with the shift)
                 if (bits(magnitudes[1]) + shift > ROI_MAX_BIT_PLANES) {
                     throw new IllegalArgumentException("the region of interest scales coefficients of component " + c
                             + " to " + (bits(magnitudes[1]) + shift) + " magnitude bit-planes, above "
@@ -1113,8 +1202,8 @@ public final class Jp2Writer {
      * @param value a non-negative number
      * @return the position of its highest set bit plus one, 0 for 0
      */
-    private static int bits(int value) {
-        return 32 - Integer.numberOfLeadingZeros(value);
+    private static int bits(long value) {
+        return 64 - Long.numberOfLeadingZeros(value);
     }
 
     /**
@@ -1122,16 +1211,17 @@ public final class Jp2Writer {
      * block coder codes them.
      *
      * @param component the tile-component
-     * @param integers the integer coefficients of the 5-3 wavelet, or {@code null}
+     * @param integers the integer coefficients of the 5-3 wavelet in 32-bit integers, or {@code null}
+     * @param longs the integer coefficients of the 5-3 wavelet in 64-bit integers, or {@code null}
      * @param floats the floating-point coefficients of the 9-7 wavelet, or {@code null}
      * @param mask the mask, nonzero for a coefficient of the region
      * @param reversible whether the 5-3 wavelet is used
      * @return the largest magnitude of the background, then of the region
      */
-    private static int[] magnitudes(TileComponent component, int[] integers, float[] floats, byte[] mask,
-                                    boolean reversible) {
+    private static long[] magnitudes(TileComponent component, int[] integers, long[] longs, float[] floats,
+                                     byte[] mask, boolean reversible) {
         var stride = (int) (component.x1 - component.x0);
-        var result = new int[2];
+        var result = new long[2];
         for (var level : component.resolutions) {
             for (var band : level.bands()) {
                 if (band.empty()) {
@@ -1140,17 +1230,17 @@ public final class Jp2Writer {
                 var width = (int) (band.x1() - band.x0());
                 var height = (int) (band.y1() - band.y0());
                 var step = band.stepSize();
-                var limit = reversible || band.bitPlanes() >= 31 ? Integer.MAX_VALUE : (1 << band.bitPlanes()) - 1;
+                var limit = reversible || band.bitPlanes() >= 63 ? Long.MAX_VALUE : (1L << band.bitPlanes()) - 1;
                 for (var y = 0; y < height; y++) {
                     var row = (band.offsetY() + y) * stride + band.offsetX();
                     for (var x = 0; x < width; x++) {
                         var at = row + x;
-                        int magnitude;
+                        long magnitude;
                         if (reversible) {
-                            magnitude = Math.abs(integers[at]);
+                            magnitude = Math.abs(integers != null ? (long) integers[at] : longs[at]);
                         } else {
                             var value = (long) Math.rint((floats[at] / step) * (1 << Tier1Tables.NMSEDEC_FRACBITS));
-                            magnitude = (int) Math.min(Math.abs(value) >> Tier1Tables.NMSEDEC_FRACBITS, limit);
+                            magnitude = Math.min(Math.abs(value) >> Tier1Tables.NMSEDEC_FRACBITS, limit);
                         }
                         var inside = mask[at] != 0 ? 1 : 0;
                         result[inside] = Math.max(result[inside], magnitude);
@@ -1182,6 +1272,74 @@ public final class Jp2Writer {
             }
         }
         return inside == 0 ? 0 : inside == width * height ? 2 : 1;
+    }
+
+    /**
+     * Applies the forward reversible component transformation to the first three components in 64-bit integers.
+     *
+     * @param r the first component, receiving the luma
+     * @param g the second component, receiving the blue difference
+     * @param b the third component, receiving the red difference
+     */
+    private static void forwardTransform(long[] r, long[] g, long[] b) {
+        for (var i = 0; i < r.length; i++) {
+            var red = r[i];
+            var green = g[i];
+            var blue = b[i];
+            r[i] = (red + (green * 2) + blue) >> 2;
+            g[i] = blue - green;
+            b[i] = red - green;
+        }
+    }
+
+    /**
+     * Narrows the 64-bit coefficients of the components that hold them to 32-bit integers, for the high-throughput
+     * block coder, which codes at most {@value #HT_MAX_BIT_PLANES} magnitude bit-planes.
+     *
+     * @param integers the 32-bit coefficients of each component, receiving the narrowed ones
+     * @param longs the 64-bit coefficients of each component, cleared once narrowed
+     * @throws IllegalArgumentException if a coefficient needs more than {@value #HT_MAX_BIT_PLANES} magnitude
+     * bit-planes
+     */
+    private static void narrow(int[][] integers, long[][] longs) {
+        var limit = (1L << HT_MAX_BIT_PLANES) - 1;
+        for (var c = 0; c < longs.length; c++) {
+            var source = longs[c];
+            if (source == null) {
+                continue;
+            }
+            var target = new int[source.length];
+            for (var i = 0; i < source.length; i++) {
+                var value = source[i];
+                if (value > limit || value < -limit) {
+                    throw new IllegalArgumentException("the high-throughput block coder codes at most "
+                            + HT_MAX_BIT_PLANES + " magnitude bit-planes, and a coefficient of component " + c
+                            + " needs " + bits(Math.abs(value)));
+                }
+                target[i] = (int) value;
+            }
+            integers[c] = target;
+            longs[c] = null;
+        }
+    }
+
+    /**
+     * Returns whether the reversible samples of a component go through the transforms in 64-bit integers: when the
+     * sub-bands' magnitude bit-planes, one more for the sums of the lifting steps, do not fit the 31 magnitude bits
+     * of an {@code int}.
+     *
+     * @param config the parameters
+     * @param quantization the component's quantization
+     * @param transformed whether the component goes through the component transform, which adds a bit
+     * @return whether the component needs 64-bit integers
+     */
+    private static boolean wide(EncoderConfig config, Quantization quantization, boolean transformed) {
+        var bound = 0;
+        var bands = 3 * config.resolutions() - 2;
+        for (var b = 0; b < bands; b++) {
+            bound = Math.max(bound, quantization.exponent(b) + quantization.guardBits() - 1);
+        }
+        return bound + (transformed ? 1 : 0) + 1 > 31;
     }
 
     /**
@@ -1264,7 +1422,8 @@ public final class Jp2Writer {
      *
      * @param config the parameters
      * @param components the tile-components
-     * @param integers the integer coefficients
+     * @param integers the integer coefficients held in 32-bit integers
+     * @param longs the integer coefficients held in 64-bit integers
      * @param floats the floating-point coefficients
      * @param transform whether the component transform was applied
      * @param region the region of interest of the tile, or {@code null}
@@ -1273,7 +1432,7 @@ public final class Jp2Writer {
      * coefficients need
      */
     private static double[] encodeBlocks(EncoderConfig config, TileComponent[] components, int[][] integers,
-                                         float[][] floats, boolean transform, TileRegion region) {
+                                         long[][] longs, float[][] floats, boolean transform, TileRegion region) {
         var jobs = new ArrayList<Job>();
         var work = 0L;
         for (var c = 0; c < components.length; c++) {
@@ -1324,16 +1483,17 @@ public final class Jp2Writer {
                         mask = coverage == 1 ? region.masks()[c] : null;
                     }
                 }
-                distortions[j] = coder.encode(block, integers[c], floats[c], y * stride + x, stride, band.orientation(),
-                        component.resolutions.length - 1 - r, band.stepSize(), config.reversible(),
+                distortions[j] = coder.encode(block, integers[c], longs[c], floats[c], y * stride + x, stride,
+                        band.orientation(), component.resolutions.length - 1 - r, band.stepSize(), config.reversible(),
                         config.codeBlockStyle(), weight, mask, shift, config.reversible() ? 0 : band.bitPlanes());
             }
         });
         for (var job : jobs) {
             var block = job.block();
             if (block.bitPlanes > job.band().bitPlanes() + block.roiPlanes) {
-                throw new IllegalArgumentException(config.guardBits() + " guard bits leave a sub-band of component "
-                        + job.component() + " " + job.band().bitPlanes() + " magnitude bit-planes, and its "
+                throw new IllegalArgumentException(stepSizes(config, config.precisions()[job.component()]).guardBits()
+                        + " guard bits leave a sub-band of component " + job.component() + " "
+                        + job.band().bitPlanes() + " magnitude bit-planes, and its "
                         + "coefficients need " + (block.bitPlanes - block.roiPlanes));
             }
         }
@@ -1491,7 +1651,8 @@ public final class Jp2Writer {
             return coder.saturate(band.bitPlanes());
         }
         if (planes > band.bitPlanes()) {
-            throw new IllegalArgumentException(config.guardBits() + " guard bits leave a sub-band of component " + c
+            throw new IllegalArgumentException(stepSizes(config, config.precisions()[c]).guardBits()
+                    + " guard bits leave a sub-band of component " + c
                     + " " + band.bitPlanes() + " magnitude bit-planes, and its coefficients need " + planes);
         }
         return planes;
@@ -1714,7 +1875,7 @@ public final class Jp2Writer {
             var pixels = new long[1];
             forEachBlock(components[c], (band, block) ->
                     pixels[0] += (long) (block.x1 - block.x0) * (block.y1 - block.y0));
-            var peak = (double) (1 << config.precisions()[c]) - 1.0;
+            var peak = Math.scalb(1.0, config.precisions()[c]) - 1.0;
             total += peak * peak * (double) pixels[0];
         }
         return total;
@@ -1758,7 +1919,7 @@ public final class Jp2Writer {
             });
             min = slopes[0];
             max = slopes[1];
-            var peak = (double) (1 << config.precisions()[c]) - 1.0;
+            var peak = Math.scalb(1.0, config.precisions()[c]) - 1.0;
             maxSquaredError += peak * peak * (double) pixels[0];
         }
         var layers = config.layers();

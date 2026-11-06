@@ -322,6 +322,61 @@ final class LiftingKernel {
     }
 
     /**
+     * Decomposes reversible signals in place, the exact inverse of {@link #inverse(long[], int, long, int)}: the
+     * lifting steps run in order and add their updates, and a single sample of odd index is doubled.
+     *
+     * @param buffer the interleaved signals, receiving the low-pass samples at the positions of even indices and the
+     * high-pass samples at the odd ones
+     * @param n the number of positions
+     * @param i0 the index of the first position
+     * @param lanes the number of signals
+     */
+    void forward(long[] buffer, int n, long i0, int lanes) {
+        if (n <= 0) {
+            return;
+        }
+        if (n == 1) {
+            if ((i0 & 1) != 0) {
+                for (var lane = 0; lane < lanes; lane++) {
+                    buffer[lane] *= 2;
+                }
+            }
+            return;
+        }
+        var i1 = i0 + n;
+        for (var s = 0; s < updates.length; s++) {
+            var m = updates[s];
+            var count = coefficients[s].length;
+            var first = (int) Math.floorMod(m - i0, 2);
+            var divisor = exponents[s];
+            for (var p = first; p < n; p += 2) {
+                var base = i0 + p + 1 - 2 * m + 2L * offsets[s];
+                var target = p * lanes;
+                if (integerCoefficients != null) {
+                    var alpha = integerCoefficients[s];
+                    for (var lane = 0; lane < lanes; lane++) {
+                        var sum = integerResidues[s];
+                        for (var k = 0; k < count; k++) {
+                            sum += alpha[k] * buffer[extend(base + 2L * k, i0, i1) * lanes + lane];
+                        }
+                        buffer[target + lane] += divisor >= 63 ? (sum < 0 ? -1 : 0) : sum >> divisor;
+                    }
+                } else {
+                    var alpha = coefficients[s];
+                    var power = Math.scalb(1.0, divisor);
+                    for (var lane = 0; lane < lanes; lane++) {
+                        var sum = residues[s];
+                        for (var k = 0; k < count; k++) {
+                            sum += alpha[k] * buffer[extend(base + 2L * k, i0, i1) * lanes + lane];
+                        }
+                        buffer[target + lane] += (long) Math.floor(sum / power);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * Reconstructs irreversible signals in place ({@code 1D_SR_ARB} with {@code 1D_SCALER} and
      * {@code 1D_UPDATER_IRR}), in single precision.
      *

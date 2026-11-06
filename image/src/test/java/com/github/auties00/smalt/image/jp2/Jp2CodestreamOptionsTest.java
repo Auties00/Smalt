@@ -789,9 +789,10 @@ class Jp2CodestreamOptionsTest {
                     lossless().regionOfInterest(new Jp2RegionOfInterest.Component(3, 2)).build()));
             var samples = new int[32 * 32];
             for (var i = 0; i < samples.length; i++) {
-                samples[i] = (i * 40503) & 0xFFFF;
+                samples[i] = (int) ((i * 2654435761L) & 0x7FFFFFFF);
             }
-            var deep = new Jp2Image(0, 0, 32, 32, 32, 32, 0, List.of(new Jp2Channel(0, 0, 32, 32, 1, 1, 16, false,
+            // a 31-bit rectangle scales the coefficients beyond the 55 bit-planes a packet signals
+            var deep = new Jp2Image(0, 0, 32, 32, 32, 32, 0, List.of(new Jp2Channel(0, 0, 32, 32, 1, 1, 31, false,
                     Jp2ChannelType.COLOR, 1, samples)), Jp2ColorSpace.GRAYSCALE, Optional.empty(), Optional.empty(),
                     Optional.empty());
             assertThrows(IllegalArgumentException.class, () -> Jp2Encoder.encode(deep, Jp2EncoderOptions.builder()

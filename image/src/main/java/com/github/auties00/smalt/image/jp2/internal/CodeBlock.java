@@ -182,11 +182,15 @@ final class CodeBlock {
     /**
      * Starts a segment, setting how many passes it can hold.
      *
-     * @implNote This implementation follows OpenJPEG's {@code opj_t2_init_seg}: a block coded
-     * with {@link ComponentCoding#TERMINATE_ALL} has one pass per segment; with
+     * <p>A block coded with {@link ComponentCoding#TERMINATE_ALL} has one pass per segment; with
      * {@link ComponentCoding#BYPASS} the first segment holds the first ten passes and later
-     * segments alternate between two raw passes and one arithmetic-coded pass; otherwise a
-     * segment holds up to 109 passes, (37 - 1) * 3 + 1.
+     * segments alternate between two raw passes and one arithmetic-coded pass; otherwise one
+     * segment holds every pass (D.4.1).
+     *
+     * @implNote This implementation follows OpenJPEG's {@code opj_t2_init_seg}, except that a
+     * segment of a block without termination is not limited to its 109 passes, (37 - 1) * 3 + 1:
+     * the scaling of a region of interest gives a block more bit-planes than the 37 a sub-band
+     * holds.
      * @param index the segment index
      * @param style the code-block style flags
      * @param first whether this is the block's first segment
@@ -218,7 +222,7 @@ final class CodeBlock {
                 max = previous == 1 || previous == 10 ? 2 : 1;
             }
         } else {
-            max = 109;
+            max = Integer.MAX_VALUE;
         }
         segmentMaxPasses[index] = max;
     }

@@ -183,6 +183,29 @@ final class Wavelet {
     }
 
     /**
+     * Applies the forward 5-3 transform over every resolution level in 64-bit integers, for samples whose
+     * coefficients do not fit {@link #forward53}.
+     *
+     * @param data the samples, row-major
+     * @param stride the row stride of {@code data}
+     * @param component the tile-component
+     */
+    static void forwardWide(long[] data, int stride, TileComponent component) {
+        var kernel = LiftingKernel.REVERSIBLE_53;
+        for (var r = component.resolutions.length - 1; r >= 1; r--) {
+            var level = component.resolutions[r];
+            var lower = component.resolutions[r - 1];
+            var width = level.width();
+            var height = level.height();
+            if (width == 0 || height == 0) {
+                continue;
+            }
+            forwardColumnsWide(data, stride, width, height, lower.height(), (int) (level.y0() & 1), kernel);
+            forwardRowsWide(data, stride, width, height, lower.width(), (int) (level.x0() & 1), kernel);
+        }
+    }
+
+    /**
      * Rebuilds a node of an arbitrary decomposition with the 5-3 wavelet: its children, then its rows and columns.
      *
      * @param data the coefficients
@@ -285,6 +308,86 @@ final class Wavelet {
             columnsWide(data, base, stride, width, height, children[0].height(), node.y0(), kernel,
                     period(component, false, depthY));
         }
+    }
+
+    /**
+     * Forward-transforms the rows of a level with a reversible kernel in 64-bit integers.
+     *
+     * @param data the samples
+     * @param stride the row stride
+     * @param width the level width
+     * @param height the level height
+     * @param sn the number of low-pass coefficients per row
+     * @param cas the parity of the level's left edge
+     * @param kernel the reversible lifting kernel
+     */
+    private static void forwardRowsWide(long[] data, int stride, int width, int height, int sn, int cas,
+                                        LiftingKernel kernel) {
+        var dn = width - sn;
+        var groups = (height + LANES - 1) / LANES;
+        var bands = ParallelBands.bands(groups, SAMPLE_WORK * width * height);
+        ParallelBands.run(bands, band -> {
+            var buffer = new long[width * LANES];
+            var end = ParallelBands.start(band + 1, bands, groups);
+            for (var group = ParallelBands.start(band, bands, groups); group < end; group++) {
+                var row = group * LANES;
+                var count = Math.min(LANES, height - row);
+                java.util.Arrays.fill(buffer, 0);
+                for (var lane = 0; lane < count; lane++) {
+                    var base = (row + lane) * stride;
+                    for (var k = 0; k < width; k++) {
+                        buffer[k * LANES + lane] = data[base + k];
+                    }
+                }
+                kernel.forward(buffer, width, cas, LANES);
+                for (var lane = 0; lane < count; lane++) {
+                    var base = (row + lane) * stride;
+                    for (var i = 0; i < sn; i++) {
+                        data[base + i] = buffer[(2 * i + cas) * LANES + lane];
+                    }
+                    for (var i = 0; i < dn; i++) {
+                        data[base + sn + i] = buffer[(2 * i + 1 - cas) * LANES + lane];
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * Forward-transforms the columns of a level with a reversible kernel in 64-bit integers.
+     *
+     * @param data the samples
+     * @param stride the row stride
+     * @param width the level width
+     * @param height the level height
+     * @param sn the number of low-pass coefficients per column
+     * @param cas the parity of the level's top edge
+     * @param kernel the reversible lifting kernel
+     */
+    private static void forwardColumnsWide(long[] data, int stride, int width, int height, int sn, int cas,
+                                           LiftingKernel kernel) {
+        var dn = height - sn;
+        var groups = (width + LANES - 1) / LANES;
+        var bands = ParallelBands.bands(groups, SAMPLE_WORK * width * height);
+        ParallelBands.run(bands, band -> {
+            var buffer = new long[height * LANES];
+            var end = ParallelBands.start(band + 1, bands, groups);
+            for (var group = ParallelBands.start(band, bands, groups); group < end; group++) {
+                var column = group * LANES;
+                var count = Math.min(LANES, width - column);
+                java.util.Arrays.fill(buffer, 0);
+                for (var k = 0; k < height; k++) {
+                    System.arraycopy(data, k * stride + column, buffer, k * LANES, count);
+                }
+                kernel.forward(buffer, height, cas, LANES);
+                for (var i = 0; i < sn; i++) {
+                    System.arraycopy(buffer, (2 * i + cas) * LANES, data, i * stride + column, count);
+                }
+                for (var i = 0; i < dn; i++) {
+                    System.arraycopy(buffer, (2 * i + 1 - cas) * LANES, data, (sn + i) * stride + column, count);
+                }
+            }
+        });
     }
 
     /**

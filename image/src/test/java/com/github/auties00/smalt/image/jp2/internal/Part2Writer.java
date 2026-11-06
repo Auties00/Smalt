@@ -333,7 +333,7 @@ final class Part2Writer {
                             if (regionScales != null && regionScales[c] != null) {
                                 shift = scaleBlock(integers[c], regionScales[c], offset, stride, block);
                             }
-                            coder.encode(block, integers == null ? null : integers[c],
+                            coder.encode(block, integers == null ? null : integers[c], null,
                                     integers != null ? null : floats[c], offset, stride, band.orientation(), 0,
                                     precinct.stepSize, integers != null, codeBlockStyle, 1.0, null, 0, 0);
                             if (block.bitPlanes - shift > precinct.bitPlanes) {
