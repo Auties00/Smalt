@@ -26,7 +26,8 @@ import java.util.Locale;
  * the Bayer pattern ({@code 1}: red, green, green, blue from the sensor's top-left photosite;
  * {@code 4}: green, blue, red, green);
  * <li>{@code "\0WBG"}, the as-shot white balance: four scale codes, then four big-endian 16-bit
- * levels in red, green, green, blue order;
+ * levels in the order of the Bayer pattern's photosites (red, green, green, blue for pattern 1;
+ * green, blue, red, green for pattern 4);
  * <li>{@code "\0RIF"}, the shot settings, of which the ISO code at offset 6 is read;
  * <li>{@code "\0TTW"}, a big-endian TIFF structure whose offsets are relative to its own start,
  * holding the camera, the EXIF metadata and a maker note whose tags {@code 0x0088} and
@@ -35,7 +36,8 @@ import java.util.Locale;
  * <li>{@code "\0PAD"}, padding.
  * </ul>
  *
- * <p>The rendered image is the area of the image size centered on the sensor. The samples are
+ * <p>The rendered image is the area of the image size centered on the sensor, one row higher for
+ * pattern 4 when that puts a red photosite at its top-left corner. The samples are
  * linear, black at 0 and white at {@code 2^bits - 1}, except on the DiMAGE A2 and DiMAGE 5,
  * whose photosites saturate at 3965. The preview's first byte is stored as another value than
  * {@code 0xFF} and is read as {@code 0xFF}; a preview of another aspect ratio than the image
@@ -46,10 +48,11 @@ import java.util.Locale;
  * @implNote This implementation follows the block and tag names of the ExifTool tag documentation;
  * the layouts, the crop, the white levels, the damaged preview byte and the letterbox were found by
  * examining CC0 sample files and checked against the values Adobe DNG Converter, run as a black
- * box, stores for them. Storage methods, bit depths and Bayer patterns no sample has shown (the
- * green-first pattern of the DiMAGE A200 among them), and the MRW structure of Sony cameras,
- * raise {@link MediaException.Unsupported} rather than being guessed; models no sample shows keep
- * the white level of their bit depth.
+ * box, stores for them. No CC0 file has the green-first pattern of the DiMAGE A200: its photosites,
+ * the order of its white balance levels and its crop are those the converter gives a CC0 DiMAGE A2
+ * file whose pattern byte is set to 4. Storage methods, bit depths and Bayer patterns no sample has
+ * shown, and the MRW structure of Sony cameras, raise {@link MediaException.Unsupported} rather than
+ * being guessed; models no sample shows keep the white level of their bit depth.
  */
 final class MrwParser {
     /**
@@ -81,6 +84,16 @@ final class MrwParser {
      * The storage method of 12-bit samples packed two in three bytes.
      */
     private static final int PACKED = 0x59;
+
+    /**
+     * The Bayer pattern code of red, green, green, blue from the sensor's top-left photosite.
+     */
+    private static final int RGGB = 1;
+
+    /**
+     * The Bayer pattern code of green, blue, red, green from the sensor's top-left photosite.
+     */
+    private static final int GBRG = 4;
 
     /**
      * The longest header read.
@@ -146,10 +159,10 @@ final class MrwParser {
         if (file.iso == 0 && rif != null) {
             file.iso = iso(rif[6] & 0xFF);
         }
-        if (wbg != null) {
-            balance(file, wbg);
-        }
         sensor(file, reader, prd, dataOffset);
+        if (wbg != null) {
+            balance(file, wbg, (prd[23] & 0xFF) == GBRG);
+        }
         var imageWidth = ByteArrays.u16be(prd, 14);
         var imageHeight = ByteArrays.u16be(prd, 12);
         file.previews.replaceAll(preview -> preview.letterboxed(imageWidth, imageHeight));
@@ -177,10 +190,10 @@ final class MrwParser {
             return;
         }
         if (file.exposureTime == 0 && exif.has(37377)) {
-            file.exposureTime = Math.pow(2, -exif.doubleValue(37377, 0));
+            file.exposureTime = StrictMath.pow(2, -exif.doubleValue(37377, 0));
         }
         if (file.fNumber == 0 && exif.has(37378)) {
-            file.fNumber = Math.pow(2, exif.doubleValue(37378, 0) / 2);
+            file.fNumber = StrictMath.pow(2, exif.doubleValue(37378, 0) / 2);
         }
         var note = exif.valuePosition(TiffTree.MAKER_NOTE);
         if (note < 0 || exif.valueCount(TiffTree.MAKER_NOTE) < 6) {
@@ -203,18 +216,21 @@ final class MrwParser {
     }
 
     /**
-     * Reads the as-shot white balance.
+     * Reads the as-shot white balance, whose levels follow the order of the Bayer pattern's
+     * photosites.
      *
      * @param file the description to fill
      * @param wbg the white balance block
+     * @param greenFirst whether the Bayer pattern is green, blue, red, green rather than red, green,
+     * green, blue
      */
-    private static void balance(RawFile file, byte[] wbg) {
+    private static void balance(RawFile file, byte[] wbg, boolean greenFirst) {
         if (wbg[0] != wbg[1] || wbg[0] != wbg[2] || wbg[0] != wbg[3]) {
             return;
         }
-        var red = ByteArrays.u16be(wbg, 4);
-        var green = (ByteArrays.u16be(wbg, 6) + ByteArrays.u16be(wbg, 8)) / 2.0;
-        var blue = ByteArrays.u16be(wbg, 10);
+        var red = ByteArrays.u16be(wbg, greenFirst ? 8 : 4);
+        var green = (ByteArrays.u16be(wbg, greenFirst ? 4 : 6) + ByteArrays.u16be(wbg, greenFirst ? 10 : 8)) / 2.0;
+        var blue = ByteArrays.u16be(wbg, greenFirst ? 6 : 10);
         if (red > 0 && green > 0 && blue > 0) {
             file.color.asShotNeutral = new double[]{green / red, 1, green / blue};
         }
@@ -272,7 +288,7 @@ final class MrwParser {
                     + " with " + bits + " significant bits is not supported";
             return;
         }
-        if (pattern != 1) {
+        if (pattern != RGGB && pattern != GBRG) {
             file.unsupported = "MRW Bayer pattern " + pattern + " is not supported";
             return;
         }
@@ -282,11 +298,16 @@ final class MrwParser {
         sensor.height = sensorHeight;
         sensor.bitsPerSample = bits;
         sensor.compression = "uncompressed";
-        sensor.cfa = CfaPattern.bayer("RGGB");
+        sensor.cfa = CfaPattern.bayer(pattern == GBRG ? "GBRG" : "RGGB");
         sensor.white = new double[]{white(file.model, bits)};
         if (imageWidth > 0 && imageHeight > 0) {
-            sensor.defaultCrop = new double[]{(sensorWidth - imageWidth) / 2, (sensorHeight - imageHeight) / 2,
-                    imageWidth, imageHeight};
+            var left = (sensorWidth - imageWidth) / 2;
+            var top = (sensorHeight - imageHeight) / 2;
+            // the crop of a green-first sensor starts one row higher, on a red photosite
+            if (pattern == GBRG && top > 0 && (top & 1) == 0 && (left & 1) == 0) {
+                top--;
+            }
+            sensor.defaultCrop = new double[]{left, top, imageWidth, imageHeight};
         }
         var source = reader.source();
         var rowBytes = packed ? sensorWidth / 2 * 3 : sensorWidth * 2;

@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.audio.mp3;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.container.mpeg.MpegAudioDemuxer;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Fixtures;
@@ -13,7 +14,6 @@ import org.junit.jupiter.params.provider.ValueSource;
 import java.util.SplittableRandom;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Checks that the Vector API synthesis kernel is bit-identical to the scalar reference, kernel
@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 class SynthesisKernelTest {
     @BeforeEach
     void requireVectorModule() {
-        assumeTrue(ModuleLayer.boot().findModule("jdk.incubator.vector").isPresent(), "Vector API not available");
+        Skip.unless(ModuleLayer.boot().findModule("jdk.incubator.vector").isPresent(), "simd:disabled", "Vector API not available");
     }
 
     private static float[] random(SplittableRandom random, int length, float scale) {
