@@ -1,7 +1,7 @@
 package com.github.auties00.smalt.video.av1.internal;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.internal.simd.Simd;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -160,7 +160,7 @@ class McDspTest {
     @MethodSource("groups")
     @DisplayName("the vector kernels match dav1d's C output")
     void vector(Group group) {
-        Assumptions.assumeTrue(Simd.ENABLED, "the Vector API is unavailable");
+        Skip.unlessVector(Simd.ENABLED);
         assertEquals(Long.toHexString(group.expected()), Long.toHexString(hash(VectorMcDsp.create(), group.name(), group.bitDepth())));
     }
 
@@ -168,7 +168,7 @@ class McDspTest {
     @ValueSource(ints = {8, 10, 12})
     @DisplayName("the vector translation-only warps match the scalar kernels on extreme samples")
     void translationWarp(int bitDepth) {
-        Assumptions.assumeTrue(Simd.ENABLED, "the Vector API is unavailable");
+        Skip.unlessVector(Simd.ENABLED);
         var vector = VectorMcDsp.create();
         var scalar = new ScalarMcDsp();
         var max = (1 << bitDepth) - 1;
@@ -207,7 +207,7 @@ class McDspTest {
     @ValueSource(ints = {8, 10, 12})
     @DisplayName("the vector filters and compound averages match the scalar kernels on extreme samples")
     void extremeSamples(int bitDepth) {
-        Assumptions.assumeTrue(Simd.ENABLED, "the Vector API is unavailable");
+        Skip.unlessVector(Simd.ENABLED);
         var vector = VectorMcDsp.create();
         var scalar = new ScalarMcDsp();
         var max = (1 << bitDepth) - 1;

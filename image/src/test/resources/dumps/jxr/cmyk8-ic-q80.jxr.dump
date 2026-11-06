@@ -1,0 +1,15 @@
+# image dump of jxr/cmyk8-ic-q80.jxr; regenerate with -Dsmalt.test.updateDumps=true
+format JXR
+info ImageInfo[format=JXR, width=75, height=43, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 75x43 rgba8 alpha=false crc=b9035357
+  format=JXR orientation=NORMAL source=75x43
+  icc=none exif=none xmp=none
+  profile=none
+  density=DOTS_PER_INCH 96.0x96.0
+scaled 18x10
+picture 75x43 rgba8 alpha=false crc=b9035357
+  format=JXR orientation=NORMAL source=75x43
+  icc=none exif=none xmp=none
+  profile=none
+  density=DOTS_PER_INCH 96.0x96.0

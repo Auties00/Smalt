@@ -1,0 +1,25 @@
+progressive	five-mixed-41x35.jpg	-progressive
+rotate-90	five-mixed-41x35.jpg	-progressive -rotate 90
+rotate-180	five-mixed-41x35.jpg	-progressive -rotate 180
+rotate-270	five-mixed-41x35.jpg	-progressive -rotate 270
+flip-horizontal	five-mixed-41x35.jpg	-progressive -flip horizontal
+flip-vertical	five-mixed-41x35.jpg	-progressive -flip vertical
+transpose	five-mixed-41x35.jpg	-progressive -transpose
+transverse	five-mixed-41x35.jpg	-progressive -transverse
+rotate-90-trim	five-mixed-41x35.jpg	-progressive -rotate 90 -trim
+transverse-trim	five-mixed-41x35.jpg	-progressive -transverse -trim
+crop	five-mixed-41x35.jpg	-progressive -crop 20x17+5+4
+crop-rotate-270	five-mixed-41x35.jpg	-progressive -crop 20x19+10+13 -rotate 270
+arithmetic-flip	five-mixed-41x35.jpg	-progressive -arithmetic -flip horizontal
+restart	five-mixed-41x35.jpg	-progressive -restart 1 -rotate 180
+wipe	five-mixed-41x35.jpg	-progressive -wipe 20x17+5+4
+six-rotate-90	six-mixed-29x21.jpg	-progressive -rotate 90
+six-transverse	six-mixed-29x21.jpg	-progressive -transverse
+six-flip-vertical-trim	six-mixed-29x21.jpg	-progressive -flip vertical -trim
+six-crop-transpose	six-mixed-29x21.jpg	-progressive -crop 15x11+3+5 -transpose
+six-arithmetic	six-mixed-29x21.jpg	-progressive -arithmetic -rotate 270
+seven-rotate-180	seven-1x1-19x13.jpg	-progressive -rotate 180
+seven-transpose-restart	seven-1x1-19x13.jpg	-progressive -transpose -restart 2B
+small-flip-horizontal-trim	five-small-13x11.jpg	-progressive -flip horizontal -trim
+small-rotate-90	five-small-13x11.jpg	-progressive -rotate 90
+small-transverse-trim	five-small-13x11.jpg	-progressive -transverse -trim

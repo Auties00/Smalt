@@ -1,0 +1,12 @@
+# audio decode dump of aiff/ima4.aifc; regenerate with -Dsmalt.test.updateDumps=true
+format AIFF
+duration 600000
+seekable true
+track 0 ADPCM_IMA_QT rate=8000 layout=[FRONT_LEFT, FRONT_RIGHT]
+0 frames=4096 crc16=8672429b
+1 frames=704 crc16=7f8607c4
+seek 0: @sample 0
+seek 200000: @sample 1600
+seek 400000: @sample 3200
+seek 600000: end
+seek -1000000: @sample 0

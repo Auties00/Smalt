@@ -96,6 +96,19 @@ public final class DemuxAssertions {
      */
     public static void assertPacketsMatch(ContainerProbe.Demuxed ours, ContainerProbe.Probe probe,
                                           ToLongFunction<Track> ptsOffset, boolean compareDts, long ptsTolerance) {
+        assertPacketsMatch(ours, probe, ptsOffset, compareDts, ptsTolerance, true);
+    }
+
+    /**
+     * Asserts like {@link #assertPacketsMatch(ContainerProbe.Demuxed, ContainerProbe.Probe,
+     * ToLongFunction, boolean, long)}, optionally without comparing the key frame flags, for files whose sample
+     * flags ffmpeg reads otherwise than the file declares them (checked against another parser instead).
+     *
+     * @param compareKeyframes whether the key frame flags are compared
+     */
+    public static void assertPacketsMatch(ContainerProbe.Demuxed ours, ContainerProbe.Probe probe,
+                                          ToLongFunction<Track> ptsOffset, boolean compareDts, long ptsTolerance,
+                                          boolean compareKeyframes) {
         assertEquals(probe.streams().size(), ours.tracks().size(), "track count");
         for (var index = 0; index < ours.tracks().size(); index++) {
             var track = ours.tracks().get(index);
@@ -139,7 +152,7 @@ public final class DemuxAssertions {
                 var where = label + " packet " + position;
                 assertEquals(want.size(), got.size(), where + " size");
                 assertEquals(want.hash(), ContainerProbe.crc32(got.data()), where + " data hash");
-                if (track.codec() != Codec.DATA) {
+                if (track.codec() != Codec.DATA && compareKeyframes) {
                     assertEquals(want.key(), got.keyframe(), where + " keyframe");
                 }
                 // a lace frame without a declared duration has no timestamp of its own; ffmpeg derives one from the codec

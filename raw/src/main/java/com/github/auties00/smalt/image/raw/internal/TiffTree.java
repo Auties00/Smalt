@@ -197,6 +197,10 @@ final class TiffTree {
         } else {
             var compression = ifd.intValue(TiffSamples.COMPRESSION, 1);
             var photometric = ifd.intValue(TiffSamples.PHOTOMETRIC, 6);
+            if (compression == TiffSamples.COMPRESSION_JPEG_XL) {
+                jpegXlPreview(ifd, file, photometric);
+                return;
+            }
             if ((compression != 6 && compression != 7) || photometric == 32803 || photometric == 34892
                     || ifd.has(TiffSamples.TILE_OFFSETS)) {
                 return;
@@ -210,6 +214,42 @@ final class TiffTree {
             length = counts[0];
         }
         addPreview(file, ifd.reader(), ifd.reader().base() + offset, length);
+    }
+
+    /**
+     * Records a DNG 1.7 JPEG XL preview: a preview directory ({@code NewSubFileType} 1) of RGB or
+     * gray image data coded with JPEG XL, in one tile or several.
+     *
+     * @param ifd the directory
+     * @param file the description to fill
+     * @param photometric the directory's photometric interpretation
+     */
+    private static void jpegXlPreview(Ifd ifd, RawFile file, int photometric) {
+        if (ifd.longValue(NEW_SUBFILE_TYPE, 0) != 1 || (photometric != 1 && photometric != 2)) {
+            return;
+        }
+        var width = ifd.intValue(TiffSamples.IMAGE_WIDTH, 0);
+        var height = ifd.intValue(TiffSamples.IMAGE_LENGTH, 0);
+        var tiled = ifd.has(TiffSamples.TILE_OFFSETS);
+        var offsets = ifd.longs(tiled ? TiffSamples.TILE_OFFSETS : TiffSamples.STRIP_OFFSETS);
+        var counts = ifd.longs(tiled ? TiffSamples.TILE_BYTE_COUNTS : TiffSamples.STRIP_BYTE_COUNTS);
+        if (width <= 0 || height <= 0 || offsets == null || counts == null || offsets.length == 0
+                || counts.length < offsets.length) {
+            return;
+        }
+        var length = 0L;
+        for (var count : counts) {
+            length += Math.max(0, count);
+        }
+        var offset = ifd.reader().base() + offsets[0];
+        for (var preview : file.previews) {
+            if (preview.offset() == offset) {
+                return;
+            }
+        }
+        if (length > 0) {
+            file.previews.add(new RawFile.Preview(offset, length, width, height, false, 0, height, ifd));
+        }
     }
 
     /**

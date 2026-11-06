@@ -1,0 +1,15 @@
+# image dump of pixelshift/dng; regenerate with -Dsmalt.test.updateDumps=true
+format DNG
+info ImageInfo[format=DNG, width=24, height=18, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 24x18 rgba8 alpha=false crc=42d56b26
+  format=DNG orientation=NORMAL source=24x18
+  icc=520:86132914 exif=58:2f7b9f0e xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+scaled 6x4
+picture 24x18 rgba8 alpha=false crc=42d56b26
+  format=DNG orientation=NORMAL source=24x18
+  icc=520:86132914 exif=58:2f7b9f0e xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+decoder raw sensor data
+sensor 24x18 channels=3 cfa=none neutral=[0.47619047619047616, 1.0, 0.6666666666666666] crc=3d6cd0b5

@@ -25,7 +25,8 @@ public final class TsDemuxerOptions {
     /**
      * The options of {@link #defaults()}.
      */
-    private static final TsDemuxerOptions DEFAULTS = new TsDemuxerOptions(MediaLimits.DEFAULT, 0, DEFAULT_PROBE_BYTES);
+    private static final TsDemuxerOptions DEFAULTS = new TsDemuxerOptions(MediaLimits.DEFAULT, 0, DEFAULT_PROBE_BYTES,
+            SampleAesKeys.none());
 
     private final MediaLimits limits;
 
@@ -35,16 +36,18 @@ public final class TsDemuxerOptions {
     private final int program;
 
     private final long probeBytes;
+    private final SampleAesKeys sampleAesKeys;
 
-    private TsDemuxerOptions(MediaLimits limits, int program, long probeBytes) {
+    private TsDemuxerOptions(MediaLimits limits, int program, long probeBytes, SampleAesKeys sampleAesKeys) {
         this.limits = limits;
         this.program = program;
         this.probeBytes = probeBytes;
+        this.sampleAesKeys = sampleAesKeys;
     }
 
     /**
      * Returns options that select the first program, probe the first
-     * {@value #DEFAULT_PROBE_BYTES} bytes and enforce {@link MediaLimits#defaults()}.
+     * {@value #DEFAULT_PROBE_BYTES} bytes, enforce {@link MediaLimits#defaults()} and decrypt nothing.
      *
      * @return the default options
      */
@@ -108,21 +111,48 @@ public final class TsDemuxerOptions {
         return probeBytes;
     }
 
+    /**
+     * {@return the keys that decrypt the elementary streams encrypted in the HLS {@code SAMPLE-AES} format;
+     * {@link SampleAesKeys#none()} by default}
+     *
+     * <p>A {@code SAMPLE-AES} stream (Apple's MPEG-2 Stream Encryption Format for HTTP Live Streaming) is an H.264
+     * ({@code stream_type 0xDB}), AAC in ADTS ({@code 0xCF}), AC-3 ({@code 0xC1}) or E-AC-3 ({@code 0xC2}) stream
+     * whose units are partly encrypted with AES-128 in CBC mode, the chain restarting from the initialization
+     * vector at each unit: the slices (NAL unit types 1 and 5) of more than 48 bytes, whose first 32 bytes stay
+     * clear and then one 16-byte block in ten while more than 16 bytes are left, after the emulation prevention
+     * bytes added over the encrypted unit are removed; the whole blocks after the header and a 16-byte leader of an
+     * ADTS frame; and the whole blocks after the 16-byte leader of each AC-3 or E-AC-3 syncframe, the chain running
+     * on through the syncframes of one E-AC-3 frame. The demuxer decrypts each unit with the key these keys give
+     * for its PES packet, so the tracks and packets are those of the clear stream; the audio setup information of
+     * the program map ({@code apad}) gives the priming of audio tracks as their
+     * {@link com.github.auties00.smalt.track.AudioTrack#skipSamples() skipped samples}, and the
+     * {@code AudioSpecificConfig} of HE-AAC streams, which ADTS headers cannot signal. With
+     * {@link SampleAesKeys#none()}, or when no key is known for a unit, an encrypted stream raises
+     * {@link com.github.auties00.smalt.MediaException.Unsupported} when its first unit is read, which for most
+     * streams is when the demuxer is created; the first syncframe an AC-3 or E-AC-3 key decrypts is checked
+     * against its CRC, so a wrong key raises {@link com.github.auties00.smalt.MediaException.Malformed}. A wrong
+     * key for other streams yields packets that do not decode.
+     */
+    public SampleAesKeys sampleAesKeys() {
+        return sampleAesKeys;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof TsDemuxerOptions that && limits.equals(that.limits) && program == that.program
-                && probeBytes == that.probeBytes;
+                && probeBytes == that.probeBytes && sampleAesKeys.equals(that.sampleAesKeys);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(limits, program, probeBytes);
+        return Objects.hash(limits, program, probeBytes, sampleAesKeys);
     }
 
     @Override
     public String toString() {
         return "TsDemuxerOptions[limits=" + limits + ", program=" + (program == 0 ? "first" : program)
-                + ", probeBytes=" + probeBytes + "]";
+                + ", probeBytes=" + probeBytes + (sampleAesKeys.equals(SampleAesKeys.none()) ? ""
+                : ", sampleAes=true") + "]";
     }
 
     /**
@@ -140,11 +170,13 @@ public final class TsDemuxerOptions {
         private MediaLimits limits;
         private long program;
         private long probeBytes;
+        private SampleAesKeys sampleAesKeys;
 
         private Builder(TsDemuxerOptions options) {
             this.limits = options.limits;
             this.program = options.program == 0 ? FIRST_PROGRAM : options.program;
             this.probeBytes = options.probeBytes;
+            this.sampleAesKeys = options.sampleAesKeys;
         }
 
         /**
@@ -191,6 +223,40 @@ public final class TsDemuxerOptions {
         }
 
         /**
+         * Sets the keys of {@code SAMPLE-AES} streams; see {@link TsDemuxerOptions#sampleAesKeys()}.
+         *
+         * @param keys the keys, {@link SampleAesKeys#none()} to decrypt nothing
+         * @return this builder
+         */
+        public Builder sampleAesKeys(SampleAesKeys keys) {
+            this.sampleAesKeys = Objects.requireNonNull(keys, "keys");
+            return this;
+        }
+
+        /**
+         * Decrypts {@code SAMPLE-AES} streams with one key; see {@link TsDemuxerOptions#sampleAesKeys()}.
+         *
+         * @param key the 16-byte AES-128 key, copied
+         * @param initializationVector the 16-byte initialization vector, copied
+         * @return this builder
+         * @throws IllegalArgumentException if the key or the initialization vector is not 16 bytes long
+         */
+        public Builder sampleAes(byte[] key, byte[] initializationVector) {
+            this.sampleAesKeys = SampleAesKeys.of(SampleAesKey.of(key, initializationVector));
+            return this;
+        }
+
+        /**
+         * Decrypts nothing, the default; see {@link TsDemuxerOptions#sampleAesKeys()}.
+         *
+         * @return this builder
+         */
+        public Builder noSampleAes() {
+            this.sampleAesKeys = SampleAesKeys.none();
+            return this;
+        }
+
+        /**
          * Builds the options.
          *
          * @return the options
@@ -200,7 +266,7 @@ public final class TsDemuxerOptions {
         public TsDemuxerOptions build() {
             var number = program == FIRST_PROGRAM ? 0 : Checks.inRange("program number", (int) program, 1, 0xFFFF);
             return new TsDemuxerOptions(limits, number,
-                    Checks.inRange("probe window", probeBytes, MIN_PROBE_BYTES, Long.MAX_VALUE));
+                    Checks.inRange("probe window", probeBytes, MIN_PROBE_BYTES, Long.MAX_VALUE), sampleAesKeys);
         }
     }
 }
