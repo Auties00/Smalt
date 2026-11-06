@@ -23,9 +23,15 @@ final class SampleTable {
     static final byte KEYFRAME = 1;
 
     /**
+     * The flag bit marking a sample that is decoded but not presented, which the edit list
+     * expansion of {@link Mp4Track} sets on decoding pre-roll.
+     */
+    static final byte DISCARD = 2;
+
+    /**
      * The number of bytes the table stores per sample, used for allocation checks.
      */
-    private static final int BYTES_PER_SAMPLE = 8 + 4 + 8 + 4 + 4 + 1;
+    private static final int BYTES_PER_SAMPLE = 8 + 4 + 8 + 4 + 4 + 1 + 2;
 
     /**
      * The limits bounding the number of samples.
@@ -62,6 +68,18 @@ final class SampleTable {
      * The flags of each sample; bit {@link #KEYFRAME} marks sync samples.
      */
     byte[] flags;
+
+    /**
+     * The zero-based sample description index of each sample, or {@code null} while every sample
+     * uses the first description.
+     */
+    short[] descriptions;
+
+    /**
+     * The record of each sample in the track's {@link CencSamples}, {@code -1} for none, or {@code null} while no
+     * sample has one.
+     */
+    int[] crypto;
 
     /**
      * The number of samples stored.
@@ -120,6 +138,14 @@ final class SampleTable {
         durations = Arrays.copyOf(durations, capacity);
         ctsOffsets = Arrays.copyOf(ctsOffsets, capacity);
         flags = Arrays.copyOf(flags, capacity);
+        if (descriptions != null) {
+            descriptions = Arrays.copyOf(descriptions, capacity);
+        }
+        if (crypto != null) {
+            var grown = Arrays.copyOf(crypto, capacity);
+            Arrays.fill(grown, crypto.length, capacity, -1);
+            crypto = grown;
+        }
     }
 
     /**
@@ -144,6 +170,69 @@ final class SampleTable {
         durations[index] = duration;
         ctsOffsets[index] = ctsOffset;
         flags[index] = keyframe ? KEYFRAME : 0;
+    }
+
+    /**
+     * Records the sample description of a sample.
+     *
+     * @param index the sample index, below the capacity
+     * @param description the zero-based description index, below {@value Short#MAX_VALUE}
+     */
+    void setDescription(int index, int description) {
+        if (descriptions == null) {
+            if (description == 0) {
+                return;
+            }
+            descriptions = new short[offsets.length];
+        }
+        descriptions[index] = (short) description;
+    }
+
+    /**
+     * Records the Common Encryption record of a sample.
+     *
+     * @param index the sample index, below the capacity
+     * @param record the index of the record in the track's {@link CencSamples}, or {@code -1} for none
+     */
+    void setCrypto(int index, int record) {
+        if (crypto == null) {
+            if (record < 0) {
+                return;
+            }
+            crypto = new int[offsets.length];
+            Arrays.fill(crypto, -1);
+        }
+        crypto[index] = record;
+    }
+
+    /**
+     * Returns the Common Encryption record of a sample.
+     *
+     * @param index the sample index
+     * @return the index of the record in the track's {@link CencSamples}, or {@code -1} for none
+     */
+    int crypto(int index) {
+        return crypto == null ? -1 : crypto[index];
+    }
+
+    /**
+     * Returns the sample description of a sample.
+     *
+     * @param index the sample index
+     * @return the zero-based description index
+     */
+    int description(int index) {
+        return descriptions == null ? 0 : descriptions[index];
+    }
+
+    /**
+     * Returns whether a sample is decoded but not presented.
+     *
+     * @param index the sample index
+     * @return {@code true} for a decoding pre-roll sample
+     */
+    boolean isDiscarded(int index) {
+        return (flags[index] & DISCARD) != 0;
     }
 
     /**

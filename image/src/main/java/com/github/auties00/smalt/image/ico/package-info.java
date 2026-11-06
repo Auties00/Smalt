@@ -1,5 +1,6 @@
 /**
- * The ICO and CUR decoder and encoder ({@link IcoDecoder}, {@link IcoEncoder}).
+ * The ICO and CUR decoder and encoder ({@link IcoDecoder}, {@link IcoEncoder}) and the ANI animated
+ * cursor decoder and encoder ({@link AniDecoder}, {@link AniEncoder}).
  *
  * <p>Unless otherwise noted, passing a {@code null} argument to a constructor or method in any class or
  * interface in this package will cause a {@link NullPointerException} to be thrown. The {@code @param}
