@@ -35,6 +35,29 @@ public final class PictureState {
     public static final int CODED = 16;
 
     /**
+     * The flag of a 4x4 block of a coding unit coded in palette mode.
+     */
+    public static final int PALETTE = 32;
+
+    /**
+     * The flags of the blocks whose samples the deblocking filter never modifies:
+     * {@link #BYPASS} and {@link #PALETTE}.
+     */
+    public static final int NO_DEBLOCK = BYPASS | PALETTE;
+
+    /**
+     * The flag of a 4x4 block of a prediction unit whose motion is that of an inter-view predicted
+     * merging candidate ({@code IvMcFlag}, 3D-HEVC).
+     */
+    public static final int IV_MC = 64;
+
+    /**
+     * The flag of a 4x4 block of a coding unit with residual prediction
+     * ({@code iv_res_pred_weight_idx} not 0, 3D-HEVC).
+     */
+    public static final int RESIDUAL_PREDICTION = 128;
+
+    /**
      * The edge flag of a transform block boundary on the left of a 4x4 block.
      */
     public static final int EDGE_TU_V = 1;
@@ -70,8 +93,8 @@ public final class PictureState {
     public final int height4;
 
     /**
-     * The {@link #INTRA}, {@link #SKIP}, {@link #PCM}, {@link #BYPASS} and {@link #CODED} flags of
-     * each 4x4 block.
+     * The {@link #INTRA}, {@link #SKIP}, {@link #PCM}, {@link #BYPASS}, {@link #CODED} and
+     * {@link #PALETTE} flags of each 4x4 block.
      */
     public final byte[] flags;
 
@@ -156,9 +179,60 @@ public final class PictureState {
     public int dependentQp;
 
     /**
+     * {@code PredictorPaletteSizeWpp} of each row of coding tree blocks, stored with
+     * {@link #wppStates}; empty without palette mode.
+     */
+    public final int[] wppPaletteSize;
+
+    /**
+     * {@code PredictorPaletteEntriesWpp} of each row of coding tree blocks,
+     * {@link #paletteStride} entries per row: {@code PaletteMaxPredictorSize} entries of each of
+     * the three components; empty without palette mode.
+     */
+    public final int[] wppPalette;
+
+    /**
+     * The entries one row of {@link #wppPalette} holds, three components of
+     * {@code PaletteMaxPredictorSize} entries.
+     */
+    public final int paletteStride;
+
+    /**
+     * {@code PredictorPaletteSizeDs}, stored with {@link #dependentStates}.
+     */
+    public int dependentPaletteSize;
+
+    /**
+     * {@code PredictorPaletteEntriesDs}, laid out like one row of {@link #wppPalette}.
+     */
+    public final int[] dependentPalette;
+
+    /**
      * The kernels the picture is reconstructed with, selected by {@link #reset()}.
      */
     public HevcDsp dsp = HevcDsp.SCALAR;
+
+    /**
+     * {@code DispRefVec} of the coding unit covering each 4x4 block, packed like the motion
+     * vectors of {@link HevcFrame}; allocated by {@link #prepareViews()}.
+     */
+    public int[] dispRefVec;
+
+    /**
+     * {@code RefViewIdx} of the coding unit covering each 4x4 block; allocated by
+     * {@link #prepareViews()}.
+     */
+    public byte[] refViewIdx;
+
+    /**
+     * Allocates the per-block disparity information of the 3D-HEVC tools, once.
+     */
+    public void prepareViews() {
+        if (dispRefVec == null) {
+            dispRefVec = new int[width4 * height4];
+            refViewIdx = new byte[width4 * height4];
+        }
+    }
 
     /**
      * Allocates the arrays for a sequence parameter set.
@@ -182,6 +256,10 @@ public final class PictureState {
         this.saoOffset = new short[3 * sps.sizeInCtbs * 4];
         this.wppStates = new byte[sps.heightInCtbs * CabacTables.COUNT];
         this.wppStatCoeff = new int[sps.heightInCtbs * 4];
+        this.paletteStride = sps.paletteModeEnabled ? 3 * sps.paletteMaxPredictorSize : 0;
+        this.wppPaletteSize = new int[sps.paletteModeEnabled ? sps.heightInCtbs : 0];
+        this.wppPalette = new int[sps.heightInCtbs * paletteStride];
+        this.dependentPalette = new int[paletteStride];
     }
 
     /**

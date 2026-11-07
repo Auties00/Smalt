@@ -2,6 +2,7 @@
 package com.github.auties00.smalt.audio.opus.internal.silk;
 
 import com.github.auties00.smalt.audio.opus.internal.celt.RangeDecoder;
+import com.github.auties00.smalt.audio.opus.internal.dnn.LpcnetPlc;
 
 import static com.github.auties00.smalt.audio.opus.internal.silk.Define.FLAG_DECODE_LBRR;
 import static com.github.auties00.smalt.audio.opus.internal.silk.Define.FLAG_DECODE_NORMAL;
@@ -9,7 +10,8 @@ import static com.github.auties00.smalt.audio.opus.internal.silk.Define.FLAG_DEC
 /**
  * Decodes one SILK frame of one channel, or conceals it when it is lost.
  *
- * @implNote This implementation omits the OSCE and deep PLC extensions.
+ * <p>In deep PLC mode ({@link DecoderState#dnn}) decoded 20 ms frames at 16 kHz pass through the channel's OSCE
+ * enhancer before the concealment state is updated, as the reference built with {@code ENABLE_OSCE} does.
  */
 public final class DecodeFrame {
     private DecodeFrame() {
@@ -30,13 +32,14 @@ public final class DecodeFrame {
      * @return the number of samples written, the frame length
      */
     public static int decodeFrame(DecoderState psDec, RangeDecoder psRangeDec, short[] pOut, int pOutOff, int lostFlag,
-                                  int condCoding) {
+                                  int condCoding, LpcnetPlc lpcnet) {
         var psDecCtrl = psDec.scratchControl;
         var L = psDec.frame_length;
         psDecCtrl.LTP_scale_Q14 = 0;
         if (lostFlag == FLAG_DECODE_NORMAL
                 || (lostFlag == FLAG_DECODE_LBRR && psDec.LBRR_flags[psDec.nFramesDecoded] == 1)) {
             var pulses = psDec.scratchPulses;
+            var ecStart = psRangeDec.tell();
             DecodeIndices.decodeIndices(psDec, psRangeDec, psDec.nFramesDecoded, lostFlag, condCoding);
             DecodePulses.decodePulses(psRangeDec, pulses, psDec.indices.signalType, psDec.indices.quantOffsetType,
                     psDec.frame_length, psDec.scratchSumPulses, psDec.scratchNLshifts, psDec.scratchSignIcdf);
@@ -45,12 +48,20 @@ public final class DecodeFrame {
             var mv_len = psDec.ltp_mem_length - psDec.frame_length;
             System.arraycopy(psDec.outBuf, psDec.frame_length, psDec.outBuf, 0, mv_len);
             System.arraycopy(pOut, pOutOff, psDec.outBuf, mv_len, psDec.frame_length);
-            Plc.plc(psDec, psDecCtrl, pOut, pOutOff, 0);
+            if (psDec.osce != null) {
+                psDec.osce.enhance(pOut, pOutOff, psDec.fs_kHz, psDec.nb_subfr, psDec.LPC_order,
+                        psDec.indices.signalType, psDecCtrl.PredCoef_Q12, psDecCtrl.pitchL, psDecCtrl.LTPCoef_Q14,
+                        psDecCtrl.Gains_Q16, psRangeDec.tell() - ecStart);
+            }
+            Plc.plc(psDec, psDecCtrl, pOut, pOutOff, 0, lpcnet);
             psDec.lossCnt = 0;
             psDec.prevSignalType = psDec.indices.signalType;
             psDec.first_frame_after_reset = 0;
         } else {
-            Plc.plc(psDec, psDecCtrl, pOut, pOutOff, 1);
+            Plc.plc(psDec, psDecCtrl, pOut, pOutOff, 1, lpcnet);
+            if (psDec.osce != null) {
+                psDec.osce.reset(psDec.osce.method());
+            }
             var mv_len = psDec.ltp_mem_length - psDec.frame_length;
             System.arraycopy(psDec.outBuf, psDec.frame_length, psDec.outBuf, 0, mv_len);
             System.arraycopy(pOut, pOutOff, psDec.outBuf, mv_len, psDec.frame_length);
