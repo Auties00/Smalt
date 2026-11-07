@@ -75,6 +75,47 @@ final class WideFrame {
     int bottomPoc;
 
     /**
+     * The motion of the frame's coded pictures that a B picture reads as co-located data (ITU-T H.264
+     * 8.4.1.2.1), by structure (0 for the frame, 1 for the top field, 2 for the bottom field): the
+     * list 0 reference index of each 8x8 quadrant at {@code 4 * mbAddr + quadrant}, or the list 1 index
+     * when the quadrant does not use list 0, -1 for intra macroblocks; {@code null} for a structure
+     * the frame was not coded as.
+     */
+    final byte[][] colRef = new byte[3][];
+
+    /**
+     * The horizontal vectors of the co-located data, laid out as {@link #colRef}.
+     */
+    final short[][] colMvX = new short[3][];
+
+    /**
+     * The vertical vectors of the co-located data, laid out as {@link #colRef}.
+     */
+    final short[][] colMvY = new short[3][];
+
+    /**
+     * Whether each macroblock address of a frame coded as macroblock pairs is a field macroblock.
+     */
+    boolean[] colField;
+
+    /**
+     * Allocates the co-located data of a structure on first use.
+     *
+     * @param structure 0 for the frame, 1 for the top field, 2 for the bottom field
+     * @param count the number of macroblocks of the structure
+     */
+    void allocateMotion(int structure, int count) {
+        if (colRef[structure] == null) {
+            colRef[structure] = new byte[count * 4];
+            colMvX[structure] = new short[count * 4];
+            colMvY[structure] = new short[count * 4];
+        }
+        if (structure == 0 && colField == null) {
+            colField = new boolean[count];
+        }
+    }
+
+    /**
      * Allocates a frame.
      *
      * @param settings the stream settings, which give the coded size and the chroma format

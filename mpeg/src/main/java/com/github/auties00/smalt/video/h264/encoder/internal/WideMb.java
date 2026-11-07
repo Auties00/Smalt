@@ -41,6 +41,67 @@ final class WideMb {
     static final int PSKIP = 5;
 
     /**
+     * B_Skip.
+     */
+    static final int BSKIP = 6;
+
+    /**
+     * B_Direct_16x16.
+     */
+    static final int BDIRECT = 7;
+
+    /**
+     * B_L0_16x16.
+     */
+    static final int BL0 = 8;
+
+    /**
+     * B_L1_16x16.
+     */
+    static final int BL1 = 9;
+
+    /**
+     * B_Bi_16x16.
+     */
+    static final int BBI = 10;
+
+    /**
+     * Returns whether a macroblock type is a skipped type.
+     *
+     * @param type the macroblock type, one of the constants above
+     * @return whether it is {@link #PSKIP} or {@link #BSKIP}
+     */
+    static boolean skipped(int type) {
+        return type == PSKIP || type == BSKIP;
+    }
+
+    /**
+     * Returns whether a macroblock type takes its motion from spatial direct prediction.
+     *
+     * @param type the macroblock type, one of the constants above
+     * @return whether it is {@link #BSKIP} or {@link #BDIRECT}
+     */
+    static boolean direct(int type) {
+        return type == BSKIP || type == BDIRECT;
+    }
+
+    /**
+     * Returns whether a macroblock of a type predicts from a reference list.
+     *
+     * @param type the inter type
+     * @param list 0 or 1
+     * @return whether the list is used; for the direct types, see {@link #directRef}
+     */
+    static boolean usesList(int type, int list) {
+        return switch (type) {
+            case P16X16, PSKIP, BL0 -> list == 0;
+            case BL1 -> list == 1;
+            case BBI -> true;
+            default -> false;
+        };
+    }
+
+    /**
      * The macroblock type, one of the constants above.
      */
     int type;
@@ -82,29 +143,69 @@ final class WideMb {
     boolean transform8x8;
 
     /**
-     * The reference index of an inter macroblock.
+     * The list 0 reference index of a {@code P_L0_16x16}, {@link #BL0} or {@link #BBI} macroblock.
      */
     int ref;
 
     /**
-     * The horizontal motion vector in quarter samples.
+     * The list 0 horizontal motion vector in quarter samples.
      */
     int mvX;
 
     /**
-     * The vertical motion vector in quarter samples.
+     * The list 0 vertical motion vector in quarter samples.
      */
     int mvY;
 
     /**
-     * The horizontal motion vector difference.
+     * The list 0 horizontal motion vector difference.
      */
     int mvdX;
 
     /**
-     * The vertical motion vector difference.
+     * The list 0 vertical motion vector difference.
      */
     int mvdY;
+
+    /**
+     * The list 1 reference index of {@link #BL1} and {@link #BBI} macroblocks.
+     */
+    int ref1;
+
+    /**
+     * The list 1 horizontal motion vector in quarter samples.
+     */
+    int mvX1;
+
+    /**
+     * The list 1 vertical motion vector in quarter samples.
+     */
+    int mvY1;
+
+    /**
+     * The list 1 horizontal motion vector difference.
+     */
+    int mvdX1;
+
+    /**
+     * The list 1 vertical motion vector difference.
+     */
+    int mvdY1;
+
+    /**
+     * The spatial direct reference index of each list, -1 for a list the direct prediction does not use.
+     */
+    final int[] directRef = new int[2];
+
+    /**
+     * The spatial direct horizontal vector of each 8x8 quadrant, list 0 at 0 to 3 and list 1 at 4 to 7.
+     */
+    final int[] directMvX = new int[8];
+
+    /**
+     * The spatial direct vertical vector of each 8x8 quadrant, laid out as {@link #directMvX}.
+     */
+    final int[] directMvY = new int[8];
 
     /**
      * The levels of the 4x4 or 8x8 blocks of each component coded like luma.
@@ -176,6 +277,14 @@ final class WideMb {
         mvY = other.mvY;
         mvdX = other.mvdX;
         mvdY = other.mvdY;
+        ref1 = other.ref1;
+        mvX1 = other.mvX1;
+        mvY1 = other.mvY1;
+        mvdX1 = other.mvdX1;
+        mvdY1 = other.mvdY1;
+        System.arraycopy(other.directRef, 0, directRef, 0, 2);
+        System.arraycopy(other.directMvX, 0, directMvX, 0, 8);
+        System.arraycopy(other.directMvY, 0, directMvY, 0, 8);
         for (var c = 0; c < 3; c++) {
             System.arraycopy(other.levels[c], 0, levels[c], 0, 256);
             System.arraycopy(other.dc[c], 0, dc[c], 0, 16);

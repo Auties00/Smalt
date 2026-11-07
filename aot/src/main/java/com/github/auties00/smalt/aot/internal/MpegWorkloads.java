@@ -513,7 +513,8 @@ final class MpegWorkloads {
 
     /**
      * The options of the streams of the H.264 extended engine the extended workloads code and decode: 10-bit
-     * 4:2:0, 10-bit 4:2:2 macroblock pairs, lossless 4:4:4, 4:0:0, and field pictures with CAVLC.
+     * 4:2:0, 10-bit 4:2:2 macroblock pairs, lossless 4:4:4 and 4:0:0, all four with B pictures, and field
+     * pictures with CAVLC, which have none.
      *
      * @return the options
      */
@@ -537,7 +538,7 @@ final class MpegWorkloads {
 
     /**
      * Returns a workload that encodes with the H.264 extended engine: high bit depths, 4:2:2, 4:4:4, 4:0:0,
-     * lossless coding, macroblock pairs, field pictures and CAVLC.
+     * lossless coding, macroblock pairs, field pictures, B pictures and CAVLC.
      *
      * @return the workload
      */

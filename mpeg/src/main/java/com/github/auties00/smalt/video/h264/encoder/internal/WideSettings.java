@@ -14,13 +14,27 @@ import com.github.auties00.smalt.video.h264.internal.H264Levels;
  *
  * <p>Pictures are I and P pictures predicted from one reference frame (two reference frames for
  * field pictures, so that a second field can predict from the frame before and from its first
- * field), or from the latest picture of a lower temporal layer.
+ * field), or from the latest picture of a lower temporal layer, and unreferenced B pictures
+ * predicted from the anchor pictures on both sides, which keep two reference frames.
  */
 final class WideSettings implements StreamParameters {
     /**
      * The binary logarithm of {@code MaxPicOrderCntLsb}.
      */
     private static final int LOG2_MAX_POC_LSB = 10;
+
+    /**
+     * The reference frames of a stream with B pictures: the anchors on both sides of the B pictures,
+     * which also serve a second field's prediction from its first field, since the older anchor leaves
+     * the decoded picture buffer when the first field is marked.
+     */
+    private static final int BIDIRECTIONAL_REFS = 2;
+
+    /**
+     * The most consecutive B pictures: unreferenced B pictures further from their anchors cost more bits at
+     * equal quality than they save.
+     */
+    private static final int MAX_B_RUN = 3;
 
     private final EncoderConfig config;
 
@@ -61,6 +75,8 @@ final class WideSettings implements StreamParameters {
     private final int numRefFrames;
 
     private final int layerRefs;
+
+    private final int bframes;
 
     private final int sliceRows;
 
@@ -104,7 +120,15 @@ final class WideSettings implements StreamParameters {
         this.transform8x8 = profileIdc >= 100;
         var layers = config.temporalLayers();
         this.layerRefs = layers > 1 ? 1 << Math.max(0, layers - 2) : 1;
-        this.numRefFrames = layerRefs + (fieldPictures ? 1 : 0);
+        var lookahead = config.realtime() || layers > 1 ? 0 : config.lookahead();
+        var wantB = cabac && config.bFrames() > 0 && lookahead > 0 && layers == 1 && config.intraRefresh() == 0;
+        var bCount = wantB ? Math.min(MAX_B_RUN, Math.min(config.bFrames(), lookahead - 1)) : 0;
+        if (bCount > 0 && config.level() != 0
+                && Levels.of(config.level()).maxDpbFrames(mbWidth * mbHeight) < BIDIRECTIONAL_REFS) {
+            bCount = 0;
+        }
+        this.bframes = bCount;
+        this.numRefFrames = bCount > 0 ? BIDIRECTIONAL_REFS : layerRefs + (fieldPictures ? 1 : 0);
         var factor = Levels.bitrateFactor(config.profile());
         var frameRate = config.frameRate().toDouble();
         var maxBitrate = config.effectiveMaxBitrate();
@@ -280,6 +304,21 @@ final class WideSettings implements StreamParameters {
     }
 
     /**
+     * {@return the number of consecutive B pictures between anchor pictures, 0 for none}
+     */
+    int bframes() {
+        return bframes;
+    }
+
+    /**
+     * {@return the number of reference frames the encoder keeps: the two anchors of B pictures, or those
+     * of the temporal layers}
+     */
+    int referenceCapacity() {
+        return bframes > 0 ? BIDIRECTIONAL_REFS : layerRefs;
+    }
+
+    /**
      * {@return the number of slices each picture is divided into, at most its rows of macroblocks or
      * macroblock pairs}
      */
@@ -333,7 +372,7 @@ final class WideSettings implements StreamParameters {
 
     @Override
     public boolean pictureOrderType0() {
-        return interlaced;
+        return interlaced || bframes > 0;
     }
 
     @Override
@@ -408,12 +447,12 @@ final class WideSettings implements StreamParameters {
 
     @Override
     public int reorderFrames() {
-        return 0;
+        return bframes > 0 ? 1 : 0;
     }
 
     @Override
     public int maxDecFrameBuffering() {
-        return numRefFrames;
+        return Math.max(numRefFrames, reorderFrames() + 1);
     }
 
     @Override

@@ -509,8 +509,9 @@ public final class H264EncoderOptions {
      * quantizer ({@link #macroblockTreeStrength()}). This costs as many pictures of delay: the encoder
      * emits nothing for the first {@code lookahead} frames, and {@link H264Encoder#flush} emits the
      * rest. It is ignored, and
-     * treated as 0, in {@link #realtime()} mode, with more than one {@linkplain #temporalLayers() temporal
-     * layer}, and in streams that are not 8-bit, 4:2:0, progressive and lossy.
+     * treated as 0, in {@link #realtime()} mode and with more than one {@linkplain #temporalLayers() temporal
+     * layer}. Streams that are not 8-bit, 4:2:0, progressive and lossy run no look-ahead analysis: there
+     * it only bounds the number of {@linkplain #bFrames() B pictures}.
      */
     public int lookahead() {
         return lookahead;
@@ -528,10 +529,14 @@ public final class H264EncoderOptions {
      * start their motion search from the motion the look-ahead tracked over the pictures in between.
      * B pictures reorder the packets, so packets carry a decoding timestamp earlier than the
      * presentation timestamp. They need a {@link #lookahead()} above their number, so the encoder
-     * uses one fewer than the look-ahead when it is smaller, and a profile with B pictures: the
-     * {@link H264Profile#CONSTRAINED_BASELINE} profile and {@link #realtime()} mode code none, and
-     * neither do streams with {@link #intraRefresh()} or more than one {@linkplain #temporalLayers()
-     * temporal layer}, nor streams that are not 8-bit, 4:2:0, progressive and lossy.
+     * uses one fewer than the look-ahead when it is smaller, CABAC, and a profile with B pictures: the
+     * {@link H264Profile#CONSTRAINED_BASELINE} profile, {@linkplain #cavlc() CAVLC} streams and
+     * {@link #realtime()} mode code none, and neither do streams with {@link #intraRefresh()} or more
+     * than one {@linkplain #temporalLayers() temporal layer}. Streams that are not 8-bit, 4:2:0,
+     * progressive and lossy code B pictures in every chroma format, bit depth and field structure,
+     * lossless streams included, but no B picture is referenced (there is no pyramid), so they code
+     * at most three in a row, the direct macroblocks use spatial direct prediction, and the encoder
+     * holds as many frames as it codes B pictures in a row instead of the look-ahead.
      */
     public int bFrames() {
         return bFrames;

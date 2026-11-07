@@ -24,8 +24,7 @@ package com.github.auties00.smalt.video.h264.encoder;
  * </tbody>
  * </table>
  * {@link #CONSTRAINED_BASELINE} codes I and P pictures only; the other profiles also code B pictures when
- * the options ask for them ({@link H264EncoderOptions#bFrames()}) and the stream is 8-bit, 4:2:0,
- * progressive and not lossless.
+ * the options ask for them ({@link H264EncoderOptions#bFrames()}) and the stream is coded with CABAC.
  */
 public enum H264Profile {
     /**

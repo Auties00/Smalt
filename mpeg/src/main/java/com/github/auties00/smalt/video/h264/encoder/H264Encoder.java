@@ -220,7 +220,9 @@ public final class H264Encoder implements VideoEncoder {
      * {@link H264EncoderOptions#realtime()} mode) the encoder emits exactly one packet per frame,
      * before this method returns. With a look-ahead it emits nothing for the first
      * {@code lookahead} frames and then one packet per frame, and {@link #flush(Consumer)} emits the
-     * rest. For an 8-bit stream, a high-bit-depth picture is first reduced to 8 bits with
+     * rest; a stream that is not 8-bit, 4:2:0, progressive and lossy holds instead as many frames as
+     * the {@linkplain H264EncoderOptions#bFrames() B pictures} it codes in a row, none without B
+     * pictures. For an 8-bit stream, a high-bit-depth picture is first reduced to 8 bits with
      * {@link com.github.auties00.smalt.image.ops.ImageOps#toEightBit(com.github.auties00.smalt.image.Picture)
      * ImageOps.toEightBit}.
      *

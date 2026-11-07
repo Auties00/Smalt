@@ -27,8 +27,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Measures what adaptive quantization by variance, the default, does to the extended engine's 10-bit streams:
  * at equal target bitrates on three synthetic ffmpeg sources, the stream with it must come out no more than 3%
  * larger than the stream without it, or the comparison would favor it, and ffmpeg's SSIM of ffmpeg's decode
- * against the source must not fall on average, nor in any case by more than a small margin. The measurements
- * justify the extended engine's default.
+ * against the source must not fall on average, nor in any case by more than a small margin. The streams have P
+ * pictures only: B pictures take their quantizer from their anchor's without a size correction, which adds rate
+ * control noise unrelated to adaptive quantization to clips this short. The measurements justify the extended
+ * engine's default.
  */
 class WideAdaptiveQuantizationQualityTest {
     private static final int WIDTH = 320;
@@ -86,7 +88,7 @@ class WideAdaptiveQuantizationQualityTest {
                                    int bitrate) {
         var options = H264EncoderOptions.forFile().toBuilder().profile(H264Profile.HIGH_10).bitDepth(10)
                 .bitrate(bitrate).frameRate(new Rational(30, 1)).timeBase(new Rational(1, 30))
-                .packetFormat(H264PacketFormat.ANNEX_B).adaptiveQuantization(mode).build();
+                .packetFormat(H264PacketFormat.ANNEX_B).adaptiveQuantization(mode).bFrames(0).build();
         var out = new ByteArrayOutputStream();
         try (var encoder = new H264Encoder(WIDTH, HEIGHT, options)) {
             for (var i = 0; i < pictures.size(); i++) {

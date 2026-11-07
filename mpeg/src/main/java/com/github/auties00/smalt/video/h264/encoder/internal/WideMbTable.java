@@ -84,29 +84,31 @@ final class WideMbTable {
     final boolean[] transform8x8;
 
     /**
-     * The horizontal motion vector of each inter macroblock.
+     * The horizontal motion vector of each 8x8 quadrant of each inter macroblock, by list,
+     * {@code 4 * position + quadrant}; zero where the list is not used.
      */
-    final short[] mvX;
+    final short[][] mvX = new short[2][];
 
     /**
-     * The vertical motion vector of each inter macroblock.
+     * The vertical motion vector of each 8x8 quadrant, laid out as {@link #mvX}.
      */
-    final short[] mvY;
+    final short[][] mvY = new short[2][];
 
     /**
-     * The reference index of each inter macroblock, -1 for intra macroblocks.
+     * The reference index of each 8x8 quadrant, laid out as {@link #mvX}, -1 for intra macroblocks and
+     * for a list the macroblock does not use.
      */
-    final byte[] ref;
+    final byte[][] ref = new byte[2][];
 
     /**
-     * The absolute horizontal motion vector difference of each macroblock, for CABAC contexts.
+     * The absolute horizontal motion vector difference of each macroblock, by list, for CABAC contexts.
      */
-    final short[] mvdX;
+    final short[][] mvdX = new short[2][];
 
     /**
-     * The absolute vertical motion vector difference of each macroblock, for CABAC contexts.
+     * The absolute vertical motion vector difference of each macroblock, by list, for CABAC contexts.
      */
-    final short[] mvdY;
+    final short[][] mvdY = new short[2][];
 
     /**
      * The position of the current macroblock in the grid.
@@ -178,11 +180,13 @@ final class WideMbTable {
         cbp = new byte[count];
         chromaMode = new byte[count];
         transform8x8 = new boolean[count];
-        mvX = new short[count];
-        mvY = new short[count];
-        ref = new byte[count];
-        mvdX = new short[count];
-        mvdY = new short[count];
+        for (var list = 0; list < 2; list++) {
+            mvX[list] = new short[count * 4];
+            mvY[list] = new short[count * 4];
+            ref[list] = new byte[count * 4];
+            mvdX[list] = new short[count];
+            mvdY[list] = new short[count];
+        }
     }
 
     /**
@@ -294,6 +298,13 @@ final class WideMbTable {
             found = top + (row >= maxH ? mbWidth : 0);
             foundY = row % maxH;
         }
+    }
+
+    /**
+     * {@return the 8x8 quadrant of the macroblock {@link #locate} found that holds the located sample}
+     */
+    int foundQuadrant() {
+        return (foundY >> 3) * 2 + (foundX >> 3);
     }
 
     /**

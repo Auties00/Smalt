@@ -99,6 +99,12 @@ final class WideSliceWriter {
     private boolean previousSkipped;
 
     /**
+     * The number of macroblocks written of each {@link WideMb} type, coding attempts that were undone
+     * included.
+     */
+    final long[] typeCounts = new long[WideMb.BBI + 1];
+
+    /**
      * The PCM samples of a macroblock.
      */
     private final int[] pcm = new int[768];
@@ -146,9 +152,14 @@ final class WideSliceWriter {
         boolean idr;
 
         /**
-         * Whether the picture is a P picture.
+         * Whether the picture is a P or B picture.
          */
         boolean predicted;
+
+        /**
+         * Whether the picture is a B picture, which {@link #predicted} then also marks.
+         */
+        boolean bidirectional;
 
         /**
          * The {@code frame_num}.
@@ -184,6 +195,11 @@ final class WideSliceWriter {
          * The number of active reference indices of frame macroblocks or fields.
          */
         int refCount;
+
+        /**
+         * The number of active list 1 reference indices of a B picture.
+         */
+        int refCount1;
 
         /**
          * The {@code modification_of_pic_nums_idc} and {@code abs_diff_pic_num_minus1} pairs of the
@@ -253,7 +269,7 @@ final class WideSliceWriter {
     private void writeHeader() {
         var p = picture;
         out.writeUe(settings.mbaff() && p.structure == 0 ? firstMb >> 1 : firstMb);
-        out.writeUe(p.predicted ? 0 : 2);
+        out.writeUe(p.bidirectional ? 1 : p.predicted ? 0 : 2);
         out.writeUe(0);
         out.write(p.frameNum, settings.log2MaxFrameNum());
         if (!settings.frameMbsOnly()) {
@@ -271,7 +287,18 @@ final class WideSliceWriter {
                 out.writeSe(p.deltaPocBottom);
             }
         }
-        if (p.predicted) {
+        if (p.bidirectional) {
+            out.writeBit(1);
+            if (p.refCount != settings.activeRefs() || p.refCount1 != 1) {
+                out.writeBit(1);
+                out.writeUe(p.refCount - 1);
+                out.writeUe(p.refCount1 - 1);
+            } else {
+                out.writeBit(0);
+            }
+            out.writeBit(0);
+            out.writeBit(0);
+        } else if (p.predicted) {
             if (p.refCount != settings.activeRefs()) {
                 out.writeBit(1);
                 out.writeUe(p.refCount - 1);
@@ -390,8 +417,9 @@ final class WideSliceWriter {
      * @param inferredField the field flag a decoder infers for the pair before reading it
      */
     private void writeMacroblock(WideMb mb, int address, boolean pairField, boolean inferredField) {
+        typeCounts[mb.type]++;
         var mbaff = settings.mbaff() && picture.structure == 0;
-        var skip = mb.type == WideMb.PSKIP;
+        var skip = WideMb.skipped(mb.type);
         var top = (address & 1) == 0;
         var fieldFlagPresent = mbaff && !skip && (top || previousSkipped);
         if (picture.predicted) {
@@ -590,21 +618,62 @@ final class WideSliceWriter {
     private void writeMbType(WideMb mb) {
         var predicted = picture.predicted;
         var chroma = coderSubsampled() ? mb.cbp >> 4 : 0;
+        var bidirectional = picture.bidirectional;
         if (!cabacMode) {
             int code = switch (mb.type) {
-                case WideMb.P16X16 -> 0;
+                case WideMb.P16X16, WideMb.BDIRECT -> 0;
+                case WideMb.BL0 -> 1;
+                case WideMb.BL1 -> 2;
+                case WideMb.BBI -> 3;
                 case WideMb.I4X4, WideMb.I8X8 -> 0;
                 case WideMb.IPCM -> 25;
                 default -> 1 + mb.i16Mode + 4 * chroma + ((mb.cbp & 15) != 0 ? 12 : 0);
             };
             if (predicted && mb.intra()) {
-                code += 5;
+                code += bidirectional ? 23 : 5;
             }
             out.writeUe(code);
             return;
         }
         int base;
-        if (predicted) {
+        if (bidirectional) {
+            var inc = bTypeCondition(-1, 0) + bTypeCondition(0, -1);
+            switch (mb.type) {
+                case WideMb.BDIRECT -> {
+                    cabac.decision(27 + inc, 0);
+                    return;
+                }
+                case WideMb.BL0, WideMb.BL1 -> {
+                    cabac.decision(27 + inc, 1);
+                    cabac.decision(30, 0);
+                    cabac.decision(32, mb.type == WideMb.BL1 ? 1 : 0);
+                    return;
+                }
+                case WideMb.BBI -> {
+                    cabac.decision(27 + inc, 1);
+                    cabac.decision(30, 1);
+                    cabac.decision(31, 0);
+                    cabac.decision(32, 0);
+                    cabac.decision(32, 0);
+                    cabac.decision(32, 0);
+                    return;
+                }
+                default -> {
+                    cabac.decision(27 + inc, 1);
+                    cabac.decision(30, 1);
+                    cabac.decision(31, 1);
+                    cabac.decision(32, 1);
+                    cabac.decision(32, 0);
+                    cabac.decision(32, 1);
+                }
+            }
+            base = 32;
+            if (mb.type == WideMb.I4X4 || mb.type == WideMb.I8X8) {
+                cabac.decision(32, 0);
+                return;
+            }
+            cabac.decision(32, 1);
+        } else if (predicted) {
             if (mb.type == WideMb.P16X16) {
                 cabac.decision(14, 0);
                 cabac.decision(15, 0);
@@ -649,6 +718,20 @@ final class WideSliceWriter {
             cabac.decision(base + 6, mb.i16Mode >> 1);
             cabac.decision(base + 7, mb.i16Mode & 1);
         }
+    }
+
+    /**
+     * Returns the {@code mb_type} context term of the neighbor at a location of a B slice: 1 when it is
+     * available and neither {@code B_Skip} nor {@code B_Direct_16x16}.
+     *
+     * @param xN the horizontal location
+     * @param yN the vertical location
+     * @return the term
+     */
+    private int bTypeCondition(int xN, int yN) {
+        table.locate(xN, yN, 16, 16);
+        var n = table.found;
+        return n >= 0 && !WideMb.direct(table.type[n]) ? 1 : 0;
     }
 
     /**
@@ -698,14 +781,14 @@ final class WideSliceWriter {
     private void writeSkipFlag(boolean skip) {
         var inc = 0;
         table.locate(-1, 0, 16, 16);
-        if (table.found >= 0 && table.type[table.found] != WideMb.PSKIP) {
+        if (table.found >= 0 && !WideMb.skipped(table.type[table.found])) {
             inc++;
         }
         table.locate(0, -1, 16, 16);
-        if (table.found >= 0 && table.type[table.found] != WideMb.PSKIP) {
+        if (table.found >= 0 && !WideMb.skipped(table.type[table.found])) {
             inc++;
         }
-        cabac.decision(11 + inc, skip ? 1 : 0);
+        cabac.decision((picture.bidirectional ? 24 : 11) + inc, skip ? 1 : 0);
     }
 
     /**
@@ -809,89 +892,129 @@ final class WideSliceWriter {
     }
 
     /**
-     * Writes the reference index and motion vector difference of a {@code P_L0_16x16} macroblock.
+     * Writes the reference indices and motion vector differences of a {@code P_L0_16x16} or of a B
+     * macroblock other than {@code B_Direct_16x16}, which has none: the indices of both lists, then the
+     * differences of both lists (ITU-T H.264 7.3.5.1).
      *
      * @param mb the macroblock
      */
     private void writeInterPrediction(WideMb mb) {
-        var fieldMb = table.fieldMb;
-        var count = picture.refCount * (fieldMb ? 2 : 1);
-        if (count > 1) {
-            if (cabacMode) {
-                var inc = refCondition(-1, 0) + 2 * refCondition(0, -1);
-                if (mb.ref == 0) {
-                    cabac.decision(54 + inc, 0);
-                } else {
-                    cabac.decision(54 + inc, 1);
-                    var ctx = 58;
-                    for (var i = 1; i < mb.ref; i++) {
-                        cabac.decision(ctx, 1);
-                        ctx = 59;
-                    }
-                    cabac.decision(ctx, 0);
-                }
-            } else if (count == 2) {
-                out.writeBit(mb.ref == 0 ? 1 : 0);
-            } else {
-                out.writeUe(mb.ref);
-            }
+        if (mb.type == WideMb.BDIRECT) {
+            return;
         }
-        if (cabacMode) {
-            var sumX = mvdSum(-1, 0, false) + mvdSum(0, -1, false);
-            var sumY = mvdSum(-1, 0, true) + mvdSum(0, -1, true);
-            CabacWriter.writeMvdComponent(cabac, 40, sumX, mb.mvdX);
-            CabacWriter.writeMvdComponent(cabac, 47, sumY, mb.mvdY);
-        } else {
-            out.writeSe(mb.mvdX);
-            out.writeSe(mb.mvdY);
+        var scale = table.fieldMb ? 2 : 1;
+        var use0 = WideMb.usesList(mb.type, 0);
+        var use1 = WideMb.usesList(mb.type, 1);
+        if (use0) {
+            writeRef(mb.ref, picture.refCount * scale, 0);
+        }
+        if (use1) {
+            writeRef(mb.ref1, picture.refCount1 * scale, 1);
+        }
+        if (use0) {
+            writeMvd(mb.mvdX, mb.mvdY, 0);
+        }
+        if (use1) {
+            writeMvd(mb.mvdX1, mb.mvdY1, 1);
         }
     }
 
     /**
-     * Returns the {@code ref_idx_l0} context term of a neighbor (ITU-T H.264 9.3.3.1.1.6).
+     * Writes {@code ref_idx_l0} or {@code ref_idx_l1} of the 16x16 partition, absent with a single index.
+     *
+     * @param ref the index
+     * @param count the number of indices the macroblock may use
+     * @param list 0 or 1
+     */
+    private void writeRef(int ref, int count, int list) {
+        if (count <= 1) {
+            return;
+        }
+        if (!cabacMode) {
+            if (count == 2) {
+                out.writeBit(ref == 0 ? 1 : 0);
+            } else {
+                out.writeUe(ref);
+            }
+            return;
+        }
+        var inc = refCondition(-1, 0, list) + 2 * refCondition(0, -1, list);
+        if (ref == 0) {
+            cabac.decision(54 + inc, 0);
+            return;
+        }
+        cabac.decision(54 + inc, 1);
+        var ctx = 58;
+        for (var i = 1; i < ref; i++) {
+            cabac.decision(ctx, 1);
+            ctx = 59;
+        }
+        cabac.decision(ctx, 0);
+    }
+
+    /**
+     * Writes {@code mvd_l0} or {@code mvd_l1} of the 16x16 partition.
+     *
+     * @param mvdX the horizontal difference
+     * @param mvdY the vertical difference
+     * @param list 0 or 1
+     */
+    private void writeMvd(int mvdX, int mvdY, int list) {
+        if (cabacMode) {
+            var sumX = mvdSum(-1, 0, false, list) + mvdSum(0, -1, false, list);
+            var sumY = mvdSum(-1, 0, true, list) + mvdSum(0, -1, true, list);
+            CabacWriter.writeMvdComponent(cabac, 40, sumX, mvdX);
+            CabacWriter.writeMvdComponent(cabac, 47, sumY, mvdY);
+        } else {
+            out.writeSe(mvdX);
+            out.writeSe(mvdY);
+        }
+    }
+
+    /**
+     * Returns the {@code ref_idx_l0} or {@code ref_idx_l1} context term of a neighbor (ITU-T H.264
+     * 9.3.3.1.1.6).
      *
      * @param xN the horizontal location
      * @param yN the vertical location
+     * @param list 0 or 1
      * @return the term
      */
-    private int refCondition(int xN, int yN) {
+    private int refCondition(int xN, int yN, int list) {
         table.locate(xN, yN, 16, 16);
         var n = table.found;
         if (n < 0) {
             return 0;
         }
         var type = table.type[n];
-        if (type <= WideMb.IPCM || type == WideMb.PSKIP) {
+        if (type <= WideMb.IPCM || WideMb.skipped(type) || type == WideMb.BDIRECT) {
             return 0;
         }
-        var ref = table.ref[n];
+        var ref = table.ref[list][n * 4 + table.foundQuadrant()];
         var threshold = table.mbaff && !table.fieldMb && table.field[n] ? 1 : 0;
         return ref > threshold ? 1 : 0;
     }
 
     /**
-     * Returns a neighbor's absolute motion vector difference component, scaled to the current
+     * Returns a neighbor's absolute motion vector difference component of a list, scaled to the current
      * macroblock (ITU-T H.264 9.3.3.1.1.7).
      *
      * @param xN the horizontal location
      * @param yN the vertical location
      * @param vertical whether to return the vertical component
+     * @param list 0 or 1
      * @return the value
      */
-    private int mvdSum(int xN, int yN, boolean vertical) {
+    private int mvdSum(int xN, int yN, boolean vertical, int list) {
         table.locate(xN, yN, 16, 16);
         var n = table.found;
         if (n < 0) {
             return 0;
         }
-        var type = table.type[n];
-        if (type <= WideMb.IPCM || type == WideMb.PSKIP) {
-            return 0;
-        }
         if (!vertical) {
-            return table.mvdX[n];
+            return table.mvdX[list][n];
         }
-        int value = table.mvdY[n];
+        int value = table.mvdY[list][n];
         if (table.mbaff) {
             if (!table.fieldMb && table.field[n]) {
                 value *= 2;
@@ -967,7 +1090,7 @@ final class WideSliceWriter {
         if (type == WideMb.IPCM) {
             return 0;
         }
-        if (type == WideMb.PSKIP) {
+        if (WideMb.skipped(type)) {
             return 1;
         }
         var b8 = (table.foundY >> 3) * 2 + (table.foundX >> 3);
@@ -992,7 +1115,7 @@ final class WideSliceWriter {
         if (type == WideMb.IPCM) {
             return 1;
         }
-        if (type == WideMb.PSKIP) {
+        if (WideMb.skipped(type)) {
             return 0;
         }
         var chroma = table.cbp[n] >> 4;
@@ -1176,7 +1299,7 @@ final class WideSliceWriter {
         if (n < 0) {
             return -1;
         }
-        if (table.type[n] == WideMb.PSKIP) {
+        if (WideMb.skipped(table.type[n])) {
             return 0;
         }
         var index = chroma ? (table.foundY >> 2) * 2 + (table.foundX >> 2)
@@ -1514,7 +1637,7 @@ final class WideSliceWriter {
         if (type == WideMb.IPCM) {
             return 1;
         }
-        if (type == WideMb.PSKIP) {
+        if (WideMb.skipped(type)) {
             return 0;
         }
         var raster = (table.foundY >> 2) * 4 + (table.foundX >> 2);
@@ -1546,7 +1669,7 @@ final class WideSliceWriter {
         if (type == WideMb.IPCM) {
             return 1;
         }
-        if (type == WideMb.PSKIP || !table.transform8x8[n]) {
+        if (WideMb.skipped(type) || !table.transform8x8[n]) {
             return 0;
         }
         var raster = (table.foundY >> 2) * 4 + (table.foundX >> 2);
@@ -1572,7 +1695,7 @@ final class WideSliceWriter {
         if (type == WideMb.IPCM) {
             return 1;
         }
-        if (type == WideMb.PSKIP || (table.cbp[n] >> 4) == 0) {
+        if (WideMb.skipped(type) || (table.cbp[n] >> 4) == 0) {
             return 0;
         }
         return (table.cbf[n * 3 + c + 1] >> 16) & 1;
@@ -1604,7 +1727,7 @@ final class WideSliceWriter {
         if (type == WideMb.IPCM) {
             return 1;
         }
-        if (type == WideMb.PSKIP || (table.cbp[n] >> 4) != 2) {
+        if (WideMb.skipped(type) || (table.cbp[n] >> 4) != 2) {
             return 0;
         }
         var index = (table.foundY >> 2) * 2 + (table.foundX >> 2);

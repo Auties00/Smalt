@@ -8,9 +8,10 @@ import java.util.Arrays;
 
 /**
  * Decides, codes and reconstructs the macroblocks of the extended engine, one at a time in
- * decoding order: the prediction (Intra_4x4, Intra_8x8, Intra_16x16, the chroma intra mode, or
- * one motion vector for the whole macroblock), the residual levels and the reconstruction that
- * later macroblocks and the decoder see.
+ * decoding order: the prediction (Intra_4x4, Intra_8x8, Intra_16x16, the chroma intra mode, one
+ * motion vector per reference list for the whole macroblock, or the spatial direct motion of a B
+ * macroblock), the residual levels and the reconstruction that later macroblocks and the decoder
+ * see.
  *
  * <p>Decisions compare prediction errors measured with the 4x4 Hadamard transform plus the
  * estimated side information weighted by a Lagrange multiplier. The reconstruction follows ITU-T
@@ -114,6 +115,43 @@ final class WideCoder {
      * parity and index.
      */
     private final WideReference[][] pairFieldRefs = new WideReference[2][];
+
+    /**
+     * Whether the picture is a B picture.
+     */
+    private boolean bSlice;
+
+    /**
+     * The list 1 references of frame macroblocks, or of every macroblock of a field picture, of a B
+     * picture.
+     */
+    private WideReference[] frameRefs1 = new WideReference[0];
+
+    /**
+     * The list 1 references of field macroblocks of a B frame of macroblock pairs, by parity.
+     */
+    private final WideReference[][] pairFieldRefs1 = new WideReference[2][];
+
+    /**
+     * The frame holding the co-located picture of a B picture, the frame of {@code RefPicList1[0]}.
+     */
+    private WideFrame colFrame;
+
+    /**
+     * The structure of the co-located picture in {@link #colFrame}: 0 for the frame, 1 or 2 for a field.
+     */
+    private int colStructure;
+
+    /**
+     * Whether the top field of the co-located frame is closer in output order to the current frame than
+     * its bottom field, {@code topAbsDiffPOC < bottomAbsDiffPOC} of ITU-T H.264 8.4.1.2.1.
+     */
+    private boolean colTopCloser;
+
+    /**
+     * The list 1 references of the current macroblock.
+     */
+    private WideReference[] refs1;
 
     /**
      * The intra refresh band of a P picture: its first column and the column after it, both 0
@@ -228,6 +266,11 @@ final class WideCoder {
     private final short[][] prediction = {new short[256], new short[256], new short[256]};
 
     /**
+     * The list 1 prediction of a bi-predicted block, laid out as {@link #prediction}.
+     */
+    private final short[][] prediction1 = {new short[256], new short[256], new short[256]};
+
+    /**
      * A saved reconstruction of the current macroblock, 256 samples per component.
      */
     private final short[][] savedRecon = {new short[256], new short[256], new short[256]};
@@ -313,6 +356,7 @@ final class WideCoder {
         this.pairFieldRefs[1] = bottomFieldRefs;
         this.refreshStart = refreshStart;
         this.refreshEnd = refreshEnd;
+        this.bSlice = false;
         table.startPicture(structure == 0 ? settings.mbHeight() : settings.mbHeight() / 2, pairs);
     }
 
@@ -394,7 +438,9 @@ final class WideCoder {
         var refreshing = pSlice && mbX >= refreshStart && mbX < refreshEnd;
         avoidTopRight = refreshing && mbX == refreshEnd - 1 && availC;
         refreshLimitX = pSlice && mbX < refreshStart ? 64 * (refreshStart - mbX) - 85 : Integer.MAX_VALUE;
-        if (pSlice && !refreshing) {
+        if (bSlice) {
+            decideB(skipAllowed);
+        } else if (pSlice && !refreshing) {
             decideInter(skipAllowed);
         } else {
             decideIntra(Long.MAX_VALUE);
@@ -423,6 +469,7 @@ final class WideCoder {
                 parity = bottom ? 1 : 0;
                 fieldContext = true;
                 refs = pairFieldRefs[parity];
+                refs1 = pairFieldRefs1[parity];
             } else {
                 src = source.planes;
                 rec = recon.planes;
@@ -430,6 +477,7 @@ final class WideCoder {
                 parity = -1;
                 fieldContext = false;
                 refs = frameRefs;
+                refs1 = frameRefs1;
             }
         } else {
             src = source.coded(structure);
@@ -438,6 +486,7 @@ final class WideCoder {
             parity = structure - 1;
             fieldContext = structure != 0;
             refs = frameRefs;
+            refs1 = frameRefs1;
         }
         x0 = mbX * 16;
         at[0] = src[0].origin + y0 * src[0].stride + x0;
@@ -1343,7 +1392,7 @@ final class WideCoder {
             }
         }
         for (var r = 0; r < refCount; r++) {
-            var mvp = predictVector(r);
+            var mvp = predictVector(r, 0);
             var found = search(refs[r], MotionPredictor.x(mvp), MotionPredictor.y(mvp), r == 0 ? skipMv : mvp);
             var cost = searchCost + ((lambda * (long) refBits(r, refCount)) >> 8);
             if (cost < bestCost) {
@@ -1360,7 +1409,7 @@ final class WideCoder {
                 return;
             }
         }
-        codeInter(bestRef, bestX, bestY, predictVector(bestRef));
+        codeInter(bestRef, bestX, bestY, predictVector(bestRef, 0));
         if (skipAllowed && bestRef == 0 && bestX == skipX && bestY == skipY && (mb.cbp & 0x3F) == 0) {
             mb.type = WideMb.PSKIP;
         }
@@ -1581,27 +1630,29 @@ final class WideCoder {
     private void codeInter(int ref, int mvx, int mvy, int mvp) {
         clearResidual();
         mb.type = WideMb.P16X16;
-        mb.transform8x8 = false;
         mb.qp = qp;
         mb.ref = ref;
         mb.mvX = mvx;
         mb.mvY = mvy;
         mb.mvdX = mvx - MotionPredictor.x(mvp);
         mb.mvdY = mvy - MotionPredictor.y(mvp);
-        var reference = refs[ref];
+        predictPart(refs[ref], 0, 0, 16, 16, mvx, mvy, prediction);
+        codeInterResidual();
+    }
+
+    /**
+     * Codes the residual of an inter macroblock whose prediction of every component is in
+     * {@link #prediction}: copies the prediction into the reconstruction and codes the components coded
+     * like luma with the 4x4 or, when it costs less, the 8x8 transform, then the subsampled chroma.
+     */
+    private void codeInterResidual() {
+        mb.transform8x8 = false;
         for (var c = 0; c < lumaComponents; c++) {
-            reference.predictLuma(c, x0, y0, mvx, mvy, 16, 16, prediction[c], 0, 16);
             copyPrediction(c, 16, 16);
         }
         if (subsampled) {
-            var cw = settings.mbWidthC();
-            var ch = settings.mbHeightC();
-            var cx = x0 / settings.subWidth();
-            var cy = y0 * ch / 16;
-            var cmvy = ch == 16 ? mvy << 1 : chromaOffset(mvy, reference.parity);
             for (var c = 1; c < 3; c++) {
-                reference.predictChroma(c, cx, cy, mvx, cmvy, cw, ch, prediction[c], 0, 16);
-                copyPrediction(c, cw, ch);
+                copyPrediction(c, settings.mbWidthC(), settings.mbHeightC());
             }
         }
         mb.cbp = codeInterLuma(false);
@@ -1624,6 +1675,404 @@ final class WideCoder {
         if (subsampled) {
             codeChroma(false, 0);
         }
+    }
+
+    /**
+     * Motion-compensates a block of the current macroblock from one reference into prediction
+     * buffers, every component included.
+     *
+     * @param reference the reference picture or field to predict from
+     * @param bx the block's horizontal luma offset in the macroblock
+     * @param by the block's vertical luma offset in the macroblock
+     * @param w the luma block width
+     * @param h the luma block height
+     * @param mvx the horizontal vector in quarter samples
+     * @param mvy the vertical vector in quarter samples
+     * @param dst the prediction buffers, 16 samples per row
+     */
+    private void predictPart(WideReference reference, int bx, int by, int w, int h, int mvx, int mvy,
+                             short[][] dst) {
+        for (var c = 0; c < lumaComponents; c++) {
+            reference.predictLuma(c, x0 + bx, y0 + by, mvx, mvy, w, h, dst[c], by * 16 + bx, 16);
+        }
+        if (subsampled) {
+            var ch = settings.mbHeightC();
+            var sw = settings.subWidth();
+            var cx = (x0 + bx) / sw;
+            var cy = (y0 + by) * ch / 16;
+            var cmvy = ch == 16 ? mvy << 1 : chromaOffset(mvy, reference.parity);
+            var offset = (by * ch / 16) * 16 + bx / sw;
+            for (var c = 1; c < 3; c++) {
+                reference.predictChroma(c, cx, cy, mvx, cmvy, w / sw, h * ch / 16, dst[c], offset, 16);
+            }
+        }
+    }
+
+    /**
+     * Predicts a block of the current macroblock of a B picture from list 0, list 1 or both, averaging
+     * the two predictions of a bi-predicted block (ITU-T H.264 8.4.2.3.1), into {@link #prediction}.
+     *
+     * @param bx the block's horizontal luma offset in the macroblock
+     * @param by the block's vertical luma offset in the macroblock
+     * @param size the luma block width and height
+     * @param ref0 the list 0 reference index, or -1 when list 0 is not used
+     * @param mvx0 the list 0 horizontal vector
+     * @param mvy0 the list 0 vertical vector
+     * @param ref1 the list 1 reference index, or -1 when list 1 is not used
+     * @param mvx1 the list 1 horizontal vector
+     * @param mvy1 the list 1 vertical vector
+     */
+    private void predictB(int bx, int by, int size, int ref0, int mvx0, int mvy0, int ref1, int mvx1, int mvy1) {
+        if (ref1 < 0) {
+            predictPart(refs[ref0], bx, by, size, size, mvx0, mvy0, prediction);
+            return;
+        }
+        if (ref0 < 0) {
+            predictPart(refs1[ref1], bx, by, size, size, mvx1, mvy1, prediction);
+            return;
+        }
+        predictPart(refs[ref0], bx, by, size, size, mvx0, mvy0, prediction);
+        predictPart(refs1[ref1], bx, by, size, size, mvx1, mvy1, prediction1);
+        for (var c = 0; c < lumaComponents; c++) {
+            average(prediction[c], prediction1[c], by * 16 + bx, size, size);
+        }
+        if (subsampled) {
+            var ch = settings.mbHeightC();
+            var sw = settings.subWidth();
+            var offset = (by * ch / 16) * 16 + bx / sw;
+            for (var c = 1; c < 3; c++) {
+                average(prediction[c], prediction1[c], offset, size / sw, size * ch / 16);
+            }
+        }
+    }
+
+    /**
+     * Averages a second prediction into a first one with upward rounding.
+     *
+     * @param a the first prediction, receiving the average
+     * @param b the second prediction
+     * @param offset the index of the block's top-left sample, both at stride 16
+     * @param w the block width
+     * @param h the block height
+     */
+    private static void average(short[] a, short[] b, int offset, int w, int h) {
+        for (var y = 0; y < h; y++) {
+            var row = offset + y * 16;
+            for (var x = 0; x < w; x++) {
+                a[row + x] = (short) ((a[row + x] + b[row + x] + 1) >> 1);
+            }
+        }
+    }
+
+    /**
+     * Sets the list 1 references and the co-located picture of the B picture the last
+     * {@link #startPicture} began, which makes it a B picture.
+     *
+     * @param references the list 1 references of frame macroblocks or of the field picture, by index
+     * @param topFieldRefs the list 1 references of top field macroblocks of a frame of pairs, or {@code null}
+     * @param bottomFieldRefs the list 1 references of bottom field macroblocks of a frame of pairs, or
+     * {@code null}
+     * @param col the frame holding {@code RefPicList1[0]}, whose co-located data is stored
+     * @param colStructure the structure of the co-located picture in {@code col}: 0 for the frame, 1 or 2
+     * for a field
+     * @param topCloser whether the top field of {@code col} is closer to the current frame in output
+     * order than its bottom field
+     */
+    void startBidirectional(WideReference[] references, WideReference[] topFieldRefs,
+                            WideReference[] bottomFieldRefs, WideFrame col, int colStructure, boolean topCloser) {
+        this.bSlice = true;
+        this.frameRefs1 = references;
+        this.pairFieldRefs1[0] = topFieldRefs;
+        this.pairFieldRefs1[1] = bottomFieldRefs;
+        this.colFrame = col;
+        this.colStructure = colStructure;
+        this.colTopCloser = topCloser;
+    }
+
+    /**
+     * The estimated {@code mb_type} bits of {@code B_Direct_16x16}, {@code B_L0_16x16}, {@code B_L1_16x16}
+     * and {@code B_Bi_16x16}.
+     */
+    private static final int[] B_TYPE_BITS = {1, 3, 3, 6};
+
+    /**
+     * Decides and codes the current macroblock of a B picture: skip or direct with the spatial direct
+     * motion, one vector from list 0, one from list 1, one from each averaged, or intra.
+     *
+     * @param skipAllowed whether {@code B_Skip} may be chosen
+     */
+    private void decideB(boolean skipAllowed) {
+        var directUsable = deriveDirect();
+        var directCost = Long.MAX_VALUE;
+        if (directUsable && forceDirect && ((table.mbX + table.mbY) & 1) == 1) {
+            predictDirect();
+            codeDirect();
+            if (skipAllowed && (mb.cbp & 0x3F) == 0) {
+                mb.type = WideMb.BSKIP;
+            }
+            return;
+        }
+        if (directUsable) {
+            predictDirect();
+            directCost = predictionSatd();
+            if (skipAllowed && directCost * 256 < 6L * lambda) {
+                codeDirect();
+                if ((mb.cbp & 0x3F) == 0) {
+                    mb.type = WideMb.BSKIP;
+                    return;
+                }
+            }
+            directCost += (lambda * (long) B_TYPE_BITS[0]) >> 8;
+        }
+        var cost0 = Long.MAX_VALUE;
+        var ref0 = 0;
+        var mv0 = 0;
+        var mvp0 = 0;
+        for (var r = 0; r < refs.length; r++) {
+            var mvp = predictVector(r, 0);
+            var found = search(refs[r], MotionPredictor.x(mvp), MotionPredictor.y(mvp), mvp);
+            var cost = searchCost + ((lambda * (long) refBits(r, refs.length)) >> 8);
+            if (cost < cost0) {
+                cost0 = cost;
+                ref0 = r;
+                mv0 = found;
+                mvp0 = mvp;
+            }
+        }
+        var cost1 = Long.MAX_VALUE;
+        var ref1 = 0;
+        var mv1 = 0;
+        var mvp1 = 0;
+        for (var r = 0; r < refs1.length; r++) {
+            var mvp = predictVector(r, 1);
+            var found = search(refs1[r], MotionPredictor.x(mvp), MotionPredictor.y(mvp), mvp);
+            var cost = searchCost + ((lambda * (long) refBits(r, refs1.length)) >> 8);
+            if (cost < cost1) {
+                cost1 = cost;
+                ref1 = r;
+                mv1 = found;
+                mvp1 = mvp;
+            }
+        }
+        var mvx0 = MotionPredictor.x(mv0);
+        var mvy0 = MotionPredictor.y(mv0);
+        var mvx1 = MotionPredictor.x(mv1);
+        var mvy1 = MotionPredictor.y(mv1);
+        predictB(0, 0, 16, ref0, mvx0, mvy0, ref1, mvx1, mvy1);
+        var costBi = predictionSatd() + mvCost(mvx0, mvy0, MotionPredictor.x(mvp0), MotionPredictor.y(mvp0))
+                + mvCost(mvx1, mvy1, MotionPredictor.x(mvp1), MotionPredictor.y(mvp1))
+                + ((lambda * (long) (refBits(ref0, refs.length) + refBits(ref1, refs1.length) + B_TYPE_BITS[3])) >> 8);
+        cost0 += (lambda * (long) B_TYPE_BITS[1]) >> 8;
+        cost1 += (lambda * (long) B_TYPE_BITS[2]) >> 8;
+        var best = Math.min(Math.min(directCost, costBi), Math.min(cost0, cost1));
+        if (best > 0) {
+            var intraCost = decideIntra(best);
+            if (intraCost < best) {
+                return;
+            }
+        }
+        if (best == directCost) {
+            predictDirect();
+            codeDirect();
+            if (skipAllowed && (mb.cbp & 0x3F) == 0) {
+                mb.type = WideMb.BSKIP;
+            }
+            return;
+        }
+        clearResidual();
+        mb.qp = qp;
+        if (best == costBi) {
+            mb.type = WideMb.BBI;
+        } else if (best == cost0) {
+            mb.type = WideMb.BL0;
+        } else {
+            mb.type = WideMb.BL1;
+        }
+        var use0 = mb.type != WideMb.BL1;
+        var use1 = mb.type != WideMb.BL0;
+        mb.ref = use0 ? ref0 : -1;
+        mb.mvX = use0 ? mvx0 : 0;
+        mb.mvY = use0 ? mvy0 : 0;
+        mb.mvdX = use0 ? mvx0 - MotionPredictor.x(mvp0) : 0;
+        mb.mvdY = use0 ? mvy0 - MotionPredictor.y(mvp0) : 0;
+        mb.ref1 = use1 ? ref1 : -1;
+        mb.mvX1 = use1 ? mvx1 : 0;
+        mb.mvY1 = use1 ? mvy1 : 0;
+        mb.mvdX1 = use1 ? mvx1 - MotionPredictor.x(mvp1) : 0;
+        mb.mvdY1 = use1 ? mvy1 - MotionPredictor.y(mvp1) : 0;
+        predictB(0, 0, 16, mb.ref, mvx0, mvy0, mb.ref1, mvx1, mvy1);
+        codeInterResidual();
+    }
+
+    /**
+     * Codes the current macroblock as {@code B_Direct_16x16} with the direct motion
+     * {@link #deriveDirect()} derived and its prediction in {@link #prediction}.
+     */
+    private void codeDirect() {
+        clearResidual();
+        mb.type = WideMb.BDIRECT;
+        mb.qp = qp;
+        System.arraycopy(directRef, 0, mb.directRef, 0, 2);
+        System.arraycopy(directMvX, 0, mb.directMvX, 0, 8);
+        System.arraycopy(directMvY, 0, mb.directMvY, 0, 8);
+        codeInterResidual();
+    }
+
+    /**
+     * Builds the prediction of the spatial direct motion {@link #deriveDirect()} derived into
+     * {@link #prediction}: one 16x16 block when every quadrant moves alike, otherwise one 8x8 block per
+     * quadrant.
+     */
+    private void predictDirect() {
+        var uniform = true;
+        for (var q = 1; q < 4 && uniform; q++) {
+            uniform = directMvX[q] == directMvX[0] && directMvY[q] == directMvY[0]
+                    && directMvX[4 + q] == directMvX[4] && directMvY[4 + q] == directMvY[4];
+        }
+        if (uniform) {
+            predictB(0, 0, 16, directRef[0], directMvX[0], directMvY[0], directRef[1], directMvX[4], directMvY[4]);
+            return;
+        }
+        for (var q = 0; q < 4; q++) {
+            predictB((q & 1) * 8, (q >> 1) * 8, 8, directRef[0], directMvX[q], directMvY[q], directRef[1],
+                    directMvX[4 + q], directMvY[4 + q]);
+        }
+    }
+
+    /**
+     * Returns the SATD between the source and {@link #prediction} of every component coded like luma.
+     *
+     * @return the SATD
+     */
+    private long predictionSatd() {
+        var total = 0L;
+        for (var c = 0; c < lumaComponents; c++) {
+            total += satd(src[c].data, at[c], src[c].stride, prediction[c], 0, 16, 16, 16);
+        }
+        return total;
+    }
+
+    /**
+     * The spatial direct reference index of each list of the current macroblock, -1 when the list is not
+     * used.
+     */
+    private final int[] directRef = new int[2];
+
+    /**
+     * The spatial direct horizontal vector of each quadrant of the current macroblock, list 0 at 0 to 3 and
+     * list 1 at 4 to 7.
+     */
+    private final int[] directMvX = new int[8];
+
+    /**
+     * The spatial direct vertical vector of each quadrant, laid out as {@link #directMvX}.
+     */
+    private final int[] directMvY = new int[8];
+
+    /**
+     * Derives the spatial direct motion of the current macroblock (ITU-T H.264 8.4.1.2.2) into
+     * {@link #directRef}, {@link #directMvX} and {@link #directMvY}, with 8x8 inference.
+     *
+     * @return whether every vector stays inside the area motion compensation may read
+     */
+    private boolean deriveDirect() {
+        for (var list = 0; list < 2; list++) {
+            var a = neighbor(-1, 0);
+            var b = neighbor(0, -1);
+            var c = neighbor(16, -1);
+            if (c < 0) {
+                c = neighbor(-1, -1);
+            }
+            directRef[list] = minPositive(scaledRef(a, list), minPositive(scaledRef(b, list), scaledRef(c, list)));
+        }
+        var zero = directRef[0] < 0 && directRef[1] < 0;
+        if (zero) {
+            directRef[0] = 0;
+            directRef[1] = 0;
+        }
+        var usable = true;
+        for (var list = 0; list < 2; list++) {
+            var ref = directRef[list];
+            var mvp = ref < 0 || zero ? 0 : predictVector(ref, list);
+            var reference = ref < 0 ? null : list == 0 ? refs[ref] : refs1[ref];
+            for (var q = 0; q < 4; q++) {
+                var zeroed = ref == 0 && colZero(q);
+                if (zeroed && mvp != 0) {
+                    zeroedQuadrants[colCase]++;
+                }
+                var mv = zeroed ? 0 : mvp;
+                var x = ref < 0 ? 0 : MotionPredictor.x(mv);
+                var y = ref < 0 ? 0 : MotionPredictor.y(mv);
+                directMvX[list * 4 + q] = x;
+                directMvY[list * 4 + q] = y;
+                if (reference != null && (clampX(x) != x || clampY(y, reference) != y)) {
+                    usable = false;
+                }
+            }
+        }
+        return usable;
+    }
+
+    /**
+     * Whether the B macroblocks of a checkerboard, those whose column and row add up to an odd number, are coded
+     * as {@code B_Direct_16x16} or {@code B_Skip} when their direct motion stays inside the reference padding; a
+     * test hook.
+     */
+    boolean forceDirect;
+
+    /**
+     * The number of quadrants whose direct vector {@code colZeroFlag} set to zero where the predicted
+     * vector is not zero, by the co-located case of the last {@link #colZero} call; a test hook.
+     */
+    final long[] zeroedQuadrants = new long[3];
+
+    /**
+     * The co-located case of the last {@link #colZero} call: 0 when the current and the co-located macroblock
+     * are both frame or both field macroblocks, 1 for a frame macroblock over a field pair, 2 for a field
+     * macroblock over a frame pair.
+     */
+    private int colCase;
+
+    /**
+     * Returns {@code MinPositive} of ITU-T H.264 8.4.1.2.2.
+     *
+     * @param x a reference index, or -1
+     * @param y another reference index, or -1
+     * @return the smaller of two non-negative indices, otherwise the larger index
+     */
+    private static int minPositive(int x, int y) {
+        return x >= 0 && y >= 0 ? Math.min(x, y) : Math.max(x, y);
+    }
+
+    /**
+     * Returns {@code colZeroFlag} of a quadrant of the current macroblock (ITU-T H.264 8.4.1.2.2), from the
+     * co-located quadrant of Table 8-8 for the corner block 8x8 inference selects. Every picture of a
+     * stream has the same structure, so the co-located picture is coded like the current one.
+     *
+     * @param q the quadrant
+     * @return whether the co-located quadrant references index 0 with a vector of at most one quarter
+     * sample in each direction
+     */
+    private boolean colZero(int q) {
+        var current = table.address;
+        var address = current;
+        var quadrant = q;
+        colCase = 0;
+        if (mbaff) {
+            var colPairField = colFrame.colField[current];
+            if (!table.fieldMb && colPairField) {
+                address = 2 * (current >> 1) + (colTopCloser ? 0 : 1);
+                quadrant = (current & 1) * 2 + (q & 1);
+                colCase = 1;
+            } else if (table.fieldMb && !colPairField) {
+                address = 2 * (current >> 1) + (q >> 1);
+                colCase = 2;
+            }
+        }
+        var k = address * 4 + quadrant;
+        var structure = colStructure;
+        return colFrame.colRef[structure][k] == 0 && Math.abs(colFrame.colMvX[structure][k]) <= 1
+                && Math.abs(colFrame.colMvY[structure][k]) <= 1;
     }
 
     /**
@@ -1727,43 +2176,38 @@ final class WideCoder {
         if (!availA || !availB) {
             return 0;
         }
-        table.locate(-1, 0, 16, 16);
-        var a = table.found;
-        if (scaledRef(a) == 0 && scaledMv(a) == 0) {
+        var a = neighbor(-1, 0);
+        if (scaledRef(a, 0) == 0 && scaledMv(a, 0) == 0) {
             return 0;
         }
-        table.locate(0, -1, 16, 16);
-        var b = table.found;
-        if (scaledRef(b) == 0 && scaledMv(b) == 0) {
+        var b = neighbor(0, -1);
+        if (scaledRef(b, 0) == 0 && scaledMv(b, 0) == 0) {
             return 0;
         }
-        return predictVector(0);
+        return predictVector(0, 0);
     }
 
     /**
-     * Returns the motion vector predictor of the 16x16 partition for a reference index (ITU-T
-     * H.264 8.4.1.3).
+     * Returns the motion vector predictor of the 16x16 partition for a reference index of a list
+     * (ITU-T H.264 8.4.1.3).
      *
      * @param ref the reference index
+     * @param list 0 or 1
      * @return the packed predictor
      */
-    int predictVector(int ref) {
-        table.locate(-1, 0, 16, 16);
-        var a = table.found;
-        table.locate(0, -1, 16, 16);
-        var b = table.found;
-        table.locate(16, -1, 16, 16);
-        var c = table.found;
+    int predictVector(int ref, int list) {
+        var a = neighbor(-1, 0);
+        var b = neighbor(0, -1);
+        var c = neighbor(16, -1);
         if (c < 0) {
-            table.locate(-1, -1, 16, 16);
-            c = table.found;
+            c = neighbor(-1, -1);
         }
-        var refA = scaledRef(a);
-        var refB = scaledRef(b);
-        var refC = scaledRef(c);
-        var mvA = scaledMv(a);
-        var mvB = scaledMv(b);
-        var mvC = scaledMv(c);
+        var refA = scaledRef(a, list);
+        var refB = scaledRef(b, list);
+        var refC = scaledRef(c, list);
+        var mvA = scaledMv(a, list);
+        var mvB = scaledMv(b, list);
+        var mvC = scaledMv(c, list);
         if (b < 0 && c < 0 && a >= 0) {
             mvB = mvA;
             mvC = mvA;
@@ -1779,6 +2223,19 @@ final class WideCoder {
     }
 
     /**
+     * Locates the neighbor covering a luma location outside the current macroblock.
+     *
+     * @param xN the horizontal location
+     * @param yN the vertical location
+     * @return {@code 4 * position + quadrant} of the neighbor's 8x8 quadrant holding the location, or -1
+     * when it is not available
+     */
+    private int neighbor(int xN, int yN) {
+        table.locate(xN, yN, 16, 16);
+        return table.found < 0 ? -1 : table.found * 4 + table.foundQuadrant();
+    }
+
+    /**
      * Returns the median of three values.
      *
      * @param a the first value
@@ -1791,21 +2248,21 @@ final class WideCoder {
     }
 
     /**
-     * Returns a neighbor's reference index in the current macroblock's units.
+     * Returns a neighbor's reference index of a list in the current macroblock's units.
      *
-     * @param position the neighbor's grid position, or -1
-     * @return the index, or -1 for an unavailable or intra neighbor
+     * @param key the neighbor's quadrant as {@link #neighbor} returns it, or -1
+     * @param list 0 or 1
+     * @return the index, or -1 for an unavailable or intra neighbor or one that does not use the list
      */
-    private int scaledRef(int position) {
-        if (position < 0) {
+    private int scaledRef(int key, int list) {
+        if (key < 0) {
             return -1;
         }
-        var type = table.type[position];
-        if (type <= WideMb.IPCM) {
+        var ref = table.ref[list][key];
+        if (ref < 0) {
             return -1;
         }
-        var ref = table.ref[position];
-        return switch (table.fieldScaling(position)) {
+        return switch (table.fieldScaling(key >> 2)) {
             case 1 -> ref >> 1;
             case -1 -> ref << 1;
             default -> ref;
@@ -1813,23 +2270,24 @@ final class WideCoder {
     }
 
     /**
-     * Returns a neighbor's motion vector in the current macroblock's units.
+     * Returns a neighbor's motion vector of a list in the current macroblock's units.
      *
-     * @param position the neighbor's grid position, or -1
-     * @return the packed vector, zero for an unavailable or intra neighbor
+     * @param key the neighbor's quadrant as {@link #neighbor} returns it, or -1
+     * @param list 0 or 1
+     * @return the packed vector, zero for an unavailable or intra neighbor or one that does not use the list
      */
-    private int scaledMv(int position) {
-        if (position < 0 || table.type[position] <= WideMb.IPCM) {
+    private int scaledMv(int key, int list) {
+        if (key < 0 || table.ref[list][key] < 0) {
             return 0;
         }
-        int y = table.mvY[position];
-        switch (table.fieldScaling(position)) {
+        int y = table.mvY[list][key];
+        switch (table.fieldScaling(key >> 2)) {
             case 1 -> y *= 2;
             case -1 -> y /= 2;
             default -> {
             }
         }
-        return MotionPredictor.pack(table.mvX[position], y);
+        return MotionPredictor.pack(table.mvX[list][key], y);
     }
 
     /**
@@ -1895,12 +2353,7 @@ final class WideCoder {
         t.cbp[p] = (byte) mb.cbp;
         t.chromaMode[p] = (byte) (mb.intra() ? mb.chromaMode : 0);
         t.transform8x8[p] = mb.transform8x8;
-        var inter = !mb.intra();
-        t.ref[p] = (byte) (inter ? (mb.type == WideMb.PSKIP ? 0 : mb.ref) : -1);
-        t.mvX[p] = (short) (inter ? mb.mvX : 0);
-        t.mvY[p] = (short) (inter ? mb.mvY : 0);
-        t.mvdX[p] = (short) (mb.type == WideMb.P16X16 ? Math.abs(mb.mvdX) : 0);
-        t.mvdY[p] = (short) (mb.type == WideMb.P16X16 ? Math.abs(mb.mvdY) : 0);
+        commitMotion(p);
         for (var i = 0; i < 16; i++) {
             int mode;
             if (mb.type == WideMb.I4X4) {
@@ -1953,6 +2406,70 @@ final class WideCoder {
                 }
             }
             t.cbf[p * 3 + c] = cbfBits;
+        }
+    }
+
+    /**
+     * Records the motion of the current macroblock in the tables: the reference index and vector of
+     * each list and quadrant, and the motion vector differences CABAC contexts read.
+     *
+     * @param p the macroblock's grid position
+     */
+    private void commitMotion(int p) {
+        var t = table;
+        var type = mb.type;
+        var direct = WideMb.direct(type);
+        var intraMb = mb.intra();
+        for (var list = 0; list < 2; list++) {
+            var used = !intraMb && (direct ? mb.directRef[list] >= 0 : WideMb.usesList(type, list));
+            var ref = !used ? -1 : direct ? mb.directRef[list] : list == 0 ? (type == WideMb.PSKIP ? 0 : mb.ref)
+                    : mb.ref1;
+            for (var q = 0; q < 4; q++) {
+                var k = p * 4 + q;
+                t.ref[list][k] = (byte) ref;
+                if (!used) {
+                    t.mvX[list][k] = 0;
+                    t.mvY[list][k] = 0;
+                } else if (direct) {
+                    t.mvX[list][k] = (short) mb.directMvX[list * 4 + q];
+                    t.mvY[list][k] = (short) mb.directMvY[list * 4 + q];
+                } else {
+                    t.mvX[list][k] = (short) (list == 0 ? mb.mvX : mb.mvX1);
+                    t.mvY[list][k] = (short) (list == 0 ? mb.mvY : mb.mvY1);
+                }
+            }
+            var coded = used && !direct && type != WideMb.PSKIP;
+            t.mvdX[list][p] = (short) (!coded ? 0 : Math.abs(list == 0 ? mb.mvdX : mb.mvdX1));
+            t.mvdY[list][p] = (short) (!coded ? 0 : Math.abs(list == 0 ? mb.mvdY : mb.mvdY1));
+        }
+    }
+
+    /**
+     * Copies the motion of the picture just coded into a frame, as the co-located data of later B
+     * pictures.
+     *
+     * @param frame the frame the picture belongs to
+     * @param structure 0 for a frame, 1 for a top field, 2 for a bottom field
+     */
+    void storeMotion(WideFrame frame, int structure) {
+        var t = table;
+        var count = t.mbWidth * t.mbRows;
+        frame.allocateMotion(structure, count);
+        var refs = frame.colRef[structure];
+        var xs = frame.colMvX[structure];
+        var ys = frame.colMvY[structure];
+        for (var address = 0; address < count; address++) {
+            var p = t.positionOf(address);
+            for (var q = 0; q < 4; q++) {
+                var k = p * 4 + q;
+                var list = t.ref[0][k] >= 0 ? 0 : 1;
+                refs[address * 4 + q] = t.ref[list][k];
+                xs[address * 4 + q] = t.mvX[list][k];
+                ys[address * 4 + q] = t.mvY[list][k];
+            }
+            if (structure == 0) {
+                frame.colField[address] = t.field[p];
+            }
         }
     }
 
