@@ -94,7 +94,7 @@ class Av1EncoderPictureFormatTest {
         return out;
     }
 
-    private static Picture copy(Picture p) {
+    static Picture copy(Picture p) {
         if (p instanceof YuvPicture yuv) {
             return yuv.toBuilder().luma(yuv.y().clone(), yuv.yStride())
                     .chroma(yuv.u() == null ? null : yuv.u().clone(), yuv.v() == null ? null : yuv.v().clone(),

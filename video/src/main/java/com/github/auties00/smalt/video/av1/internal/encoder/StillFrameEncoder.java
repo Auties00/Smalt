@@ -208,17 +208,35 @@ public final class StillFrameEncoder implements Av1Engine, FilterTarget {
     /**
      * Creates an encoder of the key frames of a video stream whose sequence header another encoder
      * built: pictures of the header's chroma layout and bit depth whose frame headers carry an order
-     * hint when the sequence enables them, coded with {@link #encodeKeyFrame}.
+     * hint when the sequence enables them, and their size when it is smaller than the sequence's
+     * largest, coded with {@link #encodeKeyFrame}.
      *
-     * @param width the picture width
-     * @param height the picture height
+     * @param width the picture width, at most the sequence's largest width
+     * @param height the picture height, at most the sequence's largest height
      * @param seq the stream's sequence header
      * @param settings the quantizer and search settings
      * @param limits the allocation limits
      * @throws IllegalArgumentException if a dimension is out of range
      */
     public StillFrameEncoder(int width, int height, SequenceHeader seq, StillSettings settings, MediaLimits limits) {
-        this(width, height, seq.layout, 8 + 2 * seq.hbd, seq, settings, limits);
+        this(width, height, seq.layout, 8 + 2 * seq.hbd, checkFits(width, height, seq), settings, limits);
+    }
+
+    /**
+     * Checks that a picture size fits a sequence header.
+     *
+     * @param width the picture width
+     * @param height the picture height
+     * @param seq the sequence header
+     * @return {@code seq}
+     * @throws IllegalArgumentException if the size exceeds the sequence's largest size
+     */
+    private static SequenceHeader checkFits(int width, int height, SequenceHeader seq) {
+        if (width > seq.maxWidth || height > seq.maxHeight) {
+            throw new IllegalArgumentException("picture size " + width + "x" + height + " exceeds the sequence's "
+                    + seq.maxWidth + "x" + seq.maxHeight);
+        }
+        return seq;
     }
 
     /**
@@ -561,6 +579,10 @@ public final class StillFrameEncoder implements Av1Engine, FilterTarget {
                 ? settings.screenContent || (settings.palette && settings.detectScreenContent && screenContent())
                 : seq.screenContentTools != 0;
         h.refreshFrameFlags = 0xFF;
+        h.frameSizeOverride = !seq.reducedStillPictureHeader && (width != seq.maxWidth || height != seq.maxHeight);
+        h.upscaledWidth = width;
+        h.codedWidth = width;
+        h.height = height;
         if (seq.orderHint) {
             h.frameOffset = orderHint & ((1 << seq.orderHintNBits) - 1);
         }

@@ -70,11 +70,12 @@ import java.util.function.Consumer;
  * predicting from up to seven earlier and later frames and from averages of a past and a future
  * one; every packet still holds exactly one shown frame, in display order, with the hidden frames
  * it depends on, so packets need no reordering. Key frames are coded with the still image search,
- * at the first picture, on request, at the key frame interval and at detected scene cuts. With a
- * {@link Av1EncoderOptions#quality()} the quantizers follow a constant quality, finer for the
- * frames the group predicts from most; without one, each group's quantizers are scaled to spend
- * {@link Av1EncoderOptions#bitrate()}. Frames are never dropped. {@link #encodeFrame} and
- * {@link #reconfigure(int, int)} are not available in this usage.
+ * at the first picture, on request, at the key frame interval, at detected scene cuts and at a
+ * size change through {@link #reconfigure(int, int)} that the references cannot predict; a frame
+ * group never spans a size change. With a {@link Av1EncoderOptions#quality()} the quantizers
+ * follow a constant quality, finer for the frames the group predicts from most; without one, each
+ * group's quantizers are scaled to spend {@link Av1EncoderOptions#bitrate()}. Frames are never
+ * dropped, and {@link #encodeFrame} is not available in this usage.
  *
  * <p><b>Intra only</b> ({@link Av1EncoderUsage#ALL_INTRA}, {@link Av1EncoderOptions#forIntraOnly(int)}).
  * Every frame is a key frame coded at the constant quality with the still image search the AVIF
@@ -406,7 +407,9 @@ public final class Av1Encoder implements VideoEncoder {
     /**
      * {@inheritDoc}
      * <p>The record is an {@code av1C} codec configuration record holding the sequence header OBU;
-     * it changes after a {@link #reconfigure(int, int)} that needs a new sequence header.
+     * it changes after a {@link #reconfigure(int, int)} that needs a new sequence header. In the
+     * good-quality usage it then describes the pictures passed since, while the packets of the
+     * pictures still in the lookahead carry the previous sequence header in band.
      */
     @Override
     public Optional<byte[]> codecConfig() {
@@ -698,36 +701,37 @@ public final class Av1Encoder implements VideoEncoder {
     }
 
     /**
-     * Changes the picture size.
+     * Changes the picture size; the pictures passed to {@link #encode} from now on must have it.
      *
-     * <p>In the real-time usage, a size no larger in either dimension than the size of the
-     * stream's sequence header continues the stream without a key frame: the frames signal their
-     * size in their headers and the next frame predicts from the references of the old size with
-     * scaled motion compensation, unless a reference is more than twice the new size or less than
-     * a sixteenth of it, which makes it a key frame. A larger size, and every change in the
-     * intra-only usage, codes the next frame as a key frame with a new sequence header. The rate
+     * <p>In the real-time and good-quality usages, a size no larger in either dimension than the
+     * size of the stream's sequence header continues the stream without a key frame: the frames
+     * signal their size in their headers and the first frame of the new size predicts from the
+     * references of the old size with scaled motion compensation, unless a reference is more than
+     * twice the new size or less than a sixteenth of it, which makes it a key frame. A larger size,
+     * and every change in the intra-only usage, codes the next frame as a key frame with a new
+     * sequence header. Every frame is shown at its coded size. In the real-time usage the rate
      * control keeps what it learned: its buffer restarts at the optimal level, and its quantizer
      * history and rate model are rescaled for the new size.
+     *
+     * <p>In the good-quality usage the pictures already in the lookahead are coded at the old size:
+     * the frame group they belong to ends before the first picture of the new size, which starts a
+     * new group. The packets keep display order, and the change costs no flush.
      *
      * @param width the new width
      * @param height the new height
      * @throws IllegalArgumentException if a dimension is not positive
-     * @throws IllegalStateException if the encoder is closed or codes in the good-quality usage,
-     * whose lookahead holds pictures of the old size; flush it and create a new encoder instead
+     * @throws IllegalStateException if the encoder is closed
      * @throws MediaException.LimitExceeded if the picture exceeds the options' limits
      */
     public void reconfigure(int width, int height) {
         checkOpen();
-        if (engine instanceof Av1GoodEncoder) {
-            // TODO: change the good-quality picture size within the sequence size from scaled references,
-            // as the real-time encoder does
-            throw new IllegalStateException("a good-quality encoder cannot change its picture size; flush it and "
-                    + "create a new encoder");
-        }
         if (width == this.width && height == this.height) {
             return;
         }
-        if (engine instanceof Av1RtEncoder realtime) {
+        if (engine instanceof Av1GoodEncoder good) {
+            checkSize(width, height, options);
+            good.resize(width, height);
+        } else if (engine instanceof Av1RtEncoder realtime) {
             checkSize(width, height, options);
             if (!realtime.resize(width, height)) {
                 var next = newRealtime(width, height, options);

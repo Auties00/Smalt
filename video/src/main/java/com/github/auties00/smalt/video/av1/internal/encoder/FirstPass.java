@@ -137,6 +137,47 @@ final class FirstPass {
     }
 
     /**
+     * Resamples a luma plane to another size with bilinear interpolation between the sample
+     * centers, edges clamped.
+     *
+     * @param luma the plane, of stride {@code width}
+     * @param width the plane width
+     * @param height the plane height
+     * @param toWidth the width of the result, positive
+     * @param toHeight the height of the result, positive
+     * @return the resampled plane, of stride {@code toWidth}
+     */
+    static short[] resample(short[] luma, int width, int height, int toWidth, int toHeight) {
+        var out = new short[toWidth * toHeight];
+        // positions in 1/65536 of a source sample, centers aligned: (x + 0.5) * width / toWidth - 0.5
+        var stepX = ((long) width << 16) / toWidth;
+        var stepY = ((long) height << 16) / toHeight;
+        var x0 = new int[toWidth];
+        var fx = new int[toWidth];
+        for (var x = 0; x < toWidth; x++) {
+            var pos = Math.max(0, (stepX >> 1) + x * stepX - (1 << 15));
+            x0[x] = (int) Math.min(pos >> 16, width - 1);
+            fx[x] = x0[x] == width - 1 ? 0 : (int) (pos & 0xFFFF) >> 8;
+        }
+        for (var y = 0; y < toHeight; y++) {
+            var pos = Math.max(0, (stepY >> 1) + y * stepY - (1 << 15));
+            var y0 = (int) Math.min(pos >> 16, height - 1);
+            var fy = y0 == height - 1 ? 0 : (int) (pos & 0xFFFF) >> 8;
+            var row0 = y0 * width;
+            var row1 = fy == 0 ? row0 : row0 + width;
+            var o = y * toWidth;
+            for (var x = 0; x < toWidth; x++) {
+                var a = x0[x];
+                var b = fx[x] == 0 ? a : a + 1;
+                var top = luma[row0 + a] * (256 - fx[x]) + luma[row0 + b] * fx[x];
+                var bottom = luma[row1 + a] * (256 - fx[x]) + luma[row1 + b] * fx[x];
+                out[o + x] = (short) ((top * (256 - fy) + bottom * fy + (1 << 15)) >> 16);
+            }
+        }
+        return out;
+    }
+
+    /**
      * Computes the statistics of a frame.
      *
      * @param cur the frame's luma, of stride {@code width}

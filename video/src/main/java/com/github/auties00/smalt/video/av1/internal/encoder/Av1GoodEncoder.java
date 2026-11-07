@@ -52,6 +52,10 @@ import static com.github.auties00.smalt.video.av1.internal.encoder.FrameUpdateTy
  * or the header that shows an earlier hidden one. The stream does not depend on the thread count.
  * An instance is used by one thread at a time.
  *
+ * <p>A {@link #resize} applies to the pictures passed after it. A frame group never spans a
+ * change: the group before it ends early, and the first group of the new size predicts from the
+ * references of the old size with scaled motion compensation, or starts with a key frame.
+ *
  * <p>Inter frames are coded with the real-time encoder's mode decision at the relaxed
  * {@link SpeedFeatures#good} levels, adding compound and skip modes, a rate-distortion partition
  * search, transform type and size searches, the coding of the few best single-reference modes,
@@ -169,6 +173,21 @@ public final class Av1GoodEncoder implements Av1Engine {
         final int display;
 
         /**
+         * The picture width, the size the frame is coded at.
+         */
+        final int width;
+
+        /**
+         * The picture height.
+         */
+        final int height;
+
+        /**
+         * The sequence header the frame is coded under.
+         */
+        SequenceHeader seq;
+
+        /**
          * The widened luma plane, kept while later frames' statistics need it.
          */
         short[] luma;
@@ -203,6 +222,19 @@ public final class Av1GoodEncoder implements Av1Engine {
             this.duration = duration;
             this.forceKey = forceKey;
             this.display = display;
+            this.width = picture.width();
+            this.height = picture.height();
+        }
+
+        /**
+         * Returns whether the picture has a size.
+         *
+         * @param width the width to compare with
+         * @param height the height to compare with
+         * @return {@code true} when the picture is {@code width} by {@code height}
+         */
+        boolean sized(int width, int height) {
+            return this.width == width && this.height == height;
         }
     }
 
@@ -217,19 +249,35 @@ public final class Av1GoodEncoder implements Av1Engine {
     }
 
     /**
-     * The picture width.
+     * The width of the frames being coded, the size of the lookahead's head.
      */
-    private final int width;
+    private int width;
 
     /**
-     * The picture height.
+     * The height of the frames being coded.
      */
-    private final int height;
+    private int height;
 
     /**
-     * The frame encoder.
+     * The frame encoder of the frames being coded.
      */
-    private final FrameEncoder frame;
+    private FrameEncoder frame;
+
+    /**
+     * The format of the coded pictures and the sequence-level tools.
+     */
+    private final StreamFormat format;
+
+    /**
+     * The sequence header of the pictures last passed to {@link #encode}: the header of
+     * {@link #frame} until a {@link #resize} beyond its largest size.
+     */
+    private SequenceHeader latestSeq;
+
+    /**
+     * The display index of the first frame a size change makes a key frame, or -1 for none.
+     */
+    private int sizeKeyDisplay = -1;
 
     /**
      * The allocation limits.
@@ -251,7 +299,7 @@ public final class Av1GoodEncoder implements Av1Engine {
      * The whole-sample motion decision of screen content frames, or {@code null} when no frame
      * uses the screen content tools.
      */
-    private final IntegerMvDecision integerMv;
+    private IntegerMvDecision integerMv;
 
     /**
      * The rate control.
@@ -389,6 +437,12 @@ public final class Av1GoodEncoder implements Av1Engine {
     private int nextKey;
 
     /**
+     * The lookahead position of the first picture of another size or sequence header than the
+     * group's, or the lookahead size when every picture has the group's.
+     */
+    private int sizeEnd;
+
+    /**
      * Whether the temporal dependency model sets the quantizers of key frames and alternate
      * references.
      */
@@ -438,22 +492,57 @@ public final class Av1GoodEncoder implements Av1Engine {
     public Av1GoodEncoder(int width, int height, StreamFormat format, MediaLimits limits) {
         this.width = width;
         this.height = height;
-        var seq = FrameEncoder.sequenceHeader(width, height, format.color(), ObuWriter.level(width, height), true,
-                true, SequenceHeader.layoutOf(format.format()), format.bitDepth());
-        seq.filmGrainPresent = format.filmGrain();
+        this.format = format;
         this.screenContent = format.screenContent();
-        if (screenContent != Av1ScreenContent.NEVER) {
-            seq.screenContentTools = SequenceHeader.ADAPTIVE;
-        }
         this.integerMv = screenContent != Av1ScreenContent.NEVER ? new IntegerMvDecision(width, height) : null;
-        format.timing().apply(seq);
-        // TODO: choose the super-resolution denominator per frame (libaom's qthresh and auto modes) and
-        // code the key frames with it; the inter frames take the fixed denominator, the key frames none
-        seq.superRes = format.superresDenominator() > 8;
+        var seq = sequenceHeader(width, height, format);
+        this.latestSeq = seq;
         this.frame = new FrameEncoder(width, height, format.superresDenominator(), seq, limits);
         frame.timing(format.timing());
         this.limits = limits;
         Arrays.fill(slotDisplay, -1);
+    }
+
+    /**
+     * Builds the sequence header of a stream whose largest picture size is the given one.
+     *
+     * @param width the largest picture width
+     * @param height the largest picture height
+     * @param format the format of the coded pictures and the sequence-level tools
+     * @return the sequence header
+     */
+    private static SequenceHeader sequenceHeader(int width, int height, StreamFormat format) {
+        var seq = FrameEncoder.sequenceHeader(width, height, format.color(), ObuWriter.level(width, height), true,
+                true, SequenceHeader.layoutOf(format.format()), format.bitDepth());
+        seq.filmGrainPresent = format.filmGrain();
+        if (format.screenContent() != Av1ScreenContent.NEVER) {
+            seq.screenContentTools = SequenceHeader.ADAPTIVE;
+        }
+        format.timing().apply(seq);
+        // TODO: choose the super-resolution denominator per frame (libaom's qthresh and auto modes) and
+        // code the key frames with it; the inter frames take the fixed denominator, the key frames none
+        seq.superRes = format.superresDenominator() > 8;
+        return seq;
+    }
+
+    /**
+     * Changes the size of the pictures passed to {@link #encode} from the next one on. The
+     * pictures already in the lookahead keep their size: the frame groups end before the first
+     * picture of the new size, whose frames are coded at it and signal it in their headers
+     * ({@code frame_size_override_flag}), predicting from the references of the previous size
+     * with scaled motion compensation. The first frame of the new size is a key frame when a
+     * reference is more than twice its size or less than a sixteenth of it, and a key frame with
+     * a new sequence header when the size exceeds the sequence's largest size, which then
+     * becomes the new size.
+     *
+     * @param width the new width, positive
+     * @param height the new height, positive
+     */
+    public void resize(int width, int height) {
+        if (width > latestSeq.maxWidth || height > latestSeq.maxHeight) {
+            latestSeq = sequenceHeader(Math.max(width, latestSeq.maxWidth), Math.max(height, latestSeq.maxHeight),
+                    format);
+        }
     }
 
     /**
@@ -471,9 +560,18 @@ public final class Av1GoodEncoder implements Av1Engine {
                 settings.maxQindex());
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>The record holds the sequence header of the pictures last passed to {@link #encode}, which
+     * a {@link #resize} beyond the sequence's largest size replaces before the frames coded under
+     * the previous one have left the lookahead.
+     */
     @Override
     public byte[] codecConfigurationRecord() {
-        return ObuWriter.av1Config(frame.sequenceHeader(), frame.sequenceHeaderObu());
+        if (latestSeq == frame.sequenceHeader()) {
+            return ObuWriter.av1Config(latestSeq, frame.sequenceHeaderObu());
+        }
+        return ObuWriter.av1Config(latestSeq, new ObuWriter().sequenceHeader(latestSeq));
     }
 
     /**
@@ -525,7 +623,8 @@ public final class Av1GoodEncoder implements Av1Engine {
     public void encode(Picture picture, long pts, long duration, boolean forceKey, Av1FilmGrain grain,
                        Consumer<Unit> output) {
         var source = new Source(SourcePlanes.copy(picture), pts, duration, forceKey, nextDisplay++);
-        var seq = frame.sequenceHeader();
+        var seq = latestSeq;
+        source.seq = seq;
         source.grain = grain == null || !seq.filmGrainPresent ? null : FilmGrains.toData(grain, seq);
         measure(source);
         queue.add(source);
@@ -573,8 +672,8 @@ public final class Av1GoodEncoder implements Av1Engine {
             second = it.next();
         }
         var bands = threads > 0 ? Math.min(threads, ParallelBands.THREADS) : ParallelBands.THREADS;
-        source.stats = FirstPass.measure(source.luma, last == null || source.forceKey ? null : last.luma,
-                second == null ? null : second.luma, width, height, bands);
+        source.stats = FirstPass.measure(source.luma, last == null || source.forceKey ? null : lumaAt(last, source),
+                second == null ? null : lumaAt(second, source), source.width, source.height, bands);
         rc.observe(source.stats.codedError);
         recent.add(source);
         while (recent.size() > 2) {
@@ -583,8 +682,24 @@ public final class Av1GoodEncoder implements Av1Engine {
     }
 
     /**
+     * Returns the luma of an earlier lookahead picture at the size of a later one, resampled when
+     * a size change lies between them, so the statistics measure the motion across the change.
+     *
+     * @param earlier the earlier picture, with its luma
+     * @param later the later picture
+     * @return the luma, of stride {@code later.width}
+     */
+    private static short[] lumaAt(Source earlier, Source later) {
+        if (earlier.sized(later.width, later.height)) {
+            return earlier.luma;
+        }
+        return FirstPass.resample(earlier.luma, earlier.width, earlier.height, later.width, later.height);
+    }
+
+    /**
      * Returns whether a lookahead frame starts a new key frame group: the first frame, a requested
-     * key frame, the key frame interval or a scene cut ({@code test_candidate_kf}).
+     * key frame, the key frame interval, a size change the references cannot predict or a scene cut
+     * ({@code test_candidate_kf}).
      *
      * @param index the frame's position in the lookahead
      * @param sinceKey the number of frames since the last key frame
@@ -592,7 +707,8 @@ public final class Av1GoodEncoder implements Av1Engine {
      */
     private boolean keyAt(int index, int sinceKey) {
         var s = get(index);
-        if (lastKeyDisplay < 0 && index == 0 || s.forceKey || s.display == cutDisplay) {
+        if (lastKeyDisplay < 0 && index == 0 || s.forceKey || s.display == cutDisplay
+                || s.display == sizeKeyDisplay) {
             return true;
         }
         if (keyInterval > 0 && sinceKey >= keyInterval) {
@@ -659,6 +775,18 @@ public final class Av1GoodEncoder implements Av1Engine {
      */
     private void codeGroup(boolean flushing, Consumer<Unit> output) {
         var head = queue.peekFirst();
+        if (head.seq != frame.sequenceHeader() || !head.sized(width, height)) {
+            switchSize(head);
+        }
+        sizeEnd = queue.size();
+        var index = 0;
+        for (var s : queue) {
+            if (s.seq != head.seq || !s.sized(width, height)) {
+                sizeEnd = index;
+                break;
+            }
+            index++;
+        }
         var sinceKey = lastKeyDisplay < 0 ? 0 : head.display - lastKeyDisplay;
         var steps = new ArrayList<Step>();
         var start = 0;
@@ -668,9 +796,9 @@ public final class Av1GoodEncoder implements Av1Engine {
             sinceKey = 0;
             kfBoost = keyBoost();
         }
-        var available = queue.size() - start;
+        var available = sizeEnd - start;
         var n = Math.min(MAX_GF_INTERVAL, available);
-        if (!flushing) {
+        if (!flushing && sizeEnd == queue.size()) {
             n = Math.min(n, Math.max(1, available - FRAMES_AFTER_ARF));
         }
         nextKey = queue.size();
@@ -712,6 +840,36 @@ public final class Av1GoodEncoder implements Av1Engine {
     }
 
     /**
+     * Makes the lookahead's head the size of the frames coded next: a frame encoder of its size
+     * takes over the references, which the next frames predict from with scaled motion
+     * compensation, or, when the head's sequence header is new or a reference cannot be scaled to
+     * its size, the head becomes a key frame.
+     *
+     * @param head the lookahead's head
+     */
+    private void switchSize(Source head) {
+        var newSequence = head.seq != frame.sequenceHeader();
+        var next = new FrameEncoder(head.width, head.height, format.superresDenominator(), head.seq, limits);
+        if (newSequence) {
+            next.timing(format.timing());
+            Arrays.fill(slotDisplay, -1);
+            Arrays.fill(slotPicture, null);
+        } else {
+            next.inherit(frame);
+        }
+        frame.close();
+        frame = next;
+        width = head.width;
+        height = head.height;
+        if (screenContent != Av1ScreenContent.NEVER) {
+            integerMv = new IntegerMvDecision(width, height);
+        }
+        if (newSequence || lastKeyDisplay >= 0 && !next.referencesPredictable()) {
+            sizeKeyDisplay = head.display;
+        }
+    }
+
+    /**
      * Runs the temporal dependency model over a group's coded frames, the reference frames they
      * predict from and up to a group of the frames that follow it, and keeps the importance of the
      * group's key frame and alternate reference for their quantizers.
@@ -731,7 +889,7 @@ public final class Av1GoodEncoder implements Av1Engine {
         var list = new ArrayList<TplModel.Frame>();
         for (var s = 0; s < FrameEncoder.SLOTS; s++) {
             slotFrame[s] = -1;
-            if (display[s] < 0) {
+            if (display[s] < 0 || !sized(slotPicture[s])) {
                 continue;
             }
             for (var t = 0; t < s; t++) {
@@ -784,7 +942,7 @@ public final class Av1GoodEncoder implements Av1Engine {
         }
         if (arfIndex >= 0) {
             var previous = arfIndex;
-            for (var i = frames; i < queue.size() && i < frames + MAX_GF_INTERVAL; i++) {
+            for (var i = frames; i < sizeEnd && i < frames + MAX_GF_INTERVAL; i++) {
                 var s = get(i);
                 if (s.forceKey) {
                     break;
@@ -806,6 +964,16 @@ public final class Av1GoodEncoder implements Av1Engine {
         if (arfIndex >= 0) {
             arfImportance = model[arfIndex].importance;
         }
+    }
+
+    /**
+     * Returns whether a picture has the size of the frames being coded.
+     *
+     * @param picture the picture, or {@code null}
+     * @return {@code true} for a picture of that size
+     */
+    private boolean sized(Picture picture) {
+        return picture != null && picture.width() == width && picture.height() == height;
     }
 
     /**
@@ -1166,7 +1334,7 @@ public final class Av1GoodEncoder implements Av1Engine {
             p.refSearch = searchMask(p.refIdx);
             p.primaryRefFrame = primaryRef(p.refIdx, level);
             p.refreshFlags = codedOverlay ? 0 : 1 << refreshSlot(slotDisplay, slotLevel, step.type == ARF, step.display);
-            previous = slotPicture[p.refIdx[0]];
+            previous = sized(slotPicture[p.refIdx[0]]) ? slotPicture[p.refIdx[0]] : null;
             p.referenceSelect = bidirectional(p.refIdx, step.display);
             p.skipMode = p.referenceSelect;
         }
@@ -1313,7 +1481,7 @@ public final class Av1GoodEncoder implements Av1Engine {
             adjust = speed >= 5 ? (noise < 0.5 ? 4 : noise < 1.0 ? 2 : 0) : (noise < 0.5 ? 6 : noise < 1.0 ? 4 : 2);
         }
         var frames = Math.min(FILTER_FRAMES + adjust, queue.size());
-        var maxAfter = Math.max(0, nextKey - index - 1);
+        var maxAfter = Math.max(0, Math.min(nextKey, sizeEnd) - index - 1);
         var maxBefore = key ? 0 : index - groupStart;
         int before;
         int after;

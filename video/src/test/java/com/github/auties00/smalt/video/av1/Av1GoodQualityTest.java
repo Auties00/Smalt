@@ -181,7 +181,6 @@ class Av1GoodQualityTest {
                 assertTrue(packets.isEmpty());
                 assertThrows(IllegalStateException.class,
                         () -> encoder.encodeFrame(new VideoFrame(pictures.getFirst(), 30_000, 3000, false)));
-                assertThrows(IllegalStateException.class, () -> encoder.reconfigure(32, 32));
                 assertThrows(IllegalArgumentException.class,
                         () -> encoder.reconfigure(Av1EncoderOptions.ofQuality(50).toBuilder()
                                 .usage(Av1EncoderUsage.REALTIME)

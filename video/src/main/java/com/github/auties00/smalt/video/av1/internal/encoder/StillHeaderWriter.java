@@ -96,7 +96,8 @@ final class StillHeaderWriter {
      *
      * @param w the writer, reset first
      * @param seq the sequence header
-     * @param hdr the frame header, with the tile, quantizer, filter and tool fields set
+     * @param hdr the frame header, with the tile, quantizer, filter and tool fields set, and the
+     * frame size with its override flag when the frame is smaller than the sequence's largest size
      */
     static void frameHeader(HeaderWriter w, SequenceHeader seq, FrameHeader hdr) {
         w.reset();
@@ -114,16 +115,13 @@ final class StillHeaderWriter {
             w.flag(true);
         }
         if (!seq.reducedStillPictureHeader) {
-            w.flag(false);
+            w.flag(hdr.frameSizeOverride);
         }
         if (seq.orderHint) {
             w.bits(hdr.frameOffset, seq.orderHintNBits);
         }
         ObuWriter.writeRemovalTimes(w, seq, hdr);
-        if (seq.superRes) {
-            w.flag(false);
-        }
-        w.flag(false);
+        ObuWriter.writeFrameSize(w, seq, hdr);
         if (hdr.allowScreenContentTools) {
             w.flag(false);
         }
