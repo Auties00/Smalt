@@ -1,0 +1,19 @@
+# demux dump of mp4/uncv-yuv420.mp4; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 160000
+seekable true
+metadata compatible_brands="isomiso6mp41"
+metadata major_brand="isom"
+metadata minor_version="512"
+track 1 VIDEO UNCOMPRESSED_23001_17 timebase=1/25 duration=4 config=77:7f292e7b
+  video 32x16 orientation=NORMAL rate=25/1
+packets 4
+0 t1 pts=0 dts=0 dur=1 flags=KEY size=768 crc=a1f7f0a9
+1 t1 pts=1 dts=1 dur=1 flags=KEY size=768 crc=77b37b68
+2 t1 pts=2 dts=2 dur=1 flags=KEY size=768 crc=810171b7
+3 t1 pts=3 dts=3 dur=1 flags=KEY size=768 crc=0891d2ec
+seek 0: t1@0
+seek 53333: t1@1
+seek 106666: t1@2
+seek 160000: end
+seek -1000000: t1@0

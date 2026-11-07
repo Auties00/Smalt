@@ -1,0 +1,79 @@
+# demux dump of ac3/eac3.eac3; regenerate with -Dsmalt.test.updateDumps=true
+format AC3
+duration 2020136
+seekable true
+track 0 AUDIO EAC3 timebase=1/44100 duration=89088 config=none
+  audio rate=44100 bits=0 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 58
+0 t0 pts=0 dts=0 dur=1536 flags=KEY size=416 crc=923321ee
+1 t0 pts=1536 dts=1536 dur=1536 flags=KEY size=418 crc=b7910129
+2 t0 pts=3072 dts=3072 dur=1536 flags=KEY size=418 crc=e1a90ec0
+3 t0 pts=4608 dts=4608 dur=1536 flags=KEY size=418 crc=f0747575
+4 t0 pts=6144 dts=6144 dur=1536 flags=KEY size=418 crc=e881a767
+5 t0 pts=7680 dts=7680 dur=1536 flags=KEY size=418 crc=78208103
+6 t0 pts=9216 dts=9216 dur=1536 flags=KEY size=418 crc=79ae54c3
+7 t0 pts=10752 dts=10752 dur=1536 flags=KEY size=418 crc=fa4d993a
+8 t0 pts=12288 dts=12288 dur=1536 flags=KEY size=418 crc=0775e2d1
+9 t0 pts=13824 dts=13824 dur=1536 flags=KEY size=418 crc=7952195a
+10 t0 pts=15360 dts=15360 dur=1536 flags=KEY size=418 crc=4458b70c
+11 t0 pts=16896 dts=16896 dur=1536 flags=KEY size=418 crc=81bc777b
+12 t0 pts=18432 dts=18432 dur=1536 flags=KEY size=418 crc=8052ec5b
+13 t0 pts=19968 dts=19968 dur=1536 flags=KEY size=418 crc=11664785
+14 t0 pts=21504 dts=21504 dur=1536 flags=KEY size=418 crc=e0461586
+15 t0 pts=23040 dts=23040 dur=1536 flags=KEY size=418 crc=3dfeb16c
+16 t0 pts=24576 dts=24576 dur=1536 flags=KEY size=418 crc=2e5ad12c
+17 t0 pts=26112 dts=26112 dur=1536 flags=KEY size=418 crc=02c3609a
+18 t0 pts=27648 dts=27648 dur=1536 flags=KEY size=418 crc=6de4ed21
+19 t0 pts=29184 dts=29184 dur=1536 flags=KEY size=418 crc=edbf84db
+20 t0 pts=30720 dts=30720 dur=1536 flags=KEY size=418 crc=e4dd8879
+21 t0 pts=32256 dts=32256 dur=1536 flags=KEY size=418 crc=cfde1ad1
+22 t0 pts=33792 dts=33792 dur=1536 flags=KEY size=418 crc=2989ce20
+23 t0 pts=35328 dts=35328 dur=1536 flags=KEY size=418 crc=9a1a8330
+24 t0 pts=36864 dts=36864 dur=1536 flags=KEY size=418 crc=160f36c7
+25 t0 pts=38400 dts=38400 dur=1536 flags=KEY size=418 crc=49412189
+26 t0 pts=39936 dts=39936 dur=1536 flags=KEY size=418 crc=96a28dc9
+27 t0 pts=41472 dts=41472 dur=1536 flags=KEY size=418 crc=7ea144c7
+28 t0 pts=43008 dts=43008 dur=1536 flags=KEY size=418 crc=9aca8da1
+29 t0 pts=44544 dts=44544 dur=1536 flags=KEY size=418 crc=9d752e13
+30 t0 pts=46080 dts=46080 dur=1536 flags=KEY size=418 crc=88a227f9
+31 t0 pts=47616 dts=47616 dur=1536 flags=KEY size=418 crc=42c49ec8
+32 t0 pts=49152 dts=49152 dur=1536 flags=KEY size=418 crc=73e22b98
+33 t0 pts=50688 dts=50688 dur=1536 flags=KEY size=418 crc=7a4f1653
+34 t0 pts=52224 dts=52224 dur=1536 flags=KEY size=418 crc=729cc6a2
+35 t0 pts=53760 dts=53760 dur=1536 flags=KEY size=418 crc=ddc1dde0
+36 t0 pts=55296 dts=55296 dur=1536 flags=KEY size=418 crc=85ba22d7
+37 t0 pts=56832 dts=56832 dur=1536 flags=KEY size=418 crc=d76c3be1
+38 t0 pts=58368 dts=58368 dur=1536 flags=KEY size=418 crc=369c23d5
+39 t0 pts=59904 dts=59904 dur=1536 flags=KEY size=418 crc=6e9d3cbb
+40 t0 pts=61440 dts=61440 dur=1536 flags=KEY size=418 crc=0bba8264
+41 t0 pts=62976 dts=62976 dur=1536 flags=KEY size=418 crc=0801a25c
+42 t0 pts=64512 dts=64512 dur=1536 flags=KEY size=418 crc=05a46b09
+43 t0 pts=66048 dts=66048 dur=1536 flags=KEY size=418 crc=73fecb93
+44 t0 pts=67584 dts=67584 dur=1536 flags=KEY size=418 crc=5fd073a0
+45 t0 pts=69120 dts=69120 dur=1536 flags=KEY size=418 crc=e09beb9f
+46 t0 pts=70656 dts=70656 dur=1536 flags=KEY size=418 crc=16b846cf
+47 t0 pts=72192 dts=72192 dur=1536 flags=KEY size=418 crc=c1f32dbe
+48 t0 pts=73728 dts=73728 dur=1536 flags=KEY size=418 crc=f7913afa
+49 t0 pts=75264 dts=75264 dur=1536 flags=KEY size=416 crc=81690bd3
+50 t0 pts=76800 dts=76800 dur=1536 flags=KEY size=418 crc=80548c84
+51 t0 pts=78336 dts=78336 dur=1536 flags=KEY size=418 crc=0bd69257
+52 t0 pts=79872 dts=79872 dur=1536 flags=KEY size=418 crc=dd0920c1
+53 t0 pts=81408 dts=81408 dur=1536 flags=KEY size=418 crc=09e7b68e
+54 t0 pts=82944 dts=82944 dur=1536 flags=KEY size=418 crc=3591bc53
+55 t0 pts=84480 dts=84480 dur=1536 flags=KEY size=418 crc=b270e90f
+56 t0 pts=86016 dts=86016 dur=1536 flags=KEY size=418 crc=0a961ea7
+57 t0 pts=87552 dts=87552 dur=1536 flags=KEY size=418 crc=4c62b6d7
+seek 0: t0@0
+seek 673378: t0@19
+seek 1346757: t0@38
+seek 2020137: end
+seek 2020136: t0@57
+seek -1000000: t0@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format AC3
+  duration -1
+  seekable false
+  track 0 AUDIO EAC3 timebase=1/44100 duration=? config=none
+    audio rate=44100 bits=0 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH

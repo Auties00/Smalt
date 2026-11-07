@@ -43,10 +43,10 @@ public abstract class LoopRestorationDsp {
     static final LoopRestorationDsp SCALAR = new ScalarLoopRestorationDsp();
 
     /**
-     * The implementation every frame uses: {@link VectorLoopRestorationDsp} when
-     * {@link Simd#ENABLED}, {@link #SCALAR} otherwise.
+     * The implementation every frame uses: {@link VectorLoopRestorationDsp}, written for 256-bit
+     * vectors, when {@link Simd#WIDE}, {@link #SCALAR} otherwise.
      */
-    private static final LoopRestorationDsp FIXED = Simd.ENABLED ? VectorLoopRestorationDsp.create() : SCALAR;
+    private static final LoopRestorationDsp FIXED = Simd.WIDE ? VectorLoopRestorationDsp.create() : SCALAR;
 
     /**
      * The edge flag telling that the columns left of the unit exist ({@code LR_HAVE_LEFT}).

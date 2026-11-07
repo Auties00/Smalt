@@ -85,7 +85,8 @@ public enum Jp2ColorSpace {
     CIEJAB(19),
 
     /**
-     * e-sRGB (enumerated value 20).
+     * e-sRGB, the extended-range encoding of sRGB of PIMA 7667 (enumerated value 20); decoded
+     * pictures hold its values clipped to sRGB.
      */
     E_SRGB(20),
 

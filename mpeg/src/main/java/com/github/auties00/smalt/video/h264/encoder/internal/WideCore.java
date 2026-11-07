@@ -1,0 +1,2094 @@
+package com.github.auties00.smalt.video.h264.encoder.internal;
+
+import com.github.auties00.smalt.image.ColorRange;
+import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.track.Packet;
+import com.github.auties00.smalt.track.PacketFlag;
+import com.github.auties00.smalt.track.PacketSideData;
+import com.github.auties00.smalt.track.Rational;
+import com.github.auties00.smalt.video.h264.encoder.H264AdaptiveQuantization;
+import com.github.auties00.smalt.video.h264.encoder.H264PacketFormat;
+import com.github.auties00.smalt.video.h264.encoder.H264RateControl;
+import com.github.auties00.smalt.video.h264.internal.H264DecoderEngine;
+import com.github.auties00.smalt.video.h264.internal.H264Nal;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+
+/**
+ * Runs the frame-level loop of the extended engine, which codes samples of 8 to 14 bits in every
+ * chroma format, lossless streams and interlaced frames: input conversion, frame type and
+ * quantizer decisions, the slices of each picture, reference management and packet assembly.
+ *
+ * <p>Pictures are I and P pictures and, when the settings ask for them, unreferenced B pictures
+ * between two anchor pictures, which are coded after the later anchor; without B pictures the
+ * pictures are coded in display order. Interlaced frames are coded as frames of macroblock pairs or
+ * as two field pictures; both fields of a frame travel in one packet. A 4:4:4 stream may code its
+ * color planes separately: each picture is then coded three times, as the monochrome pictures of its
+ * Y, Cb and Cr planes, each plane predicting from the same plane of its references and keeping its
+ * own co-located motion. A coded picture becomes a reference once an internal
+ * {@link H264DecoderEngine} has decoded it, so the encoder predicts from exactly the samples a
+ * decoder reconstructs, deblocking filter included, for every format and field structure.
+ * Instances are not thread-safe, except {@link #requestKeyframe()}, {@link #setTargetBitrate(int)}
+ * and the counters.
+ *
+ * @implNote This implementation codes every macroblock on the calling thread. Its tools are the
+ * Intra_4x4, Intra_8x8 and Intra_16x16 modes and one motion vector per macroblock and list with
+ * quarter-sample precision, B pictures with spatial direct prediction, chosen by Hadamard-transformed
+ * prediction error, with the macroblock quantizers of adaptive quantization, which each separately
+ * coded color plane takes from its own samples; smaller partitions,
+ * look-ahead with its macroblock tree, referenced B pictures and texture retention in mode decision
+ * are the domain of {@link EncoderCore}.
+ */
+public final class WideCore implements EncoderEngine {
+    /**
+     * The ratio of inter to intra cost above which a frame starts a new scene.
+     */
+    private static final double SCENE_CUT_THRESHOLD = 0.72;
+
+    /**
+     * The factor by which a frame's inter cost must exceed the recent average for a scene cut.
+     */
+    private static final double SCENE_CUT_JUMP = 1.5;
+
+    // TODO: partitions below 16x16, a B pyramid (referenced B pictures), look-ahead with the macroblock tree,
+    //  rate-distortion mode decision with texture retention and wavefront analysis on helper threads in the
+    //  extended engine
+
+    // TODO: B pictures take their anchor's quantizer plus an offset and are never coded again to correct their
+    //  size, so a short clip with B pictures overshoots its target bitrate more than one of P pictures only
+    /**
+     * The quantizer steps by which a B picture is coarser than its anchor.
+     */
+    private static final int B_QUANTIZER_OFFSET = 3;
+
+    /**
+     * A frame waiting to be coded: its converted source, timing and the decisions made when it was
+     * submitted.
+     */
+    private static final class Entry {
+        final WideFrame source;
+
+        long pts;
+
+        long duration;
+
+        double seconds;
+
+        byte[] captions;
+
+        boolean idr;
+
+        /**
+         * Whether a previous frame was measured, so that the inter sums are meaningful.
+         */
+        boolean inter;
+
+        long intraSum;
+
+        long bestSum;
+
+        /**
+         * The frame's position in display order.
+         */
+        long displayIndex;
+
+        /**
+         * The frames from the last IDR frame to this one in display order, 0 for an IDR frame.
+         */
+        long sinceIdr;
+
+        /**
+         * Whether the frame is coded as a B picture.
+         */
+        boolean bidirectional;
+
+        /**
+         * The number of B pictures an anchor leaves behind.
+         */
+        int bCount;
+
+        /**
+         * The best sums of an anchor and its B pictures.
+         */
+        long groupBest;
+
+        /**
+         * The seconds of an anchor and its B pictures.
+         */
+        double groupSeconds;
+
+        Entry(WideFrame source) {
+            this.source = source;
+        }
+    }
+
+    /**
+     * The frames submitted but not planned yet, in display order.
+     */
+    private final List<Entry> queue = new ArrayList<>();
+
+    /**
+     * The planned frames, in coding order.
+     */
+    private final List<Entry> plan = new ArrayList<>();
+
+    /**
+     * The entries not in use.
+     */
+    private final List<Entry> spare = new ArrayList<>();
+
+    /**
+     * The frame being coded.
+     */
+    private Entry head;
+
+    /**
+     * The presentation timestamps of the last submitted frames, by display index modulo its length.
+     */
+    private final long[] ptsRing;
+
+    /**
+     * The quantizer of the last anchor picture.
+     */
+    private int anchorQp = 26;
+
+    /**
+     * The bits, quantizer, complexity and seconds of the anchor picture whose B pictures are being coded,
+     * which rate control learns once the last of them is coded.
+     */
+    private long groupBits;
+
+    private int groupQp;
+
+    private long groupComplexity;
+
+    private double groupSeconds;
+
+    private volatile long lastDisplayIndex = -1;
+    private final EncoderConfig config;
+
+    private final WideSettings settings;
+
+    private final WideInput input;
+
+    private final WideCoder coder;
+
+    private final WideSliceWriter writer;
+
+    private final NalWriter nal;
+
+    private final RateController rateControl;
+
+    /**
+     * The SEI NAL unit of the closed captions of the frame being coded, or {@code null} for none.
+     */
+    private byte[] captions;
+
+    /**
+     * The decoder that reconstructs every coded picture as a decoder does.
+     */
+    private final H264DecoderEngine decoder;
+
+    private final byte[] sps;
+
+    private final byte[] pps;
+
+    private final byte[] configurationRecord;
+
+    /**
+     * The SEI payload of the HDR metadata of every IDR access unit, or {@code null}.
+     */
+    private final byte[] staticSei;
+
+    /**
+     * The SEI payload of the recovery point of every intra refresh cycle, or {@code null}.
+     */
+    private final byte[] recoverySei;
+
+    /**
+     * The coded picture buffer of the hypothetical reference decoder the stream signals, or {@code null}
+     * when it signals none.
+     */
+    private final HrdModel hrd;
+
+    /**
+     * The adaptive quantization mode.
+     */
+    private final H264AdaptiveQuantization aqMode;
+
+    /**
+     * The adaptive quantization strength, {@code 0} when every macroblock takes the picture's quantizer.
+     */
+    private final double aqStrength;
+
+    /**
+     * The activity of each macroblock of the picture being coded, see {@link AdaptiveQuantizer}.
+     */
+    private final int[] aqActivity;
+
+    /**
+     * The brightness of each macroblock of the picture being coded, see {@link AdaptiveQuantizer}.
+     */
+    private final int[] aqBrightness;
+
+    /**
+     * The adaptive quantization offset of each macroblock of the picture being coded.
+     */
+    private final double[] aqOffsets;
+
+    /**
+     * The rounded adaptive quantization offset of each macroblock address of the picture being coded, by
+     * color plane: one array, or three when the planes are coded separately, each plane taking the offsets
+     * of its own samples.
+     */
+    private final int[][] aqSteps;
+
+    /**
+     * The color plane being coded, which selects its offsets in {@link #aqSteps}; 0 when the planes are
+     * coded together.
+     */
+    private int aqPlane;
+
+    /**
+     * The number of macroblocks of the picture {@link #aqSteps} holds the offsets of.
+     */
+    private int aqCount;
+
+    /**
+     * The most bits the first access unit of the frame being coded may take in the decoder's buffer.
+     */
+    private long firstFieldBits;
+
+    /**
+     * The mean quantizer, rounded up, of the two fields of the last field pair coded, which differs from the
+     * frame's when a field is coded again to fit the decoder's buffer.
+     */
+    private int pairQp;
+
+    /**
+     * The source frame of the frame being coded.
+     */
+    private WideFrame source;
+
+    /**
+     * The reconstruction of the frame being coded, before the deblocking filter.
+     */
+    private final WideFrame recon;
+
+    /**
+     * The frames not in use.
+     */
+    private final List<WideFrame> pool = new ArrayList<>();
+
+    /**
+     * The reference frames, most recent first.
+     */
+    private final List<WideFrame> references = new ArrayList<>();
+
+    /**
+     * The frame being built from the decoder's output.
+     */
+    private WideFrame building;
+
+    /**
+     * The decoded samples of the last coded frame, for the reconstruction hook.
+     */
+    private final WideFrame lastDecoded;
+
+    /**
+     * Scratch space of the half-sample interpolation.
+     */
+    private final int[] interpolationScratch;
+
+    /**
+     * The macroblock columns each picture of an intra refresh cycle refreshes, or 0.
+     */
+    private final int refreshBand;
+
+    /**
+     * The first column of the refresh band of the next P picture.
+     */
+    private int refreshColumn;
+
+    private final int temporalLayers;
+
+    /**
+     * The latest reference frame of each temporal layer since the last IDR frame.
+     */
+    private final WideFrame[] layerLatest = new WideFrame[4];
+
+    /**
+     * The temporal layer of the frame being coded.
+     */
+    private int temporalLayer;
+
+    private volatile int lastTemporalLayer;
+
+    private final AtomicLong keyframeRequests = new AtomicLong();
+
+    private long keyframeRequestsSeen;
+
+    private final AtomicInteger pendingBitrate = new AtomicInteger();
+
+    private volatile int appliedBitrate;
+
+    private volatile long frameCount;
+
+    private volatile long keyframeCount;
+
+    private volatile long byteCount;
+
+    private volatile int lastQp;
+
+    private long lastPts = Packet.NO_TIMESTAMP;
+
+    private final long nominalDuration;
+
+    /**
+     * The number of frames coded since the last IDR frame, that one included.
+     */
+    private long framesSinceIdr;
+
+    private long submitted;
+
+    /**
+     * The {@code frame_num} of the next reference frame.
+     */
+    private int frameNum;
+
+    private int idrPicId;
+
+    private boolean parametersFed;
+
+    private boolean closed;
+
+    /**
+     * Whether the previous frame's low-resolution luma is in {@link #previousLowres}.
+     */
+    private boolean previousLowresValid;
+
+    /**
+     * The intra sum of the last measured frame, see {@link #measure(WideFrame)}.
+     */
+    private long intraSum;
+
+    /**
+     * The inter sum of the last measured frame, see {@link #measure(WideFrame)}.
+     */
+    private long interSum;
+
+    /**
+     * The sum of the per-block minima of the last measured frame, see {@link #measure(WideFrame)}.
+     */
+    private long bestSum;
+
+    /**
+     * The exponentially weighted average inter sum since the last IDR frame, or {@code -1} when
+     * there is none.
+     */
+    private double recentInterSum = -1;
+
+    private final short[] previousLowres;
+
+    private final short[] lowres;
+
+    /**
+     * No references.
+     */
+    private static final WideReference[] NONE = new WideReference[0];
+
+    /**
+     * The reference of frame macroblocks, or of the first index of a field picture.
+     */
+    private final WideReference[] oneRef = new WideReference[1];
+
+    /**
+     * The two references of a field picture.
+     */
+    private final WideReference[] twoRefs = new WideReference[2];
+
+    /**
+     * The references of top field macroblocks of a frame of pairs.
+     */
+    private final WideReference[] topRefs = new WideReference[2];
+
+    /**
+     * The references of bottom field macroblocks of a frame of pairs.
+     */
+    private final WideReference[] bottomRefs = new WideReference[2];
+
+    /**
+     * The list 1 reference of the frame macroblocks of a B frame.
+     */
+    private final WideReference[] oneRef1 = new WideReference[1];
+
+    /**
+     * The two list 1 references of a B field picture.
+     */
+    private final WideReference[] twoRefs1 = new WideReference[2];
+
+    /**
+     * The list 1 references of top field macroblocks of a B frame of pairs.
+     */
+    private final WideReference[] topRefs1 = new WideReference[2];
+
+    /**
+     * The list 1 references of bottom field macroblocks of a B frame of pairs.
+     */
+    private final WideReference[] bottomRefs1 = new WideReference[2];
+
+    /**
+     * The fields a P field picture predicts from, in index order.
+     */
+    private final List<WideReference> wanted = new ArrayList<>();
+
+    /**
+     * The fields of the initial list of a P field picture with the current field's parity.
+     */
+    private final List<WideReference> sameParity = new ArrayList<>();
+
+    /**
+     * The fields of the initial list of a P field picture with the other parity.
+     */
+    private final List<WideReference> otherParity = new ArrayList<>();
+
+    /**
+     * The initial list of a P field picture.
+     */
+    private final List<WideReference> initialList = new ArrayList<>();
+
+    /**
+     * The picture header of the picture being coded.
+     */
+    private final WideSliceWriter.Picture header = new WideSliceWriter.Picture();
+
+    /**
+     * The {@code cabac_zero_word}s of the picture being coded.
+     */
+    private final CabacZeroWords zeroWords = new CabacZeroWords();
+
+    /**
+     * The CABAC bins of the last coded picture of each structure: frame, top field, bottom field.
+     */
+    private final long[] pictureBins = new long[3];
+
+    /**
+     * The co-located motion of each color plane of the picture coded last, which the frame takes once the
+     * picture is decoded, or {@code null} when the planes are coded together.
+     */
+    private final WideFrame[] planeMotion;
+
+    /**
+     * The prediction setup of the picture about to be coded, which {@link #startPlane(int)} hands to the
+     * coder for each color plane: the structure, whether the frame is coded in pairs, whether the picture
+     * is a P or B picture, its references and its intra refresh band, see
+     * {@link WideCoder#startPicture}.
+     */
+    private int pictureStructure;
+
+    private boolean picturePairs;
+
+    private boolean picturePredicted;
+
+    private WideReference[] pictureRefs;
+
+    private WideReference[] pictureTopRefs;
+
+    private WideReference[] pictureBottomRefs;
+
+    private int pictureRefreshStart;
+
+    private int pictureRefreshEnd;
+
+    /**
+     * The list 1 setup of a B picture about to be coded, see {@link WideCoder#startBidirectional}; unused
+     * unless {@link #pictureBidirectional} is set.
+     */
+    private boolean pictureBidirectional;
+
+    private WideReference[] pictureRefs1;
+
+    private WideReference[] pictureTopRefs1;
+
+    private WideReference[] pictureBottomRefs1;
+
+    private WideFrame pictureCol;
+
+    private int pictureColStructure;
+
+    private boolean pictureColTopCloser;
+
+    /**
+     * The reference lists of one color plane, by list role (list 0 of frames or fields, of top field
+     * macroblocks and of bottom field macroblocks, then the same for list 1) and length.
+     */
+    private final WideReference[][][] planeLists = new WideReference[6][3][];
+
+    /**
+     * Constructs an engine.
+     *
+     * @param config the configuration
+     * @throws IllegalArgumentException if an explicit level is too small for the stream
+     */
+    public WideCore(EncoderConfig config) {
+        this.config = config;
+        this.settings = new WideSettings(config);
+        this.input = new WideInput(settings);
+        this.coder = new WideCoder(settings.planeSettings());
+        this.writer = new WideSliceWriter(settings.planeSettings(), coder);
+        this.planeMotion = settings.separateColorPlanes()
+                ? new WideFrame[]{new WideFrame(), new WideFrame(), new WideFrame()} : null;
+        this.nal = new NalWriter(settings.mbCount() * 128, config.packetFormat() == H264PacketFormat.ANNEX_B);
+        this.rateControl = new RateController(config);
+        this.decoder = new H264DecoderEngine(config.limits(), frame -> {
+        }, 1);
+        decoder.setLowDelay(true);
+        this.sps = NalWriter.unit(3, H264Nal.SPS, ParameterSets.sps(settings));
+        this.pps = NalWriter.unit(3, H264Nal.PPS, ParameterSets.pps(settings));
+        this.configurationRecord = ParameterSets.avcDecoderConfigurationRecord(settings, sps, pps);
+        this.staticSei = ParameterSets.staticSei(config.color());
+        this.hrd = config.hrd() ? new HrdModel(settings) : null;
+        this.aqMode = config.adaptiveQuantization();
+        this.aqStrength = config.realtime() || settings.lossless() || aqMode == H264AdaptiveQuantization.NONE ? 0
+                : config.adaptiveQuantizationStrength();
+        var macroblocks = aqStrength > 0 ? settings.mbCount() : 0;
+        this.aqActivity = new int[macroblocks];
+        this.aqBrightness = new int[macroblocks];
+        this.aqOffsets = new double[macroblocks];
+        this.aqSteps = new int[settings.codedPlanes()][macroblocks];
+        this.temporalLayers = config.temporalLayers();
+        if (config.intraRefresh() > 0) {
+            this.refreshBand = Math.ceilDiv(settings.mbWidth(), config.intraRefresh());
+            this.recoverySei = ParameterSets.recoveryPointSei(Math.ceilDiv(settings.mbWidth(), refreshBand) - 1);
+        } else {
+            this.refreshBand = 0;
+            this.recoverySei = null;
+        }
+        this.source = new WideFrame(settings);
+        spare.add(new Entry(source));
+        this.ptsRing = new long[settings.bframes() + 3];
+        this.recon = new WideFrame(settings);
+        this.lastDecoded = new WideFrame(settings);
+        this.interpolationScratch = new int[source.planes[0].stride + 16];
+        this.appliedBitrate = config.rateControl() == H264RateControl.CONSTANT_QUALITY ? 0 : config.bitrate();
+        var rate = config.frameRate();
+        this.nominalDuration = Math.max(1, new Rational(rate.denominator(), rate.numerator()).rescale(1,
+                config.timeBase()));
+        var lowresSize = (settings.codedWidth() / 2) * (settings.codedHeight() / 2);
+        this.lowres = new short[lowresSize];
+        this.previousLowres = new short[lowresSize];
+    }
+
+    @Override
+    public byte[] configurationRecord() {
+        return configurationRecord.clone();
+    }
+
+    /**
+     * {@return the escaped sequence parameter set NAL unit, a copy; a test hook}
+     */
+    public byte[] sequenceParameterSet() {
+        return sps.clone();
+    }
+
+    /**
+     * {@return the escaped picture parameter set NAL unit, a copy; a test hook}
+     */
+    public byte[] pictureParameterSet() {
+        return pps.clone();
+    }
+
+    /**
+     * Sets whether the stream enables the deblocking filter; a test hook that makes the decoded
+     * pictures equal the encoder's own reconstruction, which tests compare with decoders.
+     *
+     * @param enabled whether the filter runs, {@code true} by default
+     */
+    public void setDeblocking(boolean enabled) {
+        writer.setDeblocking(enabled);
+    }
+
+    /**
+     * Returns the decoded samples of the last coded frame, cropped to the display size; a test hook.
+     *
+     * @return the luma, Cb and Cr samples in raster order, the chroma arrays empty for monochrome
+     * streams, or three empty arrays before the first frame
+     */
+    public short[][] lastReconstruction() {
+        return frameCount == 0 ? new short[][]{new short[0], new short[0], new short[0]} : crop(lastDecoded);
+    }
+
+    /**
+     * Returns the CABAC bins of the last coded picture of a structure; a test hook.
+     *
+     * @param structure 0 for a frame, 1 for the top field, 2 for the bottom field
+     * @return the bins, 0 for CAVLC or before a picture of the structure
+     */
+    public long lastPictureBins(int structure) {
+        return pictureBins[structure];
+    }
+
+    /**
+     * Returns the encoder's own reconstruction of the last coded frame before the deblocking
+     * filter, cropped to the display size; a test hook.
+     *
+     * @return the luma, Cb and Cr samples in raster order, laid out as {@link #lastReconstruction()}
+     */
+    public short[][] lastEncoderReconstruction() {
+        return crop(recon);
+    }
+
+    /**
+     * Returns the display area of a frame's planes.
+     *
+     * @param frame the frame to crop
+     * @return the luma, Cb and Cr samples in raster order
+     */
+    private short[][] crop(WideFrame frame) {
+        var result = new short[3][];
+        for (var c = 0; c < 3; c++) {
+            var plane = frame.planes[c];
+            if (plane == null) {
+                result[c] = new short[0];
+                continue;
+            }
+            var w = c == 0 ? settings.displayWidth() : settings.displayWidth() / settings.subWidth();
+            var h = c == 0 ? settings.displayHeight() : settings.displayHeight() / settings.subHeight();
+            var out = new short[w * h];
+            for (var y = 0; y < h; y++) {
+                System.arraycopy(plane.data, plane.origin + y * plane.stride, out, y * w, w);
+            }
+            result[c] = out;
+        }
+        return result;
+    }
+
+    @Override
+    public void requestKeyframe() {
+        keyframeRequests.incrementAndGet();
+    }
+
+    @Override
+    public void setTargetBitrate(int bitsPerSecond) {
+        pendingBitrate.set(bitsPerSecond);
+    }
+
+    @Override
+    public int targetBitrate() {
+        return appliedBitrate;
+    }
+
+    @Override
+    public long frameCount() {
+        return frameCount;
+    }
+
+    @Override
+    public long keyframeCount() {
+        return keyframeCount;
+    }
+
+    @Override
+    public long keyframeRequestCount() {
+        return keyframeRequests.get();
+    }
+
+    @Override
+    public long byteCount() {
+        return byteCount;
+    }
+
+    /**
+     * Returns the rounded adaptive quantization offsets of the macroblocks of the last picture coded, the
+     * second field of a field pair, of its first color plane; a test hook.
+     *
+     * @return a copy, by macroblock address, empty without adaptive quantization
+     */
+    public int[] adaptiveOffsets() {
+        return adaptiveOffsets(0);
+    }
+
+    /**
+     * Returns the rounded adaptive quantization offsets of the macroblocks of one color plane of the last
+     * picture coded, the second field of a field pair; a test hook.
+     *
+     * @param plane the color plane, 0 unless the planes are coded separately
+     * @return a copy, by macroblock address, empty without adaptive quantization
+     */
+    public int[] adaptiveOffsets(int plane) {
+        return Arrays.copyOf(aqSteps[plane], aqCount);
+    }
+
+    /**
+     * Returns the number of macroblocks written of each type, including coding attempts the rate control or
+     * a slice size limit undid; a test hook.
+     *
+     * @return the counts of Intra_4x4, Intra_8x8, Intra_16x16, I_PCM, P_L0_16x16, P_Skip, B_Skip,
+     * B_Direct_16x16, B_L0_16x16, B_L1_16x16 and B_Bi_16x16, a copy
+     */
+    public long[] typeCounts() {
+        return writer.typeCounts.clone();
+    }
+
+    /**
+     * Sets whether the B macroblocks of a checkerboard, those whose column and row add up to an odd number, are
+     * coded as {@code B_Direct_16x16} or {@code B_Skip} whenever their spatial direct motion stays inside the
+     * reference padding; a test hook that makes errors of the direct derivation show in the decoded pictures,
+     * while the other macroblocks give the direct prediction moving neighbors.
+     *
+     * @param forced whether direct coding is forced, {@code false} by default
+     */
+    public void setForcedDirect(boolean forced) {
+        coder.forceDirect = forced;
+    }
+
+    /**
+     * Returns the number of 8x8 quadrants of B macroblocks whose spatial direct vector the co-located picture
+     * set to zero where the predicted vector is not zero, over every coding attempt; a test hook.
+     *
+     * @return the counts, a copy: where the macroblock and the co-located one are both frame or both field
+     * macroblocks, where a frame macroblock lies over a field pair, and where a field macroblock lies over a
+     * frame pair
+     */
+    public long[] zeroedDirectQuadrants() {
+        return coder.zeroedQuadrants.clone();
+    }
+
+    /**
+     * {@return the display index of the frame coded last, -1 before the first; a test hook}
+     */
+    public long lastDisplayIndex() {
+        return lastDisplayIndex;
+    }
+
+    @Override
+    public int lastQp() {
+        return lastQp;
+    }
+
+    @Override
+    public int lastTemporalLayer() {
+        return lastTemporalLayer;
+    }
+
+    @Override
+    public Packet flush() {
+        if (closed) {
+            throw new IllegalStateException("encoder is closed");
+        }
+        if (queue.isEmpty() && plan.isEmpty()) {
+            return null;
+        }
+        return codeNext();
+    }
+
+    @Override
+    public void close() {
+        if (!closed) {
+            closed = true;
+            decoder.close();
+        }
+    }
+
+    @Override
+    public Packet encode(Picture picture, long pts, long duration, byte[] captions) {
+        if (closed) {
+            throw new IllegalStateException("encoder is closed");
+        }
+        if (picture.width() != config.width() || picture.height() != config.height()) {
+            throw new IllegalArgumentException("picture is " + picture.width() + "x" + picture.height()
+                    + ", encoder expects " + config.width() + "x" + config.height());
+        }
+        var previous = lastPts;
+        var nominal = false;
+        if (pts == Packet.NO_TIMESTAMP) {
+            pts = previous == Packet.NO_TIMESTAMP ? 0 : previous + nominalDuration;
+        } else if (previous != Packet.NO_TIMESTAMP && pts <= previous) {
+            if (!config.realtime()) {
+                throw new IllegalArgumentException("timestamp " + pts + " does not follow " + previous);
+            }
+            pts = previous + 1;
+            nominal = true;
+        }
+        lastPts = pts;
+        applyPendingBitrate();
+        var entry = spare.isEmpty() ? new Entry(new WideFrame(settings)) : spare.removeLast();
+        entry.pts = pts;
+        entry.duration = duration;
+        entry.captions = CaptionSei.unit(captions);
+        entry.seconds = nominal && duration <= 0 ? 1 / config.frameRate().toDouble()
+                : frameSeconds(pts, duration, previous);
+        input.convert(picture, entry.source);
+        var requests = keyframeRequests.get();
+        var requested = requests != keyframeRequestsSeen;
+        keyframeRequestsSeen = requests;
+        var idr = submitted == 0 || requested
+                || (config.keyframeInterval() > 0 && refreshBand == 0 && framesSinceIdr >= config.keyframeInterval());
+        var inter = measure(entry.source);
+        if (!idr && refreshBand == 0 && inter) {
+            if (framesSinceIdr >= minimumSceneDistance() && interSum > SCENE_CUT_THRESHOLD * intraSum
+                    && (recentInterSum < 0 || interSum > SCENE_CUT_JUMP * recentInterSum)) {
+                idr = true;
+                recentInterSum = -1;
+            } else {
+                recentInterSum = recentInterSum < 0 ? interSum : 0.7 * recentInterSum + 0.3 * interSum;
+            }
+        }
+        entry.idr = idr;
+        entry.inter = inter;
+        entry.intraSum = intraSum;
+        entry.bestSum = bestSum;
+        entry.displayIndex = submitted;
+        entry.sinceIdr = idr ? 0 : framesSinceIdr;
+        framesSinceIdr = idr ? 1 : framesSinceIdr + 1;
+        ptsRing[(int) (submitted % ptsRing.length)] = pts;
+        submitted++;
+        queue.add(entry);
+        if (queue.size() + plan.size() <= settings.bframes()) {
+            return null;
+        }
+        return codeNext();
+    }
+
+    /**
+     * Chooses the frames to code next from the head of the display-order queue: an anchor frame up to
+     * {@link WideSettings#bframes()} frames ahead, never past an IDR frame, followed by the B pictures it
+     * leaves behind in display order, and moves them to the coding-order plan.
+     */
+    private void buildPlan() {
+        var first = queue.getFirst();
+        var count = 0;
+        if (settings.bframes() > 0 && !first.idr) {
+            var limit = Math.min(settings.bframes(), queue.size() - 1);
+            for (var k = 1; k <= limit; k++) {
+                if (queue.get(k).idr) {
+                    limit = k - 1;
+                    break;
+                }
+            }
+            count = limit;
+        }
+        var anchor = queue.get(count);
+        anchor.bidirectional = false;
+        anchor.bCount = count;
+        anchor.groupBest = 0;
+        anchor.groupSeconds = 0;
+        for (var i = 0; i <= count; i++) {
+            var frame = queue.get(i);
+            anchor.groupBest += frame.inter ? frame.bestSum : frame.intraSum;
+            anchor.groupSeconds += frame.seconds;
+        }
+        plan.add(anchor);
+        for (var k = 0; k < count; k++) {
+            var frame = queue.get(k);
+            frame.bidirectional = true;
+            frame.bCount = 0;
+            plan.add(frame);
+        }
+        for (var i = 0; i <= count; i++) {
+            queue.removeFirst();
+        }
+    }
+
+    /**
+     * Codes the next frame of the coding-order plan, building the plan first when it is empty.
+     *
+     * @return the packet of the frame
+     */
+    private Packet codeNext() {
+        if (plan.isEmpty()) {
+            buildPlan();
+        }
+        var entry = plan.removeFirst();
+        head = entry;
+        source = entry.source;
+        captions = entry.captions;
+        var packet = entry.bidirectional ? codeBidirectional(entry) : codeAnchor(entry);
+        head = null;
+        spare.add(entry);
+        return packet;
+    }
+
+    /**
+     * Codes an I or P frame.
+     *
+     * @param entry the frame
+     * @return its packet
+     */
+    private Packet codeAnchor(Entry entry) {
+        var idr = entry.idr;
+        var pts = entry.pts;
+        var duration = entry.duration;
+        var seconds = entry.seconds;
+        var grouped = !idr && entry.bCount > 0;
+        var complexity = Math.max(1, 2 * (grouped ? entry.groupBest : idr || !entry.inter ? entry.intraSum
+                : entry.bestSum));
+        temporalLayer = idr ? 0 : layerOf(entry.sinceIdr);
+        var unreferenced = temporalLayers > 1 && temporalLayer == temporalLayers - 1;
+        int qp;
+        if (settings.lossless()) {
+            qp = -settings.qpBdOffset();
+        } else {
+            if (hrd != null) {
+                firstFieldBits = hrd.begin(settings.fieldPictures() ? 1 : 2, idr);
+                rateControl.setFill(firstFieldBits);
+            }
+            if (settings.bframes() > 0) {
+                rateControl.setAnchorSpacing(entry.bCount + 1);
+            }
+            qp = rateControl.frameQp(idr, complexity, grouped ? entry.groupSeconds : seconds, entry.displayIndex);
+            if (temporalLayer > 0) {
+                qp = Math.clamp(qp + 2 * temporalLayer, config.minQuantizer(), config.maxQuantizer());
+            }
+        }
+        var refreshStart = 0;
+        var refreshEnd = 0;
+        if (refreshBand > 0 && !idr) {
+            refreshStart = refreshColumn;
+            refreshEnd = Math.min(settings.mbWidth(), refreshColumn + refreshBand);
+        }
+        var bits = codePicture(idr, unreferenced, qp, refreshStart, refreshEnd, complexity, pts, duration);
+        qp = codedQp;
+        if (!settings.lossless()) {
+            if (grouped) {
+                groupBits = bits;
+                groupQp = qp;
+                groupComplexity = complexity;
+                groupSeconds = entry.groupSeconds;
+            } else {
+                rateControl.update(idr, qp, bits, complexity, seconds);
+            }
+            var baseQp = qp - 2 * temporalLayer;
+            rateControl.coded(entry.displayIndex, baseQp, bits);
+            if (config.passRecorder() != null) {
+                config.passRecorder().record(entry.displayIndex, idr ? PassRecords.INTRA : PassRecords.PREDICTED,
+                        baseQp, bits, seconds);
+            }
+        }
+        anchorQp = qp;
+        lastQp = Math.max(qp, 0);
+        if (refreshBand > 0) {
+            refreshColumn = idr || refreshEnd >= settings.mbWidth() ? 0 : refreshEnd;
+        }
+        lastTemporalLayer = temporalLayer;
+        return packet(entry, idr, unreferenced);
+    }
+
+    /**
+     * Codes a B frame between the two most recent reference frames.
+     *
+     * @param entry the frame
+     * @return its packet
+     */
+    private Packet codeBidirectional(Entry entry) {
+        temporalLayer = 0;
+        int qp;
+        if (settings.lossless()) {
+            qp = -settings.qpBdOffset();
+        } else {
+            if (hrd != null) {
+                firstFieldBits = hrd.begin(settings.fieldPictures() ? 1 : 2, false);
+                rateControl.setFill(firstFieldBits);
+            }
+            qp = rateControl.bQp(entry.displayIndex,
+                    Math.clamp(anchorQp + B_QUANTIZER_OFFSET, config.minQuantizer(), config.maxQuantizer()));
+        }
+        var bits = codePicture(false, true, qp, 0, 0, entry.bestSum, entry.pts, entry.duration);
+        qp = codedQp;
+        if (!settings.lossless()) {
+            groupBits += bits;
+            if (plan.isEmpty()) {
+                rateControl.update(false, groupQp, groupBits, groupComplexity, groupSeconds);
+            }
+            rateControl.coded(entry.displayIndex, qp, bits);
+            if (config.passRecorder() != null) {
+                config.passRecorder().record(entry.displayIndex, PassRecords.BIDIRECTIONAL, qp, bits, entry.seconds);
+            }
+        }
+        lastQp = Math.max(qp, 0);
+        lastTemporalLayer = 0;
+        return packet(entry, false, true);
+    }
+
+    /**
+     * The quantizer of the picture {@link #codePicture} coded last, after its retries.
+     */
+    private int codedQp;
+
+    /**
+     * Codes the current frame as a frame or a field pair, again at another quantizer when its size misses
+     * the rate control model or overflows the decoder's buffer, and decodes it.
+     *
+     * @param idr whether the frame is an IDR frame
+     * @param unreferenced whether the frame is no reference picture
+     * @param qp the quantizer
+     * @param refreshStart the first column of the intra refresh band
+     * @param refreshEnd the column after the band
+     * @param complexity the frame's complexity estimate
+     * @param pts the presentation timestamp
+     * @param duration the frame duration in time-base units
+     * @return the access unit size in bits, without the filler data of the hypothetical reference decoder;
+     * {@link #codedQp} receives the final quantizer
+     */
+    private long codePicture(boolean idr, boolean unreferenced, int qp, int refreshStart, int refreshEnd,
+                             long complexity, long pts, long duration) {
+        long bits;
+        if (settings.fieldPictures()) {
+            bits = codeFieldPair(idr, unreferenced, qp, refreshStart, refreshEnd, pts, duration);
+            codedQp = pairQp;
+            return bits;
+        }
+        prepareAdaptiveQuantization(0, settings.mbaff());
+        bits = codeFrame(idr, unreferenced, qp, refreshStart, refreshEnd);
+        if (!settings.lossless()) {
+            var attempts = head.bidirectional ? 0 : config.realtime() ? 1 : 2;
+            for (var attempt = 0; attempt < attempts; attempt++) {
+                var corrected = rateControl.correctSize(idr, qp, bits, complexity);
+                if (corrected == qp) {
+                    break;
+                }
+                qp = corrected;
+                bits = codeFrame(idr, unreferenced, qp, refreshStart, refreshEnd);
+            }
+            for (var attempt = 0; attempt < 4 && rateControl.overflows(bits) && qp < config.maxQuantizer();
+                 attempt++) {
+                qp = rateControl.retryQp(qp, bits);
+                bits = codeFrame(idr, unreferenced, qp, refreshStart, refreshEnd);
+            }
+        }
+        decodePicture(0, pts, duration, 0, true, true, unreferenced, idr);
+        if (hrd != null) {
+            hrd.end(hrd.appendFiller(nal, 0, 2));
+        }
+        codedQp = qp;
+        return bits;
+    }
+
+    /**
+     * Takes the coded access unit and wraps it in a packet, updating the counters.
+     *
+     * @param entry the coded frame
+     * @param idr whether it is an IDR frame
+     * @param unreferenced whether it is no reference picture
+     * @return the packet
+     */
+    private Packet packet(Entry entry, boolean idr, boolean unreferenced) {
+        var data = nal.take();
+        var dts = entry.pts;
+        if (settings.bframes() > 0) {
+            dts = Math.min(entry.pts, ptsRing[(int) (frameCount % ptsRing.length)]
+                    - settings.bframes() * nominalDuration);
+        }
+        frameCount++;
+        byteCount += data.length;
+        if (idr) {
+            keyframeCount++;
+        }
+        lastDisplayIndex = entry.displayIndex;
+        var flags = idr ? EnumSet.of(PacketFlag.KEY)
+                : unreferenced ? EnumSet.of(PacketFlag.DISCARDABLE) : EnumSet.noneOf(PacketFlag.class);
+        return new Packet(0, data, entry.pts, dts, entry.duration > 0 ? entry.duration : nominalDuration, flags,
+                PacketSideData.NONE);
+    }
+
+    /**
+     * Returns the temporal layer of a frame from its position after the last IDR frame.
+     *
+     * @param index the number of frames from the last IDR frame to this one
+     * @return the layer
+     */
+    private int layerOf(long index) {
+        if (temporalLayers == 1) {
+            return 0;
+        }
+        var position = (int) (index & ((1L << (temporalLayers - 1)) - 1));
+        return position == 0 ? 0 : temporalLayers - 1 - Integer.numberOfTrailingZeros(position);
+    }
+
+    /**
+     * Hands the last bitrate set since the previous frame to rate control, capped at the level's
+     * maximum.
+     */
+    private void applyPendingBitrate() {
+        var requested = pendingBitrate.getAndSet(0);
+        if (requested <= 0) {
+            return;
+        }
+        var bitrate = (int) Math.min(requested,
+                (long) settings.level().maxBr() * Levels.bitrateFactor(config.profile()));
+        rateControl.setBitrate(bitrate);
+        if (config.rateControl() != H264RateControl.CONSTANT_QUALITY) {
+            appliedBitrate = bitrate;
+        }
+    }
+
+    /**
+     * Returns a frame's duration in seconds for rate control.
+     *
+     * @param pts the frame's timestamp
+     * @param duration the declared duration, or {@code 0}
+     * @param previous the previous timestamp, or {@link Packet#NO_TIMESTAMP}
+     * @return the duration
+     */
+    private double frameSeconds(long pts, long duration, long previous) {
+        var timeBase = config.timeBase().toDouble();
+        var nominal = 1 / config.frameRate().toDouble();
+        double seconds;
+        if (duration > 0) {
+            seconds = duration * timeBase;
+        } else if (previous != Packet.NO_TIMESTAMP) {
+            seconds = (pts - previous) * timeBase;
+        } else {
+            seconds = nominal;
+        }
+        return Math.clamp(seconds, nominal / 8, nominal * 8);
+    }
+
+    /**
+     * Measures the source frame's luma at half resolution in 8-bit units over 8x8 blocks, for rate
+     * control and scene cut detection.
+     *
+     * <p>It sets {@link #intraSum} to the sum of the absolute deviations from each block's mean,
+     * {@link #interSum} to the sum of the absolute differences from the previous frame's co-located
+     * block, and {@link #bestSum} to the sum over blocks of the smaller of the two.
+     *
+     * @param frame the source frame
+     * @return whether a previous frame was measured, so that the inter sums are meaningful
+     */
+    private boolean measure(WideFrame frame) {
+        var plane = frame.planes[0];
+        var w = settings.codedWidth() / 2;
+        var h = settings.codedHeight() / 2;
+        var shift = settings.bitDepth() - 8 + 2;
+        for (var y = 0; y < h; y++) {
+            var row0 = plane.origin + 2 * y * plane.stride;
+            var row1 = row0 + plane.stride;
+            for (var x = 0; x < w; x++) {
+                var sum = plane.data[row0 + 2 * x] + plane.data[row0 + 2 * x + 1] + plane.data[row1 + 2 * x]
+                        + plane.data[row1 + 2 * x + 1];
+                lowres[y * w + x] = (short) (sum >> shift);
+            }
+        }
+        var intraTotal = 0L;
+        var interTotal = 0L;
+        var bestTotal = 0L;
+        for (var by = 0; by + 8 <= h; by += 8) {
+            for (var bx = 0; bx + 8 <= w; bx += 8) {
+                var mean = 0;
+                for (var y = 0; y < 8; y++) {
+                    for (var x = 0; x < 8; x++) {
+                        mean += lowres[(by + y) * w + bx + x];
+                    }
+                }
+                mean = (mean + 32) >> 6;
+                var intraCost = 0L;
+                var interCost = 0L;
+                for (var y = 0; y < 8; y++) {
+                    for (var x = 0; x < 8; x++) {
+                        var i = (by + y) * w + bx + x;
+                        intraCost += Math.abs(lowres[i] - mean);
+                        interCost += Math.abs(lowres[i] - previousLowres[i]);
+                    }
+                }
+                intraTotal += intraCost;
+                interTotal += interCost;
+                bestTotal += Math.min(intraCost, interCost);
+            }
+        }
+        var measured = previousLowresValid;
+        intraSum = intraTotal;
+        interSum = interTotal;
+        bestSum = bestTotal;
+        System.arraycopy(lowres, 0, previousLowres, 0, lowres.length);
+        previousLowresValid = true;
+        return measured;
+    }
+
+    /**
+     * Returns the smallest distance in frames from the previous IDR frame at which a scene cut
+     * starts a new one: a quarter second, at least two frames, and two frames outside real time.
+     *
+     * @return the distance in frames
+     */
+    private long minimumSceneDistance() {
+        var distance = Math.max(2, Math.round(config.frameRate().toDouble() / 4));
+        return config.realtime() ? distance : Math.min(distance, 2);
+    }
+
+    /**
+     * Codes a progressive frame or a frame of macroblock pairs into the access unit assembler,
+     * replacing what it held, with the adaptive quantization offsets {@link #prepareAdaptiveQuantization}
+     * computed for the frame.
+     *
+     * @param idr whether the frame is an IDR frame
+     * @param unreferenced whether the frame is no reference picture
+     * @param qp the quantizer
+     * @param refreshStart the first column of the intra refresh band
+     * @param refreshEnd the column after the band
+     * @return the access unit size in bits
+     */
+    private long codeFrame(boolean idr, boolean unreferenced, int qp, int refreshStart, int refreshEnd) {
+        nal.clear();
+        appendHeaderUnits(idr, refreshStart, refreshEnd,
+                !settings.interlaced() ? 0 : settings.bottomFirst() ? 4 : 3);
+        var mbaff = settings.mbaff();
+        var n = (int) head.sinceIdr;
+        var topPoc = settings.interlaced() && settings.bottomFirst() ? 2 * n + 1 : 2 * n;
+        var bottomPoc = !settings.interlaced() ? topPoc : settings.bottomFirst() ? 2 * n : 2 * n + 1;
+        currentTopPoc = topPoc;
+        currentBottomPoc = bottomPoc;
+        var bidirectional = head.bidirectional;
+        var predicted = !idr && !references.isEmpty();
+        var currentFrameNum = idr ? 0 : frameNum;
+        var h = header;
+        h.reorderCount = 0;
+        if (bidirectional) {
+            var future = references.getFirst();
+            var past = references.get(1);
+            oneRef[0] = past.frameRef;
+            oneRef1[0] = future.frameRef;
+            if (mbaff) {
+                topRefs[0] = past.topRef;
+                topRefs[1] = past.bottomRef;
+                bottomRefs[0] = past.bottomRef;
+                bottomRefs[1] = past.topRef;
+                topRefs1[0] = future.topRef;
+                topRefs1[1] = future.bottomRef;
+                bottomRefs1[0] = future.bottomRef;
+                bottomRefs1[1] = future.topRef;
+            }
+        } else if (predicted) {
+            var target = layerTarget();
+            oneRef[0] = target.frameRef;
+            if (mbaff) {
+                topRefs[0] = target.topRef;
+                topRefs[1] = target.bottomRef;
+                bottomRefs[0] = target.bottomRef;
+                bottomRefs[1] = target.topRef;
+            }
+            if (target != references.getFirst()) {
+                h.reorder[0] = 0;
+                h.reorder[1] = currentFrameNum - picNum(target.frameNum, currentFrameNum) - 1;
+                h.reorderCount = 2;
+            }
+        }
+        preparePicture(0, mbaff, predicted, predicted ? oneRef : NONE, mbaff ? topRefs : null,
+                mbaff ? bottomRefs : null, refreshStart, refreshEnd);
+        if (bidirectional) {
+            var future = references.getFirst();
+            var current = Math.min(topPoc, bottomPoc);
+            prepareBidirectional(oneRef1, mbaff ? topRefs1 : null, mbaff ? bottomRefs1 : null, future, 0,
+                    Math.abs(future.topPoc - current) < Math.abs(future.bottomPoc - current));
+        }
+        h.idr = idr;
+        h.predicted = predicted;
+        h.bidirectional = bidirectional;
+        h.refCount1 = 1;
+        h.frameNum = currentFrameNum;
+        h.idrPicId = idrPicId;
+        h.structure = 0;
+        h.pocLsb = topPoc & ((1 << settings.log2MaxPocLsb()) - 1);
+        h.deltaPocBottom = bottomPoc - topPoc;
+        h.nalRefIdc = idr ? 3 : unreferenced ? 0 : 2;
+        h.refCount = 1;
+        h.sliceQp = qp;
+        codeSlices(h, mbaff);
+        return nal.size() * 8L;
+    }
+
+    /**
+     * The picture order counts of the top and bottom fields of the frame being coded.
+     */
+    private int currentTopPoc;
+
+    private int currentBottomPoc;
+
+    /**
+     * Returns the {@code PicNum} of a frame as seen from a picture.
+     *
+     * @param refFrameNum the frame's {@code frame_num}
+     * @param current the current {@code frame_num}
+     * @return the picture number
+     */
+    private int picNum(int refFrameNum, int current) {
+        return refFrameNum > current ? refFrameNum - (1 << settings.log2MaxFrameNum()) : refFrameNum;
+    }
+
+    /**
+     * Returns the reference frame a P picture of the current temporal layer predicts from: the
+     * latest reference without temporal layers, otherwise the latest frame of a lower layer, or of
+     * layer 0 for layer 0.
+     *
+     * @return the reference
+     */
+    private WideFrame layerTarget() {
+        if (temporalLayers == 1) {
+            return references.getFirst();
+        }
+        WideFrame target = null;
+        if (temporalLayer == 0) {
+            target = layerLatest[0];
+        } else {
+            for (var layer = 0; layer < temporalLayer; layer++) {
+                var candidate = layerLatest[layer];
+                if (candidate != null && references.contains(candidate)
+                        && (target == null || references.indexOf(candidate) < references.indexOf(target))) {
+                    target = candidate;
+                }
+            }
+        }
+        return target != null && references.contains(target) ? target : references.getFirst();
+    }
+
+    /**
+     * Appends the units an access unit starts with: the delimiter of a stream that signals a
+     * hypothetical reference decoder, the parameter sets of an IDR access unit in the Annex B format or
+     * with that decoder, and the SEI messages of the access unit.
+     *
+     * @param idr whether the access unit holds an IDR picture
+     * @param refreshStart the first column of the intra refresh band
+     * @param refreshEnd the column after the band
+     * @param structure the {@code pic_struct} of the access unit's picture timing
+     */
+    private void appendHeaderUnits(boolean idr, int refreshStart, int refreshEnd, int structure) {
+        if (hrd != null) {
+            hrd.appendDelimiter(nal);
+        }
+        if (idr && (config.packetFormat() == H264PacketFormat.ANNEX_B || hrd != null)) {
+            nal.appendEscapedUnit(sps);
+            nal.appendEscapedUnit(pps);
+        }
+        if (hrd != null) {
+            hrd.appendTiming(nal, outputTicks(), structure);
+        }
+        if (idr && staticSei != null) {
+            nal.appendUnit(0, H264Nal.SEI, staticSei, staticSei.length);
+        }
+        if (!idr && refreshBand > 0 && refreshStart == 0 && refreshEnd > 0) {
+            nal.appendUnit(0, H264Nal.SEI, recoverySei, recoverySei.length);
+        }
+        if (captions != null) {
+            nal.appendEscapedUnit(captions);
+        }
+    }
+
+    /**
+     * Returns the {@code dpb_output_delay} of the access unit being assembled: the clock ticks from its
+     * removal to its output, two per frame of reordering depth that precedes the current frame in coding
+     * order and follows it in display order.
+     *
+     * @return the delay in clock ticks
+     */
+    private int outputTicks() {
+        if (settings.bframes() == 0) {
+            return 0;
+        }
+        return (int) Math.max(0, 2 * (head.displayIndex - frameCount + settings.reorderFrames()));
+    }
+
+    /**
+     * Codes the macroblocks of the current picture as the configured slices, dividing
+     * them further at the slice size limit: a macroblock (or pair) that makes the slice's NAL unit
+     * too large, or leaves the picture's slices too little room for the {@code cabac_zero_word}s it
+     * would need, is undone and coded again as the first of a new slice. The words are appended once
+     * the last slice is closed.
+     *
+     * @param header the picture header
+     * @param pairs whether the picture is a frame of macroblock pairs
+     */
+    private void codeSlices(WideSliceWriter.Picture header, boolean pairs) {
+        var width = settings.mbWidth();
+        var rows = header.structure == 0 && !pairs ? settings.mbHeight() : settings.mbHeight() / 2;
+        var unit = pairs ? 2 : 1;
+        var units = width * rows;
+        var slices = settings.sliceRows();
+        var limit = config.maxSliceBytes();
+        var coded = settings.planeSettings();
+        var raw = (long) (256 * settings.bitDepth() + 2 * coded.mbWidthC() * coded.mbHeightC()
+                * settings.bitDepth()) * settings.mbCount() / (header.structure == 0 ? 1 : 2);
+        zeroWords.startPicture(settings.cabac(), limit, raw);
+        for (var plane = 0; plane < settings.codedPlanes(); plane++) {
+            startPlane(plane);
+            header.colorPlane = plane;
+            var sliceStart = 0;
+            var nextFixed = 1;
+            writer.start(header, 0);
+            for (var u = 0; u < units; u++) {
+                var address = u * unit;
+                if (u > 0 && u % width == 0 && nextFixed < slices
+                        && u / width == (int) ((long) nextFixed * rows / slices)) {
+                    nextFixed++;
+                    writer.endMacroblock(true, address - 1);
+                    closeSlice(header);
+                    sliceStart = address;
+                    writer.start(header, address);
+                }
+                if (address != sliceStart) {
+                    if (limit > 0) {
+                        writer.save();
+                    }
+                    writer.endMacroblock(false, address - 1);
+                }
+                codeUnit(address, pairs, header.sliceQp, sliceStart);
+                if (limit > 0 && address != sliceStart && !fitsLimit(limit)) {
+                    writer.restore();
+                    writer.endMacroblock(true, address - 1);
+                    closeSlice(header);
+                    sliceStart = address;
+                    writer.start(header, address);
+                    codeUnit(address, pairs, header.sliceQp, sliceStart);
+                }
+            }
+            writer.endMacroblock(true, units * unit - 1);
+            closeSlice(header);
+            if (planeMotion != null) {
+                coder.storeMotion(planeMotion[plane], header.structure);
+            }
+        }
+        zeroWords.finishPicture(nal);
+        pictureBins[header.structure] = zeroWords.bins();
+    }
+
+    /**
+     * Records how the picture about to be coded predicts, for {@link #startPlane(int)}; the arguments are
+     * those of {@link WideCoder#startPicture} without the frames, and mark the picture as no B picture.
+     *
+     * @param structure 0 for a frame, 1 for a top field, 2 for a bottom field
+     * @param pairs whether the frame is coded in macroblock pairs
+     * @param predicted whether the picture is a P or B picture
+     * @param references the list 0 references of frame macroblocks or of the field picture
+     * @param topFieldRefs the list 0 references of top field macroblocks of a frame of pairs, or {@code null}
+     * @param bottomFieldRefs the list 0 references of bottom field macroblocks of a frame of pairs, or
+     * {@code null}
+     * @param refreshStart the first column of the intra refresh band, 0 for none
+     * @param refreshEnd the column after the intra refresh band, 0 for none
+     */
+    private void preparePicture(int structure, boolean pairs, boolean predicted, WideReference[] references,
+                                WideReference[] topFieldRefs, WideReference[] bottomFieldRefs, int refreshStart,
+                                int refreshEnd) {
+        pictureStructure = structure;
+        picturePairs = pairs;
+        picturePredicted = predicted;
+        pictureRefs = references;
+        pictureTopRefs = topFieldRefs;
+        pictureBottomRefs = bottomFieldRefs;
+        pictureRefreshStart = refreshStart;
+        pictureRefreshEnd = refreshEnd;
+        pictureBidirectional = false;
+    }
+
+    /**
+     * Records the list 1 references and the co-located picture of the B picture about to be coded, for
+     * {@link #startPlane(int)}; the arguments are those of {@link WideCoder#startBidirectional}.
+     *
+     * @param references the list 1 references of frame macroblocks or of the field picture
+     * @param topFieldRefs the list 1 references of top field macroblocks of a frame of pairs, or {@code null}
+     * @param bottomFieldRefs the list 1 references of bottom field macroblocks of a frame of pairs, or
+     * {@code null}
+     * @param col the frame holding the co-located picture
+     * @param colStructure the structure of the co-located picture
+     * @param topCloser whether the co-located frame's top field is the closer one in output order
+     */
+    private void prepareBidirectional(WideReference[] references, WideReference[] topFieldRefs,
+                                      WideReference[] bottomFieldRefs, WideFrame col, int colStructure,
+                                      boolean topCloser) {
+        pictureBidirectional = true;
+        pictureRefs1 = references;
+        pictureTopRefs1 = topFieldRefs;
+        pictureBottomRefs1 = bottomFieldRefs;
+        pictureCol = col;
+        pictureColStructure = colStructure;
+        pictureColTopCloser = topCloser;
+    }
+
+    /**
+     * Starts the coder on one color plane of the picture {@link #preparePicture} described: the whole
+     * picture when the planes are coded together, otherwise the monochrome views of the plane in the
+     * source, the reconstruction, the references and the co-located frame.
+     *
+     * @param plane the color plane, 0 when the planes are coded together
+     */
+    private void startPlane(int plane) {
+        var separate = planeMotion != null;
+        aqPlane = plane;
+        coder.startPicture(separate ? source.plane(plane) : source, separate ? recon.plane(plane) : recon,
+                pictureStructure, picturePairs, picturePredicted, planeRefs(pictureRefs, 0, plane),
+                planeRefs(pictureTopRefs, 1, plane), planeRefs(pictureBottomRefs, 2, plane), pictureRefreshStart,
+                pictureRefreshEnd);
+        if (pictureBidirectional) {
+            coder.startBidirectional(planeRefs(pictureRefs1, 3, plane), planeRefs(pictureTopRefs1, 4, plane),
+                    planeRefs(pictureBottomRefs1, 5, plane), separate ? pictureCol.plane(0) : pictureCol,
+                    pictureColStructure, pictureColTopCloser);
+        }
+    }
+
+    /**
+     * Returns a reference list as one color plane sees it: the list itself when the planes are coded
+     * together, otherwise the plane views of its references in a list of the same length.
+     *
+     * @param references the references, or {@code null}
+     * @param role the role of the list, which selects the array the views are written to
+     * @param plane the color plane
+     * @return the plane's list, or {@code null} for {@code null}
+     */
+    private WideReference[] planeRefs(WideReference[] references, int role, int plane) {
+        if (planeMotion == null || references == null || references.length == 0) {
+            return references;
+        }
+        var views = planeLists[role][references.length];
+        if (views == null) {
+            views = new WideReference[references.length];
+            planeLists[role][references.length] = views;
+        }
+        for (var i = 0; i < references.length; i++) {
+            views[i] = references[i] == null ? null : references[i].plane(plane);
+        }
+        return views;
+    }
+
+    /**
+     * Returns whether the slice being written may keep the macroblock (or pair) written last: its
+     * NAL unit stays within the size limit, and the picture's slices keep the room for the
+     * {@code cabac_zero_word}s the picture would need if it ended there.
+     *
+     * @param limit the slice size limit in bytes
+     * @return whether the macroblock stays in the slice
+     */
+    private boolean fitsLimit(int limit) {
+        var bound = writer.sizeBound();
+        return bound <= limit && zeroWords.fits(writer.binCount(), 1 + writer.payloadLength(), bound);
+    }
+
+    /**
+     * Codes one macroblock, or both macroblocks of a pair, and writes them.
+     *
+     * @param address the address of the macroblock, the top one of a pair
+     * @param pairs whether the picture is a frame of macroblock pairs
+     * @param qp the quantizer
+     * @param sliceStart the address of the slice's first macroblock
+     */
+    private void codeUnit(int address, boolean pairs, int qp, int sliceStart) {
+        if (!pairs) {
+            var mb = coder.code(address, false, macroblockQp(address, qp), sliceStart, true);
+            writer.writeData(mb, false, false);
+            return;
+        }
+        var field = coder.decideField(address >> 1);
+        var inferred = coder.inferredField(address, sliceStart);
+        var top = coder.code(address, field, macroblockQp(address, qp), sliceStart, field == inferred);
+        writer.writeData(top, field, inferred);
+        writer.endMacroblock(false, address);
+        var bottom = coder.code(address + 1, field, macroblockQp(address + 1, qp), sliceStart, true);
+        writer.writeData(bottom, field, inferred);
+    }
+
+    /**
+     * Returns the quantizer of a macroblock: the picture's, moved by the macroblock's adaptive quantization
+     * offset, at least 1 unless the picture's is already at or below {@link RateController#QP_MIN}, and inside
+     * the configured quantizer window.
+     *
+     * @param address the macroblock address
+     * @param qp the picture's quantizer
+     * @return the quantizer
+     */
+    private int macroblockQp(int address, int qp) {
+        if (aqStrength <= 0) {
+            return qp;
+        }
+        var min = Math.max(qp <= RateController.QP_MIN ? 0 : 1, config.minQuantizer());
+        var max = Math.min(RateController.QP_MAX, config.maxQuantizer());
+        return Math.clamp(qp + aqSteps[aqPlane][address], min, max);
+    }
+
+    /**
+     * Computes the adaptive quantization offsets of the macroblocks of the picture about to be coded from the
+     * source luma, on the 8-bit scale, or from each color plane when the planes are coded separately.
+     *
+     * @param structure 0 for a frame, 1 for the top field, 2 for the bottom field
+     * @param pairs whether the frame is coded as macroblock pairs, whose addresses run down each pair
+     */
+    private void prepareAdaptiveQuantization(int structure, boolean pairs) {
+        if (aqStrength <= 0) {
+            return;
+        }
+        var width = settings.mbWidth();
+        var rows = structure == 0 ? settings.mbHeight() : settings.mbHeight() / 2;
+        var count = width * rows;
+        aqCount = count;
+        var full = config.color().range() == ColorRange.FULL;
+        for (var c = 0; c < aqSteps.length; c++) {
+            var plane = structure == 0 ? source.planes[c] : structure == 1 ? source.topView[c] : source.bottomView[c];
+            measureActivity(plane, count, width, pairs);
+            AdaptiveQuantizer.compute(aqMode, aqStrength, aqActivity, aqBrightness, count, full ? 0 : 16,
+                    full ? 255 : 235, aqOffsets);
+            var steps = aqSteps[c];
+            for (var address = 0; address < count; address++) {
+                steps[address] = (int) Math.round(aqOffsets[address]);
+            }
+        }
+    }
+
+    /**
+     * Measures the activity and brightness of each macroblock of a plane for {@link AdaptiveQuantizer}.
+     *
+     * @param plane the plane, or the field view of a plane, of the picture about to be coded
+     * @param count the number of macroblocks of the picture
+     * @param width the picture width in macroblocks
+     * @param pairs whether the frame is coded as macroblock pairs, whose addresses run down each pair
+     */
+    private void measureActivity(WidePlane plane, int count, int width, boolean pairs) {
+        var shift = settings.bitDepth() - 8;
+        for (var address = 0; address < count; address++) {
+            int mbX;
+            int mbY;
+            if (pairs) {
+                mbX = (address >> 1) % width;
+                mbY = 2 * ((address >> 1) / width) + (address & 1);
+            } else {
+                mbX = address % width;
+                mbY = address / width;
+            }
+            long energy = 0;
+            long total = 0;
+            for (var block = 0; block < 4; block++) {
+                var offset = plane.origin + (mbY * 16 + (block >> 1) * 8) * plane.stride + mbX * 16 + (block & 1) * 8;
+                long sum = 0;
+                long squares = 0;
+                for (var y = 0; y < 8; y++) {
+                    var row = offset + y * plane.stride;
+                    for (var x = 0; x < 8; x++) {
+                        var sample = plane.data[row + x];
+                        sum += sample;
+                        squares += (long) sample * sample;
+                    }
+                }
+                energy += squares * 64 - sum * sum;
+                total += sum;
+            }
+            aqActivity[address] = (int) Math.min(Integer.MAX_VALUE, (energy >> (6 + 2 * shift)) + 64);
+            aqBrightness[address] = (int) (total >> shift);
+        }
+    }
+
+    /**
+     * Finishes the slice being written and appends it, with its prefix NAL unit for temporal layers,
+     * and records it for the picture's {@code cabac_zero_word}s.
+     *
+     * @param header the picture header
+     */
+    private void closeSlice(WideSliceWriter.Picture header) {
+        var payload = writer.finish();
+        var length = writer.payloadLength();
+        var nalRefIdc = header.nalRefIdc;
+        if (temporalLayers > 1) {
+            prefix[0] = (byte) (0x80 | (header.idr ? 0x40 : 0));
+            prefix[1] = (byte) 0x80;
+            prefix[2] = (byte) ((temporalLayer << 5) | 0x07);
+            prefix[3] = (byte) 0x20;
+            nal.appendUnit(nalRefIdc, H264Nal.PREFIX, prefix, nalRefIdc != 0 ? 4 : 3);
+        }
+        nal.appendUnit(nalRefIdc, header.idr ? H264Nal.IDR_SLICE : H264Nal.SLICE, payload, length);
+        zeroWords.closed(nal, writer.binCount());
+    }
+
+    /**
+     * The payload of a prefix NAL unit (ITU-T H.264 7.3.2.12).
+     */
+    private final byte[] prefix = new byte[4];
+
+    /**
+     * Codes the two fields of an interlaced frame as field pictures, the first field in the field
+     * order first, and makes the frame a reference.
+     *
+     * @param idr whether the frame starts with an IDR field
+     * @param unreferenced whether the frame is no reference picture
+     * @param qp the quantizer
+     * @param refreshStart the first column of the intra refresh band
+     * @param refreshEnd the column after the band
+     * @param pts the presentation timestamp
+     * @param duration the frame duration in time-base units
+     * @return the size of both access units in bits, without the filler data of the hypothetical reference
+     * decoder; {@link #pairQp} receives the fields' mean quantizer
+     */
+    private long codeFieldPair(boolean idr, boolean unreferenced, int qp, int refreshStart, int refreshEnd, long pts,
+                               long duration) {
+        nal.clear();
+        var fillerBytes = 0;
+        var bottomFirst = settings.bottomFirst();
+        appendHeaderUnits(idr, refreshStart, refreshEnd, bottomFirst ? 2 : 1);
+        var n = (int) head.sinceIdr;
+        currentTopPoc = bottomFirst ? 2 * n + 1 : 2 * n;
+        currentBottomPoc = bottomFirst ? 2 * n : 2 * n + 1;
+        var bidirectional = head.bidirectional;
+        var currentFrameNum = idr ? 0 : frameNum;
+        var nalRefIdc = idr ? 3 : unreferenced ? 0 : 2;
+        var target = idr || references.isEmpty() || bidirectional ? null : layerTarget();
+        var qpSum = 0;
+        for (var k = 0; k < 2; k++) {
+            var parity = bottomFirst == (k == 0) ? 1 : 0;
+            var structure = parity + 1;
+            var list = wanted;
+            list.clear();
+            var second = k == 1 && !unreferenced;
+            if (second && target != null) {
+                list.add(parity == 0 ? target.topRef : target.bottomRef);
+            }
+            if (second) {
+                list.add(parity == 0 ? building.bottomRef : building.topRef);
+            } else if (target != null) {
+                list.add(parity == 0 ? target.topRef : target.bottomRef);
+                list.add(parity == 0 ? target.bottomRef : target.topRef);
+            }
+            var h = header;
+            WideReference[] refs;
+            if (bidirectional) {
+                var future = references.getFirst();
+                var past = references.get(1);
+                twoRefs[0] = parity == 0 ? past.topRef : past.bottomRef;
+                twoRefs[1] = parity == 0 ? past.bottomRef : past.topRef;
+                twoRefs1[0] = parity == 0 ? future.topRef : future.bottomRef;
+                twoRefs1[1] = parity == 0 ? future.bottomRef : future.topRef;
+                refs = twoRefs;
+                h.reorderCount = 0;
+            } else {
+                h.reorderCount = list.isEmpty() ? 0 : fieldReorder(list, currentFrameNum, parity, second, h.reorder);
+                refs = list.size() == 2 ? twoRefs : list.size() == 1 ? oneRef : NONE;
+                for (var i = 0; i < list.size(); i++) {
+                    refs[i] = list.get(i);
+                }
+            }
+            var predicted = bidirectional || !list.isEmpty();
+            h.bidirectional = bidirectional;
+            h.refCount1 = 2;
+            var fieldIdr = idr && k == 0;
+            var byteStart = k == 0 ? 0 : nal.size();
+            var available = Long.MAX_VALUE;
+            if (hrd != null) {
+                if (k == 1) {
+                    available = hrd.begin(1, false);
+                    hrd.appendDelimiter(nal);
+                    hrd.appendTiming(nal, outputTicks(), structure);
+                } else {
+                    available = firstFieldBits;
+                }
+            }
+            var sliceStart = nal.size();
+            var fieldQp = qp;
+            var first = nal.unitCount();
+            prepareAdaptiveQuantization(structure, false);
+            for (var attempt = 0; ; attempt++) {
+                preparePicture(structure, false, predicted, refs, null, null, refreshStart,
+                        refreshEnd);
+                if (bidirectional) {
+                    prepareBidirectional(twoRefs1, null, null, references.getFirst(), structure, false);
+                }
+                codeField(h, fieldIdr, predicted, currentFrameNum, structure, (2 * n + k)
+                        & ((1 << settings.log2MaxPocLsb()) - 1), fieldIdr ? 3 : nalRefIdc, refs.length, fieldQp);
+                if (hrd == null || attempt == 4 || fieldQp >= config.maxQuantizer()
+                        || hrd.countedBits(nal, byteStart) <= available) {
+                    break;
+                }
+                rateControl.setFill(available);
+                fieldQp = rateControl.retryQp(fieldQp, hrd.countedBits(nal, byteStart));
+                nal.truncate(sliceStart);
+            }
+            qpSum += fieldQp;
+            decodePicture(first, pts, duration, structure, k == 0, k == 1, unreferenced, idr);
+            if (hrd != null) {
+                var coded = nal.size();
+                hrd.end(hrd.appendFiller(nal, byteStart, 1));
+                fillerBytes += nal.size() - coded;
+            }
+        }
+        pairQp = (qpSum + 1) >> 1;
+        return (nal.size() - fillerBytes) * 8L;
+    }
+
+    /**
+     * Codes the slices of one field picture.
+     *
+     * @param h the picture header to fill
+     * @param fieldIdr whether the field is an IDR picture
+     * @param predicted whether the field predicts from references
+     * @param currentFrameNum the {@code frame_num}
+     * @param structure 1 for a top field, 2 for a bottom field
+     * @param pocLsb the {@code pic_order_cnt_lsb}
+     * @param nalRefIdc the {@code nal_ref_idc}
+     * @param refCount the number of references in the list
+     * @param qp the quantizer
+     */
+    private void codeField(WideSliceWriter.Picture h, boolean fieldIdr, boolean predicted, int currentFrameNum,
+                           int structure, int pocLsb, int nalRefIdc, int refCount, int qp) {
+        h.idr = fieldIdr;
+        h.predicted = predicted;
+        h.frameNum = currentFrameNum;
+        h.idrPicId = idrPicId;
+        h.structure = structure;
+        h.pocLsb = pocLsb;
+        h.deltaPocBottom = 0;
+        h.nalRefIdc = nalRefIdc;
+        h.refCount = refCount;
+        h.sliceQp = qp;
+        codeSlices(h, false);
+    }
+
+    /**
+     * Returns the reference list modification that puts the wanted fields first, or none when the
+     * initial list of ITU-T H.264 8.2.4.2.5 already starts with them.
+     *
+     * @param list the wanted fields in order
+     * @param currentFrameNum the {@code frame_num} of the current frame
+     * @param parity the parity of the current field
+     * @param second whether the current field is the second of a reference frame
+     * @param commands receives the modification as {@code modification_of_pic_nums_idc} and
+     * {@code abs_diff_pic_num_minus1} pairs
+     * @return the number of values written to {@code commands}, 0 for no modification
+     */
+    private int fieldReorder(List<WideReference> list, int currentFrameNum, int parity, boolean second,
+                             int[] commands) {
+        var defaults = defaultFieldList(parity, second);
+        var same = defaults.size() >= list.size();
+        for (var i = 0; same && i < list.size(); i++) {
+            same = defaults.get(i) == list.get(i);
+        }
+        if (same) {
+            return 0;
+        }
+        var predictor = 2 * currentFrameNum + 1;
+        for (var i = 0; i < list.size(); i++) {
+            var field = list.get(i);
+            var refFrameNum = field.frame == building ? currentFrameNum : field.frame.frameNum;
+            var number = 2 * picNum(refFrameNum, currentFrameNum) + (field.parity == parity ? 1 : 0);
+            var difference = number - predictor;
+            if (difference < 0) {
+                commands[2 * i] = 0;
+                commands[2 * i + 1] = -difference - 1;
+            } else {
+                commands[2 * i] = 1;
+                commands[2 * i + 1] = difference - 1;
+            }
+            predictor = number;
+        }
+        return 2 * list.size();
+    }
+
+    /**
+     * Returns the initial reference list of a P field (ITU-T H.264 8.2.4.2.2 and 8.2.4.2.5): the
+     * fields of the reference frames by descending {@code FrameNumWrap}, the current frame's first
+     * field included for the second field, alternating parities from the current one.
+     *
+     * @param parity the parity of the current field
+     * @param second whether the current field is the second of a reference frame
+     * @return the fields
+     */
+    private List<WideReference> defaultFieldList(int parity, boolean second) {
+        var same = sameParity;
+        var opposite = otherParity;
+        same.clear();
+        opposite.clear();
+        if (second) {
+            (parity == (settings.bottomFirst() ? 1 : 0) ? same : opposite)
+                    .add(settings.bottomFirst() ? building.bottomRef : building.topRef);
+        }
+        for (var frame : references) {
+            same.add(parity == 0 ? frame.topRef : frame.bottomRef);
+            opposite.add(parity == 0 ? frame.bottomRef : frame.topRef);
+        }
+        var result = initialList;
+        result.clear();
+        var i = 0;
+        var j = 0;
+        while (i < same.size() || j < opposite.size()) {
+            if (i < same.size()) {
+                result.add(same.get(i++));
+            }
+            if (j < opposite.size()) {
+                result.add(opposite.get(j++));
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Decodes the slices of a coded picture with the internal decoder, copies its samples into the
+     * frame being built and, once the frame is complete, makes it a reference.
+     *
+     * @param firstUnit the index of the picture's first unit in the access unit assembler
+     * @param pts the presentation timestamp
+     * @param duration the frame duration in time-base units
+     * @param structure 0 for a frame, 1 for a top field, 2 for a bottom field
+     * @param first whether the picture is the first of its frame
+     * @param last whether the picture completes its frame
+     * @param unreferenced whether the frame is no reference picture
+     * @param idr whether the frame is an IDR frame
+     */
+    private void decodePicture(int firstUnit, long pts, long duration, int structure, boolean first, boolean last,
+                               boolean unreferenced, boolean idr) {
+        if (!parametersFed) {
+            decoder.decodeNal(sps, 0, sps.length);
+            decoder.decodeNal(pps, 0, pps.length);
+            parametersFed = true;
+        }
+        decoder.beginPacket(pts, duration);
+        var buffer = nal.buffer();
+        for (var i = firstUnit; i < nal.unitCount(); i++) {
+            var start = nal.unitStart(i);
+            var type = buffer[start] & 0x1F;
+            if (type != H264Nal.SPS && type != H264Nal.PPS) {
+                decoder.decodeNal(buffer, start, nal.unitLength(i));
+            }
+        }
+        decoder.endPacket();
+        var planes = decoder.lastFinishedPicture();
+        if (first) {
+            building = takeFrame();
+        }
+        if (!unreferenced) {
+            if (planeMotion != null) {
+                for (var c = 0; c < 3; c++) {
+                    building.plane(c).swapMotion(planeMotion[c], structure);
+                }
+            } else {
+                coder.storeMotion(building, structure);
+            }
+            building.topPoc = currentTopPoc;
+            building.bottomPoc = currentBottomPoc;
+        }
+        copyDecoded(planes, building, structure);
+        copyDecoded(planes, lastDecoded, structure);
+        if (!last) {
+            buildField(building, structure == 2);
+            return;
+        }
+        if (unreferenced) {
+            pool.add(building);
+            building = null;
+            return;
+        }
+        var frame = building;
+        frame.finishReference(settings.interlaced());
+        var components = settings.chroma444() ? 3 : 1;
+        if (!settings.fieldPictures()) {
+            if (frame.frameRef == null) {
+                frame.frameRef = new WideReference(frame, frame.planes, -1);
+            }
+            frame.frameRef.interpolate(components, settings.maxSample(), interpolationScratch);
+        }
+        if (settings.interlaced()) {
+            fieldReference(frame, false).interpolate(components, settings.maxSample(), interpolationScratch);
+            fieldReference(frame, true).interpolate(components, settings.maxSample(), interpolationScratch);
+        }
+        frame.frameNum = idr ? 0 : frameNum;
+        addReference(building, idr);
+        building = null;
+    }
+
+    /**
+     * Builds the padded planes and the motion compensation view of the first field of the frame
+     * being built, so the second field can predict from it.
+     *
+     * @param frame the frame being built
+     * @param bottom whether the first field is the bottom one
+     */
+    private void buildField(WideFrame frame, boolean bottom) {
+        frame.finishReference(true);
+        var components = settings.chroma444() ? 3 : 1;
+        fieldReference(frame, bottom).interpolate(components, settings.maxSample(), interpolationScratch);
+    }
+
+    /**
+     * Returns the motion compensation view of a field of a frame whose field planes exist, creating it
+     * on first use.
+     *
+     * @param frame the frame whose field planes exist
+     * @param bottom whether to return the bottom field's view
+     * @return the view
+     */
+    private static WideReference fieldReference(WideFrame frame, boolean bottom) {
+        if (bottom) {
+            if (frame.bottomRef == null) {
+                frame.bottomRef = new WideReference(frame, frame.bottomField, 1);
+            }
+            return frame.bottomRef;
+        }
+        if (frame.topRef == null) {
+            frame.topRef = new WideReference(frame, frame.topField, 0);
+        }
+        return frame.topRef;
+    }
+
+    /**
+     * Copies the decoder's samples of a picture into a frame: every row for a frame, the field's
+     * rows for a field.
+     *
+     * @param planes the decoder's planes
+     * @param frame the destination
+     * @param structure 0 for a frame, 1 for a top field, 2 for a bottom field
+     */
+    private static void copyDecoded(H264DecoderEngine.DecodedPlanes planes, WideFrame frame, int structure) {
+        for (var c = 0; c < 3; c++) {
+            var plane = frame.planes[c];
+            if (plane == null) {
+                continue;
+            }
+            var stride = c == 0 ? planes.lumaStride() : planes.chromaStride();
+            var origin = c == 0 ? planes.lumaOrigin() : planes.chromaOrigin();
+            var bytes = c == 0 ? planes.luma() : c == 1 ? planes.cb() : planes.cr();
+            var shorts = c == 0 ? planes.luma16() : c == 1 ? planes.cb16() : planes.cr16();
+            var firstRow = structure == 2 ? 1 : 0;
+            var step = structure == 0 ? 1 : 2;
+            for (var y = firstRow; y < plane.height; y += step) {
+                var s = origin + y * stride;
+                var d = plane.origin + y * plane.stride;
+                if (shorts != null) {
+                    System.arraycopy(shorts, s, plane.data, d, plane.width);
+                } else {
+                    for (var x = 0; x < plane.width; x++) {
+                        plane.data[d + x] = (short) (bytes[s + x] & 0xFF);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Takes a frame from the pool.
+     *
+     * @return the frame
+     */
+    private WideFrame takeFrame() {
+        return pool.isEmpty() ? new WideFrame(settings) : pool.removeLast();
+    }
+
+    /**
+     * Makes a decoded frame the most recent reference, with the sliding window of ITU-T H.264
+     * 8.2.5.3.
+     *
+     * @param frame the decoded frame
+     * @param idr whether it is an IDR frame, which empties the window first
+     */
+    private void addReference(WideFrame frame, boolean idr) {
+        if (idr) {
+            pool.addAll(references);
+            references.clear();
+            Arrays.fill(layerLatest, null);
+            idrPicId = (idrPicId + 1) & 0xFFFF;
+            frameNum = 1;
+        } else {
+            frameNum = (frameNum + 1) & ((1 << settings.log2MaxFrameNum()) - 1);
+        }
+        var capacity = settings.referenceCapacity();
+        while (references.size() >= capacity) {
+            pool.add(references.removeLast());
+        }
+        references.addFirst(frame);
+        if (temporalLayers > 1) {
+            layerLatest[temporalLayer] = frame;
+        }
+    }
+}
