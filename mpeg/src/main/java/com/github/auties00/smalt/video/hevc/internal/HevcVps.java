@@ -125,6 +125,98 @@ public final class HevcVps {
     public final int[][] idDirectRefLayer = emptyLists();
 
     /**
+     * {@code IdRefListLayer} of the 3D extension (equation I-8), by layer identifier: the direct
+     * reference layers of the same {@code DepthLayerFlag}; the array length is
+     * {@code NumRefListLayers}.
+     */
+    public final int[][] idRefListLayer = emptyLists();
+
+    /**
+     * {@code ViewOIdxList} (equation I-7): the view order indices of the views in the order of
+     * their first layer.
+     */
+    public int[] viewOIdxList = {0};
+
+    /**
+     * {@code view_id_val}, by view order index.
+     */
+    public int[] viewIdVal = {0};
+
+    /**
+     * Whether the set carries a {@code vps_3d_extension()}.
+     */
+    public boolean extension3d;
+
+    /**
+     * {@code cp_precision}.
+     */
+    public int cpPrecision;
+
+    /**
+     * {@code cp_in_slice_segment_header_flag}, by view order index.
+     */
+    public final boolean[] cpInSliceHeader = new boolean[256];
+
+    /**
+     * {@code cp_ref_voi}, by view order index: the views the camera parameters of a view relate to;
+     * the array length is {@code num_cp}.
+     */
+    public final int[][] cpRefVoi = emptyViewLists();
+
+    /**
+     * {@code vps_cp_scale}, {@code vps_cp_off}, {@code vps_cp_inv_scale_plus_scale} and
+     * {@code vps_cp_inv_off_plus_off}, by view order index, then by the position of the related
+     * view in {@link #cpRefVoi}, four values per view.
+     */
+    public final int[][] vpsCp = emptyViewLists();
+
+    /**
+     * Returns {@code ViewCompLayerId} (equation I-9): the layer of a view and component with
+     * {@code DependencyId} and {@code AuxId} equal to 0.
+     *
+     * @param viewIdx the view order index
+     * @param depth whether the depth component is meant
+     * @return the layer identifier, or -1 when the view has no such layer
+     */
+    public int viewCompLayerId(int viewIdx, boolean depth) {
+        var layerId = -1;
+        for (var j = 0; j < maxLayers; j++) {
+            var lId = layerIdInNuh[j];
+            if (depthLayer[lId] == depth && viewOrderIdx[lId] == viewIdx && dependencyId[lId] == 0
+                    && auxId[lId] == 0) {
+                layerId = lId;
+            }
+        }
+        return layerId;
+    }
+
+    /**
+     * Returns the position of a view among the views the camera parameters of another view relate
+     * to, the {@code m} of {@code cp_ref_voi[ i ][ m ]}.
+     *
+     * @param viewIdx the view order index of the view whose parameters are meant
+     * @param refViewIdx the view order index of the related view
+     * @return the position, or -1 when {@code CpPresentFlag[ viewIdx ][ refViewIdx ]} is 0
+     */
+    public int cpIndex(int viewIdx, int refViewIdx) {
+        if (viewIdx < 0 || viewIdx >= 256) {
+            return -1;
+        }
+        var refs = cpRefVoi[viewIdx];
+        for (var m = 0; m < refs.length; m++) {
+            if (refs[m] == refViewIdx) {
+                return m;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * {@code vps_num_hrd_parameters}.
+     */
+    public int numHrdParameters;
+
+    /**
      * {@code IdRefLayer}, by layer identifier.
      */
     public final int[][] idRefLayer = emptyLists();
@@ -280,6 +372,17 @@ public final class HevcVps {
     }
 
     /**
+     * Returns 256 empty lists, one per view order index.
+     *
+     * @return the lists
+     */
+    private static int[][] emptyViewLists() {
+        var lists = new int[256][];
+        Arrays.fill(lists, new int[0]);
+        return lists;
+    }
+
+    /**
      * {@return the number of output layer sets, {@code NumOutputLayerSets}}
      */
     public int numOutputLayerSets() {
@@ -372,6 +475,7 @@ public final class HevcVps {
                 reader.readUe();
             }
             var hrdCount = reader.readUe(numLayerSets, "vps_num_hrd_parameters");
+            vps.numHrdParameters = hrdCount;
             for (var i = 0; i < hrdCount; i++) {
                 reader.readUe();
                 var common = i == 0 || reader.readFlag();
@@ -404,6 +508,7 @@ public final class HevcVps {
                 reader.readBit();
             }
             vps.parseExtension(reader, maxLayersMinus1, ptlProfile);
+            vps.parseTail(reader);
         } else if (vps.maxLayers > 1) {
             // a set that announces layers without describing them leaves the base layer usable
             vps.maxLayers = 1;
@@ -509,6 +614,7 @@ public final class HevcVps {
                 viewIdVal[i] = reader.readBits(viewIdLen);
             }
         }
+        this.viewIdVal = viewIdVal;
         for (var i = 0; i < layers; i++) {
             var lId = layerIdInNuh[i];
             var order = viewOrderIdx[lId];
@@ -722,6 +828,274 @@ public final class HevcVps {
                 }
             }
         }
+        deriveViews();
+        var nonVuiLength = reader.readUe(4096, "vps_non_vui_extension_length");
+        reader.skip(8L * nonVuiLength);
+        vuiPresent = reader.readFlag();
+    }
+
+    /**
+     * Whether the {@code vps_extension()} carries a {@code vps_vui()} structure.
+     */
+    private boolean vuiPresent;
+
+    /**
+     * Parses the syntax after {@code vps_vui_present_flag}: the {@code vps_vui()} structure, when
+     * present, and the {@code vps_3d_extension()} that may follow it. The structures are read with
+     * a copy of the reader and only taken when they parse completely, since the VPS VUI of streams
+     * coded to drafts of the multi-layer extensions differs from the published syntax, and no
+     * other field of the set depends on them.
+     *
+     * @param reader the reader, positioned after {@code vps_vui_present_flag}
+     */
+    private void parseTail(H264BitReader reader) {
+        var tail = new H264BitReader();
+        tail.copyFrom(reader);
+        try {
+            if (vuiPresent) {
+                while (tail.bitPosition() % 8 != 0) {
+                    tail.readBit();
+                }
+                parseVui(tail);
+            }
+            if (!tail.overrun() && tail.readFlag() && tail.readFlag()) {
+                while (tail.bitPosition() % 8 != 0) {
+                    tail.readBit();
+                }
+                parse3dExtension(tail);
+            }
+        } catch (MediaException.Malformed exception) {
+            extension3d = false;
+        }
+        if (tail.overrun() || !extension3d) {
+            extension3d = false;
+            cpPrecision = 0;
+            Arrays.fill(cpInSliceHeader, false);
+            Arrays.fill(cpRefVoi, new int[0]);
+            Arrays.fill(vpsCp, new int[0]);
+        }
+    }
+
+    /**
+     * Derives {@code ViewOIdxList} (equation I-7) and {@code IdRefListLayer} (equation I-8).
+     */
+    private void deriveViews() {
+        var list = new int[maxLayers];
+        var count = 0;
+        list[count++] = 0;
+        for (var i = 1; i < maxLayers; i++) {
+            var order = viewOrderIdx[layerIdInNuh[i]];
+            var newView = true;
+            for (var j = 0; j < i; j++) {
+                if (order == viewOrderIdx[layerIdInNuh[j]]) {
+                    newView = false;
+                    break;
+                }
+            }
+            if (newView) {
+                list[count++] = order;
+            }
+        }
+        viewOIdxList = Arrays.copyOf(list, count);
+        for (var i = 0; i < maxLayers; i++) {
+            var lId = layerIdInNuh[i];
+            var direct = idDirectRefLayer[lId];
+            var refs = new int[direct.length];
+            var n = 0;
+            for (var ref : direct) {
+                if (depthLayer[ref] == depthLayer[lId]) {
+                    refs[n++] = ref;
+                }
+            }
+            idRefListLayer[lId] = Arrays.copyOf(refs, n);
+        }
+    }
+
+    /**
+     * Returns {@code MaxSubLayersInLayerSetMinus1} of a layer set (equation F-9).
+     *
+     * @param list the layer identifiers of the set
+     * @return the value
+     */
+    private int maxSubLayersInSetMinus1(int[] list) {
+        var max = 0;
+        for (var lId : list) {
+            var index = layerIdxInVps[lId];
+            if (index >= 0) {
+                max = Math.max(max, subLayersVpsMaxMinus1[index]);
+            }
+        }
+        return max;
+    }
+
+    /**
+     * Parses a {@code vps_vui()} structure (F.7.3.2.1.4), whose fields the decoder does not use,
+     * to reach the syntax that follows the extension.
+     *
+     * @param reader the reader, positioned at the syntax structure
+     * @throws MediaException.Malformed if a field is out of range
+     */
+    private void parseVui(H264BitReader reader) {
+        var picTypeAligned = reader.readFlag();
+        var irapAligned = picTypeAligned || reader.readFlag();
+        if (irapAligned) {
+            reader.readFlag();
+        }
+        var bitRatePresent = reader.readFlag();
+        var picRatePresent = reader.readFlag();
+        if (bitRatePresent || picRatePresent) {
+            for (var i = baseLayerInternal ? 0 : 1; i < layerSetLayerIdList.length; i++) {
+                var maxSubLayersMinus1 = maxSubLayersInSetMinus1(layerSetLayerIdList[i]);
+                for (var j = 0; j <= maxSubLayersMinus1; j++) {
+                    var bitRate = bitRatePresent && reader.readFlag();
+                    var picRate = picRatePresent && reader.readFlag();
+                    if (bitRate) {
+                        reader.skipBits(32);
+                    }
+                    if (picRate) {
+                        reader.skipBits(18);
+                    }
+                }
+            }
+        }
+        var signalInfoIdxPresent = reader.readFlag();
+        var numSignalInfo = signalInfoIdxPresent ? reader.readBits(4) + 1 : maxLayers - (baseLayerInternal ? 0 : 1);
+        for (var i = 0; i < numSignalInfo; i++) {
+            reader.skipBits(3 + 1 + 8 + 8 + 8);
+        }
+        if (signalInfoIdxPresent && numSignalInfo > 1) {
+            for (var i = baseLayerInternal ? 0 : 1; i < maxLayers; i++) {
+                reader.readBits(4);
+            }
+        }
+        if (!reader.readFlag()) {
+            var tilesInUse = new boolean[maxLayers];
+            for (var i = baseLayerInternal ? 0 : 1; i < maxLayers; i++) {
+                tilesInUse[i] = reader.readFlag();
+                if (tilesInUse[i]) {
+                    reader.readFlag();
+                }
+            }
+            for (var i = baseLayerInternal ? 1 : 2; i < maxLayers; i++) {
+                for (var ref : idDirectRefLayer[layerIdInNuh[i]]) {
+                    var refIdx = layerIdxInVps[ref];
+                    if (tilesInUse[i] && refIdx >= 0 && tilesInUse[refIdx]) {
+                        reader.readFlag();
+                    }
+                }
+            }
+        }
+        if (!reader.readFlag()) {
+            for (var i = baseLayerInternal ? 0 : 1; i < maxLayers; i++) {
+                reader.readFlag();
+            }
+        }
+        reader.readFlag();
+        reader.readFlag();
+        if (reader.readFlag()) {
+            for (var i = 1; i < maxLayers; i++) {
+                for (var ref : idDirectRefLayer[layerIdInNuh[i]]) {
+                    if (baseLayerInternal || ref > 0) {
+                        var offset = reader.readUe();
+                        if (offset > 0 && reader.readFlag()) {
+                            reader.readUe();
+                        }
+                    }
+                }
+            }
+        }
+        if (reader.readFlag()) {
+            parseBspHrd(reader);
+        }
+        for (var i = 1; i < maxLayers; i++) {
+            if (idDirectRefLayer[layerIdInNuh[i]].length == 0) {
+                reader.readFlag();
+            }
+        }
+    }
+
+    /**
+     * Parses a {@code vps_vui_bsp_hrd_params()} structure (F.7.3.2.1.6).
+     *
+     * @param reader the reader, positioned at the syntax structure
+     * @throws MediaException.Malformed if a field is out of range
+     */
+    private void parseBspHrd(H264BitReader reader) {
+        var numAdd = reader.readUe(1024, "vps_num_add_hrd_params");
+        for (var i = numHrdParameters; i < numHrdParameters + numAdd; i++) {
+            var common = i == 0 || reader.readFlag();
+            var subLayersMinus1 = reader.readUe(6, "num_sub_layer_hrd_minus1");
+            HevcSps.skipHrdParameters(reader, common, subLayersMinus1);
+        }
+        var totalHrd = numHrdParameters + numAdd;
+        if (totalHrd == 0) {
+            return;
+        }
+        var hrdIdxBits = ceilLog2(totalHrd);
+        for (var h = 1; h < olsIdxToLsIdx.length; h++) {
+            var list = layerSetLayerIdList[olsIdxToLsIdx[h]];
+            var numSchemes = reader.readUe(16, "num_signalled_partitioning_schemes");
+            var partitions = new int[numSchemes + 1];
+            partitions[0] = list.length - 1;
+            for (var j = 1; j <= numSchemes; j++) {
+                partitions[j] = reader.readUe(63, "num_partitions_in_scheme_minus1");
+                reader.skip((long) (partitions[j] + 1) * list.length);
+            }
+            var maxSubLayersMinus1 = maxSubLayersInSetMinus1(list);
+            for (var i = 0; i <= numSchemes; i++) {
+                for (var t = 0; t <= maxSubLayersMinus1; t++) {
+                    var schedules = reader.readUe(31, "num_bsp_schedules_minus1") + 1;
+                    for (var j = 0; j < schedules; j++) {
+                        for (var k = 0; k <= partitions[i]; k++) {
+                            if (totalHrd > 1) {
+                                reader.readBits(hrdIdxBits);
+                            }
+                            reader.readUe();
+                        }
+                    }
+                }
+            }
+            if (reader.overrun()) {
+                throw new MediaException.Malformed("truncated VPS VUI bitstream partition HRD parameters");
+            }
+        }
+    }
+
+    /**
+     * Parses a {@code vps_3d_extension()} structure (I.7.3.2.1.7): the camera parameters that
+     * convert depth values to disparities.
+     *
+     * @param reader the reader, positioned at the syntax structure
+     * @throws MediaException.Malformed if a field is out of range
+     */
+    private void parse3dExtension(H264BitReader reader) {
+        cpPrecision = reader.readUe(5, "cp_precision");
+        for (var n = 1; n < viewOIdxList.length; n++) {
+            var i = viewOIdxList[n];
+            if (i >= 256) {
+                throw new MediaException.Malformed("view order index out of range");
+            }
+            var numCp = reader.readBits(6);
+            var refs = new int[numCp];
+            var values = new int[4 * numCp];
+            if (numCp > 0) {
+                cpInSliceHeader[i] = reader.readFlag();
+                for (var m = 0; m < numCp; m++) {
+                    refs[m] = reader.readUe(65535, "cp_ref_voi");
+                    if (!cpInSliceHeader[i]) {
+                        for (var k = 0; k < 4; k++) {
+                            values[4 * m + k] = reader.readSe(-32768, 32767, "vps_cp_scale");
+                        }
+                    }
+                }
+            }
+            cpRefVoi[i] = refs;
+            vpsCp[i] = values;
+            if (reader.overrun()) {
+                throw new MediaException.Malformed("truncated video parameter set 3D extension");
+            }
+        }
+        extension3d = true;
     }
 
     /**

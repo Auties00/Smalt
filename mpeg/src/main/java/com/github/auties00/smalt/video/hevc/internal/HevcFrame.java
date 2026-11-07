@@ -155,6 +155,12 @@ public final class HevcFrame {
     public int[][] sliceRefId = new int[4][];
 
     /**
+     * The layer identifiers of the reference pictures of each slice, indexed like
+     * {@link #sliceRefPoc}, -1 for an unused entry; {@code null} for a slice recorded without them.
+     */
+    public int[][] sliceRefLayer = new int[4][];
+
+    /**
      * The number of slices recorded in {@link #sliceRefPoc}.
      */
     public int sliceCount;
@@ -282,6 +288,28 @@ public final class HevcFrame {
      * The {@code AuxId} of the picture's layer, 0 for a primary picture.
      */
     public int auxId;
+
+    /**
+     * The {@code ViewOrderIdx} of the picture's layer, 0 for a single layer stream.
+     */
+    public int viewIdx;
+
+    /**
+     * Whether the picture belongs to a depth layer of a 3D-HEVC stream ({@code DepthLayerFlag}).
+     */
+    public boolean depthLayer;
+
+    /**
+     * The {@code TemporalId} of the picture.
+     */
+    public int temporalId;
+
+    /**
+     * The picture order counts of the pictures of the reference picture sets
+     * {@code RefPicSetStCurrBefore}, {@code RefPicSetStCurrAfter} and {@code RefPicSetLtCurr} of
+     * the picture.
+     */
+    public int[] rpsCurrPoc = new int[0];
 
     /**
      * Whether the decoder outputs several layers or a layer other than the base layer, so that the
@@ -504,6 +532,10 @@ public final class HevcFrame {
         alpha = null;
         alphaChannel = null;
         sliceCount = 0;
+        viewIdx = 0;
+        depthLayer = false;
+        temporalId = 0;
+        rpsCurrPoc = new int[0];
         Arrays.fill(ref0, (byte) -1);
         Arrays.fill(ref1, (byte) -1);
         if (ctbSlice == null || ctbSlice.length != sizeInCtbs) {
@@ -565,14 +597,30 @@ public final class HevcFrame {
      * @return the slice index for {@link #ctbSlice}
      */
     public int addSlice(int[] poc, boolean[] longTerm, int[] ids) {
+        return addSlice(poc, longTerm, ids, null);
+    }
+
+    /**
+     * Records the reference lists of a slice of this picture with the layers of their pictures
+     * and returns its index.
+     *
+     * @param poc      the picture order counts of the entries, {@code list * 16 + refIdx}
+     * @param longTerm whether each entry is a long-term reference
+     * @param ids      the identifiers of the entries
+     * @param layers   the layer identifiers of the entries, or {@code null}
+     * @return the slice index for {@link #ctbSlice}
+     */
+    public int addSlice(int[] poc, boolean[] longTerm, int[] ids, int[] layers) {
         if (sliceCount == sliceRefPoc.length) {
             sliceRefPoc = Arrays.copyOf(sliceRefPoc, sliceCount * 2);
             sliceRefLongTerm = Arrays.copyOf(sliceRefLongTerm, sliceCount * 2);
             sliceRefId = Arrays.copyOf(sliceRefId, sliceCount * 2);
+            sliceRefLayer = Arrays.copyOf(sliceRefLayer, sliceCount * 2);
         }
         sliceRefPoc[sliceCount] = poc;
         sliceRefLongTerm[sliceCount] = longTerm;
         sliceRefId[sliceCount] = ids;
+        sliceRefLayer[sliceCount] = layers;
         return sliceCount++;
     }
 

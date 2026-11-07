@@ -57,7 +57,8 @@ public record VideoLayer(int id, int viewId, Type type) {
         ALPHA,
 
         /**
-         * Depth maps of the pictures of a primary layer, in the luma samples ({@code AUX_DEPTH}).
+         * Depth maps of the pictures of a primary layer or view, in the luma samples ({@code AUX_DEPTH} auxiliary
+         * layers, and the depth views of 3D-HEVC streams).
          */
         DEPTH,
 

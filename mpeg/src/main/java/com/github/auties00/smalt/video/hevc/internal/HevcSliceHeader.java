@@ -26,6 +26,11 @@ public final class HevcSliceHeader {
     public static final int I = 2;
 
     /**
+     * The {@code general_profile_idc} of the 3D Main profile (I.11.1.1).
+     */
+    public static final int PROFILE_3D_MAIN = 8;
+
+    /**
      * The layer a slice segment belongs to and the parameters of the layered stream that shape its
      * header (F.7.3.6.1).
      *
@@ -76,6 +81,18 @@ public final class HevcSliceHeader {
      * {@code RefPicLayerId}, {@link #numActiveRefLayerPics} entries.
      */
     public int[] refPicLayerId = new int[0];
+
+    /**
+     * The 3D-HEVC part of the header of a layer decoded with the process of Annex I, or
+     * {@code null} for the other layers.
+     */
+    public Hevc3dSlice tools3d;
+
+    /**
+     * The variables the slice derives at its start for the 3D-HEVC tools, set with its reference
+     * picture lists; {@code null} for an intra slice and for the layers not decoded with Annex I.
+     */
+    public InterViewContext interView;
 
     /**
      * {@code poc_reset_idc}.
@@ -571,6 +588,7 @@ public final class HevcSliceHeader {
         copy.crossLayerBla = crossLayerBla;
         copy.numActiveRefLayerPics = numActiveRefLayerPics;
         copy.refPicLayerId = refPicLayerId;
+        copy.tools3d = tools3d;
         copy.pocResetIdc = pocResetIdc;
         copy.pocResetPeriodId = pocResetPeriodId;
         copy.fullPocReset = fullPocReset;
@@ -651,6 +669,12 @@ public final class HevcSliceHeader {
         sliceType = reader.readUe(2, "slice_type");
         var vps = layer.multiLayer() ? layer.vps() : null;
         var directRefLayers = vps != null && layerId > 0 ? vps.idDirectRefLayer[layerId].length : 0;
+        // the layers of the 3D Main profile are decoded with the process of Annex I (I.8.1)
+        var annexI = vps != null && layerId > 0 && vps.profileOf(layer.olsIdx(), layerId) == PROFILE_3D_MAIN;
+        var refListLayers = annexI ? vps.idRefListLayer[layerId] : vps != null ? vps.idDirectRefLayer[layerId] : null;
+        if (annexI) {
+            tools3d = new Hevc3dSlice(vps.depthLayer[layerId], vps.viewOrderIdx[layerId], refListLayers.length);
+        }
         if (HevcNal.isIrap(nalType) && sliceType != I && !pps.currPicRefEnabled && directRefLayers == 0) {
             throw new MediaException.Malformed("intra random access point picture with a P or B slice");
         }
@@ -691,8 +715,11 @@ public final class HevcSliceHeader {
                 temporalMvpEnabled = reader.readFlag();
             }
         }
-        if (directRefLayers > 0 && layerIdx >= 0) {
-            parseInterLayer(reader, vps, layerIdx, directRefLayers, temporalId);
+        if (refListLayers != null && refListLayers.length > 0 && layerIdx >= 0) {
+            parseInterLayer(reader, vps, layerIdx, refListLayers, temporalId);
+        }
+        if (tools3d != null) {
+            tools3d.parseTools(reader, vps, sps, layerId, temporalId, refPicLayerId, sliceType, nalType);
         }
         if (sps.saoEnabled) {
             saoLuma = reader.readFlag();
@@ -746,8 +773,11 @@ public final class HevcSliceHeader {
             }
             if ((pps.weightedPred && sliceType == P) || (pps.weightedBipred && sliceType == B)) {
                 parsePredWeightTable(reader);
+            } else if (tools3d != null && !tools3d.depth && tools3d.numRefListLayers > 0) {
+                tools3d.parseIlluminationCompensation(reader);
             }
-            maxNumMergeCand = 5 - reader.readUe(4, "five_minus_max_num_merge_cand");
+            var extraMergeCand = tools3d != null ? tools3d.numExtraMergeCand : 0;
+            maxNumMergeCand = 5 + extraMergeCand - reader.readUe(4 + extraMergeCand, "five_minus_max_num_merge_cand");
             useIntegerMv = sps.mvResolutionControl == 2 ? reader.readFlag() : sps.mvResolutionControl == 1;
         }
         var qpBdOffset = 6 * (sps.bitDepthLuma - 8);
@@ -783,24 +813,28 @@ public final class HevcSliceHeader {
         if (pps.loopFilterAcrossSlices && (saoLuma || saoChroma || !deblockingDisabled)) {
             loopFilterAcrossSlices = reader.readFlag();
         }
+        if (tools3d != null) {
+            tools3d.parseCameraParameters(reader, vps, sps.bitDepthLuma);
+        }
     }
 
     /**
-     * Parses the inter-layer prediction fields of the header of a layer with direct reference
-     * layers and derives {@code NumActiveRefLayerPics} and {@code RefPicLayerId} (equations F-52 to
-     * F-54).
+     * Parses the inter-layer prediction fields of the header of a layer with reference layers and
+     * derives {@code NumActiveRefLayerPics} and {@code RefPicLayerId} (equations F-52 to F-54, and
+     * I-32 to I-34 for the layers of Annex I, whose list holds the reference layers of their own
+     * component).
      *
      * @param reader the reader, positioned at {@code inter_layer_pred_enabled_flag} or where it
      * would be
      * @param vps the active video parameter set
      * @param layerIdx {@code LayerIdxInVps[nuh_layer_id]}
-     * @param directRefLayers {@code NumDirectRefLayers[nuh_layer_id]}, at least 1
+     * @param direct {@code IdDirectRefLayer[nuh_layer_id]}, or {@code IdRefListLayer[nuh_layer_id]}
+     * for a layer of Annex I, at least one layer
      * @param temporalId the temporal identifier
      * @throws MediaException.Malformed if a field is out of range
      */
-    private void parseInterLayer(H264BitReader reader, HevcVps vps, int layerIdx, int directRefLayers,
-                                 int temporalId) {
-        var direct = vps.idDirectRefLayer[layerId];
+    private void parseInterLayer(H264BitReader reader, HevcVps vps, int layerIdx, int[] direct, int temporalId) {
+        var directRefLayers = direct.length;
         var candidates = new int[directRefLayers];
         var numRefLayerPics = 0;
         for (var i = 0; i < directRefLayers; i++) {

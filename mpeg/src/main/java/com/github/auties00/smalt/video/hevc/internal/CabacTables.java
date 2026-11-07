@@ -242,9 +242,19 @@ public final class CabacTables {
     public static final int PALETTE_RUN = PALETTE_TRANSPOSE + 1;
 
     /**
+     * The first of the 3 contexts of {@code iv_res_pred_weight_idx} (Table I.11).
+     */
+    public static final int RESIDUAL_WEIGHT = PALETTE_RUN + 8;
+
+    /**
+     * The context of {@code illu_comp_flag} (Table I.12).
+     */
+    public static final int ILLU_COMP = RESIDUAL_WEIGHT + 3;
+
+    /**
      * The number of context variables.
      */
-    public static final int COUNT = PALETTE_RUN + 8;
+    public static final int COUNT = ILLU_COMP + 1;
 
     /**
      * The initialization values, indexed {@code [initType][ctxIdx]}.
@@ -311,6 +321,7 @@ public final class CabacTables {
             System.arraycopy(greater2, 6 * type, INIT[type], GREATER2, 6);
             java.util.Arrays.fill(INIT[type], EXPLICIT_RDPCM, LOG2_RES_SCALE, 139);
             java.util.Arrays.fill(INIT[type], LOG2_RES_SCALE, COUNT, 154);
+            System.arraycopy(new int[]{162, 153, 162}, 0, INIT[type], RESIDUAL_WEIGHT, 3);
         }
     }
 

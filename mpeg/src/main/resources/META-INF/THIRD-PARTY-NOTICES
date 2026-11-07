@@ -1156,7 +1156,13 @@ Derived Smalt packages:
   of source/Lib/TLibDecoder/TDecBinCoderCABAC.cpp; PaletteCoding: the
   palette mode parsing and reconstruction of the HM-16.21+SCM-8.8 screen
   content coding branch, source/Lib/TLibDecoder/TDecSbac.cpp and
-  TDecCu.cpp)
+  TDecCu.cpp; Hevc3dPredictor: the advanced residual prediction, bilinear
+  interpolation and illumination compensation of the 3D-HEVC reference
+  software HTM-16.3, source/Lib/TLibCommon/TComPrediction.cpp, TComYuv.cpp
+  and TComInterpolationFilter.cpp; MotionPredictor: the 3D-HEVC merging
+  candidate list, inter-view candidates and disparity vector derivation of
+  HTM-16.3 source/Lib/TLibCommon/TComDataCU.cpp; HevcDecoderEngine: the
+  slice-level 3D-HEVC variables of HTM-16.3 TComSlice.cpp and TComPic.cpp)
   video.hevc.encoder.internal (CabacWriter: the binary arithmetic encoder
   engine of source/Lib/TLibEncoder/TEncBinCoderCABAC.cpp; CabacCounter: the
   fractional bit estimate table of source/Lib/TLibCommon/ContextModel.cpp;

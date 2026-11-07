@@ -705,6 +705,18 @@ decoder cross-checking the views). It also builds `lhv1` items around the first 
 `HevcAppleAlphaTest` runs on macOS only: avconvert's `PresetHEVCHighestQualityWithAlpha` codes an ffmpeg-made ProRes
 4444 clip with alpha, and the test keeps the result in `target/media-fixtures/apple-hevc-alpha.mov`.
 
+## HEVC 3D vectors
+
+`Hevc3dConformanceTest` of `smalt-mpeg` decodes the JCT-3V 3D-HEVC conformance streams (`hevc-3dhevc-*.zip` in
+`vectors.tsv`, fetched because their licence is unstated) and compares the MD5 of every output picture of every
+layer with `mpeg/src/test/resources/com/github/auties00/smalt/video/hevc/threeD/frame-md5.txt`, which `python -I
+tools/testdata/hevc-3d/frame-md5.py` writes from the output of the 3D-HEVC reference decoder HTM-16.3 (BSD-3-Clause,
+compiled with `HEVC_EXT=2` and run as a black box), and each layer's whole output with the MD5 the archive ships.
+`Hevc3dVectorTest` decodes three short streams HTM-16.3's encoder coded from a synthetic scene (two texture views
+with their depth views): `python -I tools/testdata/hevc-3d/make-vectors.py <TAppEncoder> <TAppDecoder> <HTM cfg>
+<that threeD directory>` codes them, fails unless HTM's decoder verifies every MD5 picture hash of every layer, and
+records the SHA-256 of each stream and the MD5 of every output frame of each layer in `threeD/vectors.tsv`.
+
 ## H.264 auxiliary alpha vectors
 
 `H264AuxiliaryAlphaTest` of `smalt-mpeg` decodes streams whose access units carry alpha auxiliary coded pictures

@@ -117,7 +117,32 @@ public final class InterPredictor {
         this.refList = refList;
         this.weighted = header.weighted;
         this.dsp = dsp;
+        this.integerMotion = header.tools3d != null && header.tools3d.depth;
+        if (header.interView != null) {
+            if (predictor3d == null) {
+                predictor3d = new Hevc3dPredictor();
+            }
+            predictor3d.setSlice(header, refList);
+        }
     }
+
+    /**
+     * Whether the motion vectors of the slice count whole samples: those of the depth layers of
+     * 3D-HEVC (I.8.5.3.3.1).
+     */
+    private boolean integerMotion;
+
+    /**
+     * The predictor of the prediction units with residual prediction or illumination
+     * compensation, allocated with the first slice that may use them.
+     */
+    private Hevc3dPredictor predictor3d;
+
+    /**
+     * The motion of one sub-block partition, or of a prediction unit of a depth layer with its
+     * vectors scaled to quarter samples.
+     */
+    private final MotionPredictor.PuMotion partMotion = new MotionPredictor.PuMotion();
 
     /**
      * Predicts the samples of a prediction unit into the picture being decoded.
@@ -131,6 +156,45 @@ public final class InterPredictor {
      */
     public void predict(HevcFrame frame, int xPb, int yPb, int width, int height, MotionPredictor.PuMotion m) {
         target = frame;
+        if (m.subPbWidth != 0) {
+            var index = 0;
+            for (var y = 0; y < height; y += m.subPbHeight) {
+                for (var x = 0; x < width; x += m.subPbWidth) {
+                    m.subBlock(index++, partMotion);
+                    predictBlock(frame, xPb + x, yPb + y, m.subPbWidth, m.subPbHeight, partMotion);
+                }
+            }
+            return;
+        }
+        if (integerMotion) {
+            partMotion.clear();
+            partMotion.partMode = m.partMode;
+            for (var x = 0; x < 2; x++) {
+                partMotion.predFlag[x] = m.predFlag[x];
+                partMotion.refIdx[x] = m.refIdx[x];
+                partMotion.mvX[x] = m.mvX[x] << 2;
+                partMotion.mvY[x] = m.mvY[x] << 2;
+            }
+            m = partMotion;
+        }
+        predictBlock(frame, xPb, yPb, width, height, m);
+    }
+
+    /**
+     * Predicts the samples of a prediction block with one motion.
+     *
+     * @param frame the picture being decoded
+     * @param xPb the luma x of the block
+     * @param yPb the luma y of the block
+     * @param width the block width
+     * @param height the block height
+     * @param m the motion of the block
+     */
+    private void predictBlock(HevcFrame frame, int xPb, int yPb, int width, int height, MotionPredictor.PuMotion m) {
+        if (m.residualWeight != 0 || m.illuminationCompensation) {
+            predictor3d.predict(frame, xPb, yPb, width, height, m);
+            return;
+        }
         if (frame.y8 != null) {
             predict8(frame, xPb, yPb, width, height, m);
             return;

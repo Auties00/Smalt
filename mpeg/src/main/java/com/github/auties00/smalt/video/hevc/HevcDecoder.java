@@ -68,8 +68,17 @@ import java.util.function.Consumer;
  * of an access unit are output one after the other in increasing layer order, all with the same
  * timestamp, each frame naming its layer in {@link FrameSideData#layer()} when more than the base
  * layer is output. With {@link HevcDecoderOptions#alpha()}, the alpha auxiliary layer of an output
- * layer is attached to the layer's frames as their alpha plane. A layer that uses the 3D-HEVC
- * extension raises {@link MediaException.Unsupported} naming the feature {@code "hevc 3D extension"};
+ * layer is attached to the layer's frames as their alpha plane. The texture and depth views of
+ * 3D-HEVC streams (Annex I, the 3D Main profile) are decoded with the texture coding tools: the
+ * inter-view predicted, shifted and disparity merging candidates with sub-block partition motion and
+ * neighboring block disparity vectors (with {@code depth_ref_enabled_flag}, as in the reference decoder,
+ * without their vertical component, since the reference decoder refines them from the depth view only
+ * together with depth-based block partitioning), the view scaling of inter-view motion vectors,
+ * advanced residual prediction and illumination compensation; the depth views, whose motion vectors
+ * count whole samples, are output as {@link VideoLayer.Type#DEPTH} layers. A layer that uses view synthesis prediction,
+ * depth-based block partitioning or a depth coding tool of Annex I raises
+ * {@link MediaException.Unsupported} naming the feature ({@code "hevc 3D view synthesis prediction"},
+ * {@code "hevc 3D depth-based block partitioning"} or {@code "hevc 3D depth coding tools"});
  * a stream whose base layer is coded outside it, with another codec, raises it naming
  * {@code "hevc external base layer"}.
  *
@@ -154,8 +163,6 @@ import java.util.function.Consumer;
  * recovery point message that is truncated, or whose {@code recovery_poc_cnt} lies outside
  * {@code -MaxPicOrderCntLsb / 2} to {@code MaxPicOrderCntLsb / 2 - 1}, is ignored. The layers
  * above the base layer start at their own IRAP pictures once their reference layers have started.
- * A base layer whose parameter sets carry the 3D-HEVC extension raises
- * {@link MediaException.Unsupported} naming the feature {@code "hevc 3D extension"}.
  * Every profile of version 1, of the range extensions and of the screen content coding extensions
  * is decoded: Main, Main 10, Main Still Picture, Main 12, Main 4:2:2 10 and 12, Main 4:4:4 (8, 10,
  * 12 and 16 Intra, with their Intra and Still Picture variants), Monochrome (8, 12 and 16), High
@@ -696,7 +703,7 @@ public final class HevcDecoder implements VideoDecoder {
      * @return the layer
      */
     private static VideoLayer layerOf(HevcFrame frame) {
-        var type = switch (frame.auxId) {
+        var type = frame.depthLayer ? VideoLayer.Type.DEPTH : switch (frame.auxId) {
             case 0 -> VideoLayer.Type.PRIMARY;
             case HevcVps.AUX_ALPHA -> VideoLayer.Type.ALPHA;
             case HevcVps.AUX_DEPTH -> VideoLayer.Type.DEPTH;

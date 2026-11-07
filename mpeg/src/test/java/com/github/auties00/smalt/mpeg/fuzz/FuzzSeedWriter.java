@@ -1334,7 +1334,7 @@ class FuzzSeedWriter {
     }
 
     @Test
-    @DisplayName("writes the seeds of the multi-layer HEVC target and a layered HEIC image")
+    @DisplayName("writes the seeds of the multi-layer HEVC target (scalable, multiview, alpha and 3D) and a layered HEIC image")
     void hevcLayers() {
         var vectors = Path.of("src", "test", "resources", "com", "github", "auties00", "smalt", "video", "hevc",
                 "multilayer");
@@ -1350,6 +1350,10 @@ class FuzzSeedWriter {
         // output layer set 0 with the alpha layer attached to the primary pictures
         write(MpegFuzzTest.class, "hevcLayers", "valid-alpha.bin", FuzzPackets.video(0, 128, 96, null,
                 accessUnits(Fixtures.read(vectors.resolve("alpha-ld.hevc")), 6)));
+        // the last output layer set: two texture views with inter-view motion and residual prediction and
+        // illumination compensation, and their depth views; each picture of each layer is one part
+        write(MpegFuzzTest.class, "hevcLayers", "valid-3dhevc.bin", FuzzPackets.video(14, 128, 128, null,
+                accessUnits(Fixtures.read(vectors.resolveSibling("threeD").resolve("tex-all.hevc")), 12)));
         var unit = HevcAccessUnit.first(Fixtures.read(vectors.resolve("shvc-2x-ld.hevc")));
         var builder = new HeifBuilder().brands("heic", "heic", "mif1");
         var base = builder.item("hvc1", HevcAccessUnit.lengthPrefixed(unit.slices(layer -> layer == 0)),

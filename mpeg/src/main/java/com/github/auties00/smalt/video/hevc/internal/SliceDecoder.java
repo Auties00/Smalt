@@ -202,9 +202,46 @@ public final class SliceDecoder implements NeighborAvailability {
     private final int[] levels = new int[16];
 
     /**
-     * The motion of the prediction unit being decoded.
+     * The motion of the prediction units of the coding unit being decoded, parsed before any is
+     * derived because the coding unit extension of 3D-HEVC follows them.
      */
-    private final MotionPredictor.PuMotion puMotion = new MotionPredictor.PuMotion();
+    private final MotionPredictor.PuMotion[] puMotions = {new MotionPredictor.PuMotion(),
+            new MotionPredictor.PuMotion(), new MotionPredictor.PuMotion(), new MotionPredictor.PuMotion()};
+
+    /**
+     * The prediction unit whose syntax is being parsed.
+     */
+    private MotionPredictor.PuMotion puMotion = puMotions[0];
+
+    /**
+     * The luma x of each prediction unit of the coding unit.
+     */
+    private final int[] puX = new int[4];
+
+    /**
+     * The luma y of each prediction unit of the coding unit.
+     */
+    private final int[] puY = new int[4];
+
+    /**
+     * The width of each prediction unit of the coding unit.
+     */
+    private final int[] puWidth = new int[4];
+
+    /**
+     * The height of each prediction unit of the coding unit.
+     */
+    private final int[] puHeight = new int[4];
+
+    /**
+     * The 3D-HEVC part of the slice segment header, or {@code null}.
+     */
+    private Hevc3dSlice tools3d;
+
+    /**
+     * The variables of the 3D-HEVC tools the slice derived at its start, or {@code null}.
+     */
+    private InterViewContext views;
 
     /**
      * The frame being decoded.
@@ -604,8 +641,41 @@ public final class SliceDecoder implements NeighborAvailability {
         this.initType = header.sliceType == HevcSliceHeader.I ? 0
                 : header.sliceType == HevcSliceHeader.P ? (header.cabacInit ? 2 : 1) : (header.cabacInit ? 1 : 2);
         java.util.Arrays.fill(coefficients, 0);
+        this.tools3d = header.tools3d;
+        this.views = header.interView;
+        if (tools3d != null) {
+            check3dTools(tools3d);
+            if (views != null) {
+                pic.prepareViews();
+            }
+        }
         motion.setSlice(frame, pic, header, refList, sliceIndex);
         inter.setSlice(header, refList, pic.dsp);
+    }
+
+    /**
+     * Rejects the 3D-HEVC tools of a slice the decoder does not implement.
+     *
+     * @param tools the 3D-HEVC part of the slice segment header
+     * @throws MediaException.Unsupported if the slice enables view synthesis prediction,
+     * depth-based block partitioning or a depth coding tool
+     */
+    private static void check3dTools(Hevc3dSlice tools) {
+        // TODO: view synthesis prediction (I.8.5.3.2.13) and depth-based block partitioning (I.8.5.3.5)
+        if (tools.vspMc) {
+            throw new MediaException.Unsupported("hevc 3D view synthesis prediction",
+                    "the stream uses view synthesis prediction (vsp_mc_enabled_flag)");
+        }
+        if (tools.dbbp) {
+            throw new MediaException.Unsupported("hevc 3D depth-based block partitioning",
+                    "the stream uses depth-based block partitioning (dbbp_enabled_flag)");
+        }
+        // TODO: the depth coding tools of Annex I: the texture merging candidate, depth intra modes,
+        // depth DC coding, intra skip and inter-component partitioning prediction
+        if (tools.texMc || tools.intraContour || tools.intraDcOnlyWedge || tools.cqtCuPartPred || tools.interDcOnly
+                || tools.skipIntra) {
+            throw new MediaException.Unsupported("hevc 3D depth coding tools", "the stream uses the depth coding tools of 3D-HEVC");
+        }
     }
 
     /**
@@ -1015,7 +1085,9 @@ public final class SliceDecoder implements NeighborAvailability {
         var partMode = PART_2Nx2N;
         if (skip) {
             cuIntra = false;
-            predictionUnit(x0, y0, size, size, x0, y0, log2Size, 0, true, PART_2Nx2N);
+            puMotionPartitioned = false;
+            parsePredictionUnit(0, x0, y0, size, size, x0, y0, true, PART_2Nx2N);
+            finishInterUnit(x0, y0, log2Size, PART_2Nx2N, 1);
         } else {
             cuIntra = header.sliceType == HevcSliceHeader.I || cabac.decodeBin(CabacTables.PRED_MODE) == 1;
             if (cuIntra && sps.paletteModeEnabled && log2Size <= sps.log2MaxTbSize
@@ -1045,7 +1117,7 @@ public final class SliceDecoder implements NeighborAvailability {
             }
             if (!pcm) {
                 var rootCbf = true;
-                if (!cuIntra && !(partMode == PART_2Nx2N && puMotion.merge)) {
+                if (!cuIntra && !(partMode == PART_2Nx2N && puMotions[0].merge)) {
                     rootCbf = cabac.decodeBin(CabacTables.RQT_ROOT_CBF) == 1;
                 }
                 if (rootCbf) {
@@ -1494,61 +1566,160 @@ public final class SliceDecoder implements NeighborAvailability {
         var n = 1 << log2Size;
         var h = n >> 1;
         var q = n >> 2;
+        var count = 2;
         switch (partMode) {
-            case PART_2Nx2N -> predictionUnit(x0, y0, n, n, x0, y0, log2Size, 0, false, partMode);
+            case PART_2Nx2N -> {
+                parsePredictionUnit(0, x0, y0, n, n, x0, y0, false, partMode);
+                count = 1;
+            }
             case PART_2NxN -> {
-                predictionUnit(x0, y0, n, h, x0, y0, log2Size, 0, false, partMode);
-                predictionUnit(x0, y0 + h, n, h, x0, y0, log2Size, 1, false, partMode);
+                parsePredictionUnit(0, x0, y0, n, h, x0, y0, false, partMode);
+                parsePredictionUnit(1, x0, y0 + h, n, h, x0, y0, false, partMode);
             }
             case PART_Nx2N -> {
-                predictionUnit(x0, y0, h, n, x0, y0, log2Size, 0, false, partMode);
-                predictionUnit(x0 + h, y0, h, n, x0, y0, log2Size, 1, false, partMode);
+                parsePredictionUnit(0, x0, y0, h, n, x0, y0, false, partMode);
+                parsePredictionUnit(1, x0 + h, y0, h, n, x0, y0, false, partMode);
             }
             case PART_2NxnU -> {
-                predictionUnit(x0, y0, n, q, x0, y0, log2Size, 0, false, partMode);
-                predictionUnit(x0, y0 + q, n, n * 3 / 4, x0, y0, log2Size, 1, false, partMode);
+                parsePredictionUnit(0, x0, y0, n, q, x0, y0, false, partMode);
+                parsePredictionUnit(1, x0, y0 + q, n, n * 3 / 4, x0, y0, false, partMode);
             }
             case PART_2NxnD -> {
-                predictionUnit(x0, y0, n, n * 3 / 4, x0, y0, log2Size, 0, false, partMode);
-                predictionUnit(x0, y0 + n * 3 / 4, n, q, x0, y0, log2Size, 1, false, partMode);
+                parsePredictionUnit(0, x0, y0, n, n * 3 / 4, x0, y0, false, partMode);
+                parsePredictionUnit(1, x0, y0 + n * 3 / 4, n, q, x0, y0, false, partMode);
             }
             case PART_nLx2N -> {
-                predictionUnit(x0, y0, q, n, x0, y0, log2Size, 0, false, partMode);
-                predictionUnit(x0 + q, y0, n * 3 / 4, n, x0, y0, log2Size, 1, false, partMode);
+                parsePredictionUnit(0, x0, y0, q, n, x0, y0, false, partMode);
+                parsePredictionUnit(1, x0 + q, y0, n * 3 / 4, n, x0, y0, false, partMode);
             }
             case PART_nRx2N -> {
-                predictionUnit(x0, y0, n * 3 / 4, n, x0, y0, log2Size, 0, false, partMode);
-                predictionUnit(x0 + n * 3 / 4, y0, q, n, x0, y0, log2Size, 1, false, partMode);
+                parsePredictionUnit(0, x0, y0, n * 3 / 4, n, x0, y0, false, partMode);
+                parsePredictionUnit(1, x0 + n * 3 / 4, y0, q, n, x0, y0, false, partMode);
             }
             default -> {
-                predictionUnit(x0, y0, h, h, x0, y0, log2Size, 0, false, partMode);
-                predictionUnit(x0 + h, y0, h, h, x0, y0, log2Size, 1, false, partMode);
-                predictionUnit(x0, y0 + h, h, h, x0, y0, log2Size, 2, false, partMode);
-                predictionUnit(x0 + h, y0 + h, h, h, x0, y0, log2Size, 3, false, partMode);
+                parsePredictionUnit(0, x0, y0, h, h, x0, y0, false, partMode);
+                parsePredictionUnit(1, x0 + h, y0, h, h, x0, y0, false, partMode);
+                parsePredictionUnit(2, x0, y0 + h, h, h, x0, y0, false, partMode);
+                parsePredictionUnit(3, x0 + h, y0 + h, h, h, x0, y0, false, partMode);
+                count = 4;
             }
+        }
+        finishInterUnit(x0, y0, log2Size, partMode, count);
+    }
+
+    /**
+     * Parses the coding unit extension of an inter coding unit of 3D-HEVC (I.7.3.8.5.2), then
+     * derives the motion of each prediction unit, stores it and predicts its samples, in order.
+     *
+     * @param x0 the luma x of the coding block
+     * @param y0 the luma y of the coding block
+     * @param log2Size the coding block size as a power of two
+     * @param partMode the partitioning mode
+     * @param count the number of prediction units
+     */
+    private void finishInterUnit(int x0, int y0, int log2Size, int partMode, int count) {
+        var weight = 0;
+        var illumination = false;
+        if (tools3d != null && views != null && partMode == PART_2Nx2N) {
+            var m = puMotions[0];
+            if (tools3d.ivResPred && views.rpRefPicAvail) {
+                var ctx = available(x0, y0, x0 - 1, y0)
+                        && (pic.flags[blockIndex(x0 - 1, y0)] & PictureState.RESIDUAL_PREDICTION) != 0 ? 1 : 0;
+                if (cabac.decodeBin(CabacTables.RESIDUAL_WEIGHT + ctx) == 1) {
+                    weight = 1 + cabac.decodeBin(CabacTables.RESIDUAL_WEIGHT + 2);
+                }
+            }
+            if (tools3d.icEnabled && weight == 0 && illuminationCompensationEnabled(m)) {
+                illumination = cabac.decodeBin(CabacTables.ILLU_COMP) == 1;
+            }
+            if (weight != 0) {
+                var w4 = pic.width4;
+                var blocks = 1 << (log2Size - 2);
+                var start = blockIndex(x0, y0);
+                for (var j = 0; j < blocks; j++) {
+                    for (var i = 0; i < blocks; i++) {
+                        pic.flags[start + j * w4 + i] |= (byte) PictureState.RESIDUAL_PREDICTION;
+                    }
+                }
+            }
+        }
+        var disparity = 0;
+        var disparityView = -1;
+        if (tools3d != null && views != null && tools3d.disparityDerivation) {
+            if (tools3d.depth) {
+                motion.deriveDepthDisparity();
+            } else {
+                motion.deriveDisparity(x0, y0, 1 << log2Size, this);
+            }
+            disparity = motion.disparity();
+            disparityView = motion.disparityView();
+        }
+        for (var k = 0; k < count; k++) {
+            var m = puMotions[k];
+            m.residualWeight = weight;
+            m.illuminationCompensation = illumination;
+            m.dispVec = disparity;
+            m.refViewIdx = disparityView;
+            m.cuX = x0;
+            m.cuY = y0;
+            var xPb = puX[k];
+            var yPb = puY[k];
+            var width = puWidth[k];
+            var height = puHeight[k];
+            motion.derive(x0, y0, 1 << log2Size, xPb, yPb, width, height, k, m, this);
+            storeMotion(xPb, yPb, width, height, m);
+            if (k > 0 || width != (1 << log2Size) || height != (1 << log2Size)) {
+                markEdges(xPb, yPb, width, height, PictureState.EDGE_PU_V, PictureState.EDGE_PU_H);
+            }
+            if (illumination) {
+                m.icAbove = available(xPb, yPb, xPb, yPb - 1);
+                m.icLeft = available(xPb, yPb, xPb - 1, yPb);
+            }
+            inter.predict(frame, xPb, yPb, width, height, m);
         }
     }
 
     /**
-     * Parses a prediction unit (7.3.8.6), derives its motion and predicts its samples.
+     * Returns {@code icCuEnableFlag} of a 2Nx2N coding unit (equations I-48 and I-49): whether
+     * {@code illu_comp_flag} is present.
      *
+     * @param m the parsed syntax of the prediction unit
+     * @return {@code true} when the flag is coded
+     */
+    private boolean illuminationCompensationEnabled(MotionPredictor.PuMotion m) {
+        if (m.merge) {
+            return m.mergeIdx != 0 || !tools3d.icDisabledMergeZeroIdx;
+        }
+        var view = tools3d.viewIdx;
+        return m.predFlag[1] && views.refViewIdx[1][m.refIdx[1]] != view
+                || m.predFlag[0] && views.refViewIdx[0][m.refIdx[0]] != view;
+    }
+
+    /**
+     * Parses a prediction unit (7.3.8.6) into {@link #puMotions}; {@link #finishInterUnit} derives
+     * its motion and predicts its samples.
+     *
+     * @param partIdx the partition index
      * @param xPb the luma x of the prediction block
      * @param yPb the luma y of the prediction block
      * @param width the prediction block width
      * @param height the prediction block height
      * @param xCb the luma x of the coding block
      * @param yCb the luma y of the coding block
-     * @param log2CbSize the coding block size as a power of two
-     * @param partIdx the partition index
      * @param skip whether the coding unit is skipped
      * @param partMode the partitioning mode of the coding unit
      */
-    private void predictionUnit(int xPb, int yPb, int width, int height, int xCb, int yCb, int log2CbSize, int partIdx,
-                                boolean skip, int partMode) {
+    private void parsePredictionUnit(int partIdx, int xPb, int yPb, int width, int height, int xCb, int yCb,
+                                     boolean skip, int partMode) {
         if (refList == null) {
             throw new MediaException.Malformed("inter prediction unit in a slice without reference pictures");
         }
-        var m = puMotion;
+        var m = puMotions[partIdx];
+        puMotion = m;
+        puX[partIdx] = xPb;
+        puY[partIdx] = yPb;
+        puWidth[partIdx] = width;
+        puHeight[partIdx] = height;
         m.clear();
         m.partMode = partMode;
         if (skip) {
@@ -1598,12 +1769,6 @@ public final class SliceDecoder implements NeighborAvailability {
                 m.predFlag[1] = true;
             }
         }
-        motion.derive(xCb, yCb, 1 << log2CbSize, xPb, yPb, width, height, partIdx, m, this);
-        storeMotion(xPb, yPb, width, height, m);
-        if (partIdx > 0 || width != (1 << log2CbSize) || height != (1 << log2CbSize)) {
-            markEdges(xPb, yPb, width, height, PictureState.EDGE_PU_V, PictureState.EDGE_PU_H);
-        }
-        inter.predict(frame, xPb, yPb, width, height, m);
     }
 
     /**
@@ -1684,6 +1849,33 @@ public final class SliceDecoder implements NeighborAvailability {
     private void storeMotion(int xPb, int yPb, int width, int height, MotionPredictor.PuMotion m) {
         var w4 = frame.width4;
         var start = (yPb >> 2) * w4 + (xPb >> 2);
+        if (m.ivMc) {
+            for (var j = 0; j < height >> 2; j++) {
+                for (var i = 0; i < width >> 2; i++) {
+                    pic.flags[start + j * w4 + i] |= (byte) PictureState.IV_MC;
+                }
+            }
+        }
+        if (m.subPbWidth != 0) {
+            var index = 0;
+            for (var y = 0; y < height; y += m.subPbHeight) {
+                for (var x = 0; x < width; x += m.subPbWidth) {
+                    var block = ((yPb + y) >> 2) * w4 + ((xPb + x) >> 2);
+                    var mv0 = m.subRef0[index] >= 0 ? m.subMv0[index] : 0;
+                    var mv1 = m.subRef1[index] >= 0 ? m.subMv1[index] : 0;
+                    for (var j = 0; j < m.subPbHeight >> 2; j++) {
+                        var row = block + j * w4;
+                        var end = row + (m.subPbWidth >> 2);
+                        java.util.Arrays.fill(frame.mv0, row, end, mv0);
+                        java.util.Arrays.fill(frame.mv1, row, end, mv1);
+                        java.util.Arrays.fill(frame.ref0, row, end, m.subRef0[index]);
+                        java.util.Arrays.fill(frame.ref1, row, end, m.subRef1[index]);
+                    }
+                    index++;
+                }
+            }
+            return;
+        }
         var mv0 = (m.mvY[0] << 16) | (m.mvX[0] & 0xFFFF);
         var mv1 = (m.mvY[1] << 16) | (m.mvX[1] & 0xFFFF);
         var r0 = (byte) (m.predFlag[0] ? m.refIdx[0] : -1);

@@ -9,9 +9,7 @@ import java.util.Arrays;
 /**
  * Holds a parsed sequence parameter set (ITU-T H.265 7.3.2.2) with the variables derived from it.
  *
- * <p>Parsing accepts every syntax element of the specification. The features this decoder does not
- * implement are reported by {@link #unsupportedFeature()} rather than rejected here, so that a
- * sequence parameter set that is never activated does not stop the stream.
+ * <p>Parsing accepts every syntax element of the specification, the 3D-HEVC extension included.
  */
 public final class HevcSps implements Cloneable {
     /**
@@ -437,9 +435,80 @@ public final class HevcSps implements Cloneable {
     public int log2TransformRangeChroma = 15;
 
     /**
-     * Whether the set carries a 3D extension, which this decoder does not parse.
+     * Whether the set carries a 3D extension ({@code sps_3d_extension()}).
      */
     public boolean extension3d;
+
+    /**
+     * {@code iv_di_mc_enabled_flag}, by {@code DepthFlag}.
+     */
+    public final boolean[] ivDiMcEnabled = new boolean[2];
+
+    /**
+     * {@code iv_mv_scal_enabled_flag}, by {@code DepthFlag}.
+     */
+    public final boolean[] ivMvScalEnabled = new boolean[2];
+
+    /**
+     * {@code log2_ivmc_sub_pb_size_minus3[ 0 ] + 3}, or -1 until the set is parsed, which then
+     * infers it.
+     */
+    public int log2IvmcSubPbSize = -1;
+
+    /**
+     * {@code iv_res_pred_enabled_flag[ 0 ]}.
+     */
+    public boolean ivResPredEnabled;
+
+    /**
+     * {@code depth_ref_enabled_flag[ 0 ]}.
+     */
+    public boolean depthRefEnabled;
+
+    /**
+     * {@code vsp_mc_enabled_flag[ 0 ]}.
+     */
+    public boolean vspMcEnabled;
+
+    /**
+     * {@code dbbp_enabled_flag[ 0 ]}.
+     */
+    public boolean dbbpEnabled;
+
+    /**
+     * {@code tex_mc_enabled_flag[ 1 ]}.
+     */
+    public boolean texMcEnabled;
+
+    /**
+     * {@code log2_texmc_sub_pb_size_minus3[ 1 ] + 3}, or -1 when absent.
+     */
+    public int log2TexmcSubPbSize = -1;
+
+    /**
+     * {@code intra_contour_enabled_flag[ 1 ]}.
+     */
+    public boolean intraContourEnabled;
+
+    /**
+     * {@code intra_dc_only_wedge_enabled_flag[ 1 ]}.
+     */
+    public boolean intraDcOnlyWedgeEnabled;
+
+    /**
+     * {@code cqt_cu_part_pred_enabled_flag[ 1 ]}.
+     */
+    public boolean cqtCuPartPredEnabled;
+
+    /**
+     * {@code inter_dc_only_enabled_flag[ 1 ]}.
+     */
+    public boolean interDcOnlyEnabled;
+
+    /**
+     * {@code skip_intra_enabled_flag[ 1 ]}.
+     */
+    public boolean skipIntraEnabled;
 
     /**
      * Whether the set carries a screen content coding extension ({@code sps_scc_extension()}).
@@ -708,6 +777,9 @@ public final class HevcSps implements Cloneable {
                 sps.interViewMvVertConstraint = reader.readFlag();
             }
             sps.extension3d = extension3d;
+            if (extension3d) {
+                parse3dExtension(reader, sps);
+            }
             // the multiview, scalable and 3D profiles have no screen content coding extension: their sets may
             // carry the bit of a later version's extension data there, which is ignored
             var multiLayerProfile = sps.multiLayerExt || sps.profileIdc == 6 || sps.profileIdc == 7
@@ -720,10 +792,46 @@ public final class HevcSps implements Cloneable {
         if (reader.overrun()) {
             throw new MediaException.Malformed("truncated sequence parameter set");
         }
+        if (sps.log2IvmcSubPbSize < 0) {
+            sps.log2IvmcSubPbSize = sps.log2CtbSize;
+        }
         if (sps.width > 0) {
             sps.derive();
         }
         return sps;
+    }
+
+    /**
+     * Parses a {@code sps_3d_extension()} structure (I.7.3.2.2.5).
+     *
+     * @param reader the reader, positioned at the syntax structure
+     * @param sps the set being parsed
+     * @throws MediaException.Malformed if a sub-block size is out of range
+     */
+    private static void parse3dExtension(H264BitReader reader, HevcSps sps) {
+        for (var d = 0; d <= 1; d++) {
+            sps.ivDiMcEnabled[d] = reader.readFlag();
+            sps.ivMvScalEnabled[d] = reader.readFlag();
+            if (d == 0) {
+                sps.log2IvmcSubPbSize = reader.readUe(3, "log2_ivmc_sub_pb_size_minus3") + 3;
+                sps.ivResPredEnabled = reader.readFlag();
+                sps.depthRefEnabled = reader.readFlag();
+                sps.vspMcEnabled = reader.readFlag();
+                sps.dbbpEnabled = reader.readFlag();
+            } else {
+                sps.texMcEnabled = reader.readFlag();
+                sps.log2TexmcSubPbSize = reader.readUe(3, "log2_texmc_sub_pb_size_minus3") + 3;
+                sps.intraContourEnabled = reader.readFlag();
+                sps.intraDcOnlyWedgeEnabled = reader.readFlag();
+                sps.cqtCuPartPredEnabled = reader.readFlag();
+                sps.interDcOnlyEnabled = reader.readFlag();
+                sps.skipIntraEnabled = reader.readFlag();
+            }
+        }
+        if (sps.log2IvmcSubPbSize < sps.log2MinCbSize || sps.log2IvmcSubPbSize > sps.log2CtbSize
+                || sps.log2TexmcSubPbSize < sps.log2MinCbSize || sps.log2TexmcSubPbSize > sps.log2CtbSize) {
+            throw new MediaException.Malformed("3D-HEVC sub-block partition size out of range");
+        }
     }
 
     /**
@@ -967,20 +1075,6 @@ public final class HevcSps implements Cloneable {
                 && bitDepthLuma == other.bitDepthLuma && bitDepthChroma == other.bitDepthChroma
                 && log2CtbSize == other.log2CtbSize && log2MinCbSize == other.log2MinCbSize
                 && log2MinTbSize == other.log2MinTbSize;
-    }
-
-    /**
-     * Returns the name of the first feature of this sequence that the decoder does not implement,
-     * or {@code null} when it implements all of them.
-     *
-     * @return the feature name for {@link MediaException.Unsupported}, or {@code null}
-     */
-    public String unsupportedFeature() {
-        if (extension3d) {
-            // TODO: the 3D-HEVC extension of a base layer sequence parameter set (Annex I)
-            return "hevc 3D extension";
-        }
-        return null;
     }
 
     /**

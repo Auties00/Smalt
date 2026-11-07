@@ -1,3 +1,6 @@
+/* Ports the slice-level 3D-HEVC variables (disparity candidate pictures, default reference view, alternative and
+   residual prediction reference indices) of HTM-16.3 (source/Lib/TLibCommon/TComSlice.cpp, TComPic.cpp).
+   Copyright (c) 2010-2016, ITU/ISO/IEC; BSD 3-Clause License. Modified for Smalt. */
 package com.github.auties00.smalt.video.hevc.internal;
 
 import com.github.auties00.smalt.MediaException;
@@ -1010,10 +1013,6 @@ public final class HevcDecoderEngine {
             current.intraOnly = false;
         }
         activate(header.pps, header.sps);
-        var unsupported = header.pps.unsupportedFeature();
-        if (unsupported != null) {
-            throw new MediaException.Unsupported(unsupported, "the stream uses " + unsupported);
-        }
         if (header.numActiveRefLayerPics != activeRefLayerPics) {
             throw new MediaException.Malformed("slices of a picture differ in their inter-layer reference pictures");
         }
@@ -1021,6 +1020,9 @@ public final class HevcDecoderEngine {
         if (!header.isIntra()) {
             buildRefLists(header);
             lists = refList;
+            if (header.tools3d != null) {
+                header.interView = interViewContext(header);
+            }
         }
         var sliceIndex = recordSlice(header);
         if (lists != null) {
@@ -1040,6 +1042,179 @@ public final class HevcDecoderEngine {
      * {@code NumActiveRefLayerPics} of the current picture.
      */
     private int activeRefLayerPics;
+
+    /**
+     * Derives the variables a P or B slice of a layer decoded with the process of Annex I derives at
+     * its start (I.8.1.2): the candidate pictures for disparity vector derivation (I.8.3.1), the
+     * default reference view (I.8.3.2), the alternative target reference indices of temporal merging
+     * candidates (I.8.3.4) and the target reference indices of residual prediction with their
+     * reference pictures (I.8.3.5), as the reference decoder derives them.
+     *
+     * @param header the slice segment header, whose reference picture lists are built
+     * @return the context
+     */
+    private InterViewContext interViewContext(HevcSliceHeader header) {
+        var vps = planVps;
+        var tools = header.tools3d;
+        var context = new InterViewContext(tools);
+        context.viewOrderIdx = vps.viewOrderIdx;
+        context.viewIdVal = vps.viewIdVal;
+        var viewIdx = tools.viewIdx;
+        context.viewId = viewIdx < vps.viewIdVal.length ? vps.viewIdVal[viewIdx] : 0;
+        var lists = header.sliceType == HevcSliceHeader.B ? 2 : 1;
+        var poc = current.poc;
+        for (var list = 0; list < 2; list++) {
+            for (var i = 0; i < header.numRefIdx[list]; i++) {
+                var ref = refList[list][i];
+                var view = vps.viewOrderIdx[ref.layerId];
+                context.refViewIdx[list][i] = view;
+                context.refViewId[list][i] = view < vps.viewIdVal.length ? vps.viewIdVal[view] : 0;
+            }
+        }
+        for (var view = 0; view < InterViewContext.MAX_VIEWS; view++) {
+            context.textureLayer[view] = vps.viewCompLayerId(view, false);
+        }
+        for (var frame : accessUnit) {
+            if (frame != current && sameSize(frame)) {
+                if (frame.depthLayer) {
+                    context.depthPicture[frame.viewIdx] = frame;
+                } else if (frame.layerId == context.textureLayer[frame.viewIdx]) {
+                    context.texture[frame.viewIdx] = frame;
+                }
+            }
+        }
+        if (header.temporalMvpEnabled && !tools.depth) {
+            var colFromL0 = header.collocatedFromL0 ? 1 : 0;
+            var colList = header.sliceType == HevcSliceHeader.B ? 1 - colFromL0 : 0;
+            context.ddvCandPic[0] = refList[colList][header.collocatedRefIdx];
+            context.numDdvCandPics = 1;
+            var colPoc = context.ddvCandPic[0].poc;
+            var minTemporalId = 7;
+            search:
+            for (var k = 0; k < lists; k++) {
+                var x = k == 1 ? colFromL0 : 1 - colFromL0;
+                for (var i = 0; i < header.numRefIdx[x]; i++) {
+                    var ref = refList[x][i];
+                    if (context.refViewIdx[x][i] == viewIdx && (x == colFromL0 || ref.poc != colPoc)) {
+                        if (ref.viewIdx > 0 && ref.irap) {
+                            context.ddvCandPic[context.numDdvCandPics++] = ref;
+                            break search;
+                        }
+                        minTemporalId = Math.min(minTemporalId, ref.temporalId);
+                    }
+                }
+            }
+            if (context.numDdvCandPics == 1) {
+                var minPocDiff = 255;
+                HevcFrame candidate = null;
+                for (var k = 0; k < lists; k++) {
+                    var x = k == 1 ? colFromL0 : 1 - colFromL0;
+                    for (var i = 0; i < header.numRefIdx[x]; i++) {
+                        var ref = refList[x][i];
+                        var diff = Math.abs(ref.poc - poc);
+                        if (context.refViewIdx[x][i] == viewIdx && (x == colFromL0 || ref.poc != colPoc)
+                                && ref.temporalId == minTemporalId && diff < minPocDiff) {
+                            minPocDiff = diff;
+                            candidate = ref;
+                        }
+                    }
+                }
+                if (candidate != null) {
+                    context.ddvCandPic[context.numDdvCandPics++] = candidate;
+                }
+            }
+        }
+        search:
+        for (var view = 0; view < viewIdx; view++) {
+            for (var list = 0; list < lists; list++) {
+                for (var i = 0; i < header.numRefIdx[list]; i++) {
+                    if (refList[list][i].poc == poc && context.refViewIdx[list][i] == view) {
+                        context.defaultRefViewIdx = view;
+                        context.dispAvail = true;
+                        break search;
+                    }
+                }
+            }
+        }
+        for (var list = 0; list < lists; list++) {
+            if (header.numRefIdx[list] == 0) {
+                continue;
+            }
+            var zeroLongTerm = longTermEntry(refList[list][0]);
+            for (var i = 1; i < header.numRefIdx[list]; i++) {
+                if (zeroLongTerm != longTermEntry(refList[list][i])) {
+                    context.altRefIdx[list] = i;
+                    break;
+                }
+            }
+        }
+        if (tools.ivResPred && !HevcNal.isIrap(header.nalType)) {
+            for (var list = 0; list < lists; list++) {
+                var best = Integer.MAX_VALUE;
+                for (var i = 0; i < header.numRefIdx[list]; i++) {
+                    var diff = Math.abs(refList[list][i].poc - poc);
+                    if (diff != 0 && diff < best) {
+                        best = diff;
+                        context.rpRefIdx[list] = i;
+                    }
+                }
+            }
+            context.rpRefPicAvail = (context.rpRefIdx[0] >= 0 || context.rpRefIdx[1] >= 0) && context.dispAvail;
+        }
+        if (context.rpRefPicAvail) {
+            for (var list = 0; list < lists; list++) {
+                if (context.rpRefIdx[list] < 0) {
+                    continue;
+                }
+                var target = refList[list][context.rpRefIdx[list]].poc;
+                for (var refLayer : header.refPicLayerId) {
+                    var view = vps.viewOrderIdx[refLayer];
+                    if (view >= InterViewContext.MAX_VIEWS) {
+                        continue;
+                    }
+                    var picV = context.texture[view];
+                    if (picV != null) {
+                        for (var value : picV.rpsCurrPoc) {
+                            if (value == target) {
+                                context.refRpRefAvail[list][view] = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            var textures = new ArrayList<HevcFrame>();
+            for (var frame : dpb) {
+                if (!frame.generated && !frame.depthLayer && frame != current && sameSize(frame)) {
+                    textures.add(frame);
+                }
+            }
+            context.textures = textures.toArray(new HevcFrame[0]);
+        }
+        return context;
+    }
+
+    /**
+     * Returns whether a picture has the size of the current picture, which the 3D-HEVC tools
+     * require of the pictures of the other views they read at the coordinates of the current one.
+     *
+     * @param frame the picture
+     * @return {@code true} when the luma sizes match
+     */
+    private boolean sameSize(HevcFrame frame) {
+        return frame.width == current.width && frame.height == current.height;
+    }
+
+    /**
+     * Returns whether a reference picture is marked as a long-term reference while the current
+     * picture is decoded, as {@link #recordSlice} records it.
+     *
+     * @param ref the reference picture
+     * @return {@code true} for a long-term reference
+     */
+    private boolean longTermEntry(HevcFrame ref) {
+        return ref == current || ref.longTerm || isInterLayer(ref);
+    }
 
     /**
      * Returns the start of each substream of a slice segment in the unescaped payload, when its
@@ -1118,7 +1293,9 @@ public final class HevcDecoderEngine {
         var poc = new int[32];
         var longTerm = new boolean[32];
         var ids = new int[32];
+        var layerIds = new int[32];
         Arrays.fill(ids, -1);
+        Arrays.fill(layerIds, -1);
         if (!header.isIntra()) {
             for (var list = 0; list < 2; list++) {
                 for (var i = 0; i < header.numRefIdx[list]; i++) {
@@ -1128,10 +1305,11 @@ public final class HevcDecoderEngine {
                     // while the picture is decoded (8.1.3, H.8.1.3)
                     longTerm[list * 16 + i] = ref == current || ref.longTerm || isInterLayer(ref);
                     ids[list * 16 + i] = ref.id;
+                    layerIds[list * 16 + i] = ref.layerId;
                 }
             }
         }
-        return current.plane(header.colorPlaneId).addSlice(poc, longTerm, ids);
+        return current.plane(header.colorPlaneId).addSlice(poc, longTerm, ids, layerIds);
     }
 
     /**
@@ -1223,10 +1401,6 @@ public final class HevcDecoderEngine {
         if (HevcNal.isRasl(type) && state.irapNoRaslOutput) {
             skipping = true;
             return;
-        }
-        var unsupported = sps.unsupportedFeature();
-        if (unsupported != null) {
-            throw new MediaException.Unsupported(unsupported, "the stream uses " + unsupported);
         }
         LimitChecks.checkPicture(limits, sps.width, sps.height);
         activate(header.pps, sps);
@@ -1356,6 +1530,17 @@ public final class HevcDecoderEngine {
         frame.layerId = state.id;
         frame.viewId = planVps != null ? planVps.viewId[state.id] : 0;
         frame.auxId = planVps != null ? planVps.auxId[state.id] : 0;
+        frame.viewIdx = planVps != null ? planVps.viewOrderIdx[state.id] : 0;
+        frame.depthLayer = planVps != null && planVps.depthLayer[state.id];
+        frame.temporalId = header.temporalId;
+        var rpsPocs = new int[rpsCount[0] + rpsCount[1] + rpsCount[2]];
+        var rpsN = 0;
+        for (var set = 0; set < 3; set++) {
+            for (var i = 0; i < rpsCount[set]; i++) {
+                rpsPocs[rpsN++] = rps[set][i].poc;
+            }
+        }
+        frame.rpsCurrPoc = rpsPocs;
         frame.layered = layeredOutput;
         frame.irap = irap;
         frame.recoveryPoint = recoveryPoint;
@@ -1517,10 +1702,6 @@ public final class HevcDecoderEngine {
             state.irapNoRaslOutput = noRaslOutput;
         } else if (recoveryStart) {
             state.irapNoRaslOutput = true;
-        }
-        var unsupported = sps.unsupportedFeature();
-        if (unsupported != null) {
-            throw new MediaException.Unsupported(unsupported, "the stream uses " + unsupported);
         }
         LimitChecks.checkPicture(limits, sps.width, sps.height);
         activate(header.pps, sps);

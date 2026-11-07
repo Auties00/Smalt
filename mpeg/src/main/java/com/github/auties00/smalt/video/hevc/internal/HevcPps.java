@@ -240,9 +240,21 @@ public final class HevcPps implements Cloneable {
     public int log2SaoOffsetScaleChroma;
 
     /**
-     * Whether the set carries a 3D extension, which this decoder does not parse.
+     * Whether the set carries a 3D extension ({@code pps_3d_extension()}).
      */
     public boolean extension3d;
+
+    /**
+     * {@code dlts_present_flag}.
+     */
+    public boolean dltsPresent;
+
+    /**
+     * The depth look-up tables of {@code pps_3d_extension()} by depth layer index (the {@code i}
+     * of {@code DepIdxToLId[ i ]}): {@code DltVal} with {@code NumValDlt} entries (equations I-14
+     * and I-16), or {@code null} for a layer whose {@code dlt_flag} is 0.
+     */
+    public int[][] depthLookUpTables = new int[0][];
 
     /**
      * {@code poc_reset_info_present_flag}.
@@ -514,6 +526,9 @@ public final class HevcPps implements Cloneable {
                 parseMultilayerExtension(reader, pps);
             }
             pps.extension3d = extension3d;
+            if (extension3d) {
+                parse3dExtension(reader, pps);
+            }
             if (sccExtension && !extension3d) {
                 parseSccExtension(reader, pps);
                 if (reader.overrun()) {
@@ -531,17 +546,105 @@ public final class HevcPps implements Cloneable {
     }
 
     /**
-     * Returns the name of the first feature of this set that the decoder does not implement, or
-     * {@code null} when it implements all of them.
+     * Parses a {@code pps_3d_extension()} structure (I.7.3.2.3.7) and derives the depth look-up
+     * tables it carries (I.7.4.3.3.7 and I.7.4.3.3.8).
      *
-     * @return the feature name for {@link MediaException.Unsupported}, or {@code null}
+     * @param reader the reader, positioned at the syntax structure
+     * @param pps the picture parameter set being parsed
+     * @throws MediaException.Malformed if a field is out of range
      */
-    public String unsupportedFeature() {
-        if (extension3d) {
-            // TODO: the 3D-HEVC extension of a base layer picture parameter set (Annex I)
-            return "hevc 3D extension";
+    private static void parse3dExtension(H264BitReader reader, HevcPps pps) {
+        pps.dltsPresent = reader.readFlag();
+        if (!pps.dltsPresent) {
+            return;
         }
-        return null;
+        var layers = reader.readBits(6) + 1;
+        var bitDepth = reader.readBits(4) + 8;
+        if (bitDepth > 16) {
+            // the depth layers have the bit depth of their luma samples, at most 16
+            throw new MediaException.Malformed("pps_bit_depth_for_depth_layers_minus8 out of range");
+        }
+        var depthMaxValue = (1 << bitDepth) - 1;
+        var tables = new int[layers][];
+        var values = new int[depthMaxValue + 1];
+        for (var i = 0; i < layers; i++) {
+            if (!reader.readFlag()) {
+                continue;
+            }
+            var predicted = reader.readFlag();
+            if (predicted && (i == 0 || tables[0] == null)) {
+                throw new MediaException.Malformed("dlt_pred_flag without a reference depth look-up table");
+            }
+            var flagsPresent = !predicted && reader.readFlag();
+            int[] table;
+            if (flagsPresent) {
+                var n = 0;
+                for (var j = 0; j <= depthMaxValue; j++) {
+                    if (reader.readFlag()) {
+                        values[n++] = j;
+                    }
+                }
+                table = java.util.Arrays.copyOf(values, n);
+            } else {
+                table = deltaLookUpTable(reader, bitDepth, depthMaxValue, predicted ? tables[0] : null);
+            }
+            tables[i] = table;
+            if (reader.overrun()) {
+                throw new MediaException.Malformed("truncated picture parameter set 3D extension");
+            }
+        }
+        pps.depthLookUpTables = tables;
+    }
+
+    /**
+     * Parses a {@code delta_dlt()} structure (I.7.3.2.3.8) and derives the depth look-up table it
+     * describes (equations I-15 and I-16).
+     *
+     * @param reader the reader, positioned at the syntax structure
+     * @param bitDepth the bit depth of the depth samples
+     * @param depthMaxValue {@code depthMaxValue}
+     * @param reference the table of the first depth layer the update applies to, or {@code null}
+     * when the table is not predicted
+     * @return {@code DltVal}, with {@code NumValDlt} entries
+     * @throws MediaException.Malformed if a field is out of range
+     */
+    private static int[] deltaLookUpTable(H264BitReader reader, int bitDepth, int depthMaxValue, int[] reference) {
+        var count = reader.readBits(bitDepth);
+        var deltas = new int[count];
+        if (count > 0) {
+            var maxDiff = count > 1 ? reader.readBits(bitDepth) : 0;
+            var minDiff = count > 2 && maxDiff > 0 ? reader.readBits(HevcVps.ceilLog2(maxDiff + 1)) + 1 : maxDiff;
+            if (minDiff > maxDiff && count > 2) {
+                throw new MediaException.Malformed("min_diff_minus1 out of range");
+            }
+            deltas[0] = reader.readBits(bitDepth);
+            var bits = maxDiff > minDiff ? HevcVps.ceilLog2(maxDiff - minDiff + 1) : 0;
+            for (var k = 1; k < count; k++) {
+                var diff = bits > 0 ? reader.readBits(bits) : 0;
+                deltas[k] = deltas[k - 1] + diff + minDiff;
+            }
+        }
+        var inUpdate = new boolean[depthMaxValue + 1];
+        for (var delta : deltas) {
+            if (delta > depthMaxValue) {
+                throw new MediaException.Malformed("depth look-up table value out of range");
+            }
+            inUpdate[delta] = true;
+        }
+        var inReference = new boolean[depthMaxValue + 1];
+        if (reference != null) {
+            for (var value : reference) {
+                inReference[value] = true;
+            }
+        }
+        var table = new int[depthMaxValue + 1];
+        var n = 0;
+        for (var j = 0; j <= depthMaxValue; j++) {
+            if (inReference[j] != inUpdate[j]) {
+                table[n++] = j;
+            }
+        }
+        return java.util.Arrays.copyOf(table, n);
     }
 
     /**
