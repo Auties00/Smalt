@@ -225,6 +225,37 @@ class HeicSequenceAlphaTest {
     }
 
     @Test
+    @DisplayName("a malformed sample fails only the frames from it on, however far the decoders read ahead")
+    void malformedSample() {
+        var color = color(FRAMES, 0);
+        var alpha = alpha(FRAMES);
+        var bad = 2;
+        var file = sequence(withOverrun(color, bad), withOverrun(alpha, bad), constant(DELTA));
+        // the frame-threaded engine reads samples ahead of its first picture, as many as its timing lets it
+        for (var attempt = 0; attempt < 8; attempt++) {
+            var still = HeicDecoder.decode(MediaSource.of(file));
+            assertTrue(still.picture().width() == color.width() && still.picture().height() == color.height(),
+                    "the first frame decodes");
+            try (var reader = HeicDecoder.openAnimation(MediaSource.of(file))) {
+                for (var frame = 0; frame < bad; frame++) {
+                    assertNotNull(reader.read(), "frame " + frame);
+                }
+                assertThrows(MediaException.Malformed.class, reader::read);
+            }
+        }
+    }
+
+    /** {@return the samples with the first NAL unit length of sample {@code index} running past the sample} */
+    private static Samples withOverrun(Samples samples, int index) {
+        var data = new ArrayList<>(samples.data());
+        var broken = data.get(index).clone();
+        broken[0] = 0x7F;
+        data.set(index, broken);
+        return new Samples(data, samples.sync(), samples.offsets(), samples.config(), samples.width(),
+                samples.height());
+    }
+
+    @Test
     @DisplayName("an alpha track with fewer samples than the color track fails the frame that has none")
     void missingAlpha() {
         var color = color(4, 0);

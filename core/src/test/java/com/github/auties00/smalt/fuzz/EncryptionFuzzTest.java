@@ -65,6 +65,11 @@ class EncryptionFuzzTest {
         if (clear == null) {
             return;
         }
+        if (!annexBCarries(packets, track.codecConfig().orElse(null))) {
+            // the clear stream splits such a NAL unit at its start code emulation, the escaped encrypted one keeps it
+            run.skip("a NAL unit holds a start code emulation, which an Annex B byte stream cannot carry");
+            return;
+        }
         var encrypted = muxTs(run, track, packets, TsMuxerOptions.builder().sampleAes(KEY, SAMPLE_AES_IV).build());
         if (encrypted == null) {
             return;
@@ -103,6 +108,40 @@ class EncryptionFuzzTest {
                 }
             }
         });
+    }
+
+    /**
+     * Tells whether every NAL unit of the length-prefixed packets survives an Annex B byte stream: none holds
+     * {@code 00 00 00}, {@code 00 00 01} or {@code 00 00 02}, and none ends with a zero byte, which a demuxer reads
+     * as a trailing zero of the next start code.
+     */
+    private static boolean annexBCarries(List<Packet> packets, byte[] config) {
+        var lengthSize = config != null && config.length > 4 && config[0] == 1 ? (config[4] & 3) + 1 : 4;
+        for (var packet : packets) {
+            var data = packet.data();
+            var position = 0;
+            while (data.length - position >= lengthSize) {
+                long size = 0;
+                for (var index = 0; index < lengthSize; index++) {
+                    size = size << 8 | (data[position + index] & 0xFF);
+                }
+                var start = position + lengthSize;
+                if (size > data.length - start) {
+                    break;
+                }
+                var end = start + (int) size;
+                if (end > start && data[end - 1] == 0) {
+                    return false;
+                }
+                for (var index = start; index + 2 < end; index++) {
+                    if (data[index] == 0 && data[index + 1] == 0 && (data[index + 2] & 0xFF) <= 2) {
+                        return false;
+                    }
+                }
+                position = end;
+            }
+        }
+        return true;
     }
 
     /**

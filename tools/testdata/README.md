@@ -927,6 +927,12 @@ release binary) run as a black box, through committed golden files made by the s
 - `make-fuzz-packets.py` writes the seeds of `EncryptionFuzzTest.encryptedMux` from small H.264, HEVC, VP9, AV1 and
   MPEG-4 Part 2 clips.
 
+`HlsSampleAesStreamTest` compares the decryption of a presentation made by another packager with ffmpeg's: the first
+four segments of the lowest H.264 variant of Unified Streaming's public SAMPLE-AES demo, third-party content that is
+never committed. `python -I tools/testdata/sample-aes-stream.py <directory>` downloads its key and segments (pinned by
+SHA-256) and writes `local.m3u8` and ffmpeg's `ffmpeg-clear.ts`; `-Dsmalt.test.sampleAesStream=<directory>` enables
+the test, which the nightly opt-in job runs.
+
 ## MPEG-4 Visual reference decoder
 
 `mpeg4-oracle/build.py` builds the Microsoft MPEG-4 Visual decoder of the ISO/IEC 14496-5 reference software

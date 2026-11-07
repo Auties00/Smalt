@@ -564,6 +564,16 @@ jobs:
           mvn -B -ntp -fae -pl image -am verify -Dtest=Vp8RtQualityTest -Dsurefire.failIfNoSpecifiedTests=false
           -Dvp8rt.quality=true -Dvp8rt.quality.out=${{ github.workspace }}/vp8rt-quality.md
 
+      # A third-party SAMPLE-AES presentation, fetched pinned and never cached or committed, against ffmpeg's
+      # decryption of it.
+      - name: Compare a SAMPLE-AES presentation of another packager with ffmpeg
+        if: ${{ !cancelled() && steps.test.outcome != 'skipped' }}
+        shell: bash
+        run: |
+          python -I tools/testdata/sample-aes-stream.py "$RUNNER_TEMP/sample-aes"
+          mvn -B -ntp -fae -pl core -am verify -Dtest=HlsSampleAesStreamTest -Dsurefire.failIfNoSpecifiedTests=false \
+            -Dsmalt.test.sampleAesStream="$RUNNER_TEMP/sample-aes"
+
       # The writers derive some seeds with the runner's ffmpeg, so a seed that differs from the committed one is
       # listed, not failed; the fuzz targets must then accept every written seed.
       - name: Write the fuzz seeds and run the fuzz targets on them

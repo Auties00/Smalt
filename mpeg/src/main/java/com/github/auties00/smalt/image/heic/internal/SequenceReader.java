@@ -264,6 +264,12 @@ public final class SequenceReader implements AnimationReader {
         private boolean flushed;
 
         /**
+         * The error of the sample whose reading or feeding failed, raised once the pictures of the samples before it
+         * are read, or {@code null}.
+         */
+        private MediaException.Malformed failure;
+
+        /**
          * Receives the decoded pictures and calls {@link #add}.
          */
         private Consumer<CodedFrame> sink;
@@ -308,6 +314,7 @@ public final class SequenceReader implements AnimationReader {
             decoder.configure(configuration);
             pictures.clear();
             flushed = false;
+            failure = null;
             fed = 0;
             lastFed = Packet.NO_SAMPLE_INDEX;
         }
@@ -379,27 +386,44 @@ public final class SequenceReader implements AnimationReader {
         }
 
         /**
-         * Feeds the next sample to the decoder, or flushes the decoder at the end of the track.
+         * Feeds the next sample to the decoder, or flushes the decoder at the end of the track or after a sample
+         * that cannot be read or fed.
          *
-         * @return {@code false} when the decoder was already flushed
+         * @return {@code false} when the decoder was already flushed at the end of the track
+         * @throws MediaException.Malformed if the decoder was flushed after a sample that cannot be read or fed
          */
         private boolean step() {
             if (flushed) {
+                if (failure != null) {
+                    throw failure;
+                }
                 return false;
             }
-            var packet = samples.get();
-            if (packet == null) {
+            try {
+                var packet = samples.get();
+                if (packet == null) {
+                    flushed = true;
+                    decoder.flush();
+                    return true;
+                }
+                var slot = fed % fedPts.length;
+                fedPts[slot] = packet.pts();
+                fedIndexes[slot] = packet.sampleIndex();
+                fedOutput[slot] = false;
+                fed++;
+                lastFed = packet.sampleIndex();
+                decoder.feed(packet.data(), packet.pts(), packet.duration());
+            } catch (MediaException.Malformed exception) {
+                // how many samples the frame-threaded engine takes ahead of its output depends on its timing, so
+                // the pictures of the samples before a malformed one are output first and the error raised after
+                failure = exception;
                 flushed = true;
-                decoder.flush();
-                return true;
+                try {
+                    decoder.flush();
+                } catch (MediaException.Malformed ignored) {
+                    // the first error is the one reported
+                }
             }
-            var slot = fed % fedPts.length;
-            fedPts[slot] = packet.pts();
-            fedIndexes[slot] = packet.sampleIndex();
-            fedOutput[slot] = false;
-            fed++;
-            lastFed = packet.sampleIndex();
-            decoder.feed(packet.data(), packet.pts(), packet.duration());
             return true;
         }
 
