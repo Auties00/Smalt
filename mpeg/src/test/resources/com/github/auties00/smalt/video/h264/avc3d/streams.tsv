@@ -1,0 +1,9 @@
+# H.264 3D-AVC streams written from scratch by tools/testdata/h264-3davc/make-stream.py (syntax) and coded by the
+# 3DV-ATM 14.0 encoder from synthetic sequences by tools/testdata/h264-3davc/atm-streams.sh (atm-*). Columns:
+# name	sha256	bytes	views	frames	content
+syntax	f4e1b62425288165eb5c1d55649bbe78bf79220135c3d90b563ac161645b7d0a	1738	2 texture + 2 depth	2	32x16 I_PCM base view components, skipped P view components, every slice header prediction source, a depth parameter set with a non-linear depth representation
+atm-drwp-p	486609cb61181157edf5eb91d458ccffdc1547623333c53331e1ef418ff68b14	6027	2 texture + 2 depth	8	128x96 texture, 64x48 depth, IPPP, CABAC, depth-range-based weighted prediction of P depth slices, a depth range per view
+atm-drwp-b	ca638a41c842f0c418d8f8895bfca9f47727f0139f52aabf391566c46f031bf7	8816	2 texture + 2 depth	9	128x96 texture, 64x48 depth, IBP, CABAC, depth-range-based weighted prediction of P and B depth slices, a depth parameter set per access unit
+atm-cavlc-dmvp	237925184fefccf0990989b7c77790c806d392b9ef38bb2fcbb543c8a8634803	6334	2 texture + 2 depth	8	128x96 texture, 64x48 depth, IBP, CAVLC, depth-based motion vector prediction, depth-first coding
+atm-cavlc-dmvp-texture-first	7abc4a4aad158c8d31c2a0a640f7d89a16b641cbd052a2984189facc072eaffa	6054	2 texture + 2 depth	8	128x96 texture, 64x48 depth, IBP, CAVLC, depth-based motion vector prediction, texture-first coding
+atm-tools-texture-first	f1ecf151e779eb3f4c21c423fc2487bd385bcd107835bae8fda10b09546c1ab2	5652	2 texture + 2 depth	8	128x96 texture, 64x48 depth, IBP, CABAC, texture-first coding with depth-based motion vector prediction, view synthesis prediction, adaptive luminance compensation and run-length skip coding

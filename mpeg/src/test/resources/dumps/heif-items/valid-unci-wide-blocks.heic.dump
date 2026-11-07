@@ -1,0 +1,14 @@
+# image dump of heif-items/valid-unci-wide-blocks.heic; regenerate with -Dsmalt.test.updateDumps=true
+format HEIC
+info ImageInfo[format=HEIC, width=8, height=6, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 8x6 yuv8 YUV444 color=IDENTITY/FULL/BT709/SRGB y=fcbcc559 u=4be1e52a v=63797da3
+  format=HEIC orientation=NORMAL source=8x6
+  icc=none exif=none xmp=none
+  profile=none
+pages 1
+page 0 ImageInfo[format=HEIC, width=8, height=6, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+picture 8x6 yuv8 YUV444 color=IDENTITY/FULL/BT709/SRGB y=fcbcc559 u=4be1e52a v=63797da3
+  format=HEIC orientation=NORMAL source=8x6
+  icc=none exif=none xmp=none
+  profile=none

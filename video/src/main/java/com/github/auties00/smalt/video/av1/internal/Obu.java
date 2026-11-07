@@ -43,6 +43,11 @@ public final class Obu {
     public static final int OBU_REDUNDANT_FRAME_HDR = 7;
 
     /**
+     * The tile list OBU type, the input of large scale tile decoding.
+     */
+    public static final int OBU_TILE_LIST = 8;
+
+    /**
      * The padding OBU type.
      */
     public static final int OBU_PADDING = 15;
