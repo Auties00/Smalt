@@ -105,6 +105,14 @@ class Mpeg4EncoderTest {
                 new Case("downloaded matrices", 176, 144, 8, advanced().bFrames(1).mpegQuantization(true)
                         .intraMatrix(matrix).interMatrix(inter).build()),
                 new Case("odd size", 202, 118, 9, advanced().bFrames(2).build()),
+                // Sizes that are not a multiple of 16 with vectors reaching past the right and bottom edges, so
+                // predictions read the partial macroblocks and the padding beyond them (ISO/IEC 14496-2:2004 7.6.4).
+                new Case("odd size, fast motion", 202, 118, 9, advanced().bFrames(2).quarterSample(true)
+                        .searchRange(64).build(), EncoderScenes.Motion.FAST),
+                new Case("odd size, four vectors", 170, 120, 9, base().searchRange(64).build(),
+                        EncoderScenes.Motion.FAST),
+                new Case("odd size, one vector", 120, 170, 9, base().fourMotionVectors(false).searchRange(64)
+                        .build(), EncoderScenes.Motion.FAST),
                 new Case("one macroblock", 16, 16, 6, advanced().bFrames(1).build()),
                 new Case("partial macroblock", 9, 7, 6, base().build()),
                 new Case("wide search", 176, 144, 6, base().searchRange(64).fixedQuantizer(6).build()),
@@ -565,19 +573,35 @@ class Mpeg4EncoderTest {
         // more, quarter samples included).
         static final int FFMPEG_MAX_DIFFERENCE = 2;
         static final int REFERENCE_MAX_DIFFERENCE = 4;
-        // With partial macroblocks the references differ beyond the VOP boundary: Smalt and ffmpeg keep the decoded
-        // samples there, the reference decoder pads from the boundary (see the README), so predictions reaching
-        // past it differ by the quantization error of those samples (measured: 5 against ffmpeg, 10 against the
-        // reference decoder at 57.7 dB).
+        // ffmpeg predicts some four-vector macroblocks whose vectors reach past a VOP size that is not a multiple of
+        // 16 differently from both editions of the reference decoder, which agree with Smalt there (measured: 5 at
+        // 54.5 dB on "odd size, four vectors"; one-vector streams stay at the transform noise).
         static final int FFMPEG_PARTIAL_MAX_DIFFERENCE = 5;
-        static final int REFERENCE_PARTIAL_MAX_DIFFERENCE = 10;
+        static final double FFMPEG_PARTIAL_PSNR = 52;
 
         static boolean partialMacroblocks(Case c) {
             return c.width() % 16 != 0 || c.height() % 16 != 0;
         }
 
+        // Only four-vector streams whose fast motion reaches past the partial macroblocks meet ffmpeg's divergence;
+        // every other case, partial sizes included, stays at the transform noise floor.
+        static boolean ffmpegDivergesPastEdge(Case c) {
+            return partialMacroblocks(c) && c.options().fourMotionVectors() && c.motion() == EncoderScenes.Motion.FAST;
+        }
+
         static Stream<Case> oracleCases() {
             return cases().filter(c -> c.width() >= 16 && c.height() >= 16);
+        }
+
+        // The 2001 edition's reference decoder pads the references of sizes that are not a multiple of 16 from the
+        // VOP boundary over the decoded samples of the partial macroblocks, which ISO/IEC 14496-2:2004 corrected, so
+        // it is compared on whole macroblocks only; the 2004 edition's checks every size.
+        static Stream<Case> wholeMacroblockCases() {
+            return oracleCases().filter(c -> !partialMacroblocks(c));
+        }
+
+        static Stream<Case> everyCase() {
+            return cases();
         }
 
         @ParameterizedTest(name = "{0}")
@@ -593,26 +617,38 @@ class Mpeg4EncoderTest {
                     Mpeg4Decoder::new).stream().map(EncoderScenes.Decoded::samples).toList());
             assertEquals(decoded.length, integer.length, "ffmpeg's decoded size");
             var bound = partialMacroblocks(c) ? FFMPEG_PARTIAL_MAX_DIFFERENCE : FFMPEG_MAX_DIFFERENCE;
-            Mpeg4DifferentialTest.idctNoiseFloor(integer, simple).and(Tolerance.psnr(60)).and(Tolerance.maxAbs(bound))
-                    .assertWithin(c + " against ffmpeg -idct int" + EncoderScenes.differences(integer, decoded,
-                            c.width(), c.height(), bound), integer, decoded);
+            var tolerance = ffmpegDivergesPastEdge(c) ? Tolerance.psnr(FFMPEG_PARTIAL_PSNR)
+                    : Mpeg4DifferentialTest.idctNoiseFloor(integer, simple).and(Tolerance.psnr(60));
+            tolerance.and(Tolerance.maxAbs(bound)).assertWithin(c + " against ffmpeg -idct int"
+                    + EncoderScenes.differences(integer, decoded, c.width(), c.height(), bound), integer, decoded);
         }
 
         @ParameterizedTest(name = "{0}")
-        @MethodSource("oracleCases")
+        @MethodSource("wholeMacroblockCases")
         @DisplayName("the ISO/IEC 14496-5 reference decoder decodes the stream within the inverse DCT drift of"
                 + " Smalt's decode")
         void reference(Case c) {
+            compareWithReference(Oracle.Tool.MPEG4REF, c);
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("everyCase")
+        @DisplayName("the 2004 edition of the reference decoder decodes the stream of any size within the inverse DCT"
+                + " drift of Smalt's decode")
+        void reference2004(Case c) {
+            compareWithReference(Oracle.Tool.MPEG4REF_2004, c);
+        }
+
+        static void compareWithReference(Oracle.Tool decoder, Case c) {
             var encoded = encode(c);
             var file = write(fileName(c, "bits"), encoded.elementary());
-            var reference = Mpeg4TestStreams.reference(file, c.width(), c.height(), file.getParent());
+            var reference = Mpeg4TestStreams.reference(decoder, file, c.width(), c.height(), file.getParent());
             var decoded = EncoderScenes.concat(EncoderScenes.decode(track(c, encoded.config()), encoded.packets(),
                     Mpeg4Decoder::new).stream().map(EncoderScenes.Decoded::samples).toList());
             assertEquals(decoded.length, reference.length, "the reference decoder's decoded size");
-            var bound = partialMacroblocks(c) ? REFERENCE_PARTIAL_MAX_DIFFERENCE : REFERENCE_MAX_DIFFERENCE;
-            Tolerance.psnr(57).and(Tolerance.maxAbs(bound)).assertWithin(c + " against the reference decoder"
-                    + EncoderScenes.differences(reference, decoded, c.width(), c.height(), bound), reference,
-                    decoded);
+            Tolerance.psnr(57).and(Tolerance.maxAbs(REFERENCE_MAX_DIFFERENCE)).assertWithin(c + " against "
+                    + decoder.id() + EncoderScenes.differences(reference, decoded, c.width(), c.height(),
+                    REFERENCE_MAX_DIFFERENCE), reference, decoded);
         }
 
         // Every scene with every packet size, B-VOP count, vector count and precision: the macroblock modes, packet

@@ -197,9 +197,13 @@ public final class H263EncoderOptions {
      * overlapped block motion compensation, and vectors that may point outside the picture; {@code false} by
      * default}
      *
-     * <p>The overlapped compensation follows ITU-T H.263 F.3, as Smalt's decoder does; ffmpeg's decoder takes some
-     * of its remote vectors differently, so its decode of these streams drifts from the encoder's reconstruction
-     * (to about 40 dB PSNR within eight pictures).
+     * <p>The overlapped compensation follows ITU-T H.263 F.3, as Smalt's decoder does, across group of blocks headers
+     * included.
+     *
+     * @apiNote Some decoders take remote vectors differently: some take a vector other than the one the macroblock to
+     * the right carries, and some take the current vector instead of the neighbor's across a group of blocks header,
+     * as F.3 does only across slices. Their decode of these streams drifts from the encoder's reconstruction, the
+     * latter only with {@link #groupOfBlocksHeaders()} on.
      */
     public boolean advancedPrediction() {
         return advancedPrediction;

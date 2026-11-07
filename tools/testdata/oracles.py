@@ -65,7 +65,7 @@ VERSION_ARGS = {
     'flac': ['--version'], 'metaflac': ['--version'], 'mkvextract': ['--version'], 'opusenc': ['--version'], 'opusdec': ['--version'], 'opus_compare': [],
     'tiffcp': [], 'tiffinfo': ['-v'], 'tiffdump': [], 'tiff2rgba': [], 'MP4Box': ['-version'],
     'mkvmerge': ['--version'], 'mkvinfo': ['--version'], 'mkvalidator': ['--version'], 'tsp': ['--version'],
-    'sox': ['--version'], 'smalt-pngdump': [], 'smalt-lcmsdump': [], 'smalt-mpeg4ref': [], 'smalt-gifenc': [], 'smalt-bcdec': [],
+    'sox': ['--version'], 'smalt-pngdump': [], 'smalt-lcmsdump': [], 'smalt-mpeg4ref': [], 'smalt-mpeg4ref-2004': [], 'smalt-gifenc': [], 'smalt-bcdec': [],
     'smalt-alacenc': [], 'smalt-at9dec': [], 'smalt-mpeg2dec': [], 'smalt-mpeg2enc': [],
     'smalt-jxsdec': [], 'smalt-jxsenc': [],
     'ultrahdr_app': [], 'avifgainmaputil': ['--version'], 'avifdec': ['--version'], 'dng_validate': [],
@@ -413,7 +413,7 @@ def build(row, target):
     executable = os.path.join(out, name + EXE)
     stamp = os.path.join(out, '.' + name)
     key = '%s %s %s' % (row['version'], row['sha256'], digest(__file__))
-    if name == 'smalt-mpeg4ref':
+    if name in ('smalt-mpeg4ref', 'smalt-mpeg4ref-2004'):
         key += ' ' + digest(os.path.join(HERE, 'mpeg4-oracle', 'build.py'))
     if name == 'dng_validate':
         key += ' ' + digest(os.path.join(HERE, 'dng-validate', 'build.py'))
@@ -567,7 +567,7 @@ def build(row, target):
             builder.build(archive, work, executable, env=env,
                           cc=os.path.join(MSYS2, 'ucrt64', 'bin', 'gcc.exe') if windows else 'cc',
                           cxx=os.path.join(MSYS2, 'ucrt64', 'bin', 'g++.exe') if windows else 'c++')
-        elif name == 'smalt-mpeg4ref':
+        elif name in ('smalt-mpeg4ref', 'smalt-mpeg4ref-2004'):
             archive = download(row['source'], row['sha256'])
             builder = load_script('mpeg4-oracle', 'build.py')
             builder.build(archive, work, cxx_compiler(target), executable, static=target.startswith('windows'),

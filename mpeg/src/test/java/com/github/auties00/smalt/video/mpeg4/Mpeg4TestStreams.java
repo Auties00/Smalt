@@ -116,9 +116,17 @@ final class Mpeg4TestStreams {
      * planar 4:2:0 frames of the given size, in display order.
      */
     static byte[] reference(Path file, int width, int height, Path work) {
-        Oracle.assume(Oracle.Tool.MPEG4REF);
-        var base = work.resolve(file.getFileName() + ".ref");
-        Oracle.run(Oracle.Tool.MPEG4REF, Duration.ofMinutes(10), List.of(file.toString(), base.toString(),
+        return reference(Oracle.Tool.MPEG4REF, file, width, height, work);
+    }
+
+    /**
+     * Decodes a raw elementary stream with one edition of the ISO/IEC 14496-5 reference decoder, {@link
+     * Oracle.Tool#MPEG4REF} or {@link Oracle.Tool#MPEG4REF_2004}.
+     */
+    static byte[] reference(Oracle.Tool decoder, Path file, int width, int height, Path work) {
+        Oracle.assume(decoder);
+        var base = work.resolve(file.getFileName() + "." + decoder.id());
+        Oracle.run(decoder, Duration.ofMinutes(10), List.of(file.toString(), base.toString(),
                 Integer.toString(width), Integer.toString(height)));
         try {
             return java.nio.file.Files.readAllBytes(Path.of(base + ".yuv"));

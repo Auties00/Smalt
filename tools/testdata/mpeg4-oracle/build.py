@@ -12,8 +12,15 @@ The sources predate standard C++, so they are compiled with compatibility header
 include the standard headers and import the stream names into the global namespace), -fpermissive, and the textual
 rewrites of modernize(), each explained where it is defined; none changes what the decoder computes.
 
-Usage: python -I build.py <directory>     (with g++ or clang++ on PATH; an MSYS2 UCRT64 shell on Windows)
-The decoder lands in <directory>/bin/smalt-mpeg4ref[.exe]; run it as
+With the argument 2004 the script builds smalt-mpeg4ref-2004 instead, the decoder of the same software as
+ISO/IEC 14496-5:2001/Amd.5:2004 publishes it ("microsoft-v2.5-040207-NTU", 2004-02-07, under the same licence). That
+version follows ISO/IEC 14496-2:2004 where the 2001 edition reads differently: the reference VOP of a rectangular
+VOP whose size is not a multiple of 16 keeps the decoded samples of its partial macroblocks and is padded from the
+macroblock-aligned rectangle (subclause 7.6.4 as corrected by the corrigendum the third edition incorporates), where
+version 2.3 pads from the VOP boundary over them.
+
+Usage: python -I build.py <directory> [2004]     (with g++ or clang++ on PATH; an MSYS2 UCRT64 shell on Windows)
+The decoder lands in <directory>/bin/smalt-mpeg4ref[.exe] (smalt-mpeg4ref-2004[.exe]); run it as
   smalt-mpeg4ref <bitstream> <output base name> <width> <height>
 which writes the decoded pictures as planar 4:2:0 8-bit frames to <output base name>.yuv.
 """
@@ -30,6 +37,11 @@ URL = ('http://web.archive.org/web/20060707164348id_/http://standards.iso.org/it
        'ISO_IEC_14496-5_2001_Software_Reference/video.zip')
 SHA256 = '73b1aa5858786eeab526c6d04e95066a4a41e7f8b4c037070bbbfa7158fa499f'
 ROOT = 'video/natural/microsoft-2.3-001213/'
+# The 2004 edition: the archive of ISO/IEC 14496-5:2001/Amd.5:2004, which carries version 2.5 of the software.
+URL_2004 = ('http://web.archive.org/web/2007id_/http://standards.iso.org/ittf/PubliclyAvailableStandards/'
+            'c039392_ISO_IEC_14496-5_2001_Amd%205_2004(E)_Reference_Software.zip')
+SHA256_2004 = 'da087115954b6d2642054bea18fa38415f905eeea88420cc9d96828df8ed4bed'
+ROOT_2004 = 'C039392e Electronic inserts/microsoft-v2.5-040207-NTU/'
 DEFINES = ['-D__TRACE_AND_STATS_', '-D__DOUBLE_PRECISION_', '-D_OBSS_']
 INCLUDES = ['sys', 'sys/encoder', 'sys/decoder', 'type', 'tools/entropy', 'tools', 'tools/sadct', 'vtc/include',
             'vtc/ztq', 'vtc/zte', 'vtc/wavelet', 'vtc/pezw', 'vtc/shape', 'vtc/main']
@@ -53,13 +65,14 @@ STREAM_NAMES = ['ios', 'istream', 'ostream', 'iostream', 'ifstream', 'ofstream',
                 'streamsize']
 
 
-def fetch(work):
-    archive = os.path.join(work, 'video.zip')
-    if not os.path.isfile(archive) or sha256(archive) != SHA256:
-        request = urllib.request.Request(URL, headers={'User-Agent': 'smalt-testdata/1'})
+def fetch(work, edition='2001'):
+    url, pinned, name = (URL_2004, SHA256_2004, 'amd5.zip') if edition == '2004' else (URL, SHA256, 'video.zip')
+    archive = os.path.join(work, name)
+    if not os.path.isfile(archive) or sha256(archive) != pinned:
+        request = urllib.request.Request(url, headers={'User-Agent': 'smalt-testdata/1'})
         with urllib.request.urlopen(request, timeout=600) as response, open(archive + '.part', 'wb') as sink:
             shutil.copyfileobj(response, sink, 1 << 20)
-        if sha256(archive + '.part') != SHA256:
+        if sha256(archive + '.part') != pinned:
             sys.exit('the reference software archive does not have the pinned SHA-256')
         os.replace(archive + '.part', archive)
     return archive
@@ -77,10 +90,12 @@ def extract(archive, source):
     if os.path.isdir(source):
         shutil.rmtree(source)
     with zipfile.ZipFile(archive) as zip:
-        for name in zip.namelist():
-            if not name.startswith(ROOT) or name.endswith('/'):
+        names = zip.namelist()
+        root = ROOT_2004 if any(name.startswith(ROOT_2004) for name in names) else ROOT
+        for name in names:
+            if not name.startswith(root) or name.endswith('/'):
                 continue
-            target = os.path.join(source, *name[len(ROOT):].split('/'))
+            target = os.path.join(source, *name[len(root):].split('/'))
             os.makedirs(os.path.dirname(target), exist_ok=True)
             data = zip.read(name)
             if name.endswith(('.cpp', '.hpp', '.h', '.c')):
@@ -108,7 +123,8 @@ FRIEND_CLASS = re.compile(r'\bfriend\s+class\s+([A-Za-z_]\w*)\s*;')
 # "const BlockMemory& blkmRet", a reference to a pointer to const Int (BlockMemory is a macro for "Int*") that its
 # callers bind to their own Int pointer: the compilers of the time bound the reference to that pointer, which a
 # standard compiler refuses (it would bind a temporary, and the callers would never see the predictor), so the
-# parameter becomes the reference to an Int pointer the code means.
+# parameter becomes the reference to an Int pointer the code means, and the casts of version 2.5's callers to that
+# const reference go with it.
 #
 # The other replacements undo the pre-standard scope of a variable declared in a for statement, which lasted to the
 # end of the enclosing block: the loops whose variable is read after them declare it before them, and the loops that
@@ -122,6 +138,7 @@ REPLACEMENTS = [
     ('m_volmd.uiVerID = m_pbitstrmIn -> getBits (4); // video_oject_layer_verid',
      'm_volmd.uiVerID = m_pbitstrmIn -> getBits (4); if (m_volmd.uiVerID > 2) m_volmd.uiVerID = 2;'),
     ('decideIntraPred (const BlockMemory& blkmRet', 'decideIntraPred (BlockMemory& blkmRet'),
+    ('decideIntraPred ((const BlockMemory&)blkmPred', 'decideIntraPred ((BlockMemory&)blkmPred'),
     ('for( int iLocal = 0; *(m_piSlicePoint + iLocal) >= 0; iLocal++ ) {',
      'int iLocal; for( iLocal = 0; *(m_piSlicePoint + iLocal) >= 0; iLocal++ ) {'),
     ('for( int i = 0; *(m_piSlicePoint + i) >= 0; i++ );', 'int i; for( i = 0; *(m_piSlicePoint + i) >= 0; i++ );'),
@@ -330,13 +347,15 @@ def build(archive, work, cxx, binary, static=False, env=None):
 
 
 def main():
-    if len(sys.argv) != 2:
+    if len(sys.argv) not in (2, 3) or len(sys.argv) == 3 and sys.argv[2] != '2004':
         sys.exit(__doc__)
+    edition = sys.argv[2] if len(sys.argv) == 3 else '2001'
     work = os.path.abspath(sys.argv[1])
     os.makedirs(work, exist_ok=True)
     windows = os.name == 'nt' or sys.platform == 'msys'
-    binary = os.path.join(work, 'bin', 'smalt-mpeg4ref' + ('.exe' if windows else ''))
-    print(build(fetch(work), work, compiler(), binary, static=windows))
+    name = 'smalt-mpeg4ref-2004' if edition == '2004' else 'smalt-mpeg4ref'
+    binary = os.path.join(work, 'bin', name + ('.exe' if windows else ''))
+    print(build(fetch(work, edition), work, compiler(), binary, static=windows))
 
 
 if __name__ == '__main__':

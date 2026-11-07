@@ -35,7 +35,9 @@
 # commit, c38887c (Apache-2.0, tools/testdata/alac-oracle); smalt-at9dec drives the ATRAC9 decoder of LibAtrac9 at
 # commit efca2e3 (MIT, tools/testdata/atrac9-oracle), built without fused multiply-adds; smalt-mpeg4ref is the MPEG-4 Visual reference decoder of ISO/IEC
 # 14496-5 (version 2.3, 2000-12-13, from the Internet Archive's copy of ISO's Publicly Available Standards), built by
-# tools/testdata/mpeg4-oracle/build.py with g++ (Homebrew's on macOS, whose clang rejects the pre-standard C++);
+# tools/testdata/mpeg4-oracle/build.py with g++ (Homebrew's on macOS, whose clang rejects the pre-standard C++), and
+# smalt-mpeg4ref-2004 the same decoder in version 2.5 (2004-02-07, from ISO/IEC 14496-5:2001/Amd.5:2004), which pads
+# the references of sizes not a multiple of 16 as ISO/IEC 14496-2:2004 does, built by the same script;
 # smalt-mpeg2ref is the MPEG-2 video reference decoder (smalt-mpeg2dec, with Smalt's inverse DCT) and encoder
 # (smalt-mpeg2enc) of ISO/IEC 13818-5 (MSSG version 1.2, from the Internet Archive's copy of ISO's Publicly
 # Available Standards), built by tools/testdata/mpeg2-oracle/build.py with the platform's C compiler;
@@ -73,6 +75,7 @@ linux-x64	openjph	0.21.3	build	https://codeload.github.com/aous72/OpenJPH/tar.gz
 linux-x64	smalt-pngdump	1.6.50	build	https://download.sourceforge.net/libpng/libpng-1.6.50.tar.xz	4df396518620a7aa3651443e87d1b2862e4e88cad135a8b93423e01706232307	-	smalt-pngdump
 linux-x64	smalt-lcmsdump	2.17	build	https://github.com/mm2/Little-CMS/releases/download/lcms2.17/lcms2-2.17.tar.gz	d11af569e42a1baa1650d20ad61d12e41af4fead4aa7964a01f93b08b53ab074	-	smalt-lcmsdump
 linux-x64	smalt-mpeg4ref	2.3-001213	build	http://web.archive.org/web/20060707164348id_/http://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-5_2001_Software_Reference/video.zip	73b1aa5858786eeab526c6d04e95066a4a41e7f8b4c037070bbbfa7158fa499f	-	smalt-mpeg4ref
+linux-x64	smalt-mpeg4ref-2004	2.5-040207	build	http://web.archive.org/web/2007id_/http://standards.iso.org/ittf/PubliclyAvailableStandards/c039392_ISO_IEC_14496-5_2001_Amd%205_2004(E)_Reference_Software.zip	da087115954b6d2642054bea18fa38415f905eeea88420cc9d96828df8ed4bed	-	smalt-mpeg4ref-2004
 linux-x64	smalt-mpeg2ref	1.2-960115	build	http://web.archive.org/web/20060630183351id_/http://standards.iso.org/ittf/PubliclyAvailableStandards/c039486_ISO_IEC_13818-5_2005_Reference_Software.zip	ba372c4069e9c96d0675e1442dbcb5a9c7f46d8ca760866bd51f185641ba759e	-	smalt-mpeg2dec,smalt-mpeg2enc
 linux-x64	smalt-jxsref	3.0.2-ED3	build	https://standards.iso.org/iso-iec/21122/-5/ed-3/en/ISO_IEC_21122-5_ED-3.zip	36efc26b92a09b7447bc6e580c902d5c19ee9e919b324609768e390d38621835	-	smalt-jxsdec,smalt-jxsenc
 linux-x64	smalt-gifenc	5.2.2	build	https://download.sourceforge.net/giflib/giflib-5.2.2.tar.gz	be7ffbd057cadebe2aa144542fd90c6838c6a083b5e8a9048b8ee3b66b29d5fb	-	smalt-gifenc
@@ -98,6 +101,7 @@ linux-arm64	libjxl	0.11.2	build	https://codeload.github.com/libjxl/libjxl/tar.gz
 linux-arm64	smalt-pngdump	1.6.50	build	https://download.sourceforge.net/libpng/libpng-1.6.50.tar.xz	4df396518620a7aa3651443e87d1b2862e4e88cad135a8b93423e01706232307	-	smalt-pngdump
 linux-arm64	smalt-lcmsdump	2.17	build	https://github.com/mm2/Little-CMS/releases/download/lcms2.17/lcms2-2.17.tar.gz	d11af569e42a1baa1650d20ad61d12e41af4fead4aa7964a01f93b08b53ab074	-	smalt-lcmsdump
 linux-arm64	smalt-mpeg4ref	2.3-001213	build	http://web.archive.org/web/20060707164348id_/http://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-5_2001_Software_Reference/video.zip	73b1aa5858786eeab526c6d04e95066a4a41e7f8b4c037070bbbfa7158fa499f	-	smalt-mpeg4ref
+linux-arm64	smalt-mpeg4ref-2004	2.5-040207	build	http://web.archive.org/web/2007id_/http://standards.iso.org/ittf/PubliclyAvailableStandards/c039392_ISO_IEC_14496-5_2001_Amd%205_2004(E)_Reference_Software.zip	da087115954b6d2642054bea18fa38415f905eeea88420cc9d96828df8ed4bed	-	smalt-mpeg4ref-2004
 linux-arm64	smalt-mpeg2ref	1.2-960115	build	http://web.archive.org/web/20060630183351id_/http://standards.iso.org/ittf/PubliclyAvailableStandards/c039486_ISO_IEC_13818-5_2005_Reference_Software.zip	ba372c4069e9c96d0675e1442dbcb5a9c7f46d8ca760866bd51f185641ba759e	-	smalt-mpeg2dec,smalt-mpeg2enc
 linux-arm64	smalt-jxsref	3.0.2-ED3	build	https://standards.iso.org/iso-iec/21122/-5/ed-3/en/ISO_IEC_21122-5_ED-3.zip	36efc26b92a09b7447bc6e580c902d5c19ee9e919b324609768e390d38621835	-	smalt-jxsdec,smalt-jxsenc
 linux-arm64	smalt-gifenc	5.2.2	build	https://download.sourceforge.net/giflib/giflib-5.2.2.tar.gz	be7ffbd057cadebe2aa144542fd90c6838c6a083b5e8a9048b8ee3b66b29d5fb	-	smalt-gifenc
@@ -125,6 +129,7 @@ windows-x64	smalt-pngdump	1.6.50	build	https://download.sourceforge.net/libpng/l
 windows-x64	smalt-lcmsdump	2.17	build	https://github.com/mm2/Little-CMS/releases/download/lcms2.17/lcms2-2.17.tar.gz	d11af569e42a1baa1650d20ad61d12e41af4fead4aa7964a01f93b08b53ab074	-	smalt-lcmsdump
 windows-x64	mkvalidator	d697611	build	https://codeload.github.com/Matroska-Org/foundation-source/tar.gz/d69761114b79c1dfcb2226ceca84452835e745c3	2c35102ed7b95db6429d168256465d6f15af10c9020138ae1d7f651d280923a9	-	mkvalidator
 windows-x64	smalt-mpeg4ref	2.3-001213	build	http://web.archive.org/web/20060707164348id_/http://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-5_2001_Software_Reference/video.zip	73b1aa5858786eeab526c6d04e95066a4a41e7f8b4c037070bbbfa7158fa499f	-	smalt-mpeg4ref
+windows-x64	smalt-mpeg4ref-2004	2.5-040207	build	http://web.archive.org/web/2007id_/http://standards.iso.org/ittf/PubliclyAvailableStandards/c039392_ISO_IEC_14496-5_2001_Amd%205_2004(E)_Reference_Software.zip	da087115954b6d2642054bea18fa38415f905eeea88420cc9d96828df8ed4bed	-	smalt-mpeg4ref-2004
 windows-x64	smalt-mpeg2ref	1.2-960115	build	http://web.archive.org/web/20060630183351id_/http://standards.iso.org/ittf/PubliclyAvailableStandards/c039486_ISO_IEC_13818-5_2005_Reference_Software.zip	ba372c4069e9c96d0675e1442dbcb5a9c7f46d8ca760866bd51f185641ba759e	-	smalt-mpeg2dec,smalt-mpeg2enc
 windows-x64	smalt-jxsref	3.0.2-ED3	build	https://standards.iso.org/iso-iec/21122/-5/ed-3/en/ISO_IEC_21122-5_ED-3.zip	36efc26b92a09b7447bc6e580c902d5c19ee9e919b324609768e390d38621835	-	smalt-jxsdec,smalt-jxsenc
 windows-x64	smalt-gifenc	5.2.2	build	https://download.sourceforge.net/giflib/giflib-5.2.2.tar.gz	be7ffbd057cadebe2aa144542fd90c6838c6a083b5e8a9048b8ee3b66b29d5fb	-	smalt-gifenc
@@ -149,6 +154,7 @@ macos-arm64	libjxl	0.11.2	build	https://codeload.github.com/libjxl/libjxl/tar.gz
 macos-arm64	smalt-pngdump	1.6.50	build	https://download.sourceforge.net/libpng/libpng-1.6.50.tar.xz	4df396518620a7aa3651443e87d1b2862e4e88cad135a8b93423e01706232307	-	smalt-pngdump
 macos-arm64	smalt-lcmsdump	2.17	build	https://github.com/mm2/Little-CMS/releases/download/lcms2.17/lcms2-2.17.tar.gz	d11af569e42a1baa1650d20ad61d12e41af4fead4aa7964a01f93b08b53ab074	-	smalt-lcmsdump
 macos-arm64	smalt-mpeg4ref	2.3-001213	build	http://web.archive.org/web/20060707164348id_/http://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-5_2001_Software_Reference/video.zip	73b1aa5858786eeab526c6d04e95066a4a41e7f8b4c037070bbbfa7158fa499f	-	smalt-mpeg4ref
+macos-arm64	smalt-mpeg4ref-2004	2.5-040207	build	http://web.archive.org/web/2007id_/http://standards.iso.org/ittf/PubliclyAvailableStandards/c039392_ISO_IEC_14496-5_2001_Amd%205_2004(E)_Reference_Software.zip	da087115954b6d2642054bea18fa38415f905eeea88420cc9d96828df8ed4bed	-	smalt-mpeg4ref-2004
 macos-arm64	smalt-mpeg2ref	1.2-960115	build	http://web.archive.org/web/20060630183351id_/http://standards.iso.org/ittf/PubliclyAvailableStandards/c039486_ISO_IEC_13818-5_2005_Reference_Software.zip	ba372c4069e9c96d0675e1442dbcb5a9c7f46d8ca760866bd51f185641ba759e	-	smalt-mpeg2dec,smalt-mpeg2enc
 macos-arm64	smalt-jxsref	3.0.2-ED3	build	https://standards.iso.org/iso-iec/21122/-5/ed-3/en/ISO_IEC_21122-5_ED-3.zip	36efc26b92a09b7447bc6e580c902d5c19ee9e919b324609768e390d38621835	-	smalt-jxsdec,smalt-jxsenc
 macos-arm64	smalt-gifenc	5.2.2	build	https://download.sourceforge.net/giflib/giflib-5.2.2.tar.gz	be7ffbd057cadebe2aa144542fd90c6838c6a083b5e8a9048b8ee3b66b29d5fb	-	smalt-gifenc

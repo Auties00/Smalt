@@ -2,6 +2,7 @@
 macroblock engine shared with MPEG-4 Part 2 lacks.
 
 usage: python -I make-vectors.py <smalt checkout> <directory holding the tmn and tmndec binaries>
+       [--encoder-streams]
 
 Every stream codes a synthetic QCIF sequence (moving sinusoidal texture, a checkerboard, hashed noise and a moving
 disc) and comes with the MD5 of the decoder reconstruction it implies when blocks are transformed with the double
@@ -22,6 +23,11 @@ sample:
   smalt-b-ist, smalt-ipb-ist) are also decoded with tmndec -r, which must reproduce the reconstruction exactly
   (origin smalt-h263enc+tmndec), and smalt-dps-b-ist and smalt-dps-ipb-ist code the pictures of smalt-b-ist and
   smalt-ipb-ist in data partitioned slices, which must reconstruct the same.
+- the smalt-encoder-* streams are coded by Smalt's H.263 encoder in the Advanced Prediction mode (Annex F, with
+  Annexes D, I, J and T in some), as H263EncoderTmnTest codes them; that test writes them with
+  -Dsmalt.test.writeTmnVectors=<directory>, and they are copied into the output directory before the script runs.
+  Their reference is the decode of tmndec -r (origin smalt-encoder+tmndec). With --encoder-streams the script only
+  rewrites their rows of an existing golden.tsv.
 
 The script writes the streams and golden.tsv into mpeg/src/test/resources/com/github/auties00/smalt/video/h263/annex/.
 golden.tsv holds per stream: the file, its origin, the SHA-256 of the file, the number of pictures each
@@ -144,10 +150,38 @@ def write(out, rows, name, origin, stream, frames, size, refs):
     print(name, len(stream), 'bytes', frames)
 
 
+# Smalt encoder streams decoded by tmndec -r: name, picture size
+ENCODER = [
+    ('smalt-encoder-f', '176x144'), ('smalt-encoder-f-still', '176x144'), ('smalt-encoder-df-fast', '176x144'),
+    ('smalt-encoder-fijt', '176x144'), ('smalt-encoder-df-cif', '352x288'),
+]
+
+
+def encoder_rows(binaries, work, out):
+    """Returns the golden.tsv rows of the committed Smalt encoder streams, decoded with tmndec -r."""
+    rows = []
+    for name, size in ENCODER:
+        stream = open(os.path.join(out, name + '.263'), 'rb').read()
+        ref = tmndec_decode(binaries, work, name, stream)
+        w, h = map(int, size.split('x'))
+        rows.append('\t'.join([name + '.263', 'smalt-encoder+tmndec', hashlib.sha256(stream).hexdigest(),
+                               str(len(ref) // (w * h * 3 // 2)), size, hashlib.md5(ref).hexdigest()]))
+        print(name, len(stream), 'bytes')
+    return rows
+
+
 def main():
     checkout, binaries = sys.argv[1], sys.argv[2]
     out = os.path.join(checkout, 'mpeg/src/test/resources/com/github/auties00/smalt/video/h263/annex')
     os.makedirs(out, exist_ok=True)
+    if '--encoder-streams' in sys.argv[3:]:
+        golden = os.path.join(out, 'golden.tsv')
+        kept = [line for line in open(golden).read().splitlines()
+                if not line.startswith(tuple(name + '.263\t' for name, _ in ENCODER))]
+        with tempfile.TemporaryDirectory() as work:
+            kept += encoder_rows(binaries, work, out)
+        open(golden, 'w', newline='\n').write('\n'.join(kept) + '\n')
+        return
     h263enc.load_tcoef(os.path.join(checkout, 'mpeg/src/main/java/com/github/auties00/smalt/video/mpeg4/internal',
                                     'Tables.java'))
     qcif = source(176, 144, FRAMES)
@@ -179,6 +213,7 @@ def main():
             if name in TWINS:
                 assert refs == made[TWINS[name]], name + ' differs from ' + TWINS[name]
             write(out, rows, name, origin, bits.data(), [len(g) for g in groups], size, refs)
+        rows += encoder_rows(binaries, work, out)
     open(os.path.join(out, 'golden.tsv'), 'w', newline='\n').write('\n'.join(rows) + '\n')
 
 

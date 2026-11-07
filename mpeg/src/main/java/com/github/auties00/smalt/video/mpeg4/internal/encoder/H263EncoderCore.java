@@ -110,8 +110,6 @@ public final class H263EncoderCore {
     public H263EncoderCore(Settings settings) {
         this.settings = settings;
         this.format = settings.customFormat() ? 6 : formatOf(settings.width(), settings.height());
-        // TODO: check the overlapped motion compensation of Annex F against an independent decoder (the ITU-T TMN
-        //  decoder); ffmpeg's decode of the encoder's Advanced Prediction streams drifts to about 40 dB PSNR.
         var fourVectors = settings.advancedPrediction() || settings.deblocking();
         var tools = new PictureCoder.Tools(true, settings.extendedType(), settings.unrestrictedVectors(),
                 settings.advancedPrediction(), fourVectors, settings.advancedIntra(), settings.deblocking(),

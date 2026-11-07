@@ -1792,10 +1792,16 @@ channels, or two tracks, at 32 kHz in 12 bits. A DV source is copied when no for
   Interlaced direct mode follows ISO/IEC 14496-2 7.7.2.2, as the Windows Media Foundation decoder does;
   ffmpeg's encoder predicts those macroblocks as progressive direct ones, so its interlaced B-VOPs drift
   from what it meant (about 49 dB) wherever the backward reference has field-predicted macroblocks.
-  Overlapped motion compensation follows ITU-T H.263 F.3, and matches the TMN10 reference encoder; ffmpeg's
-  decoder takes some remote vectors differently, so H.263 Advanced Prediction streams differ from its decode
-  by up to about a decibel; the H.263 encoder's own Advanced Prediction streams, which use four vectors often,
-  drift further in ffmpeg's decode (to about 40 dB PSNR against Smalt's decode within eight pictures).
+  Overlapped motion compensation follows ITU-T H.263 F.3, and matches the TMN10 reference encoder; the H.263
+  encoder's Advanced Prediction streams without group of blocks headers decode in the TMN 3.2 decoder exactly as in
+  Smalt's with the same inverse DCT. ffmpeg's decoder takes some remote vectors differently, so H.263 Advanced Prediction streams differ from its
+  decode by up to about a decibel, and the encoder's own, which use four vectors often, drift further in it (to
+  about 40 dB PSNR against Smalt's decode within eight pictures). Across a group of blocks with a non-empty header,
+  F.3 takes the remote vectors as inside the group (in every edition of the Recommendation since 1996, and as
+  ffmpeg's encoder does), and so does Smalt; the TMN 3.2 decoder and Intel's Draft 20 H.263+ codec take the current
+  vector there, as in slices, so Advanced Prediction streams with group of blocks headers decode differently between
+  them and Smalt (Intel's `dfijst` test stream drifts to about 45 dB from its own decode, and the encoder's streams
+  with `groupOfBlocksHeaders` to about 50 dB in the TMN decoder).
   H.263 frames are handed out once the next I-, P-, EI- or EP-picture is decoded (or at flush), since B-pictures
   and the B-parts of PB-frames display before the picture that follows them. Improved PB-frames follow the
   Recommendation and the TMN test model, predicting the B-part forward with rounding type 0 and deblocking it with
@@ -1818,10 +1824,12 @@ channels, or two tracks, at 32 kHz in 12 bits. A DV source is copied when no for
   decoder reads, are not coded: PB-frames and Improved PB-frames, B-, EI- and EP-pictures, syntax-based arithmetic
   coding, reference picture selection and resampling, reduced-resolution update, independent segments, the
   alternative inter VLC, rectangular or arbitrarily ordered slices and data partitioned slices. Both rate controls
-  choose one quantizer per picture. When the MPEG-4 picture size is not a multiple of 16, Smalt's decoder, like
-  ffmpeg's, predicts from the decoded samples of the partial macroblocks beyond the VOP boundary, while the
-  ISO/IEC 14496-5 reference decoder pads its references from the VOP boundary, so the reference decoder's decode
-  of such streams, the encoder's included, differs from Smalt's by up to about 10 sample values (58 dB).
+  choose one quantizer per picture.
+- When the MPEG-4 Part 2 picture size is not a multiple of 16, the reference pictures keep the decoded samples of the
+  partial macroblocks and are padded from the macroblock-aligned rectangle, as ISO/IEC 14496-2:2004 7.6.4 (corrected
+  in its third edition) and the reference software of ISO/IEC 14496-5 Amd.5:2004 do, and as Xvid and ffmpeg do; the
+  reference software of 14496-5:2001 and the encoders that follow the 2001 text pad from the VOP boundary, so their
+  streams of such sizes drift in Smalt's decode and Smalt's in theirs.
 - MPEG-4 Part 2 Studio profiles and fine granularity scalability raise `MediaException.Unsupported`: the Studio
   conformance streams of ISO/IEC 14496-4 follow a later syntax than the Studio reference software of ISO/IEC
   14496-5 Amd 1, which no available decoder reconstructs, and the FGS reference software predates the final syntax,

@@ -87,6 +87,10 @@ class H263DifferentialTest {
                 new Case("slice structured", "176x144", "h263p", "-structured_slices 1 -ps 300", Reference.DECODER),
                 new Case("advanced prediction", "176x144", "h263", "-obmc 1 -flags +mv4", Reference.ENCODER),
                 new Case("advanced prediction CIF", "352x288", "h263", "-obmc 1 -flags +mv4", Reference.ENCODER),
+                // Non-empty GOB headers, across which F.3 takes the remote vectors as inside a GOB (the TMN 3.2
+                // decoder and Intel's Draft 20 codec take the current vector instead).
+                new Case("advanced prediction with GOB headers", "176x144", "h263", "-obmc 1 -flags +mv4 -ps 200",
+                        Reference.ENCODER),
                 new Case("H.263+ modes with advanced prediction", "352x288", "h263p",
                         "-flags +aic+mv4 -umv 1 -aiv 1 -obmc 1", Reference.ENCODER)
         );

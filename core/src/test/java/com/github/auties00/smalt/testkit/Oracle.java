@@ -139,6 +139,13 @@ public final class Oracle {
         MPEG4REF("smalt-mpeg4ref"),
 
         /**
+         * {@code tools/testdata/mpeg4-oracle}'s build of the same reference decoder in the version of ISO/IEC
+         * 14496-5:2001/Amd.5:2004, which pads the references of sizes not a multiple of 16 as ISO/IEC 14496-2:2004
+         * does.
+         */
+        MPEG4REF_2004("smalt-mpeg4ref-2004"),
+
+        /**
          * {@code tools/testdata/mpeg2-oracle}'s build of the MPEG-2 video reference decoder of ISO/IEC 13818-5, with
          * Smalt's inverse DCT.
          */

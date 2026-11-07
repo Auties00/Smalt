@@ -954,10 +954,8 @@ public final class PictureCoder {
         if (tools.h263()) {
             h263Header.postProcess(current, blocks, layer);
         }
-        // TODO: settle the padding of MPEG-4 references whose size is not a multiple of 16: Smalt's decoder, like
-        //  ffmpeg, predicts from the decoded samples of the partial macroblocks beyond the VOP boundary, while the
-        //  ISO/IEC 14496-5 reference decoder pads from the VOP boundary, so its decode of such streams differs by up
-        //  to about 10 sample values.
+        // A reference keeps the decoded samples of its partial macroblocks and is padded from the macroblock-aligned
+        // rectangle (ISO/IEC 14496-2:2004 7.6.4, H.263 4.1), as the decoder's references are.
         current.extendEdges(mbWidth * 16, mbHeight * 16);
         current.coded = true;
     }

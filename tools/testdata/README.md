@@ -945,6 +945,15 @@ also links an `operator new` that zeroes every allocation, since the decoder rea
 allocates before writing them, and widens the 100-byte buffers that hold its output file names. It compiles with
 `-ffp-contract=off`, since g++ otherwise fuses multiply-adds on arm64, which rounds the floating-point inverse DCT and
 shape-adaptive DCT unlike on x64 (and unlike Smalt's port, whose Java arithmetic is never fused).
+
+`build.py <directory> 2004` builds `smalt-mpeg4ref-2004` the same way from the archive of ISO/IEC 14496-5:2001/Amd.5:2004
+(version 2.5-040207 of the same software, under the same licence). The two versions read the padding of reference
+pictures whose size is not a multiple of 16 differently: version 2.3 pads from the VOP boundary over the decoded
+samples of the partial macroblocks, as the 2001 text of ISO/IEC 14496-2 7.6.4 reads, while version 2.5 keeps those
+samples and pads from the macroblock-aligned rectangle, as the corrected subclause of ISO/IEC 14496-2:2004 does (the
+correction is discussed on the mp4-tech list in November 2006, "Regarding padding in MPEG-4 part 2"). Smalt follows
+2004, so `Mpeg4EncoderTest` compares streams of every size with `smalt-mpeg4ref-2004` and only whole-macroblock sizes
+with `smalt-mpeg4ref`.
 `Mpeg4ConformanceTest` compares the ISO/IEC 14496-4 Advanced Simple streams (`mpeg4visual-vcon-asp*.bits`, Wayback
 copies) and `Mpeg4InterlacedDirectTest` its synthetic interlaced direct mode streams with its decodes. Two
 behaviors of the decoder shape those streams: it reads ahead of the last macroblock, so they end with a
@@ -1007,7 +1016,14 @@ MD5 of the reconstruction each stream implies with the double precision referenc
 decoder reproduces sample for sample with that transform. The script also decodes the `smalt-ist`, `smalt-b-ist` and
 `smalt-ipb-ist` streams (Annexes I, S and T without slices) with the TMN 3.2 decoder `tmndec -r` and fails unless it
 reproduces the encoder's reconstruction, and fails unless `smalt-dps-b-ist` and `smalt-dps-ipb-ist` (the same pictures
-in data partitioned slices) reconstruct the same as their twins. The Intel and TU Berlin / Oki H.263+ streams of the ITU-T video site (`h263plus-*` in `vectors.tsv`)
+in data partitioned slices) reconstruct the same as their twins. The `smalt-encoder-*` streams are Advanced
+Prediction streams (Annex F, some with Annexes D, I, J and T) of Smalt's own H.263 encoder, which
+`H263EncoderTmnTest` writes with `-Dsmalt.test.writeTmnVectors=<directory>` and checks byte for byte on every build;
+`make-vectors.py <checkout> <binaries> --encoder-streams` records the MD5 of their `tmndec -r` decode, and with
+`-Dsmalt.test.tmndec=<tmndec executable>` the test decodes them with the TMN decoder again, its default decode within
+the inverse DCT noise of the encoder's reconstruction. The TMN decoder takes the current vector as the remote vector
+of overlapped motion compensation across a group of blocks with a header, which ITU-T H.263 F.3 does not, so these
+streams have no group of blocks headers (`H263DifferentialTest` checks that case against ffmpeg's encoder). The Intel and TU Berlin / Oki H.263+ streams of the ITU-T video site (`h263plus-*` in `vectors.tsv`)
 are compared with their decoded sequences and logged PSNRs by `H263ConformanceTest`.
 
 ## giflib encoder oracle

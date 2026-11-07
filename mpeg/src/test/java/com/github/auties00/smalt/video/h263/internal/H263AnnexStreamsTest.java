@@ -38,8 +38,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>Every stream comes with the MD5 of the reconstruction its encoder computed with the double precision reference
  * inverse DCT of the test models, the TMN 3.2 encoder for the tmn-* streams and an encoder written from the text of the
- * Recommendation for the smalt-* ones. Decoded with the same transform, every sub-bitstream must reproduce it sample
- * for sample; decoded with the integer transform, every picture must stay within its noise floor.
+ * Recommendation for the smalt-* ones; the smalt-encoder-* streams, Advanced Prediction streams of Smalt's own encoder
+ * (see {@code H263EncoderTmnTest}), come with the MD5 of the TMN 3.2 decoder's decode with that transform. Decoded with
+ * the same transform, every sub-bitstream must reproduce it sample for sample; decoded with the integer transform,
+ * every picture must stay within its noise floor.
  */
 @DisplayName("H.263 annex streams")
 class H263AnnexStreamsTest {
@@ -73,7 +75,7 @@ class H263AnnexStreamsTest {
                     Arrays.stream(fields[3].split(",")).mapToInt(Integer::parseInt).toArray(), fields[4].split(","),
                     fields[5].split(",")));
         }
-        assertEquals(41, vectors.size(), "vectors in golden.tsv");
+        assertEquals(46, vectors.size(), "vectors in golden.tsv");
         return vectors;
     }
 
