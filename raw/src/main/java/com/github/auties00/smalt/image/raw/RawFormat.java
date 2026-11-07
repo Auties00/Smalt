@@ -40,7 +40,7 @@ public enum RawFormat {
     NEF("nef"),
 
     /**
-     * Sony ARW, SR2 and SRF.
+     * Sony ARW, ARQ, SR2 and SRF.
      */
     ARW("arw"),
 
@@ -70,6 +70,38 @@ public enum RawFormat {
     SRW("srw"),
 
     /**
+     * Epson ERF, the format of the R-D1 rangefinder cameras.
+     */
+    ERF("erf"),
+
+    /**
+     * Kodak DCR and KDC, and the TIFF-structured raw files of Kodak's DCS cameras.
+     */
+    DCR("dcr"),
+
+    /**
+     * Hasselblad 3FR and FFF, TIFF/EP-structured formats with lossless JPEG or uncompressed sensor data.
+     * The constant takes the name of the FFF extension, since a Java name cannot begin with a digit.
+     */
+    FFF("3fr"),
+
+    /**
+     * Leaf MOS, the format of Leaf's digital backs, with uncompressed or lossless JPEG sensor data.
+     */
+    MOS("mos"),
+
+    /**
+     * Phase One IIQ, the format of Phase One's digital backs and of Leaf's Credo backs. Its files give
+     * their metadata, not their sensor data.
+     */
+    IIQ("iiq"),
+
+    /**
+     * Mamiya MEF, the format of the ZD camera and back, with uncompressed 12-bit sensor data.
+     */
+    MEF("mef"),
+
+    /**
      * Minolta and Konica Minolta MRW, with uncompressed 12-bit sensor data.
      */
     MRW("mrw"),
@@ -83,7 +115,7 @@ public enum RawFormat {
     X3F("x3f"),
 
     /**
-     * Another TIFF/EP-structured raw format, such as Kodak DCR or Hasselblad 3FR.
+     * Another TIFF/EP-structured raw format.
      */
     OTHER("raw");
 
