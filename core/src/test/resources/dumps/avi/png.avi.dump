@@ -1,0 +1,18 @@
+# demux dump of avi/png.avi; regenerate with -Dsmalt.test.updateDumps=true
+format AVI
+duration 500000
+seekable true
+metadata ISFT="Lavf61.7.100"
+track 1 VIDEO PNG timebase=1/10 duration=5 config=none
+  video 64x48 orientation=NORMAL rate=10/1 sar=1/1 interlacing=PROGRESSIVE
+packets 5
+0 t1 pts=0 dts=0 dur=1 flags=KEY size=554 crc=40852e3f
+1 t1 pts=1 dts=1 dur=1 flags=KEY size=560 crc=836379f0
+2 t1 pts=2 dts=2 dur=1 flags=KEY size=555 crc=dc4f5e6b
+3 t1 pts=3 dts=3 dur=1 flags=KEY size=550 crc=3bdea4d4
+4 t1 pts=4 dts=4 dur=1 flags=KEY size=541 crc=471db7d1
+seek 0: t1@0
+seek 166666: t1@1
+seek 333333: t1@3
+seek 500000: end
+seek -1000000: t1@0

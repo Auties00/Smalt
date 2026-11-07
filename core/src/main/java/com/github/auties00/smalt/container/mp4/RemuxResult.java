@@ -11,17 +11,25 @@ import java.util.Objects;
  *
  * @param inputFormat the container format of the input
  * @param tracks the tracks of the output, with the identifiers they have in it
+ * @param sourceTrackIds the identifier of each output track's track in the input, in the order of {@code tracks}
  * @param packets the number of packets copied
  * @param durationMicros the presentation duration of the output in microseconds
  * @param outputSize the number of bytes written to the output
  */
-public record RemuxResult(ContainerFormat inputFormat, List<Track> tracks, long packets, long durationMicros,
-                          long outputSize) {
+public record RemuxResult(ContainerFormat inputFormat, List<Track> tracks, List<Integer> sourceTrackIds,
+                          long packets, long durationMicros, long outputSize) {
     /**
-     * Validates the result and copies the track list.
+     * Validates the result and copies the lists.
+     *
+     * @throws IllegalArgumentException if {@code sourceTrackIds} does not hold one identifier per track
      */
     public RemuxResult {
         Objects.requireNonNull(inputFormat, "inputFormat");
         tracks = List.copyOf(tracks);
+        sourceTrackIds = List.copyOf(sourceTrackIds);
+        if (sourceTrackIds.size() != tracks.size()) {
+            throw new IllegalArgumentException(sourceTrackIds.size() + " source track identifiers for "
+                    + tracks.size() + " tracks");
+        }
     }
 }

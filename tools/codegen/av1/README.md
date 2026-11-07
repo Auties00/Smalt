@@ -30,4 +30,4 @@ python regen.py
 and run `python ../check.py`, which regenerates every kernel into a temporary copy and fails on any
 difference from the committed files (CI runs it too). Never edit a generated region by hand: change the
 generator or its `.head`, regenerate, and commit both. After a change, run `ItxDspTest`,
-`LoopFilterDspTest`, `CdefDspTest`, `McDspTest`, `Av1ConformanceTest` and `JitRobustnessTest`.
+`LoopFilterDspTest`, `CdefDspTest`, `McDspTest`, `Av1ConformanceTest` and `VideoKernelGuardTest`.

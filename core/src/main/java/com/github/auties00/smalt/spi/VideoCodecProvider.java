@@ -79,6 +79,24 @@ public interface VideoCodecProvider {
     }
 
     /**
+     * Returns whether this provider's encoder of a codec codes the alpha planes of the pictures as a
+     * second stream when {@link VideoEncoderOptions#alpha()} is set.
+     *
+     * @implSpec The default implementation returns {@code false}. A provider that returns {@code true}
+     * creates, for options asking for alpha, an encoder whose shown packets carry the coded alpha frame in
+     * {@link com.github.auties00.smalt.track.PacketSideData#alphaFrame()}, a frame of the same codec whose
+     * decoded luma plane is the picture's straight alpha plane, coded so that the alpha stream can be
+     * decoded from every key frame of the main stream.
+     *
+     * @param codec the codec to produce, one {@link #encodes(Codec)} accepts
+     * @return {@code true} when {@link #createEncoder(Codec, VideoEncoderOptions)} honors
+     * {@link VideoEncoderOptions#alpha()} for {@code codec}
+     */
+    default boolean encodesAlpha(Codec codec) {
+        return false;
+    }
+
+    /**
      * Creates an encoder producing a codec.
      *
      * @implSpec The default implementation throws {@link UnsupportedOperationException}; a
