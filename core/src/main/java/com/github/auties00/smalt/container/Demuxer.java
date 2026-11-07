@@ -3,17 +3,26 @@ package com.github.auties00.smalt.container;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Track;
+import com.github.auties00.smalt.track.TrackDisposition;
 
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 
 /**
  * Splits a container into the packets of its elementary streams.
  *
- * <p>The track list is complete once the demuxer is constructed. {@link #read()} returns the
- * packets of every track interleaved in file order until the end of the input; callers ignore the
- * tracks they do not need.
+ * <p>{@link #read()} returns the packets of every track interleaved in file order until the end of
+ * the input; callers ignore the tracks they do not need. Every packet belongs to a track that
+ * {@link #tracks()} lists by the time the packet is returned. The track list is usually complete once
+ * the demuxer is constructed. A demuxer that can only find some tracks by reading (the later links of
+ * a chained Ogg stream read once, for example) appends each such track to {@link #tracks()} before
+ * {@link #read()} returns the track's first packet, with an identifier no other track has; the tracks
+ * listed before keep their place and description, so a list returned earlier is a prefix of a later
+ * one. A caller that meets a packet of a track it has not seen looks the track up in a fresh
+ * {@link #tracks()}.
  *
  * <p>Seeking follows the contract shared by every Smalt reader. {@link #seek(long)} positions the
  * demuxer on key frames: afterwards {@link #read()} returns, for every track, packets starting at
@@ -36,7 +45,26 @@ public interface Demuxer extends AutoCloseable {
     ContainerFormat format();
 
     /**
-     * Returns every elementary stream of the container, in container order.
+     * Returns the short name of the recognized container, which identifies a container that
+     * {@link ContainerFormat} does not name.
+     *
+     * <p>A demuxer of a {@link com.github.auties00.smalt.spi.ContainerProvider} of {@link ContainerFormat#OTHER}
+     * returns the provider's {@linkplain com.github.auties00.smalt.spi.ContainerProvider#name() name}.
+     *
+     * @implSpec The default implementation returns {@link ContainerFormat#shortName()} of {@link #format()}.
+     *
+     * @return the name, for example {@code "matroska"}
+     */
+    default String formatName() {
+        return format().shortName();
+    }
+
+    /**
+     * Returns every elementary stream of the container found so far, in container order.
+     *
+     * <p>The list is a snapshot: it does not change after it is returned. It holds every track of the
+     * container except those the demuxer finds while reading, which a later call lists after them,
+     * as the class description explains.
      *
      * @return the tracks; unmodifiable
      */
@@ -64,6 +92,18 @@ public interface Demuxer extends AutoCloseable {
     }
 
     /**
+     * Returns the dispositions the container flags one track with, such as the default track or forced subtitles.
+     *
+     * @implSpec The default implementation returns an empty set.
+     *
+     * @param trackId the identifier of the track
+     * @return the dispositions; unmodifiable, empty for an unknown track or a container that stores none
+     */
+    default Set<TrackDisposition> trackDisposition(int trackId) {
+        return Set.of();
+    }
+
+    /**
      * Returns the chapters of the presentation, in start order.
      *
      * @implSpec The default implementation returns an empty list.
@@ -72,6 +112,46 @@ public interface Demuxer extends AutoCloseable {
      */
     default List<Chapter> chapters() {
         return List.of();
+    }
+
+    /**
+     * Returns every chapter edition of the presentation, in container order.
+     *
+     * <p>Only Matroska stores several editions; the chapters of every other container form one edition.
+     * {@link #chapters()} returns the chapters of the {@linkplain ChapterEdition#defaultIndex default} one.
+     *
+     * @implSpec The default implementation returns one edition holding {@link #chapters()}, or none when there are
+     * no chapters.
+     *
+     * @return the editions; unmodifiable
+     */
+    default List<ChapterEdition> chapterEditions() {
+        var chapters = chapters();
+        return chapters.isEmpty() ? List.of() : List.of(ChapterEdition.of(chapters));
+    }
+
+    /**
+     * Returns the files embedded in the container that are not pictures, such as the fonts of
+     * subtitle tracks, in container order.
+     *
+     * @implSpec The default implementation returns an empty list.
+     *
+     * @return the attachments; unmodifiable
+     */
+    default List<Attachment> attachments() {
+        return List.of();
+    }
+
+    /**
+     * Returns the time address the container gives the first frame of the presentation, from a
+     * timecode track or tag.
+     *
+     * @implSpec The default implementation returns an empty optional.
+     *
+     * @return the timecode, or empty when the container declares none
+     */
+    default Optional<Timecode> timecode() {
+        return Optional.empty();
     }
 
     /**

@@ -2,6 +2,8 @@
    WebM project authors; BSD 3-Clause License. Modified for Smalt. */
 package com.github.auties00.smalt.video.vp8.internal;
 
+import com.github.auties00.smalt.internal.simd.KernelLintSuppress;
+import com.github.auties00.smalt.internal.simd.Simd;
 import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.IntVector;
 import jdk.incubator.vector.LongVector;
@@ -17,6 +19,8 @@ import java.nio.ByteOrder;
 
 /**
  * Implements {@link Vp8Dsp} with the Vector API; the output equals {@link ScalarVp8Dsp}'s.
+ *
+ * <p>The methods written for 256-bit vectors run the scalar kernels unless {@link Simd#WIDE} holds.
  *
  * @implNote This implementation follows the structure of libvpx's SSE2 kernels, whose saturating
  * arithmetic is exact: repeated saturating additions of same-signed terms clamp like one clamped
@@ -381,9 +385,13 @@ public final class VectorVp8Dsp extends Vp8Dsp {
 
     @Override
     public void idctAdd(short[] coef, int coefOff, byte[] dst, int dstOff, int stride) {
+        if (!Simd.WIDE) {
+            SCALAR.idctAdd(coef, coefOff, dst, dstOff, stride);
+            return;
+        }
         var v01 = INTS_8.cast(SHORTS_8.cast(ShortVector.fromArray(S128, coef, coefOff)).convertShape(VectorOperators.S2I, I256, 0));
         var v23 = INTS_8.cast(SHORTS_8.cast(ShortVector.fromArray(S128, coef, coefOff + 8)).convertShape(VectorOperators.S2I, I256, 0));
-        var zero = ShortVector.zero(S128).lanewise(VectorOperators.OR, ShortVector.zero(S128));
+        var zero = SHORTS_8.cast(ShortVector.zero(S128)).lanewise(VectorOperators.OR, ShortVector.zero(S128));
         zero.intoArray(coef, coefOff);
         zero.intoArray(coef, coefOff + 8);
         var sum = v01.lanewise(VectorOperators.ADD, v23);
@@ -410,7 +418,7 @@ public final class VectorVp8Dsp extends Vp8Dsp {
                         MIDDLE);
         var row1 = dstOff + stride;
         var res01 = ab01.lanewise(VectorOperators.ADD, dc01).blend(ab01.lanewise(VectorOperators.SUB, dc01), UPPER_PAIR).lanewise(VectorOperators.ADD, I256_4).lanewise(VectorOperators.ASHR, 3)
-                .lanewise(VectorOperators.ADD, INTS_8.cast(BYTES_8.cast(IntVector.broadcast(I64, (int) INT.get(dst, dstOff))
+                .lanewise(VectorOperators.ADD, INTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.broadcast(I64, (int) INT.get(dst, dstOff)))
                         .withLane(1, (int) INT.get(dst, row1)).reinterpretShape(B64, 0))
                         .convertShape(VectorOperators.ZERO_EXTEND_B2I, I256, 0)))
                 .lanewise(VectorOperators.MAX, I256_0).lanewise(VectorOperators.MIN, I256_255);
@@ -431,7 +439,7 @@ public final class VectorVp8Dsp extends Vp8Dsp {
         var row2 = row1 + stride;
         var row3 = row2 + stride;
         var res23 = ab23.lanewise(VectorOperators.ADD, dc23).blend(ab23.lanewise(VectorOperators.SUB, dc23), UPPER_PAIR).lanewise(VectorOperators.ADD, I256_4).lanewise(VectorOperators.ASHR, 3)
-                .lanewise(VectorOperators.ADD, INTS_8.cast(BYTES_8.cast(IntVector.broadcast(I64, (int) INT.get(dst, row2))
+                .lanewise(VectorOperators.ADD, INTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.broadcast(I64, (int) INT.get(dst, row2)))
                         .withLane(1, (int) INT.get(dst, row3)).reinterpretShape(B64, 0))
                         .convertShape(VectorOperators.ZERO_EXTEND_B2I, I256, 0)))
                 .lanewise(VectorOperators.MAX, I256_0).lanewise(VectorOperators.MIN, I256_255);
@@ -446,7 +454,7 @@ public final class VectorVp8Dsp extends Vp8Dsp {
         var row1 = dstOff + stride;
         var row2 = row1 + stride;
         var row3 = row2 + stride;
-        var pixels = BYTES_16.cast(IntVector.broadcast(I128, (int) INT.get(dst, dstOff)).withLane(1, (int) INT.get(dst, row1))
+        var pixels = BYTES_16.cast(INTS_4.cast(IntVector.broadcast(I128, (int) INT.get(dst, dstOff))).withLane(1, (int) INT.get(dst, row1))
                 .withLane(2, (int) INT.get(dst, row2)).withLane(3, (int) INT.get(dst, row3)).reinterpretShape(B128, 0));
         var out = INTS_4.cast(pixels.lanewise(VectorOperators.SUADD, ByteVector.broadcast(B128, (byte) Math.clamp(add, 0, 255)))
                 .lanewise(VectorOperators.SUSUB, ByteVector.broadcast(B128, (byte) Math.clamp(-add, 0, 255))).reinterpretShape(I128, 0));
@@ -476,6 +484,10 @@ public final class VectorVp8Dsp extends Vp8Dsp {
     @Override
     public void sixtap(byte[] src, int srcOff, int srcStride, byte[] dst, int dstOff, int dstStride,
                        int width, int height, int mx, int my, byte[] scratch) {
+        if (!Simd.WIDE) {
+            SCALAR.sixtap(src, srcOff, srcStride, dst, dstOff, dstStride, width, height, mx, my, scratch);
+            return;
+        }
         if (width == 4) {
             scalar.sixtap(src, srcOff, srcStride, dst, dstOff, dstStride, width, height, mx, my, scratch);
             return;
@@ -713,6 +725,10 @@ public final class VectorVp8Dsp extends Vp8Dsp {
     @Override
     public void bilinear(byte[] src, int srcOff, int srcStride, byte[] dst, int dstOff, int dstStride,
                          int width, int height, int mx, int my, byte[] scratch) {
+        if (!Simd.WIDE) {
+            SCALAR.bilinear(src, srcOff, srcStride, dst, dstOff, dstStride, width, height, mx, my, scratch);
+            return;
+        }
         if (width == 4) {
             scalar.bilinear(src, srcOff, srcStride, dst, dstOff, dstStride, width, height, mx, my, scratch);
             return;
@@ -834,35 +850,35 @@ public final class VectorVp8Dsp extends Vp8Dsp {
      */
     private static void transposeInWide(byte[] y, int yOff, int yStride, byte[] u, byte[] v, int uvOff, int uvStride,
             byte[] t, int tOff) {
-        var r0 = LongVector.broadcast(L256, (long) LONG.get(y, yOff))
+        var r0 = LONGS_4.cast(LongVector.broadcast(L256, (long) LONG.get(y, yOff)))
                 .withLane(1, (long) LONG.get(y, yOff + 8 * yStride))
                 .withLane(2, (long) LONG.get(u, uvOff))
                 .withLane(3, (long) LONG.get(v, uvOff));
-        var r1 = LongVector.broadcast(L256, (long) LONG.get(y, yOff + 1 * yStride))
+        var r1 = LONGS_4.cast(LongVector.broadcast(L256, (long) LONG.get(y, yOff + 1 * yStride)))
                 .withLane(1, (long) LONG.get(y, yOff + 9 * yStride))
                 .withLane(2, (long) LONG.get(u, uvOff + 1 * uvStride))
                 .withLane(3, (long) LONG.get(v, uvOff + 1 * uvStride));
-        var r2 = LongVector.broadcast(L256, (long) LONG.get(y, yOff + 2 * yStride))
+        var r2 = LONGS_4.cast(LongVector.broadcast(L256, (long) LONG.get(y, yOff + 2 * yStride)))
                 .withLane(1, (long) LONG.get(y, yOff + 10 * yStride))
                 .withLane(2, (long) LONG.get(u, uvOff + 2 * uvStride))
                 .withLane(3, (long) LONG.get(v, uvOff + 2 * uvStride));
-        var r3 = LongVector.broadcast(L256, (long) LONG.get(y, yOff + 3 * yStride))
+        var r3 = LONGS_4.cast(LongVector.broadcast(L256, (long) LONG.get(y, yOff + 3 * yStride)))
                 .withLane(1, (long) LONG.get(y, yOff + 11 * yStride))
                 .withLane(2, (long) LONG.get(u, uvOff + 3 * uvStride))
                 .withLane(3, (long) LONG.get(v, uvOff + 3 * uvStride));
-        var r4 = LongVector.broadcast(L256, (long) LONG.get(y, yOff + 4 * yStride))
+        var r4 = LONGS_4.cast(LongVector.broadcast(L256, (long) LONG.get(y, yOff + 4 * yStride)))
                 .withLane(1, (long) LONG.get(y, yOff + 12 * yStride))
                 .withLane(2, (long) LONG.get(u, uvOff + 4 * uvStride))
                 .withLane(3, (long) LONG.get(v, uvOff + 4 * uvStride));
-        var r5 = LongVector.broadcast(L256, (long) LONG.get(y, yOff + 5 * yStride))
+        var r5 = LONGS_4.cast(LongVector.broadcast(L256, (long) LONG.get(y, yOff + 5 * yStride)))
                 .withLane(1, (long) LONG.get(y, yOff + 13 * yStride))
                 .withLane(2, (long) LONG.get(u, uvOff + 5 * uvStride))
                 .withLane(3, (long) LONG.get(v, uvOff + 5 * uvStride));
-        var r6 = LongVector.broadcast(L256, (long) LONG.get(y, yOff + 6 * yStride))
+        var r6 = LONGS_4.cast(LongVector.broadcast(L256, (long) LONG.get(y, yOff + 6 * yStride)))
                 .withLane(1, (long) LONG.get(y, yOff + 14 * yStride))
                 .withLane(2, (long) LONG.get(u, uvOff + 6 * uvStride))
                 .withLane(3, (long) LONG.get(v, uvOff + 6 * uvStride));
-        var r7 = LongVector.broadcast(L256, (long) LONG.get(y, yOff + 7 * yStride))
+        var r7 = LONGS_4.cast(LongVector.broadcast(L256, (long) LONG.get(y, yOff + 7 * yStride)))
                 .withLane(1, (long) LONG.get(y, yOff + 15 * yStride))
                 .withLane(2, (long) LONG.get(u, uvOff + 7 * uvStride))
                 .withLane(3, (long) LONG.get(v, uvOff + 7 * uvStride));
@@ -927,21 +943,21 @@ public final class VectorVp8Dsp extends Vp8Dsp {
      * @param tOff    the index of the first transposed column
      */
     private static void transposeInLuma(byte[] y, int yOff, int yStride, byte[] t, int tOff) {
-        var r0 = LongVector.broadcast(L128, (long) LONG.get(y, yOff))
+        var r0 = LONGS_2.cast(LongVector.broadcast(L128, (long) LONG.get(y, yOff)))
                 .withLane(1, (long) LONG.get(y, yOff + 8 * yStride));
-        var r1 = LongVector.broadcast(L128, (long) LONG.get(y, yOff + 1 * yStride))
+        var r1 = LONGS_2.cast(LongVector.broadcast(L128, (long) LONG.get(y, yOff + 1 * yStride)))
                 .withLane(1, (long) LONG.get(y, yOff + 9 * yStride));
-        var r2 = LongVector.broadcast(L128, (long) LONG.get(y, yOff + 2 * yStride))
+        var r2 = LONGS_2.cast(LongVector.broadcast(L128, (long) LONG.get(y, yOff + 2 * yStride)))
                 .withLane(1, (long) LONG.get(y, yOff + 10 * yStride));
-        var r3 = LongVector.broadcast(L128, (long) LONG.get(y, yOff + 3 * yStride))
+        var r3 = LONGS_2.cast(LongVector.broadcast(L128, (long) LONG.get(y, yOff + 3 * yStride)))
                 .withLane(1, (long) LONG.get(y, yOff + 11 * yStride));
-        var r4 = LongVector.broadcast(L128, (long) LONG.get(y, yOff + 4 * yStride))
+        var r4 = LONGS_2.cast(LongVector.broadcast(L128, (long) LONG.get(y, yOff + 4 * yStride)))
                 .withLane(1, (long) LONG.get(y, yOff + 12 * yStride));
-        var r5 = LongVector.broadcast(L128, (long) LONG.get(y, yOff + 5 * yStride))
+        var r5 = LONGS_2.cast(LongVector.broadcast(L128, (long) LONG.get(y, yOff + 5 * yStride)))
                 .withLane(1, (long) LONG.get(y, yOff + 13 * yStride));
-        var r6 = LongVector.broadcast(L128, (long) LONG.get(y, yOff + 6 * yStride))
+        var r6 = LONGS_2.cast(LongVector.broadcast(L128, (long) LONG.get(y, yOff + 6 * yStride)))
                 .withLane(1, (long) LONG.get(y, yOff + 14 * yStride));
-        var r7 = LongVector.broadcast(L128, (long) LONG.get(y, yOff + 7 * yStride))
+        var r7 = LONGS_2.cast(LongVector.broadcast(L128, (long) LONG.get(y, yOff + 7 * yStride)))
                 .withLane(1, (long) LONG.get(y, yOff + 15 * yStride));
         LongVector x;
         x = r0.lanewise(VectorOperators.LSHR, 8).lanewise(VectorOperators.XOR, r1).lanewise(VectorOperators.AND, LongVector.broadcast(L128, (long) (0x00FF00FF00FF00FFL)));
@@ -1079,23 +1095,25 @@ public final class VectorVp8Dsp extends Vp8Dsp {
      * @param yOff    the index of the left window's top-left pixel, 8 pixels left of the macroblock
      * @param yStride the luma row stride
      */
+    @KernelLintSuppress(value = "kernel-size", reason = "a straight-line transpose of 16 loads, a few bytes over the"
+            + " house limit with their exact-receiver casts; the JIT guard measures it allocation-free at every width")
     private static void transposeOutLumaPair(byte[] t, int tOff, byte[] y, int yOff, int yStride) {
-        var r0 = LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 0).reinterpretShape(L256, 0)).rearrange(PAIR_LOW)
-                .blend(LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 256).reinterpretShape(L256, 0)).rearrange(PAIR_LOW), ODD_LANES);
-        var r1 = LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 32).reinterpretShape(L256, 0)).rearrange(PAIR_LOW)
-                .blend(LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 288).reinterpretShape(L256, 0)).rearrange(PAIR_LOW), ODD_LANES);
-        var r2 = LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 64).reinterpretShape(L256, 0)).rearrange(PAIR_LOW)
-                .blend(LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 320).reinterpretShape(L256, 0)).rearrange(PAIR_LOW), ODD_LANES);
-        var r3 = LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 96).reinterpretShape(L256, 0)).rearrange(PAIR_LOW)
-                .blend(LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 352).reinterpretShape(L256, 0)).rearrange(PAIR_LOW), ODD_LANES);
-        var r4 = LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 128).reinterpretShape(L256, 0)).rearrange(PAIR_LOW)
-                .blend(LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 384).reinterpretShape(L256, 0)).rearrange(PAIR_LOW), ODD_LANES);
-        var r5 = LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 160).reinterpretShape(L256, 0)).rearrange(PAIR_LOW)
-                .blend(LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 416).reinterpretShape(L256, 0)).rearrange(PAIR_LOW), ODD_LANES);
-        var r6 = LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 192).reinterpretShape(L256, 0)).rearrange(PAIR_LOW)
-                .blend(LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 448).reinterpretShape(L256, 0)).rearrange(PAIR_LOW), ODD_LANES);
-        var r7 = LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 224).reinterpretShape(L256, 0)).rearrange(PAIR_LOW)
-                .blend(LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 480).reinterpretShape(L256, 0)).rearrange(PAIR_LOW), ODD_LANES);
+        var r0 = LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 0)).reinterpretShape(L256, 0)).rearrange(PAIR_LOW)
+                .blend(LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 256)).reinterpretShape(L256, 0)).rearrange(PAIR_LOW), ODD_LANES);
+        var r1 = LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 32)).reinterpretShape(L256, 0)).rearrange(PAIR_LOW)
+                .blend(LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 288)).reinterpretShape(L256, 0)).rearrange(PAIR_LOW), ODD_LANES);
+        var r2 = LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 64)).reinterpretShape(L256, 0)).rearrange(PAIR_LOW)
+                .blend(LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 320)).reinterpretShape(L256, 0)).rearrange(PAIR_LOW), ODD_LANES);
+        var r3 = LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 96)).reinterpretShape(L256, 0)).rearrange(PAIR_LOW)
+                .blend(LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 352)).reinterpretShape(L256, 0)).rearrange(PAIR_LOW), ODD_LANES);
+        var r4 = LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 128)).reinterpretShape(L256, 0)).rearrange(PAIR_LOW)
+                .blend(LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 384)).reinterpretShape(L256, 0)).rearrange(PAIR_LOW), ODD_LANES);
+        var r5 = LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 160)).reinterpretShape(L256, 0)).rearrange(PAIR_LOW)
+                .blend(LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 416)).reinterpretShape(L256, 0)).rearrange(PAIR_LOW), ODD_LANES);
+        var r6 = LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 192)).reinterpretShape(L256, 0)).rearrange(PAIR_LOW)
+                .blend(LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 448)).reinterpretShape(L256, 0)).rearrange(PAIR_LOW), ODD_LANES);
+        var r7 = LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 224)).reinterpretShape(L256, 0)).rearrange(PAIR_LOW)
+                .blend(LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 480)).reinterpretShape(L256, 0)).rearrange(PAIR_LOW), ODD_LANES);
         LongVector x;
         x = r0.lanewise(VectorOperators.LSHR, 8).lanewise(VectorOperators.XOR, r1).lanewise(VectorOperators.AND, SWAP_BYTES);
         r1 = r1.lanewise(VectorOperators.XOR, x);
@@ -1169,23 +1187,25 @@ public final class VectorVp8Dsp extends Vp8Dsp {
      *                 macroblock
      * @param uvStride the chroma row stride
      */
+    @KernelLintSuppress(value = "kernel-size", reason = "a straight-line transpose of 16 loads, a few bytes over the"
+            + " house limit with their exact-receiver casts; the JIT guard measures it allocation-free at every width")
     private static void transposeOutChromaPair(byte[] t, int tOff, byte[] u, byte[] v, int uvOff, int uvStride) {
-        var r0 = LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 0).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH)
-                .blend(LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 256).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH), ODD_LANES);
-        var r1 = LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 32).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH)
-                .blend(LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 288).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH), ODD_LANES);
-        var r2 = LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 64).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH)
-                .blend(LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 320).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH), ODD_LANES);
-        var r3 = LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 96).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH)
-                .blend(LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 352).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH), ODD_LANES);
-        var r4 = LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 128).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH)
-                .blend(LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 384).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH), ODD_LANES);
-        var r5 = LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 160).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH)
-                .blend(LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 416).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH), ODD_LANES);
-        var r6 = LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 192).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH)
-                .blend(LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 448).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH), ODD_LANES);
-        var r7 = LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 224).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH)
-                .blend(LONGS_4.cast(ByteVector.fromArray(B256, t, tOff + 480).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH), ODD_LANES);
+        var r0 = LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 0)).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH)
+                .blend(LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 256)).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH), ODD_LANES);
+        var r1 = LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 32)).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH)
+                .blend(LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 288)).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH), ODD_LANES);
+        var r2 = LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 64)).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH)
+                .blend(LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 320)).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH), ODD_LANES);
+        var r3 = LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 96)).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH)
+                .blend(LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 352)).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH), ODD_LANES);
+        var r4 = LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 128)).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH)
+                .blend(LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 384)).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH), ODD_LANES);
+        var r5 = LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 160)).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH)
+                .blend(LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 416)).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH), ODD_LANES);
+        var r6 = LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 192)).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH)
+                .blend(LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 448)).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH), ODD_LANES);
+        var r7 = LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 224)).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH)
+                .blend(LONGS_4.cast(BYTES_32.cast(ByteVector.fromArray(B256, t, tOff + 480)).reinterpretShape(L256, 0)).rearrange(PAIR_HIGH), ODD_LANES);
         LongVector x;
         x = r0.lanewise(VectorOperators.LSHR, 8).lanewise(VectorOperators.XOR, r1).lanewise(VectorOperators.AND, SWAP_BYTES);
         r1 = r1.lanewise(VectorOperators.XOR, x);
@@ -1254,6 +1274,11 @@ public final class VectorVp8Dsp extends Vp8Dsp {
     public void filterNormal(byte[] y, int yOff, int yStride, byte[] u, byte[] v, int uvOff, int uvStride,
                              int mbLimit, int subLimit, int interiorLimit, int hevThreshold, int edges,
                              byte[] scratch) {
+        if (!Simd.WIDE) {
+            SCALAR.filterNormal(y, yOff, yStride, u, v, uvOff, uvStride, mbLimit, subLimit, interiorLimit,
+                    hevThreshold, edges, scratch);
+            return;
+        }
         if ((edges & (EDGE_LEFT | EDGE_INNER)) == EDGE_INNER) {
             scalar.filterNormal(y, yOff, yStride, u, v, uvOff, uvStride, mbLimit, subLimit, interiorLimit, hevThreshold,
                     edges, scratch);
@@ -1297,7 +1322,7 @@ public final class VectorVp8Dsp extends Vp8Dsp {
             var rows = 8 - firstRow;
             for (var r = 0; r < rows; r++) {
                 var src = uvOff + (firstRow + r) * uvStride;
-                BYTES_16.cast(LongVector.broadcast(L128, (long) LONG.get(u, src)).withLane(1, (long) LONG.get(v, src)).reinterpretShape(B128, 0)).intoArray(scratch, CHROMA_ROWS + r * 16);
+                BYTES_16.cast(LONGS_2.cast(LongVector.broadcast(L128, (long) LONG.get(u, src))).withLane(1, (long) LONG.get(v, src)).reinterpretShape(B128, 0)).intoArray(scratch, CHROMA_ROWS + r * 16);
             }
             if (top) {
                 mbFilter(scratch, CHROMA_ROWS + 4 * 16, 16, mbl, il, hev);
@@ -1590,7 +1615,7 @@ public final class VectorVp8Dsp extends Vp8Dsp {
         var qs0 = q0.lanewise(VectorOperators.XOR, B128_128);
         var qs1 = q1.lanewise(VectorOperators.XOR, B128_128);
         var d = qs0.lanewise(VectorOperators.SSUB, ps0);
-        var fv = ByteVector.zero(B128).blend(ps1.lanewise(VectorOperators.SSUB, qs1).lanewise(VectorOperators.SADD, d)
+        var fv = BYTES_16.cast(ByteVector.zero(B128)).blend(ps1.lanewise(VectorOperators.SSUB, qs1).lanewise(VectorOperators.SADD, d)
                 .lanewise(VectorOperators.SADD, d).lanewise(VectorOperators.SADD, d), mask);
         var filter1 = fv.lanewise(VectorOperators.SADD, B128_4).lanewise(VectorOperators.ASHR, 3);
         var filter2 = fv.lanewise(VectorOperators.SADD, B128_3).lanewise(VectorOperators.ASHR, 3);

@@ -17,15 +17,31 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * Replaces the EXIF and XMP items of a HEIC or AVIF file (ISO/IEC 23008-12).
+ * Replaces the EXIF and XMP items and the ICC color property of the primary item of a HEIC or
+ * AVIF file (ISO/IEC 23008-12).
  *
  * <p>The top-level {@code meta} box is rebuilt: the item information ({@code iinf}), locations
  * ({@code iloc}), references ({@code iref}) and property associations ({@code ipma}) lose the
  * removed items and gain the new ones, which describe the primary item through {@code cdsc}
- * references and keep their data in a new {@code mdat} box appended to the file. The absolute
+ * references and keep their data in a new {@code mdat} box appended to the file (before the
+ * {@code mfra} box that ends a fragmented file, which readers locate from the end). The absolute
  * offsets of the other items move with the change in size of {@code meta}; the bytes of the
  * removed items are zeroed, so a removed GPS position leaves no trace. The image data is copied
  * unchanged.
+ *
+ * <p>A new ICC profile replaces the {@code colr} property of type {@code prof} or {@code rICC}
+ * the primary item is associated with, in place when no other item shares it, or is added to
+ * {@code ipco} and associated with the primary item before its transformative properties; a
+ * removed profile loses its association, and its property is dropped when no other item uses it.
+ * The {@code nclx} {@code colr} property, which carries the matrix and range the decoding needs,
+ * is kept either way.
+ *
+ * <p>The tracks of an image sequence ({@code moov}, and the {@code moof} and {@code mfra} boxes
+ * of a fragmented one) are kept: the absolute offsets they hold ({@code stco}, {@code co64} and
+ * {@code saio} chunk and auxiliary-information offsets, {@code tfhd} base data offsets and
+ * {@code tfra} fragment offsets) move with the data they point at; the offsets a track fragment
+ * holds relative to its base ({@code trun} data offsets and the {@code saio} offsets of a
+ * {@code traf}) stay as they are.
  */
 final class HeifMetaEditor {
     /**
@@ -69,20 +85,43 @@ final class HeifMetaEditor {
     private final List<Object[]> children;
 
     /**
+     * The resource bounds.
+     */
+    private final MediaLimits limits;
+
+    /**
+     * The offset and size of every top-level {@code moov}, {@code moof} and {@code mfra} box.
+     */
+    private final List<long[]> tracks;
+
+    /**
+     * The offset of the {@code mfra} box that ends the file, which readers find through the
+     * {@code mfro} box at the end of the file, or the size of the file when no such box ends it;
+     * the data of new items goes before it.
+     */
+    private final long tail;
+
+    /**
      * Parses the top-level boxes and the {@code meta} box.
      *
      * @param source the HEIF file
      * @param limits the resource bounds
-     * @throws MediaException.Malformed if the boxes are corrupt or {@code meta} is missing
-     * @throws MediaException.Unsupported if the file is an image sequence ({@code moov})
+     * @throws MediaException.Malformed if the boxes are corrupt or {@code meta} is missing from a
+     * file without tracks
+     * @throws MediaException.Unsupported if the file is an image sequence without a {@code meta}
+     * box
      */
     HeifMetaEditor(MediaSource source, MediaLimits limits) {
         this.source = source;
+        this.limits = limits;
+        this.tracks = new ArrayList<>();
         var size = source.size();
         var position = 0L;
         var count = 0;
         long found = -1;
         long foundSize = -1;
+        var last = "";
+        var lastOffset = 0L;
         while (size - position >= 8) {
             if (++count > MAX_BOXES) {
                 throw new MediaException.Malformed("more than " + MAX_BOXES + " top-level HEIF boxes");
@@ -98,14 +137,20 @@ final class HeifMetaEditor {
                 throw new MediaException.Malformed("invalid HEIF box size " + boxSize + " at offset " + position);
             }
             var type = new String(header, 4, 4, StandardCharsets.ISO_8859_1);
-            if (type.equals("moov")) {
-                throw new MediaException.Unsupported("heif", "editing the metadata of HEIF image sequences is not supported");
+            if (type.equals("moov") || type.equals("moof") || type.equals("mfra")) {
+                tracks.add(new long[]{position, boxSize});
             }
             if (type.equals("meta") && found < 0) {
                 found = position;
                 foundSize = boxSize;
             }
+            last = type;
+            lastOffset = position;
             position += boxSize;
+        }
+        this.tail = last.equals("mfra") && position == size && lastOffset > found ? lastOffset : size;
+        if (found < 0 && !tracks.isEmpty()) {
+            throw new MediaException.Unsupported("heif", "a HEIF image sequence without a primary item cannot be edited");
         }
         if (found < 0) {
             throw new MediaException.Malformed("HEIF file without a meta box");
@@ -127,17 +172,22 @@ final class HeifMetaEditor {
     }
 
     /**
-     * Plans the output with the EXIF and XMP items replaced.
+     * Plans the output with the EXIF and XMP items and the ICC profile of the primary item
+     * replaced.
      *
      * @param replaceExif whether the EXIF items change
      * @param exif the new EXIF block, or {@code null} to remove the items
      * @param replaceXmp whether the XMP items change
      * @param xmp the new XMP packet bytes, or {@code null} to remove the items
+     * @param replaceIcc whether the ICC profile changes
+     * @param icc the new ICC profile, or {@code null} to remove it
      * @return the plan
-     * @throws MediaException.Malformed if an item box is corrupt
-     * @throws MediaException.Unsupported if the file has no primary item
+     * @throws MediaException.Malformed if an item box or a track box is corrupt
+     * @throws MediaException.Unsupported if the file has no primary item, or a track holds item
+     * locations of its own
+     * @throws MediaException.LimitExceeded if a moved offset no longer fits its field
      */
-    EditPlan plan(boolean replaceExif, byte[] exif, boolean replaceXmp, byte[] xmp) {
+    EditPlan plan(boolean replaceExif, byte[] exif, boolean replaceXmp, byte[] xmp, boolean replaceIcc, byte[] icc) {
         var iloc = Iloc.parse(child("iloc"));
         var infos = parseInfos(child("iinf"));
         var pitm = child("pitm");
@@ -183,15 +233,25 @@ final class HeifMetaEditor {
         for (var item : added) {
             newDataLength += ((byte[]) item[3]).length;
         }
-        var draft = buildMeta(iloc, infos, removed, added, primary, wide, 0, 0, idatZeros);
+        var colors = new IccChange(replaceIcc, icc);
+        var draft = buildMeta(iloc, infos, removed, added, primary, wide, 0, 0, idatZeros, colors);
         var delta = draft.length - metaSize;
-        var mdatStart = source.size() + delta;
-        var built = buildMeta(iloc, infos, removed, added, primary, wide, delta, mdatStart + 8, idatZeros);
+        var mdatStart = tail + delta;
+        var built = buildMeta(iloc, infos, removed, added, primary, wide, delta, mdatStart + 8, idatZeros, colors);
         zeros.sort((a, b) -> Long.compare(a[0], b[0]));
+        var metaEnd = metaOffset + metaSize;
+        var patched = new ArrayList<Object[]>();
+        for (var track : tracks) {
+            var bytes = ImageFiles.read(source, track[0], track[1], limits);
+            if (delta != 0) {
+                TrackOffsets.shift(bytes, metaEnd, delta);
+            }
+            patched.add(new Object[]{track[0], bytes});
+        }
         var plan = EditPlan.builder();
-        copyZeroed(plan, 0, metaOffset, zeros);
+        copyPatched(plan, 0, metaOffset, zeros, patched);
         plan.bytes(built);
-        copyZeroed(plan, metaOffset + metaSize, source.size(), zeros);
+        copyPatched(plan, metaEnd, tail, zeros, patched);
         if (!added.isEmpty()) {
             var mdat = new ByteWriter((int) Math.min(Integer.MAX_VALUE - 8, 8 + newDataLength));
             mdat.begin(FourCc.of("mdat"));
@@ -201,7 +261,33 @@ final class HeifMetaEditor {
             mdat.end();
             plan.bytes(mdat.toByteArray());
         }
+        copyPatched(plan, tail, source.size(), zeros, patched);
         return plan.build();
+    }
+
+    /**
+     * Copies a range of the original, writing the patched track boxes in place of the original
+     * ones and zeros over the parts of removed items.
+     *
+     * @param plan the plan receiving the pieces
+     * @param start the offset of the range
+     * @param end the end of the range
+     * @param zeros the ranges of removed items, sorted by offset
+     * @param patched the patched track boxes: offset and bytes, in file order
+     */
+    private static void copyPatched(EditPlan.Builder plan, long start, long end, List<long[]> zeros, List<Object[]> patched) {
+        var position = start;
+        for (var box : patched) {
+            var offset = (long) box[0];
+            var bytes = (byte[]) box[1];
+            if (offset < start || offset >= end) {
+                continue;
+            }
+            copyZeroed(plan, position, offset, zeros);
+            plan.bytes(bytes);
+            position = offset + bytes.length;
+        }
+        copyZeroed(plan, position, end, zeros);
     }
 
     /**
@@ -241,10 +327,11 @@ final class HeifMetaEditor {
      * @param delta the shift of the data after the old {@code meta}
      * @param dataStart the offset of the new items' data
      * @param idatZeros the ranges of the {@code idat} data to zero
+     * @param colors the change of the primary item's ICC profile
      * @return the box
      */
     private byte[] buildMeta(Iloc iloc, List<Info> infos, Set<Long> removed, List<Object[]> added, long primary, boolean wide,
-                             long delta, long dataStart, List<long[]> idatZeros) {
+                             long delta, long dataStart, List<long[]> idatZeros, IccChange colors) {
         var metaEnd = metaOffset + metaSize;
         var body = new ByteWriter(meta.length + 256);
         var headerSize = u32(meta, 0) == 1 ? 16 : 8;
@@ -262,7 +349,8 @@ final class HeifMetaEditor {
                     encodeReferences(body, Arrays.copyOfRange(meta, offset, offset + size), removed, added, primary, wide);
                     irefWritten = true;
                 }
-                case "iprp" -> filterAssociations(body, Arrays.copyOfRange(meta, offset, offset + size), removed);
+                case "iprp" -> ItemProperties.encode(body, Arrays.copyOfRange(meta, offset, offset + size), removed, primary,
+                        colors.replace(), colors.icc());
                 case "idat" -> {
                     var idat = Arrays.copyOfRange(meta, offset, offset + size);
                     for (var range : idatZeros) {
@@ -462,66 +550,6 @@ final class HeifMetaEditor {
     }
 
     /**
-     * Writes an {@code iprp} box without the property associations of removed items.
-     *
-     * @param out the destination
-     * @param iprp the box
-     * @param removed the removed identifiers
-     * @throws MediaException.Malformed if the box is corrupt
-     */
-    private static void filterAssociations(ByteWriter out, byte[] iprp, Set<Long> removed) {
-        if (removed.isEmpty()) {
-            out.bytes(iprp);
-            return;
-        }
-        var at = 8;
-        out.begin(FourCc.of("iprp"));
-        while (iprp.length - at >= 8) {
-            var size = (int) u32(iprp, at);
-            if (size < 8 || size > iprp.length - at) {
-                throw new MediaException.Malformed("invalid HEIF iprp child size " + size);
-            }
-            var type = new String(iprp, at + 4, 4, StandardCharsets.ISO_8859_1);
-            if (!type.equals("ipma") || size < 16) {
-                out.bytes(iprp, at, size);
-                at += size;
-                continue;
-            }
-            var version = iprp[at + 8] & 0xFF;
-            var flags = (int) (u32(iprp, at + 8) & 0xFFFFFF);
-            var count = u32(iprp, at + 12);
-            var position = at + 16;
-            out.begin(FourCc.of("ipma"));
-            out.bytes(iprp, at + 8, 4);
-            var countAt = out.size();
-            out.u32be(0);
-            var kept = 0L;
-            for (var i = 0L; i < count; i++) {
-                var start = position;
-                var idSize = version < 1 ? 2 : 4;
-                if (position + idSize + 1 > at + size) {
-                    throw new MediaException.Malformed("truncated HEIF ipma box");
-                }
-                var id = idSize == 2 ? u16(iprp, position) : u32(iprp, position);
-                position += idSize;
-                var associations = iprp[position++] & 0xFF;
-                position += associations * ((flags & 1) != 0 ? 2 : 1);
-                if (position > at + size) {
-                    throw new MediaException.Malformed("truncated HEIF ipma box");
-                }
-                if (!removed.contains(id)) {
-                    out.bytes(iprp, start, position - start);
-                    kept++;
-                }
-            }
-            out.patch32be(countAt, kept);
-            out.end();
-            at += size;
-        }
-        out.end();
-    }
-
-    /**
      * Returns the index of the next NUL byte.
      *
      * @param data the bytes
@@ -586,6 +614,15 @@ final class HeifMetaEditor {
             case 8 -> ByteArrays.i64be(data, offset);
             default -> throw new MediaException.Malformed("invalid HEIF iloc field size " + size);
         };
+    }
+
+    /**
+     * Holds the change of the primary item's ICC profile.
+     *
+     * @param replace whether the profile changes
+     * @param icc the new profile, or {@code null} to remove it
+     */
+    private record IccChange(boolean replace, byte[] icc) {
     }
 
     /**
