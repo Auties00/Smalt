@@ -38,7 +38,9 @@ import com.github.auties00.smalt.video.ffv1.Ffv1Coder;
 import com.github.auties00.smalt.video.ffv1.Ffv1Decoder;
 import com.github.auties00.smalt.video.ffv1.Ffv1Encoder;
 import com.github.auties00.smalt.video.ffv1.Ffv1EncoderOptions;
+import com.github.auties00.smalt.video.cfhd.CfhdBayerOutput;
 import com.github.auties00.smalt.video.cfhd.CfhdDecoder;
+import com.github.auties00.smalt.video.cfhd.CfhdDecoderOptions;
 import com.github.auties00.smalt.video.prores.ProResDecoder;
 import com.github.auties00.smalt.video.prores.ProResDecoderOptions;
 import com.github.auties00.smalt.video.prores.ProResEncoder;
@@ -149,7 +151,8 @@ final class VideoWorkloads {
                 file("ffv1-decode", VideoWorkloads::ffv1Decode),
                 file("qtrle-encode", VideoWorkloads::qtrleEncode),
                 file("qtrle-decode", VideoWorkloads::qtrleDecode),
-                file("cfhd-decode", VideoWorkloads::cfhdDecode));
+                file("cfhd-decode", VideoWorkloads::cfhdDecode),
+                file("cfhd-bayer-decode", VideoWorkloads::cfhdBayerDecode));
     }
 
     /**
@@ -698,6 +701,25 @@ final class VideoWorkloads {
         return TrainingWorkload.of("cfhd-decode", () -> {
             for (var i = 0; i < 4; i++) {
                 Blackhole.consume(decoder.decodeFrame(sample, 0, sample.length).width());
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that decodes a synthetic CineForm RAW intra frame both ways: demosaiced to RGB and as its
+     * color filter array mosaic.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload cfhdBayerDecode() {
+        var sample = SyntheticCfhd.bayer(SMALL_WIDTH, 176);
+        var track = VideoStreams.track(Codec.CFHD, SMALL_WIDTH, 176, null);
+        var demosaic = new CfhdDecoder(track, CfhdDecoderOptions.defaults());
+        var mosaic = new CfhdDecoder(track, CfhdDecoderOptions.builder().bayerOutput(CfhdBayerOutput.MOSAIC).build());
+        return TrainingWorkload.of("cfhd-bayer-decode", () -> {
+            for (var i = 0; i < 2; i++) {
+                Blackhole.consume(demosaic.decodeFrame(sample, 0, sample.length).width());
+                Blackhole.consume(mosaic.decodeFrame(sample, 0, sample.length).width());
             }
         });
     }

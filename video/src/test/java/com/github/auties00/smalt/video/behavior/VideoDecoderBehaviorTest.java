@@ -19,15 +19,16 @@ import java.nio.file.Path;
 /**
  * Runs the VP9, AV1, ProRes, DNxHR, DV, FFV1, Theora, QuickTime Animation and CineForm decoders
  * ({@link ReaderAsserts}) and the AVIF image decoder ({@link ImageDecoderAsserts}) of this artifact through the I/O behavior harness over the container samples
- * (core's {@code src/test/resources/samples}), the AVIF samples of derived images and sample transforms (this
- * module's {@code src/test/resources/samples}, made by {@code tools/testdata/behavior/make-avif-samples.py}) and
- * smoke-tier vectors, comparing each with its golden dump under {@code src/test/resources/dumps}.
+ * (core's {@code src/test/resources/samples}), the AVIF samples of derived images and sample transforms and the
+ * CineForm RAW sample (this module's {@code src/test/resources/samples}, made by
+ * {@code tools/testdata/behavior/make-avif-samples.py} and {@code make-cineform-raw-sample.py}) and smoke-tier
+ * vectors, comparing each with its golden dump under {@code src/test/resources/dumps}.
  */
 @DisplayName("video and AVIF decoder I/O behaviors")
 class VideoDecoderBehaviorTest {
     private static final Path SAMPLES = Path.of("..", "core", "src", "test", "resources", "samples");
 
-    private static final Path AVIF_SAMPLES = Path.of("src", "test", "resources", "samples");
+    private static final Path MODULE_SAMPLES = Path.of("src", "test", "resources", "samples");
 
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"flv/vp9.flv", "flv/av1.flv", "matroska/vp9-vorbis.webm", "matroska/vp9-alpha.webm",
@@ -37,6 +38,14 @@ class VideoDecoderBehaviorTest {
     @DisplayName("video samples: identical frames under every source behavior and clean faults")
     void sample(String sample) throws IOException {
         ReaderAsserts.video(sample, Files.readAllBytes(SAMPLES.resolve(sample))).run();
+    }
+
+    @Test
+    @DisplayName("CineForm RAW sample, its Bayer phase changing inside the stream: identical frames under every source "
+            + "behavior and clean faults")
+    void cineformRaw() throws IOException {
+        ReaderAsserts.video("avi/cfhd-bayer.avi", Files.readAllBytes(MODULE_SAMPLES.resolve("avi/cfhd-bayer.avi")))
+                .run();
     }
 
     @ParameterizedTest(name = "{0}")
@@ -57,9 +66,9 @@ class VideoDecoderBehaviorTest {
     }
 
     @Test
-    @DisplayName("the AVIF samples are the files pinned in tools/testdata/behavior/samples.tsv")
+    @DisplayName("the AVIF and CineForm RAW samples are the files pinned in tools/testdata/behavior/samples.tsv")
     void pinned() {
-        BehaviorSamples.assertPinned(AVIF_SAMPLES);
+        BehaviorSamples.assertPinned(MODULE_SAMPLES);
     }
 
     @ParameterizedTest(name = "{0}")
@@ -67,14 +76,14 @@ class VideoDecoderBehaviorTest {
     @DisplayName("AVIF samples decoded by region: identical pictures under every source behavior")
     void avifSampleRegion(String sample) throws IOException {
         RegionAsserts.behaviors("region/" + sample,
-                Files.readAllBytes(AVIF_SAMPLES.resolve(sample)));
+                Files.readAllBytes(MODULE_SAMPLES.resolve(sample)));
     }
 
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"avif/derived.avif", "avif/sato.avif"})
     @DisplayName("AVIF samples: identical pictures under every source behavior and clean faults")
     void avifSample(String sample) throws IOException {
-        ImageDecoderAsserts.of(sample, Files.readAllBytes(AVIF_SAMPLES.resolve(sample))).run();
+        ImageDecoderAsserts.of(sample, Files.readAllBytes(MODULE_SAMPLES.resolve(sample))).run();
     }
 
     @ParameterizedTest(name = "{0}")

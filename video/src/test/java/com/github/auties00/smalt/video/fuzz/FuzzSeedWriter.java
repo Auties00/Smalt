@@ -88,6 +88,29 @@ class FuzzSeedWriter {
     }
 
     @Test
+    @DisplayName("writes the CineForm RAW seeds: samples of the vectors of tools/testdata/cfhd/make-vectors.sh")
+    void cineformRaw() {
+        bayerSeed("cfhd", "valid-bayer-gamma22.bin", "bayer-gamma22.cfhd", 128, 64);
+        bayerSeed("cfhdMosaic", "valid-bayer-redspace.bin", "bayer-redspace.cfhd", 128, 64);
+        bayerSeed("cfhdMosaic", "valid-bayer-preset.bin", "bayer-preset.cfhd", 128, 64);
+    }
+
+    /** Writes the samples of a CineForm RAW vector (header "CFHDBYR1", see CfhdBayerTest) as one keyframe each. */
+    private static void bayerSeed(String method, String name, String vector, int width, int height) {
+        var data = java.nio.ByteBuffer.wrap(resource("/com/github/auties00/smalt/video/cfhd/sdk/" + vector))
+                .order(java.nio.ByteOrder.LITTLE_ENDIAN).position(8);
+        var parts = new ArrayList<FuzzPackets.Part>();
+        while (data.hasRemaining()) {
+            var sample = new byte[data.getInt()];
+            data.get(sample);
+            data.position(data.position() + data.getInt());
+            data.position(data.position() + data.getInt());
+            parts.add(new FuzzPackets.Part(sample, true));
+        }
+        write(VideoFuzzTest.class, method, name, FuzzPackets.video(0, width, height, null, parts));
+    }
+
+    @Test
     @DisplayName("writes the AVIF seed of a sequence whose alpha track is timed unlike its color track")
     void avifSequenceAlpha() {
         var color = ffmpeg("avif", video(16, 16, 5), "-c:v", "libaom-av1", "-cpu-used", "8", "-g", "2",

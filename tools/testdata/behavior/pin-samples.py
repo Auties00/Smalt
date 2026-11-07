@@ -21,6 +21,8 @@ def generator(root, relative):
         return "make-jxr-vectors.py"
     if root.startswith("image/"):
         return "make-image-samples.sh"
+    if root.startswith("video/") and relative == "avi/cfhd-bayer.avi":
+        return "make-cineform-raw-sample.py"
     if root.startswith("video/"):
         return "make-avif-samples.py"
     if relative == "elementary/vvc.266":

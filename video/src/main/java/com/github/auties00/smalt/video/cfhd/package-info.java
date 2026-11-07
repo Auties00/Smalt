@@ -1,5 +1,7 @@
 /**
- * The GoPro CineForm decoder ({@link CfhdDecoder}), the wavelet intermediate codec of SMPTE ST 2073 (VC-5) lineage.
+ * The GoPro CineForm decoder ({@link CfhdDecoder}), the wavelet intermediate codec of SMPTE ST 2073 (VC-5) lineage,
+ * with its settings ({@link CfhdDecoderOptions}) and the color filter array description of its CineForm RAW frames
+ * ({@link CfhdBayerPhase}, {@link CfhdBayerOutput}).
  *
  * <p>Unless otherwise noted, passing a {@code null} argument to a constructor or method in any class or
  * interface in this package will cause a {@link NullPointerException} to be thrown. The {@code @param}

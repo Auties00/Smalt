@@ -27,14 +27,39 @@ final class SyntheticCfhd {
      * @return the sample
      */
     static byte[] intra422(int width, int height) {
+        return intra(new int[]{1, 9, 10, 0, 11, 1, 12, 3, 84, 1, 13, 3, 14, 10, 16, 3, 20, width, 21, height, 70, 10,
+                83, 0x2000}, new int[]{width, width / 2, width / 2}, height);
+    }
+
+    /**
+     * Returns a progressive CineForm RAW intra frame at 12 bits in the {@code RGGB} phase: four channels of half the
+     * frame size.
+     *
+     * @param width the frame width, a multiple of 32
+     * @param height the frame height, a multiple of 16
+     * @return the sample
+     */
+    static byte[] bayer(int width, int height) {
+        var half = width / 2;
+        return intra(new int[]{1, 9, 10, 0, 11, 1, 12, 4, 84, 2, 13, 3, 14, 10, 16, 3, 20, half, 21, height / 2, 68,
+                1, 70, 12, 83, 0x2800}, new int[]{half, half, half, half}, height / 2);
+    }
+
+    /**
+     * Returns an intra frame of the given header and channels.
+     *
+     * @param header the tag and value pairs of the sample header
+     * @param channelWidths the width of each channel, a multiple of 8
+     * @param height the height of every channel, a multiple of 8
+     * @return the sample
+     */
+    private static byte[] intra(int[] header, int[] channelWidths, int height) {
         var out = new ByteArrayOutputStream();
-        int[] header = {1, 9, 10, 0, 11, 1, 12, 3, 84, 1, 13, 3, 14, 10, 16, 3, 20, width, 21, height, 70, 10, 83,
-                0x2000};
         for (var i = 0; i < header.length; i += 2) {
             tag(out, header[i], header[i + 1]);
         }
-        for (var channel = 0; channel < 3; channel++) {
-            var channelWidth = channel == 0 ? width : width / 2;
+        for (var channel = 0; channel < channelWidths.length; channel++) {
+            var channelWidth = channelWidths[channel];
             if (channel > 0) {
                 tag(out, 1, 3);
                 tag(out, 62, channel);

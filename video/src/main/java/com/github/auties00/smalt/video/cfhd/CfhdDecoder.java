@@ -1,6 +1,7 @@
 /* Ports cineform-sdk (Codec/decoder.c DecodeSample, DecodeSampleGroup, DecodeSampleIntraFrame, UpdateCodecState,
  * DecodeSampleLowPassBand and ReconstructWaveletBand, Codec/frame.c ConvertLowpass16sRGB48ToRGB48 and the alpha
- * decompanding of ConvertLowpass16sRGBA64ToRGBA64: the CineForm sample layout and reconstruction).
+ * decompanding of ConvertLowpass16sRGBA64ToRGBA64, Codec/DemoasicFrames.cpp UpdateCFHDDATA for the Bayer phase and
+ * encode curve metadata: the CineForm sample layout and reconstruction).
  * Copyright GoPro Inc; Apache License 2.0 or MIT. Modified for Smalt. */
 package com.github.auties00.smalt.video.cfhd;
 
@@ -8,11 +9,16 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.ColorPrimaries;
+import com.github.auties00.smalt.image.ColorRange;
+import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Rgba16Picture;
+import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
+import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Track;
@@ -21,9 +27,11 @@ import com.github.auties00.smalt.video.VideoDecoder;
 import com.github.auties00.smalt.video.VideoDecoderOptions;
 import com.github.auties00.smalt.video.VideoFrame;
 import com.github.auties00.smalt.video.cfhd.internal.CfhdBands;
+import com.github.auties00.smalt.video.cfhd.internal.CfhdBayer;
 import com.github.auties00.smalt.video.cfhd.internal.CfhdWavelets;
 
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Consumer;
 
 /**
@@ -37,13 +45,24 @@ import java.util.function.Consumer;
  * high bits of the coded precision, alpha decompanded. Highpass coefficients of every codeset decode, companded,
  * quantized, difference coded or replaced by peak tables. A group yields its first frame for its first packet and its
  * second frame for the short packet that follows; an intra frame yields one frame and a sequence header or trailer
- * none. Frames carry the packet's timestamps; {@link #flush(Consumer)} has nothing to drain. Bayer samples and the
- * Y'CbCrA 4:4:4:4 format, which GoPro's decoder does not implement either, raise
- * {@link MediaException.Unsupported}.
+ * none. Frames carry the packet's timestamps; {@link #flush(Consumer)} has nothing to drain. The Y'CbCrA 4:4:4:4
+ * format, which GoPro's decoder does not implement either, raises {@link MediaException.Unsupported}.
  *
- * <p>Pixels are the reconstruction of the coded wavelets without the output-format-dependent rounding offsets of
- * GoPro's decoder, so they may differ from it by a level of the coded precision. A corrupt sample raises
- * {@link MediaException.Malformed}; a group's second packet without its first raises it too.
+ * <p>CineForm RAW samples code a color filter array as four half-size channels (G, R-G, B-G and the difference of
+ * the two greens) and decode as {@link CfhdDecoderOptions#bayerOutput()} asks: demosaiced to an {@link Rgba16Picture}
+ * (the default) or as the mosaic itself, a 16-bit {@link ChromaFormat#MONOCHROME} {@link Yuv16Picture} of linear
+ * photosites whose color description is full range with unspecified primaries and matrix and, when the encoder's
+ * curve was undone, the linear transfer (unspecified otherwise). The arrangement of the array comes from the sample's
+ * {@code BFMT} metadata and {@link #bayerPhase()} reports it for every frame; the encoder's curve comes from its
+ * {@code ECRV} and {@code PCRV} metadata. Both persist from sample to sample until a sample changes them, as in
+ * GoPro's decoder. Mosaics equal GoPro's 16-bit Bayer output and demosaiced pictures its default 16-bit RGB output
+ * when the sample carries no white balance, color matrix or look; for a source coded with the linear curve, whose
+ * photosites GoPro's decoder returns divided by 4, the mosaic keeps them at full scale. Uncompressed CineForm RAW
+ * samples, which GoPro's decoder fails to decode, raise {@link MediaException.Unsupported}.
+ *
+ * <p>Pixels of the other formats are the reconstruction of the coded wavelets without the output-format-dependent
+ * rounding offsets of GoPro's decoder, so they may differ from it by a level of the coded precision. A corrupt sample
+ * raises {@link MediaException.Malformed}; a group's second packet without its first raises it too.
  *
  * <p>Instances are not thread-safe.
  */
@@ -109,11 +128,83 @@ public final class CfhdDecoder implements VideoDecoder {
         }
     }
 
+    private static final int TAG_UNCOMPRESSED = 0x2300;
+
+    private static final int TAG_METADATA = 0x4002;
+
+    /**
+     * The metadata tag of the Bayer phase, {@code BFMT} as a little-endian four character code.
+     */
+    private static final int METADATA_BAYER_FORMAT = fourCc("BFMT");
+
+    /**
+     * The metadata tag of the encoder's curve, {@code ECRV}.
+     */
+    private static final int METADATA_ENCODE_CURVE = fourCc("ECRV");
+
+    /**
+     * The metadata tag that marks a source whose curve was applied before encoding, {@code PCRV}.
+     */
+    private static final int METADATA_ENCODE_PRESET = fourCc("PCRV");
+
+    private static final CfhdBayerPhase[] PHASES = CfhdBayerPhase.values();
+
+    private static final ColorInfo LINEAR_MOSAIC = new ColorInfo(MatrixCoefficients.UNSPECIFIED, ColorRange.FULL,
+            ColorPrimaries.UNSPECIFIED, TransferCharacteristics.LINEAR);
+
+    private static final ColorInfo CODED_MOSAIC = new ColorInfo(MatrixCoefficients.UNSPECIFIED, ColorRange.FULL,
+            ColorPrimaries.UNSPECIFIED, TransferCharacteristics.UNSPECIFIED);
+
     private final VideoTrack track;
 
     private final MediaLimits limits;
 
+    private final CfhdBayerOutput bayerOutput;
+
+    /**
+     * The thread count of {@link CfhdDecoderOptions#threads()}.
+     */
+    private final int threads;
+
     private final CfhdWavelets wavelets = new CfhdWavelets();
+
+    private final CfhdBayer bayer = new CfhdBayer();
+
+    /**
+     * The Bayer phase of the {@code BFMT} metadata last seen, 0 to 3, 0 until a sample carries one.
+     */
+    private int bayerFormat;
+
+    /**
+     * The encoder's curve of the {@code ECRV} metadata last seen, 0 (CineForm's log curve) until a sample carries
+     * one.
+     */
+    private int encodeCurve;
+
+    /**
+     * The {@code PCRV} metadata value last seen: non-zero when the source's curve was applied before encoding.
+     */
+    private int encodePreset;
+
+    /**
+     * The curve {@link #restore} inverts, or -1 before one is built.
+     */
+    private int restoreCurve = -1;
+
+    /**
+     * The table that linearizes coded photosites under {@link #restoreCurve}.
+     */
+    private int[] restore;
+
+    /**
+     * The arrangement of the last frame, or {@code null} if it was not a Bayer frame.
+     */
+    private CfhdBayerPhase lastPhase;
+
+    /**
+     * The arrangement of the pending second frame of a group, or {@code null}.
+     */
+    private CfhdBayerPhase pendingPhase;
 
     /**
      * The levels of each channel.
@@ -176,14 +267,27 @@ public final class CfhdDecoder implements VideoDecoder {
     private boolean progressive;
 
     /**
-     * Creates a decoder for a CineForm track.
+     * Creates a decoder for a CineForm track that demosaics CineForm RAW frames.
      *
      * @param track the track description; its codec must be {@link Codec#CFHD}
-     * @param options the limits checked against every frame before allocating; the thread count and the high bit
-     * depth setting do not apply, since frames keep their coded precision
+     * @param options the limits checked against every frame before allocating and the thread count of the
+     * demosaic; the high bit depth setting does not apply, since frames keep their coded precision
      * @throws IllegalArgumentException if the track is not a CineForm track
      */
     public CfhdDecoder(VideoTrack track, VideoDecoderOptions options) {
+        this(track, CfhdDecoderOptions.builder().limits(Objects.requireNonNull(options, "options").limits())
+                .threads(options.threads()).build());
+    }
+
+    /**
+     * Creates a decoder for a CineForm track.
+     *
+     * @param track the track description; its codec must be {@link Codec#CFHD}
+     * @param options the limits checked against every frame before allocating, the thread count and what CineForm
+     * RAW frames decode to
+     * @throws IllegalArgumentException if the track is not a CineForm track
+     */
+    public CfhdDecoder(VideoTrack track, CfhdDecoderOptions options) {
         Objects.requireNonNull(track, "track");
         Objects.requireNonNull(options, "options");
         if (track.codec() != Codec.CFHD) {
@@ -191,6 +295,8 @@ public final class CfhdDecoder implements VideoDecoder {
         }
         this.track = track;
         this.limits = options.limits();
+        this.bayerOutput = options.bayerOutput();
+        this.threads = options.threads();
         for (var c = 0; c < 4; c++) {
             for (var w = 0; w < 6; w++) {
                 channels[c][w] = new Wavelet();
@@ -206,6 +312,16 @@ public final class CfhdDecoder implements VideoDecoder {
     }
 
     /**
+     * {@return the color filter array arrangement of the last frame this decoder returned, empty if that frame was
+     * not a CineForm RAW frame or no frame was returned yet}
+     *
+     * <p>The second frame of a group reports the arrangement of its group's sample.
+     */
+    public Optional<CfhdBayerPhase> bayerPhase() {
+        return Optional.ofNullable(lastPhase);
+    }
+
+    /**
      * Decodes one packet holding one sample.
      *
      * @param packet the next packet in decoding order
@@ -213,8 +329,8 @@ public final class CfhdDecoder implements VideoDecoder {
      * trailer yields none
      * @throws MediaException.Malformed if the sample is damaged, or is the second packet of a group whose first was
      * not decoded
-     * @throws MediaException.Unsupported if the sample is Bayer or Y'CbCrA 4:4:4:4 coded or uses a transform other
-     * than the spatial and group ones
+     * @throws MediaException.Unsupported if the sample is Y'CbCrA 4:4:4:4 coded or uncompressed CineForm RAW, uses a
+     * transform other than the spatial and group ones, or is a CineForm RAW frame too small to demosaic
      * @throws MediaException.LimitExceeded if the frame exceeds the limits
      */
     @Override
@@ -241,14 +357,14 @@ public final class CfhdDecoder implements VideoDecoder {
      * @throws IndexOutOfBoundsException if the range is invalid
      * @throws MediaException.Malformed if the sample is damaged, or is the second packet of a group whose first was
      * not decoded
-     * @throws MediaException.Unsupported if the sample is Bayer or Y'CbCrA 4:4:4:4 coded or uses a transform other
-     * than the spatial and group ones
+     * @throws MediaException.Unsupported if the sample is Y'CbCrA 4:4:4:4 coded or uncompressed CineForm RAW, uses a
+     * transform other than the spatial and group ones, or is a CineForm RAW frame too small to demosaic
      * @throws MediaException.LimitExceeded if the frame exceeds the limits
      */
     public Picture decodeFrame(byte[] data, int offset, int length) {
         Objects.requireNonNull(data, "data");
         Objects.checkFromIndexSize(offset, length, data.length);
-        try {
+        try (var _ = ParallelBands.operation()) {
             return parse(data, offset, offset + length);
         } catch (IndexOutOfBoundsException | NegativeArraySizeException e) {
             throw new MediaException.Malformed("CineForm sample is damaged", e);
@@ -281,13 +397,25 @@ public final class CfhdDecoder implements VideoDecoder {
             position += 4;
             var t = Math.abs(tag);
             if (t >= 0x6000) {
-                position += 4 * (value + ((t & 0xFF) << 16));
+                var size = 4L * (value + ((t & 0xFF) << 16));
+                if ((t & 0xFF00) == 0x6000) {
+                    metadata(data, position, (int) Math.min(end, position + size));
+                }
+                position = (int) Math.min(end, position + size);
                 continue;
             }
             if (t >= 0x4000) {
                 peakLevel = 0;
+                if (t == TAG_METADATA) {
+                    metadata(data, position, Math.min(end, position + 4 * value));
+                }
                 position += 4 * value;
                 continue;
+            }
+            if (t == TAG_UNCOMPRESSED) {
+                // TODO: decode uncompressed samples (packed 12-bit photosites) once a decoder can serve as their
+                // reference; GoPro's decoder fails on the ones its encoder writes
+                throw new MediaException.Unsupported("CineForm", "uncompressed samples");
             }
             if (t >= 0x2000) {
                 continue;
@@ -304,6 +432,7 @@ public final class CfhdDecoder implements VideoDecoder {
                         }
                         var picture = pending;
                         pending = null;
+                        lastPhase = pendingPhase;
                         return picture;
                     }
                 }
@@ -369,6 +498,41 @@ public final class CfhdDecoder implements VideoDecoder {
             throw new MediaException.Malformed("CineForm sample of type " + sampleType + " holds no frame");
         }
         return reconstruct();
+    }
+
+    /**
+     * Reads the Bayer phase and the encoder's curve from a chunk of metadata: entries of a little-endian four
+     * character code, a 24-bit little-endian size, a type byte and the value, padded to 4 bytes.
+     *
+     * @param data the sample
+     * @param position the index of the chunk's first entry
+     * @param end the index after the chunk
+     */
+    private void metadata(byte[] data, int position, int end) {
+        while (position + 8 <= end) {
+            var tag = littleEndian(data, position);
+            var size = littleEndian(data, position + 4) & 0xFFFFFF;
+            var at = position + 8;
+            if (size >= 1 && at + size <= end) {
+                var value = size >= 4 ? littleEndian(data, at) : data[at] & 0xFF;
+                if (tag == METADATA_BAYER_FORMAT) {
+                    bayerFormat = value;
+                } else if (tag == METADATA_ENCODE_CURVE) {
+                    encodeCurve = value;
+                } else if (tag == METADATA_ENCODE_PRESET) {
+                    encodePreset = value;
+                }
+            }
+            position = (int) Math.min(end, at + ((size + 3L) & ~3L));
+        }
+    }
+
+    private static int littleEndian(byte[] data, int at) {
+        return data[at] & 0xFF | (data[at + 1] & 0xFF) << 8 | (data[at + 2] & 0xFF) << 16 | (data[at + 3] & 0xFF) << 24;
+    }
+
+    private static int fourCc(String code) {
+        return code.charAt(0) | code.charAt(1) << 8 | code.charAt(2) << 16 | code.charAt(3) << 24;
     }
 
     /**
@@ -504,16 +668,11 @@ public final class CfhdDecoder implements VideoDecoder {
             // channels; GoPro's SDK neither writes nor reads them
             throw new MediaException.Unsupported("CineForm", "Y'CbCrA 4:4:4:4 encoded samples");
         }
-        if (encodedFormat == FORMAT_BAYER) {
-            // TODO: decode Bayer samples (four channels of a 2x2 CFA: G, R-G, B-G and the G difference) to a raw
-            // picture or demosaiced RGB
-            throw new MediaException.Unsupported("CineForm", "Bayer encoded samples");
-        }
         if (encodedFormat < FORMAT_YUV_422 || encodedFormat > FORMAT_YUVA_4444) {
             throw new MediaException.Malformed("CineForm encoded format " + encodedFormat);
         }
         var expected = switch (encodedFormat) {
-            case FORMAT_RGBA_4444 -> 4;
+            case FORMAT_RGBA_4444, FORMAT_BAYER -> 4;
             default -> 3;
         };
         if (numChannels != expected) {
@@ -568,16 +727,40 @@ public final class CfhdDecoder implements VideoDecoder {
             for (var f = 0; f < frames; f++) {
                 var level = levels[f];
                 var out = planeBuffer(f, c, widths[c] * heights[c]);
-                if (progressive) {
+                if (encodedFormat == FORMAT_BAYER && progressive) {
+                    // TODO: match GoPro's decoder on wavelet coefficients of extreme magnitude, as its encoder
+                    // writes them for the CineStyle curve; the reconstruction differs from its decode there
+                    wavelets.spatialToRow16u(level.bands, level.width, level.height, precision, out);
+                } else if (progressive) {
                     wavelets.spatialToSamples(level.bands, level.width, level.height, max, out);
                 } else {
                     wavelets.frameToSamples(level.bands, level.width, level.height, max, out);
+                    if (encodedFormat == FORMAT_BAYER) {
+                        for (var i = 0; i < widths[c] * heights[c]; i++) {
+                            out[i] <<= 16 - precision;
+                        }
+                    }
                 }
             }
         }
+        var phase = encodedFormat == FORMAT_BAYER ? phase() : null;
         var first = picture(planes[0], widths, heights);
         pending = frames == 2 ? picture(planes[1], widths, heights) : null;
+        lastPhase = phase;
+        pendingPhase = phase;
         return first;
+    }
+
+    /**
+     * {@return the arrangement of the Bayer phase last read from metadata}
+     *
+     * @throws MediaException.Malformed if the phase is not one of the four arrangements
+     */
+    private CfhdBayerPhase phase() {
+        if (bayerFormat < 0 || bayerFormat >= PHASES.length) {
+            throw new MediaException.Malformed("CineForm Bayer phase " + bayerFormat);
+        }
+        return PHASES[bayerFormat];
     }
 
     /**
@@ -673,8 +856,12 @@ public final class CfhdDecoder implements VideoDecoder {
         if (shown > 0 && shown <= height) {
             height = shown;
         }
-        LimitChecks.checkPicture(limits, width, height);
         var stride = widths[0];
+        if (encodedFormat == FORMAT_BAYER) {
+            requireSameSize(widths, heights, numChannels);
+            return bayerPicture(planes, stride, width, height);
+        }
+        LimitChecks.checkPicture(limits, width, height);
         switch (encodedFormat) {
             case FORMAT_YUV_422 -> {
                 if (widths[1] != (widths[0] + 1) / 2 || widths[2] != widths[1] || heights[1] != heights[0]
@@ -715,6 +902,45 @@ public final class CfhdDecoder implements VideoDecoder {
                 return picture;
             }
         }
+    }
+
+    /**
+     * Builds the picture of one CineForm RAW frame: its mosaic or its demosaiced RGB, twice the channel size.
+     *
+     * @param planes the 16-bit G, RG, BG and GD channels
+     * @param stride the distance between the rows of a channel
+     * @param quadsWide the number of quads of a row shown
+     * @param quadsHigh the number of quad rows shown
+     * @return the picture
+     */
+    private Picture bayerPicture(int[][] planes, int stride, int quadsWide, int quadsHigh) {
+        var width = 2L * quadsWide;
+        var height = 2L * quadsHigh;
+        if (width > Integer.MAX_VALUE || height > Integer.MAX_VALUE) {
+            throw new MediaException.LimitExceeded("CineForm frame of " + width + "x" + height);
+        }
+        LimitChecks.checkPicture(limits, (int) width, (int) height);
+        var phase = phase().ordinal();
+        if (bayerOutput == CfhdBayerOutput.MOSAIC) {
+            var linear = encodePreset == 0 && CfhdBayer.linearizes(encodeCurve);
+            if (linear && restoreCurve != encodeCurve) {
+                restore = CfhdBayer.restoreTable(encodeCurve);
+                restoreCurve = encodeCurve;
+            }
+            var curveUndone = encodePreset == 0 && (linear || CfhdBayer.linear(encodeCurve));
+            var picture = Yuv16Picture.allocate((int) width, (int) height, ChromaFormat.MONOCHROME, 16, false,
+                    curveUndone ? LINEAR_MOSAIC : CODED_MOSAIC);
+            CfhdBayer.mosaic(planes, stride, quadsWide, quadsHigh, phase, linear ? restore : null, picture.y(),
+                    picture.yStride());
+            return picture;
+        }
+        if (quadsWide < 2) {
+            throw new MediaException.Unsupported("CineForm", "demosaicing frames narrower than 4 photosites");
+        }
+        var picture = Rgba16Picture.allocate((int) width, (int) height, false);
+        bayer.demosaic(planes, stride, quadsWide, quadsHigh, phase, limits, threads, picture.pixels(),
+                picture.stride());
+        return picture;
     }
 
     /**

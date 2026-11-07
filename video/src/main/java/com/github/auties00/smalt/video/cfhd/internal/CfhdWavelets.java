@@ -172,6 +172,85 @@ public final class CfhdWavelets {
     }
 
     /**
+     * Inverts the finest spatial level into a channel of 16-bit samples as GoPro's decoder writes its 16-bit rows of
+     * four-channel frames: the coded precision in the top bits.
+     *
+     * <p>The horizontal pass follows that decoder's vector loop, which covers the columns up to
+     * {@code max(8, width - width % 8 - 16) + 6} with 16-bit saturating arithmetic and clamps each result to the coded
+     * precision, and its scalar code past them, which saturates the shifted result to 16 bits instead, so a sample
+     * above the coded range becomes 65535 there; the first two and the last two samples of a row take the boundary
+     * filters. A band narrower than 16 coefficients, where that decoder's vector code reads a coefficient it has not
+     * loaded, takes the vector arithmetic for every interior column.
+     *
+     * @param bands the four bands of the level
+     * @param width the band width
+     * @param height the band height
+     * @param precision the coded precision, from 8 to 12
+     * @param out receives the {@code 2 * width} by {@code 2 * height} samples
+     */
+    public void spatialToRow16u(short[][] bands, int width, int height, int precision, int[] out) {
+        if (width < 3) {
+            spatialToSamples(bands, width, height, (1 << precision) - 1, out);
+            for (var i = 0; i < 4 * width * height; i++) {
+                out[i] <<= 16 - precision;
+            }
+            return;
+        }
+        vertical(bands, width, height, 0);
+        var shift = 16 - precision;
+        var protection = 0x7FFF - (2 << precision) + 1;
+        var vector = width >= 16 ? Math.max(8, width - width % 8 - 16) + 7 : width - 1;
+        var max = 0xFFFF >> shift;
+        for (var row = 0; row < 2 * height; row++) {
+            var at = row * width;
+            var to = row * 2 * width;
+            var l = lowRows;
+            var h = highRows;
+            var even = ((11 * l[at] - 4 * l[at + 1] + l[at + 2] + 4) >> 3) + h[at] >> 1;
+            var odd = ((5 * l[at] + 4 * l[at + 1] - l[at + 2] + 4) >> 3) - h[at] >> 1;
+            out[to] = Math.clamp(even, 0, max) << shift;
+            out[to + 1] = Math.clamp(odd, 0, max) << shift;
+            for (var c = 1; c < vector; c++) {
+                int left = l[at + c - 1];
+                int right = l[at + c + 1];
+                int low = l[at + c];
+                int high = h[at + c];
+                var e = saturate(saturate(saturate(saturate(left - right) + 4) >> 3) + low);
+                var o = saturate(saturate(saturate(saturate(right - left) + 4) >> 3) + low);
+                out[to + 2 * c] = protect(saturate(e + high), protection, shift);
+                out[to + 2 * c + 1] = protect(saturate(o - high), protection, shift);
+            }
+            for (var c = vector; c < width - 1; c++) {
+                int left = l[at + c - 1];
+                int right = l[at + c + 1];
+                int low = l[at + c];
+                int high = h[at + c];
+                out[to + 2 * c] = Math.clamp(((left - right + 4) >> 3) + low + high >> 1 << shift, 0, 0xFFFF);
+                out[to + 2 * c + 1] = Math.clamp(((right - left + 4) >> 3) + low - high >> 1 << shift, 0, 0xFFFF);
+            }
+            var c = at + width - 1;
+            even = ((5 * l[c] + 4 * l[c - 1] - l[c - 2] + 4) >> 3) + h[c] >> 1;
+            odd = ((11 * l[c] - 4 * l[c - 1] + l[c - 2] + 4) >> 3) - h[c] >> 1;
+            out[to + 2 * width - 2] = Math.clamp(even << shift, 0, 0xFFFF);
+            out[to + 2 * width - 1] = Math.clamp(odd << shift, 0, 0xFFFF);
+        }
+    }
+
+    /**
+     * Applies the vector code's clamp of a sum to twice the coded range, its halving and its shift to 16 bits.
+     *
+     * @param sum the saturated 16-bit sum
+     * @param protection {@code 0x7FFF - (2 << precision) + 1}
+     * @param shift {@code 16 - precision}
+     * @return the 16-bit sample
+     */
+    private static int protect(int sum, int protection, int shift) {
+        var biased = saturate(sum + protection) & 0xFFFF;
+        var clamped = Math.max(biased - protection, 0);
+        return (((short) clamped >> 1) << shift) & 0xFFFF;
+    }
+
+    /**
      * Inverts a frame level into a channel of samples clamped to their precision: the horizontal wavelet of the field
      * lowpass and highpass bands, then the Haar wavelet between the fields, {@code even = (low - high) >> 1} and
      * {@code odd = (low + high) >> 1}.

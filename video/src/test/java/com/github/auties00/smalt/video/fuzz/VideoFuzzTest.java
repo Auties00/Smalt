@@ -30,6 +30,9 @@ import com.github.auties00.smalt.video.av1.Av1EncoderOptions;
 import com.github.auties00.smalt.video.av1.Av1EncoderSpeed;
 import com.github.auties00.smalt.video.av1.Av1FilmGrainTable;
 import com.github.auties00.smalt.video.av1.Av1FirstPassStatistics;
+import com.github.auties00.smalt.video.cfhd.CfhdBayerOutput;
+import com.github.auties00.smalt.video.cfhd.CfhdDecoder;
+import com.github.auties00.smalt.video.cfhd.CfhdDecoderOptions;
 import com.github.auties00.smalt.image.ChromaFormat;
 
 import java.nio.charset.StandardCharsets;
@@ -48,7 +51,8 @@ import java.util.Optional;
  * decodes the rest, the camera frame header and the tile lists, in large scale tile mode. The film grain table
  * target parses the text form, checks that it round-trips and signals the table's grain in two real-time frames
  * that it decodes; the first pass statistics target parses and reserializes them and, for pictures of at most
- * 32x32 samples, at least 16x16, runs a two-pass good-quality encode over them that it decodes.
+ * 32x32 samples, at least 16x16, runs a two-pass good-quality encode over them that it decodes. The CineForm mosaic
+ * target decodes CineForm RAW frames to their color filter array mosaics instead of demosaicing them.
  */
 class VideoFuzzTest {
     @FuzzTest
@@ -158,6 +162,12 @@ class VideoFuzzTest {
     @FuzzTest
     void cfhd(byte[] data) {
         FuzzMedia.video(Codec.CFHD, data);
+    }
+
+    @FuzzTest
+    void cfhdMosaic(byte[] data) {
+        FuzzMedia.video(Codec.CFHD, "CineForm RAW mosaic", data, (track, options) -> new CfhdDecoder(track,
+                CfhdDecoderOptions.builder().limits(Fuzz.LIMITS).bayerOutput(CfhdBayerOutput.MOSAIC).build()));
     }
 
     @FuzzTest

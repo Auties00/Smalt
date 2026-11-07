@@ -2372,13 +2372,16 @@ License:      Apache License 2.0 or MIT, at the licensee's option; Smalt uses it
 
 Derived Smalt packages:
   video.cfhd (CfhdDecoder)
-  video.cfhd.internal (CfhdBands, CfhdCodebooks, CfhdWavelets)
+  video.cfhd.internal (CfhdBands, CfhdBayer, CfhdCodebooks, CfhdWavelets)
 
 Derivation: C code translated to Java and tables copied: the sample layout
 and reconstruction of Codec/decoder.c, the inverse wavelets of
 Codec/spatial.c, Codec/InvertHorizontalStrip16s.c and Codec/temporal.c, the
-run-length decoding and companding of Codec/vlc.c and Codec/codebooks.c, and
-the codebooks of Common/table9.inc, table17.inc and table18.inc.
+run-length decoding and companding of Codec/vlc.c and Codec/codebooks.c, the
+codebooks of Common/table9.inc, table17.inc and table18.inc, and the
+CineForm RAW reconstruction and demosaic of Codec/bayer.c and
+Codec/DemoasicFrames.cpp with the curve functions of
+Common/AVIExtendedHeader.h.
 
 Copyright:
   (C) Copyright 2017 GoPro Inc (http://gopro.com/).
