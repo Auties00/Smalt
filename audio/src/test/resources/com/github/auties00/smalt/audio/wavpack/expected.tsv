@@ -1,0 +1,40 @@
+# name	wvunpack options	MD5 of the raw decode
+s16-stereo		04df137a6d47f866c0fc3a26d833d808
+s16-mono-high		be12ad58d65064e5e026b81c6c028f13
+s16-stereo-veryhigh-extra		c4e22a4a7c8af2fe819e43d2a4decc93
+s16-stereo-fast		59e629b2043fd491f7650eda2fec938a
+s16-stereo-md5		2355487464c687f7ca7731d915a21ad7
+u8-mono		b624c5f3e4ac4841277fffea5069717c
+s12-mono		86854c2d7e8b993ca2d4518fe57150e7
+s24-stereo-high		59b350b11070fa843bc8a8907b28182b
+s20-stereo		26d5104bc38c9242ae576cf6253a2846
+s32-stereo		2abc0fb4724b5814fec19214c40002c9
+s32-optimized		e3aa9ae378ffabb656a2225f95c7b680
+f32-stereo		cd9d0b317d5580eb3d3b6e7917156b00
+f32-mono-high		f51209c1296955eafb6f60619b90a1bb
+hybrid-s16-stereo		333cb58c9e62a41abfd0ee4c4e2cb3f3
+hybrid-s16-stereo-lossless		fbce94e01652b4ad47c1615b114db1bc
+hybrid-s16-stereo-lossless#lossy	-i 	6313f94964046bf524faff68ff45b98c
+hybrid-s16-mono-lossless		48fcee93e7807becff1dce28306ad058
+hybrid-s16-mono-lossless#lossy	-i 	304c505e477ee0af3bf1a03fa93f73a5
+hybrid-shaped-lossless		f1b3de54a44ebac68f9f5fd5fb0c48fd
+hybrid-shaped-lossless#lossy	-i 	e858b14ab5fc780b06a33efa7d45c608
+hybrid-negative-shaping		2c716c7faafb131dc73384b77adc831b
+hybrid-negative-shaping#lossy	-i 	0c39eb8e35a38add7b36d78f0c0453cd
+hybrid-dynamic-shaping		2c0503bbc512cb4ed05c8f12142d0355
+hybrid-dynamic-shaping#lossy	-i 	58558fbc52cfb79792194311cd8f3b77
+hybrid-s24-high		aabb3f1750ff8e6e76bffe4a8e8a3c2b
+hybrid-s24-high#lossy	-i 	2a883272da6eb2386afb35ce839c2121
+hybrid-f32-lossless		e7085baf9c0a6c74b5a95e14a2e028e9
+hybrid-f32-lossless#lossy	-i 	042b1bcfb32d69396bcc9d683197b2d8
+hybrid-s32-lossless		48a0521a0a34d4853c90696a354e5f62
+hybrid-s32-lossless#lossy	-i 	a66a97d900208f05164068486d773eca
+s16-5.1		2db8b3475a41c8c5bf20afcd39a68428
+s24-3ch		adc7855d7ce2182a5827ae81beeea0f6
+hybrid-5.1-lossless		60211d2d648a171f79d263e499abb19d
+hybrid-5.1-lossless#lossy	-i 	49d9d4c49aa6245cc608cc9952349e8e
+s16-small-blocks		9dcae87de5303a9316d5e83b64f948a6
+s16-silence		5eac3ff1e2280adf4317d713a6a628f2
+dsd64-stereo	--raw-pcm	fe0f8645ca5a5bac3b244df07dde41c9
+dsd64-stereo-fast	--raw-pcm	f4ff71e7036fbb9520e49be6808d2e53
+dsd64-mono	--raw-pcm	aa963a54c9d879a35f0e3ce1827311d6

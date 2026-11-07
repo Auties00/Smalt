@@ -7,6 +7,7 @@ import static java.lang.foreign.MemoryLayout.PathElement.groupElement;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
+import static java.lang.foreign.ValueLayout.JAVA_SHORT;
 
 /**
  * Declares the Video4Linux2 user-space ABI this backend speaks: request numbers, structure
@@ -60,6 +61,16 @@ final class V4l2 {
     static final int BUF_TYPE_VIDEO_CAPTURE = 1;
 
     /**
+     * The {@code V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE} buffer type of multi-planar capture.
+     */
+    static final int BUF_TYPE_VIDEO_CAPTURE_MPLANE = 9;
+
+    /**
+     * The {@code VIDEO_MAX_PLANES} bound on the memory planes of a buffer.
+     */
+    static final int MAX_PLANES = 8;
+
+    /**
      * The {@code V4L2_MEMORY_MMAP} memory type.
      */
     static final int MEMORY_MMAP = 1;
@@ -78,6 +89,31 @@ final class V4l2 {
      * The {@code V4L2_FIELD_INTERLACED} field order: both fields interleaved in one frame.
      */
     static final int FIELD_INTERLACED = 4;
+
+    /**
+     * The {@code V4L2_FIELD_TOP} field order: every buffer holds the top field only.
+     */
+    static final int FIELD_TOP = 2;
+
+    /**
+     * The {@code V4L2_FIELD_BOTTOM} field order: every buffer holds the bottom field only.
+     */
+    static final int FIELD_BOTTOM = 3;
+
+    /**
+     * The {@code V4L2_FIELD_SEQ_TB} field order: the top field's rows, then the bottom field's.
+     */
+    static final int FIELD_SEQ_TB = 5;
+
+    /**
+     * The {@code V4L2_FIELD_SEQ_BT} field order: the bottom field's rows, then the top field's.
+     */
+    static final int FIELD_SEQ_BT = 6;
+
+    /**
+     * The {@code V4L2_FIELD_ALTERNATE} field order: each buffer holds one field, in turn.
+     */
+    static final int FIELD_ALTERNATE = 7;
 
     /**
      * The {@code V4L2_FIELD_INTERLACED_TB} field order: interleaved, top field first.
@@ -342,6 +378,72 @@ final class V4l2 {
             JAVA_INT.withName("xfer_func")).withName("v4l2_pix_format");
 
     /**
+     * The layout of {@code struct v4l2_plane_pix_format}.
+     */
+    static final StructLayout PLANE_PIX_FORMAT = MemoryLayout.structLayout(
+            JAVA_INT.withName("sizeimage"),
+            JAVA_INT.withName("bytesperline"),
+            MemoryLayout.sequenceLayout(6, JAVA_SHORT).withName("reserved")).withName("v4l2_plane_pix_format");
+
+    /**
+     * The layout of the packed {@code struct v4l2_pix_format_mplane}; its anonymous union
+     * ({@code ycbcr_enc}/{@code hsv_enc}) is the field {@code ycbcr_enc}.
+     */
+    static final StructLayout PIX_FORMAT_MPLANE = MemoryLayout.structLayout(
+            JAVA_INT.withName("width"),
+            JAVA_INT.withName("height"),
+            JAVA_INT.withName("pixelformat"),
+            JAVA_INT.withName("field"),
+            JAVA_INT.withName("colorspace"),
+            MemoryLayout.sequenceLayout(MAX_PLANES, PLANE_PIX_FORMAT).withName("plane_fmt"),
+            JAVA_BYTE.withName("num_planes"),
+            JAVA_BYTE.withName("flags"),
+            JAVA_BYTE.withName("ycbcr_enc"),
+            JAVA_BYTE.withName("quantization"),
+            JAVA_BYTE.withName("xfer_func"),
+            MemoryLayout.sequenceLayout(7, JAVA_BYTE).withName("reserved")).withName("v4l2_pix_format_mplane");
+
+    /**
+     * The offset of {@code v4l2_pix_format_mplane.colorspace}.
+     */
+    static final long MP_COLORSPACE = PIX_FORMAT_MPLANE.byteOffset(groupElement("colorspace"));
+
+    /**
+     * The offset of {@code v4l2_pix_format_mplane.plane_fmt}.
+     */
+    static final long MP_PLANE_FMT = PIX_FORMAT_MPLANE.byteOffset(groupElement("plane_fmt"));
+
+    /**
+     * The offset of {@code v4l2_plane_pix_format.sizeimage}.
+     */
+    static final long PLANE_FMT_SIZEIMAGE = PLANE_PIX_FORMAT.byteOffset(groupElement("sizeimage"));
+
+    /**
+     * The offset of {@code v4l2_plane_pix_format.bytesperline}.
+     */
+    static final long PLANE_FMT_BYTESPERLINE = PLANE_PIX_FORMAT.byteOffset(groupElement("bytesperline"));
+
+    /**
+     * The offset of {@code v4l2_pix_format_mplane.num_planes}.
+     */
+    static final long MP_NUM_PLANES = PIX_FORMAT_MPLANE.byteOffset(groupElement("num_planes"));
+
+    /**
+     * The offset of {@code v4l2_pix_format_mplane.ycbcr_enc}.
+     */
+    static final long MP_YCBCR_ENC = PIX_FORMAT_MPLANE.byteOffset(groupElement("ycbcr_enc"));
+
+    /**
+     * The offset of {@code v4l2_pix_format_mplane.quantization}.
+     */
+    static final long MP_QUANTIZATION = PIX_FORMAT_MPLANE.byteOffset(groupElement("quantization"));
+
+    /**
+     * The offset of {@code v4l2_pix_format_mplane.xfer_func}.
+     */
+    static final long MP_XFER_FUNC = PIX_FORMAT_MPLANE.byteOffset(groupElement("xfer_func"));
+
+    /**
      * The layout of {@code struct v4l2_window}, a member of the {@code v4l2_format} union whose
      * pointers give the union its 8-byte alignment; the pointers are modeled as {@code long}.
      */
@@ -365,6 +467,7 @@ final class V4l2 {
             MemoryLayout.paddingLayout(4),
             MemoryLayout.unionLayout(
                     PIX_FORMAT.withName("pix"),
+                    PIX_FORMAT_MPLANE.withName("pix_mp"),
                     WINDOW.withName("win"),
                     MemoryLayout.sequenceLayout(200, JAVA_BYTE).withName("raw_data")).withName("fmt")).withName("v4l2_format");
 
@@ -583,6 +686,318 @@ final class V4l2 {
     static final long BUFFER_LENGTH = BUFFER.byteOffset(groupElement("length"));
 
     /**
+     * The offset of {@code v4l2_buffer.field}.
+     */
+    static final long BUFFER_FIELD = BUFFER.byteOffset(groupElement("field"));
+
+    /**
+     * The offset of {@code v4l2_buffer.sequence}.
+     */
+    static final long BUFFER_SEQUENCE = BUFFER.byteOffset(groupElement("sequence"));
+
+    /**
+     * The offset of {@code v4l2_buffer.m.planes}, the address of the {@code v4l2_plane} array of a
+     * multi-planar buffer, whose length is {@code v4l2_buffer.length}.
+     */
+    static final long BUFFER_PLANES = BUFFER.byteOffset(groupElement("m"), groupElement("planes"));
+
+    /**
+     * The layout of {@code struct v4l2_plane}: the {@code m} union holds an {@code unsigned long}.
+     */
+    static final StructLayout PLANE = MemoryLayout.structLayout(
+            JAVA_INT.withName("bytesused"),
+            JAVA_INT.withName("length"),
+            MemoryLayout.unionLayout(
+                    JAVA_INT.withName("mem_offset"),
+                    JAVA_LONG.withName("userptr"),
+                    JAVA_INT.withName("fd")).withName("m"),
+            JAVA_INT.withName("data_offset"),
+            MemoryLayout.sequenceLayout(11, JAVA_INT).withName("reserved")).withName("v4l2_plane");
+
+    /**
+     * The offset of {@code v4l2_plane.bytesused}.
+     */
+    static final long PLANE_BYTESUSED = PLANE.byteOffset(groupElement("bytesused"));
+
+    /**
+     * The offset of {@code v4l2_plane.length}.
+     */
+    static final long PLANE_LENGTH = PLANE.byteOffset(groupElement("length"));
+
+    /**
+     * The offset of {@code v4l2_plane.m.mem_offset}.
+     */
+    static final long PLANE_MEM_OFFSET = PLANE.byteOffset(groupElement("m"), groupElement("mem_offset"));
+
+    /**
+     * The offset of {@code v4l2_plane.data_offset}.
+     */
+    static final long PLANE_DATA_OFFSET = PLANE.byteOffset(groupElement("data_offset"));
+
+    /**
+     * The layout of {@code struct v4l2_queryctrl}.
+     */
+    static final StructLayout QUERYCTRL = MemoryLayout.structLayout(
+            JAVA_INT.withName("id"),
+            JAVA_INT.withName("type"),
+            MemoryLayout.sequenceLayout(32, JAVA_BYTE).withName("name"),
+            JAVA_INT.withName("minimum"),
+            JAVA_INT.withName("maximum"),
+            JAVA_INT.withName("step"),
+            JAVA_INT.withName("default_value"),
+            JAVA_INT.withName("flags"),
+            MemoryLayout.sequenceLayout(2, JAVA_INT).withName("reserved")).withName("v4l2_queryctrl");
+
+    /**
+     * The offset of {@code v4l2_queryctrl.id}.
+     */
+    static final long QUERYCTRL_ID = QUERYCTRL.byteOffset(groupElement("id"));
+
+    /**
+     * The offset of {@code v4l2_queryctrl.type}.
+     */
+    static final long QUERYCTRL_TYPE = QUERYCTRL.byteOffset(groupElement("type"));
+
+    /**
+     * The offset of {@code v4l2_queryctrl.minimum}.
+     */
+    static final long QUERYCTRL_MINIMUM = QUERYCTRL.byteOffset(groupElement("minimum"));
+
+    /**
+     * The offset of {@code v4l2_queryctrl.maximum}.
+     */
+    static final long QUERYCTRL_MAXIMUM = QUERYCTRL.byteOffset(groupElement("maximum"));
+
+    /**
+     * The offset of {@code v4l2_queryctrl.step}.
+     */
+    static final long QUERYCTRL_STEP = QUERYCTRL.byteOffset(groupElement("step"));
+
+    /**
+     * The offset of {@code v4l2_queryctrl.default_value}.
+     */
+    static final long QUERYCTRL_DEFAULT = QUERYCTRL.byteOffset(groupElement("default_value"));
+
+    /**
+     * The offset of {@code v4l2_queryctrl.flags}.
+     */
+    static final long QUERYCTRL_FLAGS = QUERYCTRL.byteOffset(groupElement("flags"));
+
+    /**
+     * The layout of {@code struct v4l2_control}.
+     */
+    static final StructLayout CONTROL = MemoryLayout.structLayout(
+            JAVA_INT.withName("id"),
+            JAVA_INT.withName("value")).withName("v4l2_control");
+
+    /**
+     * The offset of {@code v4l2_control.id}.
+     */
+    static final long CONTROL_ID = CONTROL.byteOffset(groupElement("id"));
+
+    /**
+     * The offset of {@code v4l2_control.value}.
+     */
+    static final long CONTROL_VALUE = CONTROL.byteOffset(groupElement("value"));
+
+    /**
+     * The layout of the packed {@code struct v4l2_querymenu}, whose union of a 32-byte name and a 64-bit
+     * value is modeled as the name.
+     */
+    static final StructLayout QUERYMENU = MemoryLayout.structLayout(
+            JAVA_INT.withName("id"),
+            JAVA_INT.withName("index"),
+            MemoryLayout.sequenceLayout(32, JAVA_BYTE).withName("name"),
+            JAVA_INT.withName("reserved")).withName("v4l2_querymenu");
+
+    /**
+     * The offset of {@code v4l2_querymenu.id}.
+     */
+    static final long QUERYMENU_ID = QUERYMENU.byteOffset(groupElement("id"));
+
+    /**
+     * The offset of {@code v4l2_querymenu.index}.
+     */
+    static final long QUERYMENU_INDEX = QUERYMENU.byteOffset(groupElement("index"));
+
+    /**
+     * The {@code V4L2_CTRL_TYPE_INTEGER} control type.
+     */
+    static final int CTRL_TYPE_INTEGER = 1;
+
+    /**
+     * The {@code V4L2_CTRL_TYPE_BOOLEAN} control type.
+     */
+    static final int CTRL_TYPE_BOOLEAN = 2;
+
+    /**
+     * The {@code V4L2_CTRL_TYPE_MENU} control type.
+     */
+    static final int CTRL_TYPE_MENU = 3;
+
+    /**
+     * The {@code V4L2_CTRL_FLAG_DISABLED} control flag.
+     */
+    static final int CTRL_FLAG_DISABLED = 0x0001;
+
+    /**
+     * The {@code V4L2_CTRL_FLAG_READ_ONLY} control flag.
+     */
+    static final int CTRL_FLAG_READ_ONLY = 0x0004;
+
+    /**
+     * The {@code V4L2_CID_BASE} of the user control class.
+     */
+    static final int CID_BASE = 0x00980900;
+
+    /**
+     * The {@code V4L2_CID_CAMERA_CLASS_BASE} of the camera control class.
+     */
+    static final int CID_CAMERA_CLASS_BASE = 0x009A0900;
+
+    /**
+     * {@code V4L2_CID_BRIGHTNESS}.
+     */
+    static final int CID_BRIGHTNESS = CID_BASE;
+
+    /**
+     * {@code V4L2_CID_CONTRAST}.
+     */
+    static final int CID_CONTRAST = CID_BASE + 1;
+
+    /**
+     * {@code V4L2_CID_SATURATION}.
+     */
+    static final int CID_SATURATION = CID_BASE + 2;
+
+    /**
+     * {@code V4L2_CID_HUE}.
+     */
+    static final int CID_HUE = CID_BASE + 3;
+
+    /**
+     * {@code V4L2_CID_AUTO_WHITE_BALANCE}, a boolean.
+     */
+    static final int CID_AUTO_WHITE_BALANCE = CID_BASE + 12;
+
+    /**
+     * {@code V4L2_CID_GAMMA}.
+     */
+    static final int CID_GAMMA = CID_BASE + 16;
+
+    /**
+     * {@code V4L2_CID_AUTOGAIN}, a boolean.
+     */
+    static final int CID_AUTOGAIN = CID_BASE + 18;
+
+    /**
+     * {@code V4L2_CID_GAIN}.
+     */
+    static final int CID_GAIN = CID_BASE + 19;
+
+    /**
+     * {@code V4L2_CID_POWER_LINE_FREQUENCY}, a menu of {@link #PLF_DISABLED}, {@link #PLF_50HZ},
+     * {@link #PLF_60HZ} and {@link #PLF_AUTO}.
+     */
+    static final int CID_POWER_LINE_FREQUENCY = CID_BASE + 24;
+
+    /**
+     * {@code V4L2_CID_HUE_AUTO}, a boolean.
+     */
+    static final int CID_HUE_AUTO = CID_BASE + 25;
+
+    /**
+     * {@code V4L2_CID_WHITE_BALANCE_TEMPERATURE}, in kelvin.
+     */
+    static final int CID_WHITE_BALANCE_TEMPERATURE = CID_BASE + 26;
+
+    /**
+     * {@code V4L2_CID_SHARPNESS}.
+     */
+    static final int CID_SHARPNESS = CID_BASE + 27;
+
+    /**
+     * {@code V4L2_CID_BACKLIGHT_COMPENSATION}.
+     */
+    static final int CID_BACKLIGHT_COMPENSATION = CID_BASE + 28;
+
+    /**
+     * {@code V4L2_CID_EXPOSURE_AUTO}, a menu of {@link #EXPOSURE_AUTO}, {@link #EXPOSURE_MANUAL},
+     * {@link #EXPOSURE_SHUTTER_PRIORITY} and {@link #EXPOSURE_APERTURE_PRIORITY}.
+     */
+    static final int CID_EXPOSURE_AUTO = CID_CAMERA_CLASS_BASE + 1;
+
+    /**
+     * {@code V4L2_CID_EXPOSURE_ABSOLUTE}, in units of 100 microseconds.
+     */
+    static final int CID_EXPOSURE_ABSOLUTE = CID_CAMERA_CLASS_BASE + 2;
+
+    /**
+     * {@code V4L2_CID_PAN_ABSOLUTE}, in arc seconds.
+     */
+    static final int CID_PAN_ABSOLUTE = CID_CAMERA_CLASS_BASE + 8;
+
+    /**
+     * {@code V4L2_CID_TILT_ABSOLUTE}, in arc seconds.
+     */
+    static final int CID_TILT_ABSOLUTE = CID_CAMERA_CLASS_BASE + 9;
+
+    /**
+     * {@code V4L2_CID_FOCUS_ABSOLUTE}.
+     */
+    static final int CID_FOCUS_ABSOLUTE = CID_CAMERA_CLASS_BASE + 10;
+
+    /**
+     * {@code V4L2_CID_FOCUS_AUTO}, a boolean.
+     */
+    static final int CID_FOCUS_AUTO = CID_CAMERA_CLASS_BASE + 12;
+
+    /**
+     * {@code V4L2_CID_ZOOM_ABSOLUTE}.
+     */
+    static final int CID_ZOOM_ABSOLUTE = CID_CAMERA_CLASS_BASE + 13;
+
+    /**
+     * {@code V4L2_CID_POWER_LINE_FREQUENCY_DISABLED}.
+     */
+    static final int PLF_DISABLED = 0;
+
+    /**
+     * {@code V4L2_CID_POWER_LINE_FREQUENCY_50HZ}.
+     */
+    static final int PLF_50HZ = 1;
+
+    /**
+     * {@code V4L2_CID_POWER_LINE_FREQUENCY_60HZ}.
+     */
+    static final int PLF_60HZ = 2;
+
+    /**
+     * {@code V4L2_CID_POWER_LINE_FREQUENCY_AUTO}.
+     */
+    static final int PLF_AUTO = 3;
+
+    /**
+     * {@code V4L2_EXPOSURE_AUTO}.
+     */
+    static final int EXPOSURE_AUTO = 0;
+
+    /**
+     * {@code V4L2_EXPOSURE_MANUAL}.
+     */
+    static final int EXPOSURE_MANUAL = 1;
+
+    /**
+     * {@code V4L2_EXPOSURE_SHUTTER_PRIORITY}.
+     */
+    static final int EXPOSURE_SHUTTER_PRIORITY = 2;
+
+    /**
+     * {@code V4L2_EXPOSURE_APERTURE_PRIORITY}.
+     */
+    static final int EXPOSURE_APERTURE_PRIORITY = 3;
+
+    /**
      * The {@code _IOC_WRITE} direction bit of a request number.
      */
     private static final long IOC_WRITE = 1;
@@ -666,6 +1081,26 @@ final class V4l2 {
      * {@code VIDIOC_ENUM_FRAMEINTERVALS = _IOWR('V', 75, struct v4l2_frmivalenum)}.
      */
     static final long VIDIOC_ENUM_FRAMEINTERVALS = ioc(IOC_READ | IOC_WRITE, 75, FRMIVALENUM);
+
+    /**
+     * {@code VIDIOC_G_CTRL = _IOWR('V', 27, struct v4l2_control)}.
+     */
+    static final long VIDIOC_G_CTRL = ioc(IOC_READ | IOC_WRITE, 27, CONTROL);
+
+    /**
+     * {@code VIDIOC_S_CTRL = _IOWR('V', 28, struct v4l2_control)}.
+     */
+    static final long VIDIOC_S_CTRL = ioc(IOC_READ | IOC_WRITE, 28, CONTROL);
+
+    /**
+     * {@code VIDIOC_QUERYCTRL = _IOWR('V', 36, struct v4l2_queryctrl)}.
+     */
+    static final long VIDIOC_QUERYCTRL = ioc(IOC_READ | IOC_WRITE, 36, QUERYCTRL);
+
+    /**
+     * {@code VIDIOC_QUERYMENU = _IOWR('V', 37, struct v4l2_querymenu)}.
+     */
+    static final long VIDIOC_QUERYMENU = ioc(IOC_READ | IOC_WRITE, 37, QUERYMENU);
 
     /**
      * Prevents instantiation.

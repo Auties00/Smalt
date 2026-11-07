@@ -1,0 +1,13 @@
+# video decode dump of mp4/uncv-rgba-zlib.mp4; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 120000
+seekable true
+track 1 UNCOMPRESSED_23001_17 24x8 timebase=1/25
+0 pts=0 dur=1 key=true 24x8 yuv8 YUV444 color=IDENTITY/FULL/SMPTE170M/SMPTE170M y=f4033f4b u=a98fd383 v=1658dfa0 a=7132ef17
+1 pts=1 dur=1 key=true 24x8 yuv8 YUV444 color=IDENTITY/FULL/SMPTE170M/SMPTE170M y=535ddd5d u=555c7510 v=87fab7d7 a=b598e036
+2 pts=2 dur=1 key=true 24x8 yuv8 YUV444 color=IDENTITY/FULL/SMPTE170M/SMPTE170M y=720cd2d4 u=4bc3857c v=489344bb a=71608757
+seek 0: @0
+seek 40000: @1
+seek 80000: @2
+seek 120000: end
+seek -1000000: @0

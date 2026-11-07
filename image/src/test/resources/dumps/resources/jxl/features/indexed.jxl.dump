@@ -1,0 +1,28 @@
+# image dump of resources/jxl/features/indexed.jxl; regenerate with -Dsmalt.test.updateDumps=true
+format JXL
+info ImageInfo[format=JXL, width=96, height=64, hasAlpha=false, animated=true, frameCount=8, orientation=NORMAL]
+decode
+picture 96x64 rgba8 alpha=false crc=9f0ed384
+  format=JXL orientation=NORMAL source=96x64
+  icc=512:5b447eb9 exif=none xmp=none
+  profile=ColorProfile[RGB_D65_SRG_Rel_SRG, RGB, DISPLAY, v4.4.0]
+scaled 24x16
+picture 96x64 rgba8 alpha=false crc=9f0ed384
+  format=JXL orientation=NORMAL source=96x64
+  icc=512:5b447eb9 exif=none xmp=none
+  profile=ColorProfile[RGB_D65_SRG_Rel_SRG, RGB, DISPLAY, v4.4.0]
+animation 96x64 loops=0 frames=8
+frame 0 ts=0 dur=100000 96x64 rgba8 alpha=false crc=9f0ed384
+frame 1 ts=100000 dur=100000 96x64 rgba8 alpha=false crc=d6b23c15
+frame 2 ts=200000 dur=100000 96x64 rgba8 alpha=false crc=1d4d8a31
+frame 3 ts=300000 dur=100000 96x64 rgba8 alpha=false crc=f9e62879
+frame 4 ts=400000 dur=100000 96x64 rgba8 alpha=false crc=9230f270
+frame 5 ts=500000 dur=100000 96x64 rgba8 alpha=false crc=23c8bbae
+frame 6 ts=600000 dur=100000 96x64 rgba8 alpha=false crc=db5201fb
+frame 7 ts=700000 dur=100000 96x64 rgba8 alpha=false crc=8f48f463
+decoder preview
+null
+decoder gain map
+null
+decoder boxes
+[jxli 45]
