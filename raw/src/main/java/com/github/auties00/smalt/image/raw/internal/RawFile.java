@@ -260,6 +260,12 @@ public final class RawFile {
     Sensor enhanced;
 
     /**
+     * The second image of a dual pixel file, of one of the two photodiodes of each pixel, or {@code null}; it has
+     * the main image's size, areas, levels and color data.
+     */
+    Sensor dualPixel;
+
+    /**
      * The reduced-resolution linear raw images of a DNG file (previews of photometric
      * interpretation {@code LinearRaw}), in file order.
      */
@@ -335,25 +341,34 @@ public final class RawFile {
     }
 
     /**
-     * Returns the image the options render: the frame they ask for of a pixel-shift file, the enhanced
-     * image when they ask for it and the file holds one that decodes, the sensor image otherwise.
+     * Returns the image the options render: the second image of a dual pixel file when they ask for it, the
+     * frame they ask for of a pixel-shift file, the enhanced image when they ask for it and the file holds one
+     * that decodes, the sensor image otherwise.
      *
      * @param options the decoding options
      * @return the sensor description, or {@code null} when the file holds no sensor image
-     * @throws MediaException.Unsupported if the options ask for a frame the file does not hold
+     * @throws MediaException.Unsupported if the options ask for a frame or a dual pixel image the file does not
+     * hold
      */
     Sensor sensor(RawDecoderOptions options) {
+        var image = sensor;
+        if (options.dualPixelImage() && sensor != null) {
+            if (dualPixel == null) {
+                throw new MediaException.Unsupported(format.extension(), "the file holds no dual pixel image");
+            }
+            image = dualPixel;
+        }
         var frame = options.frame();
-        if (frame.isPresent() && sensor != null) {
+        if (frame.isPresent() && image != null) {
             var index = frame.getAsInt();
-            var frames = sensor.frames != null ? sensor.frames.size() : 1;
+            var frames = image.frames != null ? image.frames.size() : 1;
             if (index >= frames) {
                 throw new MediaException.Unsupported(format.extension(), "frame " + index + " of a file of " + frames
                         + (frames == 1 ? " frame" : " frames"));
             }
-            return sensor.frames != null ? sensor.frames.get(index) : sensor;
+            return image.frames != null ? image.frames.get(index) : image;
         }
-        return options.enhancedImage() && enhanced != null ? enhanced : sensor;
+        return options.enhancedImage() && enhanced != null && image == sensor ? enhanced : image;
     }
 
     /**

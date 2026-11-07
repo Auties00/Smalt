@@ -25,8 +25,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * one of them, those of the uncompressed DNG file the converter writes, and the color filter pattern, the image
  * area, the black levels, the as-shot white balance and the white level must be the converter's. The converter
  * writes a white level of its own, larger than the camera's specular level, for some cameras; for those the
- * camera's level must lie below the converter's. The DNG files are read here directly (the dual pixel file holds
- * two samples per photosite, the second being the image of one photodiode of each pair). The oracle files are the
+ * camera's level must lie below the converter's. The DNG files are read here directly: the dual pixel file holds
+ * two samples per photosite, the second being the image of one photodiode of each pair, which the decoder's dual
+ * pixel image must equal photosite for photosite, as the two images the DNG decoder splits from the converter's file
+ * must equal the CR3 decoder's. The oracle files are the
  * ones {@code tools/testdata/raw-oracle.py} writes into {@code <conformance cache>/raw-oracle}
  * ({@code -Dsmalt.test.rawOracle} overrides the directory); the tests are skipped without them.
  */
@@ -120,6 +122,73 @@ class Cr3OracleTest {
         }
         assertEquals(0, mismatches, "photosites differ from the oracle, first at row " + first / decoded.width
                 + " column " + first % decoded.width);
+    }
+
+    private static SensorPlane plane(Sensor sensor) {
+        var plane = new SensorPlane(sensor.width, sensor.height, 1, false, MediaLimits.DEFAULT);
+        sensor.reader.read(plane, MediaLimits.DEFAULT);
+        return plane;
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("samples")
+    @DisplayName("a file holds a dual pixel image exactly when the converter stores two samples per photosite, and "
+            + "its photosites equal the converter's second samples")
+    void dualPixel(RawSamples sample) {
+        var oracle = converted(sample);
+        try (var source = MediaSource.of(sample.fetch())) {
+            var file = RawParser.parse(source, MediaLimits.DEFAULT);
+            assertEquals(oracle.samplesPerPixel() == 2, file.dualPixel != null, "dual pixel image");
+            if (file.dualPixel == null) {
+                return;
+            }
+            var main = file.sensor;
+            var dual = file.dualPixel;
+            assertArrayEquals(main.active(), dual.active(), "image area");
+            assertArrayEquals(main.defaultCrop, dual.defaultCrop, "default crop");
+            assertArrayEquals(main.black, dual.black, "black levels");
+            assertArrayEquals(main.white, dual.white, "white level");
+            assertEquals(main.cfa, dual.cfa, "color filter pattern");
+            var decoded = plane(dual);
+            assertEquals(oracle.width(), decoded.width);
+            assertEquals(oracle.height(), decoded.height);
+            var mismatches = 0L;
+            var first = -1;
+            for (var i = 0; i < decoded.integers.length; i++) {
+                if (decoded.integers[i] != oracle.samples()[i * 2 + 1]) {
+                    if (first < 0) {
+                        first = i;
+                    }
+                    mismatches++;
+                }
+            }
+            assertEquals(0, mismatches, "dual pixel photosites differ from the oracle, first at row "
+                    + first / decoded.width + " column " + first % decoded.width);
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("samples")
+    @DisplayName("the DNG decoder splits the converter's two-sample file of a dual pixel file into the CR3 decoder's "
+            + "main and dual pixel images")
+    void convertedDualPixel(RawSamples sample) {
+        var name = sample.fileName();
+        var dng = ORACLE.resolve(name.substring(0, name.lastIndexOf('.')) + ".dng");
+        Skip.unless(Files.isRegularFile(dng), "data:raw-oracle", "no oracle file " + dng + "; run tools/testdata/raw-oracle.py");
+        RawFile cr3;
+        try (var source = MediaSource.of(sample.fetch())) {
+            cr3 = RawParser.parse(source, MediaLimits.DEFAULT);
+            try (var converted = MediaSource.of(dng)) {
+                var file = RawParser.parse(converted, MediaLimits.DEFAULT);
+                assertEquals(cr3.dualPixel != null, file.dualPixel != null, "dual pixel image of the DNG file");
+                if (file.dualPixel == null) {
+                    return;
+                }
+                assertEquals(1, file.sensor.samplesPerPixel, "samples of the DNG file's main image");
+                assertArrayEquals(plane(cr3.sensor).integers, plane(file.sensor).integers, "main image");
+                assertArrayEquals(plane(cr3.dualPixel).integers, plane(file.dualPixel).integers, "dual pixel image");
+            }
+        }
     }
 
     @ParameterizedTest(name = "{0}")

@@ -201,6 +201,15 @@ class RawFuzzTest {
             }
             run.output();
         });
+        if (info.isPresent() && info.get().hasDualPixelImage()) {
+            var dual = plain.toBuilder().dualPixelImage(true).build();
+            run.value("dual pixel sensor", () -> RawDecoder.decodeRaw(MediaSource.of(data), dual)).ifPresent(raw -> {
+                if (raw.samples().length < (long) raw.width() * raw.height() * raw.channels()) {
+                    throw new AssertionError("the dual pixel image holds fewer samples than its size");
+                }
+                run.output();
+            });
+        }
         if (run.sampled(data, 0, 3)) {
             run.value("render", () -> RawDecoder.decode(MediaSource.of(data), plain)).ifPresent(image -> {
                 ImageOps.toRgba(image.picture());

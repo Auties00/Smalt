@@ -48,6 +48,11 @@ public final class Cr3Writer {
     public int encoding = 0;
     /** A second, smaller CRX image written as a track of its own after the main image's, or {@code null}. */
     public Cr3Writer thumbnail;
+    /**
+     * The second image of a dual pixel file, of the main image's size and coding, written as the last track after
+     * the timed metadata, or {@code null}.
+     */
+    public Cr3Writer dualPixel;
     /** The photosites, row by row; {@link #ramp} by default. */
     public int[] samples;
     /** The version 1 quantization parameter of each subband: LL3, HL3, LH3, HH3, HL2, LH2, HH2, HL1, LH1, HH1. */
@@ -78,6 +83,10 @@ public final class Cr3Writer {
     public int sampleOffset;
     /** After {@link #write()}: the length of the CRX sample. */
     public int sampleLength;
+    /** After {@link #write()}: the offset of the dual pixel image's CRX sample, when there is one. */
+    public int dualOffset;
+    /** After {@link #write()}: the length of the dual pixel image's CRX sample, or 0. */
+    public int dualLength;
 
     /**
      * Fills {@link #samples} with a smooth ramp plus a texture and a flat area, so that both the run mode and the
@@ -128,6 +137,15 @@ public final class Cr3Writer {
             small = thumbnail.sample();
         }
         var ctmd = colorData ? timedMetadata() : new byte[0];
+        var second = new byte[0];
+        if (dualPixel != null) {
+            if (dualPixel.samples == null) {
+                dualPixel.ramp();
+            }
+            dualPixel.expected = new int[dualPixel.width * dualPixel.height];
+            second = dualPixel.sample();
+        }
+        dualLength = second.length;
         var moov = moov(sample.length, small.length, ctmd.length, 0);
         var ftyp = box("ftyp", concat("crx ".getBytes(StandardCharsets.ISO_8859_1), u32(1),
                 "crx ".getBytes(StandardCharsets.ISO_8859_1), "isom".getBytes(StandardCharsets.ISO_8859_1)));
@@ -137,13 +155,15 @@ public final class Cr3Writer {
         var file = new ByteArrayOutputStream();
         file.writeBytes(ftyp);
         file.writeBytes(moov(sample.length, small.length, ctmd.length, dataStart));
-        file.writeBytes(box("mdat", concat(sample, small, ctmd)));
+        file.writeBytes(box("mdat", concat(sample, small, ctmd, second)));
         sampleOffset = dataStart;
+        dualOffset = dataStart + sample.length + small.length + ctmd.length;
         sampleLength = sample.length;
         return file.toByteArray();
     }
 
-    // the media data holds the main image's sample, the thumbnail's and the timed metadata, in that order
+    // the media data holds the main image's sample, the thumbnail's, the timed metadata and the dual pixel image's
+    // sample, in that order
     private byte[] moov(int sampleLength, int smallLength, int ctmdLength, long sampleOffset) {
         var canon = concat(CANON,
                 box("CMT1", tiff(ifd(new Object[][]{{271, "Canon"}, {272, model}, {274, 1}}))),
@@ -157,6 +177,10 @@ public final class Cr3Writer {
         }
         if (ctmdLength > 0) {
             children.add(track(box("CTMD", new byte[8]), ctmdLength, sampleOffset + sampleLength + smallLength));
+        }
+        if (dualPixel != null) {
+            children.add(track(dualPixel.rawEntry(), dualLength,
+                    sampleOffset + sampleLength + smallLength + ctmdLength));
         }
         return box("moov", concat(children.toArray(byte[][]::new)));
     }

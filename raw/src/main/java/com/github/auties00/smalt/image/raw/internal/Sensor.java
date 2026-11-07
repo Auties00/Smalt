@@ -228,6 +228,49 @@ final class Sensor {
     Reader reader;
 
     /**
+     * Returns a copy of this description sharing its arrays, lists and reader, with its own list of tags.
+     *
+     * @return the copy
+     */
+    Sensor copy() {
+        var copy = new Sensor();
+        copy.width = width;
+        copy.height = height;
+        copy.samplesPerPixel = samplesPerPixel;
+        copy.bitsPerSample = bitsPerSample;
+        copy.wide = wide;
+        copy.floating = floating;
+        copy.cfa = cfa;
+        copy.layout = layout;
+        copy.planeOfColor = planeOfColor;
+        copy.activeArea = activeArea;
+        copy.defaultCrop = defaultCrop;
+        copy.userCrop = userCrop;
+        copy.frame = frame;
+        copy.gain = gain;
+        copy.scaleH = scaleH;
+        copy.scaleV = scaleV;
+        copy.blackRows = blackRows;
+        copy.blackColumns = blackColumns;
+        copy.black = black;
+        copy.blackDeltaH = blackDeltaH;
+        copy.blackDeltaV = blackDeltaV;
+        copy.white = white;
+        copy.linearization = linearization;
+        copy.opcodes1 = opcodes1;
+        copy.opcodes2 = opcodes2;
+        copy.opcodes3 = opcodes3;
+        copy.lens = lens;
+        copy.pairedOpcodes2 = pairedOpcodes2;
+        copy.frames = frames;
+        copy.estimateBalance = estimateBalance;
+        copy.compression = compression;
+        copy.tags.addAll(tags);
+        copy.reader = reader;
+        return copy;
+    }
+
+    /**
      * Returns the active area, defaulting to the whole stored image.
      *
      * @return the top, left, bottom and right edges

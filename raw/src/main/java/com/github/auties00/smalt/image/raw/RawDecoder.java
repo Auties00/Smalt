@@ -18,9 +18,9 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Decodes camera raw images: DNG, and the vendor formats of Canon (CR2; CR3 metadata and
- * previews), Nikon (NEF), Sony (ARW), Fujifilm (RAF), Olympus (ORF), Panasonic (RW2) and Pentax
- * (PEF), as far as each is supported.
+ * Decodes camera raw images: DNG, and the vendor formats of Canon (CR2, CR3), Nikon (NEF), Sony
+ * (ARW), Fujifilm (RAF), Olympus (ORF), Panasonic (RW2) and Pentax (PEF), as far as each is
+ * supported.
  *
  * <p>Decoding renders the sensor image the way a raw converter does: it reads and decompresses the
  * sensor data, applies the DNG opcode lists, linearizes the samples, demosaics them, white balances
@@ -112,7 +112,8 @@ public final class RawDecoder {
                 facts.sensorWidth(), facts.sensorHeight(), facts.orientation(), facts.bitsPerSample(), facts.cfa(),
                 facts.compression(), facts.unsupported(), facts.calibrated(), facts.iso(), facts.exposureTime(),
                 facts.fNumber(), facts.focalLength(), facts.lens(), facts.captureTime(), facts.dngVersion(),
-                facts.previews(), facts.layout(), facts.profiles(), facts.enhanced(), facts.frames());
+                facts.previews(), facts.layout(), facts.profiles(), facts.enhanced(), facts.frames(),
+                facts.dualPixel());
     }
 
     /**
@@ -213,8 +214,8 @@ public final class RawDecoder {
     /**
      * Extracts the linear sensor image of a raw file, before demosaicing and color rendering.
      *
-     * <p>The options' limits, opcode, default crop, user crop, enhanced image and camera profile
-     * choices apply, and their white balance and color matrix decide the image's color description;
+     * <p>The options' limits, opcode, default crop, user crop, enhanced image, frame, dual pixel image
+     * and camera profile choices apply, and their white balance and color matrix decide the image's color description;
      * the rendering choices are ignored. A four-color sensor whose file carries no color matrices
      * decodes with the matrix {@link RawInfo#isColorCalibrated()} describes unless the options
      * supply one.

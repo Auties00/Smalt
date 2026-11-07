@@ -36,6 +36,7 @@ public final class RawDecoderOptions {
     private final String cameraProfile;
     private final boolean lensCorrections;
     private final int frame;
+    private final boolean dualPixelImage;
 
     private RawDecoderOptions(Builder builder) {
         this.limits = builder.limits;
@@ -58,6 +59,7 @@ public final class RawDecoderOptions {
         this.cameraProfile = builder.cameraProfile;
         this.lensCorrections = builder.lensCorrections;
         this.frame = builder.allFrames ? -1 : builder.frame;
+        this.dualPixelImage = builder.dualPixelImage;
     }
 
     /**
@@ -156,6 +158,7 @@ public final class RawDecoderOptions {
         builder.lensCorrections = lensCorrections;
         builder.frame = Math.max(frame, 0);
         builder.allFrames = frame < 0;
+        builder.dualPixelImage = dualPixelImage;
         return builder;
     }
 
@@ -356,6 +359,22 @@ public final class RawDecoderOptions {
         return frame < 0 ? OptionalInt.empty() : OptionalInt.of(frame);
     }
 
+    /**
+     * {@return whether the second image of a dual pixel file (the image of one of the two photodiodes of each
+     * pixel) is decoded instead of the main image (the sum of both photodiodes); {@code false} by default}
+     *
+     * <p>{@link RawInfo#hasDualPixelImage()} tells a file that holds one: a Canon CR3 file shot in dual pixel raw
+     * mode, or the DNG file of two samples per photosite Adobe DNG Converter writes from it. The second image has
+     * the main image's size, color filter array, image areas, levels and color description, so its linear values
+     * are on the main image's scale: subtracting them from the main image's gives the image of the other
+     * photodiode. It renders and converts to DNG like the main image; a size hint is then never met from an
+     * embedded preview, which shows the main image. Decoding a file that holds no second image
+     * with this option throws {@link com.github.auties00.smalt.MediaException.Unsupported}.
+     */
+    public boolean dualPixelImage() {
+        return dualPixelImage;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof RawDecoderOptions that && limits.equals(that.limits) && minWidth == that.minWidth
@@ -366,14 +385,14 @@ public final class RawDecoderOptions {
                 && defaultCrop == that.defaultCrop && Arrays.equals(colorMatrix, that.colorMatrix)
                 && enhancedImage == that.enhancedImage && userCrop == that.userCrop && autoBlack == that.autoBlack
                 && Objects.equals(cameraProfile, that.cameraProfile) && lensCorrections == that.lensCorrections
-                && frame == that.frame;
+                && frame == that.frame && dualPixelImage == that.dualPixelImage;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(limits, minWidth, minHeight, embeddedPreview, demosaic, whiteBalance, highlights,
                 toneCurve, exposure, colorSpace, highBitDepth, opcodes, defaultCrop, Arrays.hashCode(colorMatrix),
-                enhancedImage, userCrop, autoBlack, cameraProfile, lensCorrections, frame);
+                enhancedImage, userCrop, autoBlack, cameraProfile, lensCorrections, frame, dualPixelImage);
     }
 
     @Override
@@ -386,7 +405,7 @@ public final class RawDecoderOptions {
                 + ", enhancedImage=" + enhancedImage + ", userCrop=" + userCrop + ", autoBlack=" + autoBlack
                 + (cameraProfile != null ? ", cameraProfile=" + cameraProfile : "")
                 + ", lensCorrections=" + lensCorrections + (frame >= 0 ? ", frame=" + frame : "")
-                + "]";
+                + (dualPixelImage ? ", dualPixelImage=true" : "") + "]";
     }
 
     /**
@@ -417,6 +436,7 @@ public final class RawDecoderOptions {
         private boolean lensCorrections = true;
         private int frame;
         private boolean allFrames = true;
+        private boolean dualPixelImage;
 
         private Builder() {
         }
@@ -680,6 +700,18 @@ public final class RawDecoderOptions {
         public Builder allFrames() {
             this.frame = 0;
             this.allFrames = true;
+            return this;
+        }
+
+        /**
+         * Sets whether the second image of a dual pixel file is decoded instead of the main image; see
+         * {@link RawDecoderOptions#dualPixelImage()}.
+         *
+         * @param dualPixelImage the value
+         * @return this builder
+         */
+        public Builder dualPixelImage(boolean dualPixelImage) {
+            this.dualPixelImage = dualPixelImage;
             return this;
         }
 

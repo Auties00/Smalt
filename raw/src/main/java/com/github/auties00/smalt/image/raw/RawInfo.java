@@ -87,6 +87,8 @@ public final class RawInfo {
 
     private final int frames;
 
+    private final boolean dualPixel;
+
     /**
      * Constructs a description; {@link RawDecoder} creates instances.
      *
@@ -115,12 +117,13 @@ public final class RawInfo {
      * @param profiles the names of the camera profiles, the primary one first
      * @param enhanced whether the file holds an enhanced image that decodes
      * @param frames the frames of a pixel-shift file, 1 for a file of one shot
+     * @param dualPixel whether the file holds the second image of a dual pixel sensor
      */
     RawInfo(RawFormat format, String make, String model, int width, int height, int sensorWidth, int sensorHeight,
             Orientation orientation, int bitsPerSample, CfaPattern cfa, String compression, String unsupported,
             boolean calibrated, long iso, double exposureTime, double fNumber, double focalLength, String lens,
             String captureTime, String dngVersion, List<RawPreview> previews, CfaLayout layout, List<String> profiles,
-            boolean enhanced, int frames) {
+            boolean enhanced, int frames, boolean dualPixel) {
         this.format = Objects.requireNonNull(format, "format");
         this.make = make;
         this.model = model;
@@ -146,6 +149,7 @@ public final class RawInfo {
         this.profiles = List.copyOf(profiles);
         this.enhanced = enhanced;
         this.frames = frames;
+        this.dualPixel = dualPixel;
     }
 
     /**
@@ -288,6 +292,19 @@ public final class RawInfo {
     }
 
     /**
+     * {@return whether the file holds the second image of a dual pixel sensor, whose pixels each hold two
+     * photodiodes: a Canon CR3 file shot in dual pixel raw mode, or the DNG file Adobe DNG Converter writes from
+     * one}
+     *
+     * <p>The main image, which the size, color filter array and compression this object reports describe, is the
+     * sum of the two photodiodes of each pixel; the second image is that of one of them alone, of the same size,
+     * which {@link RawDecoderOptions#dualPixelImage()} decodes.
+     */
+    public boolean hasDualPixelImage() {
+        return dualPixel;
+    }
+
+    /**
      * {@return a description of the compression of the sensor data, such as {@code "lossless JPEG"},
      * or empty when unknown}
      */
@@ -402,6 +419,6 @@ public final class RawInfo {
                 + ", sensor=" + sensorWidth + "x" + sensorHeight + ", orientation=" + orientation + ", bits="
                 + bitsPerSample + ", cfa=" + cfa + ", compression=" + compression
                 + (unsupported != null ? ", unsupported=" + unsupported : "") + ", calibrated=" + calibrated
-                + (frames > 1 ? ", frames=" + frames : "") + ", previews=" + previews.size() + "]";
+                + (frames > 1 ? ", frames=" + frames : "") + (dualPixel ? ", dualPixel=true" : "") + ", previews=" + previews.size() + "]";
     }
 }

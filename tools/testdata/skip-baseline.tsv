@@ -166,7 +166,8 @@ linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.DngValidateTest
 linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.ArwParserTest	opt-in:fuzz-seeds	1
 linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CameraMatricesTest	data:vector	2
 linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.ColorTest	data:vector	2
-linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.Cr3OracleTest	data:vector	82
+linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.Cr3OracleTest	data:vector	164
+linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.DualPixelTest	data:vector	1
 linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwParserTest	data:vector	3
 linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwParserTest	opt-in:fuzz-seeds	1
 linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwTablesTest	data:vector	16
@@ -354,7 +355,8 @@ linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.DngValidateTest	d
 linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.ArwParserTest	opt-in:fuzz-seeds	1
 linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.CameraMatricesTest	data:vector	2
 linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.ColorTest	data:vector	2
-linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.Cr3OracleTest	data:vector	82
+linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.Cr3OracleTest	data:vector	164
+linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.DualPixelTest	data:vector	1
 linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwParserTest	data:vector	3
 linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwParserTest	opt-in:fuzz-seeds	1
 linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwTablesTest	data:vector	16
@@ -582,7 +584,8 @@ linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.DngValidateTest	d
 linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.ArwParserTest	opt-in:fuzz-seeds	1
 linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CameraMatricesTest	data:vector	2
 linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.ColorTest	data:vector	2
-linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.Cr3OracleTest	data:vector	82
+linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.Cr3OracleTest	data:vector	164
+linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.DualPixelTest	data:vector	1
 linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwParserTest	data:vector	3
 linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwParserTest	opt-in:fuzz-seeds	1
 linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwTablesTest	data:vector	16
@@ -771,7 +774,8 @@ macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.DngValidateTest
 macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.ArwParserTest	opt-in:fuzz-seeds	1
 macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CameraMatricesTest	data:vector	2
 macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.ColorTest	data:vector	2
-macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.Cr3OracleTest	data:vector	82
+macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.Cr3OracleTest	data:vector	164
+macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.DualPixelTest	data:vector	1
 macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwParserTest	data:vector	3
 macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwParserTest	opt-in:fuzz-seeds	1
 macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwTablesTest	data:vector	16
@@ -977,7 +981,8 @@ windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.DngValidateTest
 windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.ArwParserTest	opt-in:fuzz-seeds	1
 windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CameraMatricesTest	data:vector	2
 windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.ColorTest	data:vector	2
-windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.Cr3OracleTest	data:vector	82
+windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.Cr3OracleTest	data:vector	164
+windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.DualPixelTest	data:vector	1
 windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwParserTest	data:vector	3
 windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwParserTest	opt-in:fuzz-seeds	1
 windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwTablesTest	data:vector	16

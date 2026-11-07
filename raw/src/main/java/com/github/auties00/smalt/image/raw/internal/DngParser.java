@@ -153,7 +153,10 @@ final class DngParser {
             }
         }
         levels(raw, sensor);
-        if (sensor.samplesPerPixel == 2 && sensor.cfa != null && sensor.layout == CfaLayout.RECTANGULAR
+        if (dualPixel(sensor, file)) {
+            file.dualPixel = sample(sensor, 1);
+            sensor = sample(sensor, 0);
+        } else if (sensor.samplesPerPixel == 2 && sensor.cfa != null && sensor.layout == CfaLayout.RECTANGULAR
                 && sensor.scaleH >= DIAGONAL_SCALE && sensor.scaleV >= DIAGONAL_SCALE) {
             var problem = diagonalPairs(sensor);
             if (problem != null) {
@@ -164,6 +167,10 @@ final class DngParser {
         var userCrop = raw.doubles(51125);
         sensor.userCrop = userCrop(userCrop != null ? userCrop : first.doubles(51125));
         copyTags(raw, DngTag.RAW, sensor.tags);
+        if (file.dualPixel != null) {
+            file.dualPixel.userCrop = sensor.userCrop;
+            file.dualPixel.tags.addAll(sensor.tags);
+        }
         copyTags(first, DngTag.FIRST, file.firstTags);
         copyTags(first, DngTag.PROFILE, file.profileTags);
         file.sensor = sensor;
@@ -219,6 +226,72 @@ final class DngParser {
         }
         return frames.size() == PixelShift.PENTAX_DX.length
                 ? PixelShift.merge(frames, PixelShift.PENTAX_DX, PixelShift.PENTAX_DY) : null;
+    }
+
+    /**
+     * Tells whether a raw image holds the two images of a dual pixel sensor as its two samples per photosite, as
+     * Adobe DNG Converter writes a Canon dual pixel raw file: the sum of the two photodiodes of each pixel first,
+     * the image of one of them second. Canon's only sensors that store two samples per photosite are its dual
+     * pixel ones.
+     *
+     * @param sensor the raw image, filled from its directory
+     * @param file the file, whose make tells a Canon file
+     * @return whether the samples are the two images of a dual pixel sensor
+     */
+    private static boolean dualPixel(Sensor sensor, RawFile file) {
+        var make = file.make == null ? "" : file.make.strip().toUpperCase(Locale.ROOT);
+        // TODO: split an opcode list 2 of a two-sample dual pixel image between its two images; Adobe DNG Converter
+        //  writes none for the CR3 files of dual pixel raw mode
+        return make.startsWith("CANON") && sensor.samplesPerPixel == 2 && sensor.cfa != null
+                && sensor.layout == CfaLayout.RECTANGULAR && !sensor.floating && !sensor.wide
+                && sensor.opcodes2 == null;
+    }
+
+    /**
+     * Returns the image of one sample of a raw image of two samples per photosite: its reader reads both samples
+     * and keeps one, applying opcode list 1 to both first when the reader applies corrections, and its levels are
+     * that sample's.
+     *
+     * @param pairs the raw image of two samples per photosite, filled from its directory; not changed
+     * @param sample the sample kept, 0 or 1
+     * @return the image of one sample per photosite
+     */
+    private static Sensor sample(Sensor pairs, int sample) {
+        var image = pairs.copy();
+        var inner = pairs.reader;
+        var opcodes = pairs.opcodes1;
+        image.reader = new Sensor.Reader() {
+            @Override
+            public void read(SensorPlane plane, MediaLimits limits) {
+                read(plane, limits, false);
+            }
+
+            @Override
+            public void read(SensorPlane plane, MediaLimits limits, boolean corrections) {
+                var source = SensorPlane.of(pairs, limits);
+                inner.read(source, limits, corrections);
+                if (corrections && opcodes != null) {
+                    Opcodes.applyToSensor(pairs, source, opcodes);
+                }
+                var count = pairs.width * pairs.height;
+                for (var index = 0; index < count; index++) {
+                    plane.integers[index] = source.integers[2 * index + sample];
+                }
+            }
+        };
+        image.samplesPerPixel = 1;
+        image.opcodes1 = null;
+        if (pairs.black != null) {
+            var black = new double[pairs.black.length / 2];
+            for (var index = 0; index < black.length; index++) {
+                black[index] = pairs.black[2 * index + sample];
+            }
+            image.black = black;
+        }
+        if (pairs.white != null) {
+            image.white = new double[]{pairs.white[sample]};
+        }
+        return image;
     }
 
     /**

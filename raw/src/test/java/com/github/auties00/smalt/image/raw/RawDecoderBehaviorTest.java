@@ -176,17 +176,29 @@ class RawDecoderBehaviorTest {
                 cr3.levels = 3;
                 cr3.version = 0x200;
             }
+            case "dual-pixel" -> {
+                cr3.dualPixel = new Cr3Writer();
+                cr3.dualPixel.width = cr3.width;
+                cr3.dualPixel.height = cr3.height;
+                cr3.dualPixel.seed = 2;
+            }
             default -> throw new IllegalArgumentException(name);
         }
         return cr3;
     }
 
     @ParameterizedTest(name = "{0}")
-    @ValueSource(strings = {"lossless", "lossless-two-tiles", "lossy-version-1", "lossy-version-2"})
-    @DisplayName("synthetic Canon CR3 files of both CRX codings and codec versions: identical pictures and sensor "
-            + "data under every source behavior and clean faults")
+    @ValueSource(strings = {"lossless", "lossless-two-tiles", "lossy-version-1", "lossy-version-2", "dual-pixel"})
+    @DisplayName("synthetic Canon CR3 files of both CRX codings and codec versions and of dual pixel raw mode: "
+            + "identical pictures and sensor data, both images of a dual pixel file, under every source behavior "
+            + "and clean faults")
     void cr3(String name) {
-        harness("cr3/" + name, cr3File(name).write()).run();
+        var harness = harness("cr3/" + name, cr3File(name).write());
+        if (name.equals("dual-pixel")) {
+            var options = RawDecoderOptions.builder().dualPixelImage(true).build();
+            harness.decoder("dual pixel sensor data", source -> sensor(RawDecoder.decodeRaw(source, options)));
+        }
+        harness.run();
     }
 
     static byte[] rafFile(String name) {

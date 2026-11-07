@@ -19,15 +19,19 @@ import java.util.List;
  * ({@code uuid eaf42b5e-1c98-4b88-b9fb-b7dc406e4d16}) holds a {@code PRVW} preview JPEG.
  *
  * <p>The camera, the shot, the EXIF block and the JPEG images are read, and the largest CRX image
- * becomes the sensor data, decoded by {@link CrxDecoder}. Its {@code CRAW} sample entry holds the
+ * becomes the sensor data, decoded by {@link CrxDecoder}; the first one in file order when several
+ * have its size. Its {@code CRAW} sample entry holds the
  * {@code CMP1} box describing the coding and an {@code IAD1} box giving the image areas: the
  * recommended crop, the masked borders and the area of image data, as inclusive pixel ranges. The
  * color data of the maker note the timed metadata track ({@code CTMD}) carries in its EXIF records
  * gives the white balance and the levels.
  *
+ * <p>A file shot in dual pixel raw mode holds a second CRX image of the main image's size and coding
+ * in a later track, the image of one of the two photodiodes of each pixel, the main image being their
+ * sum; it becomes the dual pixel image, with the main image's areas and levels.
+ *
  * @implNote This implementation follows the box layout Laurent Clevy's CR3 documentation
- * describes; it reads no code. A dual pixel file's second CRX image of full size (one of the two
- * photodiodes of each pixel) is not exposed.
+ * describes; it reads no code.
  */
 final class Cr3Parser {
     /**
@@ -101,8 +105,6 @@ final class Cr3Parser {
         for (var preview : state.previews) {
             TiffTree.addPreview(file, reader, preview.offset(), preview.length());
         }
-        // TODO: expose the second full-size image of dual pixel files (one photodiode of each pixel), which decodes
-        //  like the main one, once the raw API can return a second sensor image
         Track main = null;
         for (var track : state.raws) {
             if (main == null || (long) track.image().width() * track.image().height()
@@ -115,7 +117,33 @@ final class Cr3Parser {
             file.unsupported = state.unsupported != null ? state.unsupported : "the CR3 file holds no CRX image";
             return;
         }
-        file.sensor = sensor(main, reader, makerNote(state), file);
+        var note = makerNote(state);
+        file.sensor = sensor(main, reader, note, file);
+        var second = dualPixel(state.raws, main);
+        if (second != null) {
+            file.dualPixel = sensor(new Track(second.image(), main.areas(), second.offset(), second.length()), reader,
+                    note, file);
+        }
+    }
+
+    /**
+     * Returns the second image of a dual pixel file: the first CRX image after the main one with its size, bit
+     * depth, color filter array and coding (lossless or lossy).
+     *
+     * @param raws the CRX images, in file order
+     * @param main the main image
+     * @return the second image, or {@code null} when the file holds none
+     */
+    private static Track dualPixel(List<Track> raws, Track main) {
+        var image = main.image();
+        for (var index = raws.indexOf(main) + 1; index < raws.size(); index++) {
+            var other = raws.get(index).image();
+            if (other.width() == image.width() && other.height() == image.height() && other.bits() == image.bits()
+                    && other.cfa() == image.cfa() && other.levels() == image.levels()) {
+                return raws.get(index);
+            }
+        }
+        return null;
     }
 
     /**

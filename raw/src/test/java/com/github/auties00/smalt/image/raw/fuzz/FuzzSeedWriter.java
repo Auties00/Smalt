@@ -232,6 +232,14 @@ class FuzzSeedWriter {
         second.levels = 3;
         second.version = 0x200;
         write(RawFuzzTest.class, "cr3", "valid-crx-lossy-version-2.cr3", second.write());
+        var dual = new Cr3Writer();
+        dual.width = 48;
+        dual.height = 32;
+        dual.dualPixel = new Cr3Writer();
+        dual.dualPixel.width = 48;
+        dual.dualPixel.height = 32;
+        dual.dualPixel.seed = 2;
+        write(RawFuzzTest.class, "cr3", "valid-crx-dual-pixel.cr3", dual.write());
     }
 
     private static void reduce(String method, String vector, RawSeedReducer.Layout layout, byte[] jpeg)

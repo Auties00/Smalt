@@ -84,13 +84,14 @@ public final class RawDecoding {
      * @param profiles the names of the camera profiles, the primary one first
      * @param enhanced whether the file holds an enhanced image that decodes
      * @param frames the frames of a pixel-shift file, 1 for a file of one shot
+     * @param dualPixel whether the file holds the second image of a dual pixel sensor
      */
     public record Facts(RawFormat format, String make, String model, int width, int height, int sensorWidth,
                         int sensorHeight, Orientation orientation, int bitsPerSample, CfaPattern cfa,
                         String compression, String unsupported, boolean calibrated, long iso, double exposureTime,
                         double fNumber, double focalLength, String lens, String captureTime, String dngVersion,
                         List<RawPreview> previews, CfaLayout layout, List<String> profiles, boolean enhanced,
-                        int frames) {
+                        int frames, boolean dualPixel) {
         /**
          * {@return whether the sensor image decodes: no feature is missing and the rendering has a
          * size}
@@ -183,7 +184,8 @@ public final class RawDecoding {
                 sensor != null ? sensor.compression : null, unsupported, calibrated, file.iso, file.exposureTime,
                 file.fNumber, file.focalLength, file.lens, file.captureTime, file.dngVersion, previews, layout,
                 file.profileNames(), file.enhanced != null,
-                sensor != null && sensor.frames != null ? sensor.frames.size() : 1);
+                sensor != null && sensor.frames != null ? sensor.frames.size() : 1,
+                sensor != null && file.dualPixel != null);
     }
 
     /**
@@ -421,7 +423,8 @@ public final class RawDecoding {
         return Guards.malformed(WHAT, () -> {
             var facts = facts(file);
             var hinted = options.minWidth() > 0 || options.minHeight() > 0;
-            if (hinted && options.embeddedPreview()) {
+            // the embedded previews are the camera's renderings of the main image
+            if (hinted && options.embeddedPreview() && !options.dualPixelImage()) {
                 RawFile.Preview chosen = null;
                 for (var preview : sortedPreviews(file)) {
                     if (preview.width() >= options.minWidth() && preview.rows() >= options.minHeight()) {
