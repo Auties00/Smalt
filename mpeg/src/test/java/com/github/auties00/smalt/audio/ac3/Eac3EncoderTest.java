@@ -5,6 +5,7 @@ import com.github.auties00.smalt.audio.AudioEncoderOptions;
 import com.github.auties00.smalt.audio.AudioEncoders;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.Speaker;
+import com.github.auties00.smalt.audio.ac3.internal.Ac3Crc;
 import com.github.auties00.smalt.audio.ac3.internal.ChannelMap;
 import com.github.auties00.smalt.audio.ac3.internal.DitherClearing;
 import com.github.auties00.smalt.audio.ac3.internal.StreamInspector;
@@ -25,8 +26,11 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
+import java.util.regex.Pattern;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -173,9 +177,13 @@ class Eac3EncoderTest {
             assertEquals(7, Eac3EncoderOptions.of(48000, new ChannelLayout(List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT,
                     Speaker.FRONT_CENTER, Speaker.BACK_LEFT, Speaker.BACK_RIGHT, Speaker.SIDE_LEFT, Speaker.SIDE_RIGHT)))
                     .layout().channels());
+            // without a center the side pair forms the 2/2 core and the back pair a dependent substream
             var noCenter = new ChannelLayout(List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.LOW_FREQUENCY,
                     Speaker.BACK_LEFT, Speaker.BACK_RIGHT, Speaker.SIDE_LEFT, Speaker.SIDE_RIGHT));
-            assertEquals(5, Eac3EncoderOptions.of(48000, noCenter).layout().channels());
+            assertEquals(noCenter, Eac3EncoderOptions.of(48000, noCenter).layout());
+            var unknown = new ChannelLayout(List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.TOP_BACK_CENTER,
+                    Speaker.BOTTOM_FRONT_LEFT, Speaker.BOTTOM_FRONT_RIGHT));
+            assertEquals(ChannelLayout.STEREO, Eac3EncoderOptions.of(48000, unknown).layout());
         }
 
         @Test
@@ -256,6 +264,28 @@ class Eac3EncoderTest {
             planes[ch] = Arrays.copyOf(decoded.planes().get(ch), frames);
         }
         return new AudioBuffer(decoded.layout(), 48000, planes, frames);
+    }
+
+    /**
+     * Returns a tone per channel: 200 Hz for the first channel and 150 Hz more for each next one,
+     * at an amplitude of 0.3.
+     */
+    static AudioBuffer tones(ChannelLayout layout, double seconds) {
+        var frames = (int) (48000 * seconds);
+        var planes = new float[layout.channels()][frames];
+        for (var ch = 0; ch < layout.channels(); ch++) {
+            for (var i = 0; i < frames; i++) {
+                planes[ch][i] = (float) (0.3 * Math.sin(2 * Math.PI * (200 + 150 * ch) * i / 48000.0));
+            }
+        }
+        return new AudioBuffer(layout, 48000, planes, frames);
+    }
+
+    /**
+     * Returns the frequency of the tone {@link #tones(ChannelLayout, double)} gives a speaker.
+     */
+    static double toneOf(ChannelLayout layout, Speaker speaker) {
+        return 200 + 150 * layout.indexOf(speaker);
     }
 
     /**
@@ -445,6 +475,129 @@ class Eac3EncoderTest {
             Oracle.assertDecodesCleanly(path70);
             assertTrue(Oracle.probe(path70).contains("\"channels\": 7"), Oracle.probe(path70));
         }
+
+        @ParameterizedTest(name = "custom channel map {0}")
+        @CsvSource({
+                "0x0060, SURROUND_DIRECT_LEFT SURROUND_DIRECT_RIGHT WIDE_LEFT WIDE_RIGHT, true",
+                "0x018A, BACK_CENTER TOP_CENTER TOP_FRONT_CENTER LOW_FREQUENCY_2, false",
+                "0x0014, TOP_FRONT_LEFT TOP_FRONT_RIGHT TOP_BACK_LEFT TOP_BACK_RIGHT, true",
+                "0x0600, FRONT_LEFT_OF_CENTER FRONT_RIGHT_OF_CENTER BACK_LEFT BACK_RIGHT, false"
+        })
+        @DisplayName("name the locations of a custom channel map, keep the core surrounds, and match ffmpeg's layout")
+        void customMap(String map, String locations, boolean ffmpegSides) {
+            var channelMap = Integer.decode(map);
+            var relabeled = Arrays.stream(locations.split(" ")).map(Speaker::valueOf).toList();
+            var layout = ChannelLayout.SURROUND_7_1;
+            var input = Ac3EncoderTest.signal(layout, 48000, 1);
+            var options = Eac3EncoderOptions.of(48000, layout).toBuilder().bitrate(1100000).blockSwitching(false).build();
+            var stream = remap(DitherClearing.clear(Ac3EncoderTest.concatenate(encode(options, input))), channelMap);
+            assertTrue(StreamInspector.frames(stream).stream().filter(frame -> frame.streamType() == 1)
+                    .allMatch(frame -> frame.channelMap() == channelMap));
+            var smalt = Ac3TestSupport.decode(stream, Ac3DecoderOptions.fullRange());
+            var speakers = new ArrayList<>(List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.FRONT_CENTER,
+                    Speaker.LOW_FREQUENCY, Speaker.SIDE_LEFT, Speaker.SIDE_RIGHT));
+            speakers.addAll(relabeled);
+            speakers.sort(null);
+            assertEquals(new ChannelLayout(speakers), smalt.layout());
+            // the dependent substream codes the side and rear pairs of the input, now under the map's locations
+            var coded = List.of(Speaker.SIDE_LEFT, Speaker.SIDE_RIGHT, Speaker.BACK_LEFT, Speaker.BACK_RIGHT);
+            for (var ch = 0; ch < 4; ch++) {
+                var source = input.plane(layout.indexOf(coded.get(ch)));
+                var decoded = smalt.planes().get(smalt.layout().indexOf(relabeled.get(ch)));
+                var actual = Arrays.copyOfRange(decoded, 256, 256 + input.frames());
+                var snr = Ac3TestSupport.compare(source, actual)[0];
+                assertTrue(snr >= 30, relabeled.get(ch) + " carries " + coded.get(ch) + " at " + snr + " dB");
+            }
+            var core = Ac3TestSupport.decode(stream, Ac3DecoderOptions.fullRange().toBuilder().channelExtensions(false)
+                    .build());
+            for (var side : List.of(Speaker.SIDE_LEFT, Speaker.SIDE_RIGHT)) {
+                assertArrayEquals(core.planes().get(core.layout().indexOf(side)),
+                        smalt.planes().get(smalt.layout().indexOf(side)), side + " is not the core surround");
+            }
+            Oracle.assume(Oracle.Tool.FFMPEG);
+            var path = write("custom-" + map + ".ec3", stream);
+            var probe = Oracle.probe(path);
+            assertEquals(smalt.layout().speakers(), ffmpegSpeakers(probe), probe);
+            var ffmpeg = Ac3TestSupport.ffmpeg(path, "-drc_scale", "0");
+            var agreement = Ac3TestSupport.channelSnr(ffmpeg, smalt.interleaved(), smalt.layout().channels());
+            System.out.println("custom map " + map + " agreement with ffmpeg per channel: " + Arrays.toString(agreement));
+            for (var ch = 0; ch < agreement.length; ch++) {
+                var speaker = smalt.layout().speakers().get(ch);
+                // ffmpeg 7.1 fills its side pair from the dependent substream instead of the core surrounds when
+                // the map has the back center or the front-of-center pair, duplicating channels
+                if (!ffmpegSides && (speaker == Speaker.SIDE_LEFT || speaker == Speaker.SIDE_RIGHT)) {
+                    continue;
+                }
+                assertTrue(agreement[ch] >= 90, speaker + ": " + Arrays.toString(agreement));
+            }
+        }
+    }
+
+    /**
+     * Rewrites the custom channel map of every dependent substream frame of a 7.1 stream, whose
+     * map names four locations, and recomputes the frame CRC.
+     */
+    static byte[] remap(byte[] stream, int channelMap) {
+        var out = stream.clone();
+        for (var position = 0; position < out.length; ) {
+            var bytes = 2 * (((out[position + 2] & 7) << 8 | out[position + 3] & 0xFF) + 1);
+            if ((out[position + 2] & 0xC0) >>> 6 == 1) {
+                // chanmape follows compre (bit 34 after the sync word) and its optional 8-bit compr
+                var compre = readBits(out, position * 8 + 16 + 34, 1);
+                var chanmape = position * 8 + 16 + 35 + 8 * compre;
+                assertEquals(1, readBits(out, chanmape, 1));
+                assertEquals(ChannelMap.EXTENSION_MAP, readBits(out, chanmape + 1, 16));
+                for (var i = 0; i < 16; i++) {
+                    var bit = chanmape + 1 + i;
+                    var mask = 0x80 >>> (bit & 7);
+                    out[bit >>> 3] = (byte) ((channelMap & 0x8000 >>> i) != 0 ? out[bit >>> 3] | mask
+                            : out[bit >>> 3] & ~mask);
+                }
+                var crc = Ac3Crc.compute(out, position + 2, bytes - 4);
+                out[position + bytes - 2] = (byte) (crc >>> 8);
+                out[position + bytes - 1] = (byte) crc;
+            }
+            position += bytes;
+        }
+        return out;
+    }
+
+    /** Reads an MSB-first bit field. */
+    static int readBits(byte[] data, int bit, int count) {
+        var value = 0;
+        for (var i = 0; i < count; i++) {
+            var at = bit + i;
+            value = value << 1 | (data[at >>> 3] >>> (7 - (at & 7)) & 1);
+        }
+        return value;
+    }
+
+    /** Returns the speakers of the channel layout ffprobe reports, in ffmpeg's channel order. */
+    static List<Speaker> ffmpegSpeakers(String probe) {
+        var matcher = Pattern.compile("\"channel_layout\": \"[^\"]*?\\(?([A-Z0-9+]+)\\)?\"")
+                .matcher(probe);
+        assertTrue(matcher.find(), probe);
+        var names = Map.ofEntries(Map.entry("FL", Speaker.FRONT_LEFT),
+                Map.entry("FR", Speaker.FRONT_RIGHT), Map.entry("FC", Speaker.FRONT_CENTER),
+                Map.entry("LFE", Speaker.LOW_FREQUENCY), Map.entry("BL", Speaker.BACK_LEFT),
+                Map.entry("BR", Speaker.BACK_RIGHT), Map.entry("FLC", Speaker.FRONT_LEFT_OF_CENTER),
+                Map.entry("FRC", Speaker.FRONT_RIGHT_OF_CENTER), Map.entry("BC", Speaker.BACK_CENTER),
+                Map.entry("SL", Speaker.SIDE_LEFT), Map.entry("SR", Speaker.SIDE_RIGHT),
+                Map.entry("TC", Speaker.TOP_CENTER), Map.entry("TFL", Speaker.TOP_FRONT_LEFT),
+                Map.entry("TFC", Speaker.TOP_FRONT_CENTER), Map.entry("TFR", Speaker.TOP_FRONT_RIGHT),
+                Map.entry("TBL", Speaker.TOP_BACK_LEFT), Map.entry("TBC", Speaker.TOP_BACK_CENTER),
+                Map.entry("TBR", Speaker.TOP_BACK_RIGHT), Map.entry("WL", Speaker.WIDE_LEFT),
+                Map.entry("WR", Speaker.WIDE_RIGHT), Map.entry("SDL", Speaker.SURROUND_DIRECT_LEFT),
+                Map.entry("SDR", Speaker.SURROUND_DIRECT_RIGHT),
+                Map.entry("LFE2", Speaker.LOW_FREQUENCY_2), Map.entry("TSL", Speaker.TOP_SIDE_LEFT),
+                Map.entry("TSR", Speaker.TOP_SIDE_RIGHT), Map.entry("BFC", Speaker.BOTTOM_FRONT_CENTER),
+                Map.entry("BFL", Speaker.BOTTOM_FRONT_LEFT),
+                Map.entry("BFR", Speaker.BOTTOM_FRONT_RIGHT));
+        return Arrays.stream(matcher.group(1).split("\\+")).map(name -> {
+            var speaker = names.get(name);
+            assertTrue(speaker != null, "unmapped ffmpeg channel " + name + " in " + probe);
+            return speaker;
+        }).toList();
     }
 
     @Nested
@@ -497,10 +650,13 @@ class Eac3EncoderTest {
                         continue;
                     }
                     corrections++;
-                    assertTrue(location >= 512 && location < 1536, "location " + location);
-                    var preNoise = location - (location / 256 - 1) * 256;
+                    // the transient lies 256 decoded samples after the location, in the last block of
+                    // the frame or in the next frame, where decoders apply the data
+                    assertTrue(location >= 1024 && location < 2560, "location " + location);
+                    var transient_ = location + 256;
+                    var preNoise = transient_ - (transient_ / 256 - 1) * 256;
                     var source = input.plane(ch);
-                    for (var k = location - preNoise - frame.lengths()[ch] - 256; k < location; k++) {
+                    for (var k = transient_ - preNoise - frame.lengths()[ch] - 256; k < transient_; k++) {
                         var at = frameStart + k;
                         var original = source[at - 256];
                         signal += original * original;
@@ -518,6 +674,222 @@ class Eac3EncoderTest {
             if (Oracle.find(Oracle.Tool.FFMPEG).isPresent()) {
                 Oracle.assertDecodesCleanly(write("tpnp.ec3", stream));
             }
+        }
+    }
+
+    /**
+     * Parses a space-separated list of speakers.
+     */
+    static ChannelLayout speakers(String names) {
+        var list = new ArrayList<Speaker>();
+        for (var name : names.split(" ")) {
+            list.add(Speaker.valueOf(name));
+        }
+        return new ChannelLayout(List.copyOf(list));
+    }
+
+    @Nested
+    @DisplayName("programs beyond 7.1")
+    class Extended {
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({
+                "5.1.2, FRONT_LEFT FRONT_RIGHT FRONT_CENTER LOW_FREQUENCY SIDE_LEFT SIDE_RIGHT TOP_FRONT_LEFT TOP_FRONT_RIGHT, a010",
+                "6.1, FRONT_LEFT FRONT_RIGHT FRONT_CENTER LOW_FREQUENCY BACK_CENTER SIDE_LEFT SIDE_RIGHT, 1900",
+                "5.1 with a top center, FRONT_LEFT FRONT_RIGHT FRONT_CENTER LOW_FREQUENCY SIDE_LEFT SIDE_RIGHT TOP_CENTER, b880",
+                "5.1 with a second LFE, FRONT_LEFT FRONT_RIGHT FRONT_CENTER LOW_FREQUENCY SIDE_LEFT SIDE_RIGHT LOW_FREQUENCY_2, 0003",
+                "7.1.2, FRONT_LEFT FRONT_RIGHT FRONT_CENTER LOW_FREQUENCY BACK_LEFT BACK_RIGHT SIDE_LEFT SIDE_RIGHT TOP_FRONT_LEFT TOP_FRONT_RIGHT, 0210",
+                "9.1, FRONT_LEFT FRONT_RIGHT FRONT_CENTER LOW_FREQUENCY BACK_LEFT BACK_RIGHT SIDE_LEFT SIDE_RIGHT WIDE_LEFT WIDE_RIGHT, 0220",
+                "7.1.4, FRONT_LEFT FRONT_RIGHT FRONT_CENTER LOW_FREQUENCY BACK_LEFT BACK_RIGHT SIDE_LEFT SIDE_RIGHT TOP_FRONT_LEFT TOP_FRONT_RIGHT TOP_BACK_LEFT TOP_BACK_RIGHT, b800 0210 0004",
+                "11.1, FRONT_LEFT FRONT_RIGHT FRONT_CENTER LOW_FREQUENCY BACK_LEFT BACK_RIGHT FRONT_LEFT_OF_CENTER FRONT_RIGHT_OF_CENTER SIDE_LEFT SIDE_RIGHT WIDE_LEFT WIDE_RIGHT, f800 0600 0020"})
+        @DisplayName("code every channel through dependent substreams with custom channel maps, a tone per channel decoding in its place")
+        void tones(String name, String names, String maps) {
+            var layout = speakers(names);
+            var options = Eac3EncoderOptions.of(48000, layout);
+            assertEquals(layout, options.layout());
+            var input = Eac3EncoderTest.tones(layout, 2);
+            var stream = Ac3EncoderTest.concatenate(encode(options, input));
+            var frames = StreamInspector.frames(stream);
+            var expected = maps.split(" ");
+            var dependents = expected.length;
+            for (var index = 0; index < 1 + dependents; index++) {
+                var frame = frames.get(index);
+                assertEquals(index == 0 ? 0 : 1, frame.streamType());
+                assertEquals(index == 0 ? 0 : index - 1, frame.substreamId());
+                if (index > 0) {
+                    assertEquals(Integer.parseInt(expected[index - 1], 16), frame.channelMap(), "channel map");
+                }
+            }
+            assertEquals(0, frames.get(1 + dependents).streamType(), "the next access unit");
+            var decoded = Ac3TestSupport.decode(stream, Ac3DecoderOptions.fullRange());
+            assertEquals(layout, decoded.layout());
+            var samples = decoded.interleaved();
+            var channels = layout.channels();
+            for (var ch = 0; ch < channels; ch++) {
+                var speaker = layout.speakers().get(ch);
+                if (speaker == Speaker.LOW_FREQUENCY) {
+                    continue;
+                }
+                var own = MediaFoundation.tone(samples, channels, ch, 9600, 48000, toneOf(layout, speaker) / 48000);
+                assertEquals(0.3, own, 0.01, speaker + " carries its tone");
+                for (var other : layout.speakers()) {
+                    if (other == speaker || other == Speaker.LOW_FREQUENCY) {
+                        continue;
+                    }
+                    var leak = MediaFoundation.tone(samples, channels, ch, 9600, 48000, toneOf(layout, other) / 48000);
+                    assertTrue(leak < 0.003, speaker + " carries " + other + " at " + leak);
+                }
+            }
+            if (dependents == 1 && Oracle.find(Oracle.Tool.FFMPEG).isPresent()) {
+                var file = write(name + ".ec3", stream);
+                var probe = Oracle.probe(file);
+                assertTrue(probe.contains("\"channels\": " + channels), probe);
+                Oracle.assertDecodesCleanly(file);
+            }
+        }
+
+        @Test
+        @DisplayName("mix extra channels into the core only while one dependent substream carries them")
+        void core() {
+            var layout = speakers("FRONT_LEFT FRONT_RIGHT FRONT_CENTER LOW_FREQUENCY BACK_CENTER SIDE_LEFT SIDE_RIGHT");
+            var input = Eac3EncoderTest.tones(layout, 2);
+            var stream = Ac3EncoderTest.concatenate(encode(Eac3EncoderOptions.of(48000, layout), input));
+            var core = Ac3TestSupport.decode(stream, Ac3DecoderOptions.fullRange().toBuilder().channelExtensions(false).build());
+            assertEquals(6, core.layout().channels());
+            var samples = core.interleaved();
+            var left = core.layout().indexOf(Speaker.SIDE_LEFT);
+            // the back center reaches each side surround at -3 dB, which the mix scales by -3 dB
+            var center = MediaFoundation.tone(samples, 6, left, 9600, 48000, toneOf(layout, Speaker.BACK_CENTER) / 48000);
+            var own = MediaFoundation.tone(samples, 6, left, 9600, 48000, toneOf(layout, Speaker.SIDE_LEFT) / 48000);
+            assertEquals(0.15, center, 0.01);
+            assertEquals(0.3 * Math.sqrt(0.5), own, 0.01);
+        }
+
+        @Test
+        @DisplayName("bound the bit rate by the frames of every substream")
+        void bitrates() {
+            var layout = speakers("FRONT_LEFT FRONT_RIGHT FRONT_CENTER LOW_FREQUENCY BACK_LEFT BACK_RIGHT SIDE_LEFT SIDE_RIGHT "
+                    + "TOP_FRONT_LEFT TOP_FRONT_RIGHT TOP_BACK_LEFT TOP_BACK_RIGHT");
+            var options = Eac3EncoderOptions.of(48000, layout);
+            assertEquals(768000 + 96000 * 4, options.effectiveBitrate());
+            assertTrue(options.maximumBitrate() > 1024000 * 2);
+            var input = Eac3EncoderTest.tones(layout, 0.5);
+            for (var bitrate : new int[]{options.minimumBitrate(), options.maximumBitrate()}) {
+                var stream = Ac3EncoderTest.concatenate(encode(options.toBuilder().bitrate(bitrate).build(), input));
+                for (var frame : StreamInspector.frames(stream)) {
+                    assertTrue(frame.blocks() == 6);
+                }
+            }
+            assertThrows(IllegalArgumentException.class, () -> options.toBuilder().bitrate(options.maximumBitrate() + 1).build());
+            assertThrows(IllegalArgumentException.class, () -> options.toBuilder().bitrate(options.minimumBitrate() - 1).build());
+        }
+    }
+
+    @Nested
+    @DisplayName("enhanced coupling")
+    class EnhancedCoupling {
+        @Test
+        @DisplayName("is off by default, codes the coupled bands with amplitudes when allowed, and keeps the quality of standard coupling")
+        void allowed() {
+            assertFalse(Eac3EncoderOptions.defaults().enhancedCoupling());
+            var input = Eac3MediaFoundationTest.coupledStereo(6);
+            var standard = Eac3EncoderOptions.defaults().toBuilder().bitrate(96000).spectralExtension(false).build();
+            var enhanced = standard.toBuilder().enhancedCoupling(true).build();
+            assertNotEquals(standard, enhanced);
+            var plainStream = Ac3EncoderTest.concatenate(encode(standard, input));
+            var stream = Ac3EncoderTest.concatenate(encode(enhanced, input));
+            assertEquals(0, StreamInspector.frames(plainStream).stream().mapToInt(StreamInspector.Frame::enhancedCoupling).sum());
+            var blocks = StreamInspector.frames(stream).stream().mapToInt(StreamInspector.Frame::enhancedCoupling).sum();
+            assertTrue(blocks >= 50, blocks + " blocks with enhanced coupling");
+            var plainSnr = Ac3EncoderTest.roundTripSnr(input, Ac3TestSupport.decode(plainStream, Ac3DecoderOptions.fullRange()), 256);
+            var snr = Ac3EncoderTest.roundTripSnr(input, Ac3TestSupport.decode(stream, Ac3DecoderOptions.fullRange()), 256);
+            System.out.printf("enhanced coupling: %d blocks, round-trip SNR %.2f dB, standard coupling %.2f dB%n", blocks,
+                    snr, plainSnr);
+            assertTrue(snr >= plainSnr - 3, "round-trip SNR " + snr + " against " + plainSnr);
+        }
+
+        @ParameterizedTest(name = "{0} channels at {1} bit/s, spectral extension {2}")
+        @CsvSource({"2, 96000, true, 30", "6, 256000, true, 300", "6, 224000, false, 300"})
+        @DisplayName("code enhanced coupling with spectral extension and with the coupled channel flags of multichannel programs")
+        void layouts(int channels, int bitrate, boolean spectralExtension, int least) {
+            var layout = channels == 2 ? ChannelLayout.STEREO : ChannelLayout.SURROUND_5_1;
+            var frames = 48000 * 4;
+            var planes = new float[channels][frames];
+            var random = new Random(5);
+            for (var ch = 0; ch < channels; ch++) {
+                var speaker = layout.speakers().get(ch);
+                for (var i = 0; i < frames; i++) {
+                    var t = i / 48000.0;
+                    var common = 0.08 * Math.sin(2 * Math.PI * 4000 * t) + 0.04 * Math.sin(2 * Math.PI * 7000 * t);
+                    planes[ch][i] = speaker == Speaker.LOW_FREQUENCY ? (float) (0.2 * Math.sin(2 * Math.PI * 60 * t))
+                            : (float) (0.15 * Math.sin(2 * Math.PI * (220 + 90 * ch) * t) + common * (1 - 0.1 * ch)
+                            + 0.005 * random.nextGaussian());
+                }
+            }
+            var input = new AudioBuffer(layout, 48000, planes, frames);
+            var standard = Eac3EncoderOptions.of(48000, layout).toBuilder().bitrate(bitrate)
+                    .spectralExtension(spectralExtension).build();
+            var plainStream = Ac3EncoderTest.concatenate(encode(standard, input));
+            var stream = Ac3EncoderTest.concatenate(encode(standard.toBuilder().enhancedCoupling(true).build(), input));
+            var parsed = StreamInspector.frames(stream);
+            var blocks = parsed.stream().mapToInt(StreamInspector.Frame::enhancedCoupling).sum();
+            assertTrue(blocks >= least, blocks + " blocks with enhanced coupling in " + parsed.size() + " frames");
+            if (spectralExtension) {
+                assertTrue(parsed.stream().allMatch(frame -> frame.spxBegin() >= 0), "spectral extension in every frame");
+            }
+            var plainSnr = Ac3EncoderTest.roundTripSnr(input, Ac3TestSupport.decode(plainStream, Ac3DecoderOptions.fullRange()), 256);
+            var snr = Ac3EncoderTest.roundTripSnr(input, Ac3TestSupport.decode(stream, Ac3DecoderOptions.fullRange()), 256);
+            System.out.printf("enhanced coupling, %d channels: %d blocks, round-trip SNR %.2f dB, standard coupling %.2f dB%n",
+                    channels, blocks, snr, plainSnr);
+            assertTrue(snr >= plainSnr - 3 && snr > 10, "round-trip SNR " + snr + " against " + plainSnr);
+        }
+    }
+
+    @Nested
+    @DisplayName("transient pre-noise processing lookahead")
+    class PreNoiseLookahead {
+        @ParameterizedTest(name = "{0} blocks per frame")
+        @CsvSource({"6, 1", "3, 3"})
+        @DisplayName("holds each frame until the frames its data concerns are coded, then emits every packet in order")
+        void lookahead(int blocks, int held) {
+            var input = onsets(ChannelLayout.STEREO, 2);
+            var options = Eac3EncoderOptions.defaults().toBuilder().bitrate(128000).blocksPerFrame(blocks)
+                    .blockSwitching(false).build();
+            var plain = encode(options, input);
+            var withData = new ArrayList<Packet>();
+            try (var encoder = new Eac3Encoder(options.toBuilder().preNoiseProcessing(true).build())) {
+                var frameSize = 256 * blocks;
+                var frames = new float[2][frameSize];
+                for (var f = 0; f < held; f++) {
+                    for (var ch = 0; ch < 2; ch++) {
+                        System.arraycopy(input.plane(ch), f * frameSize, frames[ch], 0, frameSize);
+                    }
+                    encoder.encode(new AudioBuffer(ChannelLayout.STEREO, 48000, frames, frameSize), withData::add);
+                }
+                assertTrue(withData.isEmpty(), "no packet before the lookahead is coded");
+                var rest = input.frames() - held * frameSize;
+                var tail = new float[2][rest];
+                for (var ch = 0; ch < 2; ch++) {
+                    System.arraycopy(input.plane(ch), held * frameSize, tail[ch], 0, rest);
+                }
+                encoder.encode(new AudioBuffer(ChannelLayout.STEREO, 48000, tail, rest), withData::add);
+                encoder.flush(withData::add);
+            }
+            assertEquals(plain.size(), withData.size());
+            for (var index = 0; index < plain.size(); index++) {
+                assertEquals(plain.get(index).pts(), withData.get(index).pts());
+                assertEquals(plain.get(index).data().length, withData.get(index).data().length, "constant bit rate");
+            }
+            var frames = StreamInspector.frames(Ac3EncoderTest.concatenate(withData));
+            var corrections = 0;
+            for (var frame : frames) {
+                for (var location : frame.locations()) {
+                    if (location >= 0) {
+                        corrections++;
+                        assertTrue(location >= 1024 && location < 2560, "location " + location);
+                    }
+                }
+            }
+            assertTrue(corrections >= 4, corrections + " corrections");
         }
     }
 }

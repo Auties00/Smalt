@@ -1,0 +1,78 @@
+# demux dump of ps/mpeg1.mpg; regenerate with -Dsmalt.test.updateDumps=true
+format MPEG_PS
+duration 816000
+seekable true
+track 224 VIDEO MPEG1_VIDEO timebase=1/90000 duration=? config=12:99807699
+  video 160x120 orientation=NORMAL rate=25/1 sar=1/1
+track 192 AUDIO MP2 timebase=1/48000 duration=? config=none
+  audio rate=48000 bits=0 skip=0 layout=[FRONT_CENTER]
+packets 54
+0 t192 pts=0 dts=0 dur=1152 flags=KEY size=192 crc=a6ccb546
+1 t192 pts=1152 dts=1152 dur=1152 flags=KEY size=192 crc=f72dc25b
+2 t192 pts=2304 dts=2304 dur=1152 flags=KEY size=192 crc=1e615931
+3 t192 pts=3456 dts=3456 dur=1152 flags=KEY size=192 crc=bed7ec46
+4 t192 pts=4608 dts=4608 dur=1152 flags=KEY size=192 crc=0df9136a
+5 t192 pts=5760 dts=5760 dur=1152 flags=KEY size=192 crc=9f3bf2ee
+6 t192 pts=6912 dts=6912 dur=1152 flags=KEY size=192 crc=e0923a93
+7 t192 pts=8064 dts=8064 dur=1152 flags=KEY size=192 crc=00c45ec3
+8 t192 pts=9216 dts=9216 dur=1152 flags=KEY size=192 crc=f0a7a3f5
+9 t192 pts=10368 dts=10368 dur=1152 flags=KEY size=192 crc=07025a2f
+10 t224 pts=902 dts=-2698 dur=3600 flags=KEY size=3393 crc=f908ed40
+11 t224 pts=11702 dts=902 dur=3600 flags=- size=1807 crc=14503832
+12 t224 pts=4502 dts=4502 dur=3600 flags=- size=1112 crc=4a11189c
+13 t224 pts=8102 dts=8102 dur=3600 flags=- size=853 crc=38aa74eb
+14 t224 pts=22502 dts=11702 dur=3600 flags=- size=1793 crc=c3e906ba
+15 t224 pts=15302 dts=15302 dur=3600 flags=- size=1104 crc=d3399754
+16 t224 pts=18902 dts=18902 dur=3600 flags=- size=949 crc=d75e8079
+17 t224 pts=33302 dts=22502 dur=3600 flags=- size=1916 crc=cf4f4c5c
+18 t224 pts=26102 dts=26102 dur=3600 flags=- size=1157 crc=86a38d81
+19 t224 pts=29702 dts=29702 dur=3600 flags=- size=1034 crc=d795a3de
+20 t224 pts=44102 dts=33302 dur=3600 flags=KEY size=3788 crc=28bc05b9
+21 t224 pts=36902 dts=36902 dur=3600 flags=- size=1042 crc=c1694fea
+22 t224 pts=40502 dts=40502 dur=3600 flags=- size=1105 crc=80935c59
+23 t224 pts=54902 dts=44102 dur=3600 flags=- size=1897 crc=cb13a73a
+24 t224 pts=47702 dts=47702 dur=3600 flags=- size=1008 crc=b4a191d5
+25 t224 pts=51302 dts=51302 dur=3600 flags=- size=1048 crc=3d18b52d
+26 t224 pts=65702 dts=54902 dur=3600 flags=- size=1580 crc=d35ceed7
+27 t192 pts=11520 dts=11520 dur=1152 flags=KEY size=192 crc=f4c22b1f
+28 t192 pts=12672 dts=12672 dur=1152 flags=KEY size=192 crc=086ef5f8
+29 t192 pts=13824 dts=13824 dur=1152 flags=KEY size=192 crc=ad3df4ee
+30 t192 pts=14976 dts=14976 dur=1152 flags=KEY size=192 crc=dc7a29b1
+31 t192 pts=16128 dts=16128 dur=1152 flags=KEY size=192 crc=315de719
+32 t192 pts=17280 dts=17280 dur=1152 flags=KEY size=192 crc=d19baf75
+33 t192 pts=18432 dts=18432 dur=1152 flags=KEY size=192 crc=d9569825
+34 t192 pts=19584 dts=19584 dur=1152 flags=KEY size=192 crc=72ff5c30
+35 t192 pts=20736 dts=20736 dur=1152 flags=KEY size=192 crc=7782e35a
+36 t192 pts=21888 dts=21888 dur=1152 flags=KEY size=192 crc=9e167c8c
+37 t192 pts=23040 dts=23040 dur=1152 flags=KEY size=192 crc=955f9c13
+38 t224 pts=58502 dts=58502 dur=3600 flags=- size=898 crc=13d19b7d
+39 t192 pts=24192 dts=24192 dur=1152 flags=KEY size=192 crc=32926299
+40 t192 pts=25344 dts=25344 dur=1152 flags=KEY size=192 crc=7c4d2f5f
+41 t192 pts=26496 dts=26496 dur=1152 flags=KEY size=192 crc=4a853e6a
+42 t192 pts=27648 dts=27648 dur=1152 flags=KEY size=192 crc=ed25b81c
+43 t192 pts=28800 dts=28800 dur=1152 flags=KEY size=192 crc=976dcb36
+44 t192 pts=29952 dts=29952 dur=1152 flags=KEY size=192 crc=77deea81
+45 t192 pts=31104 dts=31104 dur=1152 flags=KEY size=192 crc=2c30c83f
+46 t192 pts=32256 dts=32256 dur=1152 flags=KEY size=192 crc=fe43e77f
+47 t192 pts=33408 dts=33408 dur=1152 flags=KEY size=192 crc=418f1a58
+48 t192 pts=34560 dts=34560 dur=1152 flags=KEY size=192 crc=501a4ba8
+49 t192 pts=35712 dts=35712 dur=1152 flags=KEY size=192 crc=9318f15c
+50 t192 pts=36864 dts=36864 dur=1152 flags=KEY size=192 crc=97a47338
+51 t192 pts=38016 dts=38016 dur=1152 flags=KEY size=192 crc=a2619438
+52 t224 pts=62102 dts=62102 dur=3600 flags=- size=988 crc=96a8c3f5
+53 t224 pts=69302 dts=65702 dur=3600 flags=- size=1710 crc=61b5fa3d
+seek 0: t192@0 t224@0
+seek 272000: t192@11 t224@0
+seek 544000: t192@22 t224@10
+seek 816000: end
+seek -1000000: t192@0 t224@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format MPEG_PS
+  duration -1
+  seekable false
+  track 224 VIDEO MPEG1_VIDEO timebase=1/90000 duration=? config=12:99807699
+    video 160x120 orientation=NORMAL rate=25/1 sar=1/1
+  track 192 AUDIO MP2 timebase=1/48000 duration=? config=none
+    audio rate=48000 bits=0 skip=0 layout=[FRONT_CENTER]
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH

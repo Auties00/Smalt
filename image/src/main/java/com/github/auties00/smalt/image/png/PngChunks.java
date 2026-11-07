@@ -65,9 +65,46 @@ final class PngChunks {
     static final int CICP = 0x63494350;
 
     /**
+     * The mastering display color volume chunk type, {@code mDCV}.
+     */
+    static final int MDCV = 0x6D444356;
+
+    /**
+     * The draft spelling of the mastering display color volume chunk type, {@code mDCv}, which
+     * readers accept.
+     */
+    static final int MDCV_DRAFT = 0x6D444376;
+
+    /**
+     * The content light level information chunk type, {@code cLLI}.
+     */
+    static final int CLLI = 0x634C4C49;
+
+    /**
+     * The draft spelling of the content light level information chunk type, {@code cLLi}, which
+     * readers accept.
+     */
+    static final int CLLI_DRAFT = 0x634C4C69;
+
+    /**
+     * The significant bits chunk type.
+     */
+    static final int SBIT = 0x73424954;
+
+    /**
+     * The physical pixel dimensions chunk type.
+     */
+    static final int PHYS = 0x70485973;
+
+    /**
      * The Exif profile chunk type.
      */
     static final int EXIF = 0x65584966;
+
+    /**
+     * The international textual data chunk type, which carries the XMP packet.
+     */
+    static final int ITXT = 0x69545874;
 
     /**
      * The animation control chunk type.

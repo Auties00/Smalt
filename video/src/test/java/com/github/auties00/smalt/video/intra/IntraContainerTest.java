@@ -68,7 +68,15 @@ class IntraContainerTest {
         var file = source(extension, List.of("-c:v", parts[0], "-profile:v", parts[1], "-pix_fmt", parts[2]));
         var stream = IntraTesting.demux(file);
         assertEquals(codec, stream.track().codec(), label);
-        assertEquals(fourCc, new String(stream.track().codecConfig().orElseThrow(), StandardCharsets.US_ASCII), label);
+        var config = stream.track().codecConfig().orElseThrow();
+        assertEquals(fourCc, new String(config, 0, 4, StandardCharsets.US_ASCII), label);
+        if (codec == Codec.DNXHD && extension.equals("mov")) {
+            // ffmpeg writes the ACLR and ADHR extensions of Avid's sample descriptions, which the demuxer keeps
+            var text = new String(config, StandardCharsets.ISO_8859_1);
+            assertTrue(text.contains("ACLRACLR0001") && text.contains("ADHR0001"), label);
+        } else {
+            assertEquals(4, config.length, label);
+        }
         try (var decoder = VideoDecoders.create(stream.track(), VideoDecoderOptions.builder().highBitDepth(true)
                 .build())) {
             var frames = new int[1];
