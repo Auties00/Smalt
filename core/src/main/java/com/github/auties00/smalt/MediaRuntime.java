@@ -11,9 +11,12 @@ import com.github.auties00.smalt.internal.task.ParallelBands;
  * {@code --add-modules jdk.incubator.vector}, the platform's preferred vectors are at least 128
  * bits wide, and the {@code smalt.simd} system property is not {@code false}; otherwise every
  * kernel runs its scalar code. The choice is made once per JVM and never changes, so
- * {@link #isVectorized()} and {@link #vectorBits()} return constants. Vectorized video encoding
- * costs several times less than scalar encoding, so a caller that encodes in real time (a call,
- * a live stream) can use {@link #isVectorized()} to pick a picture size the host sustains.
+ * {@link #isVectorized()} and {@link #vectorBits()} return constants. The kernels written for
+ * 256-bit vectors, which include most of the video codecs' kernels, run their scalar code where
+ * {@link #vectorBits()} is below {@code 256} (ARM NEON and 128-bit SVE, x86 without AVX2), since
+ * the JIT compiler cannot compile their operations there. Vectorized video encoding costs several
+ * times less than scalar encoding, so a caller that encodes in real time (a call, a live stream)
+ * can use {@link #vectorBits()} to pick a picture size the host sustains.
  *
  * <p><b>Threads.</b> Codecs and picture operations split large work across one shared, bounded
  * pool of helper threads; {@link #parallelism()} reports how many threads, the caller included,

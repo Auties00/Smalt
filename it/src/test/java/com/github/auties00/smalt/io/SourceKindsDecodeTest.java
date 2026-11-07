@@ -1,7 +1,9 @@
 package com.github.auties00.smalt.io;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.audio.AudioReader;
 import com.github.auties00.smalt.container.Containers;
+import com.github.auties00.smalt.image.ChannelPicture;
 import com.github.auties00.smalt.image.Images;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Rgba16Picture;
@@ -249,6 +251,7 @@ class SourceKindsDecodeTest {
         var width = picture.width();
         var height = picture.height();
         switch (picture) {
+            case ChannelPicture channels -> throw new AssertionError("unexpected " + channels);
             case RgbaPicture rgba -> rows(crc, rgba.pixels(), rgba.stride(), width * 4, height);
             case YuvPicture yuv -> {
                 rows(crc, yuv.y(), yuv.yStride(), width, height);
@@ -303,7 +306,7 @@ class SourceKindsDecodeTest {
     @MethodSource("cases")
     @DisplayName("decodes exactly as from a byte array")
     void decodes(Fixture fixture, Kind kind) {
-        Assumptions.assumeTrue(Files.isRegularFile(fixture.path()));
+        Skip.unless(Files.isRegularFile(fixture.path()), "data:fixture", fixture.path() + " was not written");
         var expected = EXPECTED.computeIfAbsent(fixture.name(), _ -> decode(fixture, path -> MediaSource.of(read(path))));
         assertFalse(expected.isEmpty(), "the reference decode produced nothing");
         assertEquals(expected, decode(fixture, kind.open()));

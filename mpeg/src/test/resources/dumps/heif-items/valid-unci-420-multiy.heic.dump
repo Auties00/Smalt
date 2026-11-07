@@ -1,0 +1,14 @@
+# image dump of heif-items/valid-unci-420-multiy.heic; regenerate with -Dsmalt.test.updateDumps=true
+format HEIC
+info ImageInfo[format=HEIC, width=9, height=7, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 9x7 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=ca690757 u=662a857f v=bff03de3
+  format=HEIC orientation=NORMAL source=9x7
+  icc=none exif=none xmp=none
+  profile=none
+pages 1
+page 0 ImageInfo[format=HEIC, width=9, height=7, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+picture 9x7 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=ca690757 u=662a857f v=bff03de3
+  format=HEIC orientation=NORMAL source=9x7
+  icc=none exif=none xmp=none
+  profile=none

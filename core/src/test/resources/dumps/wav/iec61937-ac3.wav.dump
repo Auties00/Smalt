@@ -1,0 +1,44 @@
+# demux dump of wav/iec61937-ac3.wav; regenerate with -Dsmalt.test.updateDumps=true
+format WAV
+duration 1024000
+seekable true
+track 0 AUDIO AC3 timebase=1/48000 duration=49152 config=none
+  audio rate=48000 bits=0 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 32
+0 t0 pts=0 dts=0 dur=1536 flags=KEY size=768 crc=f30a14f3
+1 t0 pts=1536 dts=1536 dur=1536 flags=KEY size=768 crc=6e94094c
+2 t0 pts=3072 dts=3072 dur=1536 flags=KEY size=768 crc=2d11afb1
+3 t0 pts=4608 dts=4608 dur=1536 flags=KEY size=768 crc=8c5ee3b7
+4 t0 pts=6144 dts=6144 dur=1536 flags=KEY size=768 crc=0e2420b2
+5 t0 pts=7680 dts=7680 dur=1536 flags=KEY size=768 crc=cd01af20
+6 t0 pts=9216 dts=9216 dur=1536 flags=KEY size=768 crc=38480336
+7 t0 pts=10752 dts=10752 dur=1536 flags=KEY size=768 crc=8bbae194
+8 t0 pts=12288 dts=12288 dur=1536 flags=KEY size=768 crc=b04d25e9
+9 t0 pts=13824 dts=13824 dur=1536 flags=KEY size=768 crc=bb2114b9
+10 t0 pts=15360 dts=15360 dur=1536 flags=KEY size=768 crc=11119879
+11 t0 pts=16896 dts=16896 dur=1536 flags=KEY size=768 crc=350693ec
+12 t0 pts=18432 dts=18432 dur=1536 flags=KEY size=768 crc=afe956e7
+13 t0 pts=19968 dts=19968 dur=1536 flags=KEY size=768 crc=b58913e9
+14 t0 pts=21504 dts=21504 dur=1536 flags=KEY size=768 crc=b4e273db
+15 t0 pts=23040 dts=23040 dur=1536 flags=KEY size=768 crc=bd3cf60f
+16 t0 pts=24576 dts=24576 dur=1536 flags=KEY size=768 crc=76f48e72
+17 t0 pts=26112 dts=26112 dur=1536 flags=KEY size=768 crc=cb19b81e
+18 t0 pts=27648 dts=27648 dur=1536 flags=KEY size=768 crc=0e190706
+19 t0 pts=29184 dts=29184 dur=1536 flags=KEY size=768 crc=a870dc1d
+20 t0 pts=30720 dts=30720 dur=1536 flags=KEY size=768 crc=6502eb9e
+21 t0 pts=32256 dts=32256 dur=1536 flags=KEY size=768 crc=87e8ab54
+22 t0 pts=33792 dts=33792 dur=1536 flags=KEY size=768 crc=42a1deea
+23 t0 pts=35328 dts=35328 dur=1536 flags=KEY size=768 crc=cbb4003a
+24 t0 pts=36864 dts=36864 dur=1536 flags=KEY size=768 crc=a3838e7b
+25 t0 pts=38400 dts=38400 dur=1536 flags=KEY size=768 crc=5713c0e2
+26 t0 pts=39936 dts=39936 dur=1536 flags=KEY size=768 crc=5e507869
+27 t0 pts=41472 dts=41472 dur=1536 flags=KEY size=768 crc=e6c8b1b6
+28 t0 pts=43008 dts=43008 dur=1536 flags=KEY size=768 crc=eef8ec00
+29 t0 pts=44544 dts=44544 dur=1536 flags=KEY size=768 crc=aa9d2591
+30 t0 pts=46080 dts=46080 dur=1536 flags=KEY size=768 crc=a4ce506a
+31 t0 pts=47616 dts=47616 dur=1536 flags=KEY size=768 crc=e2aaa4af
+seek 0: t0@0
+seek 341333: t0@10
+seek 682666: t0@21
+seek 1024000: end
+seek -1000000: t0@0
