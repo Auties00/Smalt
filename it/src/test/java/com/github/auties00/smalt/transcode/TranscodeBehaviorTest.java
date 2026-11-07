@@ -271,6 +271,60 @@ class TranscodeBehaviorTest {
     }
 
     @Nested
+    @DisplayName("WAV outputs")
+    class WavOutputs {
+        @Test
+        @DisplayName("decode coded audio to PCM unless the options copy it or name its codec")
+        void codedAudio(@TempDir Path directory) {
+            var input = Fixtures.tone("mp3", 440, 44_100, 2, 1.0, List.of("-c:a", "libmp3lame", "-b:a", "128k"));
+            var decoded = directory.resolve("decoded.wav");
+            assertFalse(transcode(input, decoded, TranscodeOptions.of(OutputContainer.WAV)).streams().getFirst().copied());
+            assertEquals("pcm_s16le", MediaProbe.of(decoded).audio().codec());
+            var copied = directory.resolve("copied.wav");
+            var result = transcode(input, copied, TranscodeOptions.of(OutputContainer.WAV).toBuilder()
+                    .audio(AudioTranscodeOptions.copy()).build());
+            assertTrue(result.streams().getFirst().copied());
+            assertEquals(Codec.MP3, result.streams().getFirst().track().codec());
+            assertEquals("mp3", MediaProbe.of(copied).audio().codec());
+            Oracle.assertDecodesCleanly(copied);
+            var named = directory.resolve("named.wav");
+            transcode(input, named, TranscodeOptions.of(OutputContainer.WAV).toBuilder()
+                    .audio(AudioTranscodeOptions.builder().codec(Codec.MP3).build()).build());
+            assertEquals("mp3", MediaProbe.of(named).audio().codec());
+        }
+
+        @Test
+        @DisplayName("copy coded audio no installed decoder decodes, and refuse to re-encode it")
+        void undecodableAudio(@TempDir Path directory) throws java.io.IOException {
+            // MACE 3:1 in AIFF-C, which no Smalt artifact decodes: frames of arbitrary codes, which ffmpeg decodes
+            var track = com.github.auties00.smalt.track.AudioTrack.builder().id(1).codec(Codec.MACE3)
+                    .timeBase(Rational.timeBaseOf(8000)).sampleRate(8000).layout(ChannelLayout.MONO).build();
+            var sink = MediaSink.memory();
+            try (var muxer = new com.github.auties00.smalt.container.aiff.AiffMuxer(sink)) {
+                muxer.addTrack(track);
+                var random = new java.util.Random(7);
+                for (var index = 0; index < 40; index++) {
+                    var frames = new byte[2 * 100];
+                    random.nextBytes(frames);
+                    muxer.writePacket(new com.github.auties00.smalt.track.Packet(1, frames, index * 600L,
+                            index * 600L, 600, true));
+                }
+                muxer.finish();
+            }
+            var input = directory.resolve("mace.aifc");
+            java.nio.file.Files.write(input, sink.toByteArray());
+            var copied = directory.resolve("copied.aifc");
+            var result = transcode(input, copied, TranscodeOptions.of(OutputContainer.AIFF));
+            assertTrue(result.streams().getFirst().copied());
+            assertEquals(Codec.MACE3, result.streams().getFirst().track().codec());
+            assertEquals("mace3", MediaProbe.of(copied).audio().codec());
+            assertArrayEquals(Oracle.decodeAudio(input), Oracle.decodeAudio(copied), "the same samples");
+            assertThrows(MediaException.Unsupported.class, () -> transcode(input, directory.resolve("encoded.mp4"),
+                    TranscodeOptions.of(OutputContainer.MP4)));
+        }
+    }
+
+    @Nested
     @DisplayName("sample operations")
     class Samples {
         @Test

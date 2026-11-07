@@ -1,0 +1,107 @@
+# demux dump of matroska/damaged-cluster.webm; regenerate with -Dsmalt.test.updateDumps=true
+format MATROSKA
+duration 2004000
+seekable true
+metadata ENCODER="Lavf61.7.100"
+track 1 VIDEO VP9 timebase=1/1000 duration=2004 config=none
+  video 160x120 orientation=NORMAL rate=500000000/33333333 interlacing=PROGRESSIVE
+  color ColorInfo[matrix=UNSPECIFIED, range=LIMITED, primaries=UNSPECIFIED, transfer=UNSPECIFIED, chromaSiting=UNSPECIFIED, masteringDisplay=Optional.empty, contentLightLevel=Optional.empty]
+track 2 AUDIO VORBIS timebase=1/44100 duration=88376 config=3491:569f195a
+  audio rate=44100 bits=0 skip=0 layout=[FRONT_CENTER]
+  metadata DURATION="00:00:02.004000000"
+  metadata ENCODER="Lavc61.19.100 libvorbis"
+packets 88
+0 t2 pts=0 dts=0 dur=? flags=KEY size=32 crc=d6dd99a8
+1 t1 pts=3 dts=3 dur=67 flags=KEY size=4263 crc=b732766a
+2 t2 pts=132 dts=132 dur=? flags=KEY size=30 crc=ea371520
+3 t2 pts=265 dts=265 dur=? flags=KEY size=144 crc=e67267d3
+4 t2 pts=838 dts=838 dur=? flags=KEY size=148 crc=39b6ddb3
+5 t2 pts=1852 dts=1852 dur=? flags=KEY size=141 crc=95a65320
+6 t2 pts=2867 dts=2867 dur=? flags=KEY size=155 crc=f940ef2d
+7 t1 pts=70 dts=70 dur=67 flags=- size=1446 crc=62c61387
+8 t2 pts=3925 dts=3925 dur=? flags=KEY size=137 crc=ae1305d6
+9 t2 pts=4939 dts=4939 dur=? flags=KEY size=148 crc=87434648
+10 t2 pts=5954 dts=5954 dur=? flags=KEY size=129 crc=c52d6e3d
+11 t1 pts=136 dts=136 dur=67 flags=- size=571 crc=8e5b7c89
+12 t2 pts=6968 dts=6968 dur=? flags=KEY size=142 crc=2188af4b
+13 t2 pts=8026 dts=8026 dur=? flags=KEY size=139 crc=9a8a54d6
+14 t1 pts=203 dts=203 dur=67 flags=- size=619 crc=84387884
+15 t2 pts=9041 dts=9041 dur=? flags=KEY size=134 crc=b3e017e8
+16 t2 pts=10055 dts=10055 dur=? flags=KEY size=145 crc=55d27e52
+17 t2 pts=11069 dts=11069 dur=? flags=KEY size=145 crc=4289f066
+18 t1 pts=270 dts=270 dur=67 flags=- size=554 crc=028005e9
+19 t2 pts=12083 dts=12083 dur=? flags=KEY size=145 crc=19e9b64d
+20 t2 pts=13142 dts=13142 dur=? flags=KEY size=137 crc=eaf9015a
+21 t2 pts=14156 dts=14156 dur=? flags=KEY size=141 crc=c69e3d76
+22 t1 pts=336 dts=336 dur=67 flags=- size=537 crc=b05980c9
+23 t2 pts=15170 dts=15170 dur=? flags=KEY size=143 crc=cd708a6d
+24 t2 pts=16185 dts=16185 dur=? flags=KEY size=140 crc=3be9fdd1
+25 t2 pts=17199 dts=17199 dur=? flags=KEY size=150 crc=6edd1577
+26 t1 pts=403 dts=403 dur=67 flags=- size=435 crc=cb88b3c2
+27 t2 pts=18257 dts=18257 dur=? flags=KEY size=129 crc=b039d23d
+28 t2 pts=19272 dts=19272 dur=? flags=KEY size=146 crc=5cf82e18
+29 t2 pts=20286 dts=20286 dur=? flags=KEY size=146 crc=8b12d35b
+30 t1 pts=470 dts=470 dur=67 flags=- size=475 crc=d53cfb9a
+31 t2 pts=21300 dts=21300 dur=? flags=KEY size=149 crc=47eeb1ce
+32 t2 pts=22359 dts=22359 dur=? flags=KEY size=146 crc=6ec1e177
+33 t2 pts=23373 dts=23373 dur=? flags=KEY size=142 crc=791e47a9
+34 t1 pts=536 dts=536 dur=67 flags=- size=385 crc=b3568fe9
+35 t2 pts=24387 dts=24387 dur=? flags=KEY size=150 crc=8d7ca78e
+36 t2 pts=25402 dts=25402 dur=? flags=KEY size=144 crc=08f48bc7
+37 t2 pts=26416 dts=26416 dur=? flags=KEY size=133 crc=be36ceac
+38 t1 pts=603 dts=603 dur=67 flags=- size=524 crc=81b791da
+39 t2 pts=27474 dts=27474 dur=? flags=KEY size=143 crc=048dc530
+40 t2 pts=28489 dts=28489 dur=? flags=KEY size=144 crc=0415bd19
+41 t2 pts=58168 dts=58168 dur=? flags=KEY size=154 crc=4434af6d
+42 t1 pts=1336 dts=1336 dur=67 flags=KEY size=5172 crc=15fc936f
+43 t2 pts=59226 dts=59226 dur=? flags=KEY size=146 crc=c12c0f1c
+44 t2 pts=60241 dts=60241 dur=? flags=KEY size=147 crc=fd3a80d1
+45 t2 pts=61255 dts=61255 dur=? flags=KEY size=137 crc=e062f335
+46 t1 pts=1403 dts=1403 dur=67 flags=- size=425 crc=dfb7d3b2
+47 t2 pts=62269 dts=62269 dur=? flags=KEY size=151 crc=89861417
+48 t2 pts=63284 dts=63284 dur=? flags=KEY size=143 crc=3d28e1c5
+49 t2 pts=64342 dts=64342 dur=? flags=KEY size=143 crc=01982c2f
+50 t1 pts=1470 dts=1470 dur=67 flags=- size=575 crc=07b12008
+51 t2 pts=65356 dts=65356 dur=? flags=KEY size=142 crc=adcc9fb7
+52 t2 pts=66371 dts=66371 dur=? flags=KEY size=131 crc=c8fb9282
+53 t2 pts=67385 dts=67385 dur=? flags=KEY size=145 crc=d6bdbfb7
+54 t1 pts=1536 dts=1536 dur=67 flags=- size=374 crc=0889aba5
+55 t2 pts=68399 dts=68399 dur=? flags=KEY size=146 crc=8bcb6c1b
+56 t2 pts=69458 dts=69458 dur=? flags=KEY size=150 crc=065c5815
+57 t2 pts=70472 dts=70472 dur=? flags=KEY size=141 crc=f1e9b9a5
+58 t1 pts=1603 dts=1603 dur=67 flags=- size=653 crc=55a83fc8
+59 t2 pts=71486 dts=71486 dur=? flags=KEY size=144 crc=671c1e8f
+60 t2 pts=72500 dts=72500 dur=? flags=KEY size=144 crc=ae0fc65a
+61 t2 pts=73559 dts=73559 dur=? flags=KEY size=134 crc=9d447d0f
+62 t1 pts=1670 dts=1670 dur=67 flags=- size=406 crc=9ba4cceb
+63 t2 pts=74573 dts=74573 dur=? flags=KEY size=148 crc=cd4fb0a0
+64 t2 pts=75587 dts=75587 dur=? flags=KEY size=144 crc=30229e8d
+65 t1 pts=1736 dts=1736 dur=67 flags=- size=436 crc=4704e4a5
+66 t2 pts=76602 dts=76602 dur=? flags=KEY size=142 crc=001f11b6
+67 t2 pts=77616 dts=77616 dur=? flags=KEY size=142 crc=3e89da83
+68 t2 pts=78674 dts=78674 dur=? flags=KEY size=152 crc=923f895a
+69 t1 pts=1803 dts=1803 dur=67 flags=- size=422 crc=e05f39df
+70 t2 pts=79689 dts=79689 dur=? flags=KEY size=146 crc=fdd40025
+71 t2 pts=80703 dts=80703 dur=? flags=KEY size=138 crc=d50552ce
+72 t2 pts=81717 dts=81717 dur=? flags=KEY size=146 crc=18e76ce6
+73 t1 pts=1870 dts=1870 dur=67 flags=- size=547 crc=6a315139
+74 t2 pts=82776 dts=82776 dur=? flags=KEY size=145 crc=4403da1e
+75 t2 pts=83790 dts=83790 dur=? flags=KEY size=147 crc=178d7a5d
+76 t2 pts=84804 dts=84804 dur=? flags=KEY size=141 crc=fe2edef0
+77 t1 pts=1936 dts=1936 dur=67 flags=- size=364 crc=1f9127ec
+78 t2 pts=85819 dts=85819 dur=? flags=KEY size=148 crc=7bb43496
+79 t2 pts=86833 dts=86833 dur=? flags=KEY size=25 crc=da303672
+80 t2 pts=87450 dts=87450 dur=? flags=KEY size=24 crc=e10558d1
+81 t2 pts=87539 dts=87539 dur=? flags=KEY size=25 crc=e790676f
+82 t2 pts=87671 dts=87671 dur=? flags=KEY size=29 crc=25ff096c
+83 t2 pts=87803 dts=87803 dur=? flags=KEY size=26 crc=a1ccb13a
+84 t2 pts=87935 dts=87935 dur=? flags=KEY size=24 crc=6e78f51a
+85 t2 pts=88068 dts=88068 dur=? flags=KEY size=29 crc=c82674a2
+86 t2 pts=88200 dts=88200 dur=? flags=KEY size=32 crc=ffb35142
+87 t2 pts=88332 dts=88332 dur=? flags=KEY size=31 crc=a216954c
+seek 0: t1@0 t2@0
+seek 668000: t1@0 t2@30
+seek 1336000: t1@10 t2@31
+seek 2005987: end
+seek 2004000: t1@end t2@67
+seek -1000000: t1@0 t2@0

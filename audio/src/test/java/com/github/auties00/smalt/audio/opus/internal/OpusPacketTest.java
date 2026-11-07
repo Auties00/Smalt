@@ -7,6 +7,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.util.Arrays;
 import java.util.Random;
 
 import static com.github.auties00.smalt.audio.opus.internal.OpusDefines.*;
@@ -201,11 +202,41 @@ class OpusPacketTest {
             for (var i = 1; i < 30; i++) {
                 packet[i] = (byte) i;
             }
-            assertEquals(OPUS_OK, Repacketizer.pad(packet, 0, 30, 200));
+            var rp = new Repacketizer();
+            assertEquals(OPUS_OK, rp.pad(packet, 0, 30, 200));
             var layout = new OpusPacket.Layout();
             assertEquals(1, OpusPacket.parseImpl(packet, 0, 200, false, layout));
             assertEquals(29, layout.size[0]);
             assertEquals(1, packet[layout.frames[0]]);
+        }
+
+        @Test
+        @DisplayName("pads again with the same instance after it collected other frames")
+        void padReused() {
+            var rp = new Repacketizer();
+            rp.init();
+            assertEquals(OPUS_OK, rp.cat(bytes(0xF8, 7, 7, 7), 0, 4));
+            var small = new byte[40];
+            small[0] = (byte) 0x78;
+            small[1] = 5;
+            assertEquals(OPUS_OK, rp.pad(small, 0, 2, 40));
+            var large = new byte[900];
+            large[0] = (byte) 0x78;
+            for (var i = 1; i < 500; i++) {
+                large[i] = (byte) (i * 3);
+            }
+            var expected = Arrays.copyOf(large, 500);
+            assertEquals(OPUS_OK, rp.pad(large, 0, 500, 900));
+            var layout = new OpusPacket.Layout();
+            assertEquals(1, OpusPacket.parseImpl(small, 0, 40, false, layout));
+            assertEquals(1, layout.size[0]);
+            assertEquals(5, small[layout.frames[0]]);
+            assertEquals(1, OpusPacket.parseImpl(large, 0, 900, false, layout));
+            assertEquals(499, layout.size[0]);
+            assertArrayEquals(Arrays.copyOfRange(expected, 1, 500),
+                    Arrays.copyOfRange(large, layout.frames[0], layout.frames[0] + 499));
+            assertEquals(OPUS_BAD_ARG, rp.pad(large, 0, 901, 900));
+            assertEquals(OPUS_BAD_ARG, rp.pad(large, 0, 0, 900));
         }
 
         @Test
