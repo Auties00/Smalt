@@ -137,6 +137,87 @@ final class Pipeline {
     }
 
     /**
+     * {@return an evaluator of this pipeline as it now stands, for one thread}
+     */
+    Evaluator evaluator() {
+        return new Evaluator(this);
+    }
+
+    /**
+     * Evaluates a pipeline without allocating; the results equal those of {@link Pipeline#evaluate}.
+     *
+     * <p>Instances are not thread-safe: each holds the scratch space of one evaluation.
+     */
+    static final class Evaluator {
+        /**
+         * The stages in evaluation order.
+         */
+        private final Stage[] stages;
+
+        /**
+         * The scratch space of each stage, or {@code null} entries for stages that need none.
+         */
+        private final Object[] scratch;
+
+        /**
+         * The number of inputs.
+         */
+        private final int inputs;
+
+        /**
+         * The number of outputs.
+         */
+        private final int outputs;
+
+        /**
+         * The first ping-pong buffer.
+         */
+        private final float[] first;
+
+        /**
+         * The second ping-pong buffer.
+         */
+        private final float[] second;
+
+        /**
+         * Creates the evaluator of a pipeline.
+         *
+         * @param pipeline the pipeline, no longer modified
+         */
+        private Evaluator(Pipeline pipeline) {
+            this.stages = pipeline.stages.toArray(Stage[]::new);
+            this.scratch = new Object[stages.length];
+            for (var i = 0; i < stages.length; i++) {
+                scratch[i] = stages[i].scratch();
+            }
+            this.inputs = pipeline.inputs;
+            this.outputs = pipeline.outputs;
+            var width = Math.max(16, Math.max(inputs, outputs));
+            this.first = new float[width];
+            this.second = new float[width];
+        }
+
+        /**
+         * Evaluates the pipeline on normalized values.
+         *
+         * @param in the inputs, read before {@code out} is written, so the two may be the same array
+         * @param out receives the outputs
+         */
+        void evaluate(float[] in, float[] out) {
+            var a = first;
+            var b = second;
+            System.arraycopy(in, 0, a, 0, inputs);
+            for (var i = 0; i < stages.length; i++) {
+                stages[i].evaluate(a, b, scratch[i]);
+                var swap = a;
+                a = b;
+                b = swap;
+            }
+            System.arraycopy(a, 0, out, 0, outputs);
+        }
+    }
+
+    /**
      * Evaluates the pipeline on 16-bit samples.
      *
      * @param in the input samples
@@ -166,6 +247,8 @@ final class Pipeline {
             changed |= removePairs(Stage.Kind.LAB_TO_XYZ, null, Stage.Kind.XYZ_TO_LAB, null);
             changed |= removePairs(null, Stage.Role.LAB_V4_TO_V2, null, Stage.Role.LAB_V2_TO_V4);
             changed |= removePairs(null, Stage.Role.LAB_V2_TO_V4, null, Stage.Role.LAB_V4_TO_V2);
+            changed |= removePairs(null, Stage.Role.LAB_FLOAT_TO_PCS, null, Stage.Role.PCS_TO_LAB_FLOAT);
+            changed |= removePairs(null, Stage.Role.XYZ_FLOAT_TO_PCS, null, Stage.Role.PCS_TO_XYZ_FLOAT);
             changed |= multiplyMatrices();
         } while (changed);
     }

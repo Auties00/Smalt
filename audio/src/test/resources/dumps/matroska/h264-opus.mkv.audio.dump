@@ -1,0 +1,34 @@
+# audio decode dump of matroska/h264-opus.mkv; regenerate with -Dsmalt.test.updateDumps=true
+format MATROSKA
+duration 2008000
+seekable true
+track 2 OPUS rate=48000 layout=[FRONT_CENTER]
+0 frames=4096 crc16=8aefb227
+1 frames=4096 crc16=2ee3ac9e
+2 frames=4096 crc16=cde24ecf
+3 frames=4096 crc16=465a9176
+4 frames=4096 crc16=c1530e51
+5 frames=4096 crc16=bb527825
+6 frames=4096 crc16=da637728
+7 frames=4096 crc16=5cfaa260
+8 frames=4096 crc16=f25083c0
+9 frames=4096 crc16=e1195321
+10 frames=4096 crc16=00c67e0d
+11 frames=4096 crc16=e8d7fdb7
+12 frames=4096 crc16=fd447db9
+13 frames=4096 crc16=73bd3072
+14 frames=4096 crc16=7d1e400f
+15 frames=4096 crc16=67d9a23e
+16 frames=4096 crc16=04c3d8c9
+17 frames=4096 crc16=d23d7bad
+18 frames=4096 crc16=7b537f18
+19 frames=4096 crc16=8e125e6c
+20 frames=4096 crc16=faf3b7d7
+21 frames=4096 crc16=568791a2
+22 frames=4096 crc16=887bbfb6
+23 frames=1792 crc16=f38b119e
+seek 0: @sample 0
+seek 669333: @sample 32128
+seek 1338666: @sample 64256
+seek 2008000: end
+seek -1000000: @sample 0

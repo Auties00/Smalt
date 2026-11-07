@@ -1,0 +1,304 @@
+# Benchmarks on the hosted runners (tools/bench/README.md). They are shared virtual machines whose speed drifts from
+# run to run and with the CPU model a job lands on, so both jobs build the base and the head side by side and compare
+# them inside one job, never against numbers measured elsewhere:
+# - Pull requests: the allocation gate. Every case of the alloc set of tools/bench/benchmarks.tsv runs with JMH's gc
+#   profiler in both trees, and the gate fails when the head allocates more bytes per operation than the base plus
+#   a tolerance, confirmed in fresh JVMs. Allocation does not depend on how busy the runner is, so the gate is
+#   deterministic; a change that allocates more on purpose carries the allocation-accepted label.
+# - Weekly and on demand: the A/B timing. Every case of the ab set runs fork by fork in both trees, interleaved; the
+#   report gives each relative change with a confidence interval, and a slowdown beyond the threshold (20%; 15 to
+#   25% suits these runners) fails the run. The head's numbers are kept on the gh-pages branch
+#   (github-action-benchmark), by the default branch only.
+# The base is the pull request's base branch, else the merge base with the default branch, else (on the default
+# branch itself) the last commit at least a week old, unless the dispatch names one. Absolute numbers, small effects
+# and the comparison with FFmpeg need dedicated hardware (README, Performance).
+name: Benchmarks
+
+on:
+  pull_request:
+    # labeled and unlabeled: the allocation-accepted label decides whether an excess fails
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    paths:
+      - '**/src/main/**'
+      - '**/pom.xml'
+      - 'it/src/test/java/com/github/auties00/smalt/jit/**'
+      - 'tools/bench/**'
+      - '.github/workflows/bench.yml'
+  schedule:
+    # Sundays at 03:17 UTC
+    - cron: '17 3 * * 0'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'ab (timing), alloc (the allocation gate) or both'
+        default: ab
+      base:
+        description: The base ref or commit (default the merge base with the default branch, or a week back on it)
+        default: ''
+      ab_rows:
+        description: Comma-separated row ids of the ab set (default every row)
+        default: ''
+      alloc_rows:
+        description: Comma-separated row ids of the alloc set (default every row)
+        default: ''
+      forks:
+        description: JMH forks per side of the A/B
+        default: '5'
+      warmup:
+        description: JMH warm-up iterations of 1 s of the A/B
+        default: '5'
+      iterations:
+        description: JMH measured iterations of 1 s of the A/B
+        default: '8'
+      threshold:
+        description: The relative slowdown that fails the A/B
+        default: '0.20'
+      base_args:
+        description: JVM options for the base forks only (base HEAD then compares options on the same code)
+        default: ''
+      head_args:
+        description: JVM options for the head forks only
+        default: ''
+
+concurrency:
+  group: bench-${{ github.ref }}-${{ github.event_name }}-${{ inputs.mode }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  JAVA_VERSION: '26'
+  DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+  BASE_REF: ${{ inputs.base }}
+  BASE_ARGS: ${{ inputs.base_args }}
+  HEAD_ARGS: ${{ inputs.head_args }}
+  HEAD_NAME: ${{ github.head_ref || github.ref_name }}
+  REF_NAME: ${{ github.ref_name }}
+  # Values reach the scripts through the environment, never spliced into their text.
+  AB_ROWS: ${{ inputs.ab_rows }}
+  ALLOC_ROWS: ${{ inputs.alloc_rows }}
+
+jobs:
+  alloc:
+    name: allocation per operation
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.mode != 'ab')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Test the benchmark tool
+        run: python -m unittest discover -s tools/bench -p "test_*.py"
+
+      - name: Choose the base
+        id: refs
+        shell: bash
+        run: >
+          python tools/bench/bench.py base --default-branch "$DEFAULT_BRANCH" --head-name "$HEAD_NAME"
+          ${{ github.event_name == 'pull_request' && '--pull-request' || '' }} ${BASE_REF:+--ref "$BASE_REF"}
+          | tee -a "$GITHUB_OUTPUT"
+
+      - name: Plan
+        id: plan
+        shell: bash
+        run: python tools/bench/bench.py plan --set alloc ${ALLOC_ROWS:+--rows "$ALLOC_ROWS"} | tee -a "$GITHUB_OUTPUT"
+
+      # The base keeps its own sources but is built and run with the head's tools/bench.
+      - name: Build the base and the head
+        shell: bash
+        env:
+          BASE: ${{ steps.refs.outputs.base }}
+          MODULES: ${{ steps.plan.outputs.modules }}
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/smalt-base" "$BASE"
+          python tools/bench/bench.py classpath --tree "$RUNNER_TEMP/smalt-base" --existing --modules "$MODULES" --maven-args='-T 1C'
+          python tools/bench/bench.py classpath --modules "$MODULES" --maven-args='-T 1C'
+
+      - name: Gate the allocation per operation
+        shell: bash
+        env:
+          BASE_LABEL: ${{ steps.refs.outputs.base_label }}
+          HEAD_LABEL: ${{ steps.refs.outputs.head_label }}
+          ACCEPT: ${{ contains(github.event.pull_request.labels.*.name, 'allocation-accepted') && '--accept' || '' }}
+        run: >
+          python tools/bench/bench.py alloc --base "$RUNNER_TEMP/smalt-base"
+          --base-label "$BASE_LABEL" --head-label "$HEAD_LABEL"
+          --base-args="$BASE_ARGS" --head-args="$HEAD_ARGS" --out target/bench --summary "$GITHUB_STEP_SUMMARY"
+          $ACCEPT ${ALLOC_ROWS:+--rows "$ALLOC_ROWS"}
+
+      - name: Upload the measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-alloc
+          path: |
+            target/bench/alloc-report.md
+            target/bench/alloc-report.json
+            target/bench/alloc/
+          retention-days: 30
+
+  ab:
+    name: A/B timing
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode != 'alloc')
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    permissions:
+      # the results on the gh-pages branch
+      contents: write
+      # the cache listing of .github/scripts/cache-policy.sh, for the oracle tools
+      actions: read
+    env:
+      FORKS: ${{ inputs.forks || '5' }}
+      WARMUP: ${{ inputs.warmup || '5' }}
+      ITERATIONS: ${{ inputs.iterations || '8' }}
+      THRESHOLD: ${{ inputs.threshold || '0.20' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Test the benchmark tool
+        run: python -m unittest discover -s tools/bench -p "test_*.py"
+
+      - name: Choose the base
+        id: refs
+        shell: bash
+        run: |
+          python tools/bench/bench.py base --default-branch "$DEFAULT_BRANCH" --head-name "$HEAD_NAME" \
+            ${BASE_REF:+--ref "$BASE_REF"} | tee -a "$GITHUB_OUTPUT" > refs.txt
+          skip=false
+          if grep -qx 'same=true' refs.txt && [ "$BASE_ARGS" = "$HEAD_ARGS" ]; then
+            skip=true
+            echo "The base is the head, with the same JVM options: nothing to compare." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "skip=$skip" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Plan
+        id: plan
+        if: steps.refs.outputs.skip != 'true'
+        shell: bash
+        run: python tools/bench/bench.py plan --set ab ${AB_ROWS:+--rows "$AB_ROWS"} | tee -a "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/oracles
+        if: steps.refs.outputs.skip != 'true' && steps.plan.outputs.oracles == 'true'
+
+      # The base keeps its own sources but is built and run with the head's tools/bench.
+      - name: Build the base and the head
+        if: steps.refs.outputs.skip != 'true'
+        shell: bash
+        env:
+          BASE: ${{ steps.refs.outputs.base }}
+          MODULES: ${{ steps.plan.outputs.modules }}
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/smalt-base" "$BASE"
+          python tools/bench/bench.py classpath --tree "$RUNNER_TEMP/smalt-base" --existing --modules "$MODULES" --maven-args='-T 1C'
+          python tools/bench/bench.py classpath --modules "$MODULES" --maven-args='-T 1C'
+
+      - name: A/B
+        id: ab
+        if: steps.refs.outputs.skip != 'true'
+        shell: bash
+        env:
+          BASE_LABEL: ${{ steps.refs.outputs.base_label }}
+          HEAD_LABEL: ${{ steps.refs.outputs.head_label }}
+        run: |
+          status=0
+          python tools/bench/bench.py ab --base "$RUNNER_TEMP/smalt-base" --head . \
+            --base-label "$BASE_LABEL" --head-label "$HEAD_LABEL" \
+            --base-args="$BASE_ARGS" --head-args="$HEAD_ARGS" \
+            --forks "$FORKS" --warmup "$WARMUP" --iterations "$ITERATIONS" --threshold "$THRESHOLD" \
+            --fail-on-regression --out target/bench --store target/bench/store.json --summary "$GITHUB_STEP_SUMMARY" \
+            ${AB_ROWS:+--rows "$AB_ROWS"} || status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          if [ -f target/bench/store.json ]; then echo "stored=true" >> "$GITHUB_OUTPUT"; fi
+
+      # Only the default branch publishes, and only plain runs (no per-side JVM options); any other run commits the
+      # results to a local gh-pages branch that is never pushed, so that the storage step runs the same way.
+      - name: Prepare the gh-pages branch
+        id: pages
+        if: steps.ab.outputs.stored == 'true'
+        shell: bash
+        run: |
+          publish=false
+          if [ "$REF_NAME" = "$DEFAULT_BRANCH" ] && [ -z "$BASE_ARGS$HEAD_ARGS" ]; then publish=true; fi
+          if [ "$publish" = true ] && git ls-remote --exit-code --heads origin gh-pages > /dev/null; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          start="$RUNNER_TEMP/gh-pages"
+          git init -q -b gh-pages "$start"
+          printf '# Smalt benchmark results\n\nbench/ holds the head numbers of the A/B runs of .github/workflows/bench.yml.\n' > "$start/README.md"
+          touch "$start/.nojekyll"
+          git -C "$start" add README.md .nojekyll
+          git -C "$start" -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -q -m 'Start the benchmark results'
+          git fetch -q "$start" gh-pages:gh-pages
+          if [ "$publish" = true ]; then git push -q origin gh-pages; fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
+      - name: Store the head results
+        if: steps.pages.outcome == 'success'
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: Smalt A/B head (hosted runner, ns per operation)
+          tool: customSmallerIsBetter
+          output-file-path: target/bench/store.json
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: bench
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: ${{ steps.pages.outputs.publish == 'true' }}
+          skip-fetch-gh-pages: ${{ steps.pages.outputs.publish != 'true' }}
+          # The same-job ratio is the alert; between runs the hosted runners differ too much to compare.
+          alert-threshold: '300%'
+          comment-on-alert: false
+          fail-on-alert: false
+          max-items-in-chart: 104
+
+      - name: Show the stored results
+        if: steps.pages.outcome == 'success' && steps.pages.outputs.publish != 'true'
+        shell: bash
+        run: git show gh-pages:bench/data.js | head -c 4000
+
+      - name: Upload the results
+        if: always() && steps.refs.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-ab
+          path: |
+            target/bench/ab-report.md
+            target/bench/ab-report.json
+            target/bench/meta.json
+            target/bench/store.json
+            target/bench/base/
+            target/bench/head/
+          retention-days: 90
+
+      - name: Fail on a regression or a benchmark that did not run
+        if: steps.ab.outputs.status != '' && steps.ab.outputs.status != '0'
+        shell: bash
+        run: |
+          echo "::error::bench.py ab exited with status ${{ steps.ab.outputs.status }} (1: a regression beyond the threshold, 2: a benchmark did not run on the head); see the job summary"
+          exit 1

@@ -29,10 +29,10 @@ public abstract class LoopFilterDsp {
     static final LoopFilterDsp SCALAR = new ScalarLoopFilterDsp();
 
     /**
-     * The implementation every frame uses: {@link VectorLoopFilterDsp} when
-     * {@link Simd#ENABLED}, {@link #SCALAR} otherwise.
+     * The implementation every frame uses: {@link VectorLoopFilterDsp}, written for 256-bit vectors,
+     * when {@link Simd#WIDE}, {@link #SCALAR} otherwise.
      */
-    private static final LoopFilterDsp FIXED = Simd.ENABLED ? VectorLoopFilterDsp.create() : SCALAR;
+    private static final LoopFilterDsp FIXED = Simd.WIDE ? VectorLoopFilterDsp.create() : SCALAR;
 
     /**
      * The minimum size of the scratch buffer of {@link #loopFilterSb}: the filter decisions of a
