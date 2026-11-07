@@ -1,0 +1,14 @@
+# video decode dump of mp4/uncv-yuv420.mp4; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 160000
+seekable true
+track 1 UNCOMPRESSED_23001_17 32x16 timebase=1/25
+0 pts=0 dur=1 key=true 32x16 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=39662edd u=8cf63382 v=e4a3155e
+1 pts=1 dur=1 key=true 32x16 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=f15af754 u=1e47c47c v=d53f202e
+2 pts=2 dur=1 key=true 32x16 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=21521b9a u=56cffb0e v=b61fafa5
+3 pts=3 dur=1 key=true 32x16 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=7b21dcbe u=bab0d549 v=6ccf428f
+seek 0: @0
+seek 53333: @1
+seek 106666: @2
+seek 160000: end
+seek -1000000: @0

@@ -944,7 +944,7 @@ final class RateControl {
             if (prevAvgSourceSad > 0 && framesSinceKey > 10 && frameSourceSad > 0) {
                 var delta = (double) avgSourceSad / prevAvgSourceSad - 1.0;
                 if (delta < 0.0 && bufferLevel > (optimalBufferLevel >> 2) && q > (worstQuality >> 1)) {
-                    var adj = 1.0 + 0.5 * Math.tanh(4.0 * delta);
+                    var adj = 1.0 + 0.5 * StrictMath.tanh(4.0 * delta);
                     var qval = qindexToQ(q);
                     q += qdelta(qval, qval * adj);
                 } else if (q1Frame - q > 0 && delta > 0.1
@@ -1073,7 +1073,7 @@ final class RateControl {
         if (refreshed && thisFrameTarget > 0) {
             cr.adjust(correction);
         }
-        var limit = 0.25 + 0.75 * Math.min(0.5, Math.abs(Math.log10(correction)));
+        var limit = 0.25 + 0.75 * Math.min(0.5, Math.abs(StrictMath.log10(correction)));
         if (correction > 1.01) {
             correction = 1.0 + (correction - 1.0) * limit;
             rcf = Math.min(rcf * correction, MAX_BPB_FACTOR);

@@ -46,9 +46,10 @@ final class Vp9RtPredictor {
      */
     void predictInter(Vp9EncPicture ref, int plane, int x0, int y0, int mv, int filter, byte[] dst, int dstOff,
                       int dstStride, int w, int h, boolean average) {
-        var ss = plane == 0 ? 0 : 1;
-        var mvRow = (mv >> 16) * (1 << (1 - ss));
-        var mvCol = (short) mv * (1 << (1 - ss));
+        var sx = plane == 0 ? 0 : ref.ssX;
+        var sy = plane == 0 ? 0 : ref.ssY;
+        var mvRow = (mv >> 16) * (1 << (1 - sy));
+        var mvCol = (short) mv * (1 << (1 - sx));
         var subX = mvCol & 15;
         var subY = mvRow & 15;
         var x = x0 + (mvCol >> 4);
