@@ -8,13 +8,16 @@
 # and -lws2_32 in LIBS, lcommon/inc/win32.h and lcommon/src/win32.c take their POSIX branches under __MINGW32__ and
 # files are opened with O_BINARY,
 # and atm-encoder-fix.py replaces the user data SEI UUID derived from the clock with zeros, so every run writes the
-# same bytes. Each stream's references are the encoder's reconstructed views; for the two CABAC streams the 3DV-ATM
-# 14.0 decoder (ldecod -p NormalizeDepth=0 -p PostDilation=0) reproduces them, while it stops on the CAVLC ones.
+# same bytes. A second build, in atm-cavlc, also takes atm-encoder-cavlc.py, which adds the CAVLC syntax of the texture
+# coding tools and, with ATM_VSP_BIAS, biases the mode decision towards view synthesis prediction. Each stream's
+# references are the encoder's reconstructed views; for the CABAC streams the 3DV-ATM 14.0 decoder (ldecod -p
+# NormalizeDepth=0 -p PostDilation=0) reproduces them, while it stops on the CAVLC ones.
 set -euo pipefail
 ATM="$1"; WORK="$2"
 HERE="$(cd "$(dirname "$0")" && pwd)"
-BUILD="$WORK/atm"
-if [ ! -x "$BUILD/bin/lencod.exe" ] && [ ! -x "$BUILD/bin/lencod" ]; then
+build() {
+  local BUILD="$1" CAVLC="$2"
+  [ -x "$BUILD/bin/lencod.exe" ] || [ -x "$BUILD/bin/lencod" ] && return
   mkdir -p "$BUILD/bin"
   cp -r "$ATM/Makefile" "$ATM/makefile.base" "$ATM/lcommon" "$ATM/lencod" "$BUILD/"
   sed -i 's/^LIBS=   -lm/LIBS=   -lws2_32 -lm/; s/^CFLAGS=  -std=gnu99/CFLAGS=  -fcommon -std=gnu99/' "$BUILD/lencod/Makefile"
@@ -24,10 +27,15 @@ if [ ! -x "$BUILD/bin/lencod.exe" ] && [ ! -x "$BUILD/bin/lencod" ]; then
     "$BUILD/lcommon/inc/win32.h"
   sed -i 's/^#ifdef _WIN32$/#if defined(_WIN32) \&\& !defined(__MINGW32__)/' "$BUILD/lcommon/src/win32.c"
   python -I "$HERE/atm-encoder-fix.py" "$BUILD/lencod/src/parset.c"
+  [ "$CAVLC" = 0 ] || python -I "$HERE/atm-encoder-cavlc.py" "$BUILD"
   make -C "$BUILD/lencod" OPENMP=0
-fi
-ENCODER="$BUILD/bin/lencod.exe"
-[ -x "$ENCODER" ] || ENCODER="$BUILD/bin/lencod"
+}
+build "$WORK/atm" 0
+build "$WORK/atm-cavlc" 1
+encoder() {
+  if [ -x "$WORK/$1/bin/lencod.exe" ]; then echo "$WORK/$1/bin/lencod.exe"; else echo "$WORK/$1/bin/lencod"; fi
+}
+ENCODER="$(encoder atm)"
 OFF="tex.AdaptiveLuminanceCompensation=0 tex.VSP_Enable=0 tex.RLESkip=0"
 stream() {
   local name="$1" frames="$2" entropy="$3" order="$4"; shift 4
@@ -38,7 +46,12 @@ stream() {
     && "$ENCODER" -d tex.cfg -depd dep.cfg > enc.log 2>&1)
   cp "$dir/test.264" "$WORK/$name.264"
   for view in texture_recV3 texture_recV1 depth_recV3 depth_recV1; do
-    echo "$name $view $(md5sum < "$dir/$view.0000.yuv" | cut -c1-32)"
+    echo "$name $view $(python -I -c 'import hashlib, sys
+data = open(sys.argv[1], "rb").read()
+frame = 128 * 96 if "texture" in sys.argv[1] else 64 * 48
+if len(data) == frame * int(sys.argv[2]):
+    data = b"".join(data[i:i + frame] + bytes([128]) * (frame // 2) for i in range(0, len(data), frame))
+print(hashlib.md5(data).hexdigest())' "$dir/$view.0000.yuv" "$frames")"
   done
 }
 # depth-range-based weighted prediction of P depth slices, camera parameters of the sequence (a depth range per view)
@@ -53,3 +66,17 @@ stream atm-cavlc-dmvp-texture-first 8 0 T0D0T1D1 tex.DepthBasedMVP=1 $OFF Number
 # prediction refined with the base view's depth, adaptive luminance compensation and run-length skip coding
 stream atm-tools-texture-first 8 1 T0D0T1D1 tex.DepthBasedMVP=1 tex.VSP_Enable=1 tex.AdaptiveLuminanceCompensation=1 \
   tex.RLESkip=1 NumberBFrames=1
+# the texture coding tools of CAVLC slices with the patched encoder, the view synthesis cost divided by 8 and 24:
+# view synthesis skip runs, view synthesis direct and block-based view synthesis prediction, adaptive luminance
+# compensation, texture-first and depth-first coding
+ENCODER="$(encoder atm-cavlc)"
+TOOLS="tex.DepthBasedMVP=1 tex.VSP_Enable=1 tex.AdaptiveLuminanceCompensation=1 NumberBFrames=1"
+export ATM_VSP_BIAS=8
+stream atm-cavlc-tools-texture-first 8 0 T0D0T1D1 $TOOLS tex.RLESkip=0
+export ATM_VSP_BIAS=24
+stream atm-cavlc-tools 8 0 T0D0D1T1 $TOOLS tex.RLESkip=0
+# every texture coding tool of CABAC slices on 4:0:0 textures; the encoder writes luma-only reconstructions, which
+# the references hash with 4:2:0 chroma planes of 128, as the 3DV-ATM decoder writes them
+export ATM_VSP_BIAS=8
+stream atm-tools-monochrome 8 1 T0D0T1D1 $TOOLS tex.RLESkip=1 tex.YUVFormat=0
+unset ATM_VSP_BIAS

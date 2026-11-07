@@ -1309,6 +1309,12 @@ class FuzzSeedWriter {
         write(MpegFuzzTest.class, "h264Layers", "valid-3davc-depth-range-weights.bin", FuzzPackets.video(2, 128, 96,
                 null, List.of(new FuzzPackets.Part(Fixtures.read(vectors.resolve("avc3d").resolve("atm-drwp-b.264")),
                         true))));
+        write(MpegFuzzTest.class, "h264Layers", "valid-3davc-cavlc-tools.bin", FuzzPackets.video(2, 128, 96, null,
+                List.of(new FuzzPackets.Part(Fixtures.read(vectors.resolve("avc3d")
+                        .resolve("atm-cavlc-tools-texture-first.264")), true))));
+        write(MpegFuzzTest.class, "h264Layers", "valid-3davc-monochrome.bin", FuzzPackets.video(2, 128, 96, null,
+                List.of(new FuzzPackets.Part(Fixtures.read(vectors.resolve("avc3d").resolve("atm-tools-monochrome.264")),
+                        true))));
     }
 
     /**

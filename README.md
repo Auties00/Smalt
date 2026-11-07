@@ -1543,15 +1543,17 @@ channels, or two tracks, at 32 kHz in 12 bits. A DV source is copied when no for
   tools follow the ITU-T H.264.1 conformance bitstreams and the 3DV-ATM 14.0 reference decoder where they depart
   from the text of Annex I (the NAL unit header carries the `view_id`, the subset sequence parameter set layout,
   the closing slice header fields, one disparity per 8x8 block for view synthesis prediction, templates of one
-  sample for adaptive luminance compensation, the `transform_size_8x8_flag` of an adaptive luminance compensation
-  macroblock without luma residual), and the tool flags of the subset sequence parameter set parsed last apply to
-  every slice, as in 3DV-ATM. 3D-AVC texture slices that use the texture coding tools on field pictures or MBAFF
-  frames, above 8 bits or outside 4:2:0, or view synthesis prediction or adaptive luminance compensation with
-  CAVLC (whose flags 3DV-ATM reads with CABAC only, so no reference decoding exists) raise
-  `MediaException.Unsupported` once and are not decoded, while the other views keep decoding; depth-based motion
-  vector prediction with CAVLC is decoded. Depth-range-based weighted prediction of depth views follows 3DV-ATM,
-  which gives the depth pictures of the previous picture order count the depth ranges of a newly selected depth
-  parameter set. H.264 scalable decoding
+  sample for adaptive luminance compensation, `VspRefExist` set only by slices with `slice_vsp_flag`, and in CABAC
+  slices `mb_direct_type_flag` whatever `direct_spatial_mv_pred_flag` is and `bvsp_flag_lX` whether or not
+  `ref_idx_lX` is present), and the tool flags of the subset sequence parameter set parsed last apply to every
+  slice, as in 3DV-ATM. The texture coding tools of CAVLC slices, which 3DV-ATM codes with CABAC only, follow the
+  CAVLC syntax of Annex I (`mb_skip_type_flag` per skip run, `mb_direct_type_flag` only with spatial direct
+  prediction, `bvsp_flag_lX` only after a `ref_idx_lX` that is present); textures may be 4:2:0 or 4:0:0. Texture
+  views whose slices use the texture coding tools under a `profile_idc` 139 sequence parameter set the profile
+  forbids (`frame_mbs_only_flag` 0, samples above 8 bits, `chroma_format_idc` above 1) raise
+  `MediaException.Malformed` once and are not decoded, while the other views keep decoding. Depth-range-based
+  weighted prediction of depth views follows 3DV-ATM, which gives the depth pictures of the previous picture order
+  count the depth ranges of a newly selected depth parameter set. H.264 scalable decoding
   covers 4:2:0 8-bit layers, progressive or interlaced, decoded on the calling thread. Where the text of ITU-T
   H.264 F.8.6.2.3 and F.8.6.3.3 adds `botFieldFlag` to the row of a field macroblock or field picture in
   inter-layer resampling, the decoder follows the JSVM reference decoder and the sample geometry, which leave it

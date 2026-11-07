@@ -6,9 +6,16 @@ access unit. It exercises the 3D-AVC subset sequence parameter set, a depth para
 representation, the 3D-AVC NAL unit header, slice header prediction from every source and the closing slice header
 fields, in the layout the 3DV-ATM reference decoder (ITU-T H.264.2) reads.
 
-Usage: python -I make-stream.py <output.264> [<fuzz seed output>]
+With --high-bit-depth-texture the texture views' subset sequence parameter set codes 10-bit samples and their P
+slices set dmvp_flag, which the Enhanced Multiview Depth High profile forbids (ITU-T H.264 I.10.1.1): a decoder drops
+those views and still decodes the base view and the depth views.
+
+Usage: python -I make-stream.py [--high-bit-depth-texture] <output.264> [<fuzz seed output>]
 """
 import sys
+
+HIGH_BIT_DEPTH_TEXTURE = '--high-bit-depth-texture' in sys.argv
+ARGS = [arg for arg in sys.argv[1:] if arg != '--high-bit-depth-texture']
 
 
 class Bits:
@@ -63,14 +70,14 @@ def nal(header, rbsp):
 WIDTH_MBS, HEIGHT_MBS = 2, 1
 
 
-def sps_data(b, profile, sps_id):
+def sps_data(b, profile, sps_id, bit_depth_minus8=0):
     b.u(8, profile)
     b.u(8, 0)
     b.u(8, 30)
     b.ue(sps_id)
     b.ue(1)          # chroma_format_idc
-    b.ue(0)          # bit_depth_luma_minus8
-    b.ue(0)          # bit_depth_chroma_minus8
+    b.ue(bit_depth_minus8)   # bit_depth_luma_minus8
+    b.ue(bit_depth_minus8)   # bit_depth_chroma_minus8
     b.u(1, 0)        # qpprime_y_zero_transform_bypass_flag
     b.u(1, 0)        # seq_scaling_matrix_present_flag
     b.ue(0)          # log2_max_frame_num_minus4
@@ -94,7 +101,7 @@ def sps():
 
 def subset_sps(sps_id):
     b = Bits()
-    sps_data(b, 139, sps_id)
+    sps_data(b, 139, sps_id, 2 if HIGH_BIT_DEPTH_TEXTURE and sps_id == 0 else 0)
     b.u(1, 1)        # bit_equal_to_one
     b.ue(1)          # num_views_minus1
     b.ue(0)          # view_id[0]
@@ -251,7 +258,7 @@ def predicted(view_id, depth, idr, slice_type, src, lists_src, marking_src, data
         if depth:
             b.u(1, 0)        # depth_weighted_pred_flag
         else:
-            b.u(1, 0)        # dmvp_flag
+            b.u(1, 1 if HIGH_BIT_DEPTH_TEXTURE else 0)   # dmvp_flag
     if depth:
         b.u(1, 1)            # adaptive depth representation flag of 3DV-ATM
     data(b)
@@ -291,8 +298,8 @@ def seed(data):
 
 if __name__ == '__main__':
     data = stream()
-    with open(sys.argv[1], 'wb') as handle:
+    with open(ARGS[0], 'wb') as handle:
         handle.write(data)
-    if len(sys.argv) > 2:
-        with open(sys.argv[2], 'wb') as handle:
+    if len(ARGS) > 1:
+        with open(ARGS[1], 'wb') as handle:
             handle.write(seed(data))

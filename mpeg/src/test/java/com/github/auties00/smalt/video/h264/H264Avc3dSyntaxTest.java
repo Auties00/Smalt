@@ -21,7 +21,9 @@ import java.util.TreeMap;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Decodes the 3D-AVC stream {@code avc3d/syntax.264}, written from scratch by
@@ -29,7 +31,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * its base view components are I_PCM macroblocks, so their samples are known exactly, and every other view
  * component is skipped from the other view or the previous access unit with deblocking off, so it copies them. The
  * depth samples come out through the inverse of the depth parameter set's piecewise linear depth representation,
- * computed here from its nodes.
+ * computed here from its nodes. A variant with 10-bit texture views using depth-based motion vector prediction,
+ * which the Enhanced Multiview Depth High profile forbids, must lose those views alone.
  */
 @DisplayName("H.264 3D-AVC syntax from a generated stream")
 class H264Avc3dSyntaxTest {
@@ -38,7 +41,11 @@ class H264Avc3dSyntaxTest {
     private static final int HEIGHT = 16;
 
     static byte[] stream() throws IOException {
-        try (var input = H264Avc3dSyntaxTest.class.getResourceAsStream("avc3d/syntax.264")) {
+        return resource("avc3d/syntax.264");
+    }
+
+    static byte[] resource(String name) throws IOException {
+        try (var input = H264Avc3dSyntaxTest.class.getResourceAsStream(name)) {
             return input.readAllBytes();
         }
     }
@@ -79,6 +86,14 @@ class H264Avc3dSyntaxTest {
     }
 
     static Map<String, List<byte[]>> decode(H264DecoderOptions options) throws IOException {
+        return decode(stream(), options, null);
+    }
+
+    /**
+     * Decodes a stream to the luma samples of each view's pictures, collecting the failures the decoder reports
+     * when {@code failures} is not {@code null}.
+     */
+    static Map<String, List<byte[]>> decode(byte[] stream, H264DecoderOptions options, List<MediaException> failures) {
         var frames = new TreeMap<String, List<byte[]>>();
         try (var decoder = new H264Decoder(H264ConformanceTest.track(), options)) {
             java.util.function.Consumer<VideoFrame> sink = frame -> {
@@ -93,12 +108,33 @@ class H264Avc3dSyntaxTest {
                 }
                 frames.computeIfAbsent(key, ignored -> new ArrayList<>()).add(luma);
             };
-            for (var nal : H264TestStreams.splitAnnexB(stream())) {
-                decoder.decode(H264MvcConformanceTest.packet(nal), sink);
+            for (var nal : H264TestStreams.splitAnnexB(stream)) {
+                try {
+                    decoder.decode(H264MvcConformanceTest.packet(nal), sink);
+                } catch (MediaException failure) {
+                    if (failures == null) {
+                        throw failure;
+                    }
+                    failures.add(failure);
+                }
             }
             decoder.flush(sink);
         }
         return frames;
+    }
+
+    /**
+     * The depth samples the generator's depth views decode to: its I_PCM pattern through the inverse depth
+     * representation.
+     */
+    static byte[] depth() {
+        var lut = inverseRepresentation();
+        var coded = luma(5);
+        var depth = new byte[coded.length];
+        for (var i = 0; i < coded.length; i++) {
+            depth[i] = (byte) lut[coded[i] & 0xFF];
+        }
+        return depth;
     }
 
     @Test
@@ -115,12 +151,7 @@ class H264Avc3dSyntaxTest {
         var frames = decode(H264DecoderOptions.builder().allViews().depth(true).threads(threads).build());
         assertEquals(List.of("d0", "d1", "v0", "v1"), List.copyOf(frames.keySet()));
         var texture = luma(1);
-        var lut = inverseRepresentation();
-        var coded = luma(5);
-        var depth = new byte[coded.length];
-        for (var i = 0; i < coded.length; i++) {
-            depth[i] = (byte) lut[coded[i] & 0xFF];
-        }
+        var depth = depth();
         for (var key : frames.keySet()) {
             var expected = key.startsWith("v") ? texture : depth;
             assertEquals(2, frames.get(key).size(), key);
@@ -128,6 +159,31 @@ class H264Avc3dSyntaxTest {
                 assertArrayEquals(expected, picture, key);
             }
         }
+    }
+
+    @ParameterizedTest(name = "threads {0}")
+    @ValueSource(ints = {1, 4})
+    @DisplayName("drops the texture views whose profile_idc 139 set codes 10-bit samples as malformed")
+    void highBitDepthTexture(int threads) throws IOException, NoSuchAlgorithmException {
+        // make-stream.py --high-bit-depth-texture: the texture views' subset sequence parameter set codes 10-bit
+        // samples and their P slices set dmvp_flag, which ITU-T H.264 I.10.1.1 forbids
+        var stream = resource("avc3d/syntax-high-bit-depth-texture.264");
+        assertEquals("a24c09e2d0628da38403724994ca9ee7ccbe46e247e39892be0377529e72dd45",
+                HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(stream)));
+        var failures = new ArrayList<MediaException>();
+        var frames = decode(stream, H264DecoderOptions.builder().allViews().depth(true).threads(threads).build(),
+                failures);
+        assertEquals(List.of("d0", "d1", "v0"), List.copyOf(frames.keySet()));
+        for (var key : frames.keySet()) {
+            var expected = key.startsWith("v") ? luma(1) : depth();
+            assertEquals(2, frames.get(key).size(), key);
+            for (var picture : frames.get(key)) {
+                assertArrayEquals(expected, picture, key);
+            }
+        }
+        assertEquals(1, failures.size(), failures.toString());
+        var failure = assertInstanceOf(MediaException.Malformed.class, failures.getFirst());
+        assertTrue(failure.getMessage().contains("samples above 8 bits"), failure.getMessage());
     }
 
     @Test

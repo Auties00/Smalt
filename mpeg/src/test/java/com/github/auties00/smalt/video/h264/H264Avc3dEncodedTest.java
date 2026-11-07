@@ -25,7 +25,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * depth-first and texture-first coding ({@code atm-cavlc-*}, which the 3DV-ATM decoder does not decode), and every
  * texture coding tool of CABAC slices in texture-first coding ({@code atm-tools-texture-first}: view synthesis skip
  * and direct macroblocks, block-based view synthesis prediction with disparities refined from the base view's
- * depth, adaptive luminance compensation and run-length skip coding), which the 3DV-ATM decoder reproduces.
+ * depth, adaptive luminance compensation and run-length skip coding), which the 3DV-ATM decoder reproduces. The
+ * {@code atm-cavlc-tools*} streams code view synthesis skip runs, view synthesis direct macroblocks, block-based
+ * view synthesis prediction and adaptive luminance compensation in CAVLC slices (ITU-T H.264 I.7.3.4.1 and
+ * I.7.3.6), in texture-first and depth-first coding, from the encoder patched by
+ * {@code atm-encoder-cavlc.py}, which neither the unpatched encoder nor the 3DV-ATM decoder supports, and
+ * {@code atm-tools-monochrome} every CABAC tool on 4:0:0 textures, which the 3DV-ATM decoder reproduces.
  */
 @DisplayName("H.264 3D-AVC streams coded by the 3DV-ATM encoder")
 class H264Avc3dEncodedTest {
@@ -54,6 +59,16 @@ class H264Avc3dEncodedTest {
                 new Stream3d("atm-tools-texture-first",
                         "f1ecf151e779eb3f4c21c423fc2487bd385bcd107835bae8fda10b09546c1ab2",
                         Map.of("v3", "5433749dbe2d568a5349a9c5e55dc90c", "v1", "e31606e12fbbd1a4ee91594015222cce",
+                                "d3", "011887b0003ae0901ff47c687b796d1a", "d1", "9847a6be9ae522c482924cad39e44673")),
+                new Stream3d("atm-cavlc-tools-texture-first",
+                        "cfb89552b984ae16d34f5a89d0d0280dde11da6245c01141be5605ab500d8b61",
+                        Map.of("v3", "7a392cd8143c37a7a4229b1f38527046", "v1", "48c8917a5c8178da048a3ae3b2d5339b",
+                                "d3", "d3b9d076573cfd21c6c9ab3bc9dbfe21", "d1", "797e8f1cf1966ea85e36d24fe7f2b62c")),
+                new Stream3d("atm-cavlc-tools", "887040627e1aa49925b0be3a2d3577e84fe4e08226c9788a1772f457283a5ed1",
+                        Map.of("v3", "7a392cd8143c37a7a4229b1f38527046", "v1", "9423d1c9e996f95e2fa4439e8b437b64",
+                                "d3", "d3b9d076573cfd21c6c9ab3bc9dbfe21", "d1", "797e8f1cf1966ea85e36d24fe7f2b62c")),
+                new Stream3d("atm-tools-monochrome", "e3e3fbc757950c66313ce8e3ca809bbb96c7742ed7b4e2a4237a2f136bd92918",
+                        Map.of("v3", "bb3946b3aa0d20d29c2f374d8a3e4cd2", "v1", "768851470cac87a56400442bbc906c76",
                                 "d3", "011887b0003ae0901ff47c687b796d1a", "d1", "9847a6be9ae522c482924cad39e44673")));
     }
 

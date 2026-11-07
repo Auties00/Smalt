@@ -278,7 +278,7 @@ public final class H264DecoderEngine {
     private boolean avc3dDepth;
 
     /**
-     * Whether the 3D-AVC texture coding tools were reported as unsupported.
+     * Whether a 3D-AVC texture view was dropped for breaking a constraint its texture coding tools depend on.
      */
     private boolean avc3dToolsReported;
 
@@ -1428,31 +1428,28 @@ public final class H264DecoderEngine {
     }
 
     /**
-     * Returns why the 3D-AVC texture coding tools of a slice cannot be decoded, or {@code null} when they can.
+     * Returns the constraint of the Enhanced Multiview Depth High profile (ITU-T H.264 I.10.1.1) a slice using the
+     * 3D-AVC texture coding tools breaks, or {@code null} when it breaks none the tools depend on.
+     *
+     * <p>The profile codes every picture as a frame of 8-bit samples; the texture coding tools are specified for
+     * such pictures only.
      *
      * @param slice the slice header of a non-base texture view that may use a tool
      * @param sps the active sequence parameter set
-     * @param pps the active picture parameter set
-     * @return the reason, or {@code null}
+     * @return the broken constraint, or {@code null}
      */
-    private String avc3dUnsupported(H264SliceHeader slice, H264Sps sps, H264Pps pps) {
+    static String avc3dViolation(H264SliceHeader slice, H264Sps sps) {
         if (sps.profileIdc != 139) {
             return null;
         }
-        if (slice.fieldPic || sps.mbAdaptiveFrameField) {
-            // TODO: the 3D-AVC texture coding tools on field pictures and MBAFF frames, which no conformance
-            //  bitstream of ITU-T H.264.1 (02/2016) exercises
-            return "the 3D-AVC texture coding tools on field pictures and MBAFF frames";
+        if (slice.fieldPic || !sps.frameMbsOnly) {
+            return "a profile_idc 139 sequence parameter set with frame_mbs_only_flag 0";
         }
-        if (sps.bitDepthLuma > 8 || sps.bitDepthChroma > 8 || sps.chromaFormatIdc != 1) {
-            return "the 3D-AVC texture coding tools above 8 bits or outside 4:2:0";
+        if (sps.bitDepthLuma > 8 || sps.bitDepthChroma > 8) {
+            return "a profile_idc 139 sequence parameter set with samples above 8 bits";
         }
-        if (!pps.cabac && (slice.sliceVsp || slice.sliceType == H264SliceHeader.P
-                && avc3dContext.tools != null && avc3dContext.tools.adaptiveLuminance)) {
-            // TODO: view synthesis prediction and adaptive luminance compensation in CAVLC slices, whose syntax
-            //  no reference decoder implements (3DV-ATM 14.0 reads their flags with CABAC) and no conformance
-            //  bitstream exercises
-            return "view synthesis prediction and adaptive luminance compensation in CAVLC slices";
+        if (sps.chromaFormatIdc > 1) {
+            return "a profile_idc 139 sequence parameter set with chroma_format_idc " + sps.chromaFormatIdc;
         }
         return null;
     }
@@ -3012,12 +3009,12 @@ public final class H264DecoderEngine {
             return;
         }
         if (slice.avc3d && !depth && target != baseView && avc3dTools(slice)) {
-            var reason = avc3dUnsupported(slice, sps, pps);
+            var reason = avc3dViolation(slice, sps);
             if (reason != null) {
                 target.avc3dDropped = true;
                 if (!avc3dToolsReported) {
                     avc3dToolsReported = true;
-                    recordError(new MediaException.Unsupported("h264 3d-avc", reason));
+                    recordError(new MediaException.Malformed("3D-AVC texture coding tools in " + reason));
                 }
                 return;
             }

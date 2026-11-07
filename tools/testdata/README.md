@@ -782,6 +782,9 @@ the 3D-AVC and MVCD suites, MVDDR-1_r2 and MVDDR-2_r2 (3D-AVC NAL units without 
 and a depth view each, I_PCM base view components and skipped other view components, every slice header prediction
 source and a depth parameter set with a non-linear depth representation, so every expected sample follows from
 the coded ones. 3DV-ATM stops on CAVLC 3D-AVC streams, so this stream has no reference decoding.
+`make-stream.py --high-bit-depth-texture` writes `syntax-high-bit-depth-texture.264`, the same stream with 10-bit
+texture views whose P slices set `dmvp_flag`, which the Enhanced Multiview Depth High profile forbids; the test
+expects those views dropped as malformed and the base view and depth views decoded as before.
 `H264Avc3dEncodedTest` decodes the `atm-*.264` streams beside it, which `tools/testdata/h264-3davc/atm-streams.sh
 <3DV-ATM 14.0 tree> <work directory>` codes with the 3DV-ATM 14.0 encoder (built from source with MinGW, its
 user data SEI UUID made constant by `atm-encoder-fix.py`, so the bytes are reproducible) from the synthetic
@@ -789,10 +792,20 @@ two-view sequences of `atm-inputs.py` (128x96 texture, 64x48 depth, rectangles m
 their depth) and the configurations of `atm-configs.py`, pinned in the same `streams.tsv`: depth-range-based
 weighted prediction of P depth slices with a depth range per view and of P and B depth slices with a depth
 parameter set per access unit, depth-based motion vector prediction in CAVLC slices in depth-first and
-texture-first coding, and every texture tool of CABAC slices in texture-first coding. The expected MD5 of each
-view is that of the encoder's reconstruction, which the 3DV-ATM 14.0 decoder reproduces for the CABAC streams;
-the decoder stops on the CAVLC ones. `atm-tools-texture-first` and `atm-drwp-b` are also seeds of the
-`h264Layers` fuzz target.
+texture-first coding, and every texture tool of CABAC slices in texture-first coding. A second encoder build,
+patched by `atm-encoder-cavlc.py`, codes the texture tools in CAVLC slices with the syntax of ITU-T H.264
+I.7.3.4.1 and I.7.3.6 (`mb_skip_type_flag`, `mb_direct_type_flag`, `mb_alc_flag` and `bvsp_flag_lX` as `u(1)`),
+which the unpatched encoder crashes on: it restricts the mode decision to what that syntax carries (one skip type
+per P skip run, no adaptive luminance compensation skip, no block-based view synthesis prediction without a coded
+reference index) and, with `ATM_VSP_BIAS=n` in the environment, divides the rate-distortion cost of view synthesis
+predictions by n, since the synthetic depth does not give the textures' disparities and the encoder would
+otherwise almost never choose them. `atm-cavlc-tools-texture-first` (n = 8) and `atm-cavlc-tools` (n = 24,
+depth-first) code every CAVLC tool flag, both values of each in the first, and `atm-tools-monochrome` (n = 8)
+every CABAC tool on 4:0:0 textures (its luma-only reconstructions hashed with 4:2:0 chroma planes of 128, as the
+3DV-ATM decoder writes them). The expected MD5 of each view is that of the encoder's reconstruction, which the
+3DV-ATM 14.0 decoder reproduces for the CABAC streams; the decoder stops on the CAVLC ones. `atm-tools-texture-first`,
+`atm-drwp-b`, `atm-cavlc-tools-texture-first` and `atm-tools-monochrome` are also seeds of the `h264Layers` fuzz
+target.
 
 ## H.264 scalable vectors
 

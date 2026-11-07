@@ -1380,12 +1380,19 @@ final class SliceDecoder {
                 if (run > mbCount) {
                     throw new MediaException.Malformed("mb_skip_run " + run + " out of range");
                 }
+                // mb_skip_type_flag follows the run and makes every macroblock of it a view synthesis skip
+                var vsSkip = tools3d && run > 0 && avc3d.vspRefExist && bits.readFlag();
                 for (var i = 0; i < run; i++) {
                     if (addr >= mbCount) {
                         throw new MediaException.Malformed("slice runs past the end of the picture");
                     }
                     beginMacroblock(addr, filter);
-                    decodeSkip();
+                    if (vsSkip) {
+                        mbFlags3d |= AVC3D_VSSKIP;
+                        decodeVsSkip();
+                    } else {
+                        decodeSkip();
+                    }
                     finishMacroblock(onMacroblock);
                     addr = nextMbAddr(addr);
                 }
@@ -3346,6 +3353,13 @@ final class SliceDecoder {
                         && cabac.decision(CTX_DIRECT_TYPE + directTypeContext()) != 0) {
                     mbFlags3d |= AVC3D_DIRECT_TYPE;
                 }
+            } else {
+                if (bSlice && type == 0 && avc3d.vspRefExist && header.directSpatialMvPred && bits.readFlag()) {
+                    mbFlags3d |= AVC3D_DIRECT_TYPE;
+                }
+                if (!bSlice && avc3d.alc && type <= 2 && bits.readFlag()) {
+                    mbFlags3d |= AVC3D_ALC;
+                }
             }
         }
         var whole = bSlice ? type <= 3 : type == 0;
@@ -3428,8 +3442,7 @@ final class SliceDecoder {
             }
         }
         cbp = decodeCbp(false);
-        // 3DV-ATM reads the flag of a macroblock with adaptive luminance compensation even without luma residual
-        var alcTransform = tools3d && (mbFlags3d & AVC3D_ALC) != 0 && cabacMode;
+        var alcTransform = tools3d && (mbFlags3d & AVC3D_ALC) != 0;
         if (((cbp & 15) != 0 || alcTransform) && pps.transform8x8Mode && transformAllowed()) {
             if (cabacMode ? decodeTransformFlag() : bits.readFlag()) {
                 mbFlags |= DecoderFrame.MB_T8X8;
@@ -7229,30 +7242,37 @@ final class SliceDecoder {
      *
      * @param list the list index
      * @param r the reference index of the block
+     * @param coded whether the block's {@code ref_idx_lX} is present in the bitstream; a CAVLC slice codes the
+     * flag only after a present reference index (ITU-T H.264 I.7.3.6.1), a CABAC slice whatever it is, as
+     * 3DV-ATM and the conformance bitstreams do
      * @param x4 the block column in 4x4 units within the macroblock
      * @param y4 the block row in 4x4 units within the macroblock
      * @param w4 the block width in 4x4 units
      * @param h4 the block height in 4x4 units
      * @param mode the partitioning of the macroblock: 0 to 2 for 16x16, 16x8 and 8x16, 3 for 8x8
      */
-    private void decodeVspFlag(int list, int r, int x4, int y4, int w4, int h4, int mode) {
+    private void decodeVspFlag(int list, int r, boolean coded, int x4, int y4, int w4, int h4, int mode) {
         if (!avc3d.vsp || r < 0 || refView3d[list][r] == viewId3d) {
             return;
         }
         var bit = 1 << list;
-        int a;
-        if (x4 > 0) {
-            a = vspBits[y4 * 4 + x4 - 1] & bit;
-        } else {
-            a = availA ? pic.avc3dVsp[mbA * 16 + y4 * 4 + 3] & bit : 0;
-        }
-        int b;
-        if (y4 > 0) {
-            b = vspBits[(y4 - 1) * 4 + x4] & bit;
-        } else {
-            b = availB ? pic.avc3dVsp[mbB * 16 + 12 + x4] & bit : 0;
-        }
-        if (cabac.decision(CTX_VSP_FLAG + (a != 0 ? 1 : 0) + (b != 0 ? 1 : 0)) == 0) {
+        if (cabacMode) {
+            int a;
+            if (x4 > 0) {
+                a = vspBits[y4 * 4 + x4 - 1] & bit;
+            } else {
+                a = availA ? pic.avc3dVsp[mbA * 16 + y4 * 4 + 3] & bit : 0;
+            }
+            int b;
+            if (y4 > 0) {
+                b = vspBits[(y4 - 1) * 4 + x4] & bit;
+            } else {
+                b = availB ? pic.avc3dVsp[mbB * 16 + 12 + x4] & bit : 0;
+            }
+            if (cabac.decision(CTX_VSP_FLAG + (a != 0 ? 1 : 0) + (b != 0 ? 1 : 0)) == 0) {
+                return;
+            }
+        } else if (!coded || !bits.readFlag()) {
             return;
         }
         var table = list == 0 ? avc3d.forward : avc3d.backward;
@@ -7292,7 +7312,8 @@ final class SliceDecoder {
                     var c = partitionCache(p);
                     r = decodeRefIdx3d(list, c);
                     var offset = c - CACHE_ORIGIN;
-                    decodeVspFlag(list, r, offset & 7, offset >> 3, w, h, partShape);
+                    var coded = activeRefs(list) > 1 && (list != 0 || (mbFlags3d & AVC3D_ALC) == 0);
+                    decodeVspFlag(list, r, coded, offset & 7, offset >> 3, w, h, partShape);
                 }
                 setPartitionRef(list, p, r);
             }
@@ -7369,7 +7390,8 @@ final class SliceDecoder {
                 if ((subPred[i] & (1 << list)) != 0) {
                     r = !bSlice && refZero ? 0 : decodeRefIdx(list, c8);
                     var shape = subShape[i];
-                    decodeVspFlag(list, r, (i & 1) * 2, (i >> 1) * 2, shape == 0 || shape == 1 ? 2 : 1,
+                    var coded = (bSlice || !refZero) && activeRefs(list) > 1;
+                    decodeVspFlag(list, r, coded, (i & 1) * 2, (i >> 1) * 2, shape == 0 || shape == 1 ? 2 : 1,
                             shape == 0 || shape == 2 ? 2 : 1, 3);
                 }
                 refIdx[list][i] = r;
