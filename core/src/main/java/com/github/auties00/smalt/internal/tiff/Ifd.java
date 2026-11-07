@@ -381,8 +381,8 @@ public final class Ifd {
      * @param index the entry index
      * @param fallback the value returned for an entry without values
      * @return the first value, signed types sign-extended
-     * @throws MediaException.Malformed if the entry is not of an integer type or its first value
-     * cannot be read
+     * @throws MediaException.Malformed if the entry is not of an integer type, its values lie outside the input,
+     * or its first value cannot be read
      */
     public long firstInteger(int index, long fallback) {
         var type = type(index);
@@ -396,8 +396,17 @@ public final class Ifd {
         if (isInline(index)) {
             return TiffTypes.integer(entries, fieldIndex(index), type, header.little());
         }
+        // the whole value list must lie in the input, as value() requires: a count that runs past the end makes
+        // the offset as untrustworthy as the count
+        var position = base + valueOffset(index);
+        var length = byteLength(index);
+        var inputSize = input.size();
+        if (length < 0 || valueOffset(index) < 0 || position < 0
+                || (inputSize >= 0 && (position > inputSize || length > inputSize - position))) {
+            throw new MediaException.Malformed("TIFF tag " + tag(index) + " points past the end of the input");
+        }
         var data = new byte[size];
-        if (input.readAvailable(base + valueOffset(index), data, 0, size) < size) {
+        if (input.readAvailable(position, data, 0, size) < size) {
             throw new MediaException.Malformed("TIFF tag " + tag(index) + " is truncated");
         }
         return TiffTypes.integer(data, 0, type, header.little());

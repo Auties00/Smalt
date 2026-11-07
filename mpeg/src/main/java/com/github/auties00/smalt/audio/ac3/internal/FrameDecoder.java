@@ -827,6 +827,14 @@ public final class FrameDecoder {
     }
 
     /**
+     * Marks the next synthesized frame as lost, so that {@link #synthesize} conceals it with the header of the
+     * frame parsed last.
+     */
+    public void markLost() {
+        valid = false;
+    }
+
+    /**
      * Resets the overlap and concealment state, as after a seek.
      */
     public void reset() {

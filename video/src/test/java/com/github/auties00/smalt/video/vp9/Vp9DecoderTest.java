@@ -26,6 +26,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
 
@@ -37,7 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Covers the public VP9 decoder: picture formats per profile, the rounding of 10 and 12-bit
- * frames to 8 bits, the rejection of 4:4:0 frames, timestamps and key frame flags, hidden frames
+ * frames to 8 bits, 4:4:0 frames against libvpx's MD5, timestamps and key frame flags, hidden frames
  * and superframes, the color description and the factory registration.
  */
 @DisplayName("VP9 decoder")
@@ -77,7 +78,7 @@ class Vp9DecoderTest {
 
     @ParameterizedTest(name = "{0}")
     @CsvSource({"vp90-2-03-size-196x198.webm, YUV420", "vp91-2-04-yuv422.webm, YUV422", "vp91-2-04-yuv444.webm, YUV444",
-            "vp92-2-20-10bit-yuv420.webm, YUV420", "vp93-2-20-12bit-yuv444.webm, YUV444"})
+            "vp91-2-04-yuv440.webm, YUV440", "vp92-2-20-10bit-yuv420.webm, YUV420", "vp93-2-20-12bit-yuv444.webm, YUV444"})
     @DisplayName("produces 8-bit pictures of the stream's chroma format and coded size")
     void formats(String name, ChromaFormat format) throws IOException {
         var packets = packets(name);
@@ -192,15 +193,109 @@ class Vp9DecoderTest {
         return out.toByteArray();
     }
 
+    @ParameterizedTest(name = "{0}")
+    @CsvSource({"vp91-2-04-yuv440.webm, false", "vp93-2-20-10bit-yuv440.webm, true",
+            "vp93-2-20-12bit-yuv440.webm, true"})
+    @DisplayName("hands out 4:4:0 frames whose planes match libvpx's MD5 of every frame")
+    void yuv440(String name, boolean wide) throws IOException {
+        var packets = packets(name);
+        var actual = new ArrayList<String>();
+        try (var decoder = new Vp9Decoder(track(Optional.empty()),
+                VideoDecoderOptions.builder().limits(Vp9ConformanceTest.LIMITS).highBitDepth(wide).threads(2).build())) {
+            for (var i = 0; i < packets.size(); i++) {
+                decoder.decode(new Packet(1, packets.get(i), i, i, 1, false), frame -> {
+                    var picture = frame.picture();
+                    if (wide) {
+                        var yuv = assertInstanceOf(Yuv16Picture.class, picture);
+                        assertEquals(ChromaFormat.YUV440, yuv.chromaFormat());
+                        assertEquals(yuv.width(), yuv.chromaWidth());
+                        assertEquals((yuv.height() + 1) / 2, yuv.chromaHeight());
+                        actual.add(md5(yuv));
+                    } else {
+                        var yuv = assertInstanceOf(YuvPicture.class, picture);
+                        assertEquals(ChromaFormat.YUV440, yuv.chromaFormat());
+                        assertEquals(yuv.width(), yuv.chromaWidth());
+                        assertEquals((yuv.height() + 1) / 2, yuv.chromaHeight());
+                        actual.add(md5(yuv));
+                    }
+                });
+            }
+        }
+        assertEquals(Vp9Vectors.expectedMd5(name), actual);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @CsvSource({"vp91-2-04-yuv440.webm, 8", "vp93-2-20-10bit-yuv440.webm, 10"})
+    @DisplayName("probing a 4:4:0 stream reports the 4:4:0 chroma format")
+    void yuv440Probe(String name, int depth) throws IOException {
+        var info = com.github.auties00.smalt.Media.probe(com.github.auties00.smalt.io.MediaSource.of(
+                Files.readAllBytes(Vp9Vectors.stream(name))));
+        var video = info.videoStreams().getFirst();
+        assertEquals(java.util.Optional.of(ChromaFormat.YUV440), video.chromaFormat());
+        assertEquals(depth, video.bitDepth().orElseThrow());
+    }
+
     @Test
-    @DisplayName("rejects shown 4:4:0 frames as unsupported")
-    void yuv440() throws IOException {
-        var packets = packets("vp91-2-04-yuv440.webm");
-        try (var decoder = new Vp9Decoder(track(Optional.empty()))) {
-            var failure = assertThrows(MediaException.Unsupported.class,
-                    () -> decoder.decode(new Packet(1, packets.getFirst(), 0, 0, 1, false), frame -> {
-                    }));
-            assertTrue(failure.getMessage().contains("4:4:0"), failure.getMessage());
+    @DisplayName("rounds 4:4:0 high bit depth frames to the 8-bit reduction of their full-precision planes")
+    void yuv440Narrowed() throws IOException {
+        var packets = packets("vp93-2-20-10bit-yuv440.webm");
+        try (var narrow = new Vp9Decoder(track(Optional.empty()));
+             var wide = new Vp9Decoder(track(Optional.empty()),
+                     VideoDecoderOptions.builder().highBitDepth(true).build())) {
+            for (var i = 0; i < Math.min(packets.size(), 4); i++) {
+                var packet = new Packet(1, packets.get(i), i, i, 1, false);
+                var expected = new ArrayList<YuvPicture>();
+                wide.decode(packet, out -> expected.add(copy(ImageOps.toEightBit((Yuv16Picture) out.picture()))));
+                var actual = new ArrayList<YuvPicture>();
+                narrow.decode(packet, out -> actual.add(copy((YuvPicture) out.picture())));
+                assertEquals(expected.size(), actual.size());
+                for (var index = 0; index < expected.size(); index++) {
+                    assertEquals(ChromaFormat.YUV440, actual.get(index).chromaFormat());
+                    assertArrayEquals(planes(expected.get(index)), planes(actual.get(index)), "frame " + i);
+                }
+            }
+        }
+    }
+
+    private static String md5(YuvPicture picture) {
+        var digest = md5Digest();
+        for (var y = 0; y < picture.height(); y++) {
+            digest.update(picture.y(), y * picture.yStride(), picture.width());
+        }
+        for (var plane : new byte[][]{picture.u(), picture.v()}) {
+            for (var y = 0; y < picture.chromaHeight(); y++) {
+                digest.update(plane, y * picture.uvStride(), picture.chromaWidth());
+            }
+        }
+        return HexFormat.of().formatHex(digest.digest());
+    }
+
+    private static String md5(Yuv16Picture picture) {
+        var digest = md5Digest();
+        var row = new byte[2 * picture.width()];
+        feed(digest, row, picture.y(), picture.yStride(), picture.width(), picture.height());
+        feed(digest, row, picture.u(), picture.uvStride(), picture.chromaWidth(), picture.chromaHeight());
+        feed(digest, row, picture.v(), picture.uvStride(), picture.chromaWidth(), picture.chromaHeight());
+        return HexFormat.of().formatHex(digest.digest());
+    }
+
+    private static void feed(java.security.MessageDigest digest, byte[] row, short[] plane, int stride, int width,
+                             int height) {
+        for (var y = 0; y < height; y++) {
+            for (var x = 0; x < width; x++) {
+                var sample = plane[y * stride + x];
+                row[2 * x] = (byte) sample;
+                row[2 * x + 1] = (byte) (sample >> 8);
+            }
+            digest.update(row, 0, 2 * width);
+        }
+    }
+
+    private static java.security.MessageDigest md5Digest() {
+        try {
+            return java.security.MessageDigest.getInstance("MD5");
+        } catch (java.security.NoSuchAlgorithmException exception) {
+            throw new IllegalStateException(exception);
         }
     }
 
