@@ -81,7 +81,9 @@ public final class VideoDecoderOptions {
      *
      * <p>When {@code true}, such pictures are {@link com.github.auties00.smalt.image.Yuv16Picture}s
      * of the stream's depth; when {@code false}, every picture is reduced to an 8-bit
-     * {@link com.github.auties00.smalt.image.YuvPicture}. Codecs without a high bit depth output
+     * {@link com.github.auties00.smalt.image.YuvPicture}, except the YCgCo-Re and YCgCo-Ro pictures
+     * of the AV1 decoder, which become opaque 8-bit
+     * {@link com.github.auties00.smalt.image.RgbaPicture}s. Codecs without a high bit depth output
      * ignore it.
      *
      * @implNote This implementation honors the setting in the VP9, AV1, HEVC, H.264 and Motion-JPEG

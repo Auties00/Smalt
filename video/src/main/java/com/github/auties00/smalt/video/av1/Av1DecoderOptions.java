@@ -108,7 +108,9 @@ public final class Av1DecoderOptions {
      *
      * <p>When set, such frames are {@link com.github.auties00.smalt.image.Yuv16Picture}s of the
      * stream's bit depth; otherwise they are reduced to 8-bit
-     * {@link com.github.auties00.smalt.image.YuvPicture}s.
+     * {@link com.github.auties00.smalt.image.YuvPicture}s, or to 8-bit
+     * {@link com.github.auties00.smalt.image.RgbaPicture}s in the YCgCo-Re and YCgCo-Ro matrices
+     * (see {@link Av1Decoder}).
      */
     public boolean highBitDepth() {
         return highBitDepth;

@@ -11,10 +11,12 @@ import com.github.auties00.smalt.image.ColorPrimaries;
 import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.internal.codec.ConsumerFailure;
+import com.github.auties00.smalt.internal.color.YcgcoR;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.plane.Narrow;
 import com.github.auties00.smalt.internal.plane.Planes;
@@ -29,6 +31,7 @@ import com.github.auties00.smalt.video.av1.internal.Av1Context;
 import com.github.auties00.smalt.video.av1.internal.Av1Picture;
 import com.github.auties00.smalt.video.av1.internal.FrameHeader;
 import com.github.auties00.smalt.video.av1.internal.SequenceHeader;
+import com.github.auties00.smalt.video.av1.internal.YcgcoRgba;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -70,7 +73,13 @@ import java.util.function.Consumer;
  * {@link ChromaFormat#MONOCHROME}) at the frame size (the upscaled width when super-resolution is
  * used). High bit depth samples are reduced to 8 bits as
  * {@link com.github.auties00.smalt.image.ops.ImageOps#toEightBit(Yuv16Picture) ImageOps.toEightBit}
- * defines. A decoder created with {@link Av1DecoderOptions#highBitDepth()} set hands out the frames
+ * defines, except in the YCgCo-Re and YCgCo-Ro matrices ({@link MatrixCoefficients#YCGCO_RE},
+ * {@link MatrixCoefficients#YCGCO_RO}), whose R'G'B' samples are two or one bits shallower than the
+ * Y'CbCr samples, so that 8-bit samples would keep only 6 or 7 bits of R'G'B': frames of 10 and
+ * 12-bit streams in those matrices are opaque 8-bit {@link RgbaPicture}s, converted as
+ * {@link com.github.auties00.smalt.image.ops.ImageOps#toRgba(Picture) ImageOps.toRgba} converts
+ * the frame's samples (the R'G'B' of a lossless 10-bit YCgCo-Re stream exactly), as the AVIF decoder
+ * does. A decoder created with {@link Av1DecoderOptions#highBitDepth()} set hands out the frames
  * of 10 and 12-bit streams as {@link Yuv16Picture}s of the stream's bit depth instead, with the
  * samples of the normative decoding process; 8-bit streams always produce {@link YuvPicture}s. The
  * picture handed to the consumer is recycled and valid only until the consumer returns.
@@ -125,6 +134,17 @@ public final class Av1Decoder implements VideoDecoder {
      * The recycled output picture of high bit depth frames, when {@link #highBitDepth} is set.
      */
     private Yuv16Picture widePicture;
+
+    /**
+     * The recycled output picture of the YCgCo-Re and YCgCo-Ro frames of high bit depth streams in the 8-bit mode.
+     */
+    private RgbaPicture rgbaPicture;
+
+    /**
+     * The converter of the YCgCo-Re and YCgCo-Ro frames of high bit depth streams in the 8-bit mode, created on
+     * first use.
+     */
+    private YcgcoRgba ycgcoRgba;
 
     /**
      * The options.
@@ -269,9 +289,8 @@ public final class Av1Decoder implements VideoDecoder {
     private void emit(Consumer<VideoFrame> output) {
         try {
             for (var p : shown) {
-                // TODO: the 8-bit mode rounds YCgCo-Re and YCgCo-Ro samples, keeping only 6 or 7 bits of R'G'B';
-                // such frames could be output as 8-bit RGBA, as the AVIF decoder does
-                Picture frame = highBitDepth && p.bpc > 8 ? convertWide(p) : convert(p);
+                Picture frame = p.bpc <= 8 ? convert(p, colorInfo(p.seqHdr, p.w, p.h))
+                        : highBitDepth ? convertWide(p) : convertEightBit(p);
                 var keyframe = p.frameHdr != null && p.frameHdr.frameType == FrameHeader.KEY;
                 output.accept(new VideoFrame(frame, p.pts, p.duration > 0 ? p.duration : Track.UNKNOWN_DURATION,
                         keyframe));
@@ -508,14 +527,39 @@ public final class Av1Decoder implements VideoDecoder {
     }
 
     /**
-     * Converts a decoded picture to the recycled 8-bit output picture.
+     * Converts a decoded picture of more than 8 bits per sample to an 8-bit output picture: an RGBA picture when
+     * its matrix is YCgCo-Re or YCgCo-Ro, whose R'G'B' depth follows the sample depth, the recycled
+     * {@link YuvPicture} otherwise.
      *
      * @param p the decoded picture
      * @return the output picture
      */
-    private YuvPicture convert(Av1Picture p) {
-        var format = SequenceHeader.chromaFormat(p.layout);
+    private Picture convertEightBit(Av1Picture p) {
         var color = colorInfo(p.seqHdr, p.w, p.h);
+        if (!YcgcoR.applies(color.matrix())) {
+            return convert(p, color);
+        }
+        var target = rgbaPicture;
+        if (target == null || target.width() != p.w || target.height() != p.h) {
+            target = RgbaPicture.allocate(p.w, p.h, false);
+            rgbaPicture = target;
+        }
+        if (ycgcoRgba == null) {
+            ycgcoRgba = new YcgcoRgba();
+        }
+        ycgcoRgba.convert(p, SequenceHeader.chromaFormat(p.layout), color.matrix(), color.range(), target);
+        return target;
+    }
+
+    /**
+     * Converts a decoded picture to the recycled 8-bit output picture.
+     *
+     * @param p the decoded picture
+     * @param color the color description of the picture
+     * @return the output picture
+     */
+    private YuvPicture convert(Av1Picture p, ColorInfo color) {
+        var format = SequenceHeader.chromaFormat(p.layout);
         var target = picture;
         if (target == null || target.width() != p.w || target.height() != p.h || target.chromaFormat() != format
                 || !target.color().equals(color)) {

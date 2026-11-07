@@ -3,7 +3,12 @@ package com.github.auties00.smalt.aot.internal;
 import com.github.auties00.smalt.aot.TrainingFamily;
 import com.github.auties00.smalt.aot.TrainingWorkload;
 import com.github.auties00.smalt.image.ChromaFormat;
+import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.ColorPrimaries;
+import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
+import com.github.auties00.smalt.image.MatrixCoefficients;
+import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.ops.ResizeFilter;
@@ -352,7 +357,7 @@ final class VideoWorkloads {
 
     /**
      * Returns a workload that decodes on two threads a good-quality AV1 stream and a 10-bit 4:4:4
-     * intra-only stream, the latter at its full depth.
+     * intra-only stream, the latter at its full depth and, as YCgCo-Re video, to 8-bit RGBA.
      *
      * @return the workload
      */
@@ -369,9 +374,13 @@ final class VideoWorkloads {
         var qualityRound = VideoStreams.decodeRound(quality, new Av1Decoder(track, options));
         var intraRound = VideoStreams.decodeRound(intra,
                 new Av1Decoder(track, options.toBuilder().highBitDepth(true).build()));
+        var ycgcoTrack = track.toBuilder().color(new ColorInfo(MatrixCoefficients.YCGCO_RE, ColorRange.FULL,
+                ColorPrimaries.BT709, TransferCharacteristics.SRGB)).build();
+        var ycgcoRound = VideoStreams.decodeRound(intra, new Av1Decoder(ycgcoTrack, options));
         return TrainingWorkload.of("av1-decode-t2", () -> {
             qualityRound.run();
             intraRound.run();
+            ycgcoRound.run();
         });
     }
 

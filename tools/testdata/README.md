@@ -594,6 +594,19 @@ records the SHA-256 of each stream and of aomdec's raw output in `superres.tsv` 
 MSYS2 UCRT64 package `mingw-w64-ucrt-x86_64-aom` 3.15.2-1, BSD-2-Clause, used as black boxes, on `PATH`); with
 aomdec on `PATH` the test also compares with it directly.
 
+## AV1 YCgCo-Re and YCgCo-Ro vectors
+
+`Av1YcgcoRTest` of `smalt-video` decodes short IVF streams in the YCgCo-Re and YCgCo-Ro matrices (lossless 4:4:4 at
+10 and 12 bits in both ranges, lossless monochrome, lossy 4:2:0 and 4:2:2) in the default 8-bit mode and requires the
+R'G'B' of the synthetic source frames, quantized once to 8 bits
+(`video/src/test/resources/com/github/auties00/smalt/video/av1/ycgcor/`). `python -I
+tools/testdata/av1-ycgco-r/make-vectors.py <that directory>` computes the frames, applies the integer YCgCo-R
+transform of ITU-T H.273, codes them with ffmpeg 7.1's libaom-av1 encoder (libaom, BSD-2-Clause; both black boxes),
+sets the color description with ffmpeg's `av1_metadata` bitstream filter, writes a one-frame AVIF copy of each
+lossless 4:4:4 stream (ffmpeg's avif muxer, stream copy), which the test decodes with Smalt's AVIF decoder and, for
+the full-range 10-bit YCgCo-Re one (the only YCgCo-R PNG output libavif 1.3.0 allows at 8 bits), libavif's avifdec, and
+records the SHA-256 of every file in `ycgcor.tsv`.
+
 ## AV1 scalability, Annex B and large scale tile references
 
 `Av1LayersTest` of `smalt-video` decodes the libaom scalability vectors (`av1-1-b8-22-svc-*`, from `vectors.tsv`)
