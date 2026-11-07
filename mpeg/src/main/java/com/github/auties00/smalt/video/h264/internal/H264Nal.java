@@ -92,6 +92,11 @@ public final class H264Nal {
     public static final int SLICE_EXTENSION = 20;
 
     /**
+     * A depth parameter set (3D-AVC).
+     */
+    public static final int DEPTH_PARAMETER_SET = 16;
+
+    /**
      * A coded slice extension of a depth view component (3D-AVC).
      */
     public static final int DEPTH_SLICE_EXTENSION = 21;

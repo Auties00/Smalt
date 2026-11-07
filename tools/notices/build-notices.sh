@@ -131,6 +131,7 @@ Contents
   74. SVT-JPEG-XS
   75. DirectXTex
   76. psd-tools
+  77. 3DV-ATM, the ITU-T H.264.2 3D-AVC reference software
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -2591,6 +2592,34 @@ Copyright:
 EOF
 license_start "psd-tools license (LICENSE)"
 cat "$LIC/psd-tools-LICENSE"
+
+section "77. 3DV-ATM, the ITU-T H.264.2 3D-AVC reference software"
+cat <<'EOF'
+Project:      3DV-ATM 14.0, the 3D-AVC test model of ITU-T H.264.2 (02/2016)
+Source:       https://www.itu.int/rec/T-REC-H.264.2
+License text: disclaimer_itu.txt at the root of the software package
+License:      use without license fee or royalty, with the disclaimer of
+              warranty below
+
+Derived Smalt packages:
+  video.h264.internal (H264Avc3dExtension: the layout of the sequence
+  parameter set 3D-AVC extension and of depth parameter sets, and the
+  prediction of camera parameters, of ldecod parset.c and lcommon
+  3dv_acquisition.c; Avc3dContext: the non-linear depth representation of
+  lcommon nonlinear_depth.c; Avc3dTexture, SliceDecoder and
+  H264DecoderEngine: the 3D-AVC texture coding tools of ldecod
+  macroblock.c, mb_prediction.c, mc_prediction.c, cabac.c, context_ini.c,
+  image.c and mbuffer.c and lcommon mv_prediction.c, alc.c and
+  ctx_tables.h: depth-based motion vector prediction, view synthesis
+  prediction, adaptive luminance compensation, run-length skip coding,
+  the neighboring block disparity derivation, the disparity tables and
+  depth-range-based weighted prediction)
+
+Derivation: syntax and arithmetic followed where the conformance bitstreams
+of ITU-T H.264.1 depart from the text of ITU-T H.264 Annex I.
+EOF
+license_start "ITU disclaimer of warranty (disclaimer_itu.txt)"
+cat "$LIC/3dv-atm-disclaimer_itu.txt"
 
 } > "$OUT"
 

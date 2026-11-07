@@ -137,6 +137,12 @@ final class InterPredictor {
     private int weightMode;
 
     /**
+     * Whether single-list predictions ignore the explicit weights, for macroblocks coded with 3D-AVC adaptive
+     * luminance compensation.
+     */
+    private boolean unweighted;
+
+    /**
      * The implicit list 0 weights of the current macroblock, indexed
      * {@code refIdxL0 * implicitStride + refIdxL1}.
      */
@@ -212,6 +218,31 @@ final class InterPredictor {
     void startSlice(H264SliceHeader header, int weightMode) {
         this.header = header;
         this.weightMode = weightMode;
+        this.unweighted = false;
+    }
+
+    /**
+     * Sets whether the single-list predictions that follow ignore the explicit weights of the slice.
+     *
+     * @param unweighted {@code true} for macroblocks coded with 3D-AVC adaptive luminance compensation, which
+     * replaces the explicit weights
+     */
+    void setUnweighted(boolean unweighted) {
+        this.unweighted = unweighted;
+    }
+
+    /**
+     * Predicts one block of the current macroblock of a slice decoder from its motion caches, with the motion
+     * of the block's top-left 4x4 block.
+     *
+     * @param decoder the slice decoder positioned on the macroblock
+     * @param x4 the block column in 4x4 units within the macroblock
+     * @param y4 the block row in 4x4 units within the macroblock
+     * @param w4 the block width in 4x4 units
+     * @param h4 the block height in 4x4 units
+     */
+    void predictBlock(SliceDecoder decoder, int x4, int y4, int w4, int h4) {
+        predict(x4, y4, w4, h4, decoder.refCache(0), decoder.refCache(1), decoder.mvCache(0), decoder.mvCache(1));
     }
 
     /**
@@ -397,7 +428,7 @@ final class InterPredictor {
         } else if (f.hasChroma) {
             chromaBlock(ref, parity, px >> 1, cy, mv, f.cb, f.cr, chromaDst, chromaStride, cw, ch);
         }
-        if (weightMode == 1) {
+        if (weightMode == 1 && !unweighted) {
             var hdr = header;
             var index = r >> weightShift;
             if (hdr.lumaWeightFlag[list][index]) {

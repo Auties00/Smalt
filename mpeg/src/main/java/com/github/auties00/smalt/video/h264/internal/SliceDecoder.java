@@ -1,3 +1,7 @@
+/* Ports the macroblock layer of the 3D-AVC texture coding tools of 3DV-ATM 14.0 (ITU-T H.264.2 (02/2016), ldecod
+   macroblock.c, mb_prediction.c, cabac.c and context_ini.c, lcommon mv_prediction.c and ctx_tables.h) into this slice
+   decoder. Copyright 2001-2015 International Telecommunication Union; ITU disclaimer of warranty. Modified for
+   Smalt. */
 package com.github.auties00.smalt.video.h264.internal;
 
 import com.github.auties00.smalt.MediaException;
@@ -72,6 +76,93 @@ final class SliceDecoder {
      * The prediction flags (bit 0 list 0, bit 1 list 1) of each B {@code sub_mb_type}.
      */
     private static final byte[] B_SUB_PRED = {3, 1, 2, 3, 1, 1, 2, 2, 3, 3, 1, 2, 3};
+
+    /**
+     * The 3D-AVC flag of a view synthesis skip macroblock.
+     */
+    static final int AVC3D_VSSKIP = 1;
+
+    /**
+     * The 3D-AVC flag of a B_Direct_16x16 macroblock predicted by view synthesis.
+     */
+    static final int AVC3D_DIRECT_TYPE = 2;
+
+    /**
+     * The 3D-AVC flag of a macroblock coded with adaptive luminance compensation.
+     */
+    static final int AVC3D_ALC = 4;
+
+    /**
+     * The first context of the 3D-AVC texture syntax elements, after the contexts of clause 9 and of the
+     * scalable extension.
+     */
+    private static final int CTX_3D = 1031;
+
+    /**
+     * The number of 3D-AVC texture contexts.
+     */
+    private static final int CONTEXTS_3D = 19;
+
+    /**
+     * The contexts of the view synthesis skip flag of P slices, by the number of neighbors that are not view
+     * synthesis skip macroblocks.
+     */
+    private static final int CTX_VSSKIP_P = CTX_3D;
+
+    /**
+     * The contexts of the view synthesis direct flag of B slices.
+     */
+    private static final int CTX_DIRECT_TYPE = CTX_3D + 3;
+
+    /**
+     * The contexts of the view synthesis skip flag of B slices.
+     */
+    private static final int CTX_VSSKIP_B = CTX_3D + 6;
+
+    /**
+     * The contexts of the block-based view synthesis flag, shared by both lists.
+     */
+    private static final int CTX_VSP_FLAG = CTX_3D + 9;
+
+    /**
+     * The contexts of the adaptive luminance compensation flag of coded macroblocks.
+     */
+    private static final int CTX_ALC = CTX_3D + 12;
+
+    /**
+     * The contexts of the adaptive luminance compensation flag of skipped macroblocks.
+     */
+    private static final int CTX_ALC_SKIP = CTX_3D + 15;
+
+    /**
+     * The context of the flag that starts a run of inferred B_Skip macroblocks.
+     */
+    private static final int CTX_RLE = CTX_3D + 18;
+
+    /**
+     * The number of macroblocks a run of inferred B_Skip macroblocks spans at most.
+     */
+    private static final int RLE_SERIES = 16;
+
+    /**
+     * A disparity derivation result meaning that no block gave a disparity.
+     */
+    private static final int NO_DISPARITY = Integer.MIN_VALUE;
+
+    /**
+     * The {@code (m, n)} initialization values of the 3D-AVC texture contexts, indexed
+     * {@code [(cabac_init_idc * CONTEXTS_3D + k) * 2]}: the view synthesis skip contexts take the values of the
+     * skip flag contexts, the view synthesis flag those of the P skip flag and the direct flag those of the B
+     * {@code mb_type} prefix.
+     */
+    private static final byte[] INIT_3D = {
+            23, 33, 23, 2, 21, 0, -46, 127, -20, 104, 1, 67, 18, 64, 9, 43, 29, 0,
+            23, 33, 23, 2, 21, 0, 14, 4, 14, 27, 10, 52, 14, 4, 14, 27, 10, 52, 18, 64,
+            22, 25, 34, 0, 16, 0, -45, 127, -15, 101, -4, 76, 26, 34, 19, 22, 40, 0,
+            22, 25, 34, 0, 16, 0, 14, 4, 14, 27, 10, 52, 14, 4, 14, 27, 10, 52, 0, 64,
+            29, 16, 25, 0, 14, 0, -32, 127, -22, 117, -2, 74, 20, 40, 20, 10, 29, 0,
+            29, 16, 25, 0, 14, 0, 14, 4, 14, 27, 10, 52, 14, 4, 14, 27, 10, 52, 0, 64
+    };
 
     /**
      * The partition shape (0 16x16, 1 16x8, 2 8x16, 3 8x8) of each B {@code mb_type} 0 to 22.
@@ -821,6 +912,86 @@ final class SliceDecoder {
     private final int[][] viewDirectScale = new int[3][64];
 
     /**
+     * The 3D-AVC texture state of the slice, or {@code null} outside 3D-AVC texture views.
+     */
+    private Avc3dTexture avc3d;
+
+    /**
+     * Whether the slice uses the 3D-AVC texture coding tools.
+     */
+    private boolean tools3d;
+
+    /**
+     * Whether spatial direct prediction skips the co-located zero-motion test, as with depth-based motion vector
+     * prediction.
+     */
+    private boolean colZeroDisabled;
+
+    /**
+     * The {@code view_id} of the current picture.
+     */
+    private int viewId3d;
+
+    /**
+     * The {@code view_id} of the picture each reference index of each list names.
+     */
+    private final short[][] refView3d = new short[2][33];
+
+    /**
+     * The {@code AVC3D_*} flags of the current macroblock.
+     */
+    private int mbFlags3d;
+
+    /**
+     * The block-based view synthesis flags of the 4x4 blocks of the current macroblock in raster order: bit 0
+     * for list 0, bit 1 for list 1.
+     */
+    private final byte[] vspBits = new byte[16];
+
+    /**
+     * The packed disparity motion vectors of the view synthesis blocks of the current macroblock, indexed
+     * {@code [list][raster]}.
+     */
+    private final int[][] vspMv = new int[2][16];
+
+    /**
+     * Whether the motion of the current macroblock is discarded after its prediction, as for view synthesis
+     * skip and direct macroblocks.
+     */
+    private boolean vspClear;
+
+    /**
+     * The disparity of the current macroblock of a texture-first view, in quarter luma samples.
+     */
+    private int nbdv;
+
+    /**
+     * The disparities of the 8x8 blocks of the current macroblock of a texture-first view refined with depth,
+     * indexed {@code partitioning * 4 + raster8x8} with the partitionings 16x16, 16x8, 8x16 and 8x8.
+     */
+    private final int[] doNbdv = new int[16];
+
+    /**
+     * The number of macroblocks left in the current run of inferred B_Skip macroblocks.
+     */
+    private int rleLeft;
+
+    /**
+     * Whether the current run of B_Skip macroblock positions decodes its skip flags.
+     */
+    private boolean rleBreak;
+
+    /**
+     * The reference index a base view motion lookup found.
+     */
+    private int baseRef;
+
+    /**
+     * The packed motion vector a base view motion lookup found.
+     */
+    private int baseMv;
+
+    /**
      * Constructs a slice decoder, marking the motion cache column right of the macroblock
      * unavailable for good.
      */
@@ -951,6 +1122,12 @@ final class SliceDecoder {
         prepareViews();
         prepareWeights();
         prepareDirect();
+        avc3d = task.avc3d;
+        tools3d = avc3d != null && avc3d.coding;
+        colZeroDisabled = false;
+        if (avc3d != null) {
+            start3d();
+        }
         if (!bSlice) {
             clearList(1);
         }
@@ -972,6 +1149,9 @@ final class SliceDecoder {
             cabac.init(rbsp, offset + aligned, offset + length);
             CabacTables.initContexts(cabac.states, iSlice ? 0 : header.cabacInitIdc + 1, header.sliceQp,
                     chroma444 ? CabacTables.CONTEXT_COUNT_444 : CabacTables.CONTEXT_COUNT);
+            if (tools3d && !iSlice) {
+                init3dContexts();
+            }
             if (mbaff) {
                 decodeCabacMbaffSlice((int) addr, filter, onMacroblock);
             } else {
@@ -1243,7 +1423,9 @@ final class SliceDecoder {
                 throw new MediaException.Malformed("slice runs past the end of the picture");
             }
             beginMacroblock(addr, filter);
-            if (!iSlice && decodeSkipFlag()) {
+            if (tools3d && !iSlice) {
+                decodeMacroblock3d();
+            } else if (!iSlice && decodeSkipFlag()) {
                 decodeSkip();
             } else {
                 decodeMacroblock();
@@ -1294,6 +1476,9 @@ final class SliceDecoder {
         positionInter(mbX * 16, mbY * 16);
         pic.filter[index] = filter;
         resetMacroblock();
+        if (tools3d) {
+            begin3dMacroblock();
+        }
     }
 
     /**
@@ -1301,6 +1486,8 @@ final class SliceDecoder {
      */
     private void resetMacroblock() {
         mbFlags = 0;
+        mbFlags3d = 0;
+        vspClear = false;
         cbp = 0;
         directMask = 0;
         coded[0] = 0;
@@ -1320,6 +1507,9 @@ final class SliceDecoder {
      * @param onMacroblock the per-macroblock listener
      */
     private void finishMacroblock(MacroblockListener onMacroblock) {
+        if (tools3d) {
+            finish3dMacroblock();
+        }
         pic.sliceNum[mbAddr] = sliceNum;
         var flags = spSlice || siSlice ? mbFlags | DecoderFrame.MB_SWITCHING : mbFlags;
         frame.mbType[mbAddr] = fieldMb ? flags | DecoderFrame.MB_FIELD : flags;
@@ -1915,6 +2105,9 @@ final class SliceDecoder {
     private void decodeSkip() {
         mbFlags = DecoderFrame.MB_SKIP;
         lastQpDeltaNonZero = false;
+        if (tools3d) {
+            computeNbdv();
+        }
         if (bSlice) {
             mbFlags |= DecoderFrame.MB_DIRECT16 | (0xF << DecoderFrame.MB_DIRECT8_SHIFT);
             partShape = 3;
@@ -1928,7 +2121,11 @@ final class SliceDecoder {
             derivePSkip();
         }
         storeMotion();
-        predictInter();
+        if (tools3d && (mbFlags3d & AVC3D_ALC) != 0) {
+            predictAlc();
+        } else {
+            predictInter();
+        }
         storeSkipState();
         if (spSlice) {
             reconstructSwitching();
@@ -3139,6 +3336,18 @@ final class SliceDecoder {
      * @param type the P or B {@code mb_type}
      */
     private void decodeInterMacroblock(int type) {
+        if (tools3d) {
+            computeNbdv();
+            if (cabacMode) {
+                if (!bSlice && avc3d.alc && type <= 2 && cabac.decision(CTX_ALC + alcContext()) != 0) {
+                    mbFlags3d |= AVC3D_ALC;
+                }
+                if (bSlice && type == 0 && avc3d.vspRefExist
+                        && cabac.decision(CTX_DIRECT_TYPE + directTypeContext()) != 0) {
+                    mbFlags3d |= AVC3D_DIRECT_TYPE;
+                }
+            }
+        }
         var whole = bSlice ? type <= 3 : type == 0;
         if (whole) {
             fillCornerMotionCache(0);
@@ -3159,7 +3368,12 @@ final class SliceDecoder {
                 mbFlags = DecoderFrame.MB_DIRECT16 | (0xF << DecoderFrame.MB_DIRECT8_SHIFT);
                 partShape = 3;
                 directMask = 0xF;
-                deriveDirect();
+                if ((mbFlags3d & AVC3D_DIRECT_TYPE) != 0 && header.directSpatialMvPred
+                        && header.sps.direct8x8Inference) {
+                    fillVsp();
+                } else {
+                    deriveDirect();
+                }
                 if (partShape == 0) {
                     mvdCache[0][CACHE_ORIGIN] = 0;
                     mvdCache[1][CACHE_ORIGIN] = 0;
@@ -3171,7 +3385,13 @@ final class SliceDecoder {
                 partShape = B_SHAPE[type];
                 partPred[0] = B_PRED0[type];
                 partPred[1] = B_PRED1[type];
-                if (partShape == 3) {
+                if (tools3d) {
+                    if (partShape == 3) {
+                        decodeSubMbPred3d(true);
+                    } else {
+                        decodeMbPred3d();
+                    }
+                } else if (partShape == 3) {
                     decodeSubMbPred(true);
                 } else {
                     decodeMbPred();
@@ -3195,14 +3415,22 @@ final class SliceDecoder {
                 }
                 default -> partShape = 3;
             }
-            if (partShape == 3) {
+            if (tools3d) {
+                if (partShape == 3) {
+                    decodeSubMbPred3d(type == 4);
+                } else {
+                    decodeMbPred3d();
+                }
+            } else if (partShape == 3) {
                 decodeSubMbPred(type == 4);
             } else {
                 decodeMbPred();
             }
         }
         cbp = decodeCbp(false);
-        if ((cbp & 15) != 0 && pps.transform8x8Mode && transformAllowed()) {
+        // 3DV-ATM reads the flag of a macroblock with adaptive luminance compensation even without luma residual
+        var alcTransform = tools3d && (mbFlags3d & AVC3D_ALC) != 0 && cabacMode;
+        if (((cbp & 15) != 0 || alcTransform) && pps.transform8x8Mode && transformAllowed()) {
             if (cabacMode ? decodeTransformFlag() : bits.readFlag()) {
                 mbFlags |= DecoderFrame.MB_T8X8;
             }
@@ -3211,7 +3439,14 @@ final class SliceDecoder {
         rawLevels = spSlice;
         decodeQpDeltaAndResidual();
         pic.chromaMode[mbAddr] = 0;
+        if (tools3d && (mbFlags3d & AVC3D_ALC) != 0) {
+            predictAlc();
+            return;
+        }
         predictInter();
+        if (vspClear) {
+            clearVspMotion();
+        }
         if (spSlice) {
             reconstructSwitching();
         } else {
@@ -3791,6 +4026,10 @@ final class SliceDecoder {
      * Derives the motion of a P_Skip macroblock (ITU-T H.264 8.4.1.1).
      */
     private void derivePSkip() {
+        if (tools3d && avc3d.dmvp) {
+            derivePSkip3d();
+            return;
+        }
         var rc = refCache[0];
         var mc = mvCache[0];
         var refA = rc[CACHE_ORIGIN - 1];
@@ -3839,6 +4078,9 @@ final class SliceDecoder {
      * @return {@code [refIdxL0, refIdxL1, mvpL0, mvpL1, directZeroPrediction]}
      */
     private int[] spatialPredictors() {
+        if (tools3d && avc3d.dmvp) {
+            return spatialPredictors3d();
+        }
         var result = spatialResult;
         for (var list = 0; list < 2; list++) {
             var rc = refCache[list];
@@ -3902,7 +4144,7 @@ final class SliceDecoder {
         var ref1 = predictors[1];
         var directZero = predictors[4] != 0;
         var colZero = false;
-        if (!directZero && (ref0 == 0 || ref1 == 0) && colocatedShortTerm) {
+        if (!directZero && (ref0 == 0 || ref1 == 0) && colocatedShortTerm && !colZeroDisabled) {
             var zeros = (colocatedZero(0) ? 1 : 0) + (colocatedZero(3) ? 1 : 0)
                     + (colocatedZero(12) ? 1 : 0) + (colocatedZero(15) ? 1 : 0);
             if (zeros != 0 && zeros != 4) {
@@ -3934,7 +4176,7 @@ final class SliceDecoder {
         refIdx[0][i] = ref0;
         refIdx[1][i] = ref1;
         if (header.sps.direct8x8Inference) {
-            var colZero = !directZero && colocatedShortTerm && colocatedZero(cornerRaster(i));
+            var colZero = !directZero && colocatedShortTerm && !colZeroDisabled && colocatedZero(cornerRaster(i));
             fillBlock(0, c8, 2, 2, ref0, ref0 < 0 || directZero || (ref0 == 0 && colZero) ? 0 : mv0);
             fillBlock(1, c8, 2, 2, ref1, ref1 < 0 || directZero || (ref1 == 0 && colZero) ? 0 : mv1);
             return;
@@ -3942,7 +4184,7 @@ final class SliceDecoder {
         for (var j = 0; j < 4; j++) {
             var c = c8 + (j & 1) + (j >> 1) * 8;
             var raster = rasterOfCache(c);
-            var colZero = !directZero && colocatedShortTerm && colocatedZero(raster);
+            var colZero = !directZero && colocatedShortTerm && !colZeroDisabled && colocatedZero(raster);
             fillBlock(0, c, 1, 1, ref0, ref0 < 0 || directZero || (ref0 == 0 && colZero) ? 0 : mv0);
             fillBlock(1, c, 1, 1, ref1, ref1 < 0 || directZero || (ref1 == 0 && colZero) ? 0 : mv1);
         }
@@ -4691,11 +4933,16 @@ final class SliceDecoder {
      * @param type the flags of the neighboring macroblock
      * @param part the 8x8 partition of the neighboring block
      * @param ref the reference index of the neighboring partition
-     * @return 1 when the reference index is above 0 and the partition was not skipped or
+     * @return 1 when the reference index is above 0 and the partition was not intra, B_Skip or
      * predicted in direct mode
+     * @implNote This implementation counts the reference index of a P_Skip macroblock, which is 0
+     * except for the P_Skip macroblocks of 3D-AVC adaptive luminance compensation that predict
+     * from an inter-view reference: 3DV-ATM, which the 3D-AVC conformance bitstreams were coded
+     * with, counts them.
      */
     private static int refContext(int type, int part, int ref) {
-        if ((type & (DecoderFrame.MB_SKIP | DecoderFrame.MB_INTRA)) != 0) {
+        if ((type & DecoderFrame.MB_INTRA) != 0
+                || (type & (DecoderFrame.MB_SKIP | DecoderFrame.MB_DIRECT16)) == (DecoderFrame.MB_SKIP | DecoderFrame.MB_DIRECT16)) {
             return 0;
         }
         if ((type & (1 << (DecoderFrame.MB_DIRECT8_SHIFT + part))) != 0) {
@@ -4748,6 +4995,9 @@ final class SliceDecoder {
             }
         }
         mbFlags |= uniformity;
+        if (avc3d != null) {
+            storeRefViews();
+        }
     }
 
     /**
@@ -6333,5 +6583,1039 @@ final class SliceDecoder {
      */
     boolean directPer4x4(int i) {
         return (directMask & (1 << i)) != 0 && !header.sps.direct8x8Inference;
+    }
+
+    /**
+     * Prepares the 3D-AVC texture state of a slice: the reference views of its reference indices, and for a
+     * slice that uses the coding tools the per-macroblock state of its picture, its CABAC contexts and the
+     * pictures whose motion its tools read.
+     */
+    private void start3d() {
+        var lists = refList;
+        var current = frame.viewId;
+        for (var list = 0; list < (iSlice ? 0 : bSlice ? 2 : 1); list++) {
+            var views = refView3d[list];
+            var count = refCount[list];
+            for (var r = 0; r < count; r++) {
+                views[r] = (short) lists[list][r].viewId;
+            }
+        }
+        colZeroDisabled = tools3d && avc3d.dmvp;
+        if (!tools3d) {
+            return;
+        }
+        var count = frame.mbWidth * frame.mbHeight;
+        if (pic.avc3dFlags == null || pic.avc3dFlags.length < count) {
+            pic.avc3dFlags = new byte[count];
+            pic.avc3dVsp = new byte[count * 16];
+            pic.avc3dDisparity = new int[count];
+        }
+        viewId3d = current;
+        rleLeft = 0;
+        rleBreak = false;
+        if (avc3d.interViewMotion != null) {
+            avc3d.interViewMotion.awaitDone();
+        }
+        if (avc3d.skipMotion != null) {
+            avc3d.skipMotion.awaitDone();
+        }
+        if (avc3d.textureFirst && avc3d.hasInterviewRef) {
+            lists[0][0].awaitDone();
+            if (bSlice) {
+                lists[1][0].awaitDone();
+            }
+        }
+    }
+
+    /**
+     * Initializes the contexts of the 3D-AVC texture syntax elements for a P or B slice.
+     */
+    private void init3dContexts() {
+        var qp = Math.clamp(header.sliceQp, 0, 51);
+        var model = header.cabacInitIdc;
+        var states = cabac.states;
+        for (var k = 0; k < CONTEXTS_3D; k++) {
+            int m = INIT_3D[(model * CONTEXTS_3D + k) * 2];
+            int n = INIT_3D[(model * CONTEXTS_3D + k) * 2 + 1];
+            var pre = Math.clamp(((m * qp) >> 4) + n, 1, 126);
+            states[CTX_3D + k] = (byte) (pre <= 63 ? (63 - pre) << 1 : ((pre - 64) << 1) | 1);
+        }
+    }
+
+    /**
+     * Resets the 3D-AVC state of the current macroblock and passes the disparity of the previous macroblock on
+     * in a texture-first view.
+     */
+    private void begin3dMacroblock() {
+        Arrays.fill(vspBits, (byte) 0);
+        if (avc3d.textureFirst && avc3d.hasInterviewRef) {
+            var previous = mbAddr > 0 ? pic.avc3dDisparity[mbAddr - 1] : 0;
+            pic.avc3dDisparity[mbAddr] = previous;
+            nbdv = previous;
+        }
+    }
+
+    /**
+     * Records the 3D-AVC state of the current macroblock for the macroblocks that follow.
+     */
+    private void finish3dMacroblock() {
+        pic.avc3dFlags[mbAddr] = (byte) mbFlags3d;
+        System.arraycopy(vspBits, 0, pic.avc3dVsp, mbAddr * 16, 16);
+    }
+
+    /**
+     * Decodes the skip flags and the macroblock of a P or B macroblock of a slice using the 3D-AVC texture
+     * coding tools: view synthesis skip, adaptive luminance compensation skip, or a coded macroblock.
+     */
+    private void decodeMacroblock3d() {
+        var flags = pic.avc3dFlags;
+        var vsp = avc3d.vspRefExist;
+        var leftVs = availA && (flags[mbA] & AVC3D_VSSKIP) != 0;
+        var upVs = availB && (flags[mbB] & AVC3D_VSSKIP) != 0;
+        var context = (bSlice ? CTX_VSSKIP_B : CTX_VSSKIP_P) + (availA && !leftVs ? 1 : 0) + (availB && !upVs ? 1 : 0);
+        var vsSkip = false;
+        var skip = false;
+        if (leftVs && upVs) {
+            if (vsp) {
+                vsSkip = cabac.decision(context) != 0;
+            }
+            if (!vsSkip) {
+                skip = decodeSkipFlag3d();
+            }
+        } else {
+            skip = decodeSkipFlag3d();
+            if (!skip && vsp) {
+                vsSkip = cabac.decision(context) != 0;
+            }
+        }
+        if (vsSkip) {
+            mbFlags3d |= AVC3D_VSSKIP;
+            decodeVsSkip();
+            return;
+        }
+        if (skip) {
+            if (avc3d.alc && cabac.decision(CTX_ALC_SKIP + alcContext()) != 0) {
+                mbFlags3d |= AVC3D_ALC;
+            }
+            decodeSkip();
+            return;
+        }
+        decodeMacroblock();
+    }
+
+    /**
+     * Decodes {@code mb_skip_flag} with CABAC in a slice using the 3D-AVC texture coding tools, where a view
+     * synthesis skip macroblock counts as coded and B slices may infer runs of skipped macroblocks whose
+     * neighbors are skipped.
+     *
+     * @return whether the macroblock is skipped
+     */
+    private boolean decodeSkipFlag3d() {
+        var types = frame.mbType;
+        var flags = pic.avc3dFlags;
+        var ctx = 0;
+        if (availA && ((types[mbA] & DecoderFrame.MB_SKIP) == 0 || (flags[mbA] & AVC3D_VSSKIP) != 0)) {
+            ctx++;
+        }
+        if (availB && ((types[mbB] & DecoderFrame.MB_SKIP) == 0 || (flags[mbB] & AVC3D_VSSKIP) != 0)) {
+            ctx++;
+        }
+        if (!bSlice) {
+            return cabac.decision(11 + ctx) != 0;
+        }
+        var series = avc3d.rle && ctx == 0;
+        if (series && rleLeft == 0) {
+            rleBreak = cabac.decision(CTX_RLE) == 0;
+            rleLeft = RLE_SERIES;
+        } else if (!series && rleLeft != 0) {
+            rleBreak = false;
+            rleLeft = 0;
+        }
+        boolean skip;
+        if (series && !rleBreak) {
+            skip = true;
+            rleLeft--;
+        } else {
+            skip = cabac.decision(24 + ctx) != 0;
+        }
+        if (series && !skip) {
+            rleBreak = false;
+            rleLeft = 0;
+        }
+        return skip;
+    }
+
+    /**
+     * {@return the context increment of the adaptive luminance compensation flags: the number of available
+     * neighbors A and B coded with adaptive luminance compensation}
+     */
+    private int alcContext() {
+        var flags = pic.avc3dFlags;
+        return (availA && (flags[mbA] & AVC3D_ALC) != 0 ? 1 : 0) + (availB && (flags[mbB] & AVC3D_ALC) != 0 ? 1 : 0);
+    }
+
+    /**
+     * {@return the context increment of the view synthesis direct flag: the number of available neighbors A and
+     * B coded with view synthesis skip or direct}
+     */
+    private int directTypeContext() {
+        var flags = pic.avc3dFlags;
+        var vsp = AVC3D_VSSKIP | AVC3D_DIRECT_TYPE;
+        return (availA && (flags[mbA] & vsp) != 0 ? 1 : 0) + (availB && (flags[mbB] & vsp) != 0 ? 1 : 0);
+    }
+
+    /**
+     * Decodes a view synthesis skip macroblock: an inter-view prediction from the view synthesis references with
+     * one disparity per 8x8 block, whose motion is not kept for the macroblocks that follow.
+     *
+     * <p>A B slice predicts it so only with spatial direct prediction under {@code direct_8x8_inference_flag};
+     * otherwise it is predicted as a B_Skip macroblock.
+     */
+    private void decodeVsSkip() {
+        mbFlags = DecoderFrame.MB_SKIP;
+        lastQpDeltaNonZero = false;
+        computeNbdv();
+        if (bSlice) {
+            mbFlags |= DecoderFrame.MB_DIRECT16 | (0xF << DecoderFrame.MB_DIRECT8_SHIFT);
+            partShape = 3;
+            directMask = 0xF;
+            if (header.directSpatialMvPred && header.sps.direct8x8Inference) {
+                fillVsp();
+            } else {
+                fillCornerMotionCache(0);
+                fillCornerMotionCache(1);
+                deriveDirect();
+            }
+        } else {
+            partShape = 3;
+            directMask = 0;
+            for (var i = 0; i < 4; i++) {
+                subShape[i] = 0;
+            }
+            fillVsp();
+        }
+        storeMotion();
+        predictInter();
+        if (vspClear) {
+            clearVspMotion();
+        }
+        storeSkipState();
+    }
+
+    /**
+     * Fills the motion caches of a view synthesis macroblock: each list with a view synthesis reference predicts
+     * every 8x8 block from it with the block's disparity.
+     */
+    private void fillVsp() {
+        var lists = bSlice ? 2 : 1;
+        for (var list = 0; list < lists; list++) {
+            var r = avc3d.vspRef[list];
+            var table = list == 0 ? avc3d.forward : avc3d.backward;
+            for (var b = 0; b < 4; b++) {
+                var x8 = (b & 1) * 8;
+                var y8 = (b >> 1) * 8;
+                var mv = 0;
+                if (r >= 0) {
+                    var disparity = avc3d.textureFirst ? doNbdv[12 + b]
+                            : avc3d.cornerDisparity(table, mbX * 16 + x8, mbY * 16 + y8, 8, 8);
+                    mv = disparity & 0xFFFF;
+                }
+                fillBlock(list, CACHE_ORIGIN + (b & 1) * 2 + (b >> 1) * 16, 2, 2, r, mv);
+            }
+        }
+        vspClear = true;
+    }
+
+    /**
+     * Stores no motion for the current view synthesis macroblock: every block reads as unpredicted from both
+     * lists to the macroblocks that follow and to the deblocking filter.
+     */
+    private void clearVspMotion() {
+        var addr = mbAddr;
+        for (var list = 0; list < 2; list++) {
+            var refs = frame.ref[list];
+            var ids = frame.refId[list];
+            for (var p = 0; p < 4; p++) {
+                refs[addr * 4 + p] = -1;
+                ids[addr * 4 + p] = -1;
+            }
+            Arrays.fill(frame.mv[list], addr * 16, addr * 16 + 16, 0);
+        }
+        if (frame.refView != null) {
+            for (var p = 0; p < 4; p++) {
+                frame.refView[addr * 4 + p] = -1;
+            }
+        }
+        mbFlags |= DecoderFrame.MB_UNIFORM | DecoderFrame.MB_UNIFORM8;
+    }
+
+    /**
+     * Derives the disparity of the current inter macroblock of a texture-first view (neighboring block
+     * disparity vector): the horizontal motion of the first co-located or neighboring block predicted from
+     * another view, else the disparity of the previous macroblock; with view synthesis prediction it is
+     * refined with the depth of the view synthesis reference view, which also gives the disparity of each 8x8
+     * block of every partitioning.
+     */
+    private void computeNbdv() {
+        if (!tools3d || !avc3d.textureFirst || !avc3d.hasInterviewRef) {
+            return;
+        }
+        var disparity = temporalDisparity();
+        if (disparity == NO_DISPARITY) {
+            disparity = spatialDisparity();
+        }
+        if (disparity == NO_DISPARITY) {
+            disparity = nbdv;
+        }
+        if (avc3d.vsp) {
+            if (avc3d.depth == null) {
+                throw new MediaException.Malformed("view synthesis prediction without a reference depth view");
+            }
+            var table = avc3d.refinementTable();
+            var px = mbX * 16;
+            var py = mbY * 16;
+            disparity = table[avc3d.shiftedCornerMax(px, py, 16, 16, disparity)];
+            for (var mode = 0; mode < 4; mode++) {
+                var w = mode == 0 || mode == 1 ? 16 : 8;
+                var h = mode == 0 || mode == 2 ? 16 : 8;
+                for (var y = 0; y < 16; y += h) {
+                    for (var x = 0; x < 16; x += w) {
+                        var value = table[avc3d.shiftedCornerMax(px + x, py + y, w, h, disparity)];
+                        for (var by = y >> 3; by < (y + h) >> 3; by++) {
+                            for (var bx = x >> 3; bx < (x + w) >> 3; bx++) {
+                                doNbdv[mode * 4 + by * 2 + bx] = value;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        nbdv = disparity;
+        pic.avc3dDisparity[mbAddr] = disparity;
+    }
+
+    /**
+     * {@return the horizontal motion of the list 0 inter-view prediction of the block below and right of the
+     * current macroblock in the first picture of list 1 and then list 0, or {@link #NO_DISPARITY}}
+     */
+    private int temporalDisparity() {
+        var px = mbX * 16;
+        var py = mbY * 16;
+        for (var i = 0; i < (bSlice ? 2 : 1); i++) {
+            var col = refList[bSlice ? 1 - i : 0][0].plane(colorPlane);
+            if (col.mbWidth * 16 < px + 20 || col.mbHeight * 16 < py + 20) {
+                continue;
+            }
+            var mb = (mbY + 1) * col.mbWidth + mbX + 1;
+            var views = col.refView;
+            if (col.ref[0][mb * 4] < 0 || views == null) {
+                continue;
+            }
+            var view = views[mb * 4];
+            if (view != -1 && view != viewId3d) {
+                var x = (short) col.mv[0][mb * 16];
+                if (x != 0) {
+                    return x;
+                }
+            }
+        }
+        return NO_DISPARITY;
+    }
+
+    /**
+     * {@return the horizontal motion of the first neighboring block A, B, C or D of the current macroblock
+     * predicted in list 0 from another view, or {@link #NO_DISPARITY}}
+     */
+    private int spatialDisparity() {
+        var refs = frame.ref[0];
+        var mvs = frame.mv[0];
+        for (var k = 0; k < 4; k++) {
+            boolean available;
+            int mb;
+            int block;
+            switch (k) {
+                case 0 -> {
+                    available = availA;
+                    mb = mbA;
+                    block = 3;
+                }
+                case 1 -> {
+                    available = availB;
+                    mb = mbB;
+                    block = 12;
+                }
+                case 2 -> {
+                    available = availC;
+                    mb = mbC;
+                    block = 12;
+                }
+                default -> {
+                    available = availD;
+                    mb = mbD;
+                    block = 15;
+                }
+            }
+            if (!available) {
+                continue;
+            }
+            var r = refs[mb * 4 + (block >> 3) * 2 + ((block & 3) >> 1)];
+            if (r < 0 || refView3d[0][r] == viewId3d) {
+                continue;
+            }
+            var x = (short) mvs[mb * 16 + block];
+            if (x != 0) {
+                return x;
+            }
+        }
+        return NO_DISPARITY;
+    }
+
+    /**
+     * Looks up the motion of the base view picture of the access unit at the current macroblock shifted by its
+     * disparity, for depth-based skip and direct prediction; the result is left in {@link #baseRef} and
+     * {@link #baseMv}.
+     *
+     * @param list the list whose motion is read
+     * @return whether the block is predicted from {@code list} with a reference index the current slice has
+     */
+    private boolean baseViewMotion(int list) {
+        DecoderFrame motion;
+        if (avc3d.textureFirst) {
+            if (!avc3d.hasInterviewRef) {
+                return false;
+            }
+            motion = avc3d.skipMotion;
+        } else {
+            motion = avc3d.interViewMotion;
+        }
+        if (motion == null) {
+            return false;
+        }
+        var disparity = avc3d.textureFirst ? nbdv : depthMbDisparity(avc3d.forward);
+        readMotion(motion, list, mbX * 16 + 7 + (disparity >> 2), mbY * 16 + 7);
+        return baseRef >= 0 && baseRef < activeRefs(list);
+    }
+
+    /**
+     * Looks up the motion of the base view picture of the access unit for the depth-based prediction of a
+     * temporal motion vector; the result is left in {@link #baseRef} and {@link #baseMv}.
+     *
+     * @param list the list whose motion is read
+     * @param w the width of the block being predicted
+     * @param h the height of the block being predicted
+     * @return whether a base view picture was found
+     */
+    private boolean temporalBaseMotion(int list, int w, int h) {
+        var motion = avc3d.interViewMotion;
+        if (avc3d.textureFirst && !avc3d.hasInterviewRef || motion == null) {
+            return false;
+        }
+        var disparity = avc3d.textureFirst ? nbdv : depthMbDisparity(avc3d.forward);
+        readMotion(motion, list, mbX * 16 + (w >> 1) + (disparity >> 2), mbY * 16 + (h >> 1));
+        return true;
+    }
+
+    /**
+     * {@return the disparity the largest corner depth sample of the current macroblock gives, or 0 without a
+     * table}
+     *
+     * @param table the disparity table
+     */
+    private int depthMbDisparity(int[] table) {
+        return table == null ? 0 : avc3d.cornerDisparity(table, mbX * 16, mbY * 16, 16, 16);
+    }
+
+    /**
+     * Reads the reference index and motion vector of the 4x4 block holding a luma position of a picture into
+     * {@link #baseRef} and {@link #baseMv}, clamping the position into the picture.
+     *
+     * @param motion the picture
+     * @param list the reference picture list whose motion is read
+     * @param x the luma column
+     * @param y the luma row
+     */
+    private void readMotion(DecoderFrame motion, int list, int x, int y) {
+        var width = motion.mbWidth;
+        var bx = Math.clamp(x >> 2, 0, Math.min(frame.mbWidth, width) * 4 - 1);
+        var by = Math.clamp(y >> 2, 0, Math.min(frame.mbHeight, motion.mbHeight) * 4 - 1);
+        var mb = (by >> 2) * width + (bx >> 2);
+        baseRef = motion.ref[list][mb * 4 + ((by >> 1) & 1) * 2 + ((bx >> 1) & 1)];
+        baseMv = motion.mv[list][mb * 16 + (by & 3) * 4 + (bx & 3)];
+    }
+
+    /**
+     * Derives the motion of a P_Skip macroblock with depth-based motion vector prediction: the motion of the base
+     * view at the macroblock's disparity, else a depth-based prediction from reference index 0; with adaptive
+     * luminance compensation, a prediction from the inter-view reference.
+     */
+    private void derivePSkip3d() {
+        int r;
+        int mv;
+        if ((mbFlags3d & AVC3D_ALC) != 0) {
+            r = avc3d.ivRef;
+            if (r < 0) {
+                throw new MediaException.Malformed("adaptive luminance compensation without an inter-view reference");
+            }
+            mv = predictMv3d(0, CACHE_ORIGIN, 4, 4, r, 0, 0, true, false);
+        } else if (baseViewMotion(0)) {
+            r = baseRef;
+            mv = baseMv;
+        } else {
+            r = 0;
+            mv = predictMv3d(0, CACHE_ORIGIN, 4, 4, 0, 0, 0, true, false);
+        }
+        refCache[0][CACHE_ORIGIN] = r;
+        mvCache[0][CACHE_ORIGIN] = mv;
+    }
+
+    /**
+     * Computes the spatial direct predictors with depth-based motion vector prediction: the motion of the base
+     * view at the macroblock's disparity in each list, else depth-based predictions from reference index 0 of
+     * both lists.
+     *
+     * @return {@code [refIdxL0, refIdxL1, mvpL0, mvpL1, 0]}
+     */
+    private int[] spatialPredictors3d() {
+        var result = spatialResult;
+        var found = false;
+        result[0] = -1;
+        result[1] = -1;
+        result[2] = 0;
+        result[3] = 0;
+        for (var list = 0; list < 2; list++) {
+            if (baseViewMotion(list)) {
+                result[list] = baseRef;
+                result[2 + list] = baseMv;
+                found = true;
+            }
+        }
+        if (!found) {
+            result[0] = 0;
+            result[1] = 0;
+            result[2] = predictMv3d(0, CACHE_ORIGIN, 4, 4, 0, 0, 0, true, false);
+            result[3] = predictMv3d(1, CACHE_ORIGIN, 4, 4, 0, 0, 0, true, false);
+        }
+        result[4] = 0;
+        return result;
+    }
+
+    /**
+     * Returns the motion vector predictor of a block of the current macroblock with the 3D-AVC rules: with
+     * depth-based prediction, the neighbors that the median would take as zero, or that refer to another view
+     * than the block's reference, are replaced by a disparity derived from depth (for inter-view references) or
+     * by the motion of the base view (for temporal references).
+     *
+     * @param list the list index
+     * @param c the cache index of the block's top-left 4x4 block
+     * @param w4 the block width in 4x4 units
+     * @param h4 the block height in 4x4 units
+     * @param r the reference index
+     * @param offX the horizontal luma offset of the block in the macroblock
+     * @param offY the vertical luma offset of the block in the macroblock
+     * @param dmvp whether depth-based motion vector prediction applies
+     * @param checkViews whether neighbors referring to another view than {@code r} count as unavailable
+     * @return the packed predictor
+     */
+    private int predictMv3d(int list, int c, int w4, int h4, int r, int offX, int offY, boolean dmvp,
+                            boolean checkViews) {
+        var rc = refCache[list];
+        var mc = mvCache[list];
+        var refA = rc[c - 1];
+        var refB = rc[c - 8];
+        var cIdx = c - 8 + w4;
+        var refC = rc[cIdx];
+        if (refC == UNAVAILABLE) {
+            cIdx = c - 9;
+            refC = rc[cIdx];
+        }
+        var mvA = mc[c - 1];
+        var mvB = mc[c - 8];
+        var mvC = mc[cIdx];
+        var view = refView3d[list][r];
+        if (checkViews) {
+            refA = sameView(list, refA, view);
+            refB = sameView(list, refB, view);
+            refC = sameView(list, refC, view);
+        }
+        var type = 0;
+        if (refA == r && refB != r && refC != r) {
+            type = 1;
+        } else if (refA != r && refB == r && refC != r) {
+            type = 2;
+        } else if (refA != r && refB != r && refC == r) {
+            type = 3;
+        }
+        if (w4 == 2 && h4 == 4) {
+            if (offX == 0) {
+                if (refA == r) {
+                    type = 1;
+                }
+            } else if (refC == r) {
+                type = 3;
+            }
+        } else if (w4 == 4 && h4 == 2) {
+            if (offY == 0) {
+                if (refB == r) {
+                    type = 2;
+                }
+            } else if (refA == r) {
+                type = 1;
+            }
+        }
+        switch (type) {
+            case 1 -> {
+                return refA == UNAVAILABLE ? 0 : mvA;
+            }
+            case 2 -> {
+                return refB == UNAVAILABLE ? 0 : mvB;
+            }
+            case 3 -> {
+                return refC == UNAVAILABLE ? 0 : mvC;
+            }
+            default -> {
+            }
+        }
+        if (!dmvp) {
+            if (refB == UNAVAILABLE && refC == UNAVAILABLE) {
+                return refA == UNAVAILABLE ? 0 : mvA;
+            }
+            return median(refA == UNAVAILABLE ? 0 : mvA, refB == UNAVAILABLE ? 0 : mvB,
+                    refC == UNAVAILABLE ? 0 : mvC);
+        }
+        int substitute;
+        if (view != viewId3d) {
+            var table = list == 0 ? avc3d.forward : avc3d.backward;
+            substitute = (avc3d.textureFirst ? nbdv : depthMbDisparity(table)) & 0xFFFF;
+        } else {
+            substitute = temporalBaseMotion(list, w4 * 4, h4 * 4) && baseRef == r ? baseMv : 0;
+        }
+        return median(refA == r ? mvA : substitute, refB == r ? mvB : substitute, refC == r ? mvC : substitute);
+    }
+
+    /**
+     * {@return a neighbor's reference index, or {@link #UNAVAILABLE} when it refers to a picture of another view
+     * than the given one}
+     *
+     * @param list the list index
+     * @param ref the neighbor's reference index
+     * @param view the {@code view_id} of the block's reference
+     */
+    private int sameView(int list, int ref, int view) {
+        return ref >= 0 && refView3d[list][ref] != view ? UNAVAILABLE : ref;
+    }
+
+    /**
+     * Returns a reference index of the current macroblock in a slice using the 3D-AVC texture coding tools: the
+     * inter-view reference for list 0 of a macroblock with adaptive luminance compensation, the decoded index
+     * otherwise.
+     *
+     * @param list the list index
+     * @param c the cache index of the partition's top-left 4x4 block
+     * @return the reference index
+     */
+    private int decodeRefIdx3d(int list, int c) {
+        if (list == 0 && (mbFlags3d & AVC3D_ALC) != 0) {
+            if (avc3d.ivRef < 0) {
+                throw new MediaException.Malformed("adaptive luminance compensation without an inter-view reference");
+            }
+            return avc3d.ivRef;
+        }
+        return decodeRefIdx(list, c);
+    }
+
+    /**
+     * Decodes the block-based view synthesis flag of a block predicted from an inter-view reference, and for a
+     * set flag marks the block and derives its disparity.
+     *
+     * @param list the list index
+     * @param r the reference index of the block
+     * @param x4 the block column in 4x4 units within the macroblock
+     * @param y4 the block row in 4x4 units within the macroblock
+     * @param w4 the block width in 4x4 units
+     * @param h4 the block height in 4x4 units
+     * @param mode the partitioning of the macroblock: 0 to 2 for 16x16, 16x8 and 8x16, 3 for 8x8
+     */
+    private void decodeVspFlag(int list, int r, int x4, int y4, int w4, int h4, int mode) {
+        if (!avc3d.vsp || r < 0 || refView3d[list][r] == viewId3d) {
+            return;
+        }
+        var bit = 1 << list;
+        int a;
+        if (x4 > 0) {
+            a = vspBits[y4 * 4 + x4 - 1] & bit;
+        } else {
+            a = availA ? pic.avc3dVsp[mbA * 16 + y4 * 4 + 3] & bit : 0;
+        }
+        int b;
+        if (y4 > 0) {
+            b = vspBits[(y4 - 1) * 4 + x4] & bit;
+        } else {
+            b = availB ? pic.avc3dVsp[mbB * 16 + 12 + x4] & bit : 0;
+        }
+        if (cabac.decision(CTX_VSP_FLAG + (a != 0 ? 1 : 0) + (b != 0 ? 1 : 0)) == 0) {
+            return;
+        }
+        var table = list == 0 ? avc3d.forward : avc3d.backward;
+        var disparity = avc3d.textureFirst ? 0
+                : avc3d.cornerDisparity(table, mbX * 16 + x4 * 4, mbY * 16 + y4 * 4, w4 * 4, h4 * 4);
+        for (var y = y4; y < y4 + h4; y++) {
+            for (var x = x4; x < x4 + w4; x++) {
+                vspBits[y * 4 + x] |= (byte) bit;
+                var value = avc3d.textureFirst ? doNbdv[mode * 4 + (y >> 1) * 2 + (x >> 1)] : disparity;
+                vspMv[list][y * 4 + x] = value & 0xFFFF;
+            }
+        }
+    }
+
+    /**
+     * {@return whether a block of the current macroblock is predicted by block-based view synthesis in a list}
+     *
+     * @param list the list index
+     * @param c the cache index of the block's top-left 4x4 block
+     */
+    private boolean isVsp(int list, int c) {
+        return (vspBits[rasterOfCache(c)] & (1 << list)) != 0;
+    }
+
+    /**
+     * Parses {@code mb_pred()} of an inter macroblock with one or two partitions in a slice using the 3D-AVC
+     * texture coding tools and derives its motion vectors.
+     */
+    private void decodeMbPred3d() {
+        var parts = partShape == 0 ? 1 : 2;
+        var w = partShape == 2 ? 2 : 4;
+        var h = partShape == 1 ? 2 : 4;
+        for (var list = 0; list < 2; list++) {
+            for (var p = 0; p < parts; p++) {
+                var r = -1;
+                if ((partPred[p] & (1 << list)) != 0) {
+                    var c = partitionCache(p);
+                    r = decodeRefIdx3d(list, c);
+                    var offset = c - CACHE_ORIGIN;
+                    decodeVspFlag(list, r, offset & 7, offset >> 3, w, h, partShape);
+                }
+                setPartitionRef(list, p, r);
+            }
+        }
+        for (var list = 0; list < (bSlice ? 2 : 1); list++) {
+            clearMvd(list);
+            for (var p = 0; p < parts; p++) {
+                var c = partitionCache(p);
+                if ((partPred[p] & (1 << list)) != 0 && !isVsp(list, c)) {
+                    fillMvd(list, c, w, h, decodeMvd(list, c));
+                }
+            }
+        }
+        var dmvp = avc3d.dmvp;
+        for (var list = 0; list < 2; list++) {
+            var rc = refCache[list];
+            var mc = mvCache[list];
+            for (var i = 0; i < 16; i++) {
+                rc[CACHE_OF_RASTER[i]] = UNAVAILABLE;
+                mc[CACHE_OF_RASTER[i]] = 0;
+            }
+            for (var p = 0; p < parts; p++) {
+                var r = partitionRef(list, p);
+                var c = partitionCache(p);
+                int mv;
+                if (r < 0) {
+                    mv = 0;
+                } else if (isVsp(list, c)) {
+                    mv = vspMv[list][rasterOfCache(c)];
+                } else {
+                    var offset = c - CACHE_ORIGIN;
+                    var predictor = predictMv3d(list, c, w, h, r, (offset & 7) * 4, (offset >> 3) * 4, dmvp, dmvp);
+                    mv = addMv(predictor, mvd[list][rasterOfCache(c)]);
+                }
+                fillPartition(list, p, r, mv);
+            }
+        }
+    }
+
+    /**
+     * Parses {@code sub_mb_pred()} of a P_8x8, P_8x8ref0 or B_8x8 macroblock in a slice using the 3D-AVC
+     * texture coding tools and derives its motion vectors.
+     *
+     * @param refZero for P slices, whether the macroblock is P_8x8ref0; ignored for B slices
+     */
+    private void decodeSubMbPred3d(boolean refZero) {
+        directMask = 0;
+        for (var i = 0; i < 4; i++) {
+            if (bSlice) {
+                var type = cabacMode ? decodeBSubMbTypeCabac() : bits.readUe();
+                if (type > 12) {
+                    throw new MediaException.Malformed("sub_mb_type " + type + " out of range");
+                }
+                subShape[i] = B_SUB_SHAPE[type];
+                subPred[i] = B_SUB_PRED[type];
+                if (type == 0) {
+                    directMask |= 1 << i;
+                    subPred[i] = 0;
+                }
+            } else {
+                var type = cabacMode ? decodePSubMbTypeCabac() : bits.readUe();
+                if (type > 3) {
+                    throw new MediaException.Malformed("sub_mb_type " + type + " out of range");
+                }
+                subShape[i] = P_SUB_SHAPE[type];
+                subPred[i] = 1;
+            }
+        }
+        mbFlags |= directMask << DecoderFrame.MB_DIRECT8_SHIFT;
+        for (var list = 0; list < 2; list++) {
+            for (var i = 0; i < 4; i++) {
+                var r = -1;
+                var c8 = CACHE_ORIGIN + (i & 1) * 2 + (i >> 1) * 16;
+                if ((subPred[i] & (1 << list)) != 0) {
+                    r = !bSlice && refZero ? 0 : decodeRefIdx(list, c8);
+                    var shape = subShape[i];
+                    decodeVspFlag(list, r, (i & 1) * 2, (i >> 1) * 2, shape == 0 || shape == 1 ? 2 : 1,
+                            shape == 0 || shape == 2 ? 2 : 1, 3);
+                }
+                refIdx[list][i] = r;
+                if (cabacMode) {
+                    var flag = r > 0 ? 1 : 0;
+                    var ctx = refCtxCache[list];
+                    ctx[c8] = flag;
+                    ctx[c8 + 1] = flag;
+                    ctx[c8 + 8] = flag;
+                    ctx[c8 + 9] = flag;
+                }
+            }
+        }
+        for (var list = 0; list < (bSlice ? 2 : 1); list++) {
+            clearMvd(list);
+            for (var i = 0; i < 4; i++) {
+                if ((subPred[i] & (1 << list)) == 0) {
+                    continue;
+                }
+                var c8 = CACHE_ORIGIN + (i & 1) * 2 + (i >> 1) * 16;
+                switch (subShape[i]) {
+                    case 0 -> subMvd(list, c8, 2, 2);
+                    case 1 -> {
+                        subMvd(list, c8, 2, 1);
+                        subMvd(list, c8 + 8, 2, 1);
+                    }
+                    case 2 -> {
+                        subMvd(list, c8, 1, 2);
+                        subMvd(list, c8 + 1, 1, 2);
+                    }
+                    default -> {
+                        subMvd(list, c8, 1, 1);
+                        subMvd(list, c8 + 1, 1, 1);
+                        subMvd(list, c8 + 8, 1, 1);
+                        subMvd(list, c8 + 9, 1, 1);
+                    }
+                }
+            }
+        }
+        deriveSubMbMotion3d();
+    }
+
+    /**
+     * Decodes the motion vector difference of a sub-macroblock partition, none for a block predicted by
+     * block-based view synthesis.
+     *
+     * @param list the list index
+     * @param c the cache index of the block's top-left 4x4 block
+     * @param w the width in 4x4 blocks
+     * @param h the height in 4x4 blocks
+     */
+    private void subMvd(int list, int c, int w, int h) {
+        if (!isVsp(list, c)) {
+            fillMvd(list, c, w, h, decodeMvd(list, c));
+        }
+    }
+
+    /**
+     * Derives the motion vectors of the four 8x8 partitions of a macroblock in a slice using the 3D-AVC texture
+     * coding tools.
+     */
+    private void deriveSubMbMotion3d() {
+        var spatial = bSlice && header.directSpatialMvPred;
+        if (directMask != 0) {
+            prepareColocated();
+        }
+        int[] direct = null;
+        if (directMask != 0 && spatial) {
+            direct = spatialPredictors();
+        }
+        for (var list = 0; list < 2; list++) {
+            var rc = refCache[list];
+            var mc = mvCache[list];
+            for (var i = 0; i < 16; i++) {
+                rc[CACHE_OF_RASTER[i]] = UNAVAILABLE;
+                mc[CACHE_OF_RASTER[i]] = 0;
+            }
+        }
+        for (var i = 0; i < 4; i++) {
+            var c8 = CACHE_ORIGIN + (i & 1) * 2 + (i >> 1) * 16;
+            if ((directMask & (1 << i)) != 0) {
+                if (spatial) {
+                    spatialDirect8x8(i, direct);
+                } else {
+                    temporalDirect8x8(i);
+                }
+                continue;
+            }
+            for (var list = 0; list < 2; list++) {
+                var r = refIdx[list][i];
+                if (r < 0) {
+                    fillBlock(list, c8, 2, 2, -1, 0);
+                    continue;
+                }
+                switch (subShape[i]) {
+                    case 0 -> subMotion(list, c8, 2, 2, r);
+                    case 1 -> {
+                        subMotion(list, c8, 2, 1, r);
+                        subMotion(list, c8 + 8, 2, 1, r);
+                    }
+                    case 2 -> {
+                        subMotion(list, c8, 1, 2, r);
+                        subMotion(list, c8 + 1, 1, 2, r);
+                    }
+                    default -> {
+                        subMotion(list, c8, 1, 1, r);
+                        subMotion(list, c8 + 1, 1, 1, r);
+                        subMotion(list, c8 + 8, 1, 1, r);
+                        subMotion(list, c8 + 9, 1, 1, r);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Derives and stores the motion vector of one sub-macroblock partition.
+     *
+     * @param list the list index
+     * @param c the cache index of the block's top-left 4x4 block
+     * @param w the width in 4x4 blocks
+     * @param h the height in 4x4 blocks
+     * @param r the reference index
+     */
+    private void subMotion(int list, int c, int w, int h, int r) {
+        int mv;
+        if (isVsp(list, c)) {
+            mv = vspMv[list][rasterOfCache(c)];
+        } else {
+            var offset = c - CACHE_ORIGIN;
+            var dmvp = avc3d.dmvp;
+            mv = addMv(predictMv3d(list, c, w, h, r, (offset & 7) * 4, (offset >> 3) * 4, dmvp, dmvp),
+                    mvd[list][rasterOfCache(c)]);
+        }
+        fillBlock(list, c, w, h, r, mv);
+    }
+
+    /**
+     * Predicts and reconstructs the luma of a macroblock coded with adaptive luminance compensation, partition by
+     * partition so the decoded samples of a partition serve the luminance templates of the next, and then adds
+     * the chroma residual.
+     */
+    private void predictAlc() {
+        inter.setUnweighted(true);
+        try {
+            switch (partShape) {
+                case 0 -> alcBlock(0, 0, 4, 4);
+                case 1 -> {
+                    alcBlock(0, 0, 4, 2);
+                    alcBlock(0, 2, 4, 2);
+                }
+                case 2 -> {
+                    alcBlock(0, 0, 2, 4);
+                    alcBlock(2, 0, 2, 4);
+                }
+                default -> throw new MediaException.Malformed("adaptive luminance compensation of an 8x8 macroblock");
+            }
+        } finally {
+            inter.setUnweighted(false);
+        }
+        if (hasChroma) {
+            addChromaResidual(chromaBase);
+        }
+    }
+
+    /**
+     * Predicts one partition of a macroblock coded with adaptive luminance compensation, compensates its luma
+     * when it is predicted from the inter-view reference, and adds its luma residual.
+     *
+     * @param x4 the partition column in 4x4 units
+     * @param y4 the partition row in 4x4 units
+     * @param w4 the partition width in 4x4 units
+     * @param h4 the partition height in 4x4 units
+     */
+    private void alcBlock(int x4, int y4, int w4, int h4) {
+        inter.predictBlock(this, x4, y4, w4, h4);
+        var c = CACHE_ORIGIN + y4 * 8 + x4;
+        var r = refCache[0][c];
+        if (r >= 0 && r == avc3d.ivRef) {
+            Avc3dTexture.compensateLuminance(viewFrame[view][0][r], mvCache[0][c], lumaPlane,
+                    lumaBase + y4 * 4 * lumaStride + x4 * 4, lumaStride, mbX * 16 + x4 * 4, mbY * 16 + y4 * 4,
+                    w4 * 4, h4 * 4, frame.mbWidth * 16, frame.mbHeight * 16);
+        }
+        addLumaResidual(x4, y4, w4, h4);
+    }
+
+    /**
+     * Adds the luma residual of the transform blocks of the current inter macroblock inside a rectangle.
+     *
+     * @param x4 the rectangle column in 4x4 units
+     * @param y4 the rectangle row in 4x4 units
+     * @param w4 the rectangle width in 4x4 units
+     * @param h4 the rectangle height in 4x4 units
+     */
+    private void addLumaResidual(int x4, int y4, int w4, int h4) {
+        if ((mbFlags & DecoderFrame.MB_T8X8) != 0) {
+            var blocks = coded[0] | dcOnly[0];
+            for (var b8 = 0; b8 < 4; b8++) {
+                var bx = (b8 & 1) * 2;
+                var by = (b8 >> 1) * 2;
+                if ((blocks & (1 << b8)) == 0 || bx < x4 || bx >= x4 + w4 || by < y4 || by >= y4 + h4) {
+                    continue;
+                }
+                var offset = lumaBase + by * 4 * lumaStride + bx * 4;
+                if (bypass) {
+                    addBypass(0, b8 * 64, 8, offset, 0);
+                } else {
+                    addPlane8x8(0, b8, offset, (coded[0] & (1 << b8)) != 0);
+                }
+            }
+            return;
+        }
+        var full = coded[0];
+        var any = full | (dcOnly[0] & ~full);
+        for (var blk = 0; blk < 16; blk++) {
+            var bit = 1 << blk;
+            var bx = H264Tables.BLOCK_X[blk];
+            var by = H264Tables.BLOCK_Y[blk];
+            if ((any & bit) == 0 || bx < x4 || bx >= x4 + w4 || by < y4 || by >= y4 + h4) {
+                continue;
+            }
+            var offset = lumaBase + by * 4 * lumaStride + bx * 4;
+            if (bypass) {
+                addBypass(0, blk * 16, 4, offset, 0);
+            } else {
+                addPlane4x4(0, blk, offset, (full & bit) != 0);
+            }
+        }
+    }
+
+    /**
+     * Records the view of the list 0 reference of each 8x8 partition of the current macroblock, for the
+     * neighboring block disparity derivation of later pictures.
+     */
+    private void storeRefViews() {
+        var count = frame.mbWidth * frame.mbHeight * 4;
+        var views = frame.refView;
+        if (views == null || views.length < count) {
+            views = new short[count];
+            frame.refView = views;
+        }
+        var refs = frame.ref[0];
+        var at = mbAddr * 4;
+        for (var p = 0; p < 4; p++) {
+            var r = refs[at + p];
+            views[at + p] = r < 0 ? -1 : refView3d[0][r];
+        }
     }
 }

@@ -244,10 +244,10 @@ public final class H264DecoderOptions {
      * {@link com.github.auties00.smalt.video.VideoLayer.Type#DEPTH DEPTH}. A depth frame is output once
      * its own picture buffer releases it, independently of the texture frames of its access unit, and
      * carries the timestamp of the packet its first slice arrived in. When clear, depth views are skipped.
-     * Streams without depth views ignore this setting. The texture and depth views of 3D-AVC streams
-     * (Annex I), which predict from each other, raise
-     * {@link com.github.auties00.smalt.MediaException.Unsupported} once, as {@code "h264 3d-avc"}, and
-     * their base view is decoded.
+     * Streams without depth views ignore this setting. The depth views of 3D-AVC streams (Annex I) are
+     * decoded the same way, with the non-linear depth representation of their depth parameter sets undone
+     * on output; whatever this setting, the decoder decodes, without outputting them, the depth views that
+     * the 3D-AVC texture coding tools of the texture views it decodes sample.
      */
     public boolean depth() {
         return depth;

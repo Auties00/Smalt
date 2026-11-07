@@ -299,6 +299,22 @@ public final class H264Sps implements Cloneable {
     public H264MvcExtension mvc;
 
     /**
+     * The extension of the depth views of a 3D-AVC subset set ({@code profile_idc} 139), whose {@link #mvc}
+     * describes its texture views, or {@code null}.
+     */
+    public H264MvcExtension depthMvc;
+
+    /**
+     * The 3D-AVC extension of a subset set with {@code profile_idc} 139, or {@code null}.
+     */
+    public H264Avc3dExtension avc3d;
+
+    /**
+     * The set the depth views of a 3D-AVC subset set are decoded with, created on first use.
+     */
+    private H264Sps depthVariant;
+
+    /**
      * The SVC extension of a subset set of a scalable profile, or {@code null}.
      */
     public H264SvcExtension svc;
@@ -323,6 +339,62 @@ public final class H264Sps implements Cloneable {
         copy.bitDepthLuma = bitDepth;
         copy.bitDepthChroma = 8;
         return copy;
+    }
+
+    /**
+     * Returns the multiview extension that describes the texture views or the depth views of this subset set.
+     *
+     * @param depth whether the depth views are wanted
+     * @return the extension, or {@code null} when the set describes no such views
+     */
+    public H264MvcExtension extension(boolean depth) {
+        if (mvc != null && mvc.depth == depth) {
+            return mvc;
+        }
+        return depth ? depthMvc : null;
+    }
+
+    /**
+     * Returns the set the depth views of this subset set are decoded with: this set, or for a 3D-AVC set the
+     * copy with the resolution and frame cropping its extension gives the depth views (ITU-T H.264 I.7.4.2.1.5).
+     *
+     * @return the set
+     */
+    public H264Sps depthVariant() {
+        if (avc3d == null || (!avc3d.reducedResolution && avc3d.depthCrop == null)) {
+            return this;
+        }
+        if (depthVariant == null) {
+            var copy = copy();
+            if (avc3d.reducedResolution) {
+                copy.widthInMbs = avc3d.depthWidthInMbs;
+                copy.heightInMapUnits = avc3d.depthHeightInMapUnits;
+                copy.frameHeightInMbs = (frameMbsOnly ? 1 : 2) * copy.heightInMapUnits;
+                if (copy.cropLeft + copy.cropRight >= copy.widthInMbs * 16
+                        || copy.cropTop + copy.cropBottom >= copy.frameHeightInMbs * 16) {
+                    copy.cropLeft = 0;
+                    copy.cropRight = 0;
+                    copy.cropTop = 0;
+                    copy.cropBottom = 0;
+                }
+            }
+            if (avc3d.depthCrop != null) {
+                var chromaArrayType = chromaArrayType();
+                var unitX = chromaArrayType == 0 || chromaArrayType == 3 ? 1 : 2;
+                var unitY = (chromaArrayType == 1 ? 2 : 1) * (frameMbsOnly ? 1 : 2);
+                var crop = avc3d.depthCrop;
+                if ((crop[0] + crop[1]) * (long) unitX < copy.widthInMbs * 16L
+                        && (crop[2] + crop[3]) * (long) unitY < copy.frameHeightInMbs * 16L) {
+                    copy.cropLeft = crop[0] * unitX;
+                    copy.cropRight = crop[1] * unitX;
+                    copy.cropTop = crop[2] * unitY;
+                    copy.cropBottom = crop[3] * unitY;
+                }
+            }
+            copy.depthVariant = copy;
+            depthVariant = copy;
+        }
+        return depthVariant;
     }
 
     /**
@@ -497,6 +569,13 @@ public final class H264Sps implements Cloneable {
                 case 135, 138 -> {
                     reader.readFlag();
                     sps.mvc = H264MvcExtension.parseMvcd(reader);
+                }
+                case 139 -> {
+                    reader.readFlag();
+                    var extensions = H264MvcExtension.parse3dAvc(reader);
+                    sps.mvc = extensions[0];
+                    sps.depthMvc = extensions[1];
+                    sps.avc3d = H264Avc3dExtension.parse(reader, sps.mvc.views());
                 }
                 default -> {
                 }

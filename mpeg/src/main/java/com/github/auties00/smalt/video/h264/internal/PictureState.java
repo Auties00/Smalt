@@ -98,6 +98,24 @@ final class PictureState {
     final byte[] chromaMode;
 
     /**
+     * The 3D-AVC texture coding flags of each macroblock ({@code SliceDecoder.AVC3D_*} bits), allocated by the
+     * first slice that uses the 3D-AVC texture coding tools.
+     */
+    byte[] avc3dFlags;
+
+    /**
+     * The 3D-AVC view synthesis prediction flags of each 4x4 block, indexed {@code mbIndex * 16 + y * 4 + x}:
+     * bit 0 for list 0, bit 1 for list 1; allocated with {@link #avc3dFlags}.
+     */
+    byte[] avc3dVsp;
+
+    /**
+     * The disparity in quarter luma samples each macroblock of a texture-first 3D-AVC view passes to the next
+     * one; allocated with {@link #avc3dFlags}.
+     */
+    int[] avc3dDisparity;
+
+    /**
      * Returns the index in the per-macroblock arrays (see {@link DecoderFrame#mv}) of a
      * macroblock address of a picture.
      *

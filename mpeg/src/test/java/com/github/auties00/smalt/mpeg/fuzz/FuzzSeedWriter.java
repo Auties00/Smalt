@@ -1293,7 +1293,7 @@ class FuzzSeedWriter {
     }
 
     @Test
-    @DisplayName("writes the seeds of the layered H.264 target from the scalable and alpha test streams")
+    @DisplayName("writes the seeds of the layered H.264 target from the scalable, alpha and 3D-AVC test streams")
     void h264Layers() {
         var vectors = Path.of("src", "test", "resources", "com", "github", "auties00", "smalt", "video", "h264");
         for (var name : List.of("svc-cgs-temporal", "svc-mgs-keys", "svc-spatial")) {
@@ -1302,6 +1302,13 @@ class FuzzSeedWriter {
         }
         write(MpegFuzzTest.class, "h264Layers", "valid-aux9-cabac-slices.bin", FuzzPackets.video(0, 0, 0, null,
                 nalUnitParts(Fixtures.read(vectors.resolve("auxiliary").resolve("aux9-cabac-slices.264")))));
+        // 3D-AVC streams of the 3DV-ATM encoder, whole in one packet, decoded with their depth views (options bit 1)
+        write(MpegFuzzTest.class, "h264Layers", "valid-3davc-tools.bin", FuzzPackets.video(2, 128, 96, null,
+                List.of(new FuzzPackets.Part(Fixtures.read(vectors.resolve("avc3d")
+                        .resolve("atm-tools-texture-first.264")), true))));
+        write(MpegFuzzTest.class, "h264Layers", "valid-3davc-depth-range-weights.bin", FuzzPackets.video(2, 128, 96,
+                null, List.of(new FuzzPackets.Part(Fixtures.read(vectors.resolve("avc3d").resolve("atm-drwp-b.264")),
+                        true))));
     }
 
     /**

@@ -247,6 +247,153 @@ public final class H264MvcExtension {
     }
 
     /**
+     * Parses the multiview extension of a 3D-AVC subset sequence parameter set ({@code profile_idc} 139),
+     * whose every view has a texture and a depth view with the same inter-view references, followed by its
+     * operation points and the VUI extensions that may close it.
+     *
+     * @implNote This implementation reads the layout of the 3D-AVC conformance bitstreams of ITU-T H.264.1
+     * (02/2016) and the 3DV-ATM reference decoder (ITU-T H.264.2), which carries no
+     * {@code depth_view_present_flag} and {@code texture_view_present_flag}, rather than the
+     * {@code seq_parameter_set_mvcd_extension()} of ITU-T H.264 H.7.3.2.1.5.
+     * @param reader the reader positioned at the extension
+     * @return the extension of the texture views, at index 0, and of the depth views, at index 1
+     * @throws MediaException.Malformed if a field is out of range or the extension is truncated
+     */
+    static H264MvcExtension[] parse3dAvc(H264BitReader reader) {
+        var count = reader.readUe() + 1;
+        if (count > 1024) {
+            throw new MediaException.Malformed("num_views_minus1 out of range");
+        }
+        var viewIds = new int[count];
+        for (var i = 0; i < count; i++) {
+            viewIds[i] = reader.readUe();
+            if (viewIds[i] > 1023 || reader.overrun()) {
+                throw new MediaException.Malformed("view_id out of range");
+            }
+        }
+        var anchorRefs = new int[count][2][0];
+        var nonAnchorRefs = new int[count][2][0];
+        for (var i = 1; i < count; i++) {
+            for (var list = 0; list < 2; list++) {
+                anchorRefs[i][list] = readRefs(reader, count);
+            }
+        }
+        for (var i = 1; i < count; i++) {
+            for (var list = 0; list < 2; list++) {
+                nonAnchorRefs[i][list] = readRefs(reader, count);
+            }
+        }
+        var levels = reader.readUe() + 1;
+        if (levels > 64) {
+            throw new MediaException.Malformed("num_level_values_signalled_minus1 out of range");
+        }
+        for (var i = 0; i < levels; i++) {
+            reader.readBits(8);
+            var operations = reader.readUe() + 1;
+            if (operations > 1024) {
+                throw new MediaException.Malformed("num_applicable_ops_minus1 out of range");
+            }
+            for (var j = 0; j < operations; j++) {
+                reader.readBits(3);
+                var targets = reader.readUe() + 1;
+                if (targets > 1024 || reader.overrun()) {
+                    throw new MediaException.Malformed("applicable_op_num_target_views_minus1 out of range");
+                }
+                for (var k = 0; k < targets; k++) {
+                    reader.readUe();
+                    reader.readBits(2);
+                }
+                reader.readUe();
+                reader.readUe();
+            }
+        }
+        if (reader.readFlag()) {
+            skipVuiExtension(reader, true);
+        }
+        if (reader.readFlag()) {
+            skipVuiExtension(reader, false);
+        }
+        if (reader.overrun()) {
+            throw new MediaException.Malformed("truncated sequence parameter set 3D-AVC multiview extension");
+        }
+        var identity = new int[count];
+        for (var i = 0; i < count; i++) {
+            identity[i] = i;
+        }
+        var grid = new int[]{8, 8, 8, 8};
+        return new H264MvcExtension[]{
+                new H264MvcExtension(viewIds, anchorRefs, nonAnchorRefs, -1, grid, false, false, null),
+                new H264MvcExtension(viewIds, anchorRefs, nonAnchorRefs, -1, grid, false, false, identity)
+        };
+    }
+
+    /**
+     * Skips an {@code mvcd_vui_parameters_extension()} (ITU-T H.264 H.14.1) or an
+     * {@code mvc_vui_parameters_extension()} (ITU-T H.264 G.14.1).
+     *
+     * @param reader the reader positioned at the extension
+     * @param depth whether the extension is the MVCD one, whose target views carry a depth and a texture flag
+     */
+    private static void skipVuiExtension(H264BitReader reader, boolean depth) {
+        var operations = reader.readUe() + 1;
+        if (operations > 1024) {
+            throw new MediaException.Malformed("VUI extension num_ops_minus1 out of range");
+        }
+        for (var i = 0; i < operations; i++) {
+            reader.readBits(3);
+            var targets = reader.readUe() + 1;
+            if (targets > 1024 || reader.overrun()) {
+                throw new MediaException.Malformed("VUI extension num_target_output_views_minus1 out of range");
+            }
+            for (var j = 0; j < targets; j++) {
+                reader.readUe();
+                if (depth) {
+                    reader.readBits(2);
+                }
+            }
+            if (reader.readFlag()) {
+                reader.readBits(32);
+                reader.readBits(32);
+                reader.readFlag();
+            }
+            var nal = reader.readFlag();
+            if (nal) {
+                skipHrd(reader);
+            }
+            var vcl = reader.readFlag();
+            if (vcl) {
+                skipHrd(reader);
+            }
+            if (nal || vcl) {
+                reader.readFlag();
+            }
+            reader.readFlag();
+            if (reader.overrun()) {
+                throw new MediaException.Malformed("truncated VUI extension");
+            }
+        }
+    }
+
+    /**
+     * Skips an {@code hrd_parameters()} (ITU-T H.264 E.1.2).
+     *
+     * @param reader the reader positioned at the parameters
+     */
+    private static void skipHrd(H264BitReader reader) {
+        var count = reader.readUe() + 1;
+        if (count > 32) {
+            throw new MediaException.Malformed("cpb_cnt_minus1 out of range");
+        }
+        reader.readBits(8);
+        for (var i = 0; i < count; i++) {
+            reader.readUe();
+            reader.readUe();
+            reader.readFlag();
+        }
+        reader.readBits(20);
+    }
+
+    /**
      * Reads a count followed by that many {@code view_id}s of inter-view references.
      *
      * @param reader the bit reader positioned at the count

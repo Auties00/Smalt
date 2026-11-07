@@ -5,16 +5,20 @@ import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.video.VideoFrame;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.SplittableRandom;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
@@ -22,16 +26,18 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Feeds damaged scalable streams and streams with auxiliary pictures to a decoder that decodes every layer, view,
- * depth view and alpha plane: bytes flipped anywhere (NAL unit headers and their extensions, prefix NAL units,
- * subset sequence parameter sets and auxiliary slices included) and NAL unit types swapped among the types of the
+ * Feeds damaged scalable streams, streams with auxiliary pictures and 3D-AVC streams with the texture coding tools
+ * and depth-range-based weighted prediction to a decoder that decodes every layer, view, depth view and alpha
+ * plane: bytes flipped anywhere (NAL unit headers and their extensions, prefix NAL units, subset sequence parameter
+ * sets, depth parameter sets and auxiliary slices included) and NAL unit types swapped among the types of the
  * extensions, so that the data of one extension reaches the parser of another. The decoder may only report
- * {@link MediaException}s. A last test nests aggregators of a length-prefixed track deeper than any stack.
+ * {@link MediaException}s, and never waits on a reference picture that cannot complete. A last test nests
+ * aggregators of a length-prefixed track deeper than any stack.
  */
 @DisplayName("H.264 layered streams under damage")
 class H264LayersRobustnessTest {
     /** The NAL unit types a swap picks from: slices, parameter sets and every extension type. */
-    private static final int[] TYPES = {1, 5, 7, 8, 13, 14, 15, 19, 20, 21, 30};
+    private static final int[] TYPES = {1, 5, 7, 8, 13, 14, 15, 16, 19, 20, 21, 30};
 
     static Stream<Arguments> streams() {
         var streams = new ArrayList<Arguments>();
@@ -41,6 +47,13 @@ class H264LayersRobustnessTest {
         for (var name : List.of("aux9-cabac-slices", "aux8-cavlc-fields-inverted")) {
             streams.add(Arguments.of(name, H264AuxiliaryAlphaTest.resource(name + ".264")));
         }
+        H264Avc3dEncodedTest.streams().forEach(stream -> {
+            try {
+                streams.add(Arguments.of(stream.name(), H264Avc3dEncodedTest.bytes(stream)));
+            } catch (IOException exception) {
+                throw new UncheckedIOException(exception);
+            }
+        });
         return streams.stream();
     }
 
@@ -81,6 +94,7 @@ class H264LayersRobustnessTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("streams")
     @DisplayName("reports flipped bytes anywhere in the stream as media failures")
+    @Timeout(value = 3, unit = TimeUnit.MINUTES, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
     void flippedBytes(String name, byte[] stream) {
         var random = new SplittableRandom(name.hashCode());
         var nals = H264TestStreams.nalUnits(stream);
@@ -105,10 +119,14 @@ class H264LayersRobustnessTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("streams")
     @DisplayName("reports NAL units carrying the type of another extension as media failures")
+    @Timeout(value = 3, unit = TimeUnit.MINUTES, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
     void swappedTypes(String name, byte[] stream) {
         var random = new SplittableRandom(~name.hashCode());
         var nals = H264TestStreams.nalUnits(stream);
-        for (var round = 0; round < 30; round++) {
+        // the 3D-AVC streams are small, and round 210 of atm-drwp-b gives two views sequence parameter sets of
+        // different sizes, whose missing inter-view references must not share one gray frame
+        var rounds = name.startsWith("atm-") ? 250 : 30;
+        for (var round = 0; round < rounds; round++) {
             var damaged = new ArrayList<byte[]>();
             for (var nal : nals) {
                 var copy = nal.clone();

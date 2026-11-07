@@ -1,3 +1,6 @@
+/* Ports the picture setup of the 3D-AVC texture coding tools and depth-range-based weighted prediction of 3DV-ATM
+   14.0 (ITU-T H.264.2 (02/2016), ldecod image.c, mbuffer.c, parset.c and header.c) into this decoder engine.
+   Copyright 2001-2015 International Telecommunication Union; ITU disclaimer of warranty. Modified for Smalt. */
 package com.github.auties00.smalt.video.h264.internal;
 
 import com.github.auties00.smalt.MediaException;
@@ -259,9 +262,36 @@ public final class H264DecoderEngine {
     private H264DecoderEngine depthEngine;
 
     /**
-     * Whether a depth or 3D-AVC slice was reported as unsupported.
+     * The state this engine shares with the other engines of a 3D-AVC stream.
      */
-    private boolean unsupportedDepthReported;
+    private final Avc3dContext avc3dContext;
+
+    /**
+     * Whether the NAL unit being processed is a 3D-AVC slice ({@code nal_unit_type} 21 with
+     * {@code avc_3d_extension_flag} 1), whose header extension has been read into the {@code ext} fields.
+     */
+    private boolean avc3dSlice;
+
+    /**
+     * The {@code depth_flag} of the latest 3D-AVC NAL unit header extension read.
+     */
+    private boolean avc3dDepth;
+
+    /**
+     * Whether the 3D-AVC texture coding tools were reported as unsupported.
+     */
+    private boolean avc3dToolsReported;
+
+    /**
+     * The {@code view_id}s of the views whose depth views this depth engine decodes whatever views it outputs,
+     * because the 3D-AVC texture coding tools of the texture views decoded sample them, or {@code null}.
+     */
+    private int[] toolViewIds;
+
+    /**
+     * The {@link DecoderFrame#decodeIndex} of the picture whose first 3D-AVC slice was started last.
+     */
+    private long avc3dPicture;
 
     /**
      * The scratch samples of the reference processing of frame-compatible stereo streams.
@@ -1017,6 +1047,7 @@ public final class H264DecoderEngine {
         this.subsetSpsTable = primary != null ? primary.subsetSpsTable : new H264Sps[32];
         this.ppsRaw = primary != null ? primary.ppsRaw : new byte[256][];
         this.spsExtensions = primary != null ? primary.spsExtensions : new H264SpsExtension[32];
+        this.avc3dContext = primary != null ? primary.avc3dContext : new Avc3dContext();
     }
 
     /**
@@ -1054,6 +1085,24 @@ public final class H264DecoderEngine {
         engine.viewsRequested = true;
         engine.maxTemporalId = maxTemporalId;
         this.depthEngine = engine;
+        for (var sps : subsetSpsTable) {
+            if (sps != null) {
+                engine.noteDepthExtension(sps);
+            }
+        }
+    }
+
+    /**
+     * Selects the depth views a depth engine decodes and outputs as soon as the stream declares them, so that the
+     * depth view of the base view waits for the depth views of its access unit from its first view component on.
+     *
+     * @param sps a subset sequence parameter set of the stream
+     */
+    private void noteDepthExtension(H264Sps sps) {
+        var extension = sps.extension(true);
+        if (extension != null && viewExtension == null) {
+            selectViews(extension);
+        }
     }
 
     /**
@@ -1352,23 +1401,94 @@ public final class H264DecoderEngine {
      * @param nalRefIdc the {@code nal_ref_idc}
      */
     private void decodeDepthSlice(byte[] data, int offset, int length, int nalRefIdc) {
-        if (length < 4) {
+        if (length < 3 || length < 4 && (data[offset + 1] & 0x80) == 0) {
             noteDamage();
             recordError(new MediaException.Malformed("truncated NAL unit header extension"));
             return;
         }
         if ((data[offset + 1] & 0x80) != 0) {
-            if (!unsupportedDepthReported) {
-                unsupportedDepthReported = true;
-                // TODO: the texture and depth views of 3D-AVC streams (ITU-T H.264 Annex I)
-                recordError(new MediaException.Unsupported("h264 3d-avc",
-                        "the non-base views of a 3D-AVC stream"));
+            read3dHeader(data, offset + 1);
+            if (avc3dDepth) {
+                if (depthEngine != null) {
+                    depthEngine.decodeDepthUnit(data, offset, length, nalRefIdc);
+                }
+                return;
+            }
+            avc3dSlice = true;
+            try {
+                decodeUnit(data, offset, length, H264Nal.SLICE_EXTENSION, nalRefIdc);
+            } finally {
+                avc3dSlice = false;
             }
             return;
         }
         if (depthEngine != null) {
             depthEngine.decodeDepthUnit(data, offset, length, nalRefIdc);
         }
+    }
+
+    /**
+     * Returns why the 3D-AVC texture coding tools of a slice cannot be decoded, or {@code null} when they can.
+     *
+     * @param slice the slice header of a non-base texture view that may use a tool
+     * @param sps the active sequence parameter set
+     * @param pps the active picture parameter set
+     * @return the reason, or {@code null}
+     */
+    private String avc3dUnsupported(H264SliceHeader slice, H264Sps sps, H264Pps pps) {
+        if (sps.profileIdc != 139) {
+            return null;
+        }
+        if (slice.fieldPic || sps.mbAdaptiveFrameField) {
+            // TODO: the 3D-AVC texture coding tools on field pictures and MBAFF frames, which no conformance
+            //  bitstream of ITU-T H.264.1 (02/2016) exercises
+            return "the 3D-AVC texture coding tools on field pictures and MBAFF frames";
+        }
+        if (sps.bitDepthLuma > 8 || sps.bitDepthChroma > 8 || sps.chromaFormatIdc != 1) {
+            return "the 3D-AVC texture coding tools above 8 bits or outside 4:2:0";
+        }
+        if (!pps.cabac && (slice.sliceVsp || slice.sliceType == H264SliceHeader.P
+                && avc3dContext.tools != null && avc3dContext.tools.adaptiveLuminance)) {
+            // TODO: view synthesis prediction and adaptive luminance compensation in CAVLC slices, whose syntax
+            //  no reference decoder implements (3DV-ATM 14.0 reads their flags with CABAC) and no conformance
+            //  bitstream exercises
+            return "view synthesis prediction and adaptive luminance compensation in CAVLC slices";
+        }
+        return null;
+    }
+
+    /**
+     * Returns whether a 3D-AVC texture slice may use a coding tool of ITU-T H.264 I.8.2: depth-based motion
+     * vector prediction, view synthesis prediction, adaptive luminance compensation or run-length skip coding.
+     *
+     * @param slice the parsed header of a 3D-AVC texture slice of a non-base view
+     * @return whether the slice may use one of the tools
+     */
+    private boolean avc3dTools(H264SliceHeader slice) {
+        var tools = avc3dContext.tools;
+        var luminance = tools != null && tools.adaptiveLuminance && slice.sliceType == H264SliceHeader.P;
+        var runLength = tools != null && tools.rleSkip && slice.sliceType == H264SliceHeader.B;
+        return slice.dmvp || slice.sliceVsp || luminance || runLength;
+    }
+
+    /**
+     * Reads a {@code nal_unit_header_3davc_extension()} (ITU-T H.264 I.7.3.1.1) into the {@code ext} fields
+     * and {@link #avc3dDepth}.
+     *
+     * @implNote This implementation reads the 8-bit field as the {@code view_id}, as the 3D-AVC conformance
+     * bitstreams of ITU-T H.264.1 (02/2016) and 3DV-ATM code it, where ITU-T H.264 (08/2024) calls it
+     * {@code view_idx}, a view order index.
+     * @param data the buffer holding the two bytes of the extension
+     * @param offset the index of the first byte, whose top bit is {@code avc_3d_extension_flag}
+     */
+    private void read3dHeader(byte[] data, int offset) {
+        var bits = (data[offset] & 0xFF) << 8 | data[offset + 1] & 0xFF;
+        extViewId = bits >> 7 & 0xFF;
+        avc3dDepth = (bits >> 6 & 1) != 0;
+        extNonIdr = (bits >> 5 & 1) != 0;
+        extTemporalId = bits >> 2 & 7;
+        extAnchor = (bits >> 1 & 1) != 0;
+        extInterView = (bits & 1) != 0;
     }
 
     /**
@@ -1382,28 +1502,40 @@ public final class H264DecoderEngine {
      * @param nalRefIdc the {@code nal_ref_idc}
      */
     private void decodeDepthUnit(byte[] data, int offset, int length, int nalRefIdc) {
-        readMvcHeader(data, offset + 1);
+        var threeDimensional = (data[offset + 1] & 0x80) != 0;
+        if (threeDimensional) {
+            read3dHeader(data, offset + 1);
+        } else {
+            readMvcHeader(data, offset + 1);
+        }
         var baseViewId = -1;
         for (var sps : subsetSpsTable) {
-            if (sps != null && sps.mvc != null && sps.mvc.depth) {
-                baseViewId = sps.mvc.viewIdOf(0);
+            var extension = sps == null ? null : sps.extension(true);
+            if (extension != null) {
+                baseViewId = extension.viewIdOf(0);
                 break;
             }
         }
         if (baseViewId < 0) {
             return;
         }
-        if (extViewId != baseViewId) {
-            decodeUnit(data, offset, length, H264Nal.SLICE_EXTENSION, nalRefIdc);
-            return;
+        avc3dSlice = threeDimensional;
+        try {
+            if (extViewId != baseViewId) {
+                decodeUnit(data, offset, length, H264Nal.SLICE_EXTENSION, nalRefIdc);
+                return;
+            }
+            prefixPending = true;
+            prefixNonIdr = extNonIdr;
+            prefixViewId = extViewId;
+            prefixTemporalId = extTemporalId;
+            prefixAnchor = extAnchor;
+            prefixInterView = extInterView;
+            var skip = threeDimensional ? 2 : 3;
+            decodeUnit(data, offset + skip, length - skip, extNonIdr ? H264Nal.SLICE : H264Nal.IDR_SLICE, nalRefIdc);
+        } finally {
+            avc3dSlice = false;
         }
-        prefixPending = true;
-        prefixNonIdr = extNonIdr;
-        prefixViewId = extViewId;
-        prefixTemporalId = extTemporalId;
-        prefixAnchor = extAnchor;
-        prefixInterView = extInterView;
-        decodeUnit(data, offset + 3, length - 3, extNonIdr ? H264Nal.SLICE : H264Nal.IDR_SLICE, nalRefIdc);
     }
 
     /**
@@ -1450,15 +1582,15 @@ public final class H264DecoderEngine {
                 recordError(unsupported);
             }
         }
-        var scalable = svc != null && (type == H264Nal.SLICE || type == H264Nal.IDR_SLICE
+        var scalable = svc != null && !avc3dSlice && (type == H264Nal.SLICE || type == H264Nal.IDR_SLICE
                 || (type == H264Nal.SLICE_EXTENSION && length > 1 && (data[offset + 1] & 0x80) != 0));
         var prefixed = prefixPending && (type == H264Nal.SLICE || type == H264Nal.IDR_SLICE);
         prefixPending = false;
         switch (type) {
             case H264Nal.SLICE, H264Nal.IDR_SLICE, H264Nal.SPS, H264Nal.PPS, H264Nal.SEI, H264Nal.SLICE_PARTITION_A,
                  H264Nal.SLICE_PARTITION_B, H264Nal.SLICE_PARTITION_C, H264Nal.SPS_EXTENSION, H264Nal.SUBSET_SPS,
-                 H264Nal.SLICE_EXTENSION -> {
-                var headerBytes = type == H264Nal.SLICE_EXTENSION ? 4 : 1;
+                 H264Nal.SLICE_EXTENSION, H264Nal.DEPTH_PARAMETER_SET -> {
+                var headerBytes = type == H264Nal.SLICE_EXTENSION ? (avc3dSlice ? 3 : 4) : 1;
                 if (length < headerBytes) {
                     noteDamage();
                     recordError(new MediaException.Malformed("truncated NAL unit header extension"));
@@ -1467,10 +1599,12 @@ public final class H264DecoderEngine {
                 if (scalable) {
                     svcPrefixPending &= type == H264Nal.SLICE || type == H264Nal.IDR_SLICE;
                 } else if (type == H264Nal.SLICE_EXTENSION) {
-                    if ((data[offset + 1] & 0x80) != 0) {
-                        return;
+                    if (!avc3dSlice) {
+                        if ((data[offset + 1] & 0x80) != 0) {
+                            return;
+                        }
+                        readMvcHeader(data, offset + 1);
                     }
-                    readMvcHeader(data, offset + 1);
                     if (!viewsRequested) {
                         return;
                     }
@@ -1492,6 +1626,7 @@ public final class H264DecoderEngine {
                         case H264Nal.SEI -> handleSei(size);
                         case H264Nal.SPS_EXTENSION -> handleSpsExtension(size);
                         case H264Nal.SUBSET_SPS -> handleSubsetSps(size);
+                        case H264Nal.DEPTH_PARAMETER_SET -> avc3dContext.parseDepthParameterSet(rbsp, size);
                         case H264Nal.SLICE_PARTITION_B, H264Nal.SLICE_PARTITION_C -> handlePartition(size, type);
                         default -> {
                             if (scalable) {
@@ -1568,13 +1703,517 @@ public final class H264DecoderEngine {
         if (sps.svc != null) {
             svcAvailable = true;
         }
+        avc3dContext.noteSubsetSps(sps);
         var previous = subsetSpsTable[sps.id];
         if (previous != null && Arrays.equals(previous.raw, sps.raw)) {
             return;
         }
         subsetSpsTable[sps.id] = sps;
-        if (viewsRequested && sps.mvc != null && sps.mvc.depth == depth && viewExtension == null) {
-            selectViews(sps.mvc);
+        if (viewsRequested && sps.extension(depth) != null && viewExtension == null) {
+            selectViews(sps.extension(depth));
+        }
+        if (!depth && !auxiliary && sps.profileIdc == 139 && sps.avc3d != null) {
+            startToolDepth();
+        }
+        if (depthEngine != null) {
+            depthEngine.noteDepthExtension(sps);
+        }
+    }
+
+    /**
+     * Makes the depth engine decode the depth views of every texture view decoded, starting one that outputs
+     * nothing when the depth views are not output, once views other than the base view are decoded: the coding
+     * tools of 3D-AVC texture views sample the depth of their access unit.
+     */
+    private void startToolDepth() {
+        if (!multiview || viewExtension == null) {
+            return;
+        }
+        var count = 0;
+        for (var decoded : decodedViews) {
+            count += decoded ? 1 : 0;
+        }
+        if (count < 2) {
+            return;
+        }
+        var ids = new int[count];
+        var next = 0;
+        for (var i = 0; i < decodedViews.length && i < viewExtension.views(); i++) {
+            if (decodedViews[i]) {
+                ids[next++] = viewExtension.viewIdOf(i);
+            }
+        }
+        if (depthEngine == null) {
+            var engine = new H264DecoderEngine(limits, frame -> { }, threads, this, true);
+            engine.setLowDelay(lowDelay);
+            engine.setViews(false, new int[]{-1});
+            engine.maxTemporalId = maxTemporalId;
+            depthEngine = engine;
+            for (var other : subsetSpsTable) {
+                if (other != null) {
+                    engine.noteDepthExtension(other);
+                }
+            }
+        }
+        var engine = depthEngine;
+        if (!Arrays.equals(engine.toolViewIds, ids)) {
+            engine.toolViewIds = ids;
+            if (engine.viewExtension != null) {
+                engine.selectViews(engine.viewExtension);
+            }
+        }
+    }
+
+    /**
+     * Returns the decoded depth view component of a view in the current access unit, for the 3D-AVC texture
+     * coding tools: the picture of the view with a frame number and picture order count, finishing the picture
+     * being received first when it is that one, and waiting until it is decoded.
+     *
+     * @param viewId the {@code view_id}
+     * @param frameNum the {@code frame_num}
+     * @param poc the picture order count
+     * @return the frame, or {@code null} when no such depth view component was decoded
+     */
+    private DecoderFrame toolDepth(int viewId, int frameNum, int poc) {
+        if (current != null && current.viewId == viewId && current.frameNum == frameNum && current.poc == poc) {
+            finishPicture();
+        }
+        DecoderFrame found = null;
+        for (var state : views) {
+            if (state == null) {
+                continue;
+            }
+            var candidate = state.auFrame;
+            if (candidate != null && candidate.viewId == viewId && candidate.frameNum == frameNum
+                    && candidate.poc == poc && candidate.fields == DecoderFrame.FRAME) {
+                found = candidate;
+                break;
+            }
+            for (var frame : state.dpb) {
+                if (frame.viewId == viewId && frame.frameNum == frameNum && frame.poc == poc
+                        && frame.fields == DecoderFrame.FRAME) {
+                    found = frame;
+                    break;
+                }
+            }
+        }
+        if (found != null && parallel) {
+            awaitFrame(found);
+        }
+        return found;
+    }
+
+    /**
+     * Prepares the 3D-AVC state of a texture slice once its reference picture lists are built: the tools it
+     * uses, its inter-view references, the depth it samples and its disparity tables.
+     *
+     * @param slice the slice header
+     * @return the state, or {@code null} outside the texture views of 3D-AVC streams
+     */
+    private Avc3dTexture prepareAvc3d(H264SliceHeader slice) {
+        if (!avc3dContext.active || depth) {
+            return null;
+        }
+        var sps = view.activeSps;
+        if (view == baseView || !slice.avc3d || sps.profileIdc != 139) {
+            return Avc3dTexture.RECORD;
+        }
+        var tools = avc3dContext.tools;
+        var alc = tools != null && tools.adaptiveLuminance && slice.sliceType == H264SliceHeader.P;
+        var rle = tools != null && tools.rleSkip && slice.sliceType == H264SliceHeader.B;
+        if (!slice.dmvp && !slice.sliceVsp && !alc && !rle) {
+            return Avc3dTexture.RECORD;
+        }
+        var views = sps.extension(false);
+        var t = new Avc3dTexture();
+        t.coding = true;
+        t.viewId = view.viewId;
+        t.baseViewId = views.viewIdOf(0);
+        t.dmvp = slice.dmvp;
+        t.vsp = slice.sliceVsp;
+        t.alc = alc;
+        t.rle = rle;
+        var listCount = slice.sliceType == H264SliceHeader.B ? 2 : 1;
+        for (var list = 0; list < listCount; list++) {
+            var baseFound = false;
+            for (var i = 0; i < slice.numRefIdxActive[list]; i++) {
+                var entry = lists[list][i];
+                var interView = entry.poc == currentPoc && entry.viewId != t.viewId;
+                t.hasInterviewRef |= interView;
+                if (interView && t.vspRef[list] < 0) {
+                    t.vspRef[list] = i;
+                }
+                if (list == 0 && interView && t.ivRef < 0 && slice.sliceType == H264SliceHeader.P) {
+                    t.ivRef = i;
+                }
+                if (list == 0 && t.interViewMotion == null && entry.poc == currentPoc
+                        && entry.viewId == t.baseViewId) {
+                    t.interViewMotion = entry;
+                }
+                if (!baseFound && entry.voIdx == 0) {
+                    t.skipMotion = entry;
+                    baseFound = true;
+                }
+            }
+        }
+        t.vspRefExist = t.vsp && (t.vspRef[0] >= 0 || t.vspRef[1] >= 0);
+        var dual = depthEngine == null ? null : depthEngine.toolDepth(t.viewId, slice.frameNum, currentPoc);
+        t.textureFirst = dual == null;
+        if (!t.textureFirst) {
+            t.skipMotion = null;
+        }
+        var dps = avc3dContext.activeDps;
+        var acquisition = dps != null ? dps.acquisition() : avc3dContext.sequence;
+        var precision = sps.avc3d.disparityPrecision;
+        var lut = avc3dContext.lastAdaptiveNdr ? avc3dContext.depthOutputLut(null) : null;
+        var voIdx = views.voIdxOf(t.viewId);
+        t.forward = disparityTable(avc3dContext, acquisition, views, voIdx, slice.anchor, 0, precision, lut);
+        t.backward = disparityTable(avc3dContext, acquisition, views, voIdx, slice.anchor, 1, precision, lut);
+        DecoderFrame source = null;
+        var sourceView = t.viewId;
+        if (!t.textureFirst) {
+            if (t.dmvp || t.vsp) {
+                source = dual;
+            }
+        } else if (t.vsp) {
+            var reference = synthesisReference(slice, views, voIdx);
+            if (reference >= 0) {
+                source = depthEngine.toolDepth(reference, slice.frameNum, currentPoc);
+                sourceView = reference;
+            }
+        }
+        if (source != null) {
+            copyDepth(t, source, sourceView);
+        }
+        return t;
+    }
+
+    /**
+     * Selects the depth parameter set a 3D-AVC slice names and, for the first slice of a picture, records the
+     * picture order count and, for a depth picture, the depth range of its camera.
+     *
+     * @implNote This implementation updates, when a slice selects another depth parameter set, the depth ranges of
+     * the depth pictures whose picture order count is that of the picture started before the slice's, as 3DV-ATM
+     * 14.0 does (it compares with the picture order count before deriving the slice's), which the 3D-AVC
+     * bitstreams with depth-range-based weighted prediction it codes rely on.
+     * @param slice the slice header
+     * @throws MediaException.Malformed if the slice names a missing depth parameter set
+     */
+    private void startAvc3dSlice(H264SliceHeader slice) {
+        var first = avc3dPicture != current.decodeIndex;
+        avc3dPicture = current.decodeIndex;
+        var activationPoc = first ? avc3dContext.currentPoc : currentPoc;
+        var extension = slice.pps.sps.avc3d;
+        if (slice.avc3d && extension != null && extension.acquisitionIdc != 1
+                && (slice.dmvp || slice.sliceVsp || slice.depthRangeWeights)) {
+            if (slice.dpsId == 0) {
+                avc3dContext.activeDps = null;
+            } else {
+                var set = avc3dContext.depthParameterSets[slice.dpsId];
+                if (set == null) {
+                    throw new MediaException.Malformed("missing depth parameter set " + slice.dpsId);
+                }
+                if (set != avc3dContext.activeDps) {
+                    avc3dContext.activeDps = set;
+                    var engine = depth ? this : depthEngine;
+                    if (engine != null) {
+                        engine.refreshDepthRanges(activationPoc);
+                    }
+                }
+            }
+        }
+        if (first) {
+            avc3dContext.currentPoc = currentPoc;
+            if (depth) {
+                current.depthNear = cameraDepth(true, current.viewId);
+                current.depthFar = cameraDepth(false, current.viewId);
+            }
+        }
+    }
+
+    /**
+     * Gives the depth pictures with a picture order count the depth ranges of the active camera parameters.
+     *
+     * @param poc the picture order count
+     */
+    private void refreshDepthRanges(int poc) {
+        for (var state : views) {
+            if (state == null) {
+                continue;
+            }
+            for (var frame : state.dpb) {
+                refreshDepthRange(frame, poc);
+            }
+            if (state.auFrame != null) {
+                refreshDepthRange(state.auFrame, poc);
+            }
+        }
+        if (current != null) {
+            refreshDepthRange(current, poc);
+        }
+    }
+
+    /**
+     * Gives a depth picture with a picture order count the depth range of the active camera parameters.
+     *
+     * @param frame the depth picture
+     * @param poc the picture order count
+     */
+    private void refreshDepthRange(DecoderFrame frame, int poc) {
+        if (frame.poc == poc) {
+            frame.depthNear = cameraDepth(true, frame.viewId);
+            frame.depthFar = cameraDepth(false, frame.viewId);
+        }
+    }
+
+    /**
+     * Returns a depth range bound of the camera of a view in the active camera parameters: those of the active
+     * depth parameter set, else those of the sequence.
+     *
+     * @param near whether the nearest depth is returned, the farthest otherwise
+     * @param viewId the {@code view_id}
+     * @return the bound, 0 without camera parameters for the view
+     */
+    private double cameraDepth(boolean near, int viewId) {
+        var dps = avc3dContext.activeDps;
+        var acquisition = dps != null ? dps.acquisition() : avc3dContext.sequence;
+        var tools = avc3dContext.tools;
+        var order = tools == null ? null : tools.cameraOrder;
+        return cameraDepth(near ? acquisition.near : acquisition.far, order, viewId);
+    }
+
+    /**
+     * Fills the weight table of a depth slice with depth-range-based weighted prediction with the weights that map
+     * the depth ranges of its reference pictures onto the current one.
+     *
+     * @param slice the header of a 3D-AVC P or B depth slice with depth-range-based weighted prediction, its
+     * reference picture lists built
+     * @throws MediaException.Malformed if the camera parameters give an empty depth range
+     */
+    private void prepareDepthRange(H264SliceHeader slice) {
+        var nearCurrent = (int) current.depthNear;
+        var farCurrent = (int) current.depthFar;
+        var listCount = slice.sliceType == H264SliceHeader.B ? 2 : 1;
+        for (var list = 0; list < listCount; list++) {
+            for (var i = 0; i < slice.numRefIdxActive[list]; i++) {
+                var ref = lists[list][i];
+                var nearRef = (int) ref.depthNear;
+                var farRef = (int) ref.depthFar;
+                slice.lumaWeightFlag[list][i] = true;
+                slice.lumaWeight[list][i] = depthRangeWeight(nearCurrent, farCurrent, nearRef, farRef);
+                slice.lumaOffset[list][i] = depthRangeOffset(nearCurrent, farCurrent, farRef);
+                slice.chromaWeightFlag[list][i] = false;
+            }
+        }
+        slice.lumaLog2WeightDenom = DEPTH_RANGE_DENOM;
+        slice.chromaLog2WeightDenom = DEPTH_RANGE_DENOM;
+        slice.hasWeightTable = true;
+    }
+
+    /**
+     * The {@code luma_log2_weight_denom} of depth-range-based weighted prediction.
+     */
+    private static final int DEPTH_RANGE_DENOM = 5;
+
+    /**
+     * Returns the depth range bound of the camera of a view: the reconstructed value of the camera parameter
+     * element at the camera's position in the camera order.
+     *
+     * @param element the near or far depth parameters
+     * @param order the {@code view_id} of each camera position, or {@code null} without camera parameters
+     * @param viewId the {@code view_id}
+     * @return the bound, 0 when the camera order lists no such view
+     */
+    private static double cameraDepth(H264Avc3dExtension.Element element, int[] order, int viewId) {
+        if (order == null) {
+            return 0;
+        }
+        for (var k = 0; k < order.length && k < element.value.length; k++) {
+            if (order[k] == viewId) {
+                return element.value[k];
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * Returns the fixed-point quotient {@code numerator / denominator} with 8 fractional bits of
+     * depth-range-based weighted prediction.
+     *
+     * @param numerator the dividend
+     * @param denominator the divisor, not 0
+     * @return the quotient
+     */
+    private static int depthRatio(int numerator, int denominator) {
+        var x = (numerator + (denominator >> 1)) / denominator;
+        var sign = numerator - x * denominator < 0 ? -1 : 1;
+        return (x << 8) + (((numerator - x * denominator) << 8) + sign * (denominator >> 1)) / denominator;
+    }
+
+    /**
+     * Returns the weight of depth-range-based weighted prediction that maps depth samples of a reference
+     * picture's depth range onto the current picture's.
+     *
+     * @param nearCurrent the nearest depth of the current picture
+     * @param farCurrent the farthest depth of the current picture
+     * @param nearRef the nearest depth of the reference picture
+     * @param farRef the farthest depth of the reference picture
+     * @return the weight, from -127 to 128, for a denominator of 32
+     * @throws MediaException.Malformed if a depth range is empty
+     */
+    private static int depthRangeWeight(int nearCurrent, int farCurrent, int nearRef, int farRef) {
+        if (farRef == 0 || farCurrent == nearCurrent || nearRef == 0) {
+            throw new MediaException.Malformed("empty depth range for depth-range-based weighted prediction");
+        }
+        var a = depthRatio(farRef - nearRef, farRef);
+        var b = depthRatio(farCurrent, farCurrent - nearCurrent);
+        var c = depthRatio(nearCurrent, nearRef);
+        var shift = 24 - DEPTH_RANGE_DENOM;
+        var weight = (short) ((a * b * c + (1 << (shift - 1))) >> shift);
+        return Math.clamp(weight, -127, 128);
+    }
+
+    /**
+     * Returns the offset of depth-range-based weighted prediction.
+     *
+     * @param nearCurrent the nearest depth of the current picture
+     * @param farCurrent the farthest depth of the current picture
+     * @param farRef the farthest depth of the reference picture
+     * @return the offset, from -127 to 128
+     */
+    private static int depthRangeOffset(int nearCurrent, int farCurrent, int farRef) {
+        var a = ((nearCurrent << 8) + (farRef >> 1)) / farRef;
+        var numerator = farCurrent - farRef;
+        var denominator = farCurrent - nearCurrent;
+        var sign = numerator < 0 ? -1 : 1;
+        var x = (numerator + sign * (denominator >> 1)) / denominator;
+        sign = numerator - x * denominator < 0 ? -1 : 1;
+        var b = (x << 8) + (((numerator - x * denominator) << 8) + sign * (denominator >> 1)) / denominator;
+        var offset = (short) ((a * b + (1 << 7)) >> 8);
+        return Math.clamp(offset, -127, 128);
+    }
+
+    /**
+     * Returns the disparity table from a view to the first inter-view reference view of one list of its view
+     * components: the luma disparity in quarter samples of each depth sample value, through the camera
+     * parameters and the inverse non-linear depth representation.
+     *
+     * @param context the 3D-AVC state, which keeps the tables computed last
+     * @param acquisition the camera parameters
+     * @param views the view extension of the texture views
+     * @param voIdx the view order index of the view
+     * @param anchor whether the view component is an anchor view component
+     * @param list the reference picture list whose first inter-view reference view the table maps to
+     * @param precision the disparity parameter precision
+     * @param lut the inverse non-linear depth representation, or {@code null} for none
+     * @return the table, or {@code null} when the list names no inter-view reference view
+     */
+    private static int[] disparityTable(Avc3dContext context, H264Avc3dExtension.Acquisition acquisition,
+                                        H264MvcExtension views,
+                                        int voIdx, boolean anchor, int list, int precision, int[] lut) {
+        if (voIdx < 0) {
+            return null;
+        }
+        var references = views.references(voIdx, anchor, list);
+        if (references.length == 0) {
+            return null;
+        }
+        var refVoIdx = views.voIdxOf(references[0]);
+        if (refVoIdx < 0) {
+            return null;
+        }
+        var scale = acquisition.at(acquisition.disparityScale, voIdx, refVoIdx);
+        var offset = acquisition.at(acquisition.disparityOffset, voIdx, refVoIdx);
+        return context.disparityTable(scale, offset, precision, lut);
+    }
+
+    /**
+     * Returns the view whose depth refines the disparities of a texture-first view with view synthesis
+     * prediction: among the views whose texture and depth view components of the access unit were decoded, the
+     * nearest one on the side of positive disparity scale, else the nearest on the negative side.
+     *
+     * @param slice the slice header
+     * @param views the view extension of the texture views
+     * @param voIdx the view order index of the slice's view
+     * @return the {@code view_id}, or -1 when no view qualifies
+     */
+    private int synthesisReference(H264SliceHeader slice, H264MvcExtension views, int voIdx) {
+        var dps = slice.dpsId == 0 ? null : avc3dContext.depthParameterSets[slice.dpsId];
+        var acquisition = dps != null ? dps.acquisition() : avc3dContext.sequence;
+        var left = -1;
+        var right = -1;
+        var leftDistance = Long.MAX_VALUE;
+        var rightDistance = Long.MAX_VALUE;
+        for (var i = 0; i < views.views(); i++) {
+            if (i == voIdx || i >= this.views.length || this.views[i] == null) {
+                continue;
+            }
+            var state = this.views[i];
+            if (state.auFrame == null || state.auFrameKey != auKey || state.auFrame == current) {
+                continue;
+            }
+            var id = views.viewIdOf(i);
+            if (depthEngine.toolDepth(id, slice.frameNum, currentPoc) == null) {
+                continue;
+            }
+            var scale = acquisition.at(acquisition.disparityScale, voIdx, i);
+            var distance = Math.abs((long) scale);
+            if (scale > 0 && distance < leftDistance) {
+                leftDistance = distance;
+                left = id;
+            }
+            if (scale < 0 && distance < rightDistance) {
+                rightDistance = distance;
+                right = id;
+            }
+        }
+        return left >= 0 ? left : right;
+    }
+
+    /**
+     * Copies the luma samples of a depth picture into the current texture frame for the 3D-AVC texture coding
+     * tools of a slice, once per picture, and records the depth sampling geometry.
+     *
+     * @param t the slice state
+     * @param source the depth picture, decoded
+     * @param sourceView the {@code view_id} of {@code source}
+     * @throws MediaException.Malformed if the depth picture has more than 8 bits per sample, which profile 139
+     * does not allow
+     */
+    private void copyDepth(Avc3dTexture t, DecoderFrame source, int sourceView) {
+        if (source.luma == null) {
+            throw new MediaException.Malformed("3D-AVC depth view above 8 bits sampled by the texture coding tools");
+        }
+        var depthSps = source.sps;
+        var width = source.mbWidth * 16;
+        var height = source.mbHeight * 16;
+        var frame = current;
+        if (frame.avc3dDepthIndex != source.decodeIndex || frame.avc3dDepth == null) {
+            if (frame.avc3dDepth == null || frame.avc3dDepth.length < width * height) {
+                frame.avc3dDepth = new byte[width * height];
+            }
+            for (var y = 0; y < height; y++) {
+                System.arraycopy(source.luma, source.lumaOrigin + y * source.lumaStride, frame.avc3dDepth, y * width,
+                        width);
+            }
+            frame.avc3dDepthIndex = source.decodeIndex;
+        }
+        t.depth = frame.avc3dDepth;
+        t.depthStride = width;
+        t.cropLeft = depthSps.cropLeft;
+        t.cropTop = depthSps.cropTop;
+        t.cropRight = width - 1 - depthSps.cropRight;
+        t.cropBottom = height - 1 - depthSps.cropBottom;
+        var geometry = depthSps.avc3d;
+        if (geometry != null) {
+            t.horMult = geometry.depthHorMult;
+            t.verMult = geometry.depthVerMult;
+            t.horRsh = geometry.depthHorRsh;
+            t.verRsh = geometry.depthVerRsh;
+            t.gridX = geometry.gridPosX[t.viewId];
+            t.gridY = geometry.gridPosY[t.viewId];
+            t.depthGridX = geometry.gridPosX[sourceView];
+            t.depthGridY = geometry.gridPosY[sourceView];
         }
     }
 
@@ -1881,8 +2520,8 @@ public final class H264DecoderEngine {
             baseView.viewId = slice.viewId;
             return baseView;
         }
-        var extension = slice.sps.mvc;
-        if (extension == null || extension.depth != depth) {
+        var extension = slice.sps.extension(depth);
+        if (extension == null) {
             if (!unsupportedViewsReported) {
                 unsupportedViewsReported = true;
                 throw new MediaException.Unsupported("h264 mvcd", "the non-base views of a profile "
@@ -1943,6 +2582,13 @@ public final class H264DecoderEngine {
             targets[1] = true;
         }
         targets[0] = true;
+        if (toolViewIds != null) {
+            for (var i = 0; i < count; i++) {
+                for (var id : toolViewIds) {
+                    targets[i] |= id == extension.viewIdOf(i);
+                }
+            }
+        }
         decodedViews = extension.closure(targets);
         var outputs = 0;
         for (var output : outputViews) {
@@ -2042,9 +2688,12 @@ public final class H264DecoderEngine {
         var parsed = ppsSource[id] == raw ? ppsTable[id] : null;
         var spsId = parsed != null ? parsed.spsId : (H264Pps.peekIds(padded(raw), 0, raw.length) & 0xFF);
         var sps = depth ? subsetSpsTable[spsId] : spsTable[spsId];
-        if (sps == null || (depth && (sps.mvc == null || !sps.mvc.depth))) {
+        if (sps == null || (depth && sps.extension(true) == null)) {
             throw new MediaException.Malformed("missing " + (depth ? "depth " : "") + "sequence parameter set "
                     + spsId);
+        }
+        if (depth) {
+            sps = sps.depthVariant();
         }
         if (auxiliary) {
             sps = auxiliarySps(sps);
@@ -2075,6 +2724,9 @@ public final class H264DecoderEngine {
         var sps = subsetSpsTable[spsId];
         if (sps == null) {
             throw new MediaException.Malformed("missing subset sequence parameter set " + spsId);
+        }
+        if (depth) {
+            sps = sps.depthVariant();
         }
         if (parsed == null || parsed.sps != sps) {
             parsed = H264Pps.parse(padded(raw), 0, raw.length, sps);
@@ -2320,10 +2972,30 @@ public final class H264DecoderEngine {
             throw new MediaException.Unsupported("h264 cabac data partitioning",
                     "slice data partitioning with CABAC entropy coding belongs to no profile");
         }
-        if (extension) {
+        if (avc3dSlice) {
+            var views = sps.extension(depth);
+            var voIdx = views == null ? -1 : views.voIdxOf(extViewId);
+            if (voIdx < 0) {
+                return;
+            }
+            slice.parseRest3d(reader, pps, nalType, nalRefIdc, !extNonIdr, depth, voIdx, avc3dContext.tools,
+                    avc3dContext.history);
+        } else if (extension) {
             slice.parseRest(reader, pps, nalType, nalRefIdc, !extNonIdr);
         } else {
             slice.parseRest(reader, pps, nalType, nalRefIdc);
+        }
+        slice.depthFlag = depth;
+        if (depth && slice.avc3d) {
+            avc3dContext.lastAdaptiveNdr = slice.adaptiveDepthRepresentation;
+        }
+        if (avc3dContext.active) {
+            var views = slice.mvc ? sps.extension(depth) : null;
+            slice.voIdx = slice.mvc ? (views == null ? -1 : views.voIdxOf(extViewId)) : 0;
+            if (slice.voIdx >= 0 && avc3dContext.history.first(slice.voIdx, depth) == null
+                    || slice.voIdx == 0 && !depth && slice.firstMbInSlice == 0) {
+                avc3dContext.history.record(slice);
+            }
         }
         slice.voIdx = 0;
         slice.viewId = extViewId;
@@ -2336,8 +3008,19 @@ public final class H264DecoderEngine {
             return;
         }
         var target = viewOf(slice);
-        if (target == null) {
+        if (target == null || target.avc3dDropped) {
             return;
+        }
+        if (slice.avc3d && !depth && target != baseView && avc3dTools(slice)) {
+            var reason = avc3dUnsupported(slice, sps, pps);
+            if (reason != null) {
+                target.avc3dDropped = true;
+                if (!avc3dToolsReported) {
+                    avc3dToolsReported = true;
+                    recordError(new MediaException.Unsupported("h264 3d-avc", reason));
+                }
+                return;
+            }
         }
         if (target != baseView && !multiview) {
             return;
@@ -2749,7 +3432,8 @@ public final class H264DecoderEngine {
             frame.sps = sps;
             frame.allIntra = true;
             frame.packet = packetSerial;
-            frame.depthLut = depthLut;
+            frame.depthLut = depth && slice.avc3d && slice.adaptiveDepthRepresentation
+                    ? avc3dContext.depthOutputLut(depthLut) : depthLut;
             if (view == baseView) {
                 frame.pairKey = auxiliary ? pendingPairKey : frame.decodeIndex;
                 var extension = spsExtensions[sps.id];
@@ -3176,13 +3860,23 @@ public final class H264DecoderEngine {
      */
     private void pool(DecoderFrame frame) {
         var sps = view.activeSps;
-        if (frame != grayFrame && frame.mbWidth == sps.widthInMbs
-                && frame.mbHeight == sps.frameHeightInMbs && frame.chromaFormat == sps.chromaFormatIdc
-                && (frame.planes != null) == sps.separateColorPlane && frame.bitDepthLuma == sps.bitDepthLuma
-                && frame.bitDepthChroma == (sps.separateColorPlane ? sps.bitDepthLuma : sps.bitDepthChroma)
-                && pool.size() < view.dpbSize + spareFrames()) {
+        if (frame != grayFrame && fits(frame, sps) && pool.size() < view.dpbSize + spareFrames()) {
             pool.add(frame);
         }
+    }
+
+    /**
+     * Returns whether a frame has the picture size and sample format of a sequence parameter set.
+     *
+     * @param frame a decoded or pooled frame
+     * @param sps the sequence parameter set
+     * @return whether the frame can hold the pictures of {@code sps}
+     */
+    private static boolean fits(DecoderFrame frame, H264Sps sps) {
+        return frame.mbWidth == sps.widthInMbs && frame.mbHeight == sps.frameHeightInMbs
+                && frame.chromaFormat == sps.chromaFormatIdc && (frame.planes != null) == sps.separateColorPlane
+                && frame.bitDepthLuma == sps.bitDepthLuma
+                && frame.bitDepthChroma == (sps.separateColorPlane ? sps.bitDepthLuma : sps.bitDepthChroma);
     }
 
     /**
@@ -3401,6 +4095,13 @@ public final class H264DecoderEngine {
         if (!slice.isIntra()) {
             buildLists(slice);
         }
+        if (avc3dContext.active) {
+            startAvc3dSlice(slice);
+        }
+        var avc3dState = prepareAvc3d(slice);
+        if (depth && avc3dContext.active && slice.avc3d && slice.depthRangeWeights && !slice.isIntra()) {
+            prepareDepthRange(slice);
+        }
         if (packetIncomplete) {
             current.damaged = true;
         }
@@ -3415,6 +4116,7 @@ public final class H264DecoderEngine {
             var copy = SliceTask.copyOf(slice, rbsp, size, lists, listStructures, sliceNum, map);
             copy.captureReferences(currentPoc, current.topPoc, current.bottomPoc, slice.numRefIdxActive,
                 current.voIdx);
+            copy.avc3d = avc3dState;
             currentJob.add(copy);
             if (partitioned) {
                 pendingPartitions.add(copy);
@@ -3425,10 +4127,12 @@ public final class H264DecoderEngine {
             var copy = SliceTask.copyOf(slice, rbsp, size, lists, listStructures, sliceNum, map);
             copy.captureReferences(currentPoc, current.topPoc, current.bottomPoc, slice.numRefIdxActive,
                 current.voIdx);
+            copy.avc3d = avc3dState;
             pendingPartitions.add(copy);
             return;
         }
         var task = inlineTask;
+        task.avc3d = avc3dState;
         task.captureReferences(currentPoc, current.topPoc, current.bottomPoc, slice.numRefIdxActive,
                 current.voIdx);
         task.rbsp = rbsp;
@@ -4728,7 +5432,9 @@ public final class H264DecoderEngine {
     /**
      * Returns the inter-view reference of the current access unit with a {@code view_id}: the
      * frame of that view's component of the access unit, when it was decoded and its
-     * {@code inter_view_flag} is 1.
+     * {@code inter_view_flag} is 1, and is neither the picture being decoded nor a picture of another size,
+     * which a damaged stream can name through the views or the picture size of another sequence parameter
+     * set.
      *
      * @param viewId the {@code view_id}
      * @return the frame, or {@code null} when there is no such reference
@@ -4739,11 +5445,14 @@ public final class H264DecoderEngine {
             return null;
         }
         var state = views[voIdx];
-        if (state.auFrameKey != auKey || !state.auInterView || state.auFrame == null) {
+        if (state.auFrameKey != auKey || !state.auInterView || state.auFrame == null || state.auFrame == current) {
             return null;
         }
         var frame = state.auFrame;
         if (currentStructure != DecoderFrame.FRAME && (frame.fields & currentStructure) == 0) {
+            return null;
+        }
+        if (frame.mbWidth != current.mbWidth || frame.mbHeight != current.mbHeight) {
             return null;
         }
         return viewExtension.mfcFormatIdc >= 0 ? processedReference(state, frame) : frame;
@@ -4913,13 +5622,14 @@ public final class H264DecoderEngine {
 
     /**
      * Returns the damaged mid-gray frame used in place of a reference that no decoded picture can
-     * stand in for.
+     * stand in for, in the format of the current view's sequence parameter set: the views of a damaged
+     * multiview stream can name sequence parameter sets of different picture sizes.
      *
      * @return the gray frame
      */
     private DecoderFrame grayFrame() {
-        if (grayFrame == null) {
-            var sps = view.activeSps;
+        var sps = view.activeSps;
+        if (grayFrame == null || !fits(grayFrame, sps)) {
             grayFrame = newFrame(sps);
             grayFrame.fillGray();
             grayFrame.damaged = true;
@@ -4956,6 +5666,12 @@ public final class H264DecoderEngine {
             this.voIdx = voIdx;
             this.viewId = viewId;
         }
+
+        /**
+         * Whether the view is a 3D-AVC texture view whose slices use a coding tool this decoder lacks, so that
+         * none of its view components is decoded from then on.
+         */
+        boolean avc3dDropped;
 
         /**
          * The sequence parameter set of the frames in the buffer.

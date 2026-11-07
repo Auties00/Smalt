@@ -43,10 +43,11 @@ public final class CabacReader {
     }
 
     /**
-     * The context states, indexed by {@code ctxIdx}: 1024 contexts of clause 9 and the seven of
-     * the scalable extension (ITU-T H.264 F.9.3).
+     * The context states, indexed by {@code ctxIdx}: 1024 contexts of clause 9, the seven of
+     * the scalable extension (ITU-T H.264 F.9.3) and the nineteen of the 3D-AVC texture coding
+     * tools from 1031 on.
      */
-    public final byte[] states = new byte[1031];
+    public final byte[] states = new byte[1050];
 
     /**
      * The buffer holding the slice data, followed by zero padding.

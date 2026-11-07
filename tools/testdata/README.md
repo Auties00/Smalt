@@ -749,6 +749,38 @@ decoded. Every reference decoder is ITU-T and ISO/IEC reference software, built 
 8.5 and JSVM 9.19.15 from the ITU-T JVT site, with `g++ -DMSYS_WIN32` and the library defines of their projects) and
 run as a black box.
 
+## H.264 multiview with depth and 3D-AVC conformance oracles
+
+The frame-compatible stereo (MFC, MFCD), multiview with depth (MVCD) and 3D-AVC streams of ITU-T H.264.1
+(02/2016) (archive sets `h264-MFC-2016`, `h264-MFCD-2016`, `h264-MVCD-2016` and `h264-3DAVC-2016` of
+`archives.tsv`) are checked by `H264DepthConformanceTest` and `H264Avc3dConformanceTest` of `smalt-mpeg` against
+the md5 file of each stream. Where that file is wrong, the pinned MD5 is the output of the 3DV-ATM 14.0 decoder
+of ITU-T H.264.2 (02/2016) (`ldecod -d decoder.cfg -p NormalizeDepth=0 -p PostDilation=0 -p InputFile=<stream>`,
+built from source with MinGW: the POSIX branch, `O_BINARY` and `-fcommon`), and the tests mark it: MVDIV-1 view 6
+and MVPCT-2 view 5 were made without the rule of ITU-T H.264 G.8.4 that makes `colZeroFlag` 0 for an inter-view
+reference (3DV-ATM patched to follow it), the md5 file of MVDDR-4 lists depth view 5 in place of depth view 4,
+the depth views of MVDCT-4 were hashed after the decoder's optional depth normalization and dilation
+(`NormalizeDepth=1`, `PostDilation=1`, non-normative output processing), and the md5 file of MVDCT-10 holds
+another decoding of view 4, texture and depth, than 3DV-ATM 14.0 produces. 3DV-ATM reproduces every other md5 of
+the 3D-AVC and MVCD suites, MVDDR-1_r2 and MVDDR-2_r2 (3D-AVC NAL units without the 3D-AVC tools) included.
+`H264Avc3dSyntaxTest` decodes `mpeg/src/test/resources/com/github/auties00/smalt/video/h264/avc3d/syntax.264`, which
+`python -I tools/testdata/h264-3davc/make-stream.py <stream> [<fuzz seed>]` writes from scratch (pinned in the
+`streams.tsv` beside it, and the seed of the `h264Layers` fuzz target): two views of 32x16 samples with a texture
+and a depth view each, I_PCM base view components and skipped other view components, every slice header prediction
+source and a depth parameter set with a non-linear depth representation, so every expected sample follows from
+the coded ones. 3DV-ATM stops on CAVLC 3D-AVC streams, so this stream has no reference decoding.
+`H264Avc3dEncodedTest` decodes the `atm-*.264` streams beside it, which `tools/testdata/h264-3davc/atm-streams.sh
+<3DV-ATM 14.0 tree> <work directory>` codes with the 3DV-ATM 14.0 encoder (built from source with MinGW, its
+user data SEI UUID made constant by `atm-encoder-fix.py`, so the bytes are reproducible) from the synthetic
+two-view sequences of `atm-inputs.py` (128x96 texture, 64x48 depth, rectangles moving at a disparity that follows
+their depth) and the configurations of `atm-configs.py`, pinned in the same `streams.tsv`: depth-range-based
+weighted prediction of P depth slices with a depth range per view and of P and B depth slices with a depth
+parameter set per access unit, depth-based motion vector prediction in CAVLC slices in depth-first and
+texture-first coding, and every texture tool of CABAC slices in texture-first coding. The expected MD5 of each
+view is that of the encoder's reconstruction, which the 3DV-ATM 14.0 decoder reproduces for the CABAC streams;
+the decoder stops on the CAVLC ones. `atm-tools-texture-first` and `atm-drwp-b` are also seeds of the
+`h264Layers` fuzz target.
+
 ## H.264 scalable vectors
 
 `H264SvcStreamsTest` of `smalt-mpeg` decodes six small scalable streams coded by the JSVM 9.19.15 reference

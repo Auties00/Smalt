@@ -58,7 +58,14 @@ import java.util.function.Consumer;
  * {@link H264DecoderOptions#outputViews()}); a frame-compatible stereo stream (MFC High) also
  * reconstructs its views at full resolution (see {@link H264DecoderOptions#enhancedResolution()}),
  * and a multiview stream with depth (Multiview Depth High and MFC Depth High of Annex H) also
- * outputs its depth views (see {@link H264DecoderOptions#depth()}). A scalable stream (the Scalable
+ * outputs its depth views (see {@link H264DecoderOptions#depth()}). A 3D-AVC stream (Enhanced Multiview Depth
+ * High of Annex I: 3D-AVC subset sequence parameter sets, depth parameter sets, slice header prediction, depth
+ * views at a reduced resolution and the non-linear depth representation, which output depth samples are
+ * converted from) decodes like a multiview stream with depth, its texture views with the 3D-AVC texture coding
+ * tools (depth-based motion vector prediction, view synthesis prediction, adaptive luminance compensation,
+ * run-length skip coding and the neighboring block disparity derivation) and its depth views with
+ * depth-range-based weighted prediction; the depth views the texture tools sample are decoded whether or not
+ * they are output. A scalable stream (the Scalable
  * Baseline, Scalable High and Scalable High Intra profiles of Annex F: coarse-grain and medium-grain
  * quality layers, dyadic and extended spatial layers with cropping and chroma phase shifts,
  * inter-layer intra, motion and residual prediction, key pictures with reference base pictures,
@@ -121,8 +128,10 @@ import java.util.function.Consumer;
  *
  * <p>Streams this decoder does not handle raise {@link MediaException.Unsupported} naming the
  * feature: {@code "h264 cabac data partitioning"} for slice data partitions of a CABAC picture
- * parameter set, which no profile allows; {@code "h264 3d-avc"} for the texture and depth views
- * beyond the base view of 3D-AVC streams (Enhanced Multiview Depth High, Annex I);
+ * parameter set, which no profile allows; {@code "h264 3d-avc"} for the texture views of a 3D-AVC
+ * stream whose slices use the 3D-AVC texture coding tools on field pictures or MBAFF frames, above 8 bits or
+ * outside 4:2:0, or view synthesis prediction or adaptive luminance compensation with CAVLC, which no reference
+ * decoder implements; such views are not decoded from their first such slice on;
  * {@code "h264 mvcd"} for the non-base view components of a multiview stream that refer to a
  * sequence parameter set the decoder cannot use for them; and {@code "h264 svc format"} for
  * scalable layers with samples other than 4:2:0 at 8 bits. Each of the last three is raised once,

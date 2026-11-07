@@ -172,6 +172,7 @@ final class MpegWorkloads {
                 file("h264-decode-t2", () -> h264Decode(2, false)),
                 file("h264-decode-film-grain-t2", () -> h264FilmGrainDecode(2)),
                 file("h264-svc-decode", MpegWorkloads::h264ScalableDecode),
+                file("h264-3davc-decode", MpegWorkloads::h264Avc3dDecode),
                 file("mpeg4-encode-asp-t2", () -> VideoStreams.encode("mpeg4-encode-asp-t2",
                         new Mpeg4Encoder(WIDTH, HEIGHT, mpeg4Options(true, 2)))),
                 file("mpeg4-encode-simple-t1", () -> VideoStreams.encode("mpeg4-encode-simple-t1",
@@ -624,6 +625,30 @@ final class MpegWorkloads {
             }
         }
         return TrainingWorkload.of("h264-svc-decode", () -> rounds.forEach(Runnable::run));
+    }
+
+    /**
+     * Returns a workload that decodes two 3D-AVC streams with their texture and depth views: one that selects the
+     * 3D-AVC parameter sets, NAL unit headers and predicted slice headers and the depth view output
+     * ({@code tools/testdata/h264-3davc/make-stream.py}), and one coded by the 3DV-ATM encoder with every texture
+     * coding tool of CABAC slices ({@code tools/testdata/h264-3davc/atm-streams.sh}).
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload h264Avc3dDecode() {
+        var rounds = new ArrayList<Runnable>();
+        for (var name : List.of("syntax", "atm-tools-texture-first")) {
+            byte[] stream;
+            try (var input = MpegWorkloads.class.getResourceAsStream("avc3d/" + name + ".264")) {
+                stream = input.readAllBytes();
+            } catch (java.io.IOException | NullPointerException exception) {
+                throw new IllegalStateException("missing training stream avc3d/" + name, exception);
+            }
+            var packets = List.of(new Packet(1, stream, Packet.NO_TIMESTAMP, Packet.NO_TIMESTAMP, 0, true));
+            rounds.add(VideoStreams.decodeRound(packets, new H264Decoder(VideoStreams.track(Codec.H264, null),
+                    H264DecoderOptions.builder().allViews().depth(true).build())));
+        }
+        return TrainingWorkload.of("h264-3davc-decode", () -> rounds.forEach(Runnable::run));
     }
 
     /**

@@ -80,6 +80,11 @@ final class SliceTask {
     int[] sliceGroupMap;
 
     /**
+     * The 3D-AVC state of a texture slice of a 3D-AVC stream, or {@code null} for every other slice.
+     */
+    Avc3dTexture avc3d;
+
+    /**
      * The picture order count of each list entry when the lists were built, indexed
      * {@code [list][refIdx]}.
      */

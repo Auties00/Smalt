@@ -319,6 +319,37 @@ final class DecoderFrame {
     final int[][] refId;
 
     /**
+     * The {@code view_id} of the list 0 reference picture of each 8x8 partition, indexed
+     * {@code mbIndex * 4 + partition}, or -1 when list 0 is unused; recorded for the texture pictures of
+     * 3D-AVC streams, whose neighboring block disparity derivation reads it, and {@code null} until then.
+     */
+    short[] refView;
+
+    /**
+     * The copy of the luma samples of the depth view component the 3D-AVC texture coding tools of this picture
+     * sample, reused across pictures, or {@code null} until a picture needs one.
+     */
+    byte[] avc3dDepth;
+
+    /**
+     * The nearest depth of the camera of this picture's view in its 3D-AVC camera parameters, 0 without
+     * camera parameters.
+     */
+    double depthNear;
+
+    /**
+     * The farthest depth of the camera of this picture's view in its 3D-AVC camera parameters, 0 without
+     * camera parameters.
+     */
+    double depthFar;
+
+    /**
+     * The {@link #decodeIndex} of the depth picture {@link #avc3dDepth} holds for the picture being decoded,
+     * or 0.
+     */
+    long avc3dDepthIndex;
+
+    /**
      * The macroblock flags ({@code MB_*} constants) per macroblock.
      */
     final int[] mbType;

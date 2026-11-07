@@ -1,6 +1,5 @@
 package com.github.auties00.smalt.video.h264;
 
-import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.testkit.Conformance;
@@ -68,6 +67,8 @@ class H264DepthConformanceTest {
             MFCD|MFCD/MFCDMFC-1.zip|MFCDMFC-1/MFCDMFC-1.bin|0|v0:2b10727a937614df7ce07b9c1ae403cc:ref v1:11083d6085b508cec09f2e86f7d00fcd:ref d0:1a9bf41a5faae9df51b507867d39722e:ref d1:d29962ca5aaae6e0673228cfd6382463:ref e0:7823b009bd5c09bb1ee793975752fed7:ref e1:22a24c2943d9e4d346386f4c6eb7f1d6:ref
             MFCD|MFCD/MFCDTDC-1.zip|MFCDTDC-1/MFCDTDC-1.bin|0|v0:60915c7b9e2f1b6bd0fd80973bf47b52:ref v1:3b9ad677be0ce160df9521347b53b6e7:ref d0:1a9bf41a5faae9df51b507867d39722e:ref d1:d29962ca5aaae6e0673228cfd6382463:ref e0:1fd6e058505147a6d797d5ac11c67f95:ref e1:6fe3262fbb6edb387bb87146ef8a11cb:ref
             MFCD|MFCD/MFCDTDC-2.zip|MFCDTDC-2/MFCDTDC-2.bin|0|v0:60915c7b9e2f1b6bd0fd80973bf47b52:ref v1:3b9ad677be0ce160df9521347b53b6e7:ref d0:1a9bf41a5faae9df51b507867d39722e:ref d1:d29962ca5aaae6e0673228cfd6382463:ref e0:1fd6e058505147a6d797d5ac11c67f95:ref e1:6fe3262fbb6edb387bb87146ef8a11cb:ref
+            MVCD|MVCD/MVDDR-1_r2.zip|MVDDR-1_r2/MVDDR-1_r2.BIT|3|v1:65fc282430517fe24549cf03ab49d39d:ref v3:dbd671e2d3a08dff6e5ffa7b20b3efd7:ref v5:cd27955d6ed37b0b5407f6d72af56fc9:ref d1:14f41695e9c3d2f9710cc3589a0f36f6:ref d3:11d1c33e8e4823cb1a44cdd98f41cdef:ref d5:f0b014c88442de5dbf78c9aaec98c01c:ref
+            MVCD|MVCD/MVDDR-2_r2.zip|MVDDR-2_r2/MVDDR-2_r2.BIT|5|v1:fee6606481b54d1cd51690be33250d22:ref v5:ba4ca8e1d2897dbc9090e1c25d3af82d:ref v9:4ace1e717a72b9da56f33fcce5c74772:ref d1:f67f7133192bc3e21e687a25cd9dc03c:ref d5:6afab86e022ed5625ca705ddcdc7fa58:ref d9:52ee8c1932ed38a9144b2164e701f767:ref
             MVCD|MVCD/MVDDR-3_r1.zip|MVDDR-3_r1/MVDDR-3_r1.bin|3|v1:555a6eb73c49ed01af6ad92db4cc33c5:ref v3:c2987ac342e1afc30718a5035ba4c9af:ref d1:2db60058d842304b6e16a036b9f2c027:ref d3:9b90f0e7dd77cebc9954077d7488b0b5:ref
             MVCD|MVCD/MVDDR-4_r1.zip|MVDDR-4_r1/MVDDR-4_r1.bin|4|v4:c08e4d2d75411d16851015a453a4fbfa:ref v5:d0e195d823097217e9ab92b93a3e1786:ref d4:9405d6df6293637d563b8117e02d2267:atm d5:6c0ff23533c9e9ec633f77450cf95bc5:ref
             MVCD|MVCD/MVDIL-1_r1.zip|MVDIL-1_r1/MVDIL-1_r1.bin|3|v1:2011c640e87ac02630bdc7041603edf7:ref v3:ca8916cd6ec63077d7508623c12ce300:ref d1:b9caaec19e16fc584a66b94210bdf209:ref d3:43c3e472594ea87c5d5cdcd66a8c8b5c:ref
@@ -348,35 +349,6 @@ class H264DepthConformanceTest {
             assertEquals(List.of("d9", "v9"), List.copyOf(output.md5s().keySet()));
             assertEquals(expected.get("v9"), output.md5s().get("v9"));
             assertEquals(expected.get("d9"), output.md5s().get("d9"));
-        }
-    }
-
-    @Nested
-    @DisplayName("3D-AVC streams")
-    class ThreeDimensional {
-        @Test
-        @DisplayName("decode their base view, reporting their other views unsupported once")
-        void unsupported() throws IOException {
-            var stream = entry(Files.readAllBytes(Conformance.archive(SMOKE).fetch("MVCD/MVDDR-1_r2.zip")),
-                    "MVDDR-1_r2/MVDDR-1_r2.BIT");
-            var output = new Output("v");
-            var failures = new ArrayList<MediaException.Unsupported>();
-            try (var decoder = new H264Decoder(H264ConformanceTest.track(), H264DecoderOptions.builder().allViews()
-                    .depth(true).build())) {
-                for (var nal : H264TestStreams.splitAnnexB(stream)) {
-                    try {
-                        decoder.decode(H264MvcConformanceTest.packet(nal), output);
-                    } catch (MediaException.Unsupported failure) {
-                        failures.add(failure);
-                    }
-                }
-                decoder.flush(output);
-            }
-            assertEquals(1, failures.size(), "failures: " + failures);
-            assertEquals("h264 3d-avc", failures.getFirst().format());
-            // the base texture view of MVDDR-1, Dec_HPC3S06R1TtV3 of its md5 file
-            assertEquals("dbd671e2d3a08dff6e5ffa7b20b3efd7", output.md5s().get("v3"));
-            assertTrue(output.md5s().keySet().stream().allMatch(key -> key.equals("v3")), "" + output.md5s());
         }
     }
 }
