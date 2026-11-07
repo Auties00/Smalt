@@ -225,12 +225,19 @@ public final class PictureState {
     public byte[] refViewIdx;
 
     /**
+     * Whether the prediction unit covering each 4x4 block is predicted with view synthesis
+     * prediction, 1 or 0; allocated by {@link #prepareViews()}.
+     */
+    public byte[] vsp;
+
+    /**
      * Allocates the per-block disparity information of the 3D-HEVC tools, once.
      */
     public void prepareViews() {
         if (dispRefVec == null) {
             dispRefVec = new int[width4 * height4];
             refViewIdx = new byte[width4 * height4];
+            vsp = new byte[width4 * height4];
         }
     }
 

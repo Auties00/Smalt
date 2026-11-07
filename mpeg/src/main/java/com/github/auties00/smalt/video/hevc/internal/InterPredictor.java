@@ -161,6 +161,12 @@ public final class InterPredictor {
             for (var y = 0; y < height; y += m.subPbHeight) {
                 for (var x = 0; x < width; x += m.subPbWidth) {
                     m.subBlock(index++, partMotion);
+                    if (integerMotion) {
+                        for (var list = 0; list < 2; list++) {
+                            partMotion.mvX[list] <<= 2;
+                            partMotion.mvY[list] <<= 2;
+                        }
+                    }
                     predictBlock(frame, xPb + x, yPb + y, m.subPbWidth, m.subPbHeight, partMotion);
                 }
             }

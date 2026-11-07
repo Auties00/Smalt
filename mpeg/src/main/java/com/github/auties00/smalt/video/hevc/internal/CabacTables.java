@@ -252,9 +252,49 @@ public final class CabacTables {
     public static final int ILLU_COMP = RESIDUAL_WEIGHT + 3;
 
     /**
+     * The context of {@code skip_intra_flag} (Table I.5).
+     */
+    public static final int SKIP_INTRA = ILLU_COMP + 1;
+
+    /**
+     * The context of the first bin of {@code skip_intra_mode_idx} (Table I.8).
+     */
+    public static final int SKIP_INTRA_MODE = SKIP_INTRA + 1;
+
+    /**
+     * The context of {@code no_dim_flag} (Table I.6).
+     */
+    public static final int NO_DIM = SKIP_INTRA_MODE + 1;
+
+    /**
+     * The context of {@code depth_intra_mode_idx_flag} (Table I.7).
+     */
+    public static final int DEPTH_INTRA_MODE = NO_DIM + 1;
+
+    /**
+     * The context of {@code dbbp_flag} (Table I.9).
+     */
+    public static final int DBBP = DEPTH_INTRA_MODE + 1;
+
+    /**
+     * The context of {@code dc_only_flag} (Table I.10).
+     */
+    public static final int DC_ONLY = DBBP + 1;
+
+    /**
+     * The context of {@code depth_dc_present_flag} (Table I.13).
+     */
+    public static final int DEPTH_DC_PRESENT = DC_ONLY + 1;
+
+    /**
+     * The context of the prefix bins of {@code depth_dc_abs} (Table I.14).
+     */
+    public static final int DEPTH_DC_ABS = DEPTH_DC_PRESENT + 1;
+
+    /**
      * The number of context variables.
      */
-    public static final int COUNT = ILLU_COMP + 1;
+    public static final int COUNT = DEPTH_DC_ABS + 1;
 
     /**
      * The initialization values, indexed {@code [initType][ctxIdx]}.
@@ -322,7 +362,13 @@ public final class CabacTables {
             java.util.Arrays.fill(INIT[type], EXPLICIT_RDPCM, LOG2_RES_SCALE, 139);
             java.util.Arrays.fill(INIT[type], LOG2_RES_SCALE, COUNT, 154);
             System.arraycopy(new int[]{162, 153, 162}, 0, INIT[type], RESIDUAL_WEIGHT, 3);
+            INIT[type][SKIP_INTRA] = 185;
+            INIT[type][SKIP_INTRA_MODE] = 137;
         }
+        // the values of the reference decoder, which Tables I.6 and I.13 list in the reverse order of the
+        // initialization types
+        put(NO_DIM, new int[]{155}, new int[]{141}, new int[]{154});
+        put(DEPTH_DC_PRESENT, new int[]{64}, new int[]{0}, new int[]{0});
     }
 
     /**

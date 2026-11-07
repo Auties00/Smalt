@@ -1,3 +1,7 @@
+/* Ports the 3D-HEVC coding unit syntax (source/Lib/TLibDecoder/TDecSbac.cpp, TDecEntropy.cpp, TDecCu.cpp), the
+   depth-based block partitioning (source/Lib/TLibCommon/TComPrediction.cpp) and the view synthesis prediction
+   sub-block motion (TComDataCU.cpp) of HTM-16.3. Copyright (c) 2010-2016, ITU/ISO/IEC; BSD 3-Clause License.
+   Modified for Smalt. */
 package com.github.auties00.smalt.video.hevc.internal;
 
 import com.github.auties00.smalt.MediaException;
@@ -232,6 +236,117 @@ public final class SliceDecoder implements NeighborAvailability {
      * The height of each prediction unit of the coding unit.
      */
     private final int[] puHeight = new int[4];
+
+    /**
+     * {@code IntraPredModeY} of {@code INTRA_WEDGE} (Table I.2).
+     */
+    static final int INTRA_WEDGE = 35;
+
+    /**
+     * {@code IntraPredModeY} of {@code INTRA_CONTOUR} (Table I.2).
+     */
+    static final int INTRA_CONTOUR = 36;
+
+    /**
+     * The shift of the coding block size in the coding unit shapes {@link HevcFrame#cuShape} holds.
+     */
+    private static final int TEXTURE_LOG2_SHIFT = 3;
+
+    /**
+     * The mask of the partitioning mode in the coding unit shapes {@link HevcFrame#cuShape} holds.
+     */
+    private static final int TEXTURE_PART_MASK = 7;
+
+    /**
+     * The depth intra predictor.
+     */
+    private final Hevc3dIntra depthIntra = new Hevc3dIntra();
+
+    /**
+     * {@code TexturePic} of a depth layer of 3D-HEVC, or {@code null}.
+     */
+    private HevcFrame texturePicture;
+
+    /**
+     * Whether the coding units of the slice record their shapes for the depth layer of the view
+     * ({@link HevcSliceHeader#textureOfDepth}).
+     */
+    private boolean recordShapes;
+
+    /**
+     * {@code CqtCuPartPredEnabledFlag} of the slice.
+     */
+    private boolean cqtCuPartPred;
+
+    /**
+     * {@code dc_only_flag} of the current coding unit.
+     */
+    private boolean dcOnly;
+
+    /**
+     * {@code dbbp_flag} of the current coding unit.
+     */
+    private boolean dbbpFlag;
+
+    /**
+     * The depth intra mode of each prediction block of the current coding unit:
+     * {@link #INTRA_WEDGE}, {@link #INTRA_CONTOUR}, or 0 when {@code DimFlag} is 0.
+     */
+    private final int[] dimMode = new int[4];
+
+    /**
+     * {@code wedge_full_tab_idx} of each prediction block of the current coding unit.
+     */
+    private final int[] wedgeIdx = new int[4];
+
+    /**
+     * {@code DcOffset} of each prediction block of the current coding unit, for its two segments.
+     */
+    private final int[][] dcOffsets = new int[4][2];
+
+    /**
+     * The segment mask of the coding unit with depth-based block partitioning, one value of 0 or 1
+     * per luma sample in raster order; allocated with the first such coding unit.
+     */
+    private byte[] dbbpMask;
+
+    /**
+     * The prediction of the first segment of the coding unit with depth-based block partitioning,
+     * by component.
+     */
+    private int[][] dbbpPrediction;
+
+    /**
+     * The combined prediction of a component of the coding unit with depth-based block
+     * partitioning, before its boundary filtering.
+     */
+    private int[] dbbpCombined;
+
+    /**
+     * Whether the last block predicted with a depth intra mode has predicted values outside the
+     * sample range, which its residual reconstruction adds to instead of the clipped samples.
+     */
+    private boolean dmmPending;
+
+    /**
+     * The luma x of the block of {@link #dmmPending}.
+     */
+    private int dmmX;
+
+    /**
+     * The luma y of the block of {@link #dmmPending}.
+     */
+    private int dmmY;
+
+    /**
+     * The size of the block of {@link #dmmPending}.
+     */
+    private int dmmSize;
+
+    /**
+     * The partition pattern of the block of {@link #dmmPending}.
+     */
+    private byte[] dmmPattern;
 
     /**
      * The 3D-HEVC part of the slice segment header, or {@code null}.
@@ -643,38 +758,45 @@ public final class SliceDecoder implements NeighborAvailability {
         java.util.Arrays.fill(coefficients, 0);
         this.tools3d = header.tools3d;
         this.views = header.interView;
+        this.texturePicture = header.texturePicture;
+        this.cqtCuPartPred = false;
         if (tools3d != null) {
-            check3dTools(tools3d);
+            check3dTools(tools3d, sps);
             if (views != null) {
                 pic.prepareViews();
             }
+            if (tools3d.depth) {
+                depthIntra.setLookUpTable(tools3d.dltVal, sps.bitDepthLuma);
+                cqtCuPartPred = tools3d.cqtCuPartPred;
+            }
+        }
+        recordShapes = header.textureOfDepth;
+        if (recordShapes && (frame.cuShape == null || frame.cuShape.length != frame.width4 * frame.height4)) {
+            frame.cuShape = new byte[frame.width4 * frame.height4];
         }
         motion.setSlice(frame, pic, header, refList, sliceIndex);
         inter.setSlice(header, refList, pic.dsp);
     }
 
     /**
-     * Rejects the 3D-HEVC tools of a slice the decoder does not implement.
+     * Rejects the 3D-HEVC tools of a slice on sample formats Annex I does not specify them for,
+     * which the 3D Main profile excludes: the depth coding tools on a depth layer with chroma
+     * samples, and depth-based block partitioning on a 4:2:2 texture layer, whose chroma boundary
+     * filtering (equation I-279) reads the partition pattern outside the coding block.
      *
      * @param tools the 3D-HEVC part of the slice segment header
-     * @throws MediaException.Unsupported if the slice enables view synthesis prediction,
-     * depth-based block partitioning or a depth coding tool
+     * @param sps the active sequence parameter set
+     * @throws MediaException.Unsupported if the slice enables such a tool on such a layer
      */
-    private static void check3dTools(Hevc3dSlice tools) {
-        // TODO: view synthesis prediction (I.8.5.3.2.13) and depth-based block partitioning (I.8.5.3.5)
-        if (tools.vspMc) {
-            throw new MediaException.Unsupported("hevc 3D view synthesis prediction",
-                    "the stream uses view synthesis prediction (vsp_mc_enabled_flag)");
+    private static void check3dTools(Hevc3dSlice tools, HevcSps sps) {
+        if (tools.depth && sps.chromaArrayType != 0 && (tools.intraContour || tools.intraDcOnlyWedge
+                || tools.interDcOnly || tools.skipIntra)) {
+            throw new MediaException.Unsupported("hevc 3D depth coding tools",
+                    "depth intra modes or DC coding in a depth layer with chroma samples");
         }
-        if (tools.dbbp) {
+        if (tools.dbbp && sps.chromaArrayType == 2) {
             throw new MediaException.Unsupported("hevc 3D depth-based block partitioning",
-                    "the stream uses depth-based block partitioning (dbbp_enabled_flag)");
-        }
-        // TODO: the depth coding tools of Annex I: the texture merging candidate, depth intra modes,
-        // depth DC coding, intra skip and inter-component partitioning prediction
-        if (tools.texMc || tools.intraContour || tools.intraDcOnlyWedge || tools.cqtCuPartPred || tools.interDcOnly
-                || tools.skipIntra) {
-            throw new MediaException.Unsupported("hevc 3D depth coding tools", "the stream uses the depth coding tools of 3D-HEVC");
+                    "depth-based block partitioning in a 4:2:2 texture layer");
         }
     }
 
@@ -981,7 +1103,12 @@ public final class SliceDecoder implements NeighborAvailability {
     private void codingQuadtree(int x0, int y0, int log2Size, int depth) {
         var size = 1 << log2Size;
         boolean split;
-        if (x0 + size <= sps.width && y0 + size <= sps.height && log2Size > sps.log2MinCbSize) {
+        var inside = x0 + size <= sps.width && y0 + size <= sps.height;
+        if (inside && log2Size > sps.log2MinCbSize && cqtCuPartPred
+                && log2Size <= textureShape(x0, y0) >> TEXTURE_LOG2_SHIFT) {
+            // predSplitCuFlag: the coding unit is not split below the size of the collocated texture coding unit
+            split = false;
+        } else if (inside && log2Size > sps.log2MinCbSize) {
             var ctx = 0;
             if (available(x0, y0, x0 - 1, y0) && pic.depth[blockIndex(x0 - 1, y0)] > depth) {
                 ctx++;
@@ -1053,7 +1180,7 @@ public final class SliceDecoder implements NeighborAvailability {
     }
 
     /**
-     * Parses and reconstructs a coding unit (7.3.8.5).
+     * Parses and reconstructs a coding unit (7.3.8.5 and I.7.3.8.5).
      *
      * @param x0 the luma x of the coding block
      * @param y0 the luma y of the coding block
@@ -1065,6 +1192,9 @@ public final class SliceDecoder implements NeighborAvailability {
         cuX = x0;
         cuY = y0;
         cuSize = size;
+        dcOnly = false;
+        dbbpFlag = false;
+        java.util.Arrays.fill(dimMode, 0);
         bypass = pps.transquantBypassEnabled && cabac.decodeBin(CabacTables.TRANSQUANT_BYPASS) == 1;
         var skip = false;
         if (header.sliceType != HevcSliceHeader.I) {
@@ -1086,21 +1216,42 @@ public final class SliceDecoder implements NeighborAvailability {
         if (skip) {
             cuIntra = false;
             puMotionPartitioned = false;
+            recordShape(x0, y0, log2Size, PART_2Nx2N);
             parsePredictionUnit(0, x0, y0, size, size, x0, y0, true, PART_2Nx2N);
-            finishInterUnit(x0, y0, log2Size, PART_2Nx2N, 1);
+            finishInterUnit(x0, y0, log2Size, PART_2Nx2N, 1, true);
+        } else if (tools3d != null && tools3d.skipIntra && cabac.decodeBin(CabacTables.SKIP_INTRA) == 1) {
+            cuIntra = true;
+            recordShape(x0, y0, log2Size, PART_2Nx2N);
+            skipIntraUnit(x0, y0, log2Size);
         } else {
             cuIntra = header.sliceType == HevcSliceHeader.I || cabac.decodeBin(CabacTables.PRED_MODE) == 1;
             if (cuIntra && sps.paletteModeEnabled && log2Size <= sps.log2MaxTbSize
                     && cabac.decodeBin(CabacTables.PALETTE_MODE) == 1) {
+                recordShape(x0, y0, log2Size, PART_2Nx2N);
                 paletteCodingUnit(x0, y0, log2Size);
                 finishCodingUnit(x0, y0, size);
                 return;
             }
-            if (!cuIntra || log2Size == sps.log2MinCbSize) {
-                partMode = partMode(log2Size);
+            var partPredIdc = 0;
+            var predPartMode = false;
+            if (cqtCuPartPred) {
+                var shape = textureShape(x0, y0);
+                var texturePart = shape & TEXTURE_PART_MASK;
+                if (shape >> TEXTURE_LOG2_SHIFT == log2Size) {
+                    predPartMode = texturePart == PART_2Nx2N;
+                    if (texturePart == PART_2NxN || texturePart == PART_2NxnU || texturePart == PART_2NxnD) {
+                        partPredIdc = 1;
+                    } else if (texturePart != PART_2Nx2N && texturePart != PART_NxN) {
+                        partPredIdc = 2;
+                    }
+                }
+            }
+            if ((!cuIntra || log2Size == sps.log2MinCbSize) && !predPartMode) {
+                partMode = cuIntra || partPredIdc == 0 ? partMode(log2Size) : predictedPartMode(log2Size, partPredIdc);
             }
             intraSplit = cuIntra && partMode == PART_NxN;
             puMotionPartitioned = !cuIntra && partMode != PART_2Nx2N;
+            recordShape(x0, y0, log2Size, partMode);
             if (cuIntra) {
                 markIntra(x0, y0, size);
                 if (partMode == PART_2Nx2N && sps.pcmEnabled && log2Size >= sps.log2MinPcmCbSize
@@ -1112,24 +1263,282 @@ public final class SliceDecoder implements NeighborAvailability {
                 } else {
                     intraModes(x0, y0, log2Size, partMode);
                 }
+                if (tools3d != null && tools3d.intraDcOnlyWedge && partMode == PART_2Nx2N) {
+                    dcOnly = cabac.decodeBin(CabacTables.DC_ONLY) == 1;
+                }
+                if (pcm && dcOnly) {
+                    throw new MediaException.Malformed("dc_only_flag in a PCM coding unit");
+                }
+                if (!pcm) {
+                    depthDcs(log2Size, partMode);
+                }
             } else {
                 interPredictionUnits(x0, y0, log2Size, partMode);
+                if (dcOnly) {
+                    depthDcs(log2Size, partMode);
+                }
             }
             if (!pcm) {
-                var rootCbf = true;
-                if (!cuIntra && !(partMode == PART_2Nx2N && puMotions[0].merge)) {
-                    rootCbf = cabac.decodeBin(CabacTables.RQT_ROOT_CBF) == 1;
-                }
-                if (rootCbf) {
-                    maxTrafoDepth = cuIntra ? sps.maxTransformHierarchyDepthIntra + (intraSplit ? 1 : 0)
-                            : sps.maxTransformHierarchyDepthInter;
-                    transformTree(x0, y0, x0, y0, log2Size, 0, 0, 0, 0);
-                } else if (cuIntra) {
-                    throw new MediaException.Malformed("intra coding unit without transform tree");
+                if (dcOnly) {
+                    dcOnlyUnit(x0, y0, log2Size);
+                } else {
+                    var rootCbf = true;
+                    if (!cuIntra && !(partMode == PART_2Nx2N && puMotions[0].merge)) {
+                        rootCbf = cabac.decodeBin(CabacTables.RQT_ROOT_CBF) == 1;
+                    }
+                    if (rootCbf) {
+                        maxTrafoDepth = cuIntra ? sps.maxTransformHierarchyDepthIntra + (intraSplit ? 1 : 0)
+                                : sps.maxTransformHierarchyDepthInter;
+                        transformTree(x0, y0, x0, y0, log2Size, 0, 0, 0, 0);
+                    } else if (cuIntra) {
+                        throw new MediaException.Malformed("intra coding unit without transform tree");
+                    }
                 }
             }
         }
         finishCodingUnit(x0, y0, size);
+    }
+
+    /**
+     * Parses {@code part_mode} of an inter coding unit whose partitioning is predicted from the
+     * collocated texture coding unit (I.9.3.3.6): up to two context coded bins choose between
+     * 2Nx2N, the symmetric partitioning of the texture's direction and, with asymmetric motion
+     * partitions, a bypass bin between the two asymmetric ones.
+     *
+     * @param log2Size the coding block size as a power of two
+     * @param partPredIdc 1 for the horizontal partitionings, 2 for the vertical ones
+     * @return the partitioning mode
+     */
+    private int predictedPartMode(int log2Size, int partPredIdc) {
+        if (cabac.decodeBin(CabacTables.PART_MODE) == 1) {
+            return PART_2Nx2N;
+        }
+        var horizontal = partPredIdc == 1;
+        if (!sps.ampEnabled || log2Size == sps.log2MinCbSize || cabac.decodeBin(CabacTables.PART_MODE + 1) == 1) {
+            return horizontal ? PART_2NxN : PART_Nx2N;
+        }
+        var second = cabac.decodeBypass() == 1;
+        if (horizontal) {
+            return second ? PART_2NxnD : PART_2NxnU;
+        }
+        return second ? PART_nRx2N : PART_nLx2N;
+    }
+
+    /**
+     * Records the size and partitioning of a coding unit of a texture layer of 3D-HEVC, which the
+     * depth layer of its view predicts its coding quadtree from (I.7.4.9.4 and I.7.4.9.5).
+     *
+     * @param x0 the luma x of the coding block
+     * @param y0 the luma y of the coding block
+     * @param log2Size the coding block size as a power of two
+     * @param partMode the partitioning mode
+     */
+    private void recordShape(int x0, int y0, int log2Size, int partMode) {
+        if (!recordShapes) {
+            return;
+        }
+        var shapes = frame.cuShape;
+        var w4 = frame.width4;
+        var blocks = 1 << (log2Size - 2);
+        var start = blockIndex(x0, y0);
+        var value = (byte) (log2Size << TEXTURE_LOG2_SHIFT | partMode);
+        for (var j = 0; j < blocks; j++) {
+            var row = start + j * w4;
+            java.util.Arrays.fill(shapes, row, row + blocks, value);
+        }
+    }
+
+    /**
+     * {@return the size and partitioning the collocated coding unit of the texture picture
+     * recorded}, packed as {@link #recordShape} stores them
+     *
+     * @param x the luma x
+     * @param y the luma y
+     * @throws MediaException.Malformed if the texture picture of the view is missing
+     */
+    private int textureShape(int x, int y) {
+        var texture = texturePicture;
+        if (texture == null) {
+            throw new MediaException.Malformed("depth coding unit predicted from a missing texture picture");
+        }
+        texture.awaitDecodedRows(y + 1);
+        var shapes = texture.cuShape;
+        if (shapes == null) {
+            throw new MediaException.Malformed(
+                    "depth coding unit predicted from a texture picture without coding units");
+        }
+        return shapes[(y >> 2) * texture.width4 + (x >> 2)];
+    }
+
+    /**
+     * Parses and reconstructs a coding unit coded with {@code skip_intra_flag} (I.7.3.8.5.2 and
+     * I.8.4.4.2.4): the vertical or horizontal intra mode, or the single sample of the left or
+     * the above neighbor, over the whole coding block without a residual.
+     *
+     * @param x0 the luma x of the coding block
+     * @param y0 the luma y of the coding block
+     * @param log2Size the coding block size as a power of two
+     */
+    private void skipIntraUnit(int x0, int y0, int log2Size) {
+        var size = 1 << log2Size;
+        markIntra(x0, y0, size);
+        intraSplit = false;
+        // the reference decoder records INTRA_DC as the mode the neighbors predict their modes from
+        var w4 = pic.width4;
+        var blocks = size >> 2;
+        var start = blockIndex(x0, y0);
+        for (var j = 0; j < blocks; j++) {
+            java.util.Arrays.fill(pic.intraMode, start + j * w4, start + j * w4 + blocks, (byte) 1);
+        }
+        var mode = 0;
+        if (cabac.decodeBin(CabacTables.SKIP_INTRA_MODE) == 1) {
+            mode = 1;
+            while (mode < 3 && cabac.decodeBypass() == 1) {
+                mode++;
+            }
+        }
+        if (mode < 2) {
+            if (log2Size <= 5) {
+                predictIntra(x0, y0, log2Size, 0, mode == 0 ? 26 : 10);
+            } else {
+                gatherBoundary(x0, y0, log2Size, 0, true);
+                Hevc3dIntra.predictCopy(boundary, size, mode == 0, frame, x0, y0);
+            }
+            return;
+        }
+        gatherBoundary(x0, y0, log2Size, 0, false);
+        var corner = 2 * size;
+        var index = mode == 2 ? corner - 1 - (size >> 1) : corner + 1 + (size >> 1);
+        var value = boundaryAvailable[index] ? boundary[index] : 1 << (sps.bitDepthLuma - 1);
+        Hevc3dIntra.fill(frame, x0, y0, size, value);
+    }
+
+    /**
+     * Parses a {@code depth_dcs( )} structure (I.7.3.8.5.3) and derives {@code DcOffset} of each
+     * prediction block coded with a depth intra mode or of a coding unit coded with
+     * {@code dc_only_flag} (equation I-51).
+     *
+     * @param log2Size the coding block size as a power of two
+     * @param partMode the partitioning mode
+     */
+    private void depthDcs(int log2Size, int partMode) {
+        var count = cuIntra && partMode == PART_NxN ? 4 : 1;
+        for (var k = 0; k < count; k++) {
+            dcOffsets[k][0] = 0;
+            dcOffsets[k][1] = 0;
+            if (dimMode[k] == 0 && !dcOnly) {
+                continue;
+            }
+            var present = !(cuIntra && dcOnly) || cabac.decodeBin(CabacTables.DEPTH_DC_PRESENT) == 1;
+            if (!present) {
+                continue;
+            }
+            var segments = dimMode[k] != 0 ? 2 : 1;
+            for (var i = 0; i < segments; i++) {
+                var abs = 0;
+                while (abs < 3 && cabac.decodeBin(CabacTables.DEPTH_DC_ABS) == 1) {
+                    abs++;
+                }
+                if (abs == 3) {
+                    abs += expGolomb(0);
+                }
+                var magnitude = abs - segments + 2;
+                if (magnitude > 0 && cabac.decodeBypass() == 1) {
+                    magnitude = -magnitude;
+                }
+                dcOffsets[k][i] = magnitude;
+            }
+        }
+    }
+
+    /**
+     * Reconstructs a coding unit coded with {@code dc_only_flag}: an intra coding unit is
+     * predicted, from a partition pattern with the offsets of its segments or with its intra mode
+     * and the offset of the whole block (I.8.4.4.1 and I.8.4.4.3), and an inter coding unit takes
+     * the offset as its residual (I.8.5.4).
+     *
+     * @param x0 the luma x of the coding block
+     * @param y0 the luma y of the coding block
+     * @param log2Size the coding block size as a power of two
+     */
+    private void dcOnlyUnit(int x0, int y0, int log2Size) {
+        var size = 1 << log2Size;
+        markCoded(x0, y0, size);
+        if (!cuIntra) {
+            Hevc3dIntra.addConstant(frame, x0, y0, size, dcOffsets[0][0], (1 << sps.bitDepthLuma) - 1);
+            return;
+        }
+        if (dimMode[0] != 0) {
+            gatherBoundary(x0, y0, log2Size, 0, true);
+            depthIntra.predictSegments(boundary, size, partition(0, x0, y0, log2Size), dcOffsets[0][0],
+                    dcOffsets[0][1], frame, x0, y0);
+            return;
+        }
+        predictDcOnly(x0, y0, log2Size, pic.intraMode[blockIndex(x0, y0)]);
+        depthIntra.addDcOffset(frame, x0, y0, size, dcOffsets[0][0]);
+    }
+
+    /**
+     * Predicts the luma samples of an intra coding unit coded with {@code dc_only_flag} and an
+     * intra mode of the base specification, in transform blocks of at most the largest transform
+     * size, each predicted from the predicted samples of the blocks before it (I.8.4.4.1).
+     *
+     * @param x0 the luma x of the block
+     * @param y0 the luma y of the block
+     * @param log2Size the block size as a power of two
+     * @param mode the intra prediction mode
+     */
+    private void predictDcOnly(int x0, int y0, int log2Size, int mode) {
+        if (log2Size > sps.log2MaxTbSize) {
+            var half = 1 << (log2Size - 1);
+            predictDcOnly(x0, y0, log2Size - 1, mode);
+            predictDcOnly(x0 + half, y0, log2Size - 1, mode);
+            predictDcOnly(x0, y0 + half, log2Size - 1, mode);
+            predictDcOnly(x0 + half, y0 + half, log2Size - 1, mode);
+            return;
+        }
+        predictIntra(x0, y0, log2Size, 0, mode);
+    }
+
+    /**
+     * Sets the {@link PictureState#CODED} flag of a block, as the reference decoder records a
+     * coded luma block for the coding units coded with {@code dc_only_flag}.
+     *
+     * @param x0 the luma x of the block
+     * @param y0 the luma y of the block
+     * @param size the block size
+     */
+    private void markCoded(int x0, int y0, int size) {
+        var w4 = pic.width4;
+        var blocks = size >> 2;
+        var start = blockIndex(x0, y0);
+        for (var j = 0; j < blocks; j++) {
+            for (var i = 0; i < blocks; i++) {
+                pic.flags[start + j * w4 + i] |= PictureState.CODED;
+            }
+        }
+    }
+
+    /**
+     * Returns the partition pattern of a prediction block coded with a depth intra mode: the
+     * wedgelet pattern of its {@code wedge_full_tab_idx}, or the contour pattern of the
+     * collocated texture block.
+     *
+     * @param pb the prediction block within the coding unit, 0 to 3
+     * @param x the luma x of the block
+     * @param y the luma y of the block
+     * @param log2Size the block size as a power of two
+     * @return the pattern, in raster order
+     * @throws MediaException.Malformed if the texture picture of a contour block is missing
+     */
+    private byte[] partition(int pb, int x, int y, int log2Size) {
+        if (dimMode[pb] == INTRA_WEDGE) {
+            return Hevc3dIntra.wedge(log2Size, wedgeIdx[pb]);
+        }
+        if (texturePicture == null) {
+            throw new MediaException.Malformed("INTRA_CONTOUR without the texture picture of the view");
+        }
+        return depthIntra.contour(texturePicture, x, y, 1 << log2Size);
     }
 
     /**
@@ -1397,13 +1806,23 @@ public final class SliceDecoder implements NeighborAvailability {
         var count = partMode == PART_NxN ? 4 : 1;
         var offset = partMode == PART_NxN ? size >> 1 : size;
         var prevFlags = intraFlags;
+        var depthModes = tools3d != null && (tools3d.intraDcOnlyWedge || tools3d.intraContour);
         for (var i = 0; i < count; i++) {
-            prevFlags[i] = cabac.decodeBin(CabacTables.PREV_INTRA_LUMA) == 1;
+            if (depthModes) {
+                intraModeExtension(i, partMode == PART_NxN ? log2Size - 1 : log2Size);
+            }
+            prevFlags[i] = dimMode[i] == 0 && cabac.decodeBin(CabacTables.PREV_INTRA_LUMA) == 1;
         }
         for (var i = 0; i < count; i++) {
             var xPb = x0 + (i & 1) * offset;
             var yPb = y0 + (i >> 1) * offset;
             int mode;
+            if (dimMode[i] != 0) {
+                mode = dimMode[i];
+                lumaModes[i] = mode;
+                writeIntraMode(xPb, yPb, offset, mode);
+                continue;
+            }
             var candA = candidateMode(xPb, yPb, xPb - 1, yPb, false);
             var candB = candidateMode(xPb, yPb, xPb, yPb - 1, true);
             int c0;
@@ -1464,14 +1883,7 @@ public final class SliceDecoder implements NeighborAvailability {
                 }
             }
             lumaModes[i] = mode;
-            var w4 = pic.width4;
-            var blocks = offset >> 2;
-            var start = blockIndex(xPb, yPb);
-            for (var j = 0; j < blocks; j++) {
-                for (var k = 0; k < blocks; k++) {
-                    pic.intraMode[start + j * w4 + k] = (byte) mode;
-                }
-            }
+            writeIntraMode(xPb, yPb, offset, mode);
         }
         if (count == 1) {
             lumaModes[1] = lumaModes[2] = lumaModes[3] = lumaModes[0];
@@ -1489,6 +1901,56 @@ public final class SliceDecoder implements NeighborAvailability {
             chromaModes[1] = chromaModes[2] = chromaModes[3] = chromaModes[0];
             chromaSyntax[1] = chromaSyntax[2] = chromaSyntax[3] = chromaSyntax[0];
         }
+    }
+
+    /**
+     * Writes {@code IntraPredModeY} of a prediction block to the block arrays.
+     *
+     * @param xPb the luma x of the prediction block
+     * @param yPb the luma y of the prediction block
+     * @param size the prediction block size
+     * @param mode the intra prediction mode
+     */
+    private void writeIntraMode(int xPb, int yPb, int size, int mode) {
+        var w4 = pic.width4;
+        var blocks = size >> 2;
+        var start = blockIndex(xPb, yPb);
+        for (var j = 0; j < blocks; j++) {
+            java.util.Arrays.fill(pic.intraMode, start + j * w4, start + j * w4 + blocks, (byte) mode);
+        }
+    }
+
+    /**
+     * Parses an {@code intra_mode_ext( )} structure (I.7.3.8.5.1) into {@link #dimMode} and
+     * {@link #wedgeIdx}.
+     *
+     * @param pb the prediction block within the coding unit, 0 to 3
+     * @param log2PbSize the prediction block size as a power of two
+     * @throws MediaException.Malformed if {@code wedge_full_tab_idx} is out of range
+     */
+    private void intraModeExtension(int pb, int log2PbSize) {
+        dimMode[pb] = 0;
+        if (log2PbSize >= 6 || cabac.decodeBin(CabacTables.NO_DIM) == 1) {
+            return;
+        }
+        var wedge = tools3d.intraDcOnlyWedge;
+        var contour = wedge && tools3d.intraContour ? cabac.decodeBin(CabacTables.DEPTH_INTRA_MODE) == 1
+                : !wedge || tools3d.intraContour;
+        if (contour) {
+            dimMode[pb] = INTRA_CONTOUR;
+            return;
+        }
+        var bits = Hevc3dIntra.wedgeIndexBits(log2PbSize);
+        var index = 0;
+        // the reference decoder reads the least significant bit first
+        for (var b = 0; b < bits; b++) {
+            index |= cabac.decodeBypass() << b;
+        }
+        if (index >= Hevc3dIntra.wedgeCount(log2PbSize)) {
+            throw new MediaException.Malformed("wedge_full_tab_idx out of range");
+        }
+        wedgeIdx[pb] = index;
+        dimMode[pb] = INTRA_WEDGE;
     }
 
     /**
@@ -1551,7 +2013,8 @@ public final class SliceDecoder implements NeighborAvailability {
         if (above && yNb < ((yPb >> sps.log2CtbSize) << sps.log2CtbSize)) {
             return 1;
         }
-        return pic.intraMode[index];
+        var mode = pic.intraMode[index];
+        return mode > 34 ? 1 : mode;
     }
 
     /**
@@ -1604,22 +2067,33 @@ public final class SliceDecoder implements NeighborAvailability {
                 count = 4;
             }
         }
-        finishInterUnit(x0, y0, log2Size, partMode, count);
+        finishInterUnit(x0, y0, log2Size, partMode, count, false);
     }
 
     /**
      * Parses the coding unit extension of an inter coding unit of 3D-HEVC (I.7.3.8.5.2), then
-     * derives the motion of each prediction unit, stores it and predicts its samples, in order.
+     * derives the motion of each prediction unit, stores it and predicts its samples, in order;
+     * a coding unit with depth-based block partitioning is predicted once its two prediction
+     * units are derived (I.8.5.3.5).
      *
      * @param x0 the luma x of the coding block
      * @param y0 the luma y of the coding block
      * @param log2Size the coding block size as a power of two
      * @param partMode the partitioning mode
      * @param count the number of prediction units
+     * @param skip whether the coding unit is skipped
      */
-    private void finishInterUnit(int x0, int y0, int log2Size, int partMode, int count) {
+    private void finishInterUnit(int x0, int y0, int log2Size, int partMode, int count, boolean skip) {
         var weight = 0;
         var illumination = false;
+        if (tools3d != null && views != null && !skip) {
+            if (tools3d.dbbp && views.dispAvail && log2Size > 3 && (partMode == PART_2NxN || partMode == PART_Nx2N)) {
+                dbbpFlag = cabac.decodeBin(CabacTables.DBBP) == 1;
+            }
+            if (tools3d.interDcOnly && partMode == PART_2Nx2N) {
+                dcOnly = cabac.decodeBin(CabacTables.DC_ONLY) == 1;
+            }
+        }
         if (tools3d != null && views != null && partMode == PART_2Nx2N) {
             var m = puMotions[0];
             if (tools3d.ivResPred && views.rpRefPicAvail) {
@@ -1658,6 +2132,7 @@ public final class SliceDecoder implements NeighborAvailability {
             var m = puMotions[k];
             m.residualWeight = weight;
             m.illuminationCompensation = illumination;
+            m.dbbp = dbbpFlag;
             m.dispVec = disparity;
             m.refViewIdx = disparityView;
             m.cuX = x0;
@@ -1667,6 +2142,9 @@ public final class SliceDecoder implements NeighborAvailability {
             var width = puWidth[k];
             var height = puHeight[k];
             motion.derive(x0, y0, 1 << log2Size, xPb, yPb, width, height, k, m, this);
+            if (m.vsp) {
+                synthesizeViewMotion(xPb, yPb, width, height, m);
+            }
             storeMotion(xPb, yPb, width, height, m);
             if (k > 0 || width != (1 << log2Size) || height != (1 << log2Size)) {
                 markEdges(xPb, yPb, width, height, PictureState.EDGE_PU_V, PictureState.EDGE_PU_H);
@@ -1675,7 +2153,252 @@ public final class SliceDecoder implements NeighborAvailability {
                 m.icAbove = available(xPb, yPb, xPb, yPb - 1);
                 m.icLeft = available(xPb, yPb, xPb - 1, yPb);
             }
-            inter.predict(frame, xPb, yPb, width, height, m);
+            if (!dbbpFlag) {
+                inter.predict(frame, xPb, yPb, width, height, m);
+            }
+        }
+        if (dbbpFlag) {
+            predictDepthPartitions(x0, y0, 1 << log2Size, partMode);
+        }
+    }
+
+    /**
+     * Replaces the motion of a prediction unit predicted with view synthesis prediction by the
+     * motion of its sub-block partitions (equations I-192 to I-194): 8x4 or 4x8 partitions, as
+     * the corners of the depth block the disparity vector points to decide, each with the
+     * disparity of the largest of the corner samples of its depth block in the list and towards
+     * the reference picture of the candidate.
+     *
+     * @param xPb the luma x of the prediction block
+     * @param yPb the luma y of the prediction block
+     * @param width the prediction block width
+     * @param height the prediction block height
+     * @param m the motion of the prediction unit, receiving the sub-block partition motion
+     * @throws MediaException.Malformed if the depth picture or the camera parameters of the views
+     * are missing
+     */
+    private void synthesizeViewMotion(int xPb, int yPb, int width, int height, MotionPredictor.PuMotion m) {
+        var depthView = m.refViewIdx;
+        var depth = depthView >= 0 ? views.depthPicture[depthView] : null;
+        if (depth == null) {
+            throw new MediaException.Malformed("view synthesis prediction without the depth picture of the view");
+        }
+        var xRef = xPb + (((short) m.dispVec + 2) >> 2);
+        var yRef = yPb + (((m.dispVec >> 16) + 2) >> 2);
+        boolean horizontal;
+        if (height % 8 != 0) {
+            horizontal = true;
+        } else if (width % 8 != 0) {
+            horizontal = false;
+        } else {
+            depth.awaitRows(Math.clamp(yRef + height, 1, depth.height));
+            var topLeft = depthAt(depth, xRef, yRef);
+            var bottomRight = depthAt(depth, xRef + width - 1, yRef + height - 1);
+            var topRight = depthAt(depth, xRef + width - 1, yRef);
+            var bottomLeft = depthAt(depth, xRef, yRef + height - 1);
+            horizontal = (topLeft < bottomRight) == (topRight < bottomLeft);
+        }
+        var subWidth = horizontal ? 8 : 4;
+        var subHeight = horizontal ? 4 : 8;
+        m.subPbWidth = subWidth;
+        m.subPbHeight = subHeight;
+        var blocks = (width / subWidth) * (height / subHeight);
+        for (var list = 0; list < 2; list++) {
+            var mv = list == 0 ? m.subMv0 : m.subMv1;
+            var ref = list == 0 ? m.subRef0 : m.subRef1;
+            if (!m.predFlag[list]) {
+                java.util.Arrays.fill(mv, 0, blocks, 0);
+                java.util.Arrays.fill(ref, 0, blocks, (byte) -1);
+                continue;
+            }
+            var refIdx = m.refIdx[list];
+            var table = tools3d.depthToDisparityB(views.refViewIdx[list][refIdx]);
+            if (table == null) {
+                throw new MediaException.Malformed(
+                        "view synthesis prediction without the camera parameters of the view");
+            }
+            var index = 0;
+            for (var y = 0; y < height; y += subHeight) {
+                for (var x = 0; x < width; x += subWidth) {
+                    var maxDepth = MotionPredictor.maxCornerDepth(depth, xPb + x, yPb + y, subWidth, subHeight,
+                            m.dispVec);
+                    mv[index] = table[Math.min(maxDepth, table.length - 1)] & 0xFFFF;
+                    ref[index] = (byte) refIdx;
+                    index++;
+                }
+            }
+        }
+    }
+
+    /**
+     * Returns a luma sample of a depth picture, the coordinates clamped to the picture.
+     *
+     * @param depth the depth picture
+     * @param x the luma x
+     * @param y the luma y
+     * @return the sample value
+     */
+    private static int depthAt(HevcFrame depth, int x, int y) {
+        var index = Math.clamp(y, 0, depth.height - 1) * depth.width + Math.clamp(x, 0, depth.width - 1);
+        return depth.y8 != null ? depth.y8[index] & 0xFF : depth.y[index] & 0xFFFF;
+    }
+
+    /**
+     * Predicts a coding unit with depth-based block partitioning (I.8.5.3.5): each of the two
+     * motions of its prediction units predicts the whole coding block, and the segment mask
+     * derived from the depth block of the reference view picks, sample by sample, the prediction
+     * of the segment, with the samples at the segment boundary filtered across the direction of
+     * the partitioning.
+     *
+     * <p>As in the reference decoder, the depth block is read from the clamped position of its top
+     * left sample, its rows and columns repeating the last ones inside the picture, and its
+     * segments are split at the mean of four corner samples of the block inside the picture.
+     *
+     * @param x0 the luma x of the coding block
+     * @param y0 the luma y of the coding block
+     * @param size the coding block size
+     * @param partMode {@link #PART_2NxN} or {@link #PART_Nx2N}
+     * @throws MediaException.Malformed if the depth picture of the reference view is missing
+     */
+    private void predictDepthPartitions(int x0, int y0, int size, int partMode) {
+        if (dbbpMask == null) {
+            dbbpMask = new byte[64 * 64];
+            dbbpPrediction = new int[][]{new int[64 * 64], new int[64 * 64], new int[64 * 64]};
+            dbbpCombined = new int[64 * 64];
+        }
+        var first = puMotions[0];
+        var view = first.refViewIdx;
+        var depth = view >= 0 ? views.depthPicture[view] : null;
+        if (depth == null) {
+            throw new MediaException.Malformed("depth-based block partitioning without the depth picture of the view");
+        }
+        var dv = tools3d.depthRef ? motion.disparityRefined() : first.dispVec;
+        var blkX = x0 + (((short) dv + 2) >> 2);
+        var blkY = y0 + (((dv >> 16) + 2) >> 2);
+        var width = depth.width;
+        var height = depth.height;
+        var baseX = Math.clamp(blkX, 0, width - 1);
+        var baseY = Math.clamp(blkY, 0, height - 1);
+        depth.awaitRows(Math.min(height, baseY + size + 1));
+        var last = size - 1;
+        var right = blkX > width - size ? width - blkX - 1 : last;
+        var bottom = blkY > height - size ? height - blkY - 1 : last;
+        var topLeft = depthAt(depth, baseX, baseY);
+        var mean = (topLeft + depthAt(depth, baseX + right, baseY) + depthAt(depth, baseX, baseY + bottom)
+                + depthAt(depth, baseX + right, baseY + bottom)) >> 2;
+        var invert = topLeft > mean;
+        var columnLimit = Math.max(0, width - blkX);
+        var rowLimit = Math.max(0, height - blkY);
+        var mask = dbbpMask;
+        for (var y = 0; y < size; y++) {
+            var row = baseY + Math.min(y, rowLimit);
+            for (var x = 0; x < size; x++) {
+                var value = depthAt(depth, baseX + Math.min(x, columnLimit), row);
+                mask[y * size + x] = (byte) ((value > mean) != invert ? 1 : 0);
+            }
+        }
+        // check3dTools admits 4:0:0, 4:2:0 and 4:4:4, whose chroma blocks are square
+        var chroma = sps.chromaArrayType != 0;
+        var shift = sps.chromaShiftX;
+        var sizeC = size >> shift;
+        var xC = x0 >> shift;
+        var yC = y0 >> shift;
+        inter.predict(frame, x0, y0, size, size, first);
+        copyBlock(frame, 0, x0, y0, size, dbbpPrediction[0]);
+        if (chroma) {
+            copyBlock(frame, 1, xC, yC, sizeC, dbbpPrediction[1]);
+            copyBlock(frame, 2, xC, yC, sizeC, dbbpPrediction[2]);
+        }
+        inter.predict(frame, x0, y0, size, size, puMotions[1]);
+        var vertical = partMode == PART_Nx2N;
+        combineSegments(0, x0, y0, size, 1, vertical);
+        if (chroma) {
+            combineSegments(1, xC, yC, sizeC, 1 << shift, vertical);
+            combineSegments(2, xC, yC, sizeC, 1 << shift, vertical);
+        }
+    }
+
+    /**
+     * Combines the predictions of the two segments of a component of a coding unit with
+     * depth-based block partitioning into the picture: the picture holds the prediction of the
+     * second segment, {@link #dbbpPrediction} that of the first; a sample whose neighbors across
+     * the partitioning direction lie in different segments is filtered with the weights 1, 2, 1.
+     *
+     * @param cIdx the component
+     * @param x0 the x of the block in samples of the component
+     * @param y0 the y of the block in samples of the component
+     * @param size the block size in samples of the component
+     * @param step the distance in luma samples of the mask between two samples of the component
+     * @param vertical whether the partitioning is vertical, filtering horizontally
+     */
+    private void combineSegments(int cIdx, int x0, int y0, int size, int step, boolean vertical) {
+        var mask = dbbpMask;
+        var maskStride = size * step;
+        var first = dbbpPrediction[cIdx];
+        var combined = dbbpCombined;
+        var plane = cIdx == 0 ? frame.y : cIdx == 1 ? frame.cb : frame.cr;
+        var plane8 = cIdx == 0 ? frame.y8 : cIdx == 1 ? frame.cb8 : frame.cr8;
+        var stride = cIdx == 0 ? frame.width : frame.chromaWidth;
+        for (var y = 0; y < size; y++) {
+            var row = (y0 + y) * stride + x0;
+            for (var x = 0; x < size; x++) {
+                var second = plane8 != null ? plane8[row + x] & 0xFF : plane[row + x] & 0xFFFF;
+                combined[y * size + x] = mask[y * step * maskStride + x * step] != 0 ? second : first[y * size + x];
+            }
+        }
+        for (var y = 0; y < size; y++) {
+            var row = (y0 + y) * stride + x0;
+            for (var x = 0; x < size; x++) {
+                var centre = combined[y * size + x];
+                int a;
+                int b;
+                int sideA;
+                int sideB;
+                if (vertical) {
+                    var xa = x == 0 ? x : x - 1;
+                    var xb = x == size - 1 ? x : x + 1;
+                    sideA = mask[y * step * maskStride + xa * step];
+                    sideB = mask[y * step * maskStride + xb * step];
+                    a = combined[y * size + xa];
+                    b = combined[y * size + xb];
+                } else {
+                    var ya = y == 0 ? y : y - 1;
+                    var yb = y == size - 1 ? y : y + 1;
+                    sideA = mask[ya * step * maskStride + x * step];
+                    sideB = mask[yb * step * maskStride + x * step];
+                    a = combined[ya * size + x];
+                    b = combined[yb * size + x];
+                }
+                // a weighted mean of samples in range is in range, so equation I-279 needs no clipping
+                var value = sideA != sideB ? (a + (centre << 1) + b) >> 2 : centre;
+                if (plane8 != null) {
+                    plane8[row + x] = (byte) value;
+                } else {
+                    plane[row + x] = (short) value;
+                }
+            }
+        }
+    }
+
+    /**
+     * Copies a square block of a component of the picture being decoded.
+     *
+     * @param frame the picture
+     * @param cIdx the component
+     * @param x0 the x of the block in samples of the component
+     * @param y0 the y of the block in samples of the component
+     * @param size the block size
+     * @param target receives the samples, {@code size} per row
+     */
+    private static void copyBlock(HevcFrame frame, int cIdx, int x0, int y0, int size, int[] target) {
+        var plane = cIdx == 0 ? frame.y : cIdx == 1 ? frame.cb : frame.cr;
+        var plane8 = cIdx == 0 ? frame.y8 : cIdx == 1 ? frame.cb8 : frame.cr8;
+        var stride = cIdx == 0 ? frame.width : frame.chromaWidth;
+        for (var y = 0; y < size; y++) {
+            var row = (y0 + y) * stride + x0;
+            for (var x = 0; x < size; x++) {
+                target[y * size + x] = plane8 != null ? plane8[row + x] & 0xFF : plane[row + x] & 0xFFFF;
+            }
         }
     }
 
@@ -1849,6 +2572,12 @@ public final class SliceDecoder implements NeighborAvailability {
     private void storeMotion(int xPb, int yPb, int width, int height, MotionPredictor.PuMotion m) {
         var w4 = frame.width4;
         var start = (yPb >> 2) * w4 + (xPb >> 2);
+        if (pic.vsp != null) {
+            for (var j = 0; j < height >> 2; j++) {
+                var row = start + j * w4;
+                java.util.Arrays.fill(pic.vsp, row, row + (width >> 2), (byte) (m.vsp ? 1 : 0));
+            }
+        }
         if (m.ivMc) {
             for (var j = 0; j < height >> 2; j++) {
                 for (var i = 0; i < width >> 2; i++) {
@@ -1995,6 +2724,7 @@ public final class SliceDecoder implements NeighborAvailability {
             java.util.Arrays.fill(actPresent, false);
         }
         var size = 1 << log2Size;
+        dmmPending = false;
         if (cuIntra) {
             predictIntra(x0, y0, log2Size, 0, pic.intraMode[blockIndex(x0, y0)]);
         }
@@ -2119,6 +2849,81 @@ public final class SliceDecoder implements NeighborAvailability {
      * @param mode the intra prediction mode
      */
     private void predictIntra(int xLuma, int yLuma, int log2Size, int cIdx, int mode) {
+        if (mode > 34) {
+            predictDepthIntra(xLuma, yLuma, log2Size, mode);
+            return;
+        }
+        gatherBoundary(xLuma, yLuma, log2Size, cIdx, true);
+        var size = 1 << log2Size;
+        var shiftX = cIdx == 0 ? 0 : sps.chromaShiftX;
+        var shiftY = cIdx == 0 ? 0 : sps.chromaShiftY;
+        var plane = cIdx == 0 ? frame.y : cIdx == 1 ? frame.cb : frame.cr;
+        var plane8 = cIdx == 0 ? frame.y8 : cIdx == 1 ? frame.cb8 : frame.cr8;
+        var stride = cIdx == 0 ? frame.width : frame.chromaWidth;
+        var xc = xLuma >> shiftX;
+        var yc = yLuma >> shiftY;
+        var bitDepth = cIdx == 0 ? sps.bitDepthLuma : sps.bitDepthChroma;
+        var filter = !sps.intraSmoothingDisabled && (cIdx == 0 || sps.chromaArrayType == 3);
+        var dcFilter = !sps.intraBoundaryFilteringDisabled;
+        var edgeFilters = cIdx == 0 && dcFilter && !(sps.implicitRdpcm && bypass);
+        if (plane8 == null) {
+            intra.predict(boundary, log2Size, mode, cIdx == 0, filter, sps.strongIntraSmoothing, edgeFilters, dcFilter,
+                    bitDepth, plane, yc * stride + xc, stride);
+            return;
+        }
+        var predicted = intraBlock;
+        intra.predict(boundary, log2Size, mode, cIdx == 0, filter, sps.strongIntraSmoothing, edgeFilters, dcFilter,
+                bitDepth, predicted, 0, size);
+        for (var y = 0; y < size; y++) {
+            var row = (yc + y) * stride + xc;
+            var in = y * size;
+            for (var x = 0; x < size; x++) {
+                plane8[row + x] = (byte) predicted[in + x];
+            }
+        }
+    }
+
+    /**
+     * Predicts a luma transform block coded with a depth intra mode from its partition pattern
+     * and the {@code DcOffset} of its prediction block (I.8.4.4.2.2 and I.8.4.4.2.3); a predicted
+     * value outside the sample range is kept for the residual of the block.
+     *
+     * @param x the luma x of the block
+     * @param y the luma y of the block
+     * @param log2Size the transform block size as a power of two
+     * @param mode {@link #INTRA_WEDGE} or {@link #INTRA_CONTOUR}
+     * @throws MediaException.Malformed if the transform block is not the prediction block
+     */
+    private void predictDepthIntra(int x, int y, int log2Size, int mode) {
+        var pb = intraSplit ? partitionAt(x, y) : 0;
+        var pbSize = intraSplit ? cuSize >> 1 : cuSize;
+        if (1 << log2Size != pbSize || dimMode[pb] != mode) {
+            throw new MediaException.Malformed("transform split in a prediction block coded with a depth intra mode");
+        }
+        gatherBoundary(x, y, log2Size, 0, true);
+        var pattern = partition(pb, x, y, log2Size);
+        dmmPending = depthIntra.predictSegments(boundary, pbSize, pattern, dcOffsets[pb][0], dcOffsets[pb][1], frame,
+                x, y);
+        if (dmmPending) {
+            dmmX = x;
+            dmmY = y;
+            dmmSize = pbSize;
+            dmmPattern = pattern;
+        }
+    }
+
+    /**
+     * Gathers the neighboring samples of an intra transform block into {@link #boundary} and their
+     * availability into {@link #boundaryAvailable} (8.4.4.2.1), substituting the samples that are
+     * not available when asked (8.4.4.2.2).
+     *
+     * @param xLuma the luma x of the block
+     * @param yLuma the luma y of the block
+     * @param log2Size the transform block size of the component as a power of two
+     * @param cIdx the component
+     * @param substitute whether to substitute the samples that are not available
+     */
+    private void gatherBoundary(int xLuma, int yLuma, int log2Size, int cIdx, boolean substitute) {
         var size = 1 << log2Size;
         var shiftX = cIdx == 0 ? 0 : sps.chromaShiftX;
         var shiftY = cIdx == 0 ? 0 : sps.chromaShiftY;
@@ -2179,27 +2984,9 @@ public final class SliceDecoder implements NeighborAvailability {
                 all = false;
             }
         }
-        var bitDepth = cIdx == 0 ? sps.bitDepthLuma : sps.bitDepthChroma;
-        if (!all) {
+        if (!all && substitute) {
+            var bitDepth = cIdx == 0 ? sps.bitDepthLuma : sps.bitDepthChroma;
             IntraPredictor.substitute(boundary, boundaryAvailable, count, bitDepth);
-        }
-        var filter = !sps.intraSmoothingDisabled && (cIdx == 0 || sps.chromaArrayType == 3);
-        var dcFilter = !sps.intraBoundaryFilteringDisabled;
-        var edgeFilters = cIdx == 0 && dcFilter && !(sps.implicitRdpcm && bypass);
-        if (plane8 == null) {
-            intra.predict(boundary, log2Size, mode, cIdx == 0, filter, sps.strongIntraSmoothing, edgeFilters, dcFilter,
-                    bitDepth, plane, yc * stride + xc, stride);
-            return;
-        }
-        var predicted = intraBlock;
-        intra.predict(boundary, log2Size, mode, cIdx == 0, filter, sps.strongIntraSmoothing, edgeFilters, dcFilter,
-                bitDepth, predicted, 0, size);
-        for (var y = 0; y < size; y++) {
-            var row = (yc + y) * stride + xc;
-            var in = y * size;
-            for (var x = 0; x < size; x++) {
-                plane8[row + x] = (byte) predicted[in + x];
-            }
         }
     }
 
@@ -2238,6 +3025,10 @@ public final class SliceDecoder implements NeighborAvailability {
         }
         var skipped = transformSkip || bypass;
         var predMode = cIdx == 0 ? pic.intraMode[blockIndex(x0, y0)] : chromaModes[partitionAt(x0, y0)];
+        if (predMode > 34) {
+            // the depth intra modes scan their coefficients as INTRA_DC does
+            predMode = 1;
+        }
         rdpcmDirection = -1;
         if (!cuIntra) {
             if (sps.explicitRdpcm && skipped) {
@@ -2778,6 +3569,10 @@ public final class SliceDecoder implements NeighborAvailability {
      * @param value the value to add
      */
     private void addConstant(int x0, int y0, int size, int cIdx, int value) {
+        if (cIdx == 0 && dmmPending && x0 == dmmX && y0 == dmmY && size == dmmSize) {
+            reconstructDepthIntra(null, value);
+            return;
+        }
         var stride = cIdx == 0 ? frame.width : frame.chromaWidth;
         var xc = cIdx == 0 ? x0 : x0 >> sps.chromaShiftX;
         var yc = cIdx == 0 ? y0 : y0 >> sps.chromaShiftY;
@@ -2796,6 +3591,10 @@ public final class SliceDecoder implements NeighborAvailability {
      * @param res the residual samples, {@code size} per row
      */
     private void addResidual(int x0, int y0, int size, int cIdx, int[] res) {
+        if (cIdx == 0 && dmmPending && x0 == dmmX && y0 == dmmY && size == dmmSize) {
+            reconstructDepthIntra(res, 0);
+            return;
+        }
         var stride = cIdx == 0 ? frame.width : frame.chromaWidth;
         var xc = cIdx == 0 ? x0 : x0 >> sps.chromaShiftX;
         var yc = cIdx == 0 ? y0 : y0 >> sps.chromaShiftY;
@@ -2807,6 +3606,36 @@ public final class SliceDecoder implements NeighborAvailability {
         var plane = cIdx == 0 ? frame.y : cIdx == 1 ? frame.cb : frame.cr;
         var max = (1 << (cIdx == 0 ? sps.bitDepthLuma : sps.bitDepthChroma)) - 1;
         pic.dsp.addResidual(plane, yc * stride + xc, stride, res, size, max);
+    }
+
+    /**
+     * Reconstructs a luma block predicted with a depth intra mode whose predicted values lie
+     * outside the sample range: each sample is its segment's predicted value plus the residual,
+     * clipped (8.6.7).
+     *
+     * @param res the residual samples, {@link #dmmSize} per row, or {@code null} for a constant
+     * @param constant the residual of every sample when {@code res} is {@code null}
+     */
+    private void reconstructDepthIntra(int[] res, int constant) {
+        dmmPending = false;
+        var size = dmmSize;
+        var stride = frame.width;
+        var max = (1 << sps.bitDepthLuma) - 1;
+        var value0 = depthIntra.raw0();
+        var value1 = depthIntra.raw1();
+        for (var j = 0; j < size; j++) {
+            var row = (dmmY + j) * stride + dmmX;
+            for (var i = 0; i < size; i++) {
+                var k = j * size + i;
+                var residualValue = res != null ? res[k] : constant;
+                var sample = Math.clamp((dmmPattern[k] == 0 ? value0 : value1) + residualValue, 0, max);
+                if (frame.y8 != null) {
+                    frame.y8[row + i] = (byte) sample;
+                } else {
+                    frame.y[row + i] = (short) sample;
+                }
+            }
+        }
     }
 
     /**

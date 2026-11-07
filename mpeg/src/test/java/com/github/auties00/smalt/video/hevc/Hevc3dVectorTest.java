@@ -30,7 +30,10 @@ import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
  * per-picture MD5s of HTM's output, whose decoded picture hashes HTM verified): two texture views with their
  * depth views, the dependent views coded with inter-view motion prediction (with 8x8 and 16x16 sub-block
  * partitions, and in the dependent depth view), motion vector scaling, advanced residual prediction and
- * illumination compensation. Every picture of every layer must match HTM on one and several threads, and
+ * illumination compensation, and the depth coding tools: the wedgelet and contour intra modes, DC coding with
+ * depth look-up tables and the intra skip modes ({@code depth-intra}), then every tool together with the texture
+ * merging candidate, the coding quadtree predicted from the texture, view synthesis prediction and depth-based
+ * block partitioning with depth-refined disparity vectors ({@code depth-all}). Every picture of every layer must match HTM on one and several threads, and
  * damaged copies of the streams (bit flips, truncated or dropped NAL units, damaged parameter sets with their 3D
  * extensions) decoded on every layer must fail only with {@link MediaException}.
  */

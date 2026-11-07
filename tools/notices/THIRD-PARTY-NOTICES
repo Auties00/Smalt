@@ -1854,8 +1854,16 @@ Derived Smalt packages:
   software HTM-16.3, source/Lib/TLibCommon/TComPrediction.cpp, TComYuv.cpp
   and TComInterpolationFilter.cpp; MotionPredictor: the 3D-HEVC merging
   candidate list, inter-view candidates and disparity vector derivation of
-  HTM-16.3 source/Lib/TLibCommon/TComDataCU.cpp; HevcDecoderEngine: the
-  slice-level 3D-HEVC variables of HTM-16.3 TComSlice.cpp and TComPic.cpp)
+  HTM-16.3 source/Lib/TLibCommon/TComDataCU.cpp, with its texture merging
+  and view synthesis prediction candidates; HevcDecoderEngine: the
+  slice-level 3D-HEVC variables of HTM-16.3 TComSlice.cpp and TComPic.cpp;
+  Hevc3dIntra: the depth intra modes, wedgelet tables, depth look-up tables
+  and segment-wise DC coding of HTM-16.3 TComPrediction.cpp,
+  TComWedgelet.cpp, TComRom.cpp, TComSlice.cpp and
+  source/Lib/TLibDecoder/TDecCu.cpp; SliceDecoder: the 3D-HEVC coding unit
+  syntax of HTM-16.3 TDecSbac.cpp, TDecEntropy.cpp and TDecCu.cpp, the
+  depth-based block partitioning of TComPrediction.cpp and the view
+  synthesis prediction sub-block motion of TComDataCU.cpp)
   video.hevc.encoder.internal (CabacWriter: the binary arithmetic encoder
   engine of source/Lib/TLibEncoder/TEncBinCoderCABAC.cpp; CabacCounter: the
   fractional bit estimate table of source/Lib/TLibCommon/ContextModel.cpp;

@@ -21,10 +21,17 @@ depth layer with mid-gray chroma).
     tex-ic           illumination compensation (with the merge index 0 exception off) and inter-view motion prediction
     tex-all          inter-view motion prediction with 16x16 sub-block partitions in both dependent views, motion
                      vector scaling, residual prediction and illumination compensation
+    depth-intra      the depth intra tools: the wedgelet and contour intra modes, the DC coding of intra coding units,
+                     the depth look-up tables and the intra skip modes, with inter-component prediction
+    depth-all        every texture and depth tool of HTM's configuration: the depth intra tools, the texture merging
+                     candidate with 8x8 sub-block partitions, the DC coding of inter coding units, the coding quadtree
+                     and partitioning predicted from the texture, view synthesis prediction, depth-based block
+                     partitioning with depth-refined disparity vectors, residual prediction and illumination
+                     compensation
 
-The streams use no tool that reads the depth view of the texture being decoded (view synthesis prediction,
-depth-based block partitioning, depth-refined disparity vectors): HTM's decoder refines disparity vectors with depth
-only when depth-based block partitioning is on, so HTM's own streams with depth refinement alone fail its hash check.
+The texture vectors use no tool that reads the depth view of the texture being decoded: HTM's decoder refines
+disparity vectors with depth only when depth-based block partitioning is on, so HTM's own streams with depth
+refinement alone fail its hash check; depth-all enables the refinement together with depth-based block partitioning.
 
 Made with HTM-16.3 (https://vcgit.hhi.fraunhofer.de/jvet/HTM, tag HTM-16.3) compiled with gcc 15 and HEVC_EXT=2
 from the sources of TLibCommon, TLibEncoder, TLibDecoder, TLibRenderer, TLibVideoIO, TAppCommon, libmd5,
@@ -54,7 +61,19 @@ VECTORS = {
                '--IvMvScalingFlag=0', '--Log2SubPbSizeMinus3=3', '--DepthRefinementFlag=0'],
     'tex-all': ['--IvMvPredFlag=1 1', '--IvResPredFlag=1', '--IlluCompEnable=1', '--IlluCompLowLatencyEnc=0',
                 '--IvMvScalingFlag=1', '--Log2SubPbSizeMinus3=1', '--DepthRefinementFlag=0'],
+    'depth-intra': ['--IvMvPredFlag=1 1', '--IvResPredFlag=0', '--IlluCompEnable=0', '--IvMvScalingFlag=1',
+                    '--Log2SubPbSizeMinus3=3', '--DepthRefinementFlag=0', '--IntraWedgeFlag=1', '--IntraContourFlag=1',
+                    '--IntraSdcFlag=1', '--DLT=1', '--DepthIntraSkip=1'],
+    'depth-all': ['--IvMvPredFlag=1 1', '--IvResPredFlag=1', '--IlluCompEnable=1', '--IlluCompLowLatencyEnc=0',
+                  '--IvMvScalingFlag=1', '--Log2SubPbSizeMinus3=0', '--Log2MpiSubPbSizeMinus3=0',
+                  '--DepthRefinementFlag=1', '--ViewSynthesisPredFlag=1', '--DepthBasedBlkPartFlag=1',
+                  '--IntraWedgeFlag=1', '--IntraContourFlag=1', '--IntraSdcFlag=1', '--DLT=1', '--QTL=1',
+                  '--QtPredFlag=1', '--InterSdcFlag=1', '--MpiFlag=1', '--DepthIntraSkip=1'],
 }
+
+# The layers of each vector whose slices enable no inter-component prediction, as no tool of theirs reads another
+# component of the view; the other layers keep the inter-component prediction of HTM's configuration.
+NO_INTER_COMPONENT = {'tex-ivmc-arp': '123', 'tex-ic': '123', 'tex-all': '123', 'depth-intra': '2', 'depth-all': ''}
 
 
 def depth(x, y, t):
@@ -108,10 +127,11 @@ def main():
             base = f.read().splitlines()
         for name, options in VECTORS.items():
             stream = os.path.join(out, name + '.hevc')
-            # No inter-component tool is enabled, so no slice may enable inter-component prediction.
+            # A layer without an inter-component tool may not enable inter-component prediction in its slices.
             lines = []
             for line in base:
-                match = re.match(r'(Frame\w*_l[123]:.*\s)\d\s*$', line)
+                layers = NO_INTER_COMPONENT[name]
+                match = re.match(r'(Frame\w*_l[' + layers + r']:.*\s)\d\s*$', line) if layers else None
                 if match:
                     line = match.group(1) + '0'
                 lines.append(line)

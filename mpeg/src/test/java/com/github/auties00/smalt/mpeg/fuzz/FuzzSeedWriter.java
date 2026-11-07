@@ -1367,6 +1367,10 @@ class FuzzSeedWriter {
         // illumination compensation, and their depth views; each picture of each layer is one part
         write(MpegFuzzTest.class, "hevcLayers", "valid-3dhevc.bin", FuzzPackets.video(14, 128, 128, null,
                 accessUnits(Fixtures.read(vectors.resolveSibling("threeD").resolve("tex-all.hevc")), 12)));
+        // the same views with every texture and depth tool: depth intra modes, DC coding, the texture merging
+        // candidate, view synthesis prediction and depth-based block partitioning
+        write(MpegFuzzTest.class, "hevcLayers", "valid-3dhevc-depth.bin", FuzzPackets.video(14, 128, 128, null,
+                accessUnits(Fixtures.read(vectors.resolveSibling("threeD").resolve("depth-all.hevc")), 16)));
         var unit = HevcAccessUnit.first(Fixtures.read(vectors.resolve("shvc-2x-ld.hevc")));
         var builder = new HeifBuilder().brands("heic", "heic", "mif1");
         var base = builder.item("hvc1", HevcAccessUnit.lengthPrefixed(unit.slices(layer -> layer == 0)),

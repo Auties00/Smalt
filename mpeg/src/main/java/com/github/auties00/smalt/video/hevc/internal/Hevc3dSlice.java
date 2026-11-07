@@ -140,6 +140,12 @@ public final class Hevc3dSlice {
     public int[][] depthToDisparityF = new int[0][];
 
     /**
+     * {@code DltVal[ nuh_layer_id ]} of a depth layer whose {@code DltFlag} is 1, with
+     * {@code NumValDlt} entries, or {@code null}.
+     */
+    public int[] dltVal;
+
+    /**
      * {@code NumRefListLayers[ nuh_layer_id ]}.
      */
     public final int numRefListLayers;
@@ -155,6 +161,33 @@ public final class Hevc3dSlice {
         this.depth = depth;
         this.viewIdx = viewIdx;
         this.numRefListLayers = numRefListLayers;
+    }
+
+    /**
+     * Selects the depth look-up table of a depth layer from the picture parameter set: the table
+     * of its index among the depth layers in the order of the video parameter set (equation I-13).
+     *
+     * @param vps the active video parameter set
+     * @param pps the active picture parameter set
+     * @param layerId the {@code nuh_layer_id} of the slice segment
+     */
+    void selectLookUpTable(HevcVps vps, HevcPps pps, int layerId) {
+        dltVal = null;
+        if (!depth || !pps.dltsPresent) {
+            return;
+        }
+        var index = 0;
+        for (var lId : vps.layerIdInNuh) {
+            if (lId == layerId) {
+                if (index < pps.depthLookUpTables.length) {
+                    dltVal = pps.depthLookUpTables[index];
+                }
+                return;
+            }
+            if (vps.depthLayer[lId]) {
+                index++;
+            }
+        }
     }
 
     /**

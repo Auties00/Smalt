@@ -69,18 +69,22 @@ import java.util.function.Consumer;
  * timestamp, each frame naming its layer in {@link FrameSideData#layer()} when more than the base
  * layer is output. With {@link HevcDecoderOptions#alpha()}, the alpha auxiliary layer of an output
  * layer is attached to the layer's frames as their alpha plane. The texture and depth views of
- * 3D-HEVC streams (Annex I, the 3D Main profile) are decoded with the texture coding tools: the
- * inter-view predicted, shifted and disparity merging candidates with sub-block partition motion and
- * neighboring block disparity vectors (with {@code depth_ref_enabled_flag}, as in the reference decoder,
- * without their vertical component, since the reference decoder refines them from the depth view only
- * together with depth-based block partitioning), the view scaling of inter-view motion vectors,
- * advanced residual prediction and illumination compensation; the depth views, whose motion vectors
- * count whole samples, are output as {@link VideoLayer.Type#DEPTH} layers. A layer that uses view synthesis prediction,
- * depth-based block partitioning or a depth coding tool of Annex I raises
- * {@link MediaException.Unsupported} naming the feature ({@code "hevc 3D view synthesis prediction"},
- * {@code "hevc 3D depth-based block partitioning"} or {@code "hevc 3D depth coding tools"});
- * a stream whose base layer is coded outside it, with another codec, raises it naming
- * {@code "hevc external base layer"}.
+ * 3D-HEVC streams (Annex I, the 3D Main profile) are decoded with every coding tool: for the texture
+ * views, the inter-view predicted, shifted and disparity merging candidates with sub-block partition
+ * motion, neighboring block disparity vectors (with {@code depth_ref_enabled_flag} refined from the
+ * depth view, without their vertical component; as in the reference decoder, the refinement takes place
+ * only together with depth-based block partitioning), the view scaling of inter-view motion vectors,
+ * advanced residual prediction, illumination compensation, view synthesis prediction and depth-based
+ * block partitioning; for the depth views, whose motion vectors count whole samples, the texture
+ * merging candidate with its sub-block partitions, the wedgelet and contour intra modes, the DC coding
+ * of intra and inter coding units with the depth look-up tables, the intra skip modes and the coding
+ * quadtree and partitioning predicted from the texture. The depth views are output as
+ * {@link VideoLayer.Type#DEPTH} layers. A depth layer with chroma samples that uses the depth intra
+ * modes or the DC coding, or a 4:2:2 texture layer that uses depth-based block partitioning,
+ * which the 3D Main profile excludes and Annex I does not specify, raises
+ * {@link MediaException.Unsupported} naming the feature ({@code "hevc 3D depth coding tools"} or
+ * {@code "hevc 3D depth-based block partitioning"}); a stream whose base layer is coded outside it,
+ * with another codec, raises it naming {@code "hevc external base layer"}.
  *
  * <p>Packet format follows the track: when {@link VideoTrack#codecConfig()} holds an
  * {@code HEVCDecoderConfigurationRecord} ({@code hvcC}), packets are NAL units prefixed by their

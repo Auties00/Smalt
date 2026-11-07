@@ -312,6 +312,13 @@ public final class HevcFrame {
     public int[] rpsCurrPoc = new int[0];
 
     /**
+     * The coding unit covering each 4x4 block of a texture picture of 3D-HEVC, which the depth
+     * picture of its view predicts its coding quadtree from: the coding block size as a power of two
+     * shifted left by 3, ored with the partitioning mode; {@code null} for the other pictures.
+     */
+    public byte[] cuShape;
+
+    /**
      * Whether the decoder outputs several layers or a layer other than the base layer, so that the
      * frame of the picture names its layer.
      */

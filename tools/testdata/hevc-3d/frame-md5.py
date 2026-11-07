@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Writes the per-picture MD5s of the 3D-HEVC texture conformance streams that Hevc3dConformanceTest reads.
+"""Writes the per-picture MD5s of the 3D-HEVC conformance streams that Hevc3dConformanceTest reads.
 
 The MD5s are those of the output of the 3D-HEVC reference decoder HTM-16.3 (BSD 3-clause, built with
 HEVC_EXT=2), which writes one 8-bit 4:2:0 file per layer, rec_<nuh_layer_id>.yuv, the depth layers with
@@ -28,7 +28,7 @@ def main():
         archive = {}
         with open(md5_file, encoding='ascii') as f:
             for line in f:
-                match = re.match(r'^([0-9a-fA-F]{32})\s+\*?\S*_(\d+)\.yuv\s*$', line.strip())
+                match = re.match(r'^([0-9a-fA-F]{32})\s+\*?\S*_(\d+)(?:\.yuv)?\s*$', line.strip())
                 if match:
                     archive[int(match.group(2))] = match.group(1).lower()
         for layer in sorted(archive):

@@ -1024,6 +1024,9 @@ public final class HevcDecoderEngine {
                 header.interView = interViewContext(header);
             }
         }
+        if (header.tools3d != null && header.tools3d.depth) {
+            header.texturePicture = texturePicture(header.tools3d.viewIdx);
+        }
         var sliceIndex = recordSlice(header);
         if (lists != null) {
             var plane = header.colorPlaneId;
@@ -1192,6 +1195,23 @@ public final class HevcDecoderEngine {
             context.textures = textures.toArray(new HevcFrame[0]);
         }
         return context;
+    }
+
+    /**
+     * Returns {@code TexturePic} of a depth picture: the texture picture of its view in the
+     * access unit, when it has the size of the current picture.
+     *
+     * @param viewIdx the view order index of the depth picture
+     * @return the texture picture, or {@code null}
+     */
+    private HevcFrame texturePicture(int viewIdx) {
+        var layer = planVps.viewCompLayerId(viewIdx, false);
+        for (var frame : accessUnit) {
+            if (frame != current && !frame.generated && frame.layerId == layer && sameSize(frame)) {
+                return frame;
+            }
+        }
+        return null;
     }
 
     /**

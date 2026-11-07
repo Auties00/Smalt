@@ -89,10 +89,23 @@ public final class HevcSliceHeader {
     public Hevc3dSlice tools3d;
 
     /**
+     * Whether the slice belongs to a texture layer of a stream with depth layers, whose coding
+     * units the depth layer of the view may predict its coding quadtree from.
+     */
+    public boolean textureOfDepth;
+
+    /**
      * The variables the slice derives at its start for the 3D-HEVC tools, set with its reference
      * picture lists; {@code null} for an intra slice and for the layers not decoded with Annex I.
      */
     public InterViewContext interView;
+
+    /**
+     * {@code TexturePic} of a slice of a depth layer decoded with the process of Annex I: the
+     * texture picture of its view in the access unit, set with the slice's other decoding
+     * variables, or {@code null}.
+     */
+    public HevcFrame texturePicture;
 
     /**
      * {@code poc_reset_idc}.
@@ -589,6 +602,7 @@ public final class HevcSliceHeader {
         copy.numActiveRefLayerPics = numActiveRefLayerPics;
         copy.refPicLayerId = refPicLayerId;
         copy.tools3d = tools3d;
+        copy.textureOfDepth = textureOfDepth;
         copy.pocResetIdc = pocResetIdc;
         copy.pocResetPeriodId = pocResetPeriodId;
         copy.fullPocReset = fullPocReset;
@@ -674,6 +688,13 @@ public final class HevcSliceHeader {
         var refListLayers = annexI ? vps.idRefListLayer[layerId] : vps != null ? vps.idDirectRefLayer[layerId] : null;
         if (annexI) {
             tools3d = new Hevc3dSlice(vps.depthLayer[layerId], vps.viewOrderIdx[layerId], refListLayers.length);
+            tools3d.selectLookUpTable(vps, pps, layerId);
+        }
+        textureOfDepth = false;
+        if (vps != null && !vps.depthLayer[layerId]) {
+            for (var lId : vps.layerIdInNuh) {
+                textureOfDepth |= vps.depthLayer[lId];
+            }
         }
         if (HevcNal.isIrap(nalType) && sliceType != I && !pps.currPicRefEnabled && directRefLayers == 0) {
             throw new MediaException.Malformed("intra random access point picture with a P or B slice");

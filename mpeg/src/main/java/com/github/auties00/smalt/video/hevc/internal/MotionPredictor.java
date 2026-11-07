@@ -113,6 +113,18 @@ public final class MotionPredictor {
         public final byte[] subRef1 = new byte[MAX_SUB_BLOCKS];
 
         /**
+         * Whether the prediction unit is predicted with view synthesis prediction: its motion is
+         * that of a view synthesis prediction merging candidate, which its sub-block partitions
+         * replace with disparities derived from a depth picture (3D-HEVC).
+         */
+        public boolean vsp;
+
+        /**
+         * {@code DbbpFlag} of the coding unit (3D-HEVC).
+         */
+        public boolean dbbp;
+
+        /**
          * {@code iv_res_pred_weight_idx} of the coding unit (3D-HEVC).
          */
         public int residualWeight;
@@ -176,6 +188,8 @@ public final class MotionPredictor {
                 mvY[i] = 0;
             }
             ivMc = false;
+            vsp = false;
+            dbbp = false;
             subPbWidth = 0;
             subPbHeight = 0;
             residualWeight = 0;
@@ -209,9 +223,10 @@ public final class MotionPredictor {
     }
 
     /**
-     * The most sub-block partitions of a prediction unit: a 64x64 block of 8x8 partitions.
+     * The most sub-block partitions of a prediction unit: a 64x64 block of the 8x4 or 4x8
+     * partitions of view synthesis prediction.
      */
-    public static final int MAX_SUB_BLOCKS = 64;
+    public static final int MAX_SUB_BLOCKS = 128;
 
     /**
      * The merge candidates' list 0 motion vectors, packed.
@@ -401,6 +416,14 @@ public final class MotionPredictor {
                     m.mvY[x] = (short) ((mvp >> 16) + m.mvdY[x]);
                 }
             }
+        }
+        if (m.dbbp && m.predFlag[0] && m.predFlag[1]) {
+            // the bi-prediction restriction of the reference decoder covers every prediction unit
+            // of a coding unit with depth-based block partitioning
+            m.predFlag[1] = false;
+            m.refIdx[1] = -1;
+            m.mvX[1] = 0;
+            m.mvY[1] = 0;
         }
         if (twoVersions && m.predFlag[0] && m.predFlag[1] && nPbW <= 8 && nPbH <= 8) {
             var integer0 = ((m.mvX[0] | m.mvY[0]) & 3) == 0;
@@ -1055,6 +1078,42 @@ public final class MotionPredictor {
     private int spHeight;
 
     /**
+     * Whether each position of the 3D-HEVC candidate list carries the view synthesis prediction
+     * flag.
+     */
+    private final boolean[] extVsp = new boolean[EXT_COUNT];
+
+    /**
+     * The sub-block partition motion of the texture merging candidate: list 0 vectors.
+     */
+    private final int[] texMv0 = new int[MAX_SUB_BLOCKS];
+
+    /**
+     * The sub-block partition motion of the texture merging candidate: list 1 vectors.
+     */
+    private final int[] texMv1 = new int[MAX_SUB_BLOCKS];
+
+    /**
+     * The sub-block partition motion of the texture merging candidate: list 0 reference indices.
+     */
+    private final byte[] texRef0 = new byte[MAX_SUB_BLOCKS];
+
+    /**
+     * The sub-block partition motion of the texture merging candidate: list 1 reference indices.
+     */
+    private final byte[] texRef1 = new byte[MAX_SUB_BLOCKS];
+
+    /**
+     * The width of the sub-block partitions of the texture merging candidate.
+     */
+    private int texWidth;
+
+    /**
+     * The height of the sub-block partitions of the texture merging candidate.
+     */
+    private int texHeight;
+
+    /**
      * The motion vector and reference index {@link #interViewMotion} found for one list.
      */
     private int foundMv;
@@ -1085,6 +1144,11 @@ public final class MotionPredictor {
      * Spatial candidate B1.
      */
     private static final int EXT_B1 = 3;
+
+    /**
+     * The view synthesis prediction merging candidate.
+     */
+    private static final int EXT_VSP = 4;
 
     /**
      * Spatial candidate B0.
@@ -1232,6 +1296,14 @@ public final class MotionPredictor {
      */
     public int disparity() {
         return cuDispVec;
+    }
+
+    /**
+     * {@return {@code DispRefVec} of the coding unit, packed: the disparity vector refined from the
+     * depth of the reference view, without its vertical component, with {@code DepthRefEnabledFlag}}
+     */
+    public int disparityRefined() {
+        return cuDispRefVec;
     }
 
     /**
@@ -1509,20 +1581,31 @@ public final class MotionPredictor {
                 extRef1[k] = candRef1[i];
             }
         }
+        java.util.Arrays.fill(extVsp, false);
+        var a1Vsp = availableA1 && pic.vsp != null && pic.vsp[a1] != 0;
+        extVsp[EXT_A1] = a1Vsp && !m.illuminationCompensation && m.residualWeight == 0 && !m.dbbp;
+        if (tools.texMc && nPbW + nPbH > 12) {
+            textureCandidate(xPb, yPb, nPbW, nPbH);
+        }
         var ivMvPred = tools.ivDiMc && nPbW + nPbH > 12;
         var ivSub = false;
         if (ivMvPred && cuRefViewIdx >= 0) {
-            interViewCandidates(xPb, yPb, nPbW, nPbH, m.illuminationCompensation);
+            interViewCandidates(xPb, yPb, nPbW, nPbH, m.illuminationCompensation, m.dbbp);
             var ivDir = direction(0);
             if (ivDir != 0) {
                 setExt(EXT_IV, 0);
+                if (tools.depth && extAvailable[EXT_T] && sameExt(EXT_IV, EXT_T)) {
+                    extAvailable[EXT_IV] = false;
+                }
+                if (!tools.depth && !m.dbbp) {
+                    ivSub = true;
+                }
                 if (!tools.depth) {
                     if (extAvailable[EXT_A1] && sameExt(EXT_IV, EXT_A1)) {
                         extAvailable[EXT_A1] = false;
                     } else if (extAvailable[EXT_B1] && sameExt(EXT_IV, EXT_B1)) {
                         extAvailable[EXT_B1] = false;
                     }
-                    ivSub = true;
                 }
             }
             if (!tools.depth && direction(1) != 0) {
@@ -1541,6 +1624,10 @@ public final class MotionPredictor {
                     setExt(EXT_SHIFT, 6);
                 }
             }
+        }
+        if (tools.vspMc && !a1Vsp && !m.illuminationCompensation && m.residualWeight == 0 && !m.dbbp
+                && nPbW + nPbH > 12 && cuRefViewIdx >= 0 && views.depthPicture[cuRefViewIdx] != null) {
+            vspCandidate();
         }
         var target = m.mergeIdx;
         var chosen = -1;
@@ -1577,10 +1664,20 @@ public final class MotionPredictor {
             mv1 = candMv1[chosenBase];
         }
         m.ivMc = chosen == EXT_IV || chosen == EXT_SHIFT && shiftFromIv;
+        m.vsp = chosen >= 0 && extVsp[chosen];
         m.predFlag[0] = m.refIdx[0] >= 0;
         m.predFlag[1] = m.refIdx[1] >= 0;
         // a prediction unit sharing the merging candidates of its coding unit takes the motion of the
         // candidate, which is that of its single sub-block partition
+        if (chosen == EXT_T && origW == nPbW && origH == nPbH) {
+            m.subPbWidth = texWidth;
+            m.subPbHeight = texHeight;
+            var blocks = (nPbW / texWidth) * (nPbH / texHeight);
+            System.arraycopy(texMv0, 0, m.subMv0, 0, blocks);
+            System.arraycopy(texMv1, 0, m.subMv1, 0, blocks);
+            System.arraycopy(texRef0, 0, m.subRef0, 0, blocks);
+            System.arraycopy(texRef1, 0, m.subRef1, 0, blocks);
+        }
         if (chosen == EXT_IV && ivSub && origW == nPbW && origH == nPbH) {
             m.subPbWidth = spWidth;
             m.subPbHeight = spHeight;
@@ -1598,6 +1695,140 @@ public final class MotionPredictor {
         m.mvY[0] = m.predFlag[0] ? mv0 >> 16 : 0;
         m.mvX[1] = m.predFlag[1] ? (short) mv1 : 0;
         m.mvY[1] = m.predFlag[1] ? mv1 >> 16 : 0;
+    }
+
+    /**
+     * Derives the view synthesis prediction merging candidate (I.8.5.3.2.13) into its position of
+     * the 3D-HEVC candidate list: the first reference picture of the lists, list 0 first, of the
+     * view of the disparity vector, with the disparity vector as its motion vector, which the
+     * decoder replaces with the disparities of the sub-block partitions.
+     */
+    private void vspCandidate() {
+        for (var list = 0; list < 2; list++) {
+            for (var i = 0; i < header.numRefIdx[list]; i++) {
+                if (views.refViewIdx[list][i] == cuRefViewIdx) {
+                    extAvailable[EXT_VSP] = true;
+                    extVsp[EXT_VSP] = true;
+                    extRef0[EXT_VSP] = list == 0 ? i : -1;
+                    extRef1[EXT_VSP] = list == 1 ? i : -1;
+                    extMv0[EXT_VSP] = list == 0 ? cuDispVec : 0;
+                    extMv1[EXT_VSP] = list == 1 ? cuDispVec : 0;
+                    return;
+                }
+            }
+        }
+    }
+
+    /**
+     * Derives the texture merging candidate of a prediction unit of a depth layer
+     * (I.8.5.3.2.11), with the motion of its sub-block partitions, from the motion of the texture
+     * picture of the view, and prunes the first of the spatial candidates A1 and B1 it equals.
+     *
+     * <p>As in the reference decoder, the motion of the texture block at the center of the
+     * prediction unit decides the candidate's availability and stands in for the sub-block
+     * partitions whose texture blocks have none: a list of the center takes the first reference
+     * picture with its picture order count, whatever its view; a list of a sub-block partition the
+     * first one of its picture order count and view.
+     *
+     * @param xPb the luma x of the prediction block
+     * @param yPb the luma y of the prediction block
+     * @param nPbW the prediction block width
+     * @param nPbH the prediction block height
+     * @throws com.github.auties00.smalt.MediaException.Malformed if the texture picture of the
+     * view is missing
+     */
+    private void textureCandidate(int xPb, int yPb, int nPbW, int nPbH) {
+        var texture = header.texturePicture;
+        if (texture == null) {
+            throw new com.github.auties00.smalt.MediaException.Malformed(
+                    "texture merging candidate without the texture picture of the view");
+        }
+        var size = 1 << views.tools.log2SubPbSize;
+        var whole = nPbW % size != 0 || nPbH % size != 0;
+        texWidth = whole ? nPbW : size;
+        texHeight = whole ? nPbH : size;
+        var columns = nPbW / texWidth;
+        var rows = nPbH / texHeight;
+        var xCenter = xPb + (columns >> 1) * texWidth + (texWidth >> 1);
+        var yCenter = yPb + (rows >> 1) * texHeight + (texHeight >> 1);
+        var ref0 = textureMotion(texture, xCenter, yCenter, 0, false);
+        var mv0 = foundMv;
+        var ref1 = textureMotion(texture, xCenter, yCenter, 1, false);
+        var mv1 = foundMv;
+        if (ref0 < 0 && ref1 < 0) {
+            return;
+        }
+        var index = 0;
+        for (var y = 0; y < rows; y++) {
+            for (var x = 0; x < columns; x++) {
+                var xs = xPb + x * texWidth + (texWidth >> 1);
+                var ys = yPb + y * texHeight + (texHeight >> 1);
+                var r0 = textureMotion(texture, xs, ys, 0, true);
+                var m0 = foundMv;
+                var r1 = textureMotion(texture, xs, ys, 1, true);
+                var m1 = foundMv;
+                if (r0 < 0 && r1 < 0) {
+                    r0 = ref0;
+                    m0 = mv0;
+                    r1 = ref1;
+                    m1 = mv1;
+                }
+                texRef0[index] = (byte) r0;
+                texMv0[index] = r0 >= 0 ? m0 : 0;
+                texRef1[index] = (byte) r1;
+                texMv1[index] = r1 >= 0 ? m1 : 0;
+                index++;
+            }
+        }
+        extAvailable[EXT_T] = true;
+        extRef0[EXT_T] = ref0;
+        extMv0[EXT_T] = ref0 >= 0 ? mv0 : 0;
+        extRef1[EXT_T] = ref1;
+        extMv1[EXT_T] = ref1 >= 0 ? mv1 : 0;
+        if (extAvailable[EXT_A1] && sameExt(EXT_T, EXT_A1)) {
+            extAvailable[EXT_A1] = false;
+        } else if (extAvailable[EXT_B1] && sameExt(EXT_T, EXT_B1)) {
+            extAvailable[EXT_B1] = false;
+        }
+    }
+
+    /**
+     * Derives the motion of one list of the texture merging candidate from the 8x8 block of the
+     * texture picture covering a location (equations I-173 to I-180): the texture motion vector
+     * rounded to whole samples, with the first reference index of the list whose picture has the
+     * picture order count of the texture's reference and, when asked, its view.
+     *
+     * @param texture the texture picture
+     * @param x the luma x
+     * @param y the luma y
+     * @param list the reference picture list, 0 or 1
+     * @param sameView whether the reference picture must also be of the view of the texture's
+     * @return the reference index, or -1 when the list has no motion; the vector in
+     * {@link #foundMv}
+     */
+    private int textureMotion(HevcFrame texture, int x, int y, int list, boolean sameView) {
+        var xRef = (Math.clamp(x, 0, texture.width - 1) >> 3) << 3;
+        var yRef = (Math.clamp(y, 0, texture.height - 1) >> 3) << 3;
+        texture.awaitDecodedRows(yRef + 8);
+        var block = (yRef >> 2) * texture.width4 + (xRef >> 2);
+        var ref = list == 0 ? texture.ref0[block] : texture.ref1[block];
+        var slice = sliceOf(texture, xRef, yRef);
+        if (ref < 0 || slice < 0) {
+            return -1;
+        }
+        var entry = list * 16 + ref;
+        var poc = texture.sliceRefPoc[slice][entry];
+        var view = sameView ? views.viewOfReference(texture, slice, entry) : -1;
+        for (var i = 0; i < header.numRefIdx[list]; i++) {
+            if (refPoc[list][i] == poc && (!sameView || views.refViewIdx[list][i] == view)) {
+                var mv = list == 0 ? texture.mv0[block] : texture.mv1[block];
+                var mvX = ((short) mv + 2) >> 2;
+                var mvY = ((mv >> 16) + 2) >> 2;
+                foundMv = (mvY << 16) | (mvX & 0xFFFF);
+                return i;
+            }
+        }
+        return -1;
     }
 
     /**
@@ -1652,7 +1883,8 @@ public final class MotionPredictor {
      * @param nPbH the prediction block height
      * @param illuminationCompensation {@code IlluCompFlag} of the coding unit
      */
-    private void interViewCandidates(int xPb, int yPb, int nPbW, int nPbH, boolean illuminationCompensation) {
+    private void interViewCandidates(int xPb, int yPb, int nPbW, int nPbH, boolean illuminationCompensation,
+                                     boolean dbbp) {
         java.util.Arrays.fill(ivAvailable, false);
         var tools = views.tools;
         var depth = tools.depth;
@@ -1662,7 +1894,25 @@ public final class MotionPredictor {
         var dvY = dv >> 16;
         var base = depth ? views.depthPicture[view] : views.texture[view];
         if (!illuminationCompensation && base != null && !base.generated) {
-            if (!depth) {
+            if (!depth && dbbp) {
+                // a coding unit with depth-based block partitioning takes the motion at the center of the
+                // prediction unit, without sub-block partitions
+                for (var list = 0; list < 2; list++) {
+                    if (interViewMotion(base, xPb + (nPbW >> 1) + ((dvX + 2) >> 2),
+                            yPb + (nPbH >> 1) + ((dvY + 2) >> 2), list)) {
+                        ivAvailable[list] = true;
+                        ivMv[list] = foundMv;
+                        ivRef[list] = foundRef;
+                    }
+                    var xs = xPb + (nPbW >> 1) + ((dvX + nPbW * 2 + 2) >> 2);
+                    var ys = yPb + (nPbH >> 1) + ((dvY + nPbH * 2 + 2) >> 2);
+                    if (interViewMotion(base, xs, ys, list)) {
+                        ivAvailable[4 + list] = true;
+                        ivMv[4 + list] = foundMv;
+                        ivRef[4 + list] = foundRef;
+                    }
+                }
+            } else if (!depth) {
                 var size = 1 << tools.log2SubPbSize;
                 var whole = nPbW % size != 0 || nPbH % size != 0;
                 spWidth = whole ? nPbW : size;

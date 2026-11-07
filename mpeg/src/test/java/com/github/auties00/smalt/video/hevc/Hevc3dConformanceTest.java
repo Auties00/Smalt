@@ -30,24 +30,27 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * Decodes the texture conformance bitstreams of the JCT-3V 3D-HEVC suite (ITU-T H.265.1,
- * {@code 3DHC_T_*}): three texture views with their depth views, the dependent texture views coded
- * with inter-view motion prediction (with sub-block partitions in {@code 3DHC_T_B}), advanced
- * residual prediction ({@code 3DHC_T_A}), illumination compensation ({@code 3DHC_T_C}) and all of
- * them combined ({@code 3DHC_T_D}, and {@code 3DHC_T_E} without depth views), the depth views with
- * their integer motion vectors, and the disparity vectors of the texture views with
- * {@code depth_ref_enabled_flag} (which the reference decoder refines only with depth-based block partitioning) with the
- * inter-view predicted merging candidates of the depth views ({@code 3DHC_DT_A}). The streams with tools
- * the decoder does not implement must name them: view synthesis prediction ({@code 3DHC_DT_B}) and
- * the depth coding tools ({@code 3DHC_TD_A}). Every layer of every stream must match the reference decoder: the
- * MD5 of each output picture (luma and chroma, a depth picture's chroma mid-gray 4:2:0 planes)
- * against the per-picture MD5s of the output of the 3D-HEVC reference decoder HTM-16.3 kept with
- * the test ({@code threeD/frame-md5.txt}, written by {@code tools/testdata/hevc-3d/frame-md5.py},
- * whose whole-layer MD5s equal those the archives ship), and the MD5 of each layer's whole output
- * against the archive's. Each archive is pinned by its SHA-256 and cached by
- * {@link Conformance#fetch}.
+ * Decodes the conformance bitstreams of the JCT-3V 3D-HEVC suite (ITU-T H.265.1): the texture
+ * streams ({@code 3DHC_T_*}), three texture views with their depth views, the dependent texture views
+ * coded with inter-view motion prediction (with sub-block partitions in {@code 3DHC_T_B}), advanced
+ * residual prediction ({@code 3DHC_T_A}), illumination compensation ({@code 3DHC_T_C}) and all of them
+ * combined ({@code 3DHC_T_D}, and {@code 3DHC_T_E} without depth views); the depth dependent texture
+ * streams ({@code 3DHC_DT_*}), with the disparity vectors of {@code depth_ref_enabled_flag} (which the
+ * reference decoder refines only with depth-based block partitioning, {@code 3DHC_DT_A}), view synthesis
+ * prediction ({@code 3DHC_DT_B}), depth-based block partitioning ({@code 3DHC_DT_C}) and all of them
+ * ({@code 3DHC_DT_D}); and the depth coding streams ({@code 3DHC_TD_*}), with the texture merging
+ * candidate and its sub-block partitions ({@code 3DHC_TD_A}, {@code 3DHC_TD_B}), the wedgelet and contour
+ * intra modes, the DC coding of intra and inter coding units with the depth look-up tables, the intra
+ * skip modes and, in {@code 3DHC_TD_C}, every texture and depth tool on two views
+ * ({@code 3DHC_TD_D} and {@code 3DHC_TD_E} in random access and all-intra configurations). Every layer
+ * of every stream must match the reference decoder: the MD5 of each output picture (luma and chroma, a
+ * depth picture's chroma mid-gray 4:2:0 planes) against the per-picture MD5s of the output of the
+ * 3D-HEVC reference decoder HTM-16.3 kept with the test ({@code threeD/frame-md5.txt}, written by
+ * {@code tools/testdata/hevc-3d/frame-md5.py}, whose whole-layer MD5s equal those the archives ship),
+ * and the MD5 of each layer's whole output against the archive's. Each archive is pinned by its
+ * SHA-256 and cached by {@link Conformance#fetch}.
  */
-@DisplayName("HEVC 3D conformance bitstreams (ITU-T H.265.1, 3D-HEVC texture)")
+@DisplayName("HEVC 3D conformance bitstreams (ITU-T H.265.1, 3D-HEVC)")
 class Hevc3dConformanceTest {
     private static final String BASE = "https://www.itu.int/wftp3/av-arch/jctvc-site/bitstream_exchange/draft_conformance/3D-HEVC/";
 
@@ -61,6 +64,14 @@ class Hevc3dConformanceTest {
             3DHC_T_D_Sharp_3|D|fbb808616d3de98d0bdb8beceb01e29f665948dcf361d333fa960e2e34b6ad19|3DHC_T_D_Sharp_3/3DHC_T_D.bit
             3DHC_T_E_HHI_3|E|bdb7a7f8d891aea19aef4fc752e0a91a7e7bc0b9135d92fece74b2c25c8854a6|3DHC_T_E.bit
             3DHC_DT_A_MediaTek_3|DA|5d297a751acb27476e6174fd3189a595f8b379d231443daae3a88f41c19175f1|3DHC_DT_A.bit
+            3DHC_DT_B_NTT_3|DB|28e9b6a3bd87f9e70f01c82a9f68d3b5398dbdaa9a77b21e80f1fba7ced2f6d4|3DHC_DT_B.bit
+            3DHC_DT_C_Hisilicon_3|DC|c0100aae8edbac39155125f616fd88df76706a0e064086ba01216c0729295de0|3DHC_DT_C.bit
+            3DHC_DT_D_NTT_3|DD|f620440076f72beb6e7631b677a6c46515714d0f3f7486ad9ae0705e1c6dc6f8|3DHC_DT_D.bit
+            3DHC_TD_A_Qualcomm_3|TA|9ca38e438ea4ffd8e2e76c2943389534ddbd9d6a071f1af9dba227071f8b80a9|3DHC_TD_A_Qualcomm_3/3DHC_TD_A.bit
+            3DHC_TD_B_MediaTek_3|TB|c95d07e305d79ee2ef66696cd84cc857d1e0e864698bd995169ae3b398faa5f7|3DHC_TD_B_MediaTek_3/3DHC_TD_B.bit
+            3DHC_TD_C_MediaTek_3|TC|8b67a3f71475af469cedda80158d249008ded42f90134465b3090d274fc9b059|3DHC_TD_C.bit
+            3DHC_TD_D_HHI_3|TD|80c8ee929122b111792a13cdc6736c18e621cc7c810c015742a067d6e7ef418b|3DHC_TD_D.bit
+            3DHC_TD_E_HHI_3|TE|c1b738b3664cb587b17294e6a6c64b1027f2b61b8f80f9d4017a7e6845e287d3|3DHC_TD_E.bit
             """;
 
     record Vector(String name, String key, String sha256, String bitstream) {
@@ -110,7 +121,7 @@ class Hevc3dConformanceTest {
         return result;
     }
 
-    private static final Pattern YUV_MD5 = Pattern.compile("^([0-9a-fA-F]{32})\\s+\\*?\\S*_(\\d+)\\.yuv\\s*$");
+    private static final Pattern YUV_MD5 = Pattern.compile("^([0-9a-fA-F]{32})\\s+\\*?\\S*_(\\d+)(?:\\.yuv)?\\s*$");
 
     /**
      * Returns the MD5 of each layer's whole output that the archive ships, by layer identifier.
@@ -218,40 +229,6 @@ class Hevc3dConformanceTest {
         }
     }
 
-    record UnsupportedVector(String name, String sha256, String bitstream, String feature) {
-        @Override
-        public String toString() {
-            return name;
-        }
-    }
-
-    static Stream<UnsupportedVector> unsupportedVectors() {
-        return Stream.of(
-                new UnsupportedVector("3DHC_DT_B_NTT_3", "28e9b6a3bd87f9e70f01c82a9f68d3b5398dbdaa9a77b21e80f1fba7ced2f6d4",
-                        "3DHC_DT_B.bit", "hevc 3D view synthesis prediction"),
-                new UnsupportedVector("3DHC_TD_A_Qualcomm_3", "9ca38e438ea4ffd8e2e76c2943389534ddbd9d6a071f1af9dba227071f8b80a9",
-                        "3DHC_TD_A_Qualcomm_3/3DHC_TD_A.bit", "hevc 3D depth coding tools"));
-    }
-
-    @ParameterizedTest(name = "{0}")
-    @MethodSource("unsupportedVectors")
-    @DisplayName("a stream with a tool the decoder lacks names it, and its base texture view still decodes")
-    void unsupportedTools(UnsupportedVector vector) throws IOException {
-        var file = Conformance.fetch("hevc-3dhevc-" + vector.name() + ".zip", BASE + vector.name() + ".zip",
-                vector.sha256());
-        byte[] stream;
-        try (var zip = new ZipFile(file.toFile())) {
-            stream = HevcMultilayerConformanceTest.entry(zip, vector.bitstream());
-        }
-        var vps = HevcMultilayerConformanceTest.vps(stream);
-        var error = org.junit.jupiter.api.Assertions.assertThrows(MediaException.Unsupported.class,
-                () -> decodePictures(stream, vps.numOutputLayerSets() - 1, 1, null));
-        assertEquals(vector.feature(), error.format());
-        var base = decodePictures(stream, 0, 1, null);
-        assertEquals(List.of(0), List.copyOf(base.keySet()));
-        assertFalse(base.get(0).isEmpty());
-    }
-
     /**
      * Writes the planes and the motion of a mismatching picture where the CI uploads them.
      */
@@ -321,7 +298,8 @@ class Hevc3dConformanceTest {
     }
 
     static Stream<Vector> threadedVectors() {
-        return vectors().stream().filter(vector -> vector.key().equals("D") || vector.key().equals("E"));
+        return vectors().stream().filter(vector -> vector.key().equals("D") || vector.key().equals("E")
+                || vector.key().equals("DD") || vector.key().equals("TC"));
     }
 
     @ParameterizedTest(name = "{0}")
