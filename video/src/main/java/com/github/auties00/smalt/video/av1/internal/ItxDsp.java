@@ -34,10 +34,10 @@ public abstract class ItxDsp {
     static final ItxDsp SCALAR = new ScalarItxDsp();
 
     /**
-     * The implementation every frame uses: {@link VectorItxDsp} when
-     * {@link Simd#ENABLED}, {@link #SCALAR} otherwise.
+     * The implementation every frame uses: {@link VectorItxDsp}, written for 256-bit vectors, when
+     * {@link Simd#WIDE}, {@link #SCALAR} otherwise.
      */
-    private static final ItxDsp FIXED = Simd.ENABLED ? VectorItxDsp.create() : SCALAR;
+    private static final ItxDsp FIXED = Simd.WIDE ? VectorItxDsp.create() : SCALAR;
 
     /**
      * The minimum length of the {@code int} scratch buffer {@link #itxfmAdd} needs: one 64x64 block

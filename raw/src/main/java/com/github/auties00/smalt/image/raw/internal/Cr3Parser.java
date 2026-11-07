@@ -1,7 +1,9 @@
 package com.github.auties00.smalt.image.raw.internal;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.raw.CfaPattern;
 import com.github.auties00.smalt.internal.io.ByteArrays;
+import com.github.auties00.smalt.internal.limits.LimitChecks;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -11,17 +13,21 @@ import java.util.List;
 /**
  * Parses a Canon CR3 file: an ISO base media file whose {@code moov} box holds a Canon box
  * ({@code uuid 85c0b687-820f-11e0-8111-f4ce462b6a48}) with the metadata as TIFF structures
- * ({@code CMT1}: the first directory, {@code CMT2}: the EXIF directory, {@code CMT4}: the GPS
- * directory), and whose tracks hold a full-size JPEG, a small raw image and the CRX-coded sensor
- * data; a second Canon box ({@code uuid eaf42b5e-1c98-4b88-b9fb-b7dc406e4d16}) holds a
- * {@code PRVW} preview JPEG.
+ * ({@code CMT1}: the first directory, {@code CMT2}: the EXIF directory, {@code CMT3}: the Canon
+ * maker note, {@code CMT4}: the GPS directory), and whose tracks hold a full-size JPEG, a small
+ * raw image and the CRX-coded sensor data; a second Canon box
+ * ({@code uuid eaf42b5e-1c98-4b88-b9fb-b7dc406e4d16}) holds a {@code PRVW} preview JPEG.
  *
- * <p>The camera, the shot, the EXIF block and the JPEG images are read; the CRX-coded sensor data
- * is not decoded.
+ * <p>The camera, the shot, the EXIF block and the JPEG images are read, and the largest CRX image
+ * becomes the sensor data, decoded by {@link CrxDecoder}. Its {@code CRAW} sample entry holds the
+ * {@code CMP1} box describing the coding and an {@code IAD1} box giving the image areas: the
+ * recommended crop, the masked borders and the area of image data, as inclusive pixel ranges. The
+ * color data of the maker note the timed metadata track ({@code CTMD}) carries in its EXIF records
+ * gives the white balance and the levels.
  *
  * @implNote This implementation follows the box layout Laurent Clevy's CR3 documentation
- * describes; it reads no code. The CRX codec is documented there only in outline (the details are
- * deferred to LGPL implementations), so the sensor data is left undecoded.
+ * describes; it reads no code. A dual pixel file's second CRX image of full size (one of the two
+ * photodiodes of each pixel) is not exposed.
  */
 final class Cr3Parser {
     /**
@@ -45,6 +51,26 @@ final class Cr3Parser {
      * The deepest level of nested boxes visited.
      */
     private static final int MAX_DEPTH = 8;
+
+    /**
+     * The offset of the first child box in a {@code CRAW} sample entry.
+     */
+    private static final int CRAW_CHILDREN = 0x5A;
+
+    /**
+     * The largest {@code CMP1} or {@code IAD1} box read.
+     */
+    private static final int MAX_DESCRIPTION = 4096;
+
+    /**
+     * The most bytes of the timed metadata read.
+     */
+    private static final int MAX_TIMED = 1 << 20;
+
+    /**
+     * The maker note tag holding the camera's color data.
+     */
+    private static final int COLOR_DATA = 0x4001;
 
     /**
      * Prevents instantiation.
@@ -75,9 +101,140 @@ final class Cr3Parser {
         for (var preview : state.previews) {
             TiffTree.addPreview(file, reader, preview.offset(), preview.length());
         }
-        // TODO: decode the CRX-coded sensor data; deriving it from Adobe DNG Converter values stopped at the index
-        //  updates of its run mode
-        file.unsupported = "Canon CR3 (CRX) sensor data is not supported";
+        // TODO: expose the second full-size image of dual pixel files (one photodiode of each pixel), which decodes
+        //  like the main one, once the raw API can return a second sensor image
+        Track main = null;
+        for (var track : state.raws) {
+            if (main == null || (long) track.image().width() * track.image().height()
+                    > (long) main.image().width() * main.image().height()) {
+                main = track;
+            }
+        }
+        if (main == null || state.unsupportedArea > (long) main.image().width() * main.image().height()) {
+            // a smaller image never stands in for a main image that cannot be decoded
+            file.unsupported = state.unsupported != null ? state.unsupported : "the CR3 file holds no CRX image";
+            return;
+        }
+        file.sensor = sensor(main, reader, makerNote(state), file);
+    }
+
+    /**
+     * Returns the maker note directory holding the color data: the one of the timed metadata's
+     * records, whose {@code CMT3} copy leaves the color data out.
+     *
+     * @param state the walk's state
+     * @return the directory, or {@code null}
+     */
+    private static Ifd makerNote(State state) {
+        if (state.timedLength <= 0) {
+            return state.cmt3;
+        }
+        var reader = state.reader;
+        var length = (int) Math.min(state.timedLength, MAX_TIMED);
+        byte[] data;
+        try {
+            data = reader.bytes(state.timedOffset, length);
+        } catch (MediaException.Malformed exception) {
+            // a file cut short loses its timed metadata first, at the end of its media data
+            return state.cmt3;
+        }
+        var position = 0;
+        while (position + 12 <= length) {
+            var size = ByteArrays.u32(data, position, true);
+            var type = ByteArrays.u16(data, position + 4, true);
+            if (size < 12 || position + size > length) {
+                break;
+            }
+            if (type == 7 || type == 8 || type == 9) {
+                var record = position + 12;
+                while (record + 8 <= position + size) {
+                    var recordSize = ByteArrays.u32(data, record, true);
+                    var tag = ByteArrays.u32(data, record + 4, true);
+                    if (recordSize < 8 || record + recordSize > position + size) {
+                        break;
+                    }
+                    if (tag == TiffTree.MAKER_NOTE && recordSize > 16) {
+                        try {
+                            var tiff = TiffReader.open(state.file.source, state.timedOffset + record + 8, state.file.limits);
+                            var note = tiff.directory(tiff.firstDirectory());
+                            if (note.has(COLOR_DATA)) {
+                                return note;
+                            }
+                        } catch (MediaException.Malformed exception) {
+                            // a damaged record is skipped
+                        }
+                    }
+                    record += (int) recordSize;
+                }
+            }
+            position += (int) size;
+        }
+        return state.cmt3;
+    }
+
+    /**
+     * Describes the sensor data of a CRX image.
+     *
+     * @param track the image's track
+     * @param reader a reader over the file
+     * @param note the maker note directory, or {@code null}
+     * @param file the description to fill
+     * @return the sensor description
+     */
+    private static Sensor sensor(Track track, TiffReader reader, Ifd note, RawFile file) {
+        var image = track.image();
+        LimitChecks.checkPicture(file.limits, image.width(), image.height());
+        var sensor = new Sensor();
+        sensor.width = image.width();
+        sensor.height = image.height();
+        sensor.bitsPerSample = image.bits();
+        sensor.cfa = CfaPattern.bayer(image.pattern());
+        sensor.compression = image.levels() == 0 ? "Canon CRX lossless" : "Canon CRX lossy (C-RAW)";
+        areas(track.areas(), sensor);
+        var offset = track.offset();
+        var length = track.length();
+        sensor.reader = (plane, limits) -> {
+            LimitChecks.checkAllocation(limits, length);
+            var sample = reader.bytes(offset, length);
+            CrxDecoder.decode(image, sample, plane, limits);
+        };
+        if (note != null) {
+            Cr2Parser.colorData(note, sensor, file);
+        }
+        // TODO: correct the lens distortion and chromatic aberration of the PowerShot compacts, which Adobe DNG
+        //  Converter writes as a WarpRectilinear opcode list 3; where the file records the correction is not known yet
+        return sensor;
+    }
+
+    /**
+     * Sets the active area and the default crop from an {@code IAD1} box.
+     *
+     * @param areas the box's 16-bit values: eight header values holding the image size, then the
+     * crop, the left and top masked borders and the image data area as inclusive left, top, right
+     * and bottom pixels, or {@code null}
+     * @param sensor the sensor description to fill
+     */
+    private static void areas(int[] areas, Sensor sensor) {
+        if (areas == null || areas.length < 24) {
+            return;
+        }
+        // some cameras record a crop reaching past the area of image data; the area then extends to it
+        var left = Math.min(areas[20], areas[8]);
+        var top = Math.min(areas[21], areas[9]);
+        var right = Math.min(Math.max(areas[22], areas[10]) + 1, sensor.width);
+        var bottom = Math.min(Math.max(areas[23], areas[11]) + 1, sensor.height);
+        if (left < 0 || top < 0 || right - left < 16 || bottom - top < 16) {
+            return;
+        }
+        sensor.activeArea = new int[]{top, left, bottom, right};
+        var cropLeft = Math.max(areas[8], left);
+        var cropTop = Math.max(areas[9], top);
+        var cropRight = Math.min(areas[10] + 1, right);
+        var cropBottom = Math.min(areas[11] + 1, bottom);
+        if (cropRight - cropLeft >= 16 && cropBottom - cropTop >= 16) {
+            sensor.defaultCrop = new double[]{cropLeft - left, cropTop - top, cropRight - cropLeft,
+                    cropBottom - cropTop};
+        }
     }
 
     /**
@@ -87,6 +244,17 @@ final class Cr3Parser {
      * @param length the length of the stream
      */
     private record Jpeg(long offset, long length) {
+    }
+
+    /**
+     * A CRX image the walk found.
+     *
+     * @param image the coding parameters
+     * @param areas the {@code IAD1} values, or {@code null}
+     * @param offset the absolute offset of the sample
+     * @param length the length of the sample
+     */
+    private record Track(CrxDecoder.Image image, int[] areas, long offset, long length) {
     }
 
     /**
@@ -114,6 +282,11 @@ final class Cr3Parser {
         Ifd cmt2;
 
         /**
+         * The maker note directory of {@code CMT3}, or {@code null}.
+         */
+        Ifd cmt3;
+
+        /**
          * The GPS directory of {@code CMT4}, or {@code null}.
          */
         Ifd cmt4;
@@ -122,6 +295,22 @@ final class Cr3Parser {
          * The JPEG images found.
          */
         final List<Jpeg> previews = new ArrayList<>();
+
+        /**
+         * The CRX images found.
+         */
+        final List<Track> raws = new ArrayList<>();
+
+        /**
+         * Why the largest of the CRX images whose coding is unsupported cannot be decoded, or
+         * {@code null}.
+         */
+        String unsupported;
+
+        /**
+         * The photosites the {@code CMP1} box of {@link #unsupported}'s image declares, or 0.
+         */
+        long unsupportedArea;
 
         /**
          * The boxes visited.
@@ -137,6 +326,31 @@ final class Cr3Parser {
          * The size of the first sample of the track being walked, or {@code -1}.
          */
         long sample = -1;
+
+        /**
+         * The {@code CMP1} body of the track being walked, or {@code null}.
+         */
+        byte[] coding;
+
+        /**
+         * The {@code IAD1} values of the track being walked, or {@code null}.
+         */
+        int[] areas;
+
+        /**
+         * Whether the track being walked holds the timed metadata ({@code CTMD}).
+         */
+        boolean timed;
+
+        /**
+         * The offset of the timed metadata sample.
+         */
+        long timedOffset;
+
+        /**
+         * The length of the timed metadata sample, or 0.
+         */
+        long timedLength;
 
         /**
          * Constructs the state.
@@ -185,10 +399,13 @@ final class Cr3Parser {
                         if (type.equals("trak")) {
                             state.chunk = -1;
                             state.sample = -1;
+                            state.coding = null;
+                            state.areas = null;
+                            state.timed = false;
                         }
                         walk(state, body, boxEnd, depth + 1);
-                        if (type.equals("trak") && state.chunk > 0 && state.sample > 0) {
-                            state.previews.add(new Jpeg(state.chunk, state.sample));
+                        if (type.equals("trak")) {
+                            track(state);
                         }
                     }
                 }
@@ -202,8 +419,9 @@ final class Cr3Parser {
                         }
                     }
                 }
-                case "CMT1", "CMT2", "CMT4" -> metadata(state, type, body, boxEnd);
+                case "CMT1", "CMT2", "CMT3", "CMT4" -> metadata(state, type, body, boxEnd);
                 case "PRVW" -> state.previews.add(new Jpeg(body + 16, boxEnd - body - 16));
+                case "stsd" -> sampleEntry(state, body, boxEnd);
                 case "stsz" -> {
                     var fields = new byte[12];
                     if (reader.readAvailable(body, fields, 0, 12) == 12) {
@@ -232,6 +450,117 @@ final class Cr3Parser {
     }
 
     /**
+     * Records the track just walked: a CRX image when its sample entry holds a {@code CMP1} box,
+     * otherwise a JPEG image.
+     *
+     * @param state the walk's state
+     */
+    private static void track(State state) {
+        if (state.chunk <= 0 || state.sample <= 0) {
+            return;
+        }
+        if (state.timed) {
+            state.timedOffset = state.chunk;
+            state.timedLength = state.sample;
+            return;
+        }
+        if (state.coding == null) {
+            state.previews.add(new Jpeg(state.chunk, state.sample));
+            return;
+        }
+        try {
+            var image = CrxDecoder.image(state.coding);
+            if (image.headerLength() > state.sample) {
+                throw new MediaException.Malformed("CRX headers longer than the sample");
+            }
+            state.raws.add(new Track(image, state.areas, state.chunk, state.sample));
+        } catch (MediaException.Unsupported exception) {
+            var area = Math.min(ByteArrays.u32(state.coding, 8, false), Integer.MAX_VALUE)
+                    * Math.min(ByteArrays.u32(state.coding, 12, false), Integer.MAX_VALUE);
+            if (state.unsupported == null || area > state.unsupportedArea) {
+                state.unsupported = exception.getMessage();
+                state.unsupportedArea = area;
+            }
+        } catch (MediaException.Malformed exception) {
+            // a damaged image description leaves the track out
+        }
+    }
+
+    /**
+     * Reads a {@code CRAW} sample entry's {@code CMP1} and {@code IAD1} boxes.
+     *
+     * @param state the walk's state
+     * @param body the offset of the {@code stsd} body
+     * @param end the offset after the {@code stsd} box
+     */
+    private static void sampleEntry(State state, long body, long end) {
+        var reader = state.reader;
+        var entry = body + 8;
+        var head = new byte[8];
+        if (reader.readAvailable(entry, head, 0, 8) < 8) {
+            return;
+        }
+        var kind = new String(head, 4, 4, StandardCharsets.ISO_8859_1);
+        if (kind.equals("CTMD")) {
+            state.timed = true;
+            return;
+        }
+        if (!kind.equals("CRAW")) {
+            return;
+        }
+        var entryEnd = Math.min(end, entry + ByteArrays.u32(head, 0, false));
+        var position = entry + CRAW_CHILDREN;
+        while (position + 8 <= entryEnd) {
+            if (reader.readAvailable(position, head, 0, 8) < 8) {
+                return;
+            }
+            var size = ByteArrays.u32(head, 0, false);
+            if (size < 8 || position + size > entryEnd) {
+                return;
+            }
+            var type = new String(head, 4, 4, StandardCharsets.ISO_8859_1);
+            if (type.equals("CMP1") && size - 8 <= MAX_DESCRIPTION) {
+                state.coding = reader.bytes(position + 8, size - 8);
+            } else if (type.equals("CDI1")) {
+                areas(state, position + 12, position + size);
+            }
+            position += size;
+        }
+    }
+
+    /**
+     * Reads the {@code IAD1} box of a {@code CDI1} box.
+     *
+     * @param state the walk's state
+     * @param start the offset of the first child box
+     * @param end the offset after the {@code CDI1} box
+     */
+    private static void areas(State state, long start, long end) {
+        var reader = state.reader;
+        var head = new byte[8];
+        var position = start;
+        while (position + 8 <= end) {
+            if (reader.readAvailable(position, head, 0, 8) < 8) {
+                return;
+            }
+            var size = ByteArrays.u32(head, 0, false);
+            if (size < 8 || position + size > end) {
+                return;
+            }
+            if (new String(head, 4, 4, StandardCharsets.ISO_8859_1).equals("IAD1") && size - 8 <= MAX_DESCRIPTION) {
+                var bytes = reader.bytes(position + 8, size - 8);
+                var values = new int[bytes.length / 2];
+                for (var index = 0; index < values.length; index++) {
+                    values[index] = ByteArrays.u16(bytes, 2 * index, false);
+                }
+                state.areas = values;
+                return;
+            }
+            position += size;
+        }
+    }
+
+    /**
      * Reads one of the TIFF metadata boxes.
      *
      * @param state the walk's state
@@ -249,6 +578,7 @@ final class Cr3Parser {
             switch (type) {
                 case "CMT1" -> state.cmt1 = first;
                 case "CMT2" -> state.cmt2 = first;
+                case "CMT3" -> state.cmt3 = first;
                 default -> state.cmt4 = first;
             }
         } catch (MediaException.Malformed exception) {

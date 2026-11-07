@@ -12,6 +12,7 @@ import java.util.OptionalLong;
  * <ul>
  *   <li>H.264: an {@code AVCDecoderConfigurationRecord} ({@code avcC})</li>
  *   <li>HEVC: an {@code HEVCDecoderConfigurationRecord} ({@code hvcC})</li>
+ *   <li>VVC: a {@code VvcDecoderConfigurationRecord}, the {@code vvcC} box body without its full box header</li>
  *   <li>VP9 and AV1: the {@code vpcC} and {@code av1C} record bodies</li>
  *   <li>AAC: an {@code AudioSpecificConfig}</li>
  *   <li>Opus: an {@code OpusHead} packet</li>

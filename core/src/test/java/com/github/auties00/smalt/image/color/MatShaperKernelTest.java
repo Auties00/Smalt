@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.image.color;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.internal.simd.Simd;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -9,7 +10,6 @@ import org.junit.jupiter.params.provider.ValueSource;
 import java.util.SplittableRandom;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Checks that the Vector API matrix-shaper kernel returns exactly what its scalar twin returns, on
@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 class MatShaperKernelTest {
     @BeforeAll
     static void requireVectors() {
-        assumeTrue(Simd.ENABLED, "the Vector API is not enabled");
+        Skip.unlessVector(Simd.ENABLED);
     }
 
     private static MatShaperKernel.Tables tables(SplittableRandom random, boolean extreme) {
