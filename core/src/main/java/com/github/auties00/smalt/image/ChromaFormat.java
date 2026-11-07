@@ -29,7 +29,12 @@ public enum ChromaFormat {
     /**
      * Chroma at full resolution (4:4:4).
      */
-    YUV444(0, 0, true);
+    YUV444(0, 0, true),
+
+    /**
+     * Chroma halved vertically (4:4:0), as VP9 profiles 1 and 3 and JPEG can code it.
+     */
+    YUV440(0, 1, true);
 
     /**
      * The binary logarithm of the horizontal chroma subsampling factor.

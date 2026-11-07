@@ -1,0 +1,22 @@
+# demux dump of ts/dvb-subtitles.ts; regenerate with -Dsmalt.test.updateDumps=true
+format MPEG_TS
+duration -1
+seekable true
+track 258 DATA DVB_SUBTITLE timebase=1/90000 duration=? config=8:2574b4cf
+packets 4
+0 t258 pts=90000 dts=90000 dur=? flags=KEY size=879 crc=4d03ab4f
+1 t258 pts=270000 dts=270000 dur=? flags=KEY size=25 crc=5480ac47
+2 t258 pts=360000 dts=360000 dur=? flags=KEY size=298 crc=da8b6858
+3 t258 pts=540000 dts=540000 dur=? flags=KEY size=25 crc=9b3d95db
+seek 0: t258@0
+seek 2666666: t258@0
+seek 5333333: t258@2
+seek 8000000: end
+seek -1000000: t258@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format MPEG_TS
+  duration -1
+  seekable false
+  track 258 DATA DVB_SUBTITLE timebase=1/90000 duration=? config=8:2574b4cf
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH

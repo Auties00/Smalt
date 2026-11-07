@@ -14,6 +14,7 @@ import com.github.auties00.smalt.video.av1.internal.CdefDsp;
 import com.github.auties00.smalt.video.av1.internal.DequantTables;
 import com.github.auties00.smalt.video.av1.internal.EncoderBridge;
 import com.github.auties00.smalt.video.av1.internal.FrameContext;
+import com.github.auties00.smalt.video.av1.internal.FilmGrainData;
 import com.github.auties00.smalt.video.av1.internal.FrameHeader;
 import com.github.auties00.smalt.video.av1.internal.LoopFilterDsp;
 import com.github.auties00.smalt.video.av1.internal.LoopRestorationDsp;
@@ -206,18 +207,36 @@ public final class StillFrameEncoder implements Av1Engine, FilterTarget {
 
     /**
      * Creates an encoder of the key frames of a video stream whose sequence header another encoder
-     * built: 8-bit 4:2:0 pictures whose frame headers carry an order hint when the sequence enables
-     * them, coded with {@link #encodeKeyFrame}.
+     * built: pictures of the header's chroma layout and bit depth whose frame headers carry an order
+     * hint when the sequence enables them, and their size when it is smaller than the sequence's
+     * largest, coded with {@link #encodeKeyFrame}.
      *
-     * @param width the picture width
-     * @param height the picture height
-     * @param seq the stream's sequence header, 8-bit 4:2:0
+     * @param width the picture width, at most the sequence's largest width
+     * @param height the picture height, at most the sequence's largest height
+     * @param seq the stream's sequence header
      * @param settings the quantizer and search settings
      * @param limits the allocation limits
      * @throws IllegalArgumentException if a dimension is out of range
      */
     public StillFrameEncoder(int width, int height, SequenceHeader seq, StillSettings settings, MediaLimits limits) {
-        this(width, height, SequenceHeader.LAYOUT_I420, 8, seq, settings, limits);
+        this(width, height, seq.layout, 8 + 2 * seq.hbd, checkFits(width, height, seq), settings, limits);
+    }
+
+    /**
+     * Checks that a picture size fits a sequence header.
+     *
+     * @param width the picture width
+     * @param height the picture height
+     * @param seq the sequence header
+     * @return {@code seq}
+     * @throws IllegalArgumentException if the size exceeds the sequence's largest size
+     */
+    private static SequenceHeader checkFits(int width, int height, SequenceHeader seq) {
+        if (width > seq.maxWidth || height > seq.maxHeight) {
+            throw new IllegalArgumentException("picture size " + width + "x" + height + " exceeds the sequence's "
+                    + seq.maxWidth + "x" + seq.maxHeight);
+        }
+        return seq;
     }
 
     /**
@@ -305,15 +324,18 @@ public final class StillFrameEncoder implements Av1Engine, FilterTarget {
         seq.pri = color.primaries().code();
         seq.trc = color.transfer().code();
         seq.mtrx = color.matrix().code();
-        var srgb = seq.pri == 1 && seq.trc == 13 && seq.mtrx == 0;
-        if (seq.mtrx == 0 && !srgb && layout != SequenceHeader.LAYOUT_I444) {
+        if (seq.mtrx == 0 && layout != SequenceHeader.LAYOUT_I444) {
+            // the identity matrix needs 4:4:4; the stream signals an unspecified matrix instead
             seq.mtrx = 2;
         }
-        seq.colorRange = color.range() == ColorRange.FULL || (srgb && !mono);
+        // color_config codes the sRGB description without a range, which it implies is full
+        var srgb = seq.pri == 1 && seq.trc == 13 && seq.mtrx == 0;
+        seq.colorRange = color.range() == ColorRange.FULL || srgb;
         seq.ssHor = mono ? 1 : layout == SequenceHeader.LAYOUT_I444 ? 0 : 1;
         seq.ssVer = mono ? 1 : layout == SequenceHeader.LAYOUT_I420 ? 1 : 0;
         seq.chr = layout == SequenceHeader.LAYOUT_I420 ? chromaPosition(color.chromaSiting()) : 0;
         seq.separateUvDeltaQ = false;
+        seq.filmGrainPresent = settings.filmGrain && !settings.reducedHeader;
         return seq;
     }
 
@@ -409,15 +431,35 @@ public final class StillFrameEncoder implements Av1Engine, FilterTarget {
     }
 
     /**
-     * Encodes one 8-bit 4:2:0 picture as a key frame of a video stream and returns its frame OBU
-     * alone; the stream's sequence header comes from the encoder that built it.
+     * Encodes one 8-bit picture given as byte planes as a key frame of a video stream and returns
+     * its frame OBU alone; the stream's sequence header comes from the encoder that built it.
      *
-     * @param planes the luma, U and V planes
+     * @param planes the luma, U and V planes; the chroma planes are ignored for monochrome
      * @param strides the row stride of each plane
      * @param orderHint the frame's order hint, reduced modulo the order hint range
      * @return the frame OBU
      */
     public byte[] encodeKeyFrame(byte[][] planes, int[] strides, int orderHint) {
+        loadSource(planes, strides);
+        this.orderHint = orderHint;
+        try {
+            return encodeLoaded(false);
+        } finally {
+            this.orderHint = 0;
+        }
+    }
+
+    /**
+     * Encodes one picture given as sample planes at the encoder's bit depth as a key frame of a
+     * video stream and returns its frame OBU alone; the stream's sequence header comes from the
+     * encoder that built it.
+     *
+     * @param planes the luma, U and V planes; the chroma planes are ignored for monochrome
+     * @param strides the row stride of each plane
+     * @param orderHint the frame's order hint, reduced modulo the order hint range
+     * @return the frame OBU
+     */
+    public byte[] encodeKeyFrame(short[][] planes, int[] strides, int orderHint) {
         loadSource(planes, strides);
         this.orderHint = orderHint;
         try {
@@ -534,9 +576,13 @@ public final class StillFrameEncoder implements Av1Engine, FilterTarget {
         // A key frame of a stream whose sequence header fixes the screen content tools (the
         // good-quality encoder's) must follow it: the frame header then carries no flag of its own.
         h.allowScreenContentTools = seq.screenContentTools == SequenceHeader.ADAPTIVE
-                ? settings.screenContent || (settings.palette && screenContent())
+                ? settings.screenContent || (settings.palette && settings.detectScreenContent && screenContent())
                 : seq.screenContentTools != 0;
         h.refreshFrameFlags = 0xFF;
+        h.frameSizeOverride = !seq.reducedStillPictureHeader && (width != seq.maxWidth || height != seq.maxHeight);
+        h.upscaledWidth = width;
+        h.codedWidth = width;
+        h.height = height;
         if (seq.orderHint) {
             h.frameOffset = orderHint & ((1 << seq.orderHintNBits) - 1);
         }
@@ -554,7 +600,50 @@ public final class StillFrameEncoder implements Av1Engine, FilterTarget {
         h.cdefDamping = 3 + (settings.qindex >> 6);
         h.cdefNBits = 0;
         h.txfmMode = FrameHeader.TX_SWITCHABLE;
+        if (seq.filmGrainPresent && grain != null) {
+            h.filmGrainPresent = true;
+            h.filmGrain.copyFrom(grain);
+        }
+        if (timing != null) {
+            timing.fill(h, seq, timingPts);
+        }
         return parseBack(h);
+    }
+
+    /**
+     * The film grain the next key frame signals, with its seed, or {@code null} for none.
+     */
+    private FilmGrainData grain;
+
+    /**
+     * Sets the film grain the next key frames signal when the sequence signals film grain.
+     *
+     * @param grain the grain in the decoder's model, with the frame's seed, or {@code null} for none
+     */
+    public void filmGrain(FilmGrainData grain) {
+        this.grain = grain;
+    }
+
+    /**
+     * The decoder model times the next key frames' headers take, or {@code null} for none.
+     */
+    private FrameTiming timing;
+
+    /**
+     * The timestamp of the next key frame, for its decoder model times.
+     */
+    private long timingPts;
+
+    /**
+     * Makes the next key frames' headers carry decoder model times when the sequence signals the
+     * decoder model; the caller advances the times once the frame is kept.
+     *
+     * @param timing the times of the stream
+     * @param pts the timestamp of the next key frame, in time base units
+     */
+    void timing(FrameTiming timing, long pts) {
+        this.timing = timing;
+        this.timingPts = pts;
     }
 
     /**
