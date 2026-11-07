@@ -17,7 +17,7 @@ import java.util.function.IntConsumer;
  *
  * <p>Instances are reused across slice segments and are not thread-safe.
  */
-public final class SliceDecoder {
+public final class SliceDecoder implements NeighborAvailability {
     /**
      * {@code ctxIdxMap} of Table 9-50, the significance context of each position of a 4x4 block.
      */
@@ -202,9 +202,46 @@ public final class SliceDecoder {
     private final int[] levels = new int[16];
 
     /**
-     * The motion of the prediction unit being decoded.
+     * The motion of the prediction units of the coding unit being decoded, parsed before any is
+     * derived because the coding unit extension of 3D-HEVC follows them.
      */
-    private final MotionPredictor.PuMotion puMotion = new MotionPredictor.PuMotion();
+    private final MotionPredictor.PuMotion[] puMotions = {new MotionPredictor.PuMotion(),
+            new MotionPredictor.PuMotion(), new MotionPredictor.PuMotion(), new MotionPredictor.PuMotion()};
+
+    /**
+     * The prediction unit whose syntax is being parsed.
+     */
+    private MotionPredictor.PuMotion puMotion = puMotions[0];
+
+    /**
+     * The luma x of each prediction unit of the coding unit.
+     */
+    private final int[] puX = new int[4];
+
+    /**
+     * The luma y of each prediction unit of the coding unit.
+     */
+    private final int[] puY = new int[4];
+
+    /**
+     * The width of each prediction unit of the coding unit.
+     */
+    private final int[] puWidth = new int[4];
+
+    /**
+     * The height of each prediction unit of the coding unit.
+     */
+    private final int[] puHeight = new int[4];
+
+    /**
+     * The 3D-HEVC part of the slice segment header, or {@code null}.
+     */
+    private Hevc3dSlice tools3d;
+
+    /**
+     * The variables of the 3D-HEVC tools the slice derived at its start, or {@code null}.
+     */
+    private InterViewContext views;
 
     /**
      * The frame being decoded.
@@ -400,6 +437,34 @@ public final class SliceDecoder {
     private int rdpcmDirection;
 
     /**
+     * The palette mode decoder and the palette predictor of the slice segment.
+     */
+    private final PaletteCoding palette = new PaletteCoding();
+
+    /**
+     * The quantization parameters of the components of a palette coding unit.
+     */
+    private final int[] paletteQp = new int[3];
+
+    /**
+     * {@code tu_residual_act_flag} of the transform unit being decoded: its residuals are
+     * collected in {@link #actResidual} and color transformed before they are added.
+     */
+    private boolean actTu;
+
+    /**
+     * The residual samples of the three components of a transform unit coded with the adaptive
+     * color transform.
+     */
+    private final int[][] actResidual = {new int[32 * 32], new int[32 * 32], new int[32 * 32]};
+
+    /**
+     * Whether each component of {@link #actResidual} holds a residual of the current transform
+     * unit; a component without one has a zero residual.
+     */
+    private final boolean[] actPresent = new boolean[3];
+
+    /**
      * Constructs a decoder.
      */
     public SliceDecoder() {
@@ -576,8 +641,41 @@ public final class SliceDecoder {
         this.initType = header.sliceType == HevcSliceHeader.I ? 0
                 : header.sliceType == HevcSliceHeader.P ? (header.cabacInit ? 2 : 1) : (header.cabacInit ? 1 : 2);
         java.util.Arrays.fill(coefficients, 0);
+        this.tools3d = header.tools3d;
+        this.views = header.interView;
+        if (tools3d != null) {
+            check3dTools(tools3d);
+            if (views != null) {
+                pic.prepareViews();
+            }
+        }
         motion.setSlice(frame, pic, header, refList, sliceIndex);
         inter.setSlice(header, refList, pic.dsp);
+    }
+
+    /**
+     * Rejects the 3D-HEVC tools of a slice the decoder does not implement.
+     *
+     * @param tools the 3D-HEVC part of the slice segment header
+     * @throws MediaException.Unsupported if the slice enables view synthesis prediction,
+     * depth-based block partitioning or a depth coding tool
+     */
+    private static void check3dTools(Hevc3dSlice tools) {
+        // TODO: view synthesis prediction (I.8.5.3.2.13) and depth-based block partitioning (I.8.5.3.5)
+        if (tools.vspMc) {
+            throw new MediaException.Unsupported("hevc 3D view synthesis prediction",
+                    "the stream uses view synthesis prediction (vsp_mc_enabled_flag)");
+        }
+        if (tools.dbbp) {
+            throw new MediaException.Unsupported("hevc 3D depth-based block partitioning",
+                    "the stream uses depth-based block partitioning (dbbp_enabled_flag)");
+        }
+        // TODO: the depth coding tools of Annex I: the texture merging candidate, depth intra modes,
+        // depth DC coding, intra skip and inter-component partitioning prediction
+        if (tools.texMc || tools.intraContour || tools.intraDcOnlyWedge || tools.cqtCuPartPred || tools.interDcOnly
+                || tools.skipIntra) {
+            throw new MediaException.Unsupported("hevc 3D depth coding tools", "the stream uses the depth coding tools of 3D-HEVC");
+        }
     }
 
     /**
@@ -602,6 +700,10 @@ public final class SliceDecoder {
             var row = ctbAddrRs / sps.widthInCtbs;
             System.arraycopy(cabac.states, 0, pic.wppStates, row * CabacTables.COUNT, CabacTables.COUNT);
             System.arraycopy(statCoeff, 0, pic.wppStatCoeff, row * 4, 4);
+            if (sps.paletteModeEnabled) {
+                pic.wppPaletteSize[row] = palette.store(pic.wppPalette, row * pic.paletteStride,
+                        sps.paletteMaxPredictorSize);
+            }
         }
         saveBottomLine();
         if (cabac.overrun()) {
@@ -621,7 +723,7 @@ public final class SliceDecoder {
         }
         var col = ctbAddrRs - row * widthCtbs;
         var shift = sps.log2CtbSize;
-        var planes = sps.chromaFormatIdc == 0 ? 1 : 3;
+        var planes = sps.chromaArrayType == 0 ? 1 : 3;
         for (var c = 0; c < planes; c++) {
             var sx = c == 0 ? 0 : sps.chromaShiftX;
             var sy = c == 0 ? 0 : sps.chromaShiftY;
@@ -648,6 +750,9 @@ public final class SliceDecoder {
             System.arraycopy(cabac.states, 0, pic.dependentStates, 0, CabacTables.COUNT);
             System.arraycopy(statCoeff, 0, pic.dependentStatCoeff, 0, 4);
             pic.dependentQp = lastQpY;
+            if (sps.paletteModeEnabled) {
+                pic.dependentPaletteSize = palette.store(pic.dependentPalette, 0, sps.paletteMaxPredictorSize);
+            }
         }
     }
 
@@ -689,6 +794,10 @@ public final class SliceDecoder {
                 var above = ctbAddrRs / widthCtbs - 1;
                 System.arraycopy(pic.wppStates, above * CabacTables.COUNT, cabac.states, 0, CabacTables.COUNT);
                 System.arraycopy(pic.wppStatCoeff, above * 4, statCoeff, 0, 4);
+                if (sps.paletteModeEnabled) {
+                    palette.load(pic.wppPalette, above * pic.paletteStride, sps.paletteMaxPredictorSize,
+                            pic.wppPaletteSize[above]);
+                }
             } else {
                 initializeContexts();
             }
@@ -698,6 +807,9 @@ public final class SliceDecoder {
                 System.arraycopy(pic.dependentStates, 0, cabac.states, 0, CabacTables.COUNT);
                 System.arraycopy(pic.dependentStatCoeff, 0, statCoeff, 0, 4);
                 lastQpY = pic.dependentQp;
+                if (sps.paletteModeEnabled) {
+                    palette.load(pic.dependentPalette, 0, sps.paletteMaxPredictorSize, pic.dependentPaletteSize);
+                }
                 firstQuantGroup = false;
             } else {
                 initializeContexts();
@@ -716,6 +828,9 @@ public final class SliceDecoder {
     private void initializeContexts() {
         CabacTables.init(initType, header.sliceQp, cabac.states);
         java.util.Arrays.fill(statCoeff, 0);
+        if (sps.paletteModeEnabled) {
+            palette.initialize(sps, pps);
+        }
     }
 
     /**
@@ -728,7 +843,8 @@ public final class SliceDecoder {
      * @param yNb the neighboring luma y
      * @return {@code true} when the neighbor is decoded, in the same slice and in the same tile
      */
-    boolean available(int xCurr, int yCurr, int xNb, int yNb) {
+    @Override
+    public boolean available(int xCurr, int yCurr, int xNb, int yNb) {
         if (xNb < 0 || yNb < 0 || xNb >= sps.width || yNb >= sps.height) {
             return false;
         }
@@ -969,9 +1085,17 @@ public final class SliceDecoder {
         var partMode = PART_2Nx2N;
         if (skip) {
             cuIntra = false;
-            predictionUnit(x0, y0, size, size, x0, y0, log2Size, 0, true, PART_2Nx2N);
+            puMotionPartitioned = false;
+            parsePredictionUnit(0, x0, y0, size, size, x0, y0, true, PART_2Nx2N);
+            finishInterUnit(x0, y0, log2Size, PART_2Nx2N, 1);
         } else {
             cuIntra = header.sliceType == HevcSliceHeader.I || cabac.decodeBin(CabacTables.PRED_MODE) == 1;
+            if (cuIntra && sps.paletteModeEnabled && log2Size <= sps.log2MaxTbSize
+                    && cabac.decodeBin(CabacTables.PALETTE_MODE) == 1) {
+                paletteCodingUnit(x0, y0, log2Size);
+                finishCodingUnit(x0, y0, size);
+                return;
+            }
             if (!cuIntra || log2Size == sps.log2MinCbSize) {
                 partMode = partMode(log2Size);
             }
@@ -993,7 +1117,7 @@ public final class SliceDecoder {
             }
             if (!pcm) {
                 var rootCbf = true;
-                if (!cuIntra && !(partMode == PART_2Nx2N && puMotion.merge)) {
+                if (!cuIntra && !(partMode == PART_2Nx2N && puMotions[0].merge)) {
                     rootCbf = cabac.decodeBin(CabacTables.RQT_ROOT_CBF) == 1;
                 }
                 if (rootCbf) {
@@ -1006,6 +1130,74 @@ public final class SliceDecoder {
             }
         }
         finishCodingUnit(x0, y0, size);
+    }
+
+    /**
+     * Parses and reconstructs a coding unit coded in palette mode (7.3.8.13 and 8.4.4.2.7), then
+     * updates the palette predictor.
+     *
+     * @param x0 the luma x of the coding block
+     * @param y0 the luma y of the coding block
+     * @param log2Size the coding block size as a power of two
+     */
+    private void paletteCodingUnit(int x0, int y0, int log2Size) {
+        var size = 1 << log2Size;
+        markIntra(x0, y0, size);
+        var w4 = pic.width4;
+        var blocks = size >> 2;
+        var start = blockIndex(x0, y0);
+        for (var j = 0; j < blocks; j++) {
+            for (var i = 0; i < blocks; i++) {
+                pic.flags[start + j * w4 + i] |= PictureState.PALETTE;
+                pic.intraMode[start + j * w4 + i] = 1;
+            }
+        }
+        var escape = palette.parseHeader(cabac, sps, log2Size);
+        if (escape) {
+            deltaQp();
+            if (!bypass && header.cuChromaQpOffsetEnabled && !chromaQpOffsetCoded) {
+                chromaQpOffset();
+            }
+        }
+        palette.parseIndices(cabac);
+        palette.parseEscapes(cabac, sps, bypass);
+        var components = sps.chromaArrayType == 0 ? 1 : 3;
+        for (var c = 0; c < components; c++) {
+            paletteQp[c] = escape && !bypass ? quantizer(c) : 0;
+        }
+        palette.reconstruct(frame, sps, x0, y0, bypass, paletteQp);
+        palette.updatePredictor(sps.paletteMaxPredictorSize);
+    }
+
+    /**
+     * Parses a {@code delta_qp()} structure (7.3.8.14) when the quantization group has no
+     * {@code CuQpDeltaVal} yet, and derives {@code QpY} (equation 8-283).
+     *
+     * @throws MediaException.Malformed if {@code CuQpDeltaVal} is out of range
+     */
+    private void deltaQp() {
+        if (!pps.cuQpDeltaEnabled || cuQpDeltaCoded) {
+            return;
+        }
+        var abs = 0;
+        var ctx = CabacTables.CU_QP_DELTA;
+        while (abs < 5 && cabac.decodeBin(ctx) == 1) {
+            abs++;
+            ctx = CabacTables.CU_QP_DELTA + 1;
+        }
+        if (abs == 5) {
+            abs += expGolomb(0);
+        }
+        var value = abs;
+        if (abs > 0 && cabac.decodeBypass() == 1) {
+            value = -abs;
+        }
+        var qpBdOffset = 6 * (sps.bitDepthLuma - 8);
+        if (value < -(26 + qpBdOffset / 2) || value > 25 + qpBdOffset / 2) {
+            throw new MediaException.Malformed("CuQpDeltaVal out of range");
+        }
+        cuQpDeltaCoded = true;
+        qpY = ((qpYPred + value + 52 + 2 * qpBdOffset) % (52 + qpBdOffset)) - qpBdOffset;
     }
 
     /**
@@ -1374,61 +1566,160 @@ public final class SliceDecoder {
         var n = 1 << log2Size;
         var h = n >> 1;
         var q = n >> 2;
+        var count = 2;
         switch (partMode) {
-            case PART_2Nx2N -> predictionUnit(x0, y0, n, n, x0, y0, log2Size, 0, false, partMode);
+            case PART_2Nx2N -> {
+                parsePredictionUnit(0, x0, y0, n, n, x0, y0, false, partMode);
+                count = 1;
+            }
             case PART_2NxN -> {
-                predictionUnit(x0, y0, n, h, x0, y0, log2Size, 0, false, partMode);
-                predictionUnit(x0, y0 + h, n, h, x0, y0, log2Size, 1, false, partMode);
+                parsePredictionUnit(0, x0, y0, n, h, x0, y0, false, partMode);
+                parsePredictionUnit(1, x0, y0 + h, n, h, x0, y0, false, partMode);
             }
             case PART_Nx2N -> {
-                predictionUnit(x0, y0, h, n, x0, y0, log2Size, 0, false, partMode);
-                predictionUnit(x0 + h, y0, h, n, x0, y0, log2Size, 1, false, partMode);
+                parsePredictionUnit(0, x0, y0, h, n, x0, y0, false, partMode);
+                parsePredictionUnit(1, x0 + h, y0, h, n, x0, y0, false, partMode);
             }
             case PART_2NxnU -> {
-                predictionUnit(x0, y0, n, q, x0, y0, log2Size, 0, false, partMode);
-                predictionUnit(x0, y0 + q, n, n * 3 / 4, x0, y0, log2Size, 1, false, partMode);
+                parsePredictionUnit(0, x0, y0, n, q, x0, y0, false, partMode);
+                parsePredictionUnit(1, x0, y0 + q, n, n * 3 / 4, x0, y0, false, partMode);
             }
             case PART_2NxnD -> {
-                predictionUnit(x0, y0, n, n * 3 / 4, x0, y0, log2Size, 0, false, partMode);
-                predictionUnit(x0, y0 + n * 3 / 4, n, q, x0, y0, log2Size, 1, false, partMode);
+                parsePredictionUnit(0, x0, y0, n, n * 3 / 4, x0, y0, false, partMode);
+                parsePredictionUnit(1, x0, y0 + n * 3 / 4, n, q, x0, y0, false, partMode);
             }
             case PART_nLx2N -> {
-                predictionUnit(x0, y0, q, n, x0, y0, log2Size, 0, false, partMode);
-                predictionUnit(x0 + q, y0, n * 3 / 4, n, x0, y0, log2Size, 1, false, partMode);
+                parsePredictionUnit(0, x0, y0, q, n, x0, y0, false, partMode);
+                parsePredictionUnit(1, x0 + q, y0, n * 3 / 4, n, x0, y0, false, partMode);
             }
             case PART_nRx2N -> {
-                predictionUnit(x0, y0, n * 3 / 4, n, x0, y0, log2Size, 0, false, partMode);
-                predictionUnit(x0 + n * 3 / 4, y0, q, n, x0, y0, log2Size, 1, false, partMode);
+                parsePredictionUnit(0, x0, y0, n * 3 / 4, n, x0, y0, false, partMode);
+                parsePredictionUnit(1, x0 + n * 3 / 4, y0, q, n, x0, y0, false, partMode);
             }
             default -> {
-                predictionUnit(x0, y0, h, h, x0, y0, log2Size, 0, false, partMode);
-                predictionUnit(x0 + h, y0, h, h, x0, y0, log2Size, 1, false, partMode);
-                predictionUnit(x0, y0 + h, h, h, x0, y0, log2Size, 2, false, partMode);
-                predictionUnit(x0 + h, y0 + h, h, h, x0, y0, log2Size, 3, false, partMode);
+                parsePredictionUnit(0, x0, y0, h, h, x0, y0, false, partMode);
+                parsePredictionUnit(1, x0 + h, y0, h, h, x0, y0, false, partMode);
+                parsePredictionUnit(2, x0, y0 + h, h, h, x0, y0, false, partMode);
+                parsePredictionUnit(3, x0 + h, y0 + h, h, h, x0, y0, false, partMode);
+                count = 4;
             }
+        }
+        finishInterUnit(x0, y0, log2Size, partMode, count);
+    }
+
+    /**
+     * Parses the coding unit extension of an inter coding unit of 3D-HEVC (I.7.3.8.5.2), then
+     * derives the motion of each prediction unit, stores it and predicts its samples, in order.
+     *
+     * @param x0 the luma x of the coding block
+     * @param y0 the luma y of the coding block
+     * @param log2Size the coding block size as a power of two
+     * @param partMode the partitioning mode
+     * @param count the number of prediction units
+     */
+    private void finishInterUnit(int x0, int y0, int log2Size, int partMode, int count) {
+        var weight = 0;
+        var illumination = false;
+        if (tools3d != null && views != null && partMode == PART_2Nx2N) {
+            var m = puMotions[0];
+            if (tools3d.ivResPred && views.rpRefPicAvail) {
+                var ctx = available(x0, y0, x0 - 1, y0)
+                        && (pic.flags[blockIndex(x0 - 1, y0)] & PictureState.RESIDUAL_PREDICTION) != 0 ? 1 : 0;
+                if (cabac.decodeBin(CabacTables.RESIDUAL_WEIGHT + ctx) == 1) {
+                    weight = 1 + cabac.decodeBin(CabacTables.RESIDUAL_WEIGHT + 2);
+                }
+            }
+            if (tools3d.icEnabled && weight == 0 && illuminationCompensationEnabled(m)) {
+                illumination = cabac.decodeBin(CabacTables.ILLU_COMP) == 1;
+            }
+            if (weight != 0) {
+                var w4 = pic.width4;
+                var blocks = 1 << (log2Size - 2);
+                var start = blockIndex(x0, y0);
+                for (var j = 0; j < blocks; j++) {
+                    for (var i = 0; i < blocks; i++) {
+                        pic.flags[start + j * w4 + i] |= (byte) PictureState.RESIDUAL_PREDICTION;
+                    }
+                }
+            }
+        }
+        var disparity = 0;
+        var disparityView = -1;
+        if (tools3d != null && views != null && tools3d.disparityDerivation) {
+            if (tools3d.depth) {
+                motion.deriveDepthDisparity();
+            } else {
+                motion.deriveDisparity(x0, y0, 1 << log2Size, this);
+            }
+            disparity = motion.disparity();
+            disparityView = motion.disparityView();
+        }
+        for (var k = 0; k < count; k++) {
+            var m = puMotions[k];
+            m.residualWeight = weight;
+            m.illuminationCompensation = illumination;
+            m.dispVec = disparity;
+            m.refViewIdx = disparityView;
+            m.cuX = x0;
+            m.cuY = y0;
+            var xPb = puX[k];
+            var yPb = puY[k];
+            var width = puWidth[k];
+            var height = puHeight[k];
+            motion.derive(x0, y0, 1 << log2Size, xPb, yPb, width, height, k, m, this);
+            storeMotion(xPb, yPb, width, height, m);
+            if (k > 0 || width != (1 << log2Size) || height != (1 << log2Size)) {
+                markEdges(xPb, yPb, width, height, PictureState.EDGE_PU_V, PictureState.EDGE_PU_H);
+            }
+            if (illumination) {
+                m.icAbove = available(xPb, yPb, xPb, yPb - 1);
+                m.icLeft = available(xPb, yPb, xPb - 1, yPb);
+            }
+            inter.predict(frame, xPb, yPb, width, height, m);
         }
     }
 
     /**
-     * Parses a prediction unit (7.3.8.6), derives its motion and predicts its samples.
+     * Returns {@code icCuEnableFlag} of a 2Nx2N coding unit (equations I-48 and I-49): whether
+     * {@code illu_comp_flag} is present.
      *
+     * @param m the parsed syntax of the prediction unit
+     * @return {@code true} when the flag is coded
+     */
+    private boolean illuminationCompensationEnabled(MotionPredictor.PuMotion m) {
+        if (m.merge) {
+            return m.mergeIdx != 0 || !tools3d.icDisabledMergeZeroIdx;
+        }
+        var view = tools3d.viewIdx;
+        return m.predFlag[1] && views.refViewIdx[1][m.refIdx[1]] != view
+                || m.predFlag[0] && views.refViewIdx[0][m.refIdx[0]] != view;
+    }
+
+    /**
+     * Parses a prediction unit (7.3.8.6) into {@link #puMotions}; {@link #finishInterUnit} derives
+     * its motion and predicts its samples.
+     *
+     * @param partIdx the partition index
      * @param xPb the luma x of the prediction block
      * @param yPb the luma y of the prediction block
      * @param width the prediction block width
      * @param height the prediction block height
      * @param xCb the luma x of the coding block
      * @param yCb the luma y of the coding block
-     * @param log2CbSize the coding block size as a power of two
-     * @param partIdx the partition index
      * @param skip whether the coding unit is skipped
      * @param partMode the partitioning mode of the coding unit
      */
-    private void predictionUnit(int xPb, int yPb, int width, int height, int xCb, int yCb, int log2CbSize, int partIdx,
-                                boolean skip, int partMode) {
+    private void parsePredictionUnit(int partIdx, int xPb, int yPb, int width, int height, int xCb, int yCb,
+                                     boolean skip, int partMode) {
         if (refList == null) {
             throw new MediaException.Malformed("inter prediction unit in a slice without reference pictures");
         }
-        var m = puMotion;
+        var m = puMotions[partIdx];
+        puMotion = m;
+        puX[partIdx] = xPb;
+        puY[partIdx] = yPb;
+        puWidth[partIdx] = width;
+        puHeight[partIdx] = height;
         m.clear();
         m.partMode = partMode;
         if (skip) {
@@ -1478,12 +1769,6 @@ public final class SliceDecoder {
                 m.predFlag[1] = true;
             }
         }
-        motion.derive(xCb, yCb, 1 << log2CbSize, xPb, yPb, width, height, partIdx, m, this);
-        storeMotion(xPb, yPb, width, height, m);
-        if (partIdx > 0 || width != (1 << log2CbSize) || height != (1 << log2CbSize)) {
-            markEdges(xPb, yPb, width, height, PictureState.EDGE_PU_V, PictureState.EDGE_PU_H);
-        }
-        inter.predict(frame, xPb, yPb, width, height, m);
     }
 
     /**
@@ -1564,6 +1849,33 @@ public final class SliceDecoder {
     private void storeMotion(int xPb, int yPb, int width, int height, MotionPredictor.PuMotion m) {
         var w4 = frame.width4;
         var start = (yPb >> 2) * w4 + (xPb >> 2);
+        if (m.ivMc) {
+            for (var j = 0; j < height >> 2; j++) {
+                for (var i = 0; i < width >> 2; i++) {
+                    pic.flags[start + j * w4 + i] |= (byte) PictureState.IV_MC;
+                }
+            }
+        }
+        if (m.subPbWidth != 0) {
+            var index = 0;
+            for (var y = 0; y < height; y += m.subPbHeight) {
+                for (var x = 0; x < width; x += m.subPbWidth) {
+                    var block = ((yPb + y) >> 2) * w4 + ((xPb + x) >> 2);
+                    var mv0 = m.subRef0[index] >= 0 ? m.subMv0[index] : 0;
+                    var mv1 = m.subRef1[index] >= 0 ? m.subMv1[index] : 0;
+                    for (var j = 0; j < m.subPbHeight >> 2; j++) {
+                        var row = block + j * w4;
+                        var end = row + (m.subPbWidth >> 2);
+                        java.util.Arrays.fill(frame.mv0, row, end, mv0);
+                        java.util.Arrays.fill(frame.mv1, row, end, mv1);
+                        java.util.Arrays.fill(frame.ref0, row, end, m.subRef0[index]);
+                        java.util.Arrays.fill(frame.ref1, row, end, m.subRef1[index]);
+                    }
+                    index++;
+                }
+            }
+            return;
+        }
         var mv0 = (m.mvY[0] << 16) | (m.mvX[0] & 0xFFFF);
         var mv1 = (m.mvY[1] << 16) | (m.mvX[1] & 0xFFFF);
         var r0 = (byte) (m.predFlag[0] ? m.refIdx[0] : -1);
@@ -1668,31 +1980,19 @@ public final class SliceDecoder {
                                int cbfLuma, int cbfCb, int cbfCr) {
         var chroma = sps.chromaArrayType != 0;
         var cbfChroma = chroma && (cbfCb != 0 || cbfCr != 0);
+        actTu = false;
         if (cbfLuma != 0 || cbfChroma) {
-            if (pps.cuQpDeltaEnabled && !cuQpDeltaCoded) {
-                var abs = 0;
-                var ctx = CabacTables.CU_QP_DELTA;
-                while (abs < 5 && cabac.decodeBin(ctx) == 1) {
-                    abs++;
-                    ctx = CabacTables.CU_QP_DELTA + 1;
-                }
-                if (abs == 5) {
-                    abs += expGolomb(0);
-                }
-                var value = abs;
-                if (abs > 0 && cabac.decodeBypass() == 1) {
-                    value = -abs;
-                }
-                var qpBdOffset = 6 * (sps.bitDepthLuma - 8);
-                if (value < -(26 + qpBdOffset / 2) || value > 25 + qpBdOffset / 2) {
-                    throw new MediaException.Malformed("CuQpDeltaVal out of range");
-                }
-                cuQpDeltaCoded = true;
-                qpY = ((qpYPred + value + 52 + 2 * qpBdOffset) % (52 + qpBdOffset)) - qpBdOffset;
+            if (pps.actEnabled && (!cuIntra || (chromaSyntax[0] == 4 && chromaSyntax[1] == 4 && chromaSyntax[2] == 4
+                    && chromaSyntax[3] == 4))) {
+                actTu = cabac.decodeBin(CabacTables.ACT_FLAG) == 1;
             }
+            deltaQp();
             if (cbfChroma && !bypass && header.cuChromaQpOffsetEnabled && !chromaQpOffsetCoded) {
                 chromaQpOffset();
             }
+        }
+        if (actTu) {
+            java.util.Arrays.fill(actPresent, false);
         }
         var size = 1 << log2Size;
         if (cuIntra) {
@@ -1721,6 +2021,9 @@ public final class SliceDecoder {
             resScaleVal = crossComponent ? crossComponentScale(1) : 0;
             chromaBlocks(x0, y0, log2SizeC, 2, cbfCr);
             resScaleVal = 0;
+            if (actTu) {
+                inverseColorTransform(x0, y0, log2Size);
+            }
         } else if (blkIdx == 3) {
             chromaBlocks(xBase, yBase, 2, 1, cbfCb);
             chromaBlocks(xBase, yBase, 2, 2, cbfCr);
@@ -1881,15 +2184,16 @@ public final class SliceDecoder {
             IntraPredictor.substitute(boundary, boundaryAvailable, count, bitDepth);
         }
         var filter = !sps.intraSmoothingDisabled && (cIdx == 0 || sps.chromaArrayType == 3);
-        var edgeFilters = cIdx == 0 && !(sps.implicitRdpcm && bypass);
+        var dcFilter = !sps.intraBoundaryFilteringDisabled;
+        var edgeFilters = cIdx == 0 && dcFilter && !(sps.implicitRdpcm && bypass);
         if (plane8 == null) {
-            intra.predict(boundary, log2Size, mode, cIdx == 0, filter, sps.strongIntraSmoothing, edgeFilters, bitDepth,
-                    plane, yc * stride + xc, stride);
+            intra.predict(boundary, log2Size, mode, cIdx == 0, filter, sps.strongIntraSmoothing, edgeFilters, dcFilter,
+                    bitDepth, plane, yc * stride + xc, stride);
             return;
         }
         var predicted = intraBlock;
-        intra.predict(boundary, log2Size, mode, cIdx == 0, filter, sps.strongIntraSmoothing, edgeFilters, bitDepth,
-                predicted, 0, size);
+        intra.predict(boundary, log2Size, mode, cIdx == 0, filter, sps.strongIntraSmoothing, edgeFilters, dcFilter,
+                bitDepth, predicted, 0, size);
         for (var y = 0; y < size; y++) {
             var row = (yc + y) * stride + xc;
             var in = y * size;
@@ -2304,7 +2608,8 @@ public final class SliceDecoder {
             var coeffMin = -(1L << log2Range);
             var finalShift = Math.max(20 - bitDepth, sps.extendedPrecision ? 11 : 0);
             if (columns == 1 && rows == 1 && !transformSkip && log2Range <= 15 && rdpcmDirection < 0
-                    && !pps.crossComponentPrediction && frame.eightBit() && !(cuIntra && cIdx == 0 && log2Size == 2)) {
+                    && !pps.crossComponentPrediction && !actTu && frame.eightBit()
+                    && !(cuIntra && cIdx == 0 && log2Size == 2)) {
                 var column = Math.clamp((64 * coeffs[0] + 64) >> 7, -32768, 32767);
                 coeffs[0] = 0;
                 var dc = (64 * column + (1 << (finalShift - 1))) >> finalShift;
@@ -2341,7 +2646,12 @@ public final class SliceDecoder {
         } else if (resScaleVal != 0 && lumaResidualValid) {
             addCrossComponent(res, count);
         }
-        addResidual(x0, y0, size, cIdx, res);
+        if (actTu) {
+            System.arraycopy(res, 0, actResidual[cIdx], 0, count);
+            actPresent[cIdx] = true;
+        } else {
+            addResidual(x0, y0, size, cIdx, res);
+        }
         for (var y = 0; y < rows; y++) {
             java.util.Arrays.fill(coeffs, y * size, y * size + columns, 0);
         }
@@ -2402,7 +2712,59 @@ public final class SliceDecoder {
         var res = residual;
         java.util.Arrays.fill(res, 0, count, 0);
         addCrossComponent(res, count);
-        addResidual(x0, y0, size, cIdx, res);
+        if (actTu) {
+            System.arraycopy(res, 0, actResidual[cIdx], 0, count);
+            actPresent[cIdx] = true;
+        } else {
+            addResidual(x0, y0, size, cIdx, res);
+        }
+    }
+
+    /**
+     * Applies the adaptive color transform to the residuals of the three components of a 4:4:4
+     * transform unit (8.6.8.2) and adds them to the predicted samples.
+     *
+     * @param x0 the luma x of the transform unit
+     * @param y0 the luma y of the transform unit
+     * @param log2Size the transform block size as a power of two
+     */
+    private void inverseColorTransform(int x0, int y0, int log2Size) {
+        var size = 1 << log2Size;
+        var count = size * size;
+        for (var c = 0; c < 3; c++) {
+            if (!actPresent[c]) {
+                java.util.Arrays.fill(actResidual[c], 0, count, 0);
+            }
+        }
+        var rY = actResidual[0];
+        var rCb = actResidual[1];
+        var rCr = actResidual[2];
+        var maxY = (1 << sps.log2TransformRangeLuma) - 1;
+        var minY = -(1 << sps.log2TransformRangeLuma);
+        var maxC = (1 << sps.log2TransformRangeChroma) - 1;
+        var minC = -(1 << sps.log2TransformRangeChroma);
+        var depth = Math.max(sps.bitDepthLuma, sps.bitDepthChroma);
+        var deltaY = bypass ? 0 : depth - sps.bitDepthLuma;
+        var deltaC = bypass ? 0 : depth - sps.bitDepthChroma;
+        var chromaShift = bypass ? 0 : deltaC + 1;
+        var offsetY = deltaY > 0 ? 1 << (deltaY - 1) : 0;
+        var offsetC = deltaC > 0 ? 1 << (deltaC - 1) : 0;
+        for (var i = 0; i < count; i++) {
+            var y = Math.clamp(rY[i], minY, maxY) << deltaY;
+            var cb = Math.clamp(rCb[i], minC, maxC) << chromaShift;
+            var cr = Math.clamp(rCr[i], minC, maxC) << chromaShift;
+            var t = y - (cb >> 1);
+            y = t + cb;
+            cb = t - (cr >> 1);
+            cr += cb;
+            rY[i] = (y + offsetY) >> deltaY;
+            rCb[i] = (cb + offsetC) >> deltaC;
+            rCr[i] = (cr + offsetC) >> deltaC;
+        }
+        actTu = false;
+        addResidual(x0, y0, size, 0, rY);
+        addResidual(x0, y0, size, 1, rCb);
+        addResidual(x0, y0, size, 2, rCr);
     }
 
     /**
@@ -2457,11 +2819,13 @@ public final class SliceDecoder {
     private int quantizer(int cIdx) {
         var qpBdOffsetY = 6 * (sps.bitDepthLuma - 8);
         if (cIdx == 0) {
-            return Math.clamp(qpY + qpBdOffsetY, 0, 51 + qpBdOffsetY);
+            var act = actTu ? pps.actQpOffset[0] + header.actQpOffset[0] : 0;
+            return Math.clamp(qpY + qpBdOffsetY + act, 0, 51 + qpBdOffsetY);
         }
         var qpBdOffsetC = 6 * (sps.bitDepthChroma - 8);
-        var offset = cIdx == 1 ? pps.cbQpOffset + header.cbQpOffset + cuQpOffsetCb
-                : pps.crQpOffset + header.crQpOffset + cuQpOffsetCr;
+        var cuOffset = cIdx == 1 ? cuQpOffsetCb : cuQpOffsetCr;
+        var offset = actTu ? pps.actQpOffset[cIdx] + header.actQpOffset[cIdx] + cuOffset
+                : cIdx == 1 ? pps.cbQpOffset + header.cbQpOffset + cuOffset : pps.crQpOffset + header.crQpOffset + cuOffset;
         var qPi = Math.clamp(qpY + offset, -qpBdOffsetC, 57);
         int qPc;
         if (sps.chromaArrayType == 1) {

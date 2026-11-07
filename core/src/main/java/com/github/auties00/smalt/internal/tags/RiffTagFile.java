@@ -9,6 +9,7 @@ import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.metadata.StandardTag;
 import com.github.auties00.smalt.metadata.TagWriteOptions;
+import com.github.auties00.smalt.metadata.XmpPacket;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -18,26 +19,39 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
 
 /**
- * Edits the tags of WAV (RIFF, RF64, BW64) and AIFF files.
+ * Edits the tags of WAV (RIFF, big-endian RIFX, RF64, BW64) and AIFF files.
  *
  * <p>WAV files carry text in a {@code LIST} chunk of form {@code INFO} (one sub-chunk per
  * four-character identifier, {@code INAM}, {@code IART}, ...) and full tags in an {@code id3 }
  * chunk holding an ID3v2 tag; AIFF files carry text in {@code NAME}, {@code AUTH},
- * {@code (c) } and {@code ANNO} chunks and full tags in an {@code ID3 } chunk. {@code INFO} text
+ * {@code (c) } and {@code ANNO} chunks and full tags in an {@code ID3 } chunk. The descriptive chunks
+ * {@link RiffMetadataChunks} maps (Broadcast Wave, sampler and cue point chunks of WAV, marker, instrument
+ * and comment chunks of AIFF) are read into their keys and the chapters, which the ID3v2 chapters
+ * take precedence over, and are rewritten from them; their keys go to no other chunk. {@code INFO} text
  * is written in UTF-8, as ffmpeg does; AIFF text chunks are ISO-8859-1, so a value with other
  * characters goes to the ID3v2 chunk only. Reading merges
  * both, the ID3v2 values first. Writing stores the values the text chunks can hold in them and,
  * when the file already had an ID3v2 chunk or the tags need one (pictures, chapters, other keys),
  * every tag in an ID3v2 chunk.
  *
+ * <p>The XMP packet (XMP Specification Part 3) is read from a WAV {@code _PMX} chunk or an AIFF {@code APPL} chunk of
+ * application signature {@code XMP }, or, failing one, from a {@code PRIV} frame of the ID3v2 chunk. A rewrite keeps
+ * the chunk while the packet is unchanged, writes a packet the file kept only in its ID3v2 chunk back there, and
+ * any other packet in a {@code _PMX} or {@code APPL} chunk.
+ *
  * <p>The new chunks reuse the space of the old ones when they fit (the rest becoming a
  * {@code JUNK} chunk), or replace them at the end of the file when the old metadata chunks were
  * the last chunks; otherwise the file is rewritten with the metadata chunks before the audio
  * chunk, followed by a {@code JUNK} chunk of the configured padding. The audio chunk never
- * changes.
+ * changes. A RIFF file the edit takes past the 4 GiB its 32-bit sizes can describe becomes an
+ * RF64 file (EBU Tech 3306): the header says {@code RF64}, a {@code ds64} chunk holding the
+ * 64-bit RIFF and {@code data} sizes takes the place of a leading {@code JUNK} chunk (the
+ * placeholder EBU Tech 3306 recommends) or is inserted first, and the 32-bit sizes it replaces
+ * hold {@code 0xFFFFFFFF}. A RIFX or AIFF file cannot grow past 4 GiB.
  */
 final class RiffTagFile implements TagFile {
     /**
@@ -46,9 +60,40 @@ final class RiffTagFile implements TagFile {
     private static final int MAX_CHUNKS = 1 << 16;
 
     /**
+     * The size of the {@code ds64} chunk written when a file becomes RF64: the header, the 64-bit
+     * RIFF size, data size and sample count, and an empty table.
+     */
+    private static final int DS64_TOTAL = 8 + 28;
+
+    /**
+     * The prefix of the key of an {@code INFO} identifier that names another standard tag elsewhere.
+     */
+    private static final String INFO_PREFIX = "INFO:";
+
+    /**
      * The filler chunk identifier.
      */
     private static final String JUNK = "JUNK";
+
+    /**
+     * The largest descriptive chunk read.
+     */
+    private static final int MAX_DESCRIPTIVE = 16 << 20;
+
+    /**
+     * The identifier of the WAV chunk holding XMP.
+     */
+    private static final String WAVE_XMP = "_PMX";
+
+    /**
+     * The identifier of the AIFF application chunk.
+     */
+    private static final String AIFF_APPLICATION = "APPL";
+
+    /**
+     * The application signature of the AIFF {@code APPL} chunk holding XMP.
+     */
+    private static final String AIFF_XMP = "XMP ";
 
     /**
      * The AIFF text chunks and the standard tags they hold.
@@ -67,9 +112,19 @@ final class RiffTagFile implements TagFile {
     private final MediaLimits limits;
 
     /**
-     * Whether the file is AIFF (big-endian sizes) rather than WAV.
+     * Whether the file is AIFF rather than WAV.
      */
     private final boolean aiff;
+
+    /**
+     * Whether the file is a big-endian RIFX WAV file.
+     */
+    private final boolean rifx;
+
+    /**
+     * Whether chunk sizes are big-endian (AIFF and RIFX).
+     */
+    private final boolean bigEndian;
 
     /**
      * Whether the file is RF64 or BW64, whose RIFF size lives in the {@code ds64} chunk.
@@ -97,6 +152,36 @@ final class RiffTagFile implements TagFile {
     private final Id3v2Tag id3;
 
     /**
+     * The offsets of the {@code _PMX} and {@code APPL} chunks that hold an XMP packet.
+     */
+    private final Set<Long> xmpChunks = new HashSet<>();
+
+    /**
+     * The XMP packet of the first chunk of {@link #xmpChunks}, or {@code null}.
+     */
+    private XmpPacket xmp;
+
+    /**
+     * The first chunk of {@link #xmpChunks} as stored, or {@code null}.
+     */
+    private byte[] xmpChunk;
+
+    /**
+     * The sampling rate of the audio, in hertz, or 0 when unknown.
+     */
+    private final double sampleRate;
+
+    /**
+     * The block alignment of a WAV file's {@code fmt } chunk, 0 until read.
+     */
+    private int blockAlign;
+
+    /**
+     * The frame count of an AIFF file's {@code COMM} chunk, 0 until read.
+     */
+    private long frames;
+
+    /**
      * Parses the chunk list and the metadata chunks.
      *
      * @param source the WAV or AIFF file; not closed
@@ -110,8 +195,10 @@ final class RiffTagFile implements TagFile {
         var header = TagIo.read(source, 0, 12, limits);
         this.aiff = TagIo.matches(header, 0, "FORM");
         this.rf64 = TagIo.matches(header, 0, "RF64") || TagIo.matches(header, 0, "BW64");
-        if (!aiff && !TagIo.matches(header, 0, "RIFF") && !rf64) {
-            throw new MediaException.Unsupported("wav", "big-endian RIFX files cannot be tagged");
+        this.rifx = TagIo.matches(header, 0, "RIFX");
+        this.bigEndian = aiff || rifx;
+        if (!aiff && !rifx && !rf64 && !TagIo.matches(header, 0, "RIFF")) {
+            throw new MediaException.Malformed("not a RIFF, RIFX, RF64 or AIFF file");
         }
         var list = new ArrayList<Chunk>();
         var position = 12L;
@@ -122,7 +209,7 @@ final class RiffTagFile implements TagFile {
             }
             var chunkHeader = TagIo.read(source, position, 8, limits);
             var id = new String(chunkHeader, 0, 4, StandardCharsets.ISO_8859_1);
-            long chunkSize = aiff ? ByteArrays.u32be(chunkHeader, 4) : ByteArrays.u32le(chunkHeader, 4);
+            long chunkSize = ByteArrays.u32(chunkHeader, 4, !bigEndian);
             if (rf64 && id.equals("ds64") && chunkSize >= 24) {
                 var ds64 = TagIo.read(source, position + 8, 24, limits);
                 dataSize64 = ByteArrays.i64le(ds64, 8);
@@ -143,14 +230,41 @@ final class RiffTagFile implements TagFile {
         this.chunksEnd = position;
         Id3v2Tag found = null;
         var info = new ArrayList<MediaTags.Entry>();
+        var owned = new ArrayList<MediaTags.Entry>();
+        var comments = new ArrayList<MediaTags.Entry>();
+        byte[] cue = null;
+        byte[] adtl = null;
+        byte[] mark = null;
+        byte[] inst = null;
         for (var chunk : chunks) {
-            if (isId3(chunk) && found == null && chunk.payloadSize() >= Id3v2Tag.HEADER_SIZE) {
+            var descriptive = descriptive(chunk);
+            if (descriptive != null) {
+                if (chunk.payloadSize() > MAX_DESCRIPTIVE) {
+                    continue;
+                }
+                var payload = TagIo.read(source, chunk.offset() + 8, chunk.payloadSize(), limits);
+                switch (descriptive) {
+                    case "bext" -> RiffMetadataChunks.decodeBext(payload, !bigEndian, owned);
+                    case "iXML", "axml" -> RiffMetadataChunks.decodeXml(descriptive, payload, owned);
+                    case "chna" -> RiffMetadataChunks.decodeChna(payload, !bigEndian, owned);
+                    case "smpl" -> RiffMetadataChunks.decodeSmpl(payload, !bigEndian, owned);
+                    case "cue " -> cue = cue == null ? payload : cue;
+                    case "adtl" -> adtl = adtl == null ? payload : adtl;
+                    case "MARK" -> mark = mark == null ? payload : mark;
+                    case "INST" -> inst = inst == null ? payload : inst;
+                    default -> RiffMetadataChunks.decodeComments(payload, comments);
+                }
+                continue;
+            }
+            if (xmpCandidate(chunk) && chunk.payloadSize() <= MAX_DESCRIPTIVE) {
+                readXmp(chunk);
+            } else if (isId3(chunk) && found == null && chunk.payloadSize() >= Id3v2Tag.HEADER_SIZE) {
                 var bytes = TagIo.read(source, chunk.offset() + 8, chunk.payloadSize(), limits);
                 if (Id3v2Tag.size(bytes, 0) >= 0) {
                     found = Id3v2Tag.parse(bytes, limits);
                 }
             } else if (isInfo(chunk)) {
-                decodeInfo(TagIo.read(source, chunk.offset() + 8, chunk.payloadSize(), limits), info);
+                decodeInfo(TagIo.read(source, chunk.offset() + 8, chunk.payloadSize(), limits), bigEndian, info);
             } else if (aiff && aiffKey(chunk.id()) != null) {
                 var text = text(TagIo.read(source, chunk.offset() + 8, chunk.payloadSize(), limits));
                 if (!text.isBlank()) {
@@ -159,6 +273,13 @@ final class RiffTagFile implements TagFile {
             }
         }
         this.id3 = found;
+        this.sampleRate = sampleRate();
+        var duration = durationMicros(sampleRate);
+        var markers = RiffMetadataChunks.decodeMarkers(mark == null ? new byte[0] : mark);
+        var loopMarkers = new HashSet<Integer>();
+        if (inst != null) {
+            RiffMetadataChunks.decodeInst(inst, markers, owned, loopMarkers);
+        }
         var builder = MediaTags.builder();
         var keys = new HashSet<String>();
         if (found != null) {
@@ -174,7 +295,173 @@ final class RiffTagFile implements TagFile {
                 builder.add(entry.key(), entry.value());
             }
         }
+        var seen = new HashSet<String>();
+        for (var entry : builder.build().getAll(StandardTag.COMMENT)) {
+            seen.add(entry);
+        }
+        for (var comment : comments) {
+            if (seen.add(comment.value())) {
+                builder.add(comment.key(), comment.value());
+            }
+        }
+        for (var entry : owned) {
+            if (!keys.contains(entry.key().toLowerCase(Locale.ROOT))) {
+                builder.add(entry.key(), entry.value());
+            }
+        }
+        if (xmp != null) {
+            builder.xmp(xmp);
+        } else if (found != null && found.decode().xmp() != null) {
+            builder.xmp(found.decode().xmp());
+        }
+        if (found == null || found.decode().chapters().isEmpty()) {
+            if (aiff) {
+                builder.chapters(RiffMetadataChunks.markerChapters(markers, loopMarkers, sampleRate, duration));
+            } else if (cue != null) {
+                builder.chapters(RiffMetadataChunks.decodeCue(cue, adtl, !bigEndian, (int) sampleRate, duration));
+            }
+        }
         this.tags = builder.build();
+    }
+
+    /**
+     * Returns whether a chunk may hold an XMP packet: a WAV {@code _PMX} chunk, or an AIFF {@code APPL} chunk of
+     * signature {@code XMP }.
+     *
+     * @param chunk a top-level chunk
+     * @return {@code true} for such a chunk
+     */
+    private boolean xmpCandidate(Chunk chunk) {
+        if (!aiff) {
+            return chunk.id().equals(WAVE_XMP);
+        }
+        return chunk.id().equals(AIFF_APPLICATION) && chunk.payloadSize() >= 4
+                && TagIo.matches(TagIo.readAvailable(source, chunk.offset() + 8, 4), 0, AIFF_XMP);
+    }
+
+    /**
+     * Parses the XMP packet of a chunk, recording the chunk in {@link #xmpChunks} when it holds one.
+     *
+     * @param chunk a chunk {@link #xmpCandidate(Chunk)} accepts
+     */
+    private void readXmp(Chunk chunk) {
+        var skip = aiff ? 4 : 0;
+        var payload = TagIo.read(source, chunk.offset() + 8 + skip, chunk.payloadSize() - skip, limits);
+        XmpPacket packet;
+        try {
+            packet = XmpPacket.parse(payload);
+        } catch (MediaException.Malformed exception) {
+            return;
+        }
+        xmpChunks.add(chunk.offset());
+        if (xmp == null) {
+            xmp = packet;
+            xmpChunk = TagIo.read(source, chunk.offset(), chunk.total(), limits);
+        }
+    }
+
+    /**
+     * Encodes the chunk of an XMP packet.
+     *
+     * @param aiff whether the chunk is an AIFF {@code APPL} chunk rather than a WAV {@code _PMX} chunk
+     * @param bigEndian whether the size is big-endian (AIFF and RIFX)
+     * @param packet the packet to store
+     * @return the chunk, header and pad byte included
+     */
+    static byte[] xmpChunk(boolean aiff, boolean bigEndian, XmpPacket packet) {
+        var bytes = packet.toBytes();
+        if (!aiff) {
+            return chunk(bigEndian, WAVE_XMP, bytes);
+        }
+        var payload = new byte[4 + bytes.length];
+        System.arraycopy(AIFF_XMP.getBytes(StandardCharsets.US_ASCII), 0, payload, 0, 4);
+        System.arraycopy(bytes, 0, payload, 4, bytes.length);
+        return chunk(true, AIFF_APPLICATION, payload);
+    }
+
+    /**
+     * Returns the descriptive chunk a chunk is, whose contents this editor reads into keys or chapters and
+     * rewrites from them.
+     *
+     * @param chunk a top-level chunk
+     * @return {@code bext}, {@code iXML}, {@code axml}, {@code chna}, {@code smpl}, {@code cue } or {@code adtl}
+     * (a {@code LIST} of that form) for a WAV file, {@code MARK}, {@code INST} or {@code COMT} for an AIFF file,
+     * or {@code null}
+     */
+    private String descriptive(Chunk chunk) {
+        if (aiff) {
+            return switch (chunk.id()) {
+                case "MARK", "INST", "COMT" -> chunk.id();
+                default -> null;
+            };
+        }
+        return switch (chunk.id()) {
+            case "bext", "iXML", "axml", "chna", "smpl", "cue " -> chunk.id();
+            case "LIST" -> {
+                if (chunk.payloadSize() < 4) {
+                    yield null;
+                }
+                var form = TagIo.readAvailable(source, chunk.offset() + 8, 4);
+                yield TagIo.matches(form, 0, "adtl") ? "adtl" : null;
+            }
+            default -> null;
+        };
+    }
+
+    /**
+     * {@return the sampling rate of the {@code fmt } or {@code COMM} chunk, in hertz, or 0 without one}
+     */
+    private double sampleRate() {
+        for (var chunk : chunks) {
+            if (!aiff && chunk.id().equals("fmt ") && chunk.payloadSize() >= 16) {
+                var format = TagIo.read(source, chunk.offset() + 8, 16, limits);
+                blockAlign = ByteArrays.u16(format, 12, !bigEndian);
+                return ByteArrays.u32(format, 4, !bigEndian);
+            }
+            if (aiff && chunk.id().equals("COMM") && chunk.payloadSize() >= 18) {
+                var common = TagIo.read(source, chunk.offset() + 8, 18, limits);
+                frames = ByteArrays.u32be(common, 2);
+                return extended(common, 8);
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * Returns the duration of the audio.
+     *
+     * @param rate the sampling rate, in hertz
+     * @return the duration in microseconds, or {@code -1} when unknown
+     */
+    private long durationMicros(double rate) {
+        if (rate <= 0) {
+            return -1;
+        }
+        if (aiff) {
+            return Math.round(frames * 1e6 / rate);
+        }
+        for (var chunk : chunks) {
+            if (chunk.id().equals("data") && blockAlign > 0) {
+                return Math.round(chunk.payloadSize() / blockAlign * 1e6 / rate);
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Decodes an 80-bit IEEE 754 extended float, the sampling rate of an AIFF {@code COMM} chunk.
+     *
+     * @param data the bytes
+     * @param offset the index of the sign and exponent
+     * @return the value, or 0 when it is not a positive finite number
+     */
+    private static double extended(byte[] data, int offset) {
+        var exponent = ByteArrays.u16be(data, offset) & 0x7FFF;
+        var mantissa = ByteArrays.i64be(data, offset + 2);
+        if ((data[offset] & 0x80) != 0 || exponent == 0x7FFF || mantissa == 0) {
+            return 0;
+        }
+        return Math.scalb((double) (mantissa >>> 11), exponent - 16383 - 52);
     }
 
     /**
@@ -205,10 +492,12 @@ final class RiffTagFile implements TagFile {
      * Returns whether a chunk is one of the metadata chunks this editor replaces.
      *
      * @param chunk a top-level chunk
-     * @return {@code true} for ID3v2, {@code INFO} and AIFF text chunks
+     * @return {@code true} for ID3v2, {@code INFO}, AIFF text chunks, the descriptive chunks and the chunks holding
+     * XMP
      */
     private boolean isMetadata(Chunk chunk) {
-        return isId3(chunk) || isInfo(chunk) || (aiff && aiffKey(chunk.id()) != null);
+        return isId3(chunk) || isInfo(chunk) || (aiff && aiffKey(chunk.id()) != null) || descriptive(chunk) != null
+                || xmpChunks.contains(chunk.offset());
     }
 
     /**
@@ -230,13 +519,14 @@ final class RiffTagFile implements TagFile {
      * Decodes the sub-chunks of an {@code INFO} list.
      *
      * @param payload the list payload, starting with {@code INFO}
+     * @param bigEndian whether the sub-chunk sizes are big-endian (RIFX)
      * @param entries receives the entries
      */
-    private static void decodeInfo(byte[] payload, List<MediaTags.Entry> entries) {
+    static void decodeInfo(byte[] payload, boolean bigEndian, List<MediaTags.Entry> entries) {
         var position = 4;
         while (payload.length - position >= 8) {
             var id = new String(payload, position, 4, StandardCharsets.ISO_8859_1);
-            var size = ByteArrays.u32le(payload, position + 4);
+            var size = ByteArrays.u32(payload, position + 4, !bigEndian);
             position += 8;
             if (size > payload.length - position) {
                 return;
@@ -247,11 +537,26 @@ final class RiffTagFile implements TagFile {
                 continue;
             }
             try {
-                entries.add(new MediaTags.Entry(id.strip(), text));
+                entries.add(new MediaTags.Entry(infoKey(id.strip()), text));
             } catch (IllegalArgumentException ignored) {
                 // an identifier with control characters is dropped
             }
         }
+    }
+
+    /**
+     * Returns the key an {@code INFO} identifier is read under.
+     *
+     * @param id the identifier
+     * @return the identifier, or, for an {@code INFO} identifier that names a standard tag {@code INFO} has no
+     * identifier for ({@code ISRC}, the RIFF source, is not the ISRC), {@code "INFO:"} followed by the identifier
+     */
+    static String infoKey(String id) {
+        if (!id.matches("I[A-Z0-9]{3}")) {
+            return id;
+        }
+        var standard = StandardTag.fromName(id);
+        return standard.isPresent() && standard.get().riffInfo().isEmpty() ? INFO_PREFIX + id : id;
     }
 
     /**
@@ -260,7 +565,7 @@ final class RiffTagFile implements TagFile {
      * @param bytes the text bytes
      * @return the text
      */
-    private static String text(byte[] bytes) {
+    static String text(byte[] bytes) {
         var end = 0;
         while (end < bytes.length && bytes[end] != 0) {
             end++;
@@ -282,14 +587,34 @@ final class RiffTagFile implements TagFile {
     public EditPlan plan(MediaTags newTags, TagWriteOptions options) {
         var textChunks = new ArrayList<byte[]>();
         var textKeys = new HashSet<String>();
-        var allText = encodeText(aiff, newTags, textChunks, textKeys);
-        var needsId3 = id3 != null || !newTags.pictures().isEmpty() || !newTags.chapters().isEmpty() || !allText;
+        var plain = RiffMetadataChunks.withoutOwned(newTags, aiff);
+        var id3Xmp = id3 == null ? null : id3.decode().xmp();
+        var xmpInId3 = xmp == null && id3Xmp != null && newTags.xmp().isPresent();
+        byte[] xmpBytes = null;
+        if (!xmpInId3) {
+            if (newTags.xmp().isPresent()) {
+                xmpBytes = Objects.equals(newTags.xmp().get(), xmp) ? xmpChunk
+                        : xmpChunk(aiff, bigEndian, newTags.xmp().get());
+            }
+            plain = plain.toBuilder().noXmp().build();
+        }
+        var allText = encodeText(aiff, bigEndian, plain, textChunks, textKeys);
+        var needsId3 = id3 != null || !plain.pictures().isEmpty() || !allText;
         var newChunks = new ArrayList<byte[]>(textChunks);
-        if (needsId3 && !newTags.isEmpty()) {
+        if (needsId3 && !MuxerTags.isGlobalEmpty(plain)) {
             var major = options.id3Version().map(version -> version == TagWriteOptions.Id3Version.V2_3 ? 3 : 4)
                     .orElse(id3 != null && id3.major() == 3 ? 3 : 4);
             var preserved = id3 != null && options.preserveUnknown() ? id3.decode().opaque() : List.<Id3v2Tag.Frame>of();
-            newChunks.add(chunk(aiff, aiff ? "ID3 " : "id3 ", Id3v2Tag.encode(newTags, preserved, null, major, 0, 0)));
+            newChunks.add(chunk(bigEndian, aiff ? "ID3 " : "id3 ", Id3v2Tag.encode(plain, preserved, null,
+                    id3 == null ? null : id3.decode().xmpFrame(), major, 0, 0)));
+        }
+        if (xmpBytes != null) {
+            newChunks.add(xmpBytes);
+        }
+        if (aiff) {
+            newChunks.addAll(RiffMetadataChunks.encodeMarkers(newTags.chapters(), newTags, sampleRate));
+        } else {
+            newChunks.addAll(RiffMetadataChunks.waveChunks(newTags, !bigEndian, (int) sampleRate));
         }
         var metadataIndexes = new ArrayList<Integer>();
         for (var i = 0; i < chunks.size(); i++) {
@@ -312,12 +637,13 @@ final class RiffTagFile implements TagFile {
      * Encodes the text chunks.
      *
      * @param aiff whether the chunks are AIFF text chunks rather than a WAV {@code INFO} list
+     * @param bigEndian whether chunk sizes are big-endian (AIFF and RIFX)
      * @param tags the tags to store
      * @param out receives the chunks, each complete with its header
      * @param stored receives the lower-case keys stored
      * @return {@code true} when every entry fits a text chunk
      */
-    static boolean encodeText(boolean aiff, MediaTags tags, List<byte[]> out, Set<String> stored) {
+    static boolean encodeText(boolean aiff, boolean bigEndian, MediaTags tags, List<byte[]> out, Set<String> stored) {
         var all = true;
         if (aiff) {
             for (var entry : tags.entries()) {
@@ -336,24 +662,65 @@ final class RiffTagFile implements TagFile {
             }
             return all;
         }
+        var info = infoList(tags.entries(), bigEndian, stored);
+        if (info != null) {
+            out.add(info);
+        }
+        var ids = new HashSet<String>();
+        for (var entry : tags.entries()) {
+            var id = infoId(entry.key());
+            if (id == null || !ids.add(id)) {
+                all = false;
+            }
+        }
+        return all;
+    }
+
+    /**
+     * Returns the {@code INFO} identifier a key is stored under.
+     *
+     * @param key a {@link MediaTags} key
+     * @return the identifier, or {@code null} when {@code INFO} cannot store the key
+     */
+    static String infoId(String key) {
+        var standard = StandardTag.fromName(key);
+        if (standard.isPresent()) {
+            return standard.get().riffInfo().orElse(null);
+        }
+        if (key.matches("I[A-Z0-9]{3}")) {
+            return key;
+        }
+        if (key.startsWith(INFO_PREFIX) && key.substring(INFO_PREFIX.length()).matches("I[A-Z0-9]{3}")) {
+            return key.substring(INFO_PREFIX.length());
+        }
+        return null;
+    }
+
+    /**
+     * Encodes a {@code LIST} chunk of form {@code INFO} holding the entries it can store, the first
+     * value of each identifier.
+     *
+     * @param entries the tag entries, in order
+     * @param bigEndian whether the sizes are big-endian (RIFX)
+     * @param stored receives the identifiers written
+     * @return the chunk, or {@code null} when no entry fits one
+     */
+    static byte[] infoList(List<MediaTags.Entry> entries, boolean bigEndian, Set<String> stored) {
         var info = new ByteWriter(256);
         info.fourCc("INFO");
         var any = false;
-        for (var entry : tags.entries()) {
-            String id = null;
-            var standard = StandardTag.fromName(entry.key());
-            if (standard.isPresent() && standard.get().riffInfo().isPresent()) {
-                id = standard.get().riffInfo().get();
-            } else if (standard.isEmpty() && entry.key().matches("I[A-Z0-9]{3}")) {
-                id = entry.key();
-            }
+        for (var entry : entries) {
+            var id = infoId(entry.key());
             if (id == null || !stored.add(id)) {
-                all = false;
                 continue;
             }
             var text = entry.value().getBytes(StandardCharsets.UTF_8);
             info.fourCc(id);
-            info.u32le(text.length + 1L);
+            if (bigEndian) {
+                info.u32be(text.length + 1L);
+            } else {
+                info.u32le(text.length + 1L);
+            }
             info.bytes(text);
             info.u8(0);
             if (((text.length + 1) & 1) != 0) {
@@ -361,24 +728,21 @@ final class RiffTagFile implements TagFile {
             }
             any = true;
         }
-        if (any) {
-            out.add(chunk(false, "LIST", info.toByteArray()));
-        }
-        return all;
+        return any ? chunk(bigEndian, "LIST", info.toByteArray()) : null;
     }
 
     /**
      * Builds a chunk with its header and pad byte.
      *
-     * @param aiff whether the size is big-endian (AIFF) rather than little-endian (RIFF)
+     * @param bigEndian whether the size is big-endian (AIFF, RIFX) rather than little-endian (RIFF)
      * @param id the identifier
      * @param payload the chunk payload
      * @return the chunk
      */
-    static byte[] chunk(boolean aiff, String id, byte[] payload) {
+    static byte[] chunk(boolean bigEndian, String id, byte[] payload) {
         var out = new ByteWriter(payload.length + 9);
         out.fourCc(id);
-        if (aiff) {
+        if (bigEndian) {
             out.u32be(payload.length);
         } else {
             out.u32le(payload.length);
@@ -397,7 +761,7 @@ final class RiffTagFile implements TagFile {
      * @return the chunk
      */
     private byte[] filler(long total) {
-        return chunk(aiff, JUNK, new byte[(int) (total - 8)]);
+        return chunk(bigEndian, JUNK, new byte[(int) (total - 8)]);
     }
 
     /**
@@ -500,6 +864,9 @@ final class RiffTagFile implements TagFile {
         for (var chunk : newChunks) {
             added += chunk.length;
         }
+        if (!rf64 && tailStart + added - 8 > 0xFFFFFFFFL) {
+            return null;
+        }
         var plan = EditPlan.builder();
         appendWithSize(plan, tailStart, tailStart + added);
         for (var chunk : newChunks) {
@@ -535,11 +902,7 @@ final class RiffTagFile implements TagFile {
         }
         plan.copy(0, 4);
         var size = new byte[4];
-        if (aiff) {
-            ByteArrays.put32be(size, 0, riffSize);
-        } else {
-            ByteArrays.put32le(size, 0, riffSize);
-        }
+        ByteArrays.put32(size, 0, riffSize, !bigEndian);
         plan.bytes(size);
         plan.copy(8, end - 8);
     }
@@ -559,6 +922,10 @@ final class RiffTagFile implements TagFile {
             if (!isMetadata(chunk)) {
                 kept.add(chunk);
             }
+        }
+        var promoted = planPromoted(newChunks, kept, padding);
+        if (promoted != null) {
+            return promoted;
         }
         var length = 12L;
         var inserted = false;
@@ -583,13 +950,10 @@ final class RiffTagFile implements TagFile {
         var riffSize = length - 8;
         if (!rf64) {
             if (riffSize > 0xFFFFFFFFL) {
-                throw new MediaException.LimitExceeded("the tagged file exceeds the 4 GiB a RIFF size can hold");
+                throw new MediaException.LimitExceeded("the tagged file exceeds the 4 GiB a "
+                        + (aiff ? "FORM" : "RIFX") + " size can hold");
             }
-            if (aiff) {
-                ByteArrays.put32be(header, 4, riffSize);
-            } else {
-                ByteArrays.put32le(header, 4, riffSize);
-            }
+            ByteArrays.put32(header, 4, riffSize, !bigEndian);
         }
         plan.bytes(header);
         inserted = false;
@@ -619,6 +983,117 @@ final class RiffTagFile implements TagFile {
         }
         plan.copy(chunksEnd, source.size() - chunksEnd);
         return plan.build();
+    }
+
+    /**
+     * Plans a rewrite of a RIFF file that turns it into an RF64 file, when the rewrite would exceed
+     * the 4 GiB a RIFF size can hold.
+     *
+     * <p>The output is the {@code RF64} header, a {@code ds64} chunk, the kept chunks without a
+     * leading {@code JUNK} chunk (the {@code ds64} placeholder), the metadata chunks and the padding
+     * before the audio chunk, whose 32-bit size becomes {@code 0xFFFFFFFF}.
+     *
+     * @param newChunks the new metadata chunks
+     * @param kept the chunks that are not metadata, in file order
+     * @param padding the size of the filler chunk after the metadata, or {@code 0}
+     * @return the plan, or {@code null} when the file is not a RIFF file or the rewrite fits 4 GiB
+     */
+    private EditPlan planPromoted(List<byte[]> newChunks, List<Chunk> kept, long padding) {
+        if (aiff || rifx || rf64) {
+            return null;
+        }
+        var body = new ArrayList<>(kept);
+        if (kept.stream().noneMatch(chunk -> chunk.id().equals("data"))) {
+            padding = 0;
+        }
+        var plainLength = 12L + source.size() - chunksEnd + padding;
+        for (var chunk : kept) {
+            plainLength += chunk.total();
+        }
+        for (var bytes : newChunks) {
+            plainLength += bytes.length;
+        }
+        if (plainLength - 8 <= 0xFFFFFFFFL) {
+            return null;
+        }
+        if (!body.isEmpty() && body.getFirst().id().equals(JUNK)) {
+            body.removeFirst();
+        }
+        var length = 12L + DS64_TOTAL + source.size() - chunksEnd + padding;
+        Chunk data = null;
+        for (var chunk : body) {
+            length += chunk.total();
+            if (data == null && chunk.id().equals("data")) {
+                data = chunk;
+            }
+        }
+        for (var bytes : newChunks) {
+            length += bytes.length;
+        }
+        var header = new ByteWriter(12);
+        header.fourCc("RF64");
+        header.u32le(0xFFFFFFFFL);
+        header.fourCc("WAVE");
+        var ds64 = new ByteWriter(DS64_TOTAL);
+        ds64.fourCc("ds64");
+        ds64.u32le(DS64_TOTAL - 8);
+        ds64.u64le(length - 8);
+        ds64.u64le(data != null ? data.payloadSize() : 0);
+        ds64.u64le(data != null ? sampleCount(data.payloadSize()) : 0);
+        ds64.u32le(0);
+        var plan = EditPlan.builder();
+        plan.bytes(header.toByteArray());
+        plan.bytes(ds64.toByteArray());
+        var inserted = false;
+        for (var chunk : body) {
+            if (!inserted && chunk.id().equals("data")) {
+                for (var bytes : newChunks) {
+                    plan.bytes(bytes);
+                }
+                if (padding > 0) {
+                    plan.bytes(filler(padding));
+                }
+                inserted = true;
+            }
+            if (chunk == data) {
+                var dataHeader = new ByteWriter(8);
+                dataHeader.fourCc("data");
+                dataHeader.u32le(0xFFFFFFFFL);
+                plan.bytes(dataHeader.toByteArray());
+                plan.copy(chunk.offset() + 8, chunk.total() - 8);
+                continue;
+            }
+            plan.copy(chunk.offset(), chunk.total());
+        }
+        if (!inserted) {
+            for (var bytes : newChunks) {
+                plan.bytes(bytes);
+            }
+        }
+        plan.copy(chunksEnd, source.size() - chunksEnd);
+        return plan.build();
+    }
+
+    /**
+     * Returns the sample count the {@code ds64} chunk of a promoted file declares: the one of the
+     * {@code fact} chunk, else the audio size over the block alignment of the {@code fmt } chunk.
+     *
+     * @param dataSize the size of the audio chunk
+     * @return the number of sample frames, or {@code 0} when unknown
+     */
+    private long sampleCount(long dataSize) {
+        for (var chunk : chunks) {
+            if (chunk.id().equals("fact") && chunk.payloadSize() >= 4) {
+                return ByteArrays.u32le(TagIo.read(source, chunk.offset() + 8, 4, limits), 0);
+            }
+        }
+        for (var chunk : chunks) {
+            if (chunk.id().equals("fmt ") && chunk.payloadSize() >= 14) {
+                var blockAlign = ByteArrays.u16le(TagIo.read(source, chunk.offset() + 8, 14, limits), 12);
+                return blockAlign > 0 ? dataSize / blockAlign : 0;
+            }
+        }
+        return 0;
     }
 
     /**

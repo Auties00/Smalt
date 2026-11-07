@@ -1,0 +1,15 @@
+# image dump of cr3/lossless; regenerate with -Dsmalt.test.updateDumps=true
+format RAW
+info ImageInfo[format=RAW, width=56, height=40, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 56x40 rgba8 alpha=false crc=c7b89b03
+  format=RAW orientation=NORMAL source=56x40
+  icc=520:86132914 exif=140:acddad36 xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+scaled 14x10
+picture 28x20 rgba8 alpha=false crc=ddb673b6
+  format=RAW orientation=NORMAL source=56x40
+  icc=520:86132914 exif=140:acddad36 xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+decoder raw sensor data
+sensor 56x40 channels=1 cfa=RGGB neutral=[0.512, 1.0, 0.64] crc=7e6784ba
