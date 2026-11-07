@@ -19,7 +19,8 @@ package com.github.auties00.smalt.image.color;
  *           {@code IsDegenerated}, {@code PrelinOpt8alloc} and {@code PrelinEval8}
  *           ({@code cmsopt.c}), with its white fix-up. Little CMS applies the optimization to
  *           16-bit pixels only on request ({@code cmsFLAGS_CLUT_PRE_LINEARIZATION}); this
- *           implementation always does, because it is more accurate than a lookup table alone.
+ *           implementation applies it whenever it is more accurate than a lookup table alone on
+ *           a fixed set of probe colors, which {@link ColorTransform} measures.
  */
 final class PrelinEngine implements ColorEngine {
     /**
