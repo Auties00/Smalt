@@ -408,7 +408,7 @@ public final class Ac3Decoder implements AudioDecoder {
         var buffer = render(header, lastDependent, dependentCount > 0);
         lastDependentCount = 0;
         for (var frame : pendingDependents) {
-            if (frame[2] >= 0) {
+            if (frame[2] >= 0 && !lastDependent(frame[2])) {
                 lastDependentIds[lastDependentCount++] = frame[2];
             }
         }
@@ -516,6 +516,22 @@ public final class Ac3Decoder implements AudioDecoder {
         var buffer = render(independent.header(), lastDependent, lastDependentCount > 0);
         pendingDependents.clear();
         return buffer;
+    }
+
+    /**
+     * Returns whether a dependent substream is among those of the last decoded access unit, which lists each
+     * substream once however many frames of it a malformed unit repeats.
+     *
+     * @param id the substream identifier
+     * @return {@code true} when {@link #lastDependentIds} holds it
+     */
+    private boolean lastDependent(int id) {
+        for (var i = 0; i < lastDependentCount; i++) {
+            if (lastDependentIds[i] == id) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

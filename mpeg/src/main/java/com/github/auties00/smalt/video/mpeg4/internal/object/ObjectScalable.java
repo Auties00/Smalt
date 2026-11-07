@@ -257,12 +257,18 @@ abstract class ObjectScalable extends ObjectHeaders {
 
     private int takeQ0(EnhcBuffer preferred, EnhcBuffer fallback) {
         var buffer = !preferred.empty() ? preferred : fallback;
+        if (buffer.empty()) {
+            throw CorruptStream.INSTANCE;
+        }
         putBuf(buffer, true);
         return buffer.time;
     }
 
     private int takeQ1(EnhcBuffer preferred, EnhcBuffer fallback) {
         var buffer = !preferred.empty() ? preferred : fallback;
+        if (buffer.empty()) {
+            throw CorruptStream.INSTANCE;
+        }
         putBuf(buffer, false);
         return buffer.time;
     }

@@ -100,7 +100,7 @@ public final class ObjectStream {
 
     private ObjectDecoder build(int displayWidth, int displayHeight) {
         try {
-            return new ObjectDecoder(volHeader, 0, volHeader.length, displayWidth, displayHeight, 0, 0);
+            return new ObjectDecoder(volHeader, 0, volHeader.length, displayWidth, displayHeight, 0, 0, limits);
         } catch (CorruptStream exception) {
             throw new MediaException.Malformed("corrupt MPEG-4 video object layer header");
         } catch (UnsupportedTool exception) {

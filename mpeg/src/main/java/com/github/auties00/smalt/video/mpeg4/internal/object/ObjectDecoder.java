@@ -5,6 +5,10 @@
  * ISO/IEC free license for products conforming to ISO/IEC 14496-2. Modified for Smalt. */
 package com.github.auties00.smalt.video.mpeg4.internal.object;
 
+import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.internal.limits.LimitChecks;
+
 /**
  * Decodes one video object layer with the tools that the fast engine does not implement: binary and grayscale shape,
  * shape-adaptive DCT, static sprites, sprite brightness change, N-bit samples, NEWPRED, reduced resolution VOPs and
@@ -79,9 +83,11 @@ final class ObjectDecoder extends ObjectScalable {
      * @param displayHeight the height of the display, used when the layer is not rectangular
      * @param spatialFrameWidth the width of the enhancement layer of spatial scalability, or 0
      * @param spatialFrameHeight the height of the enhancement layer of spatial scalability, or 0
+     * @param limits the limits bounding the picture and sprite sizes, checked before the planes are allocated
+     * @throws MediaException.LimitExceeded if the display or the sprite exceeds the limits
      */
     ObjectDecoder(byte[] volHeader, int offset, int length, int displayWidth, int displayHeight,
-                  int spatialFrameWidth, int spatialFrameHeight) {
+                  int spatialFrameWidth, int spatialFrameHeight, MediaLimits limits) {
         load(volHeader, offset, length);
         if (bits.getBits(24) != 1) {
             throw CorruptStream.INSTANCE;
@@ -130,12 +136,14 @@ final class ObjectDecoder extends ObjectScalable {
             throw CorruptStream.INSTANCE;
         }
         displayWindow.set(0, 0, displayWidth, displayHeight);
+        LimitChecks.checkPicture(limits, displayWidth, displayHeight);
         if (uiSprite == 1) {
             displayWidth = rctSpt.width;
             displayHeight = rctSpt.height();
             if (displayWidth <= 0 || displayHeight <= 0 || displayWidth > 8192 || displayHeight > 8192) {
                 throw CorruptStream.INSTANCE;
             }
+            LimitChecks.checkPicture(limits, displayWidth, displayHeight);
         }
         var widthRound = (displayWidth + MB_SIZE - 1) >> 4 << 4;
         var heightRound = (displayHeight + MB_SIZE - 1) >> 4 << 4;

@@ -155,9 +155,9 @@ public final class ScalableStream {
         enhancementRenderer = new VopRenderer(color, highBitDepth);
     }
 
-    private static ObjectDecoder build(byte[] header, int width, int height, int spatialWidth, int spatialHeight) {
+    private ObjectDecoder build(byte[] header, int width, int height, int spatialWidth, int spatialHeight) {
         try {
-            return new ObjectDecoder(header, 0, header.length, width, height, spatialWidth, spatialHeight);
+            return new ObjectDecoder(header, 0, header.length, width, height, spatialWidth, spatialHeight, limits);
         } catch (CorruptStream exception) {
             throw new MediaException.Malformed("corrupt MPEG-4 video object layer header");
         } catch (UnsupportedTool exception) {
