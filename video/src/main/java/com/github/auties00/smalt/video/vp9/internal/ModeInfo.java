@@ -76,7 +76,8 @@ final class ModeInfo {
     int mv1;
 
     /**
-     * The intra modes of the four 4x4 sub-blocks of blocks smaller than 8x8, in raster order.
+     * The modes of the four 4x4 sub-blocks of blocks smaller than 8x8, in raster order: the intra
+     * modes of an intra block, and, in the encoder, the inter modes of an inter block.
      */
     final int[] subModes = new int[4];
 

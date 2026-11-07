@@ -47,7 +47,14 @@ class DnxhdRobustnessTest {
                         .toBuilder().alpha(true)
                         .losslessAlpha(true).build(), "yuva444p10le")),
                 Arguments.of("DNxHR SQ with Avid alpha", avidAlpha(frame(DnxhdEncoderOptions.of(DnxhdProfile.DNXHR_SQ),
-                        "yuv422p"))));
+                        "yuv422p"))),
+                Arguments.of("DNxHR 444 premultiplied lossless alpha", frame(DnxhdEncoderOptions.of(DnxhdProfile.DNXHR_444)
+                        .toBuilder().alpha(true).losslessAlpha(true).premultipliedAlpha(true).build(), "yuva444p10le")),
+                Arguments.of("DNxHR HQX premultiplied alpha", frame(DnxhdEncoderOptions.of(DnxhdProfile.DNXHR_HQX)
+                        .toBuilder().alpha(true).premultipliedAlpha(true).build(), "yuva444p10le")),
+                Arguments.of("DNxHR SQ with coded Avid alpha", frame(DnxhdEncoderOptions.of(DnxhdProfile.DNXHR_SQ)
+                        .toBuilder().alpha(true).alphaStorage(DnxhdEncoderOptions.AlphaStorage.AVID_CODED).build(),
+                        "yuva444p10le")));
     }
 
     /** Appends Avid's out-of-band alpha to a frame: 8-bit samples, then the size of the coding unit. */
@@ -94,6 +101,46 @@ class DnxhdRobustnessTest {
                 IntraTesting.sourceFrames(1280, 720, "yuv422p", 1).getFirst(), Packet.NO_TIMESTAMP, 0, true)).data();
         hd[0x2C] = (byte) (hd[0x2C] & ~0x60 | 0x20);
         assertThrows(MediaException.Malformed.class, () -> decoder.decodeFrame(hd, 0, hd.length));
+    }
+
+    @Test
+    @DisplayName("ignores PMA in coding units without alpha and rejects fields that disagree on it")
+    void premultipliedFlag() {
+        var decoder = new DnxhdDecoder();
+        var plain = frame(DnxhdEncoderOptions.of(DnxhdProfile.DNXHR_HQ), "yuv422p");
+        var flagged = plain.clone();
+        flagged[7] |= 4;
+        assertArrayEquals(IntraTesting.raw(decoder.decodeFrame(plain, 0, plain.length), true),
+                IntraTesting.raw(decoder.decodeFrame(flagged, 0, flagged.length), true));
+        var picture = AlphaPlanes.synthetic(1920, 1080, com.github.auties00.smalt.image.ChromaFormat.YUV422, 8)
+                .toPicture();
+        var fields = new DnxhdEncoder(1920, 1080, DnxhdEncoderOptions.of(DnxhdProfile.DNXHD).toBuilder()
+                .fieldOrder(com.github.auties00.smalt.video.FieldOrder.TOP_FIRST).alpha(true).premultipliedAlpha(true)
+                .build()).encodeFrame(new VideoFrame(picture, Packet.NO_TIMESTAMP, 0, true)).data();
+        decoder.decodeFrame(fields, 0, fields.length);
+        var mismatched = fields.clone();
+        mismatched[fields.length / 2 + 7] &= ~4;
+        assertThrows(MediaException.Malformed.class, () -> decoder.decodeFrame(mismatched, 0, mismatched.length));
+    }
+
+    @Test
+    @DisplayName("premultiplies, straightens and stores Avid alpha on several threads exactly as on one")
+    void alphaThreads() {
+        var picture = IntraTesting.sourceFrames(1280, 720, "yuva444p10le", 1).getFirst();
+        for (var options : new DnxhdEncoderOptions[]{
+                DnxhdEncoderOptions.of(DnxhdProfile.DNXHD).toBuilder().bitDepth(10).alpha(true)
+                        .premultipliedAlpha(true).build(),
+                DnxhdEncoderOptions.of(DnxhdProfile.DNXHD).toBuilder().alpha(true)
+                        .alphaStorage(DnxhdEncoderOptions.AlphaStorage.AVID_CODED).build()}) {
+            var frame = new DnxhdEncoder(1280, 720, options).encodeFrame(new VideoFrame(picture, 0, 0, true)).data();
+            var serial = new DnxhdEncoder(1280, 720, options.toBuilder().threads(1).build())
+                    .encodeFrame(new VideoFrame(picture, 0, 0, true)).data();
+            assertArrayEquals(serial, frame, options.toString());
+            var single = IntraTesting.raw(new DnxhdDecoder(DnxhdDecoderOptions.builder().threads(1).build())
+                    .decodeFrame(frame, 0, frame.length), true);
+            var parallel = IntraTesting.raw(new DnxhdDecoder().decodeFrame(frame, 0, frame.length), true);
+            assertArrayEquals(single, parallel, options.toString());
+        }
     }
 
     @Test

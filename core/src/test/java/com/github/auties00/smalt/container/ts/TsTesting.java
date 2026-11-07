@@ -5,6 +5,7 @@ import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Scratch;
 import com.github.auties00.smalt.track.Packet;
 
 import java.io.ByteArrayOutputStream;
@@ -22,7 +23,7 @@ import java.util.concurrent.TimeUnit;
  * report their warnings, decoded-output digests, and transport packet inspection.
  */
 final class TsTesting {
-    static final Path OUTPUT = Path.of("target", "ts-output");
+    static final Path OUTPUT = Scratch.directory("ts-output");
 
     private TsTesting() {
         throw new AssertionError();
@@ -40,12 +41,13 @@ final class TsTesting {
         return Fixtures.tone(extension, 440, rate, channels, seconds, output);
     }
 
-    /** Writes bytes under {@code target/ts-output}. */
+    /** Writes bytes under {@code target/ts-output} and validates them with the test kit's container validators. */
     static Path save(String name, byte[] data) {
         try {
             Files.createDirectories(OUTPUT);
             var file = OUTPUT.resolve(name);
             Files.write(file, data);
+            com.github.auties00.smalt.testkit.validate.Validators.assertValid(file);
             return file;
         } catch (IOException exception) {
             throw new UncheckedIOException(exception);

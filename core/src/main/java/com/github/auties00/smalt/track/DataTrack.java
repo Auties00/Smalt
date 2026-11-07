@@ -48,6 +48,16 @@ public final class DataTrack implements Track {
      */
     private final String handler;
 
+    /**
+     * The width of the presentation region in pixels, or {@code 0}.
+     */
+    private final int width;
+
+    /**
+     * The height of the presentation region in pixels, or {@code 0}.
+     */
+    private final int height;
+
     private DataTrack(Builder builder) {
         this.id = builder.id;
         this.codec = builder.codec;
@@ -56,6 +66,8 @@ public final class DataTrack implements Track {
         this.codecConfig = builder.codecConfig;
         this.language = builder.language;
         this.handler = builder.handler;
+        this.width = builder.width;
+        this.height = builder.height;
     }
 
     /**
@@ -63,7 +75,7 @@ public final class DataTrack implements Track {
      *
      * <p>The time base must be set; every other property starts at its default: codec
      * {@link Codec#DATA}, identifier {@code 0}, duration {@code -1}, and no configuration,
-     * language or handler.
+     * language, handler or size.
      *
      * @return the builder
      */
@@ -85,6 +97,8 @@ public final class DataTrack implements Track {
         builder.codecConfig = codecConfig;
         builder.language = language;
         builder.handler = handler;
+        builder.width = width;
+        builder.height = height;
         return builder;
     }
 
@@ -134,6 +148,27 @@ public final class DataTrack implements Track {
     }
 
     /**
+     * Returns the width of the region the track is presented in, the size its positions are measured in.
+     *
+     * <p>An MP4 track keeps it in its track header: a 3GPP timed text box ({@code tbox}) of a track whose
+     * sample entry declares no default text box is measured in this region, and a VobSub track is drawn in it.
+     *
+     * @return the width in pixels, or {@code 0} when the track declares no size
+     */
+    public int width() {
+        return width;
+    }
+
+    /**
+     * Returns the height of the region the track is presented in; see {@link #width()}.
+     *
+     * @return the height in pixels, or {@code 0} when the track declares no size
+     */
+    public int height() {
+        return height;
+    }
+
+    /**
      * Compares two tracks property by property, the configuration by content.
      *
      * @param other the object to compare with
@@ -144,7 +179,7 @@ public final class DataTrack implements Track {
         return other == this || other instanceof DataTrack that
                 && id == that.id && codec == that.codec && timeBase.equals(that.timeBase) && duration == that.duration
                 && Arrays.equals(codecConfig, that.codecConfig) && Objects.equals(language, that.language)
-                && Objects.equals(handler, that.handler);
+                && Objects.equals(handler, that.handler) && width == that.width && height == that.height;
     }
 
     /**
@@ -154,7 +189,8 @@ public final class DataTrack implements Track {
      */
     @Override
     public int hashCode() {
-        return Objects.hash(id, codec, timeBase, duration, Arrays.hashCode(codecConfig), language, handler);
+        return Objects.hash(id, codec, timeBase, duration, Arrays.hashCode(codecConfig), language, handler, width,
+                height);
     }
 
     /**
@@ -167,7 +203,8 @@ public final class DataTrack implements Track {
     public String toString() {
         return "DataTrack[id=" + id + ", codec=" + codec + ", timeBase=" + timeBase + ", duration=" + duration
                 + ", codecConfig=" + (codecConfig == null ? "none" : codecConfig.length + " bytes")
-                + ", language=" + language + ", handler=" + handler + "]";
+                + ", language=" + language + ", handler=" + handler
+                + (width > 0 ? ", size=" + width + "x" + height : "") + "]";
     }
 
     /**
@@ -210,6 +247,16 @@ public final class DataTrack implements Track {
          * The container's identifier for the stream type, or {@code null}.
          */
         private String handler;
+
+        /**
+         * The width, or {@code 0}.
+         */
+        private int width;
+
+        /**
+         * The height, or {@code 0}.
+         */
+        private int height;
 
         /**
          * Constructs a builder with the default properties.
@@ -292,6 +339,34 @@ public final class DataTrack implements Track {
          */
         public Builder handler(String handler) {
             this.handler = handler;
+            return this;
+        }
+
+        /**
+         * Sets the size of the region the track is presented in; see {@link DataTrack#width()}.
+         *
+         * @param width the width in pixels, from 1 to 65535
+         * @param height the height in pixels, from 1 to 65535
+         * @return this builder
+         * @throws IllegalArgumentException if {@code width} or {@code height} is out of range
+         */
+        public Builder size(int width, int height) {
+            if (width < 1 || width > 0xFFFF || height < 1 || height > 0xFFFF) {
+                throw new IllegalArgumentException("size " + width + "x" + height + " is out of range");
+            }
+            this.width = width;
+            this.height = height;
+            return this;
+        }
+
+        /**
+         * Removes the size, so that the track declares none.
+         *
+         * @return this builder
+         */
+        public Builder noSize() {
+            this.width = 0;
+            this.height = 0;
             return this;
         }
 

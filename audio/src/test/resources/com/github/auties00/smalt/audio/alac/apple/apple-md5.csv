@@ -1,0 +1,4 @@
+# file;channels;sample rate;frames;md5 of the source samples, interleaved 32-bit little-endian
+# made by tools/testdata/alac-oracle/make-vectors.py with alacconvert (Apple ALAC c38887c)
+alac32-stereo.caf;2;48000;9000;33caad2a0c4bd83bb52286ba3a6b0e5b
+alac32-mono.caf;1;44100;7000;0b1fbd5b5e9fbbf323848d3827e64c25

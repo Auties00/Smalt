@@ -87,7 +87,7 @@ final class Vp9EncMv {
      * @return the logarithm
      */
     private static double log2f(int value) {
-        return (float) (Math.log(value) / Math.log(2));
+        return (float) (StrictMath.log(value) / StrictMath.log(2));
     }
 
     /**
