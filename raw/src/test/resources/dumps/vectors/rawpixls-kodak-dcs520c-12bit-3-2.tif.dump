@@ -1,0 +1,10 @@
+# image dump of vectors/rawpixls-kodak-dcs520c-12bit-3-2.tif; regenerate with -Dsmalt.test.updateDumps=true
+format RAW
+info ImageInfo[format=RAW, width=1728, height=1152, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 1728x1152 rgba8 alpha=false crc=7912954c
+  format=RAW orientation=NORMAL source=1728x1152
+  icc=520:86132914 exif=778:30c75807 xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+decoder raw sensor data
+sensor 1728x1152 channels=1 cfa=GRBG neutral=[1.0, 0.9587036069001569, 0.48144276006272874] crc=ab8f8962

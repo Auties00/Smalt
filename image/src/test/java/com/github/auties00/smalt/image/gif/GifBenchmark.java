@@ -38,7 +38,7 @@ public class GifBenchmark {
         var checksum = 0;
         try (var reader = GifDecoder.openAnimation(MediaSource.of(data), ImageDecoderOptions.defaults())) {
             for (var current = reader.read(); current != null; current = reader.read()) {
-                checksum += current.picture().pixels()[checksum & 0xFFFF];
+                checksum += ((com.github.auties00.smalt.image.RgbaPicture) current.picture()).pixels()[checksum & 0xFFFF];
             }
         }
         return checksum;
