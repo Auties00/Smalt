@@ -1,0 +1,15 @@
+# image dump of jpeg/yuv444.jpg; regenerate with -Dsmalt.test.updateDumps=true
+format JPEG
+info ImageInfo[format=JPEG, width=48, height=32, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 48x32 yuv8 YUV444 color=BT601/FULL/BT709/SRGB y=e415e72b u=1f996935 v=dd2a2250
+  format=JPEG orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=none
+  density=ASPECT_RATIO 1.0x1.0
+scaled 12x8
+picture 12x8 yuv8 YUV444 color=BT601/FULL/BT709/SRGB y=28f02afd u=ee3c91a7 v=2a65b77d
+  format=JPEG orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=none
+  density=ASPECT_RATIO 1.0x1.0

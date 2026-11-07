@@ -1,9 +1,12 @@
 package com.github.auties00.smalt.probe;
 
+import com.github.auties00.smalt.track.TrackDisposition;
+
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.Set;
 
 /**
  * Describes one stream of a probed file: a track of a container, or the picture of an image file.
@@ -66,4 +69,11 @@ public sealed interface StreamInfo permits VideoStreamInfo, AudioStreamInfo, Dat
      *         unmodifiable
      */
     Map<String, String> tags();
+
+    /**
+     * Returns the dispositions the container flags the stream with, such as the default track or forced subtitles.
+     *
+     * @return the dispositions; unmodifiable, empty for an image or a container that stores none
+     */
+    Set<TrackDisposition> disposition();
 }

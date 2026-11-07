@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.audio.opus;
 
 import com.github.auties00.smalt.audio.opus.internal.OpusStreamDecoder;
+import com.github.auties00.smalt.testkit.audio.OpusCompare;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;

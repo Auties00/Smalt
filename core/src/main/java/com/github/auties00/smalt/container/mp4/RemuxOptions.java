@@ -1,9 +1,16 @@
 package com.github.auties00.smalt.container.mp4;
 
 import com.github.auties00.smalt.MediaLimits;
-import com.github.auties00.smalt.internal.check.Checks;
+import com.github.auties00.smalt.container.DecryptionKeys;
+import com.github.auties00.smalt.container.DemuxerOptions;
+import com.github.auties00.smalt.metadata.MediaTags;
+import com.github.auties00.smalt.metadata.TagMode;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -13,53 +20,48 @@ import java.util.OptionalInt;
  * with {@link #builder()} or a preset such as {@link #defaults()}.
  *
  * <p>The output is always a fast-start file, so it can be written to any
- * {@link com.github.auties00.smalt.io.MediaSink}, including a stream.
+ * {@link com.github.auties00.smalt.io.MediaSink}, including a stream. It carries the input's tags, cover art,
+ * chapters and track tags unless {@link #tagMode()} says otherwise.
  */
 public final class RemuxOptions {
     /**
-     * The value of a track field that selects the first track of its kind.
-     */
-    private static final int FIRST = -1;
-
-    /**
-     * The value of a track field that selects no track.
-     */
-    private static final int NONE = 0;
-
-    /**
      * The options of {@link #video()}.
      */
-    private static final RemuxOptions VIDEO = new RemuxOptions(MediaLimits.DEFAULT, Mp4MuxerOptions.Brand.MP4, FIRST,
-            FIRST, null);
+    private static final RemuxOptions VIDEO = new RemuxOptions(MediaLimits.DEFAULT, Mp4MuxerOptions.Brand.MP4,
+            Selection.FIRST, Selection.FIRST, Selection.NONE, null, TagMode.COPY, null, DecryptionKeys.none());
 
     /**
      * The options of {@link #audio()}.
      */
-    private static final RemuxOptions AUDIO = new RemuxOptions(MediaLimits.DEFAULT, Mp4MuxerOptions.Brand.M4A, NONE,
-            FIRST, null);
+    private static final RemuxOptions AUDIO = new RemuxOptions(MediaLimits.DEFAULT, Mp4MuxerOptions.Brand.M4A,
+            Selection.NONE, Selection.FIRST, Selection.NONE, null, TagMode.COPY, null, DecryptionKeys.none());
 
     private final MediaLimits limits;
     private final Mp4MuxerOptions.Brand brand;
-
-    /**
-     * The video selection: a track identifier, {@link #FIRST} or {@link #NONE}.
-     */
-    private final int videoTrack;
-
-    /**
-     * The audio selection: a track identifier, {@link #FIRST} or {@link #NONE}.
-     */
-    private final int audioTrack;
-
+    private final Selection video;
+    private final Selection audio;
+    private final Selection subtitles;
     private final Path temporaryDirectory;
+    private final TagMode tagMode;
 
-    private RemuxOptions(MediaLimits limits, Mp4MuxerOptions.Brand brand, int videoTrack, int audioTrack,
-                         Path temporaryDirectory) {
+    /**
+     * The tags of {@link TagMode#REPLACE} and {@link TagMode#MERGE}, or {@code null}.
+     */
+    private final MediaTags tags;
+    private final DecryptionKeys decryptionKeys;
+
+    private RemuxOptions(MediaLimits limits, Mp4MuxerOptions.Brand brand, Selection video, Selection audio,
+                         Selection subtitles, Path temporaryDirectory, TagMode tagMode, MediaTags tags,
+                         DecryptionKeys decryptionKeys) {
         this.limits = limits;
         this.brand = brand;
-        this.videoTrack = videoTrack;
-        this.audioTrack = audioTrack;
+        this.video = video;
+        this.audio = audio;
+        this.subtitles = subtitles;
         this.temporaryDirectory = temporaryDirectory;
+        this.tagMode = tagMode;
+        this.tags = tags;
+        this.decryptionKeys = decryptionKeys;
     }
 
     /**
@@ -73,7 +75,7 @@ public final class RemuxOptions {
 
     /**
      * Returns the options for a video: the first video and the first audio track into a
-     * fast-start MP4, with the default limits.
+     * fast-start MP4, without subtitles, with the default limits.
      *
      * @return the options
      */
@@ -117,8 +119,9 @@ public final class RemuxOptions {
     /**
      * {@return the file type of the output; {@link Mp4MuxerOptions.Brand#MP4} by default}
      *
-     * <p>{@link Mp4MuxerOptions.Brand#M4A} keeps no video: the first-video selection is ignored and a
-     * video track identifier is rejected.
+     * <p>The brand decides which codecs the output carries ({@link Mp4Muxer#supports}).
+     * {@link Mp4MuxerOptions.Brand#M4A} keeps no video and no subtitles: the first-video and
+     * every-subtitle selections are ignored and video or subtitle track identifiers are rejected.
      */
     public Mp4MuxerOptions.Brand brand() {
         return brand;
@@ -129,7 +132,7 @@ public final class RemuxOptions {
      * when it has one; {@code true} by default}
      */
     public boolean includesVideo() {
-        return videoTrack != NONE;
+        return video.mode != Mode.NONE;
     }
 
     /**
@@ -137,23 +140,69 @@ public final class RemuxOptions {
      * when the first video track is selected or none is; empty by default}
      */
     public OptionalInt videoTrackId() {
-        return videoTrack > 0 ? OptionalInt.of(videoTrack) : OptionalInt.empty();
+        return video.single();
     }
 
     /**
-     * {@return whether an audio track is selected, so that the output takes an audio track of the input
-     * when it has one; {@code true} by default}
+     * {@return whether an audio track is selected, so that the output takes the audio tracks of the
+     * input the selection names, or its first audio track; {@code true} by default}
      */
     public boolean includesAudio() {
-        return audioTrack != NONE;
+        return audio.mode != Mode.NONE;
     }
 
     /**
-     * {@return the identifier, as the input's demuxer reports it, of the selected audio track, or empty
-     * when the first audio track is selected or none is; empty by default}
+     * {@return the identifier, as the input's demuxer reports it, of the selected audio track when
+     * exactly one is selected by identifier, otherwise empty; empty by default}
      */
     public OptionalInt audioTrackId() {
-        return audioTrack > 0 ? OptionalInt.of(audioTrack) : OptionalInt.empty();
+        return audio.single();
+    }
+
+    /**
+     * {@return the identifiers, as the input's demuxer reports them, of the audio tracks selected by
+     * identifier, in output order, or an empty list when the first, every or no audio track is
+     * selected; empty by default}
+     */
+    public List<Integer> audioTrackIds() {
+        return audio.ids;
+    }
+
+    /**
+     * {@return whether every audio track of the input is selected, in input order; {@code false} by
+     * default}
+     */
+    public boolean includesEveryAudioTrack() {
+        return audio.mode == Mode.ALL;
+    }
+
+    /**
+     * {@return whether subtitle tracks are selected; {@code false} by default}
+     *
+     * <p>The subtitle tracks are those of the text formats of
+     * {@link com.github.auties00.smalt.track.Codec#isSubtitle()} and of
+     * {@link com.github.auties00.smalt.track.Codec#TTML}. They are copied as they are, so they must
+     * be 3GPP timed text, WebVTT or TTML, which MP4 carries.
+     */
+    public boolean includesSubtitles() {
+        return subtitles.mode != Mode.NONE;
+    }
+
+    /**
+     * {@return the identifiers, as the input's demuxer reports them, of the subtitle tracks selected by
+     * identifier, in output order, or an empty list when every or no subtitle track is selected;
+     * empty by default}
+     */
+    public List<Integer> subtitleTrackIds() {
+        return subtitles.ids;
+    }
+
+    /**
+     * {@return whether every subtitle track of the input is selected, in input order;
+     * {@code false} by default}
+     */
+    public boolean includesEverySubtitleTrack() {
+        return subtitles.mode == Mode.ALL;
     }
 
     /**
@@ -165,13 +214,54 @@ public final class RemuxOptions {
     }
 
     /**
-     * Returns the selection field of a kind: a track identifier, {@link #FIRST} or {@link #NONE}.
+     * {@return which tags, attached pictures, chapters and track tags the output carries; {@link TagMode#COPY}, the
+     * input's, by default}
      *
-     * @param video whether to return the video selection
-     * @return the selection field
+     * <p>The tags are on the input's terms and mapped to the output as {@link TagMode} describes: the track tags of
+     * a copied track go to its output track, and those of the other tracks are dropped. The output stores them as
+     * {@link Mp4Muxer#setTags(MediaTags)} describes.
      */
-    int selection(boolean video) {
-        return video ? videoTrack : audioTrack;
+    public TagMode tagMode() {
+        return tagMode;
+    }
+
+    /**
+     * {@return the tags {@link TagMode#REPLACE} writes or {@link TagMode#MERGE} merges into the input's, on the
+     * input's terms, or empty for the other modes; empty by default}
+     */
+    public Optional<MediaTags> tags() {
+        return Optional.ofNullable(tags);
+    }
+
+    /**
+     * {@return the video selection}
+     */
+    Selection videoSelection() {
+        return video;
+    }
+
+    /**
+     * {@return the audio selection}
+     */
+    Selection audioSelection() {
+        return audio;
+    }
+
+    /**
+     * {@return the subtitle selection}
+     */
+    Selection subtitleSelection() {
+        return subtitles;
+    }
+
+    /**
+     * {@return the keys that decrypt the protected tracks of the input; {@link DecryptionKeys#none()} by default}
+     *
+     * <p>The input is demuxed with these keys as {@link DemuxerOptions#decryptionKeys()} describes, so a protected
+     * input is remuxed into a clear file.
+     */
+    public DecryptionKeys decryptionKeys() {
+        return decryptionKeys;
     }
 
     @Override
@@ -179,63 +269,130 @@ public final class RemuxOptions {
         return other instanceof RemuxOptions that
                 && limits.equals(that.limits)
                 && brand == that.brand
-                && videoTrack == that.videoTrack
-                && audioTrack == that.audioTrack
-                && Objects.equals(temporaryDirectory, that.temporaryDirectory);
+                && video.equals(that.video)
+                && audio.equals(that.audio)
+                && subtitles.equals(that.subtitles)
+                && Objects.equals(temporaryDirectory, that.temporaryDirectory)
+                && tagMode == that.tagMode
+                && Objects.equals(tags, that.tags)
+                && decryptionKeys.equals(that.decryptionKeys);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(limits, brand, videoTrack, audioTrack, temporaryDirectory);
+        return Objects.hash(limits, brand, video, audio, subtitles, temporaryDirectory, tagMode, tags, decryptionKeys);
     }
 
     @Override
     public String toString() {
-        return "RemuxOptions[limits=" + limits + ", brand=" + brand + ", videoTrack=" + describe(videoTrack)
-                + ", audioTrack=" + describe(audioTrack) + ", temporaryDirectory=" + temporaryDirectory + "]";
+        return "RemuxOptions[limits=" + limits + ", brand=" + brand + ", videoTrack=" + video + ", audioTracks=" + audio
+                + ", subtitleTracks=" + subtitles + ", temporaryDirectory=" + temporaryDirectory + ", tagMode=" + tagMode
+                + (tags == null ? "" : ", tags=" + tags) + ", decryptionKeys=" + decryptionKeys + "]";
     }
 
     /**
-     * Describes a selection field.
-     *
-     * @param selection the field
-     * @return {@code "first"}, {@code "none"} or the identifier
+     * Enumerates the ways tracks of one kind are selected.
      */
-    private static String describe(int selection) {
-        return selection == FIRST ? "first" : selection == NONE ? "none" : Integer.toString(selection);
+    enum Mode {
+        /**
+         * The first track of the kind, when the input has one.
+         */
+        FIRST,
+
+        /**
+         * Every track of the kind, in input order.
+         */
+        ALL,
+
+        /**
+         * The tracks named by identifier, in the order named.
+         */
+        IDS,
+
+        /**
+         * No track of the kind.
+         */
+        NONE
+    }
+
+    /**
+     * Selects the tracks of one kind.
+     *
+     * @param mode how the tracks are selected
+     * @param ids the identifiers of the {@link Mode#IDS} selection, an empty list otherwise
+     */
+    record Selection(Mode mode, List<Integer> ids) {
+        /**
+         * The selection of the first track.
+         */
+        static final Selection FIRST = new Selection(Mode.FIRST, List.of());
+
+        /**
+         * The selection of every track.
+         */
+        static final Selection ALL = new Selection(Mode.ALL, List.of());
+
+        /**
+         * The selection of no track.
+         */
+        static final Selection NONE = new Selection(Mode.NONE, List.of());
+
+        /**
+         * Copies the identifiers.
+         */
+        Selection {
+            ids = List.copyOf(ids);
+        }
+
+        /**
+         * {@return the identifier when exactly one track is selected by identifier, otherwise empty}
+         */
+        OptionalInt single() {
+            return mode == Mode.IDS && ids.size() == 1 ? OptionalInt.of(ids.getFirst()) : OptionalInt.empty();
+        }
+
+        @Override
+        public String toString() {
+            return mode == Mode.IDS ? ids.toString() : mode.name().toLowerCase(Locale.ROOT);
+        }
     }
 
     /**
      * Assembles {@link RemuxOptions} setting by setting.
      *
-     * <p>For each kind (video and audio) the builder selects the first track of that kind, a track by
-     * the identifier the input's demuxer reports, or no track; the last call for a kind wins. Setters
-     * reject {@code null} unless documented otherwise and store identifiers unchecked; {@link #build()}
-     * checks them. Instances are not thread-safe.
+     * <p>For each kind of track (video, audio and subtitles) the builder selects tracks of that kind
+     * by the identifiers the input's demuxer reports, the first track (video and audio), every track
+     * (audio and subtitles), or no track; the last call for a kind wins. Setters reject {@code null}
+     * unless documented otherwise and store identifiers unchecked; {@link #build()} checks that no
+     * identifier is selected twice. Instances are not thread-safe.
      */
     public static final class Builder {
-        /**
-         * The builder value of a selection that takes the first track; outside the {@code int} range.
-         */
-        private static final long FIRST_TRACK = Long.MIN_VALUE;
-
-        /**
-         * The builder value of a selection that takes no track; outside the {@code int} range.
-         */
-        private static final long NO_TRACK = Long.MIN_VALUE + 1;
-
         private MediaLimits limits;
         private Mp4MuxerOptions.Brand brand;
-        private long videoTrack;
-        private long audioTrack;
+        private Mode video;
+        private int[] videoIds;
+        private Mode audio;
+        private int[] audioIds;
+        private Mode subtitles;
+        private int[] subtitleIds;
         private Path temporaryDirectory;
+        private TagMode tagMode;
+        private MediaTags tags;
+        private DecryptionKeys decryptionKeys;
 
         private Builder(RemuxOptions options) {
             this.limits = options.limits;
             this.brand = options.brand;
-            this.videoTrack = toBuilderValue(options.videoTrack);
-            this.audioTrack = toBuilderValue(options.audioTrack);
+            this.video = options.video.mode;
+            this.videoIds = toArray(options.video.ids);
+            this.audio = options.audio.mode;
+            this.audioIds = toArray(options.audio.ids);
+            this.subtitles = options.subtitles.mode;
+            this.subtitleIds = toArray(options.subtitles.ids);
             this.temporaryDirectory = options.temporaryDirectory;
+            this.tagMode = options.tagMode;
+            this.tags = options.tags;
+            this.decryptionKeys = options.decryptionKeys;
         }
 
         /**
@@ -246,6 +403,27 @@ public final class RemuxOptions {
          */
         public Builder limits(MediaLimits limits) {
             this.limits = Objects.requireNonNull(limits, "limits");
+            return this;
+        }
+
+        /**
+         * Sets the keys that decrypt protected input tracks; see {@link RemuxOptions#decryptionKeys()}.
+         *
+         * @param keys the value
+         * @return this builder
+         */
+        public Builder decryptionKeys(DecryptionKeys keys) {
+            this.decryptionKeys = Objects.requireNonNull(keys, "keys");
+            return this;
+        }
+
+        /**
+         * Decrypts nothing, the default; see {@link RemuxOptions#decryptionKeys()}.
+         *
+         * @return this builder
+         */
+        public Builder noDecryptionKeys() {
+            this.decryptionKeys = DecryptionKeys.none();
             return this;
         }
 
@@ -263,11 +441,12 @@ public final class RemuxOptions {
         /**
          * Selects a video track by identifier; see {@link RemuxOptions#videoTrackId()}.
          *
-         * @param id the value, positive
+         * @param id the value, any identifier the input's demuxer reports
          * @return this builder
          */
         public Builder videoTrack(int id) {
-            this.videoTrack = id;
+            this.video = Mode.IDS;
+            this.videoIds = new int[]{id};
             return this;
         }
 
@@ -277,7 +456,8 @@ public final class RemuxOptions {
          * @return this builder
          */
         public Builder firstVideoTrack() {
-            this.videoTrack = FIRST_TRACK;
+            this.video = Mode.FIRST;
+            this.videoIds = new int[0];
             return this;
         }
 
@@ -287,18 +467,31 @@ public final class RemuxOptions {
          * @return this builder
          */
         public Builder noVideo() {
-            this.videoTrack = NO_TRACK;
+            this.video = Mode.NONE;
+            this.videoIds = new int[0];
             return this;
         }
 
         /**
          * Selects an audio track by identifier; see {@link RemuxOptions#audioTrackId()}.
          *
-         * @param id the value, positive
+         * @param id the value, any identifier the input's demuxer reports
          * @return this builder
          */
         public Builder audioTrack(int id) {
-            this.audioTrack = id;
+            return audioTracks(id);
+        }
+
+        /**
+         * Selects audio tracks by identifier, in output order; see
+         * {@link RemuxOptions#audioTrackIds()}.
+         *
+         * @param ids the values, distinct identifiers the input's demuxer reports, at least one
+         * @return this builder
+         */
+        public Builder audioTracks(int... ids) {
+            this.audio = Mode.IDS;
+            this.audioIds = ids.clone();
             return this;
         }
 
@@ -308,7 +501,19 @@ public final class RemuxOptions {
          * @return this builder
          */
         public Builder firstAudioTrack() {
-            this.audioTrack = FIRST_TRACK;
+            this.audio = Mode.FIRST;
+            this.audioIds = new int[0];
+            return this;
+        }
+
+        /**
+         * Selects every audio track; see {@link RemuxOptions#includesEveryAudioTrack()}.
+         *
+         * @return this builder
+         */
+        public Builder allAudioTracks() {
+            this.audio = Mode.ALL;
+            this.audioIds = new int[0];
             return this;
         }
 
@@ -318,7 +523,43 @@ public final class RemuxOptions {
          * @return this builder
          */
         public Builder noAudio() {
-            this.audioTrack = NO_TRACK;
+            this.audio = Mode.NONE;
+            this.audioIds = new int[0];
+            return this;
+        }
+
+        /**
+         * Selects subtitle tracks by identifier, in output order; see
+         * {@link RemuxOptions#subtitleTrackIds()}.
+         *
+         * @param ids the values, distinct identifiers the input's demuxer reports, at least one
+         * @return this builder
+         */
+        public Builder subtitleTracks(int... ids) {
+            this.subtitles = Mode.IDS;
+            this.subtitleIds = ids.clone();
+            return this;
+        }
+
+        /**
+         * Selects every subtitle track; see {@link RemuxOptions#includesEverySubtitleTrack()}.
+         *
+         * @return this builder
+         */
+        public Builder allSubtitleTracks() {
+            this.subtitles = Mode.ALL;
+            this.subtitleIds = new int[0];
+            return this;
+        }
+
+        /**
+         * Selects no subtitle track; see {@link RemuxOptions#includesSubtitles()}.
+         *
+         * @return this builder
+         */
+        public Builder noSubtitles() {
+            this.subtitles = Mode.NONE;
+            this.subtitleIds = new int[0];
             return this;
         }
 
@@ -334,48 +575,126 @@ public final class RemuxOptions {
         }
 
         /**
+         * Writes the input's tags, pictures, chapters and track tags, setting the tag mode to {@link TagMode#COPY};
+         * see {@link RemuxOptions#tagMode()}.
+         *
+         * @return this builder
+         */
+        public Builder copyTags() {
+            this.tagMode = TagMode.COPY;
+            this.tags = null;
+            return this;
+        }
+
+        /**
+         * Writes no tag, picture, chapter or track tag, setting the tag mode to {@link TagMode#DROP}; see
+         * {@link RemuxOptions#tagMode()}.
+         *
+         * @return this builder
+         */
+        public Builder noTags() {
+            this.tagMode = TagMode.DROP;
+            this.tags = null;
+            return this;
+        }
+
+        /**
+         * Writes the given tags instead of the input's, setting the tag mode to {@link TagMode#REPLACE}; see
+         * {@link RemuxOptions#tags()}.
+         *
+         * @param tags the value, on the input's terms
+         * @return this builder
+         */
+        public Builder tags(MediaTags tags) {
+            this.tags = Objects.requireNonNull(tags, "tags");
+            this.tagMode = TagMode.REPLACE;
+            return this;
+        }
+
+        /**
+         * Writes the input's tags updated with the given ones, setting the tag mode to {@link TagMode#MERGE}; see
+         * {@link RemuxOptions#tags()}.
+         *
+         * @param tags the value, on the input's terms
+         * @return this builder
+         */
+        public Builder mergeTags(MediaTags tags) {
+            this.tags = Objects.requireNonNull(tags, "tags");
+            this.tagMode = TagMode.MERGE;
+            return this;
+        }
+
+        /**
          * Builds the options.
          *
          * @return the options
-         * @throws IllegalArgumentException if a track identifier is not positive, or a video track
-         * identifier is selected for the {@link Mp4MuxerOptions.Brand#M4A} brand
+         * @throws IllegalArgumentException if the same identifier is selected twice, a selection by
+         * identifier names no track, or a video or subtitle track identifier is selected for the
+         * {@link Mp4MuxerOptions.Brand#M4A} brand
          */
         public RemuxOptions build() {
-            var video = toSelection("video track identifier", videoTrack);
-            var audio = toSelection("audio track identifier", audioTrack);
-            if (brand == Mp4MuxerOptions.Brand.M4A && video > 0) {
-                throw new IllegalArgumentException("video track identifier " + video + " is selected for the M4A brand, "
-                        + "which carries no video");
+            var videoSelection = toSelection("video", video, videoIds);
+            var audioSelection = toSelection("audio", audio, audioIds);
+            var subtitleSelection = toSelection("subtitle", subtitles, subtitleIds);
+            if (brand == Mp4MuxerOptions.Brand.M4A && videoSelection.mode == Mode.IDS) {
+                throw new IllegalArgumentException("video track identifier " + videoSelection.ids.getFirst()
+                        + " is selected for the M4A brand, which carries no video");
             }
-            return new RemuxOptions(limits, brand, video, audio, temporaryDirectory);
+            if (brand == Mp4MuxerOptions.Brand.M4A && subtitleSelection.mode == Mode.IDS) {
+                throw new IllegalArgumentException("subtitle track identifier " + subtitleSelection.ids.getFirst()
+                        + " is selected for the M4A brand, which carries no subtitles");
+            }
+            var seen = new HashSet<Integer>();
+            for (var selection : List.of(videoSelection, audioSelection, subtitleSelection)) {
+                for (var id : selection.ids) {
+                    if (!seen.add(id)) {
+                        throw new IllegalArgumentException("track identifier " + id + " is selected twice");
+                    }
+                }
+            }
+            return new RemuxOptions(limits, brand, videoSelection, audioSelection, subtitleSelection, temporaryDirectory,
+                    tagMode, tags, decryptionKeys);
         }
 
         /**
-         * Converts a selection field of the options to its builder value.
+         * Converts a builder selection to the selection of the options.
          *
-         * @param selection a track identifier, {@link #FIRST} or {@link #NONE}
-         * @return the builder value
+         * @param kind the kind of track, for the message
+         * @param mode the selection mode
+         * @param ids the identifiers of a selection by identifier
+         * @return the selection
+         * @throws IllegalArgumentException if a selection by identifier names none
          */
-        private static long toBuilderValue(int selection) {
-            return selection == FIRST ? FIRST_TRACK : selection == NONE ? NO_TRACK : selection;
+        private static Selection toSelection(String kind, Mode mode, int[] ids) {
+            return switch (mode) {
+                case FIRST -> Selection.FIRST;
+                case ALL -> Selection.ALL;
+                case NONE -> Selection.NONE;
+                case IDS -> {
+                    if (ids.length == 0) {
+                        throw new IllegalArgumentException("no " + kind + " track identifier is selected");
+                    }
+                    var list = new ArrayList<Integer>(ids.length);
+                    for (var id : ids) {
+                        list.add(id);
+                    }
+                    yield new Selection(Mode.IDS, list);
+                }
+            };
         }
 
         /**
-         * Converts a builder value to the selection field of the options, checking an identifier.
+         * Copies a list of identifiers to an array.
          *
-         * @param name the setting, for the message
-         * @param value the builder value
-         * @return a track identifier, {@link #FIRST} or {@link #NONE}
-         * @throws IllegalArgumentException if {@code value} is an identifier that is not positive
+         * @param ids the identifiers
+         * @return the array
          */
-        private static int toSelection(String name, long value) {
-            if (value == FIRST_TRACK) {
-                return FIRST;
+        private static int[] toArray(List<Integer> ids) {
+            var result = new int[ids.size()];
+            for (var index = 0; index < result.length; index++) {
+                result[index] = ids.get(index);
             }
-            if (value == NO_TRACK) {
-                return NONE;
-            }
-            return Checks.positive(name, (int) value);
+            return result;
         }
     }
 }
