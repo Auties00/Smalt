@@ -301,8 +301,8 @@ public final class WebpContainer {
      * @param xmpPayload the new XMP packet, or {@code null} for none
      * @return the new file
      */
-    private static byte[] rebuild(byte[] file, boolean replaceExif, byte[] exifPayload, boolean replaceIcc, byte[] icc,
-                                  boolean replaceXmp, byte[] xmpPayload) {
+    static byte[] rebuild(byte[] file, boolean replaceExif, byte[] exifPayload, boolean replaceIcc, byte[] icc,
+                          boolean replaceXmp, byte[] xmpPayload) {
         var chunks = parse(file);
         if (chunks.isEmpty()) {
             throw new MediaException.Malformed("WebP file holds no chunk");
