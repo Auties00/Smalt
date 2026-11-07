@@ -1,5 +1,7 @@
 package com.github.auties00.smalt.image.raw;
 
+import com.github.auties00.smalt.image.ChannelFloatPicture;
+import com.github.auties00.smalt.image.PixelLayout;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.io.MediaSource;
@@ -32,7 +34,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Checks the DNG encoder's files with dng_validate, the validator of Adobe's DNG SDK, as a black box
  * (tools/testdata/dng-validate builds it): every file passes validation without a warning, the stage 1 image the SDK
  * reads from it (the stored raw samples, decoded by the SDK's own lossless JPEG decoder) equals the encoded image
- * sample for sample, and, for a DNG source, the SDK renders the converted file as it renders the source.
+ * sample for sample, and, for a DNG source, the SDK renders the converted file as it renders the source. The
+ * decoder's floating-point rendering of DNG 1.7 high-dynamic-range camera profiles is compared with the SDK's.
  */
 class DngValidateTest {
     static final Duration TIMEOUT = Duration.ofMinutes(5);
@@ -111,6 +114,143 @@ class DngValidateTest {
             assertEquals(expected.width(), actual.width());
             assertEquals(expected.height(), actual.height());
             SDK_RENDERING.assertWithin(sample.name() + " SDK rendering", expected, actual);
+        }
+    }
+
+    /**
+     * The decoder renders a high-dynamic-range profile as the SDK does, compared on the encoded values of
+     * {@code ProfileDynamicRange} (which map 0 to 16 times white onto 0 to 1) or, for a standard-range profile, on the
+     * gamma-encoded values both write.
+     */
+    static final Tolerance HDR_RENDERING = Tolerance.psnr(40);
+
+    /**
+     * The profiles rendered by both: high-dynamic-range ones of each tag whose high-dynamic-range rule the SDK
+     * applies as the specification states, and a standard-range one. The SDK departs from the specification for two
+     * rules, which {@link DngHdrProfileTest} checks against the specification instead: it holds a tone curve whose
+     * last input is below 1 at its last output rather than extending it by its slope, and it clips the value of a
+     * table without value divisions to 1 under a high-dynamic-range profile too. It also applies a tone curve to the
+     * largest and smallest channel and keeps the hue, where the decoder applies it to each channel, at every dynamic
+     * range: the profiles with a tone curve other than the identity are compared on the neutral rows, where the two
+     * agree, except for values past 16 times white, where the SDK's Linux build fails to render a neutral ramp
+     * ("Index out of range"), so that profile's file holds none and is compared on the whole image.
+     */
+    enum HdrProfile {
+        IDENTITY(file -> {
+        }),
+        TONE_CURVE(true, file -> file.toneCurve = new float[]{0, 0, 0.5f, 0.6f, 1, 0.9f}),
+        TONE_CURVE_ABOVE_16(file -> {
+            file.neutralRows = false;
+            file.toneCurve = new float[]{0, 0, 0.25f, 0.3f, 0.5f, 0.6f, 0.8f, 0.82f, 1, 0.95f};
+            file.baselineExposure = 5;
+        }),
+        TONE_CURVE_BRIGHT(true, file -> {
+            file.toneCurve = new float[]{0, 0, 0.3f, 0.45f, 0.6f, 0.72f, 1, 1};
+            file.baselineExposure = 3;
+        }),
+        HUE_SAT_MAP(file -> {
+            file.hueSatDims = new int[]{6, 2, 2};
+            file.hueSat = HdrProfileFiles.varied(6, 2, 2);
+        }),
+        LOOK_TABLE(file -> {
+            file.lookDims = new int[]{6, 2, 3};
+            file.look = HdrProfileFiles.varied(6, 2, 3);
+        }),
+        LOOK_TABLE_SRGB(file -> {
+            file.lookDims = new int[]{6, 2, 3};
+            file.look = HdrProfileFiles.varied(6, 2, 3);
+            file.lookSrgb = true;
+        }),
+        HUE_SAT_MAP_SRGB(file -> {
+            file.hueSatDims = new int[]{6, 2, 3};
+            file.hueSat = HdrProfileFiles.varied(6, 2, 3);
+            file.hueSatSrgb = true;
+        }),
+        STANDARD_LOOK_TABLE_SRGB(file -> {
+            file.dynamicRange = -1;
+            file.baselineExposure = 0;
+            file.lookDims = new int[]{6, 2, 3};
+            file.look = HdrProfileFiles.varied(6, 2, 3);
+            file.lookSrgb = true;
+        }),
+        RGB_TABLES(file -> file.rgbTables = HdrProfileFiles.rgbTable(5, (r, g, b) -> new float[]{
+                (float) Math.pow(r, 1.3), 0.8f * g + 0.1f * b, (float) Math.sqrt(b)})),
+        COMBINED(file -> {
+            file.hueSatDims = new int[]{6, 2, 2};
+            file.hueSat = HdrProfileFiles.varied(6, 2, 2);
+            file.lookDims = new int[]{6, 2, 3};
+            file.look = HdrProfileFiles.varied(6, 2, 3);
+            file.rgbTables = HdrProfileFiles.rgbTable(3, (r, g, b) -> new float[]{0.9f * r + 0.1f * g, g, b * b});
+        }),
+        COMBINED_NEUTRAL(true, file -> {
+            file.toneCurve = new float[]{0, 0, 0.5f, 0.6f, 1, 0.9f};
+            file.hueSatDims = new int[]{6, 2, 2};
+            file.hueSat = HdrProfileFiles.varied(6, 2, 2);
+            file.lookDims = new int[]{6, 2, 3};
+            file.look = HdrProfileFiles.varied(6, 2, 3);
+        }),
+        STANDARD(file -> {
+            file.dynamicRange = -1;
+            file.baselineExposure = 0.5;
+        });
+
+        final boolean neutral;
+        final java.util.function.Consumer<HdrProfileFiles> setup;
+
+        HdrProfile(java.util.function.Consumer<HdrProfileFiles> setup) {
+            this(false, setup);
+        }
+
+        HdrProfile(boolean neutral, java.util.function.Consumer<HdrProfileFiles> setup) {
+            this.neutral = neutral;
+            this.setup = setup;
+        }
+
+        HdrProfileFiles file() {
+            var file = new HdrProfileFiles();
+            setup.accept(file);
+            return file;
+        }
+    }
+
+    @Nested
+    @DisplayName("high-dynamic-range camera profiles")
+    class HdrProfiles {
+        @ParameterizedTest(name = "{0}")
+        @EnumSource(HdrProfile.class)
+        @DisplayName("render in floating point as the SDK renders them, values above white included")
+        void rendering(HdrProfile profile) {
+            var file = profile.file();
+            var dng = save("hdr-" + profile.name() + ".dng", file.write());
+            assertValid(dng);
+            var base = dng.resolveSibling(dng.getFileName() + "-float");
+            var run = validate(dng, "-32", "-cs3", "-tif", base.toString());
+            assertEquals(0, run.exitCode(), run.output());
+            var sdk = UncompressedTiff.floats(read(base.resolveSibling(base.getFileName() + ".tif")));
+            var smalt = (ChannelFloatPicture) RawDecoder.decode(MediaSource.of(read(dng)), RawDecoderOptions.builder()
+                    .colorSpace(RawColorSpace.PROPHOTO_RGB).floatingPoint(true).build()).picture();
+            var high = file.dynamicRange == 1;
+            assertEquals(sdk.width(), smalt.width());
+            assertEquals(sdk.height(), smalt.height());
+            var first = profile.neutral ? HdrProfileFiles.NEUTRAL_ROWS : 0;
+            var rows = sdk.height() - first;
+            var expected = ChannelFloatPicture.allocate(sdk.width(), rows, PixelLayout.RGB);
+            var actual = ChannelFloatPicture.allocate(sdk.width(), rows, PixelLayout.RGB);
+            var brightest = 0.0;
+            var offset = first * sdk.width() * 3;
+            for (var j = 0; j < sdk.width() * rows * 3; j++) {
+                var i = offset + j;
+                var reference = sdk.pixels()[i];
+                // the SDK writes a high-dynamic-range rendering in linear ProPhoto RGB, a standard one with its gamma
+                var linear = Math.pow(smalt.pixels()[i], 1.8);
+                brightest = Math.max(brightest, high ? linear : 0);
+                expected.pixels()[j] = high ? (float) DngHdrProfileTest.encode(Math.max(reference, 0)) : reference;
+                actual.pixels()[j] = high ? (float) DngHdrProfileTest.encode(linear) : smalt.pixels()[i];
+            }
+            HDR_RENDERING.assertWithin(profile.name() + " SDK rendering", expected, actual);
+            if (high) {
+                assertTrue(brightest > 1.5, "the rendering keeps values above white: " + brightest);
+            }
         }
     }
 
@@ -280,6 +420,48 @@ class DngValidateTest {
                 }
             }
             return out;
+        }
+
+        /** Reads the 32-bit floating-point chunky RGB image dng_validate writes with {@code -32}. */
+        static ChannelFloatPicture floats(byte[] tiff) {
+            var structure = DngStructure.of(tiff);
+            var ifd = structure.first();
+            var order = structure.order;
+            var width = (int) ifd.get(256).longs(order)[0];
+            var height = (int) ifd.get(257).longs(order)[0];
+            var spp = (int) ifd.get(277).longs(order)[0];
+            assertEquals(32, ifd.get(258).longs(order)[0], "bits per sample");
+            assertEquals(3, ifd.get(339).longs(order)[0], "floating-point samples");
+            assertEquals(1, ifd.has(259) ? ifd.get(259).longs(order)[0] : 1, "uncompressed");
+            var picture = ChannelFloatPicture.allocate(width, height, PixelLayout.RGB);
+            var buffer = ByteBuffer.wrap(tiff).order(order);
+            int chunkWidth;
+            int chunkHeight;
+            long[] offsets;
+            if (ifd.has(322)) {
+                chunkWidth = (int) ifd.get(322).longs(order)[0];
+                chunkHeight = (int) ifd.get(323).longs(order)[0];
+                offsets = ifd.get(324).longs(order);
+            } else {
+                chunkWidth = width;
+                chunkHeight = ifd.has(278) ? (int) Math.min(height, ifd.get(278).longs(order)[0]) : height;
+                offsets = ifd.get(273).longs(order);
+            }
+            var across = Math.ceilDiv(width, chunkWidth);
+            for (var chunk = 0; chunk < offsets.length; chunk++) {
+                var left = (chunk % across) * chunkWidth;
+                var top = (chunk / across) * chunkHeight;
+                for (var row = 0; row < chunkHeight && top + row < height; row++) {
+                    for (var column = 0; column < chunkWidth && left + column < width; column++) {
+                        for (var s = 0; s < 3; s++) {
+                            var index = (row * chunkWidth + column) * spp + Math.min(s, spp - 1);
+                            picture.pixels()[((top + row) * width + left + column) * 3 + s] =
+                                    buffer.getFloat((int) offsets[chunk] + 4 * index);
+                        }
+                    }
+                }
+            }
+            return picture;
         }
 
         static RgbaPicture rgba(byte[] tiff) {

@@ -1,7 +1,9 @@
 package com.github.auties00.smalt.image.raw.internal;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.ChannelFloatPicture;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.PixelLayout;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.ops.ImageOps;
@@ -265,9 +267,11 @@ public final class Renderer {
         var outWidth = half ? window[2] / 2 : window[2];
         var outHeight = half ? window[3] / 2 : window[3];
         LimitChecks.checkPicture(file.limits, outWidth, outHeight);
+        var floating = options.floatingPoint();
         var high = options.highBitDepth();
-        LimitChecks.checkAllocation(file.limits, (long) outWidth * outHeight * (high ? 8 : 4));
-        var target = high ? Rgba16Picture.allocate(outWidth, outHeight, false)
+        LimitChecks.checkAllocation(file.limits, (long) outWidth * outHeight * (floating ? 12 : high ? 8 : 4));
+        var target = floating ? ChannelFloatPicture.allocate(outWidth, outHeight, PixelLayout.RGB)
+                : high ? Rgba16Picture.allocate(outWidth, outHeight, false)
                 : (Picture) RgbaPicture.allocate(outWidth, outHeight, false);
         float[][] rgb = null;
         var third = thirdList(sensor, options, image.width, image.height);
@@ -311,8 +315,28 @@ public final class Renderer {
         if (size[0] != outWidth || size[1] != outHeight) {
             LimitChecks.checkPicture(file.limits, size[0], size[1]);
             picture = ImageOps.resize(picture, size[0], size[1], ResizeFilter.BICUBIC);
+            if (picture instanceof ChannelFloatPicture scaled) {
+                clampRinging(scaled, pipeline.highDynamicRange);
+            }
         }
         return picture;
+    }
+
+    /**
+     * Limits the samples of a resized floating-point picture to the range of its rendering, removing the ringing of
+     * the resampling filter that integer samples clip by their type: to [0, 1], or to [0, infinity) when the profile
+     * keeps values above 1.
+     *
+     * @param picture the resized picture, modified in place
+     * @param overrange whether values above 1 are kept
+     */
+    private static void clampRinging(ChannelFloatPicture picture, boolean overrange) {
+        var pixels = picture.pixels();
+        var top = overrange ? Float.MAX_VALUE : 1f;
+        for (var index = 0; index < pixels.length; index++) {
+            var value = pixels[index];
+            pixels[index] = value > 0 ? Math.min(value, top) : 0;
+        }
     }
 
     /**
@@ -678,7 +702,7 @@ public final class Renderer {
         /**
          * Maps the tile's camera values to output pixels and stores them in the picture.
          *
-         * @param picture the output picture, with 8 or 16 bits per sample
+         * @param picture the output picture, with 8 or 16 bits per sample or floating-point samples
          * @param x0 the first output column
          * @param y0 the first output row
          * @param width the width of the window in output pixels
@@ -692,6 +716,10 @@ public final class Renderer {
         void output(Picture picture, int x0, int y0, int width, int height, double u, double du, double v, double dv) {
             var count = width * height;
             pipeline.balance(red, green, blue, count);
+            if (picture instanceof ChannelFloatPicture floating) {
+                outputFloat(floating, x0, y0, width, height, u, du, v, dv);
+                return;
+            }
             var high = picture instanceof Rgba16Picture;
             var scale = high ? Transfer.SCALE_16 : Transfer.SCALE_8;
             if (pipeline.profiled) {
@@ -733,6 +761,70 @@ public final class Renderer {
                     }
                 }
             }
+        }
+
+        /**
+         * Maps the tile's white-balanced values to floating-point output pixels and stores them in the picture:
+         * clamped to [0, 1], or only below 0 when the profile is high dynamic range, then encoded.
+         *
+         * @param picture the output picture
+         * @param x0 the first output column
+         * @param y0 the first output row
+         * @param width the width of the window in output pixels
+         * @param height the height of the window in output pixels
+         * @param u the horizontal position of the window's first pixel center, relative to the main
+         * image's active area
+         * @param du the horizontal distance between pixels, relative to the active area
+         * @param v the vertical position of the window's first row center, relative to the active area
+         * @param dv the vertical distance between rows, relative to the active area
+         */
+        private void outputFloat(ChannelFloatPicture picture, int x0, int y0, int width, int height, double u,
+                                 double du, double v, double dv) {
+            var count = width * height;
+            var overrange = pipeline.highDynamicRange;
+            if (pipeline.profiled) {
+                pipeline.profile(red, green, blue, width, height, u, du, v, dv, scratch);
+            } else if (overrange) {
+                var m = pipeline.matrix;
+                for (var index = 0; index < count; index++) {
+                    var r = red[index];
+                    var g = green[index];
+                    var b = blue[index];
+                    red[index] = m[0] * r + m[1] * g + m[2] * b;
+                    green[index] = m[3] * r + m[4] * g + m[5] * b;
+                    blue[index] = m[6] * r + m[7] * g + m[8] * b;
+                }
+            } else {
+                KERNEL.transform(red, green, blue, count, pipeline.matrix, 1);
+            }
+            var space = pipeline.space;
+            var table = Transfer.tableFloat(space);
+            var pixels = picture.pixels();
+            for (var row = 0; row < height; row++) {
+                var target = (y0 + row) * picture.stride() + x0 * 3;
+                var source = row * width;
+                for (var column = 0; column < width; column++) {
+                    var at = source + column;
+                    pixels[target] = Transfer.encodeFloat(space, table, limit(red[at], overrange));
+                    pixels[target + 1] = Transfer.encodeFloat(space, table, limit(green[at], overrange));
+                    pixels[target + 2] = Transfer.encodeFloat(space, table, limit(blue[at], overrange));
+                    target += 3;
+                }
+            }
+        }
+
+        /**
+         * Limits a linear output value to the range of the profile.
+         *
+         * @param value the linear output value
+         * @param overrange whether values above 1 are kept
+         * @return the value clamped to [0, 1], or to [0, infinity) when {@code overrange}; 0 for NaN
+         */
+        private static float limit(float value, boolean overrange) {
+            if (!(value > 0)) {
+                return 0;
+            }
+            return overrange ? Math.min(value, Float.MAX_VALUE) : Math.min(value, 1f);
         }
     }
 }

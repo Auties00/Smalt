@@ -366,7 +366,8 @@ public final class DngWriting {
         var side = options.previewSize().orElse(Integer.MAX_VALUE);
         var hint = DngWriter.fit(width, height, side);
         var rendering = RawDecoding.render(file, decoding.toBuilder().embeddedPreview(false)
-                .colorSpace(RawColorSpace.SRGB).highBitDepth(false).minSize(hint[0], hint[1]).build());
+                .colorSpace(RawColorSpace.SRGB).highBitDepth(false).floatingPoint(false).minSize(hint[0], hint[1])
+                .build());
         var target = DngWriter.fit(rendering.width(), rendering.height(), side);
         var picture = rendering.picture();
         if (picture.width() == target[0] && picture.height() == target[1]) {

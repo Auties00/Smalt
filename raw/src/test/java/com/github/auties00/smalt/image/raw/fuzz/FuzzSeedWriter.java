@@ -4,6 +4,7 @@ import com.github.auties00.smalt.image.raw.Cr3Writer;
 import com.github.auties00.smalt.image.raw.DngSpecSamples;
 import com.github.auties00.smalt.image.raw.PixelShiftFiles;
 import com.github.auties00.smalt.image.raw.RafWriter;
+import com.github.auties00.smalt.image.raw.HdrProfileFiles;
 import com.github.auties00.smalt.image.raw.TinyDng;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -81,6 +82,17 @@ class FuzzSeedWriter {
         linear.cfa = null;
         linear.samples = Arrays.copyOf(linear.samples, 8 * 8 * 3);
         write(RawFuzzTest.class, "dng", "valid-linear.dng", linear.write());
+    }
+
+    @Test
+    @DisplayName("writes the DNG seed of a high-dynamic-range camera profile")
+    void dngHighDynamicRange() {
+        var file = new HdrProfileFiles();
+        file.toneCurve = new float[]{0, 0, 0.5f, 0.6f, 1, 0.9f};
+        file.lookDims = new int[]{6, 2, 3};
+        file.look = HdrProfileFiles.varied(6, 2, 3);
+        file.rgbTables = HdrProfileFiles.rgbTable(2, (r, g, b) -> new float[]{r, g, b});
+        write(RawFuzzTest.class, "dng", "valid-hdr-profile.dng", file.write());
     }
 
     @Test

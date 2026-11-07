@@ -11,6 +11,7 @@ import com.github.auties00.smalt.internal.io.ByteArrays;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
@@ -732,8 +733,8 @@ final class DngParser {
         var tables = first.bytes(52543);
         color.rgbTables = RgbTables.parse(tables);
         color.rgbTablesData = color.rgbTables != null ? tables : null;
-        // TODO: read ProfileDynamicRange (52551) and render high-dynamic-range profiles over their extended
-        // range; their tables and curves apply as those of a standard-range profile
+        color.profileGroupName = utf8(first, 52552);
+        dynamicRange(first.bytes(52551), first.reader().little(), color);
         var hueSatDims = first.longs(50937);
         if (hueSatDims != null && hueSatDims.length >= 3 && valid(hueSatDims)) {
             var cells = hueSatDims[0] * hueSatDims[1] * Math.max(1, hueSatDims[2]) * 3;
@@ -758,9 +759,39 @@ final class DngParser {
             }
         }
         var tone = first.doubles(50940);
-        if (tone != null && tone.length >= 4 && tone.length % 2 == 0 && tone.length <= 1 << 16) {
+        if (tone != null && tone.length >= 4 && tone.length % 2 == 0 && tone.length <= 1 << 16
+                && Arrays.stream(tone).allMatch(Double::isFinite)) {
             color.toneCurve = floats(tone);
         }
+    }
+
+    /**
+     * Reads a {@code ProfileDynamicRange} tag: the version (1), the dynamic range (0 standard, 1 high) and the
+     * {@code HintMaxOutputValue} float. The specification does not fix the byte order of the fields: they are read
+     * in the file's order, or in the other when only that one gives version 1. A tag of another version, length or
+     * dynamic range leaves the profile standard-range.
+     *
+     * @param data the tag's bytes, or {@code null}
+     * @param little whether the file is little endian
+     * @param color the color description to fill
+     */
+    static void dynamicRange(byte[] data, boolean little, ColorCalibration color) {
+        color.highDynamicRange = false;
+        color.maxOutputHint = 0;
+        if (data == null || data.length != 8) {
+            return;
+        }
+        var order = ByteArrays.u16(data, 0, little) == 1 ? little : !little;
+        if (ByteArrays.u16(data, 0, order) != 1) {
+            return;
+        }
+        var range = ByteArrays.u16(data, 2, order);
+        if (range != 0 && range != 1) {
+            return;
+        }
+        var hint = Float.intBitsToFloat((int) ByteArrays.u32(data, 4, order));
+        color.highDynamicRange = range == 1;
+        color.maxOutputHint = hint > 0 && Float.isFinite(hint) ? hint : 0;
     }
 
     /**

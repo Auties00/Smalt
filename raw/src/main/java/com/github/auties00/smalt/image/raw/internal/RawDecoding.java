@@ -15,6 +15,7 @@ import com.github.auties00.smalt.image.ops.ResizeFilter;
 import com.github.auties00.smalt.image.raw.CfaColor;
 import com.github.auties00.smalt.image.raw.CfaLayout;
 import com.github.auties00.smalt.image.raw.CfaPattern;
+import com.github.auties00.smalt.image.raw.RawCameraProfile;
 import com.github.auties00.smalt.image.raw.RawDecoderOptions;
 import com.github.auties00.smalt.image.raw.RawFormat;
 import com.github.auties00.smalt.image.raw.RawPreview;
@@ -81,7 +82,7 @@ public final class RawDecoding {
      * @param dngVersion the DNG version, or {@code null}
      * @param previews the previews of a known size, largest first
      * @param layout the spatial layout of the color filter array of the rendered area
-     * @param profiles the names of the camera profiles, the primary one first
+     * @param profiles the camera profiles, the primary one first
      * @param enhanced whether the file holds an enhanced image that decodes
      * @param frames the frames of a pixel-shift file, 1 for a file of one shot
      * @param dualPixel whether the file holds the second image of a dual pixel sensor
@@ -90,8 +91,8 @@ public final class RawDecoding {
                         int sensorHeight, Orientation orientation, int bitsPerSample, CfaPattern cfa,
                         String compression, String unsupported, boolean calibrated, long iso, double exposureTime,
                         double fNumber, double focalLength, String lens, String captureTime, String dngVersion,
-                        List<RawPreview> previews, CfaLayout layout, List<String> profiles, boolean enhanced,
-                        int frames, boolean dualPixel) {
+                        List<RawPreview> previews, CfaLayout layout, List<RawCameraProfile> profiles,
+                        boolean enhanced, int frames, boolean dualPixel) {
         /**
          * {@return whether the sensor image decodes: no feature is missing and the rendering has a
          * size}
@@ -183,7 +184,7 @@ public final class RawDecoding {
                 sensor != null ? sensor.bitsPerSample : 0, cfa,
                 sensor != null ? sensor.compression : null, unsupported, calibrated, file.iso, file.exposureTime,
                 file.fNumber, file.focalLength, file.lens, file.captureTime, file.dngVersion, previews, layout,
-                file.profileNames(), file.enhanced != null,
+                file.profiles(), file.enhanced != null,
                 sensor != null && sensor.frames != null ? sensor.frames.size() : 1,
                 sensor != null && file.dualPixel != null);
     }

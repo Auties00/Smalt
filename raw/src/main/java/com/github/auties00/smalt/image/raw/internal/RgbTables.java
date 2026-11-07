@@ -15,7 +15,8 @@ import java.util.List;
  * of the image a semantic mask names (or, for the background table, to the rest), combined by
  * weighted sum or one after another.
  *
- * <p>The tables apply to linear ProPhoto RGB values, after the tone curve. Each table converts the
+ * <p>The tables apply to linear ProPhoto RGB values, after the tone curve; those of a high-dynamic-range profile
+ * look up the values {@link HdrEncoding} encodes in each table's primaries. Each table converts the
  * values to its own primaries (adapted to their white with the Bradford transform), clamps them to
  * [0, 1], keeping the clamped-off part when the table asks for gamut extension, encodes them with
  * its transfer curve, looks them up with trilinear interpolation, decodes them and converts them
@@ -257,10 +258,12 @@ final class RgbTables {
      * @param v the vertical position of the row's center, relative to the active area
      * @param masks the mask of each table, from {@link #match}
      * @param values the decoded values of each of {@code masks}, or {@code null} entries
+     * @param highDynamicRange whether the profile is high dynamic range, so that each table looks up the values
+     * {@link HdrEncoding} encodes in its primaries
      * @param scratch the scratch arrays, from {@link #scratch()}
      */
     void apply(float[] r, float[] g, float[] b, int offset, int count, double u, double du, double v,
-               SemanticMask[] masks, float[][] values, Scratch scratch) {
+               SemanticMask[] masks, float[][] values, boolean highDynamicRange, Scratch scratch) {
         var tableCount = tables.size();
         var weights = scratch.weights;
         var color = scratch.color;
@@ -294,7 +297,7 @@ final class RgbTables {
                     if (weights[t] <= 0 || (tables.get(t).name != null && values[t] == null)) {
                         continue;
                     }
-                    transform(tables.get(t), color, mapped, looked);
+                    transform(tables.get(t), color, mapped, looked, highDynamicRange);
                     for (var c = 0; c < 3; c++) {
                         color[c] += weights[t] * (mapped[c] - color[c]);
                     }
@@ -308,7 +311,7 @@ final class RgbTables {
                     if (weights[t] <= 0 || (tables.get(t).name != null && values[t] == null)) {
                         continue;
                     }
-                    transform(tables.get(t), color, mapped, looked);
+                    transform(tables.get(t), color, mapped, looked, highDynamicRange);
                     for (var c = 0; c < 3; c++) {
                         sum[c] += weights[t] * mapped[c];
                     }
@@ -333,7 +336,7 @@ final class RgbTables {
     }
 
     /**
-     * Transforms one color through a table.
+     * Transforms one color through a table of a standard-dynamic-range profile.
      *
      * @param table the table to apply
      * @param color the linear ProPhoto RGB color
@@ -341,10 +344,29 @@ final class RgbTables {
      * @param looked a scratch array of three values
      */
     static void transform(Table table, float[] color, float[] out, float[] looked) {
+        transform(table, color, out, looked, false);
+    }
+
+    /**
+     * Transforms one color through a table.
+     *
+     * @param table the table to apply
+     * @param color the linear ProPhoto RGB color
+     * @param out receives the transformed color
+     * @param looked a scratch array of three values
+     * @param highDynamicRange whether the profile is high dynamic range: the values in the table's primaries are
+     * encoded before they are clamped and decoded after the clamped-off part is added back
+     */
+    static void transform(Table table, float[] color, float[] out, float[] looked, boolean highDynamicRange) {
         var m = table.toTable;
         var red = m[0] * color[0] + m[1] * color[1] + m[2] * color[2];
         var green = m[3] * color[0] + m[4] * color[1] + m[5] * color[2];
         var blue = m[6] * color[0] + m[7] * color[1] + m[8] * color[2];
+        if (highDynamicRange) {
+            red = HdrEncoding.encode(red);
+            green = HdrEncoding.encode(green);
+            blue = HdrEncoding.encode(blue);
+        }
         var cr = Math.clamp(red, 0f, 1f);
         var cg = Math.clamp(green, 0f, 1f);
         var cb = Math.clamp(blue, 0f, 1f);
@@ -355,6 +377,11 @@ final class RgbTables {
         red = decode(table.gamma, looked[0]) + dr;
         green = decode(table.gamma, looked[1]) + dg;
         blue = decode(table.gamma, looked[2]) + db;
+        if (highDynamicRange) {
+            red = HdrEncoding.decode(red);
+            green = HdrEncoding.decode(green);
+            blue = HdrEncoding.decode(blue);
+        }
         var n = table.fromTable;
         out[0] = n[0] * red + n[1] * green + n[2] * blue;
         out[1] = n[3] * red + n[4] * green + n[5] * blue;

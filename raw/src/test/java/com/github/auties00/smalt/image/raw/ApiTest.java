@@ -209,7 +209,8 @@ class ApiTest {
 
         private static RawInfo info(String captureTime) {
             return new RawInfo(RawFormat.DNG, null, null, 4, 4, 4, 4, Orientation.NORMAL, 16, null, null, null,
-                    false, 0, 0, 0, 0, null, captureTime, null, List.of(), CfaLayout.RECTANGULAR, List.of(""), false, 1, false);
+                    false, 0, 0, 0, 0, null, captureTime, null, List.of(), CfaLayout.RECTANGULAR,
+                    List.of(new RawCameraProfile("", "", false, 0)), false, 1, false);
         }
     }
 

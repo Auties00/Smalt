@@ -18,11 +18,17 @@ import java.util.List;
  * apply, then to the output primaries, clipped to the gamut and encoded. When none of the profile
  * steps applies, the matrices fold into one, which {@link ColorKernel} applies to whole rows.
  *
+ * <p>A high-dynamic-range profile ({@code ProfileDynamicRange}) applies its tables of three dimensions, its tone
+ * curve and its masked color tables to the values {@link HdrEncoding} encodes, decoding the results, so that they
+ * reach values up to 16 times white; its tone curve is the natural cubic spline through its points, continued above
+ * its last point by the line of its slope there, and the values above 1 reach the output.
+ *
  * @implNote This implementation's default tone curve, used when the file has no
  * {@code ProfileToneCurve}, is the rational approximation of a filmic curve published by
  * Krzysztof Narkowicz ("ACES Filmic Tone Mapping Curve", 2016),
  * {@code f(x) = x (2.51 x + 0.03) / (x (2.43 x + 0.59) + 0.14)}, normalized so that the
- * sensor's saturation of a neutral, 1, maps to white.
+ * sensor's saturation of a neutral, 1, maps to white; under a high-dynamic-range profile it applies to encoded
+ * values like a profile's curve, so 16 times white maps to itself. The specification leaves that default open.
  */
 final class ColorPipeline {
     /**
@@ -77,9 +83,27 @@ final class ColorPipeline {
     private final HueSatTable look;
 
     /**
-     * The tone curve sampled at {@link #TONE_STEPS} + 1 points over [0, 1], or {@code null}.
+     * The tone curve sampled at {@link #TONE_STEPS} + 1 points over [0, {@link #toneTop}], or {@code null}.
      */
     private final float[] tone;
+
+    /**
+     * The input the last sample of {@link #tone} stands for: 1, or the last input of a high-dynamic-range
+     * profile's curve that ends above 1.
+     */
+    private final float toneTop;
+
+    /**
+     * The slope the tone curve continues with above {@link #toneTop}.
+     */
+    private final float toneSlope;
+
+    /**
+     * Whether the profile is high dynamic range and the rendering applies its look: the tables of three dimensions,
+     * the tone curve and the masked color tables apply to encoded values ({@link HdrEncoding}), and the output keeps
+     * values above 1.
+     */
+    final boolean highDynamicRange;
 
     /**
      * The treatment of clipped highlights.
@@ -201,7 +225,19 @@ final class ColorPipeline {
         if (look != null) {
             ColorKernels.HUE_SAT.prepare(look);
         }
-        tone = standard ? toneTable(calibration.toneCurve) : null;
+        highDynamicRange = standard && calibration.highDynamicRange;
+        if (!standard) {
+            tone = null;
+            toneTop = 1;
+            toneSlope = 0;
+        } else {
+            var spline = highDynamicRange ? spline(calibration.toneCurve) : null;
+            toneTop = spline != null ? Math.max(1, calibration.toneCurve[calibration.toneCurve.length - 2]) : 1;
+            tone = spline != null ? splineTable(calibration.toneCurve, spline, toneTop)
+                    : toneTable(calibration.toneCurve);
+            toneSlope = spline != null ? endSlope(calibration.toneCurve, spline)
+                    : (tone[TONE_STEPS] - tone[TONE_STEPS - 1]) * TONE_STEPS;
+        }
         gainMap = standard && !monochrome ? calibration.gainTableMap : null;
         rgbTables = standard && !monochrome ? calibration.rgbTables : null;
         tableMasks = rgbTables != null ? rgbTables.match(masks, limits) : null;
@@ -256,6 +292,8 @@ final class ColorPipeline {
             }
             return table;
         }
+        // TODO: interpolate standard-range curves with the natural cubic spline the specification asks for, as
+        // high-dynamic-range ones are; their points are joined by lines
         var count = points.length / 2;
         var segment = 0;
         for (var index = 0; index <= TONE_STEPS; index++) {
@@ -388,6 +426,12 @@ final class ColorPipeline {
         final RgbTables.Scratch tables;
 
         /**
+         * The value of each pixel before a table with an sRGB-encoded value axis applies, grown to the largest
+         * count of pixels seen.
+         */
+        float[] values = new float[0];
+
+        /**
          * Constructs the arrays.
          *
          * @param gainTables the gain tables of a row, or {@code null}
@@ -438,7 +482,7 @@ final class ColorPipeline {
             b[index] = Math.max(0, p[6] * red + p[7] * green + p[8] * blue);
         }
         if (hueSat != null) {
-            ColorKernels.HUE_SAT.apply(hueSat, r, g, b, count);
+            table(hueSat, r, g, b, count, scratch);
         }
         for (var index = 0; index < count; index++) {
             r[index] *= gain;
@@ -462,9 +506,15 @@ final class ColorPipeline {
             }
         }
         if (look != null) {
-            ColorKernels.HUE_SAT.apply(look, r, g, b, count);
+            table(look, r, g, b, count, scratch);
         }
-        if (tone != null) {
+        if (tone != null && highDynamicRange) {
+            for (var index = 0; index < count; index++) {
+                r[index] = encodedTone(r[index]);
+                g[index] = encodedTone(g[index]);
+                b[index] = encodedTone(b[index]);
+            }
+        } else if (tone != null) {
             for (var index = 0; index < count; index++) {
                 r[index] = tone(r[index]);
                 g[index] = tone(g[index]);
@@ -474,7 +524,7 @@ final class ColorPipeline {
         if (rgbTables != null) {
             for (var row = 0; row < rows; row++) {
                 rgbTables.apply(r, g, b, row * columns, columns, u, du, v + row * dv, tableMasks, maskValues,
-                        scratch.tables);
+                        highDynamicRange, scratch.tables);
             }
         }
         var o = fromProPhoto;
@@ -523,6 +573,188 @@ final class ColorPipeline {
         var index = (int) scaled;
         var fraction = scaled - index;
         return tone[index] + (tone[index + 1] - tone[index]) * fraction;
+    }
+
+    /**
+     * Evaluates the tone curve of a high-dynamic-range profile: on the encoded value, extrapolating linearly above
+     * {@link #toneTop}, the result decoded.
+     *
+     * @param x the linear input
+     * @return the output
+     */
+    private float encodedTone(float x) {
+        var e = HdrEncoding.encode(x);
+        if (!(e > 0)) {
+            return 0;
+        }
+        if (e >= toneTop) {
+            return HdrEncoding.decode(tone[TONE_STEPS] + (e - toneTop) * toneSlope);
+        }
+        var scaled = e * (TONE_STEPS / toneTop);
+        var index = Math.min((int) scaled, TONE_STEPS - 1);
+        var fraction = scaled - index;
+        return HdrEncoding.decode(tone[index] + (tone[index + 1] - tone[index]) * fraction);
+    }
+
+    /**
+     * Applies a hue, saturation and value table in place: for a high-dynamic-range profile and a table with value
+     * divisions, to the encoded values, decoded after. The value scale of a table whose value axis is sRGB-encoded
+     * applies to the encoded value, as the specification states: the kernel scales the linear value, which this
+     * method corrects.
+     *
+     * @param table the hue, saturation and value table or the look table
+     * @param r the red values
+     * @param g the green values
+     * @param b the blue values
+     * @param count the number of pixels
+     * @param scratch the scratch arrays, from {@link #scratch()}
+     */
+    private void table(HueSatTable table, float[] r, float[] g, float[] b, int count, Scratch scratch) {
+        var encoded = highDynamicRange && table.values > 1;
+        if (encoded) {
+            HdrEncoding.encode(r, g, b, count);
+        }
+        var srgb = table.srgb && table.values > 1;
+        if (srgb) {
+            if (scratch.values.length < count) {
+                scratch.values = new float[count];
+            }
+            var values = scratch.values;
+            for (var index = 0; index < count; index++) {
+                values[index] = Math.max(r[index], Math.max(g[index], b[index]));
+            }
+        }
+        ColorKernels.HUE_SAT.apply(table, r, g, b, count);
+        if (srgb) {
+            var values = scratch.values;
+            for (var index = 0; index < count; index++) {
+                var before = values[index];
+                var after = Math.max(r[index], Math.max(g[index], b[index]));
+                if (!(before > 0) || !(after > 0)) {
+                    continue;
+                }
+                var target = HueSatTable.decodeExtended(HueSatTable.encodeExtended(before) * (after / before));
+                var factor = target / after;
+                r[index] *= factor;
+                g[index] *= factor;
+                b[index] *= factor;
+            }
+        }
+        if (encoded) {
+            HdrEncoding.decode(r, g, b, count);
+        }
+    }
+
+    /**
+     * Returns the second derivatives of the natural cubic spline through a tone curve's points, the
+     * interpolation the specification asks for.
+     *
+     * @param points the input and output pairs, or {@code null}
+     * @return the second derivative at each point, or {@code null} when there are no points or their inputs do
+     * not increase strictly
+     */
+    static double[] spline(float[] points) {
+        if (points == null) {
+            return null;
+        }
+        var count = points.length / 2;
+        for (var index = 1; index < count; index++) {
+            if (!(points[2 * index] > points[2 * index - 2])) {
+                return null;
+            }
+        }
+        var second = new double[count];
+        if (count < 3) {
+            return second;
+        }
+        // the tridiagonal system of the interior points, solved by forward elimination and back substitution
+        var diagonal = new double[count];
+        var right = new double[count];
+        for (var index = 1; index < count - 1; index++) {
+            var before = (double) points[2 * index] - points[2 * index - 2];
+            var after = (double) points[2 * index + 2] - points[2 * index];
+            diagonal[index] = 2 * (before + after);
+            right[index] = 6 * (((double) points[2 * index + 3] - points[2 * index + 1]) / after
+                    - ((double) points[2 * index + 1] - points[2 * index - 1]) / before);
+            if (index > 1) {
+                var factor = before / diagonal[index - 1];
+                diagonal[index] -= factor * before;
+                right[index] -= factor * right[index - 1];
+            }
+        }
+        for (var index = count - 2; index >= 1; index--) {
+            var after = (double) points[2 * index + 2] - points[2 * index];
+            var next = index + 1 < count - 1 ? second[index + 1] : 0;
+            second[index] = (right[index] - after * next) / diagonal[index];
+        }
+        return second;
+    }
+
+    /**
+     * Evaluates a natural cubic spline, extended by the line through its last point with its slope there.
+     *
+     * @param points the input and output pairs
+     * @param second the second derivatives, from {@link #spline}
+     * @param x the input
+     * @return the output; the first point's output below the first input
+     */
+    static double splineValue(float[] points, double[] second, double x) {
+        var count = points.length / 2;
+        if (x <= points[0]) {
+            return points[1];
+        }
+        var last = 2 * (count - 1);
+        if (x >= points[last]) {
+            return points[last + 1] + (x - points[last]) * endSlope(points, second);
+        }
+        var low = 0;
+        var high = count - 1;
+        while (high - low > 1) {
+            var middle = (low + high) >>> 1;
+            if (points[2 * middle] <= x) {
+                low = middle;
+            } else {
+                high = middle;
+            }
+        }
+        double x0 = points[2 * low];
+        double x1 = points[2 * high];
+        var h = x1 - x0;
+        var a = (x1 - x) / h;
+        var b = (x - x0) / h;
+        return a * points[2 * low + 1] + b * points[2 * high + 1]
+                + ((a * a * a - a) * second[low] + (b * b * b - b) * second[high]) * h * h / 6;
+    }
+
+    /**
+     * Returns the slope of a natural cubic spline at its last point.
+     *
+     * @param points the input and output pairs
+     * @param second the second derivatives, from {@link #spline}
+     * @return the slope
+     */
+    static float endSlope(float[] points, double[] second) {
+        var count = points.length / 2;
+        var last = 2 * (count - 1);
+        var h = (double) points[last] - points[last - 2];
+        return (float) (((double) points[last + 1] - points[last - 1]) / h
+                + h * (second[count - 2] + 2 * second[count - 1]) / 6);
+    }
+
+    /**
+     * Samples a natural cubic spline over [0, top].
+     *
+     * @param points the input and output pairs
+     * @param second the second derivatives, from {@link #spline}
+     * @param top the input of the last sample, at least 1
+     * @return the {@link #TONE_STEPS} + 1 samples
+     */
+    private static float[] splineTable(float[] points, double[] second, float top) {
+        var table = new float[TONE_STEPS + 1];
+        for (var index = 0; index <= TONE_STEPS; index++) {
+            table[index] = (float) splineValue(points, second, index * (double) top / TONE_STEPS);
+        }
+        return table;
     }
 
     /**

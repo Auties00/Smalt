@@ -107,6 +107,29 @@ final class SyntheticRaw {
     }
 
     /**
+     * Writes an uncompressed DNG whose sensor data is three-channel linear raw data of a picture, rendered with a
+     * high-dynamic-range camera profile ({@code ProfileDynamicRange} 1): a tone curve, a look table with value
+     * divisions and a background {@code RGBTables} table, which apply to encoded values, and a baseline exposure of
+     * two stops that takes the brightest values above white.
+     *
+     * @param picture the sRGB picture
+     * @return the DNG file
+     */
+    static byte[] highDynamicRange(RgbaPicture picture) {
+        var width = picture.width();
+        var height = picture.height();
+        var raw = ByteBuffer.allocate(width * height * 6).order(ByteOrder.LITTLE_ENDIAN);
+        for (var y = 0; y < height; y++) {
+            for (var x = 0; x < width; x++) {
+                for (var channel = 0; channel < 3; channel++) {
+                    raw.putShort((short) linear(picture.pixels()[y * picture.stride() + x * 4 + channel]));
+                }
+            }
+        }
+        return write(width, height, 3, raw.array(), 1, BLACK, WHITE, false, true);
+    }
+
+    /**
      * Writes a DNG whose sensor data is the RGGB Bayer mosaic of a picture coded as a VC-5
      * bitstream (DNG compression 9), as GoPro's GPR files store it.
      *
@@ -115,7 +138,7 @@ final class SyntheticRaw {
      */
     static byte[] gpr(RgbaPicture picture) {
         var strip = SyntheticVc5.bitstream(picture, 1);
-        return write(picture.width(), picture.height(), 1, strip, VC5_COMPRESSION, 0, VC5_WHITE, false);
+        return write(picture.width(), picture.height(), 1, strip, VC5_COMPRESSION, 0, VC5_WHITE, false, false);
     }
 
     /**
@@ -148,7 +171,7 @@ final class SyntheticRaw {
             raw.putShort(sample);
         }
         var strip = deflate ? deflate(raw.array()) : raw.array();
-        return write(width, height, channels, strip, deflate ? 8 : 1, BLACK, WHITE, staggered);
+        return write(width, height, channels, strip, deflate ? 8 : 1, BLACK, WHITE, staggered, false);
     }
 
     /**
@@ -162,10 +185,12 @@ final class SyntheticRaw {
      * @param black the black level
      * @param white the white level
      * @param staggered whether the mosaic is the staggered two-by-four pattern, with the profile tables
+     * @param highDynamicRange whether the profile is high dynamic range, with a tone curve, a look table and an RGB
+     * table
      * @return the file
      */
     private static byte[] write(int width, int height, int channels, byte[] strip, int compression, int black,
-                                int white, boolean staggered) {
+                                int white, boolean staggered, boolean highDynamicRange) {
         var tags = new TreeMap<Integer, byte[]>();
         var types = new TreeMap<Integer, Integer>();
         var counts = new TreeMap<Integer, Integer>();
@@ -199,6 +224,21 @@ final class SyntheticRaw {
         rationals(tags, types, counts, 50721, true, 0.8, -0.2, -0.1, -0.4, 1.3, 0.1, -0.1, 0.2, 0.7);
         rationals(tags, types, counts, 50728, false, 0.5, 1, 0.7);
         shorts(tags, types, counts, 50778, 21);
+        if (highDynamicRange) {
+            rationals(tags, types, counts, 50730, true, 2);
+            put(tags, types, counts, 50940, 11, 8, floats(0, 0, 0.3f, 0.4f, 0.6f, 0.7f, 1, 0.95f));
+            longs(tags, types, counts, 50981, 4, 2, 3);
+            var look = new float[4 * 2 * 3 * 3];
+            for (var index = 0; index < look.length; index += 3) {
+                look[index] = 4 * (index % 5);
+                look[index + 1] = 1 + 0.05f * (index % 3);
+                look[index + 2] = 1 - 0.1f * (index / 24);
+            }
+            put(tags, types, counts, 50982, 11, look.length, floats(look));
+            put(tags, types, counts, 52543, 7, 8 + 2 + 5 + 27 * 3, rgbTable());
+            put(tags, types, counts, 52551, 7, 8, ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
+                    .putShort((short) 1).putShort((short) 1).putFloat(4).array());
+        }
         var directorySize = 2 + 12 * tags.size() + 4;
         var valuesStart = 8 + directorySize;
         var values = new ByteArrayOutputStream();
@@ -230,6 +270,20 @@ final class SyntheticRaw {
         file.writeBytes(values.toByteArray());
         file.writeBytes(strip);
         return file.toByteArray();
+    }
+
+    /**
+     * Returns floats as little-endian bytes.
+     *
+     * @param values the floats to write
+     * @return the bytes
+     */
+    private static byte[] floats(float... values) {
+        var b = ByteBuffer.allocate(values.length * 4).order(ByteOrder.LITTLE_ENDIAN);
+        for (var value : values) {
+            b.putFloat(value);
+        }
+        return b.array();
     }
 
     /**

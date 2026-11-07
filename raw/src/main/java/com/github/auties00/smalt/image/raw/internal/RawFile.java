@@ -2,6 +2,7 @@ package com.github.auties00.smalt.image.raw.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.raw.RawCameraProfile;
 import com.github.auties00.smalt.image.raw.RawDecoderOptions;
 import com.github.auties00.smalt.image.raw.RawFormat;
 import com.github.auties00.smalt.internal.io.SourceBytes;
@@ -301,18 +302,29 @@ public final class RawFile {
     }
 
     /**
-     * Returns the names of the camera profiles, the primary one first, an unnamed profile as an
-     * empty string.
+     * Returns the camera profiles, the primary one first.
      *
-     * @return the names
+     * @return the profiles
      */
-    List<String> profileNames() {
-        var names = new ArrayList<String>();
-        names.add(color.profileName != null ? color.profileName : "");
+    List<RawCameraProfile> profiles() {
+        var profiles = new ArrayList<RawCameraProfile>();
+        profiles.add(describe(color));
         for (var profile : extraProfiles) {
-            names.add(profile.profileName != null ? profile.profileName : "");
+            profiles.add(describe(profile));
         }
-        return names;
+        return profiles;
+    }
+
+    /**
+     * Describes a camera profile.
+     *
+     * @param profile the profile's color description
+     * @return the description, an unnamed or ungrouped profile with an empty name or group
+     */
+    private static RawCameraProfile describe(ColorCalibration profile) {
+        return new RawCameraProfile(Objects.requireNonNullElse(profile.profileName, ""),
+                Objects.requireNonNullElse(profile.profileGroupName, ""), profile.highDynamicRange,
+                profile.maxOutputHint);
     }
 
     /**

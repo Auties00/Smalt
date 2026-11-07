@@ -21,9 +21,9 @@ record DngTag(int tag, int type, long count, byte[] value) {
 
     /**
      * The tags of the primary camera profile carried over with it: {@code ProfileEmbedPolicy},
-     * {@code ProfileCopyright}, {@code AsShotProfileName}, {@code ProfileDynamicRange} and {@code ProfileGroupName}.
+     * {@code ProfileCopyright} and {@code AsShotProfileName}.
      */
-    static final int[] PROFILE = {50941, 50942, 50934, 52551, 52552};
+    static final int[] PROFILE = {50941, 50942, 50934};
 
     /**
      * The tags of the raw image's directory carried over: {@code BayerGreenSplit}, {@code ChromaBlurRadius},

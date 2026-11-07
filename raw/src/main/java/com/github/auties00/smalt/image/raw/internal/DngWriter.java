@@ -686,6 +686,14 @@ final class DngWriter {
         if (color.profileName != null) {
             first.ascii(50936, color.profileName);
         }
+        if (color.profileGroupName != null) {
+            first.ascii(52552, color.profileGroupName);
+        }
+        if (color.highDynamicRange || color.maxOutputHint > 0) {
+            var range = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN);
+            range.putShort((short) 1).putShort((short) (color.highDynamicRange ? 1 : 0)).putFloat(color.maxOutputHint);
+            first.undefined(52551, range.array());
+        }
         if (color.analogBalance != null) {
             first.rationals(50727, rationals(color.analogBalance));
         }

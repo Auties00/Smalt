@@ -27,6 +27,7 @@ public final class RawDecoderOptions {
     private final double exposure;
     private final RawColorSpace colorSpace;
     private final boolean highBitDepth;
+    private final boolean floatingPoint;
     private final boolean opcodes;
     private final boolean defaultCrop;
     private final double[] colorMatrix;
@@ -50,6 +51,7 @@ public final class RawDecoderOptions {
         this.exposure = builder.exposure;
         this.colorSpace = builder.colorSpace;
         this.highBitDepth = builder.highBitDepth;
+        this.floatingPoint = builder.floatingPoint;
         this.opcodes = builder.opcodes;
         this.defaultCrop = builder.defaultCrop;
         this.colorMatrix = builder.colorMatrix == null ? null : builder.colorMatrix.clone();
@@ -148,6 +150,7 @@ public final class RawDecoderOptions {
         builder.exposure = exposure;
         builder.colorSpace = colorSpace;
         builder.highBitDepth = highBitDepth;
+        builder.floatingPoint = floatingPoint;
         builder.opcodes = opcodes;
         builder.defaultCrop = defaultCrop;
         builder.colorMatrix = colorMatrix;
@@ -250,6 +253,24 @@ public final class RawDecoderOptions {
      */
     public boolean highBitDepth() {
         return highBitDepth;
+    }
+
+    /**
+     * {@return whether the output holds floating-point samples, a
+     * {@link com.github.auties00.smalt.image.ChannelFloatPicture} of red, green and blue
+     * ({@link com.github.auties00.smalt.image.PixelLayout#RGB}), rather than integers; {@code false} by default}
+     *
+     * <p>The samples are encoded with the {@linkplain #colorSpace() color space}'s transfer function, 1.0 being
+     * reference white, and take precedence over {@link #highBitDepth()}. A rendering with a standard-dynamic-range
+     * camera profile holds values from 0 to 1, as an integer output does at a finer step. A DNG camera profile
+     * marked high dynamic range ({@code ProfileDynamicRange}) rendered with the {@linkplain RawToneCurve#STANDARD
+     * standard tone curve} keeps the values above 1 its exposure, gain table map, tables and tone curve produce,
+     * up to 16 times reference white and beyond, the transfer function continued above 1 by its power law;
+     * {@link RawInfo#cameraProfileDetails()} tells such profiles apart. Integer outputs clip those values to
+     * white. An embedded preview returned for a size hint keeps its integer samples.
+     */
+    public boolean floatingPoint() {
+        return floatingPoint;
     }
 
     /**
@@ -381,7 +402,8 @@ public final class RawDecoderOptions {
                 && minHeight == that.minHeight && embeddedPreview == that.embeddedPreview && demosaic == that.demosaic
                 && whiteBalance.equals(that.whiteBalance) && highlights == that.highlights
                 && toneCurve == that.toneCurve && Double.compare(exposure, that.exposure) == 0
-                && colorSpace == that.colorSpace && highBitDepth == that.highBitDepth && opcodes == that.opcodes
+                && colorSpace == that.colorSpace && highBitDepth == that.highBitDepth
+                && floatingPoint == that.floatingPoint && opcodes == that.opcodes
                 && defaultCrop == that.defaultCrop && Arrays.equals(colorMatrix, that.colorMatrix)
                 && enhancedImage == that.enhancedImage && userCrop == that.userCrop && autoBlack == that.autoBlack
                 && Objects.equals(cameraProfile, that.cameraProfile) && lensCorrections == that.lensCorrections
@@ -391,8 +413,9 @@ public final class RawDecoderOptions {
     @Override
     public int hashCode() {
         return Objects.hash(limits, minWidth, minHeight, embeddedPreview, demosaic, whiteBalance, highlights,
-                toneCurve, exposure, colorSpace, highBitDepth, opcodes, defaultCrop, Arrays.hashCode(colorMatrix),
-                enhancedImage, userCrop, autoBlack, cameraProfile, lensCorrections, frame, dualPixelImage);
+                toneCurve, exposure, colorSpace, highBitDepth, floatingPoint, opcodes, defaultCrop,
+                Arrays.hashCode(colorMatrix), enhancedImage, userCrop, autoBlack, cameraProfile, lensCorrections,
+                frame, dualPixelImage);
     }
 
     @Override
@@ -400,7 +423,8 @@ public final class RawDecoderOptions {
         return "RawDecoderOptions[limits=" + limits + ", minWidth=" + minWidth + ", minHeight=" + minHeight
                 + ", embeddedPreview=" + embeddedPreview + ", demosaic=" + demosaic + ", whiteBalance=" + whiteBalance
                 + ", highlights=" + highlights + ", toneCurve=" + toneCurve + ", exposure=" + exposure
-                + ", colorSpace=" + colorSpace + ", highBitDepth=" + highBitDepth + ", opcodes=" + opcodes
+                + ", colorSpace=" + colorSpace + ", highBitDepth=" + highBitDepth + ", floatingPoint=" + floatingPoint
+                + ", opcodes=" + opcodes
                 + ", defaultCrop=" + defaultCrop + (colorMatrix != null ? ", colorMatrix=" + Arrays.toString(colorMatrix) : "")
                 + ", enhancedImage=" + enhancedImage + ", userCrop=" + userCrop + ", autoBlack=" + autoBlack
                 + (cameraProfile != null ? ", cameraProfile=" + cameraProfile : "")
@@ -426,6 +450,7 @@ public final class RawDecoderOptions {
         private double exposure;
         private RawColorSpace colorSpace = RawColorSpace.SRGB;
         private boolean highBitDepth;
+        private boolean floatingPoint;
         private boolean opcodes = true;
         private boolean defaultCrop = true;
         private double[] colorMatrix;
@@ -563,6 +588,17 @@ public final class RawDecoderOptions {
          */
         public Builder highBitDepth(boolean highBitDepth) {
             this.highBitDepth = highBitDepth;
+            return this;
+        }
+
+        /**
+         * Sets whether the output holds floating-point samples; see {@link RawDecoderOptions#floatingPoint()}.
+         *
+         * @param floatingPoint the value
+         * @return this builder
+         */
+        public Builder floatingPoint(boolean floatingPoint) {
+            this.floatingPoint = floatingPoint;
             return this;
         }
 

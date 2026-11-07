@@ -7,6 +7,7 @@ import com.github.auties00.smalt.image.raw.DngCompression;
 import com.github.auties00.smalt.image.raw.DngEncoder;
 import com.github.auties00.smalt.image.raw.DngEncoderOptions;
 import com.github.auties00.smalt.image.raw.RawDecoder;
+import com.github.auties00.smalt.image.raw.RawColorSpace;
 import com.github.auties00.smalt.image.raw.RawDecoderOptions;
 import com.github.auties00.smalt.image.raw.RawHighlights;
 import com.github.auties00.smalt.io.MediaSource;
@@ -40,6 +41,7 @@ final class RawWorkloads {
         return List.of(
                 file("raw-decode-bayer", RawWorkloads::bayer),
                 file("raw-decode-linear", RawWorkloads::linear),
+                file("raw-decode-hdr-profile", RawWorkloads::highDynamicRange),
                 file("raw-decode-staggered", RawWorkloads::staggered),
                 file("raw-decode-gpr", RawWorkloads::gpr),
                 file("raw-decode-nef", RawWorkloads::nef),
@@ -88,6 +90,24 @@ final class RawWorkloads {
         var file = SyntheticRaw.linearRaw(SyntheticImages.rgba(SyntheticVideo.natural(640, 480, 1).getFirst(), false));
         var options = List.of(RawDecoderOptions.defaults(), RawDecoderOptions.linear());
         return TrainingWorkload.of("raw-decode-linear", () -> {
+            for (var option : options) {
+                Blackhole.consume(RawDecoder.decode(MediaSource.of(file), option).picture().width());
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that decodes a 640x480 linear raw DNG with a high-dynamic-range camera profile to
+     * floating-point ProPhoto RGB, which keeps the values above white, and to 8-bit sRGB.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload highDynamicRange() {
+        var file = SyntheticRaw.highDynamicRange(SyntheticImages.rgba(SyntheticVideo.natural(640, 480, 1).getFirst(),
+                false));
+        var options = List.of(RawDecoderOptions.builder().colorSpace(RawColorSpace.PROPHOTO_RGB).floatingPoint(true)
+                .build(), RawDecoderOptions.defaults());
+        return TrainingWorkload.of("raw-decode-hdr-profile", () -> {
             for (var option : options) {
                 Blackhole.consume(RawDecoder.decode(MediaSource.of(file), option).picture().width());
             }

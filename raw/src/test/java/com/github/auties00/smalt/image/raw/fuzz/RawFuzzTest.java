@@ -2,6 +2,7 @@ package com.github.auties00.smalt.image.raw.fuzz;
 
 import com.code_intelligence.jazzer.junit.FuzzTest;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.ChannelFloatPicture;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.Images;
 import com.github.auties00.smalt.image.ops.ImageOps;
@@ -60,6 +61,15 @@ class RawFuzzTest {
             .enhancedImage(true)
             .userCrop(true)
             .autoBlack(true)
+            .build();
+
+    /**
+     * The floating-point rendering of the standard tone curve, which keeps the values above white of a
+     * high-dynamic-range camera profile.
+     */
+    private static final RawDecoderOptions FLOATING = RawDecoderOptions.builder()
+            .limits(Fuzz.LIMITS)
+            .floatingPoint(true)
             .build();
 
     @FuzzTest
@@ -219,6 +229,15 @@ class RawFuzzTest {
         if (run.sampled(data, 1, 3)) {
             run.step("render options", () -> RawDecoder.decode(MediaSource.of(data), RENDERED));
             run.step("render profile options", () -> RawDecoder.decode(MediaSource.of(data), PROFILED));
+            run.value("render floating point", () -> RawDecoder.decode(MediaSource.of(data), FLOATING))
+                    .ifPresent(image -> {
+                        var picture = (ChannelFloatPicture) image.picture();
+                        for (var value : picture.pixels()) {
+                            if (!(value >= 0) || value == Float.POSITIVE_INFINITY) {
+                                throw new AssertionError("floating-point sample " + value);
+                            }
+                        }
+                    });
         }
         if (run.sampled(data, 2, 3)) {
             run.step("thumbnail", () -> RawDecoder.decode(MediaSource.of(data), plain.toBuilder()

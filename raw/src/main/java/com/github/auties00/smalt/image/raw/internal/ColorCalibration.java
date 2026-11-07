@@ -141,6 +141,23 @@ final class ColorCalibration {
     String profileName;
 
     /**
+     * The profile's group name ({@code ProfileGroupName}), or {@code null}.
+     */
+    String profileGroupName;
+
+    /**
+     * Whether the profile renders high dynamic range ({@code ProfileDynamicRange} with a dynamic range
+     * of 1): its tables and tone curve apply to encoded values and the rendering keeps values above 1.
+     */
+    boolean highDynamicRange;
+
+    /**
+     * The largest output value the profile intends ({@code HintMaxOutputValue} of
+     * {@code ProfileDynamicRange}), in linear output relative to reference white, or 0 for no hint.
+     */
+    float maxOutputHint;
+
+    /**
      * The profile's black rendering hint ({@code DefaultBlackRender}): 0 for automatic black
      * subtraction, 1 for none.
      */
@@ -207,6 +224,9 @@ final class ColorCalibration {
         result.lookSrgb = profile.lookSrgb;
         result.toneCurve = profile.toneCurve;
         result.profileName = profile.profileName;
+        result.profileGroupName = profile.profileGroupName;
+        result.highDynamicRange = profile.highDynamicRange;
+        result.maxOutputHint = profile.maxOutputHint;
         result.blackRender = profile.blackRender;
         var source = profile.gainTableMap != null ? profile : this;
         result.gainTableMap = source.gainTableMap;

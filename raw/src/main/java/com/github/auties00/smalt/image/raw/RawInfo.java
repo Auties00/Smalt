@@ -78,7 +78,7 @@ public final class RawInfo {
 
     private final CfaLayout layout;
 
-    private final List<String> profiles;
+    private final List<RawCameraProfile> profiles;
 
     /**
      * Whether the file holds an enhanced image that decodes.
@@ -114,7 +114,7 @@ public final class RawInfo {
      * @param dngVersion the DNG version, or {@code null}
      * @param previews the previews, largest first
      * @param layout the spatial layout of the color filter array
-     * @param profiles the names of the camera profiles, the primary one first
+     * @param profiles the camera profiles, the primary one first
      * @param enhanced whether the file holds an enhanced image that decodes
      * @param frames the frames of a pixel-shift file, 1 for a file of one shot
      * @param dualPixel whether the file holds the second image of a dual pixel sensor
@@ -122,8 +122,8 @@ public final class RawInfo {
     RawInfo(RawFormat format, String make, String model, int width, int height, int sensorWidth, int sensorHeight,
             Orientation orientation, int bitsPerSample, CfaPattern cfa, String compression, String unsupported,
             boolean calibrated, long iso, double exposureTime, double fNumber, double focalLength, String lens,
-            String captureTime, String dngVersion, List<RawPreview> previews, CfaLayout layout, List<String> profiles,
-            boolean enhanced, int frames, boolean dualPixel) {
+            String captureTime, String dngVersion, List<RawPreview> previews, CfaLayout layout,
+            List<RawCameraProfile> profiles, boolean enhanced, int frames, boolean dualPixel) {
         this.format = Objects.requireNonNull(format, "format");
         this.make = make;
         this.model = model;
@@ -267,6 +267,16 @@ public final class RawInfo {
      * {@link RawDecoderOptions.Builder#cameraProfile(String)} selects one by name.
      */
     public List<String> cameraProfiles() {
+        return profiles.stream().map(RawCameraProfile::name).toList();
+    }
+
+    /**
+     * {@return the camera profiles a DNG file holds, in the order of {@link #cameraProfiles()}, with their group and
+     * the output range each is made for; unmodifiable}
+     *
+     * <p>Other files list one unnamed standard-dynamic-range profile.
+     */
+    public List<RawCameraProfile> cameraProfileDetails() {
         return profiles;
     }
 
