@@ -38,6 +38,11 @@ final class Wavelet {
      * @param component the tile-component
      */
     static void inverse53(int[] data, int stride, TileComponent component) {
+        var top = component.top();
+        if (top.node() != null) {
+            node53(data, stride, top.node());
+            return;
+        }
         for (var r = 1; r < component.decodedResolutions; r++) {
             var level = component.resolutions[r];
             var lower = component.resolutions[r - 1];
@@ -46,8 +51,8 @@ final class Wavelet {
             if (width == 0 || height == 0) {
                 continue;
             }
-            rows53(data, stride, width, height, lower.width(), level.x0() & 1, true);
-            columns53(data, stride, width, height, lower.height(), level.y0() & 1, true);
+            rows53(data, 0, stride, width, height, lower.width(), (int) (level.x0() & 1), true);
+            columns53(data, 0, stride, width, height, lower.height(), (int) (level.y0() & 1), true);
         }
     }
 
@@ -67,19 +72,26 @@ final class Wavelet {
             if (width == 0 || height == 0) {
                 continue;
             }
-            columns53(data, stride, width, height, lower.height(), level.y0() & 1, false);
-            rows53(data, stride, width, height, lower.width(), level.x0() & 1, false);
+            columns53(data, 0, stride, width, height, lower.height(), (int) (level.y0() & 1), false);
+            rows53(data, 0, stride, width, height, lower.width(), (int) (level.x0() & 1), false);
         }
     }
 
     /**
-     * Applies the inverse 9-7 transform up to the highest decoded resolution.
+     * Applies the inverse irreversible transform up to the highest decoded resolution: the 9-7 wavelet, or the
+     * component's {@code ATK} kernel.
      *
      * @param data the coefficients, row-major
      * @param stride the row stride of {@code data}
      * @param component the tile-component
      */
     static void inverse97(float[] data, int stride, TileComponent component) {
+        var top = component.top();
+        var kernel = component.kernel;
+        if (top.node() != null) {
+            node97(data, stride, top.node(), kernel, component, top.depthX(), top.depthY());
+            return;
+        }
         for (var r = 1; r < component.decodedResolutions; r++) {
             var level = component.resolutions[r];
             var lower = component.resolutions[r - 1];
@@ -88,9 +100,35 @@ final class Wavelet {
             if (width == 0 || height == 0) {
                 continue;
             }
-            rows97(data, stride, width, height, lower.width(), level.x0() & 1, true);
-            columns97(data, stride, width, height, lower.height(), level.y0() & 1, true);
+            rows97(data, 0, stride, width, height, lower.width(), (int) (level.x0() & 1), true, kernel, level.x0(),
+                    period(component, true, level.depthX()));
+            columns97(data, 0, stride, width, height, lower.height(), (int) (level.y0() & 1), true, kernel,
+                    level.y0(), period(component, false, level.depthY()));
         }
+    }
+
+    /**
+     * Returns the cell size {@code dC} of the single sample overlap transformation (ISO/IEC 15444-2 I.3.1.1) for the
+     * one-dimensional reconstructions that produce a signal of a given depth.
+     *
+     * @implNote This implementation takes the cell sizes of the normative procedure {@code IDWT_SSO} (Figure I.3):
+     * {@code XC / 2^lev} at decomposition level {@code lev}, so {@code XC / 2^(d + 1)} for a signal decomposed
+     * {@code d} times in that direction, which also covers the levels of arbitrary decompositions that split one
+     * direction only. The informative forward procedure of I.3.2.1 starts from {@code XC} instead; a codestream
+     * written with it would need cells twice as wide. A cell size below 1 makes every index a cell boundary, as it is
+     * for a size of 1.
+     * @param component the tile-component
+     * @param horizontal whether the rows (rather than the columns) are reconstructed
+     * @param depth the number of decompositions in that direction from the tile-component to the reconstructed signal
+     * @return the cell size, a power of two; 0 when the component does not use the transformation
+     */
+    static long period(TileComponent component, boolean horizontal, int depth) {
+        if (!component.coding.sampleOverlap()) {
+            return 0;
+        }
+        var exponent = (horizontal ? component.coding.cellWidthExponent() : component.coding.cellHeightExponent())
+                - depth - 1;
+        return exponent <= 0 ? 1 : 1L << exponent;
     }
 
     /**
@@ -109,8 +147,143 @@ final class Wavelet {
             if (width == 0 || height == 0) {
                 continue;
             }
-            columns97(data, stride, width, height, lower.height(), level.y0() & 1, false);
-            rows97(data, stride, width, height, lower.width(), level.x0() & 1, false);
+            columns97(data, 0, stride, width, height, lower.height(), (int) (level.y0() & 1), false, null, 0, 0);
+            rows97(data, 0, stride, width, height, lower.width(), (int) (level.x0() & 1), false, null, 0, 0);
+        }
+    }
+
+    /**
+     * Applies the inverse transform of a reversible kernel up to the highest decoded resolution, in 64-bit integers:
+     * the component's {@code ATK} kernel, or the 5-3 wavelet in the form of {@link LiftingKernel#REVERSIBLE_53}.
+     *
+     * @param data the coefficients, row-major
+     * @param stride the row stride of {@code data}
+     * @param component the tile-component
+     */
+    static void inverseWide(long[] data, int stride, TileComponent component) {
+        var top = component.top();
+        var kernel = component.kernel != null ? component.kernel : LiftingKernel.REVERSIBLE_53;
+        if (top.node() != null) {
+            nodeWide(data, stride, top.node(), kernel, component, top.depthX(), top.depthY());
+            return;
+        }
+        for (var r = 1; r < component.decodedResolutions; r++) {
+            var level = component.resolutions[r];
+            var lower = component.resolutions[r - 1];
+            var width = level.width();
+            var height = level.height();
+            if (width == 0 || height == 0) {
+                continue;
+            }
+            rowsWide(data, 0, stride, width, height, lower.width(), level.x0(), kernel,
+                    period(component, true, level.depthX()));
+            columnsWide(data, 0, stride, width, height, lower.height(), level.y0(), kernel,
+                    period(component, false, level.depthY()));
+        }
+    }
+
+    /**
+     * Rebuilds a node of an arbitrary decomposition with the 5-3 wavelet: its children, then its rows and columns.
+     *
+     * @param data the coefficients
+     * @param stride the row stride
+     * @param node the node to rebuild, with its descendants
+     */
+    private static void node53(int[] data, int stride, SubbandNode node) {
+        var children = node.children();
+        if (children == null) {
+            return;
+        }
+        for (var child : children) {
+            node53(data, stride, child);
+        }
+        var width = node.width();
+        var height = node.height();
+        if (width == 0 || height == 0) {
+            return;
+        }
+        var base = node.offsetY() * stride + node.offsetX();
+        if (node.split() != Decomposition.VERTICAL) {
+            rows53(data, base, stride, width, height, children[0].width(), (int) (node.x0() & 1), true);
+        }
+        if (node.split() != Decomposition.HORIZONTAL) {
+            columns53(data, base, stride, width, height, children[0].height(), (int) (node.y0() & 1), true);
+        }
+    }
+
+    /**
+     * Rebuilds a node of an arbitrary decomposition with an irreversible wavelet.
+     *
+     * @param data the coefficients
+     * @param stride the row stride
+     * @param node the node to rebuild, with its descendants
+     * @param kernel the {@code ATK} kernel, or {@code null} for the 9-7 wavelet
+     * @param component the tile-component, which selects the single sample overlap transformation
+     * @param depthX the number of horizontal decompositions from the tile-component to the node
+     * @param depthY the number of vertical decompositions from the tile-component to the node
+     */
+    private static void node97(float[] data, int stride, SubbandNode node, LiftingKernel kernel,
+                               TileComponent component, int depthX, int depthY) {
+        var children = node.children();
+        if (children == null) {
+            return;
+        }
+        var childX = depthX + (node.split() != Decomposition.VERTICAL ? 1 : 0);
+        var childY = depthY + (node.split() != Decomposition.HORIZONTAL ? 1 : 0);
+        for (var child : children) {
+            node97(data, stride, child, kernel, component, childX, childY);
+        }
+        var width = node.width();
+        var height = node.height();
+        if (width == 0 || height == 0) {
+            return;
+        }
+        var base = node.offsetY() * stride + node.offsetX();
+        if (node.split() != Decomposition.VERTICAL) {
+            rows97(data, base, stride, width, height, children[0].width(), (int) (node.x0() & 1), true, kernel,
+                    node.x0(), period(component, true, depthX));
+        }
+        if (node.split() != Decomposition.HORIZONTAL) {
+            columns97(data, base, stride, width, height, children[0].height(), (int) (node.y0() & 1), true, kernel,
+                    node.y0(), period(component, false, depthY));
+        }
+    }
+
+    /**
+     * Rebuilds a node of an arbitrary decomposition with a reversible kernel in 64-bit integers.
+     *
+     * @param data the coefficients
+     * @param stride the row stride
+     * @param node the node to rebuild, with its descendants
+     * @param kernel the reversible lifting kernel
+     * @param component the tile-component, which selects the single sample overlap transformation
+     * @param depthX the number of horizontal decompositions from the tile-component to the node
+     * @param depthY the number of vertical decompositions from the tile-component to the node
+     */
+    private static void nodeWide(long[] data, int stride, SubbandNode node, LiftingKernel kernel,
+                                 TileComponent component, int depthX, int depthY) {
+        var children = node.children();
+        if (children == null) {
+            return;
+        }
+        var childX = depthX + (node.split() != Decomposition.VERTICAL ? 1 : 0);
+        var childY = depthY + (node.split() != Decomposition.HORIZONTAL ? 1 : 0);
+        for (var child : children) {
+            nodeWide(data, stride, child, kernel, component, childX, childY);
+        }
+        var width = node.width();
+        var height = node.height();
+        if (width == 0 || height == 0) {
+            return;
+        }
+        var base = node.offsetY() * stride + node.offsetX();
+        if (node.split() != Decomposition.VERTICAL) {
+            rowsWide(data, base, stride, width, height, children[0].width(), node.x0(), kernel,
+                    period(component, true, depthX));
+        }
+        if (node.split() != Decomposition.HORIZONTAL) {
+            columnsWide(data, base, stride, width, height, children[0].height(), node.y0(), kernel,
+                    period(component, false, depthY));
         }
     }
 
@@ -118,6 +291,7 @@ final class Wavelet {
      * Transforms the rows of a 5-3 level.
      *
      * @param data the coefficients
+     * @param base0 the index of the level's first sample
      * @param stride the row stride
      * @param width the level width
      * @param height the level height
@@ -125,7 +299,8 @@ final class Wavelet {
      * @param cas the parity of the level's left edge
      * @param inverse whether the inverse transform is applied
      */
-    private static void rows53(int[] data, int stride, int width, int height, int sn, int cas, boolean inverse) {
+    private static void rows53(int[] data, int base0, int stride, int width, int height, int sn, int cas,
+                               boolean inverse) {
         var dn = width - sn;
         var groups = (height + LANES - 1) / LANES;
         var bands = ParallelBands.bands(groups, SAMPLE_WORK * width * height);
@@ -138,7 +313,7 @@ final class Wavelet {
                 var count = Math.min(LANES, height - row);
                 if (inverse) {
                     for (var lane = 0; lane < count; lane++) {
-                        var base = (row + lane) * stride;
+                        var base = base0 + (row + lane) * stride;
                         for (var i = 0; i < sn; i++) {
                             buffer[(2 * i + cas) * LANES + lane] = data[base + i];
                         }
@@ -149,14 +324,14 @@ final class Wavelet {
                     clearLanes(buffer, width, count);
                     kernel.inverse53(buffer, sn, dn, cas);
                     for (var lane = 0; lane < count; lane++) {
-                        var base = (row + lane) * stride;
+                        var base = base0 + (row + lane) * stride;
                         for (var k = 0; k < width; k++) {
                             data[base + k] = buffer[k * LANES + lane];
                         }
                     }
                 } else {
                     for (var lane = 0; lane < count; lane++) {
-                        var base = (row + lane) * stride;
+                        var base = base0 + (row + lane) * stride;
                         for (var k = 0; k < width; k++) {
                             buffer[k * LANES + lane] = data[base + k];
                         }
@@ -164,7 +339,7 @@ final class Wavelet {
                     clearLanes(buffer, width, count);
                     kernel.forward53(buffer, sn, dn, cas);
                     for (var lane = 0; lane < count; lane++) {
-                        var base = (row + lane) * stride;
+                        var base = base0 + (row + lane) * stride;
                         for (var i = 0; i < sn; i++) {
                             data[base + i] = buffer[(2 * i + cas) * LANES + lane];
                         }
@@ -181,6 +356,7 @@ final class Wavelet {
      * Transforms the columns of a 5-3 level.
      *
      * @param data the coefficients
+     * @param base0 the index of the level's first sample
      * @param stride the row stride
      * @param width the level width
      * @param height the level height
@@ -188,7 +364,7 @@ final class Wavelet {
      * @param cas the parity of the level's top edge
      * @param inverse whether the inverse transform is applied
      */
-    private static void columns53(int[] data, int stride, int width, int height, int sn, int cas,
+    private static void columns53(int[] data, int base0, int stride, int width, int height, int sn, int cas,
                                   boolean inverse) {
         var dn = height - sn;
         var groups = (width + LANES - 1) / LANES;
@@ -198,8 +374,8 @@ final class Wavelet {
             var buffer = new int[height * LANES];
             var end = ParallelBands.start(band + 1, bands, groups);
             for (var group = ParallelBands.start(band, bands, groups); group < end; group++) {
-                var column = group * LANES;
-                var count = Math.min(LANES, width - column);
+                var column = base0 + group * LANES;
+                var count = Math.min(LANES, width - group * LANES);
                 if (inverse) {
                     for (var i = 0; i < sn; i++) {
                         copyIn(data, i * stride + column, buffer, (2 * i + cas) * LANES, count);
@@ -231,14 +407,19 @@ final class Wavelet {
      * Transforms the rows of a 9-7 level.
      *
      * @param data the coefficients
+     * @param base0 the index of the level's first sample
      * @param stride the row stride
      * @param width the level width
      * @param height the level height
      * @param sn the number of low-pass coefficients per row
      * @param cas the parity of the level's left edge
      * @param inverse whether the inverse transform is applied
+     * @param lifting the {@code ATK} kernel of an inverse transform, or {@code null} for the 9-7 wavelet
+     * @param i0 the level's left edge, which places the cells of the single sample overlap transformation
+     * @param period the cell size of the single sample overlap transformation, or 0 without it
      */
-    private static void rows97(float[] data, int stride, int width, int height, int sn, int cas, boolean inverse) {
+    private static void rows97(float[] data, int base0, int stride, int width, int height, int sn, int cas,
+                               boolean inverse, LiftingKernel lifting, long i0, long period) {
         var dn = width - sn;
         var groups = (height + LANES - 1) / LANES;
         var bands = ParallelBands.bands(groups, SAMPLE_WORK * width * height);
@@ -251,7 +432,7 @@ final class Wavelet {
                 var count = Math.min(LANES, height - row);
                 if (inverse) {
                     for (var lane = 0; lane < count; lane++) {
-                        var base = (row + lane) * stride;
+                        var base = base0 + (row + lane) * stride;
                         for (var i = 0; i < sn; i++) {
                             buffer[(2 * i + cas) * LANES + lane] = data[base + i];
                         }
@@ -260,16 +441,22 @@ final class Wavelet {
                         }
                     }
                     clearLanes(buffer, width, count);
-                    kernel.inverse97(buffer, sn, dn, cas);
+                    if (period > 0) {
+                        lifting.inverseOverlapped(buffer, width, i0, LANES, period);
+                    } else if (lifting != null) {
+                        lifting.inverse(buffer, width, cas, LANES);
+                    } else {
+                        kernel.inverse97(buffer, sn, dn, cas);
+                    }
                     for (var lane = 0; lane < count; lane++) {
-                        var base = (row + lane) * stride;
+                        var base = base0 + (row + lane) * stride;
                         for (var k = 0; k < width; k++) {
                             data[base + k] = buffer[k * LANES + lane];
                         }
                     }
                 } else {
                     for (var lane = 0; lane < count; lane++) {
-                        var base = (row + lane) * stride;
+                        var base = base0 + (row + lane) * stride;
                         for (var k = 0; k < width; k++) {
                             buffer[k * LANES + lane] = data[base + k];
                         }
@@ -277,7 +464,7 @@ final class Wavelet {
                     clearLanes(buffer, width, count);
                     kernel.forward97(buffer, sn, dn, cas);
                     for (var lane = 0; lane < count; lane++) {
-                        var base = (row + lane) * stride;
+                        var base = base0 + (row + lane) * stride;
                         for (var i = 0; i < sn; i++) {
                             data[base + i] = buffer[(2 * i + cas) * LANES + lane];
                         }
@@ -294,15 +481,19 @@ final class Wavelet {
      * Transforms the columns of a 9-7 level.
      *
      * @param data the coefficients
+     * @param base0 the index of the level's first sample
      * @param stride the row stride
      * @param width the level width
      * @param height the level height
      * @param sn the number of low-pass coefficients per column
      * @param cas the parity of the level's top edge
      * @param inverse whether the inverse transform is applied
+     * @param lifting the {@code ATK} kernel of an inverse transform, or {@code null} for the 9-7 wavelet
+     * @param i0 the level's top edge, which places the cells of the single sample overlap transformation
+     * @param period the cell size of the single sample overlap transformation, or 0 without it
      */
-    private static void columns97(float[] data, int stride, int width, int height, int sn, int cas,
-                                  boolean inverse) {
+    private static void columns97(float[] data, int base0, int stride, int width, int height, int sn, int cas,
+                                  boolean inverse, LiftingKernel lifting, long i0, long period) {
         var dn = height - sn;
         var groups = (width + LANES - 1) / LANES;
         var bands = ParallelBands.bands(groups, SAMPLE_WORK * width * height);
@@ -311,8 +502,8 @@ final class Wavelet {
             var buffer = new float[height * LANES];
             var end = ParallelBands.start(band + 1, bands, groups);
             for (var group = ParallelBands.start(band, bands, groups); group < end; group++) {
-                var column = group * LANES;
-                var count = Math.min(LANES, width - column);
+                var column = base0 + group * LANES;
+                var count = Math.min(LANES, width - group * LANES);
                 if (inverse) {
                     for (var i = 0; i < sn; i++) {
                         copyIn(data, i * stride + column, buffer, (2 * i + cas) * LANES, count);
@@ -320,7 +511,13 @@ final class Wavelet {
                     for (var i = 0; i < dn; i++) {
                         copyIn(data, (sn + i) * stride + column, buffer, (2 * i + 1 - cas) * LANES, count);
                     }
-                    kernel.inverse97(buffer, sn, dn, cas);
+                    if (period > 0) {
+                        lifting.inverseOverlapped(buffer, height, i0, LANES, period);
+                    } else if (lifting != null) {
+                        lifting.inverse(buffer, height, cas, LANES);
+                    } else {
+                        kernel.inverse97(buffer, sn, dn, cas);
+                    }
                     for (var k = 0; k < height; k++) {
                         System.arraycopy(buffer, k * LANES, data, k * stride + column, count);
                     }
@@ -335,6 +532,100 @@ final class Wavelet {
                     for (var i = 0; i < dn; i++) {
                         System.arraycopy(buffer, (2 * i + 1 - cas) * LANES, data, (sn + i) * stride + column, count);
                     }
+                }
+            }
+        });
+    }
+
+    /**
+     * Inverse-transforms the rows of a level with a reversible kernel in 64-bit integers.
+     *
+     * @param data the coefficients
+     * @param base0 the index of the level's first sample
+     * @param stride the row stride
+     * @param width the level width
+     * @param height the level height
+     * @param sn the number of low-pass coefficients per row
+     * @param i0 the level's left edge
+     * @param kernel the reversible lifting kernel
+     * @param period the cell size of the single sample overlap transformation, or 0 without it
+     */
+    private static void rowsWide(long[] data, int base0, int stride, int width, int height, int sn, long i0,
+                                 LiftingKernel kernel, long period) {
+        var cas = (int) (i0 & 1);
+        var dn = width - sn;
+        var groups = (height + LANES - 1) / LANES;
+        var bands = ParallelBands.bands(groups, SAMPLE_WORK * width * height);
+        ParallelBands.run(bands, band -> {
+            var buffer = new long[width * LANES];
+            var end = ParallelBands.start(band + 1, bands, groups);
+            for (var group = ParallelBands.start(band, bands, groups); group < end; group++) {
+                var row = group * LANES;
+                var count = Math.min(LANES, height - row);
+                java.util.Arrays.fill(buffer, 0);
+                for (var lane = 0; lane < count; lane++) {
+                    var base = base0 + (row + lane) * stride;
+                    for (var i = 0; i < sn; i++) {
+                        buffer[(2 * i + cas) * LANES + lane] = data[base + i];
+                    }
+                    for (var i = 0; i < dn; i++) {
+                        buffer[(2 * i + 1 - cas) * LANES + lane] = data[base + sn + i];
+                    }
+                }
+                if (period > 0) {
+                    kernel.inverseOverlapped(buffer, width, i0, LANES, period);
+                } else {
+                    kernel.inverse(buffer, width, cas, LANES);
+                }
+                for (var lane = 0; lane < count; lane++) {
+                    var base = base0 + (row + lane) * stride;
+                    for (var k = 0; k < width; k++) {
+                        data[base + k] = buffer[k * LANES + lane];
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * Inverse-transforms the columns of a level with a reversible kernel in 64-bit integers.
+     *
+     * @param data the coefficients
+     * @param base0 the index of the level's first sample
+     * @param stride the row stride
+     * @param width the level width
+     * @param height the level height
+     * @param sn the number of low-pass coefficients per column
+     * @param i0 the level's top edge
+     * @param kernel the reversible lifting kernel
+     * @param period the cell size of the single sample overlap transformation, or 0 without it
+     */
+    private static void columnsWide(long[] data, int base0, int stride, int width, int height, int sn, long i0,
+                                    LiftingKernel kernel, long period) {
+        var cas = (int) (i0 & 1);
+        var dn = height - sn;
+        var groups = (width + LANES - 1) / LANES;
+        var bands = ParallelBands.bands(groups, SAMPLE_WORK * width * height);
+        ParallelBands.run(bands, band -> {
+            var buffer = new long[height * LANES];
+            var end = ParallelBands.start(band + 1, bands, groups);
+            for (var group = ParallelBands.start(band, bands, groups); group < end; group++) {
+                var column = base0 + group * LANES;
+                var count = Math.min(LANES, width - group * LANES);
+                java.util.Arrays.fill(buffer, 0);
+                for (var i = 0; i < sn; i++) {
+                    System.arraycopy(data, i * stride + column, buffer, (2 * i + cas) * LANES, count);
+                }
+                for (var i = 0; i < dn; i++) {
+                    System.arraycopy(data, (sn + i) * stride + column, buffer, (2 * i + 1 - cas) * LANES, count);
+                }
+                if (period > 0) {
+                    kernel.inverseOverlapped(buffer, height, i0, LANES, period);
+                } else {
+                    kernel.inverse(buffer, height, cas, LANES);
+                }
+                for (var k = 0; k < height; k++) {
+                    System.arraycopy(buffer, k * LANES, data, k * stride + column, count);
                 }
             }
         });

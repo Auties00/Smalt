@@ -625,10 +625,10 @@ final class DecoderCore {
                 }
                 Agc.applyInstant(excEnhanced, excp, L_SUBFR, overflow);
                 overflow.value = false;
-                Filters.synFilt(aT, az, excp, 0, synth, iSubfr, L_SUBFR, memSyn, 0, false);
+                Filters.synFilt(aT, az, excp, 0, synth, iSubfr, L_SUBFR, memSyn, 0, false, overflow);
             } else {
                 overflow.value = false;
-                Filters.synFilt(aT, az, excEnhanced, 0, synth, iSubfr, L_SUBFR, memSyn, 0, false);
+                Filters.synFilt(aT, az, excEnhanced, 0, synth, iSubfr, L_SUBFR, memSyn, 0, false, overflow);
             }
             if (overflow.value) {
                 for (var i = PIT_MAX + L_INTERPOL + L_SUBFR - 1; i >= 0; i--) {
@@ -637,7 +637,7 @@ final class DecoderCore {
                 for (var i = L_SUBFR - 1; i >= 0; i--) {
                     excEnhanced[i] = (short) (excEnhanced[i] >> 2);
                 }
-                Filters.synFilt(aT, az, excEnhanced, 0, synth, iSubfr, L_SUBFR, memSyn, 0, true);
+                Filters.synFilt(aT, az, excEnhanced, 0, synth, iSubfr, L_SUBFR, memSyn, 0, true, overflow);
             } else {
                 System.arraycopy(synth, iSubfr + L_SUBFR - M, memSyn, 0, M);
             }

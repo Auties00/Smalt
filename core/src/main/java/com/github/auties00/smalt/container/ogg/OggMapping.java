@@ -16,7 +16,8 @@ import java.util.Map;
  * Instances are stateful (a Vorbis packet's duration depends on the previous packet) and belong
  * to one stream.
  */
-abstract sealed class OggMapping permits OpusMapping, VorbisMapping, FlacMapping, SpeexMapping, TheoraMapping, OpaqueMapping {
+abstract sealed class OggMapping permits OpusMapping, VorbisMapping, FlacMapping, SpeexMapping, TheoraMapping, SkeletonMapping,
+        OpaqueMapping {
     /**
      * Receives the chapters and pictures of the stream's comment header, or {@code null} when
      * they are not collected (streams after the first link).
@@ -54,9 +55,9 @@ abstract sealed class OggMapping permits OpusMapping, VorbisMapping, FlacMapping
             return new TheoraMapping();
         }
         if (startsWith(first, 0, "fishead\0")) {
-            return new OpaqueMapping("skeleton");
+            return new SkeletonMapping();
         }
-        return new OpaqueMapping("unknown");
+        return new OpaqueMapping();
     }
 
     /**
@@ -156,6 +157,38 @@ abstract sealed class OggMapping permits OpusMapping, VorbisMapping, FlacMapping
      */
     long granuleToTime(long granule) {
         return granule;
+    }
+
+    /**
+     * Returns the time of the key frame that decoding the last packet of a page needs, from the
+     * page's granule position.
+     *
+     * <p>The default is {@link #granuleToTime(long)}, for codecs whose packets decode on their own.
+     *
+     * @param granule the granule position, not {@code -1}
+     * @return the start time of that key frame in time-base units, at most {@code granuleToTime(granule)}
+     */
+    long keyframeTime(long granule) {
+        return granuleToTime(granule);
+    }
+
+    /**
+     * Returns whether data packets must reach {@link #observe(byte[])} even when the parser only scans.
+     *
+     * @return {@code false} by default
+     */
+    boolean observesData() {
+        return false;
+    }
+
+    /**
+     * Examines a data packet before it is timestamped.
+     *
+     * <p>The default implementation does nothing.
+     *
+     * @param packet the data packet
+     */
+    void observe(byte[] packet) {
     }
 
     /**

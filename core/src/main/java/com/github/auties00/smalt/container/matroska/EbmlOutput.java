@@ -54,6 +54,17 @@ final class EbmlOutput {
     private int depth;
 
     /**
+     * The positions recorded by {@link #mark()}, kept pointing at the same bytes when
+     * {@link #end()} moves content.
+     */
+    private int[] marks = new int[4];
+
+    /**
+     * The number of positions in {@link #marks}.
+     */
+    private int markCount;
+
+    /**
      * Constructs an empty output.
      *
      * @param capacity the initial capacity in bytes
@@ -82,6 +93,31 @@ final class EbmlOutput {
     void reset() {
         size = 0;
         depth = 0;
+        markCount = 0;
+    }
+
+    /**
+     * Records the current end of the output as a position that later {@link #end()} calls keep
+     * pointing at the same byte.
+     *
+     * @return the handle {@link #markPosition(int)} takes
+     */
+    int mark() {
+        if (markCount == marks.length) {
+            marks = Arrays.copyOf(marks, marks.length * 2);
+        }
+        marks[markCount] = size;
+        return markCount++;
+    }
+
+    /**
+     * Returns the current index of a position recorded by {@link #mark()}.
+     *
+     * @param handle the handle {@code mark()} returned
+     * @return the index of the marked byte in {@link #buffer()}
+     */
+    int markPosition(int handle) {
+        return marks[handle];
     }
 
     /**
@@ -303,6 +339,11 @@ final class EbmlOutput {
         if (length < RESERVED_SIZE) {
             System.arraycopy(buffer, contentStart, buffer, field + length, content);
             size -= RESERVED_SIZE - length;
+            for (var index = 0; index < markCount; index++) {
+                if (marks[index] >= contentStart) {
+                    marks[index] -= RESERVED_SIZE - length;
+                }
+            }
         }
     }
 
