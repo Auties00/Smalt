@@ -19,19 +19,23 @@ import java.util.Optional;
 import java.util.function.Consumer;
 
 /**
- * Encodes pictures as Theora video (the Theora I specification, bitstream version 3.2.1), every frame an intra
- * frame.
+ * Encodes pictures as Theora video (the Theora I specification, bitstream version 3.2.1), with key frames and inter
+ * frames.
  *
  * <p>The stream codes the picture at the top left of a coded frame of whole 16x16 macro blocks with the VP3
  * quantization matrices of libtheora at the options' {@linkplain TheoraEncoderOptions#quality() quality index},
- * and one static Huffman code for every token table. {@link #codecConfig()} holds the identification, comment and
- * setup headers, Xiph-laced as {@link Codec#THEORA} specifies, ready for the Ogg and Matroska muxers. Any Theora
- * decoder reads the stream; it decodes to the same samples in {@link TheoraDecoder} and in libtheora.
+ * and one static Huffman code for every token table. An inter frame predicts each macro block from the previous
+ * frame or from the golden frame (the last key frame), with or without half-sample motion vectors, or codes it
+ * intra; blocks that do not change are not coded, and an inter frame that codes no block is an empty packet, the
+ * dropped frame of the specification, which decoders show as the previous picture. A key frame starts the stream,
+ * follows {@link #requestKeyframe()}, comes at least every {@linkplain TheoraEncoderOptions#keyframeInterval() key
+ * frame interval} frames, and replaces an inter frame at a scene cut. {@link #codecConfig()} holds the identification,
+ * comment and setup headers, Xiph-laced as {@link Codec#THEORA} specifies, ready for the Ogg and Matroska muxers.
+ * Any Theora decoder reads the stream; it decodes to the same samples in {@link TheoraDecoder} and in libtheora.
  *
  * <p>A {@link YuvPicture} of the options' chroma format is coded as it is, without its alpha plane; any other
  * picture is converted with {@link ImageOps#toYuv(Picture, ChromaFormat, ColorInfo) ImageOps.toYuv} and
- * {@link TheoraEncoderOptions#color()}. Every packet holds one key frame, so {@link #requestKeyframe()} has
- * nothing to do.
+ * {@link TheoraEncoderOptions#color()}. Every picture gives one packet at once, in presentation order.
  *
  * <p>Instances are not thread-safe.
  */
@@ -77,7 +81,8 @@ public final class TheoraEncoder implements VideoEncoder {
         };
         var aspect = options.sampleAspectRatio();
         this.frames = new TheoraFrameEncoder(width, height, pixelFormat, options.quality(),
-                options.frameRate().numerator(), options.frameRate().denominator(),
+                options.keyframeInterval().orElse(Integer.MAX_VALUE), options.frameRate().numerator(),
+                options.frameRate().denominator(),
                 aspect.map(Rational::numerator).orElse(0L), aspect.map(Rational::denominator).orElse(0L), "Smalt");
         this.configuration = XiphLacing.lace(frames.headers());
         this.clock = new FrameClock(options.frameRate(), options.timeBase());
@@ -121,7 +126,7 @@ public final class TheoraEncoder implements VideoEncoder {
     }
 
     /**
-     * Encodes one picture into one key frame packet.
+     * Encodes one picture into one packet, a key frame or an inter frame.
      *
      * @param frame the frame; its picture must be of the encoder's size
      * @param output receives the packet
@@ -142,14 +147,15 @@ public final class TheoraEncoder implements VideoEncoder {
                 ? candidate : ImageOps.toYuv(picture, options.chromaFormat(), options.color());
         var data = frames.encode(yuv);
         clock.commit(timing.pts());
-        output.accept(new Packet(0, data, timing.pts(), timing.pts(), timing.duration(), true));
+        output.accept(new Packet(0, data, timing.pts(), timing.pts(), timing.duration(), frames.keyframe()));
     }
 
     /**
-     * Does nothing: every frame is a key frame.
+     * Makes the next picture encoded a key frame.
      */
     @Override
     public void requestKeyframe() {
+        frames.requestKeyframe();
     }
 
     /**

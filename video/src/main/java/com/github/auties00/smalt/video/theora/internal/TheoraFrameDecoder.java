@@ -24,30 +24,30 @@ import java.util.Arrays;
  * <p>Instances are not thread-safe.
  */
 public final class TheoraFrameDecoder {
-    private static final int INTER_NOMV = 0;
-    private static final int INTRA = 1;
-    private static final int INTER_MV = 2;
-    private static final int INTER_MV_LAST = 3;
-    private static final int INTER_MV_LAST2 = 4;
-    private static final int GOLDEN_NOMV = 5;
-    private static final int GOLDEN_MV = 6;
-    private static final int INTER_MV_FOUR = 7;
+    static final int INTER_NOMV = 0;
+    static final int INTRA = 1;
+    static final int INTER_MV = 2;
+    static final int INTER_MV_LAST = 3;
+    static final int INTER_MV_LAST2 = 4;
+    static final int GOLDEN_NOMV = 5;
+    static final int GOLDEN_MV = 6;
+    static final int INTER_MV_FOUR = 7;
 
-    private static final int FRAME_GOLD = 0;
-    private static final int FRAME_PREV = 1;
-    private static final int FRAME_SELF = 2;
-    private static final int FRAME_NONE = 3;
+    static final int FRAME_GOLD = 0;
+    static final int FRAME_PREV = 1;
+    static final int FRAME_SELF = 2;
+    static final int FRAME_NONE = 3;
 
     private static final int PADDING = 16;
 
     private static final long EOB_FINISH = Long.MAX_VALUE;
 
     /** The reference frame of each mode. */
-    private static final int[] FRAME_FOR_MODE = {FRAME_PREV, FRAME_SELF, FRAME_PREV, FRAME_PREV, FRAME_PREV,
+    static final int[] FRAME_FOR_MODE = {FRAME_PREV, FRAME_SELF, FRAME_PREV, FRAME_PREV, FRAME_PREV,
             FRAME_GOLD, FRAME_GOLD, FRAME_PREV};
 
     /** The mode alphabets of the schemes 1 to 7; scheme 0 permutes the last. */
-    private static final int[][] MODE_ALPHABETS = {
+    static final int[][] MODE_ALPHABETS = {
             {INTER_MV_LAST, INTER_MV_LAST2, INTER_MV, INTER_NOMV, INTRA, GOLDEN_NOMV, GOLDEN_MV, INTER_MV_FOUR},
             {INTER_MV_LAST, INTER_MV_LAST2, INTER_NOMV, INTER_MV, INTRA, GOLDEN_NOMV, GOLDEN_MV, INTER_MV_FOUR},
             {INTER_MV_LAST, INTER_MV, INTER_MV_LAST2, INTER_NOMV, INTRA, GOLDEN_NOMV, GOLDEN_MV, INTER_MV_FOUR},
@@ -67,14 +67,14 @@ public final class TheoraFrameDecoder {
     private static final int[][] MB_MAP = {{0, 3}, {1, 2}};
 
     /** The (plane, block) entries of a macro block map that can be valid, by pixel format. */
-    private static final int[][] MB_MAP_IDXS = {
+    static final int[][] MB_MAP_IDXS = {
             {0, 1, 2, 3, 4, 8},
             {0, 1, 2, 3, 4, 5, 8, 9},
             {0, 1, 2, 3, 4, 6, 8, 10},
             {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}};
 
     /** The integer part of a motion vector component, by quarter-pixel precision and component + 31. */
-    private static final int[][] MVMAP = {
+    static final int[][] MVMAP = {
             {-15, -15, -14, -14, -13, -13, -12, -12, -11, -11, -10, -10, -9, -9, -8,
                     -8, -7, -7, -6, -6, -5, -5, -4, -4, -3, -3, -2, -2, -1, -1, 0,
                     0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7,
@@ -85,7 +85,7 @@ public final class TheoraFrameDecoder {
                     4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7}};
 
     /** The offset of the second prediction of a fractional motion vector component. */
-    private static final int[][] MVMAP2 = {
+    static final int[][] MVMAP2 = {
             {-1, 0, -1, 0, -1, 0, -1, 0, -1, 0, -1, 0, -1, 0, -1,
                     0, -1, 0, -1, 0, -1, 0, -1, 0, -1, 0, -1, 0, -1, 0, -1,
                     0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1,
@@ -109,27 +109,27 @@ public final class TheoraFrameDecoder {
 
     private final int shiftX;
     private final int shiftY;
-    private final int[] hfrags = new int[3];
-    private final int[] vfrags = new int[3];
-    private final int[] fragOffset = new int[4];
-    private final int[] sbOffset = new int[4];
+    final int[] hfrags = new int[3];
+    final int[] vfrags = new int[3];
+    final int[] fragOffset = new int[4];
+    final int[] sbOffset = new int[4];
     private final int[] padX = new int[3];
     private final int[] padY = new int[3];
-    private final int[] stride = new int[3];
-    private final int[] origin = new int[3];
+    final int[] stride = new int[3];
+    final int[] origin = new int[3];
     private final int[] planeSize = new int[3];
-    private final int fragCount;
-    private final int sbCount;
-    private final int mbCount;
+    final int fragCount;
+    final int sbCount;
+    final int mbCount;
 
     /** The fragments of each super block, 16 per super block by quadrant and block, -1 outside the frame. */
-    private final int[] sbMaps;
+    final int[] sbMaps;
     /** The quadrants of each super block holding at least one fragment, one bit per quadrant. */
     private final int[] sbQuadValid;
     /** The 12 fragments of each macro block by plane and block, -1 where the pixel format has none. */
-    private final int[] mbMaps;
+    final int[] mbMaps;
     /** The mode of each macro block, -1 outside the frame. */
-    private final int[] mbModes;
+    final int[] mbModes;
 
     private final boolean[] coded;
     private final byte[] refi;
@@ -141,7 +141,7 @@ public final class TheoraFrameDecoder {
     private final int[] codedIndex;
     private final int[] codedFrags;
     private final int[] codedPerPlane = new int[3];
-    private int codedTotal;
+    int codedTotal;
 
     private final boolean[] sbPartial;
     private final boolean[] sbFull;
@@ -150,9 +150,10 @@ public final class TheoraFrameDecoder {
     private final byte[] tokenStart;
     private final byte[] lastStart;
 
-    private final byte[][][] buffers = new byte[3][3][];
-    private int gold = -1;
-    private int prev = -1;
+    /** The planes of the three frame buffers, by buffer and plane; {@link #gold} and {@link #prev} index them. */
+    final byte[][][] buffers = new byte[3][3][];
+    int gold = -1;
+    int prev = -1;
 
     private final int[] qis = new int[3];
     private int qiCount;
@@ -183,10 +184,21 @@ public final class TheoraFrameDecoder {
      * @throws MediaException.LimitExceeded if the frame size exceeds the limits
      */
     public TheoraFrameDecoder(TheoraSetup setup, ColorInfo color, MediaLimits limits) {
-        this.setup = setup;
-        this.color = color;
         LimitChecks.checkPicture(limits, setup.frameWidth, setup.frameHeight);
         LimitChecks.checkAllocation(limits, (long) setup.frameWidth * setup.frameHeight * 12);
+        this(setup, color);
+    }
+
+    /**
+     * Constructs a decoder without checking the frame size against resource limits, for an encoder's own
+     * reconstruction.
+     *
+     * @param setup the stream's parameters
+     * @param color the color description of the pictures
+     */
+    TheoraFrameDecoder(TheoraSetup setup, ColorInfo color) {
+        this.setup = setup;
+        this.color = color;
         shiftX = setup.pixelFormat == 3 ? 0 : 1;
         shiftY = setup.pixelFormat == 0 ? 1 : 0;
         var sbs = 0;
@@ -335,8 +347,31 @@ public final class TheoraFrameDecoder {
      * @throws MediaException.Unsupported if a key frame sets the reserved header bits
      */
     public YuvPicture decode(byte[] data, int offset, int length) {
+        decodeFrame(data, offset, length, true);
+        return picture;
+    }
+
+    /**
+     * {@return whether decoding the last packet read past its end}
+     */
+    boolean overran() {
+        return bits.exhausted();
+    }
+
+    /**
+     * Decodes one data packet into the reference frames without producing its picture.
+     *
+     * @param data the packet
+     * @throws MediaException.Malformed if the packet is not a data packet
+     */
+    void advance(byte[] data) {
+        decodeFrame(data, 0, data.length, false);
+    }
+
+    private void decodeFrame(byte[] data, int offset, int length, boolean produce) {
         keyframe = false;
         if (length == 0) {
+            bits.reset(data, offset, 0);
             intraFrame = false;
             codedTotal = 0;
         } else {
@@ -371,10 +406,10 @@ public final class TheoraFrameDecoder {
             gold = prev = 0;
         }
         if (codedTotal <= 0) {
-            if (picture == null) {
+            if (produce && picture == null) {
                 output(prev);
             }
-            return picture;
+            return;
         }
         var self = 0;
         while (self == gold || self == prev) {
@@ -405,8 +440,9 @@ public final class TheoraFrameDecoder {
             gold = self;
         }
         keyframe = intraFrame;
-        output(self);
-        return picture;
+        if (produce) {
+            output(self);
+        }
     }
 
     private void markAllIntra() {
@@ -974,7 +1010,10 @@ public final class TheoraFrameDecoder {
         return frag < fragOffset[1] ? 0 : frag < fragOffset[2] ? 1 : 2;
     }
 
-    private int bufferOffset(int frag, int pli) {
+    /**
+     * {@return the index in a plane buffer of the bottom left sample of a fragment}
+     */
+    int bufferOffset(int frag, int pli) {
         var index = frag - fragOffset[pli];
         var h = hfrags[pli];
         return origin[pli] + ((index / h) << 3) * stride[pli] + ((index % h) << 3);

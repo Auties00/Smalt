@@ -18,11 +18,12 @@ import com.github.auties00.smalt.video.theora.TheoraEncoderOptions;
  * Provides {@link TheoraDecoder} to {@link VideoDecoders} for Theora tracks and {@link TheoraEncoder} to
  * {@link VideoEncoders}.
  *
- * @implNote This implementation passes the decoder options on unchanged. It encodes 4:2:0 intra frames at the
- *           {@link TheoraEncoderOptions#defaults()} quality, with the requested frame rate, color description and
- *           sample aspect ratio (in lowest terms, or the closest ratio of 24-bit terms);
- *           the bitrate, the key frame interval and the real-time request do not apply, every frame being a key
- *           frame of one quality.
+ * @implNote This implementation passes the decoder options on unchanged. It encodes 4:2:0 at the
+ *           {@link TheoraEncoderOptions#defaults()} quality, with the requested frame rate, color description,
+ *           sample aspect ratio (in lowest terms, or the closest ratio of 24-bit terms) and key frame interval
+ *           ({@link TheoraEncoderOptions#DEFAULT_KEYFRAME_INTERVAL} when none is requested, and key frames only at
+ *           the start, on request and at scene cuts when periodic key frames are off); the bitrate and the
+ *           real-time request do not apply, every frame being coded at one quality.
  */
 public final class TheoraCodecProvider implements VideoCodecProvider {
     /**
@@ -51,6 +52,11 @@ public final class TheoraCodecProvider implements VideoCodecProvider {
         var builder = TheoraEncoderOptions.builder().frameRate(options.frameRate());
         options.color().ifPresent(builder::color);
         options.sampleAspectRatio().ifPresent(sar -> builder.sampleAspectRatio(SampleAspects.fit(sar, 0xFFFFFF)));
+        if (!options.periodicKeyframes()) {
+            builder.noPeriodicKeyframes();
+        } else {
+            options.keyframeInterval().ifPresent(builder::keyframeInterval);
+        }
         return new TheoraEncoder(options.width(), options.height(), builder.build());
     }
 }

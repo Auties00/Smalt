@@ -581,15 +581,16 @@ final class VideoWorkloads {
 
     /**
      * Returns a workload that encodes frames with the Theora encoder at a fine quality in 4:2:0 and at a coarse one
-     * in 4:4:4, on the calling thread.
+     * in 4:4:4, on the calling thread: a key frame every 8 frames and inter frames between them.
      *
      * @return the workload
      */
     private static TrainingWorkload theoraEncode() {
         var pictures = SyntheticVideo.natural(SMALL_WIDTH, SMALL_HEIGHT, 2);
-        var fine = new TheoraEncoder(SMALL_WIDTH, SMALL_HEIGHT);
+        var fine = new TheoraEncoder(SMALL_WIDTH, SMALL_HEIGHT, TheoraEncoderOptions.builder().keyframeInterval(8)
+                .build());
         var coarse = new TheoraEncoder(SMALL_WIDTH, SMALL_HEIGHT, TheoraEncoderOptions.builder().quality(10)
-                .chromaFormat(ChromaFormat.YUV444).build());
+                .keyframeInterval(8).chromaFormat(ChromaFormat.YUV444).build());
         long[] pts = {0};
         java.util.function.Consumer<Packet> output = packet -> Blackhole.consume(packet.size());
         return TrainingWorkload.of("theora-encode", () -> {

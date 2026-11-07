@@ -7,3 +7,10 @@ interval each name gives, and decoded by `smalt-theoradec` (`tools/testdata/theo
 built from its release source, BSD 3-Clause, post-processing off) to record the MD5 of every decoded picture in
 `expected.tsv`, also with an empty packet after every third data packet (`#dup`) and with the first data packet
 dropped (`#nokey`). `../theora.sha256` pins every file.
+
+`smalt-*.packets` are streams of Smalt's own Theora encoder (key frames, inter frames of every macro block mode,
+scene cuts and short key frame intervals) for the synthetic clips of `TheoraClips` (a texture panning by half
+samples, a moving square, a noise patch and a scene cut), written by `TheoraEncoderReferenceTest` when it runs with
+`-Dsmalt.test.updateDumps=true`, in the packet listing `smalt-theoradec` reads (each packet, the three headers
+first, as a 32-bit little-endian length and its bytes). `tools/testdata/theora-oracle/make-encoder-vectors.py`
+decodes them with `smalt-theoradec` into the MD5s of `encoder-expected.tsv` and pins them in `../theora.sha256`.

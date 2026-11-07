@@ -98,7 +98,7 @@ class TheoraEncoderTest {
             encoder.encode(new VideoFrame(source, i * 3000L, 3000L, true), packet -> packets.add(packet.withTrackId(1)));
         }
         assertEquals(4, packets.size());
-        assertTrue(packets.stream().allMatch(Packet::keyframe));
+        assertTrue(packets.getFirst().keyframe());
         var track = VideoTrack.builder().id(1).codec(Codec.THEORA).timeBase(encoder.timeBase()).width(width)
                 .height(height).frameRate(new Rational(30, 1)).codecConfig(encoder.codecConfig().orElseThrow())
                 .build();
@@ -109,7 +109,7 @@ class TheoraEncoderTest {
             var frames = new ArrayList<VideoFrame>();
             decoder.decode(packets.get(index), frames::add);
             assertEquals(1, frames.size());
-            assertTrue(frames.getFirst().keyframe());
+            assertEquals(packets.get(index).keyframe(), frames.getFirst().keyframe());
             var decoded = raw((YuvPicture) frames.getFirst().picture());
             var psnr = Quality.psnr(raw(sources.get(index)), decoded);
             assertTrue(psnr > (quality >= 40 ? 34 : 24), "frame " + index + " PSNR " + psnr);

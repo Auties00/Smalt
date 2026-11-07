@@ -1,7 +1,8 @@
 """Makes the seeds of video's VideoFuzzTest.theora from the Theora test vectors (make-vectors.py), as FuzzPackets
 inputs (core/src/test/java/.../testkit/fuzz/FuzzPackets.java): the options byte (0), the coded frame size, the three
 headers Xiph-laced as the configuration, then the first data packets behind the marker with their key frame flags, an
-empty packet (a dropped frame) after the second.
+empty packet (a dropped frame) after the second. The smalt-*.packets listings of make-encoder-vectors.py (Smalt's
+encoder) are read as well.
 
 Usage: python -I make-fuzz-seeds.py <vector directory> <output directory>
 """
@@ -16,6 +17,7 @@ SEEDS = [
     ('420-motion', 'valid-420-motion.bin', 5),
     ('422-odd', 'valid-422-cropped.bin', 3),
     ('444-bitrate', 'valid-444-bitrate.bin', 3),
+    ('smalt-420.packets', 'valid-420-smalt-inter.bin', 6),
 ]
 
 
@@ -37,6 +39,16 @@ def ogg_packets(data):
     return packets
 
 
+def listed_packets(data):
+    """Returns the packets of a packet listing of make-encoder-vectors.py: a 32-bit little-endian length each."""
+    packets, position = [], 0
+    while position < len(data):
+        length = struct.unpack_from('<I', data, position)[0]
+        packets.append(data[position + 4:position + 4 + length])
+        position += 4 + length
+    return packets
+
+
 def xiph_lace(packets):
     out = bytearray([len(packets) - 1])
     for packet in packets[:-1]:
@@ -54,8 +66,12 @@ def main():
     vectors, out = sys.argv[1], sys.argv[2]
     os.makedirs(out, exist_ok=True)
     for vector, name, count in SEEDS:
-        with open(os.path.join(vectors, vector + '.ogv'), 'rb') as f:
-            packets = ogg_packets(f.read())
+        if vector.endswith('.packets'):
+            with open(os.path.join(vectors, vector), 'rb') as f:
+                packets = listed_packets(f.read())
+        else:
+            with open(os.path.join(vectors, vector + '.ogv'), 'rb') as f:
+                packets = ogg_packets(f.read())
         headers, data = packets[:3], packets[3:3 + count]
         identification = headers[0]
         width = struct.unpack_from('>H', identification, 10)[0] << 4
