@@ -2,6 +2,8 @@
    License. Modified for Smalt. */
 package com.github.auties00.smalt.audio.opus.internal.celt;
 
+import com.github.auties00.smalt.audio.opus.internal.dnn.LpcnetPlc;
+
 import java.util.Arrays;
 
 /**
@@ -12,7 +14,11 @@ import java.util.Arrays;
  * given at construction. Output samples are interleaved floats nominally in {@code [-1, 1]}.
  * Any byte sequence decodes without failing: a corrupt frame yields some audio.
  *
- * @implNote This implementation omits Deep PLC, DRED and custom modes, keeps the trailing arrays of the reference state
+ * <p>A decoder put in deep PLC mode ({@link #setDeepPlc}) behaves as the reference built with
+ * {@code ENABLE_DEEP_PLC}: it feeds the 16 kHz deep PLC with the decoded history and, at a complexity of at least 5 or
+ * while DRED features are queued, conceals with it.
+ *
+ * @implNote This implementation omits custom modes, keeps the trailing arrays of the reference state
  * ({@code _decode_mem}, {@code lpc}, {@code oldBandE}, {@code oldLogE}, {@code oldLogE2}, {@code backgroundLogE}) as
  * separate arrays and allocates the stack buffers of a frame once per decoder. The float build ignores the
  * {@code accum} argument, and so does this implementation. A start band not below the end band, which the reference
@@ -28,6 +34,80 @@ public final class CeltDecoder {
      * The largest pitch lag of the pitch-based concealment ({@code PLC_PITCH_LAG_MAX}).
      */
     private static final int PLC_PITCH_LAG_MAX = 720;
+
+    /**
+     * The number of 10 ms frames of 16 kHz history the deep PLC receives on a loss ({@code PLC_UPDATE_FRAMES}).
+     */
+    private static final int PLC_UPDATE_FRAMES = 4;
+
+    /**
+     * The number of 16 kHz samples of {@link #PLC_UPDATE_FRAMES} frames ({@code PLC_UPDATE_SAMPLES}).
+     */
+    private static final int PLC_UPDATE_SAMPLES = PLC_UPDATE_FRAMES * LpcnetPlc.FRAME_SIZE;
+
+    /**
+     * The order of the 3:1 resampling filter between 48 and 16 kHz ({@code SINC_ORDER}).
+     */
+    private static final int SINC_ORDER = 48;
+
+    /**
+     * The pre-emphasis of the deep PLC ({@code PREEMPHASIS} of the LPCNet analysis).
+     */
+    private static final float DNN_PREEMPHASIS = 0.85f;
+
+    /**
+     * The 3:1 resampling filter, {@code h=cos(pi/2*abs(sin([-24:24]/48*pi*23./24)).^2);
+     * b=sinc([-24:24]/3*1.02).*h; b=b/sum(b)} ({@code sinc_filter}).
+     */
+    private static final float[] SINC_FILTER = {
+        4.2931e-05f, -0.000190293f, -0.000816132f, -0.000637162f, 0.00141662f, 0.00354764f, 0.00184368f,
+        -0.00428274f, -0.00856105f, -0.0034003f, 0.00930201f, 0.0159616f, 0.00489785f, -0.0169649f, -0.0259484f,
+        -0.00596856f, 0.0286551f, 0.0405872f, 0.00649994f, -0.0509284f, -0.0716655f, -0.00665212f, 0.134336f,
+        0.278927f, 0.339995f, 0.278927f, 0.134336f, -0.00665212f, -0.0716655f, -0.0509284f, 0.00649994f,
+        0.0405872f, 0.0286551f, -0.00596856f, -0.0259484f, -0.0169649f, 0.00489785f, 0.0159616f, 0.00930201f,
+        -0.0034003f, -0.00856105f, -0.00428274f, 0.00184368f, 0.00354764f, 0.00141662f, -0.000637162f,
+        -0.000816132f, -0.000190293f, 4.2931e-05f
+    };
+
+    /**
+     * Whether the decoder behaves as the reference built with the deep PLC.
+     */
+    private boolean deepPlc;
+
+    /**
+     * The decoder complexity, from 0 to 10; the deep PLC conceals on its own from 5.
+     */
+    private int complexity;
+
+    /**
+     * The 16 kHz deep PLC output not yet resampled ({@code plc_pcm}).
+     */
+    private final short[] plc_pcm = new short[PLC_UPDATE_SAMPLES];
+
+    /**
+     * The number of valid samples of {@link #plc_pcm}.
+     */
+    private int plc_fill;
+
+    /**
+     * The pre-emphasis memory between the deep PLC and the history ({@code plc_preemphasis_mem}).
+     */
+    private float plc_preemphasis_mem;
+
+    /**
+     * The mono 48 kHz history of {@code update_plc_state}.
+     */
+    private final float[] buf48k = new float[DECODE_BUFFER_SIZE];
+
+    /**
+     * The 16 kHz history of {@code update_plc_state}.
+     */
+    private final short[] buf16k = new short[PLC_UPDATE_SAMPLES];
+
+    /**
+     * The pitch-based concealment of the first overlap of each channel, cross-faded into the deep PLC output.
+     */
+    private final float[] bufCopy;
 
     /**
      * The smallest pitch lag of the pitch-based concealment ({@code PLC_PITCH_LAG_MIN}).
@@ -340,7 +420,20 @@ public final class CeltDecoder {
         this.collapse_masks = new int[2 * nb];
         this.allocScratch = new int[][]{new int[nb], new int[nb], new int[nb], new int[nb]};
         this.etmp = new float[overlap];
+        this.bufCopy = new float[channels * overlap];
         resetState();
+    }
+
+    /**
+     * Selects whether the decoder behaves as the reference built with the deep PLC, and the complexity that enables
+     * it ({@code OPUS_SET_COMPLEXITY}).
+     *
+     * @param enabled whether the deep PLC is built in
+     * @param complexity the decoder complexity, from 0 to 10
+     */
+    public void setDeepPlc(boolean enabled, int complexity) {
+        this.deepPlc = enabled;
+        this.complexity = complexity;
     }
 
     /**
@@ -379,6 +472,9 @@ public final class CeltDecoder {
             oldLogE[i] = oldLogE2[i] = -28.f;
         }
         skip_plc = 1;
+        Arrays.fill(plc_pcm, (short) 0);
+        plc_fill = 0;
+        plc_preemphasis_mem = 0;
     }
 
     /**
@@ -673,7 +769,7 @@ public final class CeltDecoder {
      * @param N  the frame size at 48 kHz
      * @param LM the frame size shift
      */
-    private void celtDecodeLost(int N, int LM) {
+    private void celtDecodeLost(int N, int LM, LpcnetPlc lpcnet) {
         var C = channels;
         var nbEBands = mode.nbEBands;
         var eBands = mode.eBands;
@@ -681,7 +777,12 @@ public final class CeltDecoder {
         var outSyn1 = decodeMem(C > 1 ? 1 : 0) + DECODE_BUFFER_SIZE - N;
         var lossDuration = loss_duration;
         var st = start;
-        var noiseBased = lossDuration >= 40 || st != 0 || skip_plc != 0;
+        boolean noiseBased;
+        if (lpcnet != null) {
+            noiseBased = st != 0 || (lpcnet.fec_fill_pos == 0 && (skip_plc != 0 || lossDuration >= 80));
+        } else {
+            noiseBased = lossDuration >= 40 || st != 0 || skip_plc != 0;
+        }
         if (noiseBased) {
             int seed;
             int end;
@@ -727,6 +828,9 @@ public final class CeltDecoder {
             var fade = 1.0f;
             int pitchIndex;
             if (lossDuration == 0) {
+                if (lpcnet != null) {
+                    updatePlcState(lpcnet, C);
+                }
                 last_pitch_index = pitchIndex = celtPlcPitchSearch(C);
             } else {
                 pitchIndex = last_pitch_index;
@@ -813,9 +917,111 @@ public final class CeltDecoder {
                     }
                 }
             } while (++c < C);
+            if (lpcnet != null && (complexity >= 5 || lpcnet.fec_fill_pos > 0)) {
+                deepConceal(lpcnet, N, C, lossDuration, window);
+            }
             prefilter_and_fold = 1;
         }
         loss_duration = Math.min(10000, lossDuration + (1 << LM));
+    }
+
+    /**
+     * Feeds the deep PLC with the last 40 ms of history, resampled to 16 kHz, without consuming queued DRED
+     * features ({@code update_plc_state}).
+     */
+    private void updatePlcState(LpcnetPlc lpcnet, int CC) {
+        var d0 = decodeMem(0);
+        if (CC == 1) {
+            System.arraycopy(decode_mem, d0, buf48k, 0, DECODE_BUFFER_SIZE);
+        } else {
+            var d1 = decodeMem(1);
+            for (var i = 0; i < DECODE_BUFFER_SIZE; i++) {
+                buf48k[i] = (float) (.5 * (decode_mem[d0 + i] + decode_mem[d1 + i]));
+            }
+        }
+        for (var i = 1; i < DECODE_BUFFER_SIZE; i++) {
+            buf48k[i] += DNN_PREEMPHASIS * buf48k[i - 1];
+        }
+        plc_preemphasis_mem = buf48k[DECODE_BUFFER_SIZE - 1];
+        var offset = DECODE_BUFFER_SIZE - SINC_ORDER - 1 - 3 * (PLC_UPDATE_SAMPLES - 1);
+        for (var i = 0; i < PLC_UPDATE_SAMPLES; i++) {
+            var sum = 0f;
+            for (var j = 0; j < SINC_ORDER + 1; j++) {
+                sum += buf48k[3 * i + j + offset] * SINC_FILTER[j];
+            }
+            var low = -32767.f > sum ? -32767.f : sum;
+            var clamped = 32767.f < low ? 32767.f : low;
+            buf16k[i] = (short) MathOps.float2int(clamped);
+        }
+        var readPos = lpcnet.fec_read_pos;
+        var skip = lpcnet.fec_skip;
+        for (var i = 0; i < PLC_UPDATE_FRAMES; i++) {
+            lpcnet.update(buf16k, LpcnetPlc.FRAME_SIZE * i);
+        }
+        lpcnet.fec_read_pos = readPos;
+        lpcnet.fec_skip = skip;
+    }
+
+    /**
+     * Replaces the pitch-based concealment of a frame by the deep PLC output resampled to 48 kHz, cross-faded over
+     * the first overlap of a loss; the deep PLC is mono, so both channels get the same signal.
+     */
+    private void deepConceal(LpcnetPlc lpcnet, int N, int C, int lossDuration, float[] window) {
+        var buf = decodeMem(0);
+        var c = 0;
+        do {
+            System.arraycopy(decode_mem, decodeMem(c) + DECODE_BUFFER_SIZE - N, bufCopy, c * overlap, overlap);
+        } while (++c < C);
+        var samplesNeeded16k = (N + SINC_ORDER + overlap) / 3;
+        if (lossDuration == 0) {
+            plc_fill = 0;
+        }
+        while (plc_fill < samplesNeeded16k) {
+            lpcnet.conceal(plc_pcm, plc_fill);
+            plc_fill += LpcnetPlc.FRAME_SIZE;
+        }
+        for (var i = 0; i < (N + overlap) / 3; i++) {
+            var sum = 0f;
+            for (var j = 0; j < 17; j++) {
+                sum += 3 * plc_pcm[i + j] * SINC_FILTER[3 * j];
+            }
+            decode_mem[buf + DECODE_BUFFER_SIZE - N + 3 * i] = sum;
+            sum = 0f;
+            for (var j = 0; j < 16; j++) {
+                sum += 3 * plc_pcm[i + j + 1] * SINC_FILTER[3 * j + 2];
+            }
+            decode_mem[buf + DECODE_BUFFER_SIZE - N + 3 * i + 1] = sum;
+            sum = 0f;
+            for (var j = 0; j < 16; j++) {
+                sum += 3 * plc_pcm[i + j + 1] * SINC_FILTER[3 * j + 1];
+            }
+            decode_mem[buf + DECODE_BUFFER_SIZE - N + 3 * i + 2] = sum;
+        }
+        System.arraycopy(plc_pcm, N / 3, plc_pcm, 0, plc_fill - N / 3);
+        plc_fill -= N / 3;
+        for (var i = 0; i < N; i++) {
+            var tmp = decode_mem[buf + DECODE_BUFFER_SIZE - N + i];
+            decode_mem[buf + DECODE_BUFFER_SIZE - N + i] -= DNN_PREEMPHASIS * plc_preemphasis_mem;
+            plc_preemphasis_mem = tmp;
+        }
+        var overlapMem = plc_preemphasis_mem;
+        for (var i = 0; i < overlap; i++) {
+            var tmp = decode_mem[buf + DECODE_BUFFER_SIZE + i];
+            decode_mem[buf + DECODE_BUFFER_SIZE + i] -= DNN_PREEMPHASIS * overlapMem;
+            overlapMem = tmp;
+        }
+        if (C == 2) {
+            System.arraycopy(decode_mem, buf, decode_mem, decodeMem(1), DECODE_BUFFER_SIZE + overlap);
+        }
+        c = 0;
+        do {
+            if (lossDuration == 0) {
+                var d = decodeMem(c) + DECODE_BUFFER_SIZE - N;
+                for (var i = 0; i < overlap; i++) {
+                    decode_mem[d + i] = (1 - window[i]) * bufCopy[c * overlap + i] + window[i] * decode_mem[d + i];
+                }
+            }
+        } while (++c < C);
     }
 
     /**
@@ -838,6 +1044,29 @@ public final class CeltDecoder {
      */
     public int decodeWithEc(byte[] data, int dataOff, int len, float[] pcm, int pcmOff, int frameSize,
                             RangeDecoder dec, int accum) {
+        return decodeWithEc(data, dataOff, len, pcm, pcmOff, frameSize, dec, accum, null);
+    }
+
+    /**
+     * Decodes one CELT frame, or conceals a lost one with the deep PLC available
+     * ({@code celt_decode_with_ec_dred}).
+     *
+     * @param data      the frame, or {@code null} to conceal
+     * @param dataOff   the index of the first frame byte
+     * @param len       the frame length in bytes, at most 1275
+     * @param pcm       receives {@code frameSize * channels} interleaved samples
+     * @param pcmOff    the index of the first output sample
+     * @param frameSize the frame size at the output rate
+     * @param dec       the range decoder to continue, or {@code null}
+     * @param accum     ignored, as in the float build of the reference
+     * @param lpcnet    the deep PLC of the Opus decoder, or {@code null} outside deep PLC mode
+     * @return the number of samples per channel written, or a negative Opus error code
+     */
+    public int decodeWithEc(byte[] data, int dataOff, int len, float[] pcm, int pcmOff, int frameSize,
+                            RangeDecoder dec, int accum, LpcnetPlc lpcnet) {
+        if (!deepPlc) {
+            lpcnet = null;
+        }
         int c, i, N;
         int spreadDecision;
         int bits;
@@ -890,9 +1119,12 @@ public final class CeltDecoder {
             effEnd = mode.effEBands;
         }
         if (data == null || len <= 1) {
-            celtDecodeLost(N, LM);
+            celtDecodeLost(N, LM, lpcnet);
             deemphasis(decode_mem, outSyn0, outSyn1, pcm, pcmOff, N, CC, downsample, mode.preemph, preemph_memD);
             return frameSize / downsample;
+        }
+        if (lpcnet != null) {
+            lpcnet.blend = false;
         }
         if (loss_duration == 0) {
             skip_plc = 0;

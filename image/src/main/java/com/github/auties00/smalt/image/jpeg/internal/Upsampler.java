@@ -182,4 +182,165 @@ public final class Upsampler {
             }
         }
     }
+
+    /**
+     * Upsamples one plane of 12-bit samples, with the filters and the filter choice of
+     * {@link #upsample(byte[], int, int, int, int, int, int, int, int, int, boolean)}.
+     *
+     * @param input the component samples, from 0 to 4095
+     * @param inputStride the input row stride
+     * @param inputWidth the meaningful input width, positive
+     * @param inputHeight the meaningful input height, positive
+     * @param h the component's horizontal sampling factor
+     * @param v the component's vertical sampling factor
+     * @param hMax the frame's largest horizontal sampling factor
+     * @param vMax the frame's largest vertical sampling factor
+     * @param width the output width
+     * @param height the output height
+     * @param fancy whether the triangle filter may be used
+     * @return the upsampled plane, {@code width} samples per row with a tight stride
+     */
+    public static short[] upsample(short[] input, int inputStride, int inputWidth, int inputHeight, int h, int v,
+                                   int hMax, int vMax, int width, int height, boolean fancy) {
+        var output = new short[width * height];
+        var integral = hMax % h == 0 && vMax % v == 0;
+        var rx = hMax / h;
+        var ry = vMax / v;
+        if (integral && fancy && rx == 2 && ry == 1 && inputWidth > 2) {
+            h2v1(input, inputStride, inputWidth, output, width, height);
+        } else if (integral && fancy && rx == 1 && ry == 2) {
+            h1v2(input, inputStride, inputWidth, inputHeight, output, width, height);
+        } else if (integral && fancy && rx == 2 && ry == 2 && inputWidth > 2) {
+            h2v2(input, inputStride, inputWidth, inputHeight, output, width, height);
+        } else {
+            nearest(input, inputStride, inputWidth, inputHeight, h, v, hMax, vMax, output, width, height);
+        }
+        return output;
+    }
+
+    /**
+     * Upsamples 12-bit samples by two horizontally with the triangle filter.
+     *
+     * @param input the input samples
+     * @param inputStride the input row stride
+     * @param inputWidth the input width, at least 3
+     * @param output the output plane
+     * @param width the output width
+     * @param height the output height, equal to the input height
+     */
+    private static void h2v1(short[] input, int inputStride, int inputWidth, short[] output, int width, int height) {
+        var row = new short[inputWidth * 2];
+        for (var y = 0; y < height; y++) {
+            var in = y * inputStride;
+            int value = input[in];
+            row[0] = (short) value;
+            row[1] = (short) ((value * 3 + input[in + 1] + 2) >> 2);
+            for (var x = 1; x < inputWidth - 1; x++) {
+                var near = input[in + x] * 3;
+                row[2 * x] = (short) ((near + input[in + x - 1] + 1) >> 2);
+                row[2 * x + 1] = (short) ((near + input[in + x + 1] + 2) >> 2);
+            }
+            var last = inputWidth - 1;
+            value = input[in + last];
+            row[2 * last] = (short) ((value * 3 + input[in + last - 1] + 1) >> 2);
+            row[2 * last + 1] = (short) value;
+            System.arraycopy(row, 0, output, y * width, width);
+        }
+    }
+
+    /**
+     * Upsamples 12-bit samples by two vertically with the triangle filter.
+     *
+     * @param input the input samples
+     * @param inputStride the input row stride
+     * @param inputWidth the input width, equal to the output width
+     * @param inputHeight the input height
+     * @param output the output plane
+     * @param width the output width
+     * @param height the output height
+     */
+    private static void h1v2(short[] input, int inputStride, int inputWidth, int inputHeight, short[] output,
+                             int width, int height) {
+        for (var y = 0; y < height; y++) {
+            var near = y >> 1;
+            var far = (y & 1) == 0 ? Math.max(near - 1, 0) : Math.min(near + 1, inputHeight - 1);
+            var bias = (y & 1) == 0 ? 1 : 2;
+            var a = near * inputStride;
+            var b = far * inputStride;
+            var out = y * width;
+            var columns = Math.min(width, inputWidth);
+            for (var x = 0; x < columns; x++) {
+                output[out + x] = (short) ((input[a + x] * 3 + input[b + x] + bias) >> 2);
+            }
+        }
+    }
+
+    /**
+     * Upsamples 12-bit samples by two in both directions with the triangle filter.
+     *
+     * @param input the input samples
+     * @param inputStride the input row stride
+     * @param inputWidth the input width, at least 3
+     * @param inputHeight the input height
+     * @param output the output plane
+     * @param width the output width
+     * @param height the output height
+     */
+    private static void h2v2(short[] input, int inputStride, int inputWidth, int inputHeight, short[] output,
+                             int width, int height) {
+        var row = new short[inputWidth * 2];
+        for (var y = 0; y < height; y++) {
+            var near = y >> 1;
+            var far = (y & 1) == 0 ? Math.max(near - 1, 0) : Math.min(near + 1, inputHeight - 1);
+            var a = near * inputStride;
+            var b = far * inputStride;
+            var thisSum = input[a] * 3 + input[b];
+            var nextSum = input[a + 1] * 3 + input[b + 1];
+            row[0] = (short) ((thisSum * 4 + 8) >> 4);
+            row[1] = (short) ((thisSum * 3 + nextSum + 7) >> 4);
+            var lastSum = thisSum;
+            thisSum = nextSum;
+            for (var x = 1; x < inputWidth - 1; x++) {
+                nextSum = input[a + x + 1] * 3 + input[b + x + 1];
+                row[2 * x] = (short) ((thisSum * 3 + lastSum + 8) >> 4);
+                row[2 * x + 1] = (short) ((thisSum * 3 + nextSum + 7) >> 4);
+                lastSum = thisSum;
+                thisSum = nextSum;
+            }
+            var last = inputWidth - 1;
+            row[2 * last] = (short) ((thisSum * 3 + lastSum + 8) >> 4);
+            row[2 * last + 1] = (short) ((thisSum * 4 + 7) >> 4);
+            System.arraycopy(row, 0, output, y * width, width);
+        }
+    }
+
+    /**
+     * Upsamples 12-bit samples by replicating the input sample that covers each output sample.
+     *
+     * @param input the input samples
+     * @param inputStride the input row stride
+     * @param inputWidth the input width
+     * @param inputHeight the input height
+     * @param h the component's horizontal sampling factor
+     * @param v the component's vertical sampling factor
+     * @param hMax the frame's largest horizontal sampling factor
+     * @param vMax the frame's largest vertical sampling factor
+     * @param output the output plane
+     * @param width the output width
+     * @param height the output height
+     */
+    private static void nearest(short[] input, int inputStride, int inputWidth, int inputHeight, int h, int v,
+                                int hMax, int vMax, short[] output, int width, int height) {
+        var columns = new int[width];
+        for (var x = 0; x < width; x++) {
+            columns[x] = Math.min((int) ((long) x * h / hMax), inputWidth - 1);
+        }
+        for (var y = 0; y < height; y++) {
+            var source = Math.min((int) ((long) y * v / vMax), inputHeight - 1) * inputStride;
+            var out = y * width;
+            for (var x = 0; x < width; x++) {
+                output[out + x] = input[source + columns[x]];
+            }
+        }
+    }
 }

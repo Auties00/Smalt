@@ -2,6 +2,7 @@ package com.github.auties00.smalt.container.subtitle;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.Muxer;
+import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.internal.subtitle.CueMerger;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.subtitle.SubtitleCue;
@@ -102,6 +103,7 @@ abstract sealed class CueFileMuxer implements Muxer permits SubRipMuxer, WebVttM
         if (track == null || packet.trackId() != track.id()) {
             throw new IllegalArgumentException("packet for undeclared track " + packet.trackId());
         }
+        ConfigChanges.reject(packet, track.codecConfig().orElse(null), "a subtitle file");
         start();
         var cue = decoder.decode(packet);
         if (cue != null) {
