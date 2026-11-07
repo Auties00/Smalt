@@ -43,6 +43,11 @@ final class PitchAnalysisCoreFlp {
     private final short[] frame_8_FIX = new short[PE_MAX_FRAME_LENGTH_MS * 8];
 
     /**
+     * The work array of the 12 to 8 kHz downsampler.
+     */
+    private final int[] down2_3Buf = new int[ResamplerDown.DOWN2_3_BUFFER];
+
+    /**
      * The 4 kHz frame as 16-bit integers.
      */
     private final short[] frame_4_FIX = new short[PE_MAX_FRAME_LENGTH_MS * 4];
@@ -179,7 +184,7 @@ final class PitchAnalysisCoreFlp {
         } else if (Fs_kHz == 12) {
             SigProcFlp.float2shortArray(frame_FIX, 0, frame, frameOff, frame_length);
             Arrays.fill(filt_state, 0);
-            ResamplerDown.down2_3(filt_state, frame_8_FIX, 0, frame_FIX, 0, frame_length);
+            ResamplerDown.down2_3(filt_state, frame_8_FIX, 0, frame_FIX, 0, frame_length, down2_3Buf);
             SigProcFlp.short2floatArray(frame_8kHz, 0, frame_8_FIX, 0, frame_length_8kHz);
         } else {
             SigProcFlp.float2shortArray(frame_8_FIX, 0, frame, frameOff, frame_length_8kHz);
