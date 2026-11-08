@@ -1,5 +1,11 @@
 package com.github.auties00.smalt.internal.codec;
 
+import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.audio.Speaker;
+
+import java.util.Collections;
+import java.util.List;
+
 /**
  * Reads the frame structure of AMR-NB and AMR-WB in the RFC 4867 storage format and builds the
  * {@code AMRSpecificBox} ({@code damr}) of 3GPP TS 26.244 that the MP4 {@code samr} and
@@ -39,6 +45,34 @@ public final class AmrConfigs {
      */
     public static int payloadSize(boolean wideband, int type) {
         return (wideband ? WB_SIZES : NB_SIZES)[type & 0x0F];
+    }
+
+    /**
+     * Returns the channel layout of an AMR storage file or RTP session with a channel count, in
+     * the channel order of RFC 3551 section 4.1 that RFC 4867 prescribes.
+     *
+     * @param channels the channel count, from 1 to 15
+     * @return the layout; counts above 6 have no defined order and map to unknown speakers
+     * @throws IllegalArgumentException if {@code channels} is not positive
+     */
+    public static ChannelLayout storageLayout(int channels) {
+        return switch (channels) {
+            case 1 -> ChannelLayout.MONO;
+            case 2 -> ChannelLayout.STEREO;
+            case 3 -> new ChannelLayout(List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.FRONT_CENTER));
+            case 4 -> new ChannelLayout(List.of(Speaker.FRONT_LEFT, Speaker.FRONT_CENTER, Speaker.FRONT_RIGHT,
+                    Speaker.BACK_CENTER));
+            case 5 -> new ChannelLayout(List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.FRONT_CENTER,
+                    Speaker.BACK_LEFT, Speaker.BACK_RIGHT));
+            case 6 -> new ChannelLayout(List.of(Speaker.FRONT_LEFT, Speaker.FRONT_LEFT_OF_CENTER,
+                    Speaker.FRONT_CENTER, Speaker.FRONT_RIGHT, Speaker.FRONT_RIGHT_OF_CENTER, Speaker.BACK_CENTER));
+            default -> {
+                if (channels <= 0) {
+                    throw new IllegalArgumentException("invalid channel count " + channels);
+                }
+                yield new ChannelLayout(Collections.nCopies(channels, Speaker.UNKNOWN));
+            }
+        };
     }
 
     /**

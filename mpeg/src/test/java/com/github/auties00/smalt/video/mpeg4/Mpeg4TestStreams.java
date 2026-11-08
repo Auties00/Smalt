@@ -111,10 +111,35 @@ final class Mpeg4TestStreams {
         return out.toByteArray();
     }
 
+    /**
+     * Decodes a raw elementary stream with the ISO/IEC 14496-5 reference decoder ({@code tools/testdata/mpeg4-oracle}):
+     * planar 4:2:0 frames of the given size, in display order.
+     */
+    static byte[] reference(Path file, int width, int height, Path work) {
+        return reference(Oracle.Tool.MPEG4REF, file, width, height, work);
+    }
+
+    /**
+     * Decodes a raw elementary stream with one edition of the ISO/IEC 14496-5 reference decoder, {@link
+     * Oracle.Tool#MPEG4REF} or {@link Oracle.Tool#MPEG4REF_2004}.
+     */
+    static byte[] reference(Oracle.Tool decoder, Path file, int width, int height, Path work) {
+        Oracle.assume(decoder);
+        var base = work.resolve(file.getFileName() + "." + decoder.id());
+        Oracle.run(decoder, Duration.ofMinutes(10), List.of(file.toString(), base.toString(),
+                Integer.toString(width), Integer.toString(height)));
+        try {
+            return java.nio.file.Files.readAllBytes(Path.of(base + ".yuv"));
+        } catch (java.io.IOException exception) {
+            throw new java.io.UncheckedIOException(exception);
+        }
+    }
+
     static byte[] ffmpeg(Path file, String idct) {
         var arguments = new ArrayList<String>(List.of("-v", "error"));
         if (idct != null) {
-            arguments.addAll(List.of("-idct", idct));
+            // -cpuflags 0: the reference is ffmpeg's C inverse DCT, which its arm64 NEON kernels do not reproduce.
+            arguments.addAll(List.of("-cpuflags", "0", "-idct", idct));
         }
         arguments.addAll(List.of("-i", file.toString(), "-map", "0:v:0", "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "yuv420p", "-"));
         return Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(5), arguments);

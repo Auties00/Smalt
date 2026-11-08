@@ -5,6 +5,7 @@ package com.github.auties00.smalt.image.avif;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.AnimationWriter;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.gainmap.GainMap;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.io.MediaSink;
@@ -100,6 +101,88 @@ public final class AvifEncoder {
     public static void encode(Picture picture, AvifEncoderOptions options, MediaSink sink) {
         Objects.requireNonNull(sink, "sink");
         sink.write(encode(picture, options));
+    }
+
+    /**
+     * Encodes a picture with its gain map as an AVIF file, with the {@link AvifEncoderOptions#defaults()} for both
+     * images.
+     *
+     * @param picture the picture, the base rendition
+     * @param gainMap the gain map of the picture
+     * @return the AVIF file
+     * @throws IllegalArgumentException if a metadata value is too large for a 32-bit fraction
+     * @throws MediaException.LimitExceeded if a picture exceeds the default limits
+     * @throws MediaException.Unsupported if the picture's color description cannot be coded
+     * @see #encode(Picture, GainMap, AvifEncoderOptions, AvifEncoderOptions)
+     */
+    public static byte[] encode(Picture picture, GainMap gainMap) {
+        return encode(picture, gainMap, AvifEncoderOptions.defaults(), AvifEncoderOptions.defaults());
+    }
+
+    /**
+     * Encodes a picture with its gain map as an AVIF file (ISO/IEC 23008-12 tone map derived image item, with
+     * ISO 21496-1 metadata), which readers without gain map support show as the picture alone.
+     *
+     * <p>The picture is encoded as {@link #encode(Picture, AvifEncoderOptions)} encodes it, and stays the primary
+     * item. The gain map image is encoded with {@code gainMapOptions} as a hidden item: monochrome when it is a
+     * gray picture, 4:4:4 with the identity matrix otherwise, full range, whatever the chroma format and color of
+     * {@code gainMapOptions}, with the orientation of the picture. A tone map item ({@code tmap}) whose payload is
+     * a version byte, 0, followed by the binary metadata
+     * ({@link com.github.auties00.smalt.image.gainmap.GainMapMetadata#toByteArray()}) derives the alternate
+     * rendition from the color item and the gain map item, in that order; it carries the size of the picture, the
+     * {@linkplain GainMap#alternateProfile() alternate color} (an {@code nclx} property for a profile with a CICP
+     * description, an ICC one otherwise) and the alternate light level, but no orientation, which its two inputs
+     * carry, and an alternatives group ({@code altr}) prefers it to the color item. The file gains the
+     * {@code tmap} brand.
+     *
+     * @param picture the picture, the base rendition
+     * @param gainMap the gain map of the picture
+     * @param options the encoder settings of the picture, including its metadata
+     * @param gainMapOptions the encoder settings of the gain map image: quality, speed, bit depth, losslessness and
+     * threads
+     * @return the AVIF file
+     * @throws IllegalArgumentException if a metadata value is too large for a 32-bit fraction
+     * @throws MediaException.LimitExceeded if a picture exceeds the limits of its options, needs a grid of more than
+     * 256 images per side, or the file would exceed 2 GiB
+     * @throws MediaException.Unsupported if the picture's color description cannot be coded
+     */
+    public static byte[] encode(Picture picture, GainMap gainMap, AvifEncoderOptions options,
+                                AvifEncoderOptions gainMapOptions) {
+        Objects.requireNonNull(picture, "picture");
+        Objects.requireNonNull(gainMap, "gainMap");
+        Objects.requireNonNull(options, "options");
+        Objects.requireNonNull(gainMapOptions, "gainMapOptions");
+        try (var _ = ParallelBands.operation()) {
+            LimitChecks.checkPicture(options.limits(), picture.width(), picture.height());
+            LimitChecks.checkPicture(gainMapOptions.limits(), gainMap.image().width(), gainMap.image().height());
+            try {
+                return AvifStillEncoder.encode(picture, options, gainMap, gainMapOptions);
+            } catch (OutOfMemoryError error) {
+                throw new MediaException.LimitExceeded("out of memory while encoding an AVIF image");
+            }
+        }
+    }
+
+    /**
+     * Encodes a picture with its gain map as an AVIF file and writes it to a sink, from its position.
+     *
+     * <p>The bytes written are those {@link #encode(Picture, GainMap, AvifEncoderOptions, AvifEncoderOptions)}
+     * returns.
+     *
+     * @param picture the picture, the base rendition
+     * @param gainMap the gain map of the picture
+     * @param options the encoder settings of the picture
+     * @param gainMapOptions the encoder settings of the gain map image
+     * @param sink the output; not closed
+     * @throws IllegalArgumentException if a metadata value is too large for a 32-bit fraction
+     * @throws MediaException.LimitExceeded if a picture exceeds the limits of its options
+     * @throws MediaException.Unsupported if the picture's color description cannot be coded
+     * @throws MediaException.Io if writing the sink fails
+     */
+    public static void encode(Picture picture, GainMap gainMap, AvifEncoderOptions options,
+                              AvifEncoderOptions gainMapOptions, MediaSink sink) {
+        Objects.requireNonNull(sink, "sink");
+        sink.write(encode(picture, gainMap, options, gainMapOptions));
     }
 
     /**

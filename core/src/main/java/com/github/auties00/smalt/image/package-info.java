@@ -1,6 +1,7 @@
 /**
- * Pictures and the image codec contracts: planar YUV and RGBA pictures in 8 and 16 bits, color descriptions
- * (primaries, transfer, matrix, range, chroma siting, HDR metadata), orientation, image formats, and the
+ * Pictures and the image codec contracts: planar YUV and RGBA pictures in 8 and 16 bits, channel pictures of any
+ * {@link PixelLayout} (CMYK and multi-ink separations, extra channels, floating-point samples), color
+ * descriptions (primaries, transfer, matrix, range, chroma siting, HDR metadata), orientation, image formats, and the
  * {@link Images} registry that decodes and encodes still images, animations and multi-page files with the
  * codecs present at run time.
  *
