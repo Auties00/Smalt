@@ -7,12 +7,16 @@ import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.audio.alac.AlacDecoder;
 import com.github.auties00.smalt.audio.alac.AlacEncoder;
 import com.github.auties00.smalt.audio.alac.AlacEncoderOptions;
+import com.github.auties00.smalt.audio.mp3.Mp2Program;
+import com.github.auties00.smalt.audio.mp3.Mp3Decoder;
+import com.github.auties00.smalt.audio.mp3.Mp3DecoderOptions;
 import com.github.auties00.smalt.audio.opus.OpusDecoder;
 import com.github.auties00.smalt.audio.opus.OpusDecoderOptions;
 import com.github.auties00.smalt.audio.opus.OpusDred;
 import com.github.auties00.smalt.audio.opus.OpusPackets;
 import com.github.auties00.smalt.testkit.fuzz.Fuzz;
 import com.github.auties00.smalt.testkit.fuzz.FuzzMedia;
+import com.github.auties00.smalt.testkit.fuzz.FuzzPackets;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -25,8 +29,9 @@ import java.util.Collections;
 /**
  * Fuzz targets of the audio decoders of this module (the ADPCM and telephony ones included), fed streams in the
  * {@link com.github.auties00.smalt.testkit.fuzz.FuzzPackets} format (see {@link FuzzMedia#audio}), of the
- * Opus packet parser ({@link OpusPackets}), whose input is one packet, and of the ALAC encoder, whose input is a
- * format and samples that must decode back unchanged.
+ * Opus packet parser ({@link OpusPackets}), whose input is one packet, of the ALAC encoder, whose input is a
+ * format and samples that must decode back unchanged, and of the program selection of the MPEG-2 multichannel
+ * extension ({@link Mp2Program}).
  */
 class AudioFuzzTest {
     @FuzzTest
@@ -194,6 +199,51 @@ class AudioFuzzTest {
     @FuzzTest
     void mp2(byte[] data) {
         FuzzMedia.audio(Codec.MP2, data);
+    }
+
+    /**
+     * Decodes an MPEG-1 Layer II stream in the {@link FuzzPackets} format through the {@link Mp3Decoder} program
+     * selection, then conceals a lost frame. Options bits 0 and 1 select the program ({@link Mp2Program#MAIN},
+     * {@link Mp2Program#SECOND_STEREO}, all multilingual channels, or the one multilingual channel of bits 2 to 4,
+     * 1 to 7), and bit 5 turns the CRC check off; every buffer must have the planes of its layout and finite
+     * samples.
+     */
+    @FuzzTest
+    void mp2Programs(byte[] data) {
+        var run = Fuzz.start("mp2Programs");
+        var input = FuzzPackets.parse(data, FuzzPackets.AUDIO_FIELDS);
+        var bits = input.header().options();
+        var options = Mp3DecoderOptions.builder().limits(Fuzz.LIMITS).crcCheck((bits & 0x20) == 0);
+        switch (bits & 3) {
+            case 0 -> options.program(Mp2Program.MAIN);
+            case 1 -> options.program(Mp2Program.SECOND_STEREO);
+            case 2 -> options.program(Mp2Program.MULTILINGUAL);
+            default -> options.program(Mp2Program.MULTILINGUAL).multilingualChannel(1 + ((bits >> 2) & 7) % 7);
+        }
+        var track = AudioTrack.builder().id(1).codec(Codec.MP2).timeBase(Rational.timeBaseOf(48000)).sampleRate(48000)
+                .layout(ChannelLayout.STEREO).build();
+        var decoder = new Mp3Decoder(track, options.build());
+        java.util.function.Consumer<com.github.auties00.smalt.audio.AudioBuffer> sink = buffer -> {
+            if (buffer.channels() != buffer.layout().channels() || buffer.frames() <= 0) {
+                throw new AssertionError(buffer.frames() + " frames of " + buffer.channels() + " channels in "
+                        + buffer.layout());
+            }
+            for (var c = 0; c < buffer.channels(); c++) {
+                for (var i = 0; i < buffer.frames(); i++) {
+                    if (!Float.isFinite(buffer.plane(c)[i])) {
+                        throw new AssertionError("non-finite sample in channel " + c);
+                    }
+                }
+            }
+            run.output();
+        };
+        var packets = input.packets();
+        for (var index = 0; index < packets.size() && index < 32; index++) {
+            var bytes = packets.get(index).data();
+            var pts = index * 1152L;
+            run.step("packet " + index, () -> decoder.decode(new Packet(1, bytes, pts, pts, 1152, true), sink));
+        }
+        run.step("conceal", () -> decoder.conceal(1152, sink));
     }
 
     @FuzzTest

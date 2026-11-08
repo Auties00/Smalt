@@ -7,6 +7,7 @@ import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.AudioDecoder;
 import com.github.auties00.smalt.audio.AudioDecoderOptions;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.internal.check.Checks;
 import com.github.auties00.smalt.internal.codec.ConsumerFailure;
 import com.github.auties00.smalt.internal.header.MpegAudioHeader;
@@ -17,6 +18,7 @@ import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.PacketFlag;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Objects;
 import java.util.function.Consumer;
 
@@ -36,7 +38,8 @@ import java.util.function.Consumer;
  * the ISO/IEC 13818-3 multichannel extension decode to their full channel configuration, from
  * {@code 3/0} to {@code 3/2} with the low-frequency enhancement channel, in WAVE order (for example
  * {@link ChannelLayout#SURROUND_5_1} for {@code 3/2} with LFE); see {@link Mp3DecoderOptions#multichannel()}
- * for how the extension is recognized and where an extension frame goes.
+ * for how the extension is recognized and where an extension frame goes. {@link Mp3DecoderOptions#program()}
+ * selects the second stereo program or the multilingual channels the extension may carry instead.
  *
  * <p>Layer III main data that begins in earlier frames (the bit reservoir) is carried across
  * packets, so packets must be fed in stream order. A frame whose reservoir bytes are missing (the
@@ -100,6 +103,17 @@ public final class Mp3Decoder implements AudioDecoder {
     private static final int LFE_PERIOD = 96;
 
     /**
+     * The layouts of every count of multilingual channels, by count, each channel of unknown position.
+     */
+    private static final ChannelLayout[] MULTILINGUAL_LAYOUTS = new ChannelLayout[8];
+
+    static {
+        for (var count = 1; count < MULTILINGUAL_LAYOUTS.length; count++) {
+            MULTILINGUAL_LAYOUTS[count] = new ChannelLayout(Collections.nCopies(count, Speaker.UNKNOWN));
+        }
+    }
+
+    /**
      * The resource bounds the decoder enforces.
      */
     private final MediaLimits limits;
@@ -157,6 +171,53 @@ public final class Mp3Decoder implements AudioDecoder {
      * The last low-frequency enhancement sample output, the start of the next interpolation.
      */
     private float lastLfe;
+
+    /**
+     * The program of a multichannel stream that is output.
+     */
+    private final Mp2Program program;
+
+    /**
+     * The multilingual channel output alone, from 1 to 7, or {@code 0} for all of them.
+     */
+    private final int multilingualChannel;
+
+    /**
+     * Whether the last multichannel frame that was not concealed decoded to the selected program, after which a
+     * frame whose extension fails keeps the program's format.
+     */
+    private boolean programEstablished;
+
+    /**
+     * The layout of the selected program's last frame.
+     */
+    private ChannelLayout programLayout;
+
+    /**
+     * The sampling rate of the selected program's last frame.
+     */
+    private int programRate;
+
+    /**
+     * The number of samples per channel of the selected program's frames, 1152 or 576.
+     */
+    private int programFrames;
+
+    /**
+     * The filterbank history of the selected program's channel pairs.
+     */
+    private final float[][] programStates;
+
+    /**
+     * Whether the frame decoded last was output as the selected program, leaving the filterbank history of the main
+     * program behind.
+     */
+    private boolean mainStale;
+
+    /**
+     * Whether the frame decoded last was output as the selected program, in {@link #buffer}.
+     */
+    private boolean programFrame;
 
     /**
      * The bytes of the extension frame following the frame being decoded, or {@code null}.
@@ -299,7 +360,7 @@ public final class Mp3Decoder implements AudioDecoder {
      * Constructs a decoder for an MPEG audio track with MPEG audio specific options.
      *
      * @param track the track; its codec is {@link Codec#MP3} or {@link Codec#MP2}
-     * @param options the limits, CRC check and multichannel settings
+     * @param options the limits, CRC check, multichannel and program settings
      * @throws IllegalArgumentException if the codec is neither
      */
     public Mp3Decoder(AudioTrack track, Mp3DecoderOptions options) {
@@ -321,7 +382,7 @@ public final class Mp3Decoder implements AudioDecoder {
      * Creates a decoder that uses specific options and a specific synthesis kernel.
      *
      * @param track the track; its codec is {@link Codec#MP3} or {@link Codec#MP2}
-     * @param options the limits, CRC check and multichannel settings
+     * @param options the limits, CRC check, multichannel and program settings
      * @param kernel the synthesis kernel
      */
     private Mp3Decoder(AudioTrack track, Mp3DecoderOptions options, SynthesisKernel kernel) {
@@ -331,6 +392,10 @@ public final class Mp3Decoder implements AudioDecoder {
         this.extension = new Mp2Multichannel();
         this.extensionStates = new float[2][15 * 64];
         this.extensionBuffer = new float[2 * 576];
+        this.program = options.program();
+        this.multilingualChannel = options.multilingualChannel().orElse(0);
+        this.programStates = new float[program == Mp2Program.MAIN ? 0 : 4][15 * 64];
+        extension.decodeMultilingual(program == Mp2Program.MULTILINGUAL);
         Objects.requireNonNull(track, "track");
         if (track.codec() != Codec.MP3 && track.codec() != Codec.MP2) {
             throw new IllegalArgumentException("not an MPEG audio track: " + track.codec());
@@ -399,9 +464,10 @@ public final class Mp3Decoder implements AudioDecoder {
      * {@inheritDoc}
      *
      * <p>The concealment unit is the frame length of the last decoded frame (1152 samples per channel for Layers
-     * II and III of MPEG-1, 576 for Layer III of MPEG-2 and MPEG-2.5, 384 for Layer I), or 1152 before the first
-     * frame. Every lost frame is concealed as a frame failing its CRC is (see the class description), so the run of
-     * concealed frames, which fades to silence, continues across the lost frames and the damaged ones around them.
+     * II and III of MPEG-1, 576 for Layer III of MPEG-2 and MPEG-2.5 and for multilingual channels at half the
+     * sampling rate, 384 for Layer I), or 1152 before the first frame. Every lost frame is concealed as a frame
+     * failing its CRC is (see the class description), so the run of concealed frames, which fades to silence,
+     * continues across the lost frames and the damaged ones around them.
      * A Layer III frame after the loss whose main data begins in a lost frame is concealed too, instead of decoding
      * to silence.
      *
@@ -412,7 +478,8 @@ public final class Mp3Decoder implements AudioDecoder {
         Checks.positive("samples", samples);
         Objects.requireNonNull(output, "output");
         var header = previousHeader;
-        var unit = header == 0 ? MAX_FRAME_SAMPLES : MpegAudioHeader.samplesPerFrame(header);
+        var unit = header == 0 ? MAX_FRAME_SAMPLES
+                : programEstablished && isMultichannel(header) ? programFrames : MpegAudioHeader.samplesPerFrame(header);
         var frames = Math.min(Math.max(1, (samples + unit / 2) / unit), Integer.MAX_VALUE / unit);
         layer3.dropReservoir();
         afterLoss = true;
@@ -443,7 +510,11 @@ public final class Mp3Decoder implements AudioDecoder {
         }
         var channels = MpegAudioHeader.channels(header);
         var rate = MpegAudioHeader.sampleRate(header);
-        var multichannelFrame = multichannel && MpegAudioHeader.layer(header) == 2 && MpegAudioHeader.isMpeg1(header);
+        var multichannelFrame = isMultichannel(header);
+        if (multichannelFrame && programEstablished) {
+            output.accept(concealProgram());
+            return;
+        }
         var out = multichannelFrame && extensionEstablished ? outputBuffer(extensionLayout, rate)
                 : outputBuffer(channels, rate);
         conceal(header, channels, out.plane(0), out.plane(channels - 1));
@@ -452,6 +523,16 @@ public final class Mp3Decoder implements AudioDecoder {
         }
         out.setFrames(MpegAudioHeader.samplesPerFrame(header));
         output.accept(out);
+    }
+
+    /**
+     * Returns whether a frame is decoded through the multichannel extension decoder.
+     *
+     * @param header the frame header
+     * @return {@code true} for an MPEG-1 Layer II frame with the extension on
+     */
+    private boolean isMultichannel(int header) {
+        return multichannel && MpegAudioHeader.layer(header) == 2 && MpegAudioHeader.isMpeg1(header);
     }
 
     /**
@@ -542,11 +623,12 @@ public final class Mp3Decoder implements AudioDecoder {
         var samples = MpegAudioHeader.samplesPerFrame(header);
         // TODO: decode the 13818-3 extension of Layer I (one extension per three frames, 13818-4 test22) and of
         //  Layer III (13818-4 test23); those streams play their Lo/Ro base.
-        var multichannelFrame = multichannel && MpegAudioHeader.layer(header) == 2 && MpegAudioHeader.isMpeg1(header);
-        var out = multichannelFrame && extensionEstablished ? outputBuffer(extensionLayout, rate)
+        var multichannelFrame = isMultichannel(header);
+        var out = multichannelFrame && programEstablished ? outputBuffer(programLayout, programRate)
+                : multichannelFrame && extensionEstablished ? outputBuffer(extensionLayout, rate)
                 : outputBuffer(channels, rate);
         var left = out.plane(0);
-        var right = out.plane(channels - 1);
+        var right = out.plane(Math.min(channels, out.channels()) - 1);
         frameBits.init(data, offset + MpegAudioHeader.SIZE, length - MpegAudioHeader.SIZE);
         var crcWord = -1;
         if (MpegAudioHeader.hasCrc(header)) {
@@ -559,10 +641,15 @@ public final class Mp3Decoder implements AudioDecoder {
         if (MpegAudioHeader.layer(header) == 3) {
             status = decodeLayer3(header, channels, left, right, data, offset, corrupt, crcWord);
         } else if (multichannelFrame) {
+            programFrame = false;
             status = decodeMultichannel(header, channels, data, offset, length, corrupt, crcWord);
             out = buffer;
-            left = out.plane(0);
-            right = out.plane(channels - 1);
+            if (programFrame) {
+                samples = programFrames;
+            } else {
+                left = out.plane(0);
+                right = out.plane(channels - 1);
+            }
         } else {
             status = decodeLayer12(header, channels, left, right, data, offset, corrupt, crcWord);
         }
@@ -713,11 +800,11 @@ public final class Mp3Decoder implements AudioDecoder {
                                    int crcWord) {
         var rate = MpegAudioHeader.sampleRate(header);
         if (corrupt) {
-            return CONCEAL;
+            return programEstablished ? concealProgramFrame() : CONCEAL;
         }
         layer12.readScaleInfo(header, frameBits);
         if (crcWord >= 0 && !crcMatches(data, offset, crcWord, layer12.protectedEnd() - 16)) {
-            return CONCEAL;
+            return programEstablished ? concealProgramFrame() : CONCEAL;
         }
         Arrays.fill(grbuf, 0);
         for (var part = 0; part < 3; part++) {
@@ -743,7 +830,29 @@ public final class Mp3Decoder implements AudioDecoder {
             decoded = extensionLength > 0 && (!crcCheck
                     || Mp2Multichannel.extensionCrcMatches(extensionData, extensionOffset, extensionLength));
         }
-        decoded = decoded && extension.decode(channels, rate, baseScale, crcCheck || !extensionEstablished);
+        decoded = decoded && extension.decode(channels, rate, baseScale,
+                crcCheck || !(extensionEstablished || programEstablished));
+        if (decoded && programEstablished && extension.multilingualCutShort()) {
+            return concealProgramFrame();
+        }
+        if (decoded && program != Mp2Program.MAIN && decodeProgram(rate)) {
+            programFrame = true;
+            return DECODED;
+        }
+        if (!decoded && programEstablished) {
+            return concealProgramFrame();
+        }
+        programEstablished = false;
+        if (mainStale) {
+            Arrays.fill(qmfState, 0);
+            for (var state : extensionStates) {
+                Arrays.fill(state, 0);
+            }
+            lastGoodSlots = 0;
+            lastLfe = 0;
+            extensionEstablished = false;
+            mainStale = false;
+        }
         if (decoded) {
             var layout = extension.outputLayout();
             LimitChecks.checkChannels(limits, layout.channels());
@@ -779,6 +888,114 @@ public final class Mp3Decoder implements AudioDecoder {
         synthesizeBase(channels, out.plane(0), out.plane(channels - 1));
         silenceExtension(out);
         return DECODED;
+    }
+
+    /**
+     * Outputs the selected program of a frame whose extension decoded, into {@link #buffer}.
+     *
+     * @param rate the sampling rate of the frame
+     * @return {@code false} when the frame does not carry the program
+     * @throws MediaException.LimitExceeded if the program has more channels than the limits allow
+     */
+    private boolean decodeProgram(int rate) {
+        ChannelLayout frameLayout;
+        var frameRate = rate;
+        var frames = MAX_FRAME_SAMPLES;
+        if (program == Mp2Program.SECOND_STEREO) {
+            if (extension.secondStereoChannel() < 0) {
+                return false;
+            }
+            frameLayout = ChannelLayout.STEREO;
+        } else {
+            var count = extension.multilingualChannels();
+            if (count == 0 || multilingualChannel > count) {
+                return false;
+            }
+            frameLayout = multilingualChannel == 0 ? MULTILINGUAL_LAYOUTS[count] : ChannelLayout.MONO;
+            if (extension.multilingualHalfRate()) {
+                frameRate = rate / 2;
+                frames = MAX_FRAME_SAMPLES / 2;
+            }
+        }
+        LimitChecks.checkChannels(limits, frameLayout.channels());
+        if (!programEstablished || !frameLayout.equals(programLayout) || frameRate != programRate) {
+            for (var state : programStates) {
+                Arrays.fill(state, 0);
+            }
+        }
+        programEstablished = true;
+        programLayout = frameLayout;
+        programRate = frameRate;
+        programFrames = frames;
+        mainStale = true;
+        synthesizeProgram(outputBuffer(frameLayout, frameRate), false);
+        return true;
+    }
+
+    /**
+     * Conceals a multichannel frame in the format of the selected program, into {@link #buffer}.
+     *
+     * @return {@link #DECODED}
+     */
+    private int concealProgramFrame() {
+        concealProgram();
+        programFrame = true;
+        return DECODED;
+    }
+
+    /**
+     * Feeds silence through the filterbanks of the selected program, which lets the output of its last frame
+     * decay.
+     *
+     * @return the output buffer, its frame count set
+     */
+    private AudioBuffer concealProgram() {
+        concealedFrames++;
+        var out = outputBuffer(programLayout, programRate);
+        synthesizeProgram(out, true);
+        out.setFrames(programFrames);
+        return out;
+    }
+
+    /**
+     * Synthesizes every channel of the selected program from the extension decoder, in pairs.
+     *
+     * @param out the output buffer, in the layout of the program
+     * @param silent whether to feed silence instead of the frame's samples
+     */
+    private void synthesizeProgram(AudioBuffer out, boolean silent) {
+        var channels = out.channels();
+        var slots = programFrames == MAX_FRAME_SAMPLES ? 12 : 18;
+        var parts = slots == 12 ? 3 : 1;
+        for (var pair = 0; 2 * pair < channels; pair++) {
+            var first = 2 * pair;
+            var pairChannels = first + 1 < channels ? 2 : 1;
+            var outLeft = out.plane(first);
+            var outRight = out.plane(first + pairChannels - 1);
+            for (var part = 0; part < parts; part++) {
+                if (silent) {
+                    Arrays.fill(extensionBuffer, 0);
+                } else {
+                    fillSlots(extensionBuffer, programSamples(first),
+                            pairChannels == 2 ? programSamples(first + 1) : null, part * slots, slots);
+                }
+                synthesize(extensionBuffer, programStates[pair], slots, pairChannels, outLeft, outRight,
+                        part * 32 * slots);
+            }
+        }
+    }
+
+    /**
+     * Returns the subband samples of a channel of the selected program.
+     *
+     * @param channel the channel of the program's output
+     * @return the samples, subband {@code sb}, time slot {@code t} at {@code sb * 36 + t}
+     */
+    private float[] programSamples(int channel) {
+        if (program == Mp2Program.SECOND_STEREO) {
+            return extension.channelSamples(extension.secondStereoChannel() + channel);
+        }
+        return extension.multilingualSamples(multilingualChannel == 0 ? channel : multilingualChannel - 1);
     }
 
     /**
@@ -890,11 +1107,25 @@ public final class Mp3Decoder implements AudioDecoder {
      * @param part the block of twelve slots, 0 to 2
      */
     private static void fillGranule(float[] target, float[] first, float[] second, int part) {
+        fillSlots(target, first, second, part * 12, 12);
+    }
+
+    /**
+     * Copies a run of time slots of one or two channels from the extension's layout into a granule buffer.
+     *
+     * @param target the granule buffer, subband {@code sb}, slot {@code t} at {@code sb * 18 + t}, channel 1 at
+     * index 576
+     * @param first the first channel's samples, subband {@code sb}, slot {@code t} at {@code sb * 36 + t}
+     * @param second the second channel's samples, or {@code null}
+     * @param start the first time slot
+     * @param slots the number of time slots, at most 18
+     */
+    private static void fillSlots(float[] target, float[] first, float[] second, int start, int slots) {
         Arrays.fill(target, 0);
         for (var sb = 0; sb < 32; sb++) {
-            System.arraycopy(first, sb * 36 + part * 12, target, sb * 18, 12);
+            System.arraycopy(first, sb * 36 + start, target, sb * 18, slots);
             if (second != null) {
-                System.arraycopy(second, sb * 36 + part * 12, target, 576 + sb * 18, 12);
+                System.arraycopy(second, sb * 36 + start, target, 576 + sb * 18, slots);
             }
         }
     }
@@ -1025,6 +1256,11 @@ public final class Mp3Decoder implements AudioDecoder {
         }
         extensionEstablished = false;
         lastLfe = 0;
+        programEstablished = false;
+        mainStale = false;
+        for (var state : programStates) {
+            Arrays.fill(state, 0);
+        }
     }
 
     /**

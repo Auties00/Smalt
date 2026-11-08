@@ -24,7 +24,7 @@ final class Layer12 {
     /**
      * The allocation band groups of MPEG-2 Layer II (ISO/IEC 13818-3 Table B.1).
      */
-    private static final int[] ALLOC_LAYER2_MPEG2 = {60, 4, 4, 44, 3, 7, 44, 2, 19};
+    static final int[] ALLOC_LAYER2_MPEG2 = {60, 4, 4, 44, 3, 7, 44, 2, 19};
 
     /**
      * The allocation band groups of MPEG-1 Layer II at high rates (ISO/IEC 11172-3 Tables B.2a

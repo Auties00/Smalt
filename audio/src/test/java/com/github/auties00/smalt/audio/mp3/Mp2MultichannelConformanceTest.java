@@ -37,7 +37,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * toward zero, so each channel is rounded both ways and must stay within one unit of the reference everywhere and
  * meet full accuracy in the rounding that matches; sets 02 and 09, whose decoder rounds differently still, meet
  * limited accuracy. Set 22 (a Layer I multichannel stream) and set 23 (Layer III) are not covered; the second stereo
- * programme of sets 06 and 07 and the multilingual channels of sets 10 and 12 are not output.
+ * programs of sets 06 and 07 and the multilingual channels of sets 10 and 12 are compared by
+ * {@link Mp2ProgramConformanceTest}.
  */
 class Mp2MultichannelConformanceTest {
     /** The rule of every 16-bit reference: within one unit of the reference. */

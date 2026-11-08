@@ -1,8 +1,9 @@
 /* Ports the multichannel extension decoding of the ISO/IEC 13818-5 MPEG-2 audio reference software (dist10,
  * mc/decoder/decode.c and common.c: mc_header, mc_composite_status_info, II_decode_bitalloc_mc, II_decode_scale,
  * II_buffer_sample_mc, II_dequantize_sample_mc, II_denormalize_sample_mc, II_lfe_calc, dematricing_mc,
- * denormalizing_mc, mc_error_check, mc_ext_error_check and the prediction). Copyright ISO MPEG Audio Subgroup
- * Software Simulation Group; ISO/IEC 13818-5 reference software licence. Modified for Smalt. */
+ * denormalizing_mc, mc_error_check, mc_ext_error_check, the prediction and the *_ml multilingual functions).
+ * Copyright ISO MPEG Audio Subgroup Software Simulation Group; ISO/IEC 13818-5 reference software licence. Modified
+ * for Smalt. */
 package com.github.auties00.smalt.audio.mp3;
 
 import com.github.auties00.smalt.audio.ChannelLayout;
@@ -21,9 +22,11 @@ import java.util.List;
  * center and surround channels. The tools are the transmission channel allocation per subband group,
  * dynamic crosstalk (subbands whose samples are shared with another channel), the prediction of the
  * transmission channels from {@code Lo/Ro}, the four dematrixing procedures, phantom center coding and the
- * low-frequency enhancement channel, coded at 1/96 of the sampling rate. A second stereo programme
- * ({@code 3/0 + 2/0} and {@code 2/0 + 2/0}) is decoded but is not part of the output; multilingual channels
- * are skipped.
+ * low-frequency enhancement channel, coded at 1/96 of the sampling rate. A second stereo program
+ * ({@code 1/0 + 2/0}, {@code 2/0 + 2/0} and {@code 3/0 + 2/0}) is decoded with the main one, in the channels
+ * from {@link #secondStereoChannel()}. The up to seven multilingual channels, which follow the multichannel
+ * audio data, are decoded when {@link #decodeMultilingual(boolean)} asks for them, at the sampling rate of
+ * the frame or at half of it.
  *
  * <p>Subband samples are held per channel, subband {@code sb}, time slot {@code t} (0 to 35) at
  * {@code sb * 36 + t}, in the scale of the decoder's synthesis input. Instances are not thread-safe.
@@ -245,6 +248,42 @@ final class Mp2Multichannel {
     private final float[][][] history = new float[2][8][36 + PREDICTION_HISTORY];
 
     /**
+     * Whether {@link #decode} reads the multilingual channels.
+     */
+    private boolean decodeMultilingual;
+
+    /**
+     * The number of multilingual channels the frame decoded last, 0 when it had none or they did not decode.
+     */
+    private int multilingualDecoded;
+
+    /**
+     * Whether the multilingual channels of the frame decoded last ran past the end of its extension.
+     */
+    private boolean multilingualCutShort;
+
+    /**
+     * The number of subbands the multilingual channels code.
+     */
+    private int multilingualBands;
+
+    private final int[] multilingualWidth = new int[32];
+
+    private final int[] multilingualCodes = new int[32];
+
+    private final int[][] multilingualAllocation = new int[7][32];
+
+    private final int[][] multilingualScfsi = new int[7][32];
+
+    private final int[][][] multilingualScalefactor = new int[7][3][32];
+
+    /**
+     * The subband samples of the multilingual channels, subband {@code sb}, time slot {@code t} at
+     * {@code sb * 36 + t}; 18 slots per subband at half the sampling rate, 36 otherwise.
+     */
+    private final float[][] multilingualSamples = new float[7][32 * 36];
+
+    /**
      * Gives the extension's subband sample buffer of a base channel, for the caller to fill.
      *
      * @param channel the base channel, 0 or 1
@@ -277,6 +316,59 @@ final class Mp2Multichannel {
      */
     boolean hasLfe() {
         return lfe != 0;
+    }
+
+    /**
+     * Sets whether {@link #decode} reads the multilingual channels of the frames that carry them.
+     *
+     * @param decode whether to read them
+     */
+    void decodeMultilingual(boolean decode) {
+        this.decodeMultilingual = decode;
+    }
+
+    /**
+     * Returns the channel of {@link #channelSamples(int)} holding the left channel of the second stereo
+     * program of the frame decoded last, the right channel following it.
+     *
+     * @return the channel, or {@code -1} when the frame has no second stereo program
+     */
+    int secondStereoChannel() {
+        return surround == 3 ? stereo + (center != 0 ? 1 : 0) : -1;
+    }
+
+    /**
+     * {@return the number of multilingual channels of the frame decoded last, from 0 to 7; 0 when the frame has
+     * none, when they were not asked for or when they do not fit the frame}
+     */
+    int multilingualChannels() {
+        return multilingualDecoded;
+    }
+
+    /**
+     * {@return whether the multilingual channels of the frame decoded last were asked for and ran past the end of
+     * its extension, its main program having decoded}
+     */
+    boolean multilingualCutShort() {
+        return multilingualCutShort;
+    }
+
+    /**
+     * {@return whether the multilingual channels of the frame decoded last are coded at half its sampling
+     * rate, 18 time slots per subband instead of 36}
+     */
+    boolean multilingualHalfRate() {
+        return multilingualFs == 1;
+    }
+
+    /**
+     * Returns the subband samples of a multilingual channel of the frame decoded last.
+     *
+     * @param channel the channel, from 0 to {@link #multilingualChannels()} minus one
+     * @return the samples, subband {@code sb}, time slot {@code t} at {@code sb * 36 + t}
+     */
+    float[] multilingualSamples(int channel) {
+        return multilingualSamples[channel];
     }
 
     /**
@@ -405,6 +497,8 @@ final class Mp2Multichannel {
      */
     boolean decode(int baseChannels, int sampleRate, BaseScale baseScale, boolean crcCheck) {
         stereo = baseChannels;
+        multilingualDecoded = 0;
+        multilingualCutShort = false;
         var bs = reader;
         bs.init(data, 0, (bits + 7) / 8);
         bs.limit = bits;
@@ -436,6 +530,11 @@ final class Mp2Multichannel {
         readSamples(bs, baseScale);
         if (bs.overrun()) {
             return false;
+        }
+        if (decodeMultilingual && multilingual > 0) {
+            readMultilingual(bs);
+            multilingualCutShort = bs.overrun();
+            multilingualDecoded = multilingualCutShort ? 0 : multilingual;
         }
         updateHistory();
         dematrix();
@@ -577,8 +676,6 @@ final class Mp2Multichannel {
         lfe = bs.read(1);
         audioMix = bs.read(1);
         dematrix = bs.read(2);
-        // TODO: output the multilingual channels and the second stereo programme (3/0 + 2/0, 2/0 + 2/0), which need
-        //  an API to select a programme; they are skipped or decoded without being output.
         multilingual = bs.read(3);
         multilingualFs = bs.read(1);
         multilingualLayer = bs.read(1);
@@ -615,28 +712,148 @@ final class Mp2Multichannel {
             crosstalkBits = hasCenter ? 1 : 0;
             predictionMode = hasCenter ? 2 : 5;
         }
+        // TODO: multilingual channels with multi_lingual_layer set, which the reference decoder rejects and no
+        //  ISO/IEC 13818-4 set carries; such an extension decodes as plain stereo.
         if (center == 2 || (multilingual > 0 && multilingualLayer > 0)) {
             return false;
         }
-        if (stereo == 1 && !(surround == 3 && !hasCenter)) {
+        if (stereo == 1 && !(surround == 3 && !hasCenter)
+                && !(decodeMultilingual && multilingual > 0 && surround == 0 && !hasCenter)) {
             return false;
         }
         if (stereo + mcChannels > CHANNELS) {
             return false;
         }
         bands = sampleRate == 48000 ? 27 : 30;
-        var groups = Layer12.ALLOC_LAYER2_MPEG1;
+        fillAllocationTable(Layer12.ALLOC_LAYER2_MPEG1, width, codes);
+        if (multilingualFs == 0) {
+            multilingualBands = bands;
+            System.arraycopy(width, 0, multilingualWidth, 0, 32);
+            System.arraycopy(codes, 0, multilingualCodes, 0, 32);
+        } else {
+            multilingualBands = 30;
+            fillAllocationTable(Layer12.ALLOC_LAYER2_MPEG2, multilingualWidth, multilingualCodes);
+        }
+        return true;
+    }
+
+    /**
+     * Expands allocation band groups into a code width and a table offset per subband.
+     *
+     * @param groups the {@code (table offset, code width, band count)} triples of {@link Layer12}
+     * @param width receives the code width of every subband, 0 past the last group
+     * @param codes receives the offset of every subband in {@link Mp3Tables#BIT_ALLOCATION_CODES}
+     */
+    private static void fillAllocationTable(int[] groups, int[] width, int[] codes) {
         for (int band = 0, group = 0, next = 0, groupWidth = 0, offset = 0; band < 32; band++) {
-            if (band == next && group < groups.length) {
-                offset = groups[group];
-                groupWidth = groups[group + 1];
-                next += groups[group + 2];
-                group += 3;
+            if (band == next) {
+                if (group < groups.length) {
+                    offset = groups[group];
+                    groupWidth = groups[group + 1];
+                    next += groups[group + 2];
+                    group += 3;
+                } else {
+                    groupWidth = 0;
+                }
             }
             width[band] = groupWidth;
             codes[band] = offset;
         }
-        return true;
+    }
+
+    /**
+     * Reads, dequantizes and scales the multilingual channels, which follow the multichannel audio data
+     * ({@code II_decode_bitalloc_ml}, {@code II_decode_scale_ml}, {@code II_buffer_sample_ml},
+     * {@code II_dequantize_sample_ml}, {@code II_denormalize_sample_ml}). They are plain Layer II mono channels,
+     * coded at half the sampling rate with the ISO/IEC 13818-3 lower sampling frequency table when
+     * {@code multilingual_fs} is set; the caller checks the reader for an overrun.
+     *
+     * @param bs the reader at the end of the multichannel audio data
+     */
+    private void readMultilingual(BitReader bs) {
+        var count = multilingual;
+        var limit = multilingualBands;
+        for (var i = 0; i < 32; i++) {
+            for (var j = 0; j < count; j++) {
+                multilingualAllocation[j][i] = i < limit ? bs.read(multilingualWidth[i]) : 0;
+            }
+        }
+        for (var i = 0; i < limit; i++) {
+            for (var j = 0; j < count; j++) {
+                multilingualScfsi[j][i] = multilingualAllocation[j][i] != 0 ? bs.read(2) : 4;
+            }
+        }
+        for (var i = 0; i < 32; i++) {
+            for (var j = 0; j < count; j++) {
+                var scf = multilingualScalefactor[j];
+                if (i >= limit || multilingualAllocation[j][i] == 0) {
+                    scf[0][i] = scf[1][i] = scf[2][i] = 63;
+                    continue;
+                }
+                switch (multilingualScfsi[j][i]) {
+                    case 0 -> {
+                        scf[0][i] = bs.read(6);
+                        scf[1][i] = bs.read(6);
+                        scf[2][i] = bs.read(6);
+                    }
+                    case 1 -> {
+                        scf[0][i] = scf[1][i] = bs.read(6);
+                        scf[2][i] = bs.read(6);
+                    }
+                    case 3 -> {
+                        scf[0][i] = bs.read(6);
+                        scf[1][i] = scf[2][i] = bs.read(6);
+                    }
+                    default -> scf[0][i] = scf[1][i] = scf[2][i] = bs.read(6);
+                }
+            }
+        }
+        for (var j = 0; j < count; j++) {
+            Arrays.fill(multilingualSamples[j], 0);
+        }
+        var half = multilingualFs == 1;
+        var granules = half ? 6 : 12;
+        var codesTable = Mp3Tables.BIT_ALLOCATION_CODES;
+        for (var gr = 0; gr < granules; gr++) {
+            for (var i = 0; i < limit; i++) {
+                for (var j = 0; j < count; j++) {
+                    var allocationIndex = multilingualAllocation[j][i];
+                    if (allocationIndex == 0) {
+                        continue;
+                    }
+                    var type = codesTable[multilingualCodes[i] + allocationIndex];
+                    if (type == 0) {
+                        continue;
+                    }
+                    var target = multilingualSamples[j];
+                    var base = i * 36 + 3 * gr;
+                    if (type >= 17) {
+                        var levels = type == 17 ? 3 : type == 18 ? 5 : 9;
+                        var value = bs.read(type == 17 ? 5 : type == 18 ? 7 : 10);
+                        for (var k = 0; k < 3; k++) {
+                            target[base + k] = (float) dequantize(value % levels, levels);
+                            value /= levels;
+                        }
+                    } else {
+                        var levels = (1 << type) - 1;
+                        for (var k = 0; k < 3; k++) {
+                            target[base + k] = (float) dequantize(bs.read(type), levels);
+                        }
+                    }
+                }
+            }
+        }
+        var slots = 3 * granules;
+        var partSlots = slots / 3;
+        for (var j = 0; j < count; j++) {
+            var target = multilingualSamples[j];
+            var scf = multilingualScalefactor[j];
+            for (var i = 0; i < limit; i++) {
+                for (var t = 0; t < slots; t++) {
+                    target[i * 36 + t] *= GAIN[scf[t / partSlots][i]];
+                }
+            }
+        }
     }
 
     /**
@@ -710,8 +927,8 @@ final class Mp2Multichannel {
                     } else if (surround == 3 && secondStereo[g] == 1) {
                         if (center != 0 && j == 4) {
                             allocation[j][i] = allocation[3][i];
-                        } else if (center == 0 && j == 3) {
-                            allocation[j][i] = allocation[2][i];
+                        } else if (center == 0 && j == stereo + 1) {
+                            allocation[j][i] = allocation[stereo][i];
                         } else {
                             allocation[j][i] = bs.read(width[i]);
                         }
@@ -904,7 +1121,7 @@ final class Mp2Multichannel {
             if ((center == 1 || center == 3) && j == 4) {
                 return false;
             }
-            return center != 0 || j != 3;
+            return center != 0 || j != stereo + 1;
         }
         return true;
     }
