@@ -1,6 +1,6 @@
 /**
  * The PCM codec: decoding and encoding integer and floating-point PCM ({@link PcmDecoder},
- * {@link PcmEncoder}).
+ * {@link PcmEncoder}), and decoding uncompressed DSD into PCM ({@link DsdDecoder}).
  *
  * <p>Unless otherwise noted, passing a {@code null} argument to a constructor or method in any class or
  * interface in this package will cause a {@link NullPointerException} to be thrown. The {@code @param}

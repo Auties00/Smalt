@@ -150,7 +150,7 @@ final class FlacWindow {
             case BARTLETT_HANN -> {
                 for (var n = 0; n < l; n++) {
                     var x = n1 == 0 ? 0 : (double) n / n1;
-                    w[n] = 0.62 - 0.48 * Math.abs(x - 0.5) - 0.38 * Math.cos(2 * Math.PI * x);
+                    w[n] = 0.62 - 0.48 * Math.abs(x - 0.5) - 0.38 * StrictMath.cos(2 * Math.PI * x);
                 }
             }
             case BLACKMAN -> cosineSum(w, l, 0.42, -0.5, 0.08, 0, 0);
@@ -168,7 +168,7 @@ final class FlacWindow {
                 var n2 = n1 / 2.0;
                 for (var n = 0; n <= n1; n++) {
                     var k = n2 == 0 ? 0 : (n - n2) / (parameter * n2);
-                    w[n] = Math.exp(-0.5 * k * k);
+                    w[n] = StrictMath.exp(-0.5 * k * k);
                 }
             }
             case HAMMING -> cosineSum(w, l, 0.54, -0.46, 0, 0, 0);
@@ -210,7 +210,7 @@ final class FlacWindow {
         var n1 = l - 1;
         for (var n = 0; n < l; n++) {
             var x = n1 == 0 ? 0 : 2 * Math.PI * n / n1;
-            w[n] = a0 + a1 * Math.cos(x) + a2 * Math.cos(2 * x) + a3 * Math.cos(3 * x) + a4 * Math.cos(4 * x);
+            w[n] = a0 + a1 * StrictMath.cos(x) + a2 * StrictMath.cos(2 * x) + a3 * StrictMath.cos(3 * x) + a4 * StrictMath.cos(4 * x);
         }
     }
 
@@ -230,8 +230,8 @@ final class FlacWindow {
         var np = (int) (p / 2.0 * l) - 1;
         if (np > 0) {
             for (var n = 0; n <= np; n++) {
-                w[n] = 0.5 - 0.5 * Math.cos(Math.PI * n / np);
-                w[l - np - 1 + n] = 0.5 - 0.5 * Math.cos(Math.PI * (n + np) / np);
+                w[n] = 0.5 - 0.5 * StrictMath.cos(Math.PI * n / np);
+                w[l - np - 1 + n] = 0.5 - 0.5 * StrictMath.cos(Math.PI * (n + np) / np);
             }
         }
     }
@@ -252,13 +252,13 @@ final class FlacWindow {
             w[n] = 0;
         }
         for (var i = 1; n < startN + np && n < l; n++, i++) {
-            w[n] = 0.5 - 0.5 * Math.cos(Math.PI * i / np);
+            w[n] = 0.5 - 0.5 * StrictMath.cos(Math.PI * i / np);
         }
         for (; n < endN - np && n < l; n++) {
             w[n] = 1;
         }
         for (var i = np; n < endN && n < l; n++, i--) {
-            w[n] = 0.5 - 0.5 * Math.cos(Math.PI * i / np);
+            w[n] = 0.5 - 0.5 * StrictMath.cos(Math.PI * i / np);
         }
         for (; n < l; n++) {
             w[n] = 0;
@@ -279,25 +279,25 @@ final class FlacWindow {
         var ne = (int) (p / 2.0 * (l - endN));
         var n = 0;
         for (var i = 1; n < ns && n < l; n++, i++) {
-            w[n] = 0.5 - 0.5 * Math.cos(Math.PI * i / ns);
+            w[n] = 0.5 - 0.5 * StrictMath.cos(Math.PI * i / ns);
         }
         for (; n < startN - ns && n < l; n++) {
             w[n] = 1;
         }
         for (var i = ns; n < startN && n < l; n++, i--) {
-            w[n] = 0.5 - 0.5 * Math.cos(Math.PI * i / ns);
+            w[n] = 0.5 - 0.5 * StrictMath.cos(Math.PI * i / ns);
         }
         for (; n < endN && n < l; n++) {
             w[n] = 0;
         }
         for (var i = 1; n < endN + ne && n < l; n++, i++) {
-            w[n] = 0.5 - 0.5 * Math.cos(Math.PI * i / ne);
+            w[n] = 0.5 - 0.5 * StrictMath.cos(Math.PI * i / ne);
         }
         for (; n < l - ne && n < l; n++) {
             w[n] = 1;
         }
         for (var i = ne; n < l; n++, i--) {
-            w[n] = 0.5 - 0.5 * Math.cos(Math.PI * i / ne);
+            w[n] = 0.5 - 0.5 * StrictMath.cos(Math.PI * i / ne);
         }
     }
 }
