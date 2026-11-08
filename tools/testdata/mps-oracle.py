@@ -7,8 +7,9 @@ arbitrary downmix, temporal shaping), driven by a small frontend (mps-oracle/mps
 streams:
 
 1. Synthetic streams written by mps-oracle/mpsgen.py: every tree configuration (5151 to 7572), quantization and
-   TTT mode, temporal shaping, arbitrary downmix gains, residual and arbitrary downmix residual coding, at 24, 48
-   and 96 kHz, each with a synthetic downmix: <case>.bs, <case>_dmx.wav and <case>_ref.wav.
+   TTT mode, temporal shaping, arbitrary downmix gains, residual and arbitrary downmix residual coding, the
+   arbitrary tree extension, at 24, 48 and 96 kHz and frames of 15 to 64 slots, each with a synthetic downmix:
+   <case>.bs, <case>_dmx.wav and <case>_ref.wav.
 2. Streams of the reference encoder (mp4spatialenc, trees 5151, 5152 and 525 at 16 and 32 slots per frame) of a
    synthetic 5.1 signal: enc<tree>_<slots>.bs, its downmix enc<tree>_<slots>_dmx.wav and the decode
    enc<tree>_<slots>_ref.wav.
@@ -21,7 +22,9 @@ The reference software, which this script downloads from standards.iso.org (pinn
 <work directory>/download and never redistributes, trims the configuration syntax to the 2-1-2 tree of USAC: the
 script patches copies of sac_bitdec.c and bitstream.c to read and write the full SpatialSpecificConfig of
 ISO/IEC 23003-1 (sampling frequency index, frame length and tree, differential parameter slots, the high rate
-mode outside 2-1-2) and builds the decoder and encoder libraries with gcc (on Windows from an MSYS2 UCRT64 shell).
+mode outside 2-1-2), patches copies of sac_TPprocess.c and sac_arbitraryTree.c so that the decoder runs the
+arbitrary tree it parses (it never calls arbitraryTreeProcess, whose buffers it keeps on the stack), and builds the
+decoder and encoder libraries with gcc (on Windows from an MSYS2 UCRT64 shell).
 
     python -I tools/testdata/mps-oracle.py <work directory>
 """
@@ -91,6 +94,27 @@ BITDEC_PATCHES = [(
   } else {
     self->bsHighRateMode = 1;
   }""")]
+
+# The decoder parses the arbitrary tree extension but never calls arbitraryTreeProcess, whose temporary buffers are
+# also too large for a thread stack: the patches call it where tpProcess declares it, between the subband domain
+# temporal processing and the hybrid synthesis, and make the buffers static.
+TPPROCESS_PATCHES = [(
+    """#endif
+
+  SpatialDecHybridQMFSynthesis(self);
+""",
+    """#endif
+
+  arbitraryTreeProcess(self);
+
+  SpatialDecHybridQMFSynthesis(self);
+""")]
+
+ARBITRARY_TREE_PATCHES = [(
+    """  float pTempReal [MAX_OUTPUT_CHANNELS_AT][MAX_TIME_SLOTS][MAX_HYBRID_BANDS];
+  float pTempImag [MAX_OUTPUT_CHANNELS_AT][MAX_TIME_SLOTS][MAX_HYBRID_BANDS];""",
+    """  static float pTempReal [MAX_OUTPUT_CHANNELS_AT][MAX_TIME_SLOTS][MAX_HYBRID_BANDS];
+  static float pTempImag [MAX_OUTPUT_CHANNELS_AT][MAX_TIME_SLOTS][MAX_HYBRID_BANDS];""")]
 
 BITSTREAM_PATCHES = [(
     """int FreqResBinTable[] = {0, 28, 20, 14, 10, 7, 5, 4};""",
@@ -175,6 +199,10 @@ def build(work):
     for directory in (patched, stub, objects):
         os.makedirs(directory, exist_ok=True)
     patch(os.path.join(decoder, 'src', 'sac_bitdec.c'), os.path.join(patched, 'sac_bitdec.c'), BITDEC_PATCHES)
+    patch(os.path.join(decoder, 'src', 'sac_TPprocess.c'), os.path.join(patched, 'sac_TPprocess.c'),
+          TPPROCESS_PATCHES)
+    patch(os.path.join(decoder, 'src', 'sac_arbitraryTree.c'), os.path.join(patched, 'sac_arbitraryTree.c'),
+          ARBITRARY_TREE_PATCHES)
     patch(os.path.join(encoder, 'src', 'bitstream.c'), os.path.join(patched, 'bitstream.c'), BITSTREAM_PATCHES)
     shutil.copy(os.path.join(SOURCES, 'libtsp.h'), stub)
     shared = ['-I' + os.path.join(common, 'src_frame'), '-I' + os.path.join(common, 'include'),
@@ -184,7 +212,8 @@ def build(work):
     encoder_includes = ['-I' + stub, '-I' + os.path.join(encoder, 'include'),
                         '-I' + os.path.join(encoder, 'src')] + shared
     built = compile_all(os.path.join(decoder, 'src'), decoder_includes, ['-DTP_BUG_FIX', '-DHRTF_DYNAMIC_UPDATE'],
-                        objects, 'dec_', {'sac_bitdec.c': os.path.join(patched, 'sac_bitdec.c')})
+                        objects, 'dec_', {name: os.path.join(patched, name)
+                                          for name in ('sac_bitdec.c', 'sac_TPprocess.c', 'sac_arbitraryTree.c')})
     built += compile_all(os.path.join(encoder, 'src'), encoder_includes, ['-std=gnu89'], objects, 'enc_',
                          {'bitstream.c': os.path.join(patched, 'bitstream.c')})
     for name, includes in (('mpsref.c', decoder_includes + ['-I' + os.path.join(encoder, 'include'),

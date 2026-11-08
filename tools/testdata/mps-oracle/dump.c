@@ -1,6 +1,11 @@
-/* Prints the mapped parameters of the refsoft MPS decoder after each frame (MPSREF_DUMP). */
+/* Prints the mapped parameters of the refsoft MPS decoder after each frame (MPSREF_DUMP), and reads the number of
+   channels it outputs, the channels of the arbitrary tree when the configuration has one. */
 #include <stdio.h>
 #include "sac_dec.h"
+
+int mpsref_output_channels(void *decoder) {
+    return ((spatialDec *) decoder)->numOutputChannelsAT;
+}
 
 void mpsref_dump(void *decoder, int f) {
     spatialDec *d = decoder;

@@ -1298,10 +1298,12 @@ public final class FrameDecoder {
     /**
      * Upmixes a decoded block with MPEG Surround when its layout is the configuration's downmix and a spatial
      * frame is known; the subband matrices of spectral band replication feed the upmix directly when every
-     * channel has its own 64-band matrix, the samples otherwise.
+     * channel has its own 64-band matrix, the samples otherwise. While spatial frames span several blocks, the
+     * output lags the decoded blocks by all of a frame but one, the downmix included.
      *
      * @param downmix the decoded block
-     * @return the upmix, or {@code downmix} when the block is not upmixed
+     * @return the upmix, or {@code downmix} when the block is not upmixed (holding the delayed downmix while
+     * spatial frames span several blocks)
      */
     private AudioBuffer upmix(AudioBuffer downmix) {
         blockDecoded = true;
@@ -1312,6 +1314,15 @@ public final class FrameDecoder {
         if (!surround.prepare(sampleRate, outputLength)) {
             return downmix;
         }
+        var qmf = subbandsValid && sbrMode == SbrMode.DUAL_RATE && surround.acceptsQmf();
+        if (!surround.upmixed()) {
+            if (qmf) {
+                surround.upmixQmf(subbandsReal, subbandsImag, downmix.planes(), null);
+            } else {
+                surround.upmix(downmix.planes(), null);
+            }
+            return downmix;
+        }
         surroundUpmixed = true;
         var layout = surround.layout();
         if (surroundOutput == null || !surroundOutput.layout().equals(layout)
@@ -1320,13 +1331,45 @@ public final class FrameDecoder {
             surroundOutput = new AudioBuffer(layout, sampleRate, outputLength);
         }
         var planes = surroundOutput.planes();
-        if (subbandsValid && sbrMode == SbrMode.DUAL_RATE && surround.acceptsQmf()) {
-            surround.upmixQmf(subbandsReal, subbandsImag, planes);
+        if (qmf) {
+            surround.upmixQmf(subbandsReal, subbandsImag, downmix.planes(), planes);
         } else {
             surround.upmix(downmix.planes(), planes);
         }
         surroundOutput.setFrames(outputLength);
         return surroundOutput;
+    }
+
+    /**
+     * Hands over the blocks MPEG Surround still delays after the last block, when spatial frames span several blocks:
+     * as many blocks as the delay, upmixed from silence after the last one, with the parameters of the last spatial
+     * frame where the frame that would cover them is missing.
+     *
+     * <p>The stream ends here: the subband matrices of the last block are overwritten.
+     *
+     * @param emit receives each block, valid only during the call
+     */
+    public void flushSurround(Consumer<AudioBuffer> emit) {
+        if (surround == null || output == null || !surround.configured() || !surroundDownmix(output.layout())) {
+            return;
+        }
+        var blocks = surround.delayedBlocks();
+        for (var block = 0; block < blocks; block++) {
+            for (var plane : output.planes()) {
+                Arrays.fill(plane, 0, outputLength, 0.0f);
+            }
+            if (subbandsValid) {
+                for (var plane = 0; plane < subbandsReal.length; plane++) {
+                    if (subbandsReal[plane] != null) {
+                        Arrays.fill(subbandsReal[plane], 0.0f);
+                        Arrays.fill(subbandsImag[plane], 0.0f);
+                    }
+                }
+            }
+            output.setFrames(outputLength);
+            emit.accept(upmix(output));
+        }
+        surround.drained();
     }
 
     /**

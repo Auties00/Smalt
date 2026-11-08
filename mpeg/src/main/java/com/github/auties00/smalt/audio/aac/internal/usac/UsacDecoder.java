@@ -7,9 +7,9 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.ChannelLayout;
-import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.audio.aac.internal.AacBitReader;
 import com.github.auties00.smalt.audio.aac.internal.AacKernels;
+import com.github.auties00.smalt.audio.aac.internal.OutputChannelPositions;
 import com.github.auties00.smalt.audio.aac.internal.SamplingTables;
 import com.github.auties00.smalt.audio.aac.internal.drc.MpegDrcDecoder;
 
@@ -206,19 +206,9 @@ public final class UsacDecoder {
         }
         this.elements = states.toArray(ElementState[]::new);
         this.channelOutputs = new float[channelsOut][];
-        var speakers = speakersOf(config.outputPositions());
-        var order = new Integer[channelsOut];
-        for (var i = 0; i < channelsOut; i++) {
-            order[i] = i;
-        }
-        Arrays.sort(order, (a, b) -> Integer.compare(speakers[a].ordinal(), speakers[b].ordinal()));
-        this.outputOrder = new int[channelsOut];
-        var sorted = new ArrayList<Speaker>();
-        for (var i = 0; i < channelsOut; i++) {
-            outputOrder[order[i]] = i;
-            sorted.add(speakers[order[i]]);
-        }
-        this.layout = new ChannelLayout(sorted);
+        var speakers = OutputChannelPositions.speakers(config.outputPositions());
+        this.outputOrder = OutputChannelPositions.waveOrder(speakers);
+        this.layout = OutputChannelPositions.layout(speakers, outputOrder);
         this.output = new AudioBuffer(layout, config.samplingFrequency(), outputLength);
         byte[] drcConfig = null;
         for (var element : config.elements()) {
@@ -244,57 +234,6 @@ public final class UsacDecoder {
         return new MpegDrcDecoder(config.samplingFrequency(), channelOutputs.length, outputLength,
                 esbr != null ? SBR_GAIN_DELAY : 0, drcConfig, config.loudnessInfo(), drcRequest.targetLoudness(),
                 drcRequest.effectRequest(), drcRequest.boost(), drcRequest.compress(), true);
-    }
-
-    private static Speaker[] speakersOf(int[] positions) {
-        var hasRear = false;
-        for (var p : positions) {
-            hasRear |= p == 8 || p == 9;
-        }
-        var out = new Speaker[positions.length];
-        for (var i = 0; i < positions.length; i++) {
-            out[i] = switch (positions[i]) {
-                case 0 -> Speaker.FRONT_LEFT;
-                case 1 -> Speaker.FRONT_RIGHT;
-                case 2 -> Speaker.FRONT_CENTER;
-                case 3 -> Speaker.LOW_FREQUENCY;
-                case 4 -> hasRear ? Speaker.SIDE_LEFT : Speaker.BACK_LEFT;
-                case 5 -> hasRear ? Speaker.SIDE_RIGHT : Speaker.BACK_RIGHT;
-                case 6 -> Speaker.FRONT_LEFT_OF_CENTER;
-                case 7 -> Speaker.FRONT_RIGHT_OF_CENTER;
-                case 8 -> Speaker.BACK_LEFT;
-                case 9 -> Speaker.BACK_RIGHT;
-                case 10 -> Speaker.BACK_CENTER;
-                case 11 -> Speaker.SURROUND_DIRECT_LEFT;
-                case 12 -> Speaker.SURROUND_DIRECT_RIGHT;
-                case 13 -> Speaker.SIDE_LEFT;
-                case 14 -> Speaker.SIDE_RIGHT;
-                case 15 -> Speaker.WIDE_LEFT;
-                case 16 -> Speaker.WIDE_RIGHT;
-                case 17 -> Speaker.TOP_FRONT_LEFT;
-                case 18 -> Speaker.TOP_FRONT_RIGHT;
-                case 19 -> Speaker.TOP_FRONT_CENTER;
-                case 20 -> Speaker.TOP_BACK_LEFT;
-                case 21 -> Speaker.TOP_BACK_RIGHT;
-                case 22 -> Speaker.TOP_BACK_CENTER;
-                case 23 -> Speaker.TOP_SIDE_LEFT;
-                case 24 -> Speaker.TOP_SIDE_RIGHT;
-                case 25 -> Speaker.TOP_CENTER;
-                case 26 -> Speaker.LOW_FREQUENCY_2;
-                case 27 -> Speaker.BOTTOM_FRONT_LEFT;
-                case 28 -> Speaker.BOTTOM_FRONT_RIGHT;
-                case 29 -> Speaker.BOTTOM_FRONT_CENTER;
-                default -> Speaker.UNKNOWN;
-            };
-        }
-        for (var i = 0; i < out.length; i++) {
-            for (var j = 0; j < i; j++) {
-                if (out[i] == out[j] && out[i] != Speaker.UNKNOWN) {
-                    out[i] = Speaker.UNKNOWN;
-                }
-            }
-        }
-        return out;
     }
 
     /**

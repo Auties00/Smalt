@@ -1,7 +1,8 @@
 /* Ports the ISO/IEC 23003-3:2019 reference software MPEG Surround decoder (sac_bitdec.c SpatialDecDecodeHeader,
    SpatialDecParseFrame, SpatialDecDecodeFrame, mapIndexData, factorFunct, factorCLD, createMapping, mapFrequency,
-   decodeAndMapFrameOtt, decodeAndMapFrameTtt, decodeAndMapFrameSmg, decodeAndMapFrameArbdmx, parseArbitraryDownmixData,
-   parseResidualData and SpatialDecParseExtensionFrame; sac_resdecode.c decodeIcs and decodeCpe), with the
+   decodeAndMapFrameOtt, decodeAndMapFrameTtt, decodeAndMapFrameSmg, decodeAndMapFrameArbdmx,
+   decodeAndMapFrameArbTree, parseArbitraryDownmixData, parseResidualData and SpatialDecParseExtensionFrame;
+   sac_resdecode.c decodeIcs and decodeCpe), with the
    SpatialFrame() syntax of ISO/IEC 23003-1 subclause 5.2 that the reference software trims to the 2-1-2 tree.
    Copyright Agere Systems, Coding Technologies, Fraunhofer IIS, Philips and ISO/IEC 2008; ISO/IEC reference software
    licence (use in products conforming to ISO/IEC 23003). Modified for Smalt. */
@@ -20,8 +21,9 @@ import java.util.Arrays;
  * Reads the {@code SpatialFrame()} of the MPEG Surround trees of ISO/IEC 23003-1 and maps its parameters onto
  * dequantized values per parameter set and band.
  *
- * <p>The mapped values ({@link #cld}, {@link #icc}, the TTT and arbitrary downmix parameters, the smoothing and
- * temporal shaping controls and the residual spectra) stay valid until the next frame. Instances keep the
+ * <p>The mapped values ({@link #cld}, {@link #icc}, the TTT and arbitrary downmix parameters, the CLDs of the
+ * arbitrary tree's boxes, the smoothing and temporal shaping controls and the residual spectra) stay valid until the
+ * next frame. Instances keep the
  * differential coding history of one stream; they are not thread-safe.
  */
 final class MpsParameters {
@@ -106,6 +108,20 @@ final class MpsParameters {
     private final int[][] gainIndexPrevious = new int[6][MAX_BANDS];
     final float[][][] downmixGain = new float[6][MAX_SETS + 1][MAX_BANDS];
     final boolean[] downmixResidualAbs = new boolean[6];
+
+    /**
+     * The number of boxes of the arbitrary tree, 0 when it does not run.
+     */
+    final int treeBoxes;
+    private final MpsLossless.Modes[] treeModes;
+    private final int[][][] treeCoded;
+    private final int[][] treeCodedPrevious;
+    private final int[][][] treeIndex;
+    private final int[][] treeIndexPrevious;
+    /**
+     * The CLD of each box of the arbitrary tree, in decibels, by box, parameter set and band.
+     */
+    final float[][][] treeCld;
     final boolean[] downmixAlphaUpdate = new boolean[6];
 
     private final int[] smoothMode = new int[MAX_SETS];
@@ -208,6 +224,16 @@ final class MpsParameters {
                 ottCldDefault[1] = 15;
             }
         }
+        this.treeBoxes = config.arbitraryTreeActive() ? config.treeBoxCount : 0;
+        this.treeModes = new MpsLossless.Modes[treeBoxes];
+        for (var i = 0; i < treeBoxes; i++) {
+            treeModes[i] = new MpsLossless.Modes();
+        }
+        this.treeCoded = new int[treeBoxes][MAX_SETS + 1][MAX_BANDS];
+        this.treeCodedPrevious = new int[treeBoxes][MAX_BANDS];
+        this.treeIndex = new int[treeBoxes][MAX_SETS + 1][MAX_BANDS];
+        this.treeIndexPrevious = new int[treeBoxes][MAX_BANDS];
+        this.treeCld = new float[treeBoxes][MAX_SETS + 1][MAX_BANDS];
         this.envelopeShape = new float[8][slots];
         this.envelopeCodes = new int[slots];
         this.residualStream = config.residualCoding ? residualStream(config.residualSamplingIndex) : null;
@@ -416,6 +442,7 @@ final class MpsParameters {
             switch (type) {
                 case MpsConfig.EXTENSION_RESIDUAL -> readResidual(reader);
                 case MpsConfig.EXTENSION_ARBITRARY_DOWNMIX -> readDownmixResidual(reader);
+                case MpsConfig.EXTENSION_ARBITRARY_TREE -> readArbitraryTree(reader);
                 default -> {
                 }
             }
@@ -424,6 +451,16 @@ final class MpsParameters {
                 throw new MediaException.Malformed("MPEG Surround extension frame overruns its length");
             }
             reader.skip(fill);
+        }
+    }
+
+    /**
+     * Reads the CLDs of the arbitrary tree's boxes (extension frame type 2).
+     */
+    private void readArbitraryTree(AacBitReader reader) {
+        for (var i = 0; i < treeBoxes; i++) {
+            lossless.read(reader, treeModes[i], treeCoded[i], treeCodedPrevious[i], MpsLossless.CLD, 0,
+                    config.treeBoxBands[i], config.treeBoxDefaultCld[i], sets, false, independent);
         }
     }
 
@@ -524,6 +561,10 @@ final class MpsParameters {
                 map(cldModes[offset + ch], downmixGain[ch], gainIndex[ch], gainCoded[ch], null, gainIndexPrevious[ch],
                         MpsLossless.CLD, 0, bands, 0, 0, null, null, null);
             }
+        }
+        for (var i = 0; i < treeBoxes; i++) {
+            map(treeModes[i], treeCld[i], treeIndex[i], treeCoded[i], null, treeIndexPrevious[i], MpsLossless.CLD, 0,
+                    config.treeBoxBands[i], config.treeBoxDefaultCld[i], 0, null, null, null);
         }
         if (extendFrame) {
             sets++;

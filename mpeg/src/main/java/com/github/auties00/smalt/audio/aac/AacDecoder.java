@@ -130,16 +130,27 @@ import java.util.function.Consumer;
  * ({@link #AacDecoder(List, AacDecoderOptions)}) decodes each block through {@link #decode(List, Consumer)} from the
  * access units of both. Every tree configuration decodes (5-1-5 with a mono downmix, 5-2-5 with a stereo one,
  * 7-2-7 and 7-5-7 to 7.1), with residual coding, arbitrary downmix gains and residuals, smoothing, the
- * decorrelators, the subband domain temporal processing and the guided envelope shaping. The 5.1 output follows
- * {@link ChannelLayout#SURROUND_5_1}; the 7.1 trees output front left, front right, center, LFE, back left, back
- * right and either the left and right of center (7-2-7 and 7-5-7 with front channels) or the side channels (with
- * surround channels). With spectral band replication at dual rate, the upmix takes the 64-band QMF matrices of the
- * extension directly, without a second filterbank, and leads the time domain upmix by 577 samples. A configuration
- * the decoder does not support (the arbitrary tree extension is decoded without its extra channels; 3D audio
- * downmixes are not supported) leaves the downmix as the output, as a decoder without MPEG Surround would.
- * A spatial frame lasts exactly one block: a configuration whose frame length differs from the block is not
- * upmixed. The upmix starts at the first spatial frame that does not depend on the frames before it (its
- * {@code bsIndependencyFlag} is set), so a decoder that starts within a stream outputs the downmix until then.
+ * decorrelators, the subband domain temporal processing, the guided envelope shaping and the arbitrary tree
+ * extension. The 5.1 output follows {@link ChannelLayout#SURROUND_5_1}; the 7.1 trees output front left, front
+ * right, center, LFE, back left, back right and either the left and right of center (7-2-7 and 7-5-7 with front
+ * channels) or the side channels (with surround channels). The arbitrary tree splits those outputs into as many as
+ * 32 channels, each on the loudspeaker position its {@code bsOutputChannelPosAT} names (the position table of the
+ * USAC {@code bsOutputChannelPos}), in WAVE order; under the non-uniform CLD quantization of {@code bsQuantMode} 1
+ * and 2 the upmix is the tree's alone. With spectral band replication at dual rate, the upmix takes the 64-band QMF
+ * matrices of the extension directly, without a second filterbank, and leads the time domain upmix by 577 samples.
+ * A configuration the decoder does not support (3D audio downmixes) leaves the downmix as the output, as a decoder
+ * without MPEG Surround would.
+ * A spatial frame lasts one block, a whole number {@code n} of blocks or a {@code m}-th of a block; a configuration
+ * whose frame is neither is not upmixed. A block of {@code m} frames carries them in its fill elements and is
+ * upmixed without delay; in a separate elementary stream its access unit holds the first of them, and the rest of
+ * the block is upmixed with that frame's parameters. A frame of {@code n} blocks is upmixed once its last block is
+ * decoded, so while such a configuration is in use the output lags the decoded blocks by {@code n - 1} blocks, which
+ * {@link #flush(Consumer)} hands over at the end of the stream, the
+ * downmix output before the upmix starts included (silent for the first {@code n - 1} blocks); in a separate
+ * elementary stream, the access unit of such a frame comes with the first of its blocks and the blocks after it
+ * decode through {@link #decode(Packet, Consumer)} or with an empty access unit. The upmix starts at the first
+ * spatial frame that does not depend on the frames before it (its {@code bsIndependencyFlag} is set), so a decoder
+ * that starts within a stream outputs the downmix until then.
  *
  * <p>Spectral band replication is decoded in the high quality (complex) mode, from 1024- and
  * 960-sample frames, on every channel element that carries it; parametric stereo is decoded in
@@ -715,11 +726,12 @@ public final class AacDecoder implements AudioDecoder {
      * layer, or with {@code epConfig} 1 of each category instance of each layer, in the order of the tracks the
      * decoder was built from; the layers from the first missing one on are not decoded. For a separate MPEG
      * Surround elementary stream, {@code instances} holds the access units of the tracks the decoder was built
-     * from, the downmix first; units of other tracks are ignored. For a stream that applies the error protection
-     * tool ({@code epConfig} 2 or 3), {@code instances} holds the error protected access unit of each elementary
-     * stream (one per layer of scalable AAC, one per elementary stream of ER BSAC), whose source coder frames each
-     * yield a block. The packets are read only during the call. An exception thrown by {@code output} propagates
-     * unchanged.
+     * from, the downmix first; units of other tracks are ignored, and an empty MPEG Surround access unit carries no
+     * spatial frame, as for the blocks after the first of a frame that spans several. For a stream that applies the
+     * error protection tool ({@code epConfig} 2 or 3), {@code instances} holds the error protected access unit of each
+     * elementary stream (one per layer of scalable AAC, one per elementary stream of ER BSAC), whose source coder
+     * frames each yield a block. The packets are read only during the call. An exception thrown by {@code output}
+     * propagates unchanged.
      *
      * @param instances the category instances of the block
      * @param output receives the block's samples, valid only during the call
@@ -888,6 +900,8 @@ public final class AacDecoder implements AudioDecoder {
         var core = Objects.requireNonNull(units.getFirst(), "instance").data();
         var spatial = Objects.requireNonNull(units.get(surroundTrack), "instance").data();
         ConsumerFailure.<AudioBuffer>run("AAC packet", output, emit -> {
+            // TODO: spatial frames shorter than a block come in several access units per block, and this takes one,
+            //  so the rest of such a block is upmixed with the parameters of that frame repeated
             decoder.addSurroundFrame(spatial, 0, spatial.length);
             decoder.decode(core, 0, core.length, emit);
         });
@@ -968,13 +982,17 @@ public final class AacDecoder implements AudioDecoder {
      *
      * <p>AAC buffers nothing beyond the overlap of the last frame, which belongs to the priming
      * of a frame that never comes, so this emits nothing, except for a USAC stream decoded through
-     * the MPEG-D DRC decoder: this emits the samples its delay still holds.
+     * the MPEG-D DRC decoder, where this emits the samples its delay still holds, and for MPEG Surround spatial frames
+     * of {@code n} blocks, where this emits {@code n - 1} blocks, the last of which holds the end of the stream,
+     * upmixed over silence with the parameters of the last spatial frame where the stream ends within a frame.
      */
     @Override
     public void flush(Consumer<AudioBuffer> output) {
         Objects.requireNonNull(output, "output");
         if (usac != null) {
             ConsumerFailure.<AudioBuffer>run("USAC flush", output, usac::flush);
+        } else {
+            ConsumerFailure.<AudioBuffer>run("AAC flush", output, decoder::flushSurround);
         }
     }
 }

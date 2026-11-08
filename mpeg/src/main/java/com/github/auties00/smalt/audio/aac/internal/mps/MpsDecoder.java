@@ -2,7 +2,8 @@
    SpatialDecApplyFrame; sac_process.c SpatialDecMDCT2QMF, SpatialDecHybridQMFAnalysis, SpatialDecDecorrelate,
    SpatialDecMergeResDecor, SpatialDecCreateX and SpatialDecUpdateBuffers; sac_calcM1andM2.c SpatialDecApplyM1,
    SpatialDecApplyM2, interp_UMX and applyAbsKernels; sac_TPprocess.c subbandTP and tpProcess; sac_reshapeBBEnv.c
-   extractBBEnv and spatialDecReshapeBBEnv), for the trees of ISO/IEC 23003-1 other than the 2-1-2 tree. Copyright
+   extractBBEnv and spatialDecReshapeBBEnv; sac_arbitraryTree.c arbitraryTreeProcess), for the trees of
+   ISO/IEC 23003-1 other than the 2-1-2 tree. Copyright
    Agere Systems, Coding Technologies, Fraunhofer IIS, Philips and ISO/IEC 2008; ISO/IEC reference software licence
    (use in products conforming to ISO/IEC 23003). Modified for Smalt. */
 package com.github.auties00.smalt.audio.aac.internal.mps;
@@ -19,8 +20,10 @@ import java.util.Arrays;
  * <p>The decoder takes the downmix either as time samples, which it splits with its own QMF bank, or as QMF slots
  * (the output of an SBR decoder), and returns time samples in the scale of the downmix. The output channels are in the
  * order left, right, center, LFE, left surround, right surround and, for the 7.1 trees, the two added channels (left
- * and right center for trees 3 and 5, left and right rear surround for trees 4 and 6). The arbitrary tree extension is
- * skipped and the base layout decoded; binaural, 3D stereo and blind upmixing are not implemented.
+ * and right center for trees 3 and 5, left and right rear surround for trees 4 and 6). With the arbitrary tree
+ * extension, its boxes split the outputs of the tree further, and the output channels are those of the arbitrary tree
+ * in ascending order of their loudspeaker position ({@link #outputPositions()}). Binaural, 3D stereo and blind
+ * upmixing are not implemented.
  *
  * <p>Instances keep the state of one stream; they are not thread-safe.
  */
@@ -106,6 +109,13 @@ public final class MpsDecoder {
     private final float lfeGain;
     private final boolean residualCoding;
     private final int arbitraryDownmix;
+    private final boolean arbitraryTree;
+    private final int channelsOut;
+    private final int[] leafOutput;
+    private final float[][] treeGain;
+    private final float[][] treeStack;
+    private final float[][][] treeReal;
+    private final float[][][] treeImag;
 
     private final MpsPolyphase polyphase;
     private final double[][] analysisStates;
@@ -191,6 +201,18 @@ public final class MpsDecoder {
         this.tttCount = parameters.tttCount;
         this.residualCoding = config.residualCoding;
         this.arbitraryDownmix = config.arbitraryDownmix;
+        this.arbitraryTree = config.arbitraryTreeActive();
+        this.channelsOut = config.outputChannels();
+        var positions = config.arbitraryTreePositions();
+        this.leafOutput = new int[arbitraryTree ? channelsOut : 0];
+        for (var leaf = 0; leaf < leafOutput.length; leaf++) {
+            leafOutput[leaf] = Arrays.binarySearch(positions, config.treePositions[leaf]);
+        }
+        this.treeGain = new float[arbitraryTree ? channelsOut : 0][MpsParameters.MAX_BANDS];
+        for (var gain : treeGain) {
+            Arrays.fill(gain, 1.0f);
+        }
+        this.treeStack = new float[arbitraryTree ? channelsOut + 1 : 0][MpsParameters.MAX_BANDS];
         var kernel = MpsTables.KERNELS[Arrays.binarySearch(KERNEL_BANDS, bands)];
         this.kernelBand = new int[hybridBands];
         this.kernelSign = new int[hybridBands];
@@ -232,8 +254,8 @@ public final class MpsDecoder {
         for (var i = 0; i < inputs; i++) {
             analysisStates[i] = polyphase.analysisState();
         }
-        this.synthesisStates = new double[outputs][];
-        for (var i = 0; i < outputs; i++) {
+        this.synthesisStates = new double[channelsOut][];
+        for (var i = 0; i < channelsOut; i++) {
             synthesisStates[i] = polyphase.synthesisState();
         }
         this.inputHybrid = new MpsHybrid[inputs];
@@ -272,9 +294,11 @@ public final class MpsDecoder {
         this.dryImag = new float[outputs][slots][hybridBands];
         this.wetReal = new float[outputs][slots][hybridBands];
         this.wetImag = new float[outputs][slots][hybridBands];
+        this.treeReal = arbitraryTree ? new float[channelsOut][slots][hybridBands] : dryReal;
+        this.treeImag = arbitraryTree ? new float[channelsOut][slots][hybridBands] : dryImag;
         this.qmfOutReal = new float[slots][qmfBands];
         this.qmfOutImag = new float[slots][qmfBands];
-        this.timeOut = new double[outputs][slots * qmfBands];
+        this.timeOut = new double[channelsOut][slots * qmfBands];
         this.r1Real = new float[bands][MpsMatrices.STRIDE * MpsMatrices.STRIDE];
         this.r1Imag = new float[bands][MpsMatrices.STRIDE * MpsMatrices.STRIDE];
         this.r2Decor = new float[bands][MpsMatrices.STRIDE * MpsMatrices.STRIDE];
@@ -320,7 +344,15 @@ public final class MpsDecoder {
      * {@return the number of output channels}
      */
     public int outputChannels() {
-        return outputs;
+        return channelsOut;
+    }
+
+    /**
+     * {@return the loudspeaker positions ({@code bsOutputChannelPosAT}) of the output channels, in output order, when
+     * the arbitrary tree runs, or an empty array for the outputs of the tree}
+     */
+    public int[] outputPositions() {
+        return config.arbitraryTreePositions();
     }
 
     /**
@@ -418,16 +450,18 @@ public final class MpsDecoder {
             reshapeEnvelope();
         }
         temporalProcess();
-        for (var n = 0; n < slots * qmfBands; n++) {
-            timeOut[3][n] *= lfeGain;
-            timeOut[4][n] *= surroundGain;
-            timeOut[5][n] *= surroundGain;
-            if (tree == MpsConfig.TREE_7272 || tree == MpsConfig.TREE_7572) {
-                timeOut[6][n] *= surroundGain;
-                timeOut[7][n] *= surroundGain;
+        if (!arbitraryTree) {
+            for (var n = 0; n < slots * qmfBands; n++) {
+                timeOut[3][n] *= lfeGain;
+                timeOut[4][n] *= surroundGain;
+                timeOut[5][n] *= surroundGain;
+                if (tree == MpsConfig.TREE_7272 || tree == MpsConfig.TREE_7572) {
+                    timeOut[6][n] *= surroundGain;
+                    timeOut[7][n] *= surroundGain;
+                }
             }
         }
-        for (var ch = 0; ch < outputs; ch++) {
+        for (var ch = 0; ch < channelsOut; ch++) {
             var source = timeOut[ch];
             var target = output[ch];
             for (var n = 0; n < slots * qmfBands; n++) {
@@ -671,12 +705,18 @@ public final class MpsDecoder {
         for (var ts = 0; ts < slots; ts++) {
             subbandTemporalProcess(ts);
         }
-        for (var ch = 0; ch < outputs; ch++) {
-            MpsHybrid.synthesize(dryReal[ch], dryImag[ch], slots, qmfOutReal, qmfOutImag, qmfBands);
+        if (arbitraryTree) {
+            splitOutputs();
+        }
+        for (var ch = 0; ch < channelsOut; ch++) {
+            MpsHybrid.synthesize(treeReal[ch], treeImag[ch], slots, qmfOutReal, qmfOutImag, qmfBands);
             for (var ts = 0; ts < slots; ts++) {
                 polyphase.synthesize(synthesisStates[ch], qmfOutReal[ts], qmfOutImag[ts], timeOut[ch],
                         qmfBands * ts);
             }
+        }
+        if (arbitraryTree) {
+            return;
         }
         switch (tree) {
             case MpsConfig.TREE_5152, MpsConfig.TREE_525 -> {
@@ -712,6 +752,98 @@ public final class MpsDecoder {
             default -> {
             }
         }
+    }
+
+    /**
+     * Splits the outputs of the tree with the boxes of the arbitrary tree ({@code arbitraryTreeProcess}).
+     *
+     * <p>The outputs are taken in the order of the tree's own rows, with their surround and LFE gains; the gain of
+     * each output channel of a box is interpolated over the slots of every parameter set from its value at the end
+     * of the previous set. A box codes the CLDs of its first {@code bsOttBandsAT} bands and leaves the gains of the
+     * bands above unchanged.
+     */
+    private void splitOutputs() {
+        var parameterSlot = parameters.parameterSlot;
+        for (var ps = 0; ps < parameters.sets; ps++) {
+            var box = -1;
+            var first = ps == 0 ? 0 : parameterSlot[ps - 1] + 1;
+            var end = parameterSlot[ps] + 1;
+            var split = 0;
+            var leaf = 0;
+            for (var ch = 0; ch < outputs; ch++) {
+                var gain = treeOutputGain(ch);
+                var flags = config.treeBoxes[ch];
+                var dr = dryReal[ch];
+                var di = dryImag[ch];
+                if (!flags[0]) {
+                    var target = leafOutput[leaf++];
+                    for (var ts = first; ts < end; ts++) {
+                        for (var qs = 0; qs < hybridBands; qs++) {
+                            treeReal[target][ts][qs] = gain * dr[ts][qs];
+                            treeImag[target][ts][qs] = gain * di[ts][qs];
+                        }
+                    }
+                    continue;
+                }
+                for (var level : treeStack) {
+                    Arrays.fill(level, 1.0f);
+                }
+                var live = 1;
+                var flag = 0;
+                while (live > 0) {
+                    if (flags[flag++]) {
+                        live++;
+                        box++;
+                        var cld = parameters.treeCld[box][ps];
+                        for (var pb = 0; pb < config.treeBoxBands[box]; pb++) {
+                            var linear = (float) StrictMath.pow(10.0, cld[pb] / 10.0f);
+                            var upper = (float) Math.sqrt(linear / (1 + linear));
+                            var lower = (float) Math.sqrt(1.0 / (1 + linear));
+                            for (var i = live - 1; i > 0; i--) {
+                                treeStack[i][pb] = treeStack[i - 1][pb];
+                            }
+                            treeStack[1][pb] *= lower;
+                            treeStack[0][pb] *= upper;
+                        }
+                    } else {
+                        live--;
+                        var target = leafOutput[leaf++];
+                        var previous = treeGain[split];
+                        var current = treeStack[0];
+                        for (var qs = 0; qs < hybridBands; qs++) {
+                            var pb = kernelBand[qs];
+                            var from = previous[pb];
+                            var to = current[pb];
+                            for (var ts = first; ts < end; ts++) {
+                                var alpha = (ts + 1 - first) / (float) (end - first);
+                                var factor = gain * ((1 - alpha) * from + alpha * to);
+                                treeReal[target][ts][qs] = factor * dr[ts][qs];
+                                treeImag[target][ts][qs] = factor * di[ts][qs];
+                            }
+                        }
+                        for (var pb = 0; pb < config.treeBoxBands[box]; pb++) {
+                            previous[pb] = treeStack[0][pb];
+                            for (var i = 0; i < live; i++) {
+                                treeStack[i][pb] = treeStack[i + 1][pb];
+                            }
+                        }
+                        split++;
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * {@return the surround or LFE gain of one output of the tree, by its row, under the arbitrary tree}
+     */
+    private float treeOutputGain(int row) {
+        return switch (tree) {
+            case MpsConfig.TREE_5151 -> row == 3 ? lfeGain : row == 4 || row == 5 ? surroundGain : 1.0f;
+            case MpsConfig.TREE_5152, MpsConfig.TREE_525 -> row == 5 ? lfeGain
+                    : row == 1 || row == 3 ? surroundGain : 1.0f;
+            default -> row == 7 ? lfeGain : row == 1 || row == 2 || row == 4 || row == 5 ? surroundGain : 1.0f;
+        };
     }
 
     /**

@@ -13,8 +13,8 @@ import java.util.Arrays;
 /**
  * Holds an MPEG Surround {@code SpatialSpecificConfig} (ISO/IEC 23003-1 subclause 5.1) with its extensions.
  *
- * <p>The tree configurations 0 to 6 of ISO/IEC 23003-1 are accepted; the 2-1-2 tree of USAC has its own decoder.
- * Instances are immutable after parsing.
+ * <p>The tree configurations 0 to 6 of ISO/IEC 23003-1 are accepted, with the arbitrary tree extension that splits
+ * their output channels further; the 2-1-2 tree of USAC has its own decoder. Instances are immutable after parsing.
  */
 public final class MpsConfig {
     /**
@@ -67,6 +67,12 @@ public final class MpsConfig {
      */
     public static final int EXTENSION_ARBITRARY_TREE = 2;
 
+    /**
+     * The largest number of output channels of an arbitrary tree: one per loudspeaker position of
+     * {@code bsOutputChannelPosAT}.
+     */
+    public static final int MAX_ARBITRARY_TREE_OUTPUTS = 32;
+
     static final int[] FREQUENCY_RESOLUTIONS = {0, 28, 20, 14, 10, 7, 5, 4};
     private static final int MAX_EXTENSIONS = 8;
     private static final int[] SAMPLING_FREQUENCIES = {96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000,
@@ -117,6 +123,19 @@ public final class MpsConfig {
     final int downmixResidualFrames;
     final int downmixResidualBands;
     final boolean arbitraryTree;
+    /**
+     * The {@code bsOttBoxPresentAT} flags of each output channel of the tree, in preorder: a set flag is a box whose
+     * two outputs follow, a clear one an output channel of the arbitrary tree.
+     */
+    final boolean[][] treeBoxes;
+    final int treeBoxCount;
+    final int[] treeBoxDefaultCld;
+    final boolean[] treeBoxLfe;
+    final int[] treeBoxBands;
+    /**
+     * The {@code bsOutputChannelPosAT} of each output channel of the arbitrary tree, in the order of the leaves.
+     */
+    final int[] treePositions;
 
     private MpsConfig(Builder builder) {
         this.samplingFrequency = builder.samplingFrequency;
@@ -150,6 +169,12 @@ public final class MpsConfig {
         this.downmixResidualFrames = builder.downmixResidualFrames;
         this.downmixResidualBands = builder.downmixResidualBands;
         this.arbitraryTree = builder.arbitraryTree;
+        this.treeBoxes = builder.treeBoxes;
+        this.treeBoxCount = builder.treeBoxCount;
+        this.treeBoxDefaultCld = Arrays.copyOf(builder.treeBoxDefaultCld, builder.treeBoxCount);
+        this.treeBoxLfe = Arrays.copyOf(builder.treeBoxLfe, builder.treeBoxCount);
+        this.treeBoxBands = Arrays.copyOf(builder.treeBoxBands, builder.treeBoxCount);
+        this.treePositions = builder.treePositions;
     }
 
     /**
@@ -188,6 +213,12 @@ public final class MpsConfig {
         int downmixResidualFrames;
         int downmixResidualBands;
         boolean arbitraryTree;
+        boolean[][] treeBoxes = new boolean[0][];
+        int treeBoxCount;
+        final int[] treeBoxDefaultCld = new int[MAX_ARBITRARY_TREE_OUTPUTS];
+        final boolean[] treeBoxLfe = new boolean[MAX_ARBITRARY_TREE_OUTPUTS];
+        final int[] treeBoxBands = new int[MAX_ARBITRARY_TREE_OUTPUTS];
+        int[] treePositions = new int[0];
     }
 
     /**
@@ -403,9 +434,7 @@ public final class MpsConfig {
                                 + b.downmixResidualBands + " of " + parameterBands + " parameter bands");
                     }
                 }
-                // TODO: the arbitrary tree extension adds output channels through boxes of its own
-                //  (bsOttBoxPresentAT, bsOutputChannelPosAT); the upmix decodes the tree without them.
-                case EXTENSION_ARBITRARY_TREE -> b.arbitraryTree = true;
+                case EXTENSION_ARBITRARY_TREE -> readArbitraryTree(reader, b, properties[1], parameterBands);
                 default -> {
                 }
             }
@@ -417,6 +446,94 @@ public final class MpsConfig {
             reader.skip(fill);
             available -= 8L * length;
         }
+    }
+
+    /**
+     * Reads the configuration of the arbitrary tree extension ({@code SpatialDecParseExtensionConfig}, extension
+     * type 2): the boxes that split each output channel of the tree, their CLD defaults and bands, and the loudspeaker
+     * position of every output channel they produce.
+     */
+    private static void readArbitraryTree(AacBitReader reader, Builder b, int channels, int parameterBands) {
+        var boxes = new boolean[channels][];
+        var flags = new boolean[2 * MAX_ARBITRARY_TREE_OUTPUTS];
+        var outputs = 0;
+        var count = 0;
+        for (var ch = 0; ch < channels; ch++) {
+            var open = 1;
+            var length = 0;
+            while (open > 0) {
+                var box = reader.readFlag();
+                if (box) {
+                    count++;
+                    open++;
+                } else {
+                    outputs++;
+                    open--;
+                }
+                if (outputs + open + channels - 1 - ch > MAX_ARBITRARY_TREE_OUTPUTS) {
+                    throw new MediaException.Malformed("MPEG Surround arbitrary tree has more than "
+                            + MAX_ARBITRARY_TREE_OUTPUTS + " output channels");
+                }
+                flags[length++] = box;
+            }
+            boxes[ch] = Arrays.copyOf(flags, length);
+        }
+        for (var i = 0; i < count; i++) {
+            // TODO: bsOttDefaultCldAT is used as the default CLD index, as the ISO/IEC 23003-3 reference software
+            //  does (1 gives +2 dB, checked by the at5152 oracle case); the defaults of the tree's own boxes are
+            //  indices 0 and 15, so 1 may mean 150 dB (index 15). Confirm against ISO/IEC 23003-1, not available.
+            b.treeBoxDefaultCld[i] = reader.read(1);
+            b.treeBoxLfe[i] = reader.readFlag();
+            if (b.treeBoxLfe[i]) {
+                b.treeBoxBands[i] = reader.read(5);
+                if (b.treeBoxBands[i] > parameterBands) {
+                    throw new MediaException.Malformed("MPEG Surround arbitrary tree box codes " + b.treeBoxBands[i]
+                            + " of " + parameterBands + " parameter bands");
+                }
+            } else {
+                b.treeBoxBands[i] = parameterBands;
+            }
+        }
+        var positions = new int[outputs];
+        var used = 0;
+        for (var i = 0; i < outputs; i++) {
+            positions[i] = reader.read(5);
+            if ((used & 1 << positions[i]) != 0) {
+                throw new MediaException.Malformed("MPEG Surround arbitrary tree feeds position " + positions[i]
+                        + " twice");
+            }
+            used |= 1 << positions[i];
+        }
+        b.arbitraryTree = true;
+        b.treeBoxes = boxes;
+        b.treeBoxCount = count;
+        b.treePositions = positions;
+    }
+
+    /**
+     * {@return whether the upmix runs the arbitrary tree}
+     *
+     * <p>The arbitrary tree does not run under the non-uniform CLD quantization of {@code bsQuantMode} 1 and 2: the
+     * upmix is then the one of the tree alone.
+     */
+    public boolean arbitraryTreeActive() {
+        // TODO: the CLDs of the arbitrary tree's boxes under bsQuantMode 1 and 2 need the energy tracking of
+        //  ISO/IEC 23003-1 continued past the tree's outputs, which the reference software does not implement
+        //  (decodeAndMapFrameArbTree passes factorCLD no energies); such configurations upmix the tree alone.
+        return arbitraryTree && quantMode == 0;
+    }
+
+    /**
+     * {@return the loudspeaker positions ({@code bsOutputChannelPosAT}) of the output channels of the arbitrary
+     * tree, in ascending order, or an empty array when the arbitrary tree does not run}
+     */
+    public int[] arbitraryTreePositions() {
+        if (!arbitraryTreeActive()) {
+            return new int[0];
+        }
+        var sorted = treePositions.clone();
+        Arrays.sort(sorted);
+        return sorted;
     }
 
     /**
@@ -448,9 +565,9 @@ public final class MpsConfig {
     }
 
     /**
-     * {@return the number of channels the tree outputs}
+     * {@return the number of channels the upmix outputs: those of the arbitrary tree when it runs, else the tree's}
      */
     public int outputChannels() {
-        return TREE_PROPERTIES[treeConfig][1];
+        return arbitraryTreeActive() ? treePositions.length : TREE_PROPERTIES[treeConfig][1];
     }
 }

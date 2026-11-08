@@ -1608,6 +1608,146 @@ class FuzzSeedWriter {
         }
         write(MpegFuzzTest.class, "aacSurround", "valid-mps-lc5151-separate.bin", FuzzPackets.audio(0, 48000, 1, 0,
                 MpegFuzzTest.units(List.of(core.getFirst(), config.toByteArray())), parts));
+        // the synthetic MpegSurroundTest streams over the same downmix: an arbitrary tree on side and rear
+        // positions, and spatial frames of two blocks, whose second blocks carry an empty access unit
+        separateSeed("valid-mps-at71-separate.bin", core, "mps-at71", 1);
+        separateSeed("valid-mps-long5151-separate.bin", core, "mps-long5151", 2);
+        // spatial frames of half a block: two whole frames in the fill elements of each block, and one access unit
+        // per block of a separate stream
+        write(MpegFuzzTest.class, "aac", "valid-mps-short5151-embedded.bin",
+                FuzzPackets.audio(0, 48000, 1, 0, core.getFirst(), embedFractional(core, "mps-short5151", 2)));
+        separateSeed("valid-mps-short5151-separate.bin", core, "mps-short5151", 1);
+        // spatial frames of two blocks embedded in fragments, the header in the first fragment of the first frame
+        write(MpegFuzzTest.class, "aac", "valid-mps-long5151-embedded.bin",
+                FuzzPackets.audio(0, 48000, 1, 0, core.getFirst(), embedLong(core, "mps-long5151")));
+    }
+
+    /**
+     * Builds eight blocks of a downmix whose blocks each start with a fill element holding half of a spatial frame of
+     * two blocks.
+     */
+    private static List<FuzzPackets.Part> embedLong(List<byte[]> core, String spatialName) throws IOException {
+        var spatial = new ArrayList<byte[]>();
+        var data = Files.readAllBytes(SURROUND_RESOURCES.resolve(spatialName + ".bs"));
+        var buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
+        for (var position = 0; position + 4 <= data.length; position += 4 + buffer.getInt(position)) {
+            spatial.add(Arrays.copyOfRange(data, position + 4, position + 4 + buffer.getInt(position)));
+        }
+        var header = spatial.getFirst();
+        var parts = new ArrayList<FuzzPackets.Part>();
+        for (var block = 0; block < 8; block++) {
+            var withHeader = block == 0;
+            var frame = spatial.get(block / 2 + 1);
+            var from = block % 2 == 0 ? 0 : frame.length / 2;
+            var to = block % 2 == 0 ? frame.length / 2 : frame.length;
+            var count = 1 + to - from + (withHeader ? header.length : 0);
+            var bits = new MsbBitWriter();
+            bits.write(6, 3);
+            if (count < 15) {
+                bits.write(count, 4);
+            } else {
+                bits.write(15, 4);
+                bits.write(count - 14, 8);
+            }
+            bits.write(12, 4);
+            bits.write(withHeader ? 1 : 0, 2);
+            bits.write(block % 2 == 0 ? 1 : 0, 1);
+            bits.write(block % 2, 1);
+            if (withHeader) {
+                for (var value : header) {
+                    bits.write(value & 0xFF, 8);
+                }
+            }
+            for (var i = from; i < to; i++) {
+                bits.write(frame[i] & 0xFF, 8);
+            }
+            for (var value : core.get(block + 1)) {
+                bits.write(value & 0xFF, 8);
+            }
+            bits.alignWithZeros();
+            parts.add(new FuzzPackets.Part(bits.toByteArray(), true));
+        }
+        return parts;
+    }
+
+    /**
+     * Builds eight blocks of a downmix whose blocks each start with the fill elements of {@code framesPerBlock} whole
+     * spatial frames, the first frame and every seventh after it starting with the header.
+     */
+    private static List<FuzzPackets.Part> embedFractional(List<byte[]> core, String spatialName, int framesPerBlock)
+            throws IOException {
+        var spatial = new ArrayList<byte[]>();
+        var data = Files.readAllBytes(SURROUND_RESOURCES.resolve(spatialName + ".bs"));
+        var buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
+        for (var position = 0; position + 4 <= data.length; position += 4 + buffer.getInt(position)) {
+            spatial.add(Arrays.copyOfRange(data, position + 4, position + 4 + buffer.getInt(position)));
+        }
+        var header = spatial.getFirst();
+        var parts = new ArrayList<FuzzPackets.Part>();
+        for (var block = 0; block < 8; block++) {
+            var bits = new MsbBitWriter();
+            for (var f = 0; f < framesPerBlock; f++) {
+                var index = block * framesPerBlock + f;
+                var withHeader = index % 7 == 0;
+                var frame = spatial.get(index + 1);
+                var count = 1 + frame.length + (withHeader ? header.length : 0);
+                bits.write(6, 3);
+                if (count < 15) {
+                    bits.write(count, 4);
+                } else {
+                    bits.write(15, 4);
+                    bits.write(count - 14, 8);
+                }
+                bits.write(12, 4);
+                bits.write(withHeader ? 1 : 0, 2);
+                bits.write(1, 1);
+                bits.write(1, 1);
+                if (withHeader) {
+                    for (var value : header) {
+                        bits.write(value & 0xFF, 8);
+                    }
+                }
+                for (var value : frame) {
+                    bits.write(value & 0xFF, 8);
+                }
+            }
+            for (var value : core.get(block + 1)) {
+                bits.write(value & 0xFF, 8);
+            }
+            bits.alignWithZeros();
+            parts.add(new FuzzPackets.Part(bits.toByteArray(), true));
+        }
+        return parts;
+    }
+
+    /**
+     * Writes an {@code aacSurround} seed of eight blocks of a downmix with the frames of a separate stream, one access
+     * unit every {@code blocksPerFrame} blocks and empty ones between.
+     */
+    private static void separateSeed(String name, List<byte[]> core, String spatialName, int blocksPerFrame)
+            throws IOException {
+        var spatial = new ArrayList<byte[]>();
+        var data = Files.readAllBytes(SURROUND_RESOURCES.resolve(spatialName + ".bs"));
+        var buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
+        for (var position = 0; position + 4 <= data.length; position += 4 + buffer.getInt(position)) {
+            spatial.add(Arrays.copyOfRange(data, position + 4, position + 4 + buffer.getInt(position)));
+        }
+        var header = spatial.getFirst();
+        var config = new MsbBitWriter();
+        config.write(30, 5);
+        config.write(3, 4);
+        config.write(0, 4);
+        config.write(0, 1);
+        for (var i = 1; i < header.length; i++) {
+            config.write(header[i] & 0xFF, 8);
+        }
+        var parts = new ArrayList<FuzzPackets.Part>();
+        for (var block = 0; block < 8; block++) {
+            var unit = block % blocksPerFrame == 0 ? spatial.get(block / blocksPerFrame + 1) : new byte[0];
+            parts.add(new FuzzPackets.Part(MpegFuzzTest.units(List.of(core.get(block + 1), unit)), true));
+        }
+        write(MpegFuzzTest.class, "aacSurround", name, FuzzPackets.audio(0, 48000, 1, 0,
+                MpegFuzzTest.units(List.of(core.getFirst(), config.toByteArray())), parts));
     }
 
     private static final Path SURROUND_RESOURCES = Path.of("src", "test", "resources", "com", "github", "auties00",

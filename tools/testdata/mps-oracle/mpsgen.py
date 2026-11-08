@@ -1,10 +1,14 @@
 """Writes synthetic MPEG Surround streams in the mpsref .bs format and their downmix:
 mpsgen.py <refsoft mp4spatialdec/src> <out dir> [case names...]
 
+Without names it writes every oracle case of CASES; the RESOURCES streams are written when named.
+
 Every case is a SpatialSpecificConfig with random but valid SpatialFrame() payloads: PCM coded parameters (data modes
 0 to 3, pairs, coarse quantization, frequency strides), smoothing, temporal shaping (with guided envelope shaping
-envelopes Huffman coded with the reference tree), arbitrary downmix gains and residual or downmix residual frames
-coded as AAC individual channel streams with codebook 11 (Huffman codes read from the reference tables).
+envelopes Huffman coded with the reference tree), arbitrary downmix gains, residual or downmix residual frames
+coded as AAC individual channel streams with codebook 11 (Huffman codes read from the reference tables), and the
+arbitrary tree extension (its OTT boxes, given per output channel of the tree as the preorder bsOttBoxPresentAT
+flags, with their CLDs in the extension frame).
 """
 import math
 import os
@@ -255,6 +259,21 @@ def ssc(cfg):
         ext.put(cfg['dmx_bands'], 5)
         ext.align()
         extension(b, 1, ext.data())
+    if cfg.get('at'):
+        at = cfg['at']
+        ext = Bits()
+        for flags in at['trees']:
+            for flag in flags:
+                ext.put(flag, 1)
+        for default, lfe, bands in at['boxes']:
+            ext.put(default, 1)
+            ext.put(lfe, 1)
+            if lfe:
+                ext.put(bands, 5)
+        for position in at['positions']:
+            ext.put(position, 5)
+        ext.align()
+        extension(b, 2, ext.data())
     return b.data()
 
 
@@ -426,6 +445,12 @@ class Stream:
                 ch += 2 if pair else 1
             payload.align()
             self.extension_frame(b, payload.data())
+        if cfg.get('at'):
+            payload = Bits()
+            for default, lfe, lfe_bands in cfg['at']['boxes']:
+                self.ec_data(payload, 'cld', 0, lfe_bands if lfe else bands, sets, independent)
+            payload.align()
+            self.extension_frame(b, payload.data())
         return b.data()
 
     def residual_frames(self, b, sfi, update, pair):
@@ -514,6 +539,17 @@ def write_case(name, cfg, frames=24, seed=1):
          cfg['rate'])
 
 
+def arbitrary_tree(trees, boxes, positions, dense=True):
+    """Describes an arbitrary tree: the preorder bsOttBoxPresentAT flags of each output channel of the tree, the
+    (bsOttDefaultCldAT, bsOttModeLfeAT, bsOttBandsAT) of each box in the order the flags meet them, and the
+    bsOutputChannelPosAT of each output channel of the arbitrary tree, for the oracle cases a permutation of 0 to
+    n - 1 because the reference decoder writes each channel to the output index its position names."""
+    leaves = sum(len(flags) - sum(flags) for flags in trees)
+    assert len(boxes) == sum(map(sum, trees)) and len(positions) == leaves == len(set(positions))
+    assert not dense or sorted(positions) == list(range(leaves))
+    return dict(trees=trees, boxes=boxes, positions=positions)
+
+
 def base(tree, **extra):
     cfg = dict(tree=tree, rate=48000, slots=32, freq_res=1, quant_mode=0, one_icc=0, arbdmx=0, gain_sur=2,
                gain_lfe=1, gain_dmx=0, matrix_mode=0, temp_shape=0, decorr=0, lfe_bands=4, ttt_dual=0, ttt_low=1,
@@ -563,11 +599,58 @@ CASES = {
     'v_gains': base(0, gain_sur=4, gain_lfe=3, gain_dmx=5),
     'v_q1b': base(1, quant_mode=1),
     'v_5152': base(1),
+    'atpass': base(0, at=arbitrary_tree([[0]] * 6, [], [2, 0, 1, 5, 3, 4])),
+    'at5151': base(0, at=arbitrary_tree([[1, 0, 0], [0], [0], [0], [1, 1, 0, 0, 0], [0]],
+                                        [(0, 0, 0), (1, 0, 0), (0, 1, 3)], [0, 6, 1, 2, 3, 4, 7, 8, 5])),
+    'at5152': base(1, freq_res=2, gain_sur=3, gain_lfe=2,
+                   at=arbitrary_tree([[0], [0], [0], [0], [1, 0, 0], [1, 0, 0]], [(1, 0, 0), (0, 1, 2)],
+                                     [0, 4, 1, 5, 2, 7, 3, 6])),
+    'at525': base(2, ttt_low=0, decorr=1,
+                  at=arbitrary_tree([[0], [0], [1, 0, 0], [1, 0, 1, 0, 0], [0], [0]],
+                                    [(0, 0, 0), (0, 0, 0), (1, 0, 0)], [0, 4, 1, 8, 5, 6, 2, 3, 7])),
+    'at7271': base(3, ttt_low=1, temp_shape=1,
+                   at=arbitrary_tree([[0], [0], [0], [0], [0], [0], [1, 0, 0], [0]], [(0, 0, 0)],
+                                     [0, 6, 4, 1, 7, 5, 2, 8, 3])),
+    'at7572': base(6, freq_res=5, temp_shape=1,
+                   at=arbitrary_tree([[0], [1, 0, 0], [0], [0], [1, 0, 0], [0], [0], [0]],
+                                     [(0, 0, 0), (0, 0, 0)], [0, 6, 8, 4, 1, 7, 9, 5, 2, 3])),
+    'atres5151': base(0, residual=[4, 0, 3, 0, 0], residual_sfi=6, residual_frames=1,
+                      at=arbitrary_tree([[0], [1, 0, 0], [0], [0], [0], [1, 0, 0]], [(0, 0, 0), (0, 0, 0)],
+                                        [0, 1, 6, 2, 3, 4, 5, 7])),
+    'at13': base(0, freq_res=3,
+                 at=arbitrary_tree([[1, 1, 0, 0, 1, 0, 0], [1, 0, 1, 0, 1, 0, 0], [1, 0, 0], [0], [0], [0]],
+                                   [(0, 0, 0)] * 3 + [(1, 0, 0)] * 3 + [(0, 0, 0)],
+                                   [0, 6, 7, 8, 1, 9, 10, 11, 2, 12, 3, 4, 5])),
+    'long64': base(0, slots=64, max_sets=8),
+    'long30': base(2, slots=30, ttt_low=1),
+    'long45': base(1, slots=45, freq_res=2),
+    'long24': base(1, rate=24000, slots=64, freq_res=2),
+    'long96': base(0, rate=96000, slots=32),
+    'atlong': base(0, slots=64, at=arbitrary_tree([[0], [0], [1, 0, 0], [0], [0], [0]], [(0, 0, 0)],
+                                                  [0, 1, 2, 3, 4, 5, 6])),
+    'short8': base(0, slots=8),
+    'short4': base(1, slots=4, freq_res=2, temp_shape=1),
+    'short15': base(2, slots=15, ttt_low=1),
+    'short24k': base(0, rate=24000, slots=16, freq_res=2, temp_shape=2),
+    'short96': base(2, rate=96000, slots=8, ttt_low=0, decorr=1),
+    'atshort': base(0, slots=8, at=arbitrary_tree([[0], [0], [1, 0, 0], [0], [1, 0, 0], [0]], [(0, 0, 0), (0, 0, 0)],
+                                                  [0, 1, 2, 3, 4, 5, 6, 7])),
+}
+
+# The streams of smalt-mpeg's MpegSurroundTest resources, written only when named: a frame of two AAC blocks, a frame
+# of half a block, and an arbitrary tree that splits the surround channels into side and rear pairs (positions the
+# reference decoder cannot write, since they are not 0 to n - 1).
+RESOURCES = {
+    'mps-long5151': base(0),
+    'mps-short5151': base(0, slots=8),
+    'mps-at71': base(0, slots=16, at=arbitrary_tree([[0], [0], [0], [0], [1, 0, 0], [1, 0, 0]],
+                                                     [(0, 0, 0), (0, 0, 0)], [0, 1, 2, 3, 4, 8, 5, 9],
+                                                     dense=False)),
 }
 
 if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
     names = sys.argv[3:] or list(CASES)
     for name in names:
-        write_case(name, CASES[name], seed=sum(map(ord, name)))
+        write_case(name, CASES[name] if name in CASES else RESOURCES[name], seed=sum(map(ord, name)))
         print(name)

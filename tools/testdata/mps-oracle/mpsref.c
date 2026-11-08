@@ -14,6 +14,7 @@
 #include "sac_dec_interface.h"
 #include "sac_polyphase.h"
 void mpsref_dump(void *decoder, int frame);
+int mpsref_output_channels(void *decoder);
 
 typedef struct {
     float *data;
@@ -157,7 +158,7 @@ static int decode(const char *dmx, const char *in, const char *out, int decType,
     spatialDec *dec = SpatialDecOpen(&reader.reader, "", w.rate, w.channels, &timeSlots, qmfBands, 0, 0, decType,
                                      upmixType, 0, 0, lengths[0] * 8, &bitsRead, NULL);
     if (!dec) { fprintf(stderr, "open failed\n"); return 1; }
-    int outChannels = SpatialDecGetNumOutputChannels(dec);
+    int outChannels = mpsref_output_channels(dec);
     int frameLength = timeSlots * qmfBands;
     int frames = blocks - 1;
     if ((long) frames * frameLength > w.frames) frames = w.frames / frameLength;
