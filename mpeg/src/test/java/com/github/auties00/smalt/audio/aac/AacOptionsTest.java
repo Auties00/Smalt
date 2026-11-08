@@ -117,7 +117,7 @@ class AacOptionsTest {
                             Speaker.FRONT_RIGHT_OF_CENTER, Speaker.BACK_CENTER, Speaker.BACK_CENTER),
                     java.util.List.of(Speaker.FRONT_LEFT_OF_CENTER, Speaker.FRONT_RIGHT_OF_CENTER),
                     java.util.List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.SIDE_LEFT),
-                    java.util.List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.TOP_CENTER),
+                    java.util.List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.TOP_FRONT_LEFT),
                     java.util.List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.LOW_FREQUENCY,
                             Speaker.LOW_FREQUENCY_2),
                     java.util.List.of(Speaker.UNKNOWN, Speaker.UNKNOWN))) {

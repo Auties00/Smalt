@@ -1161,6 +1161,17 @@ behavior samples of `behavior/make-lossless-dsd-samples.py`). So are copies of o
 `h263-annexes/make-vectors.py` (`h263`), the JM streams of separately coded H.264 color planes (`h264`) and the
 libxaac USAC seeds of `MpegFuzzTest` (`usac`).
 
+`aac-height-oracle.py` builds AAC configurations with a program config element height extension and silent frames by
+hand and reports what a libfdk-aac decoder binary does with them, through its C entry points and never its source or
+headers (the library is not permissive; the script records the package and its SHA-256). The hex configurations of
+`AacHeightExtensionTest` are its output. `--seed` writes the `valid-lc-pce-height.bin` seed of `MpegFuzzTest.aac`.
+ffmpeg 7.1 ignores the extension.
+
+The ISO/IEC 14496-26 streams that carry the extension are `al22_chCfg0PCE_*` and `al_sbr_gen_*_7.1TopPCE`, whose
+`AudioSpecificConfig` ends in the same `ac 04 2f` comment as a fixture of `AacHeightExtensionTest`; `al22_chCfg14_*`
+and `al_sbr_gen_*_7.1Top` signal the same channels through configuration 14. The archive sets
+`mpeg4audio-aac-height-*` hold them with their reference waveforms, for `AacHeightConformanceTest`.
+
 ## Adding a vector
 
 1. Call `Conformance.fetch(name, url, sha256)` from the test, with a cache name unique across suites.

@@ -21,8 +21,10 @@ import java.util.Optional;
  * program config element whose element lists place every loudspeaker where {@link ChannelMapping}
  * reads it back: front elements from the center outwards (front center, front left and right of
  * center, front left and right), the side pair, the back pair then the back center, and the LFE.
- * Instance tags count the elements of each type in coding order. Instances are immutable and
- * thread-safe.
+ * Height loudspeakers follow the normal ones of their list and are placed by the height extension of
+ * the element: top front center and pair, then bottom front center and pair; top side pair then top
+ * center; top back pair then top back center. Instance tags count the elements of each type in coding
+ * order. Instances are immutable and thread-safe.
  *
  * @param channelConfiguration the channel configuration, from 1 to 14, or 0 with a program config element
  * @param programConfig the program config element of configuration 0, or {@code null}
@@ -96,25 +98,36 @@ public record EncoderLayout(int channelConfiguration, ProgramConfig programConfi
         for (var speaker : speakers) {
             switch (speaker) {
                 case FRONT_CENTER, FRONT_LEFT_OF_CENTER, FRONT_RIGHT_OF_CENTER, FRONT_LEFT, FRONT_RIGHT, SIDE_LEFT,
-                     SIDE_RIGHT, BACK_LEFT, BACK_RIGHT, BACK_CENTER, LOW_FREQUENCY -> {
+                     SIDE_RIGHT, BACK_LEFT, BACK_RIGHT, BACK_CENTER, LOW_FREQUENCY, TOP_FRONT_CENTER, TOP_FRONT_LEFT,
+                     TOP_FRONT_RIGHT, TOP_SIDE_LEFT, TOP_SIDE_RIGHT, TOP_CENTER, TOP_BACK_LEFT, TOP_BACK_RIGHT,
+                     TOP_BACK_CENTER, BOTTOM_FRONT_CENTER, BOTTOM_FRONT_LEFT, BOTTOM_FRONT_RIGHT -> {
                 }
                 default -> {
-                    // TODO: height loudspeakers outside configurations 13 and 14 need the height extension of the
-                    // program config element comment field, which ChannelMapping does not read either.
                     return null;
                 }
             }
         }
+        var normal = ProgramConfig.Height.NORMAL;
+        var top = ProgramConfig.Height.TOP;
+        var bottom = ProgramConfig.Height.BOTTOM;
         var tags = new int[4];
         var front = new ArrayList<ProgramConfig.Element>();
-        single(speakers, Speaker.FRONT_CENTER, front, tags);
-        pair(speakers, Speaker.FRONT_LEFT_OF_CENTER, Speaker.FRONT_RIGHT_OF_CENTER, front, tags);
-        pair(speakers, Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, front, tags);
+        single(speakers, Speaker.FRONT_CENTER, normal, front, tags);
+        pair(speakers, Speaker.FRONT_LEFT_OF_CENTER, Speaker.FRONT_RIGHT_OF_CENTER, normal, front, tags);
+        pair(speakers, Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, normal, front, tags);
+        single(speakers, Speaker.TOP_FRONT_CENTER, top, front, tags);
+        pair(speakers, Speaker.TOP_FRONT_LEFT, Speaker.TOP_FRONT_RIGHT, top, front, tags);
+        single(speakers, Speaker.BOTTOM_FRONT_CENTER, bottom, front, tags);
+        pair(speakers, Speaker.BOTTOM_FRONT_LEFT, Speaker.BOTTOM_FRONT_RIGHT, bottom, front, tags);
         var side = new ArrayList<ProgramConfig.Element>();
-        pair(speakers, Speaker.SIDE_LEFT, Speaker.SIDE_RIGHT, side, tags);
+        pair(speakers, Speaker.SIDE_LEFT, Speaker.SIDE_RIGHT, normal, side, tags);
+        pair(speakers, Speaker.TOP_SIDE_LEFT, Speaker.TOP_SIDE_RIGHT, top, side, tags);
+        single(speakers, Speaker.TOP_CENTER, top, side, tags);
         var back = new ArrayList<ProgramConfig.Element>();
-        pair(speakers, Speaker.BACK_LEFT, Speaker.BACK_RIGHT, back, tags);
-        single(speakers, Speaker.BACK_CENTER, back, tags);
+        pair(speakers, Speaker.BACK_LEFT, Speaker.BACK_RIGHT, normal, back, tags);
+        single(speakers, Speaker.BACK_CENTER, normal, back, tags);
+        pair(speakers, Speaker.TOP_BACK_LEFT, Speaker.TOP_BACK_RIGHT, top, back, tags);
+        single(speakers, Speaker.TOP_BACK_CENTER, top, back, tags);
         var lfe = new ArrayList<Integer>();
         if (speakers.contains(Speaker.LOW_FREQUENCY)) {
             lfe.add(tags[ElementId.LFE]++);
@@ -134,13 +147,14 @@ public record EncoderLayout(int channelConfiguration, ProgramConfig programConfi
      *
      * @param speakers the loudspeakers of the layout
      * @param speaker the loudspeaker of the element
+     * @param height the height layer of the loudspeaker
      * @param elements the element list, appended to
      * @param tags the next instance tag of each element type
      */
-    private static void single(List<Speaker> speakers, Speaker speaker, List<ProgramConfig.Element> elements,
-                               int[] tags) {
+    private static void single(List<Speaker> speakers, Speaker speaker, ProgramConfig.Height height,
+                               List<ProgramConfig.Element> elements, int[] tags) {
         if (speakers.contains(speaker)) {
-            elements.add(new ProgramConfig.Element(false, tags[ElementId.SCE]++));
+            elements.add(new ProgramConfig.Element(false, tags[ElementId.SCE]++, height));
         }
     }
 
@@ -151,13 +165,14 @@ public record EncoderLayout(int channelConfiguration, ProgramConfig programConfi
      * @param speakers the loudspeakers of the layout
      * @param left the left loudspeaker of the pair
      * @param right the right loudspeaker of the pair
+     * @param height the height layer of the loudspeakers
      * @param elements the element list, appended to
      * @param tags the next instance tag of each element type
      */
-    private static void pair(List<Speaker> speakers, Speaker left, Speaker right, List<ProgramConfig.Element> elements,
-                             int[] tags) {
+    private static void pair(List<Speaker> speakers, Speaker left, Speaker right, ProgramConfig.Height height,
+                             List<ProgramConfig.Element> elements, int[] tags) {
         if (speakers.contains(left) || speakers.contains(right)) {
-            elements.add(new ProgramConfig.Element(true, tags[ElementId.CPE]++));
+            elements.add(new ProgramConfig.Element(true, tags[ElementId.CPE]++, height));
         }
     }
 

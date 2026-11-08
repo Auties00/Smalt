@@ -48,16 +48,16 @@ import java.util.function.Consumer;
  * <p>Output channels follow the WAVE order of {@link ChannelLayout} (the 5.1 configuration, coded
  * center, left, right, surrounds, LFE, is output front left, front right, center, LFE, back
  * left, back right). A program configuration element, in the {@code AudioSpecificConfig} or in
- * band, positions its channels by element position; channels it cannot position are output last
- * with an unknown speaker. Samples are floats scaled so that a full-scale 16-bit decoder output
- * spans {@code [-1, 1]}.
+ * band, positions its channels by element position and by the height extension of its comment
+ * field; channels it cannot position are output last with an unknown speaker. Samples are floats
+ * scaled so that a full-scale 16-bit decoder output spans {@code [-1, 1]}.
  *
  * <p>Supported: every window sequence and shape, section and scalefactor coding, pulses, TNS,
  * all eleven spectrum codebooks with escapes, M/S and intensity stereo, perceptual noise
  * substitution (with a fixed-seed generator, so decoding is deterministic), coupling channel
  * elements (dependently switched before or after TNS, and independently switched), 1024- and
  * 960-sample frames, sampling frequencies from 7350 Hz to 96 kHz as well as explicit
- * frequencies, channel configurations 1 to 7, 11, 12 and 14, and program configurations in the
+ * frequencies, channel configurations 1 to 7 and 11 to 14, and program configurations in the
  * {@code AudioSpecificConfig} or in band. A block whose elements do not match the configured
  * layout is decoded with a layout inferred from its elements, which the returned
  * {@link AudioBuffer} reports.

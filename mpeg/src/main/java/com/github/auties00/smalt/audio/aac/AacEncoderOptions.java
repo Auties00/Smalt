@@ -169,8 +169,10 @@ public final class AacEncoderOptions {
      * ISO/IEC 14496-3 channel configuration (see {@link #channelConfiguration()}), or a set that a
      * program config element positions: at most one each of front center, back center and LFE, and
      * the pairs front left and right, front left and right of center (with front left and right),
-     * side left and right, and back left and right, each pair complete. {@link AacProfile#HE_V2} takes stereo
-     * only.
+     * side left and right, and back left and right, each pair complete. Its height extension adds at
+     * most one each of top front center, top center, top back center and bottom front center, and the
+     * complete pairs top front, top side, top back and bottom front left and right.
+     * {@link AacProfile#HE_V2} takes stereo only.
      */
     public ChannelLayout layout() {
         return layout;
