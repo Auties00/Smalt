@@ -168,6 +168,8 @@ final class MpegWorkloads {
                 file("h264-encode-extended", MpegWorkloads::h264ExtendedEncode),
                 file("h264-encode-tuning", MpegWorkloads::h264TuningEncode),
                 file("h264-decode-extended", MpegWorkloads::h264ExtendedDecode),
+                file("h264-encode-separate-planes", MpegWorkloads::h264SeparatePlanesEncode),
+                file("h264-decode-separate-planes", MpegWorkloads::h264SeparatePlanesDecode),
                 file("h264-decode-t1", () -> h264Decode(1, false)),
                 file("h264-decode-t2", () -> h264Decode(2, false)),
                 file("h264-decode-film-grain-t2", () -> h264FilmGrainDecode(2)),
@@ -568,6 +570,56 @@ final class MpegWorkloads {
                     H264DecoderOptions.builder().highBitDepth(true).build())));
         }
         return TrainingWorkload.of("h264-decode-extended", () -> rounds.forEach(Runnable::run));
+    }
+
+    /**
+     * The options of the 4:4:4 streams with separately coded color planes the separate-plane workloads code and
+     * decode: 8-bit CABAC with B pictures, 10-bit CAVLC field pictures and lossless macroblock pairs.
+     *
+     * @return the options
+     */
+    private static List<H264EncoderOptions> separatePlaneOptions() {
+        var base = H264EncoderOptions.forFile().toBuilder().timeBase(TIME_BASE).bitrate(BITRATE)
+                .speed(H264EncoderSpeed.FAST).profile(H264Profile.HIGH_444_PREDICTIVE)
+                .chromaFormat(ChromaFormat.YUV444).separateColorPlanes(true);
+        return List.of(
+                base.bitDepth(8).build(),
+                base.bitDepth(10).cavlc(true).fieldOrder(FieldOrder.TOP_FIRST)
+                        .fieldCoding(H264FieldCoding.FIELD_PICTURES).build(),
+                base.bitDepth(8).cavlc(false).fieldCoding(H264FieldCoding.MBAFF).lossless(true).build());
+    }
+
+    /**
+     * Returns a workload that encodes 4:4:4 streams whose color planes the H.264 extended engine codes as three
+     * monochrome pictures each.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload h264SeparatePlanesEncode() {
+        var rounds = new ArrayList<Runnable>();
+        for (var option : separatePlaneOptions()) {
+            rounds.add(VideoStreams.encodeRound(new H264Encoder(WIDTH, HEIGHT, option)));
+        }
+        return TrainingWorkload.of("h264-encode-separate-planes", () -> rounds.forEach(Runnable::run));
+    }
+
+    /**
+     * Returns a workload that decodes 4:4:4 streams with separately coded color planes, which select the
+     * decoder's per-plane slice dispatch and monochrome plane frames.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload h264SeparatePlanesDecode() {
+        var rounds = new ArrayList<Runnable>();
+        for (var options : separatePlaneOptions()) {
+            var encoder = new H264Encoder(WIDTH, HEIGHT, options);
+            var codecConfig = encoder.codecConfig().orElse(null);
+            var packets = VideoStreams.encodeAll(encoder, SyntheticVideo.natural(WIDTH, HEIGHT,
+                    VideoStreams.DECODED_FRAMES / 8));
+            rounds.add(VideoStreams.decodeRound(packets, new H264Decoder(VideoStreams.track(Codec.H264, codecConfig),
+                    H264DecoderOptions.builder().highBitDepth(true).build())));
+        }
+        return TrainingWorkload.of("h264-decode-separate-planes", () -> rounds.forEach(Runnable::run));
     }
 
     /**

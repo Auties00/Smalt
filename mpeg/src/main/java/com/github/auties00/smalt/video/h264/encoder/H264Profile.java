@@ -56,8 +56,8 @@ public enum H264Profile {
     HIGH_422(122),
 
     /**
-     * High 4:4:4 Predictive ({@code profile_idc} 244): High 4:2:2 plus 4:4:4 chroma, samples of up to 14
-     * bits and lossless coding.
+     * High 4:4:4 Predictive ({@code profile_idc} 244): High 4:2:2 plus 4:4:4 chroma, coded together or as
+     * separate color planes, samples of up to 14 bits and lossless coding.
      */
     HIGH_444_PREDICTIVE(244);
 

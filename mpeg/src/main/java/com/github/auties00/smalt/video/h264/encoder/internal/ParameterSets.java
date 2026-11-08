@@ -114,7 +114,7 @@ final class ParameterSets {
         if (highSyntax(settings.profileIdc())) {
             writer.writeUe(settings.chromaFormatIdc());
             if (settings.chromaFormatIdc() == 3) {
-                writer.writeBit(0);
+                writer.writeBit(settings.separateColorPlanes() ? 1 : 0);
             }
             writer.writeUe(settings.bitDepth() - 8);
             writer.writeUe(settings.bitDepth() - 8);

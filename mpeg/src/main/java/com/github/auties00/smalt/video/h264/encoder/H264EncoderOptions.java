@@ -151,6 +151,8 @@ public final class H264EncoderOptions {
 
     private final boolean lossless;
 
+    private final boolean separateColorPlanes;
+
     private final FieldOrder fieldOrder;
 
     private final H264FieldCoding fieldCoding;
@@ -214,6 +216,7 @@ public final class H264EncoderOptions {
         this.chromaFormat = builder.chromaFormat;
         this.bitDepth = builder.bitDepth;
         this.lossless = builder.lossless;
+        this.separateColorPlanes = builder.separateColorPlanes;
         this.fieldOrder = builder.fieldOrder;
         this.fieldCoding = builder.fieldCoding;
         this.slices = builder.slices;
@@ -593,6 +596,24 @@ public final class H264EncoderOptions {
     }
 
     /**
+     * {@return whether the three color planes of a 4:4:4 stream are coded separately; {@code false} by
+     * default}
+     *
+     * <p>A stream with separate color planes sets {@code separate_colour_plane_flag}: each picture is coded
+     * as three monochrome pictures, one per color plane ({@code colour_plane_id} 0, 1 and 2, the slices of
+     * Y first, then Cb, then Cr), each with its own macroblock types, intra modes and motion, and every
+     * plane takes the luma quantizer and the luma deblocking filter, with the
+     * {@linkplain #adaptiveQuantization() adaptive quantization} offsets of its own samples. It suits planes
+     * that are not correlated, such as R, G and B under the {@link MatrixCoefficients#IDENTITY identity}
+     * matrix. It needs
+     * the {@link ChromaFormat#YUV444} {@linkplain #chromaFormat() chroma format}; every other setting,
+     * lossless coding, interlaced coding, B pictures and slices included, applies to each plane.
+     */
+    public boolean separateColorPlanes() {
+        return separateColorPlanes;
+    }
+
+    /**
      * {@return the field order of interlaced input, or {@link FieldOrder#PROGRESSIVE} for progressive
      * input; {@link FieldOrder#PROGRESSIVE} by default}
      *
@@ -838,7 +859,8 @@ public final class H264EncoderOptions {
                 && threads == that.threads && packetFormat == that.packetFormat && minQuantizer == that.minQuantizer
                 && maxQuantizer == that.maxQuantizer && realtime == that.realtime && lookahead == that.lookahead
                 && bFrames == that.bFrames && limits.equals(that.limits) && chromaFormat == that.chromaFormat
-                && bitDepth == that.bitDepth && lossless == that.lossless && fieldOrder == that.fieldOrder
+                && bitDepth == that.bitDepth && lossless == that.lossless
+                && separateColorPlanes == that.separateColorPlanes && fieldOrder == that.fieldOrder
                 && fieldCoding == that.fieldCoding && slices == that.slices && maxSliceBytes == that.maxSliceBytes
                 && intraRefresh == that.intraRefresh && temporalLayers == that.temporalLayers
                 && sampleAspectRatio.equals(that.sampleAspectRatio) && fixedFrameRate == that.fixedFrameRate
@@ -853,9 +875,9 @@ public final class H264EncoderOptions {
     public int hashCode() {
         return Objects.hash(frameRate, timeBase, profile, level, rateControl, bitrate, maxBitrate, bufferSize, quality,
                 keyframeInterval, speed, color, threads, packetFormat, minQuantizer, maxQuantizer, realtime, lookahead,
-                bFrames, limits, chromaFormat, bitDepth, lossless, fieldOrder, fieldCoding, slices, maxSliceBytes,
-                intraRefresh, temporalLayers, sampleAspectRatio, fixedFrameRate, cavlc, firstPassStats, hrd,
-                adaptiveQuantization, adaptiveQuantizationStrength, macroblockTreeStrength, psychovisualStrength);
+                bFrames, limits, chromaFormat, bitDepth, lossless, separateColorPlanes, fieldOrder, fieldCoding, slices,
+                maxSliceBytes, intraRefresh, temporalLayers, sampleAspectRatio, fixedFrameRate, cavlc, firstPassStats,
+                hrd, adaptiveQuantization, adaptiveQuantizationStrength, macroblockTreeStrength, psychovisualStrength);
     }
 
     @Override
@@ -868,6 +890,7 @@ public final class H264EncoderOptions {
                 + ", packetFormat=" + packetFormat + ", quantizers=" + minQuantizer + ".." + maxQuantizer
                 + ", realtime=" + realtime + ", lookahead=" + lookahead + ", bFrames=" + bFrames + ", limits=" + limits
                 + ", chromaFormat=" + chromaFormat + ", bitDepth=" + bitDepth + ", lossless=" + lossless
+                + ", separateColorPlanes=" + separateColorPlanes
                 + ", fieldOrder=" + fieldOrder + ", fieldCoding=" + fieldCoding + ", slices=" + slices
                 + ", maxSliceBytes=" + (maxSliceBytes == 0 ? "none" : maxSliceBytes) + ", intraRefresh="
                 + (intraRefresh == 0 ? "none" : intraRefresh) + ", temporalLayers=" + temporalLayers
@@ -932,6 +955,8 @@ public final class H264EncoderOptions {
         private int bitDepth;
 
         private boolean lossless;
+
+        private boolean separateColorPlanes;
 
         private FieldOrder fieldOrder;
 
@@ -1018,6 +1043,7 @@ public final class H264EncoderOptions {
             chromaFormat = from.chromaFormat;
             bitDepth = from.bitDepth;
             lossless = from.lossless;
+            separateColorPlanes = from.separateColorPlanes;
             fieldOrder = from.fieldOrder;
             fieldCoding = from.fieldCoding;
             slices = from.slices;
@@ -1330,6 +1356,18 @@ public final class H264EncoderOptions {
         }
 
         /**
+         * Sets whether the color planes are coded separately; see
+         * {@link H264EncoderOptions#separateColorPlanes()}.
+         *
+         * @param separateColorPlanes the value
+         * @return this builder
+         */
+        public Builder separateColorPlanes(boolean separateColorPlanes) {
+            this.separateColorPlanes = separateColorPlanes;
+            return this;
+        }
+
+        /**
          * Sets the field order of the input; see {@link H264EncoderOptions#fieldOrder()}.
          *
          * @param fieldOrder the value
@@ -1547,7 +1585,8 @@ public final class H264EncoderOptions {
          * layers are not in [1, 4], the sample aspect ratio is not positive or a term exceeds 65535,
          * the chroma format is {@link ChromaFormat#YUV440}, the profile does not code the chroma
          * format, bit depth, lossless coding or interlaced coding (see {@link H264Profile}), the color
-         * matrix is {@link MatrixCoefficients#IDENTITY} without {@link ChromaFormat#YUV444}, intra
+         * matrix is {@link MatrixCoefficients#IDENTITY} without {@link ChromaFormat#YUV444}, separate color
+         * planes are set without {@link ChromaFormat#YUV444}, intra
          * refresh is combined with more than one temporal layer, a strength of adaptive quantization, of the
          * macroblock tree or of texture retention is not in [0, 2], first pass statistics are set without
          * {@link H264RateControl#AVERAGE_BITRATE}, in real-time mode or for a lossless stream, or the
@@ -1617,6 +1656,9 @@ public final class H264EncoderOptions {
             if (bitDepth > profile.maxBitDepth()) {
                 throw new IllegalArgumentException("the " + profile + " profile does not code " + bitDepth
                         + "-bit samples");
+            }
+            if (separateColorPlanes && chromaFormat != ChromaFormat.YUV444) {
+                throw new IllegalArgumentException("separate color planes need the YUV444 chroma format");
             }
             if (lossless && profile != H264Profile.HIGH_444_PREDICTIVE) {
                 throw new IllegalArgumentException("lossless coding needs the HIGH_444_PREDICTIVE profile");

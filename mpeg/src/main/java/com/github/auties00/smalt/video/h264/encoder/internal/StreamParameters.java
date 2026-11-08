@@ -29,6 +29,15 @@ interface StreamParameters {
     int chromaFormatIdc();
 
     /**
+     * {@return the {@code separate_colour_plane_flag} of a 4:4:4 stream}
+     *
+     * @implSpec The default implementation returns {@code false}.
+     */
+    default boolean separateColorPlanes() {
+        return false;
+    }
+
+    /**
      * {@return the luma and chroma bit depth, from 8 to 14}
      */
     int bitDepth();

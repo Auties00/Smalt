@@ -16,6 +16,12 @@ import com.github.auties00.smalt.video.h264.internal.H264Levels;
  * field pictures, so that a second field can predict from the frame before and from its first
  * field), or from the latest picture of a lower temporal layer, and unreferenced B pictures
  * predicted from the anchor pictures on both sides, which keep two reference frames.
+ *
+ * <p>A 4:4:4 stream whose color planes are coded separately has two views: the stream view, with
+ * three full-size planes per frame and {@code separate_colour_plane_flag} in the sequence parameter
+ * set, and the {@linkplain #planeSettings() plane view} the macroblock coder and the slice writer
+ * code each plane with, a monochrome stream ({@code ChromaArrayType} 0, {@code MbWidthC} 0) with
+ * the same parameters otherwise.
  */
 final class WideSettings implements StreamParameters {
     /**
@@ -83,6 +89,14 @@ final class WideSettings implements StreamParameters {
     private final long numUnitsInTick;
 
     private final long timeScale;
+
+    private final boolean separateColorPlanes;
+
+    /**
+     * The view each color plane is coded with: a monochrome copy when the planes are coded separately,
+     * otherwise this instance.
+     */
+    private final WideSettings planeSettings;
 
     /**
      * Derives the settings of a configuration.
@@ -156,6 +170,42 @@ final class WideSettings implements StreamParameters {
         var rate = config.frameRate().reduce();
         this.numUnitsInTick = rate.denominator();
         this.timeScale = 2 * rate.numerator();
+        this.separateColorPlanes = config.separateColorPlanes() && chromaFormatIdc == 3;
+        this.planeSettings = separateColorPlanes ? new WideSettings(this) : this;
+    }
+
+    /**
+     * Derives the monochrome view of the color planes of a stream that codes them separately.
+     *
+     * @param stream the stream view
+     */
+    private WideSettings(WideSettings stream) {
+        this.config = stream.config;
+        this.chromaFormatIdc = 0;
+        this.subWidth = 1;
+        this.subHeight = 1;
+        this.mbWidthC = 0;
+        this.mbHeightC = 0;
+        this.bitDepth = stream.bitDepth;
+        this.interlaced = stream.interlaced;
+        this.mbaff = stream.mbaff;
+        this.fieldPictures = stream.fieldPictures;
+        this.mbWidth = stream.mbWidth;
+        this.mbHeight = stream.mbHeight;
+        this.displayWidth = stream.displayWidth;
+        this.displayHeight = stream.displayHeight;
+        this.profileIdc = stream.profileIdc;
+        this.cabac = stream.cabac;
+        this.transform8x8 = stream.transform8x8;
+        this.level = stream.level;
+        this.numRefFrames = stream.numRefFrames;
+        this.layerRefs = stream.layerRefs;
+        this.bframes = stream.bframes;
+        this.sliceRows = stream.sliceRows;
+        this.numUnitsInTick = stream.numUnitsInTick;
+        this.timeScale = stream.timeScale;
+        this.separateColorPlanes = true;
+        this.planeSettings = this;
     }
 
     @Override
@@ -217,6 +267,30 @@ final class WideSettings implements StreamParameters {
      */
     boolean chroma444() {
         return chromaFormatIdc == 3;
+    }
+
+    /**
+     * {@return whether the three color planes are coded separately, in this view and in the plane view}
+     */
+    @Override
+    public boolean separateColorPlanes() {
+        return separateColorPlanes;
+    }
+
+    /**
+     * {@return the settings each color plane is coded with: the monochrome plane view when the planes
+     * are coded separately, otherwise this instance}
+     */
+    WideSettings planeSettings() {
+        return planeSettings;
+    }
+
+    /**
+     * {@return the number of color planes coded as pictures of their own: 3 when the planes are coded
+     * separately, otherwise 1}
+     */
+    int codedPlanes() {
+        return separateColorPlanes ? 3 : 1;
     }
 
     /**

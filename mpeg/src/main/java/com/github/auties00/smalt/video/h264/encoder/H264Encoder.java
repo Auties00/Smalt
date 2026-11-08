@@ -21,7 +21,9 @@ import java.util.function.Consumer;
  * <p>The stream has the {@linkplain H264EncoderOptions#chromaFormat() chroma format},
  * {@linkplain H264EncoderOptions#bitDepth() bit depth}, {@linkplain H264EncoderOptions#fieldOrder() field
  * structure}, profile, level and rate control mode of its {@link H264EncoderOptions}, and is
- * {@linkplain H264EncoderOptions#lossless() lossless} when they ask for it. Without a
+ * {@linkplain H264EncoderOptions#lossless() lossless}, or a 4:4:4 stream of
+ * {@linkplain H264EncoderOptions#separateColorPlanes() separately coded color planes}, when they ask for it.
+ * Without a
  * {@linkplain H264EncoderOptions#lookahead() look-ahead} it
  * codes I and P pictures only: every packet's presentation and decoding timestamps are equal and
  * each input frame produces its packet before {@link #encode(VideoFrame, Consumer)} returns, so

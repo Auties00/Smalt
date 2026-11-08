@@ -306,7 +306,7 @@ final class WideCoder {
     /**
      * Constructs a coder.
      *
-     * @param settings the stream settings
+     * @param settings the settings the color planes are coded with, {@link WideSettings#planeSettings()}
      */
     WideCoder(WideSettings settings) {
         this.settings = settings;

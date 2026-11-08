@@ -25,8 +25,9 @@ import static com.github.auties00.smalt.aot.internal.WorkloadFactory.file;
 /**
  * Creates the {@link TrainingFamily#MPEG} workloads of the coding tools no Smalt encoder writes, on the bundled
  * streams of the reference encoders: USAC (libxaac's encoder), the optional modes of H.263 (the TMN 3.2 encoder and
- * the Annex encoder of {@code tools/testdata/h263-annexes}) and H.264's separately coded color planes (the JM
- * encoder's monochrome streams merged into separate planes).
+ * the Annex encoder of {@code tools/testdata/h263-annexes}) and the tools of H.264's separately coded color planes the
+ * Smalt encoder does not write, CAVLC B pictures and scaling matrices (the JM encoder's monochrome streams merged into
+ * separate planes).
  */
 final class MpegStreamWorkloads {
     /**
@@ -45,11 +46,10 @@ final class MpegStreamWorkloads {
             "smalt-ist", "smalt-rru", "smalt-dps-ipb", "smalt-rpr", "smalt-isd-rect");
 
     /**
-     * The H.264 training streams of separately coded color planes: CAVLC with B-pictures, CABAC with slices, and
-     * CAVLC with scaling matrices.
+     * The H.264 training streams of separately coded color planes: CAVLC with B-pictures, and CAVLC with scaling
+     * matrices, which each plane takes from its own lists.
      */
-    static final List<String> H264_SEPARATE_PLANE_STREAMS = List.of("m8-cavlc-sep", "m8-cabac-slices-sep",
-            "m8-cavlc-scaling-sep");
+    static final List<String> H264_SEPARATE_PLANE_STREAMS = List.of("m8-cavlc-sep", "m8-cavlc-scaling-sep");
 
     /**
      * The separator between the parts of a USAC training stream.
@@ -72,7 +72,7 @@ final class MpegStreamWorkloads {
         return List.of(
                 file("usac-decode", MpegStreamWorkloads::usacDecode),
                 file("h263-decode-optional-modes", MpegStreamWorkloads::h263Decode),
-                file("h264-decode-separate-planes", MpegStreamWorkloads::h264SeparatePlanes));
+                file("h264-decode-separate-planes-reference", MpegStreamWorkloads::h264SeparatePlanes));
     }
 
     /**
@@ -181,7 +181,8 @@ final class MpegStreamWorkloads {
     }
 
     /**
-     * Returns a workload that decodes the H.264 training streams of separately coded color planes.
+     * Returns a workload that decodes the H.264 training streams of separately coded color planes made by the
+     * reference encoder.
      *
      * @return the workload
      */
@@ -192,6 +193,6 @@ final class MpegStreamWorkloads {
             rounds.add(VideoStreams.decodeRound(stream.packets(), new H264Decoder((VideoTrack) stream.track(),
                     H264DecoderOptions.defaults())));
         }
-        return TrainingWorkload.of("h264-decode-separate-planes", () -> rounds.forEach(Runnable::run));
+        return TrainingWorkload.of("h264-decode-separate-planes-reference", () -> rounds.forEach(Runnable::run));
     }
 }

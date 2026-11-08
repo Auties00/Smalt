@@ -100,7 +100,12 @@ class H264EncoderGoldenTest {
                         .fieldCoding(H264FieldCoding.FIELD_PICTURES).lossless(true).build()), 6, "02986192e7a6371d1553ade6d212250c88936a30be52d75894e397d47ffba52e"),
                 Arguments.of("high, 4:0:0", new H264Setup(176, 144, quality.profile(H264Profile.HIGH).bitDepth(8)
                         .chromaFormat(ChromaFormat.MONOCHROME).fieldOrder(FieldOrder.PROGRESSIVE).lossless(false).build()),
-                        8, "fcd2154de9ec11d8f57ee71c6e2eec989b85b4f702eb6c719accc2ba09991b38"));
+                        8, "fcd2154de9ec11d8f57ee71c6e2eec989b85b4f702eb6c719accc2ba09991b38"),
+                Arguments.of("high 4:4:4, separate color planes, 10-bit MBAFF with B pictures", new H264Setup(176, 144,
+                        quality.profile(H264Profile.HIGH_444_PREDICTIVE).chromaFormat(ChromaFormat.YUV444).bitDepth(10)
+                                .separateColorPlanes(true).fieldOrder(FieldOrder.TOP_FIRST)
+                                .fieldCoding(H264FieldCoding.MBAFF).lookahead(3).bFrames(2).build()), 8,
+                        "14769d4177ffb8dc45dcfe8c78cb08043ae37df39b07484907b6236da8af508d"));
     }
 
     static Stream<Arguments> natural() {

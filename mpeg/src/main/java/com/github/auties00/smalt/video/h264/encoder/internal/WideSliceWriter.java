@@ -216,12 +216,17 @@ final class WideSliceWriter {
          * The slice quantizer {@code SliceQPY}.
          */
         int sliceQp;
+
+        /**
+         * The {@code colour_plane_id} of the slices of a stream that codes its color planes separately.
+         */
+        int colorPlane;
     }
 
     /**
      * Constructs a writer.
      *
-     * @param settings the stream settings
+     * @param settings the settings the color planes are coded with, {@link WideSettings#planeSettings()}
      * @param coder the coder whose macroblocks the writer codes
      */
     WideSliceWriter(WideSettings settings, WideCoder coder) {
@@ -271,6 +276,9 @@ final class WideSliceWriter {
         out.writeUe(settings.mbaff() && p.structure == 0 ? firstMb >> 1 : firstMb);
         out.writeUe(p.bidirectional ? 1 : p.predicted ? 0 : 2);
         out.writeUe(0);
+        if (settings.separateColorPlanes()) {
+            out.write(p.colorPlane, 2);
+        }
         out.write(p.frameNum, settings.log2MaxFrameNum());
         if (!settings.frameMbsOnly()) {
             out.writeBit(p.structure != 0 ? 1 : 0);

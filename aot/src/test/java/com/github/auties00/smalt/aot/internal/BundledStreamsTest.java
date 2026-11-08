@@ -45,9 +45,6 @@ class BundledStreamsTest {
     private static final Map<String, List<String>> SEPARATE_PLANE_FRAMES = Map.of(
             "m8-cavlc-sep", List.of("7feed26531f54da633d8b02dd12b861a", "9e9528c2bdee1f2b0828ce2f4f95f4ac",
                     "b4d68c9cb392214261dff70c93d4aef4", "671e5b0ea5994c1543628d23b2c9437c"),
-            "m8-cabac-slices-sep", List.of("69412913e496cb09b719bbbeb86b0a21", "e793135d9044424806767ee903f63071",
-                    "3376aaa9c629a4ec7eec3ce1174729a9", "d9baf37a9683639598a559955ea884ad",
-                    "c1846d9b978c09a2e206f83bfed52482", "f4ceeb7bd4dffd4f4d398340e8dee01a"),
             "m8-cavlc-scaling-sep", List.of("fe8522c1a1e13f7359431f6c419695d2", "a304eeb9679e6db9664230136f2a1f1e",
                     "161433b82c8b4946637420d7d488511f", "e8575e6e000cacc24fff81dfcea505ae"));
 

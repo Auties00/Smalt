@@ -43,6 +43,12 @@ final class WideReference {
     final WideFrame frame;
 
     /**
+     * The monochrome views of the three color planes, or {@code null} until {@link #plane(int)} first
+     * creates them.
+     */
+    private WideReference[] planeViews;
+
+    /**
      * Wraps the padded planes of a frame or field.
      *
      * @param frame the frame the planes belong to
@@ -53,6 +59,29 @@ final class WideReference {
         this.frame = frame;
         this.planes = planes;
         this.parity = parity;
+    }
+
+    /**
+     * Returns the reference one color plane of a stream that codes the planes separately offers motion
+     * compensation: a monochrome reference whose component 0 is this reference's component {@code c},
+     * half-sample planes included, belonging to the frame's {@linkplain WideFrame#plane(int) plane view}.
+     * The view follows the half-sample planes {@link #interpolate} computed last.
+     *
+     * @param c the color plane, 0 for Y, 1 for Cb, 2 for Cr
+     * @return the view
+     */
+    WideReference plane(int c) {
+        if (planeViews == null) {
+            planeViews = new WideReference[3];
+            for (var k = 0; k < 3; k++) {
+                planeViews[k] = new WideReference(frame.plane(k), new WidePlane[]{planes[k], null, null}, parity);
+            }
+        }
+        var view = planeViews[c];
+        view.halfH[0] = halfH[c];
+        view.halfV[0] = halfV[c];
+        view.halfC[0] = halfC[c];
+        return view;
     }
 
     /**

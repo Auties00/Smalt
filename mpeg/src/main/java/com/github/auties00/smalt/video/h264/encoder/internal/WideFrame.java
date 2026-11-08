@@ -7,6 +7,10 @@ package com.github.auties00.smalt.video.h264.encoder.internal;
  * <p>A reference frame also keeps each of its fields in planes of their own, padded with the
  * field's own edge rows, since a field picture or a field macroblock that predicts from a field
  * reads past the field's top and bottom rows as a decoder does (ITU-T H.264 8.4.2.2).
+ *
+ * <p>A frame of a stream whose color planes are coded separately also offers each plane as a
+ * monochrome frame of its own ({@link #plane(int)}), which shares the plane's samples and keeps the
+ * plane's co-located motion, since each plane is decoded as a monochrome picture (ITU-T H.264 8).
  */
 final class WideFrame {
     /**
@@ -99,6 +103,12 @@ final class WideFrame {
     boolean[] colField;
 
     /**
+     * The monochrome views of the three color planes of a frame of a stream that codes them separately,
+     * or {@code null}.
+     */
+    private final WideFrame[] planeViews;
+
+    /**
      * Allocates the co-located data of a structure on first use.
      *
      * @param structure 0 for the frame, 1 for the top field, 2 for the bottom field
@@ -137,6 +147,70 @@ final class WideFrame {
                 topView[c] = new WidePlane(planes[c], false);
                 bottomView[c] = new WidePlane(planes[c], true);
             }
+        }
+        if (settings.separateColorPlanes()) {
+            planeViews = new WideFrame[3];
+            for (var c = 0; c < 3; c++) {
+                planeViews[c] = new WideFrame(this, c);
+            }
+        } else {
+            planeViews = null;
+        }
+    }
+
+    /**
+     * Creates a frame without samples, which holds the co-located motion of a picture until the frame the
+     * picture belongs to takes it with {@link #swapMotion(WideFrame, int)}.
+     */
+    WideFrame() {
+        planeViews = null;
+    }
+
+    /**
+     * Creates the monochrome view of one color plane of a frame.
+     *
+     * @param frame the frame whose plane the view shares
+     * @param c the color plane, 0 for Y, 1 for Cb, 2 for Cr
+     */
+    private WideFrame(WideFrame frame, int c) {
+        planes[0] = frame.planes[c];
+        topView[0] = frame.topView[c];
+        bottomView[0] = frame.bottomView[c];
+        planeViews = null;
+    }
+
+    /**
+     * Returns the monochrome view of one color plane of a frame of a stream that codes the planes
+     * separately: its plane 0 is the frame's plane {@code c}, and its co-located motion is the plane's own.
+     *
+     * @param c the color plane, 0 for Y, 1 for Cb, 2 for Cr
+     * @return the view
+     */
+    WideFrame plane(int c) {
+        return planeViews[c];
+    }
+
+    /**
+     * Exchanges the co-located data of a structure with another frame, so that motion stored into a
+     * holder becomes the frame's without copying.
+     *
+     * @param other the other frame, whose data of the structure is allocated
+     * @param structure 0 for the frame, 1 for the top field, 2 for the bottom field
+     */
+    void swapMotion(WideFrame other, int structure) {
+        var refs = colRef[structure];
+        colRef[structure] = other.colRef[structure];
+        other.colRef[structure] = refs;
+        var xs = colMvX[structure];
+        colMvX[structure] = other.colMvX[structure];
+        other.colMvX[structure] = xs;
+        var ys = colMvY[structure];
+        colMvY[structure] = other.colMvY[structure];
+        other.colMvY[structure] = ys;
+        if (structure == 0) {
+            var fields = colField;
+            colField = other.colField;
+            other.colField = fields;
         }
     }
 

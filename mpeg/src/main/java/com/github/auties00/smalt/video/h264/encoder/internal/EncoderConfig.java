@@ -51,6 +51,7 @@ import java.time.Duration;
  * @param chromaFormat the chroma format of the stream
  * @param bitDepth the sample bit depth, from 8 to 14
  * @param lossless whether the stream is coded losslessly
+ * @param separateColorPlanes whether the three color planes of a 4:4:4 stream are coded separately
  * @param fieldOrder the field order of the input, {@link FieldOrder#PROGRESSIVE} for frames
  * @param fieldCoding how interlaced frames are coded
  * @param slices the number of slices per picture, from 1 to 256
@@ -76,8 +77,9 @@ public record EncoderConfig(int width, int height, Rational frameRate, Rational 
                             int quality, int keyframeInterval, H264EncoderSpeed speed, ColorInfo color, int threads,
                             H264PacketFormat packetFormat, int minQuantizer, int maxQuantizer, boolean realtime,
                             int lookahead, int bFrames, ChromaFormat chromaFormat, int bitDepth, boolean lossless,
-                            FieldOrder fieldOrder, H264FieldCoding fieldCoding, int slices, int maxSliceBytes,
-                            int intraRefresh, int temporalLayers, Rational sampleAspectRatio,
+                            boolean separateColorPlanes, FieldOrder fieldOrder, H264FieldCoding fieldCoding,
+                            int slices, int maxSliceBytes, int intraRefresh, int temporalLayers,
+                            Rational sampleAspectRatio,
                             boolean fixedFrameRate, MediaLimits limits, boolean cavlc, boolean hrd,
                             H264AdaptiveQuantization adaptiveQuantization, double adaptiveQuantizationStrength,
                             double macroblockTreeStrength, double psychovisualStrength, PassRecords passRecords,
@@ -128,7 +130,8 @@ public record EncoderConfig(int width, int height, Rational frameRate, Rational 
                 options.quality(), options.keyframeInterval().orElse(0), options.speed(), options.color(),
                 options.threads(), options.packetFormat(), options.minQuantizer(), options.maxQuantizer(),
                 options.realtime(), options.lookahead(), options.bFrames(), options.chromaFormat(),
-                options.bitDepth(), options.lossless(), options.fieldOrder(), options.fieldCoding(), options.slices(),
+                options.bitDepth(), options.lossless(), options.separateColorPlanes(), options.fieldOrder(),
+                options.fieldCoding(), options.slices(),
                 options.maxSliceBytes().orElse(0), options.intraRefresh().orElse(0), options.temporalLayers(),
                 options.sampleAspectRatio(), options.fixedFrameRate(), options.limits(), options.cavlc(),
                 options.hrd(), options.adaptiveQuantization(), options.adaptiveQuantizationStrength(),
@@ -158,9 +161,9 @@ public record EncoderConfig(int width, int height, Rational frameRate, Rational 
         return new EncoderConfig(width, height, frameRate, timeBase, profile, level, rateControl, newBitrate,
                 newMaxBitrate, newBufferSize, quality, keyframeInterval, speed, color, threads, packetFormat,
                 minQuantizer, maxQuantizer, realtime, lookahead, bFrames, chromaFormat, bitDepth, lossless,
-                fieldOrder, fieldCoding, slices, maxSliceBytes, intraRefresh, temporalLayers, sampleAspectRatio,
-                fixedFrameRate, limits, cavlc, hrd, adaptiveQuantization, adaptiveQuantizationStrength,
-                macroblockTreeStrength, psychovisualStrength, passRecords, passRecorder);
+                separateColorPlanes, fieldOrder, fieldCoding, slices, maxSliceBytes, intraRefresh, temporalLayers,
+                sampleAspectRatio, fixedFrameRate, limits, cavlc, hrd, adaptiveQuantization,
+                adaptiveQuantizationStrength, macroblockTreeStrength, psychovisualStrength, passRecords, passRecorder);
     }
 
     /**
@@ -174,9 +177,9 @@ public record EncoderConfig(int width, int height, Rational frameRate, Rational 
         return new EncoderConfig(width, height, frameRate, timeBase, profile, level, rateControl, bitrate,
                 maxBitrate, bufferSize, quality, keyframeInterval, speed, color, threads, packetFormat,
                 minQuantizer, maxQuantizer, realtime, lookahead, bFrames, chromaFormat, bitDepth, lossless,
-                fieldOrder, fieldCoding, slices, maxSliceBytes, intraRefresh, temporalLayers, sampleAspectRatio,
-                fixedFrameRate, limits, cavlc, hrd, adaptiveQuantization, adaptiveQuantizationStrength,
-                macroblockTreeStrength, psychovisualStrength, records, recorder);
+                separateColorPlanes, fieldOrder, fieldCoding, slices, maxSliceBytes, intraRefresh, temporalLayers,
+                sampleAspectRatio, fixedFrameRate, limits, cavlc, hrd, adaptiveQuantization,
+                adaptiveQuantizationStrength, macroblockTreeStrength, psychovisualStrength, records, recorder);
     }
 
     /**

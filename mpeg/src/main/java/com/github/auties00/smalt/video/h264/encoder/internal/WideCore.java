@@ -27,16 +27,20 @@ import java.util.concurrent.atomic.AtomicLong;
  * <p>Pictures are I and P pictures and, when the settings ask for them, unreferenced B pictures
  * between two anchor pictures, which are coded after the later anchor; without B pictures the
  * pictures are coded in display order. Interlaced frames are coded as frames of macroblock pairs or
- * as two field pictures; both fields of a frame travel in one packet. A coded picture becomes a
- * reference once an internal {@link H264DecoderEngine} has decoded it, so the encoder predicts from
- * exactly the samples a decoder reconstructs, deblocking filter included, for every format and field
- * structure. Instances are not thread-safe, except {@link #requestKeyframe()},
- * {@link #setTargetBitrate(int)} and the counters.
+ * as two field pictures; both fields of a frame travel in one packet. A 4:4:4 stream may code its
+ * color planes separately: each picture is then coded three times, as the monochrome pictures of its
+ * Y, Cb and Cr planes, each plane predicting from the same plane of its references and keeping its
+ * own co-located motion. A coded picture becomes a reference once an internal
+ * {@link H264DecoderEngine} has decoded it, so the encoder predicts from exactly the samples a
+ * decoder reconstructs, deblocking filter included, for every format and field structure.
+ * Instances are not thread-safe, except {@link #requestKeyframe()}, {@link #setTargetBitrate(int)}
+ * and the counters.
  *
  * @implNote This implementation codes every macroblock on the calling thread. Its tools are the
  * Intra_4x4, Intra_8x8 and Intra_16x16 modes and one motion vector per macroblock and list with
  * quarter-sample precision, B pictures with spatial direct prediction, chosen by Hadamard-transformed
- * prediction error, with the macroblock quantizers of adaptive quantization; smaller partitions,
+ * prediction error, with the macroblock quantizers of adaptive quantization, which each separately
+ * coded color plane takes from its own samples; smaller partitions,
  * look-ahead with its macroblock tree, referenced B pictures and texture retention in mode decision
  * are the domain of {@link EncoderCore}.
  */
@@ -52,8 +56,8 @@ public final class WideCore implements EncoderEngine {
     private static final double SCENE_CUT_JUMP = 1.5;
 
     // TODO: partitions below 16x16, a B pyramid (referenced B pictures), look-ahead with the macroblock tree,
-    //  rate-distortion mode decision with texture retention, wavefront analysis on helper threads and separate
-    //  color plane coding (separate_colour_plane_flag) in the extended engine
+    //  rate-distortion mode decision with texture retention and wavefront analysis on helper threads in the
+    //  extended engine
 
     // TODO: B pictures take their anchor's quantizer plus an offset and are never coded again to correct their
     //  size, so a short clip with B pictures overshoots its target bitrate more than one of P pictures only
@@ -238,9 +242,17 @@ public final class WideCore implements EncoderEngine {
     private final double[] aqOffsets;
 
     /**
-     * The rounded adaptive quantization offset of each macroblock address of the picture being coded.
+     * The rounded adaptive quantization offset of each macroblock address of the picture being coded, by
+     * color plane: one array, or three when the planes are coded separately, each plane taking the offsets
+     * of its own samples.
      */
-    private final int[] aqSteps;
+    private final int[][] aqSteps;
+
+    /**
+     * The color plane being coded, which selects its offsets in {@link #aqSteps}; 0 when the planes are
+     * coded together.
+     */
+    private int aqPlane;
 
     /**
      * The number of macroblocks of the picture {@link #aqSteps} holds the offsets of.
@@ -466,6 +478,58 @@ public final class WideCore implements EncoderEngine {
     private final long[] pictureBins = new long[3];
 
     /**
+     * The co-located motion of each color plane of the picture coded last, which the frame takes once the
+     * picture is decoded, or {@code null} when the planes are coded together.
+     */
+    private final WideFrame[] planeMotion;
+
+    /**
+     * The prediction setup of the picture about to be coded, which {@link #startPlane(int)} hands to the
+     * coder for each color plane: the structure, whether the frame is coded in pairs, whether the picture
+     * is a P or B picture, its references and its intra refresh band, see
+     * {@link WideCoder#startPicture}.
+     */
+    private int pictureStructure;
+
+    private boolean picturePairs;
+
+    private boolean picturePredicted;
+
+    private WideReference[] pictureRefs;
+
+    private WideReference[] pictureTopRefs;
+
+    private WideReference[] pictureBottomRefs;
+
+    private int pictureRefreshStart;
+
+    private int pictureRefreshEnd;
+
+    /**
+     * The list 1 setup of a B picture about to be coded, see {@link WideCoder#startBidirectional}; unused
+     * unless {@link #pictureBidirectional} is set.
+     */
+    private boolean pictureBidirectional;
+
+    private WideReference[] pictureRefs1;
+
+    private WideReference[] pictureTopRefs1;
+
+    private WideReference[] pictureBottomRefs1;
+
+    private WideFrame pictureCol;
+
+    private int pictureColStructure;
+
+    private boolean pictureColTopCloser;
+
+    /**
+     * The reference lists of one color plane, by list role (list 0 of frames or fields, of top field
+     * macroblocks and of bottom field macroblocks, then the same for list 1) and length.
+     */
+    private final WideReference[][][] planeLists = new WideReference[6][3][];
+
+    /**
      * Constructs an engine.
      *
      * @param config the configuration
@@ -475,8 +539,10 @@ public final class WideCore implements EncoderEngine {
         this.config = config;
         this.settings = new WideSettings(config);
         this.input = new WideInput(settings);
-        this.coder = new WideCoder(settings);
-        this.writer = new WideSliceWriter(settings, coder);
+        this.coder = new WideCoder(settings.planeSettings());
+        this.writer = new WideSliceWriter(settings.planeSettings(), coder);
+        this.planeMotion = settings.separateColorPlanes()
+                ? new WideFrame[]{new WideFrame(), new WideFrame(), new WideFrame()} : null;
         this.nal = new NalWriter(settings.mbCount() * 128, config.packetFormat() == H264PacketFormat.ANNEX_B);
         this.rateControl = new RateController(config);
         this.decoder = new H264DecoderEngine(config.limits(), frame -> {
@@ -494,7 +560,7 @@ public final class WideCore implements EncoderEngine {
         this.aqActivity = new int[macroblocks];
         this.aqBrightness = new int[macroblocks];
         this.aqOffsets = new double[macroblocks];
-        this.aqSteps = new int[macroblocks];
+        this.aqSteps = new int[settings.codedPlanes()][macroblocks];
         this.temporalLayers = config.temporalLayers();
         if (config.intraRefresh() > 0) {
             this.refreshBand = Math.ceilDiv(settings.mbWidth(), config.intraRefresh());
@@ -639,12 +705,23 @@ public final class WideCore implements EncoderEngine {
 
     /**
      * Returns the rounded adaptive quantization offsets of the macroblocks of the last picture coded, the
-     * second field of a field pair; a test hook.
+     * second field of a field pair, of its first color plane; a test hook.
      *
      * @return a copy, by macroblock address, empty without adaptive quantization
      */
     public int[] adaptiveOffsets() {
-        return Arrays.copyOf(aqSteps, aqCount);
+        return adaptiveOffsets(0);
+    }
+
+    /**
+     * Returns the rounded adaptive quantization offsets of the macroblocks of one color plane of the last
+     * picture coded, the second field of a field pair; a test hook.
+     *
+     * @param plane the color plane, 0 unless the planes are coded separately
+     * @return a copy, by macroblock address, empty without adaptive quantization
+     */
+    public int[] adaptiveOffsets(int plane) {
+        return Arrays.copyOf(aqSteps[plane], aqCount);
     }
 
     /**
@@ -1200,12 +1277,12 @@ public final class WideCore implements EncoderEngine {
                 h.reorderCount = 2;
             }
         }
-        coder.startPicture(source, recon, 0, mbaff, predicted, predicted ? oneRef : NONE, mbaff ? topRefs : null,
+        preparePicture(0, mbaff, predicted, predicted ? oneRef : NONE, mbaff ? topRefs : null,
                 mbaff ? bottomRefs : null, refreshStart, refreshEnd);
         if (bidirectional) {
             var future = references.getFirst();
             var current = Math.min(topPoc, bottomPoc);
-            coder.startBidirectional(oneRef1, mbaff ? topRefs1 : null, mbaff ? bottomRefs1 : null, future, 0,
+            prepareBidirectional(oneRef1, mbaff ? topRefs1 : null, mbaff ? bottomRefs1 : null, future, 0,
                     Math.abs(future.topPoc - current) < Math.abs(future.bottomPoc - current));
         }
         h.idr = idr;
@@ -1331,42 +1408,147 @@ public final class WideCore implements EncoderEngine {
         var units = width * rows;
         var slices = settings.sliceRows();
         var limit = config.maxSliceBytes();
-        var raw = (long) (256 * settings.bitDepth() + 2 * settings.mbWidthC() * settings.mbHeightC()
+        var coded = settings.planeSettings();
+        var raw = (long) (256 * settings.bitDepth() + 2 * coded.mbWidthC() * coded.mbHeightC()
                 * settings.bitDepth()) * settings.mbCount() / (header.structure == 0 ? 1 : 2);
         zeroWords.startPicture(settings.cabac(), limit, raw);
-        var sliceStart = 0;
-        var nextFixed = 1;
-        writer.start(header, 0);
-        for (var u = 0; u < units; u++) {
-            var address = u * unit;
-            if (u > 0 && u % width == 0 && nextFixed < slices
-                    && u / width == (int) ((long) nextFixed * rows / slices)) {
-                nextFixed++;
-                writer.endMacroblock(true, address - 1);
-                closeSlice(header);
-                sliceStart = address;
-                writer.start(header, address);
-            }
-            if (address != sliceStart) {
-                if (limit > 0) {
-                    writer.save();
+        for (var plane = 0; plane < settings.codedPlanes(); plane++) {
+            startPlane(plane);
+            header.colorPlane = plane;
+            var sliceStart = 0;
+            var nextFixed = 1;
+            writer.start(header, 0);
+            for (var u = 0; u < units; u++) {
+                var address = u * unit;
+                if (u > 0 && u % width == 0 && nextFixed < slices
+                        && u / width == (int) ((long) nextFixed * rows / slices)) {
+                    nextFixed++;
+                    writer.endMacroblock(true, address - 1);
+                    closeSlice(header);
+                    sliceStart = address;
+                    writer.start(header, address);
                 }
-                writer.endMacroblock(false, address - 1);
-            }
-            codeUnit(address, pairs, header.sliceQp, sliceStart);
-            if (limit > 0 && address != sliceStart && !fitsLimit(limit)) {
-                writer.restore();
-                writer.endMacroblock(true, address - 1);
-                closeSlice(header);
-                sliceStart = address;
-                writer.start(header, address);
+                if (address != sliceStart) {
+                    if (limit > 0) {
+                        writer.save();
+                    }
+                    writer.endMacroblock(false, address - 1);
+                }
                 codeUnit(address, pairs, header.sliceQp, sliceStart);
+                if (limit > 0 && address != sliceStart && !fitsLimit(limit)) {
+                    writer.restore();
+                    writer.endMacroblock(true, address - 1);
+                    closeSlice(header);
+                    sliceStart = address;
+                    writer.start(header, address);
+                    codeUnit(address, pairs, header.sliceQp, sliceStart);
+                }
+            }
+            writer.endMacroblock(true, units * unit - 1);
+            closeSlice(header);
+            if (planeMotion != null) {
+                coder.storeMotion(planeMotion[plane], header.structure);
             }
         }
-        writer.endMacroblock(true, units * unit - 1);
-        closeSlice(header);
         zeroWords.finishPicture(nal);
         pictureBins[header.structure] = zeroWords.bins();
+    }
+
+    /**
+     * Records how the picture about to be coded predicts, for {@link #startPlane(int)}; the arguments are
+     * those of {@link WideCoder#startPicture} without the frames, and mark the picture as no B picture.
+     *
+     * @param structure 0 for a frame, 1 for a top field, 2 for a bottom field
+     * @param pairs whether the frame is coded in macroblock pairs
+     * @param predicted whether the picture is a P or B picture
+     * @param references the list 0 references of frame macroblocks or of the field picture
+     * @param topFieldRefs the list 0 references of top field macroblocks of a frame of pairs, or {@code null}
+     * @param bottomFieldRefs the list 0 references of bottom field macroblocks of a frame of pairs, or
+     * {@code null}
+     * @param refreshStart the first column of the intra refresh band, 0 for none
+     * @param refreshEnd the column after the intra refresh band, 0 for none
+     */
+    private void preparePicture(int structure, boolean pairs, boolean predicted, WideReference[] references,
+                                WideReference[] topFieldRefs, WideReference[] bottomFieldRefs, int refreshStart,
+                                int refreshEnd) {
+        pictureStructure = structure;
+        picturePairs = pairs;
+        picturePredicted = predicted;
+        pictureRefs = references;
+        pictureTopRefs = topFieldRefs;
+        pictureBottomRefs = bottomFieldRefs;
+        pictureRefreshStart = refreshStart;
+        pictureRefreshEnd = refreshEnd;
+        pictureBidirectional = false;
+    }
+
+    /**
+     * Records the list 1 references and the co-located picture of the B picture about to be coded, for
+     * {@link #startPlane(int)}; the arguments are those of {@link WideCoder#startBidirectional}.
+     *
+     * @param references the list 1 references of frame macroblocks or of the field picture
+     * @param topFieldRefs the list 1 references of top field macroblocks of a frame of pairs, or {@code null}
+     * @param bottomFieldRefs the list 1 references of bottom field macroblocks of a frame of pairs, or
+     * {@code null}
+     * @param col the frame holding the co-located picture
+     * @param colStructure the structure of the co-located picture
+     * @param topCloser whether the co-located frame's top field is the closer one in output order
+     */
+    private void prepareBidirectional(WideReference[] references, WideReference[] topFieldRefs,
+                                      WideReference[] bottomFieldRefs, WideFrame col, int colStructure,
+                                      boolean topCloser) {
+        pictureBidirectional = true;
+        pictureRefs1 = references;
+        pictureTopRefs1 = topFieldRefs;
+        pictureBottomRefs1 = bottomFieldRefs;
+        pictureCol = col;
+        pictureColStructure = colStructure;
+        pictureColTopCloser = topCloser;
+    }
+
+    /**
+     * Starts the coder on one color plane of the picture {@link #preparePicture} described: the whole
+     * picture when the planes are coded together, otherwise the monochrome views of the plane in the
+     * source, the reconstruction, the references and the co-located frame.
+     *
+     * @param plane the color plane, 0 when the planes are coded together
+     */
+    private void startPlane(int plane) {
+        var separate = planeMotion != null;
+        aqPlane = plane;
+        coder.startPicture(separate ? source.plane(plane) : source, separate ? recon.plane(plane) : recon,
+                pictureStructure, picturePairs, picturePredicted, planeRefs(pictureRefs, 0, plane),
+                planeRefs(pictureTopRefs, 1, plane), planeRefs(pictureBottomRefs, 2, plane), pictureRefreshStart,
+                pictureRefreshEnd);
+        if (pictureBidirectional) {
+            coder.startBidirectional(planeRefs(pictureRefs1, 3, plane), planeRefs(pictureTopRefs1, 4, plane),
+                    planeRefs(pictureBottomRefs1, 5, plane), separate ? pictureCol.plane(plane) : pictureCol,
+                    pictureColStructure, pictureColTopCloser);
+        }
+    }
+
+    /**
+     * Returns a reference list as one color plane sees it: the list itself when the planes are coded
+     * together, otherwise the plane views of its references in a list of the same length.
+     *
+     * @param references the references, or {@code null}
+     * @param role the role of the list, which selects the array the views are written to
+     * @param plane the color plane
+     * @return the plane's list, or {@code null} for {@code null}
+     */
+    private WideReference[] planeRefs(WideReference[] references, int role, int plane) {
+        if (planeMotion == null || references == null || references.length == 0) {
+            return references;
+        }
+        var views = planeLists[role][references.length];
+        if (views == null) {
+            views = new WideReference[references.length];
+            planeLists[role][references.length] = views;
+        }
+        for (var i = 0; i < references.length; i++) {
+            views[i] = references[i] == null ? null : references[i].plane(plane);
+        }
+        return views;
     }
 
     /**
@@ -1420,12 +1602,12 @@ public final class WideCore implements EncoderEngine {
         }
         var min = Math.max(qp <= RateController.QP_MIN ? 0 : 1, config.minQuantizer());
         var max = Math.min(RateController.QP_MAX, config.maxQuantizer());
-        return Math.clamp(qp + aqSteps[address], min, max);
+        return Math.clamp(qp + aqSteps[aqPlane][address], min, max);
     }
 
     /**
      * Computes the adaptive quantization offsets of the macroblocks of the picture about to be coded from the
-     * source luma, on the 8-bit scale.
+     * source luma, on the 8-bit scale, or from each color plane when the planes are coded separately.
      *
      * @param structure 0 for a frame, 1 for the top field, 2 for the bottom field
      * @param pairs whether the frame is coded as macroblock pairs, whose addresses run down each pair
@@ -1434,11 +1616,32 @@ public final class WideCore implements EncoderEngine {
         if (aqStrength <= 0) {
             return;
         }
-        var plane = structure == 0 ? source.planes[0] : structure == 1 ? source.topView[0] : source.bottomView[0];
         var width = settings.mbWidth();
         var rows = structure == 0 ? settings.mbHeight() : settings.mbHeight() / 2;
         var count = width * rows;
         aqCount = count;
+        var full = config.color().range() == ColorRange.FULL;
+        for (var c = 0; c < aqSteps.length; c++) {
+            var plane = structure == 0 ? source.planes[c] : structure == 1 ? source.topView[c] : source.bottomView[c];
+            measureActivity(plane, count, width, pairs);
+            AdaptiveQuantizer.compute(aqMode, aqStrength, aqActivity, aqBrightness, count, full ? 0 : 16,
+                    full ? 255 : 235, aqOffsets);
+            var steps = aqSteps[c];
+            for (var address = 0; address < count; address++) {
+                steps[address] = (int) Math.round(aqOffsets[address]);
+            }
+        }
+    }
+
+    /**
+     * Measures the activity and brightness of each macroblock of a plane for {@link AdaptiveQuantizer}.
+     *
+     * @param plane the plane, or the field view of a plane, of the picture about to be coded
+     * @param count the number of macroblocks of the picture
+     * @param width the picture width in macroblocks
+     * @param pairs whether the frame is coded as macroblock pairs, whose addresses run down each pair
+     */
+    private void measureActivity(WidePlane plane, int count, int width, boolean pairs) {
         var shift = settings.bitDepth() - 8;
         for (var address = 0; address < count; address++) {
             int mbX;
@@ -1469,12 +1672,6 @@ public final class WideCore implements EncoderEngine {
             }
             aqActivity[address] = (int) Math.min(Integer.MAX_VALUE, (energy >> (6 + 2 * shift)) + 64);
             aqBrightness[address] = (int) (total >> shift);
-        }
-        var full = config.color().range() == ColorRange.FULL;
-        AdaptiveQuantizer.compute(aqMode, aqStrength, aqActivity, aqBrightness, count, full ? 0 : 16, full ? 255 : 235,
-                aqOffsets);
-        for (var address = 0; address < count; address++) {
-            aqSteps[address] = (int) Math.round(aqOffsets[address]);
         }
     }
 
@@ -1585,10 +1782,10 @@ public final class WideCore implements EncoderEngine {
             var first = nal.unitCount();
             prepareAdaptiveQuantization(structure, false);
             for (var attempt = 0; ; attempt++) {
-                coder.startPicture(source, recon, structure, false, predicted, refs, null, null, refreshStart,
+                preparePicture(structure, false, predicted, refs, null, null, refreshStart,
                         refreshEnd);
                 if (bidirectional) {
-                    coder.startBidirectional(twoRefs1, null, null, references.getFirst(), structure, false);
+                    prepareBidirectional(twoRefs1, null, null, references.getFirst(), structure, false);
                 }
                 codeField(h, fieldIdr, predicted, currentFrameNum, structure, (2 * n + k)
                         & ((1 << settings.log2MaxPocLsb()) - 1), fieldIdr ? 3 : nalRefIdc, refs.length, fieldQp);
@@ -1752,7 +1949,13 @@ public final class WideCore implements EncoderEngine {
             building = takeFrame();
         }
         if (!unreferenced) {
-            coder.storeMotion(building, structure);
+            if (planeMotion != null) {
+                for (var c = 0; c < 3; c++) {
+                    building.plane(c).swapMotion(planeMotion[c], structure);
+                }
+            } else {
+                coder.storeMotion(building, structure);
+            }
             building.topPoc = currentTopPoc;
             building.bottomPoc = currentBottomPoc;
         }
