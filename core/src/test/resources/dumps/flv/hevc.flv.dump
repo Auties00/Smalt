@@ -1,0 +1,36 @@
+# demux dump of flv/hevc.flv; regenerate with -Dsmalt.test.updateDumps=true
+format FLV
+duration 1000000
+seekable true
+metadata duration="1"
+metadata encoder="Lavf61.7.100"
+metadata filesize="18573"
+metadata framerate="15"
+metadata height="120"
+metadata videocodecid="1752589105"
+metadata videodatarate="0"
+metadata width="160"
+track 1 VIDEO HEVC timebase=1/1000 duration=? config=2430:1ed97c51
+  video 160x120 orientation=NORMAL rate=15/1 sar=1/1
+  color ColorInfo[matrix=UNSPECIFIED, range=LIMITED, primaries=UNSPECIFIED, transfer=UNSPECIFIED, chromaSiting=UNSPECIFIED, masteringDisplay=Optional.empty, contentLightLevel=Optional.empty]
+packets 15
+0 t1 pts=0 dts=0 dur=67 flags=KEY size=1789 crc=59d61136
+1 t1 pts=67 dts=67 dur=67 flags=- size=787 crc=64dd9adc
+2 t1 pts=133 dts=133 dur=67 flags=- size=669 crc=8856737b
+3 t1 pts=200 dts=200 dur=67 flags=- size=739 crc=7b42cbdd
+4 t1 pts=267 dts=267 dur=67 flags=- size=596 crc=022548a0
+5 t1 pts=333 dts=333 dur=67 flags=KEY size=2454 crc=e601cc74
+6 t1 pts=400 dts=400 dur=67 flags=- size=645 crc=9c6eb72e
+7 t1 pts=467 dts=467 dur=67 flags=- size=867 crc=fe9ec69d
+8 t1 pts=533 dts=533 dur=67 flags=- size=668 crc=72cd3a8a
+9 t1 pts=600 dts=600 dur=67 flags=- size=743 crc=34c27813
+10 t1 pts=667 dts=667 dur=67 flags=KEY size=2710 crc=9999731f
+11 t1 pts=733 dts=733 dur=67 flags=- size=955 crc=c3f19644
+12 t1 pts=800 dts=800 dur=67 flags=- size=693 crc=04aecaa8
+13 t1 pts=867 dts=867 dur=67 flags=- size=822 crc=95743641
+14 t1 pts=933 dts=933 dur=67 flags=- size=422 crc=8f180719
+seek 0: t1@0
+seek 333333: t1@5
+seek 666666: t1@5
+seek 1000000: end
+seek -1000000: t1@0

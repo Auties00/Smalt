@@ -217,7 +217,7 @@ final class NoiseShapeAnalysisFlp {
             } else {
                 for (k = 0; k < sCmn.nb_subfr; k++) {
                     SigProcFlp.warpedAutocorrelationFlp(auto_corr, x_windowed, k * SHAPE_LPC_WIN_MAX, warping,
-                            sCmn.shapeWinLength, sCmn.shapingLPCOrder);
+                            sCmn.shapeWinLength, sCmn.shapingLPCOrder, s.warpedState, s.warpedCorr);
                     System.arraycopy(auto_corr, 0, all_corr, k * (MAX_SHAPE_LPC_ORDER + 1), sCmn.shapingLPCOrder + 1);
                 }
             }

@@ -142,18 +142,29 @@ class BitDepthTest {
     }
 
     @Test
-    @DisplayName("converts, resizes and flattens 16-bit pictures through their 8-bit reduction")
-    void reducesForOtherOperations() {
+    @DisplayName("converts, resizes and flattens 16-bit pictures at their depth, close to their 8-bit counterparts")
+    void keepsDepthForOtherOperations() {
         var random = new SplittableRandom(11);
         var picture = Pictures.randomYuv(random, 24, 16, ChromaFormat.YUV420, true, ColorInfo.BT601_LIMITED);
         var wide = ImageOps.toBitDepth(picture, 10);
-        assertArrayEquals(Pictures.tight(ImageOps.toRgba(picture)), Pictures.tight(ImageOps.toRgba(wide)));
-        assertSamePlanes(ImageOps.toYuv(picture, ChromaFormat.YUV444, ColorInfo.JPEG),
-                ImageOps.toYuv(wide, ChromaFormat.YUV444, ColorInfo.JPEG));
-        assertSamePlanes((YuvPicture) ImageOps.resize(picture, 12, 8, ResizeFilter.LANCZOS3),
-                (YuvPicture) ImageOps.resize(wide, 12, 8, ResizeFilter.LANCZOS3));
-        assertSamePlanes((YuvPicture) ImageOps.flatten(picture, 0x336699),
-                (YuvPicture) ImageOps.flatten(wide, 0x336699));
+        // the 8-bit kernels round the reconstructed chroma once more than the 16-bit conversions
+        assertWithin(Pictures.tight(ImageOps.toRgba(picture)), Pictures.tight(ImageOps.toRgba(wide)), 2);
+        assertWithin(Pictures.raw(ImageOps.toYuv(picture, ChromaFormat.YUV444, ColorInfo.JPEG)),
+                Pictures.raw(ImageOps.toYuv(wide, ChromaFormat.YUV444, ColorInfo.JPEG)), 2);
+        var resized = assertInstanceOf(Yuv16Picture.class, ImageOps.resize(wide, 12, 8, ResizeFilter.LANCZOS3));
+        assertEquals(10, resized.bitDepth());
+        assertWithin(Pictures.raw((YuvPicture) ImageOps.resize(picture, 12, 8, ResizeFilter.LANCZOS3)),
+                Pictures.raw(ImageOps.toEightBit(resized)), 1);
+        var flat = assertInstanceOf(Yuv16Picture.class, ImageOps.flatten(wide, 0x336699));
+        assertEquals(10, flat.bitDepth());
+        assertWithin(Pictures.raw((YuvPicture) ImageOps.flatten(picture, 0x336699)), Pictures.raw(ImageOps.toEightBit(flat)), 1);
+    }
+
+    private static void assertWithin(byte[] expected, byte[] actual, int tolerance) {
+        assertEquals(expected.length, actual.length);
+        for (var i = 0; i < expected.length; i++) {
+            assertEquals(expected[i] & 0xFF, actual[i] & 0xFF, tolerance, "sample " + i);
+        }
     }
 
     @Test

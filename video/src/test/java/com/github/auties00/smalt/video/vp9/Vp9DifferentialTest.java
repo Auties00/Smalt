@@ -5,6 +5,7 @@ import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Tolerance;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.VideoTrack;
 import com.github.auties00.smalt.video.vp9.internal.Vp9Frame;
@@ -36,6 +37,9 @@ import static org.junit.jupiter.api.Assertions.fail;
  */
 @DisplayName("VP9 decoder differential against ffmpeg")
 class Vp9DifferentialTest {
+    /** VP9 reconstruction is normative, so every shown frame equals libvpx's and ffmpeg's decodes; frame MD5s compare equal. */
+    static final Tolerance TOLERANCE = Tolerance.exact();
+
     static Path foreman() {
         var path = Path.of(com.github.auties00.smalt.testkit.Conformance.directory().toString(), "foreman_cif.y4m");
         return Files.isRegularFile(path) ? path : null;
@@ -132,11 +136,7 @@ class Vp9DifferentialTest {
                     + actual.size() + " frames)");
         }
         var frameSize = actual.isEmpty() ? 1 : actual.getFirst().length;
-        for (var i = 0; i < bytes.length; i++) {
-            if (expected[i] != bytes[i]) {
-                fail(label + ": first difference in frame " + (i / frameSize) + " at byte " + (i % frameSize));
-            }
-        }
+        TOLERANCE.assertFrames(label, expected, bytes, frameSize);
     }
 
     static Stream<Arguments> streams() {
