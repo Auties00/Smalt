@@ -111,11 +111,54 @@ final class AacTestSupport {
         return out.toByteArray();
     }
 
+    /**
+     * Parses the raw input of libxaac's test applications: the {@code AudioSpecificConfig} followed by the
+     * access units, with the metadata file listing the configuration length ({@code -dec_info_init}), the
+     * media time scale ({@code -media_time_scale}) and the access unit sizes ({@code -ia_mp4_stsz_size}).
+     */
+    static Stream parseRaw(byte[] data, String meta) {
+        var configLength = 0;
+        var rate = 0;
+        var sizes = new ArrayList<Integer>();
+        for (var line : meta.split("\\R")) {
+            var colon = line.indexOf(':');
+            if (colon < 0) {
+                continue;
+            }
+            var value = line.substring(colon + 1).trim();
+            switch (line.substring(0, colon).trim()) {
+                case "-dec_info_init" -> configLength = Integer.parseInt(value);
+                case "-media_time_scale" -> rate = Integer.parseInt(value);
+                case "-ia_mp4_stsz_size" -> sizes.add(Integer.parseInt(value));
+                default -> {
+                }
+            }
+        }
+        var config = java.util.Arrays.copyOf(data, configLength);
+        var frames = new ArrayList<byte[]>();
+        var position = configLength;
+        for (var size : sizes) {
+            frames.add(java.util.Arrays.copyOfRange(data, position, position + size));
+            position += size;
+        }
+        return new Stream(config, frames, rate, 0);
+    }
+
     static Stream parseMp4(byte[] data) {
+        var tracks = parseMp4Tracks(data);
+        if (tracks.isEmpty()) {
+            throw new IllegalArgumentException("no mp4a track");
+        }
+        return tracks.getFirst();
+    }
+
+    /** Parses every mp4a track, in file order (one per category instance for epConfig 1 files). */
+    static List<Stream> parseMp4Tracks(byte[] data) {
         var moov = findBox(data, 0, data.length, "moov");
         if (moov == null) {
             throw new IllegalArgumentException("no moov");
         }
+        var tracks = new ArrayList<Stream>();
         for (var trak : findBoxes(data, moov[0], moov[1], "trak")) {
             var stbl = path(data, trak[0], trak[1], "mdia", "minf", "stbl");
             if (stbl == null) {
@@ -136,6 +179,14 @@ final class AacTestSupport {
             var sizes = sampleSizes(data, findBox(data, stbl[0], stbl[1], "stsz"));
             var offsets = sampleOffsets(data, stbl, sizes.length);
             var frames = new ArrayList<byte[]>();
+            var outside = false;
+            for (var i = 0; i < sizes.length; i++) {
+                outside |= offsets[i] + sizes[i] > data.length;
+            }
+            if (outside) {
+                // er_bs02_*_ep0.mp4 of ISO/IEC 14496-26 lists layer tracks whose samples lie past the end of the file.
+                continue;
+            }
             for (var i = 0; i < sizes.length; i++) {
                 var frame = new byte[sizes[i]];
                 System.arraycopy(data, (int) offsets[i], frame, 0, sizes[i]);
@@ -163,9 +214,27 @@ final class AacTestSupport {
                     }
                 }
             }
-            return new Stream(config, frames, rate, channels, skip, presented);
+            tracks.add(new Stream(config, frames, rate, channels, skip, presented));
         }
-        throw new IllegalArgumentException("no mp4a track");
+        return tracks;
+    }
+
+    /** Returns the number of MP4A tracks an MP4 file lists, those whose samples lie past its end included. */
+    static int mp4AudioTrackCount(byte[] data) {
+        var moov = findBox(data, 0, data.length, "moov");
+        var count = 0;
+        for (var trak : findBoxes(data, moov[0], moov[1], "trak")) {
+            var stbl = path(data, trak[0], trak[1], "mdia", "minf", "stbl");
+            if (stbl == null) {
+                continue;
+            }
+            var stsd = findBox(data, stbl[0], stbl[1], "stsd");
+            var entry = stsd[0] + 8;
+            if (new String(data, entry + 4, 4, java.nio.charset.StandardCharsets.ISO_8859_1).equals("mp4a")) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private static byte[] decoderSpecificInfo(byte[] data, int start, int end) {
@@ -345,6 +414,39 @@ final class AacTestSupport {
         }
     }
 
+    /** Decodes an epConfig 1 stream whose category instances are the samples of the given tracks. */
+    static Decoded decodeInstances(List<Stream> tracks) {
+        return decodeInstances(tracks, AacDecoderOptions.defaults());
+    }
+
+    /**
+     * Decodes a stream whose blocks are split over the samples of the given tracks (epConfig 1 category instances, or
+     * the elementary streams of ER BSAC and scalable AAC), under options.
+     */
+    static Decoded decodeInstances(List<Stream> tracks, AacDecoderOptions options) {
+        try (var decoder = new AacDecoder(tracks.stream().map(Stream::track).toList(), options)) {
+            var collected = new ArrayList<float[][]>();
+            var layout = new ChannelLayout[1];
+            var rate = new int[1];
+            var blocks = tracks.getFirst().frames().size();
+            for (var block = 0; block < blocks; block++) {
+                var instances = new ArrayList<Packet>();
+                for (var track : tracks) {
+                    if (block < track.frames().size()) {
+                        instances.add(new Packet(1, track.frames().get(block), Packet.NO_TIMESTAMP,
+                                Packet.NO_TIMESTAMP, 0, true));
+                    }
+                }
+                decoder.decode(instances, buffer -> {
+                    layout[0] = buffer.layout();
+                    rate[0] = buffer.sampleRate();
+                    collected.add(copy(buffer));
+                });
+            }
+            return concatenate(collected, decoder, rate[0], layout[0]);
+        }
+    }
+
     static Decoded decodeAll(AacDecoder decoder, List<byte[]> frames) {
         var collected = new ArrayList<float[][]>();
         var layout = new ChannelLayout[1];
@@ -356,6 +458,11 @@ final class AacTestSupport {
                 collected.add(copy(buffer));
             });
         }
+        decoder.flush(buffer -> collected.add(copy(buffer)));
+        return concatenate(collected, decoder, rate[0], layout[0]);
+    }
+
+    private static Decoded concatenate(List<float[][]> collected, AacDecoder decoder, int rate, ChannelLayout layout) {
         if (collected.isEmpty()) {
             return new Decoded(new float[decoder.layout().channels()][0], decoder.sampleRate(), decoder.layout());
         }
@@ -372,7 +479,7 @@ final class AacTestSupport {
             }
             position += block[0].length;
         }
-        return new Decoded(result, rate[0], layout[0]);
+        return new Decoded(result, rate, layout);
     }
 
     static float[][] copy(AudioBuffer buffer) {
