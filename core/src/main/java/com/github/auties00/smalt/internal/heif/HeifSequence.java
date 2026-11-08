@@ -159,11 +159,56 @@ public final class HeifSequence {
     }
 
     /**
+     * {@return the next sample of the color track without taking it, or {@code null} at its end}
+     *
+     * @throws MediaException.LimitExceeded if more than {@link MediaLimits#maxFrames()} samples
+     * would be held back
+     */
+    public Packet peekColor() {
+        var packet = next(colorPackets);
+        if (packet != null) {
+            colorPackets.addFirst(packet);
+        }
+        return packet;
+    }
+
+    /**
+     * {@return the next sample of the alpha track without taking it, or {@code null} at its end or without an
+     * alpha track}
+     *
+     * @throws MediaException.LimitExceeded if more than {@link MediaLimits#maxFrames()} samples
+     * would be held back
+     */
+    public Packet peekAlpha() {
+        if (alphaTrack < 0) {
+            return null;
+        }
+        var packet = next(alphaPackets);
+        if (packet != null) {
+            alphaPackets.addFirst(packet);
+        }
+        return packet;
+    }
+
+    /**
      * Drops the samples held back.
      */
     public void clear() {
         colorPackets.clear();
         alphaPackets.clear();
+    }
+
+    /**
+     * Seeks the demuxer and drops the samples held back, so that the next samples of both tracks
+     * are the ones the demuxer restarts at (see {@link Demuxer#seek(long)}).
+     *
+     * @param micros the presentation time the demuxer seeks to, in microseconds
+     * @throws MediaException.Malformed if the index needed to seek is corrupt
+     */
+    public void seek(long micros) {
+        demuxer.seek(micros);
+        clear();
+        drained = false;
     }
 
     /**

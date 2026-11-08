@@ -2,6 +2,7 @@ package com.github.auties00.smalt.video.av1.internal.encoder;
 
 import com.github.auties00.smalt.video.av1.internal.Av1Block;
 import com.github.auties00.smalt.video.av1.internal.Av1Picture;
+import com.github.auties00.smalt.video.av1.internal.Cdf;
 import com.github.auties00.smalt.video.av1.internal.EncoderBridge;
 import com.github.auties00.smalt.video.av1.internal.FrameHeader;
 import com.github.auties00.smalt.video.av1.internal.IntraEdge;
@@ -29,9 +30,10 @@ import static com.github.auties00.smalt.video.av1.internal.Tables.BLOCK_DIMENSIO
  * {@code combined_motion_search}, {@code newmv_diff_bias},
  * {@code set_color_sensitivity}, {@code av1_nonrd_pick_intra_mode}) and
  * {@code av1/encoder/nonrd_opt.c} ({@code av1_block_yrd},
- * {@code av1_model_rd_for_sb_uv}, {@code av1_estimate_intra_mode}) for single
- * references without compound prediction, interpolation filter search, warped motion,
- * palette or screen content.
+ * {@code av1_model_rd_for_sb_uv}, {@code av1_estimate_intra_mode}), with the luma palette
+ * search of screen content frames ({@code enable_palette}, {@code handle_screen_content_mode_nonrd}
+ * and {@code av1_search_palette_mode_luma}, the palette sizes searched from the largest down with
+ * a weighted one-dimensional k-means over the block's distinct values).
  */
 final class PickMode {
     /**
@@ -42,7 +44,7 @@ final class PickMode {
     /**
      * The distance between the two chroma planes in the chroma prediction buffers.
      */
-    private static final int CHROMA_PLANE = 32 * 32;
+    private static final int CHROMA_PLANE = 64 * 64;
 
     /**
      * The searched inter modes in order.
@@ -142,9 +144,10 @@ final class PickMode {
     private static final int[][] HIGHMOTION_THRESH = {{4, 8, 10}, {4, 6, 8}};
 
     /**
-     * A flat mid-gray 64x64 block, the reference of the source variance.
+     * A flat mid-gray 64x64 block of each bit depth, 8, 10 and 12, the reference of the source
+     * variance.
      */
-    private static final short[] FLAT = flat();
+    private static final short[][] FLAT = {flat(8), flat(10), flat(12)};
 
     /**
      * The scan position plus one of each coefficient of {@link #SCAN_8X8_T}.
@@ -287,7 +290,7 @@ final class PickMode {
     /**
      * The chroma predictions of the second reference of an evaluated compound mode.
      */
-    private final short[] predUvComp = new short[2 * 32 * 32];
+    private final short[] predUvComp = new short[2 * CHROMA_PLANE];
 
     /**
      * The luma prediction of the evaluated mode.
@@ -361,7 +364,7 @@ final class PickMode {
     /**
      * The chroma predictions of the evaluated mode.
      */
-    private final short[] predUv = new short[2 * 32 * 32];
+    private final short[] predUv = new short[2 * CHROMA_PLANE];
 
     /**
      * The residual of the block.
@@ -504,6 +507,89 @@ final class PickMode {
     private int thisTx;
 
     /**
+     * The number of luma palette colors of the decision, 0 when the block predicts without a
+     * palette.
+     */
+    int paletteSize;
+
+    /**
+     * The luma palette colors of the decision, strictly ascending.
+     */
+    final short[] paletteColors = new short[8];
+
+    /**
+     * The luma color index of each visible sample of the decision, rows at the block width.
+     */
+    final byte[] paletteMap = new byte[64 * 64];
+
+    /**
+     * The color indices of the palette being evaluated, rows at the block width.
+     */
+    private final byte[] paletteTrial = new byte[64 * 64];
+
+    /**
+     * The colors of the palette being evaluated.
+     */
+    private final short[] paletteTrialColors = new short[8];
+
+    /**
+     * The count of each sample value in the block, zero between searches; allocated at the first
+     * palette search.
+     */
+    private int[] histogram;
+
+    /**
+     * The distinct sample values of the block, ascending after counting.
+     */
+    private final int[] distinct = new int[MAX_PALETTE_COLORS];
+
+    /**
+     * The count of each distinct value.
+     */
+    private final long[] weights = new long[MAX_PALETTE_COLORS];
+
+    /**
+     * The rounded, distinct cluster centers of the last k-means, ascending.
+     */
+    private final int[] centroids = new int[8];
+
+    /**
+     * The cluster means of the k-means iterations.
+     */
+    private final double[] means = new double[8];
+
+    /**
+     * The weighted value sums of the k-means clusters.
+     */
+    private final double[] clusterSums = new double[8];
+
+    /**
+     * The weights of the k-means clusters.
+     */
+    private final long[] clusterWeights = new long[8];
+
+    /**
+     * The coder that counts the cost of the palette syntax.
+     */
+    private final RangeEncoder paletteCounter = new RangeEncoder();
+
+    /**
+     * The palette syntax writer the costs are counted with.
+     */
+    private final PaletteWriter paletteWriter = new PaletteWriter();
+
+    /**
+     * The most distinct values a block may hold for its palette to be searched
+     * ({@code color_palette_thresh} at its largest).
+     */
+    private static final int MAX_PALETTE_COLORS = 64;
+
+    /**
+     * The k-means iterations of a palette size.
+     */
+    private static final int KMEANS_ITERATIONS = 10;
+
+    /**
      * Creates the mode decision of a tile.
      *
      * @param frame the frame encoder
@@ -535,11 +621,12 @@ final class PickMode {
     /**
      * Returns a 64x64 block of mid-gray samples.
      *
+     * @param bitDepth the bit depth of the samples
      * @return the block
      */
-    private static short[] flat() {
+    private static short[] flat(int bitDepth) {
         var out = new short[64 * 64];
-        Arrays.fill(out, (short) 128);
+        Arrays.fill(out, (short) (1 << (bitDepth - 1)));
         return out;
     }
 
@@ -597,7 +684,7 @@ final class PickMode {
     private int perPixelVariance(int px, int py, int bw, int bh) {
         var src = frame.source.data[0];
         var stride = frame.source.stride[0];
-        var packed = dsp.sseSum(src, py * stride + px, stride, FLAT, 0, 64, bw, bh);
+        var packed = dsp.sseSum(src, py * stride + px, stride, FLAT[(frame.bitDepth - 8) >> 1], 0, 64, bw, bh);
         var log2n = Integer.numberOfTrailingZeros(bw) + Integer.numberOfTrailingZeros(bh);
         return (int) ((EncDsp.variance(packed, log2n) & 0xFFFFFFFFL) >> log2n);
     }
@@ -678,7 +765,7 @@ final class PickMode {
         if (sf.txSizeLevelBasedOnQstep != 0) {
             var qband = frame.baseQindex >> 6;
             multiplier = TX_MULTIPLIER[qband];
-            var qstep = q.dequant[1] >> 3;
+            var qstep = q.analysisDequant[1] >> 3;
             long qstepSq = (long) qstep * qstep;
             varThresh = qstepSq * 2;
             if (sf.txSizeLevelBasedOnQstep >= 2) {
@@ -724,12 +811,13 @@ final class PickMode {
         var py = t.by * 4;
         var bw = bw4 * 4;
         var bh = bh4 * 4;
-        b.uvtx = Tables.MAX_TXFM_SIZE_FOR_BS[bs * 4 + 1];
+        b.uvtx = Tables.MAX_TXFM_SIZE_FOR_BS[bs * 4 + frame.layout];
         b.maxYtx = Tables.MAX_TXFM_SIZE_FOR_BS[bs * 4];
         b.yAngle = 0;
         b.uvAngle = 0;
         skipTxfm = false;
         lumaTxType = 0;
+        paletteSize = 0;
         rdmult = f.rd.segmentRdmult[b.segId];
         sourceVariance = perPixelVariance(px, py, bw, bh);
         if (f.f.frameHdr.isKeyOrIntra()) {
@@ -791,9 +879,9 @@ final class PickMode {
                         | (x == 0 && y + txH < h4 ? IntraEdge.I444_LEFT_HAS_BOTTOM : 0);
                 var m = IpredDsp.prepareIntraEdges(bx, bx > ts.colStart, by, by > ts.rowStart, ts.colEnd, ts.rowEnd,
                         flags, plane, dst, stride, null, 0, mode, t.angle, txW, txH, f.seqHdr.intraEdgeFilter, t.edge,
-                        IpredDsp.EDGE_TOPLEFT, 255);
+                        IpredDsp.EDGE_TOPLEFT, frame.bdMax);
                 IpredDsp.INSTANCE.intraPred(m, plane, dst, stride, t.edge, IpredDsp.EDGE_TOPLEFT, txW * 4, txH * 4,
-                        t.angle[0], 4 * f.bw - 4 * bx, 4 * f.bh - 4 * by, t.ipredScratch, 255);
+                        t.angle[0], 4 * f.bw - 4 * bx, 4 * f.bh - 4 * by, t.ipredScratch, frame.bdMax);
             }
         }
     }
@@ -844,7 +932,15 @@ final class PickMode {
                 bestMode = mode;
             }
         }
-        if (bw == 8 && bh == 8 && sourceVariance >= f.speed.hybridIntraVarThresh) {
+        if (f.f.frameHdr.allowScreenContentTools && bw >= 8 && bh >= 8 && bw <= 16 && bh <= 16
+                && sourceVariance > 200) {
+            searchPalette(bs, bw, bh, px, py, yrdTx, f.rd.kfYMode[(aCtx * 5 + lCtx) * 13 + IpredDsp.DC_PRED],
+                    f.rd.skip[skipCtx * 2 + 1], f.rd.skip[skipCtx * 2], bestRd, MAX_PALETTE_COLORS);
+            if (paletteSize > 0) {
+                bestMode = IpredDsp.DC_PRED;
+            }
+        }
+        if (paletteSize == 0 && bw == 8 && bh == 8 && sourceVariance >= f.speed.hybridIntraVarThresh) {
             if (intraRd == null) {
                 intraRd = new IntraRd(frame, tile);
             }
@@ -974,19 +1070,23 @@ final class PickMode {
         var src = f.source.data[0];
         var srcStride = f.source.stride[0];
         long sse = EncDsp.sse(dsp.sseSum(src, py * srcStride + px, srcStride, predY, 0, bw, visW, visH)) & 0xFFFFFFFFL;
-        predictChroma(f.ref(ref1), mv1, px, py, bw, bh);
-        var cw = bw >> 1;
-        var ch = bh >> 1;
-        System.arraycopy(predUv, 0, predUvComp, 0, cw * ch);
-        System.arraycopy(predUv, CHROMA_PLANE, predUvComp, CHROMA_PLANE, cw * ch);
-        predictChroma(f.ref(ref0), mv0, px, py, bw, bh);
-        for (var pl = 1; pl < 3; pl++) {
-            var o = (pl - 1) * CHROMA_PLANE;
-            dsp.average(predUv, o, predUvComp, o, cw * ch);
-            var s = f.source.data[pl];
-            var stride = f.source.stride[1];
-            sse += EncDsp.sse(dsp.sseSum(s, (py >> 1) * stride + (px >> 1), stride, predUv, o, cw,
-                    Math.max(1, visW >> 1), Math.max(1, visH >> 1))) & 0xFFFFFFFFL;
+        if (f.planes > 1) {
+            var ssHor = f.ssHor;
+            var ssVer = f.ssVer;
+            predictChroma(f.ref(ref1), mv1, px, py, bw, bh);
+            var cw = bw >> ssHor;
+            var ch = bh >> ssVer;
+            System.arraycopy(predUv, 0, predUvComp, 0, cw * ch);
+            System.arraycopy(predUv, CHROMA_PLANE, predUvComp, CHROMA_PLANE, cw * ch);
+            predictChroma(f.ref(ref0), mv0, px, py, bw, bh);
+            for (var pl = 1; pl < 3; pl++) {
+                var o = (pl - 1) * CHROMA_PLANE;
+                dsp.average(predUv, o, predUvComp, o, cw * ch);
+                var s = f.source.data[pl];
+                var stride = f.source.stride[1];
+                sse += EncDsp.sse(dsp.sseSum(s, (py >> ssVer) * stride + (px >> ssHor), stride, predUv, o, cw,
+                        Math.max(1, visW >> ssHor), Math.max(1, visH >> ssVer))) & 0xFFFFFFFFL;
+            }
         }
         var rd = RdCost.rdcost(rdmult, skipModeCost(1), sse << 4);
         if (rd >= bestRd) {
@@ -1321,7 +1421,7 @@ final class PickMode {
                     }
                     if (colorSens[0] != 0 || colorSens[1] != 0) {
                         predictChroma(f.ref(ref1), mv1, px, py, bw, bh);
-                        var chromaSamples = (bw >> 1) * (bh >> 1);
+                        var chromaSamples = (bw >> f.ssHor) * (bh >> f.ssVer);
                         System.arraycopy(predUv, 0, predUvComp, 0, chromaSamples);
                         System.arraycopy(predUv, CHROMA_PLANE, predUvComp, CHROMA_PLANE, chromaSamples);
                         predictChroma(f.ref(ref0), mv0, px, py, bw, bh);
@@ -1493,7 +1593,7 @@ final class PickMode {
         var s = ref.stride[0];
         var off = ref.origin[0] + (py + (mvy >> 3)) * s + px + (mvx >> 3);
         McDsp.select().mc(Tables.FILTER_2D[curFilter * 4 + curFilter], dst, 0, bw, ref.padded[0], off, s, bw, bh,
-                (mvx & 7) << 1, (mvy & 7) << 1, mcScratch, 255);
+                (mvx & 7) << 1, (mvy & 7) << 1, mcScratch, frame.bdMax);
     }
 
     /**
@@ -1586,7 +1686,7 @@ final class PickMode {
                 rate = 0;
                 dist = sse << 4;
             } else {
-                RdCost.modelCurvfit(rdmult, bs, sse, visW * visH, q.dequant[1], model);
+                RdCost.modelCurvfit(rdmult, bs, sse, visW * visH, q.analysisDequant[1], model);
                 rate = model[0];
                 dist = model[1];
             }
@@ -1618,13 +1718,18 @@ final class PickMode {
     private void predictChroma(RefFrame ref, int mv, int px, int py, int bw, int bh) {
         var mvx = RefMvs.mvX(mv);
         var mvy = RefMvs.mvY(mv);
-        var cw = bw >> 1;
-        var ch = bh >> 1;
+        var ssHor = frame.ssHor;
+        var ssVer = frame.ssVer;
+        var cw = bw >> ssHor;
+        var ch = bh >> ssVer;
+        var mx = (mvx & (15 >> (ssHor ^ 1))) << (ssHor ^ 1);
+        var my = (mvy & (15 >> (ssVer ^ 1))) << (ssVer ^ 1);
         for (var pl = 1; pl < 3; pl++) {
             var s = ref.stride[pl];
-            var off = ref.origin[pl] + ((py >> 1) + (mvy >> 4)) * s + (px >> 1) + (mvx >> 4);
-            McDsp.select().mc(Tables.FILTER_2D[curFilter * 4 + curFilter], predUv, (pl - 1) * 32 * 32, cw,
-                    ref.padded[pl], off, s, cw, ch, mvx & 15, mvy & 15, mcScratch, 255);
+            var off = ref.origin[pl] + ((py >> ssVer) + (mvy >> (3 + ssVer))) * s + (px >> ssHor)
+                    + (mvx >> (3 + ssHor));
+            McDsp.select().mc(Tables.FILTER_2D[curFilter * 4 + curFilter], predUv, (pl - 1) * CHROMA_PLANE, cw,
+                    ref.padded[pl], off, s, cw, ch, mx, my, mcScratch, frame.bdMax);
         }
     }
 
@@ -1642,8 +1747,8 @@ final class PickMode {
      */
     private long modelUv(int px, int py, int bw, int bh, long[] out) {
         var f = frame;
-        var cw = bw >> 1;
-        var ch = bh >> 1;
+        var cw = bw >> f.ssHor;
+        var ch = bh >> f.ssVer;
         long rate = 0;
         long dist = 0;
         long totSse = 0;
@@ -1654,16 +1759,16 @@ final class PickMode {
             }
             var src = f.source.data[pl];
             var stride = f.source.stride[1];
-            var packed = dsp.sseSum(src, (py >> 1) * stride + (px >> 1), stride, predUv, (pl - 1) * 32 * 32, cw, cw,
-                    ch);
+            var packed = dsp.sseSum(src, (py >> f.ssVer) * stride + (px >> f.ssHor), stride, predUv,
+                    (pl - 1) * CHROMA_PLANE, cw, cw, ch);
             var sse = EncDsp.sse(packed) & 0xFFFFFFFFL;
             var var = EncDsp.variance(packed, log2n) & 0xFFFFFFFFL;
             totSse += sse;
             var q = f.quantizer(tile.t.b.segId, pl);
-            RdCost.modelLapndz(sse - var, log2n, q.dequant[0] >> 3, model);
+            RdCost.modelLapndz(sse - var, log2n, q.analysisDequant[0] >> 3, model);
             rate += model[0] >> 1;
             dist += model[1] << 3;
-            RdCost.modelLapndz(var, log2n, q.dequant[1] >> 3, model);
+            RdCost.modelLapndz(var, log2n, q.analysisDequant[1] >> 3, model);
             rate += model[0];
             dist += model[1] << 4;
         }
@@ -1716,9 +1821,11 @@ final class PickMode {
                 var src = f.source.data[pl];
                 var stride = f.source.stride[1];
                 var s = last.stride[pl];
-                var uvSad = dsp.sad(src, (py >> 1) * stride + (px >> 1), stride, last.padded[pl],
-                        last.origin[pl] + (py >> 1) * s + (px >> 1), s, bw >> 1, bh >> 1);
-                var normUv = uvSad >> (log2 - 2 + 2);
+                var ssHor = f.ssHor;
+                var ssVer = f.ssVer;
+                var uvSad = dsp.sad(src, (py >> ssVer) * stride + (px >> ssHor), stride, last.padded[pl],
+                        last.origin[pl] + (py >> ssVer) * s + (px >> ssHor), s, bw >> ssHor, bh >> ssVer);
+                var normUv = uvSad >> (log2 - ssHor - ssVer + 2);
                 colorSens[pl - 1] = uvSad > (ySad >> shift) && normUv > 40 ? 1 : 0;
                 if (sourceVariance < 50 && normUv > 100) {
                     colorSens[pl - 1] = 1;
@@ -2175,7 +2282,7 @@ final class PickMode {
         b.filter2d = Tables.FILTER_2D[filter * 4 + filter];
         b.tx = txOnChain(bs, bestTx);
         skipTxfm = bestSkip;
-        predictionReusable = bestRd != Long.MAX_VALUE;
+        predictionReusable = bestRd != Long.MAX_VALUE && !f.scaled(b.ref[0]);
         tile.chosenCandidates(cand[bestRef]);
         lastBestRef = bestRef;
         if (compFlagCoded && sf.compound > 0 && !screen) {
@@ -2185,7 +2292,277 @@ final class PickMode {
         if (skipModeCoded && searchSkipMode(bs, edgeFlags, px, py, bw, bh, visW, visH, bestRd)) {
             return;
         }
-        estimateIntra(bs, bw, bh, px, py, bestRd, bestSkip && bestInitialSkip, bestEarlyTerm, bestRef);
+        var best = estimateIntra(bs, bw, bh, px, py, bestRd, bestSkip && bestInitialSkip, bestEarlyTerm, bestRef);
+        if (f.f.frameHdr.allowScreenContentTools && bw >= 8 && bh >= 8 && bw <= 16 && bh <= 16
+                && interPalette(bw, bh, b.intra, bestSse)) {
+            var refCostIntra = rd.intraInter[ModeWriter.intraCtx(t.a, t.l, t.by & 31, t.bx & 31,
+                    t.by > tile.ts.rowStart, t.bx > tile.ts.colStart) * 2] + skipModeCost(0);
+            var square = Math.min(MAX_SQUARE_TX[bs], 2);
+            var rate = refCostIntra + rd.yMode[Tables.YMODE_SIZE_CONTEXT[bs] * 13 + IpredDsp.DC_PRED];
+            searchPalette(bs, bw, bh, px, py, square, rate, -1, -1, best, 32);
+            if (paletteSize > 0) {
+                predictionReusable = false;
+                b.intra = true;
+                b.yMode = IpredDsp.DC_PRED;
+                b.uvMode = IpredDsp.DC_PRED;
+                b.tx = txOnChain(bs, square);
+                skipTxfm = false;
+                lumaTxType = 0;
+            }
+        }
+    }
+
+    /**
+     * Returns whether an inter frame block searches a luma palette ({@code enable_palette} with
+     * the screen content test of {@code force_palette_test}).
+     *
+     * @param bw the block width
+     * @param bh the block height
+     * @param intra whether the best mode so far is an intra mode
+     * @param bestSse the luma sum of squared errors of the best inter mode
+     * @return {@code true} to search
+     */
+    private boolean interPalette(int bw, int bh, boolean intra, long bestSse) {
+        if (sourceVariance == 0) {
+            return false;
+        }
+        var high = frame.highSourceSad;
+        var force = false;
+        if (part.sourceSadNonrd != VarPartition.ZERO_SAD && bestSse != Long.MAX_VALUE) {
+            var perUnit = bestSse >> (Integer.numberOfTrailingZeros(bw) + Integer.numberOfTrailingZeros(bh) - 4);
+            force = perUnit > (high ? 15000 : 200000) && sourceVariance > (high ? 50 : 200);
+        }
+        return (intra || force) && (high || sourceVariance > 300);
+    }
+
+    /**
+     * Searches a luma palette for the block at the tile's current position and keeps the best one
+     * in {@link #paletteSize}, {@link #paletteColors} and {@link #paletteMap} when it beats a
+     * cost ({@code av1_rd_pick_palette_intra_sby}): from the most colors down to two, each size
+     * clusters the block's distinct values, maps every sample to its nearest color, predicts the
+     * block from the map into the reconstruction picture and estimates the residual; the search
+     * stops after two sizes in a row cost more than the one before.
+     *
+     * @param bs the block size
+     * @param bw the block width
+     * @param bh the block height
+     * @param px the block column
+     * @param py the block row
+     * @param tx the transform size of the residual estimate: 1 8x8 or 2 16x16
+     * @param modeRate the cost of the block's mode symbols before the palette syntax
+     * @param skipCost the cost of a skipped residual, or -1 when skip costs are not counted
+     * @param noSkipCost the cost of a coded residual, or -1 when skip costs are not counted
+     * @param bestRd the cost to beat
+     * @param maxColors the most distinct values the block may hold, at most 64
+     * @return the cost of the palette kept, or {@code bestRd} when none beats it
+     */
+    private long searchPalette(int bs, int bw, int bh, int px, int py, int tx, long modeRate, int skipCost,
+                               int noSkipCost, long bestRd, int maxColors) {
+        var f = frame;
+        var t = tile.t;
+        var src = f.source.data[0];
+        var srcStride = f.source.stride[0];
+        var srcOff = py * srcStride + px;
+        var cur = f.f.cur;
+        var plane = cur.data[0];
+        var stride = cur.stride[0];
+        var predOff = py * stride + px;
+        var visW = Math.min(bw, f.f.bw * 4 - px);
+        var visH = Math.min(bh, f.f.bh * 4 - py);
+        if (histogram == null) {
+            histogram = new int[1 << f.bitDepth];
+        }
+        var colors = 0;
+        var overflow = false;
+        for (var y = 0; y < visH && !overflow; y++) {
+            var row = srcOff + y * srcStride;
+            for (var x = 0; x < visW; x++) {
+                var v = src[row + x];
+                if (histogram[v] == 0) {
+                    if (colors == maxColors) {
+                        overflow = true;
+                        break;
+                    }
+                    distinct[colors++] = v;
+                }
+                histogram[v]++;
+            }
+        }
+        for (var i = 0; i < colors; i++) {
+            weights[i] = histogram[distinct[i]];
+        }
+        for (var i = 0; i < colors; i++) {
+            histogram[distinct[i]] = 0;
+        }
+        if (overflow || colors < 2) {
+            return bestRd;
+        }
+        sortByValue(colors);
+        var cdf = tile.ts.cdf;
+        var bx4 = t.bx & 31;
+        var by4 = t.by & 31;
+        var szCtx = BLOCK_DIMENSIONS[bs * 4 + 2] + BLOCK_DIMENSIONS[bs * 4 + 3] - 2;
+        var palCtx = (t.a.palSz[bx4] > 0 ? 1 : 0) + (t.l.palSz[by4] > 0 ? 1 : 0);
+        var largest = Math.min(colors, 8);
+        var worse = 0;
+        var lastRd = Long.MAX_VALUE;
+        for (var n = largest; n >= 2 && worse < 2; n--) {
+            var k = kmeans(colors, n);
+            if (k < 2 || (k < n && n != largest)) {
+                continue;
+            }
+            for (var i = 0; i < k; i++) {
+                paletteTrialColors[i] = (short) centroids[i];
+            }
+            for (var y = 0; y < visH; y++) {
+                var row = srcOff + y * srcStride;
+                for (var x = 0; x < visW; x++) {
+                    paletteTrial[y * bw + x] = (byte) nearest(k, src[row + x]);
+                }
+            }
+            for (var y = 0; y < bh; y++) {
+                var mapRow = Math.min(y, visH - 1) * bw;
+                var dst = predOff + y * stride;
+                for (var x = 0; x < bw; x++) {
+                    plane[dst + x] = paletteTrialColors[paletteTrial[mapRow + Math.min(x, visW - 1)]];
+                }
+            }
+            thisSse = EncDsp.sse(dsp.sseSum(src, srcOff, srcStride, plane, predOff, stride, visW, visH)) & 0xFFFFFFFFL;
+            blockYrd(src, srcOff, srcStride, plane, predOff, stride, bw, bh, visW, visH, tx);
+            paletteCounter.startCounting();
+            paletteCounter.encodeBool(cdf, Cdf.PAL_Y + (szCtx * 3 + palCtx) * 2, 1);
+            paletteWriter.writeColors(paletteCounter, cdf, t, 0, szCtx, bx4, by4, paletteTrialColors, 0, k,
+                    f.bitDepth);
+            paletteWriter.writeIndices(paletteCounter, cdf, paletteTrial, bw, k, 0, visW, visH);
+            var rate = modeRate + paletteCounter.cost();
+            if (skipCost < 0) {
+                rate += thisRate;
+            } else {
+                rate += thisSkip ? skipCost : thisRate + noSkipCost;
+            }
+            var rd = RdCost.rdcost(rdmult, rate, thisDist);
+            if (rd < bestRd) {
+                bestRd = rd;
+                bestRate = rate;
+                bestDist = thisDist;
+                paletteSize = k;
+                System.arraycopy(paletteTrialColors, 0, paletteColors, 0, k);
+                for (var y = 0; y < visH; y++) {
+                    System.arraycopy(paletteTrial, y * bw, paletteMap, y * bw, visW);
+                }
+            }
+            worse = rd >= lastRd ? worse + 1 : 0;
+            lastRd = rd;
+        }
+        return bestRd;
+    }
+
+    /**
+     * Sorts the first distinct values ascending, moving their weights along.
+     *
+     * @param count the number of values
+     */
+    private void sortByValue(int count) {
+        for (var i = 1; i < count; i++) {
+            var v = distinct[i];
+            var w = weights[i];
+            var j = i - 1;
+            while (j >= 0 && distinct[j] > v) {
+                distinct[j + 1] = distinct[j];
+                weights[j + 1] = weights[j];
+                j--;
+            }
+            distinct[j + 1] = v;
+            weights[j + 1] = w;
+        }
+    }
+
+    /**
+     * Clusters the weighted distinct values into at most {@code n} centers with k-means,
+     * initialized at evenly spaced weighted quantiles, and leaves the distinct rounded centers
+     * ascending in {@link #centroids}.
+     *
+     * @param count the number of distinct values, ascending in {@link #distinct}
+     * @param n the number of clusters, at most 8
+     * @return the number of distinct centers
+     */
+    private int kmeans(int count, int n) {
+        if (count <= n) {
+            System.arraycopy(distinct, 0, centroids, 0, count);
+            return count;
+        }
+        long total = 0;
+        for (var i = 0; i < count; i++) {
+            total += weights[i];
+        }
+        long acc = 0;
+        var c = 0;
+        for (var i = 0; i < count && c < n; i++) {
+            acc += weights[i];
+            while (c < n && acc * n >= (2L * c + 1) * total / 2) {
+                means[c++] = distinct[i];
+            }
+        }
+        while (c < n) {
+            means[c++] = distinct[count - 1];
+        }
+        for (var iter = 0; iter < KMEANS_ITERATIONS; iter++) {
+            Arrays.fill(clusterSums, 0, n, 0);
+            Arrays.fill(clusterWeights, 0, n, 0);
+            for (var i = 0; i < count; i++) {
+                var best = 0;
+                var bestD = Double.MAX_VALUE;
+                for (var j = 0; j < n; j++) {
+                    var d = Math.abs(distinct[i] - means[j]);
+                    if (d < bestD) {
+                        bestD = d;
+                        best = j;
+                    }
+                }
+                clusterSums[best] += distinct[i] * (double) weights[i];
+                clusterWeights[best] += weights[i];
+            }
+            for (var j = 0; j < n; j++) {
+                if (clusterWeights[j] > 0) {
+                    means[j] = clusterSums[j] / clusterWeights[j];
+                }
+            }
+        }
+        var k = 0;
+        for (var j = 0; j < n; j++) {
+            var v = (int) Math.round(means[j]);
+            var at = k;
+            while (at > 0 && centroids[at - 1] > v) {
+                at--;
+            }
+            if (at > 0 && centroids[at - 1] == v) {
+                continue;
+            }
+            System.arraycopy(centroids, at, centroids, at + 1, k - at);
+            centroids[at] = v;
+            k++;
+        }
+        return k;
+    }
+
+    /**
+     * Returns the index of the color of the palette being evaluated nearest a value.
+     *
+     * @param n the number of colors
+     * @param v the value
+     * @return the index
+     */
+    private int nearest(int n, int v) {
+        var best = 0;
+        var bestD = Integer.MAX_VALUE;
+        for (var i = 0; i < n; i++) {
+            var d = Math.abs(paletteTrialColors[i] - v);
+            if (d < bestD) {
+                bestD = d;
+                best = i;
+            }
+        }
+        return best;
     }
 
     /**
@@ -2207,8 +2584,8 @@ final class PickMode {
                                  RefFrame ref, int mv) {
         var f = frame;
         var q = f.quantizer(tile.t.b.segId, 0);
-        long dcThr = ((long) q.dequant[0] * q.dequant[0]) >> 6;
-        long acThr = ((long) q.dequant[1] * q.dequant[1]) >> 6;
+        long dcThr = ((long) q.analysisDequant[0] * q.analysisDequant[0]) >> 6;
+        long acThr = ((long) q.analysisDequant[1] * q.analysisDequant[1]) >> 6;
         var bwl = Integer.numberOfTrailingZeros(bw) - 2;
         var bhl = Integer.numberOfTrailingZeros(bh) - 2;
         var normSum = Math.abs(EncDsp.sum(packed)) >> (bwl + bhl);
@@ -2236,19 +2613,20 @@ final class PickMode {
             return true;
         }
         predictChroma(ref, mv, px, py, bw, bh);
-        var cw = bw >> 1;
-        var ch = bh >> 1;
+        var cw = bw >> f.ssHor;
+        var ch = bh >> f.ssVer;
         var log2c = Integer.numberOfTrailingZeros(cw) + Integer.numberOfTrailingZeros(ch);
         for (var pl = 1; pl < 3; pl++) {
             if (colorSens[pl - 1] == 0) {
                 continue;
             }
             var qu = f.quantizer(tile.t.b.segId, pl);
-            long uvDc = ((long) qu.dequant[0] * qu.dequant[0]) >> 3;
-            long uvAc = ((long) qu.dequant[1] * qu.dequant[1]) >> 3;
+            long uvDc = ((long) qu.analysisDequant[0] * qu.analysisDequant[0]) >> 3;
+            long uvAc = ((long) qu.analysisDequant[1] * qu.analysisDequant[1]) >> 3;
             var src2 = f.source.data[pl];
             var stride = f.source.stride[1];
-            var p = dsp.sseSum(src2, (py >> 1) * stride + (px >> 1), stride, predUv, (pl - 1) * 32 * 32, cw, cw, ch);
+            var p = dsp.sseSum(src2, (py >> f.ssVer) * stride + (px >> f.ssHor), stride, predUv, (pl - 1) * CHROMA_PLANE,
+                    cw, cw, ch);
             long s = EncDsp.sse(p) & 0xFFFFFFFFL;
             long v = EncDsp.variance(p, log2c) & 0xFFFFFFFFL;
             if (!((v < uvAc || v == 0) && (s - v < uvDc || s == v))) {
@@ -2431,7 +2809,8 @@ final class PickMode {
     }
 
     /**
-     * Chooses the finest precision of a new motion vector ({@code subpel_select}).
+     * Chooses the finest precision of a new motion vector ({@code subpel_select}): whole samples
+     * when the frame forces whole-sample motion.
      *
      * @param bw the block width
      * @param bh the block height
@@ -2446,6 +2825,9 @@ final class PickMode {
      */
     private int subpelSelect(int bw, int bh, int fr, int fc, int refRow, int refCol, int startRow,
                              int startCol, boolean fullWell) {
+        if (frame.f.frameHdr.forceIntegerMv) {
+            return SpeedFeatures.FULL_PEL;
+        }
         var sf = frame.speed;
         var lowMotion = frame.avgFrameLowMotion;
         if (sf.reduceMvPelPrecisionHighmotion >= 3) {
@@ -2505,8 +2887,9 @@ final class PickMode {
      * @param initialSkip whether the best inter mode skipped its residual from the start
      * @param bestEarlyTerm whether the best inter mode terminated early
      * @param bestRef the best inter reference index
+     * @return the cost of the best mode, intra or inter
      */
-    private void estimateIntra(int bs, int bw, int bh, int px, int py, long bestRd, boolean initialSkip,
+    private long estimateIntra(int bs, int bw, int bh, int px, int py, long bestRd, boolean initialSkip,
                                boolean bestEarlyTerm, int bestRef) {
         var f = frame;
         var sf = f.speed;
@@ -2551,10 +2934,10 @@ final class PickMode {
         }
         var maxIntra = bw <= 32 && bh <= 32;
         if (!(bestRd == Long.MAX_VALUE || forceIntra || (perform && !bestEarlyTerm && maxIntra))) {
-            return;
+            return bestRd;
         }
         if (interThresh > bestRd) {
-            return;
+            return bestRd;
         }
         var src = f.source.data[0];
         var srcStride = f.source.stride[0];
@@ -2612,5 +2995,6 @@ final class PickMode {
                 skipTxfm = false;
             }
         }
+        return bestIntraRd;
     }
 }

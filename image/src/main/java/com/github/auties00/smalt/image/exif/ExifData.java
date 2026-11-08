@@ -17,10 +17,15 @@ import java.util.Optional;
  * <p>Each map goes from the 16-bit tag number to the typed value, in the order the entries appear
  * in the directory. The pointer entries that link the directories ({@link #EXIF_IFD_POINTER},
  * {@link #GPS_IFD_POINTER} in {@link #ifd0()}, {@link #INTEROP_IFD_POINTER} in {@link #exif()})
- * and the thumbnail location ({@link #THUMBNAIL_OFFSET}, {@link #THUMBNAIL_LENGTH} in
- * {@link #thumbnailIfd()}) stay in the maps as read; {@link ExifWriter} recomputes them from the
- * directories and the thumbnail it writes, so their values are ignored. The maps are
- * unmodifiable.
+ * and the thumbnail location ({@link #THUMBNAIL_OFFSET} and {@link #THUMBNAIL_LENGTH}, or
+ * {@link #STRIP_OFFSETS} and {@link #STRIP_BYTE_COUNTS}, in {@link #thumbnailIfd()}) stay in the
+ * maps as read; {@link ExifWriter} recomputes them from the directories and the thumbnail it
+ * writes, so their values are ignored. The maps are unmodifiable.
+ *
+ * <p>The thumbnail is a JPEG file, or the samples of an uncompressed thumbnail when the
+ * thumbnail directory describes one ({@link #hasUncompressedThumbnail()}); the thumbnail
+ * directory's other entries ({@code ImageWidth}, {@code BitsPerSample},
+ * {@code PhotometricInterpretation} and so on) say how its samples are laid out.
  *
  * <p>Instances are immutable and thread-safe; {@link #thumbnail()} returns a copy.
  *
@@ -29,7 +34,8 @@ import java.util.Optional;
  * @param gps          the entries of the GPS directory, empty when absent
  * @param interop      the entries of the interoperability directory, empty when absent
  * @param thumbnailIfd the entries of the thumbnail directory (IFD1), empty when absent
- * @param thumbnail    the JPEG thumbnail IFD1 points at, empty when absent
+ * @param thumbnail    the thumbnail IFD1 points at, a JPEG file or the uncompressed strip data,
+ *                     empty when absent
  */
 public record ExifData(Map<Integer, ExifValue> ifd0, Map<Integer, ExifValue> exif, Map<Integer, ExifValue> gps,
                        Map<Integer, ExifValue> interop, Map<Integer, ExifValue> thumbnailIfd,
@@ -65,6 +71,30 @@ public record ExifData(Map<Integer, ExifValue> ifd0, Map<Integer, ExifValue> exi
      * ({@code JPEGInterchangeFormatLength}).
      */
     public static final int THUMBNAIL_LENGTH = 0x0202;
+
+    /**
+     * The tag of the IFD1 entry holding the compression of the thumbnail: 1 for an uncompressed
+     * thumbnail, 6 for a JPEG one.
+     */
+    public static final int COMPRESSION = 0x0103;
+
+    /**
+     * The tag of the IFD1 entry holding the offsets of the strips of an uncompressed thumbnail
+     * ({@code StripOffsets}).
+     */
+    public static final int STRIP_OFFSETS = 0x0111;
+
+    /**
+     * The tag of the IFD1 entry holding the number of rows in each strip of an uncompressed
+     * thumbnail ({@code RowsPerStrip}).
+     */
+    public static final int ROWS_PER_STRIP = 0x0116;
+
+    /**
+     * The tag of the IFD1 entry holding the sizes of the strips of an uncompressed thumbnail
+     * ({@code StripByteCounts}).
+     */
+    public static final int STRIP_BYTE_COUNTS = 0x0117;
 
     /**
      * The tag of the Exif directory entry holding the manufacturer's maker note.
@@ -125,7 +155,8 @@ public record ExifData(Map<Integer, ExifValue> ifd0, Map<Integer, ExifValue> exi
     /**
      * Returns the thumbnail.
      *
-     * @return a copy of the JPEG thumbnail, or empty when absent
+     * @return a copy of the thumbnail, a JPEG file or the strip data of an uncompressed thumbnail
+     * ({@link #hasUncompressedThumbnail()}), or empty when absent
      */
     @Override
     public Optional<byte[]> thumbnail() {
@@ -244,8 +275,10 @@ public record ExifData(Map<Integer, ExifValue> ifd0, Map<Integer, ExifValue> exi
     /**
      * Returns a copy with another JPEG thumbnail.
      *
-     * <p>The thumbnail directory keeps its entries; the writer records the thumbnail's location
-     * and size in it.
+     * <p>The thumbnail directory keeps its entries, except that a directory that described an
+     * uncompressed thumbnail gets {@link #COMPRESSION} 6 and loses its strip entries
+     * ({@link #STRIP_OFFSETS}, {@link #ROWS_PER_STRIP}, {@link #STRIP_BYTE_COUNTS}); the writer
+     * records the thumbnail's location and size in it.
      *
      * @param jpeg the thumbnail, a complete JPEG file
      * @return the new instance
@@ -253,7 +286,63 @@ public record ExifData(Map<Integer, ExifValue> ifd0, Map<Integer, ExifValue> exi
      */
     public ExifData withThumbnail(byte[] jpeg) {
         Objects.requireNonNull(jpeg, "jpeg");
-        return new ExifData(ifd0, exif, gps, interop, thumbnailIfd, Optional.of(jpeg));
+        var directory = thumbnailIfd;
+        if (describesStrips(directory)) {
+            var map = new LinkedHashMap<>(directory);
+            map.remove(STRIP_OFFSETS);
+            map.remove(ROWS_PER_STRIP);
+            map.remove(STRIP_BYTE_COUNTS);
+            map.put(COMPRESSION, new ExifValue.Integers(ExifValue.Type.SHORT, new long[]{6}));
+            directory = map;
+        }
+        return new ExifData(ifd0, exif, gps, interop, directory, Optional.of(jpeg));
+    }
+
+    /**
+     * Returns a copy with another uncompressed thumbnail.
+     *
+     * <p>The thumbnail directory gets {@link #COMPRESSION} 1 and loses the JPEG location entries
+     * ({@link #THUMBNAIL_OFFSET}, {@link #THUMBNAIL_LENGTH}); its other entries are kept, so the
+     * caller sets the ones that describe the samples ({@code ImageWidth}, {@code ImageLength},
+     * {@code BitsPerSample}, {@code PhotometricInterpretation}, {@code SamplesPerPixel} and so on).
+     * The writer stores the samples as one strip.
+     *
+     * @param samples the thumbnail samples, as the thumbnail directory lays them out
+     * @return the new instance
+     * @throws NullPointerException if {@code samples} is {@code null}
+     */
+    public ExifData withUncompressedThumbnail(byte[] samples) {
+        Objects.requireNonNull(samples, "samples");
+        var map = new LinkedHashMap<>(thumbnailIfd);
+        map.remove(THUMBNAIL_OFFSET);
+        map.remove(THUMBNAIL_LENGTH);
+        map.put(COMPRESSION, new ExifValue.Integers(ExifValue.Type.SHORT, new long[]{1}));
+        return new ExifData(ifd0, exif, gps, interop, map, Optional.of(samples));
+    }
+
+    /**
+     * Returns whether the thumbnail is uncompressed rather than a JPEG file.
+     *
+     * @return {@code true} when there is a thumbnail and the thumbnail directory's
+     * {@link #COMPRESSION} is 1, or it has no {@code COMPRESSION} entry but has
+     * {@link #STRIP_OFFSETS} and no {@link #THUMBNAIL_OFFSET}
+     */
+    public boolean hasUncompressedThumbnail() {
+        return thumbnail.isPresent() && describesStrips(thumbnailIfd);
+    }
+
+    /**
+     * Returns whether a thumbnail directory describes an uncompressed thumbnail.
+     *
+     * @param directory the thumbnail directory
+     * @return {@code true} when its {@link #COMPRESSION} is 1, or it has no {@code COMPRESSION}
+     * entry but has {@link #STRIP_OFFSETS} and no {@link #THUMBNAIL_OFFSET}
+     */
+    static boolean describesStrips(Map<Integer, ExifValue> directory) {
+        if (directory.get(COMPRESSION) instanceof ExifValue.Integers compression && compression.count() > 0) {
+            return compression.get(0) == 1;
+        }
+        return directory.containsKey(STRIP_OFFSETS) && !directory.containsKey(THUMBNAIL_OFFSET);
     }
 
     /**

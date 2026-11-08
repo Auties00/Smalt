@@ -88,19 +88,37 @@ final class CameraColor {
     }
 
     /**
-     * Computes the camera color mapping of a file for a white balance.
+     * Computes the camera color mapping of a file of a three-color camera for a white balance.
      *
      * @param color the color description of the file
      * @param balance the white balance
      * @param matrix an XYZ to camera matrix (D65) that replaces the file's own, or {@code null}
      * @return the mapping
-     * @throws MediaException.Unsupported if a four-color camera is given a three-color matrix or
-     * channel multipliers
+     * @throws MediaException.Unsupported if the matrix or the multipliers are not of three colors
      */
     static CameraColor of(ColorCalibration color, RawWhiteBalance balance, double[] matrix) {
-        if (matrix != null && color.channels() > 3) {
-            throw new MediaException.Unsupported("raw", "a red, green and blue color matrix cannot replace a "
-                    + "four-color camera's");
+        return of(color, balance, matrix, Math.max(3, color.channels()));
+    }
+
+    /**
+     * Computes the camera color mapping of a file for a white balance.
+     *
+     * @param color the color description of the file
+     * @param balance the white balance
+     * @param matrix an XYZ to camera matrix (D65) that replaces the file's own, {@code 3 x 3} or
+     * {@code 4 x 3}, or {@code null}
+     * @param colors the colors of the camera's sensor, 3 or 4
+     * @return the mapping
+     * @throws MediaException.Unsupported if the matrix, the file's matrices or the multipliers are
+     * not of the sensor's number of colors, or a four-color camera has no matrices
+     */
+    static CameraColor of(ColorCalibration color, RawWhiteBalance balance, double[] matrix, int colors) {
+        if (matrix != null && matrix.length / 3 != colors) {
+            throw new MediaException.Unsupported("raw", "a color matrix of " + matrix.length / 3
+                    + " colors cannot replace the matrices of a " + colors + "-color camera");
+        }
+        if (matrix == null && colors == 4 && color.channels() != 4) {
+            throw new MediaException.Unsupported("raw", Renderer.NO_FOUR_COLOR_MATRICES);
         }
         if (matrix == null && color.colorMatrix[0] == null && color.cameraToSrgb != null) {
             return embedded(color, balance);
@@ -111,17 +129,19 @@ final class CameraColor {
         double[] xy;
         switch (balance) {
             case RawWhiteBalance.Temperature temperature -> {
-                xy = ColorMath.chromaticity(temperature.kelvin());
+                xy = ColorMath.chromaticity(temperature.kelvin(), temperature.tint());
                 neutral = model.neutralOf(xy);
             }
             case RawWhiteBalance.Multipliers multipliers -> {
-                if (n != 3) {
-                    throw new MediaException.Unsupported("raw", "red, green and blue multipliers cannot white balance a "
-                            + "four-color camera");
+                if (multipliers.factors().size() != n) {
+                    throw new MediaException.Unsupported("raw", multipliers.factors().size()
+                            + " multipliers cannot white balance a " + n + "-color camera");
                 }
                 neutral = inverse(channels(multipliers));
                 xy = model.whiteOf(neutral);
             }
+            case RawWhiteBalance.Automatic _ -> throw new IllegalStateException(
+                    "an automatic white balance is resolved to multipliers before the color mapping");
             case RawWhiteBalance.AsShot _ -> {
                 if (valid(color.asShotNeutral, n)) {
                     neutral = normalize(color.asShotNeutral, n);
@@ -215,6 +235,10 @@ final class CameraColor {
     private static CameraColor embedded(ColorCalibration color, RawWhiteBalance balance) {
         double[] neutral;
         if (balance instanceof RawWhiteBalance.Multipliers multipliers) {
+            if (multipliers.factors().size() != 3) {
+                throw new MediaException.Unsupported("raw", multipliers.factors().size()
+                        + " multipliers cannot white balance a 3-color camera");
+            }
             neutral = inverse(channels(multipliers));
         } else {
             neutral = valid(color.asShotNeutral, 3) ? color.asShotNeutral : new double[]{1, 1, 1};
@@ -247,24 +271,29 @@ final class CameraColor {
     }
 
     /**
-     * Returns the red, green and blue factors of camera channel multipliers.
+     * Returns the factors of camera channel multipliers.
      *
      * @param multipliers the white balance holding the factors
-     * @return a new array of the three factors
+     * @return a new array of the three or four factors
      */
     private static double[] channels(RawWhiteBalance.Multipliers multipliers) {
-        return new double[]{multipliers.red(), multipliers.green(), multipliers.blue()};
+        var factors = multipliers.factors();
+        var result = new double[factors.size()];
+        for (var index = 0; index < result.length; index++) {
+            result[index] = factors.get(index);
+        }
+        return result;
     }
 
     /**
      * Returns the reciprocals of multipliers.
      *
-     * @param multipliers the red, green and blue camera channel factors
+     * @param multipliers the camera channel factors
      * @return the reciprocals
      */
     private static double[] inverse(double[] multipliers) {
-        var result = new double[3];
-        for (var index = 0; index < 3; index++) {
+        var result = new double[multipliers.length];
+        for (var index = 0; index < result.length; index++) {
             result[index] = multipliers[index] > 0 ? 1 / multipliers[index] : 1;
         }
         return result;
@@ -333,7 +362,7 @@ final class CameraColor {
          * @param override a matrix that replaces the file's, or {@code null}
          */
         Model(ColorCalibration color, double[] override) {
-            channels = override != null ? 3 : Math.max(3, color.channels());
+            channels = override != null ? override.length / 3 : Math.max(3, color.channels());
             var analog = color.analogBalance != null && color.analogBalance.length >= channels
                     ? ColorMath.diagonalOf(Arrays.copyOf(color.analogBalance, channels))
                     : ColorMath.diagonalOf(ColorMath.filled(channels, 1));
@@ -345,8 +374,8 @@ final class CameraColor {
                 calibrated = true;
                 return;
             }
-            calibrated = color.colorMatrix[0] != null;
-            if (!calibrated) {
+            calibrated = color.colorMatrix[0] != null && !color.generic;
+            if (color.colorMatrix[0] == null) {
                 matrices = new double[][]{GENERIC_XYZ_TO_CAMERA};
                 calibrations = new double[][]{analog};
                 forwards = null;
