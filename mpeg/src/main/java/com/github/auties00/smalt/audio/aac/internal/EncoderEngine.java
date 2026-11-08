@@ -276,7 +276,8 @@ public final class EncoderEngine {
      * Creates an engine of an object type.
      *
      * <p>AAC-LD and AAC-ELD frames code long windows only, need no look-ahead and write the error resilient
-     * syntax; their layout must use a channel configuration from 1 to 7, and they carry no extension payloads.
+     * syntax; their layout must use a channel configuration from 1 to 7, and their extension payloads, the low delay
+     * spectral band replication data of AAC-ELD, follow the channel elements without fill elements.
      *
      * @param sampleRate a standard AAC sampling rate
      * @param frameLength the frame length: 1024 or 960, or 512 or 480 for AAC-LD and AAC-ELD
@@ -406,11 +407,14 @@ public final class EncoderEngine {
      * Sets the extension payload written in a fill element right after one channel element of the next frame.
      *
      * <p>The payload is an {@code extension_payload} from its {@code extension_type} on; it is padded with zero
-     * bits to whole bytes and counts against the frame's bits. It applies to the next {@link #encodeFrame()} only.
+     * bits to whole bytes and counts against the frame's bits. In the error resilient syntax the payloads of every
+     * element are written instead after the last channel element, in element order and without padding, as
+     * {@code er_low_delay_sbr_block} holds the {@code low_delay_sbr_data} of AAC-ELD. It applies to the next
+     * {@link #encodeFrame()} only.
      *
      * @param element the index of the channel element, in coded order
      * @param payload the payload bits, most significant bit first
-     * @param bits the number of payload bits, at most 8 times 269
+     * @param bits the number of payload bits, at most 8 times 269 in a fill element
      */
     public void setExtension(int element, byte[] payload, int bits) {
         extensions[element] = payload;
@@ -978,7 +982,14 @@ public final class EncoderEngine {
                 coded[channel].write(writer, false);
                 channel++;
             }
-            writeExtension(element);
+            if (!errorResilient) {
+                writeExtension(element);
+            }
+        }
+        if (errorResilient) {
+            for (var element = 0; element < elementTypes.length; element++) {
+                writeRawExtension(element);
+            }
         }
     }
 
@@ -991,6 +1002,9 @@ public final class EncoderEngine {
     private int extensionElementBits(int element) {
         if (extensions[element] == null) {
             return 0;
+        }
+        if (errorResilient) {
+            return extensionBits[element];
         }
         var count = (extensionBits[element] + 7) >> 3;
         return 3 + 4 + (count >= 15 ? 8 : 0) + 8 * count;
@@ -1025,6 +1039,28 @@ public final class EncoderEngine {
         }
         if (8 * count > bits) {
             writer.write(0, 8 * count - bits);
+        }
+    }
+
+    /**
+     * Writes an element's extension payload, if any, as the bits alone, the way an error resilient block carries
+     * low delay spectral band replication data after its channel elements.
+     *
+     * @param element the element index
+     */
+    private void writeRawExtension(int element) {
+        var payload = extensions[element];
+        if (payload == null) {
+            return;
+        }
+        var bits = extensionBits[element];
+        var whole = bits >> 3;
+        for (var i = 0; i < whole; i++) {
+            writer.write(payload[i] & 0xFF, 8);
+        }
+        var rest = bits & 7;
+        if (rest != 0) {
+            writer.write((payload[whole] & 0xFF) >> (8 - rest), rest);
         }
     }
 

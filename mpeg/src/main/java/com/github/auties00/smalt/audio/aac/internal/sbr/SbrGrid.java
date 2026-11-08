@@ -10,7 +10,13 @@ import com.github.auties00.smalt.internal.bits.MsbBitWriter;
  * <p>A frame starts where the previous frame's last envelope ended, at most three slots into the frame, and may
  * end up to three slots past its own end. Without a transient the grid holds one envelope, or two of about equal
  * length when the spectrum changes within the frame; a transient gets a two-slot envelope starting at its slot,
- * preceded by an envelope up to it and followed by envelopes of up to eight slots. Instances are not thread-safe.
+ * preceded by an envelope up to it and followed by envelopes of up to eight slots.
+ *
+ * <p>The low delay grid of AAC-ELD ({@code sbr_ld_grid}, ISO/IEC 14496-3 subclause 4.6.19.3) is locked to the
+ * frame: a frame without transient holds one envelope, or two of about equal length when the spectrum changes
+ * within the frame, and a frame with a transient is an {@code LD_TRAN} frame whose transient position selects the
+ * envelopes of the standard's table, coded with the low frequency resolution when they span five slots or fewer.
+ * Instances are not thread-safe.
  */
 final class SbrGrid {
     /**
@@ -65,6 +71,31 @@ final class SbrGrid {
     final int[] noiseBorders = new int[3];
 
     /**
+     * The envelope count, the two inner borders and the transient envelope of each transient position of a low
+     * delay {@code LD_TRAN} grid of 16 time slots (ISO/IEC 14496-3 Table 4.179).
+     */
+    private static final int[][] LOW_DELAY_TRANSIENTS_16 = {
+            {2, 4, -1, 0}, {2, 5, -1, 0}, {3, 2, 6, 1}, {3, 3, 7, 1}, {3, 4, 8, 1}, {3, 5, 9, 1}, {3, 6, 10, 1},
+            {3, 7, 11, 1}, {3, 8, 12, 1}, {3, 9, 13, 1}, {3, 10, 14, 1}, {2, 11, -1, 1}, {2, 12, -1, 1},
+            {2, 13, -1, 1}, {2, 14, -1, 1}, {2, 15, -1, 1}
+    };
+
+    /**
+     * The entries of {@link #LOW_DELAY_TRANSIENTS_16} for grids of 15 time slots.
+     */
+    private static final int[][] LOW_DELAY_TRANSIENTS_15 = {
+            {2, 4, -1, 0}, {2, 5, -1, 0}, {3, 2, 6, 1}, {3, 3, 7, 1}, {3, 4, 8, 1}, {3, 5, 9, 1}, {3, 6, 10, 1},
+            {3, 7, 11, 1}, {3, 8, 12, 1}, {3, 9, 13, 1}, {2, 10, -1, 1}, {2, 11, -1, 1}, {2, 12, -1, 1},
+            {2, 13, -1, 1}, {2, 14, -1, 1}
+    };
+
+    /**
+     * The {@code bs_transient_position} of a low delay {@code LD_TRAN} grid, or -1 for a low delay {@code FIXFIX}
+     * grid and for the standard grid.
+     */
+    int transientPosition = -1;
+
+    /**
      * The number of relative borders coded from the leading border.
      */
     private int leadingCount;
@@ -90,6 +121,7 @@ final class SbrGrid {
      * @param lowResolution whether every envelope uses the low frequency resolution
      */
     void build(int timeSlots, int start, int attack, boolean split, boolean lowResolution) {
+        transientPosition = -1;
         transientEnvelope = -1;
         pointer = 0;
         leadingCount = 0;
@@ -177,6 +209,53 @@ final class SbrGrid {
     }
 
     /**
+     * Builds the low delay grid of a frame.
+     *
+     * @param timeSlots the number of time slots per frame, 16 or 15
+     * @param attack the slot of a transient, from 0 to {@code timeSlots - 1}, or -1 for none
+     * @param split whether to code the frame without transient as two envelopes
+     * @param lowResolution whether every envelope uses the low frequency resolution
+     */
+    void buildLowDelay(int timeSlots, int attack, boolean split, boolean lowResolution) {
+        frameClass = SbrFrameData.FIXFIX;
+        pointer = 0;
+        leadingCount = 0;
+        trailingCount = 0;
+        borders[0] = 0;
+        if (attack < 0) {
+            transientPosition = -1;
+            transientEnvelope = -1;
+            envelopes = split ? 2 : 1;
+            var step = (timeSlots + (envelopes >> 1)) / envelopes;
+            for (var l = 1; l < envelopes; l++) {
+                borders[l] = l * step;
+            }
+        } else {
+            var entry = (timeSlots == 16 ? LOW_DELAY_TRANSIENTS_16 : LOW_DELAY_TRANSIENTS_15)[attack];
+            transientPosition = attack;
+            envelopes = entry[0];
+            for (var l = 1; l < envelopes; l++) {
+                borders[l] = entry[l];
+            }
+            transientEnvelope = entry[3];
+        }
+        borders[envelopes] = timeSlots;
+        for (var l = 0; l < envelopes; l++) {
+            var length = borders[l + 1] - borders[l];
+            resolution[l] = lowResolution || (transientPosition >= 0 && length <= 5) ? 0 : 1;
+        }
+        noiseBorders[0] = 0;
+        if (envelopes > 1) {
+            noiseEnvelopes = 2;
+            noiseBorders[1] = borders[transientEnvelope >= 0 ? 1 : envelopes >> 1];
+            noiseBorders[2] = timeSlots;
+        } else {
+            noiseEnvelopes = 1;
+            noiseBorders[1] = timeSlots;
+        }
+    }
+
+    /**
      * {@return the slot the frame ends at, at or past the frame's end}
      */
     int end() {
@@ -197,6 +276,7 @@ final class SbrGrid {
         transientEnvelope = other.transientEnvelope;
         noiseEnvelopes = other.noiseEnvelopes;
         System.arraycopy(other.noiseBorders, 0, noiseBorders, 0, noiseBorders.length);
+        transientPosition = other.transientPosition;
         leadingCount = other.leadingCount;
         trailingCount = other.trailingCount;
     }
@@ -208,7 +288,8 @@ final class SbrGrid {
      * @return {@code true} when both channels can share the grid
      */
     boolean sameAs(SbrGrid other) {
-        if (frameClass != other.frameClass || envelopes != other.envelopes || pointer != other.pointer) {
+        if (frameClass != other.frameClass || envelopes != other.envelopes || pointer != other.pointer
+                || transientPosition != other.transientPosition) {
             return false;
         }
         for (var l = 0; l <= envelopes; l++) {
@@ -277,6 +358,29 @@ final class SbrGrid {
                 for (var l = 0; l < envelopes; l++) {
                     writer.write(resolution[l], 1);
                 }
+            }
+        }
+    }
+
+    /**
+     * Writes {@code sbr_ld_grid}.
+     *
+     * @param writer the destination
+     * @param ampResolution the amplitude resolution a single envelope signals: 0 for 1.5 dB, 1 for 3 dB
+     */
+    void writeLowDelay(MsbBitWriter writer, int ampResolution) {
+        if (transientPosition < 0) {
+            writer.write(0, 1);
+            writer.write(Integer.numberOfTrailingZeros(envelopes), 2);
+            if (envelopes == 1) {
+                writer.write(ampResolution, 1);
+            }
+            writer.write(resolution[0], 1);
+        } else {
+            writer.write(1, 1);
+            writer.write(transientPosition, 4);
+            for (var l = 0; l < envelopes; l++) {
+                writer.write(resolution[l], 1);
             }
         }
     }

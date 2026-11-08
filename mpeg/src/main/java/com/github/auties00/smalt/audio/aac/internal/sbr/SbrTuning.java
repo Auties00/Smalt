@@ -1,5 +1,6 @@
-/* Ports libxaac (encoder/ixheaace_sbr_rom.c: the spectral band replication tuning table of AAC-LC cores).
-   Copyright (C) 2023 The Android Open Source Project, Ittiam Systems; Apache License 2.0. Modified for Smalt. */
+/* Ports libxaac (encoder/ixheaace_sbr_rom.c: the spectral band replication tuning tables of AAC-LC and AAC-ELD
+   cores). Copyright (C) 2023 The Android Open Source Project, Ittiam Systems; Apache License 2.0. Modified for
+   Smalt. */
 package com.github.auties00.smalt.audio.aac.internal.sbr;
 
 import java.util.Optional;
@@ -8,7 +9,9 @@ import java.util.Optional;
  * Selects the frequency range, noise floor resolution and stereo coding of spectral band replication from the core
  * sampling rate, the channel count of an element and its bitrate.
  *
- * <p>An entry whose frequency range the output rate does not allow is narrowed until it does.
+ * <p>An entry whose frequency range the output rate does not allow is narrowed until it does. The low delay
+ * spectral band replication of AAC-ELD has a table of its own, and in its downsampled mode, where the output rate is
+ * the core rate, the range is also narrowed until it ends at half the core rate.
  *
  * @param startFrequency the {@code bs_start_freq} index
  * @param stopFrequency the {@code bs_stop_freq} index
@@ -126,6 +129,67 @@ record SbrTuning(int startFrequency, int stopFrequency, int frequencyScale, int 
     };
 
     /**
+     * The entries of the low delay spectral band replication of AAC-ELD, laid out like {@link #TABLE}.
+     */
+    private static final int[][][][] LOW_DELAY_TABLE = {
+            {{}, {}},
+            {{}, {}},
+            {{{8000, 32001, 1, 0, 3, 1, 0, 6, MONO}}, {}},
+            {
+                    {{16000, 18000, 4, 9, 3, 1, 0, 6, MONO}, {18000, 22000, 7, 12, 3, 1, 6, 9, MONO},
+                            {22000, 28000, 6, 9, 3, 2, 3, 6, MONO}, {28000, 36000, 8, 12, 3, 2, 9, 12, MONO},
+                            {36000, 44000, 10, 12, 1, 2, 0, 3, MONO}, {44000, 64001, 11, 13, 1, 2, 0, 3, MONO}},
+                    {{32000, 36000, 10, 12, 2, 2, 0, -3, SWITCHED}, {36000, 44000, 13, 13, 2, 2, 0, -3, SWITCHED},
+                            {44000, 52000, 10, 11, 2, 2, 0, -3, SWITCHED}, {52000, 60000, 14, 13, 1, 3, 0, -3, SWITCHED},
+                            {60000, 76000, 14, 13, 1, 3, 0, -3, INDEPENDENT},
+                            {76000, 128001, 14, 13, 1, 3, 0, -3, INDEPENDENT}}
+            },
+            {
+                    {{18000, 22000, 4, 5, 3, 2, 0, 6, MONO}, {22000, 28000, 5, 6, 2, 2, 0, 6, MONO},
+                            {28000, 36000, 7, 8, 2, 2, 0, 3, MONO}, {36000, 44000, 9, 9, 1, 2, 0, 3, MONO},
+                            {44000, 52000, 12, 11, 1, 2, 0, 3, MONO}, {52000, 64001, 13, 11, 1, 2, 0, 3, MONO}},
+                    {{32000, 36000, 5, 7, 2, 2, 0, -3, SWITCHED}, {36000, 44000, 5, 8, 2, 2, 0, -3, SWITCHED},
+                            {44000, 52000, 7, 8, 2, 3, 0, -3, SWITCHED}, {52000, 60000, 9, 9, 1, 3, 0, -3, SWITCHED},
+                            {60000, 76000, 10, 10, 1, 3, 0, -3, INDEPENDENT},
+                            {76000, 82000, 12, 11, 1, 3, 0, -3, INDEPENDENT},
+                            {82000, 128001, 13, 11, 1, 3, 0, -3, INDEPENDENT}}
+            },
+            {
+                    {{20000, 22000, 3, 8, 2, 2, 0, 6, MONO}, {22000, 28000, 3, 8, 2, 2, 0, 3, MONO},
+                            {28000, 36000, 4, 8, 2, 2, 0, 3, MONO}, {36000, 56000, 8, 9, 1, 2, 0, 3, MONO},
+                            {56000, 64001, 13, 11, 1, 2, 0, 3, MONO}},
+                    {{32000, 36000, 5, 7, 2, 2, 0, -3, SWITCHED}, {36000, 44000, 4, 8, 2, 2, 0, -3, SWITCHED},
+                            {44000, 52000, 6, 8, 2, 3, 0, -3, SWITCHED}, {52000, 60000, 9, 9, 1, 3, 0, -3, SWITCHED},
+                            {60000, 76000, 11, 10, 1, 3, 0, -3, INDEPENDENT},
+                            {76000, 88000, 12, 11, 1, 3, 0, -3, INDEPENDENT},
+                            {88000, 128001, 13, 11, 1, 3, 0, -3, INDEPENDENT}}
+            },
+            {
+                    {{24000, 36000, 4, 4, 3, 2, 0, 3, MONO}, {36000, 60000, 7, 6, 2, 2, 0, 3, MONO},
+                            {60000, 72000, 9, 8, 1, 2, 0, 3, MONO}, {72000, 100000, 11, 10, 1, 2, 0, 3, MONO},
+                            {100000, 160001, 13, 11, 1, 2, 0, 3, MONO}},
+                    {{60000, 80000, 7, 6, 2, 3, 0, -3, SWITCHED}, {80000, 112000, 9, 8, 1, 3, 0, -3, INDEPENDENT},
+                            {112000, 144000, 11, 10, 1, 3, 0, -3, INDEPENDENT},
+                            {144000, 256001, 13, 11, 1, 3, 0, -3, INDEPENDENT}}
+            },
+            {
+                    {{36000, 60000, 8, 6, 2, 2, 0, 3, MONO}, {60000, 72000, 9, 10, 1, 2, 0, 3, MONO},
+                            {72000, 100000, 11, 11, 1, 2, 0, 3, MONO}, {100000, 160001, 13, 11, 1, 2, 0, 3, MONO}},
+                    {{60000, 80000, 7, 6, 2, 3, 0, -3, SWITCHED}, {80000, 112000, 10, 8, 1, 3, 0, -3, INDEPENDENT},
+                            {112000, 144000, 12, 10, 1, 3, 0, -3, INDEPENDENT},
+                            {144000, 256001, 13, 11, 1, 3, 0, -3, INDEPENDENT}}
+            },
+            {
+                    {{36000, 60000, 4, 4, 3, 2, 0, 3, MONO}, {60000, 72000, 9, 10, 1, 2, 0, 3, MONO},
+                            {72000, 100000, 11, 11, 1, 2, 0, 3, MONO}, {100000, 160001, 13, 11, 1, 1, 0, 3, MONO}},
+                    {{60000, 80000, 7, 10, 2, 2, 0, -3, SWITCHED}, {80000, 112000, 9, 10, 1, 3, 0, -3, INDEPENDENT},
+                            {112000, 144000, 11, 11, 1, 3, 0, -3, INDEPENDENT},
+                            {144000, 176000, 12, 11, 1, 3, 0, -3, INDEPENDENT},
+                            {176000, 256001, 13, 11, 1, 3, 0, -3, INDEPENDENT}}
+            }
+    };
+
+    /**
      * Returns the tuning of an element, or empty when the table has none for the rate, the channel count and the
      * bitrate.
      *
@@ -135,13 +199,41 @@ record SbrTuning(int startFrequency, int stopFrequency, int frequencyScale, int 
      * @return the tuning
      */
     static Optional<SbrTuning> of(int coreRate, int channels, int bitrate) {
-        var row = row(coreRate, channels);
+        return find(TABLE, coreRate, channels, bitrate, 64);
+    }
+
+    /**
+     * Returns the tuning of an element of the low delay spectral band replication of AAC-ELD, or empty when the
+     * table has none for the rate, the channel count and the bitrate.
+     *
+     * @param coreRate the core sampling rate
+     * @param channels the channels of the element, 1 or 2
+     * @param bitrate the bitrate of the element, core and extension, in bits per second
+     * @param downsampled whether the tool runs in the downsampled mode, whose high band ends at half the core rate
+     * @return the tuning
+     */
+    static Optional<SbrTuning> lowDelay(int coreRate, int channels, int bitrate, boolean downsampled) {
+        return find(LOW_DELAY_TABLE, coreRate, channels, bitrate, downsampled ? 32 : 64);
+    }
+
+    /**
+     * Returns the tuning of the entry of a table that covers a bitrate.
+     *
+     * @param table the entries of each core rate and channel count, {@link #TABLE} or {@link #LOW_DELAY_TABLE}
+     * @param coreRate the core sampling rate
+     * @param channels the channels of the element, 1 or 2
+     * @param bitrate the bitrate of the element
+     * @param limit the subband past the highest the decoder can reconstruct
+     * @return the tuning, or empty
+     */
+    private static Optional<SbrTuning> find(int[][][][] table, int coreRate, int channels, int bitrate, int limit) {
+        var row = row(table, coreRate, channels);
         if (row == null) {
             return Optional.empty();
         }
         for (var entry : row) {
             if (bitrate >= entry[0] && bitrate < entry[1]) {
-                return Optional.of(fit(entry, 2 * coreRate));
+                return Optional.of(fit(entry, 2 * coreRate, limit));
             }
         }
         return Optional.empty();
@@ -151,18 +243,19 @@ record SbrTuning(int startFrequency, int stopFrequency, int frequencyScale, int 
      * Returns the tuning of a table entry with frequency band tables the decoder accepts at an output rate.
      *
      * <p>The entry's start and stop frequencies are kept when they satisfy the constraints of ISO/IEC 14496-3 (the
-     * range of subbands an output rate allows, at most five patches); otherwise the stop frequency, and if needed
-     * the start frequency, is lowered until they do.
+     * range of subbands an output rate allows, at most five patches) and end below {@code limit}; otherwise the stop
+     * frequency, and if needed the start frequency, is lowered until they do.
      *
      * @param entry the table entry
      * @param outputRate the output rate
+     * @param limit the subband past the highest the decoder can reconstruct: 64, or 32 in the downsampled mode
      * @return the tuning
      */
-    private static SbrTuning fit(int[] entry, int outputRate) {
+    private static SbrTuning fit(int[] entry, int outputRate, int limit) {
         for (var start = entry[2]; start >= 0; start--) {
             for (var stop = entry[3]; stop >= 0; stop--) {
                 var tuning = new SbrTuning(start, stop, entry[4], entry[5], entry[7], entry[8]);
-                if (valid(tuning, outputRate)) {
+                if (valid(tuning, outputRate, limit)) {
                     return tuning;
                 }
             }
@@ -171,20 +264,22 @@ record SbrTuning(int startFrequency, int stopFrequency, int frequencyScale, int 
     }
 
     /**
-     * Returns whether a tuning derives frequency band tables the decoder accepts, with at most five patches.
+     * Returns whether a tuning derives frequency band tables the decoder accepts, with at most five patches, that
+     * end below a subband.
      *
      * @param tuning the frequency range and noise resolution to check
      * @param outputRate the output rate
+     * @param limit the subband past the highest the tables may reach
      * @return {@code true} when the tables are valid
      */
-    private static boolean valid(SbrTuning tuning, int outputRate) {
+    private static boolean valid(SbrTuning tuning, int outputRate, int limit) {
         var header = new SbrHeader();
         header.startFrequency = tuning.startFrequency();
         header.stopFrequency = tuning.stopFrequency();
         header.frequencyScale = tuning.frequencyScale();
         header.noiseBands = tuning.noiseBands();
         var tables = new SbrFrequencies();
-        return tables.update(header, outputRate) && tables.patches <= 5;
+        return tables.update(header, outputRate) && tables.patches <= 5 && tables.kx + tables.m <= limit;
     }
 
     /**
@@ -195,8 +290,34 @@ record SbrTuning(int startFrequency, int stopFrequency, int frequencyScale, int 
      * @return the bitrate in bits per second
      */
     static int minimumBitrate(int coreRate, int channels) {
-        var row = row(coreRate, channels);
+        var row = row(TABLE, coreRate, channels);
         return row == null ? 0 : row[0][0];
+    }
+
+    /**
+     * Returns the lowest bitrate the low delay table tunes for a core rate and a channel count, or 0 when it has
+     * none.
+     *
+     * @param coreRate the core sampling rate
+     * @param channels the channels of the element, 1 or 2
+     * @return the bitrate in bits per second
+     */
+    static int minimumLowDelayBitrate(int coreRate, int channels) {
+        var row = row(LOW_DELAY_TABLE, coreRate, channels);
+        return row == null ? 0 : row[0][0];
+    }
+
+    /**
+     * Returns the highest bitrate the low delay table tunes for a core rate and a channel count, or 0 when it has
+     * none.
+     *
+     * @param coreRate the core sampling rate
+     * @param channels the channels of the element, 1 or 2
+     * @return the bitrate in bits per second
+     */
+    static int maximumLowDelayBitrate(int coreRate, int channels) {
+        var row = row(LOW_DELAY_TABLE, coreRate, channels);
+        return row == null ? 0 : row[row.length - 1][1] - 1;
     }
 
     /**
@@ -207,21 +328,22 @@ record SbrTuning(int startFrequency, int stopFrequency, int frequencyScale, int 
      * @return the bitrate in bits per second
      */
     static int maximumBitrate(int coreRate, int channels) {
-        var row = row(coreRate, channels);
+        var row = row(TABLE, coreRate, channels);
         return row == null ? 0 : row[row.length - 1][1] - 1;
     }
 
     /**
-     * Returns the entries of a core rate and channel count.
+     * Returns the entries of a table for a core rate and channel count.
      *
+     * @param table the entries of each core rate and channel count, {@link #TABLE} or {@link #LOW_DELAY_TABLE}
      * @param coreRate the core sampling rate
      * @param channels the channels, 1 or 2
      * @return the entries, or {@code null} when the table has none
      */
-    private static int[][] row(int coreRate, int channels) {
+    private static int[][] row(int[][][][] table, int coreRate, int channels) {
         for (var i = 0; i < RATES.length; i++) {
             if (RATES[i] == coreRate) {
-                var row = TABLE[i][channels - 1];
+                var row = table[i][channels - 1];
                 return row.length == 0 ? null : row;
             }
         }

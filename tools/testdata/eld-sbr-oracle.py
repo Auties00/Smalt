@@ -10,6 +10,9 @@
 3. With --fdk: the conformance streams and encodes of the Fraunhofer FDK AAC encoder (480-sample frames at dual
    rate and downsampled, which libxaac does not encode) decoded by the FDK AAC decoder into
    <conformance cache>/eld-sbr-fdk, and the dual-rate ones also by libxaac into eld-sbr-oracle/encoded.
+4. The streams of Smalt's AAC-ELD encoder with low delay SBR that smalt-mpeg's AacLowDelaySbrEncoderTest pins
+   (SMALT_STREAMS, the AudioSpecificConfig and access units in the .raw/.meta form below), decoded by libxaac into
+   <conformance cache>/eld-sbr-oracle/smalt and, with --fdk, by the FDK AAC decoder into eld-sbr-fdk/smalt.
    On Windows the FDK library is the binary DLL of the MSYS2 package mingw-w64-ucrt-x86_64-fdk-aac 2.0.3-1
    (pinned by SHA-256), downloaded unless --fdk names a library; elsewhere --fdk names the system's
    libfdk-aac. The library is driven through its public API as a black box.
@@ -39,6 +42,9 @@ import testdata  # noqa: E402
 COMMIT = '2fbadd57bca46693b7a077bcf1513131106d960c'
 URL = 'https://github.com/ittiam-systems/libxaac/archive/' + COMMIT + '.tar.gz'
 SHA256 = '9154b93812a11ea9352c609077fc0c276914dd1fbaf0173f0d859529763f8844'
+
+SMALT_STREAMS = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'mpeg', 'src', 'test',
+                             'resources', 'com', 'github', 'auties00', 'smalt', 'audio', 'aac', 'eld-sbr')
 
 FDK_URL = 'https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-fdk-aac-2.0.3-1-any.pkg.tar.zst'
 FDK_SHA256 = 'e08846148086d898d4affa0303a3fcccd0dc97017487017e4cb18dab95a10150'
@@ -420,6 +426,30 @@ class Fdk:
         return config, units
 
 
+def smalt_decodes(decoder, fdk):
+    """Decodes the pinned streams of Smalt's encoder with libxaac and, when given, the FDK AAC decoder."""
+    oracle = os.path.join(testdata.conformance_dir(), 'eld-sbr-oracle', 'smalt')
+    os.makedirs(oracle, exist_ok=True)
+    reference = os.path.join(testdata.conformance_dir(), 'eld-sbr-fdk', 'smalt')
+    if fdk:
+        os.makedirs(reference, exist_ok=True)
+    for file in sorted(os.listdir(SMALT_STREAMS)):
+        if not file.endswith('.raw'):
+            continue
+        name = file[:-4]
+        raw = os.path.join(SMALT_STREAMS, file)
+        meta = os.path.join(SMALT_STREAMS, name + '.meta')
+        target = os.path.join(oracle, name + '.wav')
+        subprocess.check_call([decoder, '-ifile:' + raw, '-imeta:' + meta, '-ofile:' + target, '-mp4:1'],
+                              stdout=subprocess.DEVNULL)
+        print('wrote', target)
+        if fdk:
+            config, units = read_raw(raw, meta)
+            target = os.path.join(reference, name + '.wav')
+            fdk.decode(config, units, target)
+            print('wrote', target)
+
+
 def fdk_library(work, named):
     if named:
         return named
@@ -485,8 +515,12 @@ def main():
     encoded = os.path.join(directory, 'encoded')
     os.makedirs(encoded, exist_ok=True)
     libxaac_encodes(encoder, decoder, work, encoded)
+    fdk = None
     if use_fdk:
-        fdk_oracle(fdk_library(work, named), decoder, encoded)
+        library = fdk_library(work, named)
+        fdk_oracle(library, decoder, encoded)
+        fdk = Fdk(library)
+    smalt_decodes(decoder, fdk)
 
 
 if __name__ == '__main__':

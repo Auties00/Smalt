@@ -209,7 +209,7 @@ jobs:
           path: |
             .oracle-data/eld-sbr-oracle
             .oracle-data/eld-sbr-fdk
-          key: oracle-data-eld-sbr-${{ hashFiles('tools/testdata/eld-sbr-oracle.py') }}
+          key: oracle-data-eld-sbr-${{ hashFiles('tools/testdata/eld-sbr-oracle.py', 'mpeg/src/test/resources/com/github/auties00/smalt/audio/aac/eld-sbr/**') }}
           enableCrossOsArchive: true
           lookup-only: ${{ !inputs.data-artifact }}
 
@@ -232,7 +232,7 @@ jobs:
           path: |
             .oracle-data/eld-sbr-oracle
             .oracle-data/eld-sbr-fdk
-          key: oracle-data-eld-sbr-${{ hashFiles('tools/testdata/eld-sbr-oracle.py') }}
+          key: oracle-data-eld-sbr-${{ hashFiles('tools/testdata/eld-sbr-oracle.py', 'mpeg/src/test/resources/com/github/auties00/smalt/audio/aac/eld-sbr/**') }}
           enableCrossOsArchive: true
 
       # The MPEG Surround decoder of the ISO/IEC 23003-3 reference software, patched to the full 23003-1 syntax and

@@ -7,6 +7,7 @@ import com.github.auties00.smalt.audio.aac.internal.AacKernels;
 import com.github.auties00.smalt.audio.aac.internal.AudioSpecificConfig;
 import com.github.auties00.smalt.audio.aac.internal.EncoderEngine;
 import com.github.auties00.smalt.audio.aac.internal.LowDelayAnalysis;
+import com.github.auties00.smalt.audio.aac.internal.sbr.LowDelaySbrEncoder;
 import com.github.auties00.smalt.audio.aac.internal.sbr.SbrEncoder;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -41,7 +42,12 @@ import java.util.function.Consumer;
  * <p>AAC-LD and AAC-ELD code frames of 512 or 480 samples with long windows only and no look-ahead, in the error
  * resilient syntax without resilience tools or error protection (no element identifiers; constant bitrate frames
  * end in zero padding instead of fill elements). AAC-LD uses the sine window, AAC-ELD the low delay filterbank of
- * ISO/IEC 14496-3 subclause 4.6.20, without low delay spectral band replication. Neither has an ADTS form.
+ * ISO/IEC 14496-3 subclause 4.6.20. Neither has an ADTS form. AAC-ELD may add low delay spectral band replication
+ * ({@link AacEncoderOptions#lowDelaySbr()}, subclause 4.6.19): the band from each element's crossover to the stop
+ * frequency is coded as spectral band replication data with a time grid locked to the frame, after the channel
+ * elements of each packet, analyzed with the complex low delay filterbank. In the dual-rate mode the core runs at
+ * half the input rate and each packet covers 1024 or 960 input samples; in the downsampled mode the core runs at the
+ * input rate and the spectral band replication reconstructs the band up to half of it.
  *
  * <p>The layout is coded as channel configuration {@link AacEncoderOptions#channelConfiguration()}:
  * the configuration's channel elements in their ISO/IEC 14496-3 order or, for configuration 0, the
@@ -76,14 +82,21 @@ public final class AacEncoder implements AudioEncoder {
     private final int frameLength;
 
     /**
-     * The encoding engine of AAC Low Complexity, or {@code null} for HE-AAC.
+     * The encoding engine of AAC Low Complexity, AAC-LD and AAC-ELD, or {@code null} for HE-AAC and for AAC-ELD with
+     * low delay spectral band replication.
      */
     private final EncoderEngine engine;
 
     /**
-     * The encoder of HE-AAC, or {@code null} for AAC Low Complexity.
+     * The encoder of HE-AAC, or {@code null} for the other profiles.
      */
     private final SbrEncoder sbr;
+
+    /**
+     * The encoder of AAC-ELD with low delay spectral band replication, or {@code null} for the other
+     * configurations.
+     */
+    private final LowDelaySbrEncoder lowDelaySbr;
 
     /**
      * The {@code AudioSpecificConfig}.
@@ -122,8 +135,20 @@ public final class AacEncoder implements AudioEncoder {
             this.engine = new EncoderEngine(options.sampleRate(), frameLength, layout, options.bitrate(), vbr,
                     options.effectiveBandwidth(), AacKernels.INSTANCE);
             this.sbr = null;
+            this.lowDelaySbr = null;
             this.audioSpecificConfig = AudioSpecificConfig.lowComplexity(options.sampleRate(),
                     layout.channelConfiguration(), frameLength, layout.programConfig());
+        } else if (options.profile() == AacProfile.ELD && options.lowDelaySbr().isPresent()) {
+            var dual = options.lowDelaySbr().get() == AacLowDelaySbr.DUAL_RATE;
+            var coreRate = dual ? options.sampleRate() / 2 : options.sampleRate();
+            var coreFrame = options.frameLength() / 2;
+            this.frameLength = dual ? 2 * coreFrame : coreFrame;
+            this.engine = null;
+            this.sbr = null;
+            this.lowDelaySbr = new LowDelaySbrEncoder(coreRate, coreFrame, layout, options.bitrate(), vbr, dual,
+                    AacKernels.INSTANCE);
+            this.audioSpecificConfig = AudioSpecificConfig.enhancedLowDelaySbr(coreRate,
+                    layout.channelConfiguration(), coreFrame, dual, lowDelaySbr::writeHeaders);
         } else if (options.profile() == AacProfile.LD || options.profile() == AacProfile.ELD) {
             var objectType = options.profile() == AacProfile.LD ? AudioSpecificConfig.AOT_ER_LD
                     : AudioSpecificConfig.AOT_ER_ELD;
@@ -131,13 +156,14 @@ public final class AacEncoder implements AudioEncoder {
             this.engine = new EncoderEngine(options.sampleRate(), frameLength, layout, options.bitrate(),
                     options.bitrate(), vbr, options.effectiveBandwidth(), objectType, AacKernels.INSTANCE);
             this.sbr = null;
-            // TODO: low delay SBR for AAC-ELD (ldSbrPresentFlag): a CLDFB analysis of the input, the LD time grid
+            this.lowDelaySbr = null;
             this.audioSpecificConfig = AudioSpecificConfig.lowDelay(objectType, options.sampleRate(),
                     layout.channelConfiguration(), frameLength);
         } else {
             var ps = options.profile() == AacProfile.HE_V2;
             this.frameLength = 2 * options.frameLength();
             this.engine = null;
+            this.lowDelaySbr = null;
             this.sbr = new SbrEncoder(options.sampleRate(), options.frameLength(), layout, options.bitrate(), vbr,
                     ps, AacKernels.INSTANCE);
             var signaling = switch (options.signaling()) {
@@ -166,11 +192,11 @@ public final class AacEncoder implements AudioEncoder {
      * the frames coded from now on average exactly the new bitrate, the bit reservoir keeping its fullness up to the
      * capacity of the new rate; in variable bitrate mode the new bitrate is the nominal one the coding quality is
      * derived from. With AAC Low Complexity, AAC-LD and AAC-ELD an automatic bandwidth follows the new
-     * bitrate, and {@link #options()} reports it. With HE-AAC and HE-AAC v2 the target must stay in the range
-     * of {@link AacEncoderOptions#bitrate()} for the configured profile and layout; the core takes the new bitrate,
-     * while the spectral band replication and parametric stereo keep the frequency range and the stereo bands
-     * they started with, so the stream may then code another range than the
-     * {@link AacEncoderOptions#effectiveBandwidth()} that {@link #options()} reports for the new bitrate.
+     * bitrate, and {@link #options()} reports it. With HE-AAC and HE-AAC v2, and with AAC-ELD with low delay spectral
+     * band replication, the target must stay in the range of {@link AacEncoderOptions#bitrate()} for the configured
+     * profile and layout; the core takes the new bitrate, while the spectral band replication and parametric stereo
+     * keep the frequency range and the stereo bands they started with, so the stream may then code another range
+     * than the {@link AacEncoderOptions#effectiveBandwidth()} that {@link #options()} reports for the new bitrate.
      *
      * @throws IllegalArgumentException if {@code bitsPerSecond} is outside the range of bitrates the format allows
      * @throws IllegalStateException if the encoder was flushed
@@ -187,6 +213,8 @@ public final class AacEncoder implements AudioEncoder {
         options = retargeted;
         if (engine != null) {
             engine.retarget(retargeted.bitrate(), retargeted.effectiveBandwidth());
+        } else if (lowDelaySbr != null) {
+            lowDelaySbr.retarget(retargeted.bitrate());
         } else {
             sbr.retarget(retargeted.bitrate());
         }
@@ -210,8 +238,8 @@ public final class AacEncoder implements AudioEncoder {
     /**
      * {@inheritDoc}
      *
-     * @return {@link AacEncoderOptions#frameLength()}, 1024 or 960; twice that for HE-AAC and half for AAC-LD and
-     * AAC-ELD
+     * @return {@link AacEncoderOptions#frameLength()}, 1024 or 960; twice that for HE-AAC, half for AAC-LD and
+     * AAC-ELD, and the same for AAC-ELD with dual-rate low delay spectral band replication
      */
     @Override
     public int frameSize() {
@@ -225,12 +253,17 @@ public final class AacEncoder implements AudioEncoder {
      * first packet's window starts one frame before the first input sample. For AAC-ELD it is three quarters
      * of a frame, the delay of the low delay filterbank. For HE-AAC it is one frame plus the
      * delays of the QMF filterbanks of the encoder and of a decoder conforming to ISO/IEC 14496-3: 1539
-     * samples more.
+     * samples more. For AAC-ELD with dual-rate low delay spectral band replication it is three halves of a core frame
+     * plus the 128 samples of the low delay QMF banks (896 or 848 samples), and in the downsampled mode three quarters
+     * of a frame plus 32 samples (416 or 392 samples).
      */
     @Override
     public int delay() {
         if (sbr != null) {
             return sbr.delay();
+        }
+        if (lowDelaySbr != null) {
+            return lowDelaySbr.delay();
         }
         return options.profile() == AacProfile.ELD ? LowDelayAnalysis.delay(frameLength) : frameLength;
     }
@@ -241,7 +274,8 @@ public final class AacEncoder implements AudioEncoder {
      * @return the {@code AudioSpecificConfig}: for AAC Low Complexity two bytes, followed by the
      * program config element when {@link AacEncoderOptions#channelConfiguration()} is 0; for HE-AAC the
      * form {@link AacEncoderOptions#signaling()} selects; for AAC-LD and AAC-ELD the error resilient form
-     * without resilience tools
+     * without resilience tools, for AAC-ELD with low delay spectral band replication carrying its mode and the
+     * {@code sbr_header} of each channel element
      */
     @Override
     public Optional<byte[]> codecConfig() {
@@ -272,6 +306,8 @@ public final class AacEncoder implements AudioEncoder {
             var count = Math.min(remaining, capacity());
             if (engine != null) {
                 engine.push(planes, offset, count);
+            } else if (lowDelaySbr != null) {
+                lowDelaySbr.push(planes, offset, count);
             } else {
                 sbr.push(planes, offset, count);
             }
@@ -301,6 +337,8 @@ public final class AacEncoder implements AudioEncoder {
             if (!frameReady()) {
                 if (engine != null) {
                     engine.pad(engine.capacity());
+                } else if (lowDelaySbr != null) {
+                    lowDelaySbr.pad(lowDelaySbr.capacity());
                 } else {
                     sbr.pad(sbr.capacity());
                 }
@@ -316,7 +354,7 @@ public final class AacEncoder implements AudioEncoder {
      * @return the free capacity
      */
     private int capacity() {
-        return engine != null ? engine.capacity() : sbr.capacity();
+        return engine != null ? engine.capacity() : lowDelaySbr != null ? lowDelaySbr.capacity() : sbr.capacity();
     }
 
     /**
@@ -325,7 +363,8 @@ public final class AacEncoder implements AudioEncoder {
      * @return {@code true} when a packet can be emitted
      */
     private boolean frameReady() {
-        return engine != null ? engine.frameReady() : sbr.frameReady();
+        return engine != null ? engine.frameReady() : lowDelaySbr != null ? lowDelaySbr.frameReady()
+                : sbr.frameReady();
     }
 
     /**
@@ -334,7 +373,7 @@ public final class AacEncoder implements AudioEncoder {
      * @return the packet count
      */
     private long frames() {
-        return engine != null ? engine.frames() : sbr.frames();
+        return engine != null ? engine.frames() : lowDelaySbr != null ? lowDelaySbr.frames() : sbr.frames();
     }
 
     /**
@@ -355,7 +394,8 @@ public final class AacEncoder implements AudioEncoder {
      */
     private void emit(Consumer<Packet> output) {
         var timestamp = frames() * frameLength;
-        var block = engine != null ? engine.encodeFrame() : sbr.encodeFrame();
+        var block = engine != null ? engine.encodeFrame() : lowDelaySbr != null ? lowDelaySbr.encodeFrame()
+                : sbr.encodeFrame();
         output.accept(new Packet(0, block, timestamp, timestamp, frameLength, true));
     }
 }

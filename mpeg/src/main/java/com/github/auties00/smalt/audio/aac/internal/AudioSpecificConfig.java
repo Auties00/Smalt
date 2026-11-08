@@ -5,6 +5,8 @@ import com.github.auties00.smalt.audio.aac.internal.ep.ErrorProtectionConfig;
 import com.github.auties00.smalt.internal.bits.MsbBitWriter;
 import com.github.auties00.smalt.internal.header.AacRates;
 
+import java.util.function.Consumer;
+
 /**
  * Holds the parts of an MPEG-4 {@code AudioSpecificConfig} an AAC decoder uses.
  *
@@ -502,6 +504,43 @@ public record AudioSpecificConfig(int objectType, int sampleRate, int tableIndex
             writer.write(0, 3);
             writer.write(0, 1);
         }
+        writer.write(0, 2);
+        writer.alignWithZeros();
+        return writer.toByteArray();
+    }
+
+    /**
+     * Returns the configuration of an AAC-ELD stream with low delay spectral band replication and without error
+     * resilience tools or error protection: the {@code ELDSpecificConfig} sets {@code ldSbrPresentFlag}, clears
+     * {@code ldSbrCrcFlag} and carries the {@code ld_sbr_header} that {@code headers} writes.
+     *
+     * @param coreRate the core sampling frequency in hertz, a standard sampling frequency
+     * @param channelConfiguration the channel configuration, from 1 to 7
+     * @param frameLength the core samples per frame, 512 or 480
+     * @param dualRate whether the extension runs at twice the core rate ({@code ldSbrSamplingRate} 1) rather than in
+     * the downsampled mode
+     * @param headers writes one {@code sbr_header} per channel element that is not an LFE element, in element order
+     * @return the configuration bytes
+     * @throws IllegalArgumentException if the rate has no sampling frequency index
+     */
+    public static byte[] enhancedLowDelaySbr(int coreRate, int channelConfiguration, int frameLength,
+                                             boolean dualRate, Consumer<MsbBitWriter> headers) {
+        var index = AacRates.index(coreRate);
+        if (index < 0) {
+            throw new IllegalArgumentException("no sampling frequency index for " + coreRate + " Hz");
+        }
+        var writer = new MsbBitWriter(64);
+        writer.write(31, 5);
+        writer.write(AOT_ER_ELD - 32, 6);
+        writer.write(index, 4);
+        writer.write(channelConfiguration, 4);
+        writer.write(frameLength == 480 ? 1 : 0, 1);
+        writer.write(0, 3);
+        writer.write(1, 1);
+        writer.write(dualRate ? 1 : 0, 1);
+        writer.write(0, 1);
+        headers.accept(writer);
+        writer.write(ELD_EXTENSION_TERMINATOR, 4);
         writer.write(0, 2);
         writer.alignWithZeros();
         return writer.toByteArray();

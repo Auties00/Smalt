@@ -9,6 +9,7 @@ import com.github.auties00.smalt.audio.aac.AacDecoder;
 import com.github.auties00.smalt.audio.aac.AacDecoderOptions;
 import com.github.auties00.smalt.audio.aac.AacEncoder;
 import com.github.auties00.smalt.audio.aac.AacEncoderOptions;
+import com.github.auties00.smalt.audio.aac.AacLowDelaySbr;
 import com.github.auties00.smalt.audio.aac.AacProfile;
 import com.github.auties00.smalt.audio.ac3.Ac3Decoder;
 import com.github.auties00.smalt.audio.ac3.Ac3Encoder;
@@ -157,6 +158,10 @@ final class MpegWorkloads {
                 realtime("eac3-rt", () -> eac3("eac3-rt", Eac3EncoderOptions.forRealtime(), 6)),
                 realtime("aac-encode-retarget", () -> aacRetarget(6)),
                 realtime("aac-eld-encode", () -> aacLowDelayEncode("aac-eld-encode", AacProfile.ELD, 4)),
+                realtime("aac-eld-sbr-encode", () -> aacLowDelaySbrEncode("aac-eld-sbr-encode",
+                        AacLowDelaySbr.DUAL_RATE, 4)),
+                realtime("aac-eld-sbr-downsampled-encode", () -> aacLowDelaySbrEncode(
+                        "aac-eld-sbr-downsampled-encode", AacLowDelaySbr.DOWNSAMPLED, 4)),
                 realtime("aac-decode-loss", () -> aacLossyDecode("aac-decode-loss", false, 4)),
                 realtime("heaac-decode-loss", () -> aacLossyDecode("heaac-decode-loss", true, 4)),
                 realtime("amr-nb-decode-loss", () -> amrLossyDecode(2)),
@@ -1143,6 +1148,23 @@ final class MpegWorkloads {
     private static TrainingWorkload aacLowDelayEncode(String name, AacProfile profile, double seconds) {
         var encoder = new AacEncoder(AacEncoderOptions.builder().format(48000, ChannelLayout.STEREO).bitrate(128000)
                 .profile(profile).build());
+        return AudioStreams.encode(name, SyntheticAudio.music(48000, seconds), ChannelLayout.STEREO, 48000, encoder);
+    }
+
+    /**
+     * Returns a workload that encodes AAC-ELD with low delay spectral band replication: stereo music at 48 kHz, at
+     * 48 kbit/s in the dual-rate mode (the 64-band low delay analysis and the 32-band synthesis of the core's input)
+     * or at 96 kbit/s in the downsampled mode (the 32-band low delay analysis).
+     *
+     * @param name the name of the workload
+     * @param mode the mode of the low delay spectral band replication
+     * @param seconds the music encoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacLowDelaySbrEncode(String name, AacLowDelaySbr mode, double seconds) {
+        var encoder = new AacEncoder(AacEncoderOptions.builder().format(48000, ChannelLayout.STEREO)
+                .bitrate(mode == AacLowDelaySbr.DUAL_RATE ? 48000 : 96000).profile(AacProfile.ELD)
+                .lowDelaySbr(mode).build());
         return AudioStreams.encode(name, SyntheticAudio.music(48000, seconds), ChannelLayout.STEREO, 48000, encoder);
     }
 

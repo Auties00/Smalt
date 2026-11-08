@@ -1649,15 +1649,18 @@ state machine, fade tables, sign flipping, LSF extrapolation, the ACELP and
 TCX concealment and the lean SBR concealment of the eSBR envelope) follows
 decoder/ixheaacd_usac_ec.c, ixheaacd_ec_rom.c, the ec_flag paths of
 ixheaacd_lpc.c, ixheaacd_acelp_decode.c and ixheaacd_tcx_fwd_alcnx.c, and
-ixheaacd_lean_sbrconcealment of ixheaacd_sbrdec_lpfuncs.c. The tuning table of the spectral band
-replication encoder is taken from sbr_tuning_table_lc of
-encoder/ixheaace_sbr_rom.c, with the inverse filtering region tables of
-detector_params_aac; its tonality estimation, inverse filtering decision,
-noise floor estimation and frame splitting test follow
-encoder/ixheaace_sbr_ton_corr_hp.c, ixheaace_sbr_inv_filtering_estimation.c,
-ixheaace_sbr_noise_floor_est.c and ixheaace_sbr_tran_det.c, and the envelope
-estimation of bands with synthetic sinusoids and the coupled stereo values
-ixheaace_sbr_env_est.c. The other Java code is a new
+ixheaacd_lean_sbrconcealment of ixheaacd_sbrdec_lpfuncs.c.
+The tuning table of the spectral band
+replication encoder is taken from sbr_tuning_table_lc and, for the low
+delay SBR of AAC-ELD, sbr_tuning_table_ld of encoder/ixheaace_sbr_rom.c,
+with the inverse filtering region tables of detector_params_aac; its
+tonality estimation, inverse filtering decision, noise floor estimation and
+frame splitting test follow encoder/ixheaace_sbr_ton_corr_hp.c,
+ixheaace_sbr_inv_filtering_estimation.c, ixheaace_sbr_noise_floor_est.c and
+ixheaace_sbr_tran_det.c, its AAC-ELD transient detector
+ixheaace_detect_transient_eld of ixheaace_sbr_tran_det_hp.c, and the envelope
+estimation of bands with synthetic sinusoids, the coupled stereo values and
+the low delay envelope shortening ixheaace_sbr_env_est.c. The other Java code is a new
 implementation; it is not a copy of the original files.
 
 Copyright:

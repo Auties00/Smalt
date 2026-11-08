@@ -2,11 +2,13 @@ package com.github.auties00.smalt.audio.aac;
 
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.aac.internal.EncoderLayout;
+import com.github.auties00.smalt.audio.aac.internal.sbr.LowDelaySbrEncoder;
 import com.github.auties00.smalt.audio.aac.internal.sbr.SbrEncoder;
 import com.github.auties00.smalt.internal.check.Checks;
 import com.github.auties00.smalt.internal.header.AacRates;
 
 import java.util.Objects;
+import java.util.Optional;
 import java.util.OptionalInt;
 
 /**
@@ -53,6 +55,8 @@ public final class AacEncoderOptions {
 
     private final AacSignaling signaling;
 
+    private final AacLowDelaySbr lowDelaySbr;
+
     private final EncoderLayout coding;
 
     private AacEncoderOptions(Builder builder, EncoderLayout coding) {
@@ -64,6 +68,7 @@ public final class AacEncoderOptions {
         this.frameLength = builder.frameLength;
         this.profile = builder.profile;
         this.signaling = builder.signaling;
+        this.lowDelaySbr = builder.lowDelaySbr;
         this.coding = coding;
     }
 
@@ -114,7 +119,10 @@ public final class AacEncoderOptions {
      * <p>With {@link AacProfile#LC}, {@link AacProfile#LD} and {@link AacProfile#ELD} it is a standard AAC rate
      * from 7350 to 96000. With {@link AacProfile#HE} and
      * {@link AacProfile#HE_V2} the core runs at half this rate, which must be 8000, 11025, 12000, 16000, 22050,
-     * 24000, 32000, 44100 or 48000 Hz.
+     * 24000, 32000, 44100 or 48000 Hz. With {@link AacProfile#ELD} and the {@link AacLowDelaySbr#DUAL_RATE} low
+     * delay spectral band replication the core also runs at half this rate, which must be 12000, 16000, 22050,
+     * 24000, 32000, 44100 or 48000 Hz; with {@link AacLowDelaySbr#DOWNSAMPLED} the core runs at this rate, one of
+     * those.
      */
     public int sampleRate() {
         return sampleRate;
@@ -135,6 +143,23 @@ public final class AacEncoderOptions {
      */
     public AacSignaling signaling() {
         return signaling;
+    }
+
+    /**
+     * {@return the mode of the low delay spectral band replication added to {@link AacProfile#ELD}, or empty for
+     * none; empty by default}
+     *
+     * <p>It applies to AAC-ELD only. Each channel element other than an LFE element codes the band above its
+     * crossover as spectral band replication, whose {@code sbr_header} the {@code AudioSpecificConfig} carries; the
+     * element's share of the bitrate (a channel pair counting as two channels, an LFE element as a fifth of one) must
+     * lie in the range the encoder tunes for the core rate: for a 16000 to 24000 Hz core, from 16000 to 20000 bits per
+     * second (depending on the rate) up to about 64000 for a single channel element and from 32000 up to about 128000
+     * for a channel pair; for a 32000 to 48000 Hz core, from 24000 or 36000 up to about 160000 for a single channel
+     * element and from 60000 up to about 256000 for a channel pair; for a 12000 Hz core, from 8000 to 32000 for a
+     * single channel element only.
+     */
+    public Optional<AacLowDelaySbr> lowDelaySbr() {
+        return Optional.ofNullable(lowDelaySbr);
     }
 
     /**
@@ -199,7 +224,8 @@ public final class AacEncoderOptions {
      * of DAB+ and DRM broadcasts. ADTS cannot signal it, so such a stream needs a container that
      * stores the configuration. With {@link AacProfile#HE} and {@link AacProfile#HE_V2} a frame
      * covers twice as many input samples; with {@link AacProfile#LD} and {@link AacProfile#ELD} half as
-     * many, 512 or 480.
+     * many, 512 or 480, and with {@link AacProfile#ELD} and the {@link AacLowDelaySbr#DUAL_RATE} low delay spectral
+     * band replication as many.
      */
     public int frameLength() {
         return frameLength;
@@ -219,7 +245,9 @@ public final class AacEncoderOptions {
      * must lie in the range the encoder tunes for its core rate: for a 22050 or 24000 Hz core, 8000 to
      * about 132000 bits per second for a single channel element (and for HE-AAC v2) and 16000 to about
      * 264000 for a channel pair; for a 32000 to 48000 Hz core, from 24000 and 32000; for an 8000 to
-     * 12000 Hz core, single channel elements from 8000 only.
+     * 12000 Hz core, single channel elements from 8000 only. With the low delay spectral band replication of
+     * {@link AacProfile#ELD} it includes the spectral band replication data, the upper limit counts the frames of the
+     * core rate, and each element's share must lie in the range {@link #lowDelaySbr()} gives.
      */
     public int bitrate() {
         return bitrate;
@@ -236,7 +264,8 @@ public final class AacEncoderOptions {
      * {@return the explicit audio bandwidth in hertz, from 1 to half the sampling rate, or empty to
      * derive it from the bitrate (see {@link #effectiveBandwidth()}); empty by default}
      *
-     * <p>{@link AacProfile#HE} and {@link AacProfile#HE_V2} take no explicit bandwidth.
+     * <p>{@link AacProfile#HE} and {@link AacProfile#HE_V2}, and {@link AacProfile#ELD} with the low delay spectral
+     * band replication, take no explicit bandwidth.
      */
     public OptionalInt bandwidth() {
         return bandwidth == 0 ? OptionalInt.empty() : OptionalInt.of(bandwidth);
@@ -248,9 +277,9 @@ public final class AacEncoderOptions {
      * <p>The automatic bandwidth of {@link AacProfile#LC}, {@link AacProfile#LD} and {@link AacProfile#ELD}
      * grows with the bitrate per full-band channel
      * from 3 kHz at 8 kbps through 13 kHz at 32 kbps and 18 kHz at 64 kbps to 24 kHz from 128 kbps,
-     * and never exceeds half the sampling rate. With {@link AacProfile#HE} and {@link AacProfile#HE_V2}
-     * it is the highest frequency spectral band replication reconstructs, which also grows with the
-     * bitrate.
+     * and never exceeds half the sampling rate. With {@link AacProfile#HE} and {@link AacProfile#HE_V2}, and with
+     * the low delay spectral band replication of {@link AacProfile#ELD}, it is the highest frequency spectral band
+     * replication reconstructs, which also grows with the bitrate.
      *
      * @return the bandwidth in hertz
      */
@@ -260,6 +289,10 @@ public final class AacEncoderOptions {
         }
         if (profile == AacProfile.HE || profile == AacProfile.HE_V2) {
             return SbrEncoder.bandwidth(sampleRate, coding, bitrate, profile == AacProfile.HE_V2);
+        }
+        if (lowDelaySbr != null) {
+            var dual = lowDelaySbr == AacLowDelaySbr.DUAL_RATE;
+            return LowDelaySbrEncoder.bandwidth(dual ? sampleRate / 2 : sampleRate, coding, bitrate, dual);
         }
         var fullBand = Math.max(1, layout.channels() - coding.lfeChannels());
         var perChannel = bitrate / (double) fullBand;
@@ -288,12 +321,14 @@ public final class AacEncoderOptions {
                 && bandwidth == that.bandwidth
                 && frameLength == that.frameLength
                 && profile == that.profile
-                && signaling == that.signaling;
+                && signaling == that.signaling
+                && lowDelaySbr == that.lowDelaySbr;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(sampleRate, layout, bitrate, bitrateMode, bandwidth, frameLength, profile, signaling);
+        return Objects.hash(sampleRate, layout, bitrate, bitrateMode, bandwidth, frameLength, profile, signaling,
+                lowDelaySbr);
     }
 
     @Override
@@ -305,7 +340,8 @@ public final class AacEncoderOptions {
                 + ", bandwidth=" + (bandwidth == 0 ? "auto" : String.valueOf(bandwidth))
                 + ", frameLength=" + frameLength
                 + ", profile=" + profile
-                + ", signaling=" + signaling + "]";
+                + ", signaling=" + signaling
+                + ", lowDelaySbr=" + (lowDelaySbr == null ? "none" : lowDelaySbr.toString()) + "]";
     }
 
     /**
@@ -333,6 +369,8 @@ public final class AacEncoderOptions {
 
         private AacSignaling signaling;
 
+        private AacLowDelaySbr lowDelaySbr;
+
         private Builder() {
             this.sampleRate = 48_000;
             this.layout = ChannelLayout.STEREO;
@@ -354,6 +392,7 @@ public final class AacEncoderOptions {
             this.frameLength = options.frameLength;
             this.profile = options.profile;
             this.signaling = options.signaling;
+            this.lowDelaySbr = options.lowDelaySbr;
         }
 
         /**
@@ -450,13 +489,42 @@ public final class AacEncoderOptions {
         }
 
         /**
+         * Adds low delay spectral band replication to AAC-ELD; see {@link AacEncoderOptions#lowDelaySbr()}.
+         *
+         * @param lowDelaySbr the mode
+         * @return this builder
+         */
+        public Builder lowDelaySbr(AacLowDelaySbr lowDelaySbr) {
+            this.lowDelaySbr = Objects.requireNonNull(lowDelaySbr, "lowDelaySbr");
+            return this;
+        }
+
+        /**
+         * Codes AAC-ELD without low delay spectral band replication, the default; see
+         * {@link AacEncoderOptions#lowDelaySbr()}.
+         *
+         * @return this builder
+         */
+        public Builder noLowDelaySbr() {
+            this.lowDelaySbr = null;
+            return this;
+        }
+
+        /**
          * Returns the options holding the settings of this builder.
          *
          * @return the options
          * @throws IllegalArgumentException if the sampling rate, the layout or the frame length is not
-         * supported by the profile, or the bitrate or the bandwidth does not fit the format
+         * supported by the profile, the bitrate or the bandwidth does not fit the format, or low delay spectral band
+         * replication is selected for a profile other than {@link AacProfile#ELD}
          */
         public AacEncoderOptions build() {
+            if (lowDelaySbr != null) {
+                if (profile != AacProfile.ELD) {
+                    throw new IllegalArgumentException("low delay SBR applies to AAC-ELD only, not " + profile);
+                }
+                return buildLowDelaySbr();
+            }
             if (profile == AacProfile.HE || profile == AacProfile.HE_V2) {
                 return buildHighEfficiency();
             }
@@ -479,6 +547,44 @@ public final class AacEncoderOptions {
             Checks.inRange("bitrate", (long) bitrate, (long) MIN_CHANNEL_BITRATE * channels, frameBits);
             if (explicitBandwidth) {
                 Checks.inRange("bandwidth", bandwidth, 1, sampleRate / 2);
+            }
+            return new AacEncoderOptions(this, coding);
+        }
+
+        /**
+         * Checks and returns AAC-ELD options with low delay spectral band replication.
+         *
+         * @return the options
+         * @throws IllegalArgumentException if the settings do not fit low delay spectral band replication
+         */
+        private AacEncoderOptions buildLowDelaySbr() {
+            var dual = lowDelaySbr == AacLowDelaySbr.DUAL_RATE;
+            var coreRate = dual ? sampleRate / 2 : sampleRate;
+            if (dual && (sampleRate % 2 != 0 || AacRates.index(coreRate) < 0)) {
+                throw new IllegalArgumentException("sampling rate " + sampleRate + " is not twice an AAC rate");
+            }
+            if (!dual && AacRates.index(sampleRate) < 0) {
+                throw new IllegalArgumentException("sampling rate " + sampleRate + " is not an AAC rate");
+            }
+            if (frameLength != 1024 && frameLength != 960) {
+                throw new IllegalArgumentException("frame length " + frameLength + " is not 1024 or 960");
+            }
+            if (explicitBandwidth) {
+                throw new IllegalArgumentException(
+                        "AAC-ELD with low delay SBR takes no explicit bandwidth: the SBR tuning sets it");
+            }
+            var coding = EncoderLayout.of(layout, coreRate).orElseThrow(() -> new IllegalArgumentException(
+                    "channel layout " + layout.speakers() + " is neither an AAC channel configuration nor"
+                            + " expressible by a program config element"));
+            if (coding.channelConfiguration() < 1 || coding.channelConfiguration() > 7) {
+                throw new IllegalArgumentException("AAC-LD and AAC-ELD code channel configurations 1 to 7, not "
+                        + layout.speakers());
+            }
+            var frameBits = 6144L * layout.channels() * coreRate / (frameLength / 2);
+            Checks.inRange("bitrate", (long) bitrate, 1, frameBits);
+            var reason = LowDelaySbrEncoder.unsupported(coreRate, coding, bitrate, dual);
+            if (reason.isPresent()) {
+                throw new IllegalArgumentException(reason.get());
             }
             return new AacEncoderOptions(this, coding);
         }

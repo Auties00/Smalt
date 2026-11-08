@@ -33,3 +33,6 @@ core/src/test/resources/com/github/auties00/smalt/image/color/proofing/*.kt -tex
 # The USAC concealment streams and their meta files are pinned by usac.sha256 next to them.
 mpeg/src/test/resources/com/github/auties00/smalt/audio/aac/usac/*.raw -text -diff
 mpeg/src/test/resources/com/github/auties00/smalt/audio/aac/usac/*.meta -text -diff
+# The pinned AAC-ELD low delay SBR streams of AacLowDelaySbrEncoderTest are byte-exact encoder output with their
+# libxaac metadata files; no checkout may rewrite them.
+mpeg/src/test/resources/com/github/auties00/smalt/audio/aac/eld-sbr/** -text -diff

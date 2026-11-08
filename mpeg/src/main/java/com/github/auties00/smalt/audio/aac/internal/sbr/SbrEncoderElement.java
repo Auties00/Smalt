@@ -1,7 +1,7 @@
 /* Ports libxaac (encoder/ixheaace_sbr_ton_corr_hp.c, ixheaace_sbr_inv_filtering_estimation.c,
-   ixheaace_sbr_noise_floor_est.c, ixheaace_sbr_tran_det.c, ixheaace_sbr_env_est.c and the detector tables of
-   ixheaace_sbr_rom.c). Copyright (C) 2023 The Android Open Source Project, Ittiam Systems; Apache License 2.0.
-   Modified for Smalt. */
+   ixheaace_sbr_noise_floor_est.c, ixheaace_sbr_tran_det.c, ixheaace_sbr_tran_det_hp.c (the AAC-ELD transient
+   detector), ixheaace_sbr_env_est.c and the detector tables of ixheaace_sbr_rom.c). Copyright (C) 2023 The
+   Android Open Source Project, Ittiam Systems; Apache License 2.0. Modified for Smalt. */
 package com.github.auties00.smalt.audio.aac.internal.sbr;
 
 import com.github.auties00.smalt.internal.bits.MsbBitWriter;
@@ -17,12 +17,20 @@ import java.util.Arrays;
  * into it, derives the inverse filtering levels, the noise floors and the bands needing a synthetic sinusoid,
  * quantizes the envelopes and codes everything with the cheaper of time and frequency differences. A channel pair
  * codes its envelopes either per channel or as a level and a balance, whichever is cheaper, when its tuning allows
- * coupling. The SBR header is repeated periodically. Instances are not thread-safe.
+ * coupling. The SBR header is repeated periodically.
+ *
+ * <p>For the low delay spectral band replication of AAC-ELD the element reads one QMF column per time slot, codes
+ * the frame-locked grid of {@code sbr_ld_grid} (a transient, or a transient in the last three slots of the previous
+ * frame, gives an {@code LD_TRAN} frame), and writes {@code low_delay_sbr_data} without the header, which the
+ * {@code AudioSpecificConfig} carries; a transient restarts the smoothing of the noise floors. Instances are not
+ * thread-safe.
  *
  * @implNote This implementation follows the encoder of libxaac for the tonality estimation (second order complex
  * prediction gains over half frames), the inverse filtering decision (smoothed tonalities mapped through region
  * tables with hysteresis), the noise floor estimation and the frame splitting test; its transient detection, time
- * grid and sinusoid detection are simpler designs on the same measures.
+ * grid and sinusoid detection are simpler designs on the same measures. The low delay tool follows libxaac's
+ * AAC-ELD transient detector (the slot energies of a weighted band against the previous slot's) and its frame
+ * splitting, frequency resolution and envelope shortening rules.
  */
 final class SbrEncoderElement {
     /**
@@ -113,14 +121,51 @@ final class SbrEncoderElement {
     private static final float TRANSIENT_THRESHOLD = 13000f / 64;
 
     /**
+     * The ratio of a slot's weighted energy to the previous slot's from which the low delay detector finds a
+     * transient.
+     */
+    private static final double LOW_DELAY_TRANSIENT_RATIO = 5;
+
+    /**
+     * The energy added to the previous slot's by the low delay detector, which keeps silence from triggering it.
+     */
+    private static final double LOW_DELAY_SMALL_ENERGY = 1e-2;
+
+    /**
+     * The total energy of a frame on the 16-bit scale below which the low delay splitting test keeps one envelope.
+     */
+    private static final double LOW_DELAY_SPLIT_ENERGY = 65536.0 * 31;
+
+    /**
+     * The first subband the low delay transient detector weighs.
+     */
+    private final int detectorStart;
+
+    /**
+     * The subband past the last the low delay transient detector weighs, the one at 13.5 kHz at most.
+     */
+    private final int detectorStop;
+
+    /**
+     * The weight of each subband of the low delay transient detector from {@link #detectorStart} on, rising with
+     * frequency.
+     */
+    private final double[] detectorWeights;
+
+    /**
      * The number of time slots per frame, 16 or 15.
      */
     private final int timeSlots;
 
     /**
-     * The QMF columns per frame, twice {@link #timeSlots}.
+     * The QMF columns per frame: twice {@link #timeSlots}, or {@link #timeSlots} for the low delay tool.
      */
     private final int columnsPerFrame;
+
+    /**
+     * Whether the element codes the low delay spectral band replication of AAC-ELD.
+     */
+    private final boolean lowDelay;
 
     /**
      * The header sent periodically.
@@ -257,8 +302,29 @@ final class SbrEncoderElement {
      */
     SbrEncoderElement(SbrTuning tuning, int outputRate, int timeSlots, SbrColumns[] input,
                       PsEncoder parametricStereo, int bitrate, int coreBitrate) {
+        this(tuning, outputRate, timeSlots, input, parametricStereo, bitrate, coreBitrate, false);
+    }
+
+    /**
+     * Creates the encoder of one element, optionally of the low delay spectral band replication of AAC-ELD.
+     *
+     * @param tuning the frequency range, noise resolution and stereo mode
+     * @param outputRate the sampling rate the frequency band tables refer to, twice the core rate (also in the
+     * downsampled mode of the low delay tool)
+     * @param timeSlots the number of time slots per frame, 16 or 15
+     * @param input the QMF columns of each channel, one or two
+     * @param parametricStereo the parametric stereo encoder of a single channel element, or {@code null}; always
+     * {@code null} for the low delay tool
+     * @param bitrate the bitrate of the element, core and extension, in bits per second
+     * @param coreBitrate the part of {@code bitrate} the core codes
+     * @param lowDelay whether to code the low delay tool, one QMF column per time slot
+     * @throws IllegalArgumentException if the tuning describes invalid frequency band tables
+     */
+    SbrEncoderElement(SbrTuning tuning, int outputRate, int timeSlots, SbrColumns[] input,
+                      PsEncoder parametricStereo, int bitrate, int coreBitrate, boolean lowDelay) {
         this.timeSlots = timeSlots;
-        this.columnsPerFrame = 2 * timeSlots;
+        this.lowDelay = lowDelay;
+        this.columnsPerFrame = lowDelay ? timeSlots : 2 * timeSlots;
         this.input = input.clone();
         this.parametricStereo = parametricStereo;
         this.stereoMode = input.length == 2 ? tuning.stereoMode() : SbrTuning.MONO;
@@ -267,7 +333,8 @@ final class SbrEncoderElement {
             case 3 -> 2.0;
             default -> 4.0;
         };
-        this.lowResolution = input.length == 1 ? bitrate <= 18000 : bitrate <= 28000;
+        this.lowResolution = lowDelay ? (input.length == 1 ? bitrate <= 22000 : bitrate <= 48000)
+                : (input.length == 1 ? bitrate <= 18000 : bitrate <= 28000);
         this.speech = bitrate <= 20000;
         header.ampResolution = 1;
         header.startFrequency = tuning.startFrequency();
@@ -288,14 +355,24 @@ final class SbrEncoderElement {
             }
         }
         this.noiseTable = Arrays.copyOf(tables.noise, tables.noiseBands + 1);
-        var frameSeconds = 2.0 * columnsPerFrame * 32 / outputRate;
+        var frameSeconds = 64.0 * columnsPerFrame / outputRate;
         var duration = Math.max(frameSeconds - 0.01, 0.0001);
         var rateFactor = coreBitrate > 0 ? (double) bitrate / coreBitrate : 1;
-        this.splitThreshold = 0.000075 / (duration * duration) * rateFactor;
+        this.splitThreshold = 0.000075 / (duration * duration) * rateFactor / (lowDelay ? 2 : 1);
+        var bandwidth = outputRate / 2.0 / 64;
+        this.detectorStop = Math.min((int) (13500 / bandwidth), 64);
+        // libxaac keeps at least 4 subbands; 16 keep the slot energies of noise steady when the downsampled mode
+        // leaves few subbands between the crossover and 13.5 kHz
+        this.detectorStart = Math.max(0, Math.min(tables.kx, detectorStop - 16));
+        this.detectorWeights = new double[Math.max(0, detectorStop - detectorStart)];
+        var ratio = bandwidth * 0.00075275;
+        for (var i = 0; i < detectorWeights.length; i++) {
+            detectorWeights[i] = StrictMath.pow(2, ratio * (i + 1));
+        }
         this.headerPeriod = Math.max(1, (int) Math.round(0.5 / frameSeconds));
         this.channels = new Channel[input.length];
         for (var c = 0; c < channels.length; c++) {
-            channels[c] = new Channel(timeSlots);
+            channels[c] = new Channel(timeSlots, lowDelay ? 1 : 2);
         }
     }
 
@@ -360,14 +437,26 @@ final class SbrEncoderElement {
      * Encodes one frame and returns its extension payload.
      *
      * @param base the index of the QMF column aligned with the frame's first time slot
-     * @return the payload writer, holding {@code extension_type} and {@code sbr_extension_data}
+     * @return the payload writer, holding {@code extension_type} and {@code sbr_extension_data}, or for the low
+     * delay tool {@code low_delay_sbr_data}
      */
     MsbBitWriter encode(long base) {
         var count = channels.length;
         for (var c = 0; c < count; c++) {
             var channel = channels[c];
             channel.measure(input[c], base);
-            channel.detect(usb);
+            if (lowDelay) {
+                channel.detectLowDelay(detectorStart, detectorStop, detectorWeights);
+                var detected = channel.attack;
+                if (detected < 0 && channel.previousAttack >= 0 && timeSlots - channel.previousAttack < 4) {
+                    // the transient envelope of an LD_TRAN frame ends with its frame, so a transient in the last
+                    // slots continues as one at the start of the next frame
+                    channel.attack = 0;
+                }
+                channel.previousAttack = detected;
+            } else {
+                channel.detect(usb);
+            }
             channel.split = channel.attack < 0 && splitFrame(channel);
         }
         if (count == 2 && stereoMode == SbrTuning.SWITCHED) {
@@ -382,10 +471,15 @@ final class SbrEncoderElement {
             }
         }
         for (var channel : channels) {
-            var attack = channel.attack >= channel.start ? channel.attack : -1;
-            channel.grid.build(timeSlots, channel.start, attack, channel.split, lowResolution);
-            channel.frameAmp = channel.grid.frameClass == SbrFrameData.FIXFIX && channel.grid.envelopes == 1
-                    ? 0 : header.ampResolution;
+            if (lowDelay) {
+                channel.grid.buildLowDelay(timeSlots, channel.attack, channel.split, lowResolution);
+                channel.frameAmp = header.ampResolution;
+            } else {
+                var attack = channel.attack >= channel.start ? channel.attack : -1;
+                channel.grid.build(timeSlots, channel.start, attack, channel.split, lowResolution);
+                channel.frameAmp = channel.grid.frameClass == SbrFrameData.FIXFIX && channel.grid.envelopes == 1
+                        ? 0 : header.ampResolution;
+            }
             channel.tonality(usb);
             estimateInverseFiltering(channel);
             detectHarmonics(channel);
@@ -403,7 +497,7 @@ final class SbrEncoderElement {
             var balanceBits = channels[1].code(coupledBalance, coupledNoiseBalance, true, allowed, tables);
             coupled = levelBits + balanceBits < independent;
         }
-        var headerFlag = frames % headerPeriod == 0;
+        var headerFlag = !lowDelay && frames % headerPeriod == 0;
         if (parametricStereo != null) {
             scratch.reset();
             scratch.write(EXTENSION_PS, 2);
@@ -453,10 +547,12 @@ final class SbrEncoderElement {
      */
     private void write(boolean headerFlag, boolean coupled) {
         writer.reset();
-        writer.write(EXT_SBR_DATA, 4);
+        if (!lowDelay) {
+            writer.write(EXT_SBR_DATA, 4);
+        }
         writer.write(headerFlag ? 1 : 0, 1);
         if (headerFlag) {
-            writeHeader();
+            writeHeader(writer);
         }
         if (channels.length == 1) {
             writeSingle();
@@ -466,9 +562,12 @@ final class SbrEncoderElement {
     }
 
     /**
-     * Writes {@code sbr_header}.
+     * Writes the element's {@code sbr_header}, as a frame's payload or the {@code ld_sbr_header} of an AAC-ELD
+     * {@code AudioSpecificConfig} carries it.
+     *
+     * @param writer the destination
      */
-    private void writeHeader() {
+    void writeHeader(MsbBitWriter writer) {
         writer.write(header.ampResolution, 1);
         writer.write(header.startFrequency, 4);
         writer.write(header.stopFrequency, 4);
@@ -491,7 +590,7 @@ final class SbrEncoderElement {
     private void writeSingle() {
         var channel = channels[0];
         writer.write(0, 1);
-        channel.grid.write(writer, timeSlots);
+        writeGrid(channel);
         channel.code(channel.envelope, channel.noise, false, true, tables);
         channel.writeDirections(writer);
         channel.writeInverseFiltering(writer, tables.noiseBands);
@@ -536,7 +635,7 @@ final class SbrEncoderElement {
         if (coupled) {
             left.code(coupledLevel, coupledNoiseLevel, false, allowed, tables);
             right.code(coupledBalance, coupledNoiseBalance, true, allowed, tables);
-            left.grid.write(writer, timeSlots);
+            writeGrid(left);
             left.writeDirections(writer);
             right.writeDirections(writer);
             left.writeInverseFiltering(writer, tables.noiseBands);
@@ -547,8 +646,8 @@ final class SbrEncoderElement {
         } else {
             left.code(left.envelope, left.noise, false, allowed, tables);
             right.code(right.envelope, right.noise, false, allowed, tables);
-            left.grid.write(writer, timeSlots);
-            right.grid.write(writer, timeSlots);
+            writeGrid(left);
+            writeGrid(right);
             left.writeDirections(writer);
             right.writeDirections(writer);
             left.writeInverseFiltering(writer, tables.noiseBands);
@@ -567,6 +666,19 @@ final class SbrEncoderElement {
     }
 
     /**
+     * Writes the time grid of a channel: {@code sbr_grid}, or {@code sbr_ld_grid} for the low delay tool.
+     *
+     * @param channel the channel's encoding state
+     */
+    private void writeGrid(Channel channel) {
+        if (lowDelay) {
+            channel.grid.writeLowDelay(writer, channel.frameAmp);
+        } else {
+            channel.grid.write(writer, timeSlots);
+        }
+    }
+
+    /**
      * Returns whether the spectrum of a frame without transient changes enough between its halves to code two
      * envelopes ({@code ixheaace_frame_splitter}).
      *
@@ -576,25 +688,27 @@ final class SbrEncoderElement {
     private boolean splitFrame(Channel channel) {
         var bands = tables.highBands;
         var border = (timeSlots + 1) >> 1;
-        var lowEnergy = 1.0;
+        var lowEnergy = lowDelay ? 0.0 : 1.0;
         for (var t = 0; t < timeSlots; t++) {
             for (var k = 0; k < tables.kx; k++) {
                 lowEnergy += channel.slotEnergy(t, k);
             }
         }
-        lowEnergy *= 2;
-        var highEnergy = 1.0;
+        lowEnergy *= lowDelay ? 1 : 2;
+        var highEnergy = lowDelay ? 0.0 : 1.0;
         var first = channel.bandScratch;
         var second = channel.bandScratch2;
+        var floor = lowDelay ? 0 : 1.0e6;
+        var weight2 = lowDelay ? 1 : 2;
         for (var b = 0; b < bands; b++) {
-            first[b] = 1.0e6 * border;
-            second[b] = 1.0e6 * (timeSlots - border);
+            first[b] = floor * border;
+            second[b] = floor * (timeSlots - border);
         }
         for (var t = 0; t < timeSlots; t++) {
             for (var b = 0; b < bands; b++) {
                 var energy = 0.0;
                 for (var k = tables.high[b]; k < tables.high[b + 1]; k++) {
-                    energy += 2 * channel.slotEnergy(t, k);
+                    energy += weight2 * channel.slotEnergy(t, k);
                 }
                 if (t < border) {
                     first[b] += energy;
@@ -606,7 +720,7 @@ final class SbrEncoderElement {
         }
         var total = 0.5 * (lowEnergy + channel.previousLowEnergy) + highEnergy;
         channel.previousLowEnergy = lowEnergy;
-        if (total < 1e-18) {
+        if (total < 1e-18 || lowDelay && total <= LOW_DELAY_SPLIT_ENERGY) {
             return false;
         }
         var ratio = (double) border / (timeSlots - border);
@@ -614,6 +728,10 @@ final class SbrEncoderElement {
         weight = 1 - 4 * weight * weight;
         var sum = 0.0;
         for (var b = 0; b < bands; b++) {
+            if (lowDelay) {
+                first[b] = first[b] <= EPS ? border : first[b];
+                second[b] = second[b] <= EPS ? timeSlots - border : second[b];
+            }
             var delta = Math.abs(StrictMath.log(second[b] / first[b] * ratio));
             sum += Math.sqrt((first[b] + second[b]) / total) * delta;
         }
@@ -778,12 +896,19 @@ final class SbrEncoderElement {
                 channel.noiseRatio[e][b] = Math.min(difference / meanOriginal, maxNoise);
             }
         }
+        var restart = lowDelay && grid.transientPosition >= 0;
         for (var e = 0; e < grid.noiseEnvelopes; e++) {
             var history = channel.noiseHistory;
-            for (var i = 1; i < history.length; i++) {
-                System.arraycopy(history[i], 0, history[i - 1], 0, tables.noiseBands);
+            if (restart) {
+                for (var row : history) {
+                    System.arraycopy(channel.noiseRatio[e], 0, row, 0, tables.noiseBands);
+                }
+            } else {
+                for (var i = 1; i < history.length; i++) {
+                    System.arraycopy(history[i], 0, history[i - 1], 0, tables.noiseBands);
+                }
+                System.arraycopy(channel.noiseRatio[e], 0, history[history.length - 1], 0, tables.noiseBands);
             }
-            System.arraycopy(channel.noiseRatio[e], 0, history[history.length - 1], 0, tables.noiseBands);
             for (var b = 0; b < tables.noiseBands; b++) {
                 var smoothed = 0.0;
                 for (var i = 0; i < history.length; i++) {
@@ -808,7 +933,14 @@ final class SbrEncoderElement {
         for (var l = 0; l < grid.envelopes; l++) {
             var start = grid.borders[l];
             var stop = grid.borders[l + 1];
-            if (l == grid.transientEnvelope && stop - start > 1) {
+            if (lowDelay) {
+                // the envelope ending at a transient, or the last one when the next frame starts with one, leaves
+                // out the two slots before it
+                var shortened = channel.lookaheadTransient ? grid.envelopes - 1 : grid.transientEnvelope - 1;
+                if (l == shortened && stop - start > 2) {
+                    stop -= 2;
+                }
+            } else if (l == grid.transientEnvelope && stop - start > 1) {
                 stop--;
             }
             var resolution = grid.resolution[l];
@@ -955,8 +1087,13 @@ final class SbrEncoderElement {
         private final int timeSlots;
 
         /**
+         * The QMF columns per time slot: 2, or 1 for the low delay tool.
+         */
+        private final int slotColumns;
+
+        /**
          * The energy of each subband in each slot from {@link #FIRST_SLOT} to four slots past the frame, the mean
-         * of the slot's two QMF columns.
+         * of the slot's QMF columns.
          */
         private final float[] slots;
 
@@ -984,6 +1121,33 @@ final class SbrEncoderElement {
          * The slot of the frame's transient, or -1.
          */
         int attack = -1;
+
+        /**
+         * The slot of the transient the detector found in the previous frame, or -1; the low delay tool continues
+         * a late one into the next frame.
+         */
+        int previousAttack = -1;
+
+        /**
+         * Whether the low delay detector found a transient in the two slots after the frame.
+         */
+        boolean lookaheadTransient;
+
+        /**
+         * The low delay detector's transient flags of the two slots after the previous frame, the first two of
+         * this one.
+         */
+        private final boolean[] carriedTransients = new boolean[2];
+
+        /**
+         * The low delay detector's weighted energy of each slot from two before the frame to two after it.
+         */
+        private final double[] weightedEnergy;
+
+        /**
+         * The low delay detector's transient flag of each slot from the frame's first to two after it.
+         */
+        private final boolean[] transientFlags;
 
         /**
          * Whether the frame is split in two envelopes.
@@ -1159,12 +1323,16 @@ final class SbrEncoderElement {
          * Creates the state of a channel.
          *
          * @param timeSlots the number of time slots per frame
+         * @param slotColumns the QMF columns per time slot, 2, or 1 for the low delay tool
          */
-        Channel(int timeSlots) {
+        Channel(int timeSlots, int slotColumns) {
             this.timeSlots = timeSlots;
+            this.slotColumns = slotColumns;
             this.slotCount = timeSlots + 4 - FIRST_SLOT;
             this.slots = new float[slotCount * 64];
             this.detection = new float[timeSlots + 2];
+            this.weightedEnergy = new double[timeSlots + 4];
+            this.transientFlags = new boolean[timeSlots + 2];
         }
 
         /**
@@ -1172,7 +1340,7 @@ final class SbrEncoderElement {
          *
          * @param slot the slot relative to the frame's first, from -2 to {@code timeSlots + 3}
          * @param band the subband
-         * @return the mean energy of the slot's two QMF columns
+         * @return the mean energy of the slot's QMF columns
          */
         float slotEnergy(int slot, int band) {
             return slots[(slot - FIRST_SLOT) * 64 + band];
@@ -1186,9 +1354,15 @@ final class SbrEncoderElement {
          */
         void measure(SbrColumns columns, long base) {
             for (var s = 0; s < slotCount; s++) {
-                var column = base + 2L * (s + FIRST_SLOT);
-                for (var k = 0; k < 64; k++) {
-                    slots[s * 64 + k] = 0.5f * (columns.energy(column, k) + columns.energy(column + 1, k));
+                var column = base + (long) slotColumns * (s + FIRST_SLOT);
+                if (slotColumns == 1) {
+                    for (var k = 0; k < 64; k++) {
+                        slots[s * 64 + k] = columns.energy(column, k);
+                    }
+                } else {
+                    for (var k = 0; k < 64; k++) {
+                        slots[s * 64 + k] = 0.5f * (columns.energy(column, k) + columns.energy(column + 1, k));
+                    }
                 }
             }
             Arrays.fill(bandEnergy, 0);
@@ -1258,17 +1432,63 @@ final class SbrEncoderElement {
         }
 
         /**
+         * Detects the strongest transient of the frame the way libxaac's AAC-ELD encoder does
+         * ({@code ixheaace_detect_transient_eld}): a slot holds a transient when its energy, weighted toward high
+         * frequencies, is at least five times the previous slot's and either no transient was found in the two
+         * slots before it or it still rises by 1.4 over one of them. The two slots after the frame are tested as
+         * look-ahead and their flags carried into the next frame.
+         *
+         * @param start the first weighted subband
+         * @param stop the subband past the last weighted one
+         * @param weights the weight of each subband from {@code start} on
+         */
+        void detectLowDelay(int start, int stop, double[] weights) {
+            for (var t = -2; t < timeSlots + 2; t++) {
+                var energy = 0.0;
+                for (var k = start; k < stop; k++) {
+                    energy += slotEnergy(t, k) * weights[k - start];
+                }
+                weightedEnergy[t + 2] = energy;
+            }
+            transientFlags[0] = carriedTransients[0];
+            transientFlags[1] = carriedTransients[1];
+            for (var t = 2; t < timeSlots + 2; t++) {
+                var energy = weightedEnergy[t + 2];
+                var ratio = energy / (weightedEnergy[t + 1] + LOW_DELAY_SMALL_ENERGY);
+                var weighted = energy / 1.4;
+                var isolated = !transientFlags[t - 2] && !transientFlags[t - 1];
+                transientFlags[t] = ratio >= LOW_DELAY_TRANSIENT_RATIO
+                        && (isolated || weighted >= weightedEnergy[t + 1] || weighted >= weightedEnergy[t]);
+            }
+            attack = -1;
+            var strongest = 0.0;
+            for (var t = 0; t < timeSlots; t++) {
+                var ratio = weightedEnergy[t + 2] / (weightedEnergy[t + 1] + LOW_DELAY_SMALL_ENERGY);
+                if (transientFlags[t] && ratio > strongest) {
+                    strongest = ratio;
+                    attack = t;
+                }
+            }
+            lookaheadTransient = transientFlags[timeSlots] || transientFlags[timeSlots + 1];
+            carriedTransients[0] = transientFlags[timeSlots];
+            carriedTransients[1] = transientFlags[timeSlots + 1];
+        }
+
+        /**
          * Computes the tonality of every subband up to the stop frequency in each half frame
-         * ({@code ixheaace_calculate_tonality_quotas}).
+         * ({@code ixheaace_calculate_tonality_quotas}); with an odd number of columns per frame the second half
+         * holds one column more.
          *
          * @param usb the number of subbands up to the stop frequency
          */
         void tonality(int usb) {
-            var length = timeSlots;
+            var frameColumns = slotColumns * timeSlots;
             var re = columns.re();
             var im = columns.im();
             for (var e = 0; e < 2; e++) {
-                var first = base + (long) e * length;
+                var half = frameColumns / 2;
+                var first = base + (long) e * half;
+                var length = e == 0 ? half : frameColumns - half;
                 var energySum = 0.0;
                 for (var k = 0; k < usb; k++) {
                     double r00 = 0;

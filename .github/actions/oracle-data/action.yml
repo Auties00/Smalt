@@ -43,7 +43,7 @@ runs:
         path: |
           .oracle-data/eld-sbr-oracle
           .oracle-data/eld-sbr-fdk
-        key: oracle-data-eld-sbr-${{ hashFiles('tools/testdata/eld-sbr-oracle.py') }}
+        key: oracle-data-eld-sbr-${{ hashFiles('tools/testdata/eld-sbr-oracle.py', 'mpeg/src/test/resources/com/github/auties00/smalt/audio/aac/eld-sbr/**') }}
         enableCrossOsArchive: true
 
     - name: Restore the MPEG Surround oracle files
