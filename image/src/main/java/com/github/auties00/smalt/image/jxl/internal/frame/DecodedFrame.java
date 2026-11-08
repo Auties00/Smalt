@@ -17,6 +17,9 @@ import java.util.List;
  * @param varDct the VarDCT data, or {@code null} for a modular frame
  * @param modular the modular channels: the stored color channels of a modular frame, then the
  * extra channels
+ * @param passes the number of leading passes decoded, at most the frame's pass count; the coefficients and
+ * squeeze residuals of the later passes are zero
  */
-public record DecodedFrame(FrameHeader header, LfGlobal lfGlobal, VarDctFrame varDct, List<ModularChannel> modular) {
+public record DecodedFrame(FrameHeader header, LfGlobal lfGlobal, VarDctFrame varDct, List<ModularChannel> modular,
+                           int passes) {
 }
