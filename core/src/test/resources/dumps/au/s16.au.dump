@@ -1,0 +1,20 @@
+# demux dump of au/s16.au; regenerate with -Dsmalt.test.updateDumps=true
+format AU
+duration 600000
+seekable true
+metadata Title="Pink"
+track 0 AUDIO PCM_S16BE timebase=1/22050 duration=13230 config=none
+  audio rate=22050 bits=16 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 7
+0 t0 pts=0 dts=0 dur=2048 flags=KEY size=8192 crc=30c904fe
+1 t0 pts=2048 dts=2048 dur=2048 flags=KEY size=8192 crc=e7605c4f
+2 t0 pts=4096 dts=4096 dur=2048 flags=KEY size=8192 crc=173f19ec
+3 t0 pts=6144 dts=6144 dur=2048 flags=KEY size=8192 crc=f036f8d1
+4 t0 pts=8192 dts=8192 dur=2048 flags=KEY size=8192 crc=abcd3c22
+5 t0 pts=10240 dts=10240 dur=2048 flags=KEY size=8192 crc=8b0cc669
+6 t0 pts=12288 dts=12288 dur=942 flags=KEY size=3768 crc=bc7670e9
+seek 0: t0@0
+seek 200000: t0@pts=4410
+seek 400000: t0@pts=8820
+seek 600000: end
+seek -1000000: t0@0

@@ -1,0 +1,22 @@
+# audio decode dump of flv/flv1-mp3.flv; regenerate with -Dsmalt.test.updateDumps=true
+format FLV
+duration 2050000
+seekable true
+track 1 MP3 rate=22050 layout=[FRONT_CENTER]
+0 frames=4096 crc16=3c53dc18
+1 frames=4096 crc16=5258556e
+2 frames=4096 crc16=60fd5a56
+3 frames=4096 crc16=c64580d6
+4 frames=4096 crc16=c0498aad
+5 frames=4096 crc16=e5cb529f
+6 frames=4096 crc16=eb958a11
+7 frames=4096 crc16=4bacd896
+8 frames=4096 crc16=9465abb4
+9 frames=4096 crc16=a9e064dd
+10 frames=4096 crc16=bf1464b2
+11 frames=448 crc16=241f1cbe
+seek 0: @sample 0
+seek 683333: @sample 15067
+seek 1366666: @sample 30135
+seek 2050000: @sample 45203
+seek -1000000: @sample 0

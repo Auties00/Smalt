@@ -1,0 +1,24 @@
+# demux dump of elementary/vvc.266; regenerate with -Dsmalt.test.updateDumps=true
+format VVC
+duration -1
+seekable true
+track 1 VIDEO VVC timebase=1/50 duration=? config=185:7dd3b1ea
+  video 136x104 orientation=NORMAL rate=25/1
+packets 12
+0 t1 pts=14 dts=-10 dur=2 flags=KEY size=1408 crc=c60ec18d
+1 t1 pts=6 dts=-8 dur=2 flags=- size=318 crc=cc1a4d41
+2 t1 pts=2 dts=-6 dur=2 flags=- size=255 crc=a8bcccf8
+3 t1 pts=0 dts=-4 dur=2 flags=- size=171 crc=cb15837e
+4 t1 pts=4 dts=-2 dur=2 flags=- size=113 crc=56ed7adb
+5 t1 pts=10 dts=0 dur=2 flags=- size=174 crc=56d64d79
+6 t1 pts=8 dts=2 dur=2 flags=- size=128 crc=ba5b51c9
+7 t1 pts=12 dts=4 dur=2 flags=- size=87 crc=9cba0d19
+8 t1 pts=22 dts=6 dur=2 flags=- size=420 crc=2ef54ebd
+9 t1 pts=18 dts=8 dur=2 flags=- size=213 crc=7711a614
+10 t1 pts=16 dts=10 dur=2 flags=- size=106 crc=4eecf1dc
+11 t1 pts=20 dts=12 dur=2 flags=- size=142 crc=a8bd7b62
+seek 0: t1@0
+seek 160000: t1@0
+seek 320000: t1@0
+seek 480000: end
+seek -1000000: t1@0

@@ -1,17 +1,7 @@
 package com.github.auties00.smalt.desktop.sound;
 
 import com.github.auties00.smalt.MediaException;
-import com.github.auties00.smalt.audio.AudioBuffer;
-import com.github.auties00.smalt.audio.AudioEncoder;
-import com.github.auties00.smalt.audio.AudioEncoderOptions;
-import com.github.auties00.smalt.audio.AudioEncoders;
-import com.github.auties00.smalt.audio.ChannelLayout;
-import com.github.auties00.smalt.audio.process.ChannelMixer;
-import com.github.auties00.smalt.audio.process.Resampler;
-import com.github.auties00.smalt.container.ogg.OggMuxer;
-import com.github.auties00.smalt.internal.codec.EncoderTail;
 import com.github.auties00.smalt.io.MediaSink;
-import com.github.auties00.smalt.track.Codec;
 
 import javax.sound.sampled.AudioFileFormat;
 import javax.sound.sampled.AudioFormat;
@@ -21,33 +11,47 @@ import javax.sound.sampled.spi.AudioFileWriter;
 import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.Objects;
 
 /**
- * Writes audio files for Java Sound with the encoders of the codec artifacts present at run time.
+ * Writes compressed audio files for Java Sound with the encoders of the codec artifacts present at run
+ * time.
  *
- * <p>The only type is {@link SmaltAudioFormats#OGG_OPUS} (Opus in Ogg, {@code .opus}), offered
- * when an Opus encoder is present ({@code smalt-audio}). The input is any PCM stream
- * {@link SampledAudio} reads, or any stream Java Sound converts to
- * {@link AudioFormat.Encoding#PCM_SIGNED} (such as a compressed stream of
- * {@link SmaltAudioFileReader}). Opus codes 8, 12, 16, 24 or 48 kHz: other rates are resampled to
- * 48 kHz; more than two channels are downmixed to stereo. The file ends exactly at the last input
- * sample (the Ogg end granule position trims the encoder's padding). WAV, AIFF and AU are left to
- * the JDK's writers.
+ * <p>The types, each offered when an encoder of its codec is present ({@code smalt-audio} for Opus,
+ * Vorbis, FLAC and MP3, {@code smalt-mpeg} for AAC, AMR, AC-3 and E-AC-3), are:
+ * <table class="striped">
+ * <caption>File types written</caption>
+ * <thead><tr><th scope="col">Type</th><th scope="col">File</th></tr></thead>
+ * <tbody>
+ * <tr><td>{@link SmaltAudioFormats#OGG_OPUS}</td><td>Opus in Ogg ({@code .opus})</td></tr>
+ * <tr><td>{@link SmaltAudioFormats#OGG}</td><td>Vorbis in Ogg ({@code .ogg})</td></tr>
+ * <tr><td>{@link SmaltAudioFormats#FLAC}</td><td>native FLAC, at the input's sample size for integer
+ * input, 16 bits for G.711 input and 24 bits for float input</td></tr>
+ * <tr><td>{@link SmaltAudioFormats#MP3}</td><td>MPEG-1 or MPEG-2 Layer III</td></tr>
+ * <tr><td>{@link SmaltAudioFormats#MPEG4}</td><td>AAC in an M4A file</td></tr>
+ * <tr><td>{@link SmaltAudioFormats#AAC}</td><td>AAC in ADTS framing</td></tr>
+ * <tr><td>{@link SmaltAudioFormats#AMR}</td><td>an AMR-WB file for input at 16 kHz or more, AMR-NB
+ * otherwise (the other when only one encoder is present), mono, resampled to 16 or 8 kHz</td></tr>
+ * <tr><td>{@link SmaltAudioFormats#AC3}</td><td>an AC-3 elementary stream</td></tr>
+ * <tr><td>{@link SmaltAudioFormats#EAC3}</td><td>an E-AC-3 elementary stream</td></tr>
+ * </tbody>
+ * </table>
+ *
+ * <p>The input is any stream {@link SampledAudio} reads at a positive whole sample rate, or any stream
+ * Java Sound converts to {@link AudioFormat.Encoding#PCM_SIGNED} (such as a compressed stream of
+ * {@link SmaltAudioFileReader}). A rate or channel layout the codec cannot code is converted to one it
+ * can (48 kHz, stereo), as {@link com.github.auties00.smalt.audio.AudioWriter} does. Integer samples reach
+ * FLAC unchanged, so a FLAC file decodes to exactly the input samples. A file whose container marks the
+ * encoder's priming and padding (Ogg, M4A, and an MP3 file written to a {@link File}) decodes to as many
+ * samples as were written. A stream that {@link SmaltFormatConversionProvider} encoded to the codec of the
+ * type, in the container the type names, is copied byte for byte instead of being encoded again. WAV,
+ * AIFF and AU are left to the JDK's writers.
  *
  * <p>This class is thread-safe.
  */
 public final class SmaltAudioFileWriter extends AudioFileWriter {
-    /**
-     * The track identifier of the encoded stream.
-     */
-    private static final int TRACK_ID = 0;
-
-    /**
-     * The number of frames read from the input per block.
-     */
-    private static final int BLOCK_FRAMES = 4096;
-
     /**
      * Constructs the writer.
      */
@@ -56,9 +60,13 @@ public final class SmaltAudioFileWriter extends AudioFileWriter {
 
     @Override
     public AudioFileFormat.Type[] getAudioFileTypes() {
-        return AudioEncoders.isSupported(Codec.OPUS)
-                ? new AudioFileFormat.Type[]{SmaltAudioFormats.OGG_OPUS}
-                : new AudioFileFormat.Type[0];
+        var types = new ArrayList<AudioFileFormat.Type>();
+        for (var type : EncodedFiles.WRITTEN_TYPES) {
+            if (EncodedFiles.forFileType(type, null).isPresent()) {
+                types.add(type);
+            }
+        }
+        return types.toArray(AudioFileFormat.Type[]::new);
     }
 
     @Override
@@ -77,7 +85,7 @@ public final class SmaltAudioFileWriter extends AudioFileWriter {
         Objects.requireNonNull(out, "out");
         check(stream, fileType);
         try (var sink = MediaSink.of(out)) {
-            return encode(stream, sink);
+            return write(stream, fileType, sink);
         } catch (MediaException.Io exception) {
             throw exception.getCause();
         } catch (MediaException exception) {
@@ -85,12 +93,17 @@ public final class SmaltAudioFileWriter extends AudioFileWriter {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The stream is not closed.
+     */
     @Override
     public int write(AudioInputStream stream, AudioFileFormat.Type fileType, File out) throws IOException {
         Objects.requireNonNull(out, "out");
         check(stream, fileType);
         try (var sink = MediaSink.of(out.toPath())) {
-            return encode(stream, sink);
+            return write(stream, fileType, sink);
         } catch (MediaException.Io exception) {
             throw exception.getCause();
         } catch (MediaException exception) {
@@ -117,174 +130,63 @@ public final class SmaltAudioFileWriter extends AudioFileWriter {
      * Returns whether a stream format can be written.
      *
      * @param format the stream format
-     * @return {@code true} for a PCM format {@link SampledAudio} reads at a whole sample rate, or a
-     * format Java Sound converts to {@link AudioFormat.Encoding#PCM_SIGNED}
+     * @return {@code true} for a format {@link SampledAudio} reads at a whole sample rate, or a format
+     * Java Sound converts to {@link AudioFormat.Encoding#PCM_SIGNED}
      */
     private static boolean isWritable(AudioFormat format) {
         if (SampledAudio.isSupported(format)) {
-            var rate = format.getSampleRate();
-            return rate > 0 && rate == Math.rint(rate);
+            return isWholeRate(format);
         }
         return AudioSystem.isConversionSupported(AudioFormat.Encoding.PCM_SIGNED, format);
     }
 
     /**
-     * Encodes a stream as Ogg Opus.
+     * Returns whether a format's sample rate is a positive whole number.
+     *
+     * @param format the format whose rate is checked
+     * @return {@code true} for a positive whole rate
+     */
+    static boolean isWholeRate(AudioFormat format) {
+        var rate = format.getSampleRate();
+        return rate > 0 && rate == Math.rint(rate);
+    }
+
+    /**
+     * Writes a stream as a file of a type.
      *
      * @param stream the input
+     * @param fileType the type
      * @param sink the output
      * @return the number of bytes written, capped at {@link Integer#MAX_VALUE}
      * @throws IOException if reading the input fails
      */
-    private static int encode(AudioInputStream stream, MediaSink sink) throws IOException {
-        var input = SampledAudio.isSupported(stream.getFormat())
+    private static int write(AudioInputStream stream, AudioFileFormat.Type fileType, MediaSink sink)
+            throws IOException {
+        if (stream instanceof EncodingAudioInputStream encoded
+                && EncodedFiles.isFileOf(fileType, encoded.target(), encoded.input())) {
+            var buffer = new byte[64 * 1024];
+            for (var read = encoded.read(buffer); read >= 0; read = encoded.read(buffer)) {
+                sink.write(ByteBuffer.wrap(buffer, 0, read));
+            }
+            return (int) Math.min(Integer.MAX_VALUE, sink.position());
+        }
+        var input = SampledAudio.isSupported(stream.getFormat()) && isWholeRate(stream.getFormat())
                 ? stream
                 : AudioSystem.getAudioInputStream(AudioFormat.Encoding.PCM_SIGNED, stream);
         var format = input.getFormat();
-        var inputRate = Math.round(format.getSampleRate());
-        var inputLayout = SampledAudio.layoutOf(format);
-        var outputLayout = inputLayout.channels() <= 2 ? inputLayout : ChannelLayout.STEREO;
-        try (var encoder = EncoderTail.open(Codec.OPUS, inputRate, outputLayout, false, true, AudioEncoderOptions::of);
-             var muxer = new OggMuxer(sink)) {
-            muxer.addTrack(EncoderTail.track(encoder, TRACK_ID).build());
-            var pipeline = new Pipeline(encoder, new EncoderTail(TRACK_ID, muxer::writePacket), inputRate,
-                    inputLayout);
+        var target = EncodedFiles.forFileType(fileType, format).orElseThrow();
+        try (var encoder = target.open(format, sink)) {
             var frameSize = SampledAudio.frameSize(format);
-            var bytes = new byte[BLOCK_FRAMES * frameSize];
-            var planes = new float[inputLayout.channels()][BLOCK_FRAMES];
+            var bytes = new byte[EncodedFiles.PcmEncoder.BLOCK_FRAMES * frameSize];
             while (true) {
                 var read = input.readNBytes(bytes, 0, bytes.length);
-                var frames = read / frameSize;
-                if (frames > 0) {
-                    SampledAudio.read(bytes, 0, frames, format, planes, 0);
-                    pipeline.accept(planes, frames);
-                }
+                encoder.write(bytes, 0, read / frameSize);
                 if (read < bytes.length) {
                     break;
                 }
             }
-            pipeline.finish();
-            muxer.finish();
+            encoder.finish();
             return (int) Math.min(Integer.MAX_VALUE, sink.position());
-        }
-    }
-
-    /**
-     * Downmixes, resamples and encodes blocks of input.
-     */
-    private static final class Pipeline {
-        /**
-         * The encoder.
-         */
-        private final AudioEncoder encoder;
-
-        /**
-         * Receives the packets one behind and trims the last.
-         */
-        private final EncoderTail writer;
-
-        /**
-         * The downmixer, or {@code null} when the input layout is coded as is.
-         */
-        private final ChannelMixer mixer;
-
-        /**
-         * The resampler, or {@code null} when the input rate is coded as is.
-         */
-        private final Resampler resampler;
-
-        /**
-         * The downmixed block, or {@code null} without a downmixer.
-         */
-        private float[][] mixed;
-
-        /**
-         * The resampled block, or {@code null} without a resampler.
-         */
-        private float[][] resampled;
-
-        /**
-         * The number of frames passed to the encoder.
-         */
-        private long samples;
-
-        /**
-         * Constructs the pipeline.
-         *
-         * @param encoder the open Opus encoder
-         * @param writer receives the packets
-         * @param inputRate the input rate, in hertz
-         * @param inputLayout the input layout
-         */
-        private Pipeline(AudioEncoder encoder, EncoderTail writer, int inputRate, ChannelLayout inputLayout) {
-            this.encoder = encoder;
-            this.writer = writer;
-            var layout = encoder.layout();
-            this.mixer = layout.equals(inputLayout) ? null : new ChannelMixer(inputLayout, layout);
-            this.resampler = encoder.sampleRate() == inputRate
-                    ? null
-                    : new Resampler(inputRate, encoder.sampleRate(), layout.channels(), Resampler.Quality.STANDARD);
-        }
-
-        /**
-         * Encodes a block of input.
-         *
-         * @param planes the block, at the input rate and layout
-         * @param frames the number of frames in the block
-         */
-        private void accept(float[][] planes, int frames) {
-            var block = planes;
-            if (mixer != null) {
-                mixed = capacity(mixed, frames);
-                mixer.process(block, mixed, frames);
-                block = mixed;
-            }
-            if (resampler == null) {
-                push(block, frames);
-                return;
-            }
-            resampled = capacity(resampled, resampler.maxOutputFrames(frames));
-            push(resampled, resampler.process(block, frames, resampled, 0));
-        }
-
-        /**
-         * Encodes the resampler's remaining output, flushes the encoder and ends the stream at the
-         * last input sample.
-         */
-        private void finish() {
-            if (resampler != null) {
-                resampled = capacity(resampled, resampler.maxOutputFrames(0));
-                push(resampled, resampler.flush(resampled, 0));
-            }
-            encoder.flush(writer);
-            writer.finish(samples + encoder.delay());
-        }
-
-        /**
-         * Encodes samples at the coded rate and layout.
-         *
-         * @param planes the samples
-         * @param frames the number of frames
-         */
-        private void push(float[][] planes, int frames) {
-            if (frames > 0) {
-                encoder.encode(new AudioBuffer(encoder.layout(), encoder.sampleRate(), planes, frames), writer);
-                samples += frames;
-            }
-        }
-
-        /**
-         * Returns planes of the coded layout holding at least a number of frames.
-         *
-         * @param planes the current planes, or {@code null}
-         * @param frames the frames needed
-         * @return {@code planes}, or larger new planes
-         */
-        private float[][] capacity(float[][] planes, int frames) {
-            if (planes != null && planes[0].length >= frames) {
-                return planes;
-            }
-            return new float[encoder.layout().channels()][Math.max(frames, BLOCK_FRAMES)];
         }
     }
 }

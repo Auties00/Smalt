@@ -14,27 +14,34 @@ final class EncodedBlock {
     /**
      * The left edge in sub-band coordinates.
      */
-    final int x0;
+    final long x0;
 
     /**
      * The top edge in sub-band coordinates.
      */
-    final int y0;
+    final long y0;
 
     /**
      * The right edge in sub-band coordinates (exclusive).
      */
-    final int x1;
+    final long x1;
 
     /**
      * The bottom edge in sub-band coordinates (exclusive).
      */
-    final int y1;
+    final long y1;
 
     /**
      * The number of magnitude bit-planes coded; zero or negative when the block is all zero.
      */
     int bitPlanes;
+
+    /**
+     * The number of bit-planes a region of interest adds above the sub-band's {@code Mb} in the block's count of
+     * zero bit-planes: the max-shift scaling of the tile-component when the block is coded in the scaled domain, 0
+     * otherwise.
+     */
+    int roiPlanes;
 
     /**
      * The number of coding passes.
@@ -97,6 +104,52 @@ final class EncodedBlock {
     int lengthBits;
 
     /**
+     * The number of rate-distortion candidates of a high-throughput block: the HT sets it can be coded with.
+     */
+    int candidates;
+
+    /**
+     * The cleanup pass's bit-plane of each candidate.
+     */
+    int[] candidatePlane = new int[0];
+
+    /**
+     * The number of passes of each candidate, 1 or 3.
+     */
+    int[] candidatePasses = new int[0];
+
+    /**
+     * The cumulative byte count after each pass of each candidate, three entries per candidate.
+     */
+    int[] candidateRate = new int[0];
+
+    /**
+     * The cumulative weighted distortion reduction after each pass of each candidate, three entries per
+     * candidate.
+     */
+    double[] candidateDistortion = new double[0];
+
+    /**
+     * The candidates on the lower convex hull of the block's rate-distortion points, by increasing rate.
+     */
+    int[] hull = new int[0];
+
+    /**
+     * The number of entries used in {@link #hull}.
+     */
+    int hullSize;
+
+    /**
+     * The candidates sorted by rate, while {@link #buildHull()} runs.
+     */
+    private int[] candidateOrder = new int[0];
+
+    /**
+     * The chosen candidate, or {@code -1} when the block is left out.
+     */
+    int chosen = -1;
+
+    /**
      * Constructs a code-block.
      *
      * @param x0 the left edge
@@ -104,7 +157,7 @@ final class EncodedBlock {
      * @param x1 the right edge
      * @param y1 the bottom edge
      */
-    EncodedBlock(int x0, int y0, int x1, int y1) {
+    EncodedBlock(long x0, long y0, long x1, long y1) {
         this.x0 = x0;
         this.y0 = y0;
         this.x1 = x1;
@@ -139,9 +192,150 @@ final class EncodedBlock {
     }
 
     /**
+     * Makes room for a number of candidates, discarding the previous ones.
+     *
+     * @param count the number of candidates
+     */
+    void resetCandidates(int count) {
+        if (candidatePlane.length < count) {
+            candidatePlane = new int[count];
+            candidatePasses = new int[count];
+            candidateRate = new int[3 * count];
+            candidateDistortion = new double[3 * count];
+            hull = new int[count + 1];
+            candidateOrder = new int[count];
+        }
+        candidates = 0;
+        hullSize = 0;
+        chosen = -1;
+    }
+
+    /**
+     * Records a candidate.
+     *
+     * @param plane the cleanup pass's bit-plane
+     * @param passes the number of passes, 1 or 3
+     * @param rates the cumulative byte count after each pass
+     * @param distortions the cumulative distortion reduction after each pass
+     */
+    void addCandidate(int plane, int passes, int[] rates, double[] distortions) {
+        var c = candidates++;
+        candidatePlane[c] = plane;
+        candidatePasses[c] = passes;
+        for (var p = 0; p < 3; p++) {
+            candidateRate[3 * c + p] = rates[p];
+            candidateDistortion[3 * c + p] = distortions[p];
+        }
+    }
+
+    /**
+     * Returns the byte count of a candidate.
+     *
+     * @param candidate the candidate index
+     * @return the bytes of all its passes
+     */
+    int candidateBytes(int candidate) {
+        return candidateRate[3 * candidate + candidatePasses[candidate] - 1];
+    }
+
+    /**
+     * Returns the distortion reduction of a candidate.
+     *
+     * @param candidate the candidate index
+     * @return the reduction of all its passes
+     */
+    double candidateGain(int candidate) {
+        return candidateDistortion[3 * candidate + candidatePasses[candidate] - 1];
+    }
+
+    /**
+     * Builds the lower convex hull of the candidates' rate-distortion points, starting from the empty block.
+     */
+    void buildHull() {
+        hullSize = 0;
+        var order = candidateOrder;
+        for (var i = 0; i < candidates; i++) {
+            var j = i;
+            while (j > 0 && precedes(i, order[j - 1])) {
+                order[j] = order[j - 1];
+                j--;
+            }
+            order[j] = i;
+        }
+        for (var k = 0; k < candidates; k++) {
+            var c = order[k];
+            var rate = candidateBytes(c);
+            var gain = candidateGain(c);
+            if (gain <= (hullSize == 0 ? 0 : candidateGain(hull[hullSize - 1]))) {
+                continue;
+            }
+            while (hullSize > 0) {
+                var last = hull[hullSize - 1];
+                var previousRate = hullSize > 1 ? candidateBytes(hull[hullSize - 2]) : 0;
+                var previousGain = hullSize > 1 ? candidateGain(hull[hullSize - 2]) : 0;
+                var lastSlope = (candidateGain(last) - previousGain) / (candidateBytes(last) - previousRate);
+                var slope = (gain - previousGain) / (rate - previousRate);
+                if (slope >= lastSlope) {
+                    hullSize--;
+                } else {
+                    break;
+                }
+            }
+            hull[hullSize++] = c;
+        }
+    }
+
+    /**
+     * Returns whether a candidate comes before another in rate order, the larger gain first at equal rates.
+     *
+     * @param a the first candidate
+     * @param b the second candidate
+     * @return whether {@code a} precedes {@code b}
+     */
+    private boolean precedes(int a, int b) {
+        var byRate = Integer.compare(candidateBytes(a), candidateBytes(b));
+        return byRate != 0 ? byRate < 0 : candidateGain(a) > candidateGain(b);
+    }
+
+    /**
+     * Returns the hull candidate the slope threshold selects: the last one whose slope from its predecessor is
+     * at least the threshold.
+     *
+     * @param threshold the slope threshold
+     * @return the candidate, or {@code -1} for none
+     */
+    int select(double threshold) {
+        var position = hullPosition(threshold);
+        return position < 0 ? -1 : hull[position];
+    }
+
+    /**
+     * Returns the position on the hull of the candidate {@link #select} returns.
+     *
+     * @param threshold the slope threshold
+     * @return the position, or {@code -1} for none
+     */
+    int hullPosition(double threshold) {
+        var position = -1;
+        var previousRate = 0;
+        var previousGain = 0.0;
+        for (var i = 0; i < hullSize; i++) {
+            var c = hull[i];
+            var slope = (candidateGain(c) - previousGain) / (candidateBytes(c) - previousRate);
+            if (slope < threshold) {
+                break;
+            }
+            position = i;
+            previousRate = candidateBytes(c);
+            previousGain = candidateGain(c);
+        }
+        return position;
+    }
+
+    /**
      * Returns the number of bytes of a pass.
      *
-     * @param pass the pass
+     * @param pass the pass index, from 0
      * @return the bytes it adds to the previous passes
      */
     int passLength(int pass) {
