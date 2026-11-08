@@ -88,12 +88,53 @@ final class CoreDecoder {
         if (lpdMode) {
             checkLpd(element);
             lpd.decode(reader, channel, independent);
+            received(channel);
             return;
         }
         var tns = !lfe && reader.readFlag();
         readFdStream(reader, channel, element, independent, false, false, tns ? 1 : 0);
         channel.fd.applyTns();
-        synthesize(channel, element);
+        synthesize(channel, element, true);
+        received(channel);
+    }
+
+    /**
+     * Advances the concealment state of a channel whose frame was decoded and applies the fade that follows a loss.
+     */
+    private void received(UsacChannel channel) {
+        channel.complete = true;
+        if (channel.lpd) {
+            channel.ec.advanceLpd(true);
+        } else {
+            channel.ec.advanceFd(true);
+        }
+        channel.ec.fade(channel.output, frameLength);
+    }
+
+    /**
+     * Conceals a lost frame of a channel in its last coding mode: a frequency domain channel repeats its last
+     * spectrum and a linear prediction domain channel extrapolates its excitation, fading out over the lost frames.
+     *
+     * @param channel the state of the channel
+     * @param element the element configuration
+     */
+    void conceal(UsacChannel channel, UsacConfig.Element element) {
+        channel.lastLpd = channel.lpd;
+        var ec = channel.ec;
+        if (channel.lpd) {
+            ec.advanceLpd(false);
+            lpd.conceal(channel);
+        } else {
+            ec.advanceFd(false);
+            var fd = channel.fd;
+            fd.windowSequence = ec.concealSpectrum(fd.spectrum, channel.lastSequence, channel.seed);
+            fd.windowShape = ec.shape;
+            fd.facPresent = false;
+            fd.twPresent = false;
+            synthesize(channel, element, false);
+        }
+        ec.fade(channel.output, frameLength);
+        channel.complete = true;
     }
 
     /**
@@ -142,8 +183,9 @@ final class CoreDecoder {
                 var tns = reader.readFlag();
                 readFdStream(reader, channel, element, independent, false, false, tns ? 1 : 0);
                 channel.fd.applyTns();
-                synthesize(channel, element);
+                synthesize(channel, element, true);
             }
+            received(channel);
         }
     }
 
@@ -227,8 +269,10 @@ final class CoreDecoder {
         }
         saveSpectrum(info, l.spectrum, left.savedSpectrum);
         saveSpectrum(info, r.spectrum, right.savedSpectrum);
-        synthesize(left, element);
-        synthesize(right, element);
+        synthesize(left, element, true);
+        synthesize(right, element, true);
+        received(left);
+        received(right);
     }
 
     /**
@@ -266,8 +310,16 @@ final class CoreDecoder {
         reader.checkNotOverrun();
     }
 
-    private void synthesize(UsacChannel channel, UsacConfig.Element element) {
+    /**
+     * Synthesizes a frequency domain frame.
+     *
+     * @param received whether the frame was decoded, which makes its spectrum the one a later loss repeats
+     */
+    private void synthesize(UsacChannel channel, UsacConfig.Element element, boolean received) {
         var fd = channel.fd;
+        if (received) {
+            channel.ec.save(fd.spectrum, fd.windowSequence, fd.windowShape);
+        }
         if (element.timeWarping()) {
             synthesizeWarped(channel);
             return;

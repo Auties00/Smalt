@@ -1,6 +1,8 @@
 /* Ports libxaac (decoder/ixheaacd_acelp_bitparse.c, ixheaacd_lpc.c, ixheaacd_lpc_dec.c,
    ixheaacd_acelp_decode.c, ixheaacd_acelp_tools.c, ixheaacd_tcx_fwd_mdct.c, ixheaacd_tcx_fwd_alcnx.c,
-   ixheaacd_fwd_alias_cnx.c: the linear prediction domain decoder and its transitions), commit 2fbadd57.
+   ixheaacd_fwd_alias_cnx.c: the linear prediction domain decoder and its transitions; ixheaacd_usac_ec.c and the
+   ec_flag paths of ixheaacd_lpc.c, ixheaacd_acelp_decode.c and ixheaacd_tcx_fwd_alcnx.c: its error concealment),
+   commit 2fbadd57.
    Copyright 2018 The Android Open Source Project; Apache License 2.0. Modified for Smalt. */
 package com.github.auties00.smalt.audio.aac.internal.usac;
 
@@ -111,6 +113,11 @@ final class LpdDecoder {
     private final float[] transitionFilters = new float[9 * (ORDER + 1)];
     private final float[] bassNoise = new float[FILTER_DELAY + 2 * SUBFRAME];
     private final float[] bassOut = new float[1024 + SUBFRAME];
+    private final float[] lostHistory = new float[MAX_PITCH + ORDER + 1];
+    private final float[] lostExcitation = new float[MAX_PITCH + ORDER + 1 + 256];
+    private final float[] lostSynth = new float[ORDER + 256];
+    private final float[] lostSignal = new float[1 + SUBFRAME];
+    private final float[] lostFilter = new float[ORDER + 1];
 
     /**
      * Constructs the decoder of a frame length.
@@ -177,12 +184,48 @@ final class LpdDecoder {
      */
     void decode(AacBitReader reader, UsacChannel channel, boolean independent) {
         var state = channel.lpdState;
+        var lastMode = channel.lastLpd ? state.modePrevious : channel.lastSequence == FdChannel.EIGHT_SHORT ? -2 : -1;
+        parse(reader, channel, independent, lastMode);
+        reader.checkNotOverrun();
         if (!channel.lastLpd) {
             resetFromFd(channel);
         }
-        parse(reader, channel, independent);
-        reader.checkNotOverrun();
+        System.arraycopy(mod, 0, state.receivedMod, 0, 4);
+        System.arraycopy(meanEnergy, 0, state.receivedMeanEnergy, 0, 4);
+        System.arraycopy(ltpFilter, 0, state.receivedLtpFilter, 0, 16);
+        state.receivedBassPostFilter = bassPostFilter;
+        state.receivedFirstLpd = firstLpd;
+        state.lostDivisions = 0;
         synthesize(channel, state);
+        combine(channel);
+        channel.previousShape = 0;
+        channel.lastSequence = FdChannel.EIGHT_SHORT;
+    }
+
+    /**
+     * Conceals a lost frame of a channel whose last frame was coded in the linear prediction domain
+     * ({@code ixheaacd_lpd_dec} without a valid frame): the LPC filters move from the last received ones toward
+     * their long-term mean, an ACELP channel continues its pitch with a random innovation at decaying gains, a TCX
+     * channel repeats its last spectrum with random signs, or its excitation at the estimated pitch, at the last gain.
+     *
+     * @param channel the state of the channel, whose concealment state has already advanced
+     */
+    void conceal(UsacChannel channel) {
+        var state = channel.lpdState;
+        System.arraycopy(state.receivedMod, 0, mod, 0, 4);
+        System.arraycopy(state.receivedMeanEnergy, 0, meanEnergy, 0, 4);
+        System.arraycopy(state.receivedLtpFilter, 0, ltpFilter, 0, 16);
+        bassPostFilter = state.receivedBassPostFilter;
+        firstLpd = false;
+        var ec = channel.ec;
+        if (ec.state == UsacConcealment.MUTE) {
+            Arrays.fill(state.tcxSpectrum, 0f);
+        } else {
+            UsacConcealment.flip(state.tcxSpectrum, frameLength, channel.seed);
+        }
+        System.arraycopy(state.receivedLsf4, 0, state.extrapolatedLsf4, 0, ORDER);
+        UsacConcealment.extrapolateLsf(lsf, state.extrapolatedLsf4, state.adaptiveMean, state.receivedFirstLpd);
+        concealSynthesis(channel, state);
         combine(channel);
         channel.previousShape = 0;
         channel.lastSequence = FdChannel.EIGHT_SHORT;
@@ -217,8 +260,13 @@ final class LpdDecoder {
         }
     }
 
-    private void parse(AacBitReader reader, UsacChannel channel, boolean independent) {
-        var state = channel.lpdState;
+    /**
+     * Reads {@code lpd_channel_stream()}.
+     *
+     * @param lastMode the mode of the last division before the frame: 0 for ACELP, above 0 for TCX, -1 after a
+     * frequency domain frame with long windows and -2 after one with short windows
+     */
+    private void parse(AacBitReader reader, UsacChannel channel, boolean independent, int lastMode) {
         coreMode = reader.read(3);
         var lpdMode = reader.read(5);
         if (lpdMode > 25) {
@@ -247,7 +295,6 @@ final class LpdDecoder {
         var coreModeLast = reader.read(1);
         facPresent = reader.readFlag();
         firstLpd = coreModeLast == 0;
-        var lastMode = state.modePrevious;
         var quantOffset = 0;
         var firstTcx = true;
         var k = 0;
@@ -681,23 +728,13 @@ final class LpdDecoder {
 
     private void synthesize(UsacChannel channel, LpdState state) {
         var synthBase = MAX_PITCH + synthDelay;
-        Arrays.fill(synthBuffer, 0f);
-        System.arraycopy(state.synthPrevious, 0, synthBuffer, 0, MAX_PITCH + synthDelay);
         var excitationBase = MAX_PITCH + INTERPOLATION_ORDER + 1;
-        Arrays.fill(excitationBuffer, 0f);
-        System.arraycopy(state.excitationPrevious, 0, excitationBuffer, 0, excitationBase);
-        for (var i = 0; i < half; i++) {
-            pitch[i] = state.pitchPrevious[i];
-            pitchGain[i] = state.gainPrevious[i];
-        }
-        for (var i = 0; i < superframeSubframes; i++) {
-            pitch[i + half] = 64;
-            pitchGain[i + half] = 0f;
-        }
+        begin(state);
         if (!firstLpd) {
             lspToLsf(state.lspOld, lsf, 0);
         }
         dequantizeLpc();
+        keepLsf(state);
         if (firstLpd) {
             System.arraycopy(lsf, 0, state.lsfPrevious, 0, ORDER);
             lsfToLsp(state.lsfPrevious, 0, state.lspOld);
@@ -723,9 +760,10 @@ final class LpdDecoder {
                 distance += d * d;
             }
             stability = Math.clamp(1.25f - distance / 400000.0f, 0.0f, 1.0f);
+            state.stabilityPrevious = stability;
             if (mode == 0) {
                 interpolate(state.lspOld, lspCurrent, filters, subframes);
-                acelp(state, k, stability, synthBase + k * division, excitationBase + k * division);
+                acelp(state, k, stability, synthBase + k * division, excitationBase + k * division, false);
                 if (state.modePrevious != 0 && bassPostFilter) {
                     var i = k * subframes + half;
                     pitch[i - 1] = pitch[i];
@@ -740,13 +778,109 @@ final class LpdDecoder {
                 var length = division << (mode - 1);
                 var count = mode == 1 ? subframes : mode == 2 ? superframeSubframes / 2 : superframeSubframes;
                 tcxFilters(state.lspOld, lspCurrent, filters, count);
-                tcx(channel, state, k, length, synthBase + k * division, excitationBase + k * division);
+                tcx(channel, state, k, length, synthBase + k * division, excitationBase + k * division, false);
                 k += 1 << (mode - 1);
             }
             state.modePrevious = mode;
             System.arraycopy(lspCurrent, 0, state.lspOld, 0, ORDER);
             System.arraycopy(lsfCurrent, 0, state.lsfPrevious, 0, ORDER);
         }
+        finish(state);
+    }
+
+    /**
+     * Synthesizes a lost frame in the mode of the last division, from the extrapolated LSF vectors in {@link #lsf}.
+     */
+    private void concealSynthesis(UsacChannel channel, LpdState state) {
+        var synthBase = MAX_PITCH + synthDelay;
+        var excitationBase = MAX_PITCH + INTERPOLATION_ORDER + 1;
+        begin(state);
+        var k = 0;
+        while (k < 4) {
+            state.lostDivisions++;
+            var mode = state.modePrevious < 0 ? 3 : state.modePrevious;
+            System.arraycopy(lsf, (k + 1) * ORDER, lsfCurrent, 0, ORDER);
+            lsfToLsp(lsfCurrent, 0, lspCurrent);
+            var stability = state.stabilityPrevious;
+            if (mode <= 1) {
+                interpolate(state.lspOld, lspCurrent, filters, subframes);
+                if (mode == 0) {
+                    acelp(state, k, stability, synthBase + k * division, excitationBase + k * division, true);
+                } else {
+                    extrapolateTcx(state, synthBase + k * division);
+                    if (bassPostFilter) {
+                        var i = k * subframes + half;
+                        pitch[i - 1] = pitch[i];
+                        pitchGain[i - 1] = pitchGain[i];
+                        pitch[i - 2] = pitch[i];
+                        pitchGain[i - 2] = pitchGain[i];
+                    }
+                }
+                k++;
+            } else {
+                var length = division << (mode - 1);
+                var count = mode == 2 ? superframeSubframes / 2 : superframeSubframes;
+                tcxFilters(state.lspOld, lspCurrent, filters, count);
+                tcx(channel, state, k, length, synthBase + k * division, excitationBase + k * division, true);
+                k += 1 << (mode - 1);
+            }
+            state.modePrevious = mode;
+            System.arraycopy(lspCurrent, 0, state.lspOld, 0, ORDER);
+            System.arraycopy(lsfCurrent, 0, state.lsfPrevious, 0, ORDER);
+        }
+        finish(state);
+    }
+
+    /**
+     * Loads the synthesis and excitation histories and the pitch of the previous frame.
+     */
+    private void begin(LpdState state) {
+        Arrays.fill(synthBuffer, 0f);
+        System.arraycopy(state.synthPrevious, 0, synthBuffer, 0, MAX_PITCH + synthDelay);
+        Arrays.fill(excitationBuffer, 0f);
+        System.arraycopy(state.excitationPrevious, 0, excitationBuffer, 0, MAX_PITCH + INTERPOLATION_ORDER + 1);
+        for (var i = 0; i < half; i++) {
+            pitch[i] = state.pitchPrevious[i];
+            pitchGain[i] = state.gainPrevious[i];
+        }
+        for (var i = 0; i < superframeSubframes; i++) {
+            pitch[i + half] = 64;
+            pitchGain[i + half] = 0f;
+        }
+    }
+
+    /**
+     * Keeps the last LSF vector of a received frame and the mean of its newest vectors, the points a lost frame
+     * extrapolates from.
+     */
+    private void keepLsf(LpdState state) {
+        System.arraycopy(lsf, 4 * ORDER, state.receivedLsf4, 0, ORDER);
+        var present = 1 << 4 | (firstLpd ? 1 : 0) | (mod[0] < 3 ? 1 << 2 : 0) | (mod[0] < 2 ? 1 << 1 : 0)
+                | (mod[2] < 2 ? 1 << 3 : 0);
+        var count = 0;
+        var i = 4;
+        do {
+            count += (present >> i) & 1;
+            i--;
+        } while (i >= 0 && count < 3);
+        var last = i;
+        var factor = count == 3 ? 1.0f / 3.0f : count == 2 ? 1.0f / 2.0f : 1.0f;
+        for (var k = 0; k < ORDER; k++) {
+            var sum = 0.0f;
+            for (var j = 4; j > last; j--) {
+                if (((present >> j) & 1) != 0) {
+                    sum = sum + lsf[j * ORDER + k] * factor;
+                }
+            }
+            state.adaptiveMean[k] = sum;
+        }
+    }
+
+    /**
+     * Stores the histories and pitch of a synthesized frame and runs the bass postfilter.
+     */
+    private void finish(LpdState state) {
+        var excitationBase = MAX_PITCH + INTERPOLATION_ORDER + 1;
         System.arraycopy(excitationBuffer, frameLength, state.excitationPrevious, 0, excitationBase);
         System.arraycopy(synthBuffer, frameLength, state.synthPrevious, 0, MAX_PITCH + synthDelay);
         if (!bassPostFilter) {
@@ -915,8 +1049,11 @@ final class LpdDecoder {
 
     /**
      * Decodes one ACELP division ({@code ixheaacd_acelp_alias_cnx}).
+     *
+     * @param lost whether the division is concealed: the pitch lag is the last one, the innovation is random and
+     * the gains decay from the last ones
      */
-    private void acelp(LpdState state, int k, float stability, int synth, int excitation) {
+    private void acelp(LpdState state, int k, float stability, int synth, int excitation, boolean lost) {
         var fl = facLength;
         var s = synthBuffer;
         var e = excitationBuffer;
@@ -991,6 +1128,13 @@ final class LpdDecoder {
                 lag = lagMin + index / 4;
                 fraction = index - (lag - lagMin) * 4;
             }
+            if (lost) {
+                if (state.pitchLagPrevious >= pitchMax) {
+                    state.pitchLagPrevious = pitchMax - 5;
+                }
+                lag = state.pitchLagPrevious;
+                fraction = state.pitchFractionPrevious;
+            }
             if (lag > MAX_PITCH) {
                 throw new MediaException.Malformed("USAC ACELP pitch lag " + lag + " out of range");
             }
@@ -1003,7 +1147,16 @@ final class LpdDecoder {
                 }
                 System.arraycopy(code, 0, e, excitation + start, SUBFRAME);
             }
-            decodePulses(icbIndex[k * 4 + subframe], CODE_BITS[coreMode], code);
+            if (lost) {
+                var seed = state.innovationSeed;
+                for (var i = 0; i < SUBFRAME; i++) {
+                    seed = (short) (((seed * 31821) >> 1) + 13849);
+                    code[i] = (short) (seed >> 4) / 512.0f;
+                }
+                state.innovationSeed = seed;
+            } else {
+                decodePulses(icbIndex[k * 4 + subframe], CODE_BITS[coreMode], code);
+            }
             preemphasis(code, 0, SUBFRAME, 0f, TILT_CODE);
             var sharpLag = lag;
             if (fraction > 2) {
@@ -1020,18 +1173,33 @@ final class LpdDecoder {
                 innovation += code[i] * code[i];
             }
             var innovationEnergy = innovation;
-            var average = (float) (10.0 * StrictMath.log10(innovation / (float) SUBFRAME));
-            var estimate = meanCode - average;
-            estimate = (float) StrictMath.pow(10.0, 0.05 * estimate);
-            var gainPitch = LpdTables.GAINS[g * 2];
-            var gainCode = LpdTables.GAINS[g * 2 + 1] * estimate;
+            var innovationGain = (float) (1 / StrictMath.sqrt(innovation / SUBFRAME));
+            float gainPitch;
+            float gainCode;
+            if (lost) {
+                var pitchGainLost = Math.clamp(state.pastPitchGain, 0.5f, 0.95f);
+                gainPitch = pitchGainLost;
+                state.pastPitchGain = pitchGainLost * 0.95f;
+                var codeGainLost = state.pastCodeGain * (1.4f - state.pastPitchGain);
+                gainCode = codeGainLost * innovationGain;
+                state.pastCodeGain = codeGainLost;
+            } else {
+                var average = (float) (10.0 * StrictMath.log10(innovation / (float) SUBFRAME));
+                var estimate = meanCode - average;
+                estimate = (float) StrictMath.pow(10.0, 0.05 * estimate);
+                gainPitch = LpdTables.GAINS[g * 2];
+                gainCode = LpdTables.GAINS[g * 2 + 1] * estimate;
+                state.pastPitchGain = gainPitch;
+                state.pastCodeGain = gainCode / innovationGain;
+            }
             var pitchEnergy = 0.0f;
             for (var i = 0; i < SUBFRAME; i++) {
                 pitchEnergy += e[excitation + start + i] * e[excitation + start + i];
             }
             pitchEnergy *= gainPitch * gainPitch;
             innovationEnergy *= gainCode * gainCode;
-            var voicing = (pitchEnergy - innovationEnergy) / (pitchEnergy + innovationEnergy);
+            var total = pitchEnergy + innovationEnergy;
+            var voicing = total > 0 ? (pitchEnergy - innovationEnergy) / total : 0.0f;
             for (var i = 0; i < SUBFRAME; i++) {
                 postProcess[i] = gainPitch * e[excitation + start + i];
             }
@@ -1078,6 +1246,8 @@ final class LpdDecoder {
             filter += ORDER + 1;
             subframe++;
         }
+        state.pitchLagPrevious = lag;
+        state.pitchFractionPrevious = fraction;
         deemphasis(s, synth, division, s[synth - 1]);
         Arrays.fill(memory, 16, 16 + 128, 0f);
         synthesisInPlaceAt(filters, filter, memory, 16, 128);
@@ -1300,9 +1470,12 @@ final class LpdDecoder {
     }
 
     /**
-     * Decodes one TCX division ({@code ixheaacd_tcx_mdct}).
+     * Decodes one TCX block ({@code ixheaacd_tcx_mdct}).
+     *
+     * @param lost whether the block is concealed with the last received spectrum and gain
      */
-    private void tcx(UsacChannel channel, LpdState state, int k, int length, int synth, int excitation) {
+    private void tcx(UsacChannel channel, LpdState state, int k, int length, int synth, int excitation,
+                     boolean lost) {
         var fl = facLength;
         var previousFl = state.modePrevious == -2 ? frameLength / 16 : fl;
         var window = UsacTables.window(2 * fl, false);
@@ -1318,6 +1491,35 @@ final class LpdDecoder {
                 tail[i + fl + previousFl + 1] = 0.0f;
             }
         }
+        float gain;
+        if (lost) {
+            System.arraycopy(state.tcxSpectrum, 0, shaped, 0, length);
+            gain = state.tcxGain;
+        } else {
+            gain = shapeTcx(channel, state, k, length);
+        }
+        dct(length).transform(shaped, 0, dctOut, 0);
+        unfold(dctOut, xnBuffer, 2 * fl, length - 2 * fl);
+        var scale = 2.0f / length;
+        for (var i = 0; i < length + 2 * fl; i++) {
+            xnBuffer[i] *= scale;
+        }
+        state.facGain = gain * 0.5f * (float) StrictMath.sqrt((float) fl / (float) length);
+        if (!lost) {
+            for (var i = 0; i < fl / 4; i++) {
+                state.facWeights[i] = lowGains[i * length / (8 * fl)];
+            }
+        }
+        tcxSynthesis(state, k, length, synth, excitation, gain);
+    }
+
+    /**
+     * Dequantizes a received TCX spectrum, fills its empty bands with noise and shapes it with the LPC gains into
+     * {@link #shaped}, keeping the result for concealment.
+     *
+     * @return the global gain of the block
+     */
+    private float shapeTcx(UsacChannel channel, LpdState state, int k, int length) {
         var noise = 0.0625f * (8.0f - noiseFactor[k]);
         var quantOffset = 0;
         for (var i = 0; i < k; i++) {
@@ -1326,6 +1528,7 @@ final class LpdDecoder {
         for (var i = 0; i < length; i++) {
             x[i] = quant[quantOffset + i];
         }
+        state.tcxPitch = maxPitch(x, length >> 5);
         for (var i = length / 6; i < length; i += 8) {
             var end = Math.min(length, i + 8);
             var energy = 0.0f;
@@ -1352,16 +1555,119 @@ final class LpdDecoder {
         var rms = (float) StrictMath.sqrt(energy) / length;
         var gain = (float) StrictMath.pow(10.0f, globalGain[k] / 28.0f) / (rms * 2.0f);
         noiseShaping(x, length, division / 4, gains1, gains2);
-        dct(length).transform(shaped, 0, dctOut, 0);
-        unfold(dctOut, xnBuffer, 2 * fl, length - 2 * fl);
-        var scale = 2.0f / length;
-        for (var i = 0; i < length + 2 * fl; i++) {
-            xnBuffer[i] *= scale;
+        System.arraycopy(shaped, 0, state.tcxSpectrum, 0, length);
+        state.tcxGain = gain;
+        if (k == 2) {
+            System.arraycopy(filters, 2 * (ORDER + 1), state.concealmentFilter, 0, ORDER + 1);
         }
-        state.facGain = gain * 0.5f * (float) StrictMath.sqrt((float) fl / (float) length);
-        for (var i = 0; i < fl / 4; i++) {
-            state.facWeights[i] = lowGains[i * length / (8 * fl)];
+        return gain;
+    }
+
+    /**
+     * Estimates the pitch lag of a TCX spectrum from its strongest low-frequency line pair
+     * ({@code ixheaacd_calc_max_pitch}).
+     *
+     * @param n the number of line pairs to search
+     */
+    private static int maxPitch(float[] spectrum, int n) {
+        var max = 0.0f;
+        var index = 1;
+        for (var i = 1; i < n; i++) {
+            var magnitude = spectrum[2 * i] * spectrum[2 * i] + spectrum[2 * i + 1] * spectrum[2 * i + 1];
+            if (magnitude > max) {
+                max = magnitude;
+                index = i;
+            }
         }
+        var estimate = n / (float) index;
+        if (estimate >= 256) {
+            return 256;
+        }
+        var multiple = estimate;
+        while (multiple < 256) {
+            multiple += estimate;
+        }
+        return (int) (multiple - estimate);
+    }
+
+    /**
+     * Conceals a TCX division by repeating the excitation of the last frame at the estimated TCX pitch, attenuated
+     * by the number of lost divisions and limited by the last TCX gain ({@code ixheaacd_usac_tcx_ec}).
+     *
+     * @param synth the index of the division in {@link #synthBuffer}
+     */
+    private void extrapolateTcx(LpdState state, int synth) {
+        var length = division;
+        var s = synthBuffer;
+        var history = lostHistory;
+        var span = MAX_PITCH + ORDER + 1;
+        System.arraycopy(s, synth - span, history, 0, span);
+        var excitation = lostExcitation;
+        residualOne(state.concealmentFilter, 0, history, ORDER, excitation, 0, length);
+        var split = span - length;
+        residualOne(filters, 0, history, split, excitation, split, length);
+        var lag = Math.min(state.tcxPitch, MAX_PITCH);
+        var synthesis = lostSynth;
+        System.arraycopy(history, MAX_PITCH + 1, synthesis, 0, ORDER);
+        var attenuation = state.lostDivisions <= 8 ? UsacConcealment.EXCITATION_FADE[state.lostDivisions - 1] : 0.1f;
+        for (var i = 0; i < length; i++) {
+            excitation[span + i] = attenuation * excitation[span + i - lag];
+        }
+        var signal = lostSignal;
+        signal[0] = excitation[span - 1];
+        var limit = attenuation * state.tcxGain;
+        var coefficients = lostFilter;
+        for (var start = 0; start < length; start += SUBFRAME) {
+            var fNew = 0.5f - 0.5f / (length / SUBFRAME);
+            var fOld = 1.0f - fNew;
+            for (var i = 0; i < ORDER; i++) {
+                interpolated[i] = state.lspOld[i] * fOld + lspCurrent[i] * fNew;
+            }
+            lspToLp(interpolated, coefficients, 0);
+            filterFromStart(coefficients, excitation, span + start, synthesis, ORDER + start);
+            for (var i = 0; i < ORDER; i++) {
+                coefficients[i] *= LpdTables.GAMMA[i];
+            }
+            residualOne(coefficients, 0, synthesis, ORDER + start, signal, 1, SUBFRAME);
+            deemphasis(signal, 1, SUBFRAME, signal[0]);
+            for (var i = 1; i <= SUBFRAME; i++) {
+                signal[i] = Math.clamp(signal[i], -limit, limit);
+            }
+            for (var i = SUBFRAME; i >= 1; i--) {
+                signal[i] = signal[i] - PREEMPHASIS * signal[i - 1];
+            }
+            filterFromStart(coefficients, signal, 1, synthesis, ORDER + start);
+            System.arraycopy(synthesis, ORDER + start, s, synth + start, SUBFRAME);
+        }
+    }
+
+    /**
+     * Filters one subframe through {@code 1/A(z)} into {@code out} with the filter memory taken from the first
+     * {@code ORDER} values of {@code out} ({@code ixheaacd_synthesis_tool_float} as the TCX concealment calls it).
+     */
+    private void filterFromStart(float[] a, float[] in, int inOffset, float[] out, int outOffset) {
+        var buffer = synthesisBuffer;
+        System.arraycopy(out, 0, buffer, 0, ORDER);
+        for (var i = 0; i < SUBFRAME; i++) {
+            var value = in[inOffset + i];
+            for (var j = 1; j <= ORDER; j++) {
+                value -= a[j] * buffer[ORDER + i - j];
+            }
+            buffer[ORDER + i] = value;
+            out[outOffset + i] = value;
+        }
+    }
+
+    /**
+     * Turns the inverse transform of a TCX block in {@link #xnBuffer} into synthesis and excitation, with the
+     * forward aliasing cancellation of an ACELP division before it.
+     */
+    private void tcxSynthesis(LpdState state, int k, int length, int synth, int excitation, float gain) {
+        var fl = facLength;
+        var previousFl = state.modePrevious == -2 ? frameLength / 16 : fl;
+        var window = UsacTables.window(2 * fl, false);
+        var previousWindow = UsacTables.window(2 * previousFl, false);
+        var tail = state.tail;
         var xn1 = facSignal;
         if (state.modePrevious == 0) {
             for (var i = 0; i < previousFl; i++) {

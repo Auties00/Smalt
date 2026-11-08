@@ -118,7 +118,10 @@ import java.util.function.Consumer;
  * whose loudness normalization and DRC set selection follow {@link AacDecoderOptions#targetLevel()} and
  * {@link AacDecoderOptions#drcEffect()}. An element that uses the time-warped transform ({@code tw_mdct}, outside
  * the Extended HE AAC profile) and switches to the linear prediction domain coder raises
- * {@link MediaException.Unsupported} ({@code "usac tw-mdct lpd"}).
+ * {@link MediaException.Unsupported} ({@code "usac tw-mdct lpd"}). A USAC access unit whose data is corrupt is
+ * concealed from the first element that fails to decode, as a lost one is ({@link #conceal}), and so are the access
+ * units after a lost or corrupt one until one is independent ({@code usacIndependencyFlag}), since they depend on
+ * the state the lost data carried; an empty access unit counts as lost.
  *
  * <p>MPEG Surround (ISO/IEC 23003-1, object type 30) upmixes the decoded downmix of a Main, Low Complexity, SSR or
  * LTP stream, with or without spectral band replication, while {@link AacDecoderOptions#mpegSurround()} is on.
@@ -894,11 +897,11 @@ public final class AacDecoder implements AudioDecoder {
     /**
      * {@inheritDoc}
      *
-     * @return {@code true}, except for a USAC stream (object type 42), which does not conceal
+     * @return {@code true}
      */
     @Override
     public boolean supportsConcealment() {
-        return usac == null;
+        return true;
     }
 
     /**
@@ -914,26 +917,45 @@ public final class AacDecoder implements AudioDecoder {
      * band repeats the last envelope, 6 dB lower for each further block, until the core falls silent, and parametric
      * stereo keeps its last parameters; with MPEG Surround, the block is upmixed with the parameters of the last
      * spatial frame, and so are the blocks after the loss until a spatial frame whose {@code bsIndependencyFlag} is
-     * set. Before the first block, and after the channel layout changed, the span is silence. A USAC
-     * stream (object type 42) does not conceal.
+     * set. Before the first block, and after the channel layout changed, the span is silence.
+     *
+     * <p>A USAC stream (object type 42) conceals each unit in the coding mode of the last frame of each core channel,
+     * fading over the lost units: the first lost unit of a frequency domain channel repeats its last spectrum
+     * (short windows interleaved into a long stop window) and each further one repeats it with random signs, a
+     * linear prediction domain channel moves its LPC filters from the last ones toward their long-term mean and
+     * continues an ACELP excitation at the last pitch lag with a random innovation and decaying gains, repeats a
+     * long TCX spectrum with random signs at the last gain, or a 256-sample TCX excitation at its estimated pitch;
+     * the core output falls by an eighth for each lost unit after the first (from the first in the linear prediction
+     * domain), is silent from the ninth (the eighth) on, with its high band and upmix, and rises back by an eighth
+     * for each decoded unit. Enhanced spectral band replication repeats its last envelope one quantization
+     * step quieter for each unit (predictive vector coding keeps its last prediction index), MPEG Surround 2-1-2
+     * keeps the last parameter set of its last frame and the MPEG-D DRC decoder its last gains. The access units
+     * after the span are concealed until one is independent. With MPEG-D DRC, a span concealed before the first
+     * block produces fewer samples by the DRC delay, as the first decoded block does.
      *
      * @implNote This implementation substitutes spectra in the manner of the informative error concealment of
      * ISO/IEC 14496-3 but without its interpolation toward the next good block, which would delay the output by a
-     * block.
+     * block. The USAC concealment follows the error concealment of libxaac, without the frame of delay libxaac adds
+     * to its output while concealment is on, and keeps the spectrum of every decoded frame and the linear prediction
+     * state of each channel apart, where libxaac skips the first frame after a loss and shares that state between
+     * channels.
      * @throws IllegalArgumentException if {@code samples} is not positive
-     * @throws MediaException.Unsupported if the stream is USAC ({@code "usac concealment"})
      */
     @Override
     public int conceal(int samples, Consumer<AudioBuffer> output) {
         Checks.positive("samples", samples);
         Objects.requireNonNull(output, "output");
-        if (usac != null) {
-            // TODO: USAC needs concealment of its own (FD spectra, LPD excitation, eSBR, MPS212 and DRC state); its
-            //  decoder keeps no history of the last good frame yet.
-            throw new MediaException.Unsupported("usac concealment", "USAC streams cannot conceal lost packets");
-        }
         var unit = frameLength();
         var units = Math.min(Math.max(1, (samples + unit / 2) / unit), Integer.MAX_VALUE / unit);
+        if (usac != null) {
+            var produced = new int[1];
+            ConsumerFailure.<AudioBuffer>run("USAC concealment", output, emit -> {
+                for (var i = 0; i < units; i++) {
+                    produced[0] += usac.conceal(emit);
+                }
+            });
+            return produced[0];
+        }
         ConsumerFailure.<AudioBuffer>run("AAC concealment", output, emit -> {
             for (var i = 0; i < units; i++) {
                 emit.accept(decoder.conceal());

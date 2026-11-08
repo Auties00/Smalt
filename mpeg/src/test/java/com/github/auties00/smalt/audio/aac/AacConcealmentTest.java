@@ -1,6 +1,5 @@
 package com.github.auties00.smalt.audio.aac;
 
-import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
@@ -34,7 +33,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Checks {@link AacDecoder#conceal(int, java.util.function.Consumer)}, the error concealment of a lost raw data
  * block, on every object type the decoder conceals: Low Complexity streams of Smalt's encoder, AAC Main and LTP
  * streams of ffmpeg's encoder, the ISO/IEC 14496-26 conformance streams of AAC SSR, ER AAC LC, AAC-LD, AAC-ELD,
- * HE-AAC and HE-AAC v2, and an MPEG Surround stream whose concealed blocks stay upmixed; USAC rejects concealment.
+ * HE-AAC and HE-AAC v2, and an MPEG Surround stream whose concealed blocks stay upmixed; {@link UsacConcealmentTest}
+ * covers USAC.
  * Lost blocks keep the output length, repeat the last spectrum with random signs at a falling gain without clicks, and the
  * decode converges back to the reference after the loss: exactly for Low Complexity, once the predictors and the
  * extension's envelopes refresh for the others. A black-box comparison decodes a Low Complexity stream with its lost
@@ -231,7 +231,7 @@ class AacConcealmentTest {
         }
 
         @Test
-        @DisplayName("report no concealment for USAC and reject conceal with MediaException.Unsupported")
+        @DisplayName("report concealment for USAC and conceal whole blocks of its frame length")
         void usac() {
             byte[] seed;
             try (var input = AacConcealmentTest.class.getResourceAsStream(
@@ -248,10 +248,11 @@ class AacConcealmentTest {
                     .sampleRate(rate)
                     .build();
             try (var decoder = new AacDecoder(track)) {
-                assertTrue(!decoder.supportsConcealment());
-                var failure = assertThrows(MediaException.Unsupported.class,
-                        () -> decoder.conceal(1024, buffer -> { }));
-                assertTrue(failure.getMessage().contains("USAC"), failure.getMessage());
+                assertTrue(decoder.supportsConcealment());
+                var handed = new int[1];
+                var produced = decoder.conceal(decoder.frameLength() + 100, buffer -> handed[0] += buffer.frames());
+                assertEquals(handed[0], produced);
+                assertTrue(produced > 0 && produced <= decoder.frameLength(), "one unit, less the DRC delay");
             }
         }
     }

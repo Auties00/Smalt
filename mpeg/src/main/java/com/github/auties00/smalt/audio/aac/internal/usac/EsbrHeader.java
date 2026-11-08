@@ -100,6 +100,17 @@ final class EsbrHeader {
     }
 
     /**
+     * {@return whether another header defines the same frequency band tables}
+     *
+     * @param other the other header
+     */
+    boolean sameBands(EsbrHeader other) {
+        return startFrequency == other.startFrequency && stopFrequency == other.stopFrequency
+                && crossoverBand == other.crossoverBand && frequencyScale == other.frequencyScale
+                && alterScale == other.alterScale && noiseBands == other.noiseBands;
+    }
+
+    /**
      * Copies the default header of the configuration.
      *
      * @param header the default header

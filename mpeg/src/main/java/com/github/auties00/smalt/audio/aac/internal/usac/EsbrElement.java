@@ -34,6 +34,7 @@ final class EsbrElement {
 
     private boolean pvcFrame;
     private int parsedMode = UNKNOWN;
+    private final EsbrHeader savedHeader = new EsbrHeader();
 
     /**
      * Constructs the decoder of an element.
@@ -69,6 +70,41 @@ final class EsbrElement {
      * @throws MediaException.Malformed if the data is invalid
      */
     void read(AacBitReader reader, boolean independent) {
+        var header = channels[0].frame.header;
+        savedHeader.copyFrom(header);
+        var savedPvcFrame = pvcFrame;
+        var savedParsedMode = parsedMode;
+        for (var i = 0; i < dataChannels; i++) {
+            channels[i].frame.mark();
+        }
+        if (pvc != null) {
+            pvc.mark();
+        }
+        try {
+            readData(reader, independent);
+            reader.checkNotOverrun();
+        } catch (MediaException failure) {
+            pvcFrame = savedPvcFrame;
+            parsedMode = savedParsedMode;
+            for (var i = 0; i < dataChannels; i++) {
+                channels[i].frame.restore();
+            }
+            if (pvc != null) {
+                pvc.restore();
+                pvc.updateMode(savedHeader.pvcMode);
+            }
+            var rebuild = !header.sameBands(savedHeader);
+            for (var i = 0; i < dataChannels; i++) {
+                channels[i].frame.header.copyFrom(savedHeader);
+                if (rebuild) {
+                    channels[i].resetBands();
+                }
+            }
+            throw failure;
+        }
+    }
+
+    private void readData(AacBitReader reader, boolean independent) {
         var first = channels[0];
         var header = first.frame.header;
         var reset = header.read(reader, config.sbrHeader(), independent, pvc != null, first.active);
@@ -102,6 +138,19 @@ final class EsbrElement {
                         "USAC predictive vector coding in a channel pair element is not supported");
             }
             EsbrFrame.readPair(first.frame, channels[1].frame, reader, config.harmonicSbr(), config.interTes());
+        }
+    }
+
+    /**
+     * Replaces the frame data of a lost frame with the concealment of the last frame's, before {@link #process}.
+     */
+    void conceal() {
+        if (pvcFrame) {
+            channels[0].frame.concealPvc(pvc);
+            return;
+        }
+        for (var i = 0; i < dataChannels; i++) {
+            channels[i].frame.conceal();
         }
     }
 

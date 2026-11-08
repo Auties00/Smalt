@@ -1787,7 +1787,8 @@ Derived Smalt packages:
   audio.aac.internal.sbr (LowDelayQmfWindow, SbrFrameData, SbrTuning,
   SbrEncoderElement: the spectral band replication encoder)
   audio.aac.internal.usac (Avq, LpdDecoder, LpdState, LpdTables: the USAC
-  linear prediction domain decoder)
+  linear prediction domain decoder; UsacConcealment, EsbrFrame: the USAC
+  error concealment)
 
 Derivation: Huffman codeword reordering follows the codebook priorities,
 section sorting, segmentation and set-wise decoding of
@@ -1802,7 +1803,12 @@ decoder/ixheaacd_env_extr.c. The USAC linear prediction domain decoder
 (ACELP, TCX, the LPC and FAC decoding and the RE8 lattice of the AVQ) is
 translated from decoder/ixheaacd_acelp_*.c, ixheaacd_lpc*.c, ixheaacd_tcx_*.c,
 ixheaacd_fwd_alias_cnx.c, ixheaacd_avq_dec.c and the tables of
-ixheaacd_rom.c and ixheaacd_avq_rom.c. The tuning table of the spectral band
+ixheaacd_rom.c and ixheaacd_avq_rom.c. The USAC error concealment (its frame
+state machine, fade tables, sign flipping, LSF extrapolation, the ACELP and
+TCX concealment and the lean SBR concealment of the eSBR envelope) follows
+decoder/ixheaacd_usac_ec.c, ixheaacd_ec_rom.c, the ec_flag paths of
+ixheaacd_lpc.c, ixheaacd_acelp_decode.c and ixheaacd_tcx_fwd_alcnx.c, and
+ixheaacd_lean_sbrconcealment of ixheaacd_sbrdec_lpfuncs.c. The tuning table of the spectral band
 replication encoder is taken from sbr_tuning_table_lc of
 encoder/ixheaace_sbr_rom.c, with the inverse filtering region tables of
 detector_params_aac; its tonality estimation, inverse filtering decision,

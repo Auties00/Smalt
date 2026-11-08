@@ -62,13 +62,21 @@ public final class UsacDecoder {
     private final AudioBuffer output;
     private final AacBitReader reader = new AacBitReader(new byte[0]);
     private final float[][] channelOutputs;
-    private final MpegDrcDecoder drc;
+    private MpegDrcDecoder drc;
+    private final byte[] drcConfig;
+    private final DrcRequest drcRequest;
     private final float[][] drcWork;
     private byte[] drcPayload = new byte[0];
     private int drcPayloadLength;
     private boolean drcPayloadComplete;
     private int drcDiscard = -1;
     private boolean started;
+
+    /**
+     * Whether a frame was lost or failed to decode since the last independent access unit, which makes the dependent
+     * access units until the next independent one undecodable.
+     */
+    private boolean recovering;
 
     private static final class ElementState {
         final UsacConfig.Element config;
@@ -218,15 +226,24 @@ public final class UsacDecoder {
                 drcConfig = element.extensionConfig();
             }
         }
+        this.drcConfig = drcConfig;
+        this.drcRequest = request;
         if (drcConfig != null || config.loudnessInfo() != null) {
-            this.drc = new MpegDrcDecoder(config.samplingFrequency(), channelsOut, outputLength,
-                    esbr != null ? SBR_GAIN_DELAY : 0, drcConfig, config.loudnessInfo(), request.targetLoudness(),
-                    request.effectRequest(), request.boost(), request.compress(), true);
+            this.drc = newDrc();
             this.drcWork = new float[channelsOut][outputLength];
         } else {
             this.drc = null;
             this.drcWork = null;
         }
+    }
+
+    /**
+     * {@return a new MPEG-D DRC decoder for the configuration and the playback request}
+     */
+    private MpegDrcDecoder newDrc() {
+        return new MpegDrcDecoder(config.samplingFrequency(), channelOutputs.length, outputLength,
+                esbr != null ? SBR_GAIN_DELAY : 0, drcConfig, config.loudnessInfo(), drcRequest.targetLoudness(),
+                drcRequest.effectRequest(), drcRequest.boost(), drcRequest.compress(), true);
     }
 
     private static Speaker[] speakersOf(int[] positions) {
@@ -323,18 +340,27 @@ public final class UsacDecoder {
      * Decodes one access unit.
      *
      * <p>The first access unit of a stream also decodes the access units of its {@code AudioPreRoll()}, whose output
-     * is discarded. With MPEG-D DRC, the block of the first access unit is shorter by the DRC delay.
+     * is discarded. With MPEG-D DRC, the block of the first access unit is shorter by the DRC delay. An empty access
+     * unit is concealed as {@link #conceal(Consumer)} describes, so is a corrupt one from the first element that fails
+     * to decode, and so are the dependent access units after either until an independent one.
      *
      * @param data the input array
      * @param offset the index of the access unit's first byte
      * @param length the number of bytes
      * @param sink receives the decoded block, valid only during the call
-     * @throws MediaException.Malformed if the access unit is corrupt
+     * @throws MediaException.Unsupported if the access unit uses a tool the decoder does not implement; it emits no
+     * block, and the dependent access units after it are concealed
      */
     public void decode(byte[] data, int offset, int length, Consumer<AudioBuffer> sink) {
         if (!started) {
             started = true;
-            var preRoll = readPreRoll(data, offset, length);
+            byte[][] preRoll;
+            try {
+                preRoll = readPreRoll(data, offset, length);
+            } catch (MediaException.Malformed failure) {
+                conceal(sink);
+                return;
+            }
             if (preRoll != null) {
                 for (var unit : preRoll) {
                     decodeUnit(unit, 0, unit.length, null);
@@ -353,7 +379,7 @@ public final class UsacDecoder {
         if (drc == null || drcDiscard < 0) {
             return;
         }
-        var remaining = drc.delay() - drcDiscard;
+        var remaining = drcDiscard;
         while (remaining > 0) {
             for (var channel : drcWork) {
                 Arrays.fill(channel, 0.0f);
@@ -363,20 +389,72 @@ public final class UsacDecoder {
             emit(drcWork, 0, count, sink);
             remaining -= count;
         }
-        drcDiscard = drc.delay();
+        drcDiscard = 0;
+    }
+
+    /**
+     * Conceals one lost access unit, emitting a block of {@link #frameLength()} samples (shorter by the DRC delay
+     * when it is the first block): each core channel repeats or extrapolates its last frame in its last coding mode,
+     * fading to silence over eight frames, spectral band replication repeats its last envelope a quantization step
+     * lower each frame, MPEG Surround keeps its last parameters and the MPEG-D DRC decoder its last gains. The access
+     * units that follow are concealed too until one is independent.
+     *
+     * @param sink receives the block, valid only during the call
+     * @return the number of samples per channel emitted
+     */
+    public int conceal(Consumer<AudioBuffer> sink) {
+        drcPayloadComplete = false;
+        for (var element : elements) {
+            if (element.config.type() != UsacConfig.EXT) {
+                concealElement(element);
+            }
+        }
+        recovering = true;
+        return emitFrame(sink);
     }
 
     private void decodeUnit(byte[] data, int offset, int length, Consumer<AudioBuffer> sink) {
+        if (length == 0) {
+            conceal(sink);
+            return;
+        }
         reader.reset(data, offset, length);
         drcPayloadComplete = false;
         var independent = reader.readFlag();
-        for (var element : elements) {
-            decodeElement(element, independent);
-            reader.checkNotOverrun();
+        if (recovering && !independent) {
+            conceal(sink);
+            return;
         }
+        var failed = false;
+        try {
+            for (var element : elements) {
+                if (failed) {
+                    if (element.config.type() != UsacConfig.EXT) {
+                        concealElement(element);
+                    }
+                    continue;
+                }
+                failed = !decodeElement(element, independent) || reader.overrun();
+            }
+        } catch (MediaException.Unsupported failure) {
+            // The access unit emits no block; the dependent ones after it lack its state.
+            recovering = true;
+            throw failure;
+        }
+        recovering = failed;
+        emitFrame(sink);
+    }
+
+    /**
+     * Emits the block of the current frame.
+     *
+     * @param sink receives the block, or {@code null} to discard it
+     * @return the number of samples per channel emitted
+     */
+    private int emitFrame(Consumer<AudioBuffer> sink) {
         if (drc == null) {
             if (sink == null) {
-                return;
+                return 0;
             }
             for (var element : elements) {
                 var channels = element.config.outputChannels();
@@ -390,8 +468,34 @@ public final class UsacDecoder {
             }
             output.setFrames(outputLength);
             sink.accept(output);
-            return;
+            return outputLength;
         }
+        fillDrcWork();
+        try {
+            drc.process(drcWork, drcPayloadComplete ? drcPayload : null, 0, drcPayloadLength);
+        } catch (MediaException.Malformed failure) {
+            // A corrupt gain payload can leave gains the decoder cannot apply in this and later frames; a new
+            // decoder of the same configuration and delay continues from neutral gains.
+            drc = newDrc();
+            fillDrcWork();
+            drc.process(drcWork, null, 0, 0);
+        }
+        if (drcDiscard < 0) {
+            drcDiscard = 0;
+        }
+        if (sink == null) {
+            return 0;
+        }
+        var skip = Math.min(drc.delay() - drcDiscard, outputLength);
+        drcDiscard += skip;
+        emit(drcWork, skip, outputLength - skip, sink);
+        return outputLength - skip;
+    }
+
+    /**
+     * Copies the core output of the current frame into the input of the MPEG-D DRC decoder.
+     */
+    private void fillDrcWork() {
         for (var element : elements) {
             var channels = element.config.outputChannels();
             for (var c = 0; c < channels; c++) {
@@ -402,16 +506,6 @@ public final class UsacDecoder {
                 }
             }
         }
-        drc.process(drcWork, drcPayloadComplete ? drcPayload : null, 0, drcPayloadLength);
-        if (drcDiscard < 0) {
-            drcDiscard = 0;
-        }
-        if (sink == null) {
-            return;
-        }
-        var skip = Math.min(drc.delay() - drcDiscard, outputLength);
-        drcDiscard += skip;
-        emit(drcWork, skip, outputLength - skip, sink);
     }
 
     private void emit(float[][] source, int start, int count, Consumer<AudioBuffer> sink) {
@@ -469,24 +563,78 @@ public final class UsacDecoder {
         return units;
     }
 
-    private void decodeElement(ElementState element, boolean independent) {
+    /**
+     * Decodes one element of an access unit; when its data is corrupt, the rest of the element is concealed.
+     *
+     * @return whether the element decoded, which leaves the reader at the next element
+     */
+    private boolean decodeElement(ElementState element, boolean independent) {
         var config = element.config;
-        switch (config.type()) {
-            case UsacConfig.SCE -> core.decodeSingle(reader, element.channels[0], false, config, independent);
-            case UsacConfig.LFE -> core.decodeSingle(reader, element.channels[0], true, config, independent);
-            case UsacConfig.CPE -> {
-                if (config.stereoConfigIndex() == 1) {
-                    core.decodeSingle(reader, element.channels[0], false, config, independent);
-                } else {
-                    core.decodePair(reader, element.channels[0], element.channels[1], element.pair, config,
-                            independent);
-                }
-            }
-            default -> {
+        if (config.type() == UsacConfig.EXT) {
+            try {
                 readExtension(config);
-                return;
+                return true;
+            } catch (MediaException.Malformed failure) {
+                drcPayloadComplete = false;
+                return false;
             }
         }
+        for (var channel : element.channels) {
+            channel.mark();
+        }
+        var ok = true;
+        try {
+            switch (config.type()) {
+                case UsacConfig.SCE -> core.decodeSingle(reader, element.channels[0], false, config, independent);
+                case UsacConfig.LFE -> core.decodeSingle(reader, element.channels[0], true, config, independent);
+                default -> {
+                    if (config.stereoConfigIndex() == 1) {
+                        core.decodeSingle(reader, element.channels[0], false, config, independent);
+                    } else {
+                        core.decodePair(reader, element.channels[0], element.channels[1], element.pair, config,
+                                independent);
+                    }
+                }
+            }
+        } catch (MediaException.Malformed failure) {
+            ok = false;
+            for (var channel : element.channels) {
+                if (!channel.complete) {
+                    channel.restore();
+                    core.conceal(channel, config);
+                }
+            }
+        } catch (MediaException.Unsupported failure) {
+            for (var channel : element.channels) {
+                if (!channel.complete) {
+                    channel.restore();
+                }
+            }
+            throw failure;
+        }
+        return finishElement(element, independent, ok);
+    }
+
+    /**
+     * Conceals every channel of an element and the tools that follow its core coder.
+     */
+    private void concealElement(ElementState element) {
+        for (var channel : element.channels) {
+            core.conceal(channel, element.config);
+        }
+        finishElement(element, false, false);
+    }
+
+    /**
+     * Runs the tools that follow the core coder of an element: the pseudo left and right rotation, spectral band
+     * replication and MPEG Surround, whose data is read only while the element's data is intact and concealed
+     * otherwise.
+     *
+     * @param ok whether the element's data decoded so far
+     * @return whether the element's data decoded
+     */
+    private boolean finishElement(ElementState element, boolean independent, boolean ok) {
+        var config = element.config;
         var mps = element.mps;
         if (mps != null && config.stereoConfigIndex() > 1 && config.mps().pseudoLr()) {
             rotatePseudoLr(element.channels[0].output, element.channels[1].output);
@@ -494,14 +642,56 @@ public final class UsacDecoder {
         var sbr = element.sbr;
         if (sbr != null) {
             if (config.type() != UsacConfig.LFE) {
-                sbr.read(reader, independent);
+                if (ok) {
+                    try {
+                        sbr.read(reader, independent);
+                    } catch (MediaException.Malformed failure) {
+                        ok = false;
+                    }
+                }
+                if (!ok) {
+                    sbr.conceal();
+                }
             }
             sbr.process(element.sbrInput, element.sbrOutput, config.stereoConfigIndex(), mps == null);
+            if (!ok && muted(element)) {
+                for (var plane : element.sbrOutput) {
+                    Arrays.fill(plane, 0f);
+                }
+            }
         }
         if (mps != null) {
-            mps.read(reader, independent);
+            if (ok) {
+                try {
+                    mps.read(reader, independent);
+                } catch (MediaException.Malformed failure) {
+                    ok = false;
+                }
+            }
+            if (!ok) {
+                mps.conceal();
+            }
             mps.apply(element.mpsInputReal, element.mpsInputImag, esbr.qmf, element.mpsOutput, element.mpsHighBand);
+            if (!ok && muted(element)) {
+                for (var plane : element.mpsOutput) {
+                    Arrays.fill(plane, 0f);
+                }
+            }
         }
+        return ok;
+    }
+
+    /**
+     * {@return whether the concealment has faded every core channel of an element to silence}, which silences the
+     * high band and the upmix too
+     */
+    private static boolean muted(ElementState element) {
+        for (var channel : element.channels) {
+            if (channel.ec.fadeIndex < UsacConcealment.FADE_FRAMES) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

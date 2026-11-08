@@ -68,6 +68,31 @@ final class UsacChannel {
     TimeWarpedSynthesis.State warp;
 
     /**
+     * The error concealment state.
+     */
+    final UsacConcealment ec;
+
+    /**
+     * The value of {@link #lpd} before the current frame, restored when the frame fails to decode.
+     */
+    boolean savedLpd;
+
+    /**
+     * The value of {@link #lastLpd} before the current frame, restored when the frame fails to decode.
+     */
+    boolean savedLastLpd;
+
+    /**
+     * The noise state of {@link #seed} before the current frame, restored when the frame fails to decode.
+     */
+    int savedSeed;
+
+    /**
+     * Whether the current frame of the channel has been synthesized, decoded or concealed.
+     */
+    boolean complete;
+
+    /**
      * Constructs the state of a channel.
      *
      * @param frameLength the core frame length, 768 or 1024
@@ -79,6 +104,26 @@ final class UsacChannel {
         this.overlap = new float[2 * frameLength];
         this.output = new float[frameLength];
         this.savedSpectrum = new float[frameLength];
+        this.ec = new UsacConcealment(frameLength);
         this.seed[0] = seed;
+    }
+
+    /**
+     * Records the coding mode and the noise state before a frame is decoded.
+     */
+    void mark() {
+        savedLpd = lpd;
+        savedLastLpd = lastLpd;
+        savedSeed = seed[0];
+        complete = false;
+    }
+
+    /**
+     * Restores the coding mode and the noise state recorded by {@link #mark()}, after a frame failed to decode.
+     */
+    void restore() {
+        lpd = savedLpd;
+        lastLpd = savedLastLpd;
+        seed[0] = savedSeed;
     }
 }

@@ -57,6 +57,102 @@ final class LpdState {
     final float[] lastFilter = new float[ORDER + 1];
     final float[] acelpTail = new float[1 + 2 * FAC_LENGTH];
 
+    /**
+     * The division modes of the last received frame, which a lost frame continues.
+     */
+    final int[] receivedMod = new int[4];
+
+    /**
+     * The ACELP mean energy indices of the last received frame.
+     */
+    final int[] receivedMeanEnergy = new int[4];
+
+    /**
+     * The long term prediction filter flags of the last received frame.
+     */
+    final int[] receivedLtpFilter = new int[16];
+
+    /**
+     * Whether the last received frame enabled the bass postfilter.
+     */
+    boolean receivedBassPostFilter;
+
+    /**
+     * Whether the last received frame was the first of a run of linear prediction domain frames.
+     */
+    boolean receivedFirstLpd;
+
+    /**
+     * The fourth LSF vector of the last received frame, the start of the extrapolation over a loss.
+     */
+    final float[] receivedLsf4 = new float[ORDER];
+
+    /**
+     * The mean of the newest LSF vectors of the last received frame, which the extrapolation moves toward.
+     */
+    final float[] adaptiveMean = new float[ORDER];
+
+    /**
+     * The last LSF vector of the current extrapolation.
+     */
+    final float[] extrapolatedLsf4 = new float[ORDER];
+
+    /**
+     * The LPC stability factor of the last division, 0 to 1.
+     */
+    float stabilityPrevious;
+
+    /**
+     * The number of divisions concealed since the last received frame.
+     */
+    int lostDivisions;
+
+    /**
+     * The integer pitch lag of the last ACELP subframe, in samples.
+     */
+    int pitchLagPrevious;
+
+    /**
+     * The fractional pitch lag of the last ACELP subframe, in quarter samples.
+     */
+    int pitchFractionPrevious;
+
+    /**
+     * The adaptive codebook gain a lost ACELP subframe starts from, decaying per subframe.
+     */
+    float pastPitchGain;
+
+    /**
+     * The innovation gain a lost ACELP subframe starts from, before the innovation energy normalization.
+     */
+    float pastCodeGain;
+
+    /**
+     * The state of the random innovation of lost ACELP subframes.
+     */
+    short innovationSeed;
+
+    /**
+     * The shaped spectrum of the last received TCX block, which a lost long TCX block repeats.
+     */
+    final float[] tcxSpectrum = new float[1024];
+
+    /**
+     * The global gain of the last received TCX block.
+     */
+    float tcxGain;
+
+    /**
+     * The pitch lag estimated from the last received TCX spectrum, in samples, at most 256.
+     */
+    int tcxPitch;
+
+    /**
+     * The LPC filter of the third division of the last received TCX frame, which the TCX excitation extrapolation
+     * analyzes the past synthesis with.
+     */
+    final float[] concealmentFilter = new float[ORDER + 1];
+
     LpdState() {
         Arrays.fill(pitchPrevious, 64);
         System.arraycopy(LpdTables.LSF_INIT, 0, lsfPrevious, 0, ORDER);

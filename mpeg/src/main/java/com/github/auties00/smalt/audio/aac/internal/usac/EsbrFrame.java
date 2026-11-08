@@ -2,7 +2,9 @@
    usac_sbrGetSingleChannelElement_for_pvc, usac_sbrGetChannelPairElement, sbrGetDirectionControlData,
    sbrGetNoiseFloorData, sbrGetEnvelope, sbrGetAdditionalData, extractFrameInfo, extractFrameInfo_for_pvc;
    ct_envdec.c). Copyright Coding Technologies, Sony Corporation and ISO/IEC 2002-2008; ISO/IEC reference
-   software licence (use in products conforming to ISO/IEC 23003). Modified for Smalt. */
+   software licence (use in products conforming to ISO/IEC 23003). Modified for Smalt. Ports libxaac
+   (decoder/ixheaacd_sbrdec_lpfuncs.c: ixheaacd_lean_sbrconcealment), commit 2fbadd57. Copyright 2018 The Android
+   Open Source Project; Apache License 2.0. Modified for Smalt. */
 package com.github.auties00.smalt.audio.aac.internal.usac;
 
 import com.github.auties00.smalt.MediaException;
@@ -133,6 +135,27 @@ final class EsbrFrame {
     private final int[] relativeTrail = new int[MAX_ENVELOPES];
     private final int[] pvcBorders = new int[MAX_ENVELOPES + 1];
     private final int[] pvcNoiseBorders = new int[3];
+
+    /**
+     * The frame info vector recorded by {@link #mark()}.
+     */
+    private final int[] markedFrameInfo = new int[FRAME_INFO_LENGTH];
+
+    /**
+     * The inverse filtering levels recorded by {@link #mark()}.
+     */
+    private final int[] markedInverseFiltering = new int[MAX_NOISE_VALUES];
+
+    /**
+     * The previous inverse filtering levels recorded by {@link #mark()}.
+     */
+    private final int[] markedPreviousInverseFiltering = new int[MAX_NOISE_VALUES];
+
+    /**
+     * The scalar fields recorded by {@link #mark()}: frame class, amplitude resolution, noise envelope count,
+     * coupling, the three patching values and the five sinusoid values.
+     */
+    private final int[] markedScalars = new int[12];
 
     /**
      * Constructs the state of a channel.
@@ -598,6 +621,117 @@ final class EsbrFrame {
         info[1 + envelopes + 1 + envelopes] = transientEnvelope;
         info[1 + envelopes + 1 + envelopes + 1] = noiseCount;
         System.arraycopy(noiseBorders, 0, info, 1 + envelopes + 1 + envelopes + 1 + 1, noiseCount + 1);
+    }
+
+    /**
+     * Records the state a frame read changes before the frame data it reads and a concealed frame does not replace,
+     * so that {@link #restore()} can undo a read that fails partway.
+     */
+    void mark() {
+        System.arraycopy(frameInfo, 0, markedFrameInfo, 0, FRAME_INFO_LENGTH);
+        System.arraycopy(inverseFiltering, 0, markedInverseFiltering, 0, MAX_NOISE_VALUES);
+        System.arraycopy(previousInverseFiltering, 0, markedPreviousInverseFiltering, 0, MAX_NOISE_VALUES);
+        var s = markedScalars;
+        s[0] = frameClass;
+        s[1] = ampResolution;
+        s[2] = noiseEnvelopes;
+        s[3] = coupling;
+        s[4] = patchingMode;
+        s[5] = oversampling;
+        s[6] = pitchInBins;
+        s[7] = sinePosition;
+        s[8] = sineStartNext;
+        s[9] = sineLengthNext;
+        s[10] = sineStartCurrent;
+        s[11] = sineLengthCurrent;
+    }
+
+    /**
+     * Restores the state recorded by {@link #mark()}, after a frame read failed, so that the frame conceals as a
+     * lost one does.
+     */
+    void restore() {
+        System.arraycopy(markedFrameInfo, 0, frameInfo, 0, FRAME_INFO_LENGTH);
+        System.arraycopy(markedInverseFiltering, 0, inverseFiltering, 0, MAX_NOISE_VALUES);
+        System.arraycopy(markedPreviousInverseFiltering, 0, previousInverseFiltering, 0, MAX_NOISE_VALUES);
+        var s = markedScalars;
+        frameClass = s[0];
+        ampResolution = s[1];
+        noiseEnvelopes = s[2];
+        coupling = s[3];
+        patchingMode = s[4];
+        oversampling = s[5];
+        pitchInBins = s[6];
+        sinePosition = s[7];
+        sineStartNext = s[8];
+        sineLengthNext = s[9];
+        sineStartCurrent = s[10];
+        sineLengthCurrent = s[11];
+    }
+
+    /**
+     * Replaces the frame data with that of a concealed frame ({@code ixheaacd_lean_sbrconcealment}): one envelope at
+     * the high frequency resolution from the end of the previous frame, whose energies step one quantization step
+     * toward silence (toward the centre for a balance channel) from the last ones, and the last noise floor and
+     * inverse filtering levels, without added harmonics.
+     */
+    void conceal() {
+        var start = frameInfo[0] > 0 ? frameInfo[1 + frameInfo[0]] - timeSlots : 0;
+        frameClass = FIXFIX;
+        borders[0] = start;
+        borders[1] = timeSlots;
+        resolutions[0] = EsbrFrequencies.HIGH;
+        noiseBorders[0] = start;
+        noiseBorders[1] = timeSlots;
+        store(frameInfo, 1, borders, resolutions, -1, 1, noiseBorders);
+        noiseEnvelopes = 1;
+        var count = scaleFactorBands[EsbrFrequencies.HIGH];
+        scaleFactors = count;
+        envelopeDomain[0] = 1;
+        var target = coupling == COUPLING_BALANCE ? 12 : 0;
+        var step = 1;
+        if (header.ampResolution == 0) {
+            target <<= 1;
+            step <<= 1;
+        }
+        for (var i = 0; i < count; i++) {
+            envelope[i] = previousEnergy[i] > target ? -step : step;
+        }
+        interTesGamma[0] = 0;
+        noiseDomain[0] = 1;
+        noiseFactors = noiseBands;
+        Arrays.fill(noiseLevel, 0, noiseBands, 0f);
+        System.arraycopy(inverseFiltering, 0, previousInverseFiltering, 0, noiseBands);
+        concealCommon();
+    }
+
+    /**
+     * Replaces the frame data with that of a concealed predictive vector coding frame: one envelope from the end of
+     * the previous frame, the last noise floor and inverse filtering levels and, through
+     * {@link EsbrPvc#conceal()}, the last prediction index.
+     *
+     * @param pvc the predictive vector coding state of the element
+     */
+    void concealPvc(EsbrPvc pvc) {
+        pvc.currentVarlen = pvc.nextVarlen;
+        pvc.nextVarlen = 0;
+        readPvcGrid(0, false, 0);
+        noiseEnvelopes = 1;
+        noiseDomain[0] = 1;
+        noiseFactors = noiseBands;
+        Arrays.fill(noiseLevel, 0, noiseBands, 0f);
+        System.arraycopy(inverseFiltering, 0, previousInverseFiltering, 0, noiseBands);
+        pvc.conceal();
+        concealCommon();
+    }
+
+    private void concealCommon() {
+        Arrays.fill(addHarmonics, 0, scaleFactorBands[EsbrFrequencies.HIGH], 0);
+        sineStartCurrent = sineStartNext;
+        sineLengthCurrent = sineLengthNext;
+        sineStartNext = 0;
+        sineLengthNext = 0;
+        independent = false;
     }
 
     /**

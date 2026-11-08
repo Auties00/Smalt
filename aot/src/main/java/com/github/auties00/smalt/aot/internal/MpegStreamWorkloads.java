@@ -76,7 +76,8 @@ final class MpegStreamWorkloads {
     }
 
     /**
-     * Returns a workload that decodes the USAC training streams, one decoder per stream kept across rounds.
+     * Returns a workload that decodes the USAC training streams, one decoder per stream kept across rounds, and
+     * again with a second decoder that conceals every seventh access unit and those that depend on it.
      *
      * @return the workload
      */
@@ -85,10 +86,17 @@ final class MpegStreamWorkloads {
         for (var name : USAC_STREAMS) {
             var stream = usac(name);
             var decoder = new AacDecoder(stream.track());
+            var lossy = new AacDecoder(stream.track());
             Consumer<AudioBuffer> output = AudioStreams::consume;
             rounds.add(() -> {
-                for (var packet : stream.packets()) {
-                    decoder.decode(packet, output);
+                var packets = stream.packets();
+                for (var i = 0; i < packets.size(); i++) {
+                    decoder.decode(packets.get(i), output);
+                    if (i % 7 == 3) {
+                        Blackhole.consume(lossy.conceal(lossy.frameLength(), output));
+                    } else {
+                        lossy.decode(packets.get(i), output);
+                    }
                 }
             });
         }

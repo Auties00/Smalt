@@ -46,6 +46,16 @@ final class EsbrPvc {
     private final float[] high = new float[8];
 
     /**
+     * The prediction indices recorded by {@link #mark()}.
+     */
+    private final int[] markedIds = new int[TIME_SLOTS];
+
+    /**
+     * The varlen values, mode, division and noise mode recorded by {@link #mark()}.
+     */
+    private final int[] markedScalars = new int[5];
+
+    /**
      * Updates the state when a header switches predictive vector coding on or off.
      *
      * @param pvcMode the header's {@code bs_pvc_mode}
@@ -144,6 +154,37 @@ final class EsbrPvc {
                 }
             }
         }
+    }
+
+    /**
+     * Records the state a frame read changes, so that {@link #restore()} can undo a read that fails partway.
+     */
+    void mark() {
+        System.arraycopy(ids, 0, markedIds, 0, TIME_SLOTS);
+        markedScalars[0] = currentVarlen;
+        markedScalars[1] = nextVarlen;
+        markedScalars[2] = mode;
+        markedScalars[3] = division;
+        markedScalars[4] = noiseMode;
+    }
+
+    /**
+     * Restores the state recorded by {@link #mark()}, after a frame read failed.
+     */
+    void restore() {
+        System.arraycopy(markedIds, 0, ids, 0, TIME_SLOTS);
+        currentVarlen = markedScalars[0];
+        nextVarlen = markedScalars[1];
+        mode = markedScalars[2];
+        division = markedScalars[3];
+        noiseMode = markedScalars[4];
+    }
+
+    /**
+     * Holds the last prediction index of the previous frame over a concealed frame.
+     */
+    void conceal() {
+        Arrays.fill(ids, ids[TIME_SLOTS - 1]);
     }
 
     /**

@@ -955,6 +955,21 @@ its `usac_tw_tools.c`, `usac_calcWindow.c` and `vector_ops.c` against the stand-
 `fd2buffer` and documents the generator) and runs it. The committed files were written with mingw-w64 gcc 15.2 on
 Windows x64.
 
+## USAC concealment streams
+
+`UsacConcealmentTest` (`smalt-mpeg`) loses and damages access units of eight USAC streams of the libxaac encoder
+(`mpeg/src/test/resources/com/github/auties00/smalt/audio/aac/usac/<name>.raw` with `<name>.meta`, the input format
+of libxaac's test applications): the frequency domain coder in mono, in stereo with complex prediction and with
+768-sample frames and eSBR at 8:3, the linear prediction domain coder at 16 kHz, the switched coder with eSBR and
+with predictive vector coding, MPEG Surround 2-1-2, and MPEG-D DRC. `python -I
+tools/testdata/usac-concealment/make-vectors.py <xaacenc> <checkout> --drc-params
+<libxaac>/test/encoder/impd_drc_config_params.txt` encodes them from a deterministic synthetic signal with an audio
+pre-roll every second (`-rap:1000`), so that each holds independent access units after the first, and pins them in
+`usac/usac.sha256`; xaacenc is libxaac's encoder test application at commit 2fbadd57 (Apache-2.0), built as for the
+AAC-ELD oracle above, and the committed files were written by a mingw-w64 gcc 15.2 build on Windows x64. libxaac's
+own decoder is not used as an oracle: with `-err_conceal:1` its output lags by two frames, a single lost frame is
+left out and two lost in a row bring about 45 frames of full-scale noise.
+
 ## Conformance suites read from remote archives
 
 - Argon AV1 coverage streams (AOMedia, version 2.1.1, licence unstated: used for testing only): 25 archive sets

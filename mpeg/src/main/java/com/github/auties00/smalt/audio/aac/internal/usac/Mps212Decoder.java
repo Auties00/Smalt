@@ -113,6 +113,7 @@ final class Mps212Decoder {
 
     private int sets = 1;
     private int setsPrevious;
+    private int decodedSets = 1;
     private final int[] parameterSlot = new int[MAX_SETS + 1];
     private boolean extendFrame;
     private boolean independent;
@@ -344,7 +345,7 @@ final class Mps212Decoder {
      * @throws MediaException.Malformed if the data is invalid
      */
     void read(AacBitReader reader, boolean usacIndependent) {
-        setsPrevious = sets;
+        setsPrevious = decodedSets;
         var framing = false;
         if (highRate) {
             framing = reader.readFlag();
@@ -442,6 +443,7 @@ final class Mps212Decoder {
         if (tsdEnabled) {
             readTsd(reader);
         }
+        reader.checkNotOverrun();
         decodeFrame();
     }
 
@@ -509,6 +511,31 @@ final class Mps212Decoder {
             sets++;
             parameterSlot[sets - 1] = slots - 1;
         }
+        decodedSets = sets;
+    }
+
+    /**
+     * Replaces the parameters of a lost frame with the last parameter set of the last decoded frame, held over the
+     * whole frame without smoothing or temporal shaping, before {@link #apply}.
+     */
+    void conceal() {
+        var last = decodedSets - 1;
+        setsPrevious = decodedSets;
+        System.arraycopy(cld[last], 0, cld[0], 0, MAX_BANDS);
+        System.arraycopy(icc[last], 0, icc[0], 0, MAX_BANDS);
+        System.arraycopy(ipd[last], 0, ipd[0], 0, MAX_BANDS);
+        System.arraycopy(cldIndex[last], 0, cldIndex[0], 0, MAX_BANDS);
+        System.arraycopy(iccIndex[last], 0, iccIndex[0], 0, MAX_BANDS);
+        System.arraycopy(ipdIndex[last], 0, ipdIndex[0], 0, MAX_BANDS);
+        sets = 1;
+        parameterSlot[0] = slots - 1;
+        extendFrame = false;
+        smoothMode[0] = 0;
+        decodeSmoothing();
+        stpEnabled[0] = stpEnabled[1] = false;
+        gesEnabled[0] = gesEnabled[1] = false;
+        tsdEnabled = false;
+        decodedSets = 1;
     }
 
     private void mapIndex(MpsLossless.Modes modes, float[][] output, int[][] outputIndex, int[][] coded,
