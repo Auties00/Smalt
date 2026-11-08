@@ -36,6 +36,16 @@ final class EchoPathDelayEstimator {
     private final Decimator captureDecimator;
 
     /**
+     * The selector of the capture channel the matched filter sees.
+     */
+    private final AlignmentMixer captureMixer;
+
+    /**
+     * The scratch buffer of the selected capture channel.
+     */
+    private final float[] downmixedCapture = new float[Aec3.BLOCK_SIZE];
+
+    /**
      * The matched filter bank.
      */
     private final MatchedFilter matchedFilter;
@@ -84,10 +94,12 @@ final class EchoPathDelayEstimator {
      * Creates an estimator.
      *
      * @param kernel    the matched filter kernel
+     * @param numCaptureChannels the number of capture channels
      * @param flushTiny whether the capture decimator zeroes tiny filter states and samples;
      *                  {@code false} reproduces the reference bit for bit
      */
-    EchoPathDelayEstimator(MatchedFilterKernel kernel, boolean flushTiny) {
+    EchoPathDelayEstimator(MatchedFilterKernel kernel, int numCaptureChannels, boolean flushTiny) {
+        this.captureMixer = new AlignmentMixer(numCaptureChannels, false);
         this.matchedFilter = new MatchedFilter(kernel);
         this.captureDecimator = new Decimator(flushTiny);
     }
@@ -121,13 +133,13 @@ final class EchoPathDelayEstimator {
      *
      * @param renderBuffer the decimated render ring
      * @param renderRead   the read index of the decimated render ring
-     * @param capture      the capture block
-     * @param offset       the index of the first of the 64 capture samples
+     * @param capture      the capture block, the lowest band of every channel first
      * @return the delay estimate in full-rate samples, or {@code -1} when there is none; its
      *         quality is then {@link #quality()}
      */
-    int estimateDelay(float[] renderBuffer, int renderRead, float[] capture, int offset) {
-        captureDecimator.decimate(capture, offset, downsampledCapture);
+    int estimateDelay(float[] renderBuffer, int renderRead, float[] capture) {
+        captureMixer.produceOutput(capture, 0, Aec3.BLOCK_SIZE, downmixedCapture);
+        captureDecimator.decimate(downmixedCapture, 0, downsampledCapture);
         matchedFilter.update(renderBuffer, renderRead, downsampledCapture, lagAggregator.reliableDelayFound());
         var aggregated = lagAggregator.aggregate(matchedFilter.hasLagEstimate(), matchedFilter.lag(),
                 matchedFilter.preEchoLag());

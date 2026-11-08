@@ -77,6 +77,16 @@ final class TsClock {
     private long latest = NONE;
 
     /**
+     * The largest corrected absolute decoding time returned.
+     */
+    private long latestDecoding = NONE;
+
+    /**
+     * The discontinuity correction of the stream whose decoding time is {@link #latestDecoding}.
+     */
+    private long latestDecodingCorrection;
+
+    /**
      * Constructs a clock.
      *
      * @param origin the absolute time presented first
@@ -125,7 +135,31 @@ final class TsClock {
         state.last = absolute;
         var corrected = absolute + (state.epoch < 0 ? 0 : epochs.get(state.epoch).correction);
         latest = latest == NONE ? corrected : Math.max(latest, corrected);
+        if (decoding && (latestDecoding == NONE || corrected >= latestDecoding)) {
+            latestDecoding = corrected;
+            latestDecodingCorrection = corrected - absolute;
+        }
         return corrected - origin;
+    }
+
+    /**
+     * Returns the latest decoding time of any stream, the time a stream without timestamps of its own (SCTE 35
+     * splice information) is stamped with when it arrives.
+     *
+     * @return the time in 90 kHz ticks relative to the origin, or {@link #NONE} before the first
+     */
+    long latestDecoding() {
+        return latestDecoding == NONE ? NONE : latestDecoding - origin;
+    }
+
+    /**
+     * Returns what turns a raw 33-bit time of the stream with the latest decoding time into a time of the
+     * timeline, modulo 2^33: its discontinuity correction less the origin.
+     *
+     * @return the offset in 90 kHz ticks, to add to a raw time
+     */
+    long latestDecodingOffset() {
+        return latestDecodingCorrection - origin;
     }
 
     /**

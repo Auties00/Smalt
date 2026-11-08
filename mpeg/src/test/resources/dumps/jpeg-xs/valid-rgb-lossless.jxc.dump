@@ -1,0 +1,13 @@
+# image dump of jpeg-xs/valid-rgb-lossless.jxc; regenerate with -Dsmalt.test.updateDumps=true
+format JPEG_XS
+info ImageInfo[format=JPEG_XS, width=37, height=19, hasAlpha=true, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 37x19 rgba8 alpha=true crc=d13b8563
+  format=JPEG_XS orientation=NORMAL source=37x19
+  icc=none exif=none xmp=none
+  profile=none
+scaled 9x4
+picture 37x19 rgba8 alpha=true crc=d13b8563
+  format=JPEG_XS orientation=NORMAL source=37x19
+  icc=none exif=none xmp=none
+  profile=none
