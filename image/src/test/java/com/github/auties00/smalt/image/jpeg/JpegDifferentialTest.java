@@ -6,7 +6,7 @@ import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
-import com.github.auties00.smalt.testkit.Quality;
+import com.github.auties00.smalt.testkit.Tolerance;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -14,6 +14,8 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
@@ -26,9 +28,17 @@ import static org.junit.jupiter.api.Assertions.*;
  * extreme sizes, quantizer scales 2 to 31, optimal and default Huffman tables, restart markers) and gray files made
  * by this module's encoder, and compares every plane with ffmpeg's decode. Sliced encodes carry
  * restart markers. ffmpeg's mjpeg IDCT
- * differs from libjpeg's by up to a few levels, hence the PSNR and maximum-difference bounds.
+ * differs from libjpeg's by up to a few levels, hence the PSNR and maximum-difference bounds; the luma
+ * plane also equals libjpeg-turbo's {@code djpeg -dct int -grayscale} output exactly, the decoder's
+ * bit-exactness promise.
  */
 class JpegDifferentialTest {
+    /** ffmpeg's IDCT is not libjpeg's; T.81 leaves the inverse DCT's rounding to the decoder. */
+    private static final Tolerance FFMPEG = Tolerance.psnr(45).and(Tolerance.maxAbs(3));
+
+    /** The decoder ports libjpeg-turbo's accurate integer IDCT, so its planes equal djpeg's. */
+    private static final Tolerance DJPEG = Tolerance.exact();
+
     static Stream<Arguments> ffmpegFiles() {
         var cases = new ArrayList<Arguments>();
         var sizes = new int[][]{{1, 1}, {1, 17}, {17, 1}, {33, 65}, {4097, 3}, {227, 149}, {640, 480}};
@@ -77,6 +87,7 @@ class JpegDifferentialTest {
         assertEquals(height, picture.height());
         var reference = Oracle.decodeVideo(path, pixelFormat, 1);
         comparePlanes(picture, reference);
+        DJPEG.assertWithin("luma against djpeg", djpegLuma(path), luma(picture));
     }
 
     @ParameterizedTest(name = "{0}x{1} q{2}")
@@ -94,6 +105,7 @@ class JpegDifferentialTest {
             var picture = (YuvPicture) JpegDecoder.decode(MediaSource.of(jpeg), ImageDecoderOptions.defaults()).picture();
             assertEquals(ChromaFormat.MONOCHROME, picture.chromaFormat());
             comparePlanes(picture, Oracle.decodeVideo(file, "gray", 1));
+            DJPEG.assertWithin("gray against djpeg", djpegLuma(file), luma(picture));
         } finally {
             Files.deleteIfExists(file);
         }
@@ -115,12 +127,36 @@ class JpegDifferentialTest {
             var plane = planes.get(i);
             var expected = java.util.Arrays.copyOfRange(reference, offset, offset + plane.length);
             offset += plane.length;
-            var psnr = Quality.psnr(expected, plane);
-            var max = Quality.maxDifference(expected, plane);
-            System.out.printf("plane-stats %.2f %d%n", psnr, max);
-            assertTrue(psnr >= 45, "plane " + i + " PSNR " + psnr);
-            assertTrue(max <= 3, "plane " + i + " max difference " + max);
+            FFMPEG.assertWithin("plane " + i, expected, plane);
         }
         assertEquals(reference.length, offset);
+    }
+
+    /** Returns the luma plane libjpeg-turbo's djpeg decodes, with its accurate integer IDCT, from a file. */
+    static byte[] djpegLuma(Path file) {
+        var pgm = Oracle.run(Oracle.Tool.DJPEG, Duration.ofMinutes(1), List.of("-dct", "int", "-grayscale", "-pnm",
+                file.toAbsolutePath().toString()));
+        var position = 0;
+        var fields = new ArrayList<String>();
+        while (fields.size() < 4) {
+            while (Character.isWhitespace(pgm[position])) {
+                position++;
+            }
+            if (pgm[position] == '#') {
+                while (pgm[position] != '\n') {
+                    position++;
+                }
+                continue;
+            }
+            var start = position;
+            while (!Character.isWhitespace(pgm[position])) {
+                position++;
+            }
+            fields.add(new String(pgm, start, position - start, java.nio.charset.StandardCharsets.US_ASCII));
+        }
+        assertEquals("P5", fields.get(0), "djpeg writes a binary PGM");
+        assertEquals("255", fields.get(3), "djpeg writes 8-bit samples");
+        var size = Integer.parseInt(fields.get(1)) * Integer.parseInt(fields.get(2));
+        return java.util.Arrays.copyOfRange(pgm, position + 1, position + 1 + size);
     }
 }

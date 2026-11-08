@@ -320,7 +320,7 @@ final class VectorAmrKernel implements AmrKernel {
             var raw = INT_VECTOR.cast(INT_VECTOR.cast(base.lanewise(VectorOperators.ADD, rr)).lanewise(VectorOperators.ASHR, 2)
                     .lanewise(VectorOperators.ADD, tbV)).lanewise(VectorOperators.ASHR, 1);
             var low = INT_VECTOR.cast(raw.lanewise(VectorOperators.SUB, IntVector.broadcast(INTS, 1))).lanewise(VectorOperators.LSHR, 31);
-            var high = INT_VECTOR.cast(IntVector.broadcast(INTS, 32767).lanewise(VectorOperators.SUB, raw)).lanewise(VectorOperators.LSHR, 31);
+            var high = INT_VECTOR.cast(INT_VECTOR.cast(IntVector.broadcast(INTS, 32767)).lanewise(VectorOperators.SUB, raw)).lanewise(VectorOperators.LSHR, 31);
             bad = INT_VECTOR.cast(bad).lanewise(VectorOperators.OR, low.lanewise(VectorOperators.OR, high));
             var left = sq.lanewise(VectorOperators.MUL, INT_VECTOR.cast(alpk));
             var right = INT_VECTOR.cast(sqk).lanewise(VectorOperators.MUL, raw);
