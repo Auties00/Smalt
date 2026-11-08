@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.image.jpeg;
 
+import com.github.auties00.smalt.testkit.Oracle;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.RgbaPicture;
@@ -29,23 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class JpegLargeEncodeTest {
     private static Optional<Path> cjpeg() {
-        var path = System.getenv("PATH");
-        if (path == null) {
-            return Optional.empty();
-        }
-        for (var directory : path.split(java.io.File.pathSeparator)) {
-            for (var name : new String[]{"cjpeg.exe", "cjpeg"}) {
-                try {
-                    var file = Path.of(directory.trim(), name);
-                    if (Files.isRegularFile(file)) {
-                        return Optional.of(file);
-                    }
-                } catch (RuntimeException ignored) {
-                    // malformed PATH entry
-                }
-            }
-        }
-        return Optional.empty();
+        return Oracle.find(Oracle.Tool.CJPEG);
     }
 
     private static RgbaPicture photoLike(int width, int height) {
@@ -121,7 +106,7 @@ class JpegLargeEncodeTest {
     void matchesCjpeg(int width, int height, ChromaFormat format, int quality, boolean optimize, int restart)
             throws IOException, InterruptedException {
         var cjpeg = cjpeg();
-        Assumptions.assumeTrue(cjpeg.isPresent(), "cjpeg is not on PATH");
+        Oracle.assume(Oracle.Tool.CJPEG);
         var picture = photoLike(width, height);
         var ours = JpegEncoder.encode(picture, JpegEncoderOptions.builder().quality(quality).chromaFormat(format)
                 .optimizeHuffman(optimize).restartInterval(restart).build());

@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -107,13 +108,13 @@ class PngEncoderTest {
         }
 
         @ParameterizedTest(name = "{0} colors")
-        @ValueSource(ints = {1, 2, 16, 255, 256})
-        @DisplayName("writes an 8-bit palette for up to 256 colors")
-        void palette(int colors) {
+        @CsvSource({"1, 1", "2, 1", "3, 2", "4, 2", "5, 4", "16, 4", "17, 8", "255, 8", "256, 8"})
+        @DisplayName("writes a palette of the smallest bit depth for up to 256 colors")
+        void palette(int colors, int depth) {
             var picture = indexed(40, 30, colors, false);
             var png = PngEncoder.encode(picture, PngEncoderOptions.defaults());
             assertEquals(3, colorType(png));
-            assertEquals(8, png[24]);
+            assertEquals(depth, png[24]);
             assertRoundTrip(picture, png, colors + " colors");
         }
 

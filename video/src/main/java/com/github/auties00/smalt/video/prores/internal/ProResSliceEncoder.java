@@ -5,7 +5,6 @@ import com.github.auties00.smalt.video.intra.internal.BlockKernel;
 import com.github.auties00.smalt.video.intra.internal.IntraBitWriter;
 import com.github.auties00.smalt.video.intra.internal.IntraPlanes;
 
-import java.util.Arrays;
 
 /**
  * Encodes the slices of ProRes pictures (SMPTE RDD 36): gathers the blocks of a slice from the
@@ -233,47 +232,42 @@ public final class ProResSliceEncoder {
         var subtract = 1 << (planes.depth() - 1);
         var scale = 512f / (1 << planes.depth());
         var top = sliceRow * 16;
-        var lumaBlocks = 4 * mbCount;
-        var lumaStride = planes.lumaStride();
-        for (var first = 0; first < lumaBlocks; first += BlockKernel.LANES) {
-            var lanes = Math.min(BlockKernel.LANES, lumaBlocks - first);
-            for (var lane = 0; lane < lanes; lane++) {
-                var block = first + lane;
-                var sub = block & 3;
-                var x = mbX * 16 + (block >>> 2) * 16 + (sub & 1) * 8;
-                var y = top + (sub >>> 1) * 8;
-                sources[lane] = planes.first();
-                offsets[lane] = (y * context.rowStep() + context.rowOffset()) * lumaStride + x;
-                strides[lane] = lumaStride * context.rowStep();
-            }
-            BlockKernel.INSTANCE.loadBlocks(sources, offsets, strides, lanes, subtract, scale,
-                    coefficients[0][first >>> 3], loadScratch);
-        }
-        var chromaBlocks = (chroma444 ? 4 : 2) * mbCount;
-        var chromaStride = planes.chromaStride();
-        for (var first = 0; first < chromaBlocks; first += BlockKernel.LANES) {
-            var lanes = Math.min(BlockKernel.LANES, chromaBlocks - first);
-            for (var lane = 0; lane < lanes; lane++) {
-                var block = first + lane;
-                int x;
-                int y;
-                if (chroma444) {
-                    var sub = block & 3;
-                    x = (mbX + (block >>> 2)) * 16 + (sub >>> 1) * 8;
-                    y = top + (sub & 1) * 8;
-                } else {
-                    x = (mbX + (block >>> 1)) * 8;
-                    y = top + (block & 1) * 8;
+        // One call site of the kernel: C2 inlines the kernel once per call site, and three copies push this method
+        // past the compiler's inlining node budget, leaving the last copy on the Vector API's fallback.
+        for (var component = 0; component < 3; component++) {
+            var luma = component == 0;
+            var blocks = (luma || chroma444 ? 4 : 2) * mbCount;
+            var stride = luma ? planes.lumaStride() : planes.chromaStride();
+            var plane = switch (component) {
+                case 0 -> planes.first();
+                case 1 -> planes.second();
+                default -> planes.third();
+            };
+            for (var first = 0; first < blocks; first += BlockKernel.LANES) {
+                var lanes = Math.min(BlockKernel.LANES, blocks - first);
+                for (var lane = 0; lane < lanes; lane++) {
+                    var block = first + lane;
+                    int x;
+                    int y;
+                    if (luma) {
+                        var sub = block & 3;
+                        x = mbX * 16 + (block >>> 2) * 16 + (sub & 1) * 8;
+                        y = top + (sub >>> 1) * 8;
+                    } else if (chroma444) {
+                        var sub = block & 3;
+                        x = (mbX + (block >>> 2)) * 16 + (sub >>> 1) * 8;
+                        y = top + (sub & 1) * 8;
+                    } else {
+                        x = (mbX + (block >>> 1)) * 8;
+                        y = top + (block & 1) * 8;
+                    }
+                    sources[lane] = plane;
+                    offsets[lane] = (y * context.rowStep() + context.rowOffset()) * stride + x;
+                    strides[lane] = stride * context.rowStep();
                 }
-                offsets[lane] = (y * context.rowStep() + context.rowOffset()) * chromaStride + x;
-                strides[lane] = chromaStride * context.rowStep();
+                BlockKernel.INSTANCE.loadBlocks(sources, offsets, strides, lanes, subtract, scale,
+                        coefficients[component][first >>> 3], loadScratch);
             }
-            Arrays.fill(sources, 0, lanes, planes.second());
-            BlockKernel.INSTANCE.loadBlocks(sources, offsets, strides, lanes, subtract, scale,
-                    coefficients[1][first >>> 3], loadScratch);
-            Arrays.fill(sources, 0, lanes, planes.third());
-            BlockKernel.INSTANCE.loadBlocks(sources, offsets, strides, lanes, subtract, scale,
-                    coefficients[2][first >>> 3], loadScratch);
         }
     }
 
