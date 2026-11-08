@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * {@code xdg-desktop-portal}, the only way a Wayland client may record the screen.
  *
  * <p>The cast is the portal's sequence of requests: {@code CreateSession}, {@code SelectSources}
- * (one monitor or window, the pointer embedded or hidden), {@code Start}, which may show the
+ * (one monitor or window, the pointer embedded, sent as metadata or hidden), {@code Start}, which may show the
  * desktop's dialog where the user picks what to share, and {@code OpenPipeWireRemote}, which returns
  * a descriptor of a PipeWire connection that can see only the shared streams. Each request answers
  * through the {@code Response} signal of a request object whose path is derived from the
@@ -54,6 +54,11 @@ final class ScreenCastPortal implements AutoCloseable {
     static final long CURSOR_EMBEDDED = 2;
 
     /**
+     * The cursor mode that sends the pointer as metadata of the stream's buffers.
+     */
+    static final long CURSOR_METADATA = 4;
+
+    /**
      * How long a request may take, the user's choice in the dialog included.
      */
     private static final Duration RESPONSE_TIMEOUT = Duration.ofMinutes(5);
@@ -89,7 +94,7 @@ final class ScreenCastPortal implements AutoCloseable {
      * Shares one source through the portal and opens the PipeWire connection that streams it.
      *
      * @param sourceType {@link #SOURCE_MONITOR} or {@link #SOURCE_WINDOW}
-     * @param cursor whether the pointer should be drawn into the frames, when the portal can
+     * @param cursor whether the frames should show the pointer, when the portal can provide it
      * @return the cast, which the caller closes
      * @throws MediaException.Unsupported if no session bus or screen cast portal is reachable, or
      * the portal cannot share the source type
@@ -118,8 +123,7 @@ final class ScreenCastPortal implements AutoCloseable {
         var cursorModes = property("AvailableCursorModes");
         var created = request("CreateSession", "a{sv}", options -> options.put("session_handle_token", string(token())));
         session = (String) value(created, "session_handle");
-        // TODO: draw the pointer from the stream's SPA_META_Cursor when the portal offers only the metadata mode
-        var cursorMode = cursor && (cursorModes & CURSOR_EMBEDDED) != 0 ? CURSOR_EMBEDDED : CURSOR_HIDDEN;
+        var cursorMode = cursorMode(cursor, cursorModes);
         request("SelectSources", "oa{sv}", options -> {
             options.put("types", new DBusMessage.Variant("u", sourceType));
             options.put("multiple", new DBusMessage.Variant("b", false));
@@ -138,7 +142,27 @@ final class ScreenCastPortal implements AutoCloseable {
         if (!reply.signature().equals("h")) {
             throw failure("OpenPipeWireRemote returned " + reply.signature());
         }
-        return new Cast(this, streams.getFirst(), (Integer) reply.body().getFirst(), cursorMode == CURSOR_EMBEDDED);
+        return new Cast(this, streams.getFirst(), (Integer) reply.body().getFirst(), cursorMode);
+    }
+
+    /**
+     * Chooses the cursor mode of a cast.
+     *
+     * <p>A pointer the compositor embeds costs this process nothing and matches the compositor's own
+     * rendering, so metadata is used only when it is the one mode that shows the pointer.
+     *
+     * @param cursor whether the frames should show the pointer
+     * @param available the {@code AvailableCursorModes} mask of the portal
+     * @return {@link #CURSOR_EMBEDDED}, {@link #CURSOR_METADATA} or {@link #CURSOR_HIDDEN}
+     */
+    static long cursorMode(boolean cursor, long available) {
+        if (!cursor) {
+            return CURSOR_HIDDEN;
+        }
+        if ((available & CURSOR_EMBEDDED) != 0) {
+            return CURSOR_EMBEDDED;
+        }
+        return (available & CURSOR_METADATA) != 0 ? CURSOR_METADATA : CURSOR_HIDDEN;
     }
 
     /**
@@ -324,9 +348,9 @@ final class ScreenCastPortal implements AutoCloseable {
      * @param portal the portal session, closed with the cast
      * @param stream the shared stream
      * @param pipewire the descriptor of the PipeWire connection
-     * @param cursorEmbedded whether the frames carry the pointer
+     * @param cursorMode the cursor mode the cast runs in
      */
-    record Cast(ScreenCastPortal portal, Stream stream, int pipewire, boolean cursorEmbedded) implements AutoCloseable {
+    record Cast(ScreenCastPortal portal, Stream stream, int pipewire, long cursorMode) implements AutoCloseable {
         /**
          * Ends the cast; the PipeWire descriptor belongs to whoever connected with it.
          */

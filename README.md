@@ -1229,7 +1229,7 @@ channels, or two tracks, at 32 kHz in 12 bits. A DV source is copied when no for
 
 | Feature | Artifact | Package | Backends |
 |---|---|---|---|
-| Cameras, screens and windows | `smalt-capture` | `capture` | Windows: Media Foundation (camera controls through the source's `IAMCameraControl` and `IAMVideoProcAmp`), DXGI desktop duplication or GDI (screens), Windows Graphics Capture or `PrintWindow` (windows), configuration manager notifications of cameras and monitors. macOS: AVFoundation (focus, exposure and white balance modes, zoom), ScreenCaptureKit (screens and windows; `CGDisplayCreateImage` screens before 12.3). Linux: V4L2 single-planar and multi-planar cameras (with their controls; `/dev` watched for cameras) in every field order (interlaced, sequential and alternating fields woven, single fields line-doubled) and in planar, semi-planar and packed 4:2:0, 4:2:2 and 4:4:4 Y'CbCr, 16-, 24- and 32-bit R'G'B', 8- to 16-bit luma and Motion-JPEG; in a Wayland session, screens (the compositor's outputs) through the `xdg-desktop-portal` screen cast portal and PipeWire; X11 with MIT-SHM, Composite and XFixes (screens and windows of TrueColor visuals of 16, 24 or 32 bits per pixel, pointer). Screen and window regions, the pointer drawn or left out (`ScreenCaptureOptions`), exposure, focus, zoom, white balance, power-line frequency and the picture controls of a camera (`CameraControls`), and a listener of cameras and screens plugged in, removed or rearranged (`VideoDevices.addListener`). Called with FFM, so it needs `--enable-native-access=com.github.auties00.smalt.capture`. |
+| Cameras, screens and windows | `smalt-capture` | `capture` | Windows: Media Foundation (camera controls through the source's `IAMCameraControl` and `IAMVideoProcAmp`), DXGI desktop duplication or GDI (screens), Windows Graphics Capture or `PrintWindow` (windows), configuration manager notifications of cameras and monitors. macOS: AVFoundation (focus, exposure and white balance modes, zoom), ScreenCaptureKit (screens and windows; `CGDisplayCreateImage` screens before 12.3). Linux: V4L2 single-planar and multi-planar cameras (with their controls; `/dev` watched for cameras) in every field order (interlaced, sequential and alternating fields woven, single fields line-doubled) and in planar, semi-planar and packed 4:2:0, 4:2:2 and 4:4:4 Y'CbCr, 16-, 24- and 32-bit R'G'B', 8- to 16-bit luma and Motion-JPEG; in a Wayland session, screens (the compositor's outputs) through the `xdg-desktop-portal` screen cast portal and PipeWire, in shared memory or linear DMA-BUFs, the pointer embedded by the compositor or drawn from the stream's metadata; X11 with MIT-SHM, Composite and XFixes (screens and windows of TrueColor visuals of 16, 24 or 32 bits per pixel, pointer). Screen and window regions, the pointer drawn or left out (`ScreenCaptureOptions`), exposure, focus, zoom, white balance, power-line frequency and the picture controls of a camera (`CameraControls`), and a listener of cameras and screens plugged in, removed or rearranged (`VideoDevices.addListener`). Called with FFM, so it needs `--enable-native-access=com.github.auties00.smalt.capture`. |
 | Microphones and speakers | `smalt-capture` | `capture.audio` | Windows: WASAPI (shared mode with the engine's PCM converter and `IAudioClient3` short periods, exclusive mode, loopback of an output, endpoint notifications). macOS: CoreAudio HAL output unit (shared mode; no exclusive mode, no loopback). Linux: ALSA, whose `default` device reaches PulseAudio or PipeWire (shared mode; exclusive mode opens a device without software resampling), plus the sinks and sources of a PulseAudio or PipeWire (`pipewire-pulse`) sound server, whose defaults are then the default devices; loopback of an output through the monitor source of the sink it plays to; changes reported as they happen through the server's subscription and `/dev/snd`. Float or 16-bit samples, any rate and channel count in the shared mode, capture and playback delays for echo cancellation. Run on the CI runners of all three systems against loopback devices. |
 
 ### Known limits
@@ -2403,8 +2403,11 @@ channels, or two tracks, at 32 kHz in 12 bits. A DV source is copied when no for
   cover hold whatever the X server returns; window capture on macOS needs ScreenCaptureKit (macOS 12.3), and the
   screen snapshots of older macOS versions never show the pointer. On Wayland a screen is captured through the
   screen cast portal, so the desktop may ask the user which monitor to share, and its choice is what the session
-  captures; the pointer is drawn only where the portal can embed it in the frames, and a compositor that offers only
-  DMA-BUF buffers is not captured. Wayland windows are not listed (Wayland has no protocol to list other clients'
+  captures; a compositor that offers only DMA-BUF buffers is captured when one of them is linear (tiled buffers need a
+  graphics API to read, so such a compositor fails to negotiate), and reading them is slower than reading shared memory,
+  which is preferred when offered. The pointer is drawn from the stream's metadata when the portal cannot embed it, in
+  the 4-byte R'G'B' bitmap formats, taken as premultiplied, and a portal offering neither mode shows no pointer. Wayland
+  windows are not listed (Wayland has no protocol to list other clients'
   windows; the portal shares one only through the desktop's own picker); the X11 windows of a Wayland session
   (XWayland) are captured as X11 windows. Packed 24-bit X11 pixmaps are converted but tested only against synthetic
   images, since no current X server offers that format (X.Org removed it in 1.20).
@@ -3747,8 +3750,8 @@ On Linux the capture module speaks the protocols of others' documents: the Linux
 X Window System protocol and its MIT-SHM, Composite and XFixes extensions, the D-Bus specification, the
 [XDG Desktop Portal](https://flatpak.github.io/xdg-desktop-portal/) screen cast interface, the Wayland protocol with
 xdg-output, PipeWire's stream and SPA pod API, and the PulseAudio client API, which PipeWire serves too; the
-kernel's vivid driver, Xvfb, sway with xdg-desktop-portal-wlr, WirePlumber and the PulseAudio server are the devices
-its tests run against.
+kernel's vivid driver, Xvfb, sway with xdg-desktop-portal-wlr, headless mutter, a PipeWire source of the kernel's
+udmabuf or DMA heap buffers, WirePlumber and the PulseAudio server are the devices its tests run against.
 
 **Tools that verify Smalt.** Smalt's tests and benchmarks hold it to the output of other software, run as
 black boxes: [FFmpeg](https://ffmpeg.org/) and ffprobe above all, the reference decoders and encoders of the

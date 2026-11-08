@@ -6,8 +6,9 @@ import com.github.auties00.smalt.testkit.fuzz.Fuzz;
 
 /**
  * Fuzz targets of the protocol parsers of the Linux capture backend: the D-Bus messages of the
- * session bus and the screen cast portal's responses, the SPA format pods PipeWire negotiates, and
- * the Wayland events a compositor answers an output listing with. Each input is one byte stream as
+ * session bus and the screen cast portal's responses, the SPA format pods PipeWire negotiates, the
+ * pointer metadata of a screen cast's buffers, and the Wayland events a compositor answers an output
+ * listing with. Each input is one byte stream as
  * the backend would receive it; decoded D-Bus messages are encoded again.
  */
 class CaptureFuzzTest {
@@ -24,6 +25,15 @@ class CaptureFuzzTest {
         var run = Fuzz.start("spa");
         var format = run.value("read", () -> LinuxParsers.spa(data));
         if (format.isPresent() && format.get().isPresent()) {
+            run.output();
+        }
+    }
+
+    @FuzzTest
+    void cursor(byte[] data) {
+        var run = Fuzz.start("cursor");
+        var pointer = run.value("read", () -> LinuxParsers.cursor(data));
+        if (pointer.isPresent() && pointer.get().isPresent()) {
             run.output();
         }
     }

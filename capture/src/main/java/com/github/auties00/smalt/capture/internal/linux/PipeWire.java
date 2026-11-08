@@ -69,6 +69,11 @@ final class PipeWire {
     static final int CHUNK_CORRUPTED = 1;
 
     /**
+     * The {@code SPA_CHUNK_FLAG_EMPTY} flag.
+     */
+    static final int CHUNK_EMPTY = 2;
+
+    /**
      * The layout of {@code struct spa_hook}: a list link, the callbacks, {@code removed} and
      * {@code priv}; the library owns its content.
      */
@@ -114,6 +119,11 @@ final class PipeWire {
     static final long EVENTS_PROCESS = STREAM_EVENTS.byteOffset(groupElement("process"));
 
     /**
+     * The offset of {@code pw_stream_events.remove_buffer}.
+     */
+    static final long EVENTS_REMOVE_BUFFER = STREAM_EVENTS.byteOffset(groupElement("remove_buffer"));
+
+    /**
      * The layout of the leading fields of {@code struct spa_buffer}.
      */
     static final StructLayout SPA_BUFFER = MemoryLayout.structLayout(
@@ -128,9 +138,42 @@ final class PipeWire {
     static final long BUFFER_N_DATAS = SPA_BUFFER.byteOffset(groupElement("n_datas"));
 
     /**
+     * The offset of {@code spa_buffer.n_metas}.
+     */
+    static final long BUFFER_N_METAS = SPA_BUFFER.byteOffset(groupElement("n_metas"));
+
+    /**
+     * The offset of {@code spa_buffer.metas}.
+     */
+    static final long BUFFER_METAS = SPA_BUFFER.byteOffset(groupElement("metas"));
+
+    /**
      * The offset of {@code spa_buffer.datas}.
      */
     static final long BUFFER_DATAS = SPA_BUFFER.byteOffset(groupElement("datas"));
+
+    /**
+     * The layout of {@code struct spa_meta}.
+     */
+    static final StructLayout SPA_META = MemoryLayout.structLayout(
+            JAVA_INT.withName("type"),
+            JAVA_INT.withName("size"),
+            ADDRESS.withName("data")).withName("spa_meta");
+
+    /**
+     * The offset of {@code spa_meta.type}.
+     */
+    static final long META_TYPE = SPA_META.byteOffset(groupElement("type"));
+
+    /**
+     * The offset of {@code spa_meta.size}.
+     */
+    static final long META_SIZE = SPA_META.byteOffset(groupElement("size"));
+
+    /**
+     * The offset of {@code spa_meta.data}.
+     */
+    static final long META_DATA = SPA_META.byteOffset(groupElement("data"));
 
     /**
      * The layout of {@code struct spa_data}.
@@ -148,6 +191,16 @@ final class PipeWire {
      * The offset of {@code spa_data.type}.
      */
     static final long DATA_TYPE = SPA_DATA.byteOffset(groupElement("type"));
+
+    /**
+     * The offset of {@code spa_data.fd}.
+     */
+    static final long DATA_FD = SPA_DATA.byteOffset(groupElement("fd"));
+
+    /**
+     * The offset of {@code spa_data.mapoffset}.
+     */
+    static final long DATA_MAPOFFSET = SPA_DATA.byteOffset(groupElement("mapoffset"));
 
     /**
      * The offset of {@code spa_data.maxsize}.
@@ -190,6 +243,11 @@ final class PipeWire {
      */
     static final FunctionDescriptor PROCESS = FunctionDescriptor.ofVoid(ADDRESS);
 
+    /**
+     * The descriptor of the {@code remove_buffer} event: {@code void (void *data, struct pw_buffer *buffer)}.
+     */
+    static final FunctionDescriptor REMOVE_BUFFER = FunctionDescriptor.ofVoid(ADDRESS, ADDRESS);
+
     private static final Functions FUNCTIONS = Functions.load();
 
     private PipeWire() {
@@ -205,7 +263,7 @@ final class PipeWire {
                              MethodHandle contextNew, MethodHandle contextDestroy, MethodHandle connectFd,
                              MethodHandle propertiesNewString, MethodHandle streamNew, MethodHandle streamAddListener,
                              MethodHandle streamConnect, MethodHandle streamDisconnect, MethodHandle streamDestroy,
-                             MethodHandle dequeue, MethodHandle queue) {
+                             MethodHandle streamUpdateParams, MethodHandle dequeue, MethodHandle queue) {
         static Functions load() {
             var library = Native.library("libpipewire-0.3.so.0").orElse(null);
             if (library == null) {
@@ -233,6 +291,7 @@ final class PipeWire {
                                 JAVA_INT, ADDRESS, JAVA_INT)),
                         Native.function(library, "pw_stream_disconnect", FunctionDescriptor.of(JAVA_INT, ADDRESS)),
                         Native.function(library, "pw_stream_destroy", FunctionDescriptor.ofVoid(ADDRESS)),
+                        Native.function(library, "pw_stream_update_params", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT)),
                         Native.function(library, "pw_stream_dequeue_buffer", FunctionDescriptor.of(ADDRESS, ADDRESS)),
                         Native.function(library, "pw_stream_queue_buffer", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS)));
                 functions.init.invokeExact(MemorySegment.NULL, MemorySegment.NULL);
@@ -443,13 +502,29 @@ final class PipeWire {
      * Calls {@code pw_stream_connect} as a consumer of a node, the buffers mapped.
      *
      * @param target the node id
-     * @param params an array of one pod pointer
+     * @param params an array of pod pointers, the formats offered, preferred first
+     * @param count the number of pods
      * @return {@code 0}, or a negative error
      */
-    static int connectStream(MemorySegment stream, long target, MemorySegment params) {
+    static int connectStream(MemorySegment stream, long target, MemorySegment params, int count) {
         try {
             return (int) functions().streamConnect.invokeExact(stream, DIRECTION_INPUT, (int) target, FLAGS_AUTOCONNECT_MAP,
-                    params, 1);
+                    params, count);
+        } catch (Throwable throwable) {
+            throw Native.rethrow(throwable);
+        }
+    }
+
+    /**
+     * Calls {@code pw_stream_update_params}, which copies the pods.
+     *
+     * @param params an array of pod pointers
+     * @param count the number of pods
+     * @return {@code 0}, or a negative error
+     */
+    static int updateParams(MemorySegment stream, MemorySegment params, int count) {
+        try {
+            return (int) functions().streamUpdateParams.invokeExact(stream, params, count);
         } catch (Throwable throwable) {
             throw Native.rethrow(throwable);
         }

@@ -91,7 +91,9 @@ public final class ScreenCaptureOptions {
     /**
      * {@return whether the mouse pointer is drawn into the pictures; {@code true} by default}
      *
-     * <p>The screen captures of macOS before 12.3 never show the pointer, whatever this setting.
+     * <p>The screen captures of macOS before 12.3 never show the pointer, whatever this setting, and
+     * neither does a Wayland screen cast whose portal offers the pointer neither embedded nor as
+     * metadata.
      */
     public boolean cursor() {
         return cursor;

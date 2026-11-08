@@ -196,6 +196,11 @@ final class Posix {
     static final int MAP_SHARED = 0x1;
 
     /**
+     * The {@code SEEK_END} origin of {@code lseek}.
+     */
+    static final int SEEK_END = 2;
+
+    /**
      * The {@code POLLIN} event: data is available.
      */
     static final short POLLIN = 0x1;
@@ -368,6 +373,42 @@ final class Posix {
                 return null;
             }
             return address.reinterpret(length);
+        } catch (Throwable throwable) {
+            throw Native.rethrow(throwable);
+        }
+    }
+
+    /**
+     * Maps a shared, read-only region of a descriptor.
+     *
+     * @param fd the descriptor
+     * @param length the length in bytes; positive
+     * @param offset the offset in the file
+     * @return the mapped segment of {@code length} bytes, or {@code null} with {@link #errno()}
+     * set
+     */
+    MemorySegment mmapReadOnly(int fd, long length, long offset) {
+        try {
+            var address = (MemorySegment) Functions.MMAP.invokeExact(state, MemorySegment.NULL, length,
+                    PROT_READ, MAP_SHARED, fd, offset);
+            if (address.address() == -1L) {
+                return null;
+            }
+            return address.reinterpret(length);
+        } catch (Throwable throwable) {
+            throw Native.rethrow(throwable);
+        }
+    }
+
+    /**
+     * Returns the size of a descriptor's file, as {@code lseek(fd, 0, SEEK_END)} reports it.
+     *
+     * @param fd the descriptor
+     * @return the size in bytes, or {@code -1} with {@link #errno()} set
+     */
+    long fileSize(int fd) {
+        try {
+            return (long) Functions.LSEEK.invokeExact(state, fd, 0L, SEEK_END);
         } catch (Throwable throwable) {
             throw Native.rethrow(throwable);
         }
@@ -669,6 +710,11 @@ final class Posix {
          */
         static final MethodHandle MMAP = link("mmap",
                 FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_LONG), true, -1);
+
+        /**
+         * {@code off_t lseek(int fd, off_t offset, int whence)}.
+         */
+        static final MethodHandle LSEEK = link("lseek", FunctionDescriptor.of(JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_INT), true, -1);
 
         /**
          * {@code int munmap(void *address, size_t length)}.

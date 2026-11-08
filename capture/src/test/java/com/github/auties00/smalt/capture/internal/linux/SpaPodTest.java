@@ -13,7 +13,9 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.SplittableRandom;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -79,11 +81,120 @@ class SpaPodTest {
         for (var wrapped : new boolean[]{false, true}) {
             var bytes = format(8, wrapped).end().bytes();
             var parsed = SpaPod.readVideoFormat(bytes);
-            assertEquals(new SpaPod.VideoFormat(8, 1366, 768, 0, 1, false), parsed);
+            assertEquals(new SpaPod.VideoFormat(8, 1366, 768, 0, 1, false, SpaPod.MODIFIER_INVALID), parsed);
+            assertTrue(parsed.mappable(), "shared memory");
             assertEquals(parsed, SpaPod.readVideoFormat(MemorySegment.ofArray(Arrays.copyOf(bytes, bytes.length + 64))));
         }
-        var withModifier = format(8, false).ints(SpaPod.KEY_VIDEO_MODIFIER, 0, 8, SpaPod.TYPE_LONG, 0, 0).end().bytes();
-        assertTrue(SpaPod.readVideoFormat(withModifier).modifier());
+    }
+
+    @Test
+    @DisplayName("a negotiated modifier is read: only a linear one can be mapped, fixated or still a choice of the producer")
+    void modifiers() {
+        var linear = SpaPod.readVideoFormat(format(8, false).ints(SpaPod.KEY_VIDEO_MODIFIER, 0, 8, SpaPod.TYPE_LONG, 0, 0).end().bytes());
+        assertTrue(linear.dmaBuf());
+        assertEquals(SpaPod.MODIFIER_LINEAR, linear.modifier());
+        assertTrue(linear.mappable());
+
+        var tiled = new long[]{0x0100000000000001L};
+        var fixedTiled = SpaPod.readVideoFormat(format(8, false).ints(SpaPod.KEY_VIDEO_MODIFIER, 0, 8, SpaPod.TYPE_LONG,
+                (int) tiled[0], (int) (tiled[0] >>> 32)).end().bytes());
+        assertTrue(fixedTiled.dmaBuf());
+        assertEquals(tiled[0], fixedTiled.modifier());
+        assertFalse(fixedTiled.mappable());
+
+        var pod = format(8, false).ints(SpaPod.KEY_VIDEO_MODIFIER, SpaPod.PROP_MANDATORY | SpaPod.PROP_DONT_FIXATE);
+        pod.begin(SpaPod.TYPE_CHOICE).ints(SpaPod.CHOICE_ENUM, 0, 8, SpaPod.TYPE_LONG, 0, 0, 0, 0).end();
+        var choice = SpaPod.readVideoFormat(pod.end().bytes());
+        assertEquals(SpaPod.MODIFIER_LINEAR, choice.modifier());
+        assertTrue(choice.mappable());
+
+        var wrongType = SpaPod.readVideoFormat(format(8, false).ints(SpaPod.KEY_VIDEO_MODIFIER, 0, 4, SpaPod.TYPE_INT, 0, 0).end().bytes());
+        assertTrue(wrongType.dmaBuf());
+        assertEquals(SpaPod.MODIFIER_INVALID, wrongType.modifier());
+        assertFalse(wrongType.mappable());
+    }
+
+    @Test
+    @DisplayName("the DMA-BUF offer is the shared memory offer plus a mandatory modifier list the producer fixates")
+    void offerModifiers() {
+        var modifiers = new long[]{SpaPod.MODIFIER_LINEAR};
+        var bytes = SpaPod.videoEnumFormat(List.of(8, 12), 640, 360, 30, modifiers);
+        assertEquals(0, bytes.length % 8);
+        var buffer = ByteBuffer.wrap(bytes).order(ByteOrder.nativeOrder());
+        assertEquals(bytes.length - 8, buffer.getInt());
+        assertEquals(SpaPod.TYPE_OBJECT, buffer.getInt());
+        buffer.position(16);
+        var found = false;
+        var keys = new ArrayList<Integer>();
+        while (buffer.hasRemaining()) {
+            var key = buffer.getInt();
+            keys.add(key);
+            var flags = buffer.getInt();
+            var size = buffer.getInt();
+            var type = buffer.getInt();
+            var body = buffer.position();
+            if (key == SpaPod.KEY_VIDEO_MODIFIER) {
+                found = true;
+                assertEquals(SpaPod.PROP_MANDATORY | SpaPod.PROP_DONT_FIXATE, flags);
+                assertEquals(8 | 16, flags, "the values of SPA_POD_PROP_FLAG_MANDATORY and _DONT_FIXATE in spa/pod/pod.h");
+                assertEquals(SpaPod.TYPE_CHOICE, type);
+                assertEquals(SpaPod.CHOICE_ENUM, buffer.getInt(body));
+                assertEquals(8, buffer.getInt(body + 8));
+                assertEquals(SpaPod.TYPE_LONG, buffer.getInt(body + 12));
+                assertEquals(16 + 2 * 8, size, "the default, then the one alternative");
+                assertEquals(0L, buffer.getLong(body + 16));
+                assertEquals(0L, buffer.getLong(body + 24));
+            } else {
+                assertEquals(0, flags);
+            }
+            buffer.position(body + ((size + 7) & ~7));
+        }
+        assertTrue(found);
+        assertEquals(List.of(SpaPod.KEY_MEDIA_TYPE, SpaPod.KEY_MEDIA_SUBTYPE, SpaPod.KEY_VIDEO_FORMAT, SpaPod.KEY_VIDEO_MODIFIER,
+                SpaPod.KEY_VIDEO_SIZE, SpaPod.KEY_VIDEO_FRAMERATE), keys);
+        var plain = SpaPod.videoEnumFormat(List.of(8, 12), 640, 360, 30);
+        assertTrue(plain.length < bytes.length);
+        assertEquals(plain.length, SpaPod.videoEnumFormat(List.of(8, 12), 640, 360, 30, new long[0]).length);
+    }
+
+    @Test
+    @DisplayName("the Buffers parameter is a flags choice of the memory types, as spa/param/buffers.h declares it")
+    void buffersParameter() {
+        var bytes = SpaPod.buffers(1 << PipeWire.DATA_DMA_BUF);
+        var expected = ByteBuffer.allocate(56).order(ByteOrder.nativeOrder());
+        expected.putInt(48).putInt(15).putInt(0x40004).putInt(5);
+        expected.putInt(6).putInt(0);
+        expected.putInt(20).putInt(19).putInt(4).putInt(0).putInt(4).putInt(4).putInt(1 << 3).putInt(0);
+        assertArrayEquals(expected.array(), bytes);
+        assertEquals(1 << 1 | 1 << 2, PortalScreenSession.SHARED_MEMORY_TYPES, "SPA_DATA_MemPtr and SPA_DATA_MemFd");
+        assertEquals(1 << 3, PortalScreenSession.DMA_BUF_TYPES, "SPA_DATA_DmaBuf");
+    }
+
+    @Test
+    @DisplayName("the Meta parameter asks for SPA_META_Cursor with a range of sizes")
+    void metaParameter() {
+        var bytes = SpaPod.cursorMeta(100, 50, 200);
+        var expected = ByteBuffer.allocate(88).order(ByteOrder.nativeOrder());
+        expected.putInt(80).putInt(15).putInt(0x40005).putInt(6);
+        expected.putInt(1).putInt(0).putInt(4).putInt(3).putInt(5).putInt(0);
+        expected.putInt(2).putInt(0);
+        expected.putInt(28).putInt(19).putInt(1).putInt(0).putInt(4).putInt(4).putInt(100).putInt(50).putInt(200).putInt(0);
+        assertArrayEquals(expected.array(), bytes);
+    }
+
+    @Test
+    @DisplayName("the cursor mode embeds when it can, falls back to metadata, and hides on request")
+    void cursorModes() {
+        var hidden = ScreenCastPortal.CURSOR_HIDDEN;
+        var embedded = ScreenCastPortal.CURSOR_EMBEDDED;
+        var metadata = ScreenCastPortal.CURSOR_METADATA;
+        assertEquals(List.of(1L, 2L, 4L), List.of(hidden, embedded, metadata), "the portal's documented bit values");
+        assertEquals(embedded, ScreenCastPortal.cursorMode(true, hidden | embedded | metadata));
+        assertEquals(embedded, ScreenCastPortal.cursorMode(true, embedded));
+        assertEquals(metadata, ScreenCastPortal.cursorMode(true, hidden | metadata));
+        assertEquals(hidden, ScreenCastPortal.cursorMode(true, hidden));
+        assertEquals(hidden, ScreenCastPortal.cursorMode(true, 0));
+        assertEquals(hidden, ScreenCastPortal.cursorMode(false, hidden | embedded | metadata));
     }
 
     @Test

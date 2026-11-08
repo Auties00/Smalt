@@ -10,7 +10,7 @@
 #            ffmpeg (the module built from its pinned release against the running kernel's headers), vivid test
 #            cameras for the camera controls (checked against v4l2-ctl) and for every pixel format and field order,
 #            single-planar and multi-planar, a script that adds and removes a v4l2loopback camera for the hotplug
-#            test (SMALT_TEST_CAMERA_HOTPLUG), and a headless sway session with a screen cast portal and PipeWire.
+#            test (SMALT_TEST_CAMERA_HOTPLUG), and a headless sway session with a screen cast portal and PipeWire, plus DMA-BUF sources and headless mutter.
 #   Windows: VB-Audio Virtual Cable (WASAPI loopback pair) and microphone access; the runner's desktop session
 #            (DXGI desktop duplication, GDI, Windows Graphics Capture and PrintWindow of the fixture windows).
 #   macOS:   BlackHole (CoreAudio loopback pair, made the default devices); the runner's display, which the image
@@ -211,7 +211,8 @@ jobs:
         shell: bash
         run: |
           sudo apt-get install -y -q --no-install-recommends sway swaybg pipewire pipewire-bin wireplumber dbus dbus-bin \
-            libpipewire-0.3-0 gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-pipewire python3-dbus python3-gi
+            libpipewire-0.3-0 libpipewire-0.3-dev gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-pipewire \
+            python3-dbus python3-gi gcc pkg-config mutter adwaita-icon-theme libgl1-mesa-dri
           runtime="$RUNNER_TEMP/xdg-runtime"
           mkdir -p "$runtime" "$HOME/.config/sway"
           chmod 700 "$runtime"
@@ -239,7 +240,47 @@ jobs:
           done
           test -n "$node"
           echo "test source node: $node"
-          nohup /usr/bin/python3 .github/scripts/screencast-portal.py "$node" "$runtime/pipewire-0" 1280 720 \
+          # DMA-BUF sources: the runners have no GPU, so a small producer shares real kernel DMA-BUFs (the system DMA
+          # heap, or udmabuf) with SPA_META_Cursor, negotiated the way a compositor does.
+          sudo modprobe udmabuf || true
+          sudo chmod a+rw /dev/dma_heap/system /dev/udmabuf 2> /dev/null || true
+          ls -l /dev/dma_heap /dev/udmabuf 2>&1 || true
+          gcc -O1 -g -Wall .github/scripts/dmabuf-screencast-source.c -o "$RUNNER_TEMP/dmabuf-source" \
+            $(pkg-config --cflags --libs libpipewire-0.3)
+          # Prints the id of the PipeWire node of a name, once it appears.
+          node_of() {
+            for _ in $(seq 1 50); do
+              found=$(pw-dump 2>/dev/null | /usr/bin/python3 -c "import json, sys; print(next((o['id'] for o in json.load(sys.stdin) if o.get('type') == 'PipeWire:Interface:Node' and o.get('info', {}).get('props', {}).get('node.name') == '$1'), ''))")
+              test -n "$found" && { echo "$found"; return 0; }
+              sleep 0.2
+            done
+            return 1
+          }
+          profiles=""
+          for mode in dmabuf zero both tiled resize; do
+            nohup "$RUNNER_TEMP/dmabuf-source" "smalt-$mode" "$mode" > "$RUNNER_TEMP/source-$mode.log" 2>&1 &
+            id=$(node_of "smalt-$mode") || { cat "$RUNNER_TEMP/source-$mode.log"; exit 1; }
+            # the portal offers the hidden and metadata cursor modes, not the embedded one
+            profiles="$profiles $mode=$id:640:360:5"
+          done
+          # A real compositor sending the pointer as metadata: headless mutter, rendering in software.
+          WAYLAND_DISPLAY=smalt-mutter nohup mutter --headless --wayland --no-x11 --virtual-monitor 1280x720 \
+            --wayland-display smalt-mutter > "$RUNNER_TEMP/mutter.log" 2>&1 &
+          for _ in $(seq 1 50); do
+            dbus-send --session --print-reply --dest=org.gnome.Mutter.ScreenCast /org/gnome/Mutter/ScreenCast \
+              org.freedesktop.DBus.Properties.Get string:org.gnome.Mutter.ScreenCast string:Version > /dev/null 2>&1 && break
+            sleep 0.2
+          done
+          nohup /usr/bin/python3 .github/scripts/mutter-screencast.py "$RUNNER_TEMP/mutter-node" \
+            > "$RUNNER_TEMP/mutter-cast.log" 2>&1 &
+          for _ in $(seq 1 50); do test -s "$RUNNER_TEMP/mutter-node" && break; sleep 0.2; done
+          if ! test -s "$RUNNER_TEMP/mutter-node"; then
+            echo "no mutter stream"; tail -n 30 "$RUNNER_TEMP/mutter.log" "$RUNNER_TEMP/mutter-cast.log" || true
+            exit 1
+          fi
+          profiles="$profiles mutter=$(cat "$RUNNER_TEMP/mutter-node"):1280:720:5"
+          echo "SMALT_TEST_WAYLAND_MUTTER=true" >> "$GITHUB_ENV"
+          nohup /usr/bin/python3 .github/scripts/screencast-portal.py "$node" "$runtime/pipewire-0" 1280 720 $profiles \
             > "$RUNNER_TEMP/portal.log" 2>&1 &
           sleep 1
           # the fixture itself: the portal must offer monitors to share
@@ -248,7 +289,8 @@ jobs:
           echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
           echo "SMALT_TEST_WAYLAND_DISPLAY=$runtime/$display" >> "$GITHUB_ENV"
           echo "SMALT_TEST_WAYLAND_COLOR=00ff00" >> "$GITHUB_ENV"
-          echo "SMALT_CAPTURE_REQUIRE_DEVICES=$SMALT_CAPTURE_REQUIRE_DEVICES,wayland-screen" >> "$GITHUB_ENV"
+          echo "SMALT_TEST_WAYLAND_DMABUF=true" >> "$GITHUB_ENV"
+          echo "SMALT_CAPTURE_REQUIRE_DEVICES=$SMALT_CAPTURE_REQUIRE_DEVICES,wayland-screen,wayland-dmabuf,wayland-mutter" >> "$GITHUB_ENV"
 
       - name: Provision the Windows devices
         if: runner.os == 'Windows'
@@ -287,6 +329,15 @@ jobs:
           mvn -B -ntp -fae -pl capture,desktop -am verify
           -Dtest='${{ inputs.tests || 'com/github/auties00/smalt/capture/**/*,com/github/auties00/smalt/desktop/sound/JavaSoundReadTest' }}'
           -Dsurefire.failIfNoSpecifiedTests=false
+
+      - name: Show the logs of the Wayland fixtures
+        if: failure() && runner.os == 'Linux'
+        shell: bash
+        run: |
+          for log in source-dmabuf source-zero source-both source-tiled source-resize mutter mutter-cast portal; do
+            echo "--- $log"
+            tail -n 40 "$RUNNER_TEMP/$log.log" || true
+          done
 
       - name: Check the skips against the baseline
         if: always() && steps.test.outcome != 'skipped'

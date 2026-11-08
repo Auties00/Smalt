@@ -2,15 +2,18 @@ package com.github.auties00.smalt.capture.internal.linux;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.capture.CaptureDevice;
+import com.github.auties00.smalt.capture.internal.convert.RgbLayout;
 
 import java.io.IOException;
+import java.lang.foreign.MemorySegment;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
 /**
  * Exposes the Linux backend's protocol parsers to the fuzz targets of another package: D-Bus
- * messages, SPA format pods and Wayland event streams.
+ * messages, SPA format pods, screen cast pointer metadata and Wayland event streams.
  */
 public final class LinuxParsers {
     private LinuxParsers() {
@@ -52,6 +55,30 @@ public final class LinuxParsers {
      */
     public static Optional<String> spa(byte[] data) {
         return Optional.ofNullable(SpaPod.readVideoFormat(data)).map(Object::toString);
+    }
+
+    /**
+     * Reads a screen cast's pointer metadata and draws the pointer over a small picture.
+     *
+     * @param data the {@code spa_meta_cursor} with its bitmap
+     * @return the description of the pointer, or empty when the metadata shows no pointer image
+     * @throws IllegalStateException if the drawing does not restore the picture
+     */
+    public static Optional<String> cursor(byte[] data) {
+        var cursor = new ScreenCastCursor();
+        cursor.update(MemorySegment.ofArray(data));
+        if (!cursor.drawable()) {
+            return Optional.empty();
+        }
+        var pixels = new byte[4 * 32 * 32];
+        Arrays.fill(pixels, (byte) 0x40);
+        var clean = pixels.clone();
+        cursor.draw(pixels, 4 * 32, RgbLayout.BGRX, 32, 32);
+        cursor.erase(pixels);
+        if (!Arrays.equals(clean, pixels)) {
+            throw new IllegalStateException("the pointer left marks on the picture");
+        }
+        return Optional.of("a pointer");
     }
 
     /**

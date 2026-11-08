@@ -35,14 +35,16 @@ import static java.lang.foreign.ValueLayout.JAVA_INT;
  * <p>Opening starts a cast ({@link ScreenCastPortal}), during which the desktop may ask the user which
  * monitor to share, connects to PipeWire with the descriptor the portal returned, and connects a
  * consumer stream to the shared node, offering raw video in the 4-byte R'G'B' layouts at up to the
- * requested rate. The producer's buffers arrive in shared memory, mapped by PipeWire
- * ({@code PW_STREAM_FLAG_MAP_BUFFERS}); every buffer is converted to BT.709 limited-range 4:2:0 on
- * the PipeWire loop's thread and handed to the reader through a {@link FrameExchange}, which repeats
- * the newest frame at the requested rate while the screen does not change (screen casts send frames
- * only on damage). Opening waits until the format is negotiated, so the session's size is the size
- * of the shared monitor, or of the part of the options' region on it; a later change of the
- * monitor's size is scaled to that size. The pointer is drawn when the options ask for it and the
- * portal can embed it.
+ * requested rate. Shared memory is preferred, since reading graphics memory from the processor can
+ * be slow; a producer that shares none may send linear DMA-BUFs ({@code DRM_FORMAT_MOD_LINEAR}),
+ * which {@link ScreenCastBuffer} maps and reads. Every buffer is converted to BT.709 limited-range
+ * 4:2:0 on the PipeWire loop's thread and handed to the reader through a {@link FrameExchange}, which
+ * repeats the newest frame at the requested rate while the screen does not change (screen casts send
+ * frames only on damage). Opening waits until the format is negotiated, so the session's size is the
+ * size of the shared monitor, or of the part of the options' region on it; a later change of the
+ * monitor's size is scaled to that size. The pointer is shown when the options ask for it and the
+ * portal can provide it: embedded in the frames, or, when the portal offers only that, drawn here
+ * from the buffers' metadata ({@link ScreenCastCursor}).
  *
  * <p>The cast ends when the compositor stops the stream (the monitor was unplugged, or the user
  * revoked the share): {@link #read()} then returns {@code null}.
@@ -63,6 +65,16 @@ final class PortalScreenSession implements VideoCaptureSession {
      * {@code RGBx}, {@code RGBA}, {@code xRGB}, {@code ARGB}, {@code xBGR}, {@code ABGR}.
      */
     static final List<Integer> FORMATS = List.of(8, 12, 7, 11, 9, 13, 10, 14);
+
+    /**
+     * The memory types accepted for a format without a modifier.
+     */
+    static final int SHARED_MEMORY_TYPES = 1 << PipeWire.DATA_MEM_PTR | 1 << PipeWire.DATA_MEM_FD;
+
+    /**
+     * The memory type accepted for a format with a modifier.
+     */
+    static final int DMA_BUF_TYPES = 1 << PipeWire.DATA_DMA_BUF;
 
     /**
      * The layout of {@code RGBx} and {@code RGBA} pixels.
@@ -150,9 +162,10 @@ final class PortalScreenSession implements VideoCaptureSession {
     private CaptureArea area;
 
     /**
-     * The pixels of the last buffer, copied out of shared memory; used by the loop's thread.
+     * The reader of the stream's buffers, which keeps the pixels of the last frame; used by the
+     * loop's thread until the loop stopped.
      */
-    private byte[] pixels = new byte[0];
+    private final ScreenCastBuffer frames;
 
     /**
      * The picture a frame of another size than the session's is converted into; used by the loop's
@@ -177,6 +190,8 @@ final class PortalScreenSession implements VideoCaptureSession {
         this.device = device;
         this.cast = cast;
         this.options = options;
+        this.frames = new ScreenCastBuffer(new DmaBufMapper(new Posix(), arena),
+                cast.cursorMode() == ScreenCastPortal.CURSOR_METADATA ? new ScreenCastCursor() : null);
         this.loop = PipeWire.loopNew("smalt-pipewire");
         if (loop.equals(MemorySegment.NULL)) {
             throw new MediaException.Io("cannot create a PipeWire loop", new IOException("pw_thread_loop_new failed"));
@@ -191,8 +206,9 @@ final class PortalScreenSession implements VideoCaptureSession {
      * @param options the rate, region and pointer settings
      * @return the session
      * @throws MediaException.Unsupported if PipeWire, the session bus or the portal is missing, or the
-     * producer offers no format this session converts
-     * @throws MediaException.Io if the user cancels the share or the stream fails
+     * producer chose a format this session does not convert
+     * @throws MediaException.Io if the user cancels the share, the stream fails, or no format offered
+     * here matches the producer's, as with a producer of only tiled DMA-BUFs
      */
     static PortalScreenSession open(CaptureDevice device, long sourceType, ScreenCaptureOptions options) {
         if (!PipeWire.available()) {
@@ -233,16 +249,18 @@ final class PortalScreenSession implements VideoCaptureSession {
                     .bindTo(this), PipeWire.PARAM_CHANGED, arena));
             events.set(ADDRESS, PipeWire.EVENTS_PROCESS, linker.upcallStub(lookup.findVirtual(PortalScreenSession.class,
                     "onProcess", MethodType.methodType(void.class, MemorySegment.class)).bindTo(this), PipeWire.PROCESS, arena));
+            events.set(ADDRESS, PipeWire.EVENTS_REMOVE_BUFFER, linker.upcallStub(lookup.findVirtual(PortalScreenSession.class,
+                    "onRemoveBuffer", MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class))
+                    .bindTo(this), PipeWire.REMOVE_BUFFER, arena));
         } catch (ReflectiveOperationException exception) {
             throw new AssertionError(exception);
         }
         var rate = FramePacing.atMost(options.frameRate(), MAX_RATE);
         var fps = (int) Math.max(1, Math.min(MAX_RATE, Math.ceil(rate.toDouble())));
-        var pod = SpaPod.videoEnumFormat(FORMATS, cast.stream().width(), cast.stream().height(), fps);
-        var podSegment = arena.allocate(pod.length, 8);
-        MemorySegment.copy(pod, 0, podSegment, JAVA_BYTE, 0, pod.length);
-        var params = arena.allocate(ADDRESS);
-        params.set(ADDRESS, 0, podSegment);
+        var shared = SpaPod.videoEnumFormat(FORMATS, cast.stream().width(), cast.stream().height(), fps);
+        var dmaBuf = SpaPod.videoEnumFormat(FORMATS, cast.stream().width(), cast.stream().height(), fps,
+                new long[]{SpaPod.MODIFIER_LINEAR});
+        var params = pods(arena, shared, dmaBuf);
         var hook = arena.allocate(PipeWire.HOOK);
         PipeWire.lock(loop);
         try {
@@ -260,7 +278,7 @@ final class PortalScreenSession implements VideoCaptureSession {
                 throw new MediaException.Io("cannot create a PipeWire stream", new IOException("pw_stream_new failed"));
             }
             PipeWire.addListener(stream, hook, events);
-            var connected = PipeWire.connectStream(stream, cast.stream().node(), params);
+            var connected = PipeWire.connectStream(stream, cast.stream().node(), params, 2);
             if (connected < 0) {
                 throw new MediaException.Io("cannot connect to the shared PipeWire node", new IOException("pw_stream_connect returned " + connected));
             }
@@ -280,10 +298,10 @@ final class PortalScreenSession implements VideoCaptureSession {
                 throw new MediaException.Io("the shared screen did not negotiate a format", new IOException(
                         state == PipeWire.STATE_ERROR ? "the stream failed: " + error : "no format within " + FORMAT_TIMEOUT_SECONDS + " seconds"));
             }
-            // TODO: offer and read linear DMA-BUF buffers, for compositors that share no shared-memory buffers
-            if (layout(negotiated.format()) == null || negotiated.modifier()) {
+            if (layout(negotiated.format()) == null || !negotiated.mappable()) {
                 throw new MediaException.Unsupported("screen cast format", "the compositor chose the video format "
-                        + negotiated.format() + (negotiated.modifier() ? " in DMA-BUF memory" : ""));
+                        + negotiated.format() + (negotiated.mappable() ? ""
+                        : " in DMA-BUF memory of modifier 0x" + Long.toHexString(negotiated.modifier())));
             }
             LimitChecks.checkPicture(MediaLimits.DEFAULT, negotiated.width(), negotiated.height());
             area = CaptureArea.of(options, negotiated.width(), negotiated.height(), "the shared screen");
@@ -292,6 +310,21 @@ final class PortalScreenSession implements VideoCaptureSession {
         } finally {
             PipeWire.unlock(loop);
         }
+    }
+
+    /**
+     * Copies pods into an array of pointers to them.
+     *
+     * @return the array, allocated with the pods in the arena
+     */
+    private static MemorySegment pods(Arena arena, byte[]... pods) {
+        var pointers = arena.allocate(ADDRESS, pods.length);
+        for (var index = 0; index < pods.length; index++) {
+            var pod = arena.allocate(pods[index].length, 8);
+            MemorySegment.copy(pods[index], 0, pod, JAVA_BYTE, 0, pods[index].length);
+            pointers.setAtIndex(ADDRESS, index, pod);
+        }
+        return pointers;
     }
 
     /**
@@ -344,6 +377,10 @@ final class PortalScreenSession implements VideoCaptureSession {
             if (id == SpaPod.PARAM_FORMAT && !param.equals(MemorySegment.NULL)) {
                 var parsed = SpaPod.readVideoFormat(param.reinterpret(64 * 1024 + 8));
                 if (parsed != null) {
+                    if (format != null && format.format() != parsed.format()) {
+                        frames.forgetFrame();
+                    }
+                    answer(parsed);
                     format = parsed;
                 }
             }
@@ -354,28 +391,60 @@ final class PortalScreenSession implements VideoCaptureSession {
     }
 
     /**
+     * Tells the stream which buffers a negotiated format takes, and that the buffers should carry the
+     * pointer in a metadata cast.
+     */
+    private void answer(SpaPod.VideoFormat negotiated) {
+        var buffers = SpaPod.buffers(negotiated.dmaBuf() ? DMA_BUF_TYPES : SHARED_MEMORY_TYPES);
+        try (var scope = Arena.ofConfined()) {
+            if (cast.cursorMode() == ScreenCastPortal.CURSOR_METADATA) {
+                var meta = SpaPod.cursorMeta(ScreenCastCursor.metaSize(64), ScreenCastCursor.metaSize(1),
+                        ScreenCastCursor.metaSize(ScreenCastCursor.MAX_SIDE));
+                PipeWire.updateParams(stream, pods(scope, buffers, meta), 2);
+            } else {
+                PipeWire.updateParams(stream, pods(scope, buffers), 1);
+            }
+        }
+    }
+
+    /**
+     * Releases what the session holds of a buffer the stream dropped, on the thread of the stream's
+     * owner.
+     */
+    private void onRemoveBuffer(MemorySegment data, MemorySegment buffer) {
+        try {
+            frames.remove(buffer);
+        } catch (Throwable ignored) {
+            // a failure must not unwind into the native loop
+        }
+    }
+
+    /**
      * Converts the newest filled buffer on the loop's thread and returns every buffer.
      */
     private void onProcess(MemorySegment data) {
         try {
-            MemorySegment newest = MemorySegment.NULL;
+            var newest = MemorySegment.NULL;
             while (true) {
                 var buffer = PipeWire.dequeue(stream);
                 if (buffer.equals(MemorySegment.NULL)) {
                     break;
+                }
+                if (!frames.inspect(buffer)) {
+                    PipeWire.queue(stream, buffer);
+                    continue;
                 }
                 if (!newest.equals(MemorySegment.NULL)) {
                     PipeWire.queue(stream, newest);
                 }
                 newest = buffer;
             }
-            if (newest.equals(MemorySegment.NULL)) {
-                return;
-            }
             try {
                 convert(newest);
             } finally {
-                PipeWire.queue(stream, newest);
+                if (!newest.equals(MemorySegment.NULL)) {
+                    PipeWire.queue(stream, newest);
+                }
             }
         } catch (Throwable failure) {
             var target = exchange;
@@ -387,9 +456,10 @@ final class PortalScreenSession implements VideoCaptureSession {
     }
 
     /**
-     * Converts one buffer into the exchange.
+     * Converts a frame into the exchange.
      *
-     * @param buffer the {@code pw_buffer}
+     * @param buffer the {@code pw_buffer} with new pixels, or {@link MemorySegment#NULL} to show the
+     * last pixels with a pointer that changed
      */
     private void convert(MemorySegment buffer) {
         var target = exchange;
@@ -397,39 +467,11 @@ final class PortalScreenSession implements VideoCaptureSession {
         if (target == null || current == null) {
             return;
         }
-        var spa = buffer.reinterpret(8).get(ADDRESS, 0).reinterpret(PipeWire.SPA_BUFFER.byteSize());
-        if (spa.get(JAVA_INT, PipeWire.BUFFER_N_DATAS) < 1) {
-            return;
-        }
-        var datum = spa.get(ADDRESS, PipeWire.BUFFER_DATAS).reinterpret(PipeWire.SPA_DATA.byteSize());
-        var type = datum.get(JAVA_INT, PipeWire.DATA_TYPE);
-        var base = datum.get(ADDRESS, PipeWire.DATA_DATA);
-        if (base.equals(MemorySegment.NULL) || (type != PipeWire.DATA_MEM_PTR && type != PipeWire.DATA_MEM_FD)) {
-            return;
-        }
-        var chunk = datum.get(ADDRESS, PipeWire.DATA_CHUNK).reinterpret(PipeWire.SPA_CHUNK.byteSize());
-        if ((chunk.get(JAVA_INT, 12) & PipeWire.CHUNK_CORRUPTED) != 0) {
-            return;
-        }
-        var maxSize = Integer.toUnsignedLong(datum.get(JAVA_INT, PipeWire.DATA_MAXSIZE));
-        var offset = Integer.toUnsignedLong(chunk.get(JAVA_INT, 0)) % Math.max(1, maxSize);
-        var size = Integer.toUnsignedLong(chunk.get(JAVA_INT, 4));
         var width = current.width();
         var height = current.height();
-        var stride = chunk.get(JAVA_INT, 8);
-        if (stride <= 0) {
-            stride = 4 * width;
-        }
-        var needed = (long) stride * (height - 1) + 4L * width;
-        if (stride < 4L * width || size < needed || offset + needed > maxSize || needed > Integer.MAX_VALUE - 16) {
+        if (!frames.read(buffer, width, height)) {
             return;
         }
-        var bytes = (int) needed;
-        if (pixels.length < bytes) {
-            LimitChecks.checkAllocation(MediaLimits.DEFAULT, bytes);
-            pixels = new byte[bytes];
-        }
-        MemorySegment.copy(base.reinterpret(maxSize), JAVA_BYTE, offset, pixels, 0, bytes);
         var layout = layout(current.format());
         var picture = target.acquire();
         var region = area;
@@ -443,6 +485,9 @@ final class PortalScreenSession implements VideoCaptureSession {
         }
         var coefficients = YuvCoefficients.BT709_LIMITED;
         var chromaWidth = region.width() / 2;
+        frames.drawCursor(width, height, layout);
+        var pixels = frames.pixels();
+        var stride = frames.stride();
         for (var row = 0; row < region.height(); row += 2) {
             var upper = (region.y() + row) * stride + 4 * region.x();
             var lower = upper + stride;
@@ -451,6 +496,7 @@ final class PortalScreenSession implements VideoCaptureSession {
             kernel.rgbToChroma(pixels, upper, lower, chromaWidth, layout, coefficients, out.u(), out.v(),
                     (row / 2) * out.uvStride());
         }
+        frames.eraseCursor();
         if (out != picture) {
             Pictures.fit(out, picture);
         }
@@ -473,12 +519,21 @@ final class PortalScreenSession implements VideoCaptureSession {
     }
 
     /**
-     * Returns whether the pointer is drawn into the frames.
+     * Returns how the pointer reaches the frames.
      *
-     * @return whether the portal embeds it
+     * @return the cursor mode the cast runs in
      */
-    boolean cursorEmbedded() {
-        return cast.cursorEmbedded();
+    long cursorMode() {
+        return cast.cursorMode();
+    }
+
+    /**
+     * Returns whether the stream's buffers are DMA-BUFs.
+     *
+     * @return whether the negotiated format has a modifier
+     */
+    boolean dmaBuf() {
+        return format.dmaBuf();
     }
 
     /**
@@ -516,6 +571,7 @@ final class PortalScreenSession implements VideoCaptureSession {
             PipeWire.contextDestroy(context);
         }
         PipeWire.loopDestroy(loop);
+        frames.close();
         arena.close();
         cast.close();
     }

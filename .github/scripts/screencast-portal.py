@@ -6,7 +6,11 @@ command line, which a GStreamer test source provides. OpenPipeWireRemote returns
 to the PipeWire socket. The hosted runners have no GPU, and xdg-desktop-portal-wlr 0.7 refuses to share a wlroots
 output that offers no DMA-BUF format, which a software-rendered compositor does not; this service stands in for it.
 
-Usage: /usr/bin/python3 screencast-portal.py NODE_ID PIPEWIRE_SOCKET WIDTH HEIGHT
+A test can switch what the next cast shares through the org.smalt.test.ScreenCast interface: Share(s) selects a profile
+named on the command line, each a node, its size and the cursor modes the portal offers, and LastCursorMode() returns
+the mode of the last SelectSources.
+
+Usage: /usr/bin/python3 screencast-portal.py NODE_ID PIPEWIRE_SOCKET WIDTH HEIGHT [NAME=NODE_ID:WIDTH:HEIGHT:CURSOR_MODES]...
 """
 import socket
 import sys
@@ -17,6 +21,7 @@ import dbus.service
 from gi.repository import GLib
 
 SCREEN_CAST = 'org.freedesktop.portal.ScreenCast'
+TEST = 'org.smalt.test.ScreenCast'
 REQUEST = 'org.freedesktop.portal.Request'
 SESSION = 'org.freedesktop.portal.Session'
 PROPERTIES = 'org.freedesktop.DBus.Properties'
@@ -24,7 +29,13 @@ ROOT = '/org/freedesktop/portal/desktop'
 
 dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
 bus = dbus.SessionBus()
-node, pipewire, width, height = int(sys.argv[1]), sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
+pipewire = sys.argv[2]
+profiles = {'default': (int(sys.argv[1]), int(sys.argv[3]), int(sys.argv[4]), 1 | 2)}
+for argument in sys.argv[5:]:
+    name, values = argument.split('=')
+    profiles[name] = tuple(int(value) for value in values.split(':'))
+node, width, height, cursor_modes = profiles['default']
+last_cursor_mode = 0
 
 
 def sender_path(sender):
@@ -65,6 +76,8 @@ class Portal(dbus.service.Object):
     def SelectSources(self, session, options, sender=None):
         if int(options.get('types', 1)) & 1 == 0:
             raise dbus.exceptions.DBusException('only monitors are shared')
+        global last_cursor_mode
+        last_cursor_mode = int(options.get('cursor_mode', 0))
         return self.respond(sender, options['handle_token'], {})
 
     @dbus.service.method(SCREEN_CAST, in_signature='osa{sv}', out_signature='o', sender_keyword='sender')
@@ -86,10 +99,19 @@ class Portal(dbus.service.Object):
 
     @dbus.service.method(PROPERTIES, in_signature='ss', out_signature='v')
     def Get(self, interface, name):
-        values = {'AvailableSourceTypes': 1, 'AvailableCursorModes': 1 | 2, 'version': 4}
+        values = {'AvailableSourceTypes': 1, 'AvailableCursorModes': cursor_modes, 'version': 4}
         if interface != SCREEN_CAST or name not in values:
             raise dbus.exceptions.DBusException('no property %s.%s' % (interface, name))
         return dbus.UInt32(values[name], variant_level=1)
+
+    @dbus.service.method(TEST, in_signature='s', out_signature='')
+    def Share(self, profile):
+        global node, width, height, cursor_modes
+        node, width, height, cursor_modes = profiles[profile]
+
+    @dbus.service.method(TEST, in_signature='', out_signature='u')
+    def LastCursorMode(self):
+        return dbus.UInt32(last_cursor_mode)
 
 
 name = dbus.service.BusName('org.freedesktop.portal.Desktop', bus)

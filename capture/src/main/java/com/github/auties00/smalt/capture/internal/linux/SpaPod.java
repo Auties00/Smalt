@@ -17,7 +17,8 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
  * the body and padding to 8 bytes. An object pod's body is its object type and parameter id
  * followed by properties, each a key, flags and a pod; a choice pod's body is its choice type,
  * flags and a child header followed by the child bodies back to back. This class writes the video
- * {@code EnumFormat} a capture stream offers, and reads the {@code Format} the producer chose.
+ * {@code EnumFormat} objects a capture stream offers and the {@code Buffers} and {@code Meta}
+ * parameters it answers a format with, and reads the {@code Format} the producer chose.
  */
 final class SpaPod {
     /**
@@ -29,7 +30,7 @@ final class SpaPod {
     /**
      * The choice types used.
      */
-    static final int CHOICE_NONE = 0, CHOICE_RANGE = 1, CHOICE_ENUM = 3;
+    static final int CHOICE_NONE = 0, CHOICE_RANGE = 1, CHOICE_ENUM = 3, CHOICE_FLAGS = 4;
 
     /**
      * The {@code SPA_TYPE_OBJECT_Format} object type.
@@ -37,9 +38,57 @@ final class SpaPod {
     static final int OBJECT_FORMAT = 0x40003;
 
     /**
+     * The {@code SPA_TYPE_OBJECT_ParamBuffers} object type.
+     */
+    static final int OBJECT_PARAM_BUFFERS = 0x40004;
+
+    /**
+     * The {@code SPA_TYPE_OBJECT_ParamMeta} object type.
+     */
+    static final int OBJECT_PARAM_META = 0x40005;
+
+    /**
      * The {@code SPA_PARAM_EnumFormat} and {@code SPA_PARAM_Format} parameter ids.
      */
     static final int PARAM_ENUM_FORMAT = 3, PARAM_FORMAT = 4;
+
+    /**
+     * The {@code SPA_PARAM_Buffers} and {@code SPA_PARAM_Meta} parameter ids.
+     */
+    static final int PARAM_BUFFERS = 5, PARAM_META = 6;
+
+    /**
+     * The {@code SPA_PARAM_BUFFERS_dataType} key.
+     */
+    static final int KEY_BUFFERS_DATA_TYPE = 6;
+
+    /**
+     * The {@code SPA_PARAM_META_type} and {@code SPA_PARAM_META_size} keys.
+     */
+    static final int KEY_META_TYPE = 1, KEY_META_SIZE = 2;
+
+    /**
+     * The {@code SPA_META_Cursor} metadata type.
+     */
+    static final int META_CURSOR = 5;
+
+    /**
+     * The property flags of a modifier list: {@code SPA_POD_PROP_FLAG_MANDATORY}, so that only a
+     * DMA-BUF format of the producer matches the object, and {@code SPA_POD_PROP_FLAG_DONT_FIXATE},
+     * so that the choice among the modifiers stays with the producer, which allocates the buffers.
+     */
+    static final int PROP_MANDATORY = 1 << 3, PROP_DONT_FIXATE = 1 << 4;
+
+    /**
+     * The {@code DRM_FORMAT_MOD_LINEAR} modifier: rows of pixels in plain memory order.
+     */
+    static final long MODIFIER_LINEAR = 0;
+
+    /**
+     * The {@code DRM_FORMAT_MOD_INVALID} modifier, which also stands for a modifier this class could
+     * not read.
+     */
+    static final long MODIFIER_INVALID = 0x00FF_FFFF_FFFF_FFFFL;
 
     /**
      * The format keys: {@code SPA_FORMAT_mediaType}, {@code _mediaSubtype}, {@code _VIDEO_format},
@@ -78,6 +127,22 @@ final class SpaPod {
      * @return the pod, in native byte order
      */
     static byte[] videoEnumFormat(List<Integer> formats, int width, int height, int rate) {
+        return videoEnumFormat(formats, width, height, rate, new long[0]);
+    }
+
+    /**
+     * Builds the {@code EnumFormat} of a raw video capture stream, in DMA-BUF memory when modifiers
+     * are given.
+     *
+     * @param formats the {@code spa_video_format} ids accepted, preferred first
+     * @param width the preferred width, or {@code 0} for none
+     * @param height the preferred height, or {@code 0} for none
+     * @param rate the preferred frames per second; every rate up to {@value #MAX_RATE} is offered
+     * @param modifiers the DRM format modifiers accepted, preferred first; empty for buffers without
+     * a modifier, which are shared memory
+     * @return the pod, in native byte order
+     */
+    static byte[] videoEnumFormat(List<Integer> formats, int width, int height, int rate, long[] modifiers) {
         var buffer = ByteBuffer.allocate(512).order(ByteOrder.nativeOrder());
         var object = begin(buffer, TYPE_OBJECT);
         buffer.putInt(OBJECT_FORMAT).putInt(PARAM_ENUM_FORMAT);
@@ -93,6 +158,16 @@ final class SpaPod {
             buffer.putInt(format);
         }
         end(buffer, choice);
+        if (modifiers.length > 0) {
+            buffer.putInt(KEY_VIDEO_MODIFIER).putInt(PROP_MANDATORY | PROP_DONT_FIXATE);
+            choice = begin(buffer, TYPE_CHOICE);
+            buffer.putInt(CHOICE_ENUM).putInt(0).putInt(8).putInt(TYPE_LONG);
+            buffer.putLong(modifiers[0]);
+            for (var modifier : modifiers) {
+                buffer.putLong(modifier);
+            }
+            end(buffer, choice);
+        }
         property(buffer, KEY_VIDEO_SIZE);
         choice = begin(buffer, TYPE_CHOICE);
         buffer.putInt(CHOICE_RANGE).putInt(0).putInt(8).putInt(TYPE_RECTANGLE);
@@ -108,6 +183,53 @@ final class SpaPod {
         buffer.putInt(MAX_RATE).putInt(1);
         end(buffer, choice);
         end(buffer, object);
+        return finish(buffer);
+    }
+
+    /**
+     * Builds the {@code Buffers} parameter that restricts a stream's buffers to memory types.
+     *
+     * @param dataTypes the mask of {@code spa_data_type} values accepted, each as {@code 1 << type}
+     * @return the pod, in native byte order
+     */
+    static byte[] buffers(int dataTypes) {
+        var buffer = ByteBuffer.allocate(64).order(ByteOrder.nativeOrder());
+        var object = begin(buffer, TYPE_OBJECT);
+        buffer.putInt(OBJECT_PARAM_BUFFERS).putInt(PARAM_BUFFERS);
+        property(buffer, KEY_BUFFERS_DATA_TYPE);
+        var choice = begin(buffer, TYPE_CHOICE);
+        buffer.putInt(CHOICE_FLAGS).putInt(0).putInt(4).putInt(TYPE_INT).putInt(dataTypes);
+        end(buffer, choice);
+        end(buffer, object);
+        return finish(buffer);
+    }
+
+    /**
+     * Builds the {@code Meta} parameter that asks for the pointer's metadata on every buffer.
+     *
+     * @param size the preferred size of the metadata, a {@code spa_meta_cursor} with its bitmap
+     * @param minSize the smallest size accepted
+     * @param maxSize the largest size accepted
+     * @return the pod, in native byte order
+     */
+    static byte[] cursorMeta(int size, int minSize, int maxSize) {
+        var buffer = ByteBuffer.allocate(96).order(ByteOrder.nativeOrder());
+        var object = begin(buffer, TYPE_OBJECT);
+        buffer.putInt(OBJECT_PARAM_META).putInt(PARAM_META);
+        property(buffer, KEY_META_TYPE);
+        id(buffer, META_CURSOR);
+        property(buffer, KEY_META_SIZE);
+        var choice = begin(buffer, TYPE_CHOICE);
+        buffer.putInt(CHOICE_RANGE).putInt(0).putInt(4).putInt(TYPE_INT).putInt(size).putInt(minSize).putInt(maxSize);
+        end(buffer, choice);
+        end(buffer, object);
+        return finish(buffer);
+    }
+
+    /**
+     * Returns the bytes written to a buffer.
+     */
+    private static byte[] finish(ByteBuffer buffer) {
         var bytes = new byte[buffer.position()];
         buffer.flip().get(bytes);
         return bytes;
@@ -206,7 +328,8 @@ final class SpaPod {
         var height = 0;
         var rateNumerator = 0;
         var rateDenominator = 0;
-        var modifier = false;
+        var dmaBuf = false;
+        var modifier = MODIFIER_INVALID;
         while (buffer.position() + 16 <= end) {
             var key = buffer.getInt();
             buffer.getInt();
@@ -246,7 +369,10 @@ final class SpaPod {
                 case KEY_MEDIA_TYPE -> mediaType = valueKind == TYPE_ID ? buffer.getInt(valueStart) : -1;
                 case KEY_MEDIA_SUBTYPE -> subtype = valueKind == TYPE_ID ? buffer.getInt(valueStart) : -1;
                 case KEY_VIDEO_FORMAT -> format = valueKind == TYPE_ID ? buffer.getInt(valueStart) : -1;
-                case KEY_VIDEO_MODIFIER -> modifier = true;
+                case KEY_VIDEO_MODIFIER -> {
+                    dmaBuf = true;
+                    modifier = valueKind == TYPE_LONG ? buffer.getLong(valueStart) : MODIFIER_INVALID;
+                }
                 case KEY_VIDEO_SIZE -> {
                     if (valueKind == TYPE_RECTANGLE) {
                         width = buffer.getInt(valueStart);
@@ -267,7 +393,7 @@ final class SpaPod {
         if (mediaType != MEDIA_VIDEO || subtype != SUBTYPE_RAW || format < 0 || width <= 0 || height <= 0) {
             return null;
         }
-        return new VideoFormat(format, width, height, rateNumerator, rateDenominator, modifier);
+        return new VideoFormat(format, width, height, rateNumerator, rateDenominator, dmaBuf, modifier);
     }
 
     /**
@@ -278,8 +404,18 @@ final class SpaPod {
      * @param height the height in pixels
      * @param rateNumerator the frame rate numerator, or {@code 0} when variable
      * @param rateDenominator the frame rate denominator
-     * @param modifier whether the producer chose a DMA-BUF modifier
+     * @param dmaBuf whether the format has a modifier, so its buffers are DMA-BUFs
+     * @param modifier the DRM format modifier, the default of a choice the producer has not fixated
+     * yet; {@link #MODIFIER_INVALID} without one, or when it is not a {@code long}
      */
-    record VideoFormat(int format, int width, int height, int rateNumerator, int rateDenominator, boolean modifier) {
+    record VideoFormat(int format, int width, int height, int rateNumerator, int rateDenominator, boolean dmaBuf, long modifier) {
+        /**
+         * Returns whether the buffers can be read as rows of pixels through a plain mapping.
+         *
+         * @return {@code true} for shared memory and for linear DMA-BUFs
+         */
+        boolean mappable() {
+            return !dmaBuf || modifier == MODIFIER_LINEAR;
+        }
     }
 }
