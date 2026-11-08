@@ -7,6 +7,7 @@ import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.webp.internal.alpha.AlphaEncoder;
+import com.github.auties00.smalt.image.webp.internal.color.SharpYuv;
 import com.github.auties00.smalt.image.webp.internal.color.YuvConverter;
 import com.github.auties00.smalt.image.webp.internal.lossless.Vp8lEncoder;
 import com.github.auties00.smalt.image.webp.internal.riff.FourCc;
@@ -120,7 +121,24 @@ public final class FrameEncoder {
      * @return the encoded image
      */
     public static EncodedImage encodeLossless(int[] argb, int width, int height, int quality, int method, boolean exact) {
-        var payload = Vp8lEncoder.encodeImage(argb, width, height, quality, method, exact);
+        return encodeLossless(argb, width, height, quality, method, exact, 100);
+    }
+
+    /**
+     * Encodes ARGB pixels losslessly or near-losslessly.
+     *
+     * @param argb the pixels
+     * @param width the image width in pixels
+     * @param height the image height in pixels
+     * @param quality the quality (effort), from 0 to 100
+     * @param method the method, from 0 to 6
+     * @param exact whether transparent pixels keep their color
+     * @param nearLossless the near-lossless level, from 0 to 100, where 100 is lossless
+     * @return the encoded image
+     */
+    public static EncodedImage encodeLossless(int[] argb, int width, int height, int quality, int method, boolean exact,
+                                              int nearLossless) {
+        var payload = Vp8lEncoder.encodeImage(argb, width, height, quality, method, exact, nearLossless);
         var hasAlpha = ((payload[4] & 0xFF) >>> 4 & 1) != 0;
         return new EncodedImage(payload, true, null, hasAlpha);
     }
@@ -140,7 +158,30 @@ public final class FrameEncoder {
      */
     public static YuvPicture prepareLossy(byte[] rgba, int stride, int width, int height, boolean useAlpha,
                                           boolean exact, MediaLimits limits) {
-        var yuv = YuvConverter.fromRgba(rgba, stride, width, height, useAlpha, limits);
+        return prepareLossy(rgba, stride, width, height, useAlpha, exact, false, 0, limits);
+    }
+
+    /**
+     * Prepares a 4:2:0 picture from RGBA for lossy coding with a choice of conversion: the sharp
+     * conversion, a dithered one, or alpha-weighted chroma averaging; unless exact, the color of
+     * transparent areas is then smoothed.
+     *
+     * @param rgba the RGBA samples, the first row first
+     * @param stride the distance in bytes between rows
+     * @param width the image width in pixels
+     * @param height the image height in pixels
+     * @param useAlpha whether the alpha channel is meaningful
+     * @param exact whether transparent pixels keep their color
+     * @param sharpYuv whether the sharp conversion is used
+     * @param dithering the dithering amplitude, from 0 (none) to 1, ignored with the sharp
+     * conversion
+     * @param limits the resource bounds
+     * @return the picture, with an alpha plane when some pixel is not opaque
+     */
+    public static YuvPicture prepareLossy(byte[] rgba, int stride, int width, int height, boolean useAlpha,
+                                          boolean exact, boolean sharpYuv, float dithering, MediaLimits limits) {
+        var yuv = sharpYuv ? SharpYuv.fromRgba(rgba, stride, width, height, useAlpha, limits)
+                : YuvConverter.fromRgbaDithered(rgba, stride, width, height, useAlpha, dithering, limits);
         if (!exact) {
             YuvConverter.cleanupTransparentArea(yuv);
         }
@@ -203,15 +244,29 @@ public final class FrameEncoder {
      * @return the {@code VP8 } payload, of even length
      */
     public static byte[] encodeVp8(YuvPicture picture, float quality, int method, boolean disableFilter) {
+        var base = Vp8KeyFrameSettings.quality(quality);
+        var settings = new Vp8KeyFrameSettings(quality, method, base.segments(),
+                disableFilter ? 0 : base.filterStrength(), base.sharpness(), base.partitionCount(), base.snsStrength());
+        return encodeVp8(picture, settings);
+    }
+
+    /**
+     * Encodes the color of a prepared lossy picture with explicit coding settings.
+     *
+     * <p>The payload always has an even length, as {@link #encodeVp8(YuvPicture, float, int, boolean)}
+     * describes.
+     *
+     * @param picture the picture; its alpha plane is ignored
+     * @param settings the coding settings
+     * @return the {@code VP8 } payload, of even length
+     */
+    public static byte[] encodeVp8(YuvPicture picture, Vp8KeyFrameSettings settings) {
         var opaque = YuvPicture.builder().size(picture.width(), picture.height()).chromaFormat(picture.chromaFormat())
                 .color(picture.color())
                 .luma(picture.y(), picture.yStride())
                 .chroma(picture.u(), picture.v(), picture.uvStride())
                 .build();
-        var base = Vp8KeyFrameSettings.quality(quality);
-        var options = new Vp8KeyFrameSettings(quality, method, base.segments(),
-                disableFilter ? 0 : base.filterStrength(), base.sharpness(), base.partitionCount(), base.snsStrength());
-        var payload = Vp8.encodeKeyFrame(opaque, options);
+        var payload = Vp8.encodeKeyFrame(opaque, settings);
         return (payload.length & 1) == 0 ? payload : Arrays.copyOf(payload, payload.length + 1);
     }
 }

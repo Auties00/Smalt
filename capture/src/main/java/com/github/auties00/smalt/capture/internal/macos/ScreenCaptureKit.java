@@ -179,6 +179,56 @@ final class ScreenCaptureKit {
     static final MemorySegment INTEGER_VALUE = ObjC.selector("integerValue");
 
     /**
+     * The {@code SCShareableContent.windows} getter.
+     */
+    static final MemorySegment WINDOWS = ObjC.selector("windows");
+
+    /**
+     * The {@code SCWindow.windowID} getter.
+     */
+    static final MemorySegment WINDOW_ID = ObjC.selector("windowID");
+
+    /**
+     * The {@code SCWindow.windowLayer} getter.
+     */
+    static final MemorySegment WINDOW_LAYER = ObjC.selector("windowLayer");
+
+    /**
+     * The {@code SCWindow.onScreen} getter.
+     */
+    static final MemorySegment IS_ON_SCREEN = ObjC.selector("isOnScreen");
+
+    /**
+     * The {@code SCWindow.frame} getter.
+     */
+    static final MemorySegment FRAME = ObjC.selector("frame");
+
+    /**
+     * The {@code SCWindow.title} getter.
+     */
+    static final MemorySegment TITLE = ObjC.selector("title");
+
+    /**
+     * The {@code SCWindow.owningApplication} getter.
+     */
+    static final MemorySegment OWNING_APPLICATION = ObjC.selector("owningApplication");
+
+    /**
+     * The {@code SCRunningApplication.applicationName} getter.
+     */
+    static final MemorySegment APPLICATION_NAME = ObjC.selector("applicationName");
+
+    /**
+     * The {@code SCContentFilter} initializer of a single window.
+     */
+    static final MemorySegment INIT_WITH_WINDOW = ObjC.selector("initWithDesktopIndependentWindow:");
+
+    /**
+     * The {@code SCStreamConfiguration.sourceRect} setter.
+     */
+    static final MemorySegment SET_SOURCE_RECT = ObjC.selector("setSourceRect:");
+
+    /**
      * Prevents instantiation.
      */
     private ScreenCaptureKit() {
