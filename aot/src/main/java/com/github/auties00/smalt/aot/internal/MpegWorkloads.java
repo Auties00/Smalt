@@ -12,6 +12,7 @@ import com.github.auties00.smalt.audio.aac.AacEncoderOptions;
 import com.github.auties00.smalt.audio.aac.AacLowDelaySbr;
 import com.github.auties00.smalt.audio.aac.AacProfile;
 import com.github.auties00.smalt.audio.ac3.Ac3Decoder;
+import com.github.auties00.smalt.audio.ac3.Ac3DecoderOptions;
 import com.github.auties00.smalt.audio.ac3.Ac3Encoder;
 import com.github.auties00.smalt.audio.ac3.Ac3EncoderOptions;
 import com.github.auties00.smalt.audio.ac3.Eac3Encoder;
@@ -239,6 +240,7 @@ final class MpegWorkloads {
                 file("aac-surround-decode", () -> aacSurroundDecode(4)),
                 file("ac3", () -> ac3(6)),
                 file("eac3", () -> eac3("eac3", Eac3EncoderOptions.defaults(), 6)),
+                file("eac3-tpnp-holdback", () -> eac3Holdback(4)),
                 file("dts-decode", MpegWorkloads::dtsDecode),
                 file("iec61937-wav", () -> iec61937(4)),
                 file("aac-wav", () -> aacWave(4)),
@@ -1879,6 +1881,29 @@ final class MpegWorkloads {
         Consumer<AudioBuffer> decoded = AudioStreams::consume;
         Consumer<Packet> output = packet -> decoder.decode(packet, decoded);
         return TrainingWorkload.of(name, () -> SyntheticAudio.feed(music, block, buffer -> encoder.encode(buffer, output)));
+    }
+
+    /**
+     * Returns a workload that encodes stereo music as 48 kHz E-AC-3 of three-block frames with
+     * transient pre-noise processing, and decodes it with the output held back for that processing,
+     * flushing the decoder at the end of every round; one encoder and one decoder across rounds.
+     *
+     * @param seconds the music coded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload eac3Holdback(double seconds) {
+        var music = SyntheticAudio.music(48000, seconds);
+        var encoder = new Eac3Encoder(Eac3EncoderOptions.defaults().toBuilder().bitrate(96000).blocksPerFrame(3)
+                .preNoiseProcessing(true).build());
+        var decoder = new Ac3Decoder(AudioStreams.track(Codec.EAC3, 48000, ChannelLayout.STEREO, null),
+                Ac3DecoderOptions.builder().preNoiseHoldback(true).build());
+        var block = new AudioBuffer(ChannelLayout.STEREO, 48000, AudioStreams.BLOCK_FRAMES);
+        Consumer<AudioBuffer> decoded = AudioStreams::consume;
+        Consumer<Packet> output = packet -> decoder.decode(packet, decoded);
+        return TrainingWorkload.of("eac3-tpnp-holdback", () -> {
+            SyntheticAudio.feed(music, block, buffer -> encoder.encode(buffer, output));
+            decoder.flush(decoded);
+        });
     }
 
     /**

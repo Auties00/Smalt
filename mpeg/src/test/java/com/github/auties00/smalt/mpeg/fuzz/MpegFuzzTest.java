@@ -5,6 +5,9 @@ import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.aac.AacDecoder;
 import com.github.auties00.smalt.audio.aac.AacDecoderOptions;
+import com.github.auties00.smalt.audio.ac3.Ac3Decoder;
+import com.github.auties00.smalt.audio.ac3.Ac3DecoderOptions;
+import com.github.auties00.smalt.audio.ac3.Ac3Downmix;
 import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.image.AuxiliaryImage;
 import com.github.auties00.smalt.image.ChromaFormat;
@@ -382,6 +385,71 @@ class MpegFuzzTest {
     @FuzzTest
     void eac3(byte[] data) {
         FuzzMedia.audio(Codec.EAC3, data);
+    }
+
+    /**
+     * Decodes an E-AC-3 stream in the {@link FuzzPackets} format twice, with its output held back for the transient
+     * pre-noise processing and without, conceals every fifth packet lost in both, and checks that the two decodes
+     * accept the same packets and emit the same number of samples once flushed. The options byte, modulo the number
+     * of {@link Ac3Downmix} constants, chooses the downmix.
+     */
+    @FuzzTest
+    void eac3Holdback(byte[] data) {
+        var run = Fuzz.start("eac3Holdback");
+        var input = FuzzPackets.parse(data, FuzzPackets.AUDIO_FIELDS);
+        var downmixes = Ac3Downmix.values();
+        var plainOptions = Ac3DecoderOptions.builder().limits(Fuzz.LIMITS)
+                .downmix(downmixes[Math.floorMod(input.header().options(), downmixes.length)]).build();
+        var heldOptions = plainOptions.toBuilder().preNoiseHoldback(true).build();
+        var track = AudioTrack.builder().id(1).codec(Codec.EAC3).timeBase(new Rational(1, 48000)).sampleRate(48000)
+                .build();
+        try (var held = new Ac3Decoder(track, heldOptions); var plain = new Ac3Decoder(track, plainOptions)) {
+            if (held.delay() != 512 || plain.delay() != 0) {
+                throw new IllegalStateException("delays " + held.delay() + " and " + plain.delay());
+            }
+            var counts = new long[2];
+            Consumer<AudioBuffer> heldSink = buffer -> counts[0] += checked(run, buffer);
+            Consumer<AudioBuffer> plainSink = buffer -> counts[1] += checked(run, buffer);
+            for (var index = 0; index < input.packets().size(); index++) {
+                var part = input.packets().get(index);
+                var packet = new Packet(1, part.data(), index * 1536L, index * 1536L, 1536, true);
+                boolean accepted;
+                boolean plainAccepted;
+                if (index % 5 == 4) {
+                    var span = 1 + Math.floorMod(part.data().length * 37 + index, 4096);
+                    accepted = run.step("conceal " + index, () -> held.conceal(span, heldSink));
+                    plainAccepted = run.step("plain conceal " + index, () -> plain.conceal(span, plainSink));
+                } else {
+                    accepted = run.step("packet " + index, () -> held.decode(packet, heldSink));
+                    plainAccepted = run.step("plain packet " + index, () -> plain.decode(packet, plainSink));
+                }
+                if (accepted != plainAccepted) {
+                    throw new IllegalStateException("packet " + index + " accepted " + accepted + " held back and "
+                            + plainAccepted + " plain");
+                }
+            }
+            run.step("flush", () -> held.flush(heldSink));
+            run.step("plain flush", () -> plain.flush(plainSink));
+            if (counts[0] != counts[1]) {
+                throw new IllegalStateException("held back decode emitted " + counts[0] + " samples, plain " + counts[1]);
+            }
+        }
+    }
+
+    /**
+     * Checks an audio buffer as the shared audio driver does and returns its frame count.
+     *
+     * @param run the run
+     * @param buffer the buffer
+     * @return the samples per channel
+     */
+    private static int checked(FuzzRun run, AudioBuffer buffer) {
+        var frames = buffer.frames();
+        if (frames < 0 || frames > buffer.capacity() || buffer.channels() != buffer.layout().channels()) {
+            throw new IllegalStateException("audio buffer of " + frames + " frames, " + buffer.channels() + " planes");
+        }
+        run.output();
+        return frames;
     }
 
     @FuzzTest

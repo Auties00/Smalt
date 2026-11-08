@@ -139,7 +139,7 @@ SEED_CODECS = {
     'mpeg:MpegFuzzTest.mpeg1Video': ['mpeg1video'], 'mpeg:MpegFuzzTest.mpeg2Video': ['mpeg2video'],
     'mpeg:MpegFuzzTest.vc1': ['vc1'],
     'mpeg:MpegFuzzTest.aac': ['aac'], 'mpeg:MpegFuzzTest.amrNb': ['amr_nb'], 'mpeg:MpegFuzzTest.amrWb': ['amr_wb'],
-    'mpeg:MpegFuzzTest.ac3': ['ac3'], 'mpeg:MpegFuzzTest.eac3': ['eac3'],
+    'mpeg:MpegFuzzTest.ac3': ['ac3'], 'mpeg:MpegFuzzTest.eac3': ['eac3'], 'mpeg:MpegFuzzTest.eac3Holdback': ['eac3'],
 }
 CONTAINER_EXTENSIONS = ['.ivf', '.webm', '.mkv', '.mp4', '.mov', '.ogg', '.opus', '.flac', '.mp3', '.m4a',
                         '.ac3', '.eac3', '.aac', '.amr', '.avi', '.ts', '.3gp', '.ogv', '.spx', '.wv', '.mka', '.ape', '.mpc',

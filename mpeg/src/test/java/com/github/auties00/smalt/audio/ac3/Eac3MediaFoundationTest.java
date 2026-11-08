@@ -64,9 +64,16 @@ class Eac3MediaFoundationTest {
     }
 
     /**
+     * The options of a decode held back for the transient pre-noise processing, as Dolby's decoder
+     * holds its output back.
+     */
+    private static final Ac3DecoderOptions HELD = Ac3DecoderOptions.fullRange().toBuilder().preNoiseHoldback(true)
+            .build();
+
+    /**
      * Returns whether frame {@code frame} carries transient data that Dolby's decoder applies to
      * its own samples with a synthesis buffer completed only in the next frame, which a decoder
-     * without output latency cannot.
+     * that does not hold its output back cannot.
      */
     private static boolean late(StreamInspector.Frame frame) {
         for (var ch = 0; ch < frame.locations().length; ch++) {
@@ -97,21 +104,29 @@ class Eac3MediaFoundationTest {
         assertEquals(2, mf.channels());
         // below the extension band, which both decoders fill with their own noise
         var reference = MediaFoundation.lowPass(mf.samples(), 2, 4000.0 / 48000);
-        var actual = MediaFoundation.lowPass(smalt(stream), 2, 4000.0 / 48000);
+        var actual = MediaFoundation.lowPass(smalt(stream, HELD), 2, 4000.0 / 48000);
+        var unheld = MediaFoundation.lowPass(smalt(stream), 2, 4000.0 / 48000);
         // quiet frames are measured against a hundredth of the mean frame power, since the
         // decoder's output carries its own noise floor
         var snr = MediaFoundation.frameSnr(reference, actual, 2, FRAME, 0.01);
+        var unheldSnr = MediaFoundation.frameSnr(reference, unheld, 2, FRAME, 0.01);
         var frames = StreamInspector.frames(stream);
         var corrected = 0;
         var checked = 0;
+        var lateFrames = 0;
+        var lateBetter = 0;
         var below = new ArrayList<Integer>();
         var sorted = new ArrayList<Double>();
         for (var f = 0; f < snr.length; f++) {
             var frame = frames.get(f);
             var data = Arrays.stream(frame.locations()).anyMatch(location -> location >= 0);
             corrected += data ? 1 : 0;
-            // the low-pass filter spreads the difference of a late frame into the next frame
-            if (late(frame) || f > 0 && late(frames.get(f - 1)) || Double.isInfinite(snr[f])) {
+            if (late(frame)) {
+                lateFrames++;
+                // a decode that is not held back leaves samples of this frame as decoded
+                lateBetter += snr[f] > unheldSnr[f] + 3 ? 1 : 0;
+            }
+            if (Double.isInfinite(snr[f])) {
                 continue;
             }
             checked++;
@@ -123,10 +138,13 @@ class Eac3MediaFoundationTest {
         }
         sorted.sort(null);
         var median = sorted.get(sorted.size() / 2);
-        System.out.printf("%s kbit/s: %d frames with pre-noise data, %d compared, median %.1f dB, below 50 dB %s%n",
-                rate, corrected, checked, median, below);
+        System.out.printf("%s kbit/s: %d frames with pre-noise data, %d compared, median %.1f dB, below 50 dB %s, "
+                + "%d frames corrected late, %d of them closer to Dolby's decoder than without holdback%n",
+                rate, corrected, checked, median, below, lateFrames, lateBetter);
         assertTrue(corrected >= 60, corrected + " frames with pre-noise data");
         assertTrue(median >= 80, "median " + median);
+        assertTrue(lateFrames > 0 && lateBetter == lateFrames, lateBetter + " of " + lateFrames
+                + " late frames closer to Dolby's decoder");
         // one block of the 88 kbit/s stream, which leaves enhanced coupling for a short transform,
         // decodes about 30 dB from Dolby's decoder below 400 Hz, whatever the pre-noise processing
         assertTrue(below.size() <= 1, "frames below 50 dB: " + below);
@@ -158,17 +176,19 @@ class Eac3MediaFoundationTest {
         return new byte[][]{plain.toByteArray(), forged.toByteArray()};
     }
 
-    @ParameterizedTest(name = "transprocloc {0}, transproclen {1}")
-    @CsvSource({"256, 0", "300, 100", "430, 255", "500, 0", "580, 37", "639, 200"})
+    @ParameterizedTest(name = "transprocloc {0}, transproclen {1}, holdback {2}")
+    @CsvSource({"256, 0, false", "300, 100, false", "430, 255, false", "500, 0, false", "580, 37, false",
+            "639, 200, false", "300, 100, true", "639, 200, true", "448, 37, true", "480, 100, true", "450, 255, true",
+            "511, 1, true"})
     @DisplayName("place the time scaling synthesis and cross-fade it as Dolby's decoder does")
-    void forgedData(int location, int length) {
+    void forgedData(int location, int length, boolean holdback) {
         var driver = MediaFoundation.driver();
         var streams = forged(location, length);
         var mf = MediaFoundation.decode(driver, MediaFoundation.write(directory, "forged.ec3", streams[1]), directory,
                 -1, MediaFoundation.CUSTOM, 0);
         var plain = MediaFoundation.decode(driver, MediaFoundation.write(directory, "plain.ec3", streams[0]), directory,
                 -1, MediaFoundation.CUSTOM, 0);
-        var actual = smalt(streams[1]);
+        var actual = holdback ? smalt(streams[1], HELD) : smalt(streams[1]);
         var frames = Math.min(mf.samples().length, actual.length);
         var changed = 0;
         for (var i = 0; i < frames; i++) {
@@ -206,10 +226,12 @@ class Eac3MediaFoundationTest {
                 MediaFoundation.CUSTOM, 0);
         var cutoff = 6000.0 / 48000;
         var reference = MediaFoundation.lowPass(mf.samples(), 2, cutoff);
-        var with = MediaFoundation.lowPass(smalt(stream), 2, cutoff);
+        var with = MediaFoundation.lowPass(smalt(stream, HELD), 2, cutoff);
+        var unheld = MediaFoundation.lowPass(smalt(stream), 2, cutoff);
         var without = MediaFoundation.lowPass(smalt(withoutPreNoise(stream)), 2, cutoff);
         var signal = 0.0;
         var errorWith = 0.0;
+        var errorUnheld = 0.0;
         var errorWithout = 0.0;
         var changed = 0;
         var length = Math.min(reference.length, with.length);
@@ -220,14 +242,17 @@ class Eac3MediaFoundationTest {
             changed++;
             signal += (double) reference[i] * reference[i];
             errorWith += Math.pow(reference[i] - with[i], 2);
+            errorUnheld += Math.pow(reference[i] - unheld[i], 2);
             errorWithout += Math.pow(reference[i] - without[i], 2);
         }
         var snrWith = 10 * Math.log10(signal / errorWith);
+        var snrUnheld = 10 * Math.log10(signal / errorUnheld);
         var snrWithout = 10 * Math.log10(signal / errorWithout);
-        System.out.printf("%d blocks: %d corrected samples, %.1f dB against Dolby's decoder, %.1f dB without the "
-                + "processing%n", blocks, changed, snrWith, snrWithout);
+        System.out.printf("%d blocks: %d corrected samples, %.1f dB against Dolby's decoder held back, %.1f dB not "
+                + "held back, %.1f dB without the processing%n", blocks, changed, snrWith, snrUnheld, snrWithout);
         assertTrue(changed > 2000, changed + " corrected samples");
         assertTrue(snrWith >= 38 && snrWith >= snrWithout + 10, snrWith + " dB, " + snrWithout + " dB without");
+        assertTrue(snrWith >= snrUnheld, snrWith + " dB held back, " + snrUnheld + " dB not held back");
     }
 
     /**

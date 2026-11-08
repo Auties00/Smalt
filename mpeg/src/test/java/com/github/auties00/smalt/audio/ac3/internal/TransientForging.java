@@ -4,8 +4,8 @@ import com.github.auties00.smalt.internal.bits.MsbBitReader;
 import com.github.auties00.smalt.internal.bits.MsbBitWriter;
 
 /**
- * Adds transient pre-noise processing data to an E-AC-3 frame of Smalt's encoder (an independent
- * substream without mixing, informational or additional bit stream information), setting
+ * Adds transient pre-noise processing data to an E-AC-3 frame of Smalt's encoder (of a substream
+ * without mixing, informational or additional bit stream information), setting
  * {@code transproce} and inserting {@code chintransproc}, {@code transprocloc} and
  * {@code transproclen} after the frame SNR offsets, then growing the frame to whole words and
  * recomputing {@code frmsiz} and the CRC. No other E-AC-3 encoder output in the test corpus uses
@@ -102,7 +102,9 @@ public final class TransientForging {
      */
     private static int[] positions(byte[] frame) {
         var reader = new MsbBitReader(frame, 0, frame.length);
-        reader.skip(16 + 2 + 3 + 11);
+        reader.skip(16);
+        var streamType = reader.read(2);
+        reader.skip(3 + 11);
         var fscod = reader.read(2);
         var numblkscod = fscod == 3 ? 3 : reader.read(2);
         if (fscod == 3) {
@@ -115,10 +117,13 @@ public final class TransientForging {
         if (reader.read(1) != 0) {
             reader.skip(8);
         }
+        if (streamType == 1 && reader.read(1) != 0) {
+            reader.skip(16);
+        }
         if (reader.read(1) != 0 || reader.read(1) != 0) {
             throw new IllegalArgumentException("mixing or informational metadata present");
         }
-        if (numblkscod != 3) {
+        if (streamType == 0 && numblkscod != 3) {
             reader.skip(1);
         }
         if (reader.read(1) != 0) {
@@ -158,12 +163,14 @@ public final class TransientForging {
         if (lfe) {
             reader.skip(blocks);
         }
-        if (numblkscod != 3) {
-            if (reader.read(1) != 0) {
+        if (streamType == 0) {
+            if (numblkscod != 3) {
+                if (reader.read(1) != 0) {
+                    reader.skip(5L * channels);
+                }
+            } else {
                 reader.skip(5L * channels);
             }
-        } else {
-            reader.skip(5L * channels);
         }
         reader.skip(10);
         return new int[]{transproce, (int) reader.bitPosition(), channels};

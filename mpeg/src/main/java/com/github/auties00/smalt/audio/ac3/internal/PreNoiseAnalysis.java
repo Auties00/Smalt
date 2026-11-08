@@ -22,9 +22,10 @@ import java.util.Arrays;
  * the estimate for a few time scaling lengths, and the length that removes the most error energy
  * ahead of the transient is kept when it removes at least half of it. A correction is attempted only
  * when its synthesis buffer ends within the frame carrying the data or the corrected samples begin
- * after it, so that a decoder that outputs each frame as it decodes it applies all of it, and when its
- * buffer and corrected samples begin after the transient of the correction chosen before, so that
- * each transient is corrected once and corrections never overlap. Instances are not thread-safe.
+ * after it, so that in frames of six blocks a decoder that outputs each frame as it decodes it applies
+ * all of it, and when its buffer and corrected samples begin after the transient of the correction
+ * chosen before, so that each transient is corrected once and corrections never overlap. Instances
+ * are not thread-safe.
  *
  * @implNote This implementation estimates the decoder with the cross-fades of
  * {@link TransientPreNoise}, takes the earlier audio the decoder copies from the input itself and
@@ -278,6 +279,11 @@ final class PreNoiseAnalysis {
             var start = position - preNoise - candidate - TC1;
             // a decoder applies all of the correction when its buffer is complete at the end of the
             // frame carrying the data, or when the correction starts after that frame
+            // TODO: in frames of 1, 2 or 3 blocks the buffer may be completed a frame or more after
+            //  the one following the frame carrying the data, so a correction starting after that
+            //  frame still reaches samples a decoder that does not hold its output back has already
+            //  output (measured against Dolby's decoder: 40.5 dB instead of 42.3 dB held back); the
+            //  test is start < (blockStart - 1) / frameSize * frameSize, which changes the output.
             if (blockStart > frameSize && start < frameSize) {
                 continue;
             }
