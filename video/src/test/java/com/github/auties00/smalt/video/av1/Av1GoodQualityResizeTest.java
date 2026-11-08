@@ -17,6 +17,7 @@ import com.github.auties00.smalt.video.VideoFrame;
 import com.github.auties00.smalt.video.av1.internal.BitReader;
 import com.github.auties00.smalt.video.av1.internal.FrameHeader;
 import com.github.auties00.smalt.video.av1.internal.SequenceHeader;
+import com.github.auties00.smalt.video.av1.internal.encoder.AnnexEChecker;
 import com.github.auties00.smalt.video.av1.internal.encoder.Av1EncTesting;
 import com.github.auties00.smalt.video.vp9.internal.Vp9TestVideo;
 import org.junit.jupiter.api.DisplayName;
@@ -320,6 +321,15 @@ class Av1GoodQualityResizeTest {
             }
             assertEquals(run.frames(), shown, "shown frames");
             assertTrue(scaledInter >= 4, "inter frames predicting from scaled references: " + scaledInter);
+            if (timing == Av1TimingInfo.DECODER_MODEL) {
+                var units = new ArrayList<byte[]>();
+                for (var packet : run.packets()) {
+                    units.add(packet.data());
+                }
+                // every sequence conforms to the Annex E decoder model of its level
+                var errors = AnnexEChecker.checkStream(units);
+                assertTrue(errors.isEmpty(), () -> String.join("\n", errors));
+            }
         }
 
         @Test

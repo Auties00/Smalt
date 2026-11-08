@@ -292,7 +292,11 @@ public final class Av1Encoder implements VideoEncoder {
      */
     private static StreamFormat streamFormat(Av1EncoderOptions options) {
         return new StreamFormat(options.chromaFormat(), options.bitDepth(), options.color(), signalsGrain(options),
-                options.screenContent(), new StreamTiming(options.timingInfo(), options.timeBase(), options.frameRate()),
+                options.screenContent(), new StreamTiming(options.timingInfo(), options.timeBase(), options.frameRate(),
+                        options.quality().isPresent() ? 0 : options.bitrate(),
+                        options.usage() == Av1EncoderUsage.GOOD_QUALITY ? Av1GoodEncoder.DECODES_PER_SHOWN_FRAME : 1,
+                        options.usage() == Av1EncoderUsage.REALTIME ? Av1RtEncoder.displayDelay(options.temporalLayers())
+                                : StreamTiming.DISPLAY_DELAY_FRAMES),
                 options.superResolution().orElse(8));
     }
 

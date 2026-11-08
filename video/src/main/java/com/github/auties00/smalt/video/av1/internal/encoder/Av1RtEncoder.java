@@ -67,6 +67,19 @@ public final class Av1RtEncoder implements Av1Engine {
     private static final int LAST_SLOTS = 6;
 
     /**
+     * Returns the initial display delay of a real-time stream: the frame buffers its references
+     * fill after a key frame, so that the decoder model's presentation starts, since the buffer pool
+     * holds only the frames the reference slots keep until the first frame is shown.
+     *
+     * @param temporalLayers the number of temporal layers, 1 to 3
+     * @return the delay in frames: the key frame and the rotating {@code LAST} slots without
+     * temporal layers, the key frame and the slots the lower layers refresh with them
+     */
+    public static int displayDelay(int temporalLayers) {
+        return temporalLayers == 1 ? LAST_SLOTS + 1 : temporalLayers;
+    }
+
+    /**
      * The largest number of times a key frame is coded again after overshooting its target.
      */
     static final int MAX_KEY_RECODES = 2;

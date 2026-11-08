@@ -182,7 +182,8 @@ class Av1EncoderTimingTest {
         assertFalse(seq.decoderModelInfoPresent);
         assertTrue(seq.displayModelInfoPresent);
         assertTrue(seq.displayModelParamPresent[0]);
-        assertEquals(8, seq.initialDisplayDelay[0]);
+        // the key frame and the six rotating LAST slots of real-time coding
+        assertEquals(7, seq.initialDisplayDelay[0]);
     }
 
     @Test
@@ -206,34 +207,42 @@ class Av1EncoderTimingTest {
         assertEquals(90_000, seq.timeScale);
         assertFalse(seq.equalPictureInterval);
         assertTrue(seq.decoderModelInfoPresent);
-        assertEquals(FRAME_TICKS, seq.numUnitsInDecodingTick);
-        assertEquals(16, seq.encoderDecoderBufferDelayLength);
-        assertEquals(16, seq.bufferRemovalDelayLength);
+        assertEquals(FRAME_TICKS / 16, seq.numUnitsInDecodingTick);
+        assertEquals(17, seq.encoderDecoderBufferDelayLength);
+        assertEquals(32, seq.bufferRemovalDelayLength);
         assertEquals(32, seq.framePresentationDelayLength);
         assertTrue(seq.decoderModelParamPresent[0]);
-        assertEquals(45_000, seq.decoderBufferDelay[0]);
-        assertEquals(45_000, seq.encoderBufferDelay[0]);
+        assertEquals(90_000, seq.decoderBufferDelay[0] + seq.encoderBufferDelay[0]);
+        assertTrue(seq.decoderBufferDelay[0] > 0 && seq.decoderBufferDelay[0] <= 70_000);
         assertFalse(seq.lowDelayMode[0]);
-        assertEquals(8, seq.initialDisplayDelay[0]);
+        assertEquals(usage == Av1EncoderUsage.REALTIME ? 7 : 8, seq.initialDisplayDelay[0]);
         var headers = frameHeaders(seq, stream.packets());
         var shown = 0;
-        var keyDisplay = -1L;
-        var decoded = 0L;
+        var keyPts = -1L;
+        var keyRemoval = 0L;
+        var lastRemoval = -1L;
         var keys = 0;
         for (var h : headers) {
+            var pts = shown * FRAME_TICKS;
             if (!h.showExistingFrame) {
                 assertTrue(h.bufferRemovalTimePresent, "removal times present");
+                // removal times count from the last key frame, a key frame's from the previous one
+                var removal = keyRemoval + h.bufferRemovalTime[0];
                 if (h.frameType == FrameHeader.KEY) {
                     keys++;
-                    decoded = 0;
-                    keyDisplay = shown;
+                    keyRemoval = removal;
                 }
-                assertEquals(decoded, h.bufferRemovalTime[0], "removal time");
-                decoded++;
+                assertTrue(removal > lastRemoval, "removal times increase");
+                lastRemoval = removal;
             }
             if (h.showExistingFrame || h.showFrame) {
-                assertEquals((shown - keyDisplay) * FRAME_TICKS + 8 * FRAME_TICKS, h.framePresentationTime,
+                var key = !h.showExistingFrame && h.frameType == FrameHeader.KEY;
+                // presentation times count from the last key frame's, a key frame's from the previous one
+                assertEquals(keyPts < 0 ? 0 : pts - keyPts, h.framePresentationTime,
                         "presentation time of shown frame " + shown);
+                if (key) {
+                    keyPts = pts;
+                }
                 shown++;
             }
         }

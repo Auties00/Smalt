@@ -1230,6 +1230,9 @@ final class FrameEncoder implements FilterTarget {
         }
         var w = obuWriter.showExistingHeader(seq, slot, timing != null ? timing.presentation(seq, pts) : 0);
         ObuWriter.writeObu(out, Obu.OBU_FRAME_HDR, w.buffer(), 0, w.size());
+        if (timing != null) {
+            timing.showExisting(slot, pts, out.size());
+        }
         return out.toByteArray();
     }
 
@@ -1436,6 +1439,11 @@ final class FrameEncoder implements FilterTarget {
             ObuWriter.writeObu(out, Obu.OBU_SEQ_HDR, seqObu, 0, seqObu.length);
         }
         var w = obuWriter.frameHeader(seq, hdr, refOrderHint, refHdr);
+        if (timing != null && hdr.bufferRemovalTimePresent) {
+            timing.schedule(hdr, seq, p.pts, out.size() + ObuWriter.frameObuSize(w.size(), p.temporalLayers > 1,
+                    nTiles, sizes, hdr.tilingNBytes));
+            w = obuWriter.frameHeader(seq, hdr, refOrderHint, refHdr);
+        }
         ObuWriter.writeFrameObu(out, w, p.temporalLayers > 1, p.temporalId, nTiles, sizes, data, hdr.tilingNBytes);
         pending = hdr;
         return out.toByteArray();
@@ -1782,7 +1790,7 @@ final class FrameEncoder implements FilterTarget {
             advanceGrainSeed(hdr.filmGrainPresent ? hdr.filmGrain.seed : grainSeed(params.grain));
         }
         if (timing != null) {
-            timing.advance(params.key, params.pts);
+            timing.advance(hdr, params.pts);
         }
         refresh(hdr);
         swapSources();
@@ -1801,7 +1809,7 @@ final class FrameEncoder implements FilterTarget {
      * @param stream the stream's timing
      */
     void timing(StreamTiming stream) {
-        timing = stream.mode() == Av1TimingInfo.NONE ? null : new FrameTiming(stream);
+        timing = stream.mode() == Av1TimingInfo.NONE ? null : new FrameTiming();
     }
 
     /**

@@ -635,15 +635,23 @@ public final class StillFrameEncoder implements Av1Engine, FilterTarget {
     private long timingPts;
 
     /**
+     * The bytes the caller writes before the next key frame's OBUs in its temporal unit.
+     */
+    private int timingPrefix;
+
+    /**
      * Makes the next key frames' headers carry decoder model times when the sequence signals the
      * decoder model; the caller advances the times once the frame is kept.
      *
      * @param timing the times of the stream
      * @param pts the timestamp of the next key frame, in time base units
+     * @param prefix the bytes the caller writes before the frame's OBUs in its temporal unit: the
+     * temporal delimiter and the sequence header it adds
      */
-    void timing(FrameTiming timing, long pts) {
+    void timing(FrameTiming timing, long pts, int prefix) {
         this.timing = timing;
         this.timingPts = pts;
+        this.timingPrefix = prefix;
     }
 
     /**
@@ -1025,6 +1033,12 @@ public final class StillFrameEncoder implements Av1Engine, FilterTarget {
         parseBack(hdr);
         var w = headerWriter;
         StillHeaderWriter.frameHeader(w, seq, hdr);
+        if (timing != null && hdr.bufferRemovalTimePresent) {
+            var bytes = timingPrefix + (withSequenceHeader ? ObuWriter.obuSize(seqObu.length) : 0)
+                    + ObuWriter.frameObuSize(w.size(), false, nTiles, sizes, hdr.tilingNBytes);
+            timing.schedule(hdr, seq, timingPts, bytes);
+            StillHeaderWriter.frameHeader(w, seq, hdr);
+        }
         var payload = w.size() + 1 + nTiles * hdr.tilingNBytes;
         for (var s : sizes) {
             payload += s;

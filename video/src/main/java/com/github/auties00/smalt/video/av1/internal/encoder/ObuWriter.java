@@ -36,14 +36,6 @@ final class ObuWriter {
     private static final int MAX_TILE_AREA_SB = 4096 * 2304 >> 12;
 
     /**
-     * The picture size limits of each level up to 6.0: the {@code seq_level_idx}, the largest
-     * area, the largest width and the largest height (AV1 specification annex A.3).
-     */
-    private static final int[][] LEVELS = {{0, 147456, 2048, 1152}, {1, 278784, 2816, 1584},
-            {4, 665856, 4352, 2448}, {5, 1065024, 5504, 3096}, {8, 2359296, 6144, 3456}, {12, 8912896, 8192, 4352},
-            {16, 35651584, 16384, 8704}};
-
-    /**
      * The scratch writer for header payloads.
      */
     private final HeaderWriter header = new HeaderWriter();
@@ -149,6 +141,38 @@ final class ObuWriter {
     }
 
     /**
+     * Returns the size of the frame OBU {@link #writeFrameObu} writes.
+     *
+     * @param headerBytes the size of the byte-aligned frame header
+     * @param extension whether the OBU carries an extension header
+     * @param nTiles the number of tiles
+     * @param sizes the coded size of each tile, in bytes
+     * @param tileSizeBytes the width of the tile size fields, 1 to 4 bytes
+     * @return the size, in bytes
+     */
+    static int frameObuSize(int headerBytes, boolean extension, int nTiles, int[] sizes, int tileSizeBytes) {
+        var payload = headerBytes + (nTiles > 1 ? 1 : 0) + (nTiles - 1) * tileSizeBytes;
+        for (var i = 0; i < nTiles; i++) {
+            payload += sizes[i];
+        }
+        return obuSize(payload) + (extension ? 1 : 0);
+    }
+
+    /**
+     * Returns the size of an OBU without an extension header.
+     *
+     * @param payload the size of its payload, in bytes
+     * @return the size, in bytes, of the OBU header, the size field and the payload
+     */
+    static int obuSize(int payload) {
+        var lebBytes = 1;
+        for (var v = payload >>> 7; v != 0; v >>>= 7) {
+            lebBytes++;
+        }
+        return 1 + lebBytes + payload;
+    }
+
+    /**
      * Returns the width of the tile size fields a frame needs.
      *
      * @param maxSize the size of the frame's largest tile, in bytes
@@ -185,13 +209,7 @@ final class ObuWriter {
      * @return the {@code seq_level_idx}, or 31 (no level constraint) beyond level 6.0
      */
     static int level(int width, int height) {
-        var area = (long) width * height;
-        for (var l : LEVELS) {
-            if (area <= l[1] && width <= l[2] && height <= l[3]) {
-                return l[0];
-            }
-        }
-        return 31;
+        return LevelLimits.level(width, height);
     }
 
     /**

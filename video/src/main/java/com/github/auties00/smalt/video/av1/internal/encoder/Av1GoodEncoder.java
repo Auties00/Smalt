@@ -77,6 +77,13 @@ public final class Av1GoodEncoder implements Av1Engine {
     private static final int MIN_ARF_INTERVAL = 4;
 
     /**
+     * The most frames the loop decodes per shown frame over a stretch of groups: the shortest group
+     * with an alternate reference decodes the hidden alternate reference and a coded overlay
+     * besides its frames, five decodes for four shown frames.
+     */
+    public static final double DECODES_PER_SHOWN_FRAME = (MIN_ARF_INTERVAL + 1.0) / MIN_ARF_INTERVAL;
+
+    /**
      * The deepest pyramid level of an internal alternate reference ({@code gf_max_pyr_height}).
      */
     private static final int MAX_PYRAMID_DEPTH = 5;
@@ -1404,7 +1411,7 @@ public final class Av1GoodEncoder implements Av1Engine {
             }
             var timing = frame.timing();
             if (timing != null) {
-                still.timing(timing, pts);
+                still.timing(timing, pts, (startUnit ? 2 : 0) + ObuWriter.obuSize(frame.sequenceHeaderObu().length));
             }
             byte[] obu;
             if (picture instanceof YuvPicture yuv) {
@@ -1417,7 +1424,7 @@ public final class Av1GoodEncoder implements Av1Engine {
             }
             frame.installKeyFrame(still.reconstruction(), still.header());
             if (timing != null) {
-                timing.advance(true, pts);
+                timing.advance(still.header(), pts);
             }
             screenFrames = still.header().allowScreenContentTools;
             var seqObu = frame.sequenceHeaderObu();
