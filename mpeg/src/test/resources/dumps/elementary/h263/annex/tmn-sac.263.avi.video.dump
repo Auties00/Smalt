@@ -1,0 +1,18 @@
+# video decode dump of elementary/h263/annex/tmn-sac.263.avi; regenerate with -Dsmalt.test.updateDumps=true
+format AVI
+duration 266667
+seekable true
+track 1 H263 176x144 timebase=1/30
+0 pts=0 dur=1 key=true 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=ef6b646f u=9d646915 v=9270d71a
+1 pts=1 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=9aead5a5 u=94e84e6f v=7bb5afe4
+2 pts=2 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=97c5b542 u=13d9d9a1 v=0ff84fda
+3 pts=3 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=957496bb u=241bc43f v=21c55299
+4 pts=4 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=75a697a7 u=b6ed1ac8 v=3293fdb3
+5 pts=5 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=bf85e224 u=6f4b1072 v=ba19007e
+6 pts=6 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=620a9a21 u=2890432c v=8bff9cc9
+7 pts=7 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=d1d70152 u=f0be099b v=64935fba
+seek 0: @0
+seek 88889: @2
+seek 177778: @5
+seek 266667: end
+seek -1000000: @0

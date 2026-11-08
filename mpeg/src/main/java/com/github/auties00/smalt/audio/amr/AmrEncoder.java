@@ -128,7 +128,7 @@ public final class AmrEncoder implements AudioEncoder {
         this.options = Objects.requireNonNull(options, "options");
         this.mode = options.mode();
         var wide = mode.isWideband();
-        this.coder = AmrFrameEncoder.create(wide, options.dtx());
+        this.coder = AmrFrameEncoder.create(wide, options.dtx(), options.vad() == AmrVad.OPTION_2);
         this.frameSamples = wide ? 320 : 160;
         this.pending = new short[frameSamples];
         this.frame = new byte[MAX_FRAME_BYTES];
@@ -163,6 +163,36 @@ public final class AmrEncoder implements AudioEncoder {
             throw new IllegalArgumentException(mode + " does not belong to " + codec().displayName());
         }
         this.mode = mode;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The frames take the mode of the encoder's codec with the highest bitrate not above the target, or its
+     * lowest mode when the target is below every one, from the next frame on, as {@link #setMode(AmrMode)} sets
+     * it.
+     *
+     * @throws IllegalArgumentException if {@code bitsPerSecond} is not positive
+     */
+    @Override
+    public void setTargetBitrate(long bitsPerSecond) {
+        if (bitsPerSecond <= 0) {
+            throw new IllegalArgumentException("invalid bitrate " + bitsPerSecond);
+        }
+        AmrMode chosen = null;
+        AmrMode lowest = null;
+        for (var candidate : AmrMode.values()) {
+            if (candidate.isWideband() != mode.isWideband()) {
+                continue;
+            }
+            if (lowest == null || candidate.bitrate() < lowest.bitrate()) {
+                lowest = candidate;
+            }
+            if (candidate.bitrate() <= bitsPerSecond && (chosen == null || candidate.bitrate() > chosen.bitrate())) {
+                chosen = candidate;
+            }
+        }
+        setMode(chosen != null ? chosen : lowest);
     }
 
     /**

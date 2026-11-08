@@ -28,7 +28,7 @@ public record StaticCodebook(int dim, int entries, byte[] lengths, int mapType, 
         if (entries < 1) {
             return 0;
         }
-        var vals = (int) Math.floor(Math.pow((float) entries, 1.0f / dim));
+        var vals = (int) Math.floor(StrictMath.pow((float) entries, 1.0f / dim));
         if (vals < 1) {
             vals = 1;
         }
