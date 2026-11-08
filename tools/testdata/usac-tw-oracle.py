@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Writes the reference outputs of smalt-mpeg's TimeWarpedSynthesisTest (tw-1024.f32 and tw-768.f32).
+"""Writes the reference outputs of smalt-mpeg's TimeWarpedSynthesisTest (tw-1024.f32, tw-768.f32, tw-lpd-1024.f32 and
+tw-lpd-768.f32).
 
 No conformance stream of ISO/IEC 23003-3 uses the time-warped MDCT (tw_mdct), so the oracle is the time-warped
 filterbank of the ISO/IEC 23003-3 reference software: usac_tw_tools.c (warp contour, sample positions, warped
 windowing, resampling) and calc_tw_window of usac_calcWindow.c, compiled with the frontend
-usac-tw-oracle/twref.c, which holds the time-warped branch of fd2buffer (usac_imdct.c) and drives them like
-decodeChannelElement over pseudo-random window sequences, shapes, warp ratios and transform outputs (the generator
-is described in twref.c; the test rebuilds the same inputs). The stand-in headers of usac-tw-oracle/shim replace
+usac-tw-oracle/twref.c, which holds the time-warped branch of fd2buffer (usac_imdct.c), usac_past_tw and the
+time-warped branch of usac_td2buffer (usac_td_dec.c) and drives them like decodeChannelElement over pseudo-random
+window sequences, shapes, warp ratios and transform outputs, and for the tw-lpd files over transitions to and from
+synthetic linear prediction domain frames (the generator and the two statements changed from the reference are
+described in twref.c; the test rebuilds the same inputs). The stand-in headers of usac-tw-oracle/shim replace
 the reference software's headers, which pull in the whole decoder.
 
 The reference software, which this script downloads from standards.iso.org (pinned by SHA-256) into
@@ -30,7 +33,7 @@ SOURCES = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'usac-tw-orac
 FILES = ['src_usac/usac_tw_tools.c', 'src_usac/usac_tw_tools.h', 'src_usac/usac_tw_defines.h',
          'src_usac/usac_calcWindow.c', 'src_usac/usac_calcWindow.h', 'src_frame/vector_ops.c',
          'src_frame/vector_ops.h']
-CASES = [(1024, 16, 12345), (768, 16, 777)]
+CASES = [(1024, 16, 12345, None), (768, 16, 777, None), (1024, 96, 2026, 'lpd'), (768, 96, 1108, 'lpd')]
 
 
 def fetch(target):
@@ -75,9 +78,9 @@ def main():
     os.makedirs(work, exist_ok=True)
     os.makedirs(output, exist_ok=True)
     twref = build(work)
-    for length, frames, seed in CASES:
-        target = os.path.join(output, 'tw-%d.f32' % length)
-        subprocess.check_call([twref, str(length), str(frames), str(seed), target])
+    for length, frames, seed, mode in CASES:
+        target = os.path.join(output, ('tw-%s-%d.f32' % (mode, length)) if mode else ('tw-%d.f32' % length))
+        subprocess.check_call([twref, str(length), str(frames), str(seed), target] + ([mode] if mode else []))
         print(os.path.basename(target), hashlib.sha256(open(target, 'rb').read()).hexdigest())
 
 

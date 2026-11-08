@@ -36,3 +36,5 @@ mpeg/src/test/resources/com/github/auties00/smalt/audio/aac/usac/*.meta -text -d
 # The pinned AAC-ELD low delay SBR streams of AacLowDelaySbrEncoderTest are byte-exact encoder output with their
 # libxaac metadata files; no checkout may rewrite them.
 mpeg/src/test/resources/com/github/auties00/smalt/audio/aac/eld-sbr/** -text -diff
+# The USAC time-warped filterbank oracle outputs are pinned by tw.sha256 next to them.
+mpeg/src/test/resources/com/github/auties00/smalt/audio/aac/internal/usac/*.f32 -text -diff

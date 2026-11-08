@@ -86,8 +86,7 @@ final class CoreDecoder {
         var lpdMode = !lfe && reader.readFlag();
         channel.lpd = lpdMode;
         if (lpdMode) {
-            checkLpd(element);
-            lpd.decode(reader, channel, independent);
+            lpd.decode(reader, channel, independent, warped(channel, element));
             received(channel);
             return;
         }
@@ -123,7 +122,7 @@ final class CoreDecoder {
         var ec = channel.ec;
         if (channel.lpd) {
             ec.advanceLpd(false);
-            lpd.conceal(channel);
+            lpd.conceal(channel, element.timeWarping());
         } else {
             ec.advanceFd(false);
             var fd = channel.fd;
@@ -138,19 +137,21 @@ final class CoreDecoder {
     }
 
     /**
-     * Rejects a linear prediction domain frame of an element that uses the time-warped MDCT.
-     *
-     * @param element the element configuration
-     * @throws MediaException.Unsupported if the element uses the time-warped MDCT
+     * {@return the time-warped filterbank of an element that uses the time-warped MDCT, with the channel's state
+     * created, or {@code null} for an element that uses the plain filterbank}
      */
-    private static void checkLpd(UsacConfig.Element element) {
-        if (element.timeWarping()) {
-            // TODO: the transitions between the time-warped filterbank and the LPD coder (usac_past_tw,
-            //  usac_td2buffer and the time-warped reset of the LPD decoder of ISO/IEC 23003-3) are not decoded; the
-            //  LPD coder of this package follows libxaac, which has no time-warped filterbank.
-            throw new MediaException.Unsupported("usac tw-mdct lpd",
-                    "the USAC time-warped MDCT next to linear prediction domain frames is not supported");
+    private TimeWarpedSynthesis warped(UsacChannel channel, UsacConfig.Element element) {
+        if (!element.timeWarping()) {
+            return null;
         }
+        if (warpedSynthesis == null) {
+            warpedSynthesis = new TimeWarpedSynthesis(frameLength);
+            warpedTransform = new float[2 * frameLength];
+        }
+        if (channel.warp == null) {
+            channel.warp = new TimeWarpedSynthesis.State(frameLength);
+        }
+        return warpedSynthesis;
     }
 
     /**
@@ -174,11 +175,10 @@ final class CoreDecoder {
             decodeFdPair(reader, left, right, state, element, independent);
             return;
         }
-        checkLpd(element);
         for (var index = 0; index < 2; index++) {
             var channel = index == 0 ? left : right;
             if (channel.lpd) {
-                lpd.decode(reader, channel, independent);
+                lpd.decode(reader, channel, independent, warped(channel, element));
             } else {
                 var tns = reader.readFlag();
                 readFdStream(reader, channel, element, independent, false, false, tns ? 1 : 0);
@@ -321,11 +321,11 @@ final class CoreDecoder {
             channel.ec.save(fd.spectrum, fd.windowSequence, fd.windowShape);
         }
         if (element.timeWarping()) {
-            synthesizeWarped(channel);
+            synthesizeWarped(channel, element);
             return;
         }
         if (channel.lastLpd) {
-            lpd.finishBeforeFd(channel);
+            lpd.finishBeforeFd(channel, false);
         }
         float[] facSignal = null;
         if (fd.facPresent && channel.lastLpd) {
@@ -343,19 +343,25 @@ final class CoreDecoder {
     }
 
     /**
-     * Synthesizes a frequency domain frame of an element that uses the time-warped MDCT, after a frequency domain
-     * frame.
+     * Synthesizes a frequency domain frame of an element that uses the time-warped MDCT.
+     *
+     * <p>After a linear prediction domain frame the bass postfilter does not reach into the frame: the time-warped
+     * frame completes the samples it would filter only in the next frame.
      */
-    private void synthesizeWarped(UsacChannel channel) {
+    private void synthesizeWarped(UsacChannel channel, UsacConfig.Element element) {
         var fd = channel.fd;
-        if (warpedSynthesis == null) {
-            warpedSynthesis = new TimeWarpedSynthesis(frameLength);
-            warpedTransform = new float[2 * frameLength];
+        var warped = warped(channel, element);
+        var afterLpd = channel.lastLpd;
+        float[] facSignal = null;
+        if (afterLpd) {
+            lpd.finishBeforeFd(channel, true);
+            if (fd.facPresent) {
+                var lfac = fd.shortWindows() ? frameLength / 16 : frameLength / 8;
+                lpd.decodeFdFac(channel, fd.facData, lfac, fac);
+                facSignal = fac;
+            }
         }
-        if (channel.warp == null) {
-            channel.warp = new TimeWarpedSynthesis.State(frameLength);
-        }
-        warpedSynthesis.prepare(channel.warp, fd.twPresent, fd.twRatio, fd.windowSequence, channel.lastSequence);
+        warped.prepare(channel.warp, fd.twPresent, fd.twRatio, fd.windowSequence, channel.lastSequence, afterLpd);
         if (fd.shortWindows()) {
             var shortLength = frameLength / 8;
             for (var k = 0; k < 8; k++) {
@@ -364,8 +370,8 @@ final class CoreDecoder {
         } else {
             imdct.inverse(fd.spectrum, 0, frameLength, warpedTransform, 0);
         }
-        warpedSynthesis.synthesize(channel.warp, warpedTransform, fd.windowSequence, channel.lastSequence,
-                fd.windowShape, channel.previousShape, channel.overlap, channel.output, 0);
+        warped.synthesize(channel.warp, warpedTransform, fd.windowSequence, channel.lastSequence, fd.windowShape,
+                channel.previousShape, afterLpd, facSignal, channel.overlap, channel.output, 0);
         channel.previousShape = fd.windowShape;
         channel.lastSequence = fd.windowSequence;
     }

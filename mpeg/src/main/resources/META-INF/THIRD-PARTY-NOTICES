@@ -2118,7 +2118,9 @@ Derived Smalt packages:
   the scalable AAC decoder of scal_dec_frame.c)
   audio.aac.internal.usac (the frequency domain decoder, the arithmetic
   spectral decoder, complex prediction, the time-warped filterbank of
-  usac_tw_tools.c, the frame and extension element decoding of src_usac;
+  usac_tw_tools.c and its transitions to and from the linear prediction
+  domain decoder of usac_td_dec.c and dec_LPD.c, the frame and extension
+  element decoding of src_usac;
   eSBR with the QMF transposer and PVC of the ct_*,
   harmsbrQmftrans.c and sony_pvc* files of src_tf; the MPEG Surround 2-1-2
   decoder of the sac_* files of mp4spatialdec)

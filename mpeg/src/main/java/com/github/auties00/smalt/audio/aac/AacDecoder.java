@@ -112,13 +112,12 @@ import java.util.function.Consumer;
  *
  * <p>USAC (object type 42, ISO/IEC 23003-3) decodes with its frequency domain coder (arithmetic coded spectra,
  * noise filling, complex prediction stereo, the time-warped transform, 768- and 1024-sample frames) and its linear
- * prediction domain coder (ACELP and TCX with forward aliasing cancellation), enhanced spectral band replication
+ * prediction domain coder (ACELP and TCX with forward aliasing cancellation, after the plain or the time-warped
+ * transform), enhanced spectral band replication
  * (the QMF based harmonic transposer, predictive vector coding and inter-TES, at the 2:1, 8:3 and 4:1 ratios),
  * MPEG Surround 2-1-2 with residual coding, {@code AudioPreRoll} and the MPEG-D DRC decoder of ISO/IEC 23003-4,
  * whose loudness normalization and DRC set selection follow {@link AacDecoderOptions#targetLevel()} and
- * {@link AacDecoderOptions#drcEffect()}. An element that uses the time-warped transform ({@code tw_mdct}, outside
- * the Extended HE AAC profile) and switches to the linear prediction domain coder raises
- * {@link MediaException.Unsupported} ({@code "usac tw-mdct lpd"}). A USAC access unit whose data is corrupt is
+ * {@link AacDecoderOptions#drcEffect()}. A USAC access unit whose data is corrupt is
  * concealed from the first element that fails to decode, as a lost one is ({@link #conceal}), and so are the access
  * units after a lost or corrupt one until one is independent ({@code usacIndependencyFlag}), since they depend on
  * the state the lost data carried; an empty access unit counts as lost.

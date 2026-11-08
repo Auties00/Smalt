@@ -1,6 +1,7 @@
 /* Ports the ISO/IEC 23003-3:2019 reference software (usac_tw_tools.c; the time-warped branch of fd2buffer in
-   usac_imdct.c; calc_tw_window and CalculateTwKBDTransition of usac_calcWindow.c; the tw_calc_tw and tw_adjust_past
-   calls of decode_chan_ele.c). Copyright Fraunhofer IIS, VoiceAge Corp. and ISO/IEC 2008; ISO/IEC reference
+   usac_imdct.c; usac_past_tw and the time-warped branch of usac_td2buffer in usac_td_dec.c; calc_tw_window and
+   CalculateTwKBDTransition of usac_calcWindow.c; the tw_reset, tw_calc_tw and tw_adjust_past calls of
+   decode_chan_ele.c). Copyright Fraunhofer IIS, VoiceAge Corp. and ISO/IEC 2008; ISO/IEC reference
    software licence (use in products conforming to ISO/IEC 23003). Modified for Smalt. */
 package com.github.auties00.smalt.audio.aac.internal.usac;
 
@@ -11,8 +12,8 @@ import java.util.Arrays;
 /**
  * Runs the time-warped frequency domain synthesis of USAC ({@code tw_mdct}, ISO/IEC 23003-3 subclause 7.17): the
  * warp contour of each frame from its {@code tw_data()}, the windowing of the inverse MDCT output in the warped
- * time domain, its resampling to the linear time domain through a Kaiser windowed sinc interpolator, and the
- * overlap-add.
+ * time domain, its resampling to the linear time domain through a Kaiser windowed sinc interpolator, the
+ * overlap-add, and the transitions to and from the linear prediction domain coder.
  *
  * <p>The synthesis keeps half a frame more of the signal than the plain filterbank: its output lags the output of
  * the plain filterbank by half a frame. The overlap of a channel holds two frames of samples. Instances hold
@@ -20,7 +21,8 @@ import java.util.Arrays;
  *
  * @implNote This implementation follows the float arithmetic of the reference software statement by statement,
  * including its double precision comparisons and roundings, so that its output matches the reference to the
- * rounding of the window and interpolator tables.
+ * rounding of the window and interpolator tables, except where {@link #synthesize} and {@link #combineLpd} say
+ * otherwise.
  */
 final class TimeWarpedSynthesis {
     /**
@@ -77,6 +79,13 @@ final class TimeWarpedSynthesis {
         final int[] bounds = new int[2];
 
         /**
+         * Whether {@link #finishPast} has already added the last frame's right half to the overlap. A linear
+         * prediction domain frame that fails to decode after it leaves the frame to a concealed frequency domain
+         * frame, which must not add the half again.
+         */
+        boolean pastFinished;
+
+        /**
          * Constructs the state of a channel before its first frame.
          *
          * @param length the core frame length
@@ -127,25 +136,122 @@ final class TimeWarpedSynthesis {
 
     /**
      * Computes the warp of the current frame ({@code tw_calc_tw}) and adjusts the right transition of the previous
-     * frame to the current window sequence ({@code tw_adjust_past}), for a frame that follows a frequency domain
-     * frame.
+     * frame to the current window sequence ({@code tw_adjust_past}).
+     *
+     * <p>After a linear prediction domain frame the warp contour starts over from a flat one ({@code tw_reset}) and
+     * the left transition of a {@code LONG_STOP} or {@code STOP_START} window is a quarter, not an eighth, of a long
+     * one, the length of the FAC transition.
      *
      * @param state the channel's state
      * @param present {@code tw_data_present}
      * @param ratios the {@code tw_ratio} indices, read when {@code present}
      * @param sequence the window sequence of the frame
-     * @param lastSequence the window sequence of the previous frame
+     * @param lastSequence the window sequence of the previous frame, {@code EIGHT_SHORT} after a linear prediction
+     * domain frame
+     * @param afterLpd whether the previous frame was coded in the linear prediction domain
      */
-    void prepare(State state, boolean present, int[] ratios, int sequence, int lastSequence) {
+    void prepare(State state, boolean present, int[] ratios, int sequence, int lastSequence, boolean afterLpd) {
+        if (afterLpd) {
+            reset(state);
+        }
         Arrays.fill(state.positions, 0f);
         decodeRatios(present, ratios);
-        toSamplePositions(state, sequence);
-        adjustPast(lastSequence, state.pastBounds, state.pastTransitions);
+        toSamplePositions(state, sequence, afterLpd);
+        adjustPast(lastSequence, false, state.pastBounds, state.pastTransitions);
+    }
+
+    /**
+     * Completes the last frequency domain frame before a linear prediction domain frame ({@code usac_past_tw}): its
+     * right transition, shortened to the FAC transition, is windowed in the warped time domain, resampled and added
+     * to the overlap, which then holds the frame's remaining output in the layout the linear prediction domain
+     * decoder reads, half a frame in.
+     *
+     * @implNote This implementation shortens the transition of every window sequence, as the plain filterbank does. The
+     * reference software shortens it only after {@code LONG_START} and {@code STOP_START}, the windows a conforming
+     * stream reaches this frame from; a frame concealed as {@code ONLY_LONG} or {@code LONG_STOP} can precede it here.
+     * @param state the channel's state
+     * @param lastSequence the window sequence of the frequency domain frame
+     * @param previousShape the window shape of the frequency domain frame
+     * @param overlap the overlap of the channel, {@code 2 * length} samples; updated
+     */
+    void finishPast(State state, int lastSequence, int previousShape, float[] overlap) {
+        var n = length;
+        var extra = n / 8;
+        System.arraycopy(state.pastWarped, 0, warpedPast, 0, 3 * n);
+        if (lastSequence != FdChannel.EIGHT_SHORT) {
+            adjustPast(FdChannel.LONG_START, true, state.pastBounds, state.pastTransitions);
+            windowPast(warpedPast, BORDER, state.pastBounds[1], n, state.pastTransitions[1],
+                    previousShape == 1 ? kbdTransition : sineTransition);
+        }
+        Arrays.fill(resampledPast, 0f);
+        resample(warpedPast, n + extra, 2 * n + 2 * BORDER, 3 * n, state.pastPositions, resampledPast);
+        for (var i = 0; i < 2 * n - extra; i++) {
+            overlap[extra + i] += resampledPast[n + extra + i];
+        }
+        state.pastFinished = true;
+    }
+
+    /**
+     * Adds the synthesis of a linear prediction domain frame to the overlap of an element that uses the time-warped
+     * MDCT and emits the frame ({@code usac_td2buffer}): the synthesis lags half a frame, as the time-warped
+     * frequency domain synthesis does.
+     *
+     * <p>In the first linear prediction domain frame after a frequency domain frame, the synthesis before the FAC
+     * transition is cleared, and so is the overlap the synthesis replaces: from the transition on, or, when the
+     * frame starts with ACELP, the region the bass postfilter has already filtered.
+     *
+     * @implNote This implementation clears the overlap under a frame that starts with TCX as the plain filterbank
+     * does. The reference software's time-warped branch keeps it there, although the TCX synthesis already carries
+     * the frequency domain transition, so the transition would be added twice.
+     * @param length the core frame length
+     * @param synth the frame's {@code length} synthesized samples; cleared where the overlap takes over
+     * @param overlap the overlap of the channel, {@code 2 * length} samples; updated
+     * @param lfac the FAC transition length after a frequency domain frame, or 0 after a linear prediction domain
+     * frame
+     * @param acelpFirst whether the frame starts with an ACELP division
+     * @param postFilterDelay the samples the bass postfilter reaches before the FAC transition of an ACELP division
+     * @param out receives the frame's {@code length} samples
+     */
+    static void combineLpd(int length, float[] synth, float[] overlap, int lfac, boolean acelpFirst,
+                           int postFilterDelay, float[] out) {
+        var n = length;
+        var h = n / 2;
+        if (lfac > 0) {
+            if (acelpFirst) {
+                Arrays.fill(synth, 0, h - lfac - postFilterDelay, 0f);
+                Arrays.fill(overlap, n - lfac - postFilterDelay, n, 0f);
+            } else {
+                Arrays.fill(synth, 0, h - lfac, 0f);
+                Arrays.fill(overlap, n - lfac, n + h, 0f);
+            }
+        }
+        for (var i = 0; i < h; i++) {
+            out[i] = overlap[i];
+            out[h + i] = overlap[h + i] + synth[i];
+            overlap[i] = synth[h + i] + overlap[n + i];
+        }
+        Arrays.fill(overlap, h, 2 * n, 0f);
+    }
+
+    /**
+     * Flattens the warp contour of a channel ({@code tw_reset}).
+     */
+    private void reset(State state) {
+        Arrays.fill(state.contour, 1.0f);
+        state.pitchSum[0] = length;
+        state.pitchSum[1] = length;
     }
 
     /**
      * Synthesizes one frame from the inverse transform of its spectrum, after {@link #prepare}.
      *
+     * <p>After a linear prediction domain frame, the overlap holds the end of its synthesis half a frame in, and the
+     * frame's left transition is completed by the FAC signal {@code fac} when there is one; otherwise the overlap
+     * is windowed with the time-reversed sine transition, which cancels the aliasing of a TCX frame.
+     *
+     * @implNote This implementation keeps the whole FAC signal: the reference software adds it to the part of the
+     * resampled frame it overlaps immediately, the first eighth of a frame after its center, and drops the
+     * {@code length / 8} samples of a long FAC signal beyond it, which the plain filterbank keeps.
      * @param state the channel's state
      * @param transform the inverse MDCT output: {@code 2 * length} samples of one long window, or the
      * {@code 2 * length / 8} samples of each short window one after the other
@@ -153,12 +259,16 @@ final class TimeWarpedSynthesis {
      * @param lastSequence the window sequence of the previous frame
      * @param shape the window shape of the frame
      * @param previousShape the window shape of the previous frame
+     * @param afterLpd whether the previous frame was coded in the linear prediction domain
+     * @param fac the {@code 2 * lfac} samples of the FAC signal of a frame after a linear prediction domain frame,
+     * where {@code lfac} is {@code length / 16} for eight short windows and {@code length / 8} otherwise, or
+     * {@code null} for none
      * @param overlap the overlap of the channel, {@code 2 * length} samples; updated
      * @param out receives the frame's {@code length} samples
      * @param outOffset the index of the first output sample
      */
     void synthesize(State state, float[] transform, int sequence, int lastSequence, int shape, int previousShape,
-                    float[] overlap, float[] out, int outOffset) {
+                    boolean afterLpd, float[] fac, float[] overlap, float[] out, int outOffset) {
         var n = length;
         var extra = n / 8;
         var window = shape == 1 ? kbdTransition : sineTransition;
@@ -176,14 +286,36 @@ final class TimeWarpedSynthesis {
                     state.transitions[1], previousWindow, window, n / 8);
         }
         resample(warped, 0, 2 * n + 2 * BORDER, n + extra, state.positions, resampled);
-        if (lastSequence != FdChannel.EIGHT_SHORT) {
-            windowPast(warpedPast, BORDER, state.pastBounds[1], n, state.pastTransitions[1], previousWindow);
+        if (afterLpd) {
+            var lfac = sequence == FdChannel.EIGHT_SHORT ? n / 16 : n / 8;
+            if (fac != null) {
+                for (var i = 0; i < Math.min(2 * lfac, extra); i++) {
+                    resampled[n + i] += fac[i];
+                }
+                Arrays.fill(resampled, 0, n, 0f);
+                Arrays.fill(o, n, n + extra, 0f);
+                for (var i = extra; i < 2 * lfac; i++) {
+                    o[n + i] += fac[i];
+                }
+            } else {
+                var flat = (n - 2 * lfac) / 2;
+                var transition = UsacTables.window(2 * lfac, false);
+                for (var i = 0; i < 2 * lfac; i++) {
+                    o[n / 2 + flat + i] *= transition[2 * lfac - 1 - i];
+                }
+                Arrays.fill(o, n / 2 + flat + 2 * lfac, n / 2 + flat + 2 * lfac + flat, 0f);
+            }
+        } else if (!state.pastFinished) {
+            if (lastSequence != FdChannel.EIGHT_SHORT) {
+                windowPast(warpedPast, BORDER, state.pastBounds[1], n, state.pastTransitions[1], previousWindow);
+            }
+            Arrays.fill(resampledPast, 0f);
+            resample(warpedPast, n + extra, 2 * n + 2 * BORDER, 3 * n, state.pastPositions, resampledPast);
+            for (var i = 0; i < 2 * n - extra; i++) {
+                o[extra + i] += resampledPast[n + extra + i];
+            }
         }
-        Arrays.fill(resampledPast, 0f);
-        resample(warpedPast, n + extra, 2 * n + 2 * BORDER, 3 * n, state.pastPositions, resampledPast);
-        for (var i = 0; i < 2 * n - extra; i++) {
-            o[extra + i] += resampledPast[n + extra + i];
-        }
+        state.pastFinished = false;
         for (var i = 0; i < n + extra; i++) {
             o[i] += resampled[i];
         }
@@ -217,7 +349,7 @@ final class TimeWarpedSynthesis {
      * Turns the warp contours of the previous, current and next frames into the sample positions, the transition
      * lengths and the window bounds of the frame ({@code tw_data_to_sp}).
      */
-    private void toSamplePositions(State state, int sequence) {
+    private void toSamplePositions(State state, int sequence, boolean afterLpd) {
         var n = length;
         var w = warpContour;
         System.arraycopy(state.contour, 0, w, 0, 2 * n);
@@ -246,7 +378,7 @@ final class TimeWarpedSynthesis {
         var left = (float) (n / 2) * (lastPitchSum > currentPitchSum ? 1.0f : lastPitchSum / currentPitchSum);
         var right = (float) (n / 2) * (nextPitchSum > currentPitchSum ? 1.0f : nextPitchSum / currentPitchSum);
         switch (sequence) {
-            case FdChannel.LONG_STOP, FdChannel.STOP_START -> left /= 8.0f;
+            case FdChannel.LONG_STOP, FdChannel.STOP_START -> left /= afterLpd ? 4.0f : 8.0f;
             case FdChannel.EIGHT_SHORT -> {
                 right /= 8.0f;
                 left /= 8.0f;
@@ -307,12 +439,13 @@ final class TimeWarpedSynthesis {
     }
 
     /**
-     * Adjusts the right transition of the previous frame to the current frame ({@code tw_adjust_past}), for a
-     * frequency domain frame.
+     * Adjusts the right transition of the previous frame to the current frame ({@code tw_adjust_past}): a
+     * {@code LONG_START} or {@code STOP_START} window ends with an eighth of a long transition before a frequency
+     * domain frame and with a quarter, the FAC transition, before a linear prediction domain frame.
      */
-    private void adjustPast(int lastSequence, int[] bounds, float[] transitions) {
+    private void adjustPast(int lastSequence, boolean toLpd, int[] bounds, float[] transitions) {
         if (lastSequence == FdChannel.LONG_START || lastSequence == FdChannel.STOP_START) {
-            transitions[1] /= 8.0f;
+            transitions[1] /= toLpd ? 4.0f : 8.0f;
         }
         bounds[1] = (int) Math.floor(1.5 * (double) length - 0.5 + (double) transitions[1]);
     }

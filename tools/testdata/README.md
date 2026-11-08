@@ -956,13 +956,21 @@ domain path) is covered by `MpegSurroundTest` from committed streams.
 No ISO/IEC 23003-3 conformance stream uses the time-warped MDCT (`tw_mdct`), so `TimeWarpedSynthesisTest`
 (`smalt-mpeg`) compares Smalt's time-warped filterbank with the reference software's, bit for bit, over
 pseudo-random window sequences, window shapes, warp ratios and transform outputs that the test rebuilds from a
-xorshift32 generator. The reference outputs are committed (`mpeg/src/test/resources/.../usac/tw-1024.f32` and
-`tw-768.f32`); `python -I tools/testdata/usac-tw-oracle.py <work directory> <output directory>` (with gcc; on
-Windows from an MSYS2 UCRT64 shell) rewrites them: it downloads the reference software (pinned by SHA-256), builds
-its `usac_tw_tools.c`, `usac_calcWindow.c` and `vector_ops.c` against the stand-in headers of
-`usac-tw-oracle/shim` with the frontend `usac-tw-oracle/twref.c` (which holds the time-warped branch of
-`fd2buffer` and documents the generator) and runs it. The committed files were written with mingw-w64 gcc 15.2 on
-Windows x64.
+xorshift32 generator; `tw-lpd-<length>.f32` add the transitions to and from synthetic linear prediction domain
+frames (`usac_past_tw`, the time-warped branch of `usac_td2buffer`, the placement `decoder_LPD_end` makes and the
+`FrameWasTd` and `ApplyFac` branches of `fd2buffer`), with every frequency domain to linear prediction domain
+transition and back. The reference outputs are committed (`mpeg/src/test/resources/.../usac/tw-1024.f32`,
+`tw-768.f32`, `tw-lpd-1024.f32` and `tw-lpd-768.f32`, pinned by `tw.sha256` next to them); `python -I
+tools/testdata/usac-tw-oracle.py <work directory> <output directory>` (with gcc; on Windows from an MSYS2 UCRT64
+shell) rewrites them: it downloads the reference software (pinned by SHA-256), builds its `usac_tw_tools.c`,
+`usac_calcWindow.c` and `vector_ops.c` against the stand-in headers of `usac-tw-oracle/shim` with the frontend
+`usac-tw-oracle/twref.c` (which holds the copied reference functions, documents the generator and the two
+statements it changes from the reference: the clearing under a frame that starts with TCX and the end of a long
+FAC signal, which the reference's time-warped branch leaves out where its plain branch does not) and runs it. The
+committed files were written with mingw-w64 gcc 15.2 on Windows x64. `TimeWarpedLpdTransitionTest` also checks the
+whole core decoder on streams it writes itself (`UsacTestStream`, with an arithmetic coder mirroring the
+decoder's): without warp data, the time-warped decode of a stream with every transition equals its plain decode
+half a frame later.
 
 ## USAC concealment streams
 

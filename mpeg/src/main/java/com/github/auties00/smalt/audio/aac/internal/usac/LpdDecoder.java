@@ -3,7 +3,11 @@
    ixheaacd_fwd_alias_cnx.c: the linear prediction domain decoder and its transitions; ixheaacd_usac_ec.c and the
    ec_flag paths of ixheaacd_lpc.c, ixheaacd_acelp_decode.c and ixheaacd_tcx_fwd_alcnx.c: its error concealment),
    commit 2fbadd57.
-   Copyright 2018 The Android Open Source Project; Apache License 2.0. Modified for Smalt. */
+   Copyright 2018 The Android Open Source Project; Apache License 2.0. Modified for Smalt.
+   The time-warped layout of the transitions ports the ISO/IEC 23003-3:2019 reference software (reset_decoder_lf
+   and decoder_LPD_end of dec_LPD.c, the time-warped calls of decode_chan_ele.c). Copyright Fraunhofer IIS, VoiceAge
+   Corp. and ISO/IEC 2008; ISO/IEC reference software licence (use in products conforming to ISO/IEC 23003).
+   Modified for Smalt. */
 package com.github.auties00.smalt.audio.aac.internal.usac;
 
 import com.github.auties00.smalt.MediaException;
@@ -79,6 +83,7 @@ final class LpdDecoder {
     private boolean firstLpd;
     private boolean shortFac;
     private boolean facPresent;
+    private boolean warped;
 
     private final float[] synthBuffer = new float[MAX_PITCH + SYNTH_DELAY_MAX + 1024 + 2 * SUBFRAME];
     private final float[] excitationBuffer = new float[MAX_PITCH + INTERPOLATION_ORDER + 1 + 1024 + 2 * SUBFRAME];
@@ -177,18 +182,25 @@ final class LpdDecoder {
     /**
      * Decodes one linear prediction domain frame of a channel into its output.
      *
+     * <p>In an element that uses the time-warped MDCT, the overlap holds the signal half a frame later than with the
+     * plain filterbank, and so does the output: the frame is synthesized as with the plain filterbank and emitted
+     * through {@link TimeWarpedSynthesis#combineLpd}.
+     *
      * @param reader the bit source, after {@code core_mode}
      * @param channel the state of the channel
      * @param independent whether the frame is independent
+     * @param warped the time-warped filterbank of the element, which completes the frequency domain frame before
+     * this one, or {@code null} for an element that uses the plain filterbank
      * @throws MediaException.Malformed if the stream is corrupt
      */
-    void decode(AacBitReader reader, UsacChannel channel, boolean independent) {
+    void decode(AacBitReader reader, UsacChannel channel, boolean independent, TimeWarpedSynthesis warped) {
         var state = channel.lpdState;
         var lastMode = channel.lastLpd ? state.modePrevious : channel.lastSequence == FdChannel.EIGHT_SHORT ? -2 : -1;
         parse(reader, channel, independent, lastMode);
         reader.checkNotOverrun();
+        this.warped = warped != null;
         if (!channel.lastLpd) {
-            resetFromFd(channel);
+            resetFromFd(channel, warped);
         }
         System.arraycopy(mod, 0, state.receivedMod, 0, 4);
         System.arraycopy(meanEnergy, 0, state.receivedMeanEnergy, 0, 4);
@@ -209,8 +221,10 @@ final class LpdDecoder {
      * channel repeats its last spectrum with random signs, or its excitation at the estimated pitch, at the last gain.
      *
      * @param channel the state of the channel, whose concealment state has already advanced
+     * @param warped whether the element uses the time-warped MDCT
      */
-    void conceal(UsacChannel channel) {
+    void conceal(UsacChannel channel, boolean warped) {
+        this.warped = warped;
         var state = channel.lpdState;
         System.arraycopy(state.receivedMod, 0, mod, 0, 4);
         System.arraycopy(state.receivedMeanEnergy, 0, meanEnergy, 0, 4);
@@ -233,9 +247,16 @@ final class LpdDecoder {
 
     /**
      * Prepares the state for an LPD frame that follows a frequency domain frame
-     * ({@code ixheaacd_reset_acelp_data_fix}, {@code ixheaacd_fix2flt_data}).
+     * ({@code ixheaacd_reset_acelp_data_fix}, {@code ixheaacd_fix2flt_data}; {@code reset_decoder_lf}).
+     *
+     * <p>The plain filterbank leaves the last frequency domain frame's right half unwindowed, so the FAC transition
+     * is windowed here; the time-warped filterbank windows it in the warped time domain when it completes the frame.
+     *
+     * @implNote This implementation reads the overlap of an element that uses the time-warped MDCT half a frame in
+     * for both frame lengths; the reference software passes the overlap 512 samples in, which is half a frame only
+     * for 1024-sample frames.
      */
-    private void resetFromFd(UsacChannel channel) {
+    private void resetFromFd(UsacChannel channel, TimeWarpedSynthesis warped) {
         var state = channel.lpdState;
         var lastShort = channel.lastSequence == FdChannel.EIGHT_SHORT;
         state.modePrevious = lastShort ? -2 : -1;
@@ -244,11 +265,17 @@ final class LpdDecoder {
         state.bassPostFilterPrevious = false;
         var overlap = channel.overlap;
         var fl = lastShort ? frameLength / 16 : division / 2;
-        var window = UsacTables.window(2 * fl, false);
-        for (var i = 0; i < 2 * fl; i++) {
-            overlap[frameLength / 2 - fl + i] *= window[2 * fl - 1 - i];
+        var base = 0;
+        if (warped != null) {
+            warped.finishPast(channel.warp, channel.lastSequence, channel.previousShape, overlap);
+            base = frameLength / 2;
+        } else {
+            var window = UsacTables.window(2 * fl, false);
+            for (var i = 0; i < 2 * fl; i++) {
+                overlap[frameLength / 2 - fl + i] *= window[2 * fl - 1 - i];
+            }
+            Arrays.fill(overlap, frameLength / 2 + fl, frameLength, 0f);
         }
-        Arrays.fill(overlap, frameLength / 2 + fl, frameLength, 0f);
         Arrays.fill(state.filterPrevious, 0f);
         Arrays.fill(state.excitationPrevious, 0f);
         Arrays.fill(state.synthPrevious, 0f);
@@ -256,7 +283,7 @@ final class LpdDecoder {
         state.gainThreshold = 0f;
         Arrays.fill(state.tail, 0f);
         for (var i = 0; i < 2 * fl + 1; i++) {
-            state.tail[division / 2 - fl + i] = overlap[i + frameLength / 2 - fl - 1];
+            state.tail[division / 2 - fl + i] = overlap[base + i + frameLength / 2 - fl - 1];
         }
     }
 
@@ -925,6 +952,7 @@ final class LpdDecoder {
         System.arraycopy(transitionFilters, 0, state.filterPrevious, 0, ORDER + 1);
         System.arraycopy(transitionFilters, 0, state.filterPrevious, ORDER + 1, ORDER + 1);
         var overlap = channel.overlap;
+        var base = warped ? frameLength / 2 : 0;
         if (mod[0] == 0) {
             var length = shortFac ? frameLength / 16 : division / 2;
             var gain = (float) StrictMath.pow(10.0, fdFac[0] / 28.0);
@@ -937,13 +965,13 @@ final class LpdDecoder {
             System.arraycopy(dctOut, 0, facSignal, ORDER, length);
             synthesisInPlace(weighted, facSignal, ORDER, length);
             for (var i = 0; i < length; i++) {
-                overlap[frameLength / 2 - length + i] += facSignal[ORDER + i] * gain;
+                overlap[base + frameLength / 2 - length + i] += facSignal[ORDER + i] * gain;
             }
-            Arrays.fill(overlap, frameLength / 2, frameLength / 2 + length, 0f);
+            Arrays.fill(overlap, base + frameLength / 2, base + frameLength / 2 + length, 0f);
         }
         var n = 2 * division;
         for (var i = 0; i < n; i++) {
-            fdSynth[ORDER + i] = overlap[i];
+            fdSynth[ORDER + i] = overlap[base + i];
         }
         System.arraycopy(fdSynth, ORDER, synthBuffer, synthBase - n, n);
         preemphasis(fdSynth, ORDER, n, 0f);
@@ -1917,6 +1945,11 @@ final class LpdDecoder {
         var n = frameLength;
         var overlap = channel.overlap;
         var output = channel.output;
+        if (warped) {
+            var lfac = channel.lastLpd ? 0 : channel.lastSequence == FdChannel.EIGHT_SHORT ? n / 16 : n / 8;
+            TimeWarpedSynthesis.combineLpd(n, fsynth, overlap, lfac, mod[0] == 0, SUBFRAME, output);
+            return;
+        }
         if (!channel.lastLpd) {
             var lfac = channel.lastSequence == FdChannel.EIGHT_SHORT ? n / 16 : n / 8;
             if (mod[0] == 0) {
@@ -1935,21 +1968,23 @@ final class LpdDecoder {
 
     /**
      * Builds the overlap of a frequency domain frame that follows an LPD frame from the LPD state
-     * ({@code ixheaacd_lpd_dec_update}).
+     * ({@code ixheaacd_lpd_dec_update}; {@code decoder_LPD_end}).
      *
      * @param channel the state of the channel
+     * @param warped whether the element uses the time-warped MDCT, whose overlap holds the signal half a frame in
      */
-    void finishBeforeFd(UsacChannel channel) {
+    void finishBeforeFd(UsacChannel channel, boolean warped) {
         var state = channel.lpdState;
         var overlap = channel.overlap;
+        var base = warped ? frameLength / 2 : 0;
         for (var i = 0; i < SUBFRAME + synthDelay; i++) {
-            overlap[i] = state.synthPrevious[MAX_PITCH - SUBFRAME + i];
+            overlap[base + i] = state.synthPrevious[MAX_PITCH - SUBFRAME + i];
         }
-        var offset = SUBFRAME + synthDelay - facLength;
+        var offset = base + SUBFRAME + synthDelay - facLength;
         for (var k = 0; k < 2 * facLength; k++) {
             overlap[offset + k] = state.tail[k + 1];
         }
-        Arrays.fill(overlap, lpdDelay + facLength, frameLength, 0f);
+        Arrays.fill(overlap, base + lpdDelay + facLength, base + frameLength, 0f);
         if (state.modePrevious == 0) {
             System.arraycopy(state.filterPrevious, ORDER + 1, state.lastFilter, 0, ORDER + 1);
             System.arraycopy(state.tail, 0, state.acelpTail, 0, 1 + 2 * FAC_LENGTH);

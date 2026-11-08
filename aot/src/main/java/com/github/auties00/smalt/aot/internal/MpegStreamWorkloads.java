@@ -24,17 +24,19 @@ import static com.github.auties00.smalt.aot.internal.WorkloadFactory.file;
 
 /**
  * Creates the {@link TrainingFamily#MPEG} workloads of the coding tools no Smalt encoder writes, on the bundled
- * streams of the reference encoders: USAC (libxaac's encoder), the optional modes of H.263 (the TMN 3.2 encoder and
- * the Annex encoder of {@code tools/testdata/h263-annexes}) and the tools of H.264's separately coded color planes the
- * Smalt encoder does not write, CAVLC B pictures and scaling matrices (the JM encoder's monochrome streams merged into
- * separate planes).
+ * streams of the reference encoders: USAC (libxaac's encoder, and a synthetic time-warped stream), the optional
+ * modes of H.263 (the TMN 3.2 encoder and the Annex encoder of {@code tools/testdata/h263-annexes}) and the tools of
+ * H.264's separately coded color planes the Smalt encoder does not write, CAVLC B pictures and scaling matrices (the
+ * JM encoder's monochrome streams merged into separate planes).
  */
 final class MpegStreamWorkloads {
     /**
      * The USAC training streams: the frequency domain coder in stereo at 48 kHz, the switched coder with eSBR and
-     * MPEG-D DRC in mono at 32 kHz, and the switched coder with eSBR and MPEG Surround 2-1-2 at 48 kHz.
+     * MPEG-D DRC in mono at 32 kHz, the switched coder with eSBR and MPEG Surround 2-1-2 at 48 kHz, and the time-warped
+     * MDCT switching to and from the linear prediction domain coder in mono at 16 kHz (a synthetic stream).
      */
-    static final List<String> USAC_STREAMS = List.of("usac-fd-stereo", "usac-switched-esbr-drc", "usac-mps212");
+    static final List<String> USAC_STREAMS = List.of("usac-fd-stereo", "usac-switched-esbr-drc", "usac-mps212",
+            "usac-tw-lpd");
 
     /**
      * The H.263 training streams: PB-frames with syntax-based arithmetic coding, B-pictures, SNR and spatial

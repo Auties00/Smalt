@@ -3,7 +3,8 @@
 # jxr: image's JPEG XR vectors (tools/testdata/behavior/make-jxr-vectors.py, jxrlib 1.1 JxrEncApp, jxr.tsv);
 # h263: mpeg's H.263 annex streams (tools/testdata/h263-annexes/make-vectors.py, TMN 3.2 and h263enc.py, golden.tsv);
 # h264: mpeg's separate color plane streams (JM, video/h264/chroma444/streams.tsv);
-# usac: mpeg's USAC fuzz seeds (libxaac's encoder, MpegFuzzTestInputs/aac/valid-usac-*.bin).
+# usac: mpeg's USAC fuzz seeds (libxaac's encoder; usac-tw-lpd: UsacTestStream, FuzzSeedWriter.usacTimeWarped;
+# MpegFuzzTestInputs/aac/valid-usac-*.bin).
 e1e0218c80d12b3fc1f9bbe801da3f0834a9fc920e3235cf244cb38f9c67ccdc  exr/deep-scanline-zips.exr
 3a879cbf5f0847cb309d88f6895fbb85b12393ef87f8dcd14dc8c8f970d952ff  exr/float-pxr24.exr
 2171e3fcb1403e301a45d95faac0463b6fde700662deaf92e15521f651b112d6  exr/luminance-chroma-piz.exr
@@ -43,3 +44,4 @@ aede3ea78a92c6e88eb4a6ce2db1225523fdb051beeae70859d46ff26f4ea145  h264/m8-cavlc-
 0231e35cf80acbb6e3eab086ed42efb4529992240734deafdb3c03fe7d3dd419  usac/usac-fd-stereo.bin
 6a321c3fc23135c0aa9ff63ba9e89d54da316492564c1657433ad9b19cc8d477  usac/usac-mps212.bin
 b8ca3b150616d3f39598a1643d944ed5a410417a25ffd4cae989e942de358ee3  usac/usac-switched-esbr-drc.bin
+f983188109287045dc5c43677eda7a7f6c611530c159d61cd5246fc095892ba3  usac/usac-tw-lpd.bin

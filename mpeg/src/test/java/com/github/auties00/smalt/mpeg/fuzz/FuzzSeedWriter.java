@@ -2,6 +2,7 @@ package com.github.auties00.smalt.mpeg.fuzz;
 
 import com.github.auties00.smalt.audio.aac.internal.AudioSpecificConfig;
 import com.github.auties00.smalt.audio.aac.internal.ep.EpFrameEncoder;
+import com.github.auties00.smalt.audio.aac.internal.usac.UsacTestStream;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.ChromaFormat;
@@ -58,8 +59,9 @@ import static com.github.auties00.smalt.testkit.fuzz.FuzzSeeds.write;
  * ffmpeg (and from a separate-color-plane test stream), HEIF stills built with the test kit's
  * {@link HeifBuilder} around x265 and x264 pictures and uncompressed pixels, HEIC files of the HEIC encoder, AAC
  * LTP, ER AAC LTP, SSR and ER BSAC streams written bit by bit, AAC with MPEG Surround side information (from the
- * {@code MpegSurroundTest} resources), and the scalable and alpha H.264 test streams, one NAL unit per packet. Runs
- * only with {@code -Dsmalt.fuzz.writeSeeds=true}.
+ * {@code MpegSurroundTest} resources), USAC streams switching between the time-warped MDCT and the linear prediction
+ * domain coder (written by {@link UsacTestStream}), and the scalable and alpha H.264 test streams, one NAL unit per
+ * packet. Runs only with {@code -Dsmalt.fuzz.writeSeeds=true}.
  */
 @EnabledIfSystemProperty(named = "smalt.fuzz.writeSeeds", matches = "true",
         disabledReason = "[opt-in:fuzz-seeds] runs only with -Dsmalt.fuzz.writeSeeds=true")
@@ -260,6 +262,21 @@ class FuzzSeedWriter {
         usacSeed(encoder, "valid-usac-switched-esbr-drc.bin", 32000, 1, "-usac:0", "-ccfl_idx:3", "-br:16000",
                 "-drc:1");
         usacSeed(encoder, "valid-usac-mps212.bin", 48000, 2, "-usac:0", "-mps:1", "-ccfl_idx:3", "-br:32000");
+    }
+
+    @Test
+    @DisplayName("writes the USAC seeds of the AAC target that switch between the time-warped MDCT and the LPD coder")
+    void usacTimeWarped() {
+        // the synthetic streams of the transition tests, with warp contours and the bass postfilter
+        for (var length : new int[]{1024, 768}) {
+            var plan = new UsacTestStream.Plan(length, true, true, true, 11, UsacTestStream.TRANSITIONS);
+            var parts = new ArrayList<FuzzPackets.Part>();
+            for (var unit : UsacTestStream.accessUnits(plan)) {
+                parts.add(new FuzzPackets.Part(unit, parts.isEmpty()));
+            }
+            write(MpegFuzzTest.class, "aac", "valid-usac-tw-lpd-" + length + ".bin", FuzzPackets.audio(0,
+                    UsacTestStream.SAMPLING_FREQUENCY, 1, 0, UsacTestStream.audioSpecificConfig(plan), parts));
+        }
     }
 
     /**

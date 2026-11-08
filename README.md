@@ -1721,9 +1721,14 @@ channels, or two tracks, at 32 kHz in 12 bits. A DV source is copied when no for
   implemented, nor the loudness equalization of its second edition), and its gains reach the USAC output after
   the core decoder, eSBR and MPEG Surround. The time-warped MDCT of USAC (`tw_mdct`, which no ISO/IEC 23003-3
   conformance stream uses and the Extended HE AAC profile excludes) matches the time-warped filterbank of the
-  ISO/IEC 23003-3 reference software bit for bit on synthetic frames; an element that uses it and switches to
-  the linear prediction domain coder raises `MediaException.Unsupported`. eSBR transposes with the QMF based
-  harmonic transposer, not with the DFT based one the reference decoder offers as an alternative. AAC Main
+  ISO/IEC 23003-3 reference software bit for bit on synthetic frames, its transitions to and from the linear
+  prediction domain coder included, except in three places where the reference software's time-warped branch
+  departs from its plain one: it adds the frequency domain transition twice under a frame that starts with TCX,
+  drops the end of a long FAC signal, and with 768-sample frames starts the linear prediction domain decoder from
+  the overlap at the offset of 1024-sample frames; Smalt does as the plain branch does, so that an unwarped
+  stream decodes as with the plain filterbank half a frame later. After a linear prediction domain frame, the
+  bass postfilter does not reach into a time-warped frame, as in the reference software. eSBR transposes with the
+  QMF based harmonic transposer, not with the DFT based one the reference decoder offers as an alternative. AAC Main
   prediction matches the ISO/IEC 14496-26 reference waveforms, which evaluate the predictor in double
   precision, so it drifts from decoders that use single precision, ffmpeg among them, by up to about -70 dB.
 - Audio packet loss concealment (`AudioDecoder.conceal`) extrapolates from the signal decoded before the loss only:
