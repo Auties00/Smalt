@@ -472,9 +472,9 @@ final class SmartCrop {
         for (var count : histogram) {
             if (count != 0) {
                 var p = count / total;
-                entropy -= p * Math.log(p);
+                entropy -= p * StrictMath.log(p);
             }
         }
-        return entropy / Math.log(2);
+        return entropy / StrictMath.log(2);
     }
 }

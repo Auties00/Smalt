@@ -2,6 +2,7 @@ package com.github.auties00.smalt.image.raw.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.internal.io.ByteArrays;
+import com.github.auties00.smalt.internal.tiff.TiffTypes;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -147,6 +148,7 @@ final class TiffTree {
         file.orientation = first.intValue(274, 1);
         if (exif != null) {
             shot(exif, file);
+            makerNote(exif, file);
         }
         shot(first, file);
         file.exif = ExifBlock.build(first, exif, first.child(GPS_IFD));
@@ -183,6 +185,33 @@ final class TiffTree {
     }
 
     /**
+     * Records where the maker note of an EXIF directory lies, an entry of bytes, unless one is already recorded: its
+     * position, its length, its position relative to the TIFF header its offsets refer to, and that header's byte
+     * order.
+     *
+     * @param exif the EXIF directory
+     * @param file the description to fill
+     */
+    static void makerNote(Ifd exif, RawFile file) {
+        var position = exif.valuePosition(MAKER_NOTE);
+        var length = exif.valueCount(MAKER_NOTE);
+        var reader = exif.reader();
+        var type = exif.type(MAKER_NOTE);
+        if (file.makerNotePosition >= 0 || position < reader.base() || length <= 0
+                || (type != TiffTypes.UNDEFINED && type != TiffTypes.BYTE)) {
+            return;
+        }
+        var size = reader.size();
+        if (size >= 0 && (position >= size || length > size - position)) {
+            return;
+        }
+        file.makerNotePosition = position;
+        file.makerNoteLength = length;
+        file.makerNoteOffset = position - reader.base();
+        file.makerNoteLittle = reader.little();
+    }
+
+    /**
      * Records the JPEG preview a directory holds, if any.
      *
      * @param ifd the directory
@@ -197,6 +226,10 @@ final class TiffTree {
         } else {
             var compression = ifd.intValue(TiffSamples.COMPRESSION, 1);
             var photometric = ifd.intValue(TiffSamples.PHOTOMETRIC, 6);
+            if (compression == TiffSamples.COMPRESSION_JPEG_XL) {
+                jpegXlPreview(ifd, file, photometric);
+                return;
+            }
             if ((compression != 6 && compression != 7) || photometric == 32803 || photometric == 34892
                     || ifd.has(TiffSamples.TILE_OFFSETS)) {
                 return;
@@ -210,6 +243,42 @@ final class TiffTree {
             length = counts[0];
         }
         addPreview(file, ifd.reader(), ifd.reader().base() + offset, length);
+    }
+
+    /**
+     * Records a DNG 1.7 JPEG XL preview: a preview directory ({@code NewSubFileType} 1) of RGB or
+     * gray image data coded with JPEG XL, in one tile or several.
+     *
+     * @param ifd the directory
+     * @param file the description to fill
+     * @param photometric the directory's photometric interpretation
+     */
+    private static void jpegXlPreview(Ifd ifd, RawFile file, int photometric) {
+        if (ifd.longValue(NEW_SUBFILE_TYPE, 0) != 1 || (photometric != 1 && photometric != 2)) {
+            return;
+        }
+        var width = ifd.intValue(TiffSamples.IMAGE_WIDTH, 0);
+        var height = ifd.intValue(TiffSamples.IMAGE_LENGTH, 0);
+        var tiled = ifd.has(TiffSamples.TILE_OFFSETS);
+        var offsets = ifd.longs(tiled ? TiffSamples.TILE_OFFSETS : TiffSamples.STRIP_OFFSETS);
+        var counts = ifd.longs(tiled ? TiffSamples.TILE_BYTE_COUNTS : TiffSamples.STRIP_BYTE_COUNTS);
+        if (width <= 0 || height <= 0 || offsets == null || counts == null || offsets.length == 0
+                || counts.length < offsets.length) {
+            return;
+        }
+        var length = 0L;
+        for (var count : counts) {
+            length += Math.max(0, count);
+        }
+        var offset = ifd.reader().base() + offsets[0];
+        for (var preview : file.previews) {
+            if (preview.offset() == offset) {
+                return;
+            }
+        }
+        if (length > 0) {
+            file.previews.add(new RawFile.Preview(offset, length, width, height, false, 0, height, ifd));
+        }
     }
 
     /**
