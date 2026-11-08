@@ -110,6 +110,20 @@ class WebpLosslessEncoderTest {
         assertArrayEquals(WebpTestSupport.tightRgba(picture), WebpTestSupport.tightRgba(WebpTestSupport.decodeRgba(file)));
     }
 
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"YCGCO_RE", "YCGCO_RO"})
+    @DisplayName("round-trips the R'G'B' of a deep YCgCo-R picture exactly, which its 8-bit samples could not hold")
+    void ycgcoRoundTrip(com.github.auties00.smalt.image.MatrixCoefficients matrix) {
+        var picture = random(37, 23, 7, false);
+        var color = new ColorInfo(matrix, com.github.auties00.smalt.image.ColorRange.FULL,
+                com.github.auties00.smalt.image.ColorPrimaries.BT709,
+                com.github.auties00.smalt.image.TransferCharacteristics.SRGB);
+        var deep = ImageOps.toYuv16(picture, ChromaFormat.YUV444, color,
+                matrix == com.github.auties00.smalt.image.MatrixCoefficients.YCGCO_RE ? 10 : 9);
+        var file = WebpEncoder.encode(deep, WebpEncoderOptions.lossless().toBuilder().exact(true).build());
+        assertArrayEquals(WebpTestSupport.tightRgba(picture), WebpTestSupport.tightRgba(WebpTestSupport.decodeRgba(file)));
+    }
+
     static Stream<Arguments> randomSizes() {
         return Stream.of(Arguments.of(1, 1), Arguments.of(1, 17), Arguments.of(17, 1), Arguments.of(37, 23), Arguments.of(3, 300));
     }
