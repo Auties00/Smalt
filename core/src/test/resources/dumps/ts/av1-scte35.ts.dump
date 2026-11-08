@@ -1,0 +1,41 @@
+# demux dump of ts/av1-scte35.ts; regenerate with -Dsmalt.test.updateDumps=true
+format MPEG_TS
+duration 1000000
+seekable true
+track 256 VIDEO AV1 timebase=1/90000 duration=? config=16:3689b747
+  video 160x120 orientation=NORMAL
+  color ColorInfo[matrix=UNSPECIFIED, range=LIMITED, primaries=UNSPECIFIED, transfer=UNSPECIFIED, chromaSiting=UNSPECIFIED, masteringDisplay=Optional.empty, contentLightLevel=Optional.empty]
+track 496 DATA DATA timebase=1/90000 duration=? config=none
+packets 17
+0 t256 pts=0 dts=0 dur=6000 flags=KEY size=3431 crc=8cb351f9
+1 t256 pts=6000 dts=6000 dur=6000 flags=- size=504 crc=5ce921c0
+2 t256 pts=12000 dts=12000 dur=6000 flags=- size=327 crc=a5b8d121
+3 t256 pts=18000 dts=18000 dur=6000 flags=- size=283 crc=3456d291
+4 t256 pts=24000 dts=24000 dur=6000 flags=- size=416 crc=f01829e5
+5 t256 pts=30000 dts=30000 dur=6000 flags=KEY size=2970 crc=2ae64855
+6 t256 pts=36000 dts=36000 dur=6000 flags=- size=636 crc=ac1fbd70
+7 t256 pts=42000 dts=42000 dur=6000 flags=- size=433 crc=82fdff78
+8 t256 pts=48000 dts=48000 dur=6000 flags=- size=426 crc=6e32eb09
+9 t256 pts=54000 dts=54000 dur=6000 flags=- size=761 crc=36642672
+10 t256 pts=60000 dts=60000 dur=6000 flags=KEY size=2824 crc=6a20f2b6
+11 t496 pts=30000 dts=30000 dur=42000 flags=KEY size=35 crc=3087bd06
+12 t256 pts=66000 dts=66000 dur=6000 flags=- size=684 crc=2cacb9d3
+13 t256 pts=72000 dts=72000 dur=6000 flags=- size=665 crc=77ae584e
+14 t256 pts=78000 dts=78000 dur=6000 flags=- size=545 crc=fefe05a4
+15 t256 pts=84000 dts=84000 dur=6000 flags=- size=642 crc=ec6cb29e
+16 t496 pts=72000 dts=72000 dur=12000 flags=KEY size=35 crc=6910e753
+seek 0: t256@0 t496@0
+seek 333333: t256@0 t496@0
+seek 666666: t256@5 t496@0
+seek 1000000: end
+seek -1000000: t256@0 t496@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format MPEG_TS
+  duration -1
+  seekable false
+  track 256 VIDEO AV1 timebase=1/90000 duration=? config=16:3689b747
+    video 160x120 orientation=NORMAL
+    color ColorInfo[matrix=UNSPECIFIED, range=LIMITED, primaries=UNSPECIFIED, transfer=UNSPECIFIED, chromaSiting=UNSPECIFIED, masteringDisplay=Optional.empty, contentLightLevel=Optional.empty]
+  track 496 DATA DATA timebase=1/90000 duration=? config=none
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH
