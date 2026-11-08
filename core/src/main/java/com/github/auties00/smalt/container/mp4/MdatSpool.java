@@ -18,8 +18,8 @@ import java.util.Arrays;
  * <p>Data accumulates in memory up to {@value #MEMORY_LIMIT} bytes and then moves to a temporary
  * file that is deleted when the spool is closed (and by the operating system if the process dies
  * first, where it supports delete-on-close). Appends are sequential; {@link #transferTo} copies
- * everything to the output in one pass, through the channel-to-channel transfer of the file when
- * the data spilled to disk.
+ * everything, or a range, to the output in one pass, through the channel-to-channel transfer of the
+ * file when the data spilled to disk.
  *
  * <p>In memory the data is a sequence of segments: ranges of blocks that {@link #write} copies
  * into, and whole arrays that {@link #hold} keeps by reference because they are immutable packet
@@ -308,17 +308,53 @@ final class MdatSpool implements AutoCloseable {
      * @throws MediaException.Io if reading the spool or writing the output fails
      */
     void transferTo(MediaSink sink) {
+        if (segments != null) {
+            try {
+                drain(new SinkChannel(sink));
+            } catch (IOException exception) {
+                throw new MediaException.Io("cannot copy the media data spool", exception);
+            }
+            return;
+        }
+        transferTo(sink, 0, size);
+    }
+
+    /**
+     * Copies a range of the appended bytes to a sink at its current position.
+     *
+     * @param sink the destination
+     * @param from the index of the first byte copied
+     * @param length the number of bytes copied
+     * @throws IndexOutOfBoundsException if the range is not within the appended bytes
+     * @throws MediaException.Io if reading the spool or writing the output fails
+     */
+    void transferTo(MediaSink sink, long from, long length) {
+        if (from < 0 || length < 0 || from > size - length) {
+            throw new IndexOutOfBoundsException("range " + from + " + " + length + " outside " + size + " bytes");
+        }
         var output = new SinkChannel(sink);
         try {
             if (segments != null) {
-                drain(output);
+                var start = 0L;
+                for (var index = 0; index < segmentCount && length > 0; index++) {
+                    var segmentLength = segmentLengths[index];
+                    if (start + segmentLength > from) {
+                        var skip = (int) Math.max(0, from - start);
+                        var count = (int) Math.min(segmentLength - skip, length);
+                        writeFully(output, segments[index], segmentOffsets[index] + skip, count);
+                        from += count;
+                        length -= count;
+                    }
+                    start += segmentLength;
+                }
                 return;
             }
-            var position = 0L;
-            while (position < size) {
-                var moved = file.transferTo(position, size - position, output);
+            var position = from;
+            var end = from + length;
+            while (position < end) {
+                var moved = file.transferTo(position, end - position, output);
                 if (moved <= 0) {
-                    var buffer = ByteBuffer.allocate((int) Math.min(1 << 20, size - position));
+                    var buffer = ByteBuffer.allocate((int) Math.min(1 << 20, end - position));
                     var read = file.read(buffer, position);
                     if (read <= 0) {
                         throw new IOException("media data spool ended at " + position + " of " + size + " bytes");

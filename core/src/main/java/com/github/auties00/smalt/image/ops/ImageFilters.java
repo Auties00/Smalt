@@ -15,20 +15,21 @@ import java.util.Objects;
 
 /**
  * Filters pictures by their neighborhoods: Gaussian and box blurs, unsharp masking, sharpening,
- * arbitrary convolution and median filtering.
+ * arbitrary convolution, and rank (minimum, median, maximum) and mode filtering.
  *
  * <p>Every method works on packed RGBA: a {@link YuvPicture} is converted with
  * {@link ImageOps#toRgba(Picture)} first and a {@link Yuv16Picture} to 16-bit RGBA with its matrix
  * and range, and the result is an {@link RgbaPicture} for 8-bit inputs or an {@link Rgba16Picture}
  * for 16-bit ones, with the input's alpha flag. Pixels beyond the edges of the picture repeat the
- * nearest edge pixel. A picture that reports no alpha is treated as opaque and its result is
- * opaque. Inputs are never modified; the results are new pictures with tightly packed rows, whatever
- * the number of threads that compute them, and follow the limits rule of {@link ImageOps}. This
- * class is thread-safe.
+ * nearest edge pixel, except in {@link #mode}. A picture that reports no alpha is treated as opaque
+ * and its result is opaque. Inputs are never modified; the results are new pictures with tightly
+ * packed rows, whatever the number of threads that compute them, and follow the limits rule of
+ * {@link ImageOps}. This class is thread-safe.
  *
  * @implNote This implementation runs its multiply-accumulate, box-filter and unsharp loops in a kernel with identical
  * scalar and Vector API twins. The box blur and the unsharp mask reproduce Pillow's {@code libImaging/BoxBlur.c} and
- * {@code UnsharpMask.c} exactly on 8-bit pictures, and the median filter matches Pillow's {@code MedianFilter}.
+ * {@code UnsharpMask.c} exactly on 8-bit pictures, and the rank and mode filters match Pillow's {@code RankFilter} and
+ * {@code ModeFilter}.
  */
 public final class ImageFilters {
     /**
@@ -38,7 +39,7 @@ public final class ImageFilters {
     private static final double AUTO_BOX_SIGMA = 4;
 
     /**
-     * The largest radius {@link #median} accepts.
+     * The largest radius {@link #median}, {@link #rank} and the other window filters accept.
      */
     public static final int MAX_MEDIAN_RADIUS = 32;
 
@@ -62,7 +63,6 @@ public final class ImageFilters {
      * @param sigma the standard deviation in pixels, from {@code 0} to {@link #MAX_RADIUS}
      * @return the blurred picture, as {@link #gaussianBlur(Picture, double, BlurMethod)} describes
      * @throws IllegalArgumentException if {@code sigma} is out of range or not finite
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture gaussianBlur(Picture picture, double sigma) {
@@ -82,7 +82,6 @@ public final class ImageFilters {
      * @param method how to compute the blur
      * @return the blurred picture
      * @throws IllegalArgumentException if {@code sigma} is out of range or not finite
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture gaussianBlur(Picture picture, double sigma, BlurMethod method) {
@@ -111,7 +110,6 @@ public final class ImageFilters {
      * @param radius the radius in pixels, from {@code 0} to {@link #MAX_RADIUS}
      * @return the blurred picture
      * @throws IllegalArgumentException if {@code radius} is out of range or not finite
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture boxBlur(Picture picture, double radius) {
@@ -140,7 +138,6 @@ public final class ImageFilters {
      * @param threshold the difference, in 8-bit units, at or below which a sample is left alone
      * @return the sharpened picture, as {@link #unsharpMask(Picture, double, double, int, BlurMethod)} describes
      * @throws IllegalArgumentException if an argument is out of range
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture unsharpMask(Picture picture, double sigma, double amount, int threshold) {
@@ -166,7 +163,6 @@ public final class ImageFilters {
      * @param method how to compute the blur
      * @return the sharpened picture
      * @throws IllegalArgumentException if an argument is out of range
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture unsharpMask(Picture picture, double sigma, double amount, int threshold, BlurMethod method) {
@@ -195,7 +191,6 @@ public final class ImageFilters {
      *
      * @param picture the picture to sharpen
      * @return the sharpened picture, as {@link #convolve} describes
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      * @see ConvolutionKernel#sharpen()
      */
@@ -216,7 +211,6 @@ public final class ImageFilters {
      * @param picture the picture to filter
      * @param kernel the convolution weights
      * @return the filtered picture
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture convolve(Picture picture, ConvolutionKernel kernel) {
@@ -243,7 +237,6 @@ public final class ImageFilters {
      * @param radius the window radius, from {@code 1} to {@link #MAX_MEDIAN_RADIUS}
      * @return the filtered picture
      * @throws IllegalArgumentException if {@code radius} is out of range
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture median(Picture picture, int radius) {
@@ -253,10 +246,121 @@ public final class ImageFilters {
                 throw new IllegalArgumentException("median radius " + radius + " is outside 1.." + MAX_MEDIAN_RADIUS);
             }
             try {
-                return Median.filter(Canvas.toPacked(picture), radius);
+                return RankFilter.median(Canvas.toPacked(picture), radius);
             } catch (RuntimeException exception) {
                 throw OpChecks.translate(exception);
             }
+        }
+    }
+
+    /**
+     * Replaces every sample with the smallest sample of the square window around it, each channel
+     * independently, which grows dark areas and removes bright specks (an erosion).
+     *
+     * <p>The window has {@code 2 * radius + 1} samples on each side. Alpha is filtered like the
+     * colors when the picture reports alpha. On 8-bit pictures this equals Pillow's
+     * {@code MinFilter(2 * radius + 1)}.
+     *
+     * @param picture the picture to filter
+     * @param radius the window radius, from {@code 1} to {@link #MAX_MEDIAN_RADIUS}
+     * @return the filtered picture
+     * @throws IllegalArgumentException if {@code radius} is out of range
+     * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
+     */
+    public static Picture minimum(Picture picture, int radius) {
+        return rank(picture, radius, 0);
+    }
+
+    /**
+     * Replaces every sample with the largest sample of the square window around it, each channel
+     * independently, which grows bright areas and removes dark specks (a dilation).
+     *
+     * <p>The window has {@code 2 * radius + 1} samples on each side. Alpha is filtered like the
+     * colors when the picture reports alpha. On 8-bit pictures this equals Pillow's
+     * {@code MaxFilter(2 * radius + 1)}.
+     *
+     * @param picture the picture to filter
+     * @param radius the window radius, from {@code 1} to {@link #MAX_MEDIAN_RADIUS}
+     * @return the filtered picture
+     * @throws IllegalArgumentException if {@code radius} is out of range
+     * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
+     */
+    public static Picture maximum(Picture picture, int radius) {
+        // an out-of-range radius is rejected by rank before the rank is checked
+        var side = 2 * radius + 1;
+        return rank(picture, radius, side * side - 1);
+    }
+
+    /**
+     * Replaces every sample with the sample of a given rank in the square window around it, each
+     * channel independently.
+     *
+     * <p>The {@code n = (2 * radius + 1)^2} samples of a window are sorted in ascending order and
+     * the one at the zero-based {@code rank} is kept: {@code 0} is {@link #minimum}, {@code n / 2}
+     * {@link #median} and {@code n - 1} {@link #maximum}. Alpha is filtered like the colors when the
+     * picture reports alpha. On 8-bit pictures this equals Pillow's
+     * {@code RankFilter(2 * radius + 1, rank)}.
+     *
+     * @param picture the picture to filter
+     * @param radius the window radius, from {@code 1} to {@link #MAX_MEDIAN_RADIUS}
+     * @param rank the zero-based rank, from {@code 0} to {@code (2 * radius + 1)^2 - 1}
+     * @return the filtered picture
+     * @throws IllegalArgumentException if {@code radius} or {@code rank} is out of range
+     * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
+     */
+    public static Picture rank(Picture picture, int radius, int rank) {
+        try (var _ = ParallelBands.operation()) {
+            Objects.requireNonNull(picture, "picture");
+            requireWindow(radius);
+            var side = 2 * radius + 1;
+            if (rank < 0 || rank >= side * side) {
+                throw new IllegalArgumentException("rank " + rank + " is outside 0.." + (side * side - 1));
+            }
+            try {
+                return RankFilter.filter(Canvas.toPacked(picture), radius, rank);
+            } catch (RuntimeException exception) {
+                throw OpChecks.translate(exception);
+            }
+        }
+    }
+
+    /**
+     * Replaces every sample with the most frequent value of the square window around it, each
+     * channel independently, which flattens noisy areas into their dominant values.
+     *
+     * <p>The window has {@code 2 * radius + 1} samples on each side and, unlike the other filters of
+     * this class, is cut at the edges of the picture rather than extended. The most frequent value
+     * of the window wins, the smallest one among equally frequent values; a sample whose window has
+     * no value occurring more than twice is kept. Alpha is filtered like the colors when the picture
+     * reports alpha. On 8-bit pictures this equals Pillow's {@code ModeFilter(2 * radius + 1)}.
+     *
+     * @param picture the picture to filter
+     * @param radius the window radius, from {@code 1} to {@link #MAX_MEDIAN_RADIUS}
+     * @return the filtered picture
+     * @throws IllegalArgumentException if {@code radius} is out of range
+     * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
+     */
+    public static Picture mode(Picture picture, int radius) {
+        try (var _ = ParallelBands.operation()) {
+            Objects.requireNonNull(picture, "picture");
+            requireWindow(radius);
+            try {
+                return ModeFilter.filter(Canvas.toPacked(picture), radius);
+            } catch (RuntimeException exception) {
+                throw OpChecks.translate(exception);
+            }
+        }
+    }
+
+    /**
+     * Checks the radius of a rank or mode filter window.
+     *
+     * @param radius the radius to check
+     * @throws IllegalArgumentException if it is outside {@code 1..MAX_MEDIAN_RADIUS}
+     */
+    private static void requireWindow(int radius) {
+        if (radius < 1 || radius > MAX_MEDIAN_RADIUS) {
+            throw new IllegalArgumentException("window radius " + radius + " is outside 1.." + MAX_MEDIAN_RADIUS);
         }
     }
 

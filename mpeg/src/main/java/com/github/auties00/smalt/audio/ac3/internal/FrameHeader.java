@@ -151,6 +151,66 @@ public final class FrameHeader {
     public int lfeMixLevel;
 
     /**
+     * The copyright bit {@code copyrightb}, or {@code -1} when absent.
+     */
+    public int copyright;
+
+    /**
+     * The original bit stream bit {@code origbs}, or {@code -1} when absent.
+     */
+    public int original;
+
+    /**
+     * The Dolby Surround EX mode {@code dsurexmod}, or {@code -1} when absent.
+     */
+    public int surroundExMode;
+
+    /**
+     * The Dolby Headphone mode {@code dheadphonmod}, or {@code -1} when absent.
+     */
+    public int headphoneMode;
+
+    /**
+     * The converter type {@code adconvtyp}, or {@code -1} when absent.
+     */
+    public int converterType;
+
+    /**
+     * The mixing level code {@code mixlevel}, or {@code -1} when absent.
+     */
+    public int mixingLevel;
+
+    /**
+     * The room type {@code roomtyp}, or {@code -1} when absent.
+     */
+    public int roomType;
+
+    /**
+     * The program scale factor code {@code pgmscl}, or {@code -1} when absent.
+     */
+    public int programScale;
+
+    /**
+     * The external program scale factor code {@code extpgmscl}, or {@code -1} when absent.
+     */
+    public int externalProgramScale;
+
+    /**
+     * The source sample rate code {@code sourcefscod}, or {@code -1} when absent.
+     */
+    public int sourceRate;
+
+    /**
+     * Whether the frame carries E-AC-3 mixing metadata ({@code mixmdate}).
+     */
+    public boolean mixingMetadata;
+
+    /**
+     * Whether the frame carries E-AC-3 informational metadata ({@code infomdate}).
+     */
+    public boolean informationalMetadata;
+
+    /**
      * Whether the {@code addbsi} field carries the E-AC-3 object audio extension flag
      * {@code flag_ec3_extension_type_a} (ETSI TS 103 420 section 8.3).
      */
@@ -210,6 +270,18 @@ public final class FrameHeader {
         loroCenterMixLevel = -1;
         loroSurroundMixLevel = -1;
         lfeMixLevel = -1;
+        copyright = -1;
+        original = -1;
+        surroundExMode = -1;
+        headphoneMode = -1;
+        converterType = -1;
+        mixingLevel = -1;
+        roomType = -1;
+        programScale = -1;
+        externalProgramScale = -1;
+        sourceRate = -1;
+        mixingMetadata = false;
+        informationalMetadata = false;
         objectAudio = false;
         objectComplexity = 0;
         bsmod = 0;
@@ -266,7 +338,8 @@ public final class FrameHeader {
             reader.skip(8);
         }
         if (reader.read(1) != 0) {
-            reader.skip(7);
+            mixingLevel = reader.read(5);
+            roomType = reader.read(2);
         }
         if (acmod == 0) {
             dialogueNormalization[1] = reader.read(5);
@@ -280,7 +353,8 @@ public final class FrameHeader {
                 reader.skip(7);
             }
         }
-        reader.skip(2);
+        copyright = reader.read(1);
+        original = reader.read(1);
         if (bsid == 6) {
             if (reader.read(1) != 0) {
                 downmixMode = reader.read(2);
@@ -290,7 +364,10 @@ public final class FrameHeader {
                 loroSurroundMixLevel = reader.read(3);
             }
             if (reader.read(1) != 0) {
-                reader.skip(14);
+                surroundExMode = reader.read(2);
+                headphoneMode = reader.read(2);
+                converterType = reader.read(1);
+                reader.skip(9);
             }
         } else {
             if (reader.read(1) != 0) {
@@ -354,26 +431,31 @@ public final class FrameHeader {
             channelMap = reader.read(16);
         }
         if (reader.read(1) != 0) {
+            mixingMetadata = true;
             mixingMetadata(reader);
         }
         if (reader.read(1) != 0) {
+            informationalMetadata = true;
             bsmod = reader.read(3);
-            reader.skip(2);
+            copyright = reader.read(1);
+            original = reader.read(1);
             if (acmod == 2) {
                 surroundMode = reader.read(2);
-                reader.skip(2);
+                headphoneMode = reader.read(2);
             }
             if (acmod >= 6) {
-                reader.skip(2);
+                surroundExMode = reader.read(2);
             }
             if (reader.read(1) != 0) {
-                reader.skip(8);
+                mixingLevel = reader.read(5);
+                roomType = reader.read(2);
+                converterType = reader.read(1);
             }
             if (acmod == 0 && reader.read(1) != 0) {
                 reader.skip(8);
             }
             if (fscod < 3) {
-                reader.skip(1);
+                sourceRate = reader.read(1);
             }
         }
         if (streamType == 0 && numblkscod != 3) {
@@ -415,13 +497,13 @@ public final class FrameHeader {
             return;
         }
         if (reader.read(1) != 0) {
-            reader.skip(6);
+            programScale = reader.read(6);
         }
         if (acmod == 0 && reader.read(1) != 0) {
             reader.skip(6);
         }
         if (reader.read(1) != 0) {
-            reader.skip(6);
+            externalProgramScale = reader.read(6);
         }
         switch (reader.read(2)) {
             case 1 -> reader.skip(5);

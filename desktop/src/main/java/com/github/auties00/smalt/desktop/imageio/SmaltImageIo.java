@@ -20,6 +20,11 @@ public final class SmaltImageIo {
     public static final String GIF = "smalt-gif";
 
     /**
+     * The format name of Smalt's BMP reader and writer, {@value}.
+     */
+    public static final String BMP = "smalt-bmp";
+
+    /**
      * Prevents instantiation.
      */
     private SmaltImageIo() {

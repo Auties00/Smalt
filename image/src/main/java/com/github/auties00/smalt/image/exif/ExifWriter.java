@@ -21,9 +21,13 @@ import java.util.TreeMap;
  * <p>Both forms sort the entries of each directory by tag, as TIFF requires, and recompute the
  * pointer entries ({@link ExifData#EXIF_IFD_POINTER}, {@link ExifData#GPS_IFD_POINTER},
  * {@link ExifData#INTEROP_IFD_POINTER}) and the thumbnail location
- * ({@link ExifData#THUMBNAIL_OFFSET}, {@link ExifData#THUMBNAIL_LENGTH}): a directory is written
- * when it has entries (the Exif directory also when the interoperability directory has some, the
- * thumbnail directory also when there is a thumbnail) and its pointer is dropped otherwise.
+ * ({@link ExifData#THUMBNAIL_OFFSET} and {@link ExifData#THUMBNAIL_LENGTH} for a JPEG thumbnail,
+ * {@link ExifData#STRIP_OFFSETS} and {@link ExifData#STRIP_BYTE_COUNTS} for an uncompressed one,
+ * which is written as a single strip): a directory is written when it has entries (the Exif
+ * directory also when the interoperability directory has some, the thumbnail directory also when
+ * there is a thumbnail) and its pointer is dropped otherwise. The location entries of the other
+ * thumbnail kind are dropped, and so is a {@link ExifData#ROWS_PER_STRIP} smaller than the
+ * thumbnail's {@code ImageLength}, which a single strip contradicts.
  *
  * <p>{@link #rewrite(byte[], ExifData)} is the safe way to edit a camera's block. Maker notes
  * hold offsets relative to the start of the block that a relocation would break; the rewrite
@@ -46,9 +50,15 @@ public final class ExifWriter {
     private static final Set<Integer> UNMOVABLE_IFD0 = Set.of(0x014A);
 
     /**
-     * The tags of IFD1 that hold strip offsets a fresh layout cannot relocate.
+     * The tags of IFD1 that the writer computes from the thumbnail.
      */
-    private static final Set<Integer> UNMOVABLE_IFD1 = Set.of(0x0111, 0x0117);
+    private static final Set<Integer> THUMBNAIL_LOCATION = Set.of(ExifData.THUMBNAIL_OFFSET, ExifData.THUMBNAIL_LENGTH,
+            ExifData.STRIP_OFFSETS, ExifData.STRIP_BYTE_COUNTS);
+
+    /**
+     * The tag of the {@code ImageLength} entry of IFD1.
+     */
+    private static final int IMAGE_LENGTH = 0x0101;
 
     /**
      * Prevents instantiation.
@@ -72,10 +82,11 @@ public final class ExifWriter {
      * Writes a fresh block in a byte order.
      *
      * <p>The directories follow the header in the order IFD0, Exif, interoperability, GPS and
-     * IFD1, each followed by its out-of-line values, and the thumbnail comes last. Strip offsets
-     * of IFD1 and the sub-directory offsets of IFD0, which point at data this class does not
-     * hold, are left out; a maker note is copied as is, which breaks the manufacturers' maker
-     * notes that use offsets relative to the block.
+     * IFD1, each followed by its out-of-line values, and the thumbnail comes last. The
+     * sub-directory offsets of IFD0 ({@code SubIFDs}) and every entry of type
+     * {@link ExifValue.Type#IFD}, which point at data this class does not hold, are left out; a
+     * maker note is copied as is, which breaks the manufacturers' maker notes that use offsets
+     * relative to the block.
      *
      * @param data the directories and thumbnail
      * @param order the byte order
@@ -185,7 +196,9 @@ public final class ExifWriter {
                     continue;
                 }
                 var before = previous != null ? previous.entries().get(entry.tag()) : null;
-                if (before != null && before.valueOffset() >= 0 && before.type() == entry.value().type()
+                // a value kept in place is written back there, so it must not overlap the new header
+                if (before != null && before.valueOffset() >= ExifReader.HEADER_SIZE
+                        && before.type() == entry.value().type()
                         && before.count() == entry.count() && before.valueOffset() + bytes.length <= original.length
                         && Arrays.equals(original, (int) before.valueOffset(), (int) before.valueOffset() + bytes.length,
                         bytes, 0, bytes.length)) {
@@ -213,7 +226,7 @@ public final class ExifWriter {
         var thumbnailOffset = -1L;
         if (thumbnail != null) {
             var before = old.thumbnail();
-            if (before != null && before[1] == thumbnail.length
+            if (before != null && old.uncompressed() == edited.hasUncompressedThumbnail() && before[1] == thumbnail.length
                     && Arrays.equals(original, (int) before[0], (int) (before[0] + before[1]), thumbnail, 0, thumbnail.length)) {
                 thumbnailOffset = before[0];
                 mark(keep, before[0], before[1]);
@@ -328,6 +341,8 @@ public final class ExifWriter {
         if (thumbnail != null) {
             result.put(key(ExifData.Directory.THUMBNAIL, ExifData.THUMBNAIL_OFFSET), thumbnailOffset);
             result.put(key(ExifData.Directory.THUMBNAIL, ExifData.THUMBNAIL_LENGTH), (long) thumbnail.length);
+            result.put(key(ExifData.Directory.THUMBNAIL, ExifData.STRIP_OFFSETS), thumbnailOffset);
+            result.put(key(ExifData.Directory.THUMBNAIL, ExifData.STRIP_BYTE_COUNTS), (long) thumbnail.length);
         }
         return result;
     }
@@ -400,7 +415,7 @@ public final class ExifWriter {
         var ifd1 = !data.thumbnailIfd().isEmpty() || hasThumbnail;
         var result = new ArrayList<Directory>();
         var ifd0 = entries(data.ifd0(), Set.of(ExifData.EXIF_IFD_POINTER, ExifData.GPS_IFD_POINTER),
-                fresh ? UNMOVABLE_IFD0 : Set.of());
+                fresh ? UNMOVABLE_IFD0 : Set.of(), fresh);
         if (exif) {
             ifd0.put(ExifData.EXIF_IFD_POINTER, null);
         }
@@ -409,22 +424,30 @@ public final class ExifWriter {
         }
         result.add(new Directory(ExifData.Directory.IFD0, list(ifd0, little)));
         if (exif) {
-            var entries = entries(data.exif(), Set.of(ExifData.INTEROP_IFD_POINTER), Set.of());
+            var entries = entries(data.exif(), Set.of(ExifData.INTEROP_IFD_POINTER), Set.of(), fresh);
             if (interop) {
                 entries.put(ExifData.INTEROP_IFD_POINTER, null);
             }
             result.add(new Directory(ExifData.Directory.EXIF, list(entries, little)));
         }
         if (interop) {
-            result.add(new Directory(ExifData.Directory.INTEROP, list(entries(data.interop(), Set.of(), Set.of()), little)));
+            result.add(new Directory(ExifData.Directory.INTEROP, list(entries(data.interop(), Set.of(), Set.of(), fresh),
+                    little)));
         }
         if (gps) {
-            result.add(new Directory(ExifData.Directory.GPS, list(entries(data.gps(), Set.of(), Set.of()), little)));
+            result.add(new Directory(ExifData.Directory.GPS, list(entries(data.gps(), Set.of(), Set.of(), fresh), little)));
         }
         if (ifd1) {
-            var entries = entries(data.thumbnailIfd(), Set.of(ExifData.THUMBNAIL_OFFSET, ExifData.THUMBNAIL_LENGTH),
-                    fresh ? UNMOVABLE_IFD1 : Set.of());
-            if (hasThumbnail) {
+            var entries = entries(data.thumbnailIfd(), THUMBNAIL_LOCATION, Set.of(), fresh);
+            if (data.hasUncompressedThumbnail()) {
+                entries.put(ExifData.STRIP_OFFSETS, null);
+                entries.put(ExifData.STRIP_BYTE_COUNTS, null);
+                var rows = first(entries.get(ExifData.ROWS_PER_STRIP));
+                var height = first(entries.get(IMAGE_LENGTH));
+                if (rows >= 0 && height >= 0 && rows < height) {
+                    entries.remove(ExifData.ROWS_PER_STRIP);
+                }
+            } else if (hasThumbnail) {
                 entries.put(ExifData.THUMBNAIL_OFFSET, null);
                 entries.put(ExifData.THUMBNAIL_LENGTH, null);
             }
@@ -434,18 +457,33 @@ public final class ExifWriter {
     }
 
     /**
+     * Returns the first element of an integer entry.
+     *
+     * @param value the entry, or {@code null}
+     * @return the element, or {@code -1} when the entry is absent, empty or not an integer
+     */
+    private static long first(ExifValue value) {
+        return value instanceof ExifValue.Integers integers && integers.count() > 0 ? integers.get(0) : -1;
+    }
+
+    /**
      * Collects the entries of a directory sorted by tag, leaving out computed and unmovable tags.
      *
      * @param map the entries
      * @param computed the tags the writer computes
      * @param unmovable the tags left out because they point at data that cannot move
+     * @param fresh whether the layout is fresh, which also leaves out the entries of type
+     * {@link ExifValue.Type#IFD}
      * @return the entries keyed by tag, a {@code null} value marking a computed entry
      */
     private static TreeMap<Integer, ExifValue> entries(Map<Integer, ExifValue> map, Set<Integer> computed,
-                                                       Set<Integer> unmovable) {
+                                                       Set<Integer> unmovable, boolean fresh) {
         var result = new TreeMap<Integer, ExifValue>();
         for (var entry : map.entrySet()) {
             var tag = entry.getKey();
+            if (fresh && entry.getValue().type() == ExifValue.Type.IFD) {
+                continue;
+            }
             if (tag >= 0 && tag <= 0xFFFF && !computed.contains(tag) && !unmovable.contains(tag)) {
                 result.put(tag, entry.getValue());
             }
@@ -482,6 +520,7 @@ public final class ExifWriter {
                 var text = ascii.value().getBytes(StandardCharsets.ISO_8859_1);
                 yield Arrays.copyOf(text, text.length + 1);
             }
+            case ExifValue.Utf8 utf8 -> utf8.encode();
             case ExifValue.Undefined undefined -> undefined.bytes();
             case ExifValue.Integers integers -> {
                 var size = integers.type().size();
@@ -553,18 +592,36 @@ public final class ExifWriter {
             directories.put(ExifData.Directory.GPS, gps);
         }
         long[] thumbnail = null;
+        var uncompressed = false;
         var ifd1 = scanDirectory(tiff, little, ExifReader.nextDirectory(tiff, (int) ifd0Offset, little), regions,
                 visited);
         if (ifd1 != null) {
             directories.put(ExifData.Directory.THUMBNAIL, ifd1);
-            var start = pointerOf(ifd1, ExifData.THUMBNAIL_OFFSET);
-            var length = pointerOf(ifd1, ExifData.THUMBNAIL_LENGTH);
-            if (start >= ExifReader.HEADER_SIZE && length > 0 && start + length <= tiff.length) {
-                thumbnail = new long[]{start, length};
-                regions.add(thumbnail);
+            var parsed = ExifReader.parse(tiff).thumbnailIfd();
+            if (ExifData.describesStrips(parsed)) {
+                uncompressed = true;
+                var strips = ExifReader.stripRanges(tiff, parsed.get(ExifData.STRIP_OFFSETS),
+                        parsed.get(ExifData.STRIP_BYTE_COUNTS));
+                if (strips != null) {
+                    var contiguous = true;
+                    var total = 0L;
+                    for (var strip : strips) {
+                        contiguous &= strip[0] == strips[0][0] + total;
+                        total += strip[1];
+                        regions.add(strip);
+                    }
+                    thumbnail = contiguous ? new long[]{strips[0][0], total} : null;
+                }
+            } else {
+                var start = pointerOf(ifd1, ExifData.THUMBNAIL_OFFSET);
+                var length = pointerOf(ifd1, ExifData.THUMBNAIL_LENGTH);
+                if (start >= ExifReader.HEADER_SIZE && length > 0 && start + length <= tiff.length) {
+                    thumbnail = new long[]{start, length};
+                    regions.add(thumbnail);
+                }
             }
         }
-        return new Scan(directories, regions, thumbnail);
+        return new Scan(directories, regions, thumbnail, uncompressed);
     }
 
     /**
@@ -623,7 +680,7 @@ public final class ExifWriter {
             }
             var inline = switch (type) {
                 case SHORT -> (long) ExifReader.u16(tiff, at + 8, little);
-                case LONG -> ExifReader.u32(tiff, at + 8, little);
+                case LONG, IFD -> ExifReader.u32(tiff, at + 8, little);
                 default -> -1L;
             };
             entries.put(tag, new Original(type, elements, valueOffset, inline));
@@ -674,11 +731,11 @@ public final class ExifWriter {
      */
     private record Entry(int tag, ExifValue value, byte[] bytes) {
         /**
-         * {@return the element count written in the entry: the encoded length of an ASCII value,
-         * its terminator included, the value's count otherwise}
+         * {@return the element count written in the entry: the encoded length of an ASCII or UTF-8
+         * value, its terminator included, the value's count otherwise}
          */
         long count() {
-            return value instanceof ExifValue.Ascii ? bytes.length : value.count();
+            return value instanceof ExifValue.Ascii || value instanceof ExifValue.Utf8 ? bytes.length : value.count();
         }
     }
 
@@ -710,9 +767,12 @@ public final class ExifWriter {
      * @param directories the directories found
      * @param regions the offset and length of every directory table, out-of-line value and
      * thumbnail
-     * @param thumbnail the offset and length of the thumbnail, or {@code null}
+     * @param thumbnail the offset and length of the thumbnail, or {@code null} when there is none or
+     * its strips are not contiguous
+     * @param uncompressed whether the thumbnail directory describes an uncompressed thumbnail
      */
-    private record Scan(Map<ExifData.Directory, Scanned> directories, List<long[]> regions, long[] thumbnail) {
+    private record Scan(Map<ExifData.Directory, Scanned> directories, List<long[]> regions, long[] thumbnail,
+                        boolean uncompressed) {
         /**
          * Returns a directory.
          *

@@ -156,6 +156,25 @@ public final class FrameHeader {
     public int existingFrameIdx;
 
     /**
+     * The presentation time of a shown frame in display clock ticks
+     * ({@code frame_presentation_time}), 0 unless the sequence signals the decoder model without
+     * equal picture intervals.
+     */
+    public long framePresentationTime;
+
+    /**
+     * Whether the header signals the removal times of the frame from the decoder buffer
+     * ({@code buffer_removal_time_present_flag}).
+     */
+    public boolean bufferRemovalTimePresent;
+
+    /**
+     * The removal time of the frame from the decoder buffer of each operating point in decoding
+     * clock ticks ({@code buffer_removal_time}), 0 for the operating points it does not signal.
+     */
+    public final long[] bufferRemovalTime = new long[32];
+
+    /**
      * The frame identifier.
      */
     public int frameId;
@@ -631,6 +650,9 @@ public final class FrameHeader {
         spatialId = 0;
         showExistingFrame = false;
         existingFrameIdx = 0;
+        framePresentationTime = 0;
+        bufferRemovalTimePresent = false;
+        Arrays.fill(bufferRemovalTime, 0);
         frameId = 0;
         showFrame = false;
         showableFrame = false;
@@ -855,7 +877,7 @@ public final class FrameHeader {
         if (showExistingFrame) {
             existingFrameIdx = gb.bits(3);
             if (seq.decoderModelInfoPresent && !seq.equalPictureInterval) {
-                gb.bits(seq.framePresentationDelayLength);
+                framePresentationTime = gb.bits(seq.framePresentationDelayLength) & 0xFFFFFFFFL;
             }
             if (seq.frameIdNumbersPresent) {
                 frameId = gb.bits(seq.frameIdNBits);
@@ -873,7 +895,7 @@ public final class FrameHeader {
         }
         if (showFrame) {
             if (seq.decoderModelInfoPresent && !seq.equalPictureInterval) {
-                gb.bits(seq.framePresentationDelayLength);
+                framePresentationTime = gb.bits(seq.framePresentationDelayLength) & 0xFFFFFFFFL;
             }
             showableFrame = frameType != KEY;
         } else {
@@ -901,7 +923,7 @@ public final class FrameHeader {
         }
         primaryRefFrame = !errorResilientMode && isInterOrSwitch() ? gb.bits(3) : PRIMARY_REF_NONE;
         if (seq.decoderModelInfoPresent) {
-            var bufferRemovalTimePresent = gb.bit() != 0;
+            bufferRemovalTimePresent = gb.bit() != 0;
             if (bufferRemovalTimePresent) {
                 for (var i = 0; i < seq.numOperatingPoints; i++) {
                     if (seq.decoderModelParamPresent[i]) {
@@ -909,7 +931,7 @@ public final class FrameHeader {
                         var inTemporalLayer = ((idc >> temporalId) & 1) != 0;
                         var inSpatialLayer = ((idc >> (spatialId + 8)) & 1) != 0;
                         if (idc == 0 || (inTemporalLayer && inSpatialLayer)) {
-                            gb.bits(seq.bufferRemovalDelayLength);
+                            bufferRemovalTime[i] = gb.bits(seq.bufferRemovalDelayLength) & 0xFFFFFFFFL;
                         }
                     }
                 }
