@@ -51,6 +51,49 @@ public final class DngSpecSamples {
     }
 
     /**
+     * Builds a Bayer file with what a DNG conversion carries over: two semantic masks (one of 16-bit samples
+     * cropped by a {@code MaskSubArea}, at a resolution the conversion's edge margin resamples) with an RGB table
+     * naming one, a big-endian extra camera profile with its own RGB table and dynamic range, chosen as the as-shot
+     * profile, and private data.
+     *
+     * @return the DNG file
+     */
+    public static byte[] carryOver() {
+        var builder = base(24, 16, 1, 16);
+        builder.first.ascii(50936, "Primary").ascii(50934, "Alternate")
+                .raw(50740, 1, 13, "Smalt\0private".getBytes(java.nio.charset.StandardCharsets.US_ASCII))
+                .strips(16, words(ramp(24, 16, 1, 65536)));
+        var table = ByteBuffer.allocate(8 + 2 + 7 + 5 + 24 * 4).order(ByteOrder.LITTLE_ENDIAN);
+        table.putInt(1).putInt(0).putShort((short) 7).put("subject".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        table.put((byte) 2).put((byte) 2).put((byte) 0).put((byte) 4).put((byte) 0);
+        for (var index = 0; index < 24; index++) {
+            table.putFloat(index / 24f);
+        }
+        builder.first.undefined(52543, table.array());
+        var profile = new DngBuilder(false, 0x4352);
+        var tables = ByteBuffer.allocate(8 + 2 + 5 + 24 * 4).order(ByteOrder.BIG_ENDIAN);
+        tables.putInt(1).putInt(0).putShort((short) 0);
+        tables.put((byte) 2).put((byte) 2).put((byte) 0).put((byte) 4).put((byte) 0);
+        for (var index = 0; index < 24; index++) {
+            tables.putFloat(0.4f);
+        }
+        profile.first.ascii(50936, "Alternate").signedRationals(50721, 1.1, -0.2, 0, -0.1, 1, 0.1, 0.05, -0.1, 0.9)
+                .shorts(50778, 21).undefined(52543, tables.array())
+                .undefined(52551, ByteBuffer.allocate(8).putShort((short) 1).putShort((short) 1).putFloat(4).array());
+        builder.first.blobs(50933, profile.write());
+        var data = new byte[7 * 5];
+        for (var index = 0; index < data.length; index++) {
+            data[index] = (byte) (index * 7);
+        }
+        builder.child().longs(254, 65540).longs(256, 7).longs(257, 5).shorts(258, 8).shorts(259, 1).shorts(262, 52527)
+                .shorts(277, 1).ascii(52526, "subject").ascii(52528, "one").strips(5, data);
+        builder.child().longs(254, 65540).longs(256, 3).longs(257, 2).shorts(258, 16).shorts(259, 1).shorts(262, 52527)
+                .shorts(277, 1).ascii(52526, "sky").longs(52536, 1, 2, 9, 4)
+                .strips(2, DngBuilder.words(new long[]{0, 1000, 65535, 30000, 40000, 50000}, 16, ByteOrder.LITTLE_ENDIAN));
+        return builder.write();
+    }
+
+    /**
      * Builds a sample.
      *
      * @param name one of {@link #NAMES}

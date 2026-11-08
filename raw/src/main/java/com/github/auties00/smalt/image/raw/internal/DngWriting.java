@@ -15,12 +15,20 @@ import com.github.auties00.smalt.image.raw.RawDecoderOptions;
 import com.github.auties00.smalt.image.raw.RawImage;
 import com.github.auties00.smalt.image.raw.RawWhiteBalance;
 import com.github.auties00.smalt.internal.limits.Guards;
+import com.github.auties00.smalt.internal.tiff.TiffTypes;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -47,6 +55,26 @@ public final class DngWriting {
      * validator asks.
      */
     private static final int MIN_PADDING = 2;
+
+    /**
+     * The DNG {@code AsShotProfileName} tag.
+     */
+    private static final int AS_SHOT_PROFILE_NAME = 50934;
+
+    /**
+     * The name an Adobe {@code DNGPrivateData} block starts with, NUL included.
+     */
+    private static final byte[] ADOBE = {'A', 'd', 'o', 'b', 'e', 0};
+
+    /**
+     * The key of the maker note section of an Adobe {@code DNGPrivateData} block, {@code MakN}.
+     */
+    private static final int MAKER_NOTE_SECTION = 0x4D616B4E;
+
+    /**
+     * The longest maker note carried over, which keeps the block's length within a signed 32-bit integer.
+     */
+    private static final long MAX_MAKER_NOTE = Integer.MAX_VALUE - 64;
 
     /**
      * The EXIF {@code ExposureTime} tag.
@@ -118,7 +146,7 @@ public final class DngWriting {
         content.exif = options.exif().filter(exif -> !exif.equals(ExifData.EMPTY)).orElse(null);
         content.baselineExposure = options.baselineExposure().orElse(0);
         settings(content, options);
-        pad(content);
+        pad(content, MediaLimits.DEFAULT);
         if (options.preview()) {
             content.preview = selfRendering(content, options);
         }
@@ -134,7 +162,8 @@ public final class DngWriting {
      * file's color description is kept unless the options replace its color matrix; the options' white balance
      * becomes the file's as-shot neutral, except that the as-shot white balance of a file that records none is
      * left unrecorded. The rendering hints and camera descriptions of a DNG source the decoder does not interpret
-     * are carried over.
+     * are carried over, and so are its extra camera profiles and semantic masks; the private data of a DNG source,
+     * or the maker note of another one, is kept unless the options replace the EXIF metadata.
      *
      * @param source the raw file
      * @param decoding the decoding options
@@ -180,6 +209,10 @@ public final class DngWriting {
             var calibration = file.color(decoding);
             if (decoding.colorMatrix().isEmpty() && calibration.colorMatrix[0] != null && !calibration.generic
                     && calibration.channels() == result.neutral.length) {
+                if (file.color.colorMatrix[0] != null && file.color.channels() == calibration.channels()) {
+                    // the primary profile is written as it is, the chosen one named as the as-shot profile
+                    calibration = file.color;
+                }
                 result.calibration = calibration;
                 result.baselineExposure = calibration.baselineExposure - calibration.exposureOffset;
                 if (decoding.whiteBalance() instanceof RawWhiteBalance.AsShot && calibration.asShotNeutral == null) {
@@ -192,16 +225,18 @@ public final class DngWriting {
             if (result.calibration == null && !monochrome(result)) {
                 derivable(result);
             }
-            // TODO: carry the source's extra camera profiles (ExtraCameraProfiles) and its maker note
-            // (DNGPrivateData, whose offsets need the fix-ups its Adobe header describes)
             var tags = new ArrayList<>(file.firstTags);
             if (result.calibration == file.color) {
-                tags.addAll(file.profileTags);
+                profiles(file, decoding, result, tags);
             }
             result.firstTags = tags;
             result.rawTags = sensor.tags;
+            result.masks = masks(file, decoding.limits());
             return result;
         });
+        if (options.exif().isEmpty()) {
+            content.privateData = privateData(file);
+        }
         content.baselineExposure = options.baselineExposure().orElse(content.baselineExposure);
         content.make = options.make().orElse(file.make);
         content.model = options.model().orElse(file.model);
@@ -212,11 +247,102 @@ public final class DngWriting {
         content.exif = options.exif().map(exif -> exif.equals(ExifData.EMPTY) ? null : exif)
                 .orElseGet(() -> sourceExif(file));
         settings(content, options);
-        pad(content);
+        pad(content, decoding.limits());
         if (options.preview()) {
             content.preview = rendering(file, decoding, facts.width(), facts.height(), options);
         }
         DngWriter.write(content, sink);
+    }
+
+    /**
+     * Adds the camera profiles of a converted DNG file whose color description is kept: the source's primary profile
+     * stays the primary one and its extra profiles stay extra profiles, in their order, so that a profile without a
+     * table of its own inherits the same tables of the first directory as in the source. The profile the decoding
+     * options render with becomes the as-shot profile ({@code AsShotProfileName}), which readers render by default;
+     * without a choice of the options, the source's as-shot profile is kept.
+     *
+     * @param file the parsed source
+     * @param decoding the decoding options, which select the profile
+     * @param content the content, updated
+     * @param tags the entries of the first directory, updated
+     */
+    private static void profiles(RawFile file, RawDecoderOptions decoding, DngContent content, List<DngTag> tags) {
+        var selected = file.profileIndex(decoding);
+        tags.addAll(file.profileTags);
+        content.extraProfiles = List.copyOf(file.extraProfileEntries);
+        String asShot = null;
+        if (selected >= 0) {
+            asShot = Objects.requireNonNullElse(file.extraProfiles.get(selected).profileName, "");
+        } else if (decoding.cameraProfile().isPresent()) {
+            asShot = file.color.profileName;
+        } else if (file.asShotProfileTag != null) {
+            tags.add(file.asShotProfileTag);
+        }
+        if (asShot != null) {
+            var name = asShot.getBytes(StandardCharsets.UTF_8);
+            tags.add(new DngTag(AS_SHOT_PROFILE_NAME, TiffTypes.BYTE, name.length + 1, Arrays.copyOf(name,
+                    name.length + 1)));
+        }
+    }
+
+    /**
+     * Returns the semantic masks of a source that a converted file carries over. A mask that cannot be decoded is
+     * left out, and so is every later mask of its name when it is the first of that name, so that an RGB table
+     * naming it stays without a mask, as in the source.
+     *
+     * @param file the parsed source
+     * @param limits the resource bounds
+     * @return the masks, in the source's order
+     * @throws MediaException.LimitExceeded if a mask exceeds the limits
+     */
+    private static List<DngMask> masks(RawFile file, MediaLimits limits) {
+        var masks = new ArrayList<DngMask>();
+        var seen = new HashSet<String>();
+        var unmatched = new HashSet<String>();
+        for (var mask : file.masks) {
+            if (unmatched.contains(mask.name)) {
+                continue;
+            }
+            try {
+                masks.add(DngMask.of(mask, limits));
+            } catch (MediaException.Unsupported | MediaException.Malformed exception) {
+                if (!seen.contains(mask.name)) {
+                    unmatched.add(mask.name);
+                }
+            }
+            seen.add(mask.name);
+        }
+        return masks;
+    }
+
+    /**
+     * Returns the {@code DNGPrivateData} of a converted file: a DNG source's own, as it is (the specification
+     * makes the block self-contained and independent of byte order), or, for a source with a maker note, a
+     * block holding the maker note in Adobe's form: {@code "Adobe"} and a NUL, then a {@code MakN} section of a
+     * big-endian length, the byte order mark of the maker note's TIFF structure, the maker note's big-endian offset
+     * in that structure and the maker note itself. A reader moves each offset inside the maker note by the
+     * difference between the note's new position and the recorded offset.
+     *
+     * @param file the parsed source
+     * @return the block, or {@code null} when the source has neither
+     * @throws MediaException.Malformed if the block or the maker note lies outside the file
+     * @throws MediaException.LimitExceeded if the block exceeds the limits
+     */
+    static byte[] privateData(RawFile file) {
+        var reader = new TiffReader(file.source, 0, true, file.limits);
+        if (file.privateDataPosition >= 0) {
+            return reader.bytes(file.privateDataPosition, file.privateDataLength);
+        }
+        if (file.makerNotePosition < 0 || file.makerNoteOffset > 0xFFFF_FFFFL
+                || file.makerNoteLength > MAX_MAKER_NOTE) {
+            return null;
+        }
+        var note = reader.bytes(file.makerNotePosition, file.makerNoteLength);
+        var block = ByteBuffer.allocate(ADOBE.length + 14 + note.length).order(ByteOrder.BIG_ENDIAN);
+        block.put(ADOBE).putInt(MAKER_NOTE_SECTION).putInt(6 + note.length);
+        block.put((byte) (file.makerNoteLittle ? 'I' : 'M')).put((byte) (file.makerNoteLittle ? 'I' : 'M'));
+        block.putInt((int) file.makerNoteOffset).put(note);
+        return block.array();
     }
 
     /**
@@ -260,8 +386,10 @@ public final class DngWriting {
      * refer to the stored area, is left as it is.
      *
      * @param content the content, updated
+     * @param limits the resource bounds the semantic masks are resampled under
+     * @throws MediaException.LimitExceeded if a resampled semantic mask exceeds the limits
      */
-    private static void pad(DngContent content) {
+    private static void pad(DngContent content, MediaLimits limits) {
         var cfa = content.cfa;
         if (cfa == null || content.opcodes3 != null) {
             return;
@@ -299,6 +427,11 @@ public final class DngWriting {
                 }
             }
         }
+        var masks = new ArrayList<DngMask>();
+        for (var mask : content.masks) {
+            masks.add(mask.padded(width, height, left, top, right, bottom, limits));
+        }
+        content.masks = masks;
         content.samples = padded;
         content.width = paddedWidth;
         content.height = paddedHeight;

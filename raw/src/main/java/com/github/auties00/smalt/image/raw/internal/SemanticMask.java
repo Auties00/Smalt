@@ -26,6 +26,16 @@ final class SemanticMask {
     static final int MASK_SUB_AREA = 52536;
 
     /**
+     * The tag of the instance the mask identifies.
+     */
+    static final int SEMANTIC_INSTANCE_ID = 52528;
+
+    /**
+     * The tag of the mask's XMP metadata.
+     */
+    static final int XMP = 700;
+
+    /**
      * The name ({@code SemanticName}).
      */
     final String name;
@@ -38,32 +48,32 @@ final class SemanticMask {
     /**
      * The row of the full mask the stored mask starts at.
      */
-    private final int top;
+    final int top;
 
     /**
      * The column of the full mask the stored mask starts at.
      */
-    private final int left;
+    final int left;
 
     /**
      * The width of the full mask, which spans the active area.
      */
-    private final int fullWidth;
+    final int fullWidth;
 
     /**
      * The height of the full mask.
      */
-    private final int fullHeight;
+    final int fullHeight;
 
     /**
      * The stored width.
      */
-    private final int width;
+    final int width;
 
     /**
      * The stored height.
      */
-    private final int height;
+    final int height;
 
     /**
      * The values, decoded on first use; guarded by {@code this}.
@@ -147,6 +157,53 @@ final class SemanticMask {
             values = result;
         }
         return values;
+    }
+
+    /**
+     * Decodes the stored samples as 8-bit values, for a writer that carries the mask over: the stored values of an
+     * 8-bit mask, and those of any other mask scaled to 0 to 255 and rounded.
+     *
+     * @param limits the resource bounds
+     * @return the samples, row by row
+     * @throws MediaException.Malformed if the mask cannot be decoded
+     * @throws MediaException.Unsupported if the mask uses a compression or sample format the decoder lacks
+     */
+    byte[] stored(MediaLimits limits) {
+        var sensor = new Sensor();
+        var reader = TiffSamples.describe(ifd, sensor);
+        if (sensor.samplesPerPixel != 1 || sensor.width != width || sensor.height != height) {
+            throw new MediaException.Malformed("semantic mask of " + sensor.samplesPerPixel + " samples");
+        }
+        var plane = SensorPlane.of(sensor, limits);
+        reader.read(plane, limits);
+        var exact = plane.floats == null && sensor.bitsPerSample == 8;
+        var maximum = (float) sensor.maximum();
+        var result = new byte[width * height];
+        for (var index = 0; index < result.length; index++) {
+            if (exact) {
+                result[index] = (byte) plane.sample(index);
+            } else {
+                var value = plane.floats != null ? plane.floats[index] : plane.sample(index) / maximum;
+                result[index] = (byte) Math.round(Math.clamp(value, 0f, 1f) * 255);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * {@return the instance the mask identifies ({@code SemanticInstanceID}), or {@code null}}
+     */
+    String instanceId() {
+        return ifd.string(SEMANTIC_INSTANCE_ID);
+    }
+
+    /**
+     * {@return the mask's XMP packet, or {@code null}}
+     *
+     * @throws MediaException.Malformed if the packet lies outside the file
+     */
+    byte[] xmp() {
+        return ifd.bytes(XMP);
     }
 
     /**

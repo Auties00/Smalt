@@ -146,10 +146,16 @@ public final class DngEncoder {
      * matrices, calibration illuminants, forward matrices, camera calibration, analog balance and the camera
      * profile's tables, tone curve and baseline exposure, unless the decoding options replace the color matrix,
      * in which case the description is derived as {@link #encode(RawImage, DngEncoderOptions, MediaSink)}
-     * derives it. The decoding options' white balance and camera profile choice decide the as-shot neutral and
-     * the profile written; a source that records no white balance, decoded with the as-shot one, gives a file that
-     * records none either. The rendering hints and camera descriptions of a DNG source that the decoder does not
-     * interpret ({@code ShadowScale}, {@code BaselineNoise}, {@code NoiseProfile}, {@code BayerGreenSplit} and
+     * derives it. The decoding options' white balance decides the as-shot neutral; a source that records no white
+     * balance, decoded with the as-shot one, gives a file that records none either. When the color description is
+     * kept, the camera profiles of a DNG source are kept as they are, primary and extra ones, and the profile the
+     * decoding options render with is named as the as-shot profile, which readers render by default. The semantic
+     * masks of a DNG source are kept, so the RGB tables that apply to them are too; a mask that cannot be decoded is
+     * left out, with the same effect on those tables as in the source. Unless the options replace the EXIF
+     * metadata, the file keeps the private data of a DNG source ({@code DNGPrivateData}) as it is, or holds the
+     * maker note of any other source in the private data, with its original position recorded so that a reader can
+     * resolve the offsets inside it. The rendering hints and camera descriptions of a DNG source that the decoder
+     * does not interpret ({@code ShadowScale}, {@code BaselineNoise}, {@code NoiseProfile}, {@code BayerGreenSplit} and
      * the like) are carried over, and the EXIF metadata gains the shot's settings the source records elsewhere.
      * A color filter array image whose default crop leaves fewer than two photosites on a side, and that has no
      * opcode list 3, gains a margin of photosites of the same colors, outside the default crop. The options'

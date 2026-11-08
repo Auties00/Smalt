@@ -9,7 +9,8 @@ import com.github.auties00.smalt.internal.tiff.TiffTypes;
  * @param tag the tag number
  * @param type the TIFF field type
  * @param count the number of values
- * @param value the values in little-endian byte order
+ * @param value the values: in little-endian byte order when read by {@link #of}, in the directory's when read by
+ * {@link #stored}
  */
 record DngTag(int tag, int type, long count, byte[] value) {
     /**
@@ -21,9 +22,9 @@ record DngTag(int tag, int type, long count, byte[] value) {
 
     /**
      * The tags of the primary camera profile carried over with it: {@code ProfileEmbedPolicy},
-     * {@code ProfileCopyright} and {@code AsShotProfileName}.
+     * {@code ProfileCopyright} and {@code ReductionMatrix1} to {@code 3}.
      */
-    static final int[] PROFILE = {50941, 50942, 50934};
+    static final int[] PROFILE = {50941, 50942, 50725, 50726, 52538};
 
     /**
      * The tags of the raw image's directory carried over: {@code BayerGreenSplit}, {@code ChromaBlurRadius},
@@ -39,6 +40,18 @@ record DngTag(int tag, int type, long count, byte[] value) {
      * @return the entry, or {@code null} when the directory lacks it or its value cannot be read
      */
     static DngTag of(Ifd ifd, int tag) {
+        var entry = stored(ifd, tag);
+        return entry != null ? entry.littleEndian(ifd.reader().little()) : null;
+    }
+
+    /**
+     * Reads a tag of a directory, in the directory's byte order.
+     *
+     * @param ifd the directory
+     * @param tag the tag number
+     * @return the entry, or {@code null} when the directory lacks it or its value cannot be read
+     */
+    static DngTag stored(Ifd ifd, int tag) {
         if (!ifd.has(tag)) {
             return null;
         }
@@ -48,23 +61,34 @@ record DngTag(int tag, int type, long count, byte[] value) {
         } catch (RuntimeException exception) {
             return null;
         }
-        var type = ifd.type(tag);
+        return value != null ? new DngTag(tag, ifd.type(tag), ifd.valueCount(tag), value) : null;
+    }
+
+    /**
+     * Returns this entry in little-endian byte order, each value of a numeric type reversed when the entry is
+     * big-endian; bytes, text and undefined data are kept as they are.
+     *
+     * @param little whether the entry is little-endian
+     * @return the little-endian entry
+     */
+    DngTag littleEndian(boolean little) {
         var size = switch (type) {
             case TiffTypes.SHORT, TiffTypes.SSHORT -> 2;
             case TiffTypes.LONG, TiffTypes.SLONG, TiffTypes.FLOAT, TiffTypes.RATIONAL, TiffTypes.SRATIONAL -> 4;
             case TiffTypes.DOUBLE -> 8;
             default -> 1;
         };
-        if (size > 1 && !ifd.reader().little()) {
-            value = value.clone();
-            for (var at = 0; at + size <= value.length; at += size) {
-                for (var i = 0; i < size / 2; i++) {
-                    var swap = value[at + i];
-                    value[at + i] = value[at + size - 1 - i];
-                    value[at + size - 1 - i] = swap;
-                }
+        if (size == 1 || little) {
+            return this;
+        }
+        var swapped = value.clone();
+        for (var at = 0; at + size <= swapped.length; at += size) {
+            for (var i = 0; i < size / 2; i++) {
+                var swap = swapped[at + i];
+                swapped[at + i] = swapped[at + size - 1 - i];
+                swapped[at + size - 1 - i] = swap;
             }
         }
-        return new DngTag(tag, type, ifd.valueCount(tag), value);
+        return new DngTag(tag, type, count, swapped);
     }
 }

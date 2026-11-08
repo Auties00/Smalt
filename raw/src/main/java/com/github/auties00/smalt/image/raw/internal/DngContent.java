@@ -121,6 +121,21 @@ final class DngContent {
     List<DngTag> rawTags = List.of();
 
     /**
+     * The semantic masks carried over from a DNG source, in its order.
+     */
+    List<DngMask> masks = List.of();
+
+    /**
+     * The extra camera profiles ({@code ExtraCameraProfiles}), in the order written.
+     */
+    List<DngProfile> extraProfiles = List.of();
+
+    /**
+     * The {@code DNGPrivateData} block, or {@code null}.
+     */
+    byte[] privateData;
+
+    /**
      * The camera maker, or {@code null}.
      */
     String make;

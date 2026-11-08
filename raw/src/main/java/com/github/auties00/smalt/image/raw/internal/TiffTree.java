@@ -2,6 +2,7 @@ package com.github.auties00.smalt.image.raw.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.internal.io.ByteArrays;
+import com.github.auties00.smalt.internal.tiff.TiffTypes;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -147,6 +148,7 @@ final class TiffTree {
         file.orientation = first.intValue(274, 1);
         if (exif != null) {
             shot(exif, file);
+            makerNote(exif, file);
         }
         shot(first, file);
         file.exif = ExifBlock.build(first, exif, first.child(GPS_IFD));
@@ -180,6 +182,33 @@ final class TiffTree {
         if (file.captureTime == null) {
             file.captureTime = ifd.string(36867);
         }
+    }
+
+    /**
+     * Records where the maker note of an EXIF directory lies, an entry of bytes, unless one is already recorded: its
+     * position, its length, its position relative to the TIFF header its offsets refer to, and that header's byte
+     * order.
+     *
+     * @param exif the EXIF directory
+     * @param file the description to fill
+     */
+    static void makerNote(Ifd exif, RawFile file) {
+        var position = exif.valuePosition(MAKER_NOTE);
+        var length = exif.valueCount(MAKER_NOTE);
+        var reader = exif.reader();
+        var type = exif.type(MAKER_NOTE);
+        if (file.makerNotePosition >= 0 || position < reader.base() || length <= 0
+                || (type != TiffTypes.UNDEFINED && type != TiffTypes.BYTE)) {
+            return;
+        }
+        var size = reader.size();
+        if (size >= 0 && (position >= size || length > size - position)) {
+            return;
+        }
+        file.makerNotePosition = position;
+        file.makerNoteLength = length;
+        file.makerNoteOffset = position - reader.base();
+        file.makerNoteLittle = reader.little();
     }
 
     /**

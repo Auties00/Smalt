@@ -474,10 +474,16 @@ of such a matrix (which only a decoded file can carry) to D50. `DngEncoder.conve
 area of the sensor image, linearized and with opcode lists 1 and 2 applied, with the source's default crop, user
 crop, default scale and opcode list 3, its color matrices, illuminants, forward matrices, camera calibration,
 analog balance, baseline exposure and camera profile (hue, saturation and value maps, look table, tone curve, gain
-table maps, unmasked RGB tables), the rendering hints of a DNG source (`ShadowScale`, `BaselineNoise`,
-`BayerGreenSplit`, `NoiseProfile` and the others the decoder does not interpret), the camera, orientation and EXIF
-metadata with the shot's settings, the decoding options' white balance and profile choices, and the
-`NewRawImageDigest` of the stored image (computed as the DNG SDK computes it). A CFA image whose
+table maps, RGB tables), the rendering hints of a DNG source (`ShadowScale`, `BaselineNoise`,
+`BayerGreenSplit`, `NoiseProfile` and the others the decoder does not interpret), its extra camera profiles (copied
+entry by entry in their own byte order, the profile the decoding options choose named as `AsShotProfileName`), its
+semantic masks (re-coded as 8-bit Deflate samples, 16-bit and floating-point ones rounded, since the DNG SDK
+accepts no other depth; `SemanticInstanceID`, XMP and `MaskSubArea` kept, moved with the CFA margin below: by whole mask samples where the margin allows it, otherwise
+resampled at the image's resolution), so that RGB tables applying to them are kept, its `DNGPrivateData` as it is, or
+the maker note of any other source (its EXIF maker note, or a CR3 file's `CMT3` one) held in `DNGPrivateData` in Adobe's `MakN` form with its original offset, which
+readers use to resolve the offsets inside it (exiftool reads the same maker note fields from the file as from the
+source), the camera, orientation and EXIF metadata with the shot's settings, the decoding options' white balance
+and profile choices, and the `NewRawImageDigest` of the stored image (computed as the DNG SDK computes it). A CFA image whose
 default crop leaves fewer than two photosites on a side gains a margin of same-color photosites, so that a
 converter demosaics the crop's edges from real neighbors. By default the file holds a baseline JPEG preview of 1024
 pixels on its longest side and a 256-pixel thumbnail, both sRGB renderings of the written image. Every file passes
@@ -2330,8 +2336,8 @@ channels, or two tracks, at 32 kHz in 12 bits. A DV source is copied when no for
   documented: the converter's own scale and radius vary from model to model (it leaves the F900EXR unscaled, 64
   pixels from Smalt's correction at the corners, and applies no distortion to the GFX100 and GFX100S, GFX50S II and
   X-E5, whose files record some), and the Olympus radius scale (`k0^1.5`) is fitted too, the XZ-10 differing most.
-  `DngEncoder` drops the maker note (DNG's `DNGPrivateData`), the source's extra camera profiles other than the
-  one chosen, and its semantic masks and the RGB tables that apply to them. Cameras outside the 52 profiled
+  `DngEncoder` drops the maker note and the private data when the options replace the EXIF metadata, and a semantic
+  mask that cannot be decoded (its RGB tables then apply nowhere, as in the source). Cameras outside the 52 profiled
   models (Minolta's and the CRW bodies among them) use a generic color matrix, and the white balance of Sony files without the tag and an SR2 directory of a known layout (no decoded CC0 file is one), and that of the CRW files
   without white balance levels, is estimated from the embedded preview. The uncompressed and Polaroid x530 variants of the older
   X3F coding are verified only on synthetic files (no CC0 sample shows them), Sigma's noise reduction is not

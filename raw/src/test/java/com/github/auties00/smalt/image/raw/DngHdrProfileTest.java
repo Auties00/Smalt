@@ -509,10 +509,14 @@ class DngHdrProfileTest {
             other.name = "Other";
             other.dynamicRange = -1;
             other.extraProfiles = new byte[][]{file.profile()};
-            var chosen = DngEncoder.convert(MediaSource.of(other.write()), RawDecoderOptions.builder()
+            var otherSource = other.write();
+            var test = FLOAT.toBuilder().cameraProfile("Test").build();
+            var chosen = DngEncoder.convert(MediaSource.of(otherSource), RawDecoderOptions.builder()
                     .cameraProfile("Test").build(), DngEncoderOptions.defaults());
-            assertEquals(List.of(new RawCameraProfile("Test", "Group", true, 8)),
-                    RawDecoder.info(MediaSource.of(chosen)).cameraProfileDetails());
+            assertEquals(List.of(new RawCameraProfile("Other", "", false, 0), new RawCameraProfile("Test", "Group", true,
+                    8)), RawDecoder.info(MediaSource.of(chosen)).cameraProfileDetails());
+            // the chosen profile is the as-shot one, which renders by default
+            assertArrayEquals(linear(otherSource, test), linear(chosen), 1e-4);
         }
     }
 }

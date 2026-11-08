@@ -116,6 +116,51 @@ final class GainTableMap {
     }
 
     /**
+     * Returns a map's data in little-endian byte order, as a little-endian DNG file stores it: the data itself when
+     * {@link #parse(byte[], boolean)} reads it as little-endian or cannot read it, and otherwise the data with every
+     * number reversed.
+     *
+     * @param data the tag's bytes
+     * @param second whether the data is a {@code ProfileGainTableMap2}
+     * @return the little-endian data
+     */
+    static byte[] littleEndian(byte[] data, boolean second) {
+        if (parse(data, second, true) != null || parse(data, second, false) == null) {
+            return data;
+        }
+        var header = second ? 80 : 64;
+        var size = 4;
+        if (second) {
+            var type = ByteArrays.u32(data, 64, false);
+            size = type == 0 ? 1 : type == 3 ? 4 : 2;
+        }
+        var result = data.clone();
+        reverse(result, 0, 8, 4);
+        reverse(result, 8, 40, 8);
+        reverse(result, 40, header, 4);
+        reverse(result, header, data.length, size);
+        return result;
+    }
+
+    /**
+     * Reverses the bytes of each number of a range.
+     *
+     * @param data the bytes, updated
+     * @param start the first byte of the range
+     * @param end the byte past the range; a last partial number is left as it is
+     * @param size the bytes of each number
+     */
+    static void reverse(byte[] data, int start, int end, int size) {
+        for (var at = start; at + size <= end; at += size) {
+            for (var i = 0; i < size / 2; i++) {
+                var swap = data[at + i];
+                data[at + i] = data[at + size - 1 - i];
+                data[at + size - 1 - i] = swap;
+            }
+        }
+    }
+
+    /**
      * Parses a map in one byte order.
      *
      * @param data the tag's bytes, or {@code null}

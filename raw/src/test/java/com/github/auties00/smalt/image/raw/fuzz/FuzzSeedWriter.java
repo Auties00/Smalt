@@ -85,6 +85,13 @@ class FuzzSeedWriter {
     }
 
     @Test
+    @DisplayName("writes the DNG seed of the semantic masks, camera profiles and private data a conversion carries")
+    void dngCarryOver() {
+        write(RawFuzzTest.class, "dng", "valid-carry-over.dng", DngSpecSamples.carryOver());
+        write(RawFuzzTest.class, "convert", "valid-carry-over.dng", DngSpecSamples.carryOver());
+    }
+
+    @Test
     @DisplayName("writes the DNG seed of a high-dynamic-range camera profile")
     void dngHighDynamicRange() {
         var file = new HdrProfileFiles();

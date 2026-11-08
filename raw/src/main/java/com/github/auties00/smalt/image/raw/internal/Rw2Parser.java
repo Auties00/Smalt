@@ -102,6 +102,7 @@ final class Rw2Parser {
                         var exifTree = new TiffTree(TiffReader.open(reader.source(), jpeg + position + 10, reader.limits()));
                         if (exifTree.exif != null) {
                             TiffTree.shot(exifTree.exif, file);
+                            TiffTree.makerNote(exifTree.exif, file);
                             file.exif = ExifBlock.build(exifTree.first, exifTree.exif, null);
                         }
                     } catch (MediaException.Malformed exception) {

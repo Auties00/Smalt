@@ -278,15 +278,56 @@ public final class RawFile {
     final List<DngTag> firstTags = new ArrayList<>();
 
     /**
-     * The entries of a DNG file's first directory that describe its primary camera profile and that a DNG file
-     * converted from it carries over with that profile.
+     * The entries of a DNG file's first directory that describe its primary camera profile, other than those the
+     * decoder interprets, and that a DNG file converted from it carries over with that profile.
      */
     final List<DngTag> profileTags = new ArrayList<>();
+
+    /**
+     * The {@code AsShotProfileName} entry of a DNG file's first directory, or {@code null}.
+     */
+    DngTag asShotProfileTag;
 
     /**
      * The semantic masks of a DNG file.
      */
     final List<SemanticMask> masks = new ArrayList<>();
+
+    /**
+     * The entries of each of {@link #extraProfiles}, in the same order.
+     */
+    final List<DngProfile> extraProfileEntries = new ArrayList<>();
+
+    /**
+     * The absolute position of a DNG file's {@code DNGPrivateData}, or {@code -1} when it has none.
+     */
+    long privateDataPosition = -1;
+
+    /**
+     * The length in bytes of a DNG file's {@code DNGPrivateData}.
+     */
+    long privateDataLength;
+
+    /**
+     * The absolute position of the maker note (the EXIF one, or a CR3 file's {@code CMT3}), or {@code -1} when the
+     * file has none.
+     */
+    long makerNotePosition = -1;
+
+    /**
+     * The length in bytes of the maker note.
+     */
+    long makerNoteLength;
+
+    /**
+     * The position of the maker note relative to the TIFF header its offsets refer to.
+     */
+    long makerNoteOffset;
+
+    /**
+     * Whether the TIFF structure holding the maker note is little endian.
+     */
+    boolean makerNoteLittle;
 
     /**
      * Constructs an empty description.
@@ -336,20 +377,32 @@ public final class RawFile {
      * @throws MediaException.Unsupported if the options name a camera profile the file does not hold
      */
     ColorCalibration color(RawDecoderOptions options) {
+        var index = profileIndex(options);
+        return index < 0 ? color : color.withProfile(extraProfiles.get(index));
+    }
+
+    /**
+     * Returns which camera profile the options render with, as {@link #color(RawDecoderOptions)} chooses it.
+     *
+     * @param options the decoding options
+     * @return the index of the extra profile in {@link #extraProfiles}, or {@code -1} for the primary profile
+     * @throws MediaException.Unsupported if the options name a camera profile the file does not hold
+     */
+    int profileIndex(RawDecoderOptions options) {
         var wanted = options.cameraProfile();
         var name = wanted.orElse(asShotProfile);
         if (name == null || name.equals(Objects.requireNonNullElse(color.profileName, ""))) {
-            return color;
+            return -1;
         }
-        for (var profile : extraProfiles) {
-            if (name.equals(Objects.requireNonNullElse(profile.profileName, ""))) {
-                return color.withProfile(profile);
+        for (var index = 0; index < extraProfiles.size(); index++) {
+            if (name.equals(Objects.requireNonNullElse(extraProfiles.get(index).profileName, ""))) {
+                return index;
             }
         }
         if (wanted.isPresent()) {
             throw new MediaException.Unsupported(format.extension(), "the file holds no camera profile named " + name);
         }
-        return color;
+        return -1;
     }
 
     /**

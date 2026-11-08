@@ -234,6 +234,65 @@ class DngProfileTablesTest {
         }
     }
 
+    /**
+     * Writes an RGBTables tag whose tables store their entries as the given pixel type.
+     */
+    static byte[] typedRgbTables(ByteOrder order, int pixelType, String... names) {
+        var out = ByteBuffer.allocate(8192).order(order);
+        out.putInt(names.length).putInt(0);
+        var seed = 1;
+        for (var name : names) {
+            var bytes = name == null ? new byte[0] : name.getBytes(StandardCharsets.US_ASCII);
+            out.putShort((short) bytes.length).put(bytes);
+            out.put((byte) 3).put((byte) pixelType).put((byte) 1).put((byte) 4).put((byte) 0);
+            for (var k = 0; k < 27 * 3; k++, seed = seed * 1103515245 + 12345) {
+                var value = ((seed >>> 8) & 0xFFFF) / 65535f;
+                switch (pixelType) {
+                    case 0 -> out.put((byte) Math.round(value * 255));
+                    case 1 -> out.putShort((short) Math.round(value * 65535));
+                    default -> out.putFloat(value);
+                }
+            }
+        }
+        return java.util.Arrays.copyOf(out.array(), out.position());
+    }
+
+    @Nested
+    @DisplayName("byte order conversion for writing")
+    class ByteOrders {
+        @ParameterizedTest(name = "pixel type {0}")
+        @ValueSource(ints = {0, 1, 2})
+        @DisplayName("turns big-endian RGB tables into the same tables little-endian, and keeps little-endian ones")
+        void rgbTables(int pixelType) {
+            var big = typedRgbTables(ByteOrder.BIG_ENDIAN, pixelType, "sky", null, "people");
+            var little = typedRgbTables(ByteOrder.LITTLE_ENDIAN, pixelType, "sky", null, "people");
+            assertArrayEquals(little, RgbTables.littleEndian(big));
+            assertArrayEquals(little, RgbTables.littleEndian(little));
+            var unreadable = new byte[]{1, 2, 3};
+            assertArrayEquals(unreadable, RgbTables.littleEndian(unreadable));
+        }
+
+        @ParameterizedTest(name = "data type {0}")
+        @ValueSource(ints = {-1, 0, 1, 2, 3})
+        @DisplayName("turns big-endian gain table maps of either version into little-endian ones, and keeps "
+                + "little-endian ones")
+        void gainMaps(int type) {
+            var gains = new double[2 * 3 * 4];
+            for (var index = 0; index < gains.length; index++) {
+                gains[index] = 0.5 + index / 16.0;
+            }
+            float[] weights = {0.25f, 0.5f, 0.125f, 0.0625f, 0.0625f};
+            var big = gainMap(ByteOrder.BIG_ENDIAN, 2, 3, 0.5, 0.25, 0.1, -0.2, 4, weights, type, 1.5f, 0.5f, 2,
+                    gains);
+            var little = gainMap(ByteOrder.LITTLE_ENDIAN, 2, 3, 0.5, 0.25, 0.1, -0.2, 4, weights, type, 1.5f, 0.5f, 2,
+                    gains);
+            var second = type >= 0;
+            assertNotNull(GainTableMap.parse(big, second));
+            assertArrayEquals(little, GainTableMap.littleEndian(big, second));
+            assertArrayEquals(little, GainTableMap.littleEndian(little, second));
+        }
+    }
+
     @Nested
     @DisplayName("four-color projection")
     class Projections {

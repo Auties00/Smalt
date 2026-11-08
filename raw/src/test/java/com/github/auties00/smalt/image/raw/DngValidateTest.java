@@ -319,6 +319,83 @@ class DngValidateTest {
         return UncompressedTiff.rgba(read(base.resolveSibling(base.getFileName() + ".tif")));
     }
 
+    /** Returns the SDK's 8-bit sRGB rendering of a DNG file with one of its camera profiles. */
+    static RgbaPicture sdkRendering(Path dng, String profile) {
+        var base = dng.resolveSibling(dng.getFileName() + "-render-" + profile);
+        var run = validate(dng, "-profile", profile, "-tif", base.toString());
+        assertEquals(0, run.exitCode(), run.output());
+        return UncompressedTiff.rgba(read(base.resolveSibling(base.getFileName() + ".tif")));
+    }
+
+    /** The DNG sources whose masks, profiles and private data a converted file carries over. */
+    enum CarriedOver {
+        MASKED_TABLE(List.of(), () -> {
+            var builder = DngSpecGapsTest.linear(96, 64);
+            builder.first.ascii(50708, "Smalt Spec").undefined(52543, maskedTable());
+            DngCarryOverTest.rampMask(builder, "subject", 48, 32);
+            return builder.write();
+        }),
+        BAYER_WHOLE_SAMPLE_MARGIN(List.of(), () -> {
+            var builder = DngCarryOverTest.bayer(96, 64);
+            builder.first.ascii(50708, "Smalt Spec").undefined(52543, maskedTable());
+            DngCarryOverTest.rampMask(builder, "subject", 48, 32);
+            return builder.write();
+        }),
+        BAYER_RESAMPLED_MASK(List.of(), () -> {
+            var builder = DngCarryOverTest.bayer(90, 66);
+            builder.first.ascii(50708, "Smalt Spec").undefined(52543, maskedTable());
+            DngCarryOverTest.rampMask(builder, "subject", 30, 22);
+            return builder.write();
+        }),
+        PROFILES(List.of("Primary", "Alternate", "Third"), () -> {
+            var builder = DngCarryOverTest.Profiles.file("Alternate", false);
+            builder.first.ascii(50708, "Smalt Spec");
+            return builder.write();
+        }),
+        PRIVATE_DATA(List.of(), () -> {
+            var builder = DngSpecGapsTest.linear(64, 48);
+            var block = "Smalt\0private data".getBytes(StandardCharsets.US_ASCII);
+            builder.first.ascii(50708, "Smalt Spec").raw(50740, 1, block.length, block);
+            return builder.write();
+        }),
+        IPHONE_PRORAW(List.of(), () -> read(RawSamples.DNG_IPHONE_12_PRO.fetch()));
+
+        final List<String> profiles;
+        final Supplier<byte[]> source;
+
+        /** A masked RGB table, little-endian as the SDK reads it in a little-endian file. */
+        static byte[] maskedTable() {
+            return DngCarryOverTest.Profiles.reorder(DngSpecGapsTest.constantTable("subject", 0.1f, 0));
+        }
+
+        CarriedOver(List<String> profiles, Supplier<byte[]> source) {
+            this.profiles = profiles;
+            this.source = source;
+        }
+    }
+
+    @Nested
+    @DisplayName("masks, camera profiles and private data carried over from a DNG source")
+    class CarriedOverData {
+        @ParameterizedTest(name = "{0}")
+        @EnumSource(CarriedOver.class)
+        @DisplayName("pass validation and render as their source does, with each camera profile")
+        void carried(CarriedOver carried) {
+            var source = save(carried.name() + "-source.dng", carried.source.get());
+            var file = save(carried.name() + ".dng", DngEncoder.convert(MediaSource.of(read(source))));
+            assertValid(file, problems(validate(source)));
+            var expected = sdkRendering(source);
+            var actual = sdkRendering(file);
+            assertEquals(expected.width(), actual.width());
+            assertEquals(expected.height(), actual.height());
+            SDK_RENDERING.assertWithin(carried.name() + " SDK rendering", expected, actual);
+            for (var profile : carried.profiles) {
+                SDK_RENDERING.assertWithin(carried.name() + " SDK rendering with " + profile,
+                        sdkRendering(source, profile), sdkRendering(file, profile));
+            }
+        }
+    }
+
     @Nested
     @DisplayName("synthetic images")
     class Synthetics {

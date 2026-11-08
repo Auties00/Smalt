@@ -8,6 +8,7 @@ import com.github.auties00.smalt.image.raw.CfaColor;
 import com.github.auties00.smalt.image.raw.CfaLayout;
 import com.github.auties00.smalt.image.raw.CfaPattern;
 import com.github.auties00.smalt.internal.io.ByteArrays;
+import com.github.auties00.smalt.internal.tiff.TiffTypes;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -58,6 +59,16 @@ final class DngParser {
      * The subfile type of a semantic mask (DNG 1.6).
      */
     static final int NEW_SUBFILE_SEMANTIC_MASK = 65540;
+
+    /**
+     * The tag of the name of the camera profile the shot was taken with.
+     */
+    private static final int AS_SHOT_PROFILE_NAME = 50934;
+
+    /**
+     * The tag of the private data a camera maker stores for its own converter.
+     */
+    static final int PRIVATE_DATA = 50740;
 
     /**
      * The most extra camera profiles read.
@@ -119,7 +130,7 @@ final class DngParser {
         profile(first, file.color);
         shot(first, raw, file.color);
         extraProfiles(first, file);
-        file.asShotProfile = utf8(first, 50934);
+        file.asShotProfile = utf8(first, AS_SHOT_PROFILE_NAME);
         if (raw == null) {
             file.unsupported = "the DNG file holds no raw image";
             return;
@@ -174,6 +185,8 @@ final class DngParser {
         }
         copyTags(first, DngTag.FIRST, file.firstTags);
         copyTags(first, DngTag.PROFILE, file.profileTags);
+        file.asShotProfileTag = DngTag.of(first, AS_SHOT_PROFILE_NAME);
+        privateData(first, file);
         file.sensor = sensor;
         var merged = pixelShift(tree, raw, sensor, file);
         if (merged != null) {
@@ -503,6 +516,25 @@ final class DngParser {
     }
 
     /**
+     * Records where the {@code DNGPrivateData} of the first directory lies, an entry of bytes inside the file.
+     *
+     * @param first the first directory
+     * @param file the description to fill
+     */
+    private static void privateData(Ifd first, RawFile file) {
+        var type = first.type(PRIVATE_DATA);
+        var position = first.valuePosition(PRIVATE_DATA);
+        var length = first.valueCount(PRIVATE_DATA);
+        var size = first.reader().size();
+        if ((type != TiffTypes.BYTE && type != TiffTypes.UNDEFINED) || position < 0 || length <= 0
+                || (size >= 0 && (position >= size || length > size - position))) {
+            return;
+        }
+        file.privateDataPosition = position;
+        file.privateDataLength = length;
+    }
+
+    /**
      * Reads the extra camera profiles of the first directory ({@code ExtraCameraProfiles}); a
      * profile that cannot be read is left out.
      *
@@ -525,7 +557,9 @@ final class DngParser {
                 var ifd = profileReader.directory(profileReader.firstDirectory());
                 var profile = new ColorCalibration();
                 profile(ifd, profile);
+                var entries = DngProfile.of(ifd);
                 file.extraProfiles.add(profile);
+                file.extraProfileEntries.add(entries);
             } catch (MediaException.Malformed exception) {
                 // a profile that cannot be read is left out
             }

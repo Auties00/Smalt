@@ -90,6 +90,37 @@ final class RgbTables {
     }
 
     /**
+     * Returns the tag's data in little-endian byte order, as a little-endian DNG file stores it: the data itself
+     * when {@link #parse(byte[])} reads it as little-endian or cannot read it, and otherwise the data with every
+     * multi-byte field reversed.
+     *
+     * @param data the tag's bytes
+     * @return the little-endian data
+     */
+    static byte[] littleEndian(byte[] data) {
+        if (parse(data, true) != null || parse(data, false) == null) {
+            return data;
+        }
+        var result = data.clone();
+        GainTableMap.reverse(result, 0, 8, 4);
+        var count = ByteArrays.u32(data, 0, false);
+        var position = 8;
+        for (var index = 0; index < count; index++) {
+            var nameLength = ByteArrays.u16(data, position, false);
+            GainTableMap.reverse(result, position, position + 2, 2);
+            position += 2 + nameLength;
+            var divisions = data[position] & 0xFF;
+            var pixelType = data[position + 1] & 0xFF;
+            position += 5;
+            var size = pixelType == 0 ? 1 : pixelType == 1 ? 2 : 4;
+            var end = position + divisions * divisions * divisions * 3 * size;
+            GainTableMap.reverse(result, position, end, size);
+            position = end;
+        }
+        return result;
+    }
+
+    /**
      * Parses the tag in one byte order.
      *
      * @param data the tag's bytes, or {@code null}

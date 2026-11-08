@@ -589,6 +589,26 @@ final class Cr3Parser {
     }
 
     /**
+     * Records the maker note of a {@code CMT3} box, unless one is already recorded: the box body is a TIFF structure
+     * whose first directory is the Canon maker note, so the note is the body from that directory to the end of the
+     * box, at the directory's offset from the structure's header.
+     *
+     * @param file the description to fill
+     * @param tiff the box body's TIFF structure
+     * @param end the offset after the box
+     */
+    private static void makerNote(RawFile file, TiffReader tiff, long end) {
+        var position = tiff.base() + tiff.firstDirectory();
+        if (file.makerNotePosition >= 0 || tiff.firstDirectory() < 8 || position >= end) {
+            return;
+        }
+        file.makerNotePosition = position;
+        file.makerNoteLength = end - position;
+        file.makerNoteOffset = tiff.firstDirectory();
+        file.makerNoteLittle = tiff.little();
+    }
+
+    /**
      * Reads one of the TIFF metadata boxes.
      *
      * @param state the walk's state
@@ -606,7 +626,10 @@ final class Cr3Parser {
             switch (type) {
                 case "CMT1" -> state.cmt1 = first;
                 case "CMT2" -> state.cmt2 = first;
-                case "CMT3" -> state.cmt3 = first;
+                case "CMT3" -> {
+                    state.cmt3 = first;
+                    makerNote(state.file, tiff, end);
+                }
                 default -> state.cmt4 = first;
             }
         } catch (MediaException.Malformed exception) {

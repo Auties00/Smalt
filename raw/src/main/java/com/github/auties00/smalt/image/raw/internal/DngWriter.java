@@ -41,6 +41,10 @@ import java.util.Set;
  * thumbnail, with the raw image and a baseline JPEG preview in its sub-directories; without a rendering the raw
  * image is the first directory.
  *
+ * <p>The first directory's sub-directories are the raw image and the preview, when the first directory is not the
+ * raw image, and then the semantic masks; the extra camera profiles and the private data are written as the content
+ * holds them.
+ *
  * <p>The raw image is stored in tiles of 16-bit samples, uncompressed or as lossless JPEG streams, with a black
  * level of 0 and a white level of 65535: the samples are linear reference values, so the file has no
  * linearization table, black levels, active area or opcode lists 1 and 2. The color description is the content's
@@ -167,6 +171,11 @@ final class DngWriter {
     private static final int[] ILLUMINANT_DATA = {52533, 52534, 52535};
 
     /**
+     * The {@code ExtraCameraProfiles} tag, the offsets of the camera profile structures beyond the primary profile.
+     */
+    private static final int EXTRA_CAMERA_PROFILES = 50933;
+
+    /**
      * The tags of the hue, saturation and value maps.
      */
     private static final int[] HUE_SAT_MAP = {50938, 50939, 52537};
@@ -205,6 +214,17 @@ final class DngWriter {
         }
         var backward = backwardVersion(content);
         var raw = rawDirectory(content, tiles);
+        var maskCount = content.masks.size();
+        var maskStrips = new byte[maskCount][][];
+        var masks = new IfdBuilder[maskCount];
+        for (var index = 0; index < maskCount; index++) {
+            maskStrips[index] = content.masks.get(index).strips();
+            masks[index] = content.masks.get(index).directory(maskStrips[index]);
+        }
+        var profiles = new byte[content.extraProfiles.size()][];
+        for (var index = 0; index < profiles.length; index++) {
+            profiles[index] = content.extraProfiles.get(index).structure();
+        }
         IfdBuilder first;
         IfdBuilder preview = null;
         if (jpeg != null) {
@@ -218,9 +238,15 @@ final class DngWriter {
             preview.shorts(530, 2, 2);
             preview.longs(50970, PREVIEW_SRGB);
             preview.ascii(50966, APPLICATION);
-            first.longs(330, 0, 0);
         } else {
             first = raw;
+        }
+        var children = new long[(preview != null ? 2 : 0) + maskCount];
+        if (children.length > 0) {
+            first.longs(330, children);
+        }
+        if (profiles.length > 0) {
+            first.longs(EXTRA_CAMERA_PROFILES, new long[profiles.length]);
         }
         metadata(first, content, tiles, backward);
         var position = 8 + first.size();
@@ -231,6 +257,16 @@ final class DngWriter {
             position += raw.size();
             previewOffset = position;
             position += preview.size();
+        }
+        var maskOffsets = new long[maskCount];
+        for (var index = 0; index < maskCount; index++) {
+            maskOffsets[index] = position;
+            position += masks[index].size();
+        }
+        var profileOffsets = new long[profiles.length];
+        for (var index = 0; index < profiles.length; index++) {
+            profileOffsets[index] = position;
+            position += even(profiles[index].length);
         }
         long thumbnailOffset = 0;
         if (thumbnail != null) {
@@ -249,6 +285,14 @@ final class DngWriter {
             jpegOffset = position;
             position += even(jpeg.length);
         }
+        for (var index = 0; index < maskCount; index++) {
+            var offsets = new long[maskStrips[index].length];
+            for (var strip = 0; strip < offsets.length; strip++) {
+                offsets[strip] = position;
+                position += even(maskStrips[index][strip].length);
+            }
+            masks[index].longs(273, offsets);
+        }
         if (position > MAX_FILE) {
             throw new MediaException.LimitExceeded("DNG file of " + position + " bytes, larger than 4 GiB");
         }
@@ -256,8 +300,16 @@ final class DngWriter {
         raw.longs(325, tileCounts);
         if (preview != null) {
             first.longs(273, thumbnailOffset);
-            first.longs(330, rawOffset, previewOffset);
             preview.longs(273, jpegOffset);
+            children[0] = rawOffset;
+            children[1] = previewOffset;
+        }
+        if (children.length > 0) {
+            System.arraycopy(maskOffsets, 0, children, children.length - maskCount, maskCount);
+            first.longs(330, children);
+        }
+        if (profiles.length > 0) {
+            first.longs(EXTRA_CAMERA_PROFILES, profileOffsets);
         }
         var header = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN);
         header.put((byte) 'I').put((byte) 'I').putShort((short) 42).putInt(8);
@@ -267,6 +319,12 @@ final class DngWriter {
             sink.write(raw.write(rawOffset, 0));
             sink.write(preview.write(previewOffset, 0));
         }
+        for (var index = 0; index < maskCount; index++) {
+            sink.write(masks[index].write(maskOffsets[index], 0));
+        }
+        for (var profile : profiles) {
+            writePadded(sink, profile);
+        }
         if (thumbnail != null) {
             writePadded(sink, thumbnail);
         }
@@ -275,6 +333,11 @@ final class DngWriter {
         }
         if (jpeg != null) {
             writePadded(sink, jpeg);
+        }
+        for (var strips : maskStrips) {
+            for (var strip : strips) {
+                writePadded(sink, strip);
+            }
         }
     }
 
@@ -504,6 +567,11 @@ final class DngWriter {
         if (content.opcodes3 != null) {
             raw.undefined(51022, content.opcodes3);
         }
+        var color = content.calibration;
+        if (color != null && color.gainTableMapData != null && !color.gainTableMapSecond) {
+            // the first version of the map belongs to the raw image's directory, the second to a camera profile
+            raw.undefined(52525, GainTableMap.littleEndian(color.gainTableMapData, false));
+        }
         if (content.compression == DngCompression.JPEG_XL) {
             // a distance of 0 tells DNG readers the tiles are lossless, which they otherwise cannot know
             raw.raw(JXL_DISTANCE, TiffTypes.FLOAT, 1, floats(new float[]{0}));
@@ -567,6 +635,9 @@ final class DngWriter {
         first.raw(50706, TiffTypes.BYTE, 4, new byte[]{1, 7, 1, 0});
         first.raw(50707, TiffTypes.BYTE, 4, backward);
         first.ascii(50708, content.uniqueCameraModel);
+        if (content.privateData != null) {
+            first.raw(DngParser.PRIVATE_DATA, TiffTypes.BYTE, content.privateData.length, content.privateData);
+        }
         if (content.cfa == null && content.channels == 1) {
             srational(first, 50730, new double[]{content.baselineExposure});
             return;
@@ -720,12 +791,11 @@ final class DngWriter {
         if (color.blackRender != 0) {
             first.longs(51110, color.blackRender);
         }
-        if (color.gainTableMapData != null) {
-            first.undefined(color.gainTableMapSecond ? 52544 : 52525, color.gainTableMapData);
+        if (color.gainTableMapData != null && color.gainTableMapSecond) {
+            first.undefined(52544, GainTableMap.littleEndian(color.gainTableMapData, true));
         }
-        // TODO: write the semantic masks of the source, so that RGB tables applying to them can be kept too
-        if (color.rgbTablesData != null && color.rgbTables.tables.stream().allMatch(table -> table.name() == null)) {
-            first.undefined(52543, color.rgbTablesData);
+        if (color.rgbTablesData != null) {
+            first.undefined(52543, RgbTables.littleEndian(color.rgbTablesData));
         }
     }
 
