@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.image.raw.internal;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.image.raw.RawSamples;
 import com.github.auties00.smalt.testkit.Conformance;
 import org.junit.jupiter.api.BeforeAll;
@@ -16,7 +17,6 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Re-runs {@link OlympusDerivation} on CC0 witness samples against Adobe DNG Converter as a
@@ -54,7 +54,7 @@ class OlympusDerivationTest {
     }
 
     private List<OlympusDerivation.Sample> samples() {
-        assumeTrue(samples != null, "no oracle files in " + ORACLE + "; run tools/testdata/raw-oracle.py");
+        Skip.unless(samples != null, "data:raw-oracle", "no oracle files in " + ORACLE + "; run tools/testdata/raw-oracle.py");
         return samples;
     }
 
