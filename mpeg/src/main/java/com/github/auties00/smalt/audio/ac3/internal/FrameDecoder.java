@@ -724,6 +724,23 @@ public final class FrameDecoder {
     private TransientPreNoise preNoise;
 
     /**
+     * Whether the transient pre-noise processing also corrects the samples before each frame, for
+     * an output held back by {@link #HOLDBACK} samples.
+     */
+    private boolean holdback;
+
+    /**
+     * Whether the transient pre-noise processor ran on the frame synthesized last.
+     */
+    private boolean preNoiseRan;
+
+    /**
+     * The number of samples before a frame that the transient pre-noise processing corrects with
+     * holdback.
+     */
+    public static final int HOLDBACK = TransientPreNoise.HOLDBACK;
+
+    /**
      * Creates a frame decoder running on a kernel.
      *
      * @param kernel the DSP kernels
@@ -789,6 +806,53 @@ public final class FrameDecoder {
     }
 
     /**
+     * Sets whether the transient pre-noise processing also corrects the {@link #HOLDBACK} samples
+     * before each frame, for a caller that holds its output back by as many samples and takes the
+     * corrected values from {@link #lateStart(int)} and {@link #lateValues(int)}. Pending corrections
+     * are forgotten when the setting changes.
+     *
+     * @param holdback whether to correct the samples before each frame
+     */
+    public void holdBack(boolean holdback) {
+        if (holdback != this.holdback) {
+            this.holdback = holdback;
+            preNoise = null;
+        }
+    }
+
+    /**
+     * Forgets the past output and the pending corrections of the transient pre-noise processing, for
+     * a caller whose output of this substream breaks before the next frame.
+     */
+    public void interruptPreNoise() {
+    }
+
+    /**
+     * Returns the first of the {@link #HOLDBACK} samples before the frame synthesized last that the
+     * transient pre-noise processing corrected, for a full-bandwidth channel.
+     *
+     * @param ch the full-bandwidth channel, in bit stream order
+     * @return the index in {@link #lateValues(int)} of the first corrected sample, or
+     * {@link #HOLDBACK} when none was corrected, always without holdback
+     */
+    public int lateStart(int ch) {
+        return preNoiseRan && ch < preNoise.channels() ? preNoise.lateStart(ch) : HOLDBACK;
+    }
+
+    /**
+     * Returns the corrected values of the {@link #HOLDBACK} samples before the frame synthesized
+     * last, for a full-bandwidth channel whose {@link #lateStart(int)} is below {@link #HOLDBACK}: the
+     * value at index {@code i} is that of the sample {@code HOLDBACK - i} samples before the frame, and
+     * only the values from {@link #lateStart(int)} on are set.
+     *
+     * @param ch the full-bandwidth channel, in bit stream order
+     * @return the values, owned by the decoder and valid until the next synthesis
+     */
+    public float[] lateValues(int ch) {
+        return preNoise.late(ch);
+    }
+
+    /**
      * Returns the header of the frame parsed last.
      *
      * @return the header
@@ -827,6 +891,14 @@ public final class FrameDecoder {
     }
 
     /**
+     * Marks the next synthesized frame as lost, so that {@link #synthesize} conceals it with the header of the
+     * frame parsed last.
+     */
+    public void markLost() {
+        valid = false;
+    }
+
+    /**
      * Resets the overlap and concealment state, as after a seek.
      */
     public void reset() {
@@ -838,6 +910,7 @@ public final class FrameDecoder {
         }
         started = false;
         concealmentGain = 0;
+        preNoiseRan = false;
         if (preNoise != null) {
             preNoise.reset();
         }
@@ -2449,6 +2522,7 @@ public final class FrameDecoder {
      * @param offset the index of the first sample in each plane
      */
     public void synthesize(float[][] gains, float scale, float[][] pcm, int offset) {
+        preNoiseRan = false;
         var blockCount = header.blocks;
         var channels = header.channels;
         var coded = codedChannels();
@@ -2514,11 +2588,14 @@ public final class FrameDecoder {
         }
         if (enhanced) {
             if (preNoise == null || preNoise.channels() != channels) {
-                preNoise = new TransientPreNoise(channels);
+                preNoise = new TransientPreNoise(channels, holdback);
             }
             for (var ch = 0; ch < channels; ch++) {
                 preNoise.process(ch, pcm[ch], offset, samples, locations[ch], lengths[ch]);
             }
+            preNoiseRan = true;
+        } else if (holdback) {
+            interruptPreNoise();
         }
         started = true;
         concealmentGain = 1;
@@ -2545,6 +2622,9 @@ public final class FrameDecoder {
             for (var ch = 0; ch < channels; ch++) {
                 preNoise.process(ch, pcm[ch], offset, 256 * header.blocks, -1, 0);
             }
+            preNoiseRan = true;
+        } else if (holdback) {
+            interruptPreNoise();
         }
     }
 

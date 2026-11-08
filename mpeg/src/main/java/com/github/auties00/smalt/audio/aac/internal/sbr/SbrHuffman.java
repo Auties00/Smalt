@@ -15,13 +15,14 @@ import com.github.auties00.smalt.audio.aac.internal.AacBitReader;
  *
  * @implNote This implementation takes the trees from the PacketVideo AAC decoder,
  * which encodes the spectral band replication and parametric stereo codebooks of ISO/IEC 14496-3 in
- * this form.
+ * this form; the phase codebooks of parametric stereo, which that decoder lacks, are built from
+ * the codeword tables of ISO/IEC 14496-3 in the same form.
  */
-final class SbrHuffman {
+public final class SbrHuffman {
     /**
      * The codebook of the envelope levels at 1.5 dB, coded in time.
      */
-    static final byte[] ENVELOPE_15_TIME = {
+    public static final byte[] ENVELOPE_15_TIME = {
             1, 2, -64, -65, 3, 4, -63, -66, 5, 6, -62, -67, 7, 8, -61, -68,
             9, 10, -60, -69, 11, 12, -59, -70, 13, 14, -58, -71, 15, 16, -57, -72,
             17, 18, -73, -56, 19, 21, -74, 20, -55, -75, 22, 26, 23, 24, -54, -76,
@@ -42,7 +43,7 @@ final class SbrHuffman {
     /**
      * The codebook of the envelope levels at 1.5 dB, coded in frequency.
      */
-    static final byte[] ENVELOPE_15_FREQUENCY = {
+    public static final byte[] ENVELOPE_15_FREQUENCY = {
             1, 2, -64, -65, 3, 4, -63, -66, 5, 6, -67, -62, 7, 8, -68, -61,
             9, 10, -69, -60, 11, 13, -70, 12, -59, -71, 14, 16, -58, 15, -72, -57,
             17, 19, -73, 18, -56, -74, 20, 23, 21, 22, -55, -75, -54, -53, 24, 27,
@@ -63,7 +64,7 @@ final class SbrHuffman {
     /**
      * The codebook of the envelope balances at 1.5 dB, coded in time.
      */
-    static final byte[] BALANCE_15_TIME = {
+    public static final byte[] BALANCE_15_TIME = {
             -64, 1, -63, 2, -65, 3, -62, 4, -66, 5, -61, 6, -67, 7, -60, 8,
             -68, 9, 10, 11, -69, -59, 12, 13, -70, -58, 14, 28, 15, 21, 16, 18,
             -57, 17, -71, -56, 19, 20, -88, -87, -86, -85, 22, 25, 23, 24, -84, -83,
@@ -75,7 +76,7 @@ final class SbrHuffman {
     /**
      * The codebook of the envelope balances at 1.5 dB, coded in frequency.
      */
-    static final byte[] BALANCE_15_FREQUENCY = {
+    public static final byte[] BALANCE_15_FREQUENCY = {
             -64, 1, -65, 2, -63, 3, -66, 4, -62, 5, -61, 6, -67, 7, -68, 8,
             -60, 9, 10, 11, -69, -59, -70, 12, -58, 13, 14, 17, -71, 15, -57, 16,
             -56, -73, 18, 32, 19, 25, 20, 22, -72, 21, -88, -87, 23, 24, -86, -85,
@@ -87,7 +88,7 @@ final class SbrHuffman {
     /**
      * The codebook of the envelope levels at 3 dB, coded in time.
      */
-    static final byte[] ENVELOPE_30_TIME = {
+    public static final byte[] ENVELOPE_30_TIME = {
             -64, 1, -65, 2, -63, 3, -66, 4, -62, 5, -67, 6, -61, 7, -68, 8,
             -60, 9, 10, 11, -69, -59, 12, 14, -70, 13, -71, -58, 15, 18, 16, 17,
             -72, -57, -73, -74, 19, 22, -56, 20, -55, 21, -54, -77, 23, 31, 24, 25,
@@ -101,7 +102,7 @@ final class SbrHuffman {
     /**
      * The codebook of the envelope levels at 3 dB, coded in frequency.
      */
-    static final byte[] ENVELOPE_30_FREQUENCY = {
+    public static final byte[] ENVELOPE_30_FREQUENCY = {
             -64, 1, -65, 2, -63, 3, -66, 4, -62, 5, -67, 6, 7, 8, -61, -68,
             9, 10, -60, -69, 11, 12, -59, -70, 13, 14, -58, -71, 15, 16, -57, -72,
             17, 19, -56, 18, -55, -73, 20, 24, 21, 22, -74, -54, -53, 23, -75, -76,
@@ -115,7 +116,7 @@ final class SbrHuffman {
     /**
      * The codebook of the envelope balances at 3 dB, coded in time.
      */
-    static final byte[] BALANCE_30_TIME = {
+    public static final byte[] BALANCE_30_TIME = {
             -64, 1, -63, 2, -65, 3, -66, 4, -62, 5, -61, 6, -67, 7, -68, 8,
             -60, 9, 10, 16, 11, 13, -69, 12, -76, -75, 14, 15, -74, -73, -72, -71,
             17, 20, 18, 19, -70, -59, -58, -57, 21, 22, -56, -55, -54, 23, -53, -52
@@ -124,7 +125,7 @@ final class SbrHuffman {
     /**
      * The codebook of the envelope balances at 3 dB, coded in frequency.
      */
-    static final byte[] BALANCE_30_FREQUENCY = {
+    public static final byte[] BALANCE_30_FREQUENCY = {
             -64, 1, -65, 2, -63, 3, -66, 4, -62, 5, -61, 6, -67, 7, -68, 8,
             -60, 9, 10, 13, -69, 11, -59, 12, -58, -76, 14, 17, 15, 16, -75, -74,
             -73, -72, 18, 21, 19, 20, -71, -70, -57, -56, 22, 23, -55, -54, -53, -52
@@ -133,7 +134,7 @@ final class SbrHuffman {
     /**
      * The codebook of the noise floor levels coded in time.
      */
-    static final byte[] NOISE_TIME = {
+    public static final byte[] NOISE_TIME = {
             -64, 1, -63, 2, -65, 3, -66, 4, -62, 5, -67, 6, 7, 8, -61, -68,
             9, 30, 10, 15, -60, 11, -69, 12, 13, 14, -59, -53, -95, -94, 16, 23,
             17, 20, 18, 19, -93, -92, -91, -90, 21, 22, -89, -88, -87, -86, 24, 27,
@@ -147,7 +148,7 @@ final class SbrHuffman {
     /**
      * The codebook of the noise floor balances coded in time.
      */
-    static final byte[] NOISE_BALANCE_TIME = {
+    public static final byte[] NOISE_BALANCE_TIME = {
             -64, 1, -65, 2, -63, 3, 4, 9, -66, 5, -62, 6, 7, 8, -76, -75,
             -74, -73, 10, 17, 11, 14, 12, 13, -72, -71, -70, -69, 15, 16, -68, -67,
             -61, -60, 18, 21, 19, 20, -59, -58, -57, -56, 22, 23, -55, -54, -53, -52
@@ -218,6 +219,27 @@ final class SbrHuffman {
     };
 
     /**
+     * The codebook of the inter-channel phase differences coded in frequency (ISO/IEC 14496-3
+     * Table 8.B.20).
+     */
+    static final byte[] IPD_FREQUENCY = {1, -64, 2, 3, -63, 6, 5, 4, -62, -57, -61, -58, -60, -59};
+
+    /**
+     * The codebook of the inter-channel phase differences coded in time (Table 8.B.20).
+     */
+    static final byte[] IPD_TIME = {1, -64, 3, 2, -63, -57, 5, 4, -62, -58, -59, 6, -60, -61};
+
+    /**
+     * The codebook of the overall phase differences coded in frequency (Table 8.B.21).
+     */
+    static final byte[] OPD_FREQUENCY = {1, -64, 2, 3, -57, -63, 5, 4, -62, 6, -61, -58, -59, -60};
+
+    /**
+     * The codebook of the overall phase differences coded in time (Table 8.B.21).
+     */
+    static final byte[] OPD_TIME = {1, -64, 3, 2, -63, -57, 4, 5, -59, -62, -58, 6, -60, -61};
+
+    /**
      * Prevents instantiation.
      */
     private SbrHuffman() {
@@ -231,7 +253,7 @@ final class SbrHuffman {
      * @param reader the bit source
      * @return the decoded value
      */
-    static int decode(byte[] tree, AacBitReader reader) {
+    public static int decode(byte[] tree, AacBitReader reader) {
         var node = 0;
         do {
             node = tree[2 * node + reader.readBit()];

@@ -97,7 +97,8 @@ class OrientationTest {
                 var picture = Pictures.randomYuv(new SplittableRandom(width * 7L + height), width, height, format, true, ColorInfo.JPEG);
                 var oriented = (YuvPicture) ImageOps.orient(picture, orientation);
                 var swap = orientation.swapsDimensions();
-                var expectedFormat = swap && format == ChromaFormat.YUV422 ? ChromaFormat.YUV444 : format;
+                var expectedFormat = swap && (format == ChromaFormat.YUV422 || format == ChromaFormat.YUV440)
+                        ? ChromaFormat.YUV444 : format;
                 assertEquals(expectedFormat, oriented.chromaFormat(), format.name());
                 var outWidth = swap ? height : width;
                 var outHeight = swap ? width : height;
@@ -119,7 +120,8 @@ class OrientationTest {
                     u = new byte[width * height];
                     for (var y = 0; y < height; y++) {
                         for (var x = 0; x < width; x++) {
-                            u[y * width + x] = picture.u()[y * picture.uvStride() + (x >> 1)];
+                            u[y * width + x] = picture.u()[(y >> format.shiftY()) * picture.uvStride()
+                                    + (x >> format.shiftX())];
                         }
                     }
                 } else {
@@ -147,7 +149,7 @@ class OrientationTest {
                     var yuv = Pictures.randomYuv(random, size[0], size[1], format, true, ColorInfo.BT709_LIMITED);
                     var restored = (YuvPicture) ImageOps.orient(ImageOps.orient(yuv, orientation), OrientationTest.inverse(orientation));
                     if (restored.chromaFormat() != format) {
-                        // the 4:4:4 detour of a 4:2:2 picture replicated chroma, so averaging restores it
+                        // the 4:4:4 detour of a 4:2:2 or 4:4:0 picture replicated chroma, so averaging restores it
                         restored = ImageOps.toYuv(restored, format, yuv.color());
                     }
                     assertArrayEquals(Pictures.raw(yuv), Pictures.raw(restored), format + " " + size[0] + "x" + size[1]);

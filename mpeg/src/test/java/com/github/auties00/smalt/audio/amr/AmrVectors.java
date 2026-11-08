@@ -21,13 +21,20 @@ import java.util.zip.ZipInputStream;
  * Fetches the 3GPP digital test sequences of AMR-NB (TS 26.074) and AMR-WB (TS 26.174) and
  * extracts them once into the conformance cache, unpacking the zips nested inside the archives.
  *
- * <p>The AMR-NB tree holds the linear-PCM sequences only (the A-law and mu-law variants and the
- * VAD option 2 sequences are skipped): {@code T_INP/} with the encoder inputs and the mode file
+ * <p>The AMR-NB tree holds the linear-PCM sequences: {@code T_INP/} with the encoder inputs and the mode file
  * {@code T21.MOD}, {@code T_475/} to {@code T_122/} with the {@code .COD} encoder outputs and
  * {@code .OUT} decoder outputs, {@code T_MODE/}, {@code DTX/} (VAD option 1 with DTX) and the
  * {@code SYNC_*} folders. A {@code .COD} frame is 250 little-endian 16-bit words: the TX frame
  * type, 244 bit words (0 or 1), the mode (or -1) and 4 unused words. A {@code .OUT} file is
  * 160 samples per frame, little-endian.
+ *
+ * <p>The extended AMR-NB tree holds the rest of the TS 26.074 archive: the A-law and mu-law
+ * variants of the sequences above ({@code T_INP/T00A.INP}, {@code T_102/T00A102.COD},
+ * {@code T_MODE/T21U.COD}, {@code DTX/DTX3A102.COD}, and so on, with {@code A} or {@code U} in
+ * place of the underscore), and the VAD option 2 sequences with DTX in {@code DTX2/linear/},
+ * {@code DTX2/alaw/} and {@code DTX2/mulaw/}. A companded {@code .INP} or {@code .OUT} file holds
+ * one G.711 code per little-endian 16-bit word; a companded {@code .OUT} is the compressed
+ * decoder output.
  *
  * <p>The AMR-WB tree holds {@code T/T_inp/}, {@code T/T_660/} to {@code T/T_2385/},
  * {@code T/T_mode/}, {@code T/DTX_test_vectors/...} and the {@code Sync_*} folders. A
@@ -59,6 +66,25 @@ final class AmrVectors {
                         || base.equals("NODTX_H00.ZIP") || base.equals("DTX_H00.ZIP") || base.equals("SYNC_H00.ZIP");
             }
             return upper.endsWith(".COD") || upper.endsWith(".OUT") || upper.endsWith(".INP") || upper.endsWith(".MOD");
+        });
+    }
+
+    /**
+     * Returns the root of the extracted A-law, mu-law and VAD option 2 AMR-NB sequences, fetching
+     * them when needed.
+     */
+    static Path narrowbandExtended() {
+        var archive = Conformance.fetch("3gpp-26074-i00.zip", NB_URL, NB_SHA256);
+        return extracted(archive, "3gpp-26074-i00-ext", name -> {
+            var upper = name.toUpperCase(Locale.ROOT);
+            if (upper.endsWith(".ZIP")) {
+                var base = upper.substring(upper.lastIndexOf('/') + 1);
+                return base.startsWith("TS_AMR_H01_NODTX") || base.startsWith("TS_AMR_H01_DTX")
+                        || base.equals("NODTXAH00.ZIP") || base.equals("NODTXUH00.ZIP")
+                        || base.equals("DTXAH00.ZIP") || base.equals("DTXUH00.ZIP")
+                        || base.equals("DTX2_H00.ZIP") || base.equals("DTX2AH00.ZIP") || base.equals("DTX2UH00.ZIP");
+            }
+            return upper.endsWith(".COD") || upper.endsWith(".OUT") || upper.endsWith(".INP");
         });
     }
 

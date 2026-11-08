@@ -1,6 +1,6 @@
 package com.github.auties00.smalt.audio.opus.internal.silk;
 
-import org.junit.jupiter.api.Assumptions;
+import com.github.auties00.smalt.testkit.Skip;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -197,7 +197,7 @@ class SilkEncoderBitExactTest {
     @DisplayName("encodes bit-exactly like libopus 1.5.2")
     void bitExact(SilkEncoderHarness.Config config) {
         var golden = GOLDEN.get(config.name());
-        Assumptions.assumeTrue(golden != null, "no golden hash for " + config.name());
+        Skip.unless(golden != null, "input:no-golden", "no golden hash for " + config.name());
         assertEquals(golden, SilkEncoderHarness.sha256(SilkEncoderHarness.encode(input(config), config)));
     }
 }

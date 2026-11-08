@@ -1,0 +1,15 @@
+# video decode dump of matroska/hap.mkv; regenerate with -Dsmalt.test.updateDumps=true
+format MATROSKA
+duration 500000
+seekable true
+track 1 HAP 64x48 timebase=1/1000
+0 pts=0 dur=100 key=true 64x48 rgba8 alpha=false crc=02d22e95
+1 pts=100 dur=100 key=true 64x48 rgba8 alpha=false crc=b296e73d
+2 pts=200 dur=100 key=true 64x48 rgba8 alpha=false crc=188b943d
+3 pts=300 dur=100 key=true 64x48 rgba8 alpha=false crc=8f4b40ca
+4 pts=400 dur=100 key=true 64x48 rgba8 alpha=false crc=36f6e98d
+seek 0: @0
+seek 166666: @1
+seek 333333: @3
+seek 500000: end
+seek -1000000: @0

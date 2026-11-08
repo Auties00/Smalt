@@ -1,0 +1,19 @@
+# video decode dump of hevc/scc/scc-ra-420-10.hevc.mp4; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 480000
+seekable true
+track 1 HEVC 192x128 timebase=1/90000
+0 pts=10800 dur=3600 key=true 192x128 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=f974dac5 u=93069643 v=2e6c84d7
+1 pts=14400 dur=3600 key=false 192x128 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=6ed02104 u=238d57df v=168a1e33
+2 pts=18000 dur=3600 key=false 192x128 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=2a6b6e33 u=bdbc6a86 v=313899d6
+3 pts=21600 dur=3600 key=false 192x128 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=246a2f5b u=7b131e85 v=b08b614b
+4 pts=25200 dur=3600 key=false 192x128 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=a6e8753c u=e38c527f v=4b01ff00
+5 pts=28800 dur=3600 key=false 192x128 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=c7c2cb2f u=2eaa0c18 v=b3a15f15
+6 pts=32400 dur=3600 key=false 192x128 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=523ee929 u=1f2b608d v=163fadea
+7 pts=36000 dur=3600 key=false 192x128 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=2deade06 u=daf9b95d v=afa6249f
+8 pts=39600 dur=3600 key=true 192x128 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=7916712e u=5d32366c v=0c971a94
+seek 0: @0
+seek 160000: @1
+seek 320000: @5
+seek 480000: end
+seek -1000000: @0
