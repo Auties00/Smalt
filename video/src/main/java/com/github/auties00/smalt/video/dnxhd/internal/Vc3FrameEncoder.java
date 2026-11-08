@@ -8,6 +8,7 @@ import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.task.ParallelBands;
+import com.github.auties00.smalt.video.dnxhd.DnxhdEncoderOptions.AlphaStorage;
 import com.github.auties00.smalt.video.intra.internal.IntraBands;
 import com.github.auties00.smalt.video.intra.internal.IntraBitWriter;
 import com.github.auties00.smalt.video.intra.internal.IntraInput;
@@ -33,7 +34,14 @@ import java.util.Arrays;
  * video macroblocks of each scan line with its alpha macroblocks: DCT-coded like luma with the
  * alpha weights of the compression ID, or, when lossless alpha is requested on IDs 1256 and 1270,
  * run-length coded with {@code LLA} set. A coding unit whose lossless alpha leaves no room for the
- * video at the coarsest scale factor falls back to DCT-coded alpha.
+ * video at the coarsest scale factor falls back to DCT-coded alpha. With premultiplied alpha the
+ * video is multiplied by alpha as {@link Vc3Premultiplied} defines and {@code PMA} is set.
+ *
+ * <p>Alpha stored out of band, as Avid's QuickTime encoders store it, follows the coding units of
+ * the video, which code no alpha: 8-bit samples row after row (in an area sized for 10-bit samples
+ * when the stream is deeper than 8 bits), or the coding units of a Y'CbCr frame of the same
+ * compression ID whose luma is the alpha; the frame ends with the size of its video coding units in
+ * four big-endian bytes.
  *
  * <p>Instances are not thread-safe.
  *
@@ -88,9 +96,24 @@ public final class Vc3FrameEncoder {
     private final ChromaFormat chroma;
 
     /**
-     * Whether frames carry an alpha channel.
+     * Whether frames carry an alpha channel in band.
      */
     private final boolean alpha;
+
+    /**
+     * Whether frames carry an alpha channel, in band or out of band.
+     */
+    private final boolean anyAlpha;
+
+    /**
+     * Where frames store their alpha channel.
+     */
+    private final AlphaStorage storage;
+
+    /**
+     * Whether the video is coded premultiplied by alpha.
+     */
+    private final boolean premultiplied;
 
     /**
      * Whether the alpha channel is coded losslessly when it fits.
@@ -148,6 +171,16 @@ public final class Vc3FrameEncoder {
     private Vc3RowEncoder[] rowEncoders = new Vc3RowEncoder[1];
 
     /**
+     * The encoder of the alpha coding units stored out of band, created on first use.
+     */
+    private Vc3FrameEncoder alphaEncoder;
+
+    /**
+     * The neutral chroma plane of the alpha coding units stored out of band, created on first use.
+     */
+    private short[] neutralChroma;
+
+    /**
      * Constructs a frame encoder.
      *
      * @param width the frame width
@@ -161,15 +194,18 @@ public final class Vc3FrameEncoder {
      * @param chroma the chroma layout: {@link ChromaFormat#YUV444} for the 4:4:4 IDs,
      * {@link ChromaFormat#YUV422} or, for the RI IDs that permit it,
      * {@link ChromaFormat#YUV420} for the others
-     * @param alpha whether frames carry an alpha channel; the ID must permit it
-     * @param losslessAlpha whether to code the alpha channel losslessly (IDs 1256 and 1270)
+     * @param alpha whether frames carry an alpha channel; the ID must permit it when it is stored in
+     * band
+     * @param losslessAlpha whether to code the alpha channel losslessly (IDs 1256 and 1270, in band)
+     * @param storage where frames store their alpha channel
+     * @param premultiplied whether to code the video premultiplied by alpha (in band)
      * @param threads the thread count: {@code 1} for the calling thread, otherwise the shared
      * pool with at most this many threads ({@code 0} for no cap)
      * @param limits the allocation limits
      */
     public Vc3FrameEncoder(int width, int height, Vc3Compression compression, int depth, boolean rgb, boolean alternate,
-                           ColorInfo color, ChromaFormat chroma, boolean alpha, boolean losslessAlpha, int threads,
-                           MediaLimits limits) {
+                           ColorInfo color, ChromaFormat chroma, boolean alpha, boolean losslessAlpha,
+                           AlphaStorage storage, boolean premultiplied, int threads, MediaLimits limits) {
         this.width = width;
         this.height = height;
         this.compression = compression;
@@ -178,8 +214,11 @@ public final class Vc3FrameEncoder {
         this.alternate = rgb && alternate;
         this.color = color;
         this.chroma = chroma;
-        this.alpha = alpha;
-        this.losslessAlpha = losslessAlpha;
+        this.anyAlpha = alpha;
+        this.storage = storage;
+        this.alpha = alpha && storage == AlphaStorage.IN_BAND;
+        this.premultiplied = this.alpha && premultiplied;
+        this.losslessAlpha = this.alpha && losslessAlpha;
         this.threads = threads;
         this.limits = limits;
         this.units = compression.codingUnits();
@@ -195,20 +234,30 @@ public final class Vc3FrameEncoder {
      * Encodes one picture into a frame.
      *
      * @param picture the picture, of the encoder's size
-     * @return the frame: one coding unit, or two for field-encoded interlaced IDs
+     * @return the frame: one coding unit, or two for field-encoded interlaced IDs, followed by the
+     * alpha and the size of the coding units when the alpha is stored out of band
      */
     public byte[] encode(Picture picture) {
         var paddedWidth = widthInMb * 16;
         var paddedHeight = heightInMb * 16 * units;
         var planeSamples = chroma == ChromaFormat.YUV444 ? 3 : chroma == ChromaFormat.YUV420 ? 1.5 : 2;
         var blockBatches = chroma == ChromaFormat.YUV444 ? 2 : 1;
-        LimitChecks.checkAllocation(limits, (long) ((paddedWidth * (long) paddedHeight) * (planeSamples + (alpha ? 1 : 0)) * 2)
-                + (long) widthInMb * heightInMb * units * (blockBatches + (alpha ? 1 : 0)) * 2048);
-        var alphaDepth = alpha ? depth : 0;
+        var coded = anyAlpha && storage == AlphaStorage.AVID_CODED;
+        var alphaPlanes = (anyAlpha ? 1 : 0) + (coded ? (planeSamples - 1) / 2 : 0);
+        var alphaBatches = alpha ? 1 : coded ? blockBatches : 0;
+        var samples = paddedWidth * (long) paddedHeight;
+        LimitChecks.checkAllocation(limits, (long) (samples * (planeSamples + alphaPlanes) * 2)
+                + (long) widthInMb * heightInMb * units * (blockBatches + alphaBatches) * 2048);
+        var alphaDepth = anyAlpha ? depth : 0;
         IntraPlanes planes;
         IntraInput.Deferred deferred = null;
         if (rgb) {
             var source = IntraInput.rgb(picture, 16, alphaDepth, paddedWidth, paddedHeight);
+            if (premultiplied) {
+                premultiply(source.first(), paddedWidth, paddedWidth, paddedHeight, 0, 0, source.alpha(), 0);
+                premultiply(source.second(), paddedWidth, paddedWidth, paddedHeight, 0, 0, source.alpha(), 0);
+                premultiply(source.third(), paddedWidth, paddedWidth, paddedHeight, 0, 0, source.alpha(), 0);
+            }
             if (alternate) {
                 Vc3Rgb.toYcbcr(source.first(), source.second(), source.third(), depth);
             } else {
@@ -219,8 +268,8 @@ public final class Vc3FrameEncoder {
             planes = new IntraPlanes(source.first(), source.second(), source.third(), source.alpha(), paddedWidth,
                     paddedWidth, paddedHeight, depth, alphaDepth, source.color().withRange(ColorRange.LIMITED));
         } else {
-            deferred = units == 1 && !alpha ? IntraInput.yuvDeferred(picture, chroma, depth, paddedWidth, paddedHeight,
-                    recycled) : null;
+            deferred = units == 1 && !anyAlpha ? IntraInput.yuvDeferred(picture, chroma, depth, paddedWidth,
+                    paddedHeight, recycled) : null;
             if (deferred != null) {
                 planes = deferred.planes();
             } else {
@@ -228,20 +277,131 @@ public final class Vc3FrameEncoder {
                         recycled);
             }
             recycled = planes;
+            if (premultiplied) {
+                var shiftX = chroma.shiftX();
+                var shiftY = chroma.shiftY();
+                var chromaRows = paddedHeight >> shiftY;
+                premultiply(planes.first(), paddedWidth, paddedWidth, paddedHeight, 0, 0, planes.alpha(),
+                        16 << (depth - 8));
+                premultiply(planes.second(), planes.chromaStride(), planes.chromaStride(), chromaRows, shiftX, shiftY,
+                        planes.alpha(), 1 << (depth - 1));
+                premultiply(planes.third(), planes.chromaStride(), planes.chromaStride(), chromaRows, shiftX, shiftY,
+                        planes.alpha(), 1 << (depth - 1));
+            }
         }
+        var videoSize = compression.codingUnitSize(widthInMb, heightInMb, alpha) * units;
+        var outOfBand = anyAlpha && !alpha;
+        var out = new byte[!outOfBand ? videoSize
+                : videoSize + (storage == AlphaStorage.AVID_CODED ? videoSize : rawAlphaSize()) + 4];
+        encodePlanes(planes, deferred, out, 0);
+        if (outOfBand) {
+            if (storage == AlphaStorage.AVID_CODED) {
+                codedAlpha(planes, out, videoSize);
+            } else {
+                rawAlpha(planes, out, videoSize);
+            }
+            ByteArrays.put32be(out, out.length - 4, videoSize);
+        }
+        return out;
+    }
+
+    /**
+     * Encodes prepared planes into the coding units of a frame.
+     *
+     * @param planes the prepared planes
+     * @param deferred the conversion that fills the planes row by row, or {@code null} when the
+     * planes are filled already
+     * @param out the array receiving the coding units
+     * @param offset the index of the first coding unit's first byte
+     */
+    private void encodePlanes(IntraPlanes planes, IntraInput.Deferred deferred, byte[] out, int offset) {
         var layout = chroma == ChromaFormat.YUV444 ? Vc3Layout.YUV444
                 : chroma == ChromaFormat.YUV420 ? Vc3Layout.YUV420 : Vc3Layout.YUV422;
         var unitSize = compression.codingUnitSize(widthInMb, heightInMb, alpha);
-        var out = new byte[unitSize * units];
         for (var unit = 0; unit < units; unit++) {
             if (stores[unit] == null) {
                 stores[unit] = new Vc3Coefficients(compression, layout, depth, widthInMb, heightInMb, false);
             }
             var store = stores[unit];
             store.field(unit, units);
-            encodeUnit(planes, deferred, store, unit, out, unit * unitSize, unitSize);
+            encodeUnit(planes, deferred, store, unit, out, offset + unit * unitSize, unitSize);
         }
-        return out;
+    }
+
+    /**
+     * Multiplies the samples of a padded plane by alpha in place, in parallel bands of rows.
+     *
+     * @param plane the samples
+     * @param stride the row stride of {@code plane}
+     * @param width the samples per row
+     * @param rows the rows of {@code plane}
+     * @param shiftX the horizontal subsampling of the plane
+     * @param shiftY the vertical subsampling of the plane
+     * @param alphaPlane the alpha plane, at the stream's depth and the padded width
+     * @param base the level the samples are scaled about
+     */
+    private void premultiply(short[] plane, int stride, int width, int rows, int shiftX, int shiftY, short[] alphaPlane,
+                             int base) {
+        var alphaStride = widthInMb * 16;
+        var alphaMax = (1 << depth) - 1;
+        var bands = threads == 1 ? 1 : ParallelBands.bands(rows, (long) width * rows);
+        ParallelBands.run(bands, band -> Vc3Premultiplied.apply(plane, stride, width,
+                ParallelBands.start(band, bands, rows), ParallelBands.start(band + 1, bands, rows), shiftX, shiftY,
+                alphaPlane, alphaStride, alphaMax, base));
+    }
+
+    /**
+     * Writes alpha stored out of band as 8-bit samples after the coding units of a frame.
+     *
+     * @param planes the prepared planes, whose alpha plane is at the stream's depth
+     * @param out the frame
+     * @param offset the index of the first sample
+     */
+    private void rawAlpha(IntraPlanes planes, byte[] out, int offset) {
+        var alphaPlane = planes.alpha();
+        var stride = planes.lumaStride();
+        var max = (1 << depth) - 1;
+        for (var y = 0; y < height; y++) {
+            var to = offset + y * width;
+            for (var x = 0; x < width; x++) {
+                var code = alphaPlane[y * stride + x] & 0xFFFF;
+                out[to + x] = (byte) (depth == 8 ? code : (code * 255 + max / 2) / max);
+            }
+        }
+    }
+
+    /**
+     * Writes alpha stored out of band as coding units, whose luma is the alpha and whose chroma is
+     * neutral, after the coding units of a frame.
+     *
+     * @param planes the prepared planes, whose alpha plane is at the stream's depth
+     * @param out the frame, with room for the coding units of the alpha
+     * @param offset the index of the first byte of the alpha coding units
+     */
+    private void codedAlpha(IntraPlanes planes, byte[] out, int offset) {
+        if (alphaEncoder == null) {
+            alphaEncoder = new Vc3FrameEncoder(width, height, compression, depth, false, false,
+                    ColorInfo.BT709_LIMITED, chroma, false, false, AlphaStorage.IN_BAND, false, threads, limits);
+        }
+        var chromaRows = planes.rows() >> chroma.shiftY();
+        var chromaSize = planes.chromaStride() * chromaRows;
+        if (neutralChroma == null || neutralChroma.length != chromaSize) {
+            neutralChroma = new short[chromaSize];
+            Arrays.fill(neutralChroma, (short) (1 << (depth - 1)));
+        }
+        var alphaPlanes = new IntraPlanes(planes.alpha(), neutralChroma, neutralChroma, null, planes.lumaStride(),
+                planes.chromaStride(), planes.rows(), depth, 0, ColorInfo.BT709_LIMITED);
+        alphaEncoder.encodePlanes(alphaPlanes, null, out, offset);
+    }
+
+    /**
+     * Returns the size of the area of alpha stored out of band as 8-bit samples.
+     *
+     * @return the picture's sample count for 8-bit streams, a quarter more, rounded up, otherwise
+     */
+    private int rawAlphaSize() {
+        var samples = (long) width * height;
+        return (int) (depth == 8 ? samples : (samples * 5 + 3) / 4);
     }
 
     /**
@@ -349,7 +509,8 @@ public final class Vc3FrameEncoder {
         var version = alpha && !compression.resolutionIndependent() ? 4 : compression.headerVersion();
         var subsampling = chroma == ChromaFormat.YUV444 ? 2 : chroma == ChromaFormat.YUV420 ? 1 : 0;
         var header = new Vc3Header(headerSize, version, fieldCount, false, compression.cid() == 1260, alpha,
-                losslessPart != null, false, height / units, width, depth, interlaced, compression, subsampling, 0,
+                losslessPart != null, premultiplied, height / units, width, depth, interlaced, compression, subsampling,
+                rgb ? 0 : colorVolume(planes.color()),
                 compression.chroma444() && rgb ? 1 : 0, 0, 0, heightInMb, offsets);
         header.write(out, offset);
         var payload = offset + headerSize;
@@ -357,6 +518,22 @@ public final class Vc3FrameEncoder {
             System.arraycopy(rows[row], 0, out, payload + offsets[row], rows[row].length);
         }
         ByteArrays.put32be(out, offset + size - 4, Vc3Header.SIGNATURE);
+    }
+
+    /**
+     * Returns the color volume code {@code CLV} of a Y'CbCr color description.
+     *
+     * @param color the description of the coded samples
+     * @return 0 for BT.709 and an unspecified matrix, 1 for BT.2020 non-constant luminance, 2 for BT.2020 constant
+     * luminance, otherwise {@link Vc3Header#OUT_OF_BAND_VOLUME}, which leaves the description to the container
+     */
+    private static int colorVolume(ColorInfo color) {
+        return switch (color.matrix()) {
+            case BT709, UNSPECIFIED -> 0;
+            case BT2020_NCL -> 1;
+            case BT2020_CL -> 2;
+            default -> Vc3Header.OUT_OF_BAND_VOLUME;
+        };
     }
 
     /**

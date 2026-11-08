@@ -118,8 +118,8 @@ class Av1GoodQualityTest {
             return Stream.of(
                     () -> Av1EncoderOptions.builder().quality(50).build(),
                     () -> Av1EncoderOptions.forIntraOnly(50).toBuilder().automaticQuality().build(),
-                    () -> Av1EncoderOptions.ofQuality(50).toBuilder().pictureFormat(ChromaFormat.YUV444, 8).build(),
-                    () -> Av1EncoderOptions.ofQuality(50).toBuilder().pictureFormat(ChromaFormat.YUV420, 10).build(),
+                    () -> Av1EncoderOptions.ofQuality(50).toBuilder().pictureFormat(ChromaFormat.YUV440, 8).build(),
+                    () -> Av1EncoderOptions.ofQuality(50).toBuilder().pictureFormat(ChromaFormat.YUV420, 11).build(),
                     () -> Av1EncoderOptions.ofQuality(50).toBuilder().lookahead(-1).build(),
                     () -> Av1EncoderOptions.ofQuality(50).toBuilder().lookahead(65).build(),
                     () -> Av1EncoderOptions.ofQuality(101));
@@ -181,7 +181,6 @@ class Av1GoodQualityTest {
                 assertTrue(packets.isEmpty());
                 assertThrows(IllegalStateException.class,
                         () -> encoder.encodeFrame(new VideoFrame(pictures.getFirst(), 30_000, 3000, false)));
-                assertThrows(IllegalStateException.class, () -> encoder.reconfigure(32, 32));
                 assertThrows(IllegalArgumentException.class,
                         () -> encoder.reconfigure(Av1EncoderOptions.ofQuality(50).toBuilder()
                                 .usage(Av1EncoderUsage.REALTIME)

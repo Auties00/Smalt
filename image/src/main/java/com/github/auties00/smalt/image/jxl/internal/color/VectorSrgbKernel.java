@@ -2,21 +2,23 @@
    contributors, and the JPEG XL Project Authors; MIT License and BSD 3-Clause License. Modified for Smalt. */
 package com.github.auties00.smalt.image.jxl.internal.color;
 
+import com.github.auties00.smalt.internal.simd.Simd;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
 
 /**
- * Implements {@link SrgbKernel} with the Vector API, eight samples at a time.
+ * Implements {@link SrgbKernel} with the Vector API, eight samples at a time where
+ * {@link Simd#WIDE} holds and four otherwise.
  *
  * <p>Each lane performs the operations of {@link ScalarSrgbKernel} in the same order, so the output
  * is bit-identical; the samples left over at the end of a range go through the scalar kernel.
  */
 final class VectorSrgbKernel implements SrgbKernel {
     /**
-     * The species: eight floats.
+     * The species: eight floats where the platform has 256-bit vectors, four otherwise.
      */
-    private static final VectorSpecies<Float> FLOATS = FloatVector.SPECIES_256;
+    private static final VectorSpecies<Float> FLOATS = Simd.WIDE ? FloatVector.SPECIES_256 : FloatVector.SPECIES_128;
 
     /**
      * The exact vector class of {@link #FLOATS}.
@@ -26,7 +28,7 @@ final class VectorSrgbKernel implements SrgbKernel {
     /**
      * The number of lanes.
      */
-    private static final int LANES = 8;
+    private static final int LANES = FLOATS.length();
 
     /**
      * Zero in every lane.

@@ -8,7 +8,7 @@ import java.util.OptionalDouble;
  * Enumerates the matrix coefficients that derive Y'CbCr from R'G'B', with the code points of
  * ITU-T H.273 (the {@code matrix_coefficients} field of H.264, H.265, VP9 and AV1 streams).
  *
- * <p>Instances are immutable and thread-safe.
+ * <p>This enum may gain constants in later releases; a {@code switch} over it needs a {@code default} branch.
  */
 public enum MatrixCoefficients {
     /**
@@ -79,7 +79,24 @@ public enum MatrixCoefficients {
     /**
      * ITU-R BT.2100 ICtCp (code point 14).
      */
-    ICTCP(14);
+    ICTCP(14),
+
+    /**
+     * IPT-C2, the SMPTE IPT-PQ-C2 representation (code point 15).
+     */
+    IPT_C2(15),
+
+    /**
+     * YCgCo-Re, the reversible YCgCo-R transform of R'G'B' samples two bits shallower than the Y'CbCr samples
+     * (code point 16).
+     */
+    YCGCO_RE(16),
+
+    /**
+     * YCgCo-Ro, the reversible YCgCo-R transform of R'G'B' samples one bit shallower than the Y'CbCr samples
+     * (code point 17).
+     */
+    YCGCO_RO(17);
 
     /**
      * The H.273 code point.
@@ -110,7 +127,8 @@ public enum MatrixCoefficients {
      * <p>The weight is defined for the matrices built on that equation: {@link #BT709},
      * {@link #FCC}, {@link #BT470BG}, {@link #BT601}, {@link #SMPTE240M} and {@link #BT2020_NCL}.
      * It is empty for every other matrix, {@link #UNSPECIFIED} included; {@code effective().kr()}
-     * gives the weight Smalt converts an unspecified matrix with.
+     * gives the weight Smalt converts an unspecified matrix with, and the chromaticity-derived
+     * matrices take their weights from the color primaries.
      *
      * @return the weight, or empty when the matrix does not derive luma from a weighted sum
      */
