@@ -135,8 +135,8 @@ class Av1EncoderTest {
                     () -> o.toBuilder().threads(-1).build(),
                     () -> o.toBuilder().maxKeyframeBitratePercent(99).build(),
                     () -> o.toBuilder().quality(101).build(),
-                    () -> o.toBuilder().pictureFormat(ChromaFormat.YUV444, 8).build(),
-                    () -> o.toBuilder().pictureFormat(ChromaFormat.YUV420, 10).build(),
+                    () -> o.toBuilder().pictureFormat(ChromaFormat.YUV440, 8).build(),
+                    () -> o.toBuilder().pictureFormat(ChromaFormat.YUV420, 11).build(),
                     () -> Av1EncoderOptions.forIntraOnly(50).toBuilder().pictureFormat(ChromaFormat.YUV420, 9).build());
         }
 
@@ -173,12 +173,13 @@ class Av1EncoderTest {
         @DisplayName("a size change keeps the rate control and limits the key frame after it")
         void resize() {
             var pictures = Vp9TestVideo.synthesize(320, 240, 30);
-            var smaller = Vp9TestVideo.synthesize(240, 176, 10);
+            // below half the width, the references cannot predict the new size, so it starts with a key frame
+            var smaller = Vp9TestVideo.synthesize(152, 112, 10);
             var bitrate = 500_000;
             try (var encoder = new Av1Encoder(320, 240, Av1EncoderOptions.forRealtime().toBuilder().bitrate(bitrate)
                     .build())) {
                 encodeAll(encoder, pictures);
-                encoder.reconfigure(240, 176);
+                encoder.reconfigure(152, 112);
                 assertEquals(bitrate * 600L / 1000, encoder.stats().bufferLevelBits());
                 var packets = new ArrayList<Packet>();
                 for (var i = 0; i < smaller.size(); i++) {
@@ -188,7 +189,7 @@ class Av1EncoderTest {
                 assertTrue(packets.getFirst().keyframe());
                 assertTrue(packets.getFirst().size() <= budget(bitrate) * KEY_LIMIT * 3 / 200,
                         packets.getFirst().size() + " bytes, budget " + budget(bitrate));
-                assertEquals(10, decode(encoder, packets, 240, 176).size());
+                assertEquals(10, decode(encoder, packets, 152, 112).size());
             }
         }
     }

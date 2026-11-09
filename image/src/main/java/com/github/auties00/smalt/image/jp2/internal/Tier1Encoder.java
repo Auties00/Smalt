@@ -57,6 +57,18 @@ final class Tier1Encoder {
     private static final int BYPASS_INITIAL = Integer.MAX_VALUE;
 
     /**
+     * The most magnitude bit-planes a coefficient may need, scaling included: its fixed-point form keeps
+     * {@link Tier1Tables#NMSEDEC_FRACBITS} fractional bits below them in the 63 magnitude bits of a {@code long}.
+     */
+    static final int MAX_BIT_PLANES = 63 - Tier1Tables.NMSEDEC_FRACBITS;
+
+    /**
+     * The most bit-planes a window of a wide code-block's magnitudes serves above its base: the bit-plane coded and
+     * the fractional bits below it must stay within the 31 magnitude bits of {@link #data}.
+     */
+    private static final int WINDOW_PLANES = 30 - Tier1Tables.NMSEDEC_FRACBITS;
+
+    /**
      * The 5-3 wavelet norms of each orientation and level (OpenJPEG's {@code opj_dwt_norms}).
      */
     private static final double[][] NORMS = {
@@ -80,6 +92,17 @@ final class Tier1Encoder {
      * The coefficients in stripe order, in sign-magnitude form.
      */
     private final int[] data = new int[4096];
+
+    /**
+     * The coefficients of a wide code-block in stripe order, in sign-magnitude form: the sign in bit 63 and the
+     * magnitude with {@link Tier1Tables#NMSEDEC_FRACBITS} fractional bits; allocated on first use.
+     */
+    private long[] wideData;
+
+    /**
+     * The lowest magnitude bit of a wide code-block that {@link #data} holds at its bit 0.
+     */
+    private int windowBase;
 
     /**
      * The flag words, laid out as the decoder's.
@@ -147,7 +170,7 @@ final class Tier1Encoder {
      * Returns the 5-3 or 9-7 wavelet norm of a sub-band.
      *
      * @param level       the decomposition level, 0 for the highest resolution's bands
-     * @param orientation the orientation
+     * @param orientation the sub-band orientation, 0 to 3
      * @param reversible  whether the 5-3 wavelet is used
      * @return the norm, the last tabulated level's for deeper levels
      */
@@ -163,8 +186,16 @@ final class Tier1Encoder {
     /**
      * Codes a code-block.
      *
+     * <p>A block whose fixed-point coefficients fit 31 bits is coded from {@link #data} directly. A deeper block, a
+     * reversible coefficient of more than {@code 25} magnitude bits after any region of interest scaling, or a block
+     * of deep channels, keeps its coefficients in {@link #wideData} and codes each bit-plane from a 31-bit window of
+     * their magnitudes that {@link #window} loads into {@link #data}; the window keeps the bit-plane and the six bits
+     * below it that the distortion estimates read, so both forms produce the same codestream.
+     *
      * @param block       the code-block, receiving its passes and bytes
-     * @param samples     the sub-band coefficients: integers for the 5-3 wavelet
+     * @param samples     the sub-band coefficients: integers for the 5-3 wavelet, or {@code null} when
+     *                    {@code wideSamples} holds them
+     * @param wideSamples the sub-band coefficients of the 5-3 wavelet in 64-bit integers, or {@code null}
      * @param floats      the sub-band coefficients: floats for the 9-7 wavelet
      * @param offset      the index of the block's first coefficient
      * @param stride      the row stride of the coefficients
@@ -174,45 +205,68 @@ final class Tier1Encoder {
      * @param reversible  whether the 5-3 wavelet is used
      * @param style       the code-block style flags
      * @param weight      the component's weight in the distortion (its color transform norm)
+     * @param mask        the region of interest mask of the tile-component, nonzero for a coefficient scaled up by
+     *                    {@code shift}, in the layout of {@code samples}; or {@code null}
+     * @param shift       the max-shift scaling of the coefficients {@code mask} selects; the caller ensures that a
+     *                    scaled coefficient keeps at most {@link #MAX_BIT_PLANES} magnitude bits
+     * @param maxBitPlanes the number of magnitude bit-planes above which a coefficient saturates, or 0 for none
      * @return the block's total weighted distortion reduction
      */
-    double encode(EncodedBlock block, int[] samples, float[] floats, int offset, int stride, int orientation,
-                  int level, float stepSize, boolean reversible, int style, double weight) {
-        var w = block.x1 - block.x0;
-        var h = block.y1 - block.y0;
+    double encode(EncodedBlock block, int[] samples, long[] wideSamples, float[] floats, int offset, int stride,
+                  int orientation, int level, float stepSize, boolean reversible, int style, double weight,
+                  byte[] mask, int shift, int maxBitPlanes) {
+        var w = (int) (block.x1 - block.x0);
+        var h = (int) (block.y1 - block.y0);
         allocate(w, h);
-        var position = 0;
-        var k = 0;
-        for (; k < (h & ~3); k += 4) {
-            for (var i = 0; i < w; i++) {
-                for (var r = 0; r < 4; r++) {
-                    data[position++] = quantize(samples, floats, offset + (k + r) * stride + i, stepSize, reversible);
+        var count = w * h;
+        var roi = mask != null && shift > 0 ? shift : 0;
+        boolean wide;
+        if (reversible && wideSamples == null) {
+            var bound = gather(samples, offset, stride, w, h);
+            wide = 32 - Integer.numberOfLeadingZeros(bound) + roi + Tier1Tables.NMSEDEC_FRACBITS > 31;
+            if (!wide) {
+                for (var i = 0; i < count; i++) {
+                    data[i] <<= Tier1Tables.NMSEDEC_FRACBITS;
                 }
             }
-        }
-        if (k < h) {
-            for (var i = 0; i < w; i++) {
-                for (var r = k; r < h; r++) {
-                    data[position++] = quantize(samples, floats, offset + r * stride + i, stepSize, reversible);
-                }
-            }
-        }
-        var max = 0;
-        for (var i = 0; i < position; i++) {
-            var value = data[i];
-            if (value < 0) {
-                if (value == Integer.MIN_VALUE) {
-                    value = Integer.MIN_VALUE + 1;
-                }
-                max = Math.max(max, -value);
-                data[i] = -value | 0x80000000;
-            } else {
-                max = Math.max(max, value);
+        } else {
+            wide = reversible || maxBitPlanes == 0 || maxBitPlanes + roi + Tier1Tables.NMSEDEC_FRACBITS > 31;
+            if (!wide) {
+                var limit = (1 << (maxBitPlanes + Tier1Tables.NMSEDEC_FRACBITS)) - 1;
+                quantize(floats, offset, stride, w, h, stepSize, limit);
             }
         }
         zeroContexts = orientation << 9;
-        block.bitPlanes = max != 0 ? (31 - Integer.numberOfLeadingZeros(max)) + 1 - Tier1Tables.NMSEDEC_FRACBITS : 0;
         block.totalPasses = 0;
+        if (wide) {
+            block.bitPlanes = loadWide(samples, wideSamples, floats, offset, stride, w, h, stepSize, reversible,
+                    mask, roi, maxBitPlanes);
+            windowBase = -1;
+            var capacity = (long) count * (block.bitPlanes + 2) * 3 / 8 + 76;
+            if (out.length < capacity) {
+                out = new byte[(int) capacity];
+            }
+        } else {
+            if (roi > 0) {
+                scale(mask, offset, stride, w, h, shift);
+            }
+            var max = 0;
+            for (var i = 0; i < count; i++) {
+                var value = data[i];
+                if (value < 0) {
+                    if (value == Integer.MIN_VALUE) {
+                        value = Integer.MIN_VALUE + 1;
+                    }
+                    max = Math.max(max, -value);
+                    data[i] = -value | 0x80000000;
+                } else {
+                    max = Math.max(max, value);
+                }
+            }
+            block.bitPlanes = max != 0 ? (31 - Integer.numberOfLeadingZeros(max)) + 1 - Tier1Tables.NMSEDEC_FRACBITS
+                    : 0;
+            windowBase = 0;
+        }
         if (block.bitPlanes <= 0) {
             return 0;
         }
@@ -231,6 +285,10 @@ final class Tier1Encoder {
         var predictable = (style & ComponentCoding.PREDICTABLE_TERMINATION) != 0;
         block.ensurePasses(3 * block.bitPlanes);
         for (; bitPlane >= 0; passes++) {
+            if (wide && (windowBase < 0 || (bitPlane == windowBase && windowBase > 0))) {
+                window(Math.max(0, bitPlane - WINDOW_PLANES), count);
+            }
+            var plane = bitPlane - windowBase;
             var raw = bitPlane < block.bitPlanes - 4 && passType < 2 && lazy;
             if (passes > 0 && block.passTerminated[passes - 1]) {
                 if (raw) {
@@ -247,10 +305,10 @@ final class Tier1Encoder {
                 }
             }
             switch (passType) {
-                case 0 -> significance(bitPlane, raw, vsc);
-                case 1 -> refinement(bitPlane, raw);
+                case 0 -> significance(plane, raw, vsc);
+                case 1 -> refinement(plane, raw);
                 default -> {
-                    cleanup(bitPlane, vsc);
+                    cleanup(plane, vsc);
                     if ((style & ComponentCoding.SEGMENTATION_SYMBOLS) != 0) {
                         for (var i = 1; i < 5; i++) {
                             encode(Tier1Tables.UNI, i % 2);
@@ -302,21 +360,211 @@ final class Tier1Encoder {
     }
 
     /**
-     * Quantizes one coefficient to the coder's fixed-point form with
-     * {@link Tier1Tables#NMSEDEC_FRACBITS} fractional bits.
+     * Scales up the quantized coefficients of a code-block that a region of interest mask selects, in the
+     * stripe-column order of {@link #data}: the integer part of each magnitude moves up by {@code shift} bits, and
+     * its fractional bits stay below the lowest bit-plane.
      *
-     * @param samples    the integer coefficients
-     * @param floats     the floating-point coefficients
-     * @param index      the coefficient index
-     * @param stepSize   the step size
-     * @param reversible whether the coefficients are integers
-     * @return the fixed-point value
+     * @param mask the mask, in the layout of the coefficients
+     * @param offset the index of the block's first coefficient
+     * @param stride the row stride of the coefficients
+     * @param w the block width
+     * @param h the block height
+     * @param shift the scaling exponent
      */
-    private static int quantize(int[] samples, float[] floats, int index, float stepSize, boolean reversible) {
-        if (reversible) {
-            return samples[index] << Tier1Tables.NMSEDEC_FRACBITS;
+    private void scale(byte[] mask, int offset, int stride, int w, int h, int shift) {
+        var position = 0;
+        var k = 0;
+        for (; k < (h & ~3); k += 4) {
+            for (var i = 0; i < w; i++) {
+                for (var r = 0; r < 4; r++) {
+                    if (mask[offset + (k + r) * stride + i] != 0) {
+                        data[position] = scaled(data[position], shift);
+                    }
+                    position++;
+                }
+            }
         }
-        return (int) (long) Math.rint((floats[index] / stepSize) * (1 << Tier1Tables.NMSEDEC_FRACBITS));
+        if (k < h) {
+            for (var i = 0; i < w; i++) {
+                for (var r = k; r < h; r++) {
+                    if (mask[offset + r * stride + i] != 0) {
+                        data[position] = scaled(data[position], shift);
+                    }
+                    position++;
+                }
+            }
+        }
+    }
+
+    /**
+     * Scales up the integer part of a fixed-point coefficient.
+     *
+     * @param value the signed fixed-point value
+     * @param shift the scaling exponent
+     * @return the scaled value
+     */
+    private static int scaled(int value, int shift) {
+        var magnitude = Math.abs(value);
+        var fraction = (1 << Tier1Tables.NMSEDEC_FRACBITS) - 1;
+        var result = ((magnitude >>> Tier1Tables.NMSEDEC_FRACBITS) << (shift + Tier1Tables.NMSEDEC_FRACBITS))
+                | (magnitude & fraction);
+        return value < 0 ? -result : result;
+    }
+
+    /**
+     * Copies the integer coefficients of a code-block into {@link #data} in stripe-column order, unscaled.
+     *
+     * @param samples the integer coefficients
+     * @param offset the index of the block's first coefficient
+     * @param stride the row stride of the coefficients
+     * @param w the block width
+     * @param h the block height
+     * @return the bitwise or of the coefficient magnitudes, negative when a coefficient is {@link Integer#MIN_VALUE}
+     */
+    private int gather(int[] samples, int offset, int stride, int w, int h) {
+        var bound = 0;
+        var position = 0;
+        var k = 0;
+        for (; k < (h & ~3); k += 4) {
+            for (var i = 0; i < w; i++) {
+                for (var r = 0; r < 4; r++) {
+                    var value = samples[offset + (k + r) * stride + i];
+                    bound |= Math.abs(value);
+                    data[position++] = value;
+                }
+            }
+        }
+        if (k < h) {
+            for (var i = 0; i < w; i++) {
+                for (var r = k; r < h; r++) {
+                    var value = samples[offset + r * stride + i];
+                    bound |= Math.abs(value);
+                    data[position++] = value;
+                }
+            }
+        }
+        return bound;
+    }
+
+    /**
+     * Quantizes the floating-point coefficients of a code-block into {@link #data} in stripe-column order, in the
+     * coder's fixed-point form with {@link Tier1Tables#NMSEDEC_FRACBITS} fractional bits, saturated at a limit.
+     *
+     * @param floats the floating-point coefficients
+     * @param offset the index of the block's first coefficient
+     * @param stride the row stride of the coefficients
+     * @param w the block width
+     * @param h the block height
+     * @param stepSize the step size
+     * @param limit the largest fixed-point magnitude
+     */
+    private void quantize(float[] floats, int offset, int stride, int w, int h, float stepSize, int limit) {
+        var position = 0;
+        var k = 0;
+        for (; k < (h & ~3); k += 4) {
+            for (var i = 0; i < w; i++) {
+                for (var r = 0; r < 4; r++) {
+                    data[position++] = Math.clamp(quantize(floats[offset + (k + r) * stride + i], stepSize),
+                            -limit, limit);
+                }
+            }
+        }
+        if (k < h) {
+            for (var i = 0; i < w; i++) {
+                for (var r = k; r < h; r++) {
+                    data[position++] = Math.clamp(quantize(floats[offset + r * stride + i], stepSize),
+                            -limit, limit);
+                }
+            }
+        }
+    }
+
+    /**
+     * Quantizes one floating-point coefficient to the coder's fixed-point form.
+     *
+     * @param value the coefficient
+     * @param stepSize the step size
+     * @return the fixed-point value, with {@link Tier1Tables#NMSEDEC_FRACBITS} fractional bits
+     */
+    private static long quantize(float value, float stepSize) {
+        return (long) Math.rint((value / stepSize) * (1 << Tier1Tables.NMSEDEC_FRACBITS));
+    }
+
+    /**
+     * Loads the coefficients of a wide code-block into {@link #wideData} in stripe-column order and sign-magnitude
+     * form: saturated at {@code maxBitPlanes}, the coefficients a region of interest mask selects scaled up, as the
+     * 31-bit form does.
+     *
+     * @param samples the integer coefficients, already copied to {@link #data} by {@link #gather}, or {@code null}
+     * @param wideSamples the 64-bit integer coefficients, or {@code null}
+     * @param floats the floating-point coefficients
+     * @param offset the index of the block's first coefficient
+     * @param stride the row stride of the coefficients
+     * @param w the block width
+     * @param h the block height
+     * @param stepSize the step size
+     * @param reversible whether the coefficients are integers
+     * @param mask the region of interest mask, or {@code null}
+     * @param shift the scaling of the coefficients the mask selects, 0 for none
+     * @param maxBitPlanes the number of magnitude bit-planes above which a coefficient saturates, or 0 for none
+     * @return the number of magnitude bit-planes of the largest coefficient
+     * @throws IllegalArgumentException if a coefficient needs more than {@link #MAX_BIT_PLANES} magnitude bit-planes
+     */
+    private int loadWide(int[] samples, long[] wideSamples, float[] floats, int offset, int stride, int w, int h,
+                         float stepSize, boolean reversible, byte[] mask, int shift, int maxBitPlanes) {
+        if (wideData == null) {
+            wideData = new long[data.length];
+        }
+        var limit = maxBitPlanes > 0 && maxBitPlanes + Tier1Tables.NMSEDEC_FRACBITS < 63
+                ? (1L << (maxBitPlanes + Tier1Tables.NMSEDEC_FRACBITS)) - 1 : Long.MAX_VALUE;
+        var integral = MAX_BIT_PLANES - shift;
+        var max = 0L;
+        var position = 0;
+        var k = 0;
+        while (k < h) {
+            var rows = Math.min(4, h - k);
+            for (var i = 0; i < w; i++) {
+                for (var r = 0; r < rows; r++) {
+                    var index = offset + (k + r) * stride + i;
+                    long value;
+                    if (!reversible) {
+                        value = Math.clamp(quantize(floats[index], stepSize), -limit, limit);
+                    } else {
+                        var integer = samples != null ? data[position] : wideSamples[index];
+                        if (integer >= 1L << integral || integer <= -(1L << integral)) {
+                            throw new IllegalArgumentException("a coefficient needs more than " + MAX_BIT_PLANES
+                                    + " magnitude bit-planes");
+                        }
+                        value = integer << Tier1Tables.NMSEDEC_FRACBITS;
+                    }
+                    var magnitude = Math.abs(value);
+                    if (shift > 0 && mask[index] != 0) {
+                        var fraction = (1L << Tier1Tables.NMSEDEC_FRACBITS) - 1;
+                        magnitude = ((magnitude >>> Tier1Tables.NMSEDEC_FRACBITS)
+                                << (shift + Tier1Tables.NMSEDEC_FRACBITS)) | (magnitude & fraction);
+                    }
+                    max = Math.max(max, magnitude);
+                    wideData[position++] = value < 0 ? magnitude | Long.MIN_VALUE : magnitude;
+                }
+            }
+            k += rows;
+        }
+        return max != 0 ? 64 - Long.numberOfLeadingZeros(max) - Tier1Tables.NMSEDEC_FRACBITS : 0;
+    }
+
+    /**
+     * Loads into {@link #data} the window of the magnitudes of a wide code-block that starts at a bit: each word
+     * takes the sign in bit 31 and magnitude bits {@code base} to {@code base + 30} below it.
+     *
+     * @param base the lowest magnitude bit of the window
+     * @param count the number of coefficients
+     */
+    private void window(int base, int count) {
+        windowBase = base;
+        for (var i = 0; i < count; i++) {
+            var value = wideData[i];
+            data[i] = ((int) ((value & Long.MAX_VALUE) >>> base) & 0x7FFFFFFF) | ((int) (value >>> 63) << 31);
+        }
     }
 
     /**
@@ -349,7 +597,7 @@ final class Tier1Encoder {
      *
      * @param nmsedec     the pass's normalized distortion reduction
      * @param level       the decomposition level
-     * @param orientation the orientation
+     * @param orientation the sub-band orientation, 0 to 3
      * @param bitPlane    the bit-plane
      * @param reversible  whether the 5-3 wavelet is used
      * @param stepSize    the step size
@@ -367,9 +615,34 @@ final class Tier1Encoder {
             norm = norm(level, orientation, false);
             step /= (1 << gain);
         }
-        var w = weight * norm * step * (1 << bitPlane);
+        var w = weight * norm * step * Math.scalb(1.0, bitPlane);
         w *= w * nmsedec / 8192.0;
         return w;
+    }
+
+    /**
+     * Returns the weight of a squared error of one quantization step in the distortion a pass's
+     * weighted reduction measures, as {@link #weightedDistortion} weighs it.
+     *
+     * @param level the decomposition level
+     * @param orientation the sub-band orientation, 0 to 3
+     * @param reversible whether the 5-3 wavelet is used
+     * @param stepSize the step size
+     * @param weight the component's weight
+     * @return the weight
+     */
+    static double distortionScale(int level, int orientation, boolean reversible, float stepSize, double weight) {
+        double norm;
+        double step = stepSize;
+        if (reversible) {
+            norm = norm(level, orientation, true);
+        } else {
+            var gain = orientation == 0 ? 0 : orientation == 3 ? 2 : 1;
+            norm = norm(level, orientation, false);
+            step /= (1 << gain);
+        }
+        var w = weight * norm * step;
+        return w * w;
     }
 
     /**
@@ -412,7 +685,7 @@ final class Tier1Encoder {
     /**
      * Codes one decision with the MQ coder (C.2).
      *
-     * @param context the context
+     * @param context the context index
      * @param d       the decision
      */
     private void encode(int context, int d) {
