@@ -1,0 +1,21 @@
+# demux dump of matroska/hap.mkv; regenerate with -Dsmalt.test.updateDumps=true
+format MATROSKA
+duration 500000
+seekable true
+metadata ENCODER="Lavf61.7.100"
+track 1 VIDEO HAP timebase=1/1000 duration=500 config=4:48107715
+  video 64x48 orientation=NORMAL rate=10/1 interlacing=PROGRESSIVE
+  color ColorInfo[matrix=IDENTITY, range=FULL, primaries=UNSPECIFIED, transfer=UNSPECIFIED, chromaSiting=UNSPECIFIED, masteringDisplay=Optional.empty, contentLightLevel=Optional.empty]
+  metadata DURATION="00:00:00.500000000"
+  metadata ENCODER="Lavc61.19.100 hap"
+packets 5
+0 t1 pts=0 dts=0 dur=100 flags=KEY size=609 crc=37c5c5ff
+1 t1 pts=100 dts=100 dur=100 flags=KEY size=637 crc=7249c527
+2 t1 pts=200 dts=200 dur=100 flags=KEY size=620 crc=0d0269dd
+3 t1 pts=300 dts=300 dur=100 flags=KEY size=599 crc=b00ba4c3
+4 t1 pts=400 dts=400 dur=100 flags=KEY size=601 crc=ab7997ab
+seek 0: t1@0
+seek 166666: t1@1
+seek 333333: t1@3
+seek 500000: end
+seek -1000000: t1@0

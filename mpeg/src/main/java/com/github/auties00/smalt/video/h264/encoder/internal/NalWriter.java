@@ -30,6 +30,21 @@ final class NalWriter {
     private int size;
 
     /**
+     * The index of the header byte of each unit assembled.
+     */
+    private int[] unitStarts = new int[16];
+
+    /**
+     * The length of each unit assembled.
+     */
+    private int[] unitLengths = new int[16];
+
+    /**
+     * The number of units assembled.
+     */
+    private int units;
+
+    /**
      * Constructs a writer.
      *
      * @param capacity the initial capacity in bytes
@@ -57,6 +72,7 @@ final class NalWriter {
         buffer[size++] = (byte) ((nalRefIdc << 5) | nalUnitType);
         size = escape(payload, length, buffer, size);
         writePrefix(start, size - start - 4);
+        record(start + 4, size - start - 4);
     }
 
     /**
@@ -71,6 +87,85 @@ final class NalWriter {
         System.arraycopy(unit, 0, buffer, start + 4, unit.length);
         size = start + 4 + unit.length;
         writePrefix(start, unit.length);
+        record(start + 4, unit.length);
+    }
+
+    /**
+     * Appends {@code cabac_zero_word}s to a slice unit already assembled, each as the escaped bytes
+     * {@code 00 00 03}, moving the units after it and updating its length prefix.
+     *
+     * <p>The unit must end with its {@code rbsp_slice_trailing_bits}, or with words appended
+     * before; either way the bytes appended are those emulation prevention gives the words.
+     *
+     * @param index the unit's position, from 0
+     * @param words the number of words, at least 1
+     */
+    void appendZeroWords(int index, int words) {
+        var extra = 3 * words;
+        ensure(extra);
+        var end = unitStarts[index] + unitLengths[index];
+        System.arraycopy(buffer, end, buffer, end + extra, size - end);
+        for (var i = 0; i < extra; i += 3) {
+            buffer[end + i] = 0;
+            buffer[end + i + 1] = 0;
+            buffer[end + i + 2] = 3;
+        }
+        size += extra;
+        unitLengths[index] += extra;
+        writePrefix(unitStarts[index] - 4, unitLengths[index]);
+        for (var i = index + 1; i < units; i++) {
+            unitStarts[i] += extra;
+        }
+    }
+
+    /**
+     * Records the position of a unit just appended.
+     *
+     * @param start the index of its header byte
+     * @param length its length
+     */
+    private void record(int start, int length) {
+        if (units == unitStarts.length) {
+            unitStarts = Arrays.copyOf(unitStarts, 2 * units);
+            unitLengths = Arrays.copyOf(unitLengths, 2 * units);
+        }
+        unitStarts[units] = start;
+        unitLengths[units] = length;
+        units++;
+    }
+
+    /**
+     * {@return the number of units assembled}
+     */
+    int unitCount() {
+        return units;
+    }
+
+    /**
+     * Returns the index in {@link #buffer()} of the header byte of a unit assembled.
+     *
+     * @param index the unit's position, from 0
+     * @return the index
+     */
+    int unitStart(int index) {
+        return unitStarts[index];
+    }
+
+    /**
+     * Returns the escaped length of a unit assembled, header byte included.
+     *
+     * @param index the unit's position, from 0
+     * @return the length in bytes
+     */
+    int unitLength(int index) {
+        return unitLengths[index];
+    }
+
+    /**
+     * {@return the buffer holding the assembled units, valid until the next append}
+     */
+    byte[] buffer() {
+        return buffer;
     }
 
     /**
@@ -152,7 +247,20 @@ final class NalWriter {
     byte[] take() {
         var result = Arrays.copyOf(buffer, size);
         size = 0;
+        units = 0;
         return result;
+    }
+
+    /**
+     * Discards the bytes assembled after a size.
+     *
+     * @param size the number of bytes to keep, at most {@link #size()}
+     */
+    void truncate(int size) {
+        this.size = size;
+        while (units > 0 && unitStarts[units - 1] >= size) {
+            units--;
+        }
     }
 
     /**
@@ -160,6 +268,7 @@ final class NalWriter {
      */
     void clear() {
         size = 0;
+        units = 0;
     }
 
     /**

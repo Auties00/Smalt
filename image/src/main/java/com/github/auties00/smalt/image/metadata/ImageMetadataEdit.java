@@ -1,6 +1,5 @@
 package com.github.auties00.smalt.image.metadata;
 
-import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.color.ColorProfile;
@@ -160,8 +159,14 @@ public final class ImageMetadataEdit {
      * {@return what happens to the ICC color profile, with the replacing profile when it is replaced;
      * {@link Change.Keep} by default}
      *
-     * <p>The ICC bytes of a replacing profile are written unchanged. A high-dynamic-range profile, which
-     * has no ICC form, is rejected.
+     * <p>The ICC bytes of a replacing profile are written unchanged; a high-dynamic-range profile is
+     * written in its ICC form, whose {@code cicp} tag carries its PQ or HLG code points. In a PNG file
+     * a replacing profile also replaces the {@code sRGB}, {@code cICP}, {@code mDCV} and {@code cLLI}
+     * chunks, which take precedence over {@code iCCP}: a high-dynamic-range profile is written as a
+     * {@code cICP} chunk, with {@code mDCV} and {@code cLLI} chunks when its
+     * {@link ColorProfile#colorInfo()} has a mastering display or a content light level, followed by
+     * the {@code iCCP} chunk unless the image has a grayscale color type, which the RGB ICC form cannot
+     * describe.
      */
     public Change<ColorProfile> colorProfile() {
         return colorProfile;
@@ -210,7 +215,9 @@ public final class ImageMetadataEdit {
 
     /**
      * {@return whether the metadata of no other kind is removed: JPEG application segments other
-     * than JFIF, Adobe and MPF, and PNG {@code tIME}; {@code false} by default}
+     * than JFIF, Adobe and MPF, PNG {@code tIME}, and the TIFF Photoshop image resources and the
+     * IFD0 entries of types {@link com.github.auties00.smalt.image.exif.ExifValue ExifValue} does not
+     * represent; {@code false} by default}
      */
     public boolean removesOtherMetadata() {
         return removeOther;
@@ -618,13 +625,8 @@ public final class ImageMetadataEdit {
          * Returns the edit holding the settings of this builder.
          *
          * @return the edit
-         * @throws MediaException.Unsupported if the replacing color profile has no ICC form (a
-         * high-dynamic-range profile)
          */
         public ImageMetadataEdit build() {
-            if (colorProfile instanceof Change.Replace<ColorProfile>(var profile) && profile.isHighDynamicRange()) {
-                throw new MediaException.Unsupported("icc", "a high-dynamic-range profile has no ICC form");
-            }
             return new ImageMetadataEdit(this);
         }
     }
