@@ -52,17 +52,17 @@ final class Mp3HybridTransform {
     static {
         for (var i = 0; i < 36; i++) {
             for (var m = 0; m < 18; m++) {
-                LONG_TABLE[18 * i + m] = (float) (Math.cos(Math.PI / 72 * (2 * i + 19) * (2 * m + 1)) / 9);
+                LONG_TABLE[18 * i + m] = (float) (StrictMath.cos(Math.PI / 72 * (2 * i + 19) * (2 * m + 1)) / 9);
             }
         }
         for (var i = 0; i < 12; i++) {
             for (var m = 0; m < 6; m++) {
-                SHORT_TABLE[6 * i + m] = (float) (Math.cos(Math.PI / 24 * (2 * i + 7) * (2 * m + 1)) / 3);
+                SHORT_TABLE[6 * i + m] = (float) (StrictMath.cos(Math.PI / 24 * (2 * i + 7) * (2 * m + 1)) / 3);
             }
-            SHORT_WINDOW[i] = (float) Math.sin(Math.PI / 12 * (i + 0.5));
+            SHORT_WINDOW[i] = (float) StrictMath.sin(Math.PI / 12 * (i + 0.5));
         }
         for (var i = 0; i < 36; i++) {
-            WINDOWS[Mp3CodedGranule.LONG][i] = (float) Math.sin(Math.PI / 36 * (i + 0.5));
+            WINDOWS[Mp3CodedGranule.LONG][i] = (float) StrictMath.sin(Math.PI / 36 * (i + 0.5));
         }
         var start = WINDOWS[Mp3CodedGranule.START];
         var stop = WINDOWS[Mp3CodedGranule.STOP];
@@ -75,7 +75,7 @@ final class Mp3HybridTransform {
             stop[35 - i] = 1;
         }
         for (var i = 24; i < 30; i++) {
-            start[i] = (float) Math.sin(Math.PI / 12 * (i - 18 + 0.5));
+            start[i] = (float) StrictMath.sin(Math.PI / 12 * (i - 18 + 0.5));
             stop[35 - i] = start[i];
         }
     }
