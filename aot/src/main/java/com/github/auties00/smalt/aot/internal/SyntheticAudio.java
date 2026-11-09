@@ -42,8 +42,8 @@ final class SyntheticAudio {
             var voiced = syllable % 4 != 3;
             var vowel = vowels[(int) ((seed >>> 40) % vowels.length)];
             for (var k = 0; k < 3; k++) {
-                var r = Math.exp(-Math.PI * bandwidths[k] / rate);
-                a1[k] = 2 * r * Math.cos(2 * Math.PI * Math.min(vowel[k], 0.45 * rate) / rate);
+                var r = StrictMath.exp(-Math.PI * bandwidths[k] / rate);
+                a1[k] = 2 * r * StrictMath.cos(2 * Math.PI * Math.min(vowel[k], 0.45 * rate) / rate);
                 a2[k] = -r * r;
             }
             var pitch = 95 + 12 * (syllable % 7);
@@ -54,7 +54,7 @@ final class SyntheticAudio {
                 if (silent) {
                     excitation = 0;
                 } else if (voiced) {
-                    pulse += (pitch + 25 * Math.sin(Math.PI * i / length)) / rate;
+                    pulse += (pitch + 25 * StrictMath.sin(Math.PI * i / length)) / rate;
                     excitation = 0.03 * noise;
                     if (pulse >= 1) {
                         pulse -= 1;
@@ -70,7 +70,7 @@ final class SyntheticAudio {
                     y1[k] = y;
                     x = y * (1 + a2[k]);
                 }
-                out[n] = (float) (x * Math.sin(Math.PI * i / length));
+                out[n] = (float) (x * StrictMath.sin(Math.PI * i / length));
             }
         }
         normalize(out, 0.5f);
@@ -96,17 +96,17 @@ final class SyntheticAudio {
         for (var t = 0; t < frames; t++) {
             var chord = chords[(t / rate) % chords.length];
             var sinceBeat = (t % (rate / 2)) / (double) rate;
-            var envelope = Math.exp(-4 * sinceBeat);
+            var envelope = StrictMath.exp(-4 * sinceBeat);
             double l = 0;
             double r = 0;
             for (var note = 0; note < 4; note++) {
                 var midi = note < 3 ? chord[note] + 12 : chord[0] - 12;
-                var frequency = 440 * Math.pow(2, (midi - 69) / 12.0);
+                var frequency = 440 * StrictMath.pow(2, (midi - 69) / 12.0);
                 double value = 0;
                 for (var h = 0; h < 6; h++) {
                     phases[note][h] += frequency * (h + 1) / rate;
                     phases[note][h] -= Math.floor(phases[note][h]);
-                    value += Math.sin(2 * Math.PI * phases[note][h]) / (h + 1);
+                    value += StrictMath.sin(2 * Math.PI * phases[note][h]) / (h + 1);
                 }
                 var pan = 0.2 + 0.2 * note;
                 l += value * envelope * (1 - pan);
@@ -114,7 +114,7 @@ final class SyntheticAudio {
             }
             seed = seed * 6364136223846793005L + 1442695040888963407L;
             var noise = ((seed >>> 40) / (double) (1L << 24)) - 0.5;
-            var hatEnvelope = Math.exp(-40 * ((t % (rate / 8)) / (double) rate));
+            var hatEnvelope = StrictMath.exp(-40 * ((t % (rate / 8)) / (double) rate));
             var highPassed = noise - hat;
             hat = noise;
             left[t] = (float) (l + 0.3 * highPassed * hatEnvelope);

@@ -12,6 +12,7 @@ import java.util.SplittableRandom;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * The media data spool: copied and held segments, in memory and spilled past the memory limit,
@@ -21,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class MdatSpoolTest {
     @ParameterizedTest(name = "{0} bytes")
     @ValueSource(ints = {0, 1, 70_000, 3 << 20, MdatSpool.MEMORY_LIMIT, MdatSpool.MEMORY_LIMIT + 1, (MdatSpool.MEMORY_LIMIT * 3) / 2})
-    @DisplayName("transfers exactly the appended bytes, whether written, held or spilled")
+    @DisplayName("transfers exactly the appended bytes, or any range of them, whether written, held or spilled")
     void roundTrip(int total) {
         var random = new SplittableRandom(total);
         var expected = new ByteArrayOutputStream();
@@ -47,6 +48,16 @@ class MdatSpoolTest {
             var output = new MemoryChannel();
             spool.transferTo(MediaSink.of(output));
             assertArrayEquals(expected.toByteArray(), output.toByteArray());
+            var bytes = expected.toByteArray();
+            for (var round = 0; round < 12 && total > 0; round++) {
+                var from = random.nextInt(total);
+                var length = random.nextInt(total - from + 1);
+                var range = new MemoryChannel();
+                spool.transferTo(MediaSink.of(range), from, length);
+                assertArrayEquals(Arrays.copyOfRange(bytes, from, from + length), range.toByteArray(),
+                        "range " + from + " + " + length);
+            }
+            assertThrows(IndexOutOfBoundsException.class, () -> spool.transferTo(MediaSink.of(new MemoryChannel()), total, 1));
         }
     }
 }
