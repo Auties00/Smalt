@@ -13,8 +13,10 @@
 #            test (SMALT_TEST_CAMERA_HOTPLUG), and a headless sway session with a screen cast portal and PipeWire, plus DMA-BUF sources and headless mutter.
 #   Windows: VB-Audio Virtual Cable (WASAPI loopback pair) and microphone access; the runner's desktop session
 #            (DXGI desktop duplication, GDI, Windows Graphics Capture and PrintWindow of the fixture windows).
-#   macOS:   BlackHole (CoreAudio loopback pair, made the default devices); the runner's display, which the image
-#            grants Screen Recording to (ScreenCaptureKit screens and windows); no camera can be provisioned.
+#   macOS:   BlackHole (CoreAudio loopback pair, made the default devices; hog mode and process taps run on it, the
+#            System Audio Recording permission written by .github/scripts/macos-tap-permission.sh); the runner's
+#            display, which the image grants Screen Recording to (ScreenCaptureKit screens and windows); no camera
+#            can be provisioned.
 # Nightly calls it (nightly.yml with jobs=capture runs it alone).
 name: Capture
 
@@ -314,13 +316,22 @@ jobs:
           SwitchAudioSource -a
           echo "SMALT_CAPTURE_LIVE=true" >> "$GITHUB_ENV"
           echo "SMALT_TEST_AUDIO_LOOPBACK=BlackHole 2ch|BlackHole 2ch" >> "$GITHUB_ENV"
-          echo "SMALT_CAPTURE_REQUIRE_DEVICES=screen,window,audio-loopback,audio-input,audio-output" >> "$GITHUB_ENV"
+          echo "SMALT_CAPTURE_REQUIRE_DEVICES=screen,window,audio-loopback,audio-input,audio-output,audio-tap" >> "$GITHUB_ENV"
 
       # JavaSoundReadTest compares with ffmpeg, which the Linux devices step installs from apt; Windows and macOS
       # restore the pinned oracle build.
       - name: Install the oracle tools (Windows, macOS)
         if: runner.os != 'Linux'
         uses: ./.github/actions/oracles
+
+      # A process tap needs the System Audio Recording permission. CoreAudioTapLiveTest refuses it through the same
+      # script for its refusal test, and grants it again.
+      - name: Grant the process tap permission
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          bash .github/scripts/macos-tap-permission.sh 2
+          echo "SMALT_TEST_TAP_PERMISSION_SCRIPT=$PWD/.github/scripts/macos-tap-permission.sh" >> "$GITHUB_ENV"
 
       - name: Capture tests
         id: test
@@ -354,6 +365,16 @@ jobs:
           name: outcomes-${{ env.SMALT_SKIP_JOB }}
           path: target/outcomes-*.tsv
           retention-days: 14
+
+      # Last, in a JVM of its own: a tap waiting for an answer no one gives holds CoreAudio on the device for minutes.
+      - name: Process tap with the permission never answered
+        if: runner.os == 'macOS' && inputs.tests == ''
+        shell: bash
+        run: |
+          bash .github/scripts/macos-tap-permission.sh none
+          SMALT_TEST_TAP_UNANSWERED=true mvn -B -ntp -pl capture -am test \
+            -Dtest='com/github/auties00/smalt/capture/internal/macos/CoreAudioTapUnansweredLiveTest' \
+            -Dsurefire.failIfNoSpecifiedTests=false
 
       - name: Upload the test reports
         if: always()
