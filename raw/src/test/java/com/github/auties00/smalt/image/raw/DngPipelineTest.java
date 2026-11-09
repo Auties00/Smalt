@@ -90,6 +90,30 @@ class DngPipelineTest {
             assertArrayEquals(dng.samples, unsigned(raw(dng).samples()));
         }
 
+        @ParameterizedTest(name = "NEAR {0}")
+        @ValueSource(ints = {0, 2})
+        @DisplayName("a JPEG-LS codestream in place of the lossless JPEG decodes the same way")
+        void jpegLs(int near) {
+            var dng = TinyDng.ramp(64, 48);
+            dng.compression = 7;
+            dng.white = 65535;
+            var picture = com.github.auties00.smalt.image.Yuv16Picture.allocate(64, 48,
+                    com.github.auties00.smalt.image.ChromaFormat.MONOCHROME, 16, false,
+                    com.github.auties00.smalt.image.ColorInfo.JPEG);
+            for (var i = 0; i < dng.samples.length; i++) {
+                picture.y()[(i / 64) * picture.yStride() + i % 64] = (short) dng.samples[i];
+            }
+            dng.stripData = com.github.auties00.smalt.image.jpeg.JpegLsEncoder.encode(picture,
+                    com.github.auties00.smalt.image.jpeg.JpegLsEncoderOptions.ofNearLossless(near));
+            var decoded = unsigned(raw(dng).samples());
+            for (var i = 0; i < decoded.length; i++) {
+                assertEquals(dng.samples[i], decoded[i], near, "sample " + i);
+            }
+            if (near == 0) {
+                assertArrayEquals(dng.samples, decoded);
+            }
+        }
+
         @ParameterizedTest(name = "{0} bits")
         @ValueSource(ints = {10, 12, 14})
         @DisplayName("bit-packed samples unpack most significant bit first and scale to the white level")

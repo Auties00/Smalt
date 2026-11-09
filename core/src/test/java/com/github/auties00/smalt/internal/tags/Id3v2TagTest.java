@@ -10,6 +10,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.ByteArrayOutputStream;
@@ -146,6 +147,50 @@ class Id3v2TagTest {
             assertEquals("Artist", tags.get(StandardTag.ARTIST).orElseThrow());
             assertEquals("image/png", tags.pictures().getFirst().mediaType());
             assertArrayEquals(picture, tags.pictures().getFirst().data());
+        }
+
+        @ParameterizedTest(name = "{0} as {1}")
+        @CsvSource({"TT1, TIT1", "TT2, TIT2", "TT3, TIT3", "TP1, TPE1", "TP2, TPE2", "TP3, TPE3", "TP4, TPE4",
+                "TCM, TCOM", "TXT, TEXT", "TLA, TLAN", "TAL, TALB", "TRK, TRCK", "TPA, TPOS", "TYE, TYER",
+                "TDA, TDAT", "TIM, TIME", "TCO, TCON", "TEN, TENC", "TSS, TSSE", "TCR, TCOP", "TPB, TPUB",
+                "TBP, TBPM", "TXX, TXXX", "COM, COMM", "ULT, USLT"})
+        @DisplayName("reads every version 2.2 text, comment and lyrics frame like its version 2.3 counterpart")
+        void version22Frames(String old, String current) {
+            // the 2.2 frames carry the payload of their 2.3 counterparts: a text encoding, then the text, or for
+            // comments and lyrics a language and a description first
+            var payload = switch (current) {
+                case "TXXX" -> text("key\0value");
+                case "COMM", "USLT" -> {
+                    var out = new ByteArrayOutputStream();
+                    out.write(0);
+                    out.writeBytes("eng\0words".getBytes(StandardCharsets.ISO_8859_1));
+                    yield out.toByteArray();
+                }
+                case "TYER" -> text("1999");
+                case "TDAT" -> text("2412");
+                case "TIME" -> text("0815");
+                case "TCON" -> text("(17)");
+                default -> text("value of " + current);
+            };
+            // a day counts only next to a year and a time only next to both, which then carry it into the date
+            MediaTags expected;
+            MediaTags actual;
+            if (current.equals("TDAT")) {
+                expected = decode(tag(3, 0, frame(3, "TYER", 0, text("1999")), frame(3, current, 0, payload)));
+                actual = decode(tag(2, 0, frame(2, "TYE", 0, text("1999")), frame(2, old, 0, payload)));
+                assertEquals("1999-12-24", expected.get(StandardTag.DATE).orElseThrow());
+            } else if (current.equals("TIME")) {
+                expected = decode(tag(3, 0, frame(3, "TYER", 0, text("1999")), frame(3, "TDAT", 0, text("2412")),
+                        frame(3, current, 0, payload)));
+                actual = decode(tag(2, 0, frame(2, "TYE", 0, text("1999")), frame(2, "TDA", 0, text("2412")),
+                        frame(2, old, 0, payload)));
+                assertEquals("1999-12-24T08:15", expected.get(StandardTag.DATE).orElseThrow());
+            } else {
+                expected = decode(tag(3, 0, frame(3, current, 0, payload)));
+                actual = decode(tag(2, 0, frame(2, old, 0, payload)));
+            }
+            assertTrue(!expected.entries().isEmpty(), current + " maps to no tag");
+            assertEquals(expected, actual);
         }
 
         @Test

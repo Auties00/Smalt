@@ -116,7 +116,7 @@ final class DtxEncoder {
      * @return the next free parameter
      */
     int encode(boolean computeSidFlag, QPlsf qSt, GcPred predState, short[] ana, int anaOffset, Flag overflow) {
-        if (computeSidFlag || logEnIndex == 0) {
+        if (computeSidFlag) {
             short logEn = 0;
             java.util.Arrays.fill(lLsp, 0);
             for (var i = DTX_HIST_SIZE - 1; i >= 0; i--) {
