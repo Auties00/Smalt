@@ -1,0 +1,15 @@
+# image dump of png/rgba16.png; regenerate with -Dsmalt.test.updateDumps=true
+format PNG
+info ImageInfo[format=PNG, width=48, height=32, hasAlpha=true, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 48x32 rgba8 alpha=true crc=164f0d13
+  format=PNG orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=none
+  density=ASPECT_RATIO 1.0x1.0
+scaled 12x8
+picture 48x32 rgba8 alpha=true crc=164f0d13
+  format=PNG orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=none
+  density=ASPECT_RATIO 1.0x1.0
