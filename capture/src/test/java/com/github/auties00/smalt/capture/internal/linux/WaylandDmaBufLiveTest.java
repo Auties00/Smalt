@@ -55,7 +55,8 @@ class WaylandDmaBufLiveTest {
     private enum Pointer { MAGENTA_AT_A, MAGENTA_AT_B, NONE, GREEN_AT_A }
 
     private static CaptureDevice.Screen device() {
-        Skip.unlessDevice(!Skip.setting("smalt.test.waylandDmaBuf", "SMALT_TEST_WAYLAND_DMABUF").isEmpty(), "wayland-dmabuf",
+        var enabled = !Skip.setting("smalt.test.waylandDmaBuf", "SMALT_TEST_WAYLAND_DMABUF").isEmpty();
+        Skip.unlessDevice(enabled, "wayland-dmabuf",
                 "set SMALT_TEST_WAYLAND_DMABUF where the portal has the DMA-BUF profiles");
         return new CaptureDevice.Screen("wayland:test", "the source", 0, 0, WIDTH, HEIGHT, true);
     }
@@ -370,7 +371,8 @@ class WaylandDmaBufLiveTest {
     @Test
     @DisplayName("headless mutter's metadata pointer is drawn, and moves with the virtual pointer")
     void mutter() {
-        Skip.unlessDevice(!Skip.setting("smalt.test.waylandMutter", "SMALT_TEST_WAYLAND_MUTTER").isEmpty(), "wayland-mutter",
+        var enabled = !Skip.setting("smalt.test.waylandMutter", "SMALT_TEST_WAYLAND_MUTTER").isEmpty();
+        Skip.unlessDevice(enabled, "wayland-mutter",
                 "set SMALT_TEST_WAYLAND_MUTTER where the portal has a stream of headless mutter");
         share("mutter");
         var device = new CaptureDevice.Screen("wayland:mutter", "mutter", 0, 0, 1280, 720, true);
