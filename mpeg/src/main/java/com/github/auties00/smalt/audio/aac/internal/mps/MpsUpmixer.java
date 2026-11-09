@@ -182,7 +182,7 @@ public final class MpsUpmixer {
      * other block.
      */
     public int delayedBlocks() {
-        return delayed;
+        return reconfigured ? 0 : delayed;
     }
 
     /**
@@ -545,8 +545,14 @@ public final class MpsUpmixer {
             ringReal = new float[blocksPerFrame][inputs][slots][bands];
             ringImag = new float[blocksPerFrame][inputs][slots][bands];
             ringQmf = new boolean[blocksPerFrame];
-            ringStart = 0;
+        } else {
+            for (var block : ring) {
+                for (var channel : block) {
+                    Arrays.fill(channel, 0.0f);
+                }
+            }
         }
+        ringStart = 0;
     }
 
     /**

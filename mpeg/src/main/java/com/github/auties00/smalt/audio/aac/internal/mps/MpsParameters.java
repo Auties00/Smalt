@@ -70,6 +70,7 @@ final class MpsParameters {
     int sets = 1;
     int setsPrevious = 1;
     final int[] parameterSlot = new int[MAX_SETS + 1];
+    private final int[] lastParameterSlot = new int[MAX_SETS + 1];
     boolean extendFrame;
     private boolean independent;
 
@@ -299,10 +300,24 @@ final class MpsParameters {
      *
      * <p>Byte alignment is relative to the first bit of the frame.
      *
+     * <p>A frame that fails leaves the parameter sets of the last frame in place, so that {@link #repeat()} keeps them.
+     *
      * @param reader the bit source, positioned at the frame
      * @throws MediaException.Malformed if the frame is invalid
      */
     void read(AacBitReader reader) {
+        var lastSets = sets;
+        System.arraycopy(parameterSlot, 0, lastParameterSlot, 0, parameterSlot.length);
+        try {
+            parse(reader);
+        } catch (RuntimeException exception) {
+            sets = lastSets;
+            System.arraycopy(lastParameterSlot, 0, parameterSlot, 0, parameterSlot.length);
+            throw exception;
+        }
+    }
+
+    private void parse(AacBitReader reader) {
         var start = reader.bitPosition();
         setsPrevious = sets;
         var framing = reader.readFlag();
@@ -422,11 +437,37 @@ final class MpsParameters {
 
     /**
      * Keeps the mapped parameters of the last frame for the next one: its last parameter set becomes the previous
-     * one, and the matrices of the next frame equal it.
+     * one and the only one of the next frame, unsmoothed, so that the matrices of the next frame equal it.
      */
     void repeat() {
         setsPrevious = sets;
         residualFresh = false;
+        var last = sets - 1;
+        if (last > 0) {
+            keepLastSet(cld, last);
+            keepLastSet(icc, last);
+            keepLastSet(downmixGain, last);
+            keepLastSet(treeCld, last);
+            keepLastSet(cpc1, last);
+            keepLastSet(cpc2, last);
+            keepLastSet(tttIcc, last);
+            keepLastSet(tttCld1, last);
+            keepLastSet(tttCld2, last);
+            sets = 1;
+            parameterSlot[0] = slots - 1;
+        }
+        smoothingTime[0] = 256;
+        Arrays.fill(smoothingData[0], 0, bands, 0);
+    }
+
+    private static void keepLastSet(float[][][] values, int last) {
+        for (var box : values) {
+            keepLastSet(box, last);
+        }
+    }
+
+    private static void keepLastSet(float[][] values, int last) {
+        System.arraycopy(values[last], 0, values[0], 0, values[0].length);
     }
 
     private void readExtensions(AacBitReader reader) {

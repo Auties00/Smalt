@@ -1322,6 +1322,113 @@ class MpegSurroundTest {
         }
 
         @Test
+        @DisplayName("keeps the parameter sets of the last frame when a frame fails after its own parameter slots")
+        void failedFrameKeepsParameterSets() {
+            var spatial = spatial();
+            var config = config(spatial.getFirst());
+            var downmix = scaled(noise(1, 2 * FRAME, 0.5f, 101));
+            var reference = new MpsDecoder(config, 48000);
+            var expected = new float[6][2 * FRAME];
+            reference.readFrame(new AacBitReader(spatial.get(1)));
+            reference.decode(downmix, 0, expected, 0);
+            reference.repeatFrame();
+            reference.decode(downmix, FRAME, expected, FRAME);
+
+            var decoder = new MpsDecoder(config, 48000);
+            var actual = new float[6][2 * FRAME];
+            decoder.readFrame(new AacBitReader(spatial.get(1)));
+            decoder.decode(downmix, 0, actual, 0);
+            // differential parameter slots: one set at slot 0, then the frame ends
+            var invalid = new byte[]{(byte) 0b1000_0000};
+            assertThrows(MediaException.Malformed.class, () -> decoder.readFrame(new AacBitReader(invalid)));
+            decoder.repeatFrame();
+            decoder.decode(downmix, FRAME, actual, FRAME);
+            assertSameUpmix(expected, actual);
+        }
+
+        /** Writes a frame of one parameter set that keeps every value of the last frame (data mode 1), unsmoothed. */
+        static byte[] keepingFrame(int boxes, int iccBoxes, int treeBoxes) {
+            var bits = new Bits().put(0, 1).put(0, 3).put(0, 1);
+            for (var i = 0; i < boxes + iccBoxes; i++) {
+                bits.put(1, 2);
+            }
+            bits.put(0, 2);
+            var bytes = bits.bytes();
+            if (treeBoxes == 0) {
+                return bytes;
+            }
+            var extension = new Bits();
+            for (var i = 0; i < treeBoxes; i++) {
+                extension.put(1, 2);
+            }
+            var payload = extension.bytes();
+            var frame = Arrays.copyOf(bytes, bytes.length + 1 + payload.length);
+            frame[bytes.length] = (byte) payload.length;
+            System.arraycopy(payload, 0, frame, bytes.length + 1, payload.length);
+            return frame;
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({"mps-long5151.bs,0", "mps-at71.bs,2"})
+        @DisplayName("repeats the last parameter set of a frame of several sets, like a frame holding only that set")
+        void repeatHoldsLastParameterSet(String name, int treeBoxes) {
+            var spatial = blocks(resource(name));
+            var config = config(spatial.getFirst());
+            var last = 1;
+            // the frames up to the first one of several parameter sets, which bits 1 to 3 of a frame count
+            while (((spatial.get(last)[0] >> 4) & 7) == 0) {
+                last++;
+            }
+            var length = new MpsDecoder(config, 48000).frameLength();
+            var input = scaled(noise(1, (last + 2) * length, 0.5f, 103));
+            var repeating = new MpsDecoder(config, 48000);
+            var keeping = new MpsDecoder(config, 48000);
+            var expected = new float[config.outputChannels()][(last + 2) * length];
+            var actual = new float[config.outputChannels()][(last + 2) * length];
+            for (var f = 1; f <= last; f++) {
+                repeating.readFrame(new AacBitReader(spatial.get(f)));
+                keeping.readFrame(new AacBitReader(spatial.get(f)));
+                repeating.decode(input, (f - 1) * length, actual, (f - 1) * length);
+                keeping.decode(input, (f - 1) * length, expected, (f - 1) * length);
+            }
+            var frame = keepingFrame(5, 4, treeBoxes);
+            for (var f = last; f < last + 2; f++) {
+                repeating.repeatFrame();
+                keeping.readFrame(new AacBitReader(frame));
+                repeating.decode(input, f * length, actual, f * length);
+                keeping.decode(input, f * length, expected, f * length);
+            }
+            assertSameUpmix(expected, actual);
+        }
+
+        @Test
+        @DisplayName("discards the blocks the old configuration delayed even when the new one has the same frames")
+        void reconfigurationDiscardsDelayedBlocks() {
+            var spatial = spatial();
+            var config = config(spatial.getFirst());
+            var upmixer = new MpsUpmixer();
+            upmixer.configure(config);
+            var downmix = noise(1, 4 * BLOCK, 0.5f, 107);
+            var out = new float[6][BLOCK];
+            for (var k = 0; k < 2; k++) {
+                assertTrue(upmixer.prepare(48000, BLOCK));
+                upmixer.upmix(block(downmix, k), out);
+            }
+            assertEquals(1, upmixer.delayedBlocks());
+            upmixer.configure(config);
+            assertEquals(0, upmixer.delayedBlocks(), "a flush has nothing to hand over");
+            assertTrue(upmixer.prepare(48000, BLOCK));
+            var samples = block(downmix, 2);
+            upmixer.upmix(samples, out);
+            assertFalse(upmixer.upmixed());
+            assertArrayEquals(new float[BLOCK], samples[0], 0.0f, "silent as at the start of a stream");
+            assertTrue(upmixer.prepare(48000, BLOCK));
+            samples = block(downmix, 3);
+            upmixer.upmix(samples, out);
+            assertArrayEquals(block(downmix, 2)[0], samples[0], 0.0f, "then the delayed downmix");
+        }
+
+        @Test
         @DisplayName("restarts cleanly when the configuration moves between frames of two blocks and of one")
         void reconfigures() {
             var longFrames = spatial();

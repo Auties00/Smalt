@@ -22,7 +22,7 @@ import java.util.Arrays;
  * order left, right, center, LFE, left surround, right surround and, for the 7.1 trees, the two added channels (left
  * and right center for trees 3 and 5, left and right rear surround for trees 4 and 6). With the arbitrary tree
  * extension, its boxes split the outputs of the tree further, and the output channels are those of the arbitrary tree
- * in ascending order of their loudspeaker position ({@link #outputPositions()}). Binaural, 3D stereo and blind
+ * in ascending order of their loudspeaker position. Binaural, 3D stereo and blind
  * upmixing are not implemented.
  *
  * <p>Instances keep the state of one stream; they are not thread-safe.
@@ -345,14 +345,6 @@ public final class MpsDecoder {
      */
     public int outputChannels() {
         return channelsOut;
-    }
-
-    /**
-     * {@return the loudspeaker positions ({@code bsOutputChannelPosAT}) of the output channels, in output order, when
-     * the arbitrary tree runs, or an empty array for the outputs of the tree}
-     */
-    public int[] outputPositions() {
-        return config.arbitraryTreePositions();
     }
 
     /**
@@ -838,6 +830,9 @@ public final class MpsDecoder {
      * {@return the surround or LFE gain of one output of the tree, by its row, under the arbitrary tree}
      */
     private float treeOutputGain(int row) {
+        // TODO: the reference software gives rows 1 and 4 the surround gain in all the 7.1 trees, also where they are
+        //  the left and right center of trees 3 and 5, which take no such gain without the arbitrary tree. Followed
+        //  as the only source; confirm against ISO/IEC 23003-1, not available.
         return switch (tree) {
             case MpsConfig.TREE_5151 -> row == 3 ? lfeGain : row == 4 || row == 5 ? surroundGain : 1.0f;
             case MpsConfig.TREE_5152, MpsConfig.TREE_525 -> row == 5 ? lfeGain

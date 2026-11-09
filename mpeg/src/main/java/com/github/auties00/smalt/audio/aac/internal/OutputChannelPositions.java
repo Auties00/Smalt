@@ -3,8 +3,8 @@ package com.github.auties00.smalt.audio.aac.internal;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.Speaker;
 
-import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 /**
  * Maps the 5-bit loudspeaker positions of MPEG-D ({@code bsOutputChannelPos} of USAC, {@code bsOutputChannelPosAT} of
@@ -103,12 +103,10 @@ public final class OutputChannelPositions {
      * @return the layout of the reordered channels
      */
     public static ChannelLayout layout(Speaker[] speakers, int[] waveOrder) {
-        var sorted = new ArrayList<Speaker>(speakers.length);
         var placed = new Speaker[speakers.length];
         for (var i = 0; i < speakers.length; i++) {
             placed[waveOrder[i]] = speakers[i];
         }
-        sorted.addAll(Arrays.asList(placed));
-        return new ChannelLayout(sorted);
+        return new ChannelLayout(List.of(placed));
     }
 }

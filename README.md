@@ -1740,7 +1740,9 @@ channels, or two tracks, at 32 kHz in 12 bits. A DV source is copied when no for
   several frames takes them from its fill elements, or from a separate stream one access unit per block, so the
   rest of such a block repeats that frame's parameters; the upmix starts at the first spatial frame whose
   `bsIndependencyFlag` is set. The arbitrary tree's `bsOttDefaultCldAT` is read as the reference software reads
-  it, as the default CLD index (1 is +2 dB), which ISO/IEC 23003-1 may define as 150 dB. The arbitrary tree extension's boxes
+  it, as the default CLD index (1 is +2 dB), which ISO/IEC 23003-1 may define as 150 dB, and the left and right center
+  channels of the 7-2-7 and 7-5-7 trees take the surround gain under the arbitrary tree, also as the reference
+  software has it. The arbitrary tree extension's boxes
   split the outputs into as many as 32 channels on the loudspeaker positions of `bsOutputChannelPosAT`, except under
   the non-uniform CLD quantization of `bsQuantMode` 1 and 2, where the upmix is the tree's alone (the energy
   tracking of its boxes is not specified to Smalt, and the reference software does not implement it), and a 3D
