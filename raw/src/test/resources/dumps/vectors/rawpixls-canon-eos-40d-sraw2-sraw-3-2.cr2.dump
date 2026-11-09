@@ -1,0 +1,10 @@
+# image dump of vectors/rawpixls-canon-eos-40d-sraw2-sraw-3-2.cr2; regenerate with -Dsmalt.test.updateDumps=true
+format RAW
+info ImageInfo[format=RAW, width=1944, height=1296, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 1944x1296 rgba8 alpha=false crc=908f4243
+  format=RAW orientation=NORMAL source=1944x1296
+  icc=520:86132914 exif=918:db4757d2 xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+decoder raw sensor data
+sensor 1944x1296 channels=3 cfa=none neutral=[0.7041101634807538, 0.8260198384024174, 1.0] crc=dd78229a
