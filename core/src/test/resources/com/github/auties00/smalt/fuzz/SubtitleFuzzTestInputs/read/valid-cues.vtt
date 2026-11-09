@@ -1,0 +1,10 @@
+WEBVTT
+
+NOTE seed
+
+intro
+00:00.000 --> 00:00.500 align:start line:10%
+<v Ann>Hello <c.yellow>there</c></v>
+
+00:00.600 --> 00:01.000
+<b>two</b> <ruby>x<rt>y</rt></ruby>

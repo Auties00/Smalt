@@ -1,0 +1,28 @@
+# demux dump of flac/flac.flac; regenerate with -Dsmalt.test.updateDumps=true
+format FLAC
+duration 600000
+seekable true
+metadata encoder="Lavf61.7.100"
+track 0 AUDIO FLAC timebase=1/22050 duration=13230 config=90:047765e0
+  audio rate=22050 bits=24 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 6
+0 t0 pts=0 dts=0 dur=2304 flags=KEY size=5724 crc=c3a2ec42
+1 t0 pts=2304 dts=2304 dur=2304 flags=KEY size=5729 crc=c886ca98
+2 t0 pts=4608 dts=4608 dur=2304 flags=KEY size=5725 crc=1f496e8d
+3 t0 pts=6912 dts=6912 dur=2304 flags=KEY size=5722 crc=fd4df1ab
+4 t0 pts=9216 dts=9216 dur=2304 flags=KEY size=5719 crc=862edbd0
+5 t0 pts=11520 dts=11520 dur=1710 flags=KEY size=4257 crc=4ca4a668
+seek 0: t0@0
+seek 200000: t0@1
+seek 400000: t0@3
+seek 600000: end
+seek -1000000: t0@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format FLAC
+  duration 600000
+  seekable false
+  metadata encoder="Lavf61.7.100"
+  track 0 AUDIO FLAC timebase=1/22050 duration=13230 config=90:047765e0
+    audio rate=22050 bits=24 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH

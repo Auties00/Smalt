@@ -1,0 +1,15 @@
+# image dump of raf/packed12-two-images; regenerate with -Dsmalt.test.updateDumps=true
+format RAW
+info ImageInfo[format=RAW, width=100, height=26, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 100x26 rgba8 alpha=false crc=c7a3e406
+  format=RAW orientation=NORMAL source=100x26
+  icc=520:86132914 exif=none xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+scaled 25x6
+picture 50x13 rgba8 alpha=false crc=401890b2
+  format=RAW orientation=NORMAL source=100x26
+  icc=520:86132914 exif=none xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+decoder raw sensor data
+sensor 100x26 channels=2 cfa=RGGB neutral=[0.58984375, 1.0, 0.7365853658536585] crc=6c974930

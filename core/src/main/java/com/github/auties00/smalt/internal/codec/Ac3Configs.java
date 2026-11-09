@@ -72,9 +72,9 @@ public final class Ac3Configs {
             {Speaker.FRONT_LEFT}, {Speaker.FRONT_CENTER}, {Speaker.FRONT_RIGHT}, {Speaker.SIDE_LEFT},
             {Speaker.SIDE_RIGHT}, {Speaker.FRONT_LEFT_OF_CENTER, Speaker.FRONT_RIGHT_OF_CENTER},
             {Speaker.BACK_LEFT, Speaker.BACK_RIGHT}, {Speaker.BACK_CENTER}, {Speaker.TOP_CENTER},
-            {Speaker.UNKNOWN, Speaker.UNKNOWN}, {Speaker.UNKNOWN, Speaker.UNKNOWN},
+            {Speaker.SURROUND_DIRECT_LEFT, Speaker.SURROUND_DIRECT_RIGHT}, {Speaker.WIDE_LEFT, Speaker.WIDE_RIGHT},
             {Speaker.TOP_FRONT_LEFT, Speaker.TOP_FRONT_RIGHT}, {Speaker.TOP_FRONT_CENTER},
-            {Speaker.TOP_BACK_LEFT, Speaker.TOP_BACK_RIGHT}, {Speaker.UNKNOWN}, {Speaker.LOW_FREQUENCY}};
+            {Speaker.TOP_BACK_LEFT, Speaker.TOP_BACK_RIGHT}, {Speaker.LOW_FREQUENCY_2}, {Speaker.LOW_FREQUENCY}};
 
     /**
      * The custom channel map location of each bit of the {@code chan_loc} field of the
@@ -194,6 +194,20 @@ public final class Ac3Configs {
         }
         var length = ((((data[offset + 2] & 0x07) << 8) | (data[offset + 3] & 0xFF)) + 1) * 2;
         return length < 8 ? -1 : length;
+    }
+
+    /**
+     * Returns whether the sync frame whose header starts at an offset starts an access unit.
+     *
+     * @param data the bytes, holding at least six from {@code offset}
+     * @param offset the offset of the sync word
+     * @return {@code true} for an AC-3 frame or an independent E-AC-3 frame of substream 0
+     */
+    public static boolean startsAccessUnit(byte[] data, int offset) {
+        if ((data[offset + 5] & 0xFF) >> 3 <= 10) {
+            return true;
+        }
+        return ((data[offset + 2] & 0xFF) >> 6) != 1 && ((data[offset + 2] >> 3) & 0x07) == 0;
     }
 
     /**
