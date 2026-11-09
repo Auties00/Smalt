@@ -453,6 +453,88 @@ final class Mp2Multichannel {
     }
 
     /**
+     * Gathers the bits of the extension of three Layer I frames: each frame's bits after its audio data, less its
+     * ancillary bytes, followed by the data of the extension frame when one is given.
+     *
+     * @param frames the bytes of each frame
+     * @param starts the bit offset in each frame where its audio data ends
+     * @param ends the bit offset in each frame where it ends
+     * @param extension the bytes holding the extension frame, or {@code null}
+     * @param extensionOffset the index of the extension frame
+     * @param extensionLength the extension frame length in bytes
+     * @return {@code false} when the frames have no room for an extension header
+     */
+    boolean gather(byte[][] frames, int[] starts, int[] ends, byte[] extension, int extensionOffset,
+                   int extensionLength) {
+        var first = starts[0];
+        if (ends[0] - first < 32) {
+            return false;
+        }
+        var present = (frames[0][first >> 3] >> (7 - (first & 7))) & 1;
+        var ancillary = 0;
+        if (present == 1) {
+            for (var i = 1; i <= 8; i++) {
+                var position = first + i;
+                ancillary = ancillary << 1 | ((frames[0][position >> 3] >> (7 - (position & 7))) & 1);
+            }
+        }
+        var total = 0;
+        for (var part = 0; part < frames.length; part++) {
+            total += Math.max(0, ends[part] - starts[part] - ancillary * 8);
+        }
+        if (ends[0] - first - ancillary * 8 < 32) {
+            return false;
+        }
+        var extensionBits = present == 1 && extension != null ? (extensionLength - 5) * 8 : 0;
+        total += extensionBits;
+        if (data.length < (total + 7) / 8 + 4) {
+            data = new byte[(total + 7) / 8 + 1024];
+        }
+        Arrays.fill(data, 0, (total + 7) / 8 + 4, (byte) 0);
+        var to = 0;
+        for (var part = 0; part < frames.length; part++) {
+            var count = Math.max(0, ends[part] - starts[part] - ancillary * 8);
+            copyBits(frames[part], starts[part], data, to, count);
+            to += count;
+        }
+        if (extensionBits > 0) {
+            copyBits(extension, (extensionOffset + 5) * 8, data, to, extensionBits);
+        }
+        bits = total;
+        return true;
+    }
+
+    /**
+     * Sets the channel configuration for a frame whose channels {@link Layer3Multichannel} decoded into
+     * {@link #channelSamples(int)} and {@link #lfeSamples()}, instead of {@link #decode}.
+     *
+     * @param baseChannels the number of base channels, 1 or 2
+     * @param center the {@code centre} field of the extension header
+     * @param surround the {@code surround} field of the extension header
+     * @param lfe the {@code lfe} field of the extension header
+     */
+    void setChannels(int baseChannels, int center, int surround, int lfe) {
+        this.stereo = baseChannels;
+        this.center = center;
+        this.surround = surround;
+        this.lfe = lfe;
+    }
+
+    /**
+     * Sets the multilingual channels of a frame whose channels {@link Layer3Multichannel} decoded into
+     * {@link #multilingualSamples(int)}.
+     *
+     * @param count the number of channels decoded
+     * @param halfRate whether they are coded at half the frame's sampling rate
+     * @param cutShort whether they ran past the end of the extension, so none decoded
+     */
+    void setMultilingual(int count, boolean halfRate, boolean cutShort) {
+        this.multilingualDecoded = count;
+        this.multilingualFs = halfRate ? 1 : 0;
+        this.multilingualCutShort = cutShort;
+    }
+
+    /**
      * Copies a run of bits between byte arrays, most significant bit first.
      *
      * @param source the source bytes

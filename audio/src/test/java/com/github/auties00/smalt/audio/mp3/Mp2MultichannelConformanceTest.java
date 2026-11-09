@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.audio.mp3;
 
+import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.container.mpeg.MpegAudioDemuxer;
@@ -21,6 +22,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -36,8 +38,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * accuracy as they stand. The 16-bit ones were written by the originators' decoders, which round to nearest or
  * toward zero, so each channel is rounded both ways and must stay within one unit of the reference everywhere and
  * meet full accuracy in the rounding that matches; sets 02 and 09, whose decoder rounds differently still, meet
- * limited accuracy. Set 22 (a Layer I multichannel stream) and set 23 (Layer III) are not covered; the second stereo
- * programs of sets 06 and 07 and the multilingual channels of sets 10 and 12 are compared by
+ * limited accuracy. Set 22 is a Layer I multichannel stream, one extension over three frames, and set 23 a Layer III
+ * one; the second stereo programs of sets 06 and 07 and the multilingual channels of sets 10 and 12 are compared by
  * {@link Mp2ProgramConformanceTest}.
  */
 class Mp2MultichannelConformanceTest {
@@ -76,6 +78,8 @@ class Mp2MultichannelConformanceTest {
                 "19", "acd3f3320e16a918374ff6d9a4adbc8796c64b5d4f1f34693bd744f3e4a26b56",
                 "20", "19453913ee6484775797f12441a9f58cf05a70841db2671ddcdf9d388019a44a",
                 "21", "64b29c3463d5e945c1421b3099a48b769920c177c1d071994b0d21b9bb29a4f8",
+                "22", "5ac95a62562ac59cd63208790e32c72702836bf98488d2a27df0e409ac53daa5",
+                "23", "5b04e95be8d5d5bdbe73d327d2e4ed218c6361236fc9da2f776fd2c8c38e30c1",
                 "24", "4694a9785bee5ddb94e34b185a6a535c6bb18d0a0de95603fd825593302c8b74",
                 "25", "6d9f855ab57644fabd18f323c1c4f9accbf96459420cc85a47edbc1cb8c84568",
                 "26", "b9890fbc53100a425da1f9c0772b850999d3fdb3f095cb45806b66edb00aeea6",
@@ -142,7 +146,10 @@ class Mp2MultichannelConformanceTest {
         return frames;
     }
 
-    /** Joins each base frame with the extension frame of the same index, as the decoder takes them. */
+    /**
+     * Joins each base frame with the extension frame of the same index, as the decoder takes them; a Layer I stream has
+     * one extension frame per three base frames, which goes with the third.
+     */
     static List<Packet> packets(byte[] base, byte[] extension) {
         List<Packet> packets;
         try (var demuxer = new MpegAudioDemuxer(MediaSource.of(base))) {
@@ -152,12 +159,18 @@ class Mp2MultichannelConformanceTest {
             return packets;
         }
         var frames = extensionFrames(extension);
-        assertEquals(packets.size(), frames.size(), "one extension frame per base frame");
+        var group = frames.size() * 3 == packets.size() ? 3 : 1;
+        assertEquals(packets.size(), frames.size() * group, "one extension frame per base frame or group of three");
         var joined = new ArrayList<Packet>(packets.size());
         for (var i = 0; i < packets.size(); i++) {
             var packet = packets.get(i);
-            var data = Arrays.copyOf(packet.data(), packet.size() + frames.get(i).length);
-            System.arraycopy(frames.get(i), 0, data, packet.size(), frames.get(i).length);
+            if (i % group != group - 1) {
+                joined.add(packet);
+                continue;
+            }
+            var frame = frames.get(i / group);
+            var data = Arrays.copyOf(packet.data(), packet.size() + frame.length);
+            System.arraycopy(frame, 0, data, packet.size(), frame.length);
             joined.add(packet.withData(data));
         }
         return joined;
@@ -171,21 +184,23 @@ class Mp2MultichannelConformanceTest {
         var output = new LinkedHashMap<Speaker, AudioPipeline.FloatList>();
         try (var demuxer = new MpegAudioDemuxer(MediaSource.of(files.get(name + ".mpg")))) {
             var decoder = new Mp3Decoder(AudioPipeline.firstAudio(demuxer), options);
+            Consumer<AudioBuffer> sink = buffer -> {
+                if (!layouts.contains(buffer.layout())) {
+                    layouts.add(buffer.layout());
+                }
+                for (var c = 0; c < buffer.channels(); c++) {
+                    var list = output.computeIfAbsent(buffer.layout().speakers().get(c),
+                            ignored -> new AudioPipeline.FloatList());
+                    var plane = buffer.plane(c);
+                    for (var i = 0; i < buffer.frames(); i++) {
+                        list.add(plane[i]);
+                    }
+                }
+            };
             for (var packet : packets) {
-                decoder.decode(packet, buffer -> {
-                    if (!layouts.contains(buffer.layout())) {
-                        layouts.add(buffer.layout());
-                    }
-                    for (var c = 0; c < buffer.channels(); c++) {
-                        var list = output.computeIfAbsent(buffer.layout().speakers().get(c),
-                                ignored -> new AudioPipeline.FloatList());
-                        var plane = buffer.plane(c);
-                        for (var i = 0; i < buffer.frames(); i++) {
-                            list.add(plane[i]);
-                        }
-                    }
-                });
+                decoder.decode(packet, sink);
             }
+            decoder.flush(sink);
         }
         var result = new LinkedHashMap<Speaker, float[]>();
         output.forEach((speaker, list) -> result.put(speaker, list.toArray()));
@@ -201,6 +216,32 @@ class Mp2MultichannelConformanceTest {
                     : (short) (((data[p] & 0xFF) << 8) | (data[p + 1] & 0xFF));
         }
         return out;
+    }
+
+    /** Removes the sixth sample of every twelve. */
+    private static int[] withoutFrameSample5(int[] samples) {
+        var kept = new int[samples.length / 12 * 11];
+        var to = 0;
+        for (var i = 0; i < samples.length && to < kept.length; i++) {
+            if (i % 12 != 5) {
+                kept[to++] = samples[i];
+            }
+        }
+        return kept;
+    }
+
+    /** Asserts low-frequency channel samples within one unit of their reference. */
+    private static void assertLfeWithin(String what, int[] expected, float[] actual) {
+        var reference = new short[expected.length];
+        for (var i = 0; i < reference.length; i++) {
+            reference[i] = (short) expected[i];
+        }
+        var nearest = toPcm16(actual, actual.length, 1, 0, false);
+        var zero = toPcm16(actual, actual.length, 1, 0, true);
+        var matched = Tolerance.Difference.ofPcm(reference, nearest).rms() <= Tolerance.Difference.ofPcm(reference, zero).rms()
+                ? nearest : zero;
+        ONE_UNIT.assertPcm(what, reference, matched);
+        FULL.assertPcm(what, reference, matched);
     }
 
     /** Rounds float samples to 16 bits, to nearest or toward zero, saturating. */
@@ -225,16 +266,34 @@ class Mp2MultichannelConformanceTest {
         var compared = 0;
         for (var entry : CHANNELS.entrySet()) {
             var reference = files.get("test" + set + entry.getKey() + ".pcm");
-            if (reference == null) {
+            // test23.pcm is the Lo/Ro base, which layer3Base compares
+            if (reference == null || (set.equals("23") && entry.getKey().isEmpty())) {
                 continue;
             }
             var speaker = entry.getValue();
             var ours = output.get(speaker);
             assertTrue(ours != null, "test" + set + entry.getKey() + " has no " + speaker + " output in " + layouts);
+            if (set.equals("23")) {
+                // the file ends inside frame 342, which the reference decoder did not output
+                ours = Arrays.copyOf(ours, 341 * 1152);
+            }
             var lfe = speaker == Speaker.LOW_FREQUENCY;
             var wide = !lfe && reference.length == ours.length * 3;
             var expected = samples(reference, wide ? 3 : 2);
             var what = "test" + set + entry.getKey();
+            if (lfe && set.equals("23")) {
+                // the reference breaks the smooth low-frequency channel at the sixth of each frame's twelve samples, at
+                // the frame's overlap, where the standard's transform and this decoder's output stay on the curve
+                expected = withoutFrameSample5(expected);
+                var kept = new float[expected.length];
+                for (var i = 0; i < kept.length; i++) {
+                    var original = i / 11 * 12 + i % 11;
+                    kept[i] = ours[(original % 12 < 5 ? original : original + 1) * 96 + 95];
+                }
+                assertLfeWithin(what, expected, kept);
+                compared++;
+                continue;
+            }
             // the decoder reaches each coded LFE sample at the end of its 96-sample period
             var stride = lfe ? 96 : 1;
             var phase = lfe ? 95 : 0;
@@ -264,6 +323,29 @@ class Mp2MultichannelConformanceTest {
             compared++;
         }
         assertTrue(compared > 0, "test" + set + " has no reference channel");
+    }
+
+    @Test
+    @DisplayName("with the multichannel option off, set 23 decodes to its reference Lo/Ro base channels")
+    void layer3Base() {
+        var files = files("23");
+        var layouts = new ArrayList<ChannelLayout>();
+        var base = decode(files, "23", layouts, Mp3DecoderOptions.builder().multichannel(false).build());
+        assertEquals(List.of(ChannelLayout.STEREO), layouts);
+        var reference = samples(files.get("test23.pcm"), 2);
+        var left = new short[reference.length / 2];
+        var right = new short[reference.length / 2];
+        for (var i = 0; i < left.length; i++) {
+            left[i] = (short) reference[2 * i];
+            right[i] = (short) reference[2 * i + 1];
+        }
+        var lo = base.get(Speaker.FRONT_LEFT);
+        var ro = base.get(Speaker.FRONT_RIGHT);
+        // the file ends inside frame 342, which the reference decoder did not output
+        assertEquals(left.length, 341 * 1152, "test23 base length");
+        // the originators' decoder rounds toward zero
+        FULL.assertPcm("test23 Lo", left, toPcm16(lo, left.length, 1, 0, true));
+        FULL.assertPcm("test23 Ro", right, toPcm16(ro, right.length, 1, 0, true));
     }
 
     @Test

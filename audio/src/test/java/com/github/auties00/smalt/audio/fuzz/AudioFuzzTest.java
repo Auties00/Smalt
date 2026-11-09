@@ -202,7 +202,7 @@ class AudioFuzzTest {
     }
 
     /**
-     * Decodes an MPEG-1 Layer II stream in the {@link FuzzPackets} format through the {@link Mp3Decoder} program
+     * Decodes an MPEG-1 multichannel stream of any layer in the {@link FuzzPackets} format through the {@link Mp3Decoder} program
      * selection, then conceals a lost frame. Options bits 0 and 1 select the program ({@link Mp2Program#MAIN},
      * {@link Mp2Program#SECOND_STEREO}, all multilingual channels, or the one multilingual channel of bits 2 to 4,
      * 1 to 7), and bit 5 turns the CRC check off; every buffer must have the planes of its layout and finite
@@ -244,6 +244,7 @@ class AudioFuzzTest {
             run.step("packet " + index, () -> decoder.decode(new Packet(1, bytes, pts, pts, 1152, true), sink));
         }
         run.step("conceal", () -> decoder.conceal(1152, sink));
+        run.step("flush", () -> decoder.flush(sink));
     }
 
     @FuzzTest

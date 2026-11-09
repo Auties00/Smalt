@@ -83,10 +83,11 @@ public final class Mp3DecoderOptions {
     }
 
     /**
-     * {@return whether MPEG-1 Layer II frames carrying the ISO/IEC 13818-3 multichannel extension decode to
+     * {@return whether MPEG-1 frames carrying the ISO/IEC 13818-3 multichannel extension decode to
      * their full channel configuration; {@code true} by default}
      *
-     * <p>The extension follows the audio data of the frame, in its ancillary data, and continues, when it is
+     * <p>The extension follows the audio data of the frame, in its ancillary data (Layers I and II) or in its main
+     * data after the base channels (Layer III), and continues, when it is
      * larger than the frame holds, in an extension frame (sync word {@code 0x7FF}) that must follow its
      * frame in the same packet. A frame is taken as multichannel when the CRC-16 of its extension matches,
      * which the extension always carries; once a frame of the stream has decoded as multichannel, a later
@@ -95,6 +96,13 @@ public final class Mp3DecoderOptions {
      * channels, without dematrixing, and the other channels decay to silence. With {@link #crcCheck()} off,
      * the extension of such a frame is decoded as it stands instead. Which program of the extension is output
      * is {@link #program()}.
+     *
+     * <p>A Layer I extension spans three frames and yields one buffer of 1152 samples; its extension frame comes after
+     * any frame of the three. The stream does not mark the first frame of a group, so the decoder holds a frame that
+     * may start one and tries the group each frame starts until one decodes: a frame that turns out not to start a
+     * group is output by itself, as its base channels. A Layer III extension has its own side information and bit
+     * reservoir, and joint coding across channels; after a frame whose extension is lost, the frames that need its
+     * reservoir bytes are concealed too.
      *
      * <p>When the setting is off, every frame decodes to its MPEG-1 compatible two channels, the
      * {@code Lo/Ro} downmix of a multichannel stream.

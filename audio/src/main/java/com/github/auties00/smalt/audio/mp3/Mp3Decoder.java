@@ -29,12 +29,13 @@ import java.util.function.Consumer;
  * each frame is taken from its own header, so a track may mix layers. A packet holds one or more
  * complete frames, each starting with its four-byte header; bytes after the last whole frame are
  * ignored. Every frame yields one {@link AudioBuffer} of 384 (Layer I), 576 (MPEG-2 and MPEG-2.5
- * Layer III) or 1152 samples per channel, in the frame's own sample rate and channel count: a
+ * Layer III) or 1152 samples per channel, in the frame's own sample rate and channel count, except that three
+ * Layer I frames that decode with their multichannel extension yield one buffer of 1152: a
  * stream that switches between mono and stereo, or between sample rates, produces buffers of
  * different formats. Dual-channel frames decode to a {@link ChannelLayout#STEREO} buffer.
  * Samples are scaled so that full-scale 16-bit output corresponds to {@code [-1, 1)}.
  *
- * <p>With {@link Mp3DecoderOptions#multichannel()} on (the default), MPEG-1 Layer II frames that carry
+ * <p>With {@link Mp3DecoderOptions#multichannel()} on (the default), MPEG-1 frames of any layer that carry
  * the ISO/IEC 13818-3 multichannel extension decode to their full channel configuration, from
  * {@code 3/0} to {@code 3/2} with the low-frequency enhancement channel, in WAVE order (for example
  * {@link ChannelLayout#SURROUND_5_1} for {@code 3/2} with LFE); see {@link Mp3DecoderOptions#multichannel()}
@@ -61,7 +62,9 @@ import java.util.function.Consumer;
  *
  * <p>{@link #sampleRate()} and {@link #layout()} report the track's declared format until the
  * first frame is decoded, and the format of the first decoded frame afterwards. The decoder
- * outputs every frame immediately, so {@link #flush(Consumer)} has nothing to drain. Encoder
+ * outputs every frame immediately, with two exceptions that {@link #flush(Consumer)} drains: a Layer I frame that may
+ * start a multichannel extension waits for the two frames after it, and a Layer III frame with a multichannel extension
+ * waits for the next frame, whose {@code main_data_begin} tells where the extension's data ends in the frame. Encoder
  * delay and padding are not removed here: readers apply {@link AudioTrack#skipSamples()} and
  * {@link AudioTrack#duration()} as the demuxer documents.
  *
@@ -218,6 +221,141 @@ public final class Mp3Decoder implements AudioDecoder {
      * Whether the frame decoded last was output as the selected program, in {@link #buffer}.
      */
     private boolean programFrame;
+
+    /**
+     * The Layer III multichannel extension decoder.
+     */
+    private final Layer3Multichannel layer3Extension;
+
+    /**
+     * The spectra of the base channels of a Layer III frame with an extension: granule, then channel 1 at index 576.
+     */
+    private final float[][] baseSpectrum = new float[2][2 * 576];
+
+    /**
+     * The number of Layer I frames held until their extension can be decoded, at most 2 between frames.
+     */
+    private int heldFrames;
+
+    /**
+     * The held Layer I frames, each from its first byte.
+     */
+    private final byte[][] heldBytes = new byte[3][];
+
+    /**
+     * The bit offset in each held frame where its audio data ends.
+     */
+    private final int[] heldStarts = new int[3];
+
+    /**
+     * The bit offset in each held frame where it ends.
+     */
+    private final int[] heldEnds = new int[3];
+
+    /**
+     * The extension frame each held frame's packet carried after it, as many bytes as {@link #heldExtensionLengths}
+     * says.
+     */
+    private final byte[][] heldExtensions = new byte[3][];
+
+    /**
+     * The length of the extension frame of each held frame, 0 for none.
+     */
+    private final int[] heldExtensionLengths = new int[3];
+
+    /**
+     * The header of each held frame.
+     */
+    private final int[] heldHeaders = new int[3];
+
+    /**
+     * The number of Layer I frames counted since the last concealment by {@link #skipProgramFrame}.
+     */
+    private int skippedProgramFrames;
+
+    /**
+     * The subband samples of each held frame: frame, then channel 1 at index 576, in the layout of {@link #grbuf}.
+     */
+    private final float[][] heldSamples = new float[3][2 * 576];
+
+    /**
+     * The scalefactor index of each held frame: frame, channel, subband.
+     */
+    private final int[][][] heldScales = new int[3][2][32];
+
+    /**
+     * The allocation of each held frame: frame, channel, subband.
+     */
+    private final int[][][] heldAllocations = new int[3][2][32];
+
+    /**
+     * Gives the extension decoder the scalefactor indices of three held Layer I frames.
+     */
+    private final Mp2Multichannel.BaseScale heldScale = new Mp2Multichannel.BaseScale() {
+        @Override
+        public int index(int channel, int band, int part) {
+            return heldScales[part][channel][band];
+        }
+
+        @Override
+        public int allocation(int channel, int band) {
+            for (var part = 0; part < 3; part++) {
+                if (heldAllocations[part][channel][band] != 0) {
+                    return heldAllocations[part][channel][band];
+                }
+            }
+            return 0;
+        }
+    };
+
+    /**
+     * Whether the frames of an established Layer I extension are known to be in step with the stream, so that a
+     * frame group may decode with its CRC unchecked.
+     */
+    private boolean heldAligned;
+
+    /**
+     * The Layer III frame held until the next frame's {@code main_data_begin} is known, with its extension frame
+     * after it, or {@code null}.
+     */
+    private byte[] pendingFrame;
+
+    /**
+     * The number of frame bytes in {@link #pendingFrame}.
+     */
+    private int pendingLength;
+
+    /**
+     * The length of the extension frame after the frame in {@link #pendingFrame}.
+     */
+    private int pendingExtensionLength;
+
+    /**
+     * Whether the frame in {@link #pendingFrame} is concealed whatever its CRC.
+     */
+    private boolean pendingCorrupt;
+
+    /**
+     * Whether the last Layer III frame had a multichannel extension, so the next one probably has too and is held at
+     * once, without first being parsed.
+     */
+    private boolean layer3NeedsLookahead;
+
+    /**
+     * Whether the frame being decoded turned out to have a multichannel extension before the next frame's
+     * {@code main_data_begin} is known, so it was left undecoded.
+     */
+    private boolean layer3Held;
+
+    /**
+     * The {@code main_data_begin} of the frame after the one being decoded, or {@code -1} when it is not known.
+     */
+    private int nextMainDataBegin = -1;
+
+    /**
+     * Whether the frame decoded last was output through its Layer III extension, in {@link #buffer}.
+     */
+    private boolean layer3ExtensionFrame;
 
     /**
      * The bytes of the extension frame following the frame being decoded, or {@code null}.
@@ -402,6 +540,8 @@ public final class Mp3Decoder implements AudioDecoder {
         }
         this.layer3 = new Layer3(kernel);
         this.layer12 = new Layer12();
+        this.layer3Extension = new Layer3Multichannel(layer3, extension, kernel);
+        layer3Extension.decodeMultilingual(program == Mp2Program.MULTILINGUAL);
         var base = layer12;
         this.baseScale = new Mp2Multichannel.BaseScale() {
             @Override
@@ -465,7 +605,9 @@ public final class Mp3Decoder implements AudioDecoder {
      *
      * <p>The concealment unit is the frame length of the last decoded frame (1152 samples per channel for Layers
      * II and III of MPEG-1, 576 for Layer III of MPEG-2 and MPEG-2.5 and for multilingual channels at half the
-     * sampling rate, 384 for Layer I), or 1152 before the first frame. Every lost frame is concealed as a frame
+     * sampling rate, 384 for Layer I), or 1152 before the first frame. Frames held for a multichannel extension (see
+     * the class description) are output first and counted in the result. Every
+     * lost frame is concealed as a frame
      * failing its CRC is (see the class description), so the run of concealed frames, which fades to silence,
      * continues across the lost frames and the damaged ones around them.
      * A Layer III frame after the loss whose main data begins in a lost frame is concealed too, instead of decoding
@@ -481,14 +623,23 @@ public final class Mp3Decoder implements AudioDecoder {
         var unit = header == 0 ? MAX_FRAME_SAMPLES
                 : programEstablished && isMultichannel(header) ? programFrames : MpegAudioHeader.samplesPerFrame(header);
         var frames = Math.min(Math.max(1, (samples + unit / 2) / unit), Integer.MAX_VALUE / unit);
-        layer3.dropReservoir();
-        afterLoss = true;
+        var released = new int[1];
         ConsumerFailure.<AudioBuffer>run("MPEG audio concealment", output, emit -> {
+            Consumer<AudioBuffer> counting = buffer -> {
+                released[0] += buffer.frames();
+                emit.accept(buffer);
+            };
+            releasePending(0, counting);
+            releaseHeld(counting);
+            layer3.dropReservoir();
+            layer3Extension.dropReservoir();
+            afterLoss = true;
+            heldAligned = false;
             for (var frame = 0; frame < frames; frame++) {
                 concealFrame(header, emit);
             }
         });
-        return frames * unit;
+        return released[0] + frames * unit;
     }
 
     /**
@@ -519,20 +670,20 @@ public final class Mp3Decoder implements AudioDecoder {
                 : outputBuffer(channels, rate);
         conceal(header, channels, out.plane(0), out.plane(channels - 1));
         if (out.channels() > channels) {
-            silenceExtension(out);
+            silenceExtension(out, header);
         }
         out.setFrames(MpegAudioHeader.samplesPerFrame(header));
         output.accept(out);
     }
 
     /**
-     * Returns whether a frame is decoded through the multichannel extension decoder.
+     * Returns whether a frame may carry a multichannel extension.
      *
      * @param header the frame header
-     * @return {@code true} for an MPEG-1 Layer II frame with the extension on
+     * @return {@code true} for an MPEG-1 frame with the extension on
      */
     private boolean isMultichannel(int header) {
-        return multichannel && MpegAudioHeader.layer(header) == 2 && MpegAudioHeader.isMpeg1(header);
+        return multichannel && MpegAudioHeader.isMpeg1(header);
     }
 
     /**
@@ -576,9 +727,27 @@ public final class Mp3Decoder implements AudioDecoder {
             extensionData = extensionSize > 0 ? data : null;
             extensionOffset = following;
             extensionLength = extensionSize;
+            var next = following + extensionSize;
+            nextMainDataBegin = next + MpegAudioHeader.SIZE + 2 < length ? mainDataBegin(data, next) : -1;
             decodeFrame(header, data, offset, Math.min(size, length - offset), corrupt, output);
             offset += size + extensionSize;
         }
+    }
+
+    /**
+     * Returns the {@code main_data_begin} of the Layer III frame at an offset.
+     *
+     * @param data the bytes
+     * @param offset the index of the candidate frame, with at least seven bytes from it
+     * @return the value, or {@code -1} when no MPEG-1 Layer III frame starts there
+     */
+    private static int mainDataBegin(byte[] data, int offset) {
+        var header = MpegAudioHeader.read(data, offset);
+        if (!MpegAudioHeader.isValid(header) || MpegAudioHeader.layer(header) != 3 || !MpegAudioHeader.isMpeg1(header)) {
+            return -1;
+        }
+        var at = offset + MpegAudioHeader.SIZE + (MpegAudioHeader.hasCrc(header) ? 2 : 0);
+        return at + 1 < data.length ? (data[at] & 0xFF) << 1 | (data[at + 1] & 0xFF) >> 7 : -1;
     }
 
     /**
@@ -613,16 +782,58 @@ public final class Mp3Decoder implements AudioDecoder {
      */
     private void decodeFrame(int header, byte[] data, int offset, int length, boolean corrupt,
                              Consumer<AudioBuffer> output) {
+        var layer = MpegAudioHeader.layer(header);
+        var compatible = previousHeader == 0 || MpegAudioHeader.isCompatible(previousHeader, header);
+        if (pendingFrame != null && pendingLength != 0) {
+            var begin = compatible && layer == 3 ? mainDataBegin(data, offset) : 0;
+            var next = nextMainDataBegin;
+            var extensionBytes = extensionData;
+            var extensionAt = extensionOffset;
+            var extensionSize = extensionLength;
+            releasePending(Math.max(0, begin), output);
+            nextMainDataBegin = next;
+            extensionData = extensionBytes;
+            extensionOffset = extensionAt;
+            extensionLength = extensionSize;
+        }
+        if (layer != 1 || !compatible || !isMultichannel(header)) {
+            releaseHeld(output);
+        }
+        if (layer == 3 && compatible && isMultichannel(header) && layer3NeedsLookahead && nextMainDataBegin < 0) {
+            holdLayer3Frame(data, offset, length, corrupt);
+            return;
+        }
+        decodeNow(header, data, offset, length, corrupt, output);
+    }
+
+    /**
+     * Decodes one frame whose lookahead is settled and hands its samples to {@code output}, unless it is a Layer I
+     * frame that waits for the rest of its multichannel frame group.
+     *
+     * @param header the frame header
+     * @param data the packet payload
+     * @param offset the index of the frame header
+     * @param length the number of frame bytes available
+     * @param corrupt whether the frame is concealed whatever its CRC
+     * @param output receives the frame's buffer
+     * @throws MediaException.LimitExceeded if the frame has more channels than the limits allow
+     */
+    private void decodeNow(int header, byte[] data, int offset, int length, boolean corrupt,
+                           Consumer<AudioBuffer> output) {
         if (previousHeader != 0 && !MpegAudioHeader.isCompatible(previousHeader, header)) {
             reset();
+        }
+        if (MpegAudioHeader.layer(header) == 1 && isMultichannel(header)) {
+            previousHeader = header;
+            LimitChecks.checkChannels(limits, MpegAudioHeader.channels(header));
+            decodeLayer1Group(header, data, offset, length, corrupt, output);
+            return;
         }
         previousHeader = header;
         var channels = MpegAudioHeader.channels(header);
         LimitChecks.checkChannels(limits, channels);
         var rate = MpegAudioHeader.sampleRate(header);
         var samples = MpegAudioHeader.samplesPerFrame(header);
-        // TODO: decode the 13818-3 extension of Layer I (one extension per three frames, 13818-4 test22) and of
-        //  Layer III (13818-4 test23); those streams play their Lo/Ro base.
         var multichannelFrame = isMultichannel(header);
         var out = multichannelFrame && programEstablished ? outputBuffer(programLayout, programRate)
                 : multichannelFrame && extensionEstablished ? outputBuffer(extensionLayout, rate)
@@ -639,7 +850,22 @@ public final class Mp3Decoder implements AudioDecoder {
         }
         int status;
         if (MpegAudioHeader.layer(header) == 3) {
+            layer3ExtensionFrame = false;
+            programFrame = false;
+            layer3Held = false;
             status = decodeLayer3(header, channels, left, right, data, offset, corrupt, crcWord);
+            if (layer3Held) {
+                holdLayer3Frame(data, offset, length, corrupt);
+                return;
+            }
+            if (layer3ExtensionFrame) {
+                out = buffer;
+                if (programFrame) {
+                    samples = programFrames;
+                }
+            } else if (status == DECODED && out.channels() > channels) {
+                silenceExtension(out, header);
+            }
         } else if (multichannelFrame) {
             programFrame = false;
             status = decodeMultichannel(header, channels, data, offset, length, corrupt, crcWord);
@@ -656,7 +882,7 @@ public final class Mp3Decoder implements AudioDecoder {
         if (status == CONCEAL) {
             conceal(header, channels, left, right);
             if (out.channels() > channels) {
-                silenceExtension(out);
+                silenceExtension(out, header);
             }
         } else {
             concealedRun = 0;
@@ -713,6 +939,7 @@ public final class Mp3Decoder implements AudioDecoder {
             if (!frameBits.overrun()) {
                 layer3.keepMainData(frameBits);
             }
+            layer3Extension.dropReservoir();
             return CONCEAL;
         }
         var mainDataBegin = layer3.readSideInfo(frameBits, header);
@@ -721,6 +948,15 @@ public final class Mp3Decoder implements AudioDecoder {
             return SILENT;
         }
         var complete = layer3.restoreReservoir(frameBits, mainDataBegin);
+        if (!complete) {
+            layer3Extension.dropReservoir();
+        }
+        if (complete && decodeLayer3Extension(header, channels, left, right)) {
+            if (!layer3Held) {
+                layer3.saveReservoir();
+            }
+            return DECODED;
+        }
         if (complete) {
             var granules = MpegAudioHeader.isMpeg1(header) ? 2 : 1;
             for (var granule = 0; granule < granules; granule++) {
@@ -732,6 +968,149 @@ public final class Mp3Decoder implements AudioDecoder {
         }
         layer3.saveReservoir();
         return complete ? DECODED : afterLoss ? CONCEAL : SILENT;
+    }
+
+    /**
+     * Decodes a Layer III frame with its multichannel extension, when it has one. The base channels are decoded
+     * whenever the frame has an extension header; a frame whose extension cannot be read is output as its base
+     * channels here, in the layout already chosen. When the frame has an extension and the next frame's
+     * {@code main_data_begin} is not known, nothing changes but {@link #layer3Held}: the frame's last bytes that hold
+     * the next frame's main data are not the extension's, whose own reservoir and extension frame continue after its
+     * end.
+     *
+     * @param header the frame header
+     * @param channels the number of base channels
+     * @param left the left output plane
+     * @param right the right output plane, or {@code left} for mono
+     * @return {@code false} when the frame has no extension and is left for plain decoding
+     * @throws MediaException.LimitExceeded if the frame has more channels than the limits allow
+     */
+    private boolean decodeLayer3Extension(int header, int channels, float[] left, float[] right) {
+        if (!isMultichannel(header)) {
+            return false;
+        }
+        var main = layer3.mainBits();
+        var position = main.position;
+        for (var granule = 0; granule < 2 * channels; granule++) {
+            position += layer3.granules[granule].part23Length;
+        }
+        var parsed = position < main.limit
+                && layer3Extension.parse(main, position, Math.max(0, nextMainDataBegin), header, channels, extensionData,
+                extensionOffset, extensionLength, crcCheck || !(extensionEstablished || programEstablished));
+        if (!parsed) {
+            layer3Extension.dropReservoir();
+            layer3NeedsLookahead = false;
+            if (programEstablished) {
+                concealLayer3Program(header, channels);
+                return true;
+            }
+            if (extensionEstablished) {
+                concealedFrames++;
+                layer3Extension.clearExtensionHistory();
+            }
+            return false;
+        }
+        layer3NeedsLookahead = true;
+        if (nextMainDataBegin < 0) {
+            layer3Held = true;
+            return true;
+        }
+        var complete = layer3Extension.readMainData();
+        for (var granule = 0; granule < 2; granule++) {
+            Arrays.fill(baseSpectrum[granule], 0);
+            layer3.decodeSpectrum(header, granule * channels, channels, baseSpectrum[granule]);
+        }
+        if (!complete && programEstablished) {
+            for (var granule = 0; granule < 2; granule++) {
+                layer3.finishGranule(header, granule * channels, channels, baseSpectrum[granule]);
+            }
+            concealProgramFrame();
+            layer3ExtensionFrame = true;
+            return true;
+        }
+        if (!complete) {
+            if (extensionEstablished) {
+                concealedFrames++;
+            }
+            layer3Extension.clearExtensionHistory();
+            for (var granule = 0; granule < 2; granule++) {
+                layer3.finishGranule(header, granule * channels, channels, baseSpectrum[granule]);
+                System.arraycopy(baseSpectrum[granule], 0, grbuf, 0, 2 * 576);
+                keepGood(18, channels);
+                synthesize(18, channels, left, right, granule * 576);
+            }
+            return true;
+        }
+        for (var granule = 0; granule < 2; granule++) {
+            layer3Extension.synthesize(granule, baseSpectrum[granule]);
+        }
+        layer3Extension.configureTarget();
+        layer3ExtensionFrame = true;
+        if (programEstablished && extension.multilingualCutShort()) {
+            concealProgramFrame();
+            return true;
+        }
+        outputExtension(MpegAudioHeader.sampleRate(header));
+        return true;
+    }
+
+    /**
+     * Keeps the base channels of a Layer III frame whose extension cannot be read in step, and conceals the frame in
+     * the format of the selected program, into {@link #buffer}.
+     *
+     * @param header the frame header
+     * @param channels the number of base channels
+     */
+    private void concealLayer3Program(int header, int channels) {
+        for (var granule = 0; granule < 2; granule++) {
+            Arrays.fill(grbuf, 0);
+            layer3.decodeGranule(header, granule * channels, channels, grbuf);
+        }
+        concealProgramFrame();
+        layer3ExtensionFrame = true;
+    }
+
+    /**
+     * Copies a Layer III frame and its extension frame, to decode them when the next frame's {@code main_data_begin}
+     * is known.
+     *
+     * @param data the packet payload
+     * @param offset the index of the frame header
+     * @param length the number of frame bytes available
+     * @param corrupt whether the frame is concealed whatever its CRC
+     */
+    private void holdLayer3Frame(byte[] data, int offset, int length, boolean corrupt) {
+        var extensionSize = extensionData != null ? extensionLength : 0;
+        var size = length + extensionSize;
+        if (pendingFrame == null || pendingFrame.length < size) {
+            pendingFrame = new byte[size];
+        }
+        System.arraycopy(data, offset, pendingFrame, 0, length);
+        if (extensionSize > 0) {
+            System.arraycopy(extensionData, extensionOffset, pendingFrame, length, extensionSize);
+        }
+        pendingLength = length;
+        pendingExtensionLength = extensionSize;
+        pendingCorrupt = corrupt;
+    }
+
+    /**
+     * Decodes the Layer III frame held for its lookahead, if there is one.
+     *
+     * @param nextBegin the {@code main_data_begin} of the frame after it
+     * @param output receives the frame's buffer
+     */
+    private void releasePending(int nextBegin, Consumer<AudioBuffer> output) {
+        if (pendingFrame == null || pendingLength == 0) {
+            return;
+        }
+        var length = pendingLength;
+        pendingLength = 0;
+        extensionData = pendingExtensionLength > 0 ? pendingFrame : null;
+        extensionOffset = length;
+        extensionLength = pendingExtensionLength;
+        nextMainDataBegin = nextBegin;
+        decodeNow(MpegAudioHeader.read(pendingFrame, 0), pendingFrame, 0, length, pendingCorrupt, output);
     }
 
     /**
@@ -776,6 +1155,274 @@ public final class Mp3Decoder implements AudioDecoder {
             }
         }
         return DECODED;
+    }
+
+    /**
+     * Decodes one MPEG-1 Layer I frame of a stream that may carry the multichannel extension, whose data and output
+     * span three frames. A frame with room for an extension header is held until its group is complete. When a group
+     * decodes, it is output at once as one buffer of 1152 samples; when it does not, only its first frame is output,
+     * as plain Layer I, and the next frame is tried as the start of a group, which finds the groups of a stream joined
+     * at any frame and the groups again after a loss. A frame with no such room needs no group: it is output with
+     * those before it. Once a group of the stream decoded to a selected program, such frames instead keep the format
+     * of the program, concealed.
+     *
+     * @param header the frame header
+     * @param data the packet payload
+     * @param offset the index of the frame header
+     * @param length the number of frame bytes available
+     * @param corrupt whether the frame is concealed whatever its CRC
+     * @param output receives the frames' buffers
+     * @throws MediaException.LimitExceeded if the frame has more channels than the limits allow
+     */
+    private void decodeLayer1Group(int header, byte[] data, int offset, int length, boolean corrupt,
+                                   Consumer<AudioBuffer> output) {
+        var channels = MpegAudioHeader.channels(header);
+        frameBits.init(data, offset + MpegAudioHeader.SIZE, length - MpegAudioHeader.SIZE);
+        var crcWord = -1;
+        if (MpegAudioHeader.hasCrc(header)) {
+            crcWord = frameBits.read(16);
+            if (frameBits.overrun() || !crcCheck) {
+                crcWord = -1;
+            }
+        }
+        var lost = corrupt;
+        if (!lost) {
+            layer12.readScaleInfo(header, frameBits);
+            lost = crcWord >= 0 && !crcMatches(data, offset, crcWord, layer12.protectedEnd() - 16);
+        }
+        if (lost) {
+            heldAligned = false;
+            releaseHeld(output);
+            if (programEstablished) {
+                skipProgramFrame(output);
+            } else {
+                concealFrame(header, output);
+            }
+            return;
+        }
+        Arrays.fill(grbuf, 0);
+        for (var part = 0; part < 3; part++) {
+            layer12.dequantizeGranule(grbuf, part * 4, frameBits, 1);
+        }
+        if (frameBits.overrun()) {
+            releaseHeld(output);
+            reset();
+            var out = outputBuffer(channels, MpegAudioHeader.sampleRate(header));
+            for (var plane = 0; plane < out.channels(); plane++) {
+                Arrays.fill(out.plane(plane), 0, 384, 0);
+            }
+            out.setFrames(384);
+            output.accept(out);
+            return;
+        }
+        layer12.applyScalefactors(grbuf, 0);
+        if (heldFrames == 0 && !startsExtension()) {
+            heldAligned = false;
+            outputPlainLayer1(header, channels, grbuf, output);
+            return;
+        }
+        holdLayer1Frame(data, offset, length, frameBits.position + MpegAudioHeader.SIZE * 8, channels);
+        if (heldFrames < 3) {
+            return;
+        }
+        var extensionFrame = (byte[]) null;
+        var extensionFrameLength = 0;
+        for (var part = 0; part < 3 && extensionFrame == null; part++) {
+            if (heldExtensionLengths[part] > 0) {
+                extensionFrame = heldExtensions[part];
+                extensionFrameLength = heldExtensionLengths[part];
+            }
+        }
+        for (var ch = 0; ch < channels; ch++) {
+            var samples = extension.baseSamples(ch);
+            for (var part = 0; part < 3; part++) {
+                for (var sb = 0; sb < 32; sb++) {
+                    System.arraycopy(heldSamples[part], 576 * ch + sb * 18, samples, sb * 36 + part * 12, 12);
+                }
+            }
+        }
+        var rate = MpegAudioHeader.sampleRate(header);
+        var decoded = extension.gather(heldBytes, heldStarts, heldEnds, extensionFrame, 0, extensionFrameLength);
+        if (decoded && extension.wantsExtensionFrame()) {
+            decoded = extensionFrame != null && (!crcCheck
+                    || Mp2Multichannel.extensionCrcMatches(extensionFrame, 0, extensionFrameLength));
+        }
+        decoded = decoded && extension.decode(channels, rate, heldScale,
+                crcCheck || !heldAligned || !(extensionEstablished || programEstablished));
+        if (decoded && programEstablished && extension.multilingualCutShort()) {
+            decoded = false;
+        }
+        if (!decoded) {
+            heldAligned = false;
+            releaseOneHeld(output);
+            return;
+        }
+        heldAligned = true;
+        heldFrames = 0;
+        programFrame = false;
+        outputExtension(rate);
+        var samples = programFrame ? programFrames : MAX_FRAME_SAMPLES;
+        var out = buffer;
+        concealedRun = 0;
+        afterLoss = false;
+        if (!started) {
+            started = true;
+            sampleRate = out.sampleRate();
+            layout = out.layout();
+        }
+        out.setFrames(samples);
+        output.accept(out);
+    }
+
+    /**
+     * {@return whether the bits after the audio data of the Layer I frame in {@link #frameBits} can start an extension:
+     * they hold a header that adds channels to the base ones, which the padding of a plain stream does not}
+     */
+    private boolean startsExtension() {
+        if (frameBits.limit - frameBits.position < 32) {
+            return false;
+        }
+        var position = frameBits.position;
+        var present = frameBits.read(1);
+        if (present == 1) {
+            frameBits.read(8);
+        }
+        var center = frameBits.read(2);
+        var surround = frameBits.read(2);
+        var lfe = frameBits.read(1);
+        frameBits.read(3);
+        var languages = frameBits.read(3);
+        frameBits.position = position;
+        return center != 2 && (center != 0 || surround != 0 || lfe != 0 || languages != 0);
+    }
+
+    /**
+     * Outputs one Layer I frame as its base channels: in the multichannel layout, the other channels decaying to
+     * silence, once a frame group of the stream decoded with its extension.
+     *
+     * @param header the frame header
+     * @param channels the number of base channels
+     * @param samples the frame's subband samples, channel 1 at index 576; overwritten
+     * @param output receives the frame's buffer
+     */
+    private void outputPlainLayer1(int header, int channels, float[] samples, Consumer<AudioBuffer> output) {
+        if (programEstablished) {
+            skipProgramFrame(output);
+            return;
+        }
+        var rate = MpegAudioHeader.sampleRate(header);
+        var out = extensionEstablished ? outputBuffer(extensionLayout, rate) : outputBuffer(channels, rate);
+        if (samples != grbuf) {
+            System.arraycopy(samples, 0, grbuf, 0, 2 * 576);
+        }
+        keepGood(12, channels);
+        synthesize(12, channels, out.plane(0), out.plane(channels - 1), 0);
+        if (out.channels() > channels) {
+            concealedFrames++;
+            silenceExtension(out, header);
+        }
+        concealedRun = 0;
+        afterLoss = false;
+        if (!started) {
+            started = true;
+            sampleRate = out.sampleRate();
+            layout = out.layout();
+        }
+        out.setFrames(384);
+        output.accept(out);
+    }
+
+    /**
+     * Counts one Layer I frame that does not carry the selected program, and conceals the program, in its format, for
+     * every three of them, the program's frame spanning three frames.
+     *
+     * @param output receives the concealed buffer
+     */
+    private void skipProgramFrame(Consumer<AudioBuffer> output) {
+        if (++skippedProgramFrames == 3) {
+            skippedProgramFrames = 0;
+            output.accept(concealProgram());
+        }
+    }
+
+    /**
+     * Holds the Layer I frame just dequantized in {@link #grbuf}.
+     *
+     * @param data the packet payload
+     * @param offset the index of the frame header
+     * @param length the number of frame bytes available
+     * @param start the bit offset from the frame header where the frame's audio data ends
+     * @param channels the number of base channels
+     */
+    private void holdLayer1Frame(byte[] data, int offset, int length, int start, int channels) {
+        var slot = heldFrames++;
+        if (heldBytes[slot] == null || heldBytes[slot].length < length) {
+            heldBytes[slot] = new byte[Math.max(length, 2048)];
+        }
+        System.arraycopy(data, offset, heldBytes[slot], 0, length);
+        heldStarts[slot] = start;
+        // the reference decoder leaves out the last bit of a Layer I frame, and test 22 is written that way
+        heldEnds[slot] = length * 8 - 1;
+        var extensionSize = extensionData != null ? extensionLength : 0;
+        heldExtensionLengths[slot] = extensionSize;
+        if (extensionSize > 0) {
+            if (heldExtensions[slot] == null || heldExtensions[slot].length < extensionSize) {
+                heldExtensions[slot] = new byte[Math.max(extensionSize, 2048)];
+            }
+            System.arraycopy(extensionData, extensionOffset, heldExtensions[slot], 0, extensionSize);
+        }
+        System.arraycopy(grbuf, 0, heldSamples[slot], 0, 2 * 576);
+        heldHeaders[slot] = MpegAudioHeader.read(data, offset);
+        for (var ch = 0; ch < channels; ch++) {
+            for (var band = 0; band < 32; band++) {
+                heldScales[slot][ch][band] = layer12.scaleIndex(band, ch, 0);
+                heldAllocations[slot][ch][band] = layer12.allocationIndex(band, ch);
+            }
+        }
+    }
+
+    /**
+     * Outputs the first held Layer I frame as its base channels and moves the others forward.
+     *
+     * @param output receives the frame's buffer
+     */
+    private void releaseOneHeld(Consumer<AudioBuffer> output) {
+        var header = heldHeaders[0];
+        outputPlainLayer1(header, MpegAudioHeader.channels(header), heldSamples[0], output);
+        heldFrames--;
+        var bytes = heldBytes[0];
+        var samples = heldSamples[0];
+        var scales = heldScales[0];
+        var allocations = heldAllocations[0];
+        var extensionBytes = heldExtensions[0];
+        for (var slot = 0; slot < 2; slot++) {
+            heldBytes[slot] = heldBytes[slot + 1];
+            heldStarts[slot] = heldStarts[slot + 1];
+            heldEnds[slot] = heldEnds[slot + 1];
+            heldExtensions[slot] = heldExtensions[slot + 1];
+            heldExtensionLengths[slot] = heldExtensionLengths[slot + 1];
+            heldSamples[slot] = heldSamples[slot + 1];
+            heldScales[slot] = heldScales[slot + 1];
+            heldAllocations[slot] = heldAllocations[slot + 1];
+            heldHeaders[slot] = heldHeaders[slot + 1];
+        }
+        heldBytes[2] = bytes;
+        heldSamples[2] = samples;
+        heldScales[2] = scales;
+        heldAllocations[2] = allocations;
+        heldExtensions[2] = extensionBytes;
+        heldExtensionLengths[2] = 0;
+    }
+
+    /**
+     * Outputs every held Layer I frame as its base channels.
+     *
+     * @param output receives the frames' buffers
+     */
+    private void releaseHeld(Consumer<AudioBuffer> output) {
+        while (heldFrames > 0) {
+            releaseOneHeld(output);
+        }
     }
 
     /**
@@ -835,14 +1482,68 @@ public final class Mp3Decoder implements AudioDecoder {
         if (decoded && programEstablished && extension.multilingualCutShort()) {
             return concealProgramFrame();
         }
-        if (decoded && program != Mp2Program.MAIN && decodeProgram(rate)) {
-            programFrame = true;
-            return DECODED;
-        }
         if (!decoded && programEstablished) {
             return concealProgramFrame();
         }
+        if (decoded) {
+            outputExtension(rate);
+            return DECODED;
+        }
         programEstablished = false;
+        clearStaleMain();
+        if (!extensionEstablished) {
+            var out = outputBuffer(channels, rate);
+            synthesizeBase(channels, out.plane(0), out.plane(channels - 1));
+            return DECODED;
+        }
+        concealedFrames++;
+        var out = outputBuffer(extensionLayout, rate);
+        synthesizeBase(channels, out.plane(0), out.plane(channels - 1));
+        silenceExtension(out, header);
+        return DECODED;
+    }
+
+    /**
+     * Outputs a frame whose extension decoded, into {@link #buffer}: the selected program when it carries it, the main
+     * program otherwise.
+     *
+     * @param rate the sampling rate of the frame
+     * @throws MediaException.LimitExceeded if the frame has more channels than the limits allow
+     */
+    private void outputExtension(int rate) {
+        if (program != Mp2Program.MAIN && decodeProgram(rate)) {
+            programFrame = true;
+            return;
+        }
+        programEstablished = false;
+        clearStaleMain();
+        var frameLayout = extension.outputLayout();
+        LimitChecks.checkChannels(limits, frameLayout.channels());
+        if (!extensionEstablished || !frameLayout.equals(extensionLayout)) {
+            for (var state : extensionStates) {
+                Arrays.fill(state, 0);
+            }
+            lastLfe = 0;
+        }
+        extensionEstablished = true;
+        extensionLayout = frameLayout;
+        Arrays.fill(extensionPlanes, -1);
+        lfePlane = -1;
+        var map = extension.outputChannels();
+        for (var plane = 0; plane < map.length; plane++) {
+            if (map[plane] < 0) {
+                lfePlane = plane;
+            } else {
+                extensionPlanes[map[plane]] = plane;
+            }
+        }
+        synthesizeExtension(outputBuffer(frameLayout, rate), true);
+    }
+
+    /**
+     * Forgets the filterbank history of the main program when the frame before was output as the selected program.
+     */
+    private void clearStaleMain() {
         if (mainStale) {
             Arrays.fill(qmfState, 0);
             for (var state : extensionStates) {
@@ -853,41 +1554,6 @@ public final class Mp3Decoder implements AudioDecoder {
             extensionEstablished = false;
             mainStale = false;
         }
-        if (decoded) {
-            var layout = extension.outputLayout();
-            LimitChecks.checkChannels(limits, layout.channels());
-            if (!extensionEstablished || !layout.equals(extensionLayout)) {
-                for (var state : extensionStates) {
-                    Arrays.fill(state, 0);
-                }
-                lastLfe = 0;
-            }
-            extensionEstablished = true;
-            extensionLayout = layout;
-            Arrays.fill(extensionPlanes, -1);
-            lfePlane = -1;
-            var map = extension.outputChannels();
-            for (var plane = 0; plane < map.length; plane++) {
-                if (map[plane] < 0) {
-                    lfePlane = plane;
-                } else {
-                    extensionPlanes[map[plane]] = plane;
-                }
-            }
-            var out = outputBuffer(layout, rate);
-            synthesizeExtension(out, true);
-            return DECODED;
-        }
-        if (!extensionEstablished) {
-            var out = outputBuffer(channels, rate);
-            synthesizeBase(channels, out.plane(0), out.plane(channels - 1));
-            return DECODED;
-        }
-        concealedFrames++;
-        var out = outputBuffer(extensionLayout, rate);
-        synthesizeBase(channels, out.plane(0), out.plane(channels - 1));
-        silenceExtension(out);
-        return DECODED;
     }
 
     /**
@@ -1069,7 +1735,9 @@ public final class Mp3Decoder implements AudioDecoder {
      *
      * @param out the output buffer, in the multichannel layout
      */
-    private void silenceExtension(AudioBuffer out) {
+    private void silenceExtension(AudioBuffer out, int header) {
+        var samples = MpegAudioHeader.samplesPerFrame(header);
+        var parts = samples / 384;
         for (var pair = 0; pair < 2; pair++) {
             var first = 2 + 2 * pair;
             var firstPlane = extensionPlanes[first];
@@ -1080,14 +1748,14 @@ public final class Mp3Decoder implements AudioDecoder {
             var pairChannels = firstPlane >= 0 && secondPlane >= 0 ? 2 : 1;
             var outLeft = out.plane(firstPlane >= 0 ? firstPlane : secondPlane);
             var outRight = pairChannels == 2 ? out.plane(secondPlane) : outLeft;
-            for (var part = 0; part < 3; part++) {
+            for (var part = 0; part < parts; part++) {
                 Arrays.fill(extensionBuffer, 0);
                 synthesize(extensionBuffer, extensionStates[pair], 12, pairChannels, outLeft, outRight, part * 384);
             }
         }
         if (lfePlane >= 0) {
             var plane = out.plane(lfePlane);
-            for (var k = 0; k < 12; k++) {
+            for (var k = 0; k < samples / LFE_PERIOD; k++) {
                 var step = -lastLfe / LFE_PERIOD;
                 for (var n = 0; n < LFE_PERIOD; n++) {
                     plane[k * LFE_PERIOD + n] = lastLfe + step * (n + 1);
@@ -1158,8 +1826,9 @@ public final class Mp3Decoder implements AudioDecoder {
         concealedFrames++;
         concealedRun++;
         var layer = MpegAudioHeader.layer(header);
-        var slots = layer == 3 ? 18 : 12;
-        var parts = layer == 3 ? MpegAudioHeader.samplesPerFrame(header) / 576 : layer == 1 ? 1 : 3;
+        // a Layer III frame output through its extension keeps its samples as twelve-slot groups
+        var slots = layer == 3 && lastGoodSlots != 12 ? 18 : 12;
+        var parts = MpegAudioHeader.samplesPerFrame(header) / (32 * slots);
         var gain = concealedRun <= AUDIBLE_CONCEALMENT ? 1.0f / (1 << concealedRun) : 0;
         var repeat = gain != 0 && lastGoodSlots == slots && lastGoodChannels == channels;
         for (var part = 0; part < parts; part++) {
@@ -1251,6 +1920,10 @@ public final class Mp3Decoder implements AudioDecoder {
         Arrays.fill(qmfState, 0);
         lastGoodSlots = 0;
         extension.reset();
+        layer3Extension.reset();
+        layer3NeedsLookahead = false;
+        heldAligned = false;
+        skippedProgramFrames = 0;
         for (var state : extensionStates) {
             Arrays.fill(state, 0);
         }
@@ -1266,10 +1939,15 @@ public final class Mp3Decoder implements AudioDecoder {
     /**
      * {@inheritDoc}
      *
-     * <p>Does nothing: every frame is output as soon as it is decoded.
+     * <p>Outputs the frames held for a multichannel extension: Layer I frames that do not make up a group, as their
+     * base channels, and the last Layer III frame.
      */
     @Override
     public void flush(Consumer<AudioBuffer> output) {
         Objects.requireNonNull(output, "output");
+        ConsumerFailure.<AudioBuffer>run("MPEG audio flush", output, emit -> {
+            releasePending(0, emit);
+            releaseHeld(emit);
+        });
     }
 }
