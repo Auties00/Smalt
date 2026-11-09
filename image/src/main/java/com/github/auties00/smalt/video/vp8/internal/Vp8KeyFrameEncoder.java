@@ -17,10 +17,10 @@ import java.util.Arrays;
  * <p>An instance encodes a single picture: construct it with the picture and settings, then call
  * {@link #encode()} once. With one token partition, the frame is byte-identical to libwebp's for
  * the same YUV samples and settings, in libwebp's default configuration for everything the
- * settings do not cover (one pass, no target size, strong filter, no autofilter, no
- * preprocessing). With helper threads available the analysis pass runs in bands of macroblock
- * rows and the token loop of methods 3 to 6 in a {@link RowWavefront}; the output does not depend
- * on the number of threads.
+ * settings do not cover (no target size, no partition limit, no preprocessing, the full quality
+ * range). With helper threads available the analysis pass runs in bands of macroblock rows, the
+ * token loop of methods 3 to 6 in a {@link RowWavefront} and the loop filter search over its
+ * candidate levels; the output does not depend on the number of threads.
  *
  * @implNote This implementation keeps one token buffer per partition and honors the requested
  * partition count, where libwebp forces a single token partition when it buffers tokens (methods 3
@@ -56,6 +56,11 @@ public final class Vp8KeyFrameEncoder {
      * The largest first partition size, in 1/256 bit, before the encoder restricts 4x4 modes.
      */
     private static final long PARTITION0_SIZE_LIMIT = ((1L << 19) - 2048L) << 11;
+
+    /**
+     * The quality step below which the PSNR search stops.
+     */
+    private static final double DQ_LIMIT = 0.4;
 
     /**
      * The quality at or below which chroma DC error diffusion is enabled.
@@ -152,6 +157,31 @@ public final class Vp8KeyFrameEncoder {
      * The spatial noise shaping strength.
      */
     private final int snsStrength;
+
+    /**
+     * Whether the simple loop filter is signaled.
+     */
+    private final boolean simpleFilterConfig;
+
+    /**
+     * Whether the segment filter strengths are chosen from the filtered reconstruction.
+     */
+    private final boolean autoFilter;
+
+    /**
+     * The number of entropy-analysis passes.
+     */
+    private final int passes;
+
+    /**
+     * The PSNR in dB the passes aim at, or {@code 0} for none.
+     */
+    private final float targetPsnr;
+
+    /**
+     * Whether the passes search the quantizer for {@link #targetPsnr}.
+     */
+    private final boolean doSearch;
 
     /**
      * The pixel kernels.
@@ -377,6 +407,16 @@ public final class Vp8KeyFrameEncoder {
     private long workerHeaderCost;
 
     /**
+     * The distortion of the macroblocks this worker coded in the current pass.
+     */
+    private long workerDistortion;
+
+    /**
+     * The loop filter search of {@link Vp8KeyFrameSettings#autoFilter()}, or {@code null}.
+     */
+    private LoopFilterSearch filterSearch;
+
+    /**
      * The coefficient residual description reused by the cost and coding helpers.
      */
     private final EncProba.Residual res = new EncProba.Residual();
@@ -581,6 +621,11 @@ public final class Vp8KeyFrameEncoder {
         this.filterStrength = filterStrength;
         this.configSharpness = settings.sharpness();
         this.snsStrength = settings.snsStrength();
+        this.simpleFilterConfig = settings.simpleFilter();
+        this.autoFilter = settings.autoFilter();
+        this.passes = settings.passes();
+        this.targetPsnr = settings.targetPsnr();
+        this.doSearch = targetPsnr > 0;
         this.mbW = (picture.width() + 15) >> 4;
         this.mbH = (picture.height() + 15) >> 4;
         this.predsW = 4 * mbW + 1;
@@ -595,9 +640,9 @@ public final class Vp8KeyFrameEncoder {
         this.mbAlpha = new int[count];
         this.yTop = new byte[mbW * 16];
         this.uvTop = new byte[mbW * 16];
-        this.topDerr = quality <= ERROR_DIFFUSION_QUALITY ? new int[mbW * 4] : null;
+        this.topDerr = quality <= ERROR_DIFFUSION_QUALITY || passes > 1 ? new int[mbW * 4] : null;
         this.numParts = partitionCount;
-        this.profile = filterStrength > 0 ? 0 : 2;
+        this.profile = filterStrength > 0 || autoFilter ? (simpleFilterConfig ? 1 : 0) : 2;
         this.rdOptLevel = method >= 6 ? RD_OPT_TRELLIS_ALL : method >= 5 ? RD_OPT_TRELLIS
                 : method >= 3 ? RD_OPT_BASIC : RD_OPT_NONE;
         this.maxI4HeaderBits = 256 * 16 * 16;
@@ -629,6 +674,11 @@ public final class Vp8KeyFrameEncoder {
         this.filterStrength = parent.filterStrength;
         this.configSharpness = parent.configSharpness;
         this.snsStrength = parent.snsStrength;
+        this.simpleFilterConfig = parent.simpleFilterConfig;
+        this.autoFilter = parent.autoFilter;
+        this.passes = parent.passes;
+        this.targetPsnr = parent.targetPsnr;
+        this.doSearch = parent.doSearch;
         this.mbW = parent.mbW;
         this.mbH = parent.mbH;
         this.predsW = parent.predsW;
@@ -1040,7 +1090,7 @@ public final class Vp8KeyFrameEncoder {
      */
     private static double qualityToCompression(double c) {
         var linear = c < 0.75 ? c * (2.0 / 3.0) : 2.0 * c - 1.0;
-        return Math.pow(linear, 1 / 3.0);
+        return StrictMath.pow(linear, 1 / 3.0);
     }
 
     /**
@@ -1066,7 +1116,7 @@ public final class Vp8KeyFrameEncoder {
         var cBase = qualityToCompression(q / 100.0);
         for (var i = 0; i < numSegments; i++) {
             var expn = 1.0 - amp * dqm[i].alpha;
-            var c = Math.pow(cBase, expn);
+            var c = StrictMath.pow(cBase, expn);
             var qi = (int) (127.0 * (1.0 - c));
             dqm[i].quant = Math.clamp(qi, 0, 127);
         }
@@ -1105,7 +1155,7 @@ public final class Vp8KeyFrameEncoder {
             m.fstrength = f < 2 ? 0 : Math.min(f, 63);
         }
         filterLevel = dqm[0].fstrength;
-        filterSimple = false;
+        filterSimple = simpleFilterConfig;
         filterSharpness = configSharpness;
     }
 
@@ -1261,50 +1311,105 @@ public final class Vp8KeyFrameEncoder {
     /**
      * Codes every macroblock with token buffering (methods 3 to 6), like libwebp's
      * {@code VP8EncTokenLoop}.
+     *
+     * <p>Every pass but the last only refines the token probabilities, which carry over to the
+     * next pass, and, with a PSNR target, measures the distortion to choose the quantizer of the
+     * next pass; the last pass records the tokens that are written.
      */
     private void tokenLoop() {
         var maxCount = Math.max(96, (mbW * mbH) >> 3);
         var participants = tokenParticipants();
-        if (participants > 1) {
-            tokenLoopParallel(maxCount, participants);
-            return;
+        var stats = new PassStats(quality, targetPsnr);
+        var pixelCount = (long) mbW * mbH * 384;
+        var parallel = participants > 1 ? new ParallelPass(this, maxCount) : null;
+        if (filterSearch == null && autoFilter) {
+            filterSearch = new LoopFilterSearch(this, mbSegment, mbType, mbSkip, configSharpness, simpleFilterConfig,
+                    maxCount + 1);
         }
-        var passesLeft = 1;
-        while (passesLeft-- > 0) {
-            long sizeP0 = 0;
-            var cnt = maxCount;
+        var numPassLeft = passes;
+        while (numPassLeft-- > 0) {
+            var isLastPass = Math.abs(stats.dq) <= DQ_LIMIT || numPassLeft == 0 || maxI4HeaderBits == 0;
             it.init();
-            setLoopParams(quality);
-            Arrays.fill(proba.stats, 0);
-            for (var t : tokens) {
-                t.clear();
+            setLoopParams(stats.q);
+            if (isLastPass) {
+                Arrays.fill(proba.stats, 0);
+                if (filterSearch != null) {
+                    filterSearch.reset();
+                }
             }
-            do {
-                it.importSamples(null);
-                if (--cnt < 0) {
-                    proba.finalizeTokenProbas();
-                    proba.calculateLevelCosts();
-                    cnt = maxCount;
+            var search = isLastPass ? filterSearch : null;
+            long sizeP0;
+            long distortion;
+            if (parallel != null) {
+                parallel.run(participants, search);
+                sizeP0 = parallel.headerCost;
+                distortion = parallel.distortion;
+            } else {
+                sizeP0 = 0;
+                distortion = 0;
+                var cnt = maxCount;
+                for (var t : tokens) {
+                    t.clear();
                 }
-                decimate(info, rdOptLevel);
-                recordTokens(info, tokens[it.part]);
-                sizeP0 += info.h;
-                if (reconstruction != null) {
-                    storeReconstruction();
+                do {
+                    it.importSamples(null);
+                    if (--cnt < 0) {
+                        proba.finalizeTokenProbas();
+                        proba.calculateLevelCosts();
+                        cnt = maxCount;
+                    }
+                    decimate(info, rdOptLevel);
+                    recordTokens(info, tokens[it.part]);
+                    sizeP0 += info.h;
+                    distortion += info.d;
+                    if (reconstruction != null) {
+                        storeReconstruction();
+                    }
+                    if (search != null) {
+                        storeFilterSample(search);
+                    }
+                    it.saveBoundary();
+                } while (it.next());
+                if (search != null) {
+                    search.flush(mbW * mbH, dqm, numSegments, threadLimit);
                 }
-                it.saveBoundary();
-            } while (it.next());
+            }
             sizeP0 += segmentHdrSize;
+            stats.value = psnr(distortion, pixelCount);
             if (maxI4HeaderBits > 0 && sizeP0 > PARTITION0_SIZE_LIMIT) {
-                passesLeft++;
+                numPassLeft++;
                 maxI4HeaderBits >>= 1;
+                continue;
+            }
+            if (isLastPass) {
+                break;
+            }
+            if (doSearch) {
+                stats.computeNextQ();
             }
         }
         proba.finalizeTokenProbas();
-        for (var p = 0; p < numParts; p++) {
-            tokens[p].emit(parts[p], proba.coeffs);
+        if (parallel != null) {
+            parallel.emit();
+        } else {
+            for (var p = 0; p < numParts; p++) {
+                tokens[p].emit(parts[p], proba.coeffs);
+            }
         }
         postLoopFinalize();
+    }
+
+    /**
+     * Stores the reconstruction of the current macroblock for the loop filter search, folding the
+     * stored macroblocks into its sums when its buffer is full.
+     *
+     * @param search the loop filter search receiving the reconstruction
+     */
+    private void storeFilterSample(LoopFilterSearch search) {
+        search.store(it.mb, it.yuvOut);
+        if (it.mb + 1 - search.start() == search.capacity()) {
+            search.flush(it.mb + 1, dqm, numSegments, threadLimit);
+        }
     }
 
     /**
@@ -1320,28 +1425,81 @@ public final class Vp8KeyFrameEncoder {
     }
 
     /**
-     * Codes every macroblock like {@link #tokenLoop()} with several threads, with the same output.
+     * Codes the passes of {@link #tokenLoop()} with several threads, with the same output.
      *
-     * <p>The loop is cut where the sequential loop refreshes the token probabilities, every
+     * <p>A pass is cut where the sequential loop refreshes the token probabilities, every
      * {@code maxCount} macroblocks; between two cuts the rows run in a wavefront (a macroblock
      * waits for the row above to code the macroblock above and to its right), each into a token
      * buffer of its own, and at a cut the token statistics are replayed in raster order, which the
      * saturating counters need to match the sequential loop.
-     *
-     * @param maxCount     the macroblocks between probability refreshes
-     * @param participants the number of threads
      */
-    private void tokenLoopParallel(int maxCount, int participants) {
-        var total = mbW * mbH;
-        var wave = new RowWavefront(mbH);
-        var rowTokens = new TokenBuffer[mbH];
-        var marks = new int[mbH];
-        var carry = new EncIterator(this);
-        var passesLeft = 1;
-        while (passesLeft-- > 0) {
-            it.init();
-            setLoopParams(quality);
-            Arrays.fill(proba.stats, 0);
+    private static final class ParallelPass {
+        /**
+         * The encoder whose passes are coded.
+         */
+        private final Vp8KeyFrameEncoder enc;
+
+        /**
+         * The macroblocks between probability refreshes.
+         */
+        private final int maxCount;
+
+        /**
+         * The row dependencies.
+         */
+        private final RowWavefront wave;
+
+        /**
+         * The tokens of every macroblock row.
+         */
+        private final TokenBuffer[] rowTokens;
+
+        /**
+         * The number of tokens of every row already replayed into the statistics.
+         */
+        private final int[] marks;
+
+        /**
+         * The holder of the left context across a cut inside a row.
+         */
+        private final EncIterator carry;
+
+        /**
+         * The first-partition cost of the last pass, in 1/256 bit, without the segment header.
+         */
+        long headerCost;
+
+        /**
+         * The distortion of the last pass.
+         */
+        long distortion;
+
+        /**
+         * Constructs the parallel passes of an encoder.
+         *
+         * @param enc the encoder
+         * @param maxCount the macroblocks between probability refreshes
+         */
+        ParallelPass(Vp8KeyFrameEncoder enc, int maxCount) {
+            this.enc = enc;
+            this.maxCount = maxCount;
+            this.wave = new RowWavefront(enc.mbH);
+            this.rowTokens = new TokenBuffer[enc.mbH];
+            this.marks = new int[enc.mbH];
+            this.carry = new EncIterator(enc);
+        }
+
+        /**
+         * Codes one pass.
+         *
+         * @param participants the number of threads
+         * @param search the loop filter search to feed, or {@code null}
+         */
+        void run(int participants, LoopFilterSearch search) {
+            var mbW = enc.mbW;
+            var mbH = enc.mbH;
+            var proba = enc.proba;
+            var total = mbW * mbH;
             Arrays.fill(marks, 0);
             for (var row = 0; row < mbH; row++) {
                 if (rowTokens[row] == null) {
@@ -1352,9 +1510,9 @@ public final class Vp8KeyFrameEncoder {
             }
             var pool = new Vp8KeyFrameEncoder[participants];
             for (var i = 0; i < participants; i++) {
-                pool[i] = new Vp8KeyFrameEncoder(this);
+                pool[i] = new Vp8KeyFrameEncoder(enc);
             }
-            workers = pool;
+            enc.workers = pool;
             var start = 0;
             var end = Math.min(total, maxCount);
             while (start < total) {
@@ -1367,11 +1525,14 @@ public final class Vp8KeyFrameEncoder {
                 }
                 wave.run(participants, firstRow, lastRow + 1, (participant, row) ->
                         pool[participant].codeRow(wave, row, row == firstRow ? firstCol : 0,
-                                row == lastRow ? endCol : mbW, row > firstRow, rowTokens[row], carry));
+                                row == lastRow ? endCol : mbW, row > firstRow, rowTokens[row], carry, search));
                 for (var row = firstRow; row <= lastRow; row++) {
                     var buffer = rowTokens[row];
                     proba.replayTokens(buffer.array(), marks[row], buffer.size());
                     marks[row] = buffer.size();
+                }
+                if (search != null) {
+                    search.flush(end, enc.dqm, enc.numSegments, enc.threadLimit);
                 }
                 if (end < total) {
                     proba.finalizeTokenProbas();
@@ -1380,40 +1541,46 @@ public final class Vp8KeyFrameEncoder {
                 start = end;
                 end = Math.min(total, end + maxCount + 1);
             }
-            long sizeP0 = segmentHdrSize;
+            long header = 0;
+            long disto = 0;
             for (var worker : pool) {
-                sizeP0 += worker.workerHeaderCost;
+                header += worker.workerHeaderCost;
+                disto += worker.workerDistortion;
             }
-            if (maxI4HeaderBits > 0 && sizeP0 > PARTITION0_SIZE_LIMIT) {
-                passesLeft++;
-                maxI4HeaderBits >>= 1;
+            headerCost = header;
+            distortion = disto;
+        }
+
+        /**
+         * Writes the tokens of the last pass into the token partitions, row by row.
+         */
+        void emit() {
+            for (var row = 0; row < enc.mbH; row++) {
+                rowTokens[row].emit(enc.parts[row & (enc.numParts - 1)], enc.proba.coeffs);
             }
         }
-        proba.finalizeTokenProbas();
-        for (var row = 0; row < mbH; row++) {
-            rowTokens[row].emit(parts[row & (numParts - 1)], proba.coeffs);
-        }
-        postLoopFinalize();
     }
 
     /**
      * Codes the macroblocks of a row segment on a worker.
      *
-     * @param wave   the wavefront
-     * @param row    the macroblock row
-     * @param first  the first column
-     * @param end    the column after the last
-     * @param waits  whether the macroblocks wait for the row above
+     * @param wave the wavefront
+     * @param row the macroblock row
+     * @param first the first column
+     * @param end the column after the last
+     * @param waits whether the macroblocks wait for the row above
      * @param buffer the token buffer of the row
-     * @param carry  the holder of the left context across a cut inside the row
+     * @param carry the holder of the left context across a cut inside the row
+     * @param search the loop filter search to store the reconstructions in, or {@code null}
      */
     private void codeRow(RowWavefront wave, int row, int first, int end, boolean waits,
-                         TokenBuffer buffer, EncIterator carry) {
+                         TokenBuffer buffer, EncIterator carry, LoopFilterSearch search) {
         it.seek(row, first);
         if (first > 0) {
             it.loadLeft(carry);
         }
         long header = 0;
+        long disto = 0;
         for (var col = first; col < end; col++) {
             if (waits) {
                 wave.await(row - 1, Math.min(col + 2, mbW));
@@ -1422,8 +1589,12 @@ public final class Vp8KeyFrameEncoder {
             decimate(info, rdOptLevel);
             recordTokens(info, buffer);
             header += info.h;
+            disto += info.d;
             if (reconstruction != null) {
                 storeReconstruction();
+            }
+            if (search != null) {
+                search.store(it.mb, it.yuvOut);
             }
             it.saveBoundary();
             it.advance();
@@ -1433,19 +1604,22 @@ public final class Vp8KeyFrameEncoder {
             it.saveLeft(carry);
         }
         workerHeaderCost += header;
+        workerDistortion += disto;
     }
 
     /**
-     * Collects the token statistics of a first pass, like libwebp's {@code StatLoop}.
+     * Collects the token statistics of the analysis passes, like libwebp's {@code StatLoop}.
      *
-     * <p>When the pass reports a zero first-partition cost, which happens with distortion-only
+     * <p>When a pass reports a zero first-partition cost, which happens with distortion-only
      * decisions (methods 0 to 2) and a single segment, the probabilities keep their defaults and
-     * the skip flag is not coded.
+     * the skip flag is not coded. With a PSNR target the passes move the quantizer towards it and
+     * the coding pass keeps the parameters of the last of them.
      */
     private void statLoop() {
-        var fastProbe = method == 0 || method == 3;
-        var rdOpt = method >= 3 ? RD_OPT_BASIC : RD_OPT_NONE;
+        var fastProbe = (method == 0 || method == 3) && !doSearch;
+        var rdOpt = method >= 3 || doSearch ? RD_OPT_BASIC : RD_OPT_NONE;
         var nbMbs = mbW * mbH;
+        var stats = new PassStats(quality, targetPsnr);
         if (fastProbe) {
             if (method == 3) {
                 nbMbs = nbMbs > 200 ? nbMbs >> 1 : 100;
@@ -1454,17 +1628,28 @@ public final class Vp8KeyFrameEncoder {
             }
         }
         Arrays.fill(proba.stats, 0);
-        var passesLeft = 1;
-        while (passesLeft-- > 0) {
-            var sizeP0 = oneStatPass(rdOpt, nbMbs);
+        var numPassLeft = passes;
+        while (numPassLeft-- > 0) {
+            var isLastPass = Math.abs(stats.dq) <= DQ_LIMIT || numPassLeft == 0 || maxI4HeaderBits == 0;
+            var sizeP0 = oneStatPass(rdOpt, nbMbs, stats);
             if (sizeP0 == 0) {
                 // libwebp's StatLoop returns here without finalizing the probabilities, which
                 // happens when distortion-only decisions leave no header cost and one segment
                 return;
             }
             if (maxI4HeaderBits > 0 && sizeP0 > PARTITION0_SIZE_LIMIT) {
-                passesLeft++;
+                numPassLeft++;
                 maxI4HeaderBits >>= 1;
+                continue;
+            }
+            if (isLastPass) {
+                break;
+            }
+            if (doSearch) {
+                stats.computeNextQ();
+                if (Math.abs(stats.dq) <= DQ_LIMIT) {
+                    break;
+                }
             }
         }
         proba.finalizeSkipProba(mbW * mbH);
@@ -1474,16 +1659,19 @@ public final class Vp8KeyFrameEncoder {
 
     /**
      * Runs one statistics pass over up to {@code nbMbs} macroblocks, like libwebp's
-     * {@code OneStatPass}.
+     * {@code OneStatPass}, and stores its PSNR in {@code stats}.
      *
      * @param rdOpt the rate-distortion level
      * @param nbMbs the number of macroblocks to visit
+     * @param stats the search state, whose quality the pass codes at
      * @return the first partition cost, in 1/256 bit
      */
-    private long oneStatPass(int rdOpt, int nbMbs) {
+    private long oneStatPass(int rdOpt, int nbMbs, PassStats stats) {
         long sizeP0 = 0;
+        long distortion = 0;
+        var pixelCount = (long) nbMbs * 384;
         it.init();
-        setLoopParams(quality);
+        setLoopParams(stats.q);
         do {
             it.importSamples(null);
             if (decimate(info, rdOpt)) {
@@ -1491,9 +1679,22 @@ public final class Vp8KeyFrameEncoder {
             }
             recordResiduals(info);
             sizeP0 += info.h;
+            distortion += info.d;
             it.saveBoundary();
         } while (it.next() && --nbMbs > 0);
+        stats.value = psnr(distortion, pixelCount);
         return sizeP0 + segmentHdrSize;
+    }
+
+    /**
+     * Returns the PSNR of a summed squared error, like libwebp's {@code GetPSNR}.
+     *
+     * @param mse the summed squared error
+     * @param size the number of samples
+     * @return the PSNR in dB, 99 when either argument is zero
+     */
+    private static double psnr(long mse, long size) {
+        return mse > 0 && size > 0 ? 10.0 * StrictMath.log10(255.0 * 255.0 * size / mse) : 99;
     }
 
     /**
@@ -1501,6 +1702,12 @@ public final class Vp8KeyFrameEncoder {
      */
     private void encLoop() {
         statLoop();
+        LoopFilterSearch search = null;
+        if (autoFilter) {
+            search = new LoopFilterSearch(this, mbSegment, mbType, mbSkip, configSharpness, simpleFilterConfig,
+                    Math.max(96, (mbW * mbH) >> 3) + 1);
+            filterSearch = search;
+        }
         it.init();
         do {
             it.importSamples(null);
@@ -1518,20 +1725,29 @@ public final class Vp8KeyFrameEncoder {
             if (reconstruction != null) {
                 storeReconstruction();
             }
+            if (search != null) {
+                storeFilterSample(search);
+            }
             it.saveBoundary();
         } while (it.next());
+        if (search != null) {
+            search.flush(mbW * mbH, dqm, numSegments, threadLimit);
+        }
         postLoopFinalize();
     }
 
     /**
-     * Pads the token partitions and raises the filter strength of blocky segments, like
-     * libwebp's {@code PostLoopFinalize}.
+     * Pads the token partitions and sets the filter strength of every segment, like libwebp's
+     * {@code PostLoopFinalize}: from the loop filter search when it ran, otherwise by raising the
+     * strength of blocky segments.
      */
     private void postLoopFinalize() {
         for (var p : parts) {
             p.finish();
         }
-        if (filterStrength > 0) {
+        if (filterSearch != null) {
+            filterSearch.choose(dqm);
+        } else if (filterStrength > 0) {
             var maxLevel = 0;
             for (var s = 0; s < NUM_MB_SEGMENTS; s++) {
                 var m = dqm[s];
@@ -1548,6 +1764,80 @@ public final class Vp8KeyFrameEncoder {
                 maxLevel = Math.max(maxLevel, m.fstrength);
             }
             filterLevel = maxLevel;
+        }
+    }
+
+    /**
+     * Holds the state of the quantizer search over the passes, like libwebp's {@code PassStats}
+     * with a PSNR target.
+     */
+    private static final class PassStats {
+        /**
+         * Whether no step has been taken yet.
+         */
+        private boolean isFirst = true;
+
+        /**
+         * The last quality step; 10 before the first.
+         */
+        float dq = 10f;
+
+        /**
+         * The quality of the next pass.
+         */
+        float q;
+
+        /**
+         * The quality of the previous pass.
+         */
+        private float lastQ;
+
+        /**
+         * The PSNR of the latest pass.
+         */
+        double value;
+
+        /**
+         * The PSNR of the pass before it.
+         */
+        private double lastValue;
+
+        /**
+         * The PSNR aimed at, 40 when no target is set.
+         */
+        private final double target;
+
+        /**
+         * Constructs the state of a search starting at a quality.
+         *
+         * @param quality the starting quality, from 0 to 100
+         * @param targetPsnr the PSNR target, or 0 for none
+         */
+        PassStats(float quality, float targetPsnr) {
+            this.q = Math.clamp(quality, 0f, 100f);
+            this.lastQ = q;
+            this.target = targetPsnr > 0 ? targetPsnr : 40.0;
+        }
+
+        /**
+         * Moves the quality by the secant step towards the target, at most 30 per pass
+         * ({@code ComputeNextQ}).
+         */
+        void computeNextQ() {
+            float step;
+            if (isFirst) {
+                step = value > target ? -dq : dq;
+                isFirst = false;
+            } else if (value != lastValue) {
+                var slope = (target - value) / (lastValue - value);
+                step = (float) (slope * (lastQ - q));
+            } else {
+                step = 0;
+            }
+            dq = Math.clamp(step, -30f, 30f);
+            lastQ = q;
+            lastValue = value;
+            q = Math.clamp(q + dq, 0f, 100f);
         }
     }
 

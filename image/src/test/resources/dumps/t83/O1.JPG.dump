@@ -1,0 +1,13 @@
+# image dump of t83/O1.JPG; regenerate with -Dsmalt.test.updateDumps=true
+format JPEG
+info ImageInfo[format=JPEG, width=255, height=257, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 255x257 rgba8 alpha=false crc=ad992f5b
+  format=JPEG orientation=NORMAL source=255x257
+  icc=none exif=none xmp=none
+  profile=none
+scaled 63x64
+picture 255x257 rgba8 alpha=false crc=ad992f5b
+  format=JPEG orientation=NORMAL source=255x257
+  icc=none exif=none xmp=none
+  profile=none

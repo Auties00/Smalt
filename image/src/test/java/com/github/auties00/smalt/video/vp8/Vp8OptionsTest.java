@@ -117,12 +117,12 @@ class Vp8OptionsTest {
         }
 
         @Test
-        @DisplayName("speeds map to libvpx's cpu-used numbers 4 to 16")
+        @DisplayName("speeds map to libvpx's cpu-used numbers 0 to 16")
         void speeds() {
-            for (var level = 4; level <= 16; level++) {
+            for (var level = 0; level <= 16; level++) {
                 assertEquals(level, Vp8EncoderSpeed.of(level).level());
             }
-            assertThrows(IllegalArgumentException.class, () -> Vp8EncoderSpeed.of(3));
+            assertThrows(IllegalArgumentException.class, () -> Vp8EncoderSpeed.of(-1));
             assertThrows(IllegalArgumentException.class, () -> Vp8EncoderSpeed.of(17));
         }
 

@@ -21,6 +21,7 @@ import java.util.OptionalInt;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -304,13 +305,19 @@ class Av1EncoderApiTest {
                 var coded = new AtomicLong();
                 var keyFrames = new ConcurrentLinkedQueue<Long>();
                 var stop = new AtomicBoolean();
+                var failure = new AtomicReference<Throwable>();
                 var coder = Thread.ofPlatform().start(() -> {
-                    for (var i = 0L; !stop.get(); i++) {
-                        var frame = new VideoFrame(pictures.get((int) (i % pictures.size())), i * 3000, 3000, false);
-                        if (encoder.encodeFrame(frame).orElseThrow().keyframe()) {
-                            keyFrames.add(i);
+                    try {
+                        for (var i = 0L; !stop.get(); i++) {
+                            var frame = new VideoFrame(pictures.get((int) (i % pictures.size())), i * 3000, 3000,
+                                    false);
+                            if (encoder.encodeFrame(frame).orElseThrow().keyframe()) {
+                                keyFrames.add(i);
+                            }
+                            coded.set(i + 1);
                         }
-                        coded.set(i + 1);
+                    } catch (Throwable thrown) {
+                        failure.set(thrown);
                     }
                 });
                 try {
@@ -320,8 +327,13 @@ class Av1EncoderApiTest {
                         while (coded.get() < before + 2 && coder.isAlive()) {
                             Thread.onSpinWait();
                         }
+                        if (failure.get() != null) {
+                            throw new AssertionError("the coding thread failed after frame " + coded.get(),
+                                    failure.get());
+                        }
                         assertTrue(keyFrames.stream().anyMatch(index -> index >= before),
-                                "the request made after frame " + before + " was lost");
+                                "the request made after frame " + before + " was lost; key frames " + keyFrames
+                                        + ", " + coded.get() + " frames coded");
                         keyFrames.clear();
                     }
                 } finally {

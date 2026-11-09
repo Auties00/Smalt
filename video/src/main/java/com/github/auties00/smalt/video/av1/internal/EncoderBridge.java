@@ -129,8 +129,107 @@ public final class EncoderBridge {
     }
 
     /**
-     * Predicts every plane of a compound 4:2:0 block of at least 8x8 samples into the frame's
-     * picture with the decoder's compound prediction.
+     * Sets up the super-resolution upscaling of a frame whose coded picture is narrower than its
+     * upscaled picture: the horizontal step and initial position of each plane, as a decoder
+     * derives them.
+     *
+     * @param f the frame, with its coded picture in {@link FrameContext#cur} and its upscaled
+     * picture in {@link FrameContext#srCur}
+     */
+    public static void setupSuperres(FrameContext f) {
+        var cur = f.cur;
+        var sr = f.srCur;
+        var ssHor = cur.layout != SequenceHeader.LAYOUT_I444 ? 1 : 0;
+        var inCw = (cur.w + ssHor) >> ssHor;
+        var outCw = (sr.w + ssHor) >> ssHor;
+        f.resizeStep[0] = Av1Context.scaleFac(cur.w, sr.w);
+        f.resizeStep[1] = Av1Context.scaleFac(inCw, outCw);
+        f.resizeStart[0] = Av1Context.upscaleX0(cur.w, sr.w, f.resizeStep[0]);
+        f.resizeStart[1] = Av1Context.upscaleX0(inCw, outCw, f.resizeStep[1]);
+    }
+
+    /**
+     * Upscales the whole filtered coded picture of a frame into its upscaled picture with the
+     * decoder's super-resolution filter.
+     *
+     * @param f the frame, set up by {@link #setupSuperres}, with the in-loop filters before
+     * super-resolution applied
+     */
+    public static void superres(FrameContext f) {
+        var cur = f.cur;
+        var sr = f.srCur;
+        var planes = cur.layout != SequenceHeader.LAYOUT_I400 ? 3 : 1;
+        for (var pl = 0; pl < planes; pl++) {
+            var ssVer = pl != 0 && cur.layout == SequenceHeader.LAYOUT_I420 ? 1 : 0;
+            var ssHor = pl != 0 && cur.layout != SequenceHeader.LAYOUT_I444 ? 1 : 0;
+            var dstStride = sr.stride[pl != 0 ? 1 : 0];
+            var srcStride = cur.stride[pl != 0 ? 1 : 0];
+            var dstW = (sr.w + ssHor) >> ssHor;
+            var srcW = (4 * f.bw + ssHor) >> ssHor;
+            var h = (cur.h + ssVer) >> ssVer;
+            f.mc.resize(sr.data[pl], 0, dstStride, cur.data[pl], 0, srcStride, dstW, h, srcW,
+                    f.resizeStep[pl != 0 ? 1 : 0], f.resizeStart[pl != 0 ? 1 : 0], f.bitdepthMax);
+        }
+    }
+
+    /**
+     * Predicts one plane of a single-reference block with the decoder's motion compensation,
+     * scaled when the reference has another size than the frame.
+     *
+     * @param t the task context, whose frame context holds the current picture and the scale
+     * factors of the references
+     * @param dst the destination plane
+     * @param dstOff the offset of the block in the destination
+     * @param dstStride the destination stride
+     * @param bw4 the block width in 4-sample luma units
+     * @param bh4 the block height in 4-sample luma units
+     * @param bx the block column in 4-sample luma units
+     * @param by the block row in 4-sample luma units
+     * @param pl the plane
+     * @param mv the packed motion vector
+     * @param refp the reference picture
+     * @param refidx the decoder reference index, for the scale factors
+     * @param filter2d the interpolation filter
+     */
+    public static void predictSingle(TaskContext t, short[] dst, int dstOff, int dstStride, int bw4, int bh4, int bx,
+                                     int by, int pl, int mv, Av1Picture refp, int refidx, int filter2d) {
+        Recon.mc(t, dst, null, dstOff, dstStride, bw4, bh4, bx, by, pl, mv, refp, refidx, filter2d);
+    }
+
+    /**
+     * Fills a picture of the frame's size with the zero-motion prediction of a reference of
+     * another size: every plane predicted in 8x8 luma blocks with the decoder's scaled motion
+     * compensation and the regular filter.
+     *
+     * @param t a task context whose frame context holds the current picture and the scale factors
+     * of the references
+     * @param dst the picture to fill, of the frame's size and layout
+     * @param ref the reference picture
+     * @param refidx the decoder reference index of the reference, for the scale factors
+     */
+    public static void resample(TaskContext t, Av1Picture dst, Av1Picture ref, int refidx) {
+        var layout = dst.layout;
+        var ssHor = layout == SequenceHeader.LAYOUT_I420 || layout == SequenceHeader.LAYOUT_I422 ? 1 : 0;
+        var ssVer = layout == SequenceHeader.LAYOUT_I420 ? 1 : 0;
+        var planes = layout == SequenceHeader.LAYOUT_I400 ? 1 : 3;
+        var w4 = (dst.w + 7) >> 3 << 1;
+        var h4 = (dst.h + 7) >> 3 << 1;
+        for (var pl = 0; pl < planes; pl++) {
+            var ssx = pl != 0 ? ssHor : 0;
+            var ssy = pl != 0 ? ssVer : 0;
+            var stride = dst.stride[pl != 0 ? 1 : 0];
+            for (var by = 0; by < h4; by += 2) {
+                for (var bx = 0; bx < w4; bx += 2) {
+                    var off = ((by * 4) >> ssy) * stride + ((bx * 4) >> ssx);
+                    Recon.mc(t, dst.data[pl], null, off, stride, 2, 2, bx, by, pl, 0, ref, refidx, 0);
+                }
+            }
+        }
+    }
+
+    /**
+     * Predicts every plane of a compound block of at least 8x8 luma samples into the frame's
+     * picture with the decoder's compound prediction, in the picture's chroma layout.
      *
      * @param t the task context, positioned at the block, with the frame's references
      * @param bs the block size
@@ -141,7 +240,12 @@ public final class EncoderBridge {
     public static void predictCompound(TaskContext t, int bs, Av1Block b, int dst, int uvdstoff) {
         var bw4 = Tables.BLOCK_DIMENSIONS[bs * 4];
         var bh4 = Tables.BLOCK_DIMENSIONS[bs * 4 + 1];
-        Recon.predictCompound(t, bs, b, dst, uvdstoff, true, 1, (bw4 + 1) >> 1, (bh4 + 1) >> 1);
+        var layout = t.f.cur.layout;
+        var ssHor = layout == SequenceHeader.LAYOUT_I420 || layout == SequenceHeader.LAYOUT_I422 ? 1 : 0;
+        var ssVer = layout == SequenceHeader.LAYOUT_I420 ? 1 : 0;
+        var chroma = layout != SequenceHeader.LAYOUT_I400;
+        Recon.predictCompound(t, bs, b, dst, uvdstoff, chroma, chroma ? SequenceHeader.LAYOUT_I444 - layout : 0,
+                (bw4 + ssHor) >> ssHor, (bh4 + ssVer) >> ssVer);
     }
 
     /**
