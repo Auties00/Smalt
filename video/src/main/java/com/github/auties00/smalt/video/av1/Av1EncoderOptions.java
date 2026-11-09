@@ -8,6 +8,7 @@ import com.github.auties00.smalt.track.Rational;
 
 import java.time.Duration;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.OptionalInt;
 
 /**
@@ -114,6 +115,18 @@ public final class Av1EncoderOptions {
 
     private final int bitDepth;
 
+    private final Av1FilmGrainTable filmGrain;
+
+    private final OptionalInt denoiseLevel;
+
+    private final Av1ScreenContent screenContent;
+
+    private final Av1FirstPassStatistics firstPassStatistics;
+
+    private final Av1TimingInfo timingInfo;
+
+    private final OptionalInt superResolution;
+
     private Av1EncoderOptions(Builder builder) {
         this.usage = builder.usage;
         this.lookahead = builder.lookahead;
@@ -139,6 +152,12 @@ public final class Av1EncoderOptions {
         this.quality = builder.quality;
         this.chromaFormat = builder.chromaFormat;
         this.bitDepth = builder.bitDepth;
+        this.filmGrain = builder.filmGrain;
+        this.denoiseLevel = builder.denoiseLevel;
+        this.screenContent = builder.screenContent;
+        this.firstPassStatistics = builder.firstPassStatistics;
+        this.timingInfo = builder.timingInfo;
+        this.superResolution = builder.superResolution;
     }
 
     /**
@@ -253,16 +272,17 @@ public final class Av1EncoderOptions {
      * <ul>
      *   <li>{@link Av1EncoderUsage#REALTIME}: a constant {@linkplain #bitrate() bitrate} with the
      *       buffer model, frame dropping, error resilience, adaptive quantization and temporal
-     *       layers; no {@linkplain #quality() quality}; 8-bit 4:2:0.</li>
+     *       layers; no {@linkplain #quality() quality}.</li>
      *   <li>{@link Av1EncoderUsage#GOOD_QUALITY}: a constant quality when {@link #quality()} is set,
      *       otherwise a variable bitrate; the lookahead and the quantizer window apply, the buffer
      *       model, frame dropping, error resilience, adaptive quantization and temporal layers do
-     *       not; 8-bit 4:2:0.</li>
-     *   <li>{@link Av1EncoderUsage#ALL_INTRA}: a constant quality, which is required, in the picture
-     *       format of {@link #chromaFormat()} and {@link #bitDepth()}; the bitrate, buffer,
-     *       quantizer window, frame dropping, adaptive quantization, temporal layer and lookahead
-     *       settings do not apply.</li>
+     *       not.</li>
+     *   <li>{@link Av1EncoderUsage#ALL_INTRA}: a constant quality, which is required; the bitrate,
+     *       buffer, quantizer window, frame dropping, adaptive quantization, temporal layer and
+     *       lookahead settings do not apply.</li>
      * </ul>
+     *
+     * <p>Every usage codes the picture format of {@link #chromaFormat()} and {@link #bitDepth()}.
      */
     public Av1EncoderUsage usage() {
         return usage;
@@ -468,8 +488,10 @@ public final class Av1EncoderOptions {
     /**
      * {@return the chroma format of the coded pictures; {@link ChromaFormat#YUV420} by default}
      *
-     * <p>Pictures in another format are converted. Only the all-intra usage codes a format other
-     * than 4:2:0.
+     * <p>Pictures in another format are converted. The stream's profile follows from the format
+     * and the {@linkplain #bitDepth() bit depth}: main for 4:2:0 and monochrome up to 10 bits, high
+     * for 4:4:4 up to 10 bits, professional for 4:2:2 and for 12 bits. No usage codes
+     * {@link ChromaFormat#YUV440}, which AV1 cannot code.
      */
     public ChromaFormat chromaFormat() {
         return chromaFormat;
@@ -478,10 +500,88 @@ public final class Av1EncoderOptions {
     /**
      * {@return the bit depth of the coded pictures, 8, 10 or 12; 8 by default}
      *
-     * <p>Pictures of another depth are converted. Only the all-intra usage codes more than 8 bits.
+     * <p>Pictures of another depth are converted.
      */
     public int bitDepth() {
         return bitDepth;
+    }
+
+    /**
+     * {@return the film grain the stream signals, by presentation time, or empty for none; empty
+     * by default}
+     *
+     * <p>A decoder adds the grain of a frame to its reconstruction, so detail too fine to code
+     * cheaply, such as the grain of film stock or sensor noise, can be signaled instead of coded.
+     * The table is given its grain without changing the pictures; to code a noisy source without
+     * its noise and estimate the grain to signal, use {@link #denoiseLevel()}.
+     */
+    public Optional<Av1FilmGrainTable> filmGrain() {
+        return Optional.ofNullable(filmGrain);
+    }
+
+    /**
+     * {@return the strength of the denoising applied to every picture before it is coded, from 1
+     * to 50, or empty for none; empty by default}
+     *
+     * <p>With a level, each picture is denoised with a Wiener filter whose noise floor grows with
+     * the level, and the grain removed is estimated from the picture's flat areas and signaled as
+     * film grain, so the decoded stream shows grain of the source's strength and pattern without
+     * spending bits on it. Levels from 10 (light noise) to 30 (heavy grain) suit most sources.
+     * Denoising costs several times the analysis of the fastest speeds.
+     */
+    public OptionalInt denoiseLevel() {
+        return denoiseLevel;
+    }
+
+    /**
+     * {@return when the frames use the screen content tools; {@link Av1ScreenContent#DETECT} by
+     * default}
+     *
+     * <p>A running predicted encoder keeps this setting; see {@link Av1Encoder#reconfigure}.
+     */
+    public Av1ScreenContent screenContent() {
+        return screenContent;
+    }
+
+    /**
+     * {@return the measurements of the whole video an {@link Av1FirstPass} took, which make the
+     * encode its second pass, or empty for a single pass; empty by default}
+     *
+     * <p>The good-quality usage only. With them, a variable {@linkplain #bitrate() bitrate} is spent
+     * over the whole video: each frame group gets the share of the bits left that its complexity
+     * gets of the complexity left, so the stream's size comes close to the bitrate times the
+     * video's duration, and simple passages save bits for complex ones. Key frames are placed
+     * with the measurements of the frames beyond the lookahead. Frames after the last measured one
+     * are coded as in a single pass.
+     */
+    public Optional<Av1FirstPassStatistics> firstPassStatistics() {
+        return Optional.ofNullable(firstPassStatistics);
+    }
+
+    /**
+     * {@return the timing information the sequence header signals; {@link Av1TimingInfo#NONE} by
+     * default}
+     *
+     * <p>The predicted usages only. A running encoder keeps this setting; see
+     * {@link Av1Encoder#reconfigure}.
+     */
+    public Av1TimingInfo timingInfo() {
+        return timingInfo;
+    }
+
+    /**
+     * {@return the super-resolution denominator, from 9 to 16, or empty to code every frame at the
+     * picture width; empty by default}
+     *
+     * <p>The predicted usages only. With a denominator, the frames the inter encoder codes (every
+     * frame in real time, every frame but the key frames in good quality) are coded at
+     * {@code 8 / denominator} of the picture width, rounded, and upscaled by the decoder with the
+     * normative super-resolution filter, which spends fewer bits on detail the bitrate cannot keep;
+     * each such frame predicts from its references with scaled motion compensation. A running
+     * encoder keeps this setting; see {@link Av1Encoder#reconfigure}.
+     */
+    public OptionalInt superResolution() {
+        return superResolution;
     }
 
     @Override
@@ -498,7 +598,11 @@ public final class Av1EncoderOptions {
                 && tileColumnsLog2 == that.tileColumnsLog2
                 && threads == that.threads && maxKeyframeBitratePercent.equals(that.maxKeyframeBitratePercent)
                 && color.equals(that.color) && limits.equals(that.limits) && quality.equals(that.quality)
-                && chromaFormat == that.chromaFormat && bitDepth == that.bitDepth;
+                && chromaFormat == that.chromaFormat && bitDepth == that.bitDepth
+                && Objects.equals(filmGrain, that.filmGrain) && denoiseLevel.equals(that.denoiseLevel)
+                && screenContent == that.screenContent
+                && Objects.equals(firstPassStatistics, that.firstPassStatistics) && timingInfo == that.timingInfo
+                && superResolution.equals(that.superResolution);
     }
 
     @Override
@@ -507,7 +611,7 @@ public final class Av1EncoderOptions {
                 maxQuantizer,
                 bufferSize, initialBufferLevel, optimalBufferLevel, dropFrames, errorResilient, adaptiveQuantization,
                 temporalLayers, tileColumnsLog2, threads, maxKeyframeBitratePercent, color, limits, quality, chromaFormat,
-                bitDepth);
+                bitDepth, filmGrain, denoiseLevel, screenContent, firstPassStatistics, timingInfo, superResolution);
     }
 
     @Override
@@ -522,7 +626,9 @@ public final class Av1EncoderOptions {
                 + ", tileColumnsLog2=" + tileColumnsLog2 + ", threads="
                 + threads + ", maxKeyframeBitratePercent=" + maxKeyframeBitratePercent + ", color=" + color
                 + ", limits=" + limits + ", quality=" + quality + ", chromaFormat=" + chromaFormat + ", bitDepth="
-                + bitDepth + "]";
+                + bitDepth + ", filmGrain=" + (filmGrain != null) + ", denoiseLevel=" + denoiseLevel
+                + ", screenContent=" + screenContent + ", firstPassStatistics=" + firstPassStatistics
+                + ", timingInfo=" + timingInfo + ", superResolution=" + superResolution + "]";
     }
 
     /**
@@ -580,6 +686,18 @@ public final class Av1EncoderOptions {
 
         private int bitDepth = 8;
 
+        private Av1FilmGrainTable filmGrain;
+
+        private OptionalInt denoiseLevel = OptionalInt.empty();
+
+        private Av1ScreenContent screenContent = Av1ScreenContent.DETECT;
+
+        private Av1FirstPassStatistics firstPassStatistics;
+
+        private Av1TimingInfo timingInfo = Av1TimingInfo.NONE;
+
+        private OptionalInt superResolution = OptionalInt.empty();
+
         private Builder() {
         }
 
@@ -608,6 +726,12 @@ public final class Av1EncoderOptions {
             quality = from.quality;
             chromaFormat = from.chromaFormat;
             bitDepth = from.bitDepth;
+            filmGrain = from.filmGrain;
+            denoiseLevel = from.denoiseLevel;
+            screenContent = from.screenContent;
+            firstPassStatistics = from.firstPassStatistics;
+            timingInfo = from.timingInfo;
+            superResolution = from.superResolution;
         }
 
         /**
@@ -900,6 +1024,117 @@ public final class Av1EncoderOptions {
         }
 
         /**
+         * Sets the film grain the stream signals; see {@link Av1EncoderOptions#filmGrain()}.
+         *
+         * @param table the grain by presentation time
+         * @return this builder
+         */
+        public Builder filmGrain(Av1FilmGrainTable table) {
+            this.filmGrain = Objects.requireNonNull(table, "table");
+            return this;
+        }
+
+        /**
+         * Signals no film grain from a table, the default.
+         *
+         * @return this builder
+         */
+        public Builder noFilmGrain() {
+            this.filmGrain = null;
+            return this;
+        }
+
+        /**
+         * Sets the denoising applied before coding, with the grain it removes signaled; see
+         * {@link Av1EncoderOptions#denoiseLevel()}.
+         *
+         * @param level the strength, from 1 to 50
+         * @return this builder
+         */
+        public Builder denoise(int level) {
+            this.denoiseLevel = OptionalInt.of(level);
+            return this;
+        }
+
+        /**
+         * Codes the pictures without denoising them, the default.
+         *
+         * @return this builder
+         */
+        public Builder noDenoise() {
+            this.denoiseLevel = OptionalInt.empty();
+            return this;
+        }
+
+        /**
+         * Sets whether the screen content tools are used; see
+         * {@link Av1EncoderOptions#screenContent()}.
+         *
+         * @param mode the value
+         * @return this builder
+         */
+        public Builder screenContent(Av1ScreenContent mode) {
+            this.screenContent = Objects.requireNonNull(mode, "mode");
+            return this;
+        }
+
+        /**
+         * Makes the encode the second pass over measurements of the whole video; see
+         * {@link Av1EncoderOptions#firstPassStatistics()}.
+         *
+         * @param statistics the measurements
+         * @return this builder
+         */
+        public Builder firstPassStatistics(Av1FirstPassStatistics statistics) {
+            this.firstPassStatistics = Objects.requireNonNull(statistics, "statistics");
+            return this;
+        }
+
+        /**
+         * Encodes in a single pass, the default.
+         *
+         * @return this builder
+         */
+        public Builder noFirstPassStatistics() {
+            this.firstPassStatistics = null;
+            return this;
+        }
+
+        /**
+         * Sets the timing information the sequence header signals; see
+         * {@link Av1EncoderOptions#timingInfo()}.
+         *
+         * @param timing the value
+         * @return this builder
+         */
+        public Builder timingInfo(Av1TimingInfo timing) {
+            this.timingInfo = Objects.requireNonNull(timing, "timing");
+            return this;
+        }
+
+        /**
+         * Codes the predicted frames at a reduced width the decoder upscales; see
+         * {@link Av1EncoderOptions#superResolution()}.
+         *
+         * @param denominator the super-resolution denominator, from 9 to 16
+         * @return this builder
+         */
+        public Builder superResolution(int denominator) {
+            this.superResolution = OptionalInt.of(denominator);
+            return this;
+        }
+
+        /**
+         * Codes every frame at the picture width, the default.
+         *
+         * @return this builder
+         */
+        public Builder noSuperResolution() {
+            this.superResolution = OptionalInt.empty();
+            return this;
+        }
+
+        /**
          * Returns the options holding the settings of this builder.
          *
          * @return the options
@@ -911,10 +1146,14 @@ public final class Av1EncoderOptions {
          * initial level is not in [0, size], the optimal level is not positive or exceeds the size,
          * the temporal layers are not in [1, 3], the tile column logarithm is not in [0, 6], the
          * thread count is negative, the key frame target limit is below 100, the real-time usage has
-         * a quality, the all-intra usage has none, or a usage other than all-intra has a picture
-         * format other than 8-bit 4:2:0
+         * a quality, the all-intra usage has none, the chroma format is 4:4:0, which AV1 cannot
+         * code, the denoising level is not in [1, 50], both a film grain table and denoising are
+         * set, or first pass statistics are set outside the good-quality usage
          */
         public Av1EncoderOptions build() {
+            if (chromaFormat == ChromaFormat.YUV440) {
+                throw new IllegalArgumentException("AV1 cannot code 4:4:0 chroma");
+            }
             if (quality.isPresent()) {
                 Checks.inRange("quality", quality.getAsInt(), 0, 100);
             }
@@ -950,9 +1189,23 @@ public final class Av1EncoderOptions {
             if (usage == Av1EncoderUsage.ALL_INTRA && quality.isEmpty()) {
                 throw new IllegalArgumentException("all-intra coding needs a quality");
             }
-            if (usage != Av1EncoderUsage.ALL_INTRA && (chromaFormat != ChromaFormat.YUV420 || bitDepth != 8)) {
-                throw new IllegalArgumentException(usage + " coding supports 8-bit 4:2:0 only, got " + bitDepth
-                        + "-bit " + chromaFormat);
+            if (firstPassStatistics != null && usage != Av1EncoderUsage.GOOD_QUALITY) {
+                throw new IllegalArgumentException("first pass statistics need the good-quality usage");
+            }
+            if (timingInfo != Av1TimingInfo.NONE && usage == Av1EncoderUsage.ALL_INTRA) {
+                throw new IllegalArgumentException("timing information needs a predicted usage");
+            }
+            if (superResolution.isPresent()) {
+                Checks.inRange("super-resolution denominator", superResolution.getAsInt(), 9, 16);
+                if (usage == Av1EncoderUsage.ALL_INTRA) {
+                    throw new IllegalArgumentException("super-resolution needs a predicted usage");
+                }
+            }
+            if (denoiseLevel.isPresent()) {
+                Checks.inRange("denoising level", denoiseLevel.getAsInt(), 1, 50);
+                if (filmGrain != null) {
+                    throw new IllegalArgumentException("a film grain table and denoising cannot both be set");
+                }
             }
             return new Av1EncoderOptions(this);
         }

@@ -15,8 +15,8 @@ import java.util.Locale;
  *
  * <p>The format is recognized from the content: the Fujifilm, CR3, MRW, CRW and X3F signatures, the TIFF byte
  * order mark with its signature (42 for TIFF, {@code RO} and {@code RS} for Olympus, {@code U}
- * for Panasonic), Canon's {@code CR} marker, the DNG version tag and finally the camera maker of
- * the first directory.
+ * for Panasonic), Phase One's block signature, Canon's {@code CR} marker, the DNG version tag and finally
+ * the camera maker of the first directory.
  */
 public final class RawParser {
     /**
@@ -30,7 +30,8 @@ public final class RawParser {
      * Parses a raw file without decoding its sensor data.
      *
      * <p>A file of a camera model {@link CameraMatrices} knows gets that model's color matrices
-     * when it carries none of its own.
+     * when it carries none of its own, and a file of a four-color camera without any gets the
+     * matrix {@link FourColorMatrices} gives it.
      *
      * @param source the raw file, read but not closed
      * @param limits the resource bounds
@@ -41,6 +42,7 @@ public final class RawParser {
     public static RawFile parse(MediaSource source, MediaLimits limits) {
         var file = parseFormat(source, limits);
         CameraMatrices.complete(file);
+        FourColorMatrices.complete(file);
         return file;
     }
 
@@ -102,6 +104,11 @@ public final class RawParser {
         if (magic != 42) {
             throw new MediaException.Unsupported("raw", "TIFF signature " + magic + " is not a raw format this decoder reads");
         }
+        if (IiqParser.matches(head, length)) {
+            var file = new RawFile(source, limits, RawFormat.IIQ);
+            IiqParser.parse(reader, file);
+            return file;
+        }
         if (head[8] == 'C' && head[9] == 'R') {
             var file = new RawFile(source, limits, RawFormat.CR2);
             Cr2Parser.parse(reader, file);
@@ -111,6 +118,11 @@ public final class RawParser {
         if (first.has(50706)) {
             var file = new RawFile(source, limits, RawFormat.DNG);
             DngParser.parse(reader, file);
+            return file;
+        }
+        if (LeafParser.matches(first)) {
+            var file = new RawFile(source, limits, RawFormat.MOS);
+            LeafParser.parse(reader, file);
             return file;
         }
         var make = first.string(271);
@@ -130,7 +142,32 @@ public final class RawParser {
             PefParser.parse(reader, file);
             return file;
         }
-        var file = new RawFile(source, limits, vendor.startsWith("SAMSUNG") ? RawFormat.SRW : RawFormat.OTHER);
+        if (vendor.startsWith("SAMSUNG")) {
+            var file = new RawFile(source, limits, RawFormat.SRW);
+            SrwParser.parse(reader, file);
+            return file;
+        }
+        if (KodakParser.matches(vendor)) {
+            var file = new RawFile(source, limits, RawFormat.DCR);
+            KodakParser.parse(reader, file);
+            return file;
+        }
+        if (vendor.startsWith("HASSELBLAD")) {
+            var file = new RawFile(source, limits, RawFormat.FFF);
+            HasselbladParser.parse(reader, file);
+            return file;
+        }
+        if (MefParser.matches(vendor)) {
+            var file = new RawFile(source, limits, RawFormat.MEF);
+            MefParser.parse(reader, file);
+            return file;
+        }
+        if (vendor.startsWith("SEIKO EPSON")) {
+            var file = new RawFile(source, limits, RawFormat.ERF);
+            ErfParser.parse(reader, file);
+            return file;
+        }
+        var file = new RawFile(source, limits, RawFormat.OTHER);
         TiffEpParser.parse(reader, file);
         return file;
     }
