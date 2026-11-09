@@ -52,6 +52,17 @@ final class LfeInterpolator {
     }
 
     /**
+     * Takes decimated samples into the history without interpolating them.
+     *
+     * @param decimated the decimated samples
+     * @param count the number of decimated samples, at most 64
+     */
+    void advance(float[] decimated, int count) {
+        System.arraycopy(decimated, 0, samples, 7, count);
+        System.arraycopy(samples, count, samples, 0, 7);
+    }
+
+    /**
      * Clears the history.
      */
     void reset() {

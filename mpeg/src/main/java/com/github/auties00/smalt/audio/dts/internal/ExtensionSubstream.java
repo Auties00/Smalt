@@ -155,6 +155,16 @@ public final class ExtensionSubstream {
     private final int[] mixOutChannels = new int[4];
 
     /**
+     * The peak bit rate smoothing buffer size of the XLL component of the asset, in units of 16 kB, 0 for none.
+     */
+    private int xllPeakBuffer;
+
+    /**
+     * The offset of the first XLL frame in the XLL component of the asset, in bytes.
+     */
+    private int xllSyncOffset;
+
+    /**
      * The speaker layout of each speaker remapping set ({@code nuSpkrMaskRemapSet}).
      */
     private final int[] remapLayouts = new int[7];
@@ -194,15 +204,18 @@ public final class ExtensionSubstream {
     }
 
     /**
-     * Decodes an extension substream frame that follows a core frame, applying its components to the core.
+     * Decodes an extension substream frame that follows a core frame, applying its components to the core. An XLL
+     * component replaces the core output with the lossless one ({@link #ownOutput()}), for which the core frame must
+     * have been decoded with {@link CoreDecoder#setFixedPoint} on ({@link #losslessRatio} tells with which ratio); that
+     * reconstruction leaves an X96 component out.
      *
      * @param data the bytes
      * @param offset the index of the sync word
      * @param length the frame size
      * @param core the core decoder, its frame decoded
      * @throws MediaException.Malformed if the frame breaks the syntax
-     * @throws MediaException.Unsupported if the frame carries an XLL extension, which a stream with a core does
-     *         not decode yet; the extensions before it are applied to the core
+     * @throws MediaException.Unsupported if a component needs a feature this decoder does not implement; the
+     *         extensions before it are applied to the core
      */
     public void decode(byte[] data, int offset, int length, CoreDecoder core) {
         parse(data, offset, length);
@@ -210,19 +223,40 @@ public final class ExtensionSubstream {
         if ((components & XXCH) != 0) {
             xxch.decode(data, componentOffsets[6], componentSizes[6], core, reader);
         }
-        if ((components & X96) != 0) {
+        if ((components & X96) != 0 && !core.fixedPoint()) {
             x96.decodeSubstream(data, componentOffsets[7], componentSizes[7], core);
         }
         if ((components & XBR) != 0) {
             xbr.decode(data, componentOffsets[5], componentSizes[5], core);
         }
         if ((components & XLL) != 0) {
-            // TODO: decode the lossless channels coded against a core. Their residuals add to the reference
-            // decoder's fixed-point core, which the specification does not define; Smalt's float core leaves them
-            // within about 100 least significant bits, but an LFE channel coded against the core and the downmixes
-            // a hierarchical channel set embeds into the core come out wrong (the FATE xll_51_24_48_768 and
-            // xll_71_24_48_768 streams), so the core alone is output until those match.
-            throw new MediaException.Unsupported("DTS", "the XLL extension of a stream with a core");
+            checkWholeXllFrame();
+            xll.decode(data, componentOffsets[9], componentSizes[9], this, core);
+            ownOutput = true;
+        }
+    }
+
+    /**
+     * {@return the ratio of the rate of the XLL channels coded against a core to the rate of that core, 1 or 2, when
+     * this decoder can add them to the core, or {@code 0}}
+     *
+     * <p>A frame that breaks the syntax or needs a peak bit rate smoothing buffer codes none this decoder can add.
+     *
+     * @param data the bytes
+     * @param offset the index of the sync word
+     * @param length the frame size
+     * @param coreRate the sample rate of the core
+     */
+    public int losslessRatio(byte[] data, int offset, int length, int coreRate) {
+        try {
+            parse(data, offset, length);
+            if ((components & XLL) == 0) {
+                return 0;
+            }
+            checkWholeXllFrame();
+            return xll.coreRatio(data, componentOffsets[9], componentSizes[9], this, coreRate);
+        } catch (MediaException.Malformed | MediaException.Unsupported unusable) {
+            return 0;
         }
     }
 
@@ -240,6 +274,7 @@ public final class ExtensionSubstream {
         parse(data, offset, length);
         ownOutput = false;
         if ((components & XLL) != 0) {
+            checkWholeXllFrame();
             xll.decode(data, componentOffsets[9], componentSizes[9], this, null);
             ownOutput = true;
         } else if ((components & LBR) != 0) {
@@ -247,6 +282,21 @@ public final class ExtensionSubstream {
             ownOutput = true;
         }
         return ownOutput;
+    }
+
+    /**
+     * Rejects an XLL component that is not one whole frame.
+     *
+     * @throws MediaException.Unsupported if the asset uses a peak bit rate smoothing buffer or an XLL frame does not
+     *         start with the component
+     */
+    private void checkWholeXllFrame() {
+        if (xllPeakBuffer != 0 || xllSyncOffset != 0) {
+            // TODO: peak bit rate smoothing (nuPeakBRCntrlBuffSzkB, nuInitLLDecDlyFrames, nuExSSXLLSyncOffset): XLL
+            // frames spread over the components of several extension substream frames need a buffer across frames.
+            // No stream known needs it (the FATE suite and the DTS-HD MA samples of samples.ffmpeg.org do not).
+            throw new MediaException.Unsupported("DTS", "XLL with a peak bit rate smoothing buffer");
+        }
     }
 
     /**
@@ -508,11 +558,13 @@ public final class ExtensionSubstream {
      */
     private void readXllSize(int sizeBits) {
         componentSizes[9] = reader.read(sizeBits) + 1;
+        xllPeakBuffer = 0;
+        xllSyncOffset = 0;
         if (reader.readFlag()) {
-            reader.skip(4);
+            xllPeakBuffer = reader.read(4);
             var delayBits = reader.read(5) + 1;
             reader.skip(delayBits);
-            reader.skip(sizeBits);
+            xllSyncOffset = reader.read(sizeBits);
         }
     }
 }

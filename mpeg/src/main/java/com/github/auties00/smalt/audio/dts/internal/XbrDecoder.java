@@ -176,9 +176,19 @@ final class XbrDecoder {
                         var mode = useTransients ? core.transientMode(subframe, plane, n) : 0;
                         var scale = subsubframe < (mode == 0 ? subsubframes : mode) ? scales[ch][n][0]
                                 : scales[ch][n][1];
-                        var factor = scale * (steps[abits] * (1.0f / (1 << 22)));
                         var base = SubbandBuffer.HISTORY + offset + 8 * subsubframe;
                         var samples = planes[n];
+                        if (core.fixedPoint()) {
+                            var step = (long) scale * steps[abits];
+                            var shift = ChannelSet.fixedStepShift(step);
+                            for (var m = 0; m < 8; m++) {
+                                // unlike a core sample the sum is not clipped: ffmpeg's lossless output needs it whole
+                                samples[base + m] = (long) samples[base + m]
+                                        + ChannelSet.scaleFixed(codes[m], step >> shift, shift);
+                            }
+                            continue;
+                        }
+                        var factor = scale * (steps[abits] * (1.0f / (1 << 22)));
                         for (var m = 0; m < 8; m++) {
                             samples[base + m] += factor * codes[m];
                         }

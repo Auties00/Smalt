@@ -13,6 +13,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -94,30 +95,24 @@ final class DtsDecoderDifferentialTest {
         }
 
         @ParameterizedTest(name = "{0}")
-        @ValueSource(strings = {"xll_51_24_48_768", "xll_71_24_48_768_0", "xll_71_24_48_768_1",
-                "xll_71_24_96_768"})
-        @DisplayName("lossless streams with core output their core, as ffmpeg's core-only decoding does")
-        void losslessWithCore(String name) {
-            // the XLL extension of a stream with a core is not decoded yet (TODO in ExtensionSubstream)
+        @CsvSource({"xll_51_24_48_768, 0", "xll_xch_61_24_48_768, 512", "xll_71_24_48_768_0, 512",
+                "xll_71_24_48_768_1, 512", "xll_71_24_96_768, 1024", "xll_x96_51_24_96_1509, 0"})
+        @DisplayName("lossless streams over a core match ffmpeg sample for sample")
+        void losslessOverCore(String name, int from) {
+            // ffmpeg outputs the core alone for the first frame of a stream with several channel sets: its LFE channel
+            // holds 40 or 56 where the same source coded in one channel set (xll_51_24_48_768) holds 0, as Smalt does
             Oracle.assume(Oracle.Tool.FFMPEG);
             var file = vector(name);
             var decoded = DtsTestSupport.decodeFile(file, DtsDecoderOptions.defaults());
-            var reference = DtsTestSupport.ffmpegFloats(file, List.of("-core_only", "1"));
-            assertEquals(48000, decoded.sampleRate());
-            assertEquals(reference.length, decoded.samples().length, "sample count");
-            DtsTestSupport.report(name, reference, decoded.samples(), decoded.channels());
-            LOSSY.assertPcm(name, reference, decoded.samples());
-        }
-
-        @Test
-        @DisplayName("a lossless stream with an X96 core outputs the 96 kHz core")
-        void losslessWithX96Core() {
-            Oracle.assume(Oracle.Tool.FFMPEG);
-            var file = vector("xll_x96_51_24_96_1509");
-            var decoded = DtsTestSupport.decodeFile(file, DtsDecoderOptions.defaults());
-            var lossless = DtsTestSupport.ffmpegIntegers(file);
-            assertEquals(96000, decoded.sampleRate());
-            assertEquals(lossless.length, decoded.samples().length, "sample count");
+            var reference = DtsTestSupport.ffmpegIntegers(file);
+            var actual = DtsTestSupport.toInt32(decoded.samples());
+            assertEquals(reference.length, actual.length, "sample count");
+            var start = from * decoded.channels();
+            Tolerance.exact().assertWithin(name, Arrays.copyOfRange(reference, start, reference.length),
+                    Arrays.copyOfRange(actual, start, actual.length));
+            for (var i = 0; i < start; i++) {
+                assertEquals(0, actual[i], "first frame sample " + i);
+            }
         }
     }
 

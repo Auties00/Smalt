@@ -97,6 +97,17 @@ final class ChannelSet {
     final int[] vqStart = new int[MAX_CHANNELS];
 
     /**
+     * The significant bits the scale factor and step size product keeps in the fixed-point reconstruction.
+     */
+    private static final int FIXED_STEP_BITS = 23;
+
+    /**
+     * Whether the subband samples are dequantized to the integers of the fixed-point reconstruction, which the
+     * lossless extension codes its residuals against, rather than in floating point.
+     */
+    boolean fixedPoint;
+
+    /**
      * The joint intensity source channel plus one by channel, or {@code 0} ({@code JOINX}).
      */
     final int[] joint = new int[MAX_CHANNELS];
@@ -162,6 +173,11 @@ final class ChannelSet {
      * The joint intensity scale factors by channel and subband.
      */
     private final float[][] jointScales = new float[MAX_CHANNELS][32];
+
+    /**
+     * The fixed-point joint intensity scale factors by channel and subband, Q17.
+     */
+    private final int[][] jointLevels = new int[MAX_CHANNELS][32];
 
     /**
      * The joint scale factor code book by channel ({@code JOIN_SHUFF}).
@@ -332,6 +348,7 @@ final class ChannelSet {
                         throw new MediaException.Malformed("invalid DTS joint scale factor index " + index);
                     }
                     jointScales[ch][n] = (float) DtsCoreTables.JOINT_SCALES[index];
+                    jointLevels[ch][n] = DtsFixedTables.JOINT_SCALES[index];
                 }
             }
         }
@@ -351,9 +368,16 @@ final class ChannelSet {
             var planes = buffer.planes[firstPlane + ch];
             for (var n = vqStart[ch]; n < subbands[ch]; n++) {
                 var index = reader.read(10);
-                var scale = scales[ch][n][0] * (1.0f / 16);
                 var plane = planes[n];
                 var base = SubbandBuffer.HISTORY + offset;
+                if (fixedPoint) {
+                    var level = (long) scales[ch][n][0];
+                    for (var m = 0; m < count; m++) {
+                        plane[base + m] = clip((DtsVqTables.highFrequency(index, m) * level + 8) >> 4);
+                    }
+                    continue;
+                }
+                var scale = scales[ch][n][0] * (1.0f / 16);
                 for (var m = 0; m < count; m++) {
                     plane[base + m] = scale * DtsVqTables.highFrequency(index, m);
                 }
@@ -394,8 +418,15 @@ final class ChannelSet {
                         adjusted = adjusted * (long) (adjust[ch][abits - 1] * 16) >> 4;
                     }
                     var step = adjusted * steps[abits];
-                    for (var m = 0; m < 8; m++) {
-                        plane[base + m] = dequantize(codes[m], step);
+                    if (fixedPoint) {
+                        var shift = fixedStepShift(step);
+                        for (var m = 0; m < 8; m++) {
+                            plane[base + m] = dequantizeFixed(codes[m], step >> shift, shift);
+                        }
+                    } else {
+                        for (var m = 0; m < 8; m++) {
+                            plane[base + m] = dequantize(codes[m], step);
+                        }
                     }
                 }
                 if (predictionMode[ch][n] != 0) {
@@ -421,8 +452,15 @@ final class ChannelSet {
             var target = buffer.planes[firstPlane + ch];
             var from = buffer.planes[source];
             for (var n = subbands[ch]; n < planeBands[source]; n++) {
-                var scale = jointScales[ch][n];
                 var base = SubbandBuffer.HISTORY + offset;
+                if (fixedPoint) {
+                    var level = (long) jointLevels[ch][n];
+                    for (var m = 0; m < count; m++) {
+                        target[n][base + m] = clip(((long) from[n][base + m] * level + (1 << 16)) >> 17);
+                    }
+                    continue;
+                }
+                var scale = jointScales[ch][n];
                 for (var m = 0; m < count; m++) {
                     target[n][base + m] = scale * from[n][base + m];
                 }
@@ -547,6 +585,43 @@ final class ChannelSet {
             return product > 0 ? 8388607.0f : -8388608.0f;
         }
         return clip((code * step + (1 << 21)) >> 22);
+    }
+
+    /**
+     * {@return the number of low bits the fixed-point reconstruction drops from a scale factor and step size product}
+     *
+     * @param step the scale factor times the step size times 2^22
+     */
+    static int fixedStepShift(long step) {
+        return Math.max(0, Long.SIZE - Long.numberOfLeadingZeros(step) - FIXED_STEP_BITS);
+    }
+
+    /**
+     * Dequantizes a subband sample in the fixed-point reconstruction: the scale factor and step size product keeps
+     * its top {@value #FIXED_STEP_BITS} bits, truncated, before it multiplies the code.
+     *
+     * @param code the quantization index
+     * @param step the scale factor times the step size times 2^22, shifted right by {@code shift}
+     * @param shift the number of bits dropped from the product
+     * @return the subband sample
+     */
+    static float dequantizeFixed(int code, long step, int shift) {
+        return clip(scaleFixed(code, step, shift));
+    }
+
+    /**
+     * {@return a subband sample of the fixed-point reconstruction before it is clipped}
+     *
+     * @param code the quantization index
+     * @param step the scale factor times the step size times 2^22, shifted right by {@code shift}
+     * @param shift the number of bits dropped from the product
+     */
+    static long scaleFixed(int code, long step, int shift) {
+        var product = code * step;
+        if (shift >= 22) {
+            return product << (shift - 22);
+        }
+        return (product + (1L << (21 - shift))) >> (22 - shift);
     }
 
     /**

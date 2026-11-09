@@ -77,14 +77,9 @@ final class XllDecoder {
     private final int[][] reordered = new int[16][];
 
     /**
-     * The core samples of the channel being completed, with the embedded downmixes undone.
+     * The width of the fixed-point core samples.
      */
-    private final int[] coreSamples = new int[MAX_FRAME];
-
-    /**
-     * The undo coefficients of the channels of the channel set being reversed, Q15.
-     */
-    private final int[] undoCoefficients = new int[16];
+    private static final int CORE_BITS = 24;
 
     /**
      * The output samples by output channel.
@@ -147,6 +142,16 @@ final class XllDecoder {
     private int fixedLsbWidth;
 
     /**
+     * The index after the last component read.
+     */
+    private int frameEnd;
+
+    /**
+     * The number of channels the channel sets of the last component code.
+     */
+    private int channelBase;
+
+    /**
      * Constructs a decoder.
      */
     XllDecoder() {
@@ -162,11 +167,98 @@ final class XllDecoder {
      * @param offset the index of the component
      * @param length the component size
      * @param substream the extension substream holding the asset descriptor
-     * @param core the core decoder with its frame decoded and synthesized samples available, or {@code null}
+     * @param core the core decoder with its frame decoded, or {@code null}
      * @throws MediaException.Malformed if the component breaks the syntax
      * @throws MediaException.Unsupported if the component needs a feature this decoder does not implement
      */
     void decode(byte[] data, int offset, int length, ExtensionSubstream substream, CoreDecoder core) {
+        var position = readHeaders(data, offset, length, substream);
+        var bands = 0;
+        for (var s = 0; s < sets0; s++) {
+            bands = Math.max(bands, sets[s].bands);
+        }
+        position = readNavigation(data, position, frameEnd, bands);
+        if (bands > 1) {
+            // TODO: frequency bands above 96 kHz need the band synthesis filter, which ETSI TS 102 114 does not
+            // specify.
+            throw new MediaException.Unsupported("DTS", "XLL frequency bands above 96 kHz are not supported");
+        }
+        if (core != null) {
+            if (codesAgainstCore() && !core.losslessReference()) {
+                // TODO: a core with a 128 times interpolated LFE channel has no oracle: ETSI TS 102 114 does not give
+                // the fixed-point reconstruction and ffmpeg refuses it in that mode.
+                throw new MediaException.Unsupported("DTS", "XLL over a core with a 128 times interpolated LFE channel");
+            }
+            core.synthesize(false);
+        }
+        for (var band = 0; band < bands; band++) {
+            for (var segment = 0; segment < segments; segment++) {
+                for (var s = 0; s < sets0; s++) {
+                    var set = sets[s];
+                    if (set.bands <= band) {
+                        continue;
+                    }
+                    var size = naviSizes[band][segment][s];
+                    if (position + size > frameEnd) {
+                        throw new MediaException.Malformed("DTS XLL band data overruns the frame");
+                    }
+                    readBandData(data, position, size, set, segment);
+                    position += size;
+                }
+            }
+        }
+        var frameSamples = segments * segmentSamples;
+        for (var s = 0; s < sets0; s++) {
+            reconstruct(sets[s], frameSamples);
+        }
+        addCore(core, frameSamples);
+        render(frameSamples, channelBase);
+    }
+
+    /**
+     * {@return the ratio of the rate of an XLL component to the rate of a core, when the component has band 0 alone
+     * and every channel set at one rate, the rate of the core or twice it; else {@code 0}}
+     *
+     * <p>A component with no channel coded against the core is included: the frames after it may need the history its
+     * core frame leaves in the fixed-point reconstruction.
+     *
+     * @param data the bytes
+     * @param offset the index of the component
+     * @param length the component size
+     * @param substream the extension substream holding the asset descriptor
+     * @param coreRate the sample rate of the core
+     * @throws MediaException.Malformed if the component breaks the syntax
+     * @throws MediaException.Unsupported if the component needs a feature this decoder does not implement
+     */
+    int coreRatio(byte[] data, int offset, int length, ExtensionSubstream substream, int coreRate) {
+        readHeaders(data, offset, length, substream);
+        var ratio = sets[0].sampleRate == 2 * coreRate ? 2 : 1;
+        for (var s = 0; s < sets0; s++) {
+            if (sets[s].bands > 1 || sets[s].sampleRate != ratio * coreRate) {
+                return 0;
+            }
+        }
+        return ratio;
+    }
+
+    /**
+     * {@return whether a channel of the last component read is coded against the core}
+     */
+    private boolean codesAgainstCore() {
+        for (var s = 0; s < sets0; s++) {
+            if ((sets[s].residualType & ((1 << sets[s].channels) - 1)) != (1 << sets[s].channels) - 1) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Reads the common header and the channel set headers of a component.
+     *
+     * @return the index of the navigation index, after the channel set headers
+     */
+    private int readHeaders(byte[] data, int offset, int length, ExtensionSubstream substream) {
         if (length < 16 || CoreDecoder.readInt(data, offset) != SYNC) {
             throw new MediaException.Malformed("missing DTS XLL sync word");
         }
@@ -197,7 +289,7 @@ final class XllDecoder {
             throw new MediaException.Malformed("DTS XLL frame of " + segments * segmentSamples + " samples");
         }
         var position = offset + headerSize;
-        var channelBase = 0;
+        channelBase = 0;
         for (var s = 0; s < sets0; s++) {
             var set = sets[s];
             if (position + 2 > offset + frameSize) {
@@ -215,41 +307,8 @@ final class XllDecoder {
         if (channelBase > samples.length) {
             throw new MediaException.Malformed("DTS XLL frame codes " + channelBase + " channels");
         }
-        var bands = 0;
-        for (var s = 0; s < sets0; s++) {
-            bands = Math.max(bands, sets[s].bands);
-        }
-        position = readNavigation(data, position, offset + frameSize, bands);
-        if (bands > 1) {
-            // TODO: frequency bands above 96 kHz need the band synthesis filter, which ETSI TS 102 114 does not
-            // specify.
-            throw new MediaException.Unsupported("DTS", "XLL frequency bands above 96 kHz are not supported");
-        }
-        if (core != null) {
-            core.synthesize(false);
-        }
-        for (var band = 0; band < bands; band++) {
-            for (var segment = 0; segment < segments; segment++) {
-                for (var s = 0; s < sets0; s++) {
-                    var set = sets[s];
-                    if (set.bands <= band) {
-                        continue;
-                    }
-                    var size = naviSizes[band][segment][s];
-                    if (position + size > offset + frameSize) {
-                        throw new MediaException.Malformed("DTS XLL band data overruns the frame");
-                    }
-                    readBandData(data, position, size, set, segment);
-                    position += size;
-                }
-            }
-        }
-        var frameSamples = segments * segmentSamples;
-        for (var s = 0; s < sets0; s++) {
-            reconstruct(sets[s], frameSamples);
-        }
-        addCore(core, frameSamples);
-        render(frameSamples, channelBase);
+        frameEnd = offset + frameSize;
+        return position;
     }
 
     /**
@@ -370,7 +429,7 @@ final class XllDecoder {
     private int rice(int k) {
         var unary = 0;
         while (reader.read(1) == 0) {
-            if (++unary > 32 || reader.overrun()) {
+            if (++unary < 0 || reader.overrun()) {
                 throw new MediaException.Malformed("invalid DTS XLL Rice code");
             }
         }
@@ -440,15 +499,9 @@ final class XllDecoder {
             }
         }
         for (var ch = 0; ch < set.channels; ch++) {
-            var adjust = set.widthAdjust[0][ch];
-            int shift;
-            if (fixedLsbWidth == 0) {
-                var bits = set.scalableBits[0][ch];
-                shift = (adjust > 0 && bits > 0 ? bits - 1 : bits) + adjust;
-            } else {
-                shift = fixedLsbWidth;
-            }
-            if (scalableLsbs && shift > 0) {
+            var shift = lsbShift(set, ch);
+            if (shift > 0) {
+                var adjust = set.widthAdjust[0][ch];
                 var buffer = samples[set.firstChannel + ch];
                 var low = lsbs[set.firstChannel + ch];
                 for (var n = 0; n < frameSamples; n++) {
@@ -459,90 +512,193 @@ final class XllDecoder {
     }
 
     /**
-     * Scales every channel to its storage width and adds the core to the channels coded against it, from the last
-     * channel set to the first. The core carries the downmix the encoder embedded into it, so before it is added to
-     * a channel the downmixes of the later channel sets into that channel are undone on it (C.9): the core sample
-     * is multiplied by the inverse downmix scale and the channels of the later set, times their undo coefficients,
-     * are subtracted. A channel coded alone already holds its own signal.
+     * {@return the number of low bits of a channel that the MSB part of its band data does not code}
+     *
+     * @param set the channel set
+     * @param ch the channel within the set
+     */
+    private int lsbShift(ChannelSetHeader set, int ch) {
+        if (!scalableLsbs) {
+            return 0;
+        }
+        if (fixedLsbWidth != 0) {
+            return fixedLsbWidth;
+        }
+        var bits = set.scalableBits[0][ch];
+        var adjust = set.widthAdjust[0][ch];
+        return (adjust > 0 && bits > 0 ? bits - 1 : bits) + adjust;
+    }
+
+    /**
+     * Brings every channel to its storage width with the core added to the channels coded against it, then undoes
+     * the downmixes the later channel sets embedded into the earlier ones.
+     *
+     * <p>A channel coded against the core adds the core sample, multiplied by the inverse downmix scales of the later
+     * channel sets and rounded to the precision of the channel's MSB part, then clipped to 24 bits. A channel coded
+     * alone is not scaled. Each channel then subtracts the channels of the later sets, times their undo coefficients
+     * and at its own resolution, as those channels stand before their own downmixes are undone (clause 8.6.2.4).
      *
      * @param core the core decoder, or {@code null} without core
      * @param frameSamples the number of samples per channel of the frame
      * @throws MediaException.Malformed if a channel is coded against a missing core
+     * @implNote This implementation follows ffmpeg's lossless output, measured as a black box, for the arithmetic of
+     * the scales and coefficients, which clause C.9 leaves open for more than one later set and for negative scales.
      */
     private void addCore(CoreDecoder core, int frameSamples) {
-        for (var s = sets0 - 1; s >= 0; s--) {
+        for (var s = 0; s < sets0; s++) {
             var set = sets[s];
             var masks = set.channelMasks();
-            var full = 1 << (set.bitWidth - 1);
-            var shift = set.bitWidth - set.bitResolution;
             for (var ch = 0; ch < set.channels; ch++) {
-                var buffer = samples[set.firstChannel + ch];
-                if ((set.residualType >> ch & 1) != 0) {
-                    if (shift > 0) {
-                        for (var n = 0; n < frameSamples; n++) {
-                            buffer[n] <<= shift;
-                        }
+                if ((set.residualType >> ch & 1) == 0) {
+                    if (core == null) {
+                        throw new MediaException.Malformed("DTS XLL residual coded against a missing core");
                     }
-                    continue;
+                    if (core.fixedOutputSamples() != frameSamples) {
+                        throw new MediaException.Malformed("DTS XLL frame of " + frameSamples
+                                + " samples over a core frame of " + core.fixedOutputSamples());
+                    }
+                    addCoreChannel(samples[set.firstChannel + ch], core.fixedChannelOutput(masks[ch]),
+                            coreGain(s, ch), lsbShift(set, ch), CORE_BITS - set.bitResolution, frameSamples);
                 }
-                if (core == null) {
-                    throw new MediaException.Malformed("DTS XLL residual coded against a missing core");
-                }
-                var lossy = core.channelOutput(masks[ch]);
-                var base = coreSamples;
-                for (var n = 0; n < frameSamples; n++) {
-                    base[n] = Math.clamp(Math.round(lossy[n] * full), -full, full - 1);
-                }
+            }
+        }
+        for (var s = 0; s < sets0; s++) {
+            var set = sets[s];
+            var widen = set.bitWidth - set.bitResolution;
+            for (var ch = 0; ch < set.channels; ch++) {
                 for (var t = s + 1; t < sets0; t++) {
-                    undoDownmix(sets[t], t, s, ch, base, frameSamples);
+                    undoDownmix(t, s, ch, frameSamples);
                 }
-                for (var n = 0; n < frameSamples; n++) {
-                    buffer[n] = (buffer[n] << shift) + base[n];
+                if (widen > 0) {
+                    var buffer = samples[set.firstChannel + ch];
+                    for (var n = 0; n < frameSamples; n++) {
+                        buffer[n] <<= widen;
+                    }
                 }
             }
         }
     }
 
     /**
-     * Undoes on the core samples of one channel the downmix a later channel set embedded into it.
+     * Adds the scaled core to one channel.
      *
-     * @param source the later channel set
-     * @param sourceIndex the index of the later channel set
-     * @param targetIndex the index of the channel set of the channel
-     * @param channel the channel within its set
-     * @param base the core samples of the channel, updated
+     * @param buffer the samples of the channel, updated
+     * @param lossy the 24-bit core samples
+     * @param gain the gain of the core, Q16
+     * @param lsb the number of low bits of the channel the MSB part does not code
+     * @param reduce the number of bits the core has more than the sample resolution of the channel
      * @param frameSamples the number of samples per channel of the frame
      */
-    private void undoDownmix(ChannelSetHeader source, int sourceIndex, int targetIndex, int channel, int[] base,
-                             int frameSamples) {
-        if (!source.downmixEmbedded || !source.downmixCoefficientsPresent || source.replacementSet != 0) {
+    private static void addCoreChannel(int[] buffer, int[] lossy, int gain, int lsb, int reduce, int frameSamples) {
+        var drop = reduce + lsb;
+        var half = drop > 0 ? 1L << (drop - 1) : 0;
+        for (var n = 0; n < frameSamples; n++) {
+            var scaled = ((long) lossy[n] * gain + (1 << 15)) >> 16;
+            var msb = (int) Math.clamp((scaled + half) >> drop, -(1L << 23), (1L << 23) - 1);
+            buffer[n] += msb << lsb;
+        }
+    }
+
+    /**
+     * {@return the gain of the core in a channel: the product of the inverse downmix scales of the later channel
+     * sets, Q16}
+     *
+     * @param target the index of the channel set of the channel
+     * @param channel the channel within its set
+     */
+    private int coreGain(int target, int channel) {
+        var gain = 1 << 16;
+        for (var t = target + 1; t < sets0; t++) {
+            if (mixesInto(t, target)) {
+                gain = multiply16(gain, sets[t].inverseScale(column(t, target, channel)));
+            }
+        }
+        return gain;
+    }
+
+    /**
+     * Undoes on one channel the downmix a later channel set embedded into it.
+     *
+     * @param source the index of the later channel set
+     * @param target the index of the channel set of the channel
+     * @param channel the channel within its set
+     * @param frameSamples the number of samples per channel of the frame
+     */
+    private void undoDownmix(int source, int target, int channel, int frameSamples) {
+        if (!mixesInto(source, target)) {
             return;
         }
-        var column = 0;
-        for (var u = 0; u < targetIndex; u++) {
-            if (source.hierarchical || sets[u].primary) {
+        var set = sets[source];
+        var column = column(source, target, channel);
+        var inverse = Math.abs(set.inverseScale(column));
+        var buffer = samples[sets[target].firstChannel + channel];
+        for (var k = 0; k < set.channels; k++) {
+            var coefficient = set.undoCoefficient(k, column, inverse);
+            if (coefficient == 0) {
+                continue;
+            }
+            for (var w = source + 1; w < sets0; w++) {
+                if (mixesInto(w, target) && mixesInto(w, source)) {
+                    coefficient = multiply16(coefficient, sets[w].inverseScale(column(w, target, channel)));
+                    coefficient = (int) (((long) coefficient * sets[w].scale(column(w, source, k)) + (1 << 14)) >> 15);
+                }
+            }
+            var later = samples[set.firstChannel + k];
+            var drop = 15 + set.bitResolution - sets[target].bitResolution;
+            if (drop > 0) {
+                for (var n = 0; n < frameSamples; n++) {
+                    buffer[n] -= (int) (((long) coefficient * later[n] + (1L << (drop - 1))) >> drop);
+                }
+            } else {
+                for (var n = 0; n < frameSamples; n++) {
+                    buffer[n] -= (int) ((long) coefficient * later[n] << -drop);
+                }
+            }
+        }
+    }
+
+    /**
+     * {@return whether a channel set embeds a downmix into an earlier one}
+     *
+     * @param source the index of the later channel set
+     * @param target the index of the earlier channel set
+     */
+    private boolean mixesInto(int source, int target) {
+        var set = sets[source];
+        return !set.primary && set.downmixCoefficientsPresent && set.downmixEmbedded && set.replacementSet == 0
+                && (set.hierarchical || sets[target].primary);
+    }
+
+    /**
+     * {@return the column of a channel in the downmix matrix of a later channel set}
+     *
+     * @param source the index of the later channel set
+     * @param target the index of the channel set of the channel
+     * @param channel the channel within its set
+     * @throws MediaException.Malformed if the matrix has no such column
+     */
+    private int column(int source, int target, int channel) {
+        var set = sets[source];
+        var column = channel;
+        for (var u = 0; u < target; u++) {
+            if (set.hierarchical || sets[u].primary) {
                 column += sets[u].channels;
             }
         }
-        if (!(source.hierarchical || sets[targetIndex].primary)) {
-            return;
+        if (column >= set.downmixColumns) {
+            throw new MediaException.Malformed("DTS XLL downmix matrix has no column " + column);
         }
-        column += channel;
-        if (column >= source.downmixColumns) {
-            return;
-        }
-        var inverse = source.inverseScale(column);
-        var undo = undoCoefficients;
-        for (var k = 0; k < source.channels; k++) {
-            undo[k] = source.undoCoefficient(k, column, inverse);
-        }
-        for (var n = 0; n < frameSamples; n++) {
-            long value = ((long) base[n] * inverse + (1 << 15)) >> 16;
-            for (var k = 0; k < source.channels; k++) {
-                value -= ((long) undo[k] * samples[source.firstChannel + k][n] + (1 << 14)) >> 15;
-            }
-            base[n] = (int) value;
-        }
+        return column;
+    }
+
+    /**
+     * {@return the product of two Q16 numbers, rounded}
+     *
+     * @param a the first number
+     * @param b the second number
+     */
+    private static int multiply16(int a, int b) {
+        return (int) (((long) a * b + (1 << 15)) >> 16);
     }
 
     /**
@@ -576,7 +732,7 @@ final class XllDecoder {
                 }
                 var target = output[out];
                 for (var n = 0; n < frameSamples; n++) {
-                    target[n] = buffer[n] / (float) full;
+                    target[n] = Math.clamp(buffer[n], -full, full - 1) / (float) full;
                 }
                 outputMasks[out] = masks[ch];
                 out++;
@@ -1063,6 +1219,21 @@ final class XllDecoder {
             }
             var sign = (code & 0x100) != 0 ? 1 : -1;
             return sign * DtsCoreTables.INV_DMIX[index - 40];
+        }
+
+        /**
+         * {@return the downmix scale of a target channel, Q15}
+         *
+         * @param column the target channel, counted over the channel sets the set mixes into
+         * @throws MediaException.Malformed if the scale index is outside -40 dB to 0 dB
+         */
+        int scale(int column) {
+            var code = downmixCoefficients[column * (channels + 1)];
+            var index = (code & 0xFF) - 1;
+            if (index < 40 || index > 240) {
+                throw new MediaException.Malformed("invalid DTS XLL downmix scale index " + index);
+            }
+            return (code & 0x100) != 0 ? DtsCoreTables.DMIX[index] : -DtsCoreTables.DMIX[index];
         }
 
         /**

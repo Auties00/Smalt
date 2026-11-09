@@ -35,11 +35,12 @@ import java.util.function.Consumer;
  *
  * <p>The decoder implements the core (5.1 channels up to 48 kHz) and its extensions: XCh (6.1), XXCH (up to 32
  * extra channels), X96 (96 kHz), XBR (higher bit rate) and XLL (lossless, DTS-HD Master Audio, up to 96 kHz). A
- * stream without core is output at the lossless resolution, bit for bit. The XLL extension of a stream with a core
- * is not decoded yet: such a stream outputs its core with the other extensions. When the extension substream of a
- * frame with a core needs what the decoder does not implement, the core is output; a stream without core that
- * needs it (XLL frequency bands above 96 kHz), DTS Express (LBR) and termination frames with a partial
- * subsubframe raise {@link MediaException.Unsupported}.
+ * stream with XLL is output at the lossless resolution, bit for bit, its channels coded against a core added to the
+ * fixed-point reconstruction of that core, with the downmixes its channel sets embed undone. When the extension
+ * substream of a frame with a core needs what the decoder does not implement (channels coded against a core with a
+ * 128 times interpolated LFE channel, a peak bit rate smoothing buffer), the core is output; a stream without core
+ * that needs it (XLL frequency bands above 96 kHz, a peak bit rate smoothing buffer), DTS Express (LBR) and
+ * termination frames with a partial subsubframe raise {@link MediaException.Unsupported}.
  * {@link #layout()} and {@link #sampleRate()} report the track's declared format until the first access unit is
  * decoded and that unit's output format afterwards; every buffer carries its own layout, its channels in the order
  * of {@link Speaker}. Samples are scaled so that 24-bit full scale maps to 1.0.
@@ -205,9 +206,11 @@ public final class DtsDecoder implements AudioDecoder {
         if (frameSize > plainLength) {
             return data.length;
         }
-        core.decode(source, offset, frameSize, options.extensions());
         var consumed = DtsFraming.packedLength(frameSize, packing);
         var next = position + consumed;
+        core.setFixedPoint(packing == DtsFraming.BIG_ENDIAN_16 && options.extensions()
+                ? losslessRatio(source, offset, frameSize, data, next) : 0);
+        core.decode(source, offset, frameSize, options.extensions());
         var substreamDecoded = false;
         if (packing == DtsFraming.BIG_ENDIAN_16 && options.extensions()) {
             if (next + 4 <= data.length && DtsFraming.readInt(data, next) == DtsFraming.EXSS_SYNC) {
@@ -229,6 +232,29 @@ public final class DtsDecoder implements AudioDecoder {
             emit(output);
         }
         return next;
+    }
+
+    /**
+     * {@return the ratio of the rate of the lossless channels an extension substream frame after a core frame codes
+     * against that core to the rate of the core, so that the core must be decoded to the fixed-point reconstruction,
+     * or {@code 0} if the frame codes none this decoder can reconstruct}
+     *
+     * @param source the bytes of the core frame
+     * @param offset the index of the core frame
+     * @param frameSize the core frame size
+     * @param data the bytes of the access unit
+     * @param position the index after the core frame
+     */
+    private int losslessRatio(byte[] source, int offset, int frameSize, byte[] data, int position) {
+        if (position + 4 > data.length || DtsFraming.readInt(data, position) != DtsFraming.EXSS_SYNC) {
+            return 0;
+        }
+        var size = substream.frameSize(data, position, data.length - position);
+        if (size <= 0 || size > data.length - position) {
+            return 0;
+        }
+        var header = core.peekHeader(source, offset, frameSize);
+        return header.lfe == 1 ? 0 : substream.losslessRatio(data, position, size, header.sampleRate);
     }
 
     /**

@@ -1719,6 +1719,27 @@ class FuzzSeedWriter {
     }
 
     @Test
+    @DisplayName("writes the DTS-HD Master Audio seeds: lossless channels over a synthetic core, at its rate and twice it, and over XXCH")
+    void dtsLossless() {
+        write(MpegFuzzTest.class, "dts", "valid-xll-over-core.bin", dtsSeed(
+                com.github.auties00.smalt.audio.dts.internal.XllFuzzSeeds.overCore(1), 48000, 7));
+        write(MpegFuzzTest.class, "dts", "valid-xll-over-core-96k.bin", dtsSeed(
+                com.github.auties00.smalt.audio.dts.internal.XllFuzzSeeds.overCore(2), 48000, 7));
+        write(MpegFuzzTest.class, "dts", "valid-xll-over-xxch.bin", dtsSeed(
+                com.github.auties00.smalt.audio.dts.internal.XllFuzzSeeds.overXxch(), 48000, 8));
+        write(MpegFuzzTest.class, "dts", "valid-xll-rice.bin", dtsSeed(
+                com.github.auties00.smalt.audio.dts.internal.XllFuzzSeeds.rice(), 48000, 6));
+    }
+
+    private static byte[] dtsSeed(List<byte[]> units, int sampleRate, int channels) {
+        var parts = new ArrayList<FuzzPackets.Part>();
+        for (var unit : units) {
+            parts.add(new FuzzPackets.Part(unit, true));
+        }
+        return FuzzPackets.audio(0, sampleRate, channels, 0, null, parts);
+    }
+
+    @Test
     @DisplayName("writes the E-AC-3 seeds of Smalt's encoder tools: dependent substreams, pre-noise data, enhanced coupling, metadata")
     void eac3Tools() {
         for (var name : com.github.auties00.smalt.audio.ac3.Eac3ToolStreams.NAMES) {

@@ -224,6 +224,42 @@ public final class CoreDecoder {
     private boolean previousX96;
 
     /**
+     * The ratio of the rate of the lossless channels to the rate of the core for the fixed-point reconstruction the
+     * lossless extension codes its residuals against, 1 or 2, or 0 for the floating-point one.
+     */
+    private int fixedPoint;
+
+    /**
+     * The value of {@link #fixedPoint} the frame before the current one was synthesized with.
+     */
+    private int previousFixed;
+
+    /**
+     * The fixed-point 32-band synthesis filter bank by channel.
+     */
+    private final FixedQmf32[] fixedQmf32 = new FixedQmf32[SubbandBuffer.MAX_CHANNELS];
+
+    /**
+     * The fixed-point 64-band synthesis filter bank by channel.
+     */
+    private final FixedQmf64[] fixedQmf64 = new FixedQmf64[SubbandBuffer.MAX_CHANNELS];
+
+    /**
+     * The fixed-point LFE interpolation filter.
+     */
+    private final FixedLfeInterpolator fixedLfeInterpolator = new FixedLfeInterpolator();
+
+    /**
+     * The decimated LFE samples of the frame in the fixed-point reconstruction.
+     */
+    private final int[] lfeFixed = new int[64];
+
+    /**
+     * The fixed-point reconstruction by channel, the LFE channel last, 24-bit samples.
+     */
+    private int[][] fixedPcm;
+
+    /**
      * The step size table of the frame.
      */
     private int[] steps;
@@ -235,6 +271,8 @@ public final class CoreDecoder {
         for (var i = 0; i < qmf32.length; i++) {
             qmf32[i] = new Qmf32();
             qmf64[i] = new Qmf64();
+            fixedQmf32[i] = new FixedQmf32();
+            fixedQmf64[i] = new FixedQmf64();
         }
         xch.planeBands = primary.planeBands;
     }
@@ -272,6 +310,7 @@ public final class CoreDecoder {
         }
         primary.channels = primaryChannels;
         primary.firstPlane = 0;
+        primary.fixedPoint = fixedPoint != 0;
         primary.readHeader(reader);
         if (header.crcPresent) {
             reader.skip(16);
@@ -364,12 +403,17 @@ public final class CoreDecoder {
         }
         var scale = DtsCoreTables.RMS7[index] * 0.035f;
         for (var n = 0; n < count; n++) {
+            lfeFixed[lfeSamples] = FixedLfeInterpolator.dequantize(codes[n], index);
             lfeDecimated[lfeSamples++] = ChannelSet.clip(codes[n] * scale);
         }
     }
 
     /**
      * Applies sum/difference decoding to a pair of channels in the subband domain (clause C.3.5).
+     *
+     * @implNote This implementation applies it to the fixed-point reconstruction too, as the clause asks of every
+     * core. ffmpeg's lossless output leaves it out, which would keep a sum and a difference in the place of two
+     * channels; no known lossless stream sets the flags, so only synthetic streams tell the two apart.
      */
     private void sumDifference(int first, int second) {
         var a = buffer.planes[first];
@@ -401,7 +445,7 @@ public final class CoreDecoder {
                     return;
                 }
             }
-            if (word == X96_SYNC && header.extensionType == 2 && x96Fits(data, offset, position, end)) {
+            if (word == X96_SYNC && header.extensionType == 2 && fixedPoint == 0 && x96Fits(data, offset, position, end)) {
                 x96.decodeCore(data, offset + position, end - position, this);
                 return;
             }
@@ -484,6 +528,7 @@ public final class CoreDecoder {
      * @param reader the bit stream, standing on the first subframe of the set
      */
     void decodeExtensionSet(ChannelSet set, MsbBitReader reader) {
+        set.fixedPoint = fixedPoint != 0;
         for (var subframe = 0; subframe < subframes; subframe++) {
             var subsubframes = subsubframeCounts[subframe];
             var position = subframeOffsets[subframe];
@@ -673,13 +718,23 @@ public final class CoreDecoder {
             undoDownmixes();
         }
         var out = pcm;
-        if (x96Present != previousX96) {
+        var fixed = undo ? 0 : fixedPoint;
+        if (x96Present != previousX96 || fixed != previousFixed) {
             for (var ch = 0; ch < SubbandBuffer.MAX_CHANNELS; ch++) {
                 qmf32[ch].reset();
                 qmf64[ch].reset();
+                fixedQmf32[ch].reset();
+                fixedQmf64[ch].reset();
             }
             previousX96 = x96Present;
+            previousFixed = fixed;
         }
+        if (fixed != 0) {
+            lfeInterpolator.advance(lfeDecimated, lfeSamples);
+            synthesizeFixed(fixed);
+            return;
+        }
+        fixedLfeInterpolator.advance(lfeFixed, lfeSamples);
         for (var ch = 0; ch < channels; ch++) {
             if (x96Present) {
                 qmf64[ch].synthesize(buffer.planes[ch], 0, samples, out[ch], 0, X96_SYNTHESIS_SCALE);
@@ -701,6 +756,83 @@ public final class CoreDecoder {
     }
 
     /**
+     * Synthesizes every channel with the fixed-point reconstruction into {@link #fixedPcm}.
+     *
+     * @param ratio the ratio of the output rate to the rate of the core, 1 or 2
+     */
+    private void synthesizeFixed(int ratio) {
+        if (fixedPcm == null) {
+            fixedPcm = new int[SubbandBuffer.MAX_CHANNELS + 1][8192];
+        }
+        for (var ch = 0; ch < channels; ch++) {
+            if (ratio == 2) {
+                fixedQmf64[ch].synthesize(buffer.planes[ch], 32, 0, samples, fixedPcm[ch], 0);
+            } else {
+                fixedQmf32[ch].synthesize(buffer.planes[ch], 0, samples, header.perfectReconstruction, fixedPcm[ch], 0);
+            }
+        }
+        if (header.lfe > 0) {
+            if (ratio == 2) {
+                fixedLfeInterpolator.interpolateDouble(lfeFixed, lfeSamples, fixedPcm[channels], 0);
+            } else {
+                fixedLfeInterpolator.interpolate(lfeFixed, lfeSamples, fixedPcm[channels], 0);
+            }
+        }
+}
+
+    /**
+     * Selects the reconstruction of the frames decoded from now on when they are synthesized for the lossless
+     * extension ({@link #synthesize(boolean)} without undoing the downmixes): the floating-point one, or the
+     * fixed-point one the residuals are coded against, which {@link #fixedChannelOutput(int)} reads instead of
+     * {@link #output(int)}. That reconstruction leaves the X96 extension out, adds the XBR one in integers and keeps
+     * the XCh and XXCH downmixes. A frame with a 128 times interpolated LFE channel has none
+     * ({@link #losslessReference()}), and a frame synthesized for its own output is always in floating point.
+     *
+     * @param ratio the ratio of the rate of the lossless channels to the rate of the core, 1 or 2, or 0 for the
+     *              floating-point reconstruction
+     */
+    public void setFixedPoint(int ratio) {
+        this.fixedPoint = ratio;
+    }
+
+    /**
+     * {@return whether the frame is decoded to the integer subband samples of the fixed-point reconstruction, without
+     * the X96 extension}
+     */
+    boolean fixedPoint() {
+        return fixedPoint != 0;
+    }
+
+    /**
+     * {@return whether the frame is decoded to the fixed-point reconstruction lossless residuals add to}
+     */
+    boolean losslessReference() {
+        return fixedPoint != 0 && header.lfe != 1;
+    }
+
+    /**
+     * {@return the number of samples per channel of the fixed-point reconstruction of the frame}
+     */
+    int fixedOutputSamples() {
+        return samples * 32 * fixedPoint;
+    }
+
+    /**
+     * Reads the header of a core frame without decoding the frame.
+     *
+     * @param data the bytes
+     * @param offset the index of the sync word
+     * @param length the frame size
+     * @return the header, overwritten by the next call or decode
+     * @throws MediaException.Malformed if the header breaks the syntax
+     */
+    public CoreHeader peekHeader(byte[] data, int offset, int length) {
+        reader.reset(data, offset, length);
+        header.read(reader);
+        return header;
+    }
+
+    /**
      * {@return the PCM of a channel of the last synthesized frame, {@link #outputSamples()} samples}
      *
      * @param ch the channel, indexed like {@link #mask(int)}; {@link #channels()} is the LFE channel
@@ -710,14 +842,26 @@ public final class CoreDecoder {
     }
 
     /**
-     * {@return the PCM of the channel with a DTS speaker bit in the last synthesized frame}
+     * {@return the 24-bit fixed-point reconstruction of the channel with a DTS speaker bit in the last synthesized
+     * frame, {@link #fixedOutputSamples()} samples}
      *
      * @param mask the speaker bit
      * @throws MediaException.Malformed if no channel has the bit
      */
-    float[] channelOutput(int mask) {
+    int[] fixedChannelOutput(int mask) {
+        return fixedPcm[channelIndex(mask)];
+    }
+
+    /**
+     * {@return the channel with a DTS speaker bit, a side surround speaker standing for a surround one and the
+     * reverse, {@link #channels()} for the LFE channel}
+     *
+     * @param mask the speaker bit
+     * @throws MediaException.Malformed if no channel has the bit
+     */
+    private int channelIndex(int mask) {
         if (mask == Speakers.LFE1 && hasLfe()) {
-            return pcm[channels];
+            return channels;
         }
         var index = indexOf(mask);
         if (index < 0) {
@@ -732,7 +876,7 @@ public final class CoreDecoder {
         if (index < 0) {
             throw new MediaException.Malformed("DTS core has no channel for speaker bit 0x" + Integer.toHexString(mask));
         }
-        return pcm[index];
+        return index;
     }
 
     /**
@@ -903,8 +1047,11 @@ public final class CoreDecoder {
         for (var ch = 0; ch < SubbandBuffer.MAX_CHANNELS; ch++) {
             qmf32[ch].reset();
             qmf64[ch].reset();
+            fixedQmf32[ch].reset();
+            fixedQmf64[ch].reset();
         }
         lfeInterpolator.reset();
+        fixedLfeInterpolator.reset();
         buffer.clearHistory();
         buffer.clearSaved();
         Arrays.fill(masks, 0);
