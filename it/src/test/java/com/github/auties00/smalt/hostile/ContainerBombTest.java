@@ -83,6 +83,16 @@ class ContainerBombTest {
                     be16(data, indexOf(data, "COMM", 12) + 8, 100);
                     return data;
                 }),
+                new Input("AIFF-C MAC3", () -> {
+                    try {
+                        var data = java.nio.file.Files.readAllBytes(java.nio.file.Path.of("..", "core", "src", "test",
+                                "resources", "samples", "aiff", "mace3.aifc"));
+                        be16(data, indexOf(data, "COMM", 12) + 8, 100);
+                        return data;
+                    } catch (java.io.IOException exception) {
+                        throw new java.io.UncheckedIOException(exception);
+                    }
+                }),
                 new Input("Wave64", () -> {
                     var data = pcm(ContainerFormat.W64, Codec.PCM_S16LE);
                     // the fmt chunk body follows its 16-byte GUID and 64-bit size

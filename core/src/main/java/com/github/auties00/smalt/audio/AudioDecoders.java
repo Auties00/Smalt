@@ -15,7 +15,7 @@ import java.util.Objects;
  *
  * <p>The decoder comes from the first {@link AudioCodecProvider} that decodes the track's codec.
  * The Smalt artifacts decode AAC (Main, LC, SSR, LTP and ER LTP, with HE-AAC), AMR-NB and AMR-WB
- * ({@code smalt-mpeg}), MP3, MP2, Opus, Vorbis, FLAC, ALAC, Speex, WavPack, Monkey's Audio, Musepack and DST
+ * ({@code smalt-mpeg}), MP3, MP2, Opus, Vorbis, FLAC, ALAC, Speex, WavPack, Monkey's Audio, Musepack, DST and MACE
  * ({@code smalt-audio}) and every uncompressed PCM and DSD variant (core); a
  * codec no provider decodes raises {@link MediaException.Unsupported} naming it and, when a
  * Smalt artifact decodes it, the artifact to add.

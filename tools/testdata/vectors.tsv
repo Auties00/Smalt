@@ -8306,3 +8306,12 @@ smoke	psdtools-masks-2.psd	25590	cc6363e24089c2f8910ae44b8067825e2af5e1c43c5d8b3
 smoke	psdtools-multichannel-pattern-fill.psd	23426	801b1c14522974ec39099eec445aafab47fc89700b96f1f788466698a09e6bcc	https://raw.githubusercontent.com/psd-tools/psd-tools/9a2e523bf6a88ddb95c1c7c1e5d3ba62ab59f9ce/tests/psd_files/multichannel-pattern-fill.psd
 smoke	psdtools-note.psd	61918	0b343c50db1a572393ea6a41d48f1aec7fa8d20c862a1716985b73d1a20d8b5f	https://raw.githubusercontent.com/psd-tools/psd-tools/9a2e523bf6a88ddb95c1c7c1e5d3ba62ab59f9ce/tests/psd_files/note.psd
 smoke	psdtools-unicode_pathname.psd	120304	9ce5876f237020b4a10607d60bef0d4c568d7d330ac91016778196762f429f42	https://raw.githubusercontent.com/psd-tools/psd-tools/9a2e523bf6a88ddb95c1c7c1e5d3ba62ab59f9ce/tests/psd_files/unicode_pathname.psd
+smoke	mace-Bach3-1.aiff	86032	4450d377ab074de23bca6c87b198058289072009417fb2a0eaa0a74c29536082	https://samples.ffmpeg.org/A-codecs/MACE/mac3/Bach3-1.aiff
+smoke	mace-Boys3-1.aiff	245776	a235e3b0b5d7cc0e1ef7afd277d595402555267ff30903617deecf41b1075a92	https://samples.ffmpeg.org/A-codecs/MACE/mac3/Boys3-1.aiff
+smoke	mace-Bach6-1.aiff	43194	799e368f885049d2bca2f3efaa77ab3b27006f6045cfd657b744336c12c0368c	https://samples.ffmpeg.org/A-codecs/MACE/mac6/Bach6-1.aiff
+smoke	mace-Boys6-1.aiff	116322	cb2ba2d9a6d556e1752124cebd33c65fe48e2b0c2878a2788884dc06a1e1e018	https://samples.ffmpeg.org/A-codecs/MACE/mac6/Boys6-1.aiff
+smoke	mace-mac3audio.mov	3052917	19cd872d386f502729c4cbd73381306ebe5bb694f0240229cf98136d6e6230a3	https://samples.ffmpeg.org/A-codecs/MACE/mac3/mac3audio.mov
+smoke	mace-surge-1-8-MAC3.mov	194233	08572e5c2ad094ee2c3fb0473c971617d5f61f78c75047e5e64ccd3b74e46eac	https://samples.ffmpeg.org/A-codecs/MACE/surge-samples/surge-1-8-MAC3.mov
+smoke	mace-surge-1-8-MAC6.mov	97850	c4c61708d6fb7c8b4812ed4499d48669dd2d6aafd0fcaab009e8badb48f24281	https://samples.ffmpeg.org/A-codecs/MACE/surge-samples/surge-1-8-MAC6.mov
+smoke	mace-surge-2-8-MAC3.mov	386999	add63c0b102f9160734c5a0a46c5055a91fa662eec8946725ad7c87fa93dd13a	https://samples.ffmpeg.org/A-codecs/MACE/surge-samples/surge-2-8-MAC3.mov
+smoke	mace-surge-2-8-MAC6.mov	194233	a66e4d3c772ce336f08ce542d52fe4c7664bcba0e0e2d0575d13278c536c56e2	https://samples.ffmpeg.org/A-codecs/MACE/surge-samples/surge-2-8-MAC6.mov

@@ -5,6 +5,8 @@ core/src/test/resources/samples/ac3/eac3.eac3	24240	400d4df66702dc55e5386a052567
 core/src/test/resources/samples/adif/aac.adif	16070	cb5174d3b404863bb6880e98e0b5088b494ce77ddded841531f0e4962d940696	make-audio-container-samples.py
 core/src/test/resources/samples/adts/aac.aac	16672	402c234b16a46779b820e19712b09b77070920f6299152664757ec5de94fdd29	make-samples.sh
 core/src/test/resources/samples/aiff/ima4.aifc	5172	b32b512bd0e61d1987673aa4bed83e2668f804eedc6674dd22c6d2d6179a9b0b	make-adpcm-samples.py
+core/src/test/resources/samples/aiff/mace3.aifc	4494	a85ccb59ae5b974c74d8afbe324bdcf92c353fc0cfa80c8e07799c94e7f43fbe	tools/testdata/mace/make-fixtures.py
+core/src/test/resources/samples/aiff/mace6.aifc	1186	1d763f01325f56ca3c8781739f37d465d50a2943d56e5e95b37405b9192d1c69	tools/testdata/mace/make-fixtures.py
 core/src/test/resources/samples/aiff/markers.aiff	16200	3f7f05851c739cf957c03aa8a16a09dd484f02fd1a3c575d5dbeeb757621e688	make-descriptive-samples.py
 core/src/test/resources/samples/aiff/s24.aiff	79434	ebf14564d8e9bfc6ecd8519f3e880fd48595927c54df40f1132a7d6420a3384c	make-samples.sh
 core/src/test/resources/samples/amr/nb-stereo.amr	6046	d40d1fb20f5dfde8e971710e28170d3ba60472f0cb95962e07d8574f817aef60	make-amr-mc-samples.py
@@ -103,6 +105,8 @@ core/src/test/resources/samples/mp4/hevc.mp4	18875	128b382bc84d00e2e8bd72f689017
 core/src/test/resources/samples/mp4/ima4.mov	5801	b1c37fc46af2ce625a8d89ce5cba407d1e496f35347e050d9061e0f32ce621fd	make-adpcm-samples.py
 core/src/test/resources/samples/mp4/jpeg2000.mov	22043	61fcdfd99ef4e81586e7b3a125a64b5c8d62778d5f3cbcc85f4fc3bc0868e0a0	make-samples.sh
 core/src/test/resources/samples/mp4/location-xmp.mp4	46724	bc9b03c9b5c01af5c51feea19da11d7d2a6d4cd0070777a7633f972371c79943	make-samples.sh, make-keyed-metadata-samples.py
+core/src/test/resources/samples/mp4/mace3.mov	5022	2e5efd8ce89a85f8b9da0d203501f2b3579e6060d6ccf7273a702a9ed8ad0287	tools/testdata/mace/make-fixtures.py
+core/src/test/resources/samples/mp4/mace6.mov	1713	34de95a2d8f649d9f935a86e576d8d7449973fc3e11cf27d1d2cdc35a3c49a80	tools/testdata/mace/make-fixtures.py
 core/src/test/resources/samples/mp4/moov-last.mp4	45860	f07f29483d40c24ccdbed6833e4a04f5d22e446968b7448c4cf0ad36cc8281dc	make-samples.sh
 core/src/test/resources/samples/mp4/motion.mj2	18352	9c3c18eeee3e9fe70749ac0b6671c29d712f7a559d34cf38fe52ff24978976c3	make-mj2-sample.py
 core/src/test/resources/samples/mp4/mpeg2.mp4	31858	6bb0c3e442cb9996d2625aaef5b28ad370acf3ef421d346bcd9cf15af34693ee	make-samples.sh

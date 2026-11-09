@@ -55,6 +55,8 @@ def generator(root, relative):
     if relative in ("ogg/opus-ambisonic.opus", "mp4/ambisonic.mov", "mp4/ambisonic-aac.mp4",
                     "wav/ambisonic-bformat.wav"):
         return "make-ambisonic-samples.py"
+    if relative in ("aiff/mace3.aifc", "aiff/mace6.aifc", "mp4/mace3.mov", "mp4/mace6.mov"):
+        return "tools/testdata/mace/make-fixtures.py"
     if relative in ("aiff/ima4.aifc", "mp4/ima4.mov", "mp4/gsm.mov", "mp4/ms-adpcm.mov", "avi/ima-adpcm.avi",
                     "avi/ms-adpcm.avi", "avi/g726.avi", "matroska/ms-adpcm.mka", "matroska/ima-adpcm.mka",
                     "matroska/g722.mka"):

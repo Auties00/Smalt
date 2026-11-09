@@ -40,6 +40,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @DisplayName("Java Sound WAVE, AIFF and AU variants")
 class JavaSoundJdkVariantsTest {
+    private static final Path MACE_SAMPLES = Path.of("..", "core", "src", "test", "resources", "samples", "aiff");
+
     private static final int RATE = 16_000;
 
     private static List<AudioFileReader> jdkReaders() {
@@ -107,12 +109,34 @@ class JavaSoundJdkVariantsTest {
                 Arguments.of("AIFF-C alaw", tone("aifc", "-c:a", "pcm_alaw")),
                 Arguments.of("AIFF-C ulaw", tone("aifc", "-c:a", "pcm_mulaw")),
                 Arguments.of("AIFF-C ima4", tone("aifc", "-c:a", "adpcm_ima_qt")),
+                Arguments.of("AIFF-C MAC3", MACE_SAMPLES.resolve("mace3.aifc")),
+                Arguments.of("AIFF-C MAC6", MACE_SAMPLES.resolve("mace6.aifc")),
                 Arguments.of("AU s16", tone("au", "-c:a", "pcm_s16be")),
                 Arguments.of("AU f32", tone("au", "-c:a", "pcm_f32be")),
                 Arguments.of("AU f64", tone("au", "-c:a", "pcm_f64be")),
                 Arguments.of("AU s8", tone("au", "-c:a", "pcm_s8")),
                 Arguments.of("AU A-law", tone("au", "-c:a", "pcm_alaw")),
                 Arguments.of("AU mu-law", tone("au", "-c:a", "pcm_mulaw")));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"mace3", "mace6"})
+    @DisplayName("decodes AIFF-C MACE to QuickTime's samples through the format conversion provider")
+    void mace(String name) throws Exception {
+        var reference = Files.readAllBytes(Path.of("..", "audio", "src", "test", "resources", "com", "github",
+                "auties00", "smalt", "audio", "mace", "sample-" + name + ".pcm"));
+        try (var stream = new SmaltAudioFileReader().getAudioInputStream(MACE_SAMPLES.resolve(name + ".aifc").toFile());
+             var pcm = AudioSystem.getAudioInputStream(AudioFormat.Encoding.PCM_SIGNED, stream)) {
+            assertEquals(16, pcm.getFormat().getSampleSizeInBits());
+            var high = pcm.getFormat().isBigEndian() ? 0 : 1;
+            var decoded = pcm.readAllBytes();
+            assertEquals(reference.length * 2, decoded.length);
+            var eightBit = new byte[reference.length];
+            for (var index = 0; index < eightBit.length; index++) {
+                eightBit[index] = (byte) (decoded[2 * index + high] + 128);
+            }
+            assertArrayEquals(reference, eightBit);
+        }
     }
 
     @ParameterizedTest(name = "{0}")

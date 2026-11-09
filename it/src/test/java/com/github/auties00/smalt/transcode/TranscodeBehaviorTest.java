@@ -296,7 +296,35 @@ class TranscodeBehaviorTest {
         @Test
         @DisplayName("copy coded audio no installed decoder decodes, and refuse to re-encode it")
         void undecodableAudio(@TempDir Path directory) throws java.io.IOException {
-            // MACE 3:1 in AIFF-C, which no Smalt artifact decodes: frames of arbitrary codes, which ffmpeg decodes
+            // ATRAC1 in Matroska, which no Smalt artifact decodes: frames of arbitrary bytes
+            var track = com.github.auties00.smalt.track.AudioTrack.builder().id(1).codec(Codec.ATRAC1)
+                    .timeBase(Rational.timeBaseOf(44100)).sampleRate(44100).layout(ChannelLayout.STEREO).build();
+            var sink = MediaSink.memory();
+            try (var muxer = new com.github.auties00.smalt.container.matroska.MatroskaMuxer(sink)) {
+                muxer.addTrack(track);
+                var random = new java.util.Random(7);
+                for (var index = 0; index < 40; index++) {
+                    var frame = new byte[2 * 212];
+                    random.nextBytes(frame);
+                    muxer.writePacket(new com.github.auties00.smalt.track.Packet(1, frame, index * 512L,
+                            index * 512L, 512, true));
+                }
+                muxer.finish();
+            }
+            var input = directory.resolve("atrac1.mka");
+            java.nio.file.Files.write(input, sink.toByteArray());
+            var copied = directory.resolve("copied.mka");
+            var result = transcode(input, copied, TranscodeOptions.of(OutputContainer.MATROSKA));
+            assertTrue(result.streams().getFirst().copied());
+            assertEquals(Codec.ATRAC1, result.streams().getFirst().track().codec());
+            assertArrayEquals(packetBytes(input), packetBytes(copied), "the same frames");
+            assertThrows(MediaException.Unsupported.class, () -> transcode(input, directory.resolve("encoded.mp4"),
+                    TranscodeOptions.of(OutputContainer.MP4)));
+        }
+
+        @Test
+        @DisplayName("re-encode MACE, which has a decoder but no encoder, and copy it within its containers")
+        void maceTranscodes(@TempDir Path directory) throws java.io.IOException {
             var track = com.github.auties00.smalt.track.AudioTrack.builder().id(1).codec(Codec.MACE3)
                     .timeBase(Rational.timeBaseOf(8000)).sampleRate(8000).layout(ChannelLayout.MONO).build();
             var sink = MediaSink.memory();
@@ -319,8 +347,27 @@ class TranscodeBehaviorTest {
             assertEquals(Codec.MACE3, result.streams().getFirst().track().codec());
             assertEquals("mace3", MediaProbe.of(copied).audio().codec());
             assertArrayEquals(Oracle.decodeAudio(input), Oracle.decodeAudio(copied), "the same samples");
-            assertThrows(MediaException.Unsupported.class, () -> transcode(input, directory.resolve("encoded.mp4"),
-                    TranscodeOptions.of(OutputContainer.MP4)));
+            var encoded = directory.resolve("encoded.m4a");
+            var converted = transcode(input, encoded, TranscodeOptions.of(OutputContainer.M4A));
+            assertFalse(converted.streams().getFirst().copied());
+            assertEquals("aac", MediaProbe.of(encoded).audio().codec());
+            // 40 packets of 600 samples at 8 kHz
+            try (var reader = com.github.auties00.smalt.audio.AudioReader.open(
+                    MediaSource.of(java.nio.file.Files.readAllBytes(encoded)))) {
+                assertEquals(3_000_000.0, reader.durationMicros(), 250_000.0);
+            }
+        }
+
+        /** Concatenates the bytes of every packet of a file, through Smalt's demuxer. */
+        private static byte[] packetBytes(Path file) throws java.io.IOException {
+            var bytes = new java.io.ByteArrayOutputStream();
+            try (var demuxer = com.github.auties00.smalt.container.Containers.openDemuxer(
+                    MediaSource.of(java.nio.file.Files.readAllBytes(file)))) {
+                for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                    bytes.writeBytes(packet.data());
+                }
+            }
+            return bytes.toByteArray();
         }
     }
 

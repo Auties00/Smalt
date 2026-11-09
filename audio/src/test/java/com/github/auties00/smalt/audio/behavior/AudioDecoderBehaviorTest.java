@@ -11,7 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
- * Decodes the Opus, Vorbis, FLAC, ALAC, MP3, MP2, ADPCM, telephony, lossless, DSD and ATRAC9 inputs of the container
+ * Decodes the Opus, Vorbis, FLAC, ALAC, MP3, MP2, ADPCM, telephony, MACE, lossless, DSD and ATRAC9 inputs of the container
  * samples (core's {@code src/test/resources/samples}) and of the smoke tier through the I/O behavior harness
  * ({@link ReaderAsserts}), comparing each with its per-block CRC dump under {@code src/test/resources/dumps}.
  */
@@ -26,6 +26,7 @@ class AudioDecoderBehaviorTest {
             "mp3/vbr-xing.mp3", "mp3/cbr.mp3", "mp3/mp2-id3v1.mp2", "avi/mpeg4-mp3.avi", "wav/mp3.wav", "wav/flac.wav",
             "wav/opus.wav", "ogg/opus-ambisonic.opus", "wav/ima-adpcm.wav", "wav/ms-adpcm.wav", "wav/gsm.wav",
             "wav/g722.wav", "wav/g726.wav", "aiff/ima4.aifc", "mp4/ima4.mov", "mp4/gsm.mov", "mp4/ms-adpcm.mov",
+            "aiff/mace3.aifc", "aiff/mace6.aifc", "mp4/mace3.mov", "mp4/mace6.mov",
             "avi/ima-adpcm.avi", "avi/ms-adpcm.avi", "avi/g726.avi", "matroska/ms-adpcm.mka", "matroska/g722.mka",
             "matroska/ima-adpcm.mka", "wavpack/wavpack.wv", "matroska/wavpack.mka", "ogg/speex.spx", "ape/ape.ape",
             "musepack/musepack.mpc", "dsd/dsd.dsf", "dsd/dsd.dff", "wav/atrac9.at9", "matroska/atrac9.mka"})

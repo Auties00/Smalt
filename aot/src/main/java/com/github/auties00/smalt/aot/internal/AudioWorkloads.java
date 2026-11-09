@@ -28,6 +28,7 @@ import com.github.auties00.smalt.audio.g726.G726Encoder;
 import com.github.auties00.smalt.audio.g726.G726EncoderOptions;
 import com.github.auties00.smalt.audio.gsm.GsmDecoder;
 import com.github.auties00.smalt.audio.gsm.GsmEncoder;
+import com.github.auties00.smalt.audio.mace.MaceDecoder;
 import com.github.auties00.smalt.audio.mp3.Mp2Encoder;
 import com.github.auties00.smalt.audio.mp3.Mp2EncoderOptions;
 import com.github.auties00.smalt.audio.mp3.Mp3Decoder;
@@ -70,6 +71,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Random;
 import java.util.function.Consumer;
 
 import static com.github.auties00.smalt.aot.internal.WorkloadFactory.file;
@@ -77,7 +79,8 @@ import static com.github.auties00.smalt.aot.internal.WorkloadFactory.realtime;
 
 /**
  * Creates the workloads of {@link TrainingFamily#AUDIO}, the codecs of {@code smalt-audio}: Opus,
- * Vorbis, FLAC, ALAC, MP3, MP2, IMA and Microsoft ADPCM, G.722, G.726 and GSM 06.10 encoding and decoding, Speex,
+ * Vorbis, FLAC, ALAC, MP3, MP2, IMA and Microsoft ADPCM, G.722, G.726 and GSM 06.10 encoding and decoding, MACE
+ * decoding, Speex,
  * WavPack, Monkey's Audio, Musepack, ATRAC9 and DST decoding, the DSD to PCM conversion of {@code smalt-core}, and
  * the voice processor, each on synthetic speech or music and keeping its codecs across rounds as a long-running
  * application does.
@@ -122,6 +125,8 @@ final class AudioWorkloads {
                         G726EncoderOptions.ofCodeSize(5)), 6)),
                 realtime("gsm-encode", () -> telephonyEncode("gsm-encode", new GsmEncoder(Codec.GSM), 6)),
                 realtime("gsm-decode", () -> telephonyDecode("gsm-decode", new GsmEncoder(Codec.GSM_MS), 6)),
+                realtime("mace3-decode", () -> maceDecode("mace3-decode", Codec.MACE3, 6)),
+                realtime("mace6-decode", () -> maceDecode("mace6-decode", Codec.MACE6, 6)),
                 file("opus-encode-speech", () -> opusSpeech(8)),
                 file("opus-encode-music", () -> opusMusic(6)),
                 file("opus-decode", () -> opusDecode(6)),
@@ -406,6 +411,30 @@ final class AudioWorkloads {
             default -> new GsmDecoder(track);
         };
         return AudioStreams.decode(name, packets, decoder);
+    }
+
+    /**
+     * Returns a workload that decodes 22.05 kHz mono MACE. Smalt has no MACE encoder, and every byte is a valid frame,
+     * so the stream is pseudo-random bytes, which visit the step tables more widely than audio.
+     *
+     * @param name the name of the workload
+     * @param codec the MACE variant
+     * @param seconds the duration of the stream
+     * @return the workload
+     */
+    private static TrainingWorkload maceDecode(String name, Codec codec, double seconds) {
+        var rate = 22050;
+        var track = AudioStreams.track(codec, rate, ChannelLayout.MONO, null);
+        var frameBytes = codec == Codec.MACE3 ? 2 : 1;
+        var frames = 512;
+        var random = new Random(0x4D414345L);
+        var packets = new ArrayList<Packet>();
+        for (var pts = 0L; pts < rate * seconds; pts += frames * 6L) {
+            var data = new byte[frames * frameBytes];
+            random.nextBytes(data);
+            packets.add(new Packet(1, data, pts, pts, frames * 6, true));
+        }
+        return AudioStreams.decode(name, packets, new MaceDecoder(track));
     }
 
     /**

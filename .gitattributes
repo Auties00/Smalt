@@ -19,6 +19,8 @@ image/src/test/resources/samples/** -text
 # a PGM header's line feeds.
 image/src/test/resources/com/github/auties00/smalt/image/jp2/kakadu-e5/** -text -diff
 image/src/test/resources/com/github/auties00/smalt/image/jp2/kakadu-cbap/** -text -diff
+# The MACE streams and QuickTime's decodes of them are byte-exact.
+audio/src/test/resources/com/github/auties00/smalt/audio/mace/** -text -diff
 # Reference outputs stored as raw float32 samples are byte-exact.
 **/src/test/resources/**/*.f32 -text -diff
 # Little CMS reference outputs of the color tests are raw samples, byte-exact.

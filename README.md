@@ -668,7 +668,7 @@ them, so files exchanged with ffmpeg differ in these known ways:
 | G.722 | yes: 64, 56 and 48 kbit/s modes, from WAV, AVI and Matroska `A_MS/ACM`; sub-band decoders bit-exact with the ITU-T G.722 Appendix II test sequences | yes: 64 kbit/s, 16 kHz mono; sub-band encoders bit-exact with the Appendix II sequences | `smalt-audio` | `audio.g722` | spec (ITU-T G.722) | none |
 | G.726 | yes: 16, 24, 32 and 40 kbit/s (2 to 5-bit codes, MSB-first packing), from WAV, AVI and Matroska `A_MS/ACM`, the uniform PCM output of Annex A; bit-exact with the ITU-T G.726 Appendix II test sequences | yes: every code size, any rate, bit-exact with the Appendix II sequences | `smalt-audio` | `audio.g726` | spec (ITU-T G.726 and its Annex A) | none |
 | GSM 06.10 (full rate) | yes: RFC 3551 33-byte frames (AIFF-C `GSM `, QuickTime `agsm`) and Microsoft's 65-byte blocks (WAV and AVI `0x0031`, Matroska `A_MS/ACM`); bit-exact with the ETSI EN 300 961 test sequences, codec homing included, and with libgsm | yes: both layouts, bit-exact with the EN 300 961 sequences and byte-identical to libgsm | `smalt-audio` | `audio.gsm` | libgsm 1.0.22 | none |
-| MACE 3:1, 6:1 | no (see Known limits); AIFF-C and QuickTime `MAC3`/`MAC6` tracks are read and written | no | - | - | - | none |
+| MACE 3:1, 6:1 | yes: AIFF-C and QuickTime `MAC3`/`MAC6` tracks, 16-bit samples repeating the 8-bit ones in both bytes; mono and stereo equal QuickTime 7.7.9 for Windows sample for sample (QuickTime takes no more channels; more are decoded in the same layout, each independently) | no | `smalt-audio` | `audio.mace` | black box (QuickTime 7.7.9 for Windows, every table measured), US patent 5,083,310 | none |
 
 Every decoder in the table also stands in for lost packets through the codec-neutral
 `AudioDecoder.conceal(samples, output)`, and the Opus, AAC, MP3 (constant and average bitrate) and AMR encoders
@@ -1861,9 +1861,9 @@ channels, or two tracks, at 32 kHz in 12 bits. A DV source is copied when no for
   so after a seek those bands differ from a decode from the start. ATRAC9 has no MP4 mapping, and a frame coding
   parameters for which LibAtrac9 has no defined result (gradient units past 31, fine precisions past 15, a band
   extension outside 13 to 20 quantization units) raises `MediaException.Malformed`.
-- MACE 3:1 and 6:1 (AIFF-C and QuickTime `MAC3`, `MAC6`) are read and written by the containers but not decoded:
-  the MACE patent (US 5,083,310) describes the structure but not the step, adaptation and quantizer tables, and no
-  public description of them exists, so `AudioDecoders.create` raises `MediaException.Unsupported`.
+- MACE 3:1 and 6:1 decode but do not encode, so `AudioEncoders.create` raises `MediaException.Unsupported`. No public
+  description of the tables exists: they were measured from QuickTime 7.7.9 as a black box, and the decoder equals
+  QuickTime sample for sample on every stream tried, which is the only evidence available for them.
 - CAF: `CafMuxer` writes packets of variable size (AAC, ALAC, Opus, MPEG audio, AC-3) only to a seekable sink,
   since the packet table they need must precede a `data` chunk of unknown size; constant-size formats stream. CAF
   formats other than those of the Containers table (for example AMR, iLBC, MACE, QDesign) raise
@@ -3823,7 +3823,8 @@ icons), the OpenEXR library (through its Python bindings, as the reference decod
 jxrlib's JxrEncApp and JxrDecApp (as the encoder and reference decoder of the JPEG XR test images), Apple's sips and
 iconutil (as the reader and writer of ICNS icons), Little CMS,
 [zimg](https://github.com/sekrit-twc/zimg) (through FFmpeg's zscale filter),
-ExifTool, Adobe DNG Converter, Sandflow's [imscJS](https://github.com/sandflow/imscJS), the IMSC reference
+ExifTool, Adobe DNG Converter, Apple QuickTime 7 (for the MACE tables), Sandflow's
+[imscJS](https://github.com/sandflow/imscJS), the IMSC reference
 implementation, the Fraunhofer [FDK AAC](https://github.com/mstorsjo/fdk-aac) library, and the Dolby Digital
 Plus decoder of Windows Media Foundation, and the BBC's [bmx](https://github.com/bbc/bmx), whose raw2bmx writes
 MXF test files and whose mxf2raw reads Smalt's; the payload vectors of [libwebrtc](https://webrtc.googlesource.com/src)'s RTP

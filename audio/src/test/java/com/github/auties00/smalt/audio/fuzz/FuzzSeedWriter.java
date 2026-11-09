@@ -124,6 +124,14 @@ class FuzzSeedWriter {
             write(AudioFuzzTest.class, "g726", "valid-" + bits + "bit.bin", telephonySeed(8000, 1, bits, null,
                     split(packed.toByteArray(), 15, 8)));
         }
+        write(AudioFuzzTest.class, "mace3", "valid-mono.bin", telephonySeed(22050, 1, 0, null,
+                split(java.nio.file.Files.readAllBytes(resources.resolve("mace/encoded-mac3.mace")), 256, 4)));
+        write(AudioFuzzTest.class, "mace3", "valid-stereo.bin", telephonySeed(22050, 2, 0, null,
+                split(java.nio.file.Files.readAllBytes(resources.resolve("mace/encoded-stereo-mac3.mace")), 256, 4)));
+        write(AudioFuzzTest.class, "mace6", "valid-mono.bin", telephonySeed(22050, 1, 0, null,
+                split(java.nio.file.Files.readAllBytes(resources.resolve("mace/encoded-mac6.mace")), 128, 4)));
+        write(AudioFuzzTest.class, "mace6", "valid-stereo.bin", telephonySeed(22050, 2, 0, null,
+                split(java.nio.file.Files.readAllBytes(resources.resolve("mace/encoded-stereo-mac6.mace")), 128, 4)));
         write(AudioFuzzTest.class, "gsm", "valid-mono.bin", telephonySeed(8000, 1, 0, null,
                 split(java.nio.file.Files.readAllBytes(resources.resolve("gsm/libgsm.gsm")), 66, 6)));
         var blocks = chunks(java.nio.file.Files.readAllBytes(resources.resolve("gsm/libgsm-ms.wav")));

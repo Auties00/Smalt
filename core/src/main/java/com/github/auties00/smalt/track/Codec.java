@@ -631,15 +631,13 @@ public enum Codec {
      */
     GSM(TrackKind.AUDIO, "gsm"),
 
-    // TODO: MACE decoding: US patent 5,083,310 gives MACE's structure (the 3-2-3 bit packing and the predictor and
-    // adaptation constants) but not its 128-entry step tables, adaptation table, quantizer levels or filters, and no
-    // other public or permissively licensed description of them exists, so a decoder cannot be written bit-exact
     /**
      * Apple's Macintosh Audio Compression/Expansion at 3:1, the AIFF-C and QuickTime {@code MAC3} compression
      * type: two bytes for every six 8-bit samples of a channel.
      *
-     * <p>A packet holds whole frames of two bytes per channel, six samples of every channel. The
-     * containers read and write the stream, but no Smalt artifact decodes it.
+     * <p>A packet holds whole frames of two bytes per channel, the channels of a frame one after the other, six
+     * samples of every channel: each byte gives three samples, from its low three bits, its next two and its top
+     * three. The track has no configuration.
      */
     MACE3(TrackKind.AUDIO, "mace3"),
 
@@ -647,8 +645,9 @@ public enum Codec {
      * Apple's Macintosh Audio Compression/Expansion at 6:1, the AIFF-C and QuickTime {@code MAC6} compression
      * type: one byte for every six 8-bit samples of a channel.
      *
-     * <p>A packet holds whole frames of one byte per channel, six samples of every channel. The
-     * containers read and write the stream, but no Smalt artifact decodes it.
+     * <p>A packet holds whole frames of one byte per channel, the channels of a frame one after the other, six
+     * samples of every channel: the byte's top three bits, its next two and its low three give two samples each.
+     * The track has no configuration.
      */
     MACE6(TrackKind.AUDIO, "mace6"),
 

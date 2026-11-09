@@ -1973,8 +1973,9 @@ public final class AudioStreamDecoder implements AutoCloseable {
 
         /**
          * Returns whether a track's codec keeps a prediction state that a restart never reproduces: IMA ADPCM in
-         * Apple's {@code ima4} layout, whose frames carry only the top bits of the predictor they continue,
-         * AAC Main (backward-adaptive prediction), AAC LTP, ER AAC LTP and AAC-LD (long term prediction), and
+         * Apple's {@code ima4} layout, whose frames carry only the top bits of the predictor they continue, MACE,
+         * whose frames carry none of its adaptation and predictor state, AAC Main (backward-adaptive prediction),
+         * AAC LTP, ER AAC LTP and AAC-LD (long term prediction), and
          * AAC-ELD with low delay spectral band replication, whose SBR state no pre-roll of a few frames
          * reproduces, USAC, whose arithmetic coder context, linear prediction state and enhanced SBR state
          * reach back to the last independent frame and beyond, and MPEG-4 CELP, whose predicted spectral parameters,
@@ -1989,6 +1990,9 @@ public final class AudioStreamDecoder implements AutoCloseable {
                 return true;
             }
             if (track.codec() == Codec.CELP) {
+                return true;
+            }
+            if (track.codec() == Codec.MACE3 || track.codec() == Codec.MACE6) {
                 return true;
             }
             var config = track.codecConfig();

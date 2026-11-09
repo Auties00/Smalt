@@ -115,6 +115,16 @@ class AudioFuzzTest {
     }
 
     @FuzzTest
+    void mace3(byte[] data) {
+        FuzzMedia.audio(Codec.MACE3, data);
+    }
+
+    @FuzzTest
+    void mace6(byte[] data) {
+        FuzzMedia.audio(Codec.MACE6, data);
+    }
+
+    @FuzzTest
     void gsm(byte[] data) {
         FuzzMedia.audio(Codec.GSM, data);
     }

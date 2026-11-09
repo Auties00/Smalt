@@ -32,7 +32,8 @@ public enum TrainingFamily {
      * transmission and loss concealment), Vorbis at several qualities, FLAC at 16 and 24 bits, ALAC
      * stereo (searched and fast) and 24-bit 5.1, MP3 at constant and variable bitrate and in real time,
      * the decoders of all five, IMA ADPCM (WAVE and {@code ima4} layouts) and Microsoft ADPCM files, G.722, G.726
-     * and GSM 06.10 in real time (encoders and decoders), the Speex decoder with loss concealment, the WavPack
+     * and GSM 06.10 in real time (encoders and decoders), the MACE decoder in real time, the Speex decoder with loss
+     * concealment, the WavPack
      * decoder (lossless, floating-point, DSD and hybrid with correction data), the Monkey's Audio and Musepack
      * decoders, the ATRAC9 decoder (stereo, 5.1 and high-rate files), the DSD to PCM conversion of DSF and
      * DSDIFF streams, and the voice
