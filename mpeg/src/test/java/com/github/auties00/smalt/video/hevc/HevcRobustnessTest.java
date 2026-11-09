@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
+import java.util.concurrent.Callable;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
@@ -26,9 +27,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Feeds mutated streams (bit flips, truncated, dropped, duplicated and reordered NAL units, garbage
  * NAL units, corrupt parameter sets and corrupt length prefixes) to the decoder, including streams of
- * the range extension formats and coding tools. Every call must
- * return or raise a {@link MediaException} within the time limit; any other exception, a hang or an
- * out-of-memory condition fails the test. After the damage, the clean stream fed again from its
+ * the range extension formats and coding tools, of the screen content coding tools and of separate
+ * color planes. Every call must return or raise a {@link MediaException} within the time limit; any
+ * other exception, a hang or an out-of-memory condition fails the test. After the damage, the clean stream fed again from its
  * first IDR picture must decode exactly.
  */
 @DisplayName("HEVC decoder robustness")
@@ -220,6 +221,69 @@ class HevcRobustnessTest {
                 "CCP_8bit_RExt_QCOM_1|PERSIST_RPARAM_A_RExt_Sony_3|EXTPREC_HIGHTHROUGHPUT_444_16_INTRA_8BIT_RExt_Sony_1"
                         + "|TSCTX_8bit_RExt_SHARP_1|ADJUST_IPRED_ANGLE_A_RExt_Mitsubishi_2|Bitdepth_A_RExt_Sony_1"
                         + "|GENERAL_16b_400_RExt_Sony_1|WPP_AND_TILE_AND_CABAC_BYPASS_ALIGN_1_HIGH_TP_444_14BIT_RExt_Apple_2"));
+    }
+
+    static Stream<Arguments> screenContentAndPlaneStreams() throws java.io.IOException {
+        var conformance = HevcSccConformanceTest.vectors().stream()
+                .map(vector -> Arguments.of(vector.name(), (Callable<byte[]>) () -> HevcSccConformanceTest.bitstream(vector)));
+        var coded = Stream.concat(codedScreenContent(),
+                        Stream.of("planes/planes-ld-8.bit", "planes/planes-ra-10.bit", "planes/planes-intra-8.bit"))
+                .map(path -> Arguments.of(path, (Callable<byte[]>) () -> resource(path)));
+        return Stream.concat(conformance, coded);
+    }
+
+    /**
+     * Returns the paths of the HM-SCM streams of {@link HevcSccConformanceTest}, which all start with an IDR picture.
+     */
+    static Stream<String> codedScreenContent() throws java.io.IOException {
+        return HevcSccConformanceTest.coded()
+                .map(arguments -> "scc/" + ((HevcSccConformanceTest.Coded) arguments.get()[0]).name() + ".hevc")
+                .distinct();
+    }
+
+    private static byte[] resource(String path) throws java.io.IOException {
+        try (var input = HevcRobustnessTest.class.getResourceAsStream(path)) {
+            return input.readAllBytes();
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("codedScreenContent")
+    @DisplayName("screen content coding streams recover at the next IDR picture after damage")
+    void screenContentRecovery(String path) throws Exception {
+        var bytes = resource(path);
+        var nals = HevcTestStreams.nalUnits(bytes);
+        var clean = HevcTestStreams.splitAnnexB(bytes);
+        var reference = decodeHostile(List.of(), clean);
+        assertTrue(!reference.isEmpty(), path + " decodes no frame");
+        var mutations = List.of("bit flips", "truncation", "dropped and duplicated", "reordered", "garbage",
+                "parameter sets");
+        assertTimeoutPreemptively(LIMIT, () -> {
+            var random = new Random(path.hashCode());
+            for (var trial = 0; trial < 12; trial++) {
+                var frames = decodeHostile(mutate(mutations.get(trial % mutations.size()), random, nals), clean);
+                assertTrue(frames.size() >= reference.size(), "trial " + trial + " lost frames of the clean stream");
+                var offset = frames.size() - reference.size();
+                for (var i = 0; i < reference.size(); i++) {
+                    assertArrayEquals(reference.get(i), frames.get(offset + i), "trial " + trial + ": clean frame " + i);
+                }
+            }
+        });
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("screenContentAndPlaneStreams")
+    @DisplayName("screen content coding tools and separate color planes fail only with MediaException")
+    void screenContentAndPlanes(String name, Callable<byte[]> stream) throws Exception {
+        var nals = HevcTestStreams.nalUnits(stream.call());
+        var mutations = List.of("bit flips", "truncation", "dropped and duplicated", "reordered", "garbage",
+                "parameter sets");
+        assertTimeoutPreemptively(LIMIT, () -> {
+            var random = new Random(name.hashCode());
+            for (var trial = 0; trial < 18; trial++) {
+                decodeHostile(mutate(mutations.get(trial % mutations.size()), random, nals), List.of());
+            }
+        });
     }
 
     @Test

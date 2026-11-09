@@ -62,8 +62,8 @@ final class SyntheticVideo {
             for (var row = 0; row < height; row++) {
                 for (var column = 0; column < width; column++) {
                     var noise = valueNoise(lattice, (column + t * 1.37) / 9.0, (row - t * 0.61) / 9.0);
-                    var wave = 40 * Math.sin((column - t * 2.3) / 23.0) * Math.cos((row + t * 1.1) / 31.0);
-                    var dx = column - width / 2.0 - 60 * Math.sin(t / 9.0);
+                    var wave = 40 * StrictMath.sin((column - t * 2.3) / 23.0) * StrictMath.cos((row + t * 1.1) / 31.0);
+                    var dx = column - width / 2.0 - 60 * StrictMath.sin(t / 9.0);
                     var dy = row - height / 2.0;
                     var spot = dx * dx + dy * dy < 1600 ? 50 : 0;
                     y[row * picture.yStride() + column] =
@@ -202,8 +202,8 @@ final class SyntheticVideo {
      * @return the sample
      */
     private static int moved(YuvPicture base, int column, int row, int t, int width, int height) {
-        var dx = (int) (40 * Math.sin(t / 3.0));
-        var dy = (int) (24 * Math.cos(t / 4.0));
+        var dx = (int) (40 * StrictMath.sin(t / 3.0));
+        var dy = (int) (24 * StrictMath.cos(t / 4.0));
         var x = Math.floorMod(column + dx * t / 2, width);
         var y = Math.floorMod(row + dy * t / 3, height);
         return base.y()[y * base.yStride() + x] & 0xFF;
