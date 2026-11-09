@@ -63,18 +63,14 @@ class VendorOracleTest {
     private static final String NONE = "no oracle files";
 
     /**
-     * The Sony models whose files are not decoded: the variable-length coding of compression 32767 and the four-color
-     * DSC-F828,
-     * whose sensor data the parser does not read.
+     * The Sony models whose files are not decoded: the four-color DSC-F828, whose sensor data the parser does not read.
      */
-    private static final Set<String> UNDECODED_ARW = Set.of("DSLR-A100", "DSLR-A200", "DSLR-A230", "DSLR-A290",
-            "DSLR-A350", "DSLR-A380", "DSLR-A390", "DSC-F828");
+    private static final Set<String> UNDECODED_ARW = Set.of("DSC-F828");
 
     /**
-     * The undecoded Sony models whose files have no encrypted SR2 directory of a known layout: the DSLR-A100, whose
-     * file has none, and the four-color DSC-F828.
+     * The undecoded Sony models whose files have no encrypted SR2 directory of a known layout.
      */
-    private static final Set<String> NO_SR2_BALANCE = Set.of("DSLR-A100", "DSC-F828");
+    private static final Set<String> NO_SR2_BALANCE = Set.of("DSC-F828");
 
     /**
      * The levels summary of a converter's DNG file.
@@ -283,7 +279,9 @@ class VendorOracleTest {
             "RW2_DIGILUX_3_4_3", "DCR_EASYSHARE_Z981", "DCR_EASYSHARE_Z990_NAN", "DCR_P880_NAN",
             "DCR_KODAK_P712_ZOOM_DIGITAL_CAMERA_NAN", "DCR_DCS520C_12BIT_3_2", "DCR_DCS760C_12BIT_3_2",
             "DCR_DCS_PRO_14N_12BIT_3_2", "DCR_DCS_PRO_14NX_12BIT_3_2", "DCR_DCS_PRO_SLR_C_12BIT_3_2",
-            "DCR_DCS_PRO_SLR_N_12BIT_3_2", "ARW_A900_UNCOMPRESSED_12", "ARW_A450_CRAW_12", "ARW_A700_CRAW_8",
+            "DCR_DCS_PRO_SLR_N_12BIT_3_2", "ARW_A900_UNCOMPRESSED_12", "ARW_A450_CRAW_12", "ARW_A700_CRAW_8", "ARW_A200_COMPRESSED_12",
+            "ARW_A100_DELTA_12", "ARW_A230_DELTA_12", "ARW_A290_DELTA_12", "ARW_A300_DELTA_12", "ARW_A330_DELTA_12",
+            "ARW_A350_DELTA_12", "ARW_A380_DELTA_12", "ARW_A390_DELTA_12",
             "MEF_ZD"})
     @DisplayName("the photosites, filter array, levels and white balance equal the converter's, and the image area "
             + "is the converter's image size within a few photosites of its place")
@@ -302,17 +300,6 @@ class VendorOracleTest {
         assertEquals(levels.crop()[3], crop[3], "the crop height");
         assertTrue(Math.abs(origin[0] + levels.crop()[0] - crop[0]) <= 8, "the crop's left edge");
         assertTrue(Math.abs(origin[1] + levels.crop()[1] - crop[1]) <= 8, "the crop's top edge");
-    }
-
-    @Test
-    @DisplayName("the DSLR-A200 file, whose coding is not decoded, is described with the converter's white balance")
-    void sonyUndecoded() {
-        var levels = Levels.read(oracle(ORACLE, stem(RawSamples.ARW_A200_COMPRESSED_12), ".levels"));
-        var file = parse(bytes(RawSamples.ARW_A200_COMPRESSED_12));
-        assertTrue(file.unsupported != null, "the variable-length coding is not decoded");
-        assertNotNull(file.color.asShotNeutral, "the white balance of the encrypted SR2 directory");
-        assertArrayEquals(normalized(levels.neutral()), normalized(file.color.asShotNeutral), 1e-5,
-                "the white balance");
     }
 
     @ParameterizedTest(name = "{0}")

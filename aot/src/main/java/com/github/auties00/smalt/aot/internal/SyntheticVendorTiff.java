@@ -597,6 +597,64 @@ final class SyntheticVendorTiff {
     }
 
     /**
+     * Writes an ARW file of an RGGB mosaic of a picture in the lossless variable-length coding of the DSLR-A200 to
+     * A390, with 12-bit samples, black level zero and the image four photosites inside each edge.
+     *
+     * @param picture the source of the mosaic
+     * @return the file and its image area
+     */
+    static RawSample arwVariableLength(RgbaPicture picture) {
+        var width = picture.width();
+        var height = picture.height();
+        var stored = SyntheticVendorRaw.mosaic(picture, 0, 4095);
+        var strip = sonyDifferences(stored, width, height);
+        var tiff = new TiffParts(true);
+        var file = tiffEp(tiff, List.of(TiffParts.ascii(271, "SONY"), TiffParts.ascii(272, "DSLR-A350")),
+                List.of(tiff.longs(40962, width - 8), tiff.longs(40963, height - 8)), null,
+                offset -> {
+                    var entries = new ArrayList<>(rawDirectory(tiff, width, height, 12, 32767, offset, strip.length));
+                    entries.add(tiff.shorts(0x7000, 3));
+                    return entries;
+                }, strip);
+        return sample(file, width, height, stored, 4, 4, width - 8, height - 8, uniform(0), 4095);
+    }
+
+    /**
+     * Codes photosites in the variable-length coding: whole columns from the right, each its even rows and then its odd
+     * ones, in eight more rows than the image has, every sample a difference from the one before it.
+     *
+     * @param samples the photosites, row by row
+     * @param width the image's width
+     * @param height the image's height
+     * @return the stream
+     */
+    private static byte[] sonyDifferences(int[] samples, int width, int height) {
+        var bits = new BitWriter(false);
+        var previous = 0;
+        for (var x = width - 1; x >= 0; x--) {
+            for (var phase = 0; phase < 2; phase++) {
+                for (var y = phase; y < height + 8; y += 2) {
+                    var sample = y < height ? samples[y * width + x] : previous;
+                    var difference = sample - previous;
+                    previous = sample;
+                    var category = 32 - Integer.numberOfLeadingZeros(Math.abs(difference));
+                    switch (category) {
+                        case 0 -> bits.write(0b011, 3);
+                        case 1 -> bits.write(0b11, 2);
+                        case 2 -> bits.write(0b10, 2);
+                        case 3 -> bits.write(0b010, 3);
+                        default -> bits.write(1, category - 1);
+                    }
+                    if (category != 0) {
+                        bits.write(difference < 0 ? difference + (1 << category) - 1 : difference, category);
+                    }
+                }
+            }
+        }
+        return bits.bytes();
+    }
+
+    /**
      * Builds the Sony cRAW tone curve of {@link #SONY_THRESHOLDS}, mapping twice an 11-bit value to a 14-bit one.
      *
      * @return the curve, of 4096 entries

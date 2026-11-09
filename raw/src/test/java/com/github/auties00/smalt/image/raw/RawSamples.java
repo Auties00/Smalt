@@ -65,6 +65,54 @@ public enum RawSamples {
             "04eacd403d92e0c90da9d91b87615af8eda1afc963350d3ab774557c36763eef"),
 
     /**
+     * rawpixls-sony-dslr-a230-12bit-12bit-compressed-3-2.arw (13893632 bytes).
+     */
+    ARW_A230_DELTA_12("rawpixls-sony-dslr-a230-12bit-12bit-compressed-3-2.arw", "https://raw.pixls.us/getfile.php/2448/nice/Sony%20-%20DSLR-A230%20-%2012bit%2012bit%20compressed%20%283%3A2%29.ARW",
+            "09b1e3d96a286f2e36cc0ae7cbeae1ac19457d147fad2f43e4112c15754749f0"),
+
+    /**
+     * rawpixls-sony-dslr-a290-12bit-12bit-compressed-3-2.arw (14286848 bytes).
+     */
+    ARW_A290_DELTA_12("rawpixls-sony-dslr-a290-12bit-12bit-compressed-3-2.arw", "https://raw.pixls.us/getfile.php/2730/nice/Sony%20-%20DSLR-A290%20-%2012bit%2012bit%20compressed%20%283%3A2%29.ARW",
+            "f56febc3621e0c4039a993ab289f9024c873e54f5749324e44cbaed59c4c2b8a"),
+
+    /**
+     * rawpixls-sony-dslr-a350-12bit-12bit-compressed-3-2.arw (16173680 bytes).
+     */
+    ARW_A350_DELTA_12("rawpixls-sony-dslr-a350-12bit-12bit-compressed-3-2.arw", "https://raw.pixls.us/getfile.php/2053/nice/Sony%20-%20DSLR-A350%20-%2012bit%2012bit%20compressed%20%283%3A2%29.ARW",
+            "6eb2ba8974aba7af9eab4a9350f8ab3fc294dc47b5afcc9e0d04be26643b2923"),
+
+    /**
+     * rawpixls-sony-dslr-a380-12bit-12bit-compressed-3-2.arw (19431424 bytes).
+     */
+    ARW_A380_DELTA_12("rawpixls-sony-dslr-a380-12bit-12bit-compressed-3-2.arw", "https://raw.pixls.us/getfile.php/5346/nice/Sony%20-%20DSLR-A380%20-%2012bit%2012bit%20compressed%20%283%3A2%29.ARW",
+            "1bdf11f9bcc65568b855c4ab9aa456d566ba6104a888a5567b237cf175e75a6b"),
+
+    /**
+     * rawpixls-sony-dslr-a390-12bit-12bit-compressed-3-2.arw (13860864 bytes).
+     */
+    ARW_A390_DELTA_12("rawpixls-sony-dslr-a390-12bit-12bit-compressed-3-2.arw", "https://raw.pixls.us/getfile.php/2497/nice/Sony%20-%20DSLR-A390%20-%2012bit%2012bit%20compressed%20%283%3A2%29.ARW",
+            "6a4b2d1eea77993d3a37d8aeb4b6a14523f372354b1aaa00e3d0bd4e2da695a6"),
+
+    /**
+     * rawpixls-sony-dslr-a100-compressed-3-2.arw (10137572 bytes).
+     */
+    ARW_A100_DELTA_12("rawpixls-sony-dslr-a100-compressed-3-2.arw", "https://raw.pixls.us/getfile.php/2346/nice/Sony%20-%20DSLR-A100%20-%20compressed%20%283%3A2%29.ARW",
+            "4df7981ac4baec9648b4f106751ea4b09a6e27bc70a15f8ef09bec051fec362d"),
+
+    /**
+     * rawpixls-sony-dslr-a300-12bit-12bit-compressed-3-2.arw (10519152 bytes).
+     */
+    ARW_A300_DELTA_12("rawpixls-sony-dslr-a300-12bit-12bit-compressed-3-2.arw", "https://raw.pixls.us/getfile.php/339/nice/Sony%20-%20DSLR-A300%20-%2012bit%2012bit%20compressed%20%283%3A2%29.ARW",
+            "daaa25127006b1178c298bce14de41c80ef0fd95101f0b3513e5126dfb8cced2"),
+
+    /**
+     * rawpixls-sony-dslr-a330-12bit-12bit-compressed-3-2.arw (9601024 bytes).
+     */
+    ARW_A330_DELTA_12("rawpixls-sony-dslr-a330-12bit-12bit-compressed-3-2.arw", "https://raw.pixls.us/getfile.php/355/nice/Sony%20-%20DSLR-A330%20-%2012bit%2012bit%20compressed%20%283%3A2%29.ARW",
+            "e5737fc8debb5ddea8d557de050565f3516635e093d246450ea2b3d1a27947a3"),
+
+    /**
      * rawpixls-canon-eos-40d-sraw2-sraw-3-2.cr2 (5805950 bytes).
      */
     CR2_40D_SRAW("rawpixls-canon-eos-40d-sraw2-sraw-3-2.cr2", "https://raw.pixls.us/getfile.php/2102/nice/Canon%20-%20EOS%2040D%20-%20sRAW2%20%28sRAW%29%20%283%3A2%29.CR2",

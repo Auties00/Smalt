@@ -21,8 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Checks the Sony ARW parser on synthetic files of compression 32767 built from the layout of the DSLR-A900 sample:
  * 12-bit samples packed in pairs into three bytes least significant bits first, with the A900's levels and image
- * area, and the rejection of the variable-length coding, which stores neither one nor one and a half bytes per
- * photosite.
+ * area, and the rejection of other sizes, which only the models of {@code SonyDeltaCoding} write.
  */
 class ArwParserTest {
     private static final String FUZZ_TARGET = "com.github.auties00.smalt.image.raw.fuzz.RawFuzzTest";
@@ -116,14 +115,14 @@ class ArwParserTest {
     }
 
     @Test
-    @DisplayName("rejects the variable-length coding, whose data is neither one nor one and a half bytes per "
-            + "photosite, and keeps reading the one byte per photosite of cRAW")
+    @DisplayName("rejects data of another size than one or one and a half bytes per photosite on a model without the "
+            + "variable-length coding, and keeps reading the one byte per photosite of cRAW")
     void codings() {
         var arw = new Arw().samples(4);
         arw.strip = Arrays.copyOf(arw.strip, arw.width * arw.height * 6 / 5);
         var file = parse(arw.write());
         assertNull(file.sensor);
-        assertTrue(file.unsupported.contains("variable-length"), file.unsupported);
+        assertTrue(file.unsupported.contains("32767"), file.unsupported);
         arw.width = 32;
         arw.height = 6;
         arw.strip = new byte[arw.width * arw.height];

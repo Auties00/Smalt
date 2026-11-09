@@ -54,7 +54,7 @@ Panasonic models. The converter is free to download and use; nothing of it is re
 
 For the samples of VENDOR_SAMPLES (the Samsung SRW, Epson ERF, GoPro GPR, Hasselblad 3FR and FFF, Leaf MOS,
 Mamiya MEF and Kodak DCR, KDC and TIFF files, the packed DSLR-A900 ARW file, the DSLR-A450 and A700 cRAW files, the
-DSLR-A200 file whose coding the decoder does not read, and the uncompressed Panasonic RAW files of the oldest models)
+variable-length ARW files of the DSLR-A100 to A390, and the uncompressed Panasonic RAW files of the oldest models)
 and the copies of samples with bytes changed (PATCHED_SAMPLES: a Minolta DiMAGE A2 file whose
 Bayer pattern byte is set to 4, and Mamiya ZD files with other white balance values), it keeps instead of the DNG file a
 <stem>.photosites summary and a <stem>.levels file, and for the samples of CURVE_SAMPLES (the lossy Nikon NEF
@@ -312,6 +312,14 @@ VENDOR_SAMPLES = [
     'rawpixls-sony-dslr-a450-12bit-12bit-compressed-3-2.arw',
     'rawpixls-sony-dslr-a700-8bit-8bit-compressed-3-2.arw',
     'rawpixls-sony-dslr-a200-12bit-12bit-compressed-3-2.arw',
+    'rawpixls-sony-dslr-a230-12bit-12bit-compressed-3-2.arw',
+    'rawpixls-sony-dslr-a290-12bit-12bit-compressed-3-2.arw',
+    'rawpixls-sony-dslr-a300-12bit-12bit-compressed-3-2.arw',
+    'rawpixls-sony-dslr-a330-12bit-12bit-compressed-3-2.arw',
+    'rawpixls-sony-dslr-a350-12bit-12bit-compressed-3-2.arw',
+    'rawpixls-sony-dslr-a380-12bit-12bit-compressed-3-2.arw',
+    'rawpixls-sony-dslr-a390-12bit-12bit-compressed-3-2.arw',
+    'rawpixls-sony-dslr-a100-compressed-3-2.arw',
     'rawpixls-mamiya-zd.mef',
 ]
 

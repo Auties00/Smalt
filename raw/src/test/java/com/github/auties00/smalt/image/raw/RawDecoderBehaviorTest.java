@@ -120,6 +120,16 @@ class RawDecoderBehaviorTest {
         harness("pixelshift/" + name, data).run();
     }
 
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"valid-delta-a200.arw", "valid-arq-lossless-strip.arq", "valid-arq-lossless-tiles.arq"})
+    @DisplayName("synthetic Sony files of the variable-length coding and of lossless JPEG ARQ sensor data: identical "
+            + "pictures and sensor data under every source behavior and clean faults")
+    void sonyCodings(String name) throws java.io.IOException {
+        var seed = com.github.auties00.smalt.testkit.fuzz.FuzzSeeds.directory(
+                "com.github.auties00.smalt.image.raw.fuzz.RawFuzzTest", "arw").resolve(name);
+        harness("sony/" + name, java.nio.file.Files.readAllBytes(seed)).run();
+    }
+
     static X3fWriter x3fFile(String name) {
         var x3f = new X3fWriter();
         x3f.preview = false;

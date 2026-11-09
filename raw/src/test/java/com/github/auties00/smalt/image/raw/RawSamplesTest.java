@@ -67,7 +67,7 @@ class RawSamplesTest {
             "ARW_NEX6_CRAW_12, ARW, 4912, 3264, RGGB, 14, true, NEX-6, 200",
             "ARW_A7M2_UNCOMPRESSED_14, ARW, 6000, 4000, RGGB, 14, true, ILCE-7M2, 100",
             "ARW_A900_UNCOMPRESSED_12, ARW, 6048, 4032, RGGB, 12, true, DSLR-A900, 200",
-            "ARW_A200_COMPRESSED_12, ARW, 0, 0, -, 0, false, DSLR-A200, 800",
+            "ARW_A200_COMPRESSED_12, ARW, 3872, 2592, RGGB, 12, true, DSLR-A200, 800",
             "SRW_NX1000, SRW, 5472, 3648, GRBG, 12, true, NX1000, 400",
             "SRW_NX300, SRW, 5472, 3648, GRBG, 12, true, NX300, 100",
             "SRW_NX_MINI, SRW, 5472, 3648, RGGB, 12, true, NX mini, 1000",

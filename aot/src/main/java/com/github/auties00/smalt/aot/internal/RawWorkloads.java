@@ -184,13 +184,14 @@ final class RawWorkloads {
 
     /**
      * Returns a workload that describes, extracts the sensor values of and decodes with Menon
-     * demosaicing two ARW files: cRAW of 1024x768 and uncompressed of 640x480.
+     * demosaicing three ARW files: cRAW of 1024x768, uncompressed of 640x480 and variable-length coded of 640x480.
      *
      * @return the workload
      */
     private static TrainingWorkload arw() {
         return vendor("raw-decode-arw", List.of(SyntheticVendorTiff.arw(picture(1024, 768), true).file(),
-                SyntheticVendorTiff.arw(picture(640, 480), false).file()));
+                SyntheticVendorTiff.arw(picture(640, 480), false).file(),
+                SyntheticVendorTiff.arwVariableLength(picture(640, 480)).file()));
     }
 
     /**

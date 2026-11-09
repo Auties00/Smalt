@@ -50,6 +50,8 @@ class SyntheticVendorTiffTest {
                         (Supplier<RawSample>) () -> SyntheticVendorTiff.arw(picture(160, 96), true)),
                 Arguments.of("ARW uncompressed", RawFormat.ARW,
                         (Supplier<RawSample>) () -> SyntheticVendorTiff.arw(picture(160, 96), false)),
+                Arguments.of("ARW variable-length", RawFormat.ARW,
+                        (Supplier<RawSample>) () -> SyntheticVendorTiff.arwVariableLength(picture(160, 96))),
                 Arguments.of("ORF compressed", RawFormat.ORF,
                         (Supplier<RawSample>) () -> SyntheticVendorTiff.orf(picture(96, 64), true)),
                 Arguments.of("ORF uncompressed", RawFormat.ORF,

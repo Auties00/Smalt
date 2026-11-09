@@ -24,6 +24,10 @@ import java.util.List;
  * <li>first byte 224: at 2182 (the DSLR-A230, A290, A380, A390, A450, A500 and A900).</li>
  * </ul>
  *
+ * <p>The black levels are read for the models whose coding has no other record of them, those of
+ * {@link SonyDeltaCoding}: four little-endian 16-bit values for the red, green, green and blue photosites. A red black
+ * level of zero makes all of them zero, as the converter reads them.
+ *
  * @implNote This implementation's layouts and keystream bytes were derived from the encrypted blocks of the 195 CC0
  * ARW files of the archive, without any description of the cipher. The files whose raw directory also carries the
  * {@code BlackLevel} and {@code WB_RGGBLevels} tags show, by the offsets at which those values sit under one
@@ -33,10 +37,13 @@ import java.util.List;
  * and copies with one bit of a level flipped show, by the direction the converter's neutral moves, each plain bit:
  * the DSLR-A450 file gives the keystream at 2182 and the DSLR-A700 file the keystream at 1654, which decrypt the
  * levels of every other file of their layouts to the converter's white balance (the DSLR-A500 and A900, and the
- * A200 to A390, which the converter reads but this decoder does not); the layout of first byte 157 was found from
+ * A200 to A390); the layout of first byte 157 was found from
  * the converter's white balance of its six files, and copies of the SLT-A55 file with the bytes at 2434 inverted
- * move the converter's neutral, while those with the bytes 16 before them inverted make it refuse the file. Files
- * of other layouts or keys are not read.
+ * move the converter's neutral, while those with the bytes 16 before them inverted make it refuse the file. The
+ * DSLR-A350 and A230 files, whose converter black level is zero, give the keystream of the black levels of their
+ * layouts; the DSLR-A200 file, whose converter black level is 4, differs from the A350 file by exactly 4 in the four
+ * values, and copies of the A200, A350 and A390 files with a bit of one value flipped show, by where the converter's
+ * black levels move, the order of the values and the rule for zero. Files of other layouts or keys are not read.
  */
 final class Sr2Balance {
     /**
@@ -50,18 +57,27 @@ final class Sr2Balance {
      * @param first the block's first byte
      * @param offset the offset of the as-shot levels in the block
      * @param keystream the eight keystream bytes at the offset
+     * @param blackKeystream the eight keystream bytes of the black levels, sixteen bytes before the offset, or
+     * {@code null} when they are not known
      */
-    private record Layout(int first, int offset, byte[] keystream) {
+    private record Layout(int first, int offset, byte[] keystream, byte[] blackKeystream) {
     }
 
     /**
      * The known layouts.
      */
     private static final List<Layout> LAYOUTS = List.of(
-            new Layout(133, 2526, bytes(0x43, 0x25, 0x71, 0x5f, 0x88, 0xb3, 0x09, 0x75)),
-            new Layout(157, 2434, bytes(0x14, 0x4a, 0x05, 0x3b, 0x0d, 0xe6, 0xe1, 0xc9)),
-            new Layout(220, 1654, bytes(0x99, 0x22, 0xb6, 0xa0, 0x1f, 0xc5, 0x6e, 0x36)),
-            new Layout(224, 2182, bytes(0x1d, 0x62, 0xed, 0xd7, 0x0d, 0xac, 0x33, 0xdf)));
+            new Layout(133, 2526, bytes(0x43, 0x25, 0x71, 0x5f, 0x88, 0xb3, 0x09, 0x75), null),
+            new Layout(157, 2434, bytes(0x14, 0x4a, 0x05, 0x3b, 0x0d, 0xe6, 0xe1, 0xc9), null),
+            new Layout(220, 1654, bytes(0x99, 0x22, 0xb6, 0xa0, 0x1f, 0xc5, 0x6e, 0x36),
+                    bytes(0x18, 0x95, 0x65, 0xf0, 0x18, 0x8f, 0x61, 0xc6)),
+            new Layout(224, 2182, bytes(0x1d, 0x62, 0xed, 0xd7, 0x0d, 0xac, 0x33, 0xdf),
+                    bytes(0xc6, 0x17, 0x02, 0xcb, 0x89, 0x21, 0xbc, 0x43)));
+
+    /**
+     * The largest black level read, the largest sample of the 12-bit data of its models.
+     */
+    private static final int MAX_BLACK = 4095;
 
     /**
      * Prevents instantiation.
@@ -87,6 +103,55 @@ final class Sr2Balance {
             return read(reader, reader.directory(u32(pointer, reader.little())));
         } catch (MediaException.Malformed | MediaException.LimitExceeded exception) {
             // a damaged or oversized structure leaves the white balance to the estimate
+            return null;
+        }
+    }
+
+    /**
+     * Returns the black levels of a file from its encrypted directory.
+     *
+     * @param reader the TIFF structure
+     * @param first the first directory
+     * @return the levels of the red, green, green and blue photosites of the file's 2x2 pattern, or {@code null} when
+     * the file has no encrypted directory of a layout whose black levels are known, the levels are zero or out of
+     * range, or its structure is damaged or exceeds the limits
+     */
+    static double[] black(TiffReader reader, Ifd first) {
+        try {
+            var pointer = first.bytes(0xC634);
+            if (pointer == null || pointer.length != 4) {
+                return null;
+            }
+            var sr2 = reader.directory(u32(pointer, reader.little()));
+            var offset = reader.base() + sr2.longValue(0x7200, -1);
+            var length = sr2.longValue(0x7201, -1);
+            var key = sr2.bytes(0x7221);
+            if (offset <= reader.base() || length <= 0 || key == null || key.length != 4
+                    || u32(key, reader.little()) != KEY) {
+                return null;
+            }
+            var head = reader.bytes(offset, 1);
+            for (var layout : LAYOUTS) {
+                if ((head[0] & 0xFF) != layout.first() || layout.blackKeystream() == null
+                        || layout.offset() + 8 > length) {
+                    continue;
+                }
+                var data = reader.bytes(offset + layout.offset() - 16, 8);
+                var levels = new double[4];
+                for (var k = 0; k < 4; k++) {
+                    var low = (data[2 * k] ^ layout.blackKeystream()[2 * k]) & 0xFF;
+                    var high = (data[2 * k + 1] ^ layout.blackKeystream()[2 * k + 1]) & 0xFF;
+                    var level = (short) (low | high << 8);
+                    if (level < 0 || level > MAX_BLACK) {
+                        return null;
+                    }
+                    levels[k] = level;
+                }
+                return levels[0] == 0 ? null : levels;
+            }
+            return null;
+        } catch (MediaException.Malformed | MediaException.LimitExceeded exception) {
+            // a damaged or oversized structure leaves the black level at zero
             return null;
         }
     }
