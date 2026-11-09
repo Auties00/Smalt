@@ -54,7 +54,7 @@ final class MovieHeaderWriter {
     static void validateConfig(Track track) {
         var codec = track.codec();
         switch (codec) {
-            case H264, HEVC, VVC, AAC, OPUS, ALAC, FLAC -> {
+            case H264, HEVC, VVC, AAC, CELP, OPUS, ALAC, FLAC -> {
                 if (track.codecConfig().isEmpty() || track.codecConfig().get().length == 0) {
                     throw new IllegalArgumentException(codec.displayName() + " track " + track.id()
                             + " needs its codec configuration");
@@ -75,6 +75,9 @@ final class MovieHeaderWriter {
             AudioConfigs.parseOpusHead(track.codecConfig().orElseThrow());
         } else if (codec == Codec.AAC) {
             AudioConfigs.parseAac(track.codecConfig().orElseThrow());
+        } else if (codec == Codec.CELP && AudioConfigs.celpSampleRate(track.codecConfig().orElseThrow()) == 0) {
+            throw new IllegalArgumentException("CELP track " + track.id()
+                    + " has a configuration that is not of a CELP object");
         } else if (codec == Codec.FLAC) {
             AudioConfigs.parseFlac(track.codecConfig().orElseThrow());
         } else if (codec == Codec.UNCOMPRESSED_23001_17) {

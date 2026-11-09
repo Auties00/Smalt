@@ -411,6 +411,16 @@ public enum Codec {
     DST(TrackKind.AUDIO, "dst"),
 
     /**
+     * MPEG-4 CELP speech, audio object types 8 (CELP) and 24 (ER CELP) of ISO/IEC 14496-3 subpart 3: 8 kHz narrowband
+     * and 16 kHz wideband speech, with bitrate and bandwidth scalable enhancement layers.
+     *
+     * <p>A packet is one access unit of one elementary stream: a frame of 10 to 40 milliseconds of the base layer, or
+     * of one enhancement layer, which an MP4 file carries in a track of its own. The configuration is the MPEG-4
+     * {@code AudioSpecificConfig} with its {@code CelpSpecificConfig} or {@code ErrorResilientCelpSpecificConfig}.
+     */
+    CELP(TrackKind.AUDIO, "celp"),
+
+    /**
      * Sony ATRAC9, the audio of the PlayStation Vita and PlayStation 4 ({@code .at9} files): a WAVE
      * {@code WAVEFORMATEXTENSIBLE} sub-format, GUID {@code 47E142D2-36BA-4D8D-88FC-61654F8C836C}.
      *

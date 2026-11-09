@@ -7,6 +7,7 @@ import com.github.auties00.smalt.internal.bits.MsbBitReader;
 import com.github.auties00.smalt.internal.bits.MsbBitWriter;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.track.AudioTrack;
+import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -356,7 +357,45 @@ class TsLatmTest {
     }
 
     @Test
-    @DisplayName("does not expose a stream with a CELP frame length type")
+    @DisplayName("exposes a CELP stream with the payload lengths of its frame length table")
+    void celpTrack() {
+        var random = new java.util.Random(8);
+        var elements = new ArrayList<byte[]>();
+        var expected = new ArrayList<byte[]>();
+        for (var index = 0; index < 8; index++) {
+            var writer = new MsbBitWriter(64);
+            writer.write(0, 1);
+            writer.write(0, 1);
+            writer.write(1, 1);
+            writer.write(0, 6);
+            writer.write(0, 4);
+            writer.write(0, 3);
+            // a CELP base layer at 8 kHz, multi-pulse MPE_Configuration 0
+            copy(writer, new byte[]{0x45, (byte) 0x8C, 0x00, 0x00}, 25);
+            writer.write(4, 3);
+            writer.write(0, 6);
+            writer.write(0, 1);
+            writer.write(0, 1);
+            // CELPframeLengthTableIndex 0 of the fixed rate: 154 bits
+            var payload = new byte[20];
+            random.nextBytes(payload);
+            payload[19] &= (byte) 0xC0;
+            for (var bit = 0; bit < 154; bit++) {
+                writer.write((payload[bit >>> 3] >> (7 - (bit & 7))) & 1, 1);
+            }
+            writer.alignWithZeros();
+            elements.add(writer.toByteArray());
+            expected.add(payload);
+        }
+        var demuxed = TsTesting.demux(transportStream(elements));
+        var track = (AudioTrack) demuxed.tracks().getFirst();
+        assertEquals(Codec.CELP, track.codec());
+        assertEquals(8000, track.sampleRate());
+        assertPayloads(expected, payloads(demuxed));
+    }
+
+    @Test
+    @DisplayName("does not expose an AAC stream with a CELP frame length type")
     void celp() {
         var writer = new MsbBitWriter(64);
         writer.write(0, 1);

@@ -400,8 +400,8 @@ public final class Mp4Muxer implements Muxer {
      * Returns whether an MP4 file of a brand can carry a codec, so that {@link #addTrack(Track)}
      * accepts a track of it given the configuration the codec needs.
      *
-     * <p>Every brand but {@link Mp4MuxerOptions.Brand#THREE_GPP} carries AAC, Opus, MP3, MP2, ALAC, FLAC, AMR-NB,
-     * AMR-WB, AC-3 and E-AC-3; {@link Mp4MuxerOptions.Brand#MP4}, {@link Mp4MuxerOptions.Brand#QUICKTIME} and
+     * <p>Every brand but {@link Mp4MuxerOptions.Brand#THREE_GPP} carries AAC, MPEG-4 CELP, Opus, MP3, MP2, ALAC, FLAC,
+     * AMR-NB, AMR-WB, AC-3 and E-AC-3; {@link Mp4MuxerOptions.Brand#MP4}, {@link Mp4MuxerOptions.Brand#QUICKTIME} and
      * {@link Mp4MuxerOptions.Brand#MJ2} add Motion JPEG 2000; {@link Mp4MuxerOptions.Brand#MP4} and
      * {@link Mp4MuxerOptions.Brand#QUICKTIME} add H.264, HEVC, VVC, VP8, VP9, AV1, MPEG-4 Part 2, MPEG-1 and MPEG-2
      * video, H.263, Motion-JPEG, JPEG XS, ISO/IEC 23001-17 uncompressed video, the 16-, 24- and 32-bit integer and
@@ -427,7 +427,7 @@ public final class Mp4Muxer implements Muxer {
             };
         }
         return switch (Objects.requireNonNull(codec, "codec")) {
-            case AAC, OPUS, MP3, MP2, ALAC, FLAC, AMR_NB, AMR_WB, AC3, EAC3 -> true;
+            case AAC, CELP, OPUS, MP3, MP2, ALAC, FLAC, AMR_NB, AMR_WB, AC3, EAC3 -> true;
             case JPEG2000 -> brand != Mp4MuxerOptions.Brand.M4A;
             case JPEG_XS, UNCOMPRESSED_23001_17 -> brand == Mp4MuxerOptions.Brand.MP4
                     || brand == Mp4MuxerOptions.Brand.QUICKTIME;
@@ -463,7 +463,7 @@ public final class Mp4Muxer implements Muxer {
      * {@code jxsm} with the {@code jpvi} and {@code jxpl} boxes of the track's configuration or, without one, built
      * from the first frame's picture header. ISO/IEC 23001-17 uncompressed video is {@code uncv} with the boxes of
      * the track's configuration, which must hold a valid {@code uncC} box and, unless it names a profile, its
-     * {@code cmpd} box. AAC needs its
+     * {@code cmpd} box. AAC and MPEG-4 CELP, which are {@code mp4a} entries, need their
      * {@code AudioSpecificConfig}, Opus its {@code OpusHead}, ALAC its {@code ALACSpecificConfig}
      * and FLAC its metadata blocks; MP3 and MP2 are {@code mp4a}
      * entries with the MPEG-1 or MPEG-2 audio object type; AMR-NB and AMR-WB are {@code samr} and

@@ -17,7 +17,6 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -35,8 +34,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * within half a decibel on average.
  *
  * <p>The smoke tier decodes {@code er_ac121_ep0} at its base and top layers, {@code er_ac111_ep1} (category instances
- * in separate tracks, a mono and a stereo layer) at its top layer and {@code ac01} at its base layer, and checks that
- * a CELP core ({@code er_ac211_ep0}) is rejected.
+ * in separate tracks, a mono and a stereo layer) at its top layer and {@code ac01} at its base layer. The streams over
+ * a CELP core are decoded by {@link ScalableCoreConformanceTest}.
  */
 @DisplayName("Scalable AAC conformance (ISO/IEC 14496-26)")
 class ScalableConformanceTest {
@@ -84,15 +83,6 @@ class ScalableConformanceTest {
             tests.add(DynamicTest.dynamicTest(stream, () -> check(stream, layers, noise)));
         }
         return tests.stream();
-    }
-
-    @Test
-    @DisplayName("rejects a CELP core layer")
-    void celpCore() {
-        var tracks = tracks("er_ac211_ep0");
-        var exception = assertThrows(MediaException.Unsupported.class,
-                () -> new AacDecoder(tracks.stream().map(AacTestSupport.Stream::track).toList()));
-        assertEquals("aac scalable core", exception.format());
     }
 
     @Test

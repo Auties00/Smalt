@@ -2055,7 +2055,14 @@ Derived Smalt packages:
   audio.aac.internal (BsacDecoder, BsacTables: the ER BSAC decoder of
   sam_decode_frame.c, sam_decoder.c, sam_decode_bsac.c, sam_fadecode.c,
   sam_bitbuffer.c, sam_tns.c and the models of sam_model.h; ScalableDecoder:
-  the scalable AAC decoder of scal_dec_frame.c)
+  the scalable AAC decoder of scal_dec_frame.c; CelpCoreLayer: the CELP core
+  path of scal_dec_frame.c, the core delay buffer of dec_tf.c and mdct_core
+  of transfo.c)
+  audio.celp.internal (ComfortNoise: the comfort noise constants and gain
+  normalization of nec_cng_module.c; BandwidthExtension, Lsp: the renewal of
+  the bandwidth extension LSP prediction in non-active frames of
+  nb_celp_dec.c and nec_cng_lspvq.c; CelpCore: the smoothing of wideband
+  non-active frames of phi_lpc.c and the comb filter gains of nec_exc_module.c)
   audio.aac.internal.usac (the frequency domain decoder, the arithmetic
   spectral decoder, complex prediction, the time-warped filterbank of
   usac_tw_tools.c and its transitions to and from the linear prediction
@@ -2075,8 +2082,9 @@ Derivation: C code translated to Java and tables transcribed.
 
 Copyright:
   AT&T, Dolby Laboratories, Fraunhofer IIS, VoiceAge Corp., Sony
-  Corporation, Coding Technologies, Agere Systems, Philips, Samsung AIT and
-  ISO/IEC (1999 to 2019)
+  Corporation, Coding Technologies, Agere Systems, Philips, Samsung AIT, NEC
+  Corporation, Hughes Electronics, Matsushita Communication Industrial and
+  ISO/IEC (1996 to 2019)
 EOF
 license_start "Notices of the source files"
 cat "$LIC/iso23003-3-usac-refsoft-notice.txt"

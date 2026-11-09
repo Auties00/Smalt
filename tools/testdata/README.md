@@ -931,6 +931,17 @@ from the new resources), and the script decodes them with libxaac into `eld-sbr-
 with the FDK AAC decoder into `eld-sbr-fdk/smalt`, which the test compares with Smalt's decodes. The CI cache entry
 of these files hashes the pinned streams too, so a rewrite decodes them again.
 
+## MPEG-4 CELP oracle
+
+The ISO/IEC 14496-26 streams use a part of the CELP configurations, and no encoder writes CELP, but every field of a
+frame has a fixed width, so random bits make a valid stream of any configuration.
+`python -I tools/testdata/celp-oracle/celp-oracle.py <usacEncDec directory> <scratch directory>` decodes such streams
+with the CELP core of the ISO/IEC 14496-3 reference decoder (`src_lpc` of the ISO/IEC 23003-3 reference software, which
+`mps-oracle.py` downloads and which is never redistributed) through the frontend `celp-oracle/harness.c`, built with
+gcc, and writes the frame RMS and three samples of each frame to
+`mpeg/src/test/resources/com/github/auties00/smalt/audio/celp/reference-decoder.txt`, the committed fixture of
+`CelpReferenceDifferentialTest`, which generates the same frames.
+
 ## MPEG Surround oracle
 
 The MPEG Surround (ISO/IEC 23003-1) conformance streams are not public, so `MpegSurroundOracleTest` (`smalt-mpeg`)

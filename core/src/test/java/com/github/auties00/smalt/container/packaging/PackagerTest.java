@@ -499,6 +499,9 @@ class PackagerTest {
             var heaac = AudioTrack.builder().id(2).codec(Codec.AAC).timeBase(Rational.timeBaseOf(48_000))
                     .codecConfig(new byte[]{0x2B, (byte) 0x92, 0x08, 0x00}).build();
             assertEquals("mp4a.40.5", CodecStrings.of(heaac, null));
+            var celp = AudioTrack.builder().id(2).codec(Codec.CELP).timeBase(Rational.timeBaseOf(8000))
+                    .codecConfig(new byte[]{0x45, (byte) 0x88, 0x00}).build();
+            assertEquals("mp4a.40.8", CodecStrings.of(celp, null));
             assertEquals("ec-3", CodecStrings.of(AudioTrack.builder().id(3).codec(Codec.EAC3)
                     .timeBase(Rational.timeBaseOf(48_000)).build(), null));
         }

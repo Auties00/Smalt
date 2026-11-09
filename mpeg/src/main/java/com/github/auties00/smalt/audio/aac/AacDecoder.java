@@ -5,7 +5,9 @@ import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.AudioDecoder;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.audio.aac.internal.AacKernels;
 import com.github.auties00.smalt.audio.aac.internal.AudioSpecificConfig;
+import com.github.auties00.smalt.audio.aac.internal.CelpCoreLayer;
 import com.github.auties00.smalt.audio.aac.internal.DynamicRangeControl;
 import com.github.auties00.smalt.audio.aac.internal.FrameDecoder;
 import com.github.auties00.smalt.audio.aac.internal.SamplingTables;
@@ -13,6 +15,7 @@ import com.github.auties00.smalt.audio.aac.internal.ep.ErrorProtectionDecoder;
 import com.github.auties00.smalt.audio.aac.internal.mps.MpsConfig;
 import com.github.auties00.smalt.audio.aac.internal.usac.UsacConfig;
 import com.github.auties00.smalt.audio.aac.internal.usac.UsacDecoder;
+import com.github.auties00.smalt.audio.celp.internal.CelpObject;
 import com.github.auties00.smalt.internal.check.Checks;
 import com.github.auties00.smalt.internal.codec.ConsumerFailure;
 import com.github.auties00.smalt.track.AudioTrack;
@@ -107,8 +110,21 @@ import java.util.function.Consumer;
  * the stereo layers of a stereo output outputs its mono layers in both channels. A decoder built from the base
  * layer's track alone decodes the base layer. Every tool of the layers decodes: long term prediction of the first
  * layer, M/S and intensity stereo, noise substitution, TNS of the first layer and of the first stereo layer above a
- * mono one, and, for object type 20, the error resilience tools of each layer with every {@code epConfig}. Layers
- * over a CELP or TwinVQ core raise {@link MediaException.Unsupported} ({@code "aac scalable core"}).
+ * mono one, and, for object type 20, the error resilience tools of each layer with every {@code epConfig}.
+ *
+ * <p>The base layer of a scalable object may be a CELP or ER CELP object (object types 8 and 24, subclause
+ * 4.5.2.2.5), carried in tracks of its own ahead of the AAC layers: its base layer, with {@code epConfig} 1 its five
+ * error sensitivity categories, and its enhancement layers. The CELP speech, decoded without its post-processor, is
+ * up-sampled to the AAC rate, delayed by the {@code coreCoderDelay} of the first AAC layer, transformed with the AAC
+ * window of each frame (the up-sampling filter tool of subclause 4.6.15), run through the TNS analysis filters of the
+ * first AAC layer, and switched into the AAC spectrum band by band as its {@code diff_control} and
+ * {@code diff_control_lr} flags tell, before the inverse M/S matrix of a stereo layer. Core frames and AAC frames
+ * need not align (the super-frames of Tables 4.88 and 4.89): {@link #decode(List, Consumer)} takes, with the access
+ * units of an AAC frame, the core access units that start within it, told apart by their track ids, and an AAC frame
+ * whose core samples have not arrived uses silence in their place. The layers count the core's first:
+ * {@link AacDecoderOptions#maxLayer()} below the number of CELP layers outputs the CELP speech of that layer, mono at
+ * the core rate, in blocks of one CELP frame. Layers over a TwinVQ core raise {@link MediaException.Unsupported}
+ * ({@code "aac scalable core"}), as do AAC layers that depend on a core without its tracks.
  *
  * <p>USAC (object type 42, ISO/IEC 23003-3) decodes with its frequency domain coder (arithmetic coded spectra,
  * noise filling, complex prediction stereo, the time-warped transform, 768- and 1024-sample frames) and its linear
@@ -212,6 +228,45 @@ public final class AacDecoder implements AudioDecoder {
     private byte[][] instanceData = new byte[0][];
 
     /**
+     * The CELP core layer of a scalable AAC object decoded with its AAC layers, or {@code null}.
+     */
+    private final CelpCoreLayer core;
+
+    /**
+     * The CELP decoder of a scalable AAC object decoded at a layer of its core, or {@code null}.
+     */
+    private final CelpObject coreOutput;
+
+    /**
+     * The track ids of the elementary streams of the CELP core, in stream order, or {@code null} without a core.
+     */
+    private final int[] coreTracks;
+
+    /**
+     * The access units of one core frame and their sizes.
+     */
+    private final byte[][] coreUnits;
+
+    private final int[] coreSizes;
+
+    /**
+     * The speech of one call of {@link #coreOutput} and the buffer it is handed out in.
+     */
+    private final float[] coreSamples;
+
+    private final AudioBuffer coreBuffer;
+
+    /**
+     * The access units of the AAC layers of the frame being decoded, reused frame after frame.
+     */
+    private final List<Packet> layerPackets = new ArrayList<>();
+
+    /**
+     * The packet of a call of {@link #decode(Packet, Consumer)} over a core.
+     */
+    private final List<Packet> singlePacket = new ArrayList<>(1);
+
+    /**
      * The index of the track of a separate MPEG Surround elementary stream whose access units carry the spatial
      * frames, or -1.
      */
@@ -309,17 +364,20 @@ public final class AacDecoder implements AudioDecoder {
      * SSR or LTP stream may be followed by the track of its MPEG Surround elementary stream (object type 30): the
      * first such track configures the upmix while {@link AacDecoderOptions#mpegSurround()} is on, and unless its
      * configuration embeds the spatial frames in the downmix, {@link #decode(List, Consumer)} then receives the
-     * access units of both. Every other track is ignored, and every other object type takes its configuration
-     * from the first track alone, so this constructor then equals the single-track one.
+     * access units of both. A scalable AAC object over a CELP core lists the tracks of the core first, of codec
+     * {@link Codec#CELP} (or {@link Codec#AAC}, as their configurations tell the object type), then those of the AAC
+     * layers; every track then needs an id of its own. Every other track is ignored, and every other object type
+     * takes its configuration from the first track alone, so this constructor then equals the single-track one.
      *
      * @param tracks the tracks of the object's elementary streams, in stream order, the base layer first
      * @param options the resource limits and the extensions to decode
-     * @throws IllegalArgumentException if {@code tracks} is empty or a track is not an AAC track
+     * @throws IllegalArgumentException if {@code tracks} is empty, a track is neither an AAC track nor a CELP track
+     * of the core of a scalable object, or the tracks of a scalable object over a core share a track id
      * @throws NullPointerException if a track of {@code tracks} is {@code null}
      * @throws MediaException.Malformed if a configuration is invalid, or the configurations of a scalable
      * object do not describe its layers
      * @throws MediaException.Unsupported if the configuration uses an unsupported feature, including scalable
-     * AAC over a CELP or TwinVQ core ({@code "aac scalable core"})
+     * AAC over a TwinVQ core or without the tracks of its core ({@code "aac scalable core"})
      * @throws MediaException.LimitExceeded if the configuration declares more channels than the
      * options' limits allow
      */
@@ -329,24 +387,80 @@ public final class AacDecoder implements AudioDecoder {
         if (tracks.isEmpty()) {
             throw new IllegalArgumentException("no track");
         }
-        for (var other : tracks) {
-            if (Objects.requireNonNull(other, "track").codec() != Codec.AAC) {
+        var coreCount = coreTrackCount(tracks);
+        var layerMax = options.maxLayer().orElse(-1);
+        CelpCoreLayer layerCore = null;
+        for (var i = 0; i < tracks.size(); i++) {
+            var other = Objects.requireNonNull(tracks.get(i), "track");
+            if (other.codec() != Codec.AAC && !(i < coreCount && other.codec() == Codec.CELP)) {
                 throw new IllegalArgumentException(other.codec() + " is not AAC");
             }
         }
-        var track = tracks.getFirst();
         var limits = options.limits();
-        if (tracks.size() > 1 && track.codecConfig().isPresent() && isCore(track.codecConfig().get())) {
-            for (var i = 1; i < tracks.size(); i++) {
-                var layer = tracks.get(i).codecConfig();
-                if (layer.isPresent() && isScalable(layer.get())) {
-                    // TODO: the CELP (object types 8 and 24) and TwinVQ (7 and 21) core layers of scalable AAC need
-                    //  decoders of those object types, which Smalt does not have.
-                    throw new MediaException.Unsupported("aac scalable core",
-                            "scalable AAC over a CELP or TwinVQ core layer is not supported");
+        if (coreCount > 0) {
+            var type = AudioSpecificConfig.objectTypeOf(tracks.getFirst().codecConfig().orElseThrow());
+            if (type != 8 && type != 24) {
+                // TODO: the TwinVQ core layers (object types 7 and 21) of scalable AAC need a TwinVQ decoder.
+                throw new MediaException.Unsupported("aac scalable core",
+                        "scalable AAC over a TwinVQ core layer is not supported");
+            }
+            var ids = new int[coreCount];
+            for (var i = 0; i < tracks.size(); i++) {
+                var id = tracks.get(i).id();
+                for (var j = 0; j < i; j++) {
+                    if (tracks.get(j).id() == id) {
+                        throw new IllegalArgumentException("the tracks of a scalable AAC object over a core share the"
+                                + " track id " + id);
+                    }
+                }
+                if (i < coreCount) {
+                    ids[i] = id;
                 }
             }
+            this.coreTracks = ids;
+            AudioSpecificConfig layerConfig;
+            try {
+                layerConfig = AudioSpecificConfig.parse(tracks.get(coreCount).codecConfig().orElseThrow(
+                        () -> new MediaException.Malformed("scalable AAC track without an AudioSpecificConfig")));
+            } catch (MediaException exception) {
+                throw exception;
+            } catch (RuntimeException exception) {
+                throw new MediaException.Malformed("invalid AAC configuration", exception);
+            }
+            var coreConfigs = new ArrayList<byte[]>();
+            for (var i = 0; i < coreCount; i++) {
+                coreConfigs.add(tracks.get(i).codecConfig().orElseThrow());
+            }
+            var coreLayer = new CelpCoreLayer(coreConfigs, layerConfig.sampleRate(), layerConfig.frameLength(),
+                    Math.max(layerConfig.coreCoderDelay(), 0), limits, AacKernels.INSTANCE);
+            var coreLayers = coreLayer.layers();
+            layerCore = coreLayer;
+            var requested = options.maxLayer().orElse(-1);
+            if (requested >= 0 && requested < coreLayers) {
+                var object = new CelpObject(coreConfigs, requested, false, limits);
+                this.core = null;
+                this.coreOutput = object;
+                this.coreSamples = new float[object.frameSize() * object.framesPerUnit()];
+                this.coreBuffer = new AudioBuffer(ChannelLayout.MONO, object.sampleRate(), object.frameSize());
+            } else {
+                this.core = coreLayer;
+                this.coreOutput = null;
+                this.coreSamples = null;
+                this.coreBuffer = null;
+            }
+            this.coreUnits = new byte[coreCount][];
+            this.coreSizes = new int[coreCount];
+            layerMax = requested < 0 ? -1 : Math.max(requested - coreLayers, 0);
+        } else {
+            this.coreTracks = null;
+            this.core = null;
+            this.coreOutput = null;
+            this.coreUnits = null;
+            this.coreSizes = null;
+            this.coreSamples = null;
+            this.coreBuffer = null;
         }
+        var track = tracks.get(coreCount);
         if (track.codec() != Codec.AAC) {
             throw new IllegalArgumentException(track.codec() + " is not AAC");
         }
@@ -370,7 +484,7 @@ public final class AacDecoder implements AudioDecoder {
             var configs = new ArrayList<AudioSpecificConfig>();
             configs.add(config);
             if (config.scalable()) {
-                for (var i = 1; i < tracks.size(); i++) {
+                for (var i = coreCount + 1; i < tracks.size(); i++) {
                     var layer = tracks.get(i).codecConfig();
                     if (layer.isEmpty()) {
                         throw new MediaException.Malformed("scalable AAC track without an AudioSpecificConfig");
@@ -386,8 +500,8 @@ public final class AacDecoder implements AudioDecoder {
             var dynamicRange = new DynamicRangeControl(compression != AacCompression.NONE,
                     compression == AacCompression.HEAVY, options.cutScale(), options.boostScale(),
                     options.targetLevel().orElse(-1), config.frameLength(), config.lowDelaySbr() != null);
-            this.decoder = new FrameDecoder(configs, limits, fallback, mode, stereo, dynamicRange,
-                    options.maxLayer().orElse(-1));
+            this.decoder = new FrameDecoder(configs, limits, fallback, mode, stereo, dynamicRange, layerMax,
+                    layerCore);
             var surroundIndex = -1;
             if (options.mpegSurround() && carriesSurround(config)) {
                 MpsConfig surround = null;
@@ -470,6 +584,29 @@ public final class AacDecoder implements AudioDecoder {
      */
     private static boolean carriesSurround(AudioSpecificConfig config) {
         return !config.errorResilient() && !config.bsac() && !config.scalable();
+    }
+
+    /**
+     * Returns the number of leading tracks that carry the core layer of a scalable AAC object.
+     *
+     * @param tracks the tracks of the object's elementary streams
+     * @return the number of tracks before the first scalable AAC layer whose configurations describe CELP or TwinVQ
+     * layers, or 0 when the tracks do not start with a core followed by a scalable AAC layer
+     */
+    private static int coreTrackCount(List<AudioTrack> tracks) {
+        var count = 0;
+        while (count < tracks.size()) {
+            var config = Objects.requireNonNull(tracks.get(count), "track").codecConfig();
+            if (config.isEmpty() || !isCore(config.get())) {
+                break;
+            }
+            count++;
+        }
+        if (count == 0 || count == tracks.size()) {
+            return 0;
+        }
+        var next = Objects.requireNonNull(tracks.get(count), "track").codecConfig();
+        return next.isPresent() && isScalable(next.get()) ? count : 0;
     }
 
     /**
@@ -578,11 +715,12 @@ public final class AacDecoder implements AudioDecoder {
      * {@inheritDoc}
      *
      * <p>With spectral band replication at dual rate this is twice the core rate. When the
-     * decision is left to the first packet, this is the core rate until then.
+     * decision is left to the first packet, this is the core rate until then. When the output is a layer of the CELP
+     * core of a scalable object, this is the rate of the CELP speech.
      */
     @Override
     public int sampleRate() {
-        return usac != null ? usac.sampleRate() : decoder.sampleRate();
+        return coreOutput != null ? coreOutput.sampleRate() : usac != null ? usac.sampleRate() : decoder.sampleRate();
     }
 
     /**
@@ -594,11 +732,11 @@ public final class AacDecoder implements AudioDecoder {
      * its own layout while its blocks are upmixed: from the start for a separate elementary stream, from the
      * first block whose fill elements carry the configuration for embedded side information. A block that is not
      * upmixed (before the first independent spatial frame, or under a configuration the decoder does not support)
-     * reports the downmix layout.
+     * reports the downmix layout. The output of a layer of the CELP core of a scalable object is mono.
      */
     @Override
     public ChannelLayout layout() {
-        return usac != null ? usac.layout() : decoder.layout();
+        return coreOutput != null ? ChannelLayout.MONO : usac != null ? usac.layout() : decoder.layout();
     }
 
     /**
@@ -608,16 +746,19 @@ public final class AacDecoder implements AudioDecoder {
      */
     @Override
     public int[] codedChannelOrder() {
-        return usac != null ? usac.codedChannelOrder() : decoder.codedChannelOrder();
+        return coreOutput != null ? new int[]{0} : usac != null ? usac.codedChannelOrder()
+                : decoder.codedChannelOrder();
     }
 
     /**
      * {@return the number of samples per channel each raw data block decodes to: 1024, or 960 when
      * the configuration sets the frame length flag (512 or 480 for AAC-LD and AAC-ELD), doubled
-     * when spectral band replication doubles the rate}
+     * when spectral band replication doubles the rate, or the samples of a CELP frame when the output is a layer of
+     * the CELP core of a scalable object}
      */
     public int frameLength() {
-        return usac != null ? usac.frameLength() : decoder.frameLength();
+        return coreOutput != null ? coreOutput.frameSize() : usac != null ? usac.frameLength()
+                : decoder.frameLength();
     }
 
     /**
@@ -675,8 +816,10 @@ public final class AacDecoder implements AudioDecoder {
      * concealed when the frame cannot be corrected. A decoder built with
      * a separate MPEG Surround elementary stream decodes the packet as a block whose spatial frame is
      * missing: the upmix keeps the parameters of the last frame, and the downmix is the output before the
-     * first one ({@link #decode(List, Consumer)} takes both access units). An exception thrown by
-     * {@code output} propagates unchanged.
+     * first one ({@link #decode(List, Consumer)} takes both access units). Over a CELP core, a packet of a core
+     * track is decoded and queued for the AAC frames, emitting nothing unless the output is a layer of the core, and
+     * any other packet is the access unit of the first AAC layer, as {@link #decode(List, Consumer)} takes it alone.
+     * An exception thrown by {@code output} propagates unchanged.
      *
      * @throws MediaException.Malformed if the packet is corrupt
      * @throws MediaException.Unsupported if the configuration stores category instances separately
@@ -686,6 +829,16 @@ public final class AacDecoder implements AudioDecoder {
     public void decode(Packet packet, Consumer<AudioBuffer> output) {
         Objects.requireNonNull(packet, "packet");
         Objects.requireNonNull(output, "output");
+        if (coreTracks != null) {
+            singlePacket.clear();
+            singlePacket.add(packet);
+            try {
+                decodeOverCore(singlePacket, output);
+            } finally {
+                singlePacket.clear();
+            }
+            return;
+        }
         if (separateCategoryInstances()) {
             throw new MediaException.Unsupported("aac er epconfig 1",
                     "error resilient AAC with separate category instances needs every instance of a block");
@@ -724,7 +877,10 @@ public final class AacDecoder implements AudioDecoder {
      * stream order (the base layer first); they are concatenated into the frame, and the layers of
      * missing trailing streams decode as absent. For scalable AAC, {@code instances} holds the access unit of each
      * layer, or with {@code epConfig} 1 of each category instance of each layer, in the order of the tracks the
-     * decoder was built from; the layers from the first missing one on are not decoded. For a separate MPEG
+     * decoder was built from; the layers from the first missing one on are not decoded. Over a CELP core,
+     * {@code instances} also holds, anywhere among them, the core access units that start within the frame, of each
+     * core track in time order: they are told apart by their track ids and decoded first, frame by frame. For a
+     * separate MPEG
      * Surround elementary stream, {@code instances} holds the access units of the tracks the decoder was built
      * from, the downmix first; units of other tracks are ignored, and an empty MPEG Surround access unit carries no
      * spatial frame, as for the blocks after the first of a frame that spans several. For a stream that applies the
@@ -746,6 +902,20 @@ public final class AacDecoder implements AudioDecoder {
     public void decode(List<Packet> instances, Consumer<AudioBuffer> output) {
         Objects.requireNonNull(instances, "instances");
         Objects.requireNonNull(output, "output");
+        if (coreTracks != null) {
+            decodeOverCore(instances, output);
+            return;
+        }
+        decodeUnits(instances, output);
+    }
+
+    /**
+     * Decodes the access units of one frame of a stream without a CELP core.
+     *
+     * @param instances the access units, as {@link #decode(List, Consumer)} takes them
+     * @param output receives the samples
+     */
+    private void decodeUnits(List<Packet> instances, Consumer<AudioBuffer> output) {
         if (surroundTrack >= 0) {
             decodeSurround(instances, output);
             return;
@@ -779,6 +949,106 @@ public final class AacDecoder implements AudioDecoder {
         } finally {
             Arrays.fill(data, 0, count, null);
         }
+    }
+
+    /**
+     * Decodes the access units of a scalable AAC object over a CELP core: the core frames first, in the order their
+     * packets come, then the AAC frame of the layer packets, unless the output is a layer of the core.
+     *
+     * @param instances the access units, the core ones told apart by their track ids
+     * @param output receives the samples
+     */
+    private void decodeOverCore(List<Packet> instances, Consumer<AudioBuffer> output) {
+        layerPackets.clear();
+        try {
+            for (var packet : instances) {
+                Objects.requireNonNull(packet, "instance");
+                if (coreStream(packet.trackId()) < 0) {
+                    layerPackets.add(packet);
+                }
+            }
+            ConsumerFailure.<AudioBuffer>run("AAC packet", output, emit -> {
+                for (var frame = 0; ; frame++) {
+                    var count = coreFrame(instances, frame);
+                    if (count == 0) {
+                        break;
+                    }
+                    decodeCoreFrame(count, emit);
+                }
+            });
+            if (coreOutput == null && !layerPackets.isEmpty()) {
+                decodeUnits(layerPackets, output);
+            }
+        } finally {
+            layerPackets.clear();
+            Arrays.fill(coreUnits, null);
+        }
+    }
+
+    /**
+     * Gathers the access units of one core frame from the packets of a call into {@link #coreUnits}: the packet of
+     * that rank among those of each core stream, in stream order, up to the first stream that lacks one.
+     *
+     * @param packets the packets of the call
+     * @param frame the rank of the core frame among those of the call
+     * @return the number of access units gathered, 0 when the first core stream has no packet of that rank
+     */
+    private int coreFrame(List<Packet> packets, int frame) {
+        var count = 0;
+        for (var stream = 0; stream < coreTracks.length; stream++) {
+            var rank = 0;
+            Packet found = null;
+            for (var packet : packets) {
+                if (packet.trackId() == coreTracks[stream] && rank++ == frame) {
+                    found = packet;
+                    break;
+                }
+            }
+            if (found == null) {
+                break;
+            }
+            coreUnits[count] = found.data();
+            coreSizes[count] = found.data().length;
+            count++;
+        }
+        return count;
+    }
+
+    /**
+     * Decodes one core frame from {@link #coreUnits}: queued for the AAC layers, or handed out when the output is a
+     * layer of the core.
+     *
+     * @param count the number of access units
+     * @param output receives the speech of each frame when the output is a layer of the core
+     */
+    private void decodeCoreFrame(int count, Consumer<AudioBuffer> output) {
+        if (core != null) {
+            core.decode(coreUnits, coreSizes, count);
+            return;
+        }
+        var frames = coreOutput.decode(coreUnits, coreSizes, count, coreSamples);
+        var size = coreOutput.frameSize();
+        var plane = coreBuffer.plane(0);
+        for (var f = 0; f < frames; f++) {
+            System.arraycopy(coreSamples, f * size, plane, 0, size);
+            coreBuffer.setFrames(size);
+            output.accept(coreBuffer);
+        }
+    }
+
+    /**
+     * Returns the core stream a track id belongs to.
+     *
+     * @param trackId the track id of a packet
+     * @return the index of the core stream, or -1 for the track of an AAC layer
+     */
+    private int coreStream(int trackId) {
+        for (var i = 0; i < coreTracks.length; i++) {
+            if (coreTracks[i] == trackId) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /**
@@ -971,7 +1241,13 @@ public final class AacDecoder implements AudioDecoder {
         }
         ConsumerFailure.<AudioBuffer>run("AAC concealment", output, emit -> {
             for (var i = 0; i < units; i++) {
-                emit.accept(decoder.conceal());
+                if (coreOutput != null) {
+                    Arrays.fill(coreBuffer.plane(0), 0, unit, 0);
+                    coreBuffer.setFrames(unit);
+                    emit.accept(coreBuffer);
+                } else {
+                    emit.accept(decoder.conceal());
+                }
             }
         });
         return units * unit;

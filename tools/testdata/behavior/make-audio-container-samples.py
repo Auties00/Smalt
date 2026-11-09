@@ -7,6 +7,7 @@ the ADTS profile, sampling frequency index and channel configuration, the instan
 channel element of the first block.
 The AU file of 3-bit G.723 codes is assembled here too, since ffmpeg declares every G.726 code size as G.721
 (encoding 23): its codes are ffmpeg's adpcm_g726le output and its header declares encoding 25.
+The LOAS file of CELP is assembled here too, as no encoder writes CELP: see celp_loas.
 
     python -I tools/testdata/behavior/make-audio-container-samples.py [samples directory]
 """
@@ -15,6 +16,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+from random import Random
 
 SHORT = "anoisesrc=color=pink:amplitude=0.3:sample_rate=22050:seed=7:duration=0.6"
 TONE = "sine=frequency=440:sample_rate=8000:duration=0.6"
@@ -130,6 +132,54 @@ def au_header(encoding, rate, channels, data_size):
     return struct.pack(">4sIIIII8x", b".snd", 32, data_size, encoding, rate, channels)
 
 
+class Bits:
+    """An MSB-first bit writer."""
+
+    def __init__(self):
+        self.bits = []
+
+    def write(self, value, width):
+        for bit in range(width - 1, -1, -1):
+            self.bits.append((value >> bit) & 1)
+
+    def to_bytes(self):
+        padded = self.bits + [0] * (-len(self.bits) % 8)
+        return bytes(int("".join(map(str, padded[i:i + 8])), 2) for i in range(0, len(padded), 8))
+
+
+def celp_loas():
+    """LOAS of a CELP base layer: no encoder writes one, and every field of a CELP frame has a fixed width, so the
+    frames are seeded random bits of the 154-bit frames of MPE_Configuration 0 at 8 kHz (frameLengthType 4, table
+    index 0), with the StreamMuxConfig in every eighth frame."""
+    random = Random(14496)
+    out = bytearray()
+    for frame in range(32):
+        element = Bits()
+        carries_config = frame % 8 == 0
+        element.write(0 if carries_config else 1, 1)
+        if carries_config:
+            element.write(0, 1)  # audioMuxVersion
+            element.write(1, 1)  # allStreamsSameTimeFraming
+            element.write(0, 6)  # numSubFrames
+            element.write(0, 4)  # numProgram
+            element.write(0, 3)  # numLayer
+            element.write(8, 5)  # audioObjectType
+            element.write(11, 4)  # samplingFrequencyIndex
+            element.write(1, 4)  # channelConfiguration
+            element.write(1, 1)  # isBaseLayer
+            element.write(0, 3)  # ExcitationMode, SampleRateMode, FineRateControl
+            element.write(0, 5)  # MPE_Configuration
+            element.write(0, 3)  # NumEnhLayers, BandwidthScalabilityMode
+            element.write(4, 3)  # frameLengthType
+            element.write(0, 6)  # CELPframeLengthTableIndex
+            element.write(0, 2)  # otherDataPresent, crcCheckPresent
+        for _ in range(154):
+            element.write(random.getrandbits(1), 1)
+        payload = element.to_bytes()
+        out += bytes((0x56, 0xE0 | (len(payload) >> 8), len(payload) & 0xFF)) + payload
+    return bytes(out)
+
+
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else "core/src/test/resources/samples"
     for directory in ("caf", "w64", "au", "loas", "adif"):
@@ -159,6 +209,8 @@ def main():
         data = file.read()
     with open(os.path.join(out, "adif", "aac.adif"), "wb") as file:
         file.write(adif(data))
+    with open(os.path.join(out, "loas", "celp.loas"), "wb") as file:
+        file.write(celp_loas())
 
 
 if __name__ == "__main__":

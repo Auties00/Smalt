@@ -342,6 +342,74 @@ public final class AudioConfigs {
     }
 
     /**
+     * Returns the sampling rate of an {@code AudioSpecificConfig} of a CELP object (audio object types 8 and 24 of
+     * ISO/IEC 14496-3 subpart 3).
+     *
+     * @param config the configuration
+     * @return the rate in hertz, or 0 when the configuration is not of a CELP object, is truncated or names a
+     * reserved rate
+     */
+    public static int celpSampleRate(byte[] config) {
+        if (config.length < 2) {
+            return 0;
+        }
+        var bits = new MsbBitReader(config);
+        var objectType = bits.read(5);
+        if (objectType == 31) {
+            objectType = 32 + bits.read(6);
+        }
+        if (objectType != 8 && objectType != 24) {
+            return 0;
+        }
+        var index = bits.read(4);
+        var rate = index == AacRates.ESCAPE ? bits.read(24) : AacRates.rate(index);
+        return bits.overrun() ? 0 : rate;
+    }
+
+    /**
+     * Returns the samples of a frame of the multi-pulse CELP coder (ISO/IEC 14496-3 Tables 3.74 and 3.75).
+     *
+     * @param configuration {@code MPE_Configuration}
+     * @param wideband whether the coder runs at 16 kHz ({@code SampleRateMode} 1)
+     * @return the frame size in samples at the coder's rate, or 0 for a reserved configuration
+     */
+    public static int celpMpeFrameSamples(int configuration, boolean wideband) {
+        if (configuration < 0 || configuration > 31) {
+            return 0;
+        }
+        if (wideband) {
+            return configuration == 7 || configuration == 23 ? 0 : configuration < 16 ? 320 : 160;
+        }
+        if (configuration < 3) {
+            return 320;
+        }
+        if (configuration < 6) {
+            return 240;
+        }
+        if (configuration < 22) {
+            return 160;
+        }
+        if (configuration < 27) {
+            return 80;
+        }
+        return configuration == 27 ? 240 : 0;
+    }
+
+    /**
+     * Returns the samples of a frame of the regular pulse CELP coder (ISO/IEC 14496-3 Table 3.73).
+     *
+     * @param configuration {@code RPE_Configuration}
+     * @return the frame size in samples at 16 kHz, or 0 for a reserved configuration
+     */
+    public static int celpRpeFrameSamples(int configuration) {
+        return switch (configuration) {
+            case 0, 2, 3 -> 240;
+            case 1 -> 160;
+            default -> 0;
+        };
+    }
+
+    /**
      * Returns the AAC sampling frequency index that names a rate.
      *
      * @param rate the rate in hertz

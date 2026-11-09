@@ -338,6 +338,184 @@ class FuzzSeedWriter {
     }
 
     @Test
+    @DisplayName("writes the CELP seeds of the CELP targets")
+    void celp() {
+        // no available encoder writes MPEG-4 CELP, and every field of a CELP frame has a fixed width, so the frames
+        // are random bits of the configuration's frame length; the ER CELP frames cycle through the four TX_flag
+        // values of silence compression
+        var random = new java.util.Random(14496);
+        seedCelp("valid-mpe-8k.bin", 8000, celpConfig(8, false, false, false, false, 4, 0, false), 160, false, random);
+        seedCelp("valid-mpe-16k-frc.bin", 16000, celpConfig(8, false, true, true, false, 17, 0, false), 220, false,
+                random);
+        seedCelp("valid-rpe-16k.bin", 16000, celpConfig(8, true, true, false, false, 1, 0, false), 160, false, random);
+        seedCelp("valid-er-rpe-silence.bin", 16000, celpConfig(24, true, true, false, true, 2, 0, false), 260, true,
+                random);
+        seedCelp("valid-er-mpe-silence.bin", 8000, celpConfig(24, false, false, false, true, 22, 0, false), 60, true,
+                random);
+        // an object of a base layer with two bitrate scalable layers and a bandwidth scalable layer, and an ER
+        // object with every error sensitivity category in a stream of its own (epConfig 1)
+        var layered = new ArrayList<FuzzPackets.Part>();
+        var categories = new ArrayList<FuzzPackets.Part>();
+        for (var frame = 0; frame < 8; frame++) {
+            layered.add(new FuzzPackets.Part(MpegFuzzTest.units(List.of(randomBytes(random, 20),
+                    randomBytes(random, 6), randomBytes(random, 6), randomBytes(random, 40))), true));
+            var units = new ArrayList<byte[]>();
+            units.add(new byte[]{(byte) (0x40 | random.nextInt(64)), (byte) random.nextInt(256),
+                    (byte) random.nextInt(256)});
+            for (var category = 1; category < 5; category++) {
+                units.add(randomBytes(random, 2 + 2 * category));
+            }
+            categories.add(new FuzzPackets.Part(MpegFuzzTest.units(units), true));
+        }
+        var layeredConfigs = MpegFuzzTest.units(List.of(celpConfig(8, false, false, false, false, 4, 2, true),
+                celpLayer(8, false, 1), celpLayer(8, false, 2), celpLayer(8, true, 1)));
+        write(MpegFuzzTest.class, "celpLayers", "valid-bitrate-bandwidth.bin",
+                FuzzPackets.audio(7, 16000, 1, 0, layeredConfigs, layered));
+        var categoryConfig = celpConfig(24, false, false, false, true, 4, 0, false);
+        categoryConfig[categoryConfig.length - 1] |= 0x10;
+        write(MpegFuzzTest.class, "celpLayers", "valid-er-categories.bin", FuzzPackets.audio(15, 8000, 1, 0,
+                MpegFuzzTest.units(List.of(categoryConfig, categoryConfig, categoryConfig, categoryConfig,
+                        categoryConfig)), categories));
+        // the 60-sample subframes of MPE_Configuration 27 under silence compression
+        seedCelp("valid-er-mpe27-silence.bin", 8000, celpConfig(24, false, false, false, true, 27, 0, false), 40, true,
+                random);
+    }
+
+    @Test
+    @DisplayName("writes the seeds of the scalable AAC over a CELP core target")
+    void aacCelpCore() {
+        // the configurations of the 8 kHz ER CELP core and of the mono and stereo ER AAC layers of er_ac211 (24 kHz,
+        // 960 samples, the mono layer depending on the core with a coreCoderDelay of 0), and frames: two core frames
+        // of random bits, then one access unit of each AAC layer, per AAC frame; the valid seed has empty AAC layers
+        // (all zero: a long window and a max_sfb of 0, so the output is the switched core), the others random ones
+        var random = new java.util.Random(144963);
+        var configs = MpegFuzzTest.units(List.of(new byte[]{(byte) 0xC5, (byte) 0x8C, 0x0E, 0x00},
+                new byte[]{(byte) 0xA3, 0x0E, 0x00, 0x04, 0x20}, new byte[]{(byte) 0xA3, 0x15, 0x24, 0x00}));
+        var randomParts = new ArrayList<FuzzPackets.Part>();
+        var empty = new ArrayList<FuzzPackets.Part>();
+        for (var frame = 0; frame < 10; frame++) {
+            var randomUnits = new ArrayList<byte[]>();
+            var emptyUnits = new ArrayList<byte[]>();
+            for (var core = 0; core < 2; core++) {
+                var unit = randomBytes(random, 16);
+                unit[0] = 0;
+                unit[1] = (byte) (0x40 | (unit[1] & 0x3F));
+                randomUnits.add(unit);
+                emptyUnits.add(unit);
+            }
+            for (var layer = 1; layer <= 2; layer++) {
+                var unit = randomBytes(random, 1 + 60 * layer);
+                unit[0] = (byte) layer;
+                randomUnits.add(unit);
+                var zeros = new byte[1 + 8 * layer];
+                zeros[0] = (byte) layer;
+                emptyUnits.add(zeros);
+            }
+            randomParts.add(new FuzzPackets.Part(MpegFuzzTest.units(randomUnits), true));
+            empty.add(new FuzzPackets.Part(MpegFuzzTest.units(emptyUnits), true));
+        }
+        write(MpegFuzzTest.class, "aacCelpCore", "valid-er-mono-stereo.bin",
+                FuzzPackets.audio(7, 24000, 2, 0, configs, empty));
+        write(MpegFuzzTest.class, "aacCelpCore", "random-er-layers.bin",
+                FuzzPackets.audio(7, 24000, 2, 0, configs, randomParts));
+        write(MpegFuzzTest.class, "aacCelpCore", "core-layer.bin",
+                FuzzPackets.audio(0, 24000, 2, 0, configs, randomParts));
+    }
+
+    /**
+     * Writes a seed of the single-stream CELP target.
+     *
+     * @param name the file name
+     * @param sampleRate the sampling rate
+     * @param config the {@code AudioSpecificConfig}
+     * @param bytes the bytes of an access unit
+     * @param silence whether the frames start with {@code TX_flag}, cycling through its values
+     * @param random the source of the frame bits
+     */
+    private static void seedCelp(String name, int sampleRate, byte[] config, int bytes, boolean silence,
+                                 java.util.Random random) {
+        var parts = new ArrayList<FuzzPackets.Part>();
+        for (var frame = 0; frame < 12; frame++) {
+            var data = randomBytes(random, bytes);
+            if (silence) {
+                data[0] = (byte) ((data[0] & 0x3F) | (new int[]{1, 2, 0, 3}[frame % 4] << 6));
+            }
+            parts.add(new FuzzPackets.Part(data, true));
+        }
+        write(MpegFuzzTest.class, "celp", name, FuzzPackets.audio(0, sampleRate, 1, 0, config, parts));
+    }
+
+    private static byte[] randomBytes(java.util.Random random, int count) {
+        var data = new byte[count];
+        random.nextBytes(data);
+        return data;
+    }
+
+    /**
+     * Returns the {@code AudioSpecificConfig} of a CELP base layer (ISO/IEC 14496-3 Tables 3.2 to 3.4).
+     *
+     * @param objectType 8 or 24
+     * @param rpe whether the coder is the regular pulse one
+     * @param wideband whether the coder runs at 16 kHz
+     * @param fineRateControl {@code FineRateControl}
+     * @param silenceCompression {@code SilenceCompression}, for object type 24
+     * @param configuration {@code RPE_Configuration} or {@code MPE_Configuration}
+     * @param enhancementLayers {@code NumEnhLayers}
+     * @param bandwidthScalable {@code BandwidthScalabilityMode}
+     * @return the configuration, with {@code epConfig} 0 for object type 24
+     */
+    private static byte[] celpConfig(int objectType, boolean rpe, boolean wideband, boolean fineRateControl,
+                                     boolean silenceCompression, int configuration, int enhancementLayers,
+                                     boolean bandwidthScalable) {
+        var writer = new MsbBitWriter();
+        writer.write(objectType, 5);
+        writer.write(wideband ? 8 : 11, 4);
+        writer.write(1, 4);
+        writer.write(1, 1);
+        writer.write(rpe ? 1 : 0, 1);
+        writer.write(wideband ? 1 : 0, 1);
+        writer.write(fineRateControl ? 1 : 0, 1);
+        if (objectType == 24) {
+            writer.write(silenceCompression ? 1 : 0, 1);
+        }
+        if (rpe) {
+            writer.write(configuration, 3);
+        } else {
+            writer.write(configuration, 5);
+            writer.write(enhancementLayers, 2);
+            writer.write(bandwidthScalable ? 1 : 0, 1);
+        }
+        if (objectType == 24) {
+            writer.write(0, 2);
+        }
+        writer.alignWithZeros();
+        return writer.toByteArray();
+    }
+
+    /**
+     * Returns the {@code AudioSpecificConfig} of a CELP enhancement layer.
+     *
+     * @param objectType 8 or 24
+     * @param bandwidth whether it is the bandwidth scalable layer
+     * @param id {@code CELP-BRS-id} of a bitrate scalable layer, {@code BWS_configuration} of the bandwidth one
+     * @return the configuration
+     */
+    private static byte[] celpLayer(int objectType, boolean bandwidth, int id) {
+        var writer = new MsbBitWriter();
+        writer.write(objectType, 5);
+        writer.write(bandwidth ? 8 : 11, 4);
+        writer.write(1, 4);
+        writer.write(0, 1);
+        writer.write(bandwidth ? 1 : 0, 1);
+        writer.write(id, 2);
+        if (objectType == 24) {
+            writer.write(0, 2);
+        }
+        writer.alignWithZeros();
+        return writer.toByteArray();
+    }
+
+    @Test
     @DisplayName("writes the scalable AAC seeds of the layered AAC target")
     void scalable() {
         // no available encoder writes scalable AAC, so these frames are built bit by bit: two mono layers (long

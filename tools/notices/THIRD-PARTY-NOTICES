@@ -6179,7 +6179,14 @@ Derived Smalt packages:
   audio.aac.internal (BsacDecoder, BsacTables: the ER BSAC decoder of
   sam_decode_frame.c, sam_decoder.c, sam_decode_bsac.c, sam_fadecode.c,
   sam_bitbuffer.c, sam_tns.c and the models of sam_model.h; ScalableDecoder:
-  the scalable AAC decoder of scal_dec_frame.c)
+  the scalable AAC decoder of scal_dec_frame.c; CelpCoreLayer: the CELP core
+  path of scal_dec_frame.c, the core delay buffer of dec_tf.c and mdct_core
+  of transfo.c)
+  audio.celp.internal (ComfortNoise: the comfort noise constants and gain
+  normalization of nec_cng_module.c; BandwidthExtension, Lsp: the renewal of
+  the bandwidth extension LSP prediction in non-active frames of
+  nb_celp_dec.c and nec_cng_lspvq.c; CelpCore: the smoothing of wideband
+  non-active frames of phi_lpc.c and the comb filter gains of nec_exc_module.c)
   audio.aac.internal.usac (the frequency domain decoder, the arithmetic
   spectral decoder, complex prediction, the time-warped filterbank of
   usac_tw_tools.c and its transitions to and from the linear prediction
@@ -6199,8 +6206,9 @@ Derivation: C code translated to Java and tables transcribed.
 
 Copyright:
   AT&T, Dolby Laboratories, Fraunhofer IIS, VoiceAge Corp., Sony
-  Corporation, Coding Technologies, Agere Systems, Philips, Samsung AIT and
-  ISO/IEC (1999 to 2019)
+  Corporation, Coding Technologies, Agere Systems, Philips, Samsung AIT, NEC
+  Corporation, Hughes Electronics, Matsushita Communication Industrial and
+  ISO/IEC (1996 to 2019)
 
 -------------------------------------------------------------------------------
 Notices of the source files
@@ -6432,6 +6440,201 @@ derivative works.
 Copyright (c) ISO/IEC 2008.
 $Id: scal_dec_frame.c,v 1.1.1.1 2009-05-29 14:10:17 mul Exp $
 *******************************************************************************/
+
+CELP core of the scalable AAC decoder: core sample delay buffer (usacEncDec/src_tf/dec_tf.c):
+
+/*******************************************************************************
+This software module was originally developed by
+
+Fraunhofer IIS, VoiceAge Corp.
+
+Initial Author:
+Bernhard Grill     (Fraunhofer Gesellschaft IIS)
+
+and edited by
+Markus Werner      (SEED / Software Development Karlsruhe)
+Eugen Dodenhoeft   (Fraunhofer IIS)
+
+-
+
+in the course of development of ISO/IEC 23003 for reference purposes and its
+performance may not have been optimized. This software module is an
+implementation of one or more tools as specified by ISO/IEC 23003. ISO/IEC gives
+You a royalty-free, worldwide, non-exclusive, copyright license to copy,
+distribute, and make derivative works of this software module or modifications
+thereof for use in implementations of ISO/IEC 23003 in products that satisfy
+conformance criteria (if any). Those intending to use this software module in
+products are advised that its use may infringe existing patents. ISO/IEC have no
+liability for use of this software module or modifications thereof. Copyright is
+not released for products that do not conform to audiovisual and image-coding
+related ITU Recommendations and/or ISO/IEC International Standards.
+
+Assurance that the originally developed software module can be used (1) in
+ISO/IEC 23003 once ISO/IEC 23003 has been adopted; and (2) to develop ISO/IEC
+23003:s
+Fraunhofer IIS, VoiceAge Corp. grant(s) ISO/IEC all
+rights necessary to include the originally developed software module or
+modifications thereof in ISO/IEC 23003 and to permit ISO/IEC to offer You a
+royalty-free, worldwide, non-exclusive, copyright license to copy, distribute,
+and make derivative works for use in implementations of ISO/IEC 23003 in
+products that satisfy conformance criteria (if any), and to the extent that such
+originally developed software module or portions of it are included in ISO/IEC
+23003. To the extent that Fraunhofer IIS, VoiceAge Corp.
+own(s) patent rights that would be required to make, use, or sell the
+originally developed software module or portions thereof included in ISO/IEC
+23003 in a conforming product, Fraunhofer IIS, VoiceAge Corp. 
+will assure the ISO/IEC that it is (they are) willing to negotiate
+licenses under reasonable and non-discriminatory terms and conditions with
+applicants throughout the world. ISO/IEC gives You a free license to this
+software module or modifications thereof for the sole purpose of developing
+ISO/IEC 23003.
+
+Fraunhofer IIS, VoiceAge Corp. retain full right to
+modify and use the code for its (their) own purpose, assign or donate the code
+to a third party and to inhibit third parties from using the code for products
+that do not conform to MPEG-related ITU Recommendations and/or ISO/IEC
+International Standards. This copyright notice must be included in all copies or
+derivative works.
+
+Copyright (c) ISO/IEC 2008.
+$Id: dec_tf.c,v 1.7 2011-05-10 16:18:23 mul Exp $
+*******************************************************************************/
+
+CELP core of the scalable AAC decoder: forward MDCT of the core (usacEncDec/src_tf/transfo.c):
+
+/************************* MPEG-2 AAC Audio Decoder **************************
+ *                                                                           *
+"This software module was originally developed by 
+AT&T, Dolby Laboratories, Fraunhofer Gesellschaft IIS in the course of 
+development of the MPEG-2 AAC/MPEG-4 Audio standard ISO/IEC 13818-7, 
+14496-1,2 and 3. This software module is an implementation of a part of one or more 
+MPEG-2 AAC/MPEG-4 Audio tools as specified by the MPEG-2 AAC/MPEG-4 
+Audio standard. ISO/IEC  gives users of the MPEG-2 AAC/MPEG-4 Audio 
+standards free license to this software module or modifications thereof for use in 
+hardware or software products claiming conformance to the MPEG-2 AAC/MPEG-4
+Audio  standards. Those intending to use this software module in hardware or 
+software products are advised that this use may infringe existing patents. 
+The original developer of this software module and his/her company, the subsequent 
+editors and their companies, and ISO/IEC have no liability for use of this software 
+module or modifications thereof in an implementation. Copyright is not released for 
+non MPEG-2 AAC/MPEG-4 Audio conforming products.The original developer
+retains full right to use the code for his/her  own purpose, assign or donate the 
+code to a third party and to inhibit third party from using the code for non 
+MPEG-2 AAC/MPEG-4 Audio conforming products. This copyright notice must
+be included in all copies or derivative works." 
+Copyright(c)1996.
+ *                                                                           *
+ ****************************************************************************/
+
+CELP decoder modules (usacEncDec/src_lpc/nec_cng_module.c; the same notice heads nec_cng_lspvq.c):
+
+/*
+This software module was originally developed by
+Hironori Ito (NEC Corporation)
+and edited by
+
+in the course of development of the
+MPEG-2 AAC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.
+This software module is an implementation of a part of one or more
+MPEG-2 AAC/MPEG-4 Audio tools as specified by the MPEG-2 AAC/MPEG-4 Audio
+standard. ISO/IEC  gives users of the MPEG-2 AAC/MPEG-4 Audio standards
+free license to this software module or modifications thereof for use in
+hardware or software products claiming conformance to the MPEG-2 AAC/
+MPEG-4 Audio  standards. Those intending to use this software module in
+hardware or software products are advised that this use may infringe
+existing patents. The original developer of this software module and
+his/her company, the subsequent editors and their companies, and ISO/IEC
+have no liability for use of this software module or modifications
+thereof in an implementation. Copyright is not released for non
+MPEG-2 AAC/MPEG-4 Audio conforming products. The original developer
+retains full right to use the code for his/her  own purpose, assign or
+donate the code to a third party and to inhibit third party from using
+the code for non MPEG-2 AAC/MPEG-4 Audio conforming products.
+This copyright notice must be included in all copies or derivative works.
+Copyright (c)1996.
+*/
+
+CELP decoder module (usacEncDec/src_lpc/nb_celp_dec.c):
+
+/*
+This software module was originally developed by
+Ron Burns (Hughes Electronics)
+and edited by
+Naoya Tanaka (Matsushita Communication Industrial Co., Ltd.)
+Toshiyuki Nomura (NEC Corporation)
+in the course of development of the
+MPEG-2 AAC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.
+This software module is an implementation of a part of one or more
+MPEG-2 AAC/MPEG-4 Audio tools as specified by the MPEG-2 AAC/MPEG-4 Audio
+standard. ISO/IEC  gives users of the MPEG-2 AAC/MPEG-4 Audio standards
+free license to this software module or modifications thereof for use in
+hardware or software products claiming conformance to the MPEG-2 AAC/
+MPEG-4 Audio  standards. Those intending to use this software module in
+hardware or software products are advised that this use may infringe
+existing patents. The original developer of this software module and
+his/her company, the subsequent editors and their companies, and ISO/IEC
+have no liability for use of this software module or modifications
+thereof in an implementation. Copyright is not released for non
+MPEG-2 AAC/MPEG-4 Audio conforming products. The original developer
+retains full right to use the code for his/her  own purpose, assign or
+donate the code to a third party and to inhibit third party from using
+the code for non MPEG-2 AAC/MPEG-4 Audio conforming products.
+This copyright notice must be included in all copies or derivative works.
+Copyright (c)1996.
+*/
+
+CELP decoder module (usacEncDec/src_lpc/phi_lpc.c):
+
+/*
+This software module was originally developed by Rakesh Taori and Andy
+Gerrits (Philips Research Laboratories, Eindhoven, The Netherlands) in
+the course of development of the MPEG-4 Audio (ISO/IEC 14496-3). This
+software module is an implementation of a part of one or more MPEG-4
+Audio (ISO/IEC 14496-3) tools as specified by the MPEG-4 Audio
+(ISO/IEC 14496-3). ISO/IEC gives users of the MPEG-4 Audio (ISO/IEC
+14496-3) free license to this software module or modifications thereof
+for use in hardware or software products claiming conformance to the
+MPEG-4 Audio (ISO/IEC 14496-3). Those intending to use this software
+module in hardware or software products are advised that its use may
+infringe existing patents. The original developer of this software
+module and his/her company, the subsequent editors and their
+companies, and ISO/IEC have no liability for use of this software
+module or modifications thereof in an implementation. Copyright is not
+released for non MPEG-4 Audio (ISO/IEC 14496-3) conforming products.
+CN1 retains full right to use the code for his/her own purpose, assign
+or donate the code to a third party and to inhibit third parties from
+using the code for non MPEG-4 Audio (ISO/IEC 14496-3) conforming
+products.  This copyright notice must be included in all copies or
+derivative works. Copyright 1996.
+*/
+
+CELP decoder module (usacEncDec/src_lpc/nec_exc_module.c):
+
+/*
+This software module was originally developed by
+Toshiyuki Nomura (NEC Corporation)
+and edited by
+
+in the course of development of the
+MPEG-2 AAC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.
+This software module is an implementation of a part of one or more
+MPEG-2 AAC/MPEG-4 Audio tools as specified by the MPEG-2 AAC/MPEG-4 Audio
+standard. ISO/IEC  gives users of the MPEG-2 AAC/MPEG-4 Audio standards
+free license to this software module or modifications thereof for use in
+hardware or software products claiming conformance to the MPEG-2 AAC/
+MPEG-4 Audio  standards. Those intending to use this software module in
+hardware or software products are advised that this use may infringe
+existing patents. The original developer of this software module and
+his/her company, the subsequent editors and their companies, and ISO/IEC
+have no liability for use of this software module or modifications
+thereof in an implementation. Copyright is not released for non
+MPEG-2 AAC/MPEG-4 Audio conforming products. The original developer
+retains full right to use the code for his/her  own purpose, assign or
+donate the code to a third party and to inhibit third party from using
+the code for non MPEG-2 AAC/MPEG-4 Audio conforming products.
+This copyright notice must be included in all copies or derivative works.
+Copyright (c)1996.
+*/
 
 
 ===============================================================================

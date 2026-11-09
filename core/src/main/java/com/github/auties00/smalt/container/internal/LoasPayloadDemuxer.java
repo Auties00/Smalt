@@ -2,6 +2,7 @@ package com.github.auties00.smalt.container.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.internal.bits.MsbBitReader;
@@ -220,19 +221,21 @@ public final class LoasPayloadDemuxer implements Demuxer {
                 throw new MediaException.Malformed("LOAS stream without a supported StreamMuxConfig");
             }
         }
-        var layout = AudioConfigs.aacLayout(config.channels());
+        var layout = config.celp() ? ChannelLayout.MONO : AudioConfigs.aacLayout(config.channels());
         var count = layout != null ? layout.channels() : config.declaredChannels();
         LimitChecks.checkChannels(limits, count);
         this.trackRate = config.coreRate();
         this.baseConfig = config.audioSpecificConfig();
         var described = AudioTrack.builder()
-                .codec(Codec.AAC)
+                .codec(config.celp() ? Codec.CELP : Codec.AAC)
                 .timeBase(Rational.timeBaseOf(trackRate))
                 .codecConfig(config.audioSpecificConfig())
                 .sampleRate(trackRate)
                 .layout(layout)
                 .build();
-        described = AacExtensions.refine(described, payloads[0]);
+        if (!config.celp()) {
+            described = AacExtensions.refine(described, payloads[0]);
+        }
         var size = this.dataEnd - dataStart;
         if (dataEnd >= 0 && size <= MAX_WALK && ForwardOnlySource.isCheapToReach(source, dataEnd)) {
             walk(first);
@@ -341,7 +344,7 @@ public final class LoasPayloadDemuxer implements Demuxer {
         try {
             if (!bits.readFlag()) {
                 var parsed = Latm.readStreamMuxConfig(bits);
-                if (parsed == null) {
+                if (parsed == null || (config != null && parsed.celp() != config.celp())) {
                     return;
                 }
                 if (reported != null && !Arrays.equals(parsed.audioSpecificConfig(), reported)) {
@@ -389,7 +392,7 @@ public final class LoasPayloadDemuxer implements Demuxer {
             }
             configIndex(config);
             for (var unused = 0; unused < payloads.length; unused++) {
-                var scaled = 1024L * trackRate + carried;
+                var scaled = (long) config.frameSamples() * trackRate + carried;
                 carried = scaled % config.coreRate();
                 time += scaled / config.coreRate();
             }
@@ -482,7 +485,7 @@ public final class LoasPayloadDemuxer implements Demuxer {
             while (true) {
                 while (payloadIndex < payloads.length) {
                     var payload = payloads[payloadIndex++];
-                    var scaled = 1024L * trackRate + remainder;
+                    var scaled = (long) config.frameSamples() * trackRate + remainder;
                     remainder = scaled % config.coreRate();
                     var samples = scaled / config.coreRate();
                     var time = timestamp;
@@ -492,7 +495,10 @@ public final class LoasPayloadDemuxer implements Demuxer {
                     }
                     var sideData = PacketSideData.NONE;
                     if (pending != null) {
-                        var announced = AacExtensions.refine(track.toBuilder()
+                        var announced = pending.celp() ? track.toBuilder()
+                                .codecConfig(pending.audioSpecificConfig())
+                                .sampleRate(pending.coreRate())
+                                .build() : AacExtensions.refine(track.toBuilder()
                                 .codecConfig(pending.audioSpecificConfig())
                                 .sampleRate(pending.coreRate())
                                 .layout(AudioConfigs.aacLayout(pending.channels()))

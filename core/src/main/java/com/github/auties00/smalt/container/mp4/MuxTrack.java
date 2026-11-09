@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.container.mp4;
 
+import com.github.auties00.smalt.container.internal.Latm;
 import com.github.auties00.smalt.internal.codec.AmrConfigs;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
@@ -692,6 +693,7 @@ final class MuxTrack {
         }
         var samples = switch (audio.codec()) {
             case AAC -> 1024;
+            case CELP -> audio.codecConfig().map(Latm::audioSpecificConfigFrameSamples).filter(n -> n > 0).orElse(0);
             case MP3 -> audio.sampleRate() >= 32000 ? 1152 : 576;
             case OPUS -> 960 * audio.sampleRate() / 48000;
             case AMR_NB, AMR_WB -> audio.sampleRate() / 50;

@@ -98,7 +98,7 @@ final class LatmParser extends FrameParser {
         try {
             if (!bits.readFlag()) {
                 var parsed = Latm.readStreamMuxConfig(bits);
-                if (parsed == null) {
+                if (parsed == null || (config != null && parsed.celp() != config.celp())) {
                     return;
                 }
                 if (track == null) {
@@ -117,13 +117,15 @@ final class LatmParser extends FrameParser {
             for (var payload : payloads) {
                 if (refinePending) {
                     refinePending = false;
-                    track = AacExtensions.refine((AudioTrack) track, payload);
+                    if (!config.celp()) {
+                        track = AacExtensions.refine((AudioTrack) track, payload);
+                    }
                 }
                 if (changePending != null) {
                     announceChange(changePending, payload);
                     changePending = null;
                 }
-                var samples = toTimestampRate(1024, rate);
+                var samples = toTimestampRate(config.frameSamples(), rate);
                 output.emit(payload, samples, samples);
             }
         } catch (RuntimeException exception) {
@@ -143,7 +145,7 @@ final class LatmParser extends FrameParser {
         LimitChecks.checkChannels(limits, parsed.declaredChannels());
         var described = AudioTrack.builder()
                 .id(trackId())
-                .codec(Codec.AAC)
+                .codec(parsed.celp() ? Codec.CELP : Codec.AAC)
                 .timeBase(Rational.timeBaseOf(parsed.coreRate()))
                 .codecConfig(parsed.audioSpecificConfig())
                 .language(entry.language())
@@ -166,6 +168,9 @@ final class LatmParser extends FrameParser {
      * the channels, as for ADTS
      */
     private static ChannelLayout layoutOf(Config parsed) {
+        if (parsed.celp()) {
+            return ChannelLayout.MONO;
+        }
         var count = parsed.channels() == 7 ? 8 : parsed.channels();
         return count > 0 ? ChannelLayout.defaultFor(count) : null;
     }
@@ -182,7 +187,9 @@ final class LatmParser extends FrameParser {
                 .sampleRate(parsed.coreRate())
                 .layout(layoutOf(parsed))
                 .build();
-        described = AacExtensions.refine(described, payload);
+        if (!parsed.celp()) {
+            described = AacExtensions.refine(described, payload);
+        }
         reportedConfig = parsed.audioSpecificConfig();
         rate = parsed.coreRate();
         announce(described.codecConfig().orElseThrow());

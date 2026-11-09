@@ -937,6 +937,11 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                         }
                     }
                 }
+                if (codec == Codec.AAC && config != null && AudioConfigs.celpSampleRate(config) > 0) {
+                    codec = Codec.CELP;
+                    channels = 1;
+                    sampleRate = AudioConfigs.celpSampleRate(config);
+                }
                 if (codec == Codec.AAC && config != null) {
                     try {
                         var aac = AudioConfigs.parseAac(config);

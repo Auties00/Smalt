@@ -28,7 +28,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * for bit with the decode of the {@code epConfig} 0 twin, which the other conformance tests compare with the
  * reference waveforms. The test encoder rebuilds every frame from the decoded classes byte for byte, which validates
  * it for the tests that build streams the suite lacks. Scalable streams over a CELP or TwinVQ core check their AAC
- * layers at the EP level only.
+ * layers at the EP level only; {@link ScalableCoreConformanceTest} decodes those over a CELP core against their
+ * references.
  */
 class AacErrorProtectionConformanceTest {
     private static final List<String> AAC = List.of("er_ad1111_22_ep3_srs01", "er_ad1111_44_ep3_srs01",

@@ -19,6 +19,8 @@ import com.github.auties00.smalt.audio.ac3.Eac3Encoder;
 import com.github.auties00.smalt.audio.ac3.Eac3EncoderOptions;
 import com.github.auties00.smalt.audio.dts.DtsDecoder;
 import com.github.auties00.smalt.audio.amr.AmrDecoder;
+import com.github.auties00.smalt.audio.celp.CelpDecoder;
+import com.github.auties00.smalt.audio.celp.CelpDecoderOptions;
 import com.github.auties00.smalt.audio.amr.AmrEncoder;
 import com.github.auties00.smalt.audio.amr.AmrEncoderOptions;
 import com.github.auties00.smalt.audio.amr.AmrMode;
@@ -84,6 +86,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.Random;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -248,7 +251,8 @@ final class MpegWorkloads {
                 file("amr-nb-decode", () -> amrDecode("amr-nb-decode", Codec.AMR_NB, 1)),
                 file("amr-nb-dtx-encode", () -> amrDtxEncode(4)),
                 file("amr-wb-encode", () -> amrEncode("amr-wb-encode", Codec.AMR_WB, 4)),
-                file("amr-wb-decode", () -> amrDecode("amr-wb-decode", Codec.AMR_WB, 1)));
+                file("amr-wb-decode", () -> amrDecode("amr-wb-decode", Codec.AMR_WB, 1)),
+                file("celp-decode", MpegWorkloads::celpDecode));
     }
 
     /**
@@ -2104,5 +2108,139 @@ final class MpegWorkloads {
         var track = AudioTrack.builder().id(1).codec(codec).timeBase(new Rational(1, rate)).sampleRate(rate)
                 .layout(ChannelLayout.MONO).build();
         return AudioStreams.decode(name, packets, new AmrDecoder(track));
+    }
+
+    /**
+     * Returns a workload that decodes MPEG-4 CELP: the multi-pulse coder at 8 kHz with two bitrate scalable layers and
+     * the bandwidth scalable layer, the multi-pulse coder at 16 kHz and the regular pulse coder, with and without the
+     * post-processor, and both with fine rate control and silence compression. No encoder writes CELP and every field
+     * of a frame has a fixed width, so the frames are seeded random bits; {@code TX_flag} cycles through the frames of
+     * silence compression.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload celpDecode() {
+        var random = new Random(14496);
+        var decoders = new ArrayList<CelpDecoder>(5);
+        var streams = new ArrayList<List<List<Packet>>>(5);
+        var plain = CelpDecoderOptions.builder().postFilter(false).build();
+        var layered = List.of(celpBase(8, false, false, false, false, 8, 2, true), celpLayer(8, 1, false),
+                celpLayer(8, 2, false), celpLayer(8, 1, true));
+        decoders.add(new CelpDecoder(celpTracks(layered), CelpDecoderOptions.defaults()));
+        streams.add(celpFrames(random, new int[]{20, 8, 8, 40}, false));
+        decoders.add(new CelpDecoder(celpTracks(List.of(celpBase(8, false, true, true, false, 17, 0, false))), plain));
+        streams.add(celpFrames(random, new int[]{50}, false));
+        decoders.add(new CelpDecoder(celpTracks(List.of(celpBase(8, true, true, false, false, 1, 0, false))),
+                CelpDecoderOptions.defaults()));
+        streams.add(celpFrames(random, new int[]{40}, false));
+        decoders.add(new CelpDecoder(celpTracks(List.of(celpBase(24, false, false, true, true, 4, 0, false))), plain));
+        streams.add(celpFrames(random, new int[]{40}, true));
+        decoders.add(new CelpDecoder(celpTracks(List.of(celpBase(24, true, true, false, true, 2, 0, false))), plain));
+        streams.add(celpFrames(random, new int[]{40}, true));
+        Consumer<AudioBuffer> output = AudioStreams::consume;
+        return TrainingWorkload.of("celp-decode", () -> {
+            for (var i = 0; i < decoders.size(); i++) {
+                var decoder = decoders.get(i);
+                for (var units : streams.get(i)) {
+                    decoder.decode(units, output);
+                }
+            }
+        });
+    }
+
+    /**
+     * Returns the frames of a CELP object in random bits.
+     *
+     * @param random the source of the bits
+     * @param sizes the bytes of an access unit of each elementary stream
+     * @param silence whether the frames start with {@code TX_flag}
+     * @return the access units of each frame
+     */
+    private static List<List<Packet>> celpFrames(Random random, int[] sizes, boolean silence) {
+        var frames = new ArrayList<List<Packet>>(64);
+        for (var frame = 0; frame < 64; frame++) {
+            var units = new ArrayList<Packet>(sizes.length);
+            for (var stream = 0; stream < sizes.length; stream++) {
+                var data = new byte[sizes[stream]];
+                random.nextBytes(data);
+                if (silence) {
+                    data[0] = (byte) ((data[0] & 0x3F) | ((frame % 8 < 5 ? 1 : frame % 8 == 5 ? 2 : frame % 8 == 6 ? 0
+                            : 3) << 6));
+                }
+                units.add(new Packet(stream + 1, data, frame, frame, 1, true));
+            }
+            frames.add(units);
+        }
+        return frames;
+    }
+
+    /**
+     * Returns the tracks of the elementary streams of a CELP object.
+     *
+     * @param configs the {@code AudioSpecificConfig} of each stream
+     * @return the tracks
+     */
+    private static List<AudioTrack> celpTracks(List<byte[]> configs) {
+        var tracks = new ArrayList<AudioTrack>(configs.size());
+        for (var config : configs) {
+            tracks.add(AudioTrack.builder().id(tracks.size() + 1).codec(Codec.CELP).timeBase(new Rational(1, 16000))
+                    .codecConfig(config).build());
+        }
+        return tracks;
+    }
+
+    /**
+     * Returns the {@code AudioSpecificConfig} of a CELP base layer.
+     *
+     * @param objectType 8 or 24
+     * @param rpe whether the coder is the regular pulse one
+     * @param wideband whether the coder runs at 16 kHz
+     * @param fineRateControl {@code FineRateControl}
+     * @param silence {@code SilenceCompression}, of object type 24
+     * @param configuration {@code RPE_Configuration} or {@code MPE_Configuration}
+     * @param layers {@code NumEnhLayers}
+     * @param bandwidth {@code BandwidthScalabilityMode}
+     * @return the configuration
+     */
+    private static byte[] celpBase(int objectType, boolean rpe, boolean wideband, boolean fineRateControl,
+                                   boolean silence, int configuration, int layers, boolean bandwidth) {
+        var bits = new StringBuilder(bits(objectType, 5) + bits(wideband ? 8 : 11, 4) + bits(1, 4) + "1"
+                + (rpe ? "1" : "0") + (wideband ? "1" : "0") + (fineRateControl ? "1" : "0"));
+        if (objectType == 24) {
+            bits.append(silence ? "1" : "0");
+        }
+        bits.append(rpe ? bits(configuration, 3) : bits(configuration, 5) + bits(layers, 2) + (bandwidth ? "1" : "0"));
+        return celpConfig(bits.append(objectType == 24 ? "00" : ""));
+    }
+
+    /**
+     * Returns the {@code AudioSpecificConfig} of a CELP enhancement layer of object type 8.
+     *
+     * @param objectType 8
+     * @param id {@code CELP-BRS-id}, or {@code BWS_configuration} of the bandwidth scalable layer
+     * @param bandwidth whether it is the bandwidth scalable layer
+     * @return the configuration
+     */
+    private static byte[] celpLayer(int objectType, int id, boolean bandwidth) {
+        return celpConfig(new StringBuilder(bits(objectType, 5) + bits(bandwidth ? 8 : 11, 4) + bits(1, 4) + "0"
+                + (bandwidth ? "1" : "0") + bits(id, 2)));
+    }
+
+    private static String bits(int value, int width) {
+        var text = new StringBuilder(width);
+        for (var bit = width - 1; bit >= 0; bit--) {
+            text.append((value >> bit) & 1);
+        }
+        return text.toString();
+    }
+
+    private static byte[] celpConfig(StringBuilder bits) {
+        var bytes = new byte[(bits.length() + 7) / 8];
+        for (var i = 0; i < bits.length(); i++) {
+            if (bits.charAt(i) == '1') {
+                bytes[i / 8] |= (byte) (0x80 >> (i % 8));
+            }
+        }
+        return bytes;
     }
 }

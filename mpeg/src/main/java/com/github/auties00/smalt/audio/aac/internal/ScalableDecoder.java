@@ -32,6 +32,12 @@ import java.util.List;
  * categories; with {@code epConfig} 1 every category instance of a layer comes in an access unit of its own: a
  * mono layer the instances of categories 1, 2 (with RVLC scalefactors), 3 and 4, a stereo layer the instances of
  * categories 0 to 4 of its first channel and 1 to 4 of its second.
+ *
+ * <p>Over a CELP core ({@link CelpCoreLayer}), the first AAC layer carries no long term prediction; its
+ * {@code diff_control} flags tell, per dc group of four bands (per window of an eight short sequence), whether the
+ * frequency selective switch adds the up-sampled core spectrum, run through the TNS analysis filters of the first
+ * layer, to the combined mono spectrum, or with a stereo first layer, as {@code diff_control_lr} tells per band and
+ * channel, to the combined stereo spectra before the inverse M/S matrix (subclause 4.6.14.1).
  */
 final class ScalableDecoder {
     /**
@@ -57,9 +63,10 @@ final class ScalableDecoder {
     private static final int NOISE_RIGHT = 4;
 
     /**
-     * The seed of the noise generator.
+     * The initial state of the noise generator: that of the reference decoder, so that noise substitution matches
+     * its output sample by sample when every band is generated in its order (window group, window, band).
      */
-    private static final int NOISE_SEED = 0x1F2E3D4C;
+    private static final int NOISE_SEED = 0;
 
     /**
      * The number of coding layers the configurations describe.
@@ -250,6 +257,52 @@ final class ScalableDecoder {
     private int noiseState = NOISE_SEED;
 
     /**
+     * The number of dc groups of a long window and the lines of the single dc group of a short window, by sampling
+     * frequency index, for a narrowband and for a wideband CELP core (ISO/IEC 14496-3 Table 4.112).
+     */
+    private static final int[] DC_GROUPS = {4, 4, 5, 5, 5, 6, 8, 8, 8, 10, 10, 9, 9};
+
+    private static final int[] DIFF_SHORT_LINES = {8, 8, 13, 18, 18, 26, 36, 36, 54, 104, 104, 104, 104};
+
+    private static final int[] WIDEBAND_DC_GROUPS = {6, 6, 6, 7, 7, 8, 9, 9, 10};
+
+    private static final int[] WIDEBAND_DIFF_SHORT_LINES = {18, 18, 26, 36, 36, 54, 104, 104, 104};
+
+    /**
+     * The CELP core layer, or {@code null} when every layer is AAC.
+     */
+    private final CelpCoreLayer celp;
+
+    /**
+     * The up-sampled spectrum of the core of the current frame, or {@code null} without a core.
+     */
+    private final float[] coreSpectrum;
+
+    /**
+     * The number of dc groups of a long window and the lines of the dc group of a short window.
+     */
+    private final int dcGroups;
+
+    private final int diffShortLines;
+
+    /**
+     * The decoded {@code diff_control} flags of the first layer over a core, {@code true} where the switch takes the
+     * AAC spectrum alone: per band of a long window, per window of an eight short sequence.
+     */
+    private final boolean[] coreControl = new boolean[ChannelStream.MAX_BANDS];
+
+    /**
+     * The number of bands the {@code diff_control_lr} flags of a stereo first layer over a core cover.
+     */
+    private int coreDiffBands;
+
+    /**
+     * Whether the core takes the TNS filters of the right channel of a stereo first layer
+     * ({@code tns_channel_mono_layer}).
+     */
+    private boolean tnsFromRight;
+
+    /**
      * The noise generator seed of each band and window of the left channel of the stereo layer being filled,
      * indexed {@code window * MAX_BANDS + band}.
      */
@@ -262,20 +315,20 @@ final class ScalableDecoder {
      * {@code epConfig} 1 one per category instance
      * @param maxLayer the highest layer to output, or -1 for the last one
      * @param kernel the inverse quantization kernel
-     * @throws MediaException.Unsupported if a layer depends on a core coder
+     * @param celp the CELP core layer, or {@code null} when every layer is AAC
+     * @throws MediaException.Unsupported if the first layer depends on a core coder and no core is given
      * @throws MediaException.Malformed if the configurations do not describe the layers of one object
      */
-    ScalableDecoder(List<AudioSpecificConfig> configs, int maxLayer, AacKernel kernel) {
+    ScalableDecoder(List<AudioSpecificConfig> configs, int maxLayer, AacKernel kernel, CelpCoreLayer celp) {
         var first = configs.getFirst();
-        // TODO: CELP (object types 8 and 24) and TwinVQ (7 and 21) core layers, which the frequency selective switch
-        //  combines with the AAC layers (ISO/IEC 14496-3 subclauses 4.5.2.2.5 and 4.5.2.2.6), need decoders of
-        //  those object types, which Smalt does not have.
-        for (var config : configs) {
-            if (config.coreCoderDelay() >= 0) {
-                throw new MediaException.Unsupported("aac scalable core",
-                        "scalable AAC over a CELP or TwinVQ core layer is not supported");
-            }
+        if (first.coreCoderDelay() >= 0 && celp == null) {
+            throw new MediaException.Unsupported("aac scalable core",
+                    "scalable AAC over a core coder decodes only with the tracks of its core layer");
         }
+        if (first.coreCoderDelay() < 0 && celp != null) {
+            throw new MediaException.Malformed("a CELP core under scalable AAC layers that do not depend on it");
+        }
+        this.celp = celp;
         var layers = new AudioSpecificConfig[8];
         var count = 0;
         for (var config : configs) {
@@ -345,6 +398,11 @@ final class ScalableDecoder {
         this.predictionOverlaps = new float[layerChannels[0]][frameLength];
         this.scratch = new float[frameLength];
         this.reconstruction = new float[frameLength];
+        this.coreSpectrum = celp != null ? new float[frameLength] : null;
+        var index = Math.min(first.tableIndex(), DC_GROUPS.length - 1);
+        var wideband = celp != null && celp.sampleRate() > 12000 && index < WIDEBAND_DC_GROUPS.length;
+        this.dcGroups = wideband ? WIDEBAND_DC_GROUPS[index] : DC_GROUPS[index];
+        this.diffShortLines = wideband ? WIDEBAND_DIFF_SHORT_LINES[index] : DIFF_SHORT_LINES[index];
     }
 
     /**
@@ -418,6 +476,8 @@ final class ScalableDecoder {
         Arrays.fill(diffControl[0], false);
         Arrays.fill(diffControl[1], false);
         diffBands = 0;
+        coreDiffBands = 0;
+        tnsFromRight = false;
         extensionTns[0] = false;
         extensionTns[1] = false;
         readMainLayer();
@@ -428,7 +488,11 @@ final class ScalableDecoder {
                 lastStereoBands = Math.max(lastStereoBands, maxBands[layer]);
             }
         }
-        combine(Math.min(outputLayer, present - 1));
+        if (celp != null) {
+            celp.transform(windowSequence, previousShape, windowShape, coreSpectrum);
+            streams[0][layerChannels[0] == 2 && tnsFromRight ? 1 : 0].applyTnsAnalysis(coreSpectrum);
+        }
+        combine(Math.min(outputLayer, present - 1), present);
     }
 
     /**
@@ -488,6 +552,7 @@ final class ScalableDecoder {
         }
         if (channels == 2) {
             readMidSide(reader, 0, maxBands[0], streams[0][0]);
+            tnsFromRight = celp != null && reader.readFlag();
         }
         reader.checkNotOverrun();
         for (var channel = 0; channel < channels; channel++) {
@@ -497,7 +562,14 @@ final class ScalableDecoder {
             if (!errorResilient && tns) {
                 stream.readScalableTns(side);
             }
-            if (side.readFlag()) {
+            if (celp != null) {
+                if (channel == 0) {
+                    readCoreControl(side);
+                }
+                if (channels == 2) {
+                    readCoreControlLr(side, channel);
+                }
+            } else if (side.readFlag()) {
                 stream.readScalableLtp(side);
             }
             if (errorResilient) {
@@ -536,7 +608,7 @@ final class ScalableDecoder {
         }
         reader.checkNotOverrun();
         var monoStereo = stereo && layerChannels[layer - 1] == 1;
-        var switched = stereo && layerChannels[0] == 1;
+        var switched = stereo && (layerChannels[0] == 1 || celp != null);
         if (errorResilient) {
             for (var channel = 0; channel < channels; channel++) {
                 var side = source(layer, channel, SIDE);
@@ -605,7 +677,7 @@ final class ScalableDecoder {
      * @param lastStereoBands the largest {@code max_sfb} of the stereo layers below
      */
     private void readDiffControl(AacBitReader reader, int channel, int layer, int lastStereoBands) {
-        var bands = Math.min(maxBands[layer], maxBands[lastMono]);
+        var bands = Math.min(maxBands[layer], lastMono >= 0 ? maxBands[lastMono] : coreBands());
         diffBands = bands;
         if (windowSequence == ChannelStream.EIGHT_SHORT_SEQUENCE) {
             if (lastStereoBands == 0) {
@@ -621,16 +693,96 @@ final class ScalableDecoder {
     }
 
     /**
+     * Reads the {@code diff_control} flags of the first layer over a core: one flag per window of an eight short
+     * sequence, otherwise one code of Table 4.165 per dc group, whose four bits from the most significant give the
+     * flags of its four bands. The bands above the dc groups take the AAC spectrum alone.
+     *
+     * @param reader the bit source
+     */
+    private void readCoreControl(AacBitReader reader) {
+        Arrays.fill(coreControl, true);
+        if (windowSequence == ChannelStream.EIGHT_SHORT_SEQUENCE) {
+            for (var window = 0; window < 8; window++) {
+                coreControl[window] = reader.readFlag();
+            }
+            return;
+        }
+        for (var group = 0; group < dcGroups; group++) {
+            var code = reader.read(2);
+            int flags;
+            if (code < 2) {
+                flags = code == 0 ? 0 : 15;
+            } else {
+                code = code << 2 | reader.read(2);
+                if (code == 8 || code == 9) {
+                    flags = code - 1;
+                } else {
+                    code = code << 1 | reader.read(1);
+                    flags = code <= 25 ? code - 19 : code - 17;
+                }
+            }
+            for (var i = 0; i < 4; i++) {
+                coreControl[group * 4 + i] = (flags & 8 >> i) != 0;
+            }
+        }
+    }
+
+    /**
+     * Reads the {@code diff_control_lr} flags of one channel of a stereo first layer over a mono core. The bands
+     * coded M/S take the core's {@code diff_control} flag in the mid channel and the AAC spectrum alone in the side
+     * channel.
+     *
+     * @param reader the bit source
+     * @param channel the channel index, 0 for left or mid, 1 for right or side
+     */
+    private void readCoreControlLr(AacBitReader reader, int channel) {
+        if (windowSequence == ChannelStream.EIGHT_SHORT_SEQUENCE) {
+            for (var window = 0; window < 8; window++) {
+                diffControl[channel][window] = reader.readFlag();
+            }
+            return;
+        }
+        var bands = Math.min(4 * dcGroups, maxBands[0]);
+        coreDiffBands = bands;
+        for (var band = 0; band < bands; band++) {
+            if (!msUsed[band]) {
+                diffControl[channel][band] = reader.readFlag();
+            } else {
+                diffControl[0][band] = coreControl[band];
+                diffControl[1][band] = true;
+            }
+        }
+    }
+
+    /**
+     * {@return the {@code max_sfb} the core stands for as the last mono layer: {@code 4 * no_of_dc_groups - 1} for a
+     * long window, the band holding the last of the {@code diff_short_lines} for short windows}
+     */
+    private int coreBands() {
+        if (windowSequence == ChannelStream.EIGHT_SHORT_SEQUENCE) {
+            var band = 0;
+            while (band < shortOffsets.length - 1 && shortOffsets[band] < diffShortLines) {
+                band++;
+            }
+            return band - 1;
+        }
+        return 4 * dcGroups - 1;
+    }
+
+    /**
      * Combines the decoded layers up to the output layer into {@link #spectra} and applies the TNS filters.
      *
      * <p>A band of a layer that codes noise substitution or intensity stereo combines with the layer below as
      * ISO/IEC 14496-3 subclause 4.5.2.2.7 tabulates: noise of a lower layer remains only where the higher layer
      * codes the band as zero, intensity bands of consecutive layers add their left channels and take the higher
-     * layer's positions, and every other band that a higher layer codes with a tool replaces the lower layers.
+     * layer's positions, and every other band that a higher layer codes with a tool replaces the lower layers. The
+     * noise bands of every decoded layer are generated, those above the output layer too, so that the generator
+     * follows the same sequence whatever the output layer.
      *
      * @param output the highest decoded layer to combine
+     * @param present the number of layers decoded
      */
-    private void combine(int output) {
+    private void combine(int output, int present) {
         var eightShort = windowSequence == ChannelStream.EIGHT_SHORT_SEQUENCE;
         windows = eightShort ? 8 : 1;
         windowLength = eightShort ? frameLength / 8 : frameLength;
@@ -642,7 +794,7 @@ final class ScalableDecoder {
         for (var group = 0; group < groupCount; group++) {
             groupStarts[group + 1] = groupStarts[group] + groups.groupLength(group);
         }
-        for (var layer = 0; layer <= output; layer++) {
+        for (var layer = 0; layer < present; layer++) {
             fillNoise(layer);
         }
         var mono = layerChannels[0] == 1;
@@ -653,7 +805,13 @@ final class ScalableDecoder {
             System.arraycopy(streams[0][1].spectrum(), 0, spectra[1], 0, frameLength);
             setTools(stereoTools, 0);
         }
-        predict();
+        if (celp == null) {
+            predict();
+        } else if (!mono) {
+            matrix(1.0f);
+            applyIntensity();
+            matrix(0.5f);
+        }
         if (mono) {
             for (var layer = 1; layer <= Math.min(output, lastMono); layer++) {
                 addMono(layer);
@@ -669,6 +827,10 @@ final class ScalableDecoder {
                 for (var layer = firstStereo + 1; layer <= output; layer++) {
                     addStereo(layer, core);
                 }
+                // TODO: frames 204 and 205 of er_ac211 (eight short sequences whose mono layer codes noise
+                //  substitution in window groups after the first, under a stereo layer coded left and right) differ
+                //  from the reference decoder by up to 240 LSB in the left channel: the reference keeps part of those
+                //  mono noise bands, which this decoder clears.
                 for (var group = 0; group < groupCount; group++) {
                     for (var band = 0; band < bandCount; band++) {
                         var index = group * ChannelStream.MAX_BANDS + band;
@@ -677,16 +839,27 @@ final class ScalableDecoder {
                         }
                     }
                 }
+                if (celp != null) {
+                    switchCore(spectra[0]);
+                }
                 switchFrequencies();
             } else {
                 for (var layer = 1; layer <= output; layer++) {
                     addStereo(layer, spectra[0]);
                 }
+                if (celp != null) {
+                    switchCoreStereo();
+                }
             }
             matrix(1.0f);
             applyIntensity();
-        } else if (channels() == 2) {
-            System.arraycopy(spectra[0], 0, spectra[1], 0, frameLength);
+        } else {
+            if (celp != null) {
+                switchCore(spectra[0]);
+            }
+            if (channels() == 2) {
+                System.arraycopy(spectra[0], 0, spectra[1], 0, frameLength);
+            }
         }
         applyTns(output);
         previousShape = windowShape;
@@ -764,15 +937,15 @@ final class ScalableDecoder {
             var stream = streams[layer][channel];
             var spectrum = stream.spectrum();
             for (var group = 0; group < groupCount; group++) {
-                for (var band = 0; band < maxBands[layer]; band++) {
-                    var index = group * ChannelStream.MAX_BANDS + band;
-                    if (stream.bandType(index) != Codebooks.NOISE_HCB) {
-                        continue;
-                    }
-                    var reuse = channel == 1 && streams[layer][0].bandType(index) == Codebooks.NOISE_HCB
-                            && msUsed[groupStarts[group] * ChannelStream.MAX_BANDS + band];
-                    var gain = Dequantizer.gain(stream.bandValue(index));
-                    for (var window = groupStarts[group]; window < groupStarts[group + 1]; window++) {
+                for (var window = groupStarts[group]; window < groupStarts[group + 1]; window++) {
+                    for (var band = 0; band < maxBands[layer]; band++) {
+                        var index = group * ChannelStream.MAX_BANDS + band;
+                        if (stream.bandType(index) != Codebooks.NOISE_HCB) {
+                            continue;
+                        }
+                        var reuse = channel == 1 && streams[layer][0].bandType(index) == Codebooks.NOISE_HCB
+                                && msUsed[groupStarts[group] * ChannelStream.MAX_BANDS + band];
+                        var gain = Dequantizer.gain(stream.bandValue(index));
                         var seedIndex = window * ChannelStream.MAX_BANDS + band;
                         int state;
                         if (reuse) {
@@ -1060,6 +1233,72 @@ final class ScalableDecoder {
             }
             for (var line = base + offsets[bandCount]; line < base + windowLength; line++) {
                 monoSpectrum[line] = left[line];
+            }
+        }
+    }
+
+    /**
+     * Runs the frequency selective switch of a mono first layer over a core: the core spectrum is added to the
+     * combined mono spectrum in the bands of the dc groups (the {@code diff_short_lines} of each short window) whose
+     * {@code diff_control} flag is clear.
+     *
+     * @param mono the combined mono spectrum, updated in place
+     */
+    private void switchCore(float[] mono) {
+        for (var window = 0; window < windows; window++) {
+            var base = window * windowLength;
+            if (windows == 8) {
+                if (!coreControl[window]) {
+                    for (var line = base; line < base + Math.min(diffShortLines, windowLength); line++) {
+                        mono[line] += coreSpectrum[line];
+                    }
+                }
+                continue;
+            }
+            for (var band = 0; band < Math.min(4 * dcGroups, bandCount); band++) {
+                if (coreControl[band]) {
+                    continue;
+                }
+                for (var line = base + offsets[band]; line < base + offsets[band + 1]; line++) {
+                    mono[line] += coreSpectrum[line];
+                }
+            }
+        }
+    }
+
+    /**
+     * Runs the frequency selective switch of a stereo first layer over a mono core, before the inverse M/S matrix:
+     * the core spectrum, doubled in the bands coded left and right, is added to a channel where its
+     * {@code diff_control_lr} flag is clear, and in the bands coded M/S to the mid channel alone. Over short windows
+     * the switch covers the {@code diff_short_lines} of each window, and an M/S band takes the core's flag of its
+     * window.
+     */
+    private void switchCoreStereo() {
+        var shortWindows = windows == 8;
+        for (var window = 0; window < windows; window++) {
+            var base = window * windowLength;
+            var top = base + (shortWindows ? Math.min(diffShortLines, windowLength) : windowLength);
+            for (var band = 0; band < bandCount; band++) {
+                var midSide = msUsed[window * ChannelStream.MAX_BANDS + band];
+                var scale = midSide ? 1.0f : 2.0f;
+                for (var channel = 0; channel < 2; channel++) {
+                    boolean off;
+                    if (!shortWindows) {
+                        off = band >= coreDiffBands || diffControl[channel][band];
+                    } else if (midSide) {
+                        off = channel == 1 || coreControl[window];
+                    } else {
+                        off = diffControl[channel][window];
+                    }
+                    if (off) {
+                        continue;
+                    }
+                    var target = spectra[channel];
+                    var end = Math.min(base + offsets[band + 1], top);
+                    for (var line = base + offsets[band]; line < end; line++) {
+                        target[line] += scale * coreSpectrum[line];
+                    }
+                }
             }
         }
     }

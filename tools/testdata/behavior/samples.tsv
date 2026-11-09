@@ -59,6 +59,7 @@ core/src/test/resources/samples/flv/vp9.flv	22421	2af6ac09d2f098f6c4595f881bef3e
 core/src/test/resources/samples/ivf/av1.ivf	15789	183cdc6db1fb06753f9e9b1c1e08d33c22a6d3e450c056fb8f2ed2cf8daa761c	make-samples.sh
 core/src/test/resources/samples/ivf/vp8.ivf	26473	ce9c8209c150f896f751f82167ae8131668b8c5037ff7424776f5284a5e8e32a	make-samples.sh
 core/src/test/resources/samples/loas/aac.loas	16521	cfc64ffe4968468c1cd09348f5a0059b006bf67da431dd14c16c236b8f7b4cb0	make-audio-container-samples.py
+core/src/test/resources/samples/loas/celp.loas	760	b1872bedc7b721fea1c32aa5e825e3f96e99e519ef9e8f5ef720d07b6ae041bf	make-audio-container-samples.py
 core/src/test/resources/samples/matroska/atrac9.mka	8106	e84989856a9620a94931ad81fc71aa286d041daa5f18efb4a9264b98a87dd1d1	audio Atrac9VectorWriter (-Dsmalt.atrac9.writeVectors=true)
 core/src/test/resources/samples/matroska/cfhd.mkv	28070	1d4c2520e1d84047d3e7e837087e64d03532fb65e43fb46c2bbe209791d9a7fc	make-intermediate-samples.sh
 core/src/test/resources/samples/matroska/dolby-vision-p84.mkv	9941	96e0cdaebc69e962ca80cb3f806d73f48af9e115f4c5fc4d6a1627ffe72f9746	make-dolby-vision-samples.py

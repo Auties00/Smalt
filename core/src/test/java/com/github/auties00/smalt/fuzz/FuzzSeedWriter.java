@@ -235,6 +235,7 @@ class FuzzSeedWriter {
         copy(DemuxerFuzzTest.class, "au", "valid-g721.au", audioSamples.resolve("au/g721.au"));
         copy(DemuxerFuzzTest.class, "au", "valid-mulaw.au", audioSamples.resolve("au/mulaw.au"));
         copy(DemuxerFuzzTest.class, "loas", "valid-aac.loas", audioSamples.resolve("loas/aac.loas"));
+        copy(DemuxerFuzzTest.class, "loas", "valid-celp.loas", audioSamples.resolve("loas/celp.loas"));
         copy(DemuxerFuzzTest.class, "adif", "valid-aac.adif", audioSamples.resolve("adif/aac.adif"));
 
         copy(DemuxerFuzzTest.class, "ivf", "valid-vp8.ivf", ffmpeg("ivf", video(32, 32, 2), "-c:v", "libvpx",

@@ -22,6 +22,8 @@ audio.amr.internal.wbcommon	mpeg
 audio.amr.internal.wbenc	mpeg
 audio.ape	audio
 audio.atrac9	audio
+audio.celp	mpeg
+audio.celp.internal	mpeg
 audio.dst	audio
 audio.dts	mpeg
 audio.dts.internal	mpeg

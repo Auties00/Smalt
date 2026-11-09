@@ -1238,6 +1238,12 @@ final class SampleEntryWriter {
                     sampleRate = frame.sampleRate();
                 }
             }
+            case CELP -> {
+                channels = 1;
+                if (sampleRate == 0) {
+                    sampleRate = AudioConfigs.celpSampleRate(config);
+                }
+            }
             case AMR_NB, AMR_WB -> {
                 var wideband = audio.codec() == Codec.AMR_WB;
                 format = wideband ? BoxTypes.SAWB : BoxTypes.SAMR;
@@ -1256,11 +1262,12 @@ final class SampleEntryWriter {
         writer.u32(0);
         writer.u32(sampleRate > 0 && sampleRate <= 0xFFFF ? (long) sampleRate << 16 : 0);
         switch (audio.codec()) {
-            case AAC, MP3, MP2 -> {
-                var objectType = audio.codec() == Codec.AAC ? EsDescriptor.MPEG4_AUDIO
+            case AAC, CELP, MP3, MP2 -> {
+                var mpeg4 = audio.codec() == Codec.AAC || audio.codec() == Codec.CELP;
+                var objectType = mpeg4 ? EsDescriptor.MPEG4_AUDIO
                         : sampleRate >= 32000 || sampleRate == 0 ? EsDescriptor.MPEG1_AUDIO : EsDescriptor.MPEG2_AUDIO;
                 var descriptor = new EsDescriptor(objectType, EsDescriptor.AUDIO_STREAM, maxSampleSize(plan),
-                        maxBitrate(plan), averageBitrate(plan), audio.codec() == Codec.AAC ? config : null);
+                        maxBitrate(plan), averageBitrate(plan), mpeg4 ? config : null);
                 writer.beginFull(BoxTypes.ESDS, 0, 0);
                 descriptor.write(writer, plan.track.number);
                 writer.end();

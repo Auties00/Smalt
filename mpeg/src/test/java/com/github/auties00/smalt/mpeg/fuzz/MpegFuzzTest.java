@@ -8,6 +8,8 @@ import com.github.auties00.smalt.audio.aac.AacDecoderOptions;
 import com.github.auties00.smalt.audio.ac3.Ac3Decoder;
 import com.github.auties00.smalt.audio.ac3.Ac3DecoderOptions;
 import com.github.auties00.smalt.audio.ac3.Ac3Downmix;
+import com.github.auties00.smalt.audio.celp.CelpDecoder;
+import com.github.auties00.smalt.audio.celp.CelpDecoderOptions;
 import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.image.AuxiliaryImage;
 import com.github.auties00.smalt.image.ChromaFormat;
@@ -57,8 +59,10 @@ import java.util.function.Consumer;
  * MPEG-4 Part 2 decoder decoding the two layers of a scalable object (see {@link #mpeg4Layers}), of the H.264
  * parameter set parser, of the H.264 decoder decoding every layer of a stream (see {@link #h264Layers}) and of the
  * AAC decoder decoding the layers of a scalable object from several elementary streams (see {@link #aacScalable})
- * or a downmix with a separate MPEG Surround elementary stream (see {@link #aacSurround}), and of the H.264 first
- * pass statistics (see {@link #h264FirstPassStats}).
+ * or over a CELP core (see {@link #aacCelpCore}) or a downmix with a separate MPEG Surround elementary stream (see
+ * {@link #aacSurround}), of the CELP decoder
+ * decoding the layers and categories of an object from several elementary streams (see {@link #celpLayers}), and of
+ * the H.264 first pass statistics (see {@link #h264FirstPassStats}).
  */
 class MpegFuzzTest {
     /** The packets of an elementary stream that are decoded after it is split. */
@@ -265,6 +269,66 @@ class MpegFuzzTest {
     }
 
     /**
+     * Decodes a scalable AAC object over a CELP core: the codec configuration of the {@link FuzzPackets} input lists
+     * the {@code AudioSpecificConfig} of each elementary stream, the CELP ones first, and every packet the access
+     * units of one AAC frame, in the format of {@link #units(byte[])}, each unit's first byte the index of the stream
+     * it belongs to; bits 0 to 2 of the options give the highest layer to decode, 7 for every layer. Inputs whose
+     * first configuration is not of object type 8 or 24 are skipped.
+     */
+    @FuzzTest
+    void aacCelpCore(byte[] data) {
+        var run = Fuzz.start("aacCelpCore");
+        var input = FuzzPackets.parse(data, FuzzPackets.AUDIO_FIELDS);
+        var configs = units(input.header().config().orElse(new byte[0]));
+        var type = configs.isEmpty() || configs.getFirst().length == 0 ? 0 : (configs.getFirst()[0] & 0xFF) >>> 3;
+        if (type != 8 && type != 24) {
+            run.skip("not a CELP core");
+            return;
+        }
+        var options = AacDecoderOptions.builder().limits(Fuzz.LIMITS);
+        var layer = input.header().options() & 7;
+        if (layer != 7) {
+            options.maxLayer(layer);
+        }
+        var tracks = new ArrayList<AudioTrack>();
+        var core = true;
+        for (var config : configs) {
+            var objectType = config.length == 0 ? 0 : (config[0] & 0xFF) >>> 3;
+            core &= objectType == 8 || objectType == 24;
+            tracks.add(AudioTrack.builder().id(tracks.size() + 1).codec(core ? Codec.CELP : Codec.AAC)
+                    .timeBase(new Rational(1, 48_000)).codecConfig(config).build());
+        }
+        var built = options.build();
+        var decoder = run.value("open", () -> new AacDecoder(tracks, built));
+        if (decoder.isEmpty()) {
+            return;
+        }
+        Consumer<AudioBuffer> sink = buffer -> {
+            for (var channel = 0; channel < buffer.channels(); channel++) {
+                var plane = buffer.plane(channel);
+                for (var i = 0; i < buffer.frames(); i++) {
+                    if (!Float.isFinite(plane[i])) {
+                        throw new IllegalStateException("decoded a non-finite sample");
+                    }
+                }
+            }
+            run.output();
+        };
+        try (var opened = decoder.get()) {
+            for (var index = 0; index < input.packets().size(); index++) {
+                var packets = new ArrayList<Packet>();
+                for (var unit : units(input.packets().get(index).data())) {
+                    if (unit.length > 0) {
+                        packets.add(new Packet(1 + (unit[0] & 0xFF) % tracks.size(), Arrays.copyOfRange(unit, 1,
+                                unit.length), index * 960L, index * 960L, 960, true));
+                    }
+                }
+                run.step("packet " + index, () -> opened.decode(packets, sink));
+            }
+        }
+    }
+
+    /**
      * Decodes an AAC downmix with a separate MPEG Surround elementary stream: the codec configuration of the
      * {@link FuzzPackets} input lists the {@code AudioSpecificConfig} of the downmix and of the MPEG Surround stream
      * (object type 30), and every packet their access units, in the format of {@link #units(byte[])}; bit 0 of the
@@ -365,6 +429,69 @@ class MpegFuzzTest {
             out.writeBytes(unit);
         }
         return out.toByteArray();
+    }
+
+    @FuzzTest
+    void celp(byte[] data) {
+        FuzzMedia.audio(Codec.CELP, data);
+    }
+
+    /**
+     * Decodes a CELP object whose layers or error sensitivity categories come in several elementary streams: the
+     * codec configuration of the {@link FuzzPackets} input lists the {@code AudioSpecificConfig} of each stream and
+     * every packet the access units of one frame, in the format of {@link #units(byte[])}; bits 0 to 2 of the options
+     * give the highest layer to decode, 7 for every layer, and bit 3 turns the post-processor off. Inputs whose first
+     * configuration is not of object type 8 or 24 are skipped.
+     */
+    @FuzzTest
+    void celpLayers(byte[] data) {
+        var run = Fuzz.start("celpLayers");
+        var input = FuzzPackets.parse(data, FuzzPackets.AUDIO_FIELDS);
+        var configs = units(input.header().config().orElse(new byte[0]));
+        var type = configs.isEmpty() || configs.getFirst().length == 0 ? 0 : (configs.getFirst()[0] & 0xFF) >>> 3;
+        if (type != 8 && type != 24) {
+            run.skip("not CELP");
+            return;
+        }
+        var options = CelpDecoderOptions.builder().limits(Fuzz.LIMITS)
+                .postFilter((input.header().options() & 8) == 0);
+        var layer = input.header().options() & 7;
+        if (layer != 7) {
+            options.maxLayer(layer);
+        }
+        var tracks = new ArrayList<AudioTrack>();
+        for (var config : configs) {
+            tracks.add(AudioTrack.builder().id(tracks.size() + 1).codec(Codec.CELP).timeBase(new Rational(1, 16_000))
+                    .codecConfig(config).build());
+        }
+        var decoder = run.value("open", () -> new CelpDecoder(tracks, options.build()));
+        if (decoder.isEmpty()) {
+            return;
+        }
+        Consumer<AudioBuffer> sink = buffer -> {
+            if (buffer.channels() != 1 || buffer.frames() != decoder.get().frameSize()) {
+                throw new IllegalStateException("decoded a block of " + buffer.channels() + " channels and "
+                        + buffer.frames() + " samples");
+            }
+            for (var i = 0; i < buffer.frames(); i++) {
+                if (!Float.isFinite(buffer.plane(0)[i])) {
+                    throw new IllegalStateException("decoded a non-finite sample");
+                }
+            }
+            run.output();
+        };
+        try (var opened = decoder.get()) {
+            for (var index = 0; index < input.packets().size(); index++) {
+                var packets = new ArrayList<Packet>();
+                for (var unit : units(input.packets().get(index).data())) {
+                    packets.add(new Packet(1, unit, index * 320L, index * 320L, 320, true));
+                }
+                if (packets.isEmpty()) {
+                    continue;
+                }
+                run.step("packet " + index, () -> opened.decode(packets, sink));
+            }
+        }
     }
 
     @FuzzTest
