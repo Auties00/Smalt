@@ -1368,6 +1368,10 @@ class FuzzSeedWriter {
                 var nal = com.github.auties00.smalt.testkit.DolbyVisionRpus.rpuNals(demuxer.read().data()).getFirst();
                 write(DolbyVisionFuzzTest.class, "rpu", "valid-" + profile + ".bin",
                         com.github.auties00.smalt.internal.nal.NalUnits.unescape(nal, 2, nal.length - 2));
+                var rpu = com.github.auties00.smalt.internal.nal.NalUnits.unescape(nal, 2, nal.length - 2);
+                var seed = new byte[rpu.length + 1];
+                System.arraycopy(rpu, 0, seed, 1, rpu.length);
+                write(DolbyVisionFuzzTest.class, "reconstruct", "valid-" + profile + ".bin", seed);
             }
         }
     }

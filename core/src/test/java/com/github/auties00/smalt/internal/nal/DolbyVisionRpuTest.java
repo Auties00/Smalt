@@ -14,11 +14,13 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.SplittableRandom;
 import java.util.stream.Stream;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -33,6 +35,84 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @DisplayName("Dolby Vision RPU parser")
 class DolbyVisionRpuTest {
+    /** Lists the parsed values of an RPU, which hold arrays that a record's equality compares by identity. */
+    private static List<Object> describe(DolbyVisionRpu rpu) {
+        var values = new ArrayList<Object>(List.of(rpu.profile(), rpu.enhancementLayer(), rpu.vdrBitDepth()));
+        for (var curve : rpu.mapping().curves()) {
+            values.add(Arrays.toString(curve.pivots()));
+            for (var piece : curve.pieces()) {
+                values.add(piece.mmr() + " " + piece.order() + " " + Arrays.toString(piece.coefficients()));
+            }
+        }
+        var management = rpu.displayManagement();
+        values.add(Arrays.toString(management.yccToRgb()));
+        values.add(Arrays.toString(management.yccToRgbOffset()));
+        values.add(Arrays.toString(management.rgbToLms()));
+        values.add(management.affectedId());
+        values.add(management.currentId());
+        values.add(management.cmV29Levels());
+        return values;
+    }
+
+    @Nested
+    @DisplayName("mappings")
+    class Mappings {
+        @Test
+        @DisplayName("hold IEEE 754 coefficients of coefficient_data_type 1 in units of 1/2^32, as ffmpeg reads them")
+        void floating() {
+            var data = DolbyVisionRpus.of(Kind.PROFILE_8).fixedPoint().rpu();
+            var mapping = DolbyVisionRpu.parse(data, 0, data.length).mapping();
+            assertEquals(32, mapping.denominatorBits());
+            assertTrue(mapping.floatingCoefficients());
+            // the writer's bit patterns of a polynomial: 0, 0 and 12345, an IEEE 754 denormal that rounds to 0
+            assertArrayEquals(new long[3], mapping.curves()[0].pieces()[0].coefficients());
+        }
+
+        @Test
+        @DisplayName("hold the curves of a real profile 5 RPU")
+        void real() throws IOException {
+            var file = Files.readAllBytes(Conformance.fetchListed("dovi-tool-profile5.bin"));
+            var unescaped = NalUnits.unescape(file, 4, file.length - 4);
+            var rpu = DolbyVisionRpu.parse(unescaped, 0, unescaped.length);
+            var mapping = rpu.mapping();
+            assertEquals(23, mapping.denominatorBits());
+            assertFalse(mapping.floatingCoefficients());
+            for (var curve : mapping.curves()) {
+                assertEquals(curve.pivots().length - 1, curve.pieces().length);
+                for (var index = 1; index < curve.pivots().length; index++) {
+                    assertTrue(curve.pivots()[index] > curve.pivots()[index - 1]);
+                }
+            }
+            assertEquals(0, mapping.curves()[0].pivots()[0]);
+            assertArrayEquals(DolbyVisionRpus.IPT_PQ_C2_YCC_TO_RGB, rpu.displayManagement().yccToRgb());
+            assertArrayEquals(DolbyVisionRpus.IPT_PQ_C2_RGB_TO_LMS, rpu.displayManagement().rgbToLms());
+            assertArrayEquals(DolbyVisionRpus.IPT_PQ_C2_OFFSET, rpu.displayManagement().yccToRgbOffset());
+        }
+
+        @Test
+        @DisplayName("name the mapping an RPU reuses and have no curves of their own")
+        void reuse() {
+            var data = DolbyVisionRpus.of(Kind.PROFILE_5).reusePrevious(7).rpu();
+            var rpu = DolbyVisionRpu.parse(data, 0, data.length);
+            assertNull(rpu.mapping());
+            assertEquals(7, rpu.previousRpuId());
+            var own = DolbyVisionRpus.of(Kind.PROFILE_5).rpu();
+            assertEquals(-1, DolbyVisionRpu.parse(own, 0, own.length).previousRpuId());
+        }
+
+        @Test
+        @DisplayName("keep display management identifiers, and no matrices when compressed")
+        void management() {
+            var data = DolbyVisionRpus.of(Kind.PROFILE_8).displayManagementIds(4, 2).compressedDm().rpu();
+            var management = DolbyVisionRpu.parse(data, 0, data.length).displayManagement();
+            assertEquals(4, management.affectedId());
+            assertEquals(2, management.currentId());
+            assertNull(management.yccToRgb());
+            assertNull(management.yccToRgbOffset());
+            assertNull(management.rgbToLms());
+        }
+    }
+
     @Nested
     @DisplayName("synthetic RPUs")
     class Synthetic {
@@ -115,7 +195,8 @@ class DolbyVisionRpuTest {
                 var writer = DolbyVisionRpus.of(Kind.PROFILE_5).chromaMmr().frame(frame);
                 var raw = writer.rpu();
                 var nal = writer.hevcNal();
-                assertEquals(DolbyVisionRpu.parse(raw, 0, raw.length), DolbyVisionRpu.parseHevcNal(nal, 0, nal.length));
+                assertEquals(describe(DolbyVisionRpu.parse(raw, 0, raw.length)),
+                        describe(DolbyVisionRpu.parseHevcNal(nal, 0, nal.length)));
                 var padded = new byte[nal.length + 7];
                 System.arraycopy(nal, 0, padded, 3, nal.length);
                 assertEquals(5, DolbyVisionRpu.tryParseHevcNal(padded, 3, nal.length).profile());

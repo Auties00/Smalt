@@ -27,6 +27,19 @@ public final class DolbyVisionRpus {
         PROFILE_8
     }
 
+    /** The {@code ycc_to_rgb_coef} values of a BT.2020 Y'CbCr source. */
+    public static final short[] BT2020_YCC_TO_RGB = {9574, 0, 13802, 9574, -1540, -5348, 9574, 17610, 0};
+    /** The {@code ycc_to_rgb_offset} values of a limited range source. */
+    public static final long[] BT2020_OFFSET = {16777216, 134217728, 134217728};
+    /** The {@code rgb_to_lms_coef} values of a BT.2020 source. */
+    public static final short[] BT2020_RGB_TO_LMS = {7222, 8771, 390, 2654, 12430, 1300, 0, 422, 15962};
+    /** The {@code ycc_to_rgb_coef} values of IPT-PQ-c2. */
+    public static final short[] IPT_PQ_C2_YCC_TO_RGB = {8192, 799, 1681, 8192, -933, 1091, 8192, 267, -5545};
+    /** The {@code ycc_to_rgb_offset} values of IPT-PQ-c2. */
+    public static final long[] IPT_PQ_C2_OFFSET = {0, 134217728, 134217728};
+    /** The {@code rgb_to_lms_coef} values of IPT-PQ-c2. */
+    public static final short[] IPT_PQ_C2_RGB_TO_LMS = {17081, -349, -349, -349, 17081, -349, -349, -349, 17081};
+
     private final Kind kind;
     private boolean chromaMmr;
     private boolean compressedDm;
@@ -34,6 +47,14 @@ public final class DolbyVisionRpus {
     private boolean reusePrevious;
     private boolean fixedPoint;
     private int frame;
+    private DolbyVisionReference.Mapping mapping;
+    private short[] yccToRgb;
+    private long[] yccToRgbOffset;
+    private short[] rgbToLms;
+    private int vdrDepth;
+    private int previousRpuId;
+    private int affectedDmId;
+    private int currentDmId;
 
     private DolbyVisionRpus(Kind kind) {
         this.kind = kind;
@@ -72,8 +93,8 @@ public final class DolbyVisionRpus {
     }
 
     /**
-     * Writes {@code coefficient_data_type} 1: coefficients are 32-bit fixed-point fractions without Exp-Golomb
-     * integer parts.
+     * Writes {@code coefficient_data_type} 1: coefficients are 32-bit values without Exp-Golomb integer parts, which
+     * this writer fills with the bits of its fractions.
      */
     public DolbyVisionRpus fixedPoint() {
         this.fixedPoint = true;
@@ -83,6 +104,48 @@ public final class DolbyVisionRpus {
     /** Sets the frame index, which moves the level 1 maximum so that consecutive RPUs differ. */
     public DolbyVisionRpus frame(int frame) {
         this.frame = frame;
+        return this;
+    }
+
+    /**
+     * Writes these curves, with {@code coefficient_data_type} 0, instead of the default mapping. Coefficients keep
+     * their sign through the Exp-Golomb integer part: {@code floor(value / 2^bits)} then the remainder.
+     */
+    public DolbyVisionRpus mapping(DolbyVisionReference.Mapping mapping) {
+        this.mapping = mapping;
+        return this;
+    }
+
+    /** Writes these display management matrices instead of the BT.2020 Y'CbCr ones. */
+    public DolbyVisionRpus matrices(short[] yccToRgb, long[] yccToRgbOffset, short[] rgbToLms) {
+        this.yccToRgb = yccToRgb;
+        this.yccToRgbOffset = yccToRgbOffset;
+        this.rgbToLms = rgbToLms;
+        return this;
+    }
+
+    /** Writes the matrices of profile 5, IPT-PQ-c2 with crosstalk, as dovi_tool's profile 5 generator does. */
+    public DolbyVisionRpus iptPqC2() {
+        return matrices(IPT_PQ_C2_YCC_TO_RGB, IPT_PQ_C2_OFFSET, IPT_PQ_C2_RGB_TO_LMS);
+    }
+
+    /** Sets the reconstructed bit depth. */
+    public DolbyVisionRpus vdrBitDepth(int depth) {
+        this.vdrDepth = depth;
+        return this;
+    }
+
+    /** Sets {@code use_prev_vdr_rpu_flag} and the identifier of the mapping reused. */
+    public DolbyVisionRpus reusePrevious(int rpuId) {
+        this.reusePrevious = true;
+        this.previousRpuId = rpuId;
+        return this;
+    }
+
+    /** Sets {@code affected_dm_metadata_id} and {@code current_dm_metadata_id}. */
+    public DolbyVisionRpus displayManagementIds(int affected, int current) {
+        this.affectedDmId = affected;
+        this.currentDmId = current;
         return this;
     }
 
@@ -100,13 +163,13 @@ public final class DolbyVisionRpus {
         bits.put(1, 0);
         bits.put(2, fixedPoint ? 1 : 0);
         if (!fixedPoint) {
-            bits.ue(23);
+            bits.ue(mapping != null ? mapping.denominatorBits() : 23);
         }
         bits.put(2, 1);
         bits.put(1, profile5 ? 1 : 0);
         bits.ue(2);
         bits.ue(2);
-        bits.ue(kind == Kind.PROFILE_4 ? 6 : 4);
+        bits.ue(vdrDepth != 0 ? vdrDepth - 8 : kind == Kind.PROFILE_4 ? 6 : 4);
         bits.put(1, 0);
         bits.put(3, compressedDm ? 1 : 0);
         bits.put(1, residual ? 1 : 0);
@@ -114,7 +177,9 @@ public final class DolbyVisionRpus {
         bits.put(1, 1);
         bits.put(1, reusePrevious ? 1 : 0);
         if (reusePrevious) {
-            bits.ue(0);
+            bits.ue(previousRpuId);
+        } else if (mapping != null) {
+            customMapping(bits);
         } else {
             mapping(bits, residual);
         }
@@ -129,6 +194,64 @@ public final class DolbyVisionRpus {
         out.write(crc >>> 8);
         out.write(crc);
         out.write(0x80);
+        return out.toByteArray();
+    }
+
+    /**
+     * Returns the RPU as the payload of an AV1 metadata OBU: {@code metadata_type} 4, the ITU-T T.35 country code,
+     * provider and oriented code, the EMDF container around the RPU without its prefix byte, and the OBU trailing
+     * bits, as the dolby_vision crate of dovi_tool writes it.
+     */
+    public byte[] av1Metadata() {
+        var rpu = rpu();
+        var bits = new Bits();
+        bits.put(8, 4);
+        bits.put(8, 0xB5);
+        bits.put(16, 0x3B);
+        bits.put(32, 0x800);
+        bits.put(2, 0);
+        bits.put(3, 6);
+        bits.put(5, 31);
+        // emdf_payload_id_ext 225 as variable_bits(5): (6 + 1) << 5 + 1
+        bits.put(5, 6);
+        bits.put(1, 1);
+        bits.put(5, 1);
+        bits.put(1, 0);
+        bits.put(4, 0);
+        bits.put(1, 1);
+        var size = rpu.length - 1;
+        if (size >= 256) {
+            bits.put(8, (size >> 8) - 1);
+            bits.put(1, 1);
+        }
+        bits.put(8, size & 0xFF);
+        bits.put(1, 0);
+        for (var index = 1; index < rpu.length; index++) {
+            bits.put(8, rpu[index] & 0xFF);
+        }
+        bits.put(5, 0);
+        bits.put(2, 1);
+        bits.put(2, 0);
+        bits.put(8, 0);
+        while (bits.bits.size() % 8 != 0) {
+            bits.put(1, 1);
+        }
+        bits.put(8, 0x80);
+        return bits.bytes();
+    }
+
+    /** Returns a metadata OBU of the RPU, with its size field, for an AV1 temporal unit. */
+    public byte[] av1Obu() {
+        var payload = av1Metadata();
+        var out = new ByteArrayOutputStream();
+        out.write(5 << 3 | 2);
+        var size = payload.length;
+        while (size >= 0x80) {
+            out.write(size & 0x7F | 0x80);
+            size >>>= 7;
+        }
+        out.write(size);
+        out.writeBytes(payload);
         return out.toByteArray();
     }
 
@@ -204,6 +327,42 @@ public final class DolbyVisionRpus {
         return crc;
     }
 
+    private void customMapping(Bits bits) {
+        bits.ue(mapping.rpuId());
+        bits.ue(0);
+        bits.ue(0);
+        for (var curve : mapping.curves()) {
+            bits.ue(curve.pivots().length - 2);
+            var previous = 0;
+            for (var pivot : curve.pivots()) {
+                bits.put(10, pivot - previous);
+                previous = pivot;
+            }
+        }
+        bits.ue(0);
+        bits.ue(0);
+        for (var curve : mapping.curves()) {
+            for (var piece : curve.pieces()) {
+                var coefficients = piece.coefficients();
+                bits.ue(piece.mmr() ? 1 : 0);
+                if (piece.mmr()) {
+                    bits.put(2, piece.order() - 1);
+                } else {
+                    bits.ue(piece.order() - 1);
+                    if (piece.order() == 1) {
+                        bits.put(1, 0);
+                    }
+                }
+                for (var coefficient : coefficients) {
+                    var denominator = mapping.denominatorBits();
+                    var integer = coefficient >> denominator;
+                    bits.se(integer);
+                    bits.put(denominator, coefficient - (integer << denominator));
+                }
+            }
+        }
+    }
+
     private void mapping(Bits bits, boolean residual) {
         bits.ue(0);
         bits.ue(0);
@@ -272,17 +431,17 @@ public final class DolbyVisionRpus {
     }
 
     private void displayManagement(Bits bits) {
-        bits.ue(0);
-        bits.ue(0);
+        bits.ue(affectedDmId);
+        bits.ue(currentDmId);
         bits.ue(frame == 0 ? 1 : 0);
         if (!compressedDm) {
-            for (var coefficient : new int[]{9574, 0, 13802, 9574, -1540, -5348, 9574, 17610, 0}) {
+            for (var coefficient : yccToRgb != null ? yccToRgb : BT2020_YCC_TO_RGB) {
                 bits.put(16, coefficient & 0xFFFF);
             }
-            for (var offset : new long[]{16777216, 134217728, 134217728}) {
+            for (var offset : yccToRgbOffset != null ? yccToRgbOffset : BT2020_OFFSET) {
                 bits.put(32, offset);
             }
-            for (var coefficient : new int[]{7222, 8771, 390, 2654, 12430, 1300, 0, 422, 15962}) {
+            for (var coefficient : rgbToLms != null ? rgbToLms : BT2020_RGB_TO_LMS) {
                 bits.put(16, coefficient & 0xFFFF);
             }
             bits.put(16, 65535);

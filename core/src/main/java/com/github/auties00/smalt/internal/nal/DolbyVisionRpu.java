@@ -33,11 +33,14 @@ import java.util.List;
  * @param profile the Dolby Vision profile the header implies (4, 5, 7 or 8), or 0 when it implies none
  * @param enhancementLayer the kind of enhancement layer the mapping describes
  * @param displayManagement the display management data, or {@code null} when the RPU carries none
+ * @param mapping the reshaping curves, or {@code null} when the previous RPU is reused
+ * @param previousRpuId {@code prev_vdr_rpu_id}, the identifier of the reused mapping, or -1 when the RPU has its own
  */
 public record DolbyVisionRpu(int rpuFormat, int vdrRpuProfile, boolean baseLayerFullRange, int baseLayerBitDepth,
                              int enhancementLayerBitDepth, int vdrBitDepth, boolean enhancementLayerResampling,
                              boolean residualDisabled, boolean previousReused, int profile,
-                             EnhancementLayer enhancementLayer, DisplayManagement displayManagement) {
+                             EnhancementLayer enhancementLayer, DisplayManagement displayManagement,
+                             Mapping mapping, int previousRpuId) {
     /**
      * The first byte of every RPU ({@code rpu_nal_prefix}).
      */
@@ -117,10 +120,51 @@ public record DolbyVisionRpu(int rpuFormat, int vdrRpuProfile, boolean baseLayer
      * @param cmV29Levels the levels of the CM v2.9 extension blocks, in order
      * @param cmV40Levels the levels of the CM v4.0 extension blocks, in order, or {@code null} when the RPU has
      * no CM v4.0 data
+     * @param affectedId {@code affected_dm_metadata_id}, the identifier this data is stored under
+     * @param currentId {@code current_dm_metadata_id}, the identifier of the data that applies to this picture
+     * @param yccToRgb the nine {@code ycc_to_rgb_coef} values in row order, in units of 1/8192, or {@code null} for
+     * compressed data
+     * @param yccToRgbOffset the three {@code ycc_to_rgb_offset} values, unsigned, in units of 1/2^28 of the signal
+     * range, or {@code null} for compressed data
+     * @param rgbToLms the nine {@code rgb_to_lms_coef} values in row order, in units of 1/16384, or {@code null} for
+     * compressed data
      */
     public record DisplayManagement(boolean compressed, int signalEotf, int signalBitDepth, int signalColorSpace,
                                     int signalFullRange, int sourceMinPq, int sourceMaxPq, List<Integer> cmV29Levels,
-                                    List<Integer> cmV40Levels) {
+                                    List<Integer> cmV40Levels, int affectedId, int currentId, short[] yccToRgb,
+                                    long[] yccToRgbOffset, short[] rgbToLms) {
+    }
+
+    /**
+     * The reshaping curves of an RPU ({@code rpu_data_mapping}).
+     *
+     * @param rpuId {@code vdr_rpu_id}, the identifier a later RPU reuses this mapping by
+     * @param denominatorBits the width of the fractional part of the coefficients, in bits
+     * @param floatingCoefficients whether the coefficients are IEEE 754 values ({@code coefficient_data_type} 1),
+     * which {@link Piece#coefficients()} holds converted to {@code denominatorBits} fractional bits
+     * @param curves the curves of the three components
+     */
+    public record Mapping(int rpuId, int denominatorBits, boolean floatingCoefficients, Curve[] curves) {
+    }
+
+    /**
+     * The reshaping curve of one component.
+     *
+     * @param pivots the {@code pivot_value} of each pivot point: the running sum of {@code pred_pivot_value}
+     * @param pieces the mapping of each interval between consecutive pivots
+     */
+    public record Curve(int[] pivots, Piece[] pieces) {
+    }
+
+    /**
+     * The mapping of one interval of a curve.
+     *
+     * @param mmr whether the mapping is a multivariate multiple regression instead of a polynomial
+     * @param order the order: from 1 to 2 for a polynomial, from 1 to 3 for a regression
+     * @param coefficients the fixed-point coefficients {@code (int << denominatorBits) + fraction}: {@code order + 1}
+     * of a polynomial in increasing powers, or the constant and then {@code 7 * order} of a regression
+     */
+    public record Piece(boolean mmr, int order, long[] coefficients) {
     }
 
     /**
@@ -212,6 +256,11 @@ public record DolbyVisionRpu(int rpuFormat, int vdrRpuProfile, boolean baseLayer
         private boolean integerParts;
 
         /**
+         * The mapping being parsed, set by {@link #mapping(int, int, boolean)}.
+         */
+        private Mapping parsedMapping;
+
+        /**
          * Constructs a parser.
          *
          * @param reader the bits, positioned after the prefix byte
@@ -267,9 +316,7 @@ public record DolbyVisionRpu(int rpuFormat, int vdrRpuProfile, boolean baseLayer
             }
             var dmPresent = reader.readFlag();
             var reuse = reader.readFlag();
-            if (reuse) {
-                reader.readUe();
-            }
+            var previousRpuId = reuse ? reader.readUe() : -1;
             var profile = switch (vdrRpuProfile) {
                 case 0 -> fullRange ? 5 : 0;
                 case 1 -> resampling && !residualDisabled ? (vdrDepth == 4 ? 7 : 4) : 8;
@@ -291,7 +338,8 @@ public record DolbyVisionRpu(int rpuFormat, int vdrRpuProfile, boolean baseLayer
             }
             reader.skip(left - TRAILER_BITS);
             return new DolbyVisionRpu(rpuFormat, vdrRpuProfile, fullRange, baseDepth + 8, enhancementDepth + 8,
-                    vdrDepth + 8, resampling, residualDisabled, reuse, profile, layer, management);
+                    vdrDepth + 8, resampling, residualDisabled, reuse, profile, layer, management, parsedMapping,
+                    previousRpuId);
         }
 
         /**
@@ -303,18 +351,23 @@ public record DolbyVisionRpu(int rpuFormat, int vdrRpuProfile, boolean baseLayer
          * @return the kind of enhancement layer
          */
         private EnhancementLayer mapping(int baseDepth, int enhancementDepth, boolean quantized) {
-            reader.readUe();
+            var rpuId = reader.readUe();
             if (reader.readUe() != 0 || reader.readUe() != 0) {
                 throw new MediaException.Malformed("Dolby Vision mapping color space or chroma format is not 0");
             }
-            var pieces = new int[3];
+            var pivotValues = new int[3][];
             for (var component = 0; component < 3; component++) {
                 var pivots = reader.readUe() + 2;
                 if (pivots - 2 >= MAX_PIECES) {
                     throw new MediaException.Malformed("Dolby Vision reshaping curve of " + pivots + " pivots");
                 }
-                pieces[component] = pivots - 1;
-                reader.skip((long) pivots * baseDepth);
+                var values = new int[pivots];
+                var sum = 0;
+                for (var pivot = 0; pivot < pivots; pivot++) {
+                    sum += reader.read(baseDepth);
+                    values[pivot] = sum;
+                }
+                pivotValues[component] = values;
             }
             if (quantized) {
                 if (reader.read(3) != 0) {
@@ -324,22 +377,28 @@ public record DolbyVisionRpu(int rpuFormat, int vdrRpuProfile, boolean baseLayer
             }
             reader.readUe();
             reader.readUe();
+            var curves = new Curve[3];
             for (var component = 0; component < 3; component++) {
-                for (var piece = 0; piece < pieces[component]; piece++) {
-                    switch (reader.readUe()) {
+                var pieces = new Piece[pivotValues[component].length - 1];
+                for (var piece = 0; piece < pieces.length; piece++) {
+                    pieces[piece] = switch (reader.readUe()) {
                         case 0 -> polynomial();
                         case 1 -> mmr();
                         default -> throw new MediaException.Malformed("Dolby Vision mapping_idc out of range");
-                    }
+                    };
                 }
+                curves[component] = new Curve(pivotValues[component], pieces);
             }
+            parsedMapping = new Mapping(rpuId, denominatorBits, !integerParts, curves);
             return quantized ? quantization(enhancementDepth) : EnhancementLayer.NONE;
         }
 
         /**
-         * Skips the coefficients of a polynomial piece.
+         * Reads the coefficients of a polynomial piece.
+         *
+         * @return the piece
          */
-        private void polynomial() {
+        private Piece polynomial() {
             var orderMinus1 = reader.readUe();
             if (orderMinus1 > 1) {
                 throw new MediaException.Malformed("Dolby Vision polynomial of order " + (orderMinus1 + 1));
@@ -348,35 +407,41 @@ public record DolbyVisionRpu(int rpuFormat, int vdrRpuProfile, boolean baseLayer
                 // TODO: linear interpolation pieces (linear_interp_flag); no known stream uses them
                 throw new MediaException.Malformed("Dolby Vision polynomial linear interpolation");
             }
-            for (var coefficient = 0; coefficient < orderMinus1 + 2; coefficient++) {
-                coefficient();
+            var coefficients = new long[orderMinus1 + 2];
+            for (var coefficient = 0; coefficient < coefficients.length; coefficient++) {
+                coefficients[coefficient] = coefficient();
             }
+            return new Piece(false, orderMinus1 + 1, coefficients);
         }
 
         /**
-         * Skips the coefficients of a multivariate multiple regression piece.
+         * Reads the coefficients of a multivariate multiple regression piece.
+         *
+         * @return the piece
          */
-        private void mmr() {
+        private Piece mmr() {
             var orderMinus1 = reader.read(2);
             if (orderMinus1 > 2) {
                 throw new MediaException.Malformed("Dolby Vision MMR of order 4");
             }
-            coefficient();
-            for (var order = 0; order <= orderMinus1; order++) {
-                for (var coefficient = 0; coefficient < MMR_COEFFICIENTS; coefficient++) {
-                    coefficient();
-                }
+            var coefficients = new long[1 + (orderMinus1 + 1) * MMR_COEFFICIENTS];
+            for (var coefficient = 0; coefficient < coefficients.length; coefficient++) {
+                coefficients[coefficient] = coefficient();
             }
+            return new Piece(true, orderMinus1 + 1, coefficients);
         }
 
         /**
-         * Skips one signed coefficient: its integer part when coefficients carry one, then its fraction.
+         * Reads one signed coefficient: its integer part when coefficients carry one, then its fraction.
+         *
+         * @return the coefficient with {@link #denominatorBits} fractional bits
          */
-        private void coefficient() {
+        private long coefficient() {
             if (integerParts) {
-                reader.readSe();
+                var integer = (long) reader.readSe();
+                return (integer << denominatorBits) + reader.readLong(denominatorBits);
             }
-            reader.skip(denominatorBits);
+            return (long) (Float.intBitsToFloat(reader.read(32)) * (double) (1L << denominatorBits));
         }
 
         /**
@@ -407,9 +472,12 @@ public record DolbyVisionRpu(int rpuFormat, int vdrRpuProfile, boolean baseLayer
          * @return the display management data
          */
         private DisplayManagement displayManagement(boolean compressed) {
+            var affectedId = reader.readUe();
+            var currentId = reader.readUe();
             reader.readUe();
-            reader.readUe();
-            reader.readUe();
+            short[] yccToRgb = null;
+            long[] yccToRgbOffset = null;
+            short[] rgbToLms = null;
             var eotf = 0;
             var depth = 0;
             var space = 0;
@@ -417,7 +485,18 @@ public record DolbyVisionRpu(int rpuFormat, int vdrRpuProfile, boolean baseLayer
             var minPq = 0;
             var maxPq = 0;
             if (!compressed) {
-                reader.skip(9 * 16 + 3 * 32 + 9 * 16);
+                yccToRgb = new short[9];
+                for (var coefficient = 0; coefficient < 9; coefficient++) {
+                    yccToRgb[coefficient] = (short) reader.read(16);
+                }
+                yccToRgbOffset = new long[3];
+                for (var offset = 0; offset < 3; offset++) {
+                    yccToRgbOffset[offset] = reader.readLong(32);
+                }
+                rgbToLms = new short[9];
+                for (var coefficient = 0; coefficient < 9; coefficient++) {
+                    rgbToLms[coefficient] = (short) reader.read(16);
+                }
                 eotf = reader.read(16);
                 reader.skip(16 + 16 + 32);
                 depth = reader.read(5);
@@ -433,7 +512,8 @@ public record DolbyVisionRpu(int rpuFormat, int vdrRpuProfile, boolean baseLayer
             if (reader.bitsLeft() >= CM_V40_MIN_BITS) {
                 v40 = extensionBlocks(CM_V40_MAX_BLOCKS);
             }
-            return new DisplayManagement(compressed, eotf, depth, space, full, minPq, maxPq, v29, v40);
+            return new DisplayManagement(compressed, eotf, depth, space, full, minPq, maxPq, v29, v40, affectedId,
+                    currentId, yccToRgb, yccToRgbOffset, rgbToLms);
         }
 
         /**

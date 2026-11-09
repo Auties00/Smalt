@@ -10,7 +10,7 @@
 # what the code allocates per round of frames, samples or images.
 # av1-encoder: the same for the AV1 encoder, whose JVM takes 5 to more than 12 s to stop allocating from kernels the
 # JIT has not compiled yet.
-hot-paths	it	ab,alloc	-	-	\.JitEndToEndBenchmark\.round$	spec=h264enc:speed=BALANCED:profile=main:threads=1,h264enc:speed=FASTEST:profile=baseline:threads=1,h264enc:rt=true:threads=2,h264dec:threads=1,h264dec:threads=2,vp8enc:speed=6:threads=1,vp8enc:speed=8:threads=2:resilient=false,vp9enc:speed=6:threads=1,mpeg4enc:threads=1,mpeg4dec:threads=1,h263enc:threads=1,proresdec,proresenc,dnxhddec,dnxhdenc,webpenc,webpdec,webpanim,jpegsend,pngdec,gifdec,convert,effects,capture,opusvoice,opuscall,aacenc,heaac,heaacenc,ac3,amrnb,amrwb,flacenc,alacenc,mp3enc,resample,voice
+hot-paths	it	ab,alloc	-	-	\.JitEndToEndBenchmark\.round$	spec=h264enc:speed=BALANCED:profile=main:threads=1,h264enc:speed=FASTEST:profile=baseline:threads=1,h264enc:rt=true:threads=2,h264dec:threads=1,h264dec:threads=2,dvrec:threads=1,vp8enc:speed=6:threads=1,vp8enc:speed=8:threads=2:resilient=false,vp9enc:speed=6:threads=1,mpeg4enc:threads=1,mpeg4dec:threads=1,h263enc:threads=1,proresdec,proresenc,dnxhddec,dnxhdenc,webpenc,webpdec,webpanim,jpegsend,pngdec,gifdec,convert,effects,capture,opusvoice,opuscall,aacenc,heaac,heaacenc,ac3,amrnb,amrwb,flacenc,alacenc,mp3enc,resample,voice
 av1-encoder	it	ab,alloc	-	25	\.JitEndToEndBenchmark\.round$	spec=av1enc:speed=FASTER:threads=1
 capture-conversion	capture	ab	-	-	\.ConversionBenchmark\.	kernel=vector
 color-transform	core	ab	-	-	\.ColorTransformBenchmark\.transform$	transform=p3,pq-16

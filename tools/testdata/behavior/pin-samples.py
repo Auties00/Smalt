@@ -9,10 +9,13 @@ shows up as a reviewed change of this manifest.
 import hashlib
 import os
 
-ROOTS = ["core/src/test/resources/samples", "image/src/test/resources/samples", "video/src/test/resources/samples"]
+ROOTS = ["core/src/test/resources/samples", "image/src/test/resources/samples", "video/src/test/resources/samples",
+         "mpeg/src/test/resources/dolbyvision"]
 
 
 def generator(root, relative):
+    if root.startswith("mpeg/"):
+        return "make-dolby-vision-reconstruction.py"
     if root.startswith("image/") and relative.split("/")[0] in ("pnm", "tga", "qoi", "hdr", "exr"):
         return "make-raster-samples.sh"
     if root.startswith("image/") and relative.split("/")[0] in ("icns", "psd", "dds"):

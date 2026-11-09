@@ -443,8 +443,9 @@ public final class HevcDecoder implements VideoDecoder {
         var dolbyVision = track.dolbyVision().orElse(null);
         if (dolbyVision != null && !dolbyVision.isBackwardCompatible() && !options.dolbyVisionBaseLayer()) {
             throw new MediaException.Unsupported("dolby vision reconstruction", "Dolby Vision profile "
-                    + dolbyVision.profile() + " has no backward compatible base layer and is not decodable; set"
-                    + " dolbyVisionBaseLayer to decode its base layer as plain video");
+                    + dolbyVision.profile() + " has no backward compatible base layer; decode it through VideoDecoders,"
+                    + " which reconstructs its pictures, or set dolbyVisionBaseLayer to decode its base layer as plain"
+                    + " video");
         }
         this.options = options;
         // TODO: decode the tiles of a picture concurrently too; pictures and wavefront rows already

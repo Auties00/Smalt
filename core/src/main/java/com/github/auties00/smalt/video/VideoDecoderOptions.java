@@ -101,11 +101,14 @@ public final class VideoDecoderOptions {
      * {@linkplain com.github.auties00.smalt.track.DolbyVision#isBackwardCompatible() configuration} with
      * compatibility identifier 0) is coded in a Dolby Vision specific color space, so its pictures show wrong
      * colors without the reconstruction its reference processing units describe. When {@code false},
-     * {@link VideoDecoders#create(com.github.auties00.smalt.track.VideoTrack, VideoDecoderOptions)} rejects a track
-     * that declares such a configuration and the HEVC decoder rejects a single-layer stream whose first reference
-     * processing unit is of profile 5, both with {@link com.github.auties00.smalt.MediaException.Unsupported}; when
-     * {@code true}, they decode the base layer as plain video, its pictures tagged with the color description of
-     * the bitstream.
+     * {@link VideoDecoders#create(com.github.auties00.smalt.track.VideoTrack, VideoDecoderOptions)} reconstructs the
+     * pictures of a track that declares such a configuration, and of an HEVC or AV1 track that declares no
+     * configuration from the first key frame of a single-layer stream whose first reference processing unit is of
+     * profile 5: BT.2020 RGB coded with the SMPTE ST 2084 inverse EOTF, 4:4:4 pictures of
+     * {@linkplain com.github.auties00.smalt.image.MatrixCoefficients#IDENTITY identity matrix} and full range whose
+     * Y, U and V planes hold G, B and R, of the stream's reconstructed bit depth with {@link #highBitDepth()} and of
+     * 8 bits otherwise. When {@code true}, the base layer decodes as plain video, its pictures tagged with the color
+     * description of the bitstream.
      */
     public boolean dolbyVisionBaseLayer() {
         return dolbyVisionBaseLayer;

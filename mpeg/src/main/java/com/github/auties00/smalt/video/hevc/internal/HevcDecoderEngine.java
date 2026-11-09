@@ -713,8 +713,9 @@ public final class HevcDecoderEngine {
     /**
      * The message of the failure of a Dolby Vision profile 5 stream.
      */
-    private static final String PROFILE_5 = "Dolby Vision profile 5 has no backward compatible base layer and is not"
-            + " decodable; set dolbyVisionBaseLayer to decode its base layer as plain video";
+    private static final String PROFILE_5 = "Dolby Vision profile 5 has no backward compatible base layer; decode it"
+            + " through VideoDecoders, which reconstructs its pictures, or set dolbyVisionBaseLayer to decode its base"
+            + " layer as plain video";
 
     /**
      * Whether the reference processing units are still checked for profile 5.

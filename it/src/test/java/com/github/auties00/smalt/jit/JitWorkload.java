@@ -405,6 +405,7 @@ public final class JitWorkload {
                     Boolean.parseBoolean(options.getOrDefault("rt", "false")));
             case "h264dec" -> h264Decode(threads, options.get("input"));
             case "hevcdec" -> hevcDecode(threads, Path.of(options.get("input")));
+            case "dvrec" -> DolbyVisionJitWorkload.reconstruct(threads);
             case "vp8dec" -> vp8Decode(Path.of(options.get("input")));
             case "vp8enc" -> vp8Encode(threads, Integer.parseInt(options.getOrDefault("speed", "6")),
                     Boolean.parseBoolean(options.getOrDefault("resilient", "true")),

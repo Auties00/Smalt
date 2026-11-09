@@ -37,7 +37,9 @@ import com.github.auties00.smalt.image.jxs.JpegXsEncoderOptions;
 import com.github.auties00.smalt.image.jxs.JpegXsImage;
 import com.github.auties00.smalt.image.jxs.JpegXsVideoDecoder;
 import com.github.auties00.smalt.image.jxs.JpegXsVideoEncoder;
+import com.github.auties00.smalt.track.DolbyVision;
 import com.github.auties00.smalt.track.VideoTrack;
+import com.github.auties00.smalt.video.VideoDecoders;
 import com.github.auties00.smalt.video.VideoEncoderOptions;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
@@ -218,6 +220,7 @@ final class MpegWorkloads {
                 file("jxs-encode", MpegWorkloads::jpegXsEncode),
                 file("jxs-decode", MpegWorkloads::jpegXsDecode),
                 file("hevc-decode-t1", () -> hevcDecode(1, false)),
+                file("dolby-vision-reconstruct-t2", () -> dolbyVisionReconstruct(2)),
                 file("hevc-decode-t2", () -> hevcDecode(2, false)),
                 file("aac-encode", () -> aacEncode(6)),
                 file("aac-960-surround-encode", () -> aacShortFrameSurroundEncode(3)),
@@ -468,6 +471,25 @@ final class MpegWorkloads {
         var decoder = new HevcDecoder(VideoStreams.track(Codec.HEVC, codecConfig.orElse(null)),
                 HevcDecoderOptions.builder().threads(threads).hashVerification(true).build());
         return VideoStreams.decode((realtime ? "hevc-decode-rt-t" : "hevc-decode-t") + threads, packets, decoder);
+    }
+
+    /**
+     * Returns a workload that decodes a profile 5 Dolby Vision stream through {@link VideoDecoders}, which reconstructs
+     * its pictures from their reference processing units.
+     *
+     * @param threads the decoder threads
+     * @return the workload
+     */
+    private static TrainingWorkload dolbyVisionReconstruct(int threads) {
+        var encoder = new HevcEncoder(WIDTH, HEIGHT, hevcFileOptions(HevcEncoderSpeed.FASTEST, 2).toBuilder()
+                .profile(HevcProfile.MAIN_10).bitDepth(10).build());
+        var codecConfig = encoder.codecConfig();
+        var packets = SyntheticDolbyVision.withRpus(VideoStreams.encodeAll(encoder, SyntheticVideo.natural(WIDTH, HEIGHT,
+                VideoStreams.DECODED_FRAMES / 4)));
+        var track = VideoStreams.track(Codec.HEVC, codecConfig.orElse(null)).toBuilder()
+                .dolbyVision(DolbyVision.of(5, 1, 0)).build();
+        var decoder = VideoDecoders.create(track, VideoDecoderOptions.builder().threads(threads).highBitDepth(true).build());
+        return VideoStreams.decode("dolby-vision-reconstruct-t" + threads, packets, decoder);
     }
 
     /**

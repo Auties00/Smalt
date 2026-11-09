@@ -32,6 +32,7 @@ audio.g722	audio
 audio.g726	audio
 audio.gsm	audio
 audio.loudness	core
+audio.mace	audio
 audio.mp3	audio
 audio.musepack	audio
 audio.opus	audio
@@ -172,6 +173,7 @@ internal.check	core
 internal.codec	core
 internal.color	core
 internal.compress	core
+internal.dolbyvision	core
 internal.dsd	core
 internal.edit	core
 internal.field	core

@@ -827,10 +827,15 @@ the `BlockAdditionMapping`, not in WebM; the `"DOVI"` registration and the DOVI 
 the packets, so a remux between any two of them keeps the stream a Dolby Vision stream; ffprobe reads the
 configuration of every file Smalt writes, and Smalt reads ffmpeg's. The decoders show the base layer: a stream
 whose base layer is backward compatible (profiles 8.1, 8.2, 8.4, 9, 10.1, 10.2, 10.4, 7's HDR10 base layer)
-decodes as plain video of its color description, while one that is not (profile 5 and 10.0, IPTPQc2) raises
-`MediaException.Unsupported` (feature `"dolby vision reconstruction"`), from its container configuration or,
-for a single-layer HEVC stream that declares none, from its first valid RPU (the RPU parser follows the
-dolby_vision crate of dovi_tool), unless `VideoDecoderOptions.dolbyVisionBaseLayer` asks for the base layer anyway.
+decodes as plain video of its color description, while one that is not (profile 5 and 10.0, IPTPQc2) has its
+pictures reconstructed by `VideoDecoders` from its RPUs, as the composer of ETSI GS CCM 001 defines: pivots, polynomial
+and MMR mappings in exact integer arithmetic, then the RPU's `YCCtoRGB` and `RGBtoLMS` matrices, to BT.2020 RGB coded
+with the SMPTE ST 2084 inverse EOTF, 4:4:4 pictures of identity matrix and full range whose Y, U and V planes hold G, B
+and R, of the RPU's bit depth with `VideoDecoderOptions.highBitDepth` and of 8 bits otherwise. Such a stream is told
+from its container configuration or, for a single-layer HEVC or AV1 stream that declares none, from its first valid
+RPU, at the first key frame from there on (the RPU parser follows the dolby_vision crate of dovi_tool, and an AV1
+stream carries its RPUs in ITU-T T.35 metadata OBUs); `VideoDecoderOptions.dolbyVisionBaseLayer` asks for the base
+layer anyway, and `HevcDecoder` by itself refuses the stream unless its own options do.
 
 PCM is stored one frame per sample, in a timescale of the sampling rate, as QuickTime and ISO/IEC 23003-5
 readers expect; its frames follow each other from the first packet's timestamp, so a gap between packets is
@@ -2355,12 +2360,15 @@ channels, or two tracks, at 32 kHz in 12 bits. A DV source is copied when no for
   track entry declares the HDR10+ `BlockAdditionMapping` only for a PQ track or one whose first message is
   queued when the header is written; the messages of any other track (live output of a track without PQ color)
   are written without it, which WebM readers of VP9 accept (WebM assigns `BlockAddID` 4 to ITU-T T.35).
-- Dolby Vision: the decoders show the base layer only. The pictures of a stream without a backward compatible
-  base layer (profile 5, 10.0) are not reconstructed from its RPUs (reshaping, IPTPQc2 to RGB); such a stream is
-  refused unless `VideoDecoderOptions.dolbyVisionBaseLayer` decodes its base layer with wrong colors. The
-  enhancement layer of profile 7 (in band, NAL unit type 63, or a second track or PID) is not applied, and the
-  in-band check of an undeclared profile 5 stream covers HEVC only (AV1 RPUs in ITU-T T.35 metadata OBUs are
-  not read); it skips multi-layer streams, since the RPU headers of profile 20 (MV-HEVC) read as profile 5.
+- Dolby Vision: the decoders show the base layer of a backward compatible stream, whose display management is not
+  applied, and reconstruct a stream without one (profile 5, 10.0) without display management too: the pictures keep
+  the mastering display's range for the application to tone map. The enhancement layer of profile 7 (in band, NAL
+  unit type 63, or a second track or PID) is not applied; a stream with no backward compatible base layer that
+  names one in its configuration or carries one in band is refused, as is one on a codec other than HEVC and AV1 or
+  with an alpha plane. The in-band check of an undeclared stream skips
+  multi-layer streams, since the RPU headers of profile 20 (MV-HEVC) read as profile 5, and pictures before the first
+  key frame from the first RPU on stay plain video. Polynomial pieces with `linear_interp_flag` are refused, as no
+  known stream uses them. Reconstruction has no vector kernels.
   WebM files and SAMPLE-AES transport streams carry no Dolby Vision configuration, and HLS playlists name a
   backward compatible stream by its base codec only (no `SUPPLEMENTAL-CODECS`).
 - HDR color management converts HLG through the BT.2100 reference display of 1000 cd/m2 (system gamma 1.2),
@@ -3803,7 +3811,7 @@ kernel's vivid driver, Xvfb, sway with xdg-desktop-portal-wlr, headless mutter, 
 udmabuf or DMA heap buffers, WirePlumber and the PulseAudio server are the devices its tests run against.
 
 **Tools that verify Smalt.** Smalt's tests and benchmarks hold it to the output of other software, run as
-black boxes: [FFmpeg](https://ffmpeg.org/) and ffprobe above all, the reference decoders and encoders of the
+black boxes: [FFmpeg](https://ffmpeg.org/) and ffprobe above all, [libplacebo](https://code.videolan.org/videolan/libplacebo) through FFmpeg for Dolby Vision reconstruction, the reference decoders and encoders of the
 projects above (libvpx, libaom, dav1d, libwebp's cwebp and dwebp, OpenJPEG, OpenJPH, djxl, libultrahdr's
 ultrahdr_app, libavif's avifgainmaputil, [libheif](https://github.com/strukturag/libheif)'s heif-info and heif-dec (also
 built with its uncompressed codec as the reference decoder of ISO/IEC 23001-17 test images), libFLAC, LAME,

@@ -2,6 +2,7 @@ package com.github.auties00.smalt.video;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.internal.codec.AlphaVideoDecoder;
+import com.github.auties00.smalt.internal.dolbyvision.DolbyVisionVideoDecoder;
 import com.github.auties00.smalt.internal.provider.Artifacts;
 import com.github.auties00.smalt.internal.provider.Providers;
 import com.github.auties00.smalt.spi.VideoCodecProvider;
@@ -23,10 +24,11 @@ import java.util.Objects;
  * artifact to add. A stream using a tool its decoder lacks raises
  * {@link MediaException.Unsupported} naming the tool.
  *
- * <p>A Dolby Vision track is decoded as its base layer: the reference processing units its packets carry are
- * ignored. A track whose {@linkplain VideoTrack#dolbyVision() Dolby Vision configuration} is not
- * {@linkplain com.github.auties00.smalt.track.DolbyVision#isBackwardCompatible() backward compatible} (profile 5)
- * raises {@link MediaException.Unsupported}, since its base layer shows wrong colors as plain video, unless
+ * <p>A backward compatible Dolby Vision track is decoded as its base layer: the reference processing units its
+ * packets carry are ignored. The pictures of a track whose {@linkplain VideoTrack#dolbyVision() Dolby Vision
+ * configuration} is not {@linkplain com.github.auties00.smalt.track.DolbyVision#isBackwardCompatible() backward
+ * compatible} (profile 5 and 10.0), or of an undeclared HEVC or AV1 track whose first reference processing unit is of
+ * profile 5, are reconstructed from those units, since the base layer shows wrong colors as plain video, unless
  * {@link VideoDecoderOptions#dolbyVisionBaseLayer()} asks for the base layer anyway.
  *
  * <p>A track that {@linkplain VideoTrack#hasAlpha() carries alpha} as a second coded stream, as
@@ -61,7 +63,7 @@ public final class VideoDecoders {
      * @param track the track to decode
      * @return the decoder, which the caller closes
      * @throws MediaException.Unsupported if the codec is not decodable, or the track is a Dolby Vision track without
-     * a backward compatible base layer and the options do not ask for its base layer
+     * a backward compatible base layer that cannot be reconstructed
      * @throws MediaException.Malformed if the track's configuration is corrupt
      */
     public static VideoDecoder create(VideoTrack track) {
@@ -73,11 +75,16 @@ public final class VideoDecoders {
      *
      * <p>The output does not depend on {@link VideoDecoderOptions#threads()}.
      *
+     * <p>The pictures of a Dolby Vision stream without a backward compatible base layer (profile 5 and 10.0) are
+     * reconstructed from its reference processing units, as {@link VideoDecoderOptions#dolbyVisionBaseLayer()}
+     * describes, unless the options ask for its base layer.
+     *
      * @param track the track to decode
      * @param options the limits and the thread count
      * @return the decoder, which the caller closes
      * @throws MediaException.Unsupported if the codec is not decodable, or the track is a Dolby Vision track without
-     * a backward compatible base layer and the options do not ask for its base layer
+     * a backward compatible base layer that cannot be reconstructed: its codec is neither HEVC nor AV1, it carries no
+     * reference processing units, it has an enhancement layer or an alpha plane
      * @throws MediaException.Malformed if the track's configuration is corrupt
      */
     public static VideoDecoder create(VideoTrack track, VideoDecoderOptions options) {
@@ -85,15 +92,24 @@ public final class VideoDecoders {
         Objects.requireNonNull(options, "options");
         var codec = track.codec();
         var dolbyVision = track.dolbyVision().orElse(null);
-        if (dolbyVision != null && !dolbyVision.isBackwardCompatible() && !options.dolbyVisionBaseLayer()) {
-            // TODO: reconstruct the pictures of non-backward-compatible Dolby Vision streams from their RPUs
+        var refused = dolbyVision != null && !dolbyVision.isBackwardCompatible() && !options.dolbyVisionBaseLayer();
+        var reconstructible = codec == Codec.HEVC || codec == Codec.AV1;
+        if (refused && (!reconstructible || !dolbyVision.rpuPresent() || dolbyVision.enhancementLayerPresent()
+                || track.hasAlpha())) {
+            // TODO: compose an enhancement layer (ETSI GS CCM 001, clause 5.4.3) when a stream without a backward
+            // compatible base layer has one; the single-track streams of the current profiles do not
             throw new MediaException.Unsupported("dolby vision reconstruction", "Dolby Vision profile "
-                    + dolbyVision.profile() + " without a backward compatible base layer is not decodable; set"
+                    + dolbyVision.profile() + " on " + codec.displayName() + " cannot be reconstructed; set"
                     + " VideoDecoderOptions.dolbyVisionBaseLayer to decode its base layer as plain video");
         }
         var provider = provider(codec);
         if (provider == null) {
             throw Artifacts.unsupported(codec.displayName(), "decodable", Artifacts.decoderOf(codec));
+        }
+        if (refused || (dolbyVision == null && reconstructible && !track.hasAlpha()
+                && !options.dolbyVisionBaseLayer())) {
+            return new DolbyVisionVideoDecoder(codec, track.codecConfig().orElse(null), refused, options,
+                    decoderOptions -> provider.createDecoder(track, decoderOptions));
         }
         var decoder = provider.createDecoder(track, options);
         if (!track.hasAlpha()) {

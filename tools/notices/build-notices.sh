@@ -2022,14 +2022,15 @@ License text: https://github.com/quietvoid/dovi_tool/blob/main/LICENSE
 License:      MIT
 
 Derived Smalt packages:
-  internal.nal (DolbyVisionRpu)
+  internal.nal (DolbyVisionRpu), internal.dolbyvision (DolbyVisionRpuReader)
 
 Derivation: the syntax of the Dolby Vision reference processing unit (the
 header, the reshaping mapping with its polynomial and MMR pieces, the
 nonlinear quantization parameters, the display management data and its
 extension block lists, the CRC-32 and the final byte), the profile it implies
 and the test that tells a minimal enhancement layer from a full one,
-translated to Java.
+translated to Java; and the ITU-T T.35 and EMDF wrapping of an RPU in an AV1
+metadata OBU (dolby_vision/src/av1: mod.rs, emdf.rs).
 
 Copyright:
   Copyright (c) 2026 quietvoid

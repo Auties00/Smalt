@@ -1236,3 +1236,16 @@ The golden dumps are tied to the samples' exact bytes, which another ffmpeg buil
 committed files are the reference: `behavior/samples.tsv` pins each by size and SHA-256 (the behavior tests check
 it), and `python -I tools/testdata/behavior/pin-samples.py` rewrites it after a deliberate regeneration, together
 with the dumps (`-Dsmalt.test.updateDumps=true`).
+
+## Dolby Vision reconstruction fixture
+
+`behavior/make-dolby-vision-reconstruction.py` writes `mpeg/src/test/resources/dolbyvision`: a 10-bit profile 5 HEVC
+stream (libx265, RPUs of its own and dovi_tool's `profile5.bin` and `profile5-02.bin`) and what libplacebo makes of it
+(`gbrp16le`, gzip). libplacebo needs a Vulkan device, so CI compares against the committed output, pinned in
+`behavior/samples.tsv`. The fixture was made with BtbN's ffmpeg N-124279-g0f6ba39122 (winget's yt-dlp.FFmpeg package)
+run as a black box on Windows 11; the script's docstring has the procedure and the filter options.
+
+The hex constants `GENERATED_NAL` and `GENERATED_T35` of core's `DolbyVisionRpuReaderTest` are a profile 5 RPU written
+by the dolby_vision crate of dovi_tool (MIT, commit 41dae64): `DoviRpu::profile5_config` of a default `GenerateConfig`,
+through `write_hevc_unspec62_nalu` and `write_av1_rpu_metadata_obu_t35_complete`, in a small Rust program on that crate
+(`dovi_tool generate` runs the same function; its own binary needs a newer rustc than the machine had).

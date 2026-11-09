@@ -7041,6 +7041,8 @@ smoke	dovi-tool-unordered_l8_blocks.bin	424	f3ab8beea029487f90cc049e82273b5cabe3
 smoke	dovi-tool-empty_dmv1_blocks.bin	116	32d2e62e272a538f4457ca434d1c7afdc2cd065652d894ce79c92e3dc1b46aa0	https://raw.githubusercontent.com/quietvoid/dovi_tool/41dae646193c12de152333ff5dbc33579cb9ef4a/assets/tests/empty_dmv1_blocks.bin
 smoke	dovi-tool-regular.mkv	78891	8f1df1bf34973e1fa146800de0d9c8e6fad60dd2f229c88541b7534f720ff38f	https://raw.githubusercontent.com/quietvoid/dovi_tool/41dae646193c12de152333ff5dbc33579cb9ef4a/assets/hevc_tests/regular.mkv
 smoke	dovi-tool-regular_rpu.bin	49710	14fba3e654287d096a3e06646c9e476a4c96f9f4af89b4cf08ef7c93d37b1ee8	https://raw.githubusercontent.com/quietvoid/dovi_tool/41dae646193c12de152333ff5dbc33579cb9ef4a/assets/hevc_tests/regular_rpu.bin
+smoke	dovi-tool-av1-p5-01.bin	242	e19fe340517584cf2aadf8a68d0c63bf0b2c0e57b321aa9815e3daee4ba6f987	https://raw.githubusercontent.com/quietvoid/dovi_tool/41dae646193c12de152333ff5dbc33579cb9ef4a/assets/av1-rpu/p5-01.bin
+smoke	dovi-tool-av1-p5-01-ref.bin	241	3c12515c5d446f74349a75ee6b9fe884a4fa7177b265fd6472bcb724d6bbb9ed	https://raw.githubusercontent.com/quietvoid/dovi_tool/41dae646193c12de152333ff5dbc33579cb9ef4a/assets/av1-rpu/p5-01-ref.bin
 # The ER BSAC conformance streams of ISO/IEC 14496-26 (er_bs01 to er_bs23, epConfig 0 and 1, one epConfig 3
 # stream) and the reference waveforms of their layers (ISO terms of the free download; used for testing only,
 # never redistributed), for mpeg's BsacConformanceTest.

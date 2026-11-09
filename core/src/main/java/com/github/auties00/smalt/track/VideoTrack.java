@@ -312,8 +312,8 @@ public final class VideoTrack implements Track {
      * processing units in band. A muxer that can store the configuration writes it again, so that a remux keeps
      * the track a Dolby Vision track. A configuration that is not
      * {@linkplain DolbyVision#isBackwardCompatible() backward compatible} makes
-     * {@link com.github.auties00.smalt.video.VideoDecoders} refuse the track unless
-     * {@link com.github.auties00.smalt.video.VideoDecoderOptions#dolbyVisionBaseLayer()} is set.
+     * {@link com.github.auties00.smalt.video.VideoDecoders} reconstruct the pictures from the reference processing
+     * units unless {@link com.github.auties00.smalt.video.VideoDecoderOptions#dolbyVisionBaseLayer()} is set.
      *
      * @return the configuration, or empty when the track is not declared as Dolby Vision
      */
