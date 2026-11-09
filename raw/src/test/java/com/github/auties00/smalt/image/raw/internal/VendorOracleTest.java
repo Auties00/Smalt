@@ -62,12 +62,6 @@ class VendorOracleTest {
 
     private static final String NONE = "no oracle files";
 
-    /** The SRW samples of Samsung's compressions, which are not decoded. */
-    private static final Set<RawSamples> COMPRESSED_SRW = Set.of(RawSamples.SRW_NX1, RawSamples.SRW_NX30,
-            RawSamples.SRW_NX3000, RawSamples.SRW_NX300, RawSamples.SRW_NX500_12_NORMAL,
-            RawSamples.SRW_NX500_12_LOSSLESS, RawSamples.SRW_NX500_14_NORMAL, RawSamples.SRW_NX500_14_LOSSLESS,
-            RawSamples.SRW_NX_MINI, RawSamples.SRW_NX2000, RawSamples.SRW_NX3300, RawSamples.SRW_EK_GN120);
-
     /**
      * The Sony models whose files are not decoded: the variable-length coding of compression 32767 and the four-color
      * DSC-F828,
@@ -283,6 +277,8 @@ class VendorOracleTest {
     @ParameterizedTest(name = "{0}")
     @EnumSource(value = RawSamples.class, names = {"SRW_EX1", "SRW_WB2000", "SRW_NX5", "SRW_NX10", "SRW_NX11",
             "SRW_NX20", "SRW_NX200", "SRW_NX210", "SRW_NX1000", "SRW_NX1100_4422", "SRW_NX1100_4423", "SRW_NX1100_4424",
+            "SRW_NX1", "SRW_NX30", "SRW_NX3000", "SRW_NX300", "SRW_NX500_12_NORMAL", "SRW_NX500_12_LOSSLESS",
+            "SRW_NX500_14_NORMAL", "SRW_NX500_14_LOSSLESS", "SRW_NX_MINI", "SRW_NX2000", "SRW_NX3300", "SRW_EK_GN120",
             "ERF_R_D1", "ERF_R_D1S", "ERF_R_D1X", "RW2_DMC_FZ8_4_3", "RW2_DMC_FZ50_16_9", "RW2_DMC_LX1_16_9",
             "RW2_DIGILUX_3_4_3", "DCR_EASYSHARE_Z981", "DCR_EASYSHARE_Z990_NAN", "DCR_P880_NAN",
             "DCR_KODAK_P712_ZOOM_DIGITAL_CAMERA_NAN", "DCR_DCS520C_12BIT_3_2", "DCR_DCS760C_12BIT_3_2",
@@ -306,21 +302,6 @@ class VendorOracleTest {
         assertEquals(levels.crop()[3], crop[3], "the crop height");
         assertTrue(Math.abs(origin[0] + levels.crop()[0] - crop[0]) <= 8, "the crop's left edge");
         assertTrue(Math.abs(origin[1] + levels.crop()[1] - crop[1]) <= 8, "the crop's top edge");
-    }
-
-    @ParameterizedTest(name = "{0}")
-    @EnumSource(value = RawSamples.class, names = {"SRW_NX1", "SRW_NX30", "SRW_NX3000", "SRW_NX300",
-            "SRW_NX500_12_NORMAL", "SRW_NX500_12_LOSSLESS", "SRW_NX500_14_NORMAL", "SRW_NX500_14_LOSSLESS", "SRW_NX_MINI",
-            "SRW_NX2000", "SRW_NX3300", "SRW_EK_GN120"})
-    @DisplayName("Samsung's compressed files are described, with the converter's levels and white balance, and not "
-            + "decoded")
-    void compressed(RawSamples sample) {
-        var levels = Levels.read(oracle(ORACLE, stem(sample), ".levels"));
-        var file = parse(bytes(sample));
-        assertTrue(COMPRESSED_SRW.contains(sample));
-        assertTrue(file.unsupported != null, "a compressed file is not decoded");
-        assertNotNull(file.color.asShotNeutral);
-        assertArrayEquals(normalized(levels.neutral()), normalized(file.color.asShotNeutral), 1e-4, "the white balance");
     }
 
     @Test

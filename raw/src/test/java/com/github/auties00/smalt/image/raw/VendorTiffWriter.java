@@ -31,6 +31,8 @@ public final class VendorTiffWriter {
     public LongFunction<byte[]> makerNote;
     /** Further entries of the raw image directory. */
     public final List<Entry> rawEntries = new ArrayList<>();
+    /** The offset of the strip in the file last written. */
+    public long stripOffset;
 
     /**
      * One directory entry.
@@ -137,6 +139,7 @@ public final class VendorTiffWriter {
         var noteOffset = rawOffset + rawSize;
         var note = makerNote == null ? new byte[0] : makerNote.apply(noteOffset);
         var stripOffset = noteOffset + note.length + (note.length & 1);
+        this.stripOffset = stripOffset;
         var out = new ByteArrayOutputStream();
         out.writeBytes(ByteBuffer.allocate(8).order(order)
                 .put((byte) (little ? 'I' : 'M')).put((byte) (little ? 'I' : 'M')).putShort((short) 42).putInt(8)

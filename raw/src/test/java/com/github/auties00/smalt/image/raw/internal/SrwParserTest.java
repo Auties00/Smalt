@@ -2,6 +2,7 @@ package com.github.auties00.smalt.image.raw.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.raw.CfaPattern;
 import com.github.auties00.smalt.image.raw.RawDecoder;
 import com.github.auties00.smalt.image.raw.RawDecoderOptions;
 import com.github.auties00.smalt.image.raw.RawFormat;
@@ -12,6 +13,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.nio.ByteBuffer;
@@ -32,8 +34,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Checks the Samsung SRW parser on synthetic files built from the layouts the CC0 samples show (16-bit words,
- * 12-bit samples packed least or most significant bit first, the maker note's levels stored plus the key, the
- * valid sensor area and the white levels of the models), the variants it rejects, truncated and damaged files.
+ * 12-bit samples packed least or most significant bit first, the three compressed codings written by
+ * {@link SrwCoding}, the maker note's levels stored plus the key, the valid sensor area and the white levels of the
+ * models), the variants it rejects, truncated and damaged files.
  */
 class SrwParserTest {
     private static final String FUZZ_TARGET = "com.github.auties00.smalt.image.raw.fuzz.RawFuzzTest";
@@ -92,6 +95,13 @@ class SrwParserTest {
         }
 
         byte[] write() {
+            var writer = writer();
+            var strip = strip();
+            writer.strip = Arrays.copyOf(strip, strip.length - dropBytes);
+            return writer.write();
+        }
+
+        VendorTiffWriter writer() {
             var writer = new VendorTiffWriter();
             writer.little = little;
             writer.make = "SAMSUNG";
@@ -104,8 +114,6 @@ class SrwParserTest {
             // Samsung's raw directories state no photometric interpretation
             writer.photometric = 0;
             writer.cfa = cfa;
-            var strip = strip();
-            writer.strip = Arrays.copyOf(strip, strip.length - dropBytes);
             writer.makerNote = offset -> {
                 var entries = new ArrayList<VendorTiffWriter.Entry>();
                 if (byteOrder != null) {
@@ -123,7 +131,7 @@ class SrwParserTest {
                 entries.add(writer.slongs(0xA028, levels));
                 return VendorTiffWriter.directory(entries, 0, writer.order());
             };
-            return writer.write();
+            return writer;
         }
     }
 
@@ -218,18 +226,265 @@ class SrwParserTest {
         assertNull(parse(srw.samples(3).write()).sensor.defaultCrop);
     }
 
-    @ParameterizedTest(name = "compression {0}")
-    @ValueSource(ints = {32770, 32772, 32773})
-    @DisplayName("rejects Samsung's compressions as unsupported")
-    void compressed(int compression) {
+    private static byte[] coded(Srw srw, SrwCoding.Coded coded) {
+        var writer = srw.writer();
+        writer.strip = coded.strip();
+        if (coded.offsets() == null || srw.compression != 32770) {
+            return writer.write();
+        }
+        // the table of row offsets follows the strip, at an offset known from a first pass
+        var table = ByteBuffer.allocate(coded.offsets().length * 4).order(ByteOrder.LITTLE_ENDIAN);
+        for (var offset : coded.offsets()) {
+            table.putInt(offset);
+        }
+        writer.strip = Arrays.copyOf(coded.strip(), coded.strip().length + table.capacity());
+        System.arraycopy(table.array(), 0, writer.strip, coded.strip().length, table.capacity());
+        var position = writer.longs(0xA010, 0);
+        var size = writer.longs(0xA011, table.capacity());
+        writer.rawEntries.add(position);
+        writer.rawEntries.add(size);
+        writer.write();
+        writer.rawEntries.set(0, writer.longs(0xA010, writer.stripOffset + coded.strip().length));
+        return writer.write();
+    }
+
+    private static Srw sized(int compression, int width, int height, int bits) {
         var srw = new Srw();
         srw.compression = compression;
-        srw.dropBytes = compression == 32770 ? 10 : 0;
+        srw.width = width;
+        srw.height = height;
+        srw.bits = bits;
+        srw.areas = new long[]{0, 0, width, height, 0, 0, width, height};
+        return srw;
+    }
+
+    @ParameterizedTest(name = "{0}x{1}, seed {2}")
+    @CsvSource({"16, 8, 1", "64, 32, 2", "40, 9, 3", "1, 1, 4", "17, 2, 5", "2048, 8, 6"})
+    @DisplayName("decodes compression 32770 at fewer bits than the photosites, a table giving its rows")
+    void interleaved(int width, int height, long seed) {
+        var coded = SrwCoding.interleaved(width, height, seed);
+        var file = parse(coded(sized(32770, width, height, 12), coded));
+        assertNotNull(file.sensor, file.unsupported);
+        assertEquals("Samsung", file.sensor.compression);
+        assertArrayEquals(coded.samples(), decode(file));
+    }
+
+    @ParameterizedTest(name = "{0}x{1}, {2} bits, seed {3}")
+    @CsvSource({"16, 8, 12, 1", "64, 32, 12, 2", "33, 7, 12, 3", "1, 1, 12, 4", "2, 2, 14, 5", "512, 16, 14, 6"})
+    @DisplayName("decodes compression 32772: prefix codes of every category, photosites limited to the bit depth")
+    void prefixed(int width, int height, int bits, long seed) {
+        var coded = SrwCoding.prefixed(width, height, bits, seed);
+        var file = parse(coded(sized(32772, width, height, bits), coded));
+        assertNotNull(file.sensor, file.unsupported);
+        assertEquals(bits, file.sensor.bitsPerSample);
+        assertArrayEquals(coded.samples(), decode(file));
+    }
+
+    @ParameterizedTest(name = "{0}x{1}, {2} bits, quantized {3}, row start {4}")
+    @CsvSource({"16, 8, 12, false, 128, 1", "64, 32, 14, false, 128, 2", "40, 9, 12, false, 64, 3",
+            "16, 8, 12, true, 128, 4", "64, 32, 14, true, 128, 5", "200, 21, 12, true, 300, 6", "17, 2, 14, true, 0, 7",
+            "1, 1, 12, false, 128, 8"})
+    @DisplayName("decodes compression 32773: every prediction mode, the ends of rows, quantizer changes and the "
+            + "header's prediction")
+    void modal(int width, int height, int bits, boolean quantized, int rowStart, long seed) {
+        var coded = SrwCoding.modal(width, height, bits, quantized, rowStart, seed);
+        var file = parse(coded(sized(32773, width, height, bits), coded));
+        assertNotNull(file.sensor, file.unsupported);
+        assertArrayEquals(coded.samples(), decode(file));
+    }
+
+    @Test
+    @DisplayName("a coded strip cut short decodes to its end")
+    void truncatedCoded() {
+        var strips = new SrwCoding.Coded[]{SrwCoding.prefixed(64, 32, 12, 2), SrwCoding.modal(64, 32, 12, false, 128, 3)};
+        var compressions = new int[]{32772, 32773};
+        for (var index = 0; index < strips.length; index++) {
+            var coded = strips[index];
+            var bytes = coded(sized(compressions[index], 64, 32, 12), coded);
+            var file = parse(Arrays.copyOf(bytes, bytes.length - coded.strip().length / 2));
+            var decoded = decode(file);
+            assertEquals(coded.samples().length, decoded.length);
+            // half of the strip holds about half of the rows: the first eight are whole, the last are not reached
+            assertArrayEquals(Arrays.copyOf(coded.samples(), 8 * 64), Arrays.copyOf(decoded, 8 * 64));
+            assertArrayEquals(new short[8 * 64], Arrays.copyOfRange(decoded, 24 * 64, 32 * 64));
+        }
+    }
+
+    @Test
+    @DisplayName("a 32773 strip ending at a row's start leaves the rows after it at zero")
+    void truncatedAtRow() {
+        var coded = SrwCoding.modal(64, 32, 12, false, 128, 3);
+        var cut = Arrays.copyOf(coded.strip(), coded.offsets()[10]);
+        var decoded = decode(parse(coded(sized(32773, 64, 32, 12), new SrwCoding.Coded(cut, null, null))));
+        assertArrayEquals(Arrays.copyOf(coded.samples(), 10 * 64), Arrays.copyOf(decoded, 10 * 64));
+        assertArrayEquals(new short[22 * 64], Arrays.copyOfRange(decoded, 10 * 64, 32 * 64));
+    }
+
+    @Test
+    @DisplayName("a strip longer than the file allocates what the file holds")
+    void stripPastFile() {
+        var coded = SrwCoding.prefixed(64, 32, 12, 2);
+        var bytes = coded(sized(32772, 64, 32, 12), coded);
+        var entry = entryOf(bytes, 279);
+        ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).putInt(entry + 8, 0xFFFFFFF0);
+        assertArrayEquals(coded.samples(), decode(parse(bytes)));
+    }
+
+    /** {@return the position of the first directory entry of a tag in the raw directory of a little-endian file} */
+    private static int entryOf(byte[] bytes, int tag) {
+        var buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
+        for (var at = 8; at + 12 <= bytes.length; at += 2) {
+            if (buffer.getShort(at) == (short) tag && buffer.getShort(at + 2) == 4 && buffer.getInt(at + 4) == 1) {
+                return at;
+            }
+        }
+        throw new AssertionError("no entry of tag " + tag);
+    }
+
+    @ParameterizedTest(name = "compression {0}")
+    @ValueSource(ints = {32770, 32773})
+    @DisplayName("the rows of a block coding count against the allocation limit")
+    void blockRowsLimit(int compression) {
+        var coded = compression == 32770 ? SrwCoding.interleaved(4096, 1, 1) : SrwCoding.modal(4096, 1, 12, false, 128, 1);
+        var file = parse(coded(sized(compression, 4096, 1, 12), coded));
+        // the strip and the plane fit, the rows the predictions read do not
+        var limits = MediaLimits.builder().maxBytes(4096 * 19L).build();
+        var plane = SensorPlane.of(file.sensor, limits);
+        assertThrows(MediaException.LimitExceeded.class, () -> file.sensor.reader.read(plane, limits));
+    }
+
+    @Test
+    @DisplayName("takes a width of 16 bits, and its differences limited to the bit depth")
+    void widestDifferences() {
+        var strip = SrwCoding.strip(32, 1, 12, false, "1" + "11111111" + "1111" + "0000" + "0000" + "0000" + "0".repeat(60)
+                + "1" + "01000000" + "0111111111111111" + "1000000000000000" + "0000000000000001" + "1111111111111111");
+        var decoded = decode(parse(coded(sized(32773, 32, 1, 12), new SrwCoding.Coded(strip, null, null))));
+        assertEquals(4095, decoded[16]);
+        assertEquals(0, decoded[18]);
+        assertEquals(129, decoded[20]);
+        assertEquals(127, decoded[22]);
+    }
+
+    @Test
+    @DisplayName("a width above 16 bits is malformed")
+    void widthAboveRange() {
+        var strip = SrwCoding.strip(48, 1, 12, false, "1" + "11111111" + "1111" + "0000" + "0000" + "0000" + "0".repeat(60)
+                + "1" + "01000000" + "0".repeat(64) + "1" + "01000000");
+        var file = parse(coded(sized(32773, 48, 1, 12), new SrwCoding.Coded(strip, null, null)));
+        assertThrows(MediaException.Malformed.class, () -> decode(file));
+    }
+
+    @ParameterizedTest(name = "mode {0}")
+    @ValueSource(ints = {0, 1, 2, 3, 4, 5, 6})
+    @DisplayName("a 32773 block of the first two rows predicting from above is malformed, as the converter refuses it")
+    void upperModeInFirstRows(int mode) {
+        var modeBits = "0" + String.format("%3s", Integer.toBinaryString(mode)).replace(' ', '0');
+        var first = SrwCoding.strip(16, 2, 12, false, modeBits);
+        var file = parse(coded(sized(32773, 16, 2, 12), new SrwCoding.Coded(first, null, null)));
+        assertThrows(MediaException.Malformed.class, () -> decode(file));
+        // the left mode stated there is fine
+        var left = SrwCoding.strip(16, 2, 12, false, "0111");
+        assertEquals(128, decode(parse(coded(sized(32773, 16, 2, 12), new SrwCoding.Coded(left, null, null))))[0] & 0xFFFF,
+                "the row start");
+    }
+
+    @Test
+    @DisplayName("a 32770 row whose offset is past the strip ends the decoding, the rows before it decoded")
+    void offsetPastStrip() {
+        var coded = SrwCoding.interleaved(64, 32, 1);
+        var offsets = coded.offsets().clone();
+        offsets[8] = Integer.MAX_VALUE;
+        var damaged = new SrwCoding.Coded(coded.strip(), offsets, coded.samples());
+        var decoded = decode(parse(coded(sized(32770, 64, 32, 12), damaged)));
+        // coded rows 6 and 7 hold lines 6 and 7; line 8 is left at zero
+        assertArrayEquals(Arrays.copyOf(coded.samples(), 8 * 64), Arrays.copyOf(decoded, 8 * 64));
+        assertEquals(0, decoded[8 * 64]);
+    }
+
+    @Test
+    @DisplayName("a block whose always-zero bit is set is malformed")
+    void reservedBit() {
+        // the field 3 with a quantizer, the bit keeping the left mode, and the bit that must be zero
+        var strip = SrwCoding.strip(16, 2, 12, true, "11" + "000000000001" + "1" + "1");
+        var file = parse(coded(sized(32773, 16, 2, 12), new SrwCoding.Coded(strip, null, null)));
+        assertThrows(MediaException.Malformed.class, () -> decode(file));
+    }
+
+    @Test
+    @DisplayName("a width below zero is malformed")
+    void widthBelowZero() {
+        // a block setting its four widths to 0, and a block subtracting one from each
+        var strip = SrwCoding.strip(32, 2, 12, false, "1" + "11111111" + "0000000000000000" + "1" + "10101010");
+        var file = parse(coded(sized(32773, 32, 2, 12), new SrwCoding.Coded(strip, null, null)));
+        assertThrows(MediaException.Malformed.class, () -> decode(file));
+    }
+
+    @Test
+    @DisplayName("the code no category uses is malformed")
+    void unassignedCode() {
+        var file = parse(coded(sized(32772, 16, 2, 12),
+                new SrwCoding.Coded(new byte[]{(byte) 0b11010111, (byte) 0b11100000, 0, 0}, null, null)));
+        assertThrows(MediaException.Malformed.class, () -> decode(file));
+    }
+
+    @ParameterizedTest(name = "byte {0} set to {1}")
+    @CsvSource({"2, 0", "3, 0", "9, 1"})
+    @DisplayName("a 32773 strip of an unknown header is unsupported")
+    void unknownHeader(int index, int value) {
+        var coded = SrwCoding.modal(16, 2, 12, false, 128, 1);
+        coded.strip()[index] = (byte) value;
+        var bytes = coded(sized(32773, 16, 2, 12), coded);
+        var info = RawDecoder.info(MediaSource.of(bytes));
+        assertEquals(RawFormat.SRW, info.format());
+        assertFalse(info.isDecodable());
+        assertThrows(MediaException.Unsupported.class, () -> RawDecoder.decodeRaw(MediaSource.of(bytes)));
+    }
+
+    @Test
+    @DisplayName("a 32773 strip whose header states another size is malformed")
+    void headerSize() {
+        var coded = SrwCoding.modal(16, 2, 12, false, 128, 1);
+        var bytes = coded(sized(32773, 32, 2, 12), coded);
+        assertThrows(MediaException.Malformed.class, () -> parse(bytes));
+    }
+
+    @Test
+    @DisplayName("compression 32770 at other bits without a table of rows is unsupported")
+    void noTable() {
+        var srw = new Srw();
+        srw.dropBytes = 10;
         var bytes = srw.samples(4).write();
         var info = RawDecoder.info(MediaSource.of(bytes));
         assertEquals(RawFormat.SRW, info.format());
         assertFalse(info.isDecodable());
         assertThrows(MediaException.Unsupported.class, () -> RawDecoder.decodeRaw(MediaSource.of(bytes)));
+    }
+
+    @ParameterizedTest(name = "{0}: {1}")
+    @CsvSource({"NX300, GRBG", "NX300M, GRBG", "NX2000, GRBG", "EK-GN100, GRBG", "EK-GN110, GRBG", "EK-GN120, GRBG",
+            "NX3000, GRBG", "NX3300, GRBG", "NX mini, RGGB", "NX30, RGGB"})
+    @DisplayName("takes the filter array of the models whose files state another")
+    void filterArrays(String model, String pattern) {
+        var srw = new Srw().samples(1);
+        srw.model = model;
+        srw.cfa = new byte[]{0, 1, 1, 2};
+        var file = parse(srw.write());
+        var expected = CfaPattern.bayer(pattern);
+        for (var index = 0; index < 4; index++) {
+            assertEquals(expected.color(index / 2, index % 2), file.sensor.cfa.color(index / 2, index % 2));
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"NX300", "NX300M", "NX30", "NX2000", "EK-GN100", "EK-GN110", "EK-GN120"})
+    @DisplayName("takes the image place of the models whose sensor area leaves the image out")
+    void fixedImage(String model) {
+        var coded = SrwCoding.interleaved(5546, 3700, 1);
+        var srw = sized(32770, 5546, 3700, 12);
+        srw.model = model;
+        srw.areas = new long[]{0, 0, 5632, 3714, 78, 16, 5526, 3664};
+        var file = parse(coded(srw, coded));
+        assertArrayEquals(new double[]{52, 28, 5472, 3648}, file.sensor.defaultCrop);
     }
 
     @Test
@@ -248,11 +503,15 @@ class SrwParserTest {
         var words = new Srw();
         words.compression = 32769;
         words.bits = 14;
-        var originals = new byte[][]{new Srw().samples(6).write(), words.samples(7).write()};
+        var originals = new byte[][]{new Srw().samples(6).write(), words.samples(7).write(),
+                coded(sized(32770, 64, 16, 12), SrwCoding.interleaved(64, 16, 8)),
+                coded(sized(32772, 64, 16, 12), SrwCoding.prefixed(64, 16, 12, 9)),
+                coded(sized(32773, 64, 16, 12), SrwCoding.modal(64, 16, 12, false, 128, 10)),
+                coded(sized(32773, 64, 16, 14), SrwCoding.modal(64, 16, 14, true, 128, 11))};
         var random = new SplittableRandom(21);
         assertTimeoutPreemptively(Duration.ofSeconds(60), () -> {
             for (var round = 0; round < 600; round++) {
-                var bytes = originals[round % 2].clone();
+                var bytes = originals[round % originals.length].clone();
                 if (round % 3 == 0) {
                     bytes = Arrays.copyOf(bytes, 8 + random.nextInt(bytes.length - 8));
                 } else {
@@ -300,5 +559,13 @@ class SrwParserTest {
         words.compression = 32769;
         words.bits = 14;
         FuzzSeeds.write(FUZZ_TARGET, "srw", "valid-words.srw", words.samples(3).write());
+        FuzzSeeds.write(FUZZ_TARGET, "srw", "valid-interleaved.srw",
+                coded(sized(32770, 64, 16, 12), SrwCoding.interleaved(64, 16, 4)));
+        FuzzSeeds.write(FUZZ_TARGET, "srw", "valid-prefixed.srw",
+                coded(sized(32772, 64, 16, 12), SrwCoding.prefixed(64, 16, 12, 5)));
+        FuzzSeeds.write(FUZZ_TARGET, "srw", "valid-modal-lossless.srw",
+                coded(sized(32773, 64, 16, 14), SrwCoding.modal(64, 16, 14, false, 128, 6)));
+        FuzzSeeds.write(FUZZ_TARGET, "srw", "valid-modal-quantized.srw",
+                coded(sized(32773, 64, 16, 12), SrwCoding.modal(64, 16, 12, true, 128, 7)));
     }
 }

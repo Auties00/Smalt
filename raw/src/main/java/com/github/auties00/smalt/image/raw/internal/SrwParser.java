@@ -1,10 +1,15 @@
 package com.github.auties00.smalt.image.raw.internal;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.raw.CfaColor;
 import com.github.auties00.smalt.image.raw.CfaPattern;
+import com.github.auties00.smalt.internal.io.ByteArrays;
+import com.github.auties00.smalt.internal.limits.LimitChecks;
 
+import java.util.Arrays;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Parses a Samsung SRW file: a TIFF/EP structure whose color filter array directory holds the
@@ -17,7 +22,8 @@ import java.util.Map;
  * the strip holds exactly the bits of every photosite (12-bit samples back to back, least
  * significant bit first when the maker note's {@code RawDataByteOrder}, tag {@code 0x0040}, is 0,
  * most significant bit first when it is 1 or, as in the oldest models, absent and the file is big
- * endian).
+ * endian). {@link SrwDecoder} decodes the codings of the later models: 32770 at fewer bits than the
+ * photosites, 32772 and 32773.
  *
  * <p>The maker note values of the black level ({@code WB_RGGBLevelsBlack}, tag {@code 0xA028}) and
  * of the as-shot white balance ({@code WB_RGGBLevelsUncorrected}, tag {@code 0xA021}) are stored
@@ -25,16 +31,18 @@ import java.util.Map;
  * blue order; the white balance levels are the camera's multipliers on a scale of 4096 for green.
  * The image is the valid area of {@code SensorAreas} (tag {@code 0xA010}: the full area as left,
  * top, right and bottom, then the valid one), or the EXIF image size centered on it when that is
- * smaller (the 16:9 shots of the compacts). The white level is that of the camera model
- * (3750 for most 12-bit NX models, 4000 for the NX mini and the 12-bit NX500 files, 16100 for the
- * 14-bit NX1 and NX500 files, 15600 for the EX1 and 3700 for the WB2000), or the largest value of
- * the bit depth.
+ * smaller (the 16:9 shots of the compacts). Compressions 32772 and 32773 take the valid area, as Adobe DNG
+ * Converter does whatever size their EXIF states. The stored rows of the NX300, NX30, NX2000 and Galaxy NX
+ * models cut the sensor area, so their image is at a place of its own. The filter array their files
+ * and those of the NX3000, NX3300 and NX mini state is not the sensor's. The white level is that of
+ * the camera model (3750 for most 12-bit NX models, 4000 for the NX mini and the 12-bit NX1 and NX500
+ * files, 16100 for the 14-bit NX1 and NX500 files, 15600 for the EX1 and 3700 for the WB2000), or the
+ * largest value of the bit depth.
  *
  * @implNote This implementation follows the tag names of the ExifTool tag documentation; the
  * layouts, the subtraction of the key, the order of the levels and the white levels were found by
  * comparing CC0 sample files with the values Adobe DNG Converter, run as a black box, stores for
- * them. Samsung's compressions of the later NX models (32770 at fewer bits than the photosites,
- * 32772 and 32773) are not decoded.
+ * them.
  */
 final class SrwParser {
     /**
@@ -48,13 +56,53 @@ final class SrwParser {
     private static final int PACKED = 32770;
 
     /**
+     * The TIFF compression code of the prefix-coded photosites.
+     */
+    private static final int PREFIXED = 32772;
+
+    /**
+     * The TIFF compression code of the blocks with prediction modes.
+     */
+    private static final int MODAL = 32773;
+
+    /**
+     * The tag of the position of the table of row offsets of compression 32770.
+     */
+    private static final int ROW_TABLE = 0xA010;
+
+    /**
+     * The tag of the bytes of the table of row offsets of compression 32770.
+     */
+    private static final int ROW_TABLE_BYTES = 0xA011;
+
+    /**
+     * The filter arrays of the camera models whose files state another one, the arrangement Adobe DNG
+     * Converter gives them and their photosites' brightness confirms.
+     */
+    private static final Map<String, String> FILTER_ARRAYS = Map.of("NX300", "GRBG", "NX300M", "GRBG", "NX2000", "GRBG",
+            "EK-GN100", "GRBG", "EK-GN110", "GRBG", "EK-GN120", "GRBG", "NX3000", "GRBG", "NX3300", "GRBG",
+            "NX mini", "RGGB");
+
+    /**
+     * The camera models whose sensor area leaves the image size out, whose image is at a fixed place
+     * of their stored rows.
+     */
+    private static final Set<String> FIXED_IMAGE = Set.of("NX300", "NX300M", "NX30", "NX2000", "EK-GN100", "EK-GN110",
+            "EK-GN120");
+
+    /**
+     * The left, top, width and height of the image of the {@link #FIXED_IMAGE} models.
+     */
+    private static final double[] FIXED_IMAGE_AREA = {52, 28, 5472, 3648};
+
+    /**
      * The white levels of the camera models whose photosites saturate below the bit depth's
      * largest value, on the scale of their 12-bit files.
      */
     private static final Map<String, Integer> WHITE_12 = Map.ofEntries(
             Map.entry("NX5", 3750), Map.entry("NX10", 3750), Map.entry("NX11", 3750), Map.entry("NX20", 3750),
             Map.entry("NX200", 3750), Map.entry("NX210", 3750), Map.entry("NX1000", 3750), Map.entry("NX1100", 3750),
-            Map.entry("NX mini", 4000), Map.entry("NX500", 4000));
+            Map.entry("NX mini", 4000), Map.entry("NX500", 4000), Map.entry("NX1", 4000));
 
     /**
      * The white levels of the camera models whose photosites saturate below the bit depth's
@@ -93,7 +141,7 @@ final class SrwParser {
         var bits = raw.intValue(TiffSamples.BITS_PER_SAMPLE, 12);
         var compression = raw.intValue(TiffSamples.COMPRESSION, 1);
         var sensor = new Sensor();
-        if (compression == WORDS || compression == PACKED) {
+        if (compression == WORDS || compression == PACKED || compression == PREFIXED || compression == MODAL) {
             if (width <= 0 || height <= 0 || bits < 8 || bits > 16) {
                 throw new MediaException.Malformed("invalid SRW raw image of " + width + "x" + height + "x" + bits);
             }
@@ -103,38 +151,55 @@ final class SrwParser {
                 throw new MediaException.Malformed("SRW raw image without data");
             }
             var count = counts[0];
+            var compressed = false;
             PackedRows.Row row;
             int rowBytes;
-            if (compression == WORDS && count >= (long) width * height * 2) {
+            if (compression == PREFIXED) {
+                prefixed(reader, sensor, width, height, bits, offsets[0], count);
+                compressed = true;
+                rowBytes = 0;
+                row = null;
+            } else if (compression == MODAL) {
+                if (!modal(reader, sensor, file, width, height, bits, offsets[0], count)) {
+                    return;
+                }
+                compressed = true;
+                rowBytes = 0;
+                row = null;
+            } else if (compression == WORDS && count >= (long) width * height * 2) {
                 rowBytes = width * 2;
                 row = PackedRows.of(PackedRows.Layout.LITTLE_WORDS, 16);
+            } else if (compression == PACKED && interleaved(raw, reader, sensor, width, height, bits, offsets[0], count)) {
+                compressed = true;
+                rowBytes = 0;
+                row = null;
             } else if (compression == PACKED && bits == 12 && width % 2 == 0 && count == (long) width * height * 3 / 2) {
                 rowBytes = width * 3 / 2;
                 var little = note == null ? reader.little() : note.longValue(0x0040, reader.little() ? 0 : 1) == 0;
                 row = PackedRows.of(little ? PackedRows.Layout.LSB_FIRST : PackedRows.Layout.MSB_FIRST, 12);
             } else {
-                // TODO: decode Samsung's compression of compression code 32770 at fewer bits than the photosites
                 file.unsupported = "SRW compression " + compression + " at " + count + " bytes for " + width + "x"
                         + height + " photosites is not supported";
                 return;
             }
-            var offset = reader.base() + offsets[0];
-            var source = reader.source();
-            sensor.width = width;
-            sensor.height = height;
-            sensor.bitsPerSample = bits;
-            sensor.compression = "uncompressed";
-            sensor.reader = (plane, limits) -> PackedRows.read(source, offset, rowBytes, row, plane, limits);
+            if (!compressed) {
+                var offset = reader.base() + offsets[0];
+                var source = reader.source();
+                sensor.width = width;
+                sensor.height = height;
+                sensor.bitsPerSample = bits;
+                sensor.compression = "uncompressed";
+                sensor.reader = (plane, limits) -> PackedRows.read(source, offset, rowBytes, row, plane, limits);
+            }
         } else {
             try {
                 sensor.reader = TiffSamples.describe(raw, sensor);
             } catch (MediaException.Unsupported exception) {
-                // TODO: decode Samsung's compressions 32772 and 32773
                 file.unsupported = exception.getMessage();
                 return;
             }
         }
-        sensor.cfa = TiffEpParser.cfa(raw, tree.exif);
+        sensor.cfa = filterArray(file.model, TiffEpParser.cfa(raw, tree.exif));
         if (sensor.cfa == null) {
             file.unsupported = "the SRW raw image has no CFA pattern";
             return;
@@ -142,9 +207,148 @@ final class SrwParser {
         var white = (sensor.bitsPerSample <= 12 ? WHITE_12 : WHITE_14).get(file.model == null ? "" : file.model.strip());
         sensor.white = new double[]{white != null ? white : (1 << sensor.bitsPerSample) - 1};
         if (note != null) {
-            levels(note, tree.exif, sensor, file);
+            levels(note, compression == PREFIXED || compression == MODAL ? null : tree.exif, sensor, file);
+        }
+        if (file.model != null && FIXED_IMAGE.contains(file.model.strip())
+                && sensor.width >= FIXED_IMAGE_AREA[0] + FIXED_IMAGE_AREA[2]
+                && sensor.height >= FIXED_IMAGE_AREA[1] + FIXED_IMAGE_AREA[3]) {
+            sensor.defaultCrop = FIXED_IMAGE_AREA.clone();
         }
         file.sensor = sensor;
+    }
+
+    /**
+     * Describes the block coding of compression 32770 when the raw directory holds its table of
+     * row offsets.
+     *
+     * @param raw the raw directory
+     * @param reader the TIFF structure
+     * @param sensor the sensor description to fill
+     * @param width the stored width
+     * @param height the stored height
+     * @param bits the bit depth
+     * @param offset the strip's offset
+     * @param count the strip's bytes
+     * @return whether the table exists
+     */
+    private static boolean interleaved(Ifd raw, TiffReader reader, Sensor sensor, int width, int height, int bits,
+                                       long offset, long count) {
+        var table = raw.longs(ROW_TABLE);
+        var size = raw.longs(ROW_TABLE_BYTES);
+        if (table == null || size == null || table.length == 0 || size.length == 0 || size[0] != height * 4L) {
+            return false;
+        }
+        var position = reader.base() + table[0];
+        var start = reader.base() + offset;
+        describe(sensor, width, height, bits);
+        sensor.reader = (plane, limits) -> {
+            LimitChecks.checkAllocation(limits, height * 4L);
+            var bytes = new byte[height * 4];
+            var read = reader.readAvailable(position, bytes, 0, bytes.length);
+            var offsets = new int[read / 4];
+            for (var index = 0; index < offsets.length; index++) {
+                offsets[index] = ByteArrays.i32le(bytes, index * 4);
+            }
+            SrwDecoder.decodeInterleaved(strip(reader, start, count, limits), offsets, bits, plane, limits);
+        };
+        return true;
+    }
+
+    /**
+     * Describes compression 32772.
+     *
+     * @param reader the TIFF structure
+     * @param sensor the sensor description to fill
+     * @param width the stored width
+     * @param height the stored height
+     * @param bits the bit depth
+     * @param offset the strip's offset
+     * @param count the strip's bytes
+     */
+    private static void prefixed(TiffReader reader, Sensor sensor, int width, int height, int bits, long offset,
+                                 long count) {
+        var start = reader.base() + offset;
+        describe(sensor, width, height, bits);
+        sensor.reader = (plane, limits) -> SrwDecoder.decodePrefixed(strip(reader, start, count, limits), bits, plane);
+    }
+
+    /**
+     * Describes compression 32773 from the strip's header.
+     *
+     * @param reader the TIFF structure
+     * @param sensor the sensor description to fill
+     * @param file the description to fill when the coding is unknown
+     * @param width the stored width
+     * @param height the stored height
+     * @param bits the bit depth
+     * @param offset the strip's offset
+     * @param count the strip's bytes
+     * @return whether the coding is known
+     */
+    private static boolean modal(TiffReader reader, Sensor sensor, RawFile file, int width, int height, int bits,
+                                 long offset, long count) {
+        var start = reader.base() + offset;
+        var header = new byte[SrwDecoder.HEADER];
+        if (reader.readAvailable(start, header, 0, header.length) < header.length) {
+            throw new MediaException.Malformed("SRW strip without a header");
+        }
+        var quantized = header[SrwDecoder.CODING_OFFSET] == SrwDecoder.CODING_QUANTIZED;
+        if (header[2] != 0x33 || header[3] != 0x56
+                || !quantized && header[SrwDecoder.CODING_OFFSET] != SrwDecoder.CODING_LOSSLESS) {
+            file.unsupported = "the coding of the SRW strip of compression 32773 is not supported";
+            return false;
+        }
+        if (ByteArrays.u16(header, 4, true) != height || ByteArrays.u16(header, 6, true) != width) {
+            throw new MediaException.Malformed("the SRW strip's size is not the raw directory's");
+        }
+        describe(sensor, width, height, bits);
+        sensor.reader = (plane, limits) -> SrwDecoder.decodeModal(strip(reader, start, count, limits), quantized, bits,
+                plane, limits);
+        return true;
+    }
+
+    /**
+     * Fills in what the compressed layouts share.
+     *
+     * @param sensor the sensor description to fill
+     * @param width the stored width
+     * @param height the stored height
+     * @param bits the bit depth
+     */
+    private static void describe(Sensor sensor, int width, int height, int bits) {
+        sensor.width = width;
+        sensor.height = height;
+        sensor.bitsPerSample = bits;
+        sensor.compression = "Samsung";
+    }
+
+    /**
+     * Reads a strip, as much of it as the file holds, allocating no more than the file can fill.
+     *
+     * @param reader the TIFF structure
+     * @param start the strip's position
+     * @param count the strip's bytes
+     * @param limits the resource bounds
+     * @return the bytes
+     */
+    private static byte[] strip(TiffReader reader, long start, long count, MediaLimits limits) {
+        var size = reader.size();
+        var available = size < 0 ? count : Math.min(count, Math.max(size - start, 0));
+        LimitChecks.checkAllocation(limits, available);
+        var data = new byte[(int) available];
+        var read = reader.readAvailable(start, data, 0, data.length);
+        return read == data.length ? data : Arrays.copyOf(data, read);
+    }
+
+    /**
+     * {@return the filter array of the sensor: the camera model's when its files state another}
+     *
+     * @param model the camera model, or {@code null}
+     * @param stated the array the file states, or {@code null}
+     */
+    private static CfaPattern filterArray(String model, CfaPattern stated) {
+        var name = model == null ? null : FILTER_ARRAYS.get(model.strip());
+        return name == null ? stated : CfaPattern.bayer(name);
     }
 
     /**
@@ -203,7 +407,7 @@ final class SrwParser {
      * Reads the black level and the image area of the maker note.
      *
      * @param note the maker note's directory
-     * @param exif the EXIF directory, or {@code null}
+     * @param exif the EXIF directory whose image size can be smaller than the valid area, or {@code null}
      * @param sensor the sensor description, its size and color filter array set
      * @param file the description to fill
      */

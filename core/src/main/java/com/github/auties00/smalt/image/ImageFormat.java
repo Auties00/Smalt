@@ -118,7 +118,8 @@ public enum ImageFormat {
      * ({@code IIRO}, {@code IIRS} or {@code MMOR}), Panasonic and Leica RW2 and RWL
      * ({@code IIU}), Pentax PEF, Samsung SRW, Minolta MRW and Sigma X3F ({@code FOVb}), and any
      * other TIFF-structured file whose directories hold a color filter array or linear raw
-     * image (photometric interpretation 32803 or 34892) or a vendor raw compression.
+     * image (photometric interpretation 32803 or 34892) or a vendor raw compression, Samsung's
+     * 32773 told from PackBits by a color filter array pattern without a photometric interpretation.
      *
      * <p>The TIFF-structured vendor formats other than CR2 start like any TIFF file, so
      * {@link #detect(byte[], int)} recognizes them only when their directories lie within the

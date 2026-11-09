@@ -393,6 +393,16 @@ imagecodecs 2026.10.10 (both BSD-licensed, used as black-box writers; `pip insta
 numpy`) from a synthetic pattern, checks that the lossless ones decode to it and the lossy ones do not, and
 pins them in `tiff/codecs.sha256`; the output is deterministic for those versions.
 
+## Samsung SRW oracle digests
+
+`SrwOracleTest` of `smalt-raw` compares the photosites of the 12 compressed SRW samples, and of 43 copies of them with
+single fields changed to values the cameras never write, with the digests in
+`raw/src/test/resources/com/github/auties00/smalt/image/raw/internal/srw-oracle.tsv`. `python tools/testdata/srw-oracle.py`
+(Windows, with a Windows build of Python) writes them from what Adobe DNG Converter 18.0, pinned by SHA-256 and run as a
+black box, stores; the test needs only the samples, so it runs wherever the full tier is. The copies are never stored:
+the table holds their edits. The script's documentation says what each group of copies settles. The test's `exifHeight`
+cases hold, by hand, two more copies whose stored image crop the converter keeps when their EXIF height changes.
+
 ## TIFF YCbCr data-unit vectors
 
 `TiffYCbCrTest` of `smalt-image` reads interleaved subsampled YCbCr files (8 and 16 bits; 2x1, 2x2, 4x2 and 4x4

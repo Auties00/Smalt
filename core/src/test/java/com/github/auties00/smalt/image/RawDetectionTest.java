@@ -48,6 +48,22 @@ class RawDetectionTest {
     }
 
     @Test
+    @DisplayName("compression 32772 is a raw compression; 32773 is PackBits unless the directory states a filter array "
+            + "and no photometric interpretation")
+    void samsungCompressions() {
+        var prefixed = tiff(8, false, 256, 16, 259, 32772);
+        assertEquals(Optional.of(ImageFormat.RAW), Images.detect(MediaSource.of(prefixed)));
+        var packBits = tiff(8, false, 256, 16, 259, 32773);
+        assertEquals(Optional.of(ImageFormat.TIFF), Images.detect(MediaSource.of(packBits)));
+        var modal = tiff(8, false, 256, 16, 259, 32773, 33422, 1);
+        assertEquals(Optional.of(ImageFormat.RAW), Images.detect(MediaSource.of(modal)));
+        var shown = tiff(8, false, 256, 16, 259, 32773, 262, 2, 33422, 1);
+        assertEquals(Optional.of(ImageFormat.TIFF), Images.detect(MediaSource.of(shown)));
+        var stale = tiff(8, false, 256, 16, 259, 1, 33422, 1);
+        assertEquals(Optional.of(ImageFormat.TIFF), Images.detect(MediaSource.of(stale)));
+    }
+
+    @Test
     @DisplayName("a TIFF whose first directory holds DNGVersion is a DNG, wherever the directory lies")
     void dng() {
         var near = tiff(8, false, 256, 16, 50706, 1);
