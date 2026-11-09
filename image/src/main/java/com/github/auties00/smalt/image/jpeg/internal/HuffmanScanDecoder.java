@@ -163,6 +163,11 @@ final class HuffmanScanDecoder {
     private final int[] predictors = new int[4];
 
     /**
+     * Whether the scan belongs to a differential frame, whose DC coefficients are not predicted.
+     */
+    private boolean differential;
+
+    /**
      * The unstuffed entropy-coded data.
      */
     private byte[] data;
@@ -341,6 +346,7 @@ final class HuffmanScanDecoder {
         var components = scan.components.length;
         this.dcTables = dc;
         this.acTables = ac;
+        this.differential = target.differential;
         this.quant = new int[components][];
         this.planes = new byte[components][];
         this.strides = new int[components];
@@ -379,16 +385,17 @@ final class HuffmanScanDecoder {
         if (batched) {
             prepareBatches(scan);
         }
+        var window = target.scanWindow(scan);
         if (mode == BASELINE_PIXELS && restartInterval != 0) {
             var bands = intervalBands(scan, restartInterval);
             if (bands > 1) {
-                return decodeIntervals(scan, restartInterval, scaleShift, bands);
+                return decodeIntervals(scan, restartInterval, scaleShift, bands, window);
             }
         }
-        if (mode == BASELINE_PIXELS && restartInterval == 0) {
+        if (mode == BASELINE_PIXELS && restartInterval == 0 && (window == null || window[3] == scan.mcusHigh)) {
             var runs = speculativeRuns(scan);
             if (runs > 1) {
-                var decoded = decodeSpeculative(scan, scaleShift, runs);
+                var decoded = decodeSpeculative(scan, scaleShift, runs, window);
                 if (decoded >= 0) {
                     return decoded;
                 }
@@ -396,7 +403,8 @@ final class HuffmanScanDecoder {
         }
         var left = restartInterval;
         var decoded = 0L;
-        for (var mcuY = 0; mcuY < scan.mcusHigh; mcuY++) {
+        var lastRow = window == null ? scan.mcusHigh : window[3];
+        for (var mcuY = 0; mcuY < lastRow; mcuY++) {
             for (var mcuX = 0; mcuX < scan.mcusWide; mcuX++) {
                 if (restartInterval != 0) {
                     if (left == 0) {
@@ -405,20 +413,35 @@ final class HuffmanScanDecoder {
                     }
                     left--;
                 }
+                var inside = window == null || (mcuY >= window[1] && mcuX >= window[0] && mcuX < window[2]);
+                var x = window == null ? mcuX : mcuX - window[0];
+                var y = window == null ? mcuY : mcuY - window[1];
                 if (insufficient) {
+                    if (!inside) {
+                        continue;
+                    }
                     if (batched) {
-                        skipMcu(scan, mcuX, mcuY, scaleShift);
+                        skipMcu(scan, x, y, scaleShift);
                     } else if (mode == BASELINE_PIXELS) {
-                        fillMcu(scan, mcuX, mcuY, scaleShift);
+                        fillMcu(scan, x, y, scaleShift);
+                    }
+                    continue;
+                }
+                if (!inside) {
+                    discardMcu(scan);
+                    if (exhausted()) {
+                        insufficient = true;
+                    } else {
+                        decoded++;
                     }
                     continue;
                 }
                 switch (mode) {
                     case BASELINE_PIXELS -> {
                         if (batched || scaleShift == 3) {
-                            baselinePixels(scan, mcuX, mcuY, scaleShift);
+                            baselinePixels(scan, x, y, scaleShift);
                         } else {
-                            blockPixels(scan, mcuX, mcuY, scaleShift);
+                            blockPixels(scan, x, y, scaleShift);
                         }
                     }
                     case BASELINE_COEFFICIENTS -> baselineCoefficients(scan, mcuX, mcuY);
@@ -474,12 +497,14 @@ final class HuffmanScanDecoder {
      * @param scan the scan being decoded
      * @param scaleShift the binary logarithm of the size reduction
      * @param runCount the number of runs of a window
+     * @param window the MCUs the planes hold, as {@link DecodeTarget#scanWindow} returns them, reaching the last
+     * MCU row, or {@code null} for every MCU
      * @return the number of MCUs decoded entirely from data of the scan, or {@code -1} when the
      * scan must be decoded sequentially instead because the working storage would exceed the limits
      * or the stitched sequence misses blocks; the planes are then rewritten entirely by the
      * sequential decode
      */
-    private long decodeSpeculative(JpegScan scan, int scaleShift, int runCount) {
+    private long decodeSpeculative(JpegScan scan, int scaleShift, int runCount, int[] window) {
         var speculative = new SpeculativeScanDecoder(data, segments.start(0), segments.end(0), scan, dcTables, acTables,
                 limits);
         var mcus = (long) scan.mcusWide * scan.mcusHigh;
@@ -560,7 +585,7 @@ final class HuffmanScanDecoder {
             var bands = ParallelBands.bands(Math.max(1, usable / perMcu), (long) usable * BLOCK_WORK);
             ParallelBands.run(bands, band -> worker(workers, band, scan).transformStored(scan, scaleShift, pieces,
                     pieceStarts, values, first, ParallelBands.start(band, bands, usable),
-                    ParallelBands.start(band + 1, bands, usable)));
+                    ParallelBands.start(band + 1, bands, usable), window));
             done += block;
             var tail = pieces.getLast();
             if (last || tail.to() != tail.run().blocks) {
@@ -570,7 +595,7 @@ final class HuffmanScanDecoder {
             startPhase = tail.run().endPhase;
         }
         if (exhaustedMcu < mcus) {
-            worker(workers, 0, scan).fillGray(scan, scaleShift, exhaustedMcu + 1);
+            worker(workers, 0, scan).fillGray(scan, scaleShift, exhaustedMcu + 1, window);
             return exhaustedMcu;
         }
         return done < totalBlocks ? -1 : mcus;
@@ -609,9 +634,10 @@ final class HuffmanScanDecoder {
      * @param first the index in the scan of the window's first block
      * @param from the index in the window of the first block to transform
      * @param to the index in the window of the block after the last one
+     * @param window the MCUs the planes hold, or {@code null} for every MCU
      */
     private void transformStored(JpegScan scan, int scaleShift, List<SpeculativeScanDecoder.Piece> pieces,
-                                 int[] pieceStarts, int[] dcValues, long first, int from, int to) {
+                                 int[] pieceStarts, int[] dcValues, long first, int from, int to, int[] window) {
         if (from >= to) {
             return;
         }
@@ -634,7 +660,12 @@ final class HuffmanScanDecoder {
             var ci = scan.blockComponent[b];
             var q = quant[ci];
             var dc = ((short) dcValues[block]) * q[0];
-            if (batched) {
+            var inside = window == null || (mcuY >= window[1] && mcuX >= window[0] && mcuX < window[2]);
+            var x = window == null ? mcuX : mcuX - window[0];
+            var y = window == null ? mcuY : mcuY - window[1];
+            if (!inside) {
+                // the block is decoded for its DC prediction only
+            } else if (batched) {
                 var slot = blockSlot[b];
                 var batch = batches[slot];
                 var lane = pending[slot];
@@ -647,9 +678,9 @@ final class HuffmanScanDecoder {
                     mask &= mask - 1;
                     batch[ZIGZAG_BATCH[k] + lane] = values[value++] * q[k];
                 }
-                commitBlock(slot, scan.blockRow(mcuY, b), scan.blockColumn(mcuX, b), scaleShift);
+                commitBlock(slot, scan.blockRow(y, b), scan.blockColumn(x, b), scaleShift);
             } else {
-                planes[ci][scan.blockRow(mcuY, b) * strides[ci] + scan.blockColumn(mcuX, b)] = ReducedIdct.dcValue1(dc);
+                planes[ci][scan.blockRow(y, b) * strides[ci] + scan.blockColumn(x, b)] = ReducedIdct.dcValue1(dc);
             }
             if (++b == perMcu) {
                 b = 0;
@@ -674,21 +705,30 @@ final class HuffmanScanDecoder {
      * @param scan the scan being decoded
      * @param scaleShift the binary logarithm of the size reduction
      * @param firstMcu the first MCU
+     * @param window the MCUs the planes hold, or {@code null} for every MCU
      */
-    private void fillGray(JpegScan scan, int scaleShift, long firstMcu) {
+    private void fillGray(JpegScan scan, int scaleShift, long firstMcu, int[] window) {
         var batched = scaleShift < 3;
         var mcusWide = scan.mcusWide;
         var mcus = (long) mcusWide * scan.mcusHigh;
         for (var m = firstMcu; m < mcus; m++) {
             var mcuX = (int) (m % mcusWide);
             var mcuY = (int) (m / mcusWide);
+            if (window != null && (mcuY < window[1] || mcuX < window[0] || mcuX >= window[2])) {
+                if (batched && mcuX == mcusWide - 1) {
+                    flushPending(scaleShift);
+                }
+                continue;
+            }
+            var x = window == null ? mcuX : mcuX - window[0];
+            var y = window == null ? mcuY : mcuY - window[1];
             if (batched) {
-                skipMcu(scan, mcuX, mcuY, scaleShift);
+                skipMcu(scan, x, y, scaleShift);
                 if (mcuX == mcusWide - 1) {
                     flushPending(scaleShift);
                 }
             } else {
-                fillMcu(scan, mcuX, mcuY, 3);
+                fillMcu(scan, x, y, 3);
             }
         }
         if (batched) {
@@ -731,18 +771,31 @@ final class HuffmanScanDecoder {
      * consecutive intervals on several threads.
      *
      * @param scan the scan being decoded
+     * <p>With a window, only the intervals that hold an MCU of the window are decoded: every interval starts at
+     * its own segment, so the others are skipped without reading them.
+     *
      * @param restartInterval the number of MCUs per restart interval
      * @param scaleShift the binary logarithm of the size reduction
      * @param bands the number of bands
+     * @param window the MCUs the planes hold, or {@code null} for every MCU
      * @return the number of MCUs decoded entirely from data of the scan
      */
-    private long decodeIntervals(JpegScan scan, int restartInterval, int scaleShift, int bands) {
-        var mcus = (long) scan.mcusWide * scan.mcusHigh;
+    private long decodeIntervals(JpegScan scan, int restartInterval, int scaleShift, int bands, int[] window) {
+        var mcusWide = scan.mcusWide;
+        var mcus = (long) mcusWide * scan.mcusHigh;
         var intervals = (int) ((mcus + restartInterval - 1) / restartInterval);
+        var selected = new int[intervals];
+        var held = 0;
+        for (var k = 0; k < intervals; k++) {
+            if (window == null || holds(k, restartInterval, mcusWide, mcus, window)) {
+                selected[held++] = k;
+            }
+        }
+        var selectedCount = held;
         var decoded = new long[bands];
         ParallelBands.run(bands, band -> decoded[band] = new HuffmanScanDecoder(this).decodeIntervalRange(scan,
-                restartInterval, scaleShift, ParallelBands.start(band, bands, intervals),
-                ParallelBands.start(band + 1, bands, intervals)));
+                restartInterval, scaleShift, selected, ParallelBands.start(band, bands, selectedCount),
+                ParallelBands.start(band + 1, bands, selectedCount), window));
         var total = 0L;
         for (var count : decoded) {
             total += count;
@@ -751,17 +804,45 @@ final class HuffmanScanDecoder {
     }
 
     /**
-     * Decodes the restart intervals {@code [first, last)} of a sequential scan into sample planes,
-     * interval {@code k} from segment {@code k}.
+     * Returns whether a restart interval holds an MCU of a window.
+     *
+     * @param interval the interval index
+     * @param restartInterval the number of MCUs per restart interval
+     * @param mcusWide the number of MCUs per row of the scan
+     * @param mcus the number of MCUs of the scan
+     * @param window the MCUs the planes hold, as {@link DecodeTarget#scanWindow} returns them
+     * @return whether one of its MCUs lies in the window
+     */
+    private static boolean holds(int interval, int restartInterval, int mcusWide, long mcus, int[] window) {
+        var end = Math.min((long) (interval + 1) * restartInterval, mcus);
+        for (var m = (long) interval * restartInterval; m < end; m++) {
+            var row = m / mcusWide;
+            if (row >= window[3]) {
+                return false;
+            }
+            var column = m % mcusWide;
+            if (row >= window[1] && column >= window[0] && column < window[2]) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Decodes some restart intervals of a sequential scan into sample planes, interval {@code k} from segment
+     * {@code k}.
      *
      * @param scan the scan being decoded
      * @param restartInterval the number of MCUs per restart interval
      * @param scaleShift the binary logarithm of the size reduction
-     * @param first the first interval
-     * @param last the interval after the last one
+     * @param intervals the indices of the intervals to decode, ascending
+     * @param first the index in {@code intervals} of the first interval
+     * @param last the index in {@code intervals} after the last one
+     * @param window the MCUs the planes hold, or {@code null} for every MCU
      * @return the number of MCUs decoded entirely from data of the scan
      */
-    private long decodeIntervalRange(JpegScan scan, int restartInterval, int scaleShift, int first, int last) {
+    private long decodeIntervalRange(JpegScan scan, int restartInterval, int scaleShift, int[] intervals, int first,
+                                     int last, int[] window) {
         var batched = scaleShift < 3;
         if (batched) {
             prepareBatches(scan);
@@ -769,7 +850,8 @@ final class HuffmanScanDecoder {
         var mcusWide = scan.mcusWide;
         var mcus = (long) mcusWide * scan.mcusHigh;
         var decoded = 0L;
-        for (var k = first; k < last; k++) {
+        for (var i = first; i < last; i++) {
+            var k = intervals[i];
             segment = k;
             startSegment(segments.start(k), segments.end(k));
             insufficient = false;
@@ -779,14 +861,24 @@ final class HuffmanScanDecoder {
             for (var m = (long) k * restartInterval; m < end; m++) {
                 var mcuY = (int) (m / mcusWide);
                 var mcuX = (int) (m % mcusWide);
+                var inside = window == null || (mcuY >= window[1] && mcuY < window[3] && mcuX >= window[0]
+                        && mcuX < window[2]);
+                var x = window == null ? mcuX : mcuX - window[0];
+                var y = window == null ? mcuY : mcuY - window[1];
                 if (insufficient) {
-                    if (batched) {
-                        skipMcu(scan, mcuX, mcuY, scaleShift);
+                    if (!inside) {
+                        // an MCU outside the window holds nothing to fill
+                    } else if (batched) {
+                        skipMcu(scan, x, y, scaleShift);
                     } else {
-                        fillMcu(scan, mcuX, mcuY, 3);
+                        fillMcu(scan, x, y, 3);
                     }
                 } else {
-                    baselinePixels(scan, mcuX, mcuY, scaleShift);
+                    if (inside) {
+                        baselinePixels(scan, x, y, scaleShift);
+                    } else {
+                        discardMcu(scan);
+                    }
                     if (exhausted()) {
                         insufficient = true;
                     } else {
@@ -1042,6 +1134,21 @@ final class HuffmanScanDecoder {
     }
 
     /**
+     * Decodes one MCU of a sequential scan without storing it: its DC coefficients update the predictors and its AC
+     * coefficients are skipped.
+     *
+     * @param scan the scan being decoded
+     */
+    private void discardMcu(JpegScan scan) {
+        var block = this.block;
+        for (var b = 0; b < scan.blocksPerMcu; b++) {
+            var ci = scan.blockComponent[b];
+            decodeDcOnly(block, dcTables[ci], acTables[ci], quant[ci], ci);
+            block[0] = 0;
+        }
+    }
+
+    /**
      * Counts the blocks of an MCU without data into their batches, leaving their coefficients at
      * zero, which the batch transform turns into mid-gray.
      *
@@ -1204,7 +1311,7 @@ final class HuffmanScanDecoder {
             }
         }
         var dc = predictors[component] + diff;
-        predictors[component] = dc;
+        predictors[component] = differential ? 0 : dc;
         block[lane] = ((short) dc) * quant[0];
         var fast = acTable.fast;
         var lookup = acTable.lookup;
@@ -1323,7 +1430,7 @@ final class HuffmanScanDecoder {
             }
         }
         var dc = predictors[component] + diff;
-        predictors[component] = dc;
+        predictors[component] = differential ? 0 : dc;
         block[0] = ((short) dc) * quant[0];
         var fast = acTable.fast;
         var lookup = acTable.lookup;
@@ -1423,7 +1530,7 @@ final class HuffmanScanDecoder {
                 diff = size == 0 ? 0 : HuffmanDecodingTable.extend(bits(size), size);
             }
             var dc = predictors[ci] + diff;
-            predictors[ci] = dc;
+            predictors[ci] = differential ? 0 : dc;
             coefficients[ci][offset] = (short) (dc << al);
         }
     }

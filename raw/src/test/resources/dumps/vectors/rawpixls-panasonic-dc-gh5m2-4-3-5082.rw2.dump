@@ -1,0 +1,10 @@
+# image dump of vectors/rawpixls-panasonic-dc-gh5m2-4-3-5082.rw2; regenerate with -Dsmalt.test.updateDumps=true
+format RAW
+info ImageInfo[format=RAW, width=5184, height=3888, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 5184x3888 rgba8 alpha=false crc=798f6fb2
+  format=RAW orientation=NORMAL source=5184x3888
+  icc=520:86132914 exif=848:32af1f56 xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+decoder raw sensor data
+sensor 5184x3888 channels=1 cfa=RGGB neutral=[0.4129032258064516, 1.0, 0.5688888888888889] crc=22a312ea
