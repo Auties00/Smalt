@@ -8,8 +8,8 @@ does), extracts the converter without installing it and runs it as a black box, 
 - for each sample of LENS_SAMPLES, a <stem>.lens text file: after a comment line, "active" with the active area
   of the converter's DNG file (top, left, bottom and right), "crop" with its default crop (x, y, width and height
   relative to the active area) and "list2"/"list3" with the hexadecimal bytes of its opcode lists 2 and 3 when it
-  writes them (the converter turns the lens corrections of the vendor's maker note into FixVignetteRadial and
-  WarpRectilinear opcodes there); for the samples of RENDER_SAMPLES it also keeps the DNG file, <stem>.dng;
+  writes them (the converter turns the lens corrections of the vendor's maker note, or for most PowerShot files its
+  own lens profiles, into FixVignetteRadial and WarpRectilinear opcodes there); for the samples of RENDER_SAMPLES it also keeps the DNG file, <stem>.dng;
 - for each sample of SHIFT_SAMPLES (pixel-shift Pentax PEF and DNG files and a Sony ARQ file), a <stem>.merged
   text file summarizing the uncompressed linear DNG file (-u) the converter merges the frames into: "size"
   (width, height and samples per pixel) and, for each sample, "digest <sample> <SHA-256>" of its values over the
@@ -56,11 +56,40 @@ LENS_SAMPLES = [
     'rawpixls-fujifilm-gfx-50s-14bit-14bit-compressed-3-2.raf',
     'rawpixls-fujifilm-x-a1-12bit-12bit-uncompressed-3-2.raf',
     'rawpixls-fujifilm-finepix-x10-12bit-12bit-uncompressed-4-3.raf',
+    'rawpixls-canon-powershot-g7-x-mark-iii-3-2.cr3',
+    'rawpixls-canon-powershot-g5-x-mark-ii-raw-3-2.cr3',
+    'rawpixls-canon-powershot-g5-x-mark-ii-c-raw-3-2.cr3',
+    'rawpixls-canon-powershot-g5-x-mark-ii-c-raw-1-1.cr3',
+    'rawpixls-canon-powershot-sx70-hs-raw-3-2-3-2.cr3',
+    'rawpixls-canon-powershot-sx70-hs-c-raw-3-2-3-2.cr3',
+    'rawpixls-canon-powershot-v1-craw-3-2.cr3',
+    'rawpixls-canon-powershot-g1-x-raw-4-3.cr2',
+    'rawpixls-canon-powershot-g1-x-mark-ii-raw-3-2.cr2',
+    'rawpixls-canon-powershot-g1-x-mark-iii-raw-3-2.cr2',
+    'rawpixls-canon-powershot-g11-raw-4-3.cr2',
+    'rawpixls-canon-powershot-g12-raw-4-3.cr2',
+    'rawpixls-canon-powershot-g15-raw-4-3.cr2',
+    'rawpixls-canon-powershot-g16-raw-4-3.cr2',
+    'rawpixls-canon-powershot-g3-x-raw-3-2.cr2',
+    'rawpixls-canon-powershot-g5-x-raw-3-2.cr2',
+    'rawpixls-canon-powershot-g7-x-raw-3-2.cr2',
+    'rawpixls-canon-powershot-g7-x-mark-ii-raw-3-2.cr2',
+    'rawpixls-canon-powershot-g9-raw-4-3.cr2',
+    'rawpixls-canon-powershot-g9-x-raw-3-2.cr2',
+    'rawpixls-canon-powershot-g9-x-mark-ii-raw-3-2.cr2',
+    'rawpixls-canon-powershot-s100-raw-4-3.cr2',
+    'rawpixls-canon-powershot-s100v-raw-4-3.cr2',
+    'rawpixls-canon-powershot-s110-raw-4-3.cr2',
+    'rawpixls-canon-powershot-s120-raw-4-3.cr2',
+    'rawpixls-canon-powershot-s95-raw-4-3.cr2',
+    'rawpixls-canon-powershot-sx50-hs-raw-4-3.cr2',
+    'rawpixls-canon-powershot-sx60-hs-raw-4-3.cr2',
 ]
 
 RENDER_SAMPLES = [
     'rawpixls-sony-dsc-rx100m3-12bit-12bit-compressed-3-2.arw',
     'rawpixls-olympus-e-m1-16bit-4-3.orf',
+    'rawpixls-canon-powershot-g7-x-mark-iii-3-2.cr3',
 ]
 
 SHIFT_SAMPLES = [

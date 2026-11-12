@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.image.raw.fuzz;
 
 import com.github.auties00.smalt.image.raw.Cr3Writer;
+import com.github.auties00.smalt.image.raw.LensShot;
 import com.github.auties00.smalt.image.raw.DngSpecSamples;
 import com.github.auties00.smalt.image.raw.PixelShiftFiles;
 import com.github.auties00.smalt.image.raw.RafWriter;
@@ -224,6 +225,17 @@ class FuzzSeedWriter {
     }
 
     @Test
+    @DisplayName("writes the reduced PowerShot samples, one of each layout of maker note lens table in CR2 but the first, which reduces poorly")
+    void powerShotLens() throws IOException {
+        var jpeg = Files.readAllBytes(ffmpeg("jpg", video(16, 16, 1), "-frames:v", "1", "-update", "1", "-q:v", "10"));
+        for (var vector : new String[]{"rawpixls-canon-powershot-s110-raw-4-3.cr2",
+                "rawpixls-canon-powershot-g16-raw-4-3.cr2", "rawpixls-canon-powershot-g7-x-raw-3-2.cr2",
+                "rawpixls-canon-powershot-g7-x-mark-ii-raw-3-2.cr2"}) {
+            reduce("cr2", vector, RawSeedReducer.Layout.CR2, jpeg);
+        }
+    }
+
+    @Test
     @DisplayName("writes the multi-frame seeds: Pentax pixel-shift PEF and DNG files and a Sony ARQ file")
     void pixelShift() {
         var files = new PixelShiftFiles(12, 8, 3);
@@ -259,6 +271,14 @@ class FuzzSeedWriter {
         dual.dualPixel.height = 32;
         dual.dualPixel.seed = 2;
         write(RawFuzzTest.class, "cr3", "valid-crx-dual-pixel.cr3", dual.write());
+        var powerShot = new Cr3Writer();
+        powerShot.width = 96;
+        powerShot.height = 64;
+        powerShot.model = "Canon PowerShot G7 X Mark III";
+        powerShot.ramp();
+        powerShot.lensTable = LensShot.table(powerShot, new double[]{0.99, -0.14, 0.05, -0.01}, new double[]{0, 0.001},
+                new double[]{0, -0.001});
+        write(RawFuzzTest.class, "cr3", "valid-crx-powershot-lens.cr3", powerShot.write());
     }
 
     private static void reduce(String method, String vector, RawSeedReducer.Layout layout, byte[] jpeg)

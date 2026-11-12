@@ -35,6 +35,8 @@ import java.util.function.DoubleUnaryOperator;
  * is scaled so that the image fills its area.</li>
  * </ul>
  *
+ * <p>{@link CanonLens} reads the tables of Canon's PowerShot files.
+ *
  * @implNote This implementation derives the layouts and the units from CC0 sample files of every vendor, by
  * comparing the recorded data with the {@code WarpRectilinear} and {@code FixVignetteRadial} opcodes Adobe DNG
  * Converter 18.0, run as a black box, writes for the same files; tag names follow the ExifTool tag documentation.
@@ -377,7 +379,7 @@ final class VendorLens {
      * @param gain the vignetting gain, or {@code null}
      * @return the corrections
      */
-    private static LensCorrection sampled(double centerX, double centerY, double radius, double scale,
+    static LensCorrection sampled(double centerX, double centerY, double radius, double scale,
                                           DoubleUnaryOperator green, DoubleUnaryOperator red,
                                           DoubleUnaryOperator blue, DoubleUnaryOperator gain) {
         var count = (int) Math.round(REACH / STEP) + 1;

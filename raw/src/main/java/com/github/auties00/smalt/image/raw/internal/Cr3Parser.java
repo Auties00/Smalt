@@ -117,12 +117,13 @@ final class Cr3Parser {
             file.unsupported = state.unsupported != null ? state.unsupported : "the CR3 file holds no CRX image";
             return;
         }
-        var note = makerNote(state);
-        file.sensor = sensor(main, reader, note, file);
+        var note = makerNote(state, COLOR_DATA);
+        var lensNote = CanonLens.applies(file.model) ? makerNote(state, CanonLens.TAG) : null;
+        file.sensor = sensor(main, reader, note, lensNote, file);
         var second = dualPixel(state.raws, main);
         if (second != null) {
             file.dualPixel = sensor(new Track(second.image(), main.areas(), second.offset(), second.length()), reader,
-                    note, file);
+                    note, lensNote, file);
         }
     }
 
@@ -147,13 +148,14 @@ final class Cr3Parser {
     }
 
     /**
-     * Returns the maker note directory holding the color data: the one of the timed metadata's
-     * records, whose {@code CMT3} copy leaves the color data out.
+     * Returns the maker note directory holding a tag: the one of the timed metadata's records, since the
+     * {@code CMT3} copy leaves the color data and the lens correction data out.
      *
      * @param state the walk's state
-     * @return the directory, or {@code null}
+     * @param wanted the tag
+     * @return the directory, the {@code CMT3} one when no record holds the tag, or {@code null}
      */
-    private static Ifd makerNote(State state) {
+    private static Ifd makerNote(State state, int wanted) {
         if (state.timedLength <= 0) {
             return state.cmt3;
         }
@@ -185,7 +187,7 @@ final class Cr3Parser {
                         try {
                             var tiff = TiffReader.open(state.file.source, state.timedOffset + record + 8, state.file.limits);
                             var note = tiff.directory(tiff.firstDirectory());
-                            if (note.has(COLOR_DATA)) {
+                            if (note.has(wanted)) {
                                 return note;
                             }
                         } catch (MediaException.Malformed exception) {
@@ -206,10 +208,11 @@ final class Cr3Parser {
      * @param track the image's track
      * @param reader a reader over the file
      * @param note the maker note directory, or {@code null}
+     * @param lensNote the maker note directory holding the lens correction data, or {@code null}
      * @param file the description to fill
      * @return the sensor description
      */
-    private static Sensor sensor(Track track, TiffReader reader, Ifd note, RawFile file) {
+    private static Sensor sensor(Track track, TiffReader reader, Ifd note, Ifd lensNote, RawFile file) {
         var image = track.image();
         LimitChecks.checkPicture(file.limits, image.width(), image.height());
         var sensor = new Sensor();
@@ -229,8 +232,9 @@ final class Cr3Parser {
         if (note != null) {
             Cr2Parser.colorData(note, sensor, file);
         }
-        // TODO: correct the lens distortion and chromatic aberration of the PowerShot compacts, which Adobe DNG
-        //  Converter writes as a WarpRectilinear opcode list 3; where the file records the correction is not known yet
+        if (lensNote != null) {
+            sensor.lens = CanonLens.of(lensNote, sensor, file.model);
+        }
         return sensor;
     }
 

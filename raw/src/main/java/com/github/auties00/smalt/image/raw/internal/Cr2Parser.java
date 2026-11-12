@@ -327,6 +327,7 @@ final class Cr2Parser {
             }
         }
         colorData(note, sensor, file);
+        sensor.lens = CanonLens.of(note, sensor, file.model);
     }
 
     /**

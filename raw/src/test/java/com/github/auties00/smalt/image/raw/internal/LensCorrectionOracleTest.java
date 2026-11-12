@@ -22,10 +22,12 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Checks the lens corrections derived from the maker notes of Sony, Panasonic, Olympus and Fujifilm files against
+ * Checks the lens corrections derived from the maker notes of Sony, Panasonic, Olympus, Fujifilm and Canon PowerShot files
+ * against
  * the {@code WarpRectilinear} and {@code FixVignetteRadial} opcodes Adobe DNG Converter, run as a black box, writes
  * for the same CC0 samples, kept by {@code tools/testdata/raw-lens-oracle.py} in
  * {@code <conformance cache>/raw-lens-oracle} ({@code -Dsmalt.test.rawLensOracle}); skipped without them.
@@ -65,7 +67,48 @@ class LensCorrectionOracleTest {
             new Sample("rawpixls-fujifilm-x-t4-14bit-14bit-compressed-3-2.raf", 7, 7, 0.015),
             new Sample("rawpixls-fujifilm-gfx-50s-14bit-14bit-compressed-3-2.raf", 5, 5, 0.015),
             new Sample("rawpixls-fujifilm-x-a1-12bit-12bit-uncompressed-3-2.raf", 25, 25, 0.06),
-            new Sample("rawpixls-fujifilm-finepix-x10-12bit-12bit-uncompressed-4-3.raf", 3, 3, -1));
+            new Sample("rawpixls-fujifilm-finepix-x10-12bit-12bit-uncompressed-4-3.raf", 3, 3, -1),
+            // the converter corrects these from its own profiles or, the two oldest layouts, reads the same tag; its
+            // profile differs most from the camera's tables, which the JPEG follows, on the SX70 HS and the G1 X Mark II
+            new Sample("rawpixls-canon-powershot-g7-x-mark-iii-3-2.cr3", 7, 9, -1),
+            new Sample("rawpixls-canon-powershot-g5-x-mark-ii-raw-3-2.cr3", 1, 1, -1),
+            new Sample("rawpixls-canon-powershot-g5-x-mark-ii-c-raw-3-2.cr3", 1, 1, -1),
+            new Sample("rawpixls-canon-powershot-g5-x-mark-ii-c-raw-1-1.cr3", 2.5, 2.5, -1),
+            new Sample("rawpixls-canon-powershot-sx70-hs-raw-3-2-3-2.cr3", 33, 33, -1),
+            new Sample("rawpixls-canon-powershot-sx70-hs-c-raw-3-2-3-2.cr3", 33, 33, -1),
+            new Sample("rawpixls-canon-powershot-v1-craw-3-2.cr3", 0.5, 0.5, -1),
+            new Sample("rawpixls-canon-powershot-g1-x-raw-4-3.cr2", 1, 1, -1),
+            new Sample("rawpixls-canon-powershot-g1-x-mark-ii-raw-3-2.cr2", 21, 22, -1),
+            new Sample("rawpixls-canon-powershot-g1-x-mark-iii-raw-3-2.cr2", 1, 1, -1),
+            new Sample("rawpixls-canon-powershot-g15-raw-4-3.cr2", 0.25, 0.25, -1),
+            new Sample("rawpixls-canon-powershot-g16-raw-4-3.cr2", 1.5, 1.5, -1),
+            new Sample("rawpixls-canon-powershot-g3-x-raw-3-2.cr2", 1.5, 3.5, -1),
+            new Sample("rawpixls-canon-powershot-g5-x-raw-3-2.cr2", 7.5, 9.5, -1),
+            new Sample("rawpixls-canon-powershot-g7-x-raw-3-2.cr2", 7.5, 9.5, -1),
+            new Sample("rawpixls-canon-powershot-g7-x-mark-ii-raw-3-2.cr2", 1, 1, -1),
+            new Sample("rawpixls-canon-powershot-g9-x-raw-3-2.cr2", 4, 4, -1),
+            new Sample("rawpixls-canon-powershot-g9-x-mark-ii-raw-3-2.cr2", 1.5, 1.5, -1),
+            new Sample("rawpixls-canon-powershot-s100-raw-4-3.cr2", 1, 1, -1),
+            new Sample("rawpixls-canon-powershot-s100v-raw-4-3.cr2", 0.5, 0.5, -1),
+            new Sample("rawpixls-canon-powershot-s110-raw-4-3.cr2", 1, 1.5, -1),
+            new Sample("rawpixls-canon-powershot-s120-raw-4-3.cr2", 2, 5, -1),
+            new Sample("rawpixls-canon-powershot-s95-raw-4-3.cr2", 1, 1, -1),
+            new Sample("rawpixls-canon-powershot-sx50-hs-raw-4-3.cr2", 0.25, 0.5, -1),
+            new Sample("rawpixls-canon-powershot-sx60-hs-raw-4-3.cr2", 3, 3, -1));
+
+    /**
+     * The samples on which the converter corrects no distortion, only about a pixel of chromatic aberration: the
+     * derived correction must stay as small, but no tolerance of theirs could tell a missing one.
+     */
+    private static final List<String> UNCORRECTED = List.of("rawpixls-canon-powershot-v1-craw-3-2.cr3",
+            "rawpixls-canon-powershot-g15-raw-4-3.cr2", "rawpixls-canon-powershot-sx50-hs-raw-4-3.cr2");
+
+    /**
+     * The samples whose maker note records no correction (a table of no knots, or no tag), for which the converter
+     * writes none either.
+     */
+    private static final List<String> RECORD_NONE = List.of("rawpixls-canon-powershot-g9-raw-4-3.cr2",
+            "rawpixls-canon-powershot-g11-raw-4-3.cr2", "rawpixls-canon-powershot-g12-raw-4-3.cr2");
 
     /**
      * The converter's opcodes of one sample.
@@ -211,7 +254,7 @@ class LensCorrectionOracleTest {
                     }
                 }
             }
-            if (correction < 4 * sample.green()) {
+            if (correction < 4 * sample.green() && !UNCORRECTED.contains(sample.name())) {
                 failures.add(sample.name() + ": the converter's correction of " + correction + " px is too small");
             }
             if (sample.name().contains("panasonic") && aberration < 3 * sample.redBlue()) {
@@ -246,11 +289,23 @@ class LensCorrectionOracleTest {
     }
 
     @Test
+    @DisplayName("the samples whose maker note records no correction get none, and the converter writes none")
+    void recordNone() throws IOException {
+        Skip.unless(Files.isDirectory(ORACLE), "data:raw-lens-oracle", "no lens oracle files in " + ORACLE);
+        for (var name : RECORD_NONE) {
+            var stem = name.substring(0, name.lastIndexOf('.'));
+            var oracle = Oracle.read(ORACLE.resolve(stem + ".lens"));
+            assertTrue(oracle.list2() == null && oracle.list3() == null, name);
+            assertNull(open(Conformance.fetchListed(name)).sensor.lens, name);
+        }
+    }
+
+    @Test
     @DisplayName("the rendering with the corrections correlates with the rendering of the converter's DNG file")
     void rendering() throws IOException {
         Skip.unless(Files.isDirectory(ORACLE), "data:raw-lens-oracle", "no lens oracle files in " + ORACLE);
         for (var name : List.of("rawpixls-sony-dsc-rx100m3-12bit-12bit-compressed-3-2.arw",
-                "rawpixls-olympus-e-m1-16bit-4-3.orf")) {
+                "rawpixls-olympus-e-m1-16bit-4-3.orf", "rawpixls-canon-powershot-g7-x-mark-iii-3-2.cr3")) {
             var stem = name.substring(0, name.lastIndexOf('.'));
             var options = RawDecoderOptions.builder().defaultCrop(false).embeddedPreview(false).highBitDepth(true)
                     .demosaic(RawDemosaic.BILINEAR).build();
@@ -262,7 +317,8 @@ class LensCorrectionOracleTest {
             assertEquals(converted.length, corrected.length, name);
             var with = correlation(converted, corrected);
             var without = correlation(converted, plain);
-            assertTrue(with > 0.99 && with > without, name + ": correlation " + with + " with, " + without
+            // the camera's correction of the PowerShot, up to 7 pixels from the converter's, shows at 16x16 blocks
+            assertTrue(with > (name.endsWith(".cr3") ? 0.85 : 0.99) && with > without, name + ": correlation " + with + " with, " + without
                     + " without the corrections");
         }
     }

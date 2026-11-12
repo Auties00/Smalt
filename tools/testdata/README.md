@@ -200,12 +200,16 @@ in `vectors.tsv` (about 6 GB of DNG files) into `<conformance cache>/raw-oracle-
 
 `python tools/testdata/raw-lens-oracle.py` (Windows, same converter) writes the oracle files of
 `LensCorrectionOracleTest` and `PixelShiftOracleTest` into `<conformance cache>/raw-lens-oracle`
-(`-Dsmalt.test.rawLensOracle`): for Sony, Panasonic, Olympus and Fujifilm samples a `<stem>.lens` file with the active
+(`-Dsmalt.test.rawLensOracle`): for Sony, Panasonic, Olympus, Fujifilm and Canon PowerShot samples a `<stem>.lens` file with the active
 area, the default crop and the opcode lists 2 and 3 of the converter's DNG file (the `WarpRectilinear` and
-`FixVignetteRadial` opcodes it derives from the maker note's lens corrections), keeping the DNG files of two samples
+`FixVignetteRadial` opcodes it derives from the maker note's lens corrections, or, on the PowerShot files, takes from its
+own profiles), keeping the DNG files of three samples
 for a rendering comparison; and for the pixel-shift Pentax PEF and DNG samples and the Sony ARQ sample a
 `<stem>.merged` summary (size, and per sample the SHA-256 and first row) of the linear DNG file the converter merges
-their frames into.
+their frames into. The `raw/src/test/resources/.../internal/canon-lens/*.bin` fixtures are maker note tag `0x4015` as
+stored in CC0 raw.pixls.us samples of `vectors.tsv`, cut out unchanged: `s95`, `g11`, `s110`, `g15`, `g16`, `g7x` and `g7xii`
+of the CR2 samples of those PowerShot models, `g7xiii`, `sx70` and `v1` of the CR3 samples of the G7 X Mark III, the SX70 HS
+(RAW 3:2) and the V1, and `eos-m50` of the EOS M50's.
 
 ## PNG oracles
 

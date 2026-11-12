@@ -198,12 +198,14 @@ class RawDecoderBehaviorTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @ValueSource(strings = {"lossless", "lossless-two-tiles", "lossy-version-1", "lossy-version-2", "dual-pixel"})
-    @DisplayName("synthetic Canon CR3 files of both CRX codings and codec versions and of dual pixel raw mode: "
-            + "identical pictures and sensor data, both images of a dual pixel file, under every source behavior "
+    @ValueSource(strings = {"lossless", "lossless-two-tiles", "lossy-version-1", "lossy-version-2", "dual-pixel",
+            "powershot-lens"})
+    @DisplayName("synthetic Canon CR3 files of both CRX codings and codec versions, of dual pixel raw mode and of a "
+            + "compact whose maker note records its lens correction: identical pictures and sensor data, both images of a dual pixel file, under every source behavior "
             + "and clean faults")
     void cr3(String name) {
-        var harness = harness("cr3/" + name, cr3File(name).write());
+        var harness = harness("cr3/" + name, name.equals("powershot-lens") ? LensShot.behaviorFile().write()
+                : cr3File(name).write());
         if (name.equals("dual-pixel")) {
             var options = RawDecoderOptions.builder().dualPixelImage(true).build();
             harness.decoder("dual pixel sensor data", source -> sensor(RawDecoder.decodeRaw(source, options)));

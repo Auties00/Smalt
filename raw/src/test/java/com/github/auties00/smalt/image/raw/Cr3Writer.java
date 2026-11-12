@@ -65,6 +65,8 @@ public final class Cr3Writer {
     public long seed = 1;
     /** Whether the file has the timed metadata track with the color data. */
     public boolean colorData = true;
+    /** The bytes of the lens correction tag of the timed metadata's maker note, or {@code null}. */
+    public byte[] lensTable;
     /** The camera model. */
     public String model = "Canon EOS R5";
     /** The ISO speed. */
@@ -734,7 +736,7 @@ public final class Cr3Writer {
         System.arraycopy(balance, 0, color, 71, 4);
         Arrays.fill(color, 329, 333, black);
         color[797] = white;
-        var note = tiff(ifd(new Object[][]{{0x4001, color}}));
+        var note = tiff(ifd(lensTable == null ? new Object[][]{{0x4001, color}} : new Object[][]{{0x4001, color}, {0x4015, lensTable}}));
         var record = concat(u32le(8 + note.length), u32le(0x927C), note);
         var exif = concat(u32le(12 + record.length), u16le(8), new byte[]{1, 1}, u16le(1), u16le(-1), record);
         var stamp = concat(u32le(24), u16le(1), new byte[]{0, 0}, u16le(1), u16le(0), new byte[12]);
@@ -781,6 +783,10 @@ public final class Cr3Writer {
                             data.writeBytes(u16le(v));
                         }
                     }
+                }
+                case byte[] values -> {
+                    directory.putShort((short) 7).putInt(values.length).putInt(dataStart + data.size());
+                    data.writeBytes(values);
                 }
                 default -> throw new IllegalArgumentException(value.toString());
             }

@@ -356,8 +356,8 @@ public final class RawDecoderOptions {
 
     /**
      * {@return whether the lens corrections a camera raw file records for its shot (radial distortion, lateral
-     * chromatic aberration and vignetting, from the maker note of Fujifilm, Olympus, Panasonic and Sony files) are
-     * applied to the rendering; {@code true} by default}
+     * chromatic aberration and vignetting, from the maker note of Canon PowerShot, Fujifilm, Olympus, Panasonic and
+     * Sony files) are applied to the rendering; {@code true} by default}
      *
      * <p>The corrections apply to the rendering of files that hold no DNG opcode list 3 of their own, after
      * demosaicing, as DNG {@code FixVignetteRadial} and {@code WarpRectilinear} opcodes would; a DNG file
