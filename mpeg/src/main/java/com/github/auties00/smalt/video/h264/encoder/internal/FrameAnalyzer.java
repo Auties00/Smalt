@@ -109,6 +109,12 @@ final class FrameAnalyzer {
     final int[] activity;
 
     /**
+     * The brightness of each macroblock, the sum of its 256 luma samples, measured with
+     * {@link #activity}.
+     */
+    final int[] brightness;
+
+    /**
      * The sum of {@link #intraCost}.
      */
     long intraSum;
@@ -152,6 +158,7 @@ final class FrameAnalyzer {
         this.interCost = new int[count];
         this.vectors = new int[count];
         this.activity = new int[count];
+        this.brightness = new int[count];
     }
 
     /**
@@ -233,7 +240,7 @@ final class FrameAnalyzer {
                 interTotal += intraBlock;
             }
             if (doActivity) {
-                activity[index] = activity(source, mbX, mbY);
+                activity[index] = activity(source, mbX, mbY, index);
             }
             if ((mbX + 1) % Wavefront.GROUP == 0 || mbX + 1 == mbWidth) {
                 progress.publish(base + mbY, mbX + 2);
@@ -377,15 +384,18 @@ final class FrameAnalyzer {
     }
 
     /**
-     * Returns the luma activity of a macroblock of the full-resolution source.
+     * Returns the luma activity of a macroblock of the full-resolution source, storing its
+     * {@link #brightness}.
      *
      * @param source the source picture
      * @param mbX the macroblock column
      * @param mbY the macroblock row
+     * @param index the macroblock address
      * @return the sum of the four 8x8 blocks' variances times 64, plus 64
      */
-    private int activity(Frame source, int mbX, int mbY) {
+    private int activity(Frame source, int mbX, int mbY, int index) {
         long energy = 0;
+        long total = 0;
         for (var block = 0; block < 4; block++) {
             var offset = source.lumaOrigin + (mbY * 16 + (block >> 1) * 8) * source.lumaStride + mbX * 16
                     + (block & 1) * 8;
@@ -393,7 +403,9 @@ final class FrameAnalyzer {
             var sum = packed & 0xFFFFFFFFL;
             var squares = packed >>> 32;
             energy += squares * 64 - sum * sum;
+            total += sum;
         }
+        brightness[index] = (int) total;
         return (int) Math.min(Integer.MAX_VALUE, (energy >> 6) + 64);
     }
 

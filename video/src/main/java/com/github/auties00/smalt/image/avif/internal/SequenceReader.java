@@ -7,19 +7,20 @@ import com.github.auties00.smalt.container.mp4.Mp4Demuxer;
 import com.github.auties00.smalt.image.AnimationFrame;
 import com.github.auties00.smalt.image.AnimationReader;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.Rgba16Picture;
+import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.internal.heif.HeifFile;
 import com.github.auties00.smalt.internal.heif.HeifMovie;
 import com.github.auties00.smalt.internal.heif.HeifPictures;
 import com.github.auties00.smalt.internal.heif.HeifProperty;
+import com.github.auties00.smalt.internal.heif.HeifSequence;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.VideoTrack;
 import com.github.auties00.smalt.video.av1.internal.SequenceHeader;
-
-import java.util.ArrayDeque;
 
 /**
  * Plays the image sequence of an AVIF file ({@code avis}): the color track, and the alpha track
@@ -28,15 +29,27 @@ import java.util.ArrayDeque;
  * <p>The color track is the first track with an {@code av01} sample entry and samples that is
  * not itself an auxiliary track; the alpha track is the first such track that references it with
  * {@code auxl} and whose {@code auxi} box, when present, names the alpha URN. Every sample of the
- * two tracks shows one frame, and the n-th alpha frame is the alpha plane of the n-th color
- * frame. The samples are read through {@link Mp4Demuxer}.
+ * two tracks shows one frame, and the frame of the n-th alpha sample is the alpha plane of the
+ * frame of the n-th color sample, whatever the timing of the two tracks. The samples are read
+ * through {@link Mp4Demuxer}.
  *
- * <p>Each frame is converted to RGBA; color premultiplied by alpha ({@code prem} track
- * reference) is divided back. Timestamps are the sums of the sample durations. A reader is not
- * thread-safe.
+ * <p>Each frame is converted to RGBA: 16-bit RGBA when the reader keeps a source depth above 8
+ * bits, 8-bit RGBA otherwise. Color premultiplied by alpha ({@code prem} track reference) is
+ * divided back; alpha frames of another bit depth than the color frames are rescaled to it, and
+ * alpha frames of another size are resampled to it with {@link HeifPictures#resampleAlpha}. A
+ * frame's timestamp is the presentation time of its color sample relative to the first one, and
+ * it lasts until that sample's duration ends.
  *
- * @implNote This implementation chooses the tracks as libavif's {@code avifDecoderReset}
- * ({@code src/read.c}, BSD 2-clause) does.
+ * <p>The reader seeks: it restarts both tracks at their last sync samples at or before the
+ * requested time, decodes the samples up to the one shown then, which is the frame a decode from
+ * the start shows, and pairs it with the alpha sample of the same index, so a seek returns the
+ * frames a read from the start does. When the alpha track restarts after that sample, the reader
+ * restarts both tracks at earlier times, down to the start, until the alpha track restarts at or
+ * before it. A reader is not thread-safe.
+ *
+ * @implNote This implementation chooses the tracks, and pairs their samples by index, as
+ * libavif's {@code avifDecoderReset} and {@code avifDecoderNextImage} ({@code src/read.c}, BSD
+ * 2-clause) do.
  */
 public final class SequenceReader implements AnimationReader {
     /**
@@ -85,14 +98,9 @@ public final class SequenceReader implements AnimationReader {
     private final MediaLimits limits;
 
     /**
-     * The color samples read ahead of their alpha samples.
+     * The samples of the color and alpha tracks, in track order.
      */
-    private final ArrayDeque<Packet> colorPackets = new ArrayDeque<>();
-
-    /**
-     * The alpha samples read ahead of their color samples.
-     */
-    private final ArrayDeque<Packet> alphaPackets = new ArrayDeque<>();
+    private final HeifSequence samples;
 
     /**
      * The canvas width.
@@ -105,19 +113,31 @@ public final class SequenceReader implements AnimationReader {
     private final int height;
 
     /**
-     * The presentation time of the next frame, in microseconds.
+     * The presentation time of the first color sample, in track time base units, or
+     * {@link Packet#NO_TIMESTAMP} until it is known.
      */
-    private long timestamp;
+    private long colorBase = Packet.NO_TIMESTAMP;
 
     /**
-     * The number of frames returned.
+     * The frame a seek decoded, which the next {@link #read()} returns, or {@code null}.
+     */
+    private AnimationFrame pending;
+
+    /**
+     * Whether a seek went past the last frame, so that the next {@link #read()} returns
+     * {@code null}.
+     */
+    private boolean exhausted;
+
+    /**
+     * The number of frames returned since the reader was opened or last sought.
      */
     private int frames;
 
     /**
-     * Whether the demuxer has no more samples.
+     * Whether the frames {@link #read()} returns keep a source depth above 8 bits.
      */
-    private boolean drained;
+    private final boolean highBitDepth;
 
     /**
      * Opens the sequence of a file.
@@ -125,11 +145,13 @@ public final class SequenceReader implements AnimationReader {
      * @param source the file
      * @param file the parsed file, which has a {@code moov} box
      * @param limits the bounds
+     * @param highBitDepth whether the frames {@link #read()} returns keep a source depth above 8
+     * bits, as {@link Rgba16Picture} pictures
      * @throws MediaException.Malformed if the file has no AV1 color track or its tracks are
      * corrupt
      * @throws MediaException.LimitExceeded if the canvas or the sample count exceeds the limits
      */
-    public SequenceReader(MediaSource source, HeifFile file, MediaLimits limits) {
+    public SequenceReader(MediaSource source, HeifFile file, MediaLimits limits, boolean highBitDepth) {
         var movie = HeifMovie.parse(source, file, limits);
         var color = colorTrack(movie);
         if (color == null) {
@@ -138,6 +160,7 @@ public final class SequenceReader implements AnimationReader {
         var alpha = alphaTrack(movie, color.id());
         this.info = color;
         this.limits = limits;
+        this.highBitDepth = highBitDepth;
         this.premultiplied = alpha != null && color.references("prem", alpha.id());
         this.nclx = color.property(HeifProperty.ColorNclx.class);
         this.demuxer = new Mp4Demuxer(source, DemuxerOptions.builder().limits(limits).build());
@@ -147,6 +170,8 @@ public final class SequenceReader implements AnimationReader {
             this.width = color.width() > 0 ? color.width() : colorTrack.width();
             this.height = color.height() > 0 ? color.height() : colorTrack.height();
             LimitChecks.checkPicture(limits, width, height);
+            this.samples = new HeifSequence(demuxer, colorTrack.id(), alphaTrack == null ? -1 : alphaTrack.id(), limits,
+                    "avif");
         } catch (RuntimeException exception) {
             demuxer.close();
             throw exception;
@@ -250,25 +275,29 @@ public final class SequenceReader implements AnimationReader {
 
     @Override
     public AnimationFrame read() {
+        if (pending != null) {
+            var frame = pending;
+            pending = null;
+            return frame;
+        }
+        if (exhausted) {
+            return null;
+        }
         try {
-            var color = next(colorPackets, colorTrack.id());
+            var color = nextColor();
             if (color == null) {
                 return null;
             }
             Packet alpha = null;
             if (alphaTrack != null) {
-                alpha = next(alphaPackets, alphaTrack.id());
+                alpha = nextAlpha();
                 if (alpha == null) {
                     throw new MediaException.Malformed("avif: the alpha track has fewer samples than the color track");
                 }
             }
             LimitChecks.checkFrames(limits, frames + 1L);
-            var picture = decode(color, alpha, false);
+            var frame = frame(color, alpha);
             frames++;
-            var duration = Math.max(0, colorTrack.timeBase().toMicros(color.duration()));
-            var frame = new AnimationFrame(premultiplied ? HeifPictures.unpremultiply(picture) : ImageOps.toRgba(picture),
-                    timestamp, duration);
-            timestamp += duration;
             return frame;
         } catch (MediaException exception) {
             throw exception;
@@ -280,23 +309,239 @@ public final class SequenceReader implements AnimationReader {
     }
 
     /**
+     * Decodes a color sample and its alpha sample into a frame.
+     *
+     * @param color the color sample
+     * @param alpha the alpha sample, or {@code null} without an alpha track
+     * @return the frame
+     */
+    private AnimationFrame frame(Packet color, Packet alpha) {
+        var picture = decode(color, alpha, highBitDepth);
+        var start = relative(color.pts());
+        var end = relative(color.pts() + Math.max(0, color.duration()));
+        var straight = premultiplied ? HeifPictures.unpremultiply(picture) : picture;
+        var rgba = highBitDepth && (straight instanceof Yuv16Picture || straight instanceof Rgba16Picture)
+                ? ImageOps.toRgba16(straight) : ImageOps.toRgba(straight);
+        return new AnimationFrame(rgba, start, Math.max(0, end - start));
+    }
+
+    /**
+     * {@return a presentation time of the color track relative to its first sample, in
+     * microseconds}
+     *
+     * @param pts the presentation time, in track time base units
+     */
+    private long relative(long pts) {
+        return colorTrack.timeBase().toMicros(pts - colorBase);
+    }
+
+    /**
+     * {@return the next color sample, or {@code null} at the end of the track}
+     */
+    private Packet nextColor() {
+        var packet = samples.nextColor();
+        if (packet != null && colorBase == Packet.NO_TIMESTAMP) {
+            colorBase = packet.pts();
+        }
+        return packet;
+    }
+
+    /**
+     * {@return the next alpha sample, or {@code null} at the end of the track}
+     */
+    private Packet nextAlpha() {
+        return samples.nextAlpha();
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return {@code true}
+     */
+    @Override
+    public boolean isSeekable() {
+        return true;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The frame then returned equals the one a decode from the start returns at that time
+     * (see the class description).
+     *
+     * @throws MediaException.Malformed if a sample decoded while seeking is corrupt, or the alpha
+     * track has no sample for the frame
+     * @throws MediaException.LimitExceeded if the samples of the two tracks are too far apart
+     */
+    @Override
+    public void seek(long micros) {
+        try {
+            seekFrom(Math.max(0, micros));
+        } catch (MediaException exception) {
+            throw exception;
+        } catch (OutOfMemoryError error) {
+            throw new MediaException.LimitExceeded("out of memory while seeking an AVIF sequence");
+        } catch (RuntimeException exception) {
+            throw new MediaException.Malformed("malformed AVIF sequence", exception);
+        }
+    }
+
+    /**
+     * Seeks to a time at or after the first frame.
+     *
+     * <p>The color sample shown at the target is found from the last sync samples at or before
+     * it. When the alpha track restarts after that sample, both tracks restart at half the time,
+     * then a quarter, down to the start, until the alpha track restarts at or before it, and the
+     * color track is decoded again up to the same sample.
+     *
+     * @param target the time relative to the first color sample, in microseconds, at least zero
+     */
+    private void seekFrom(long target) {
+        pending = null;
+        exhausted = false;
+        if (colorBase == Packet.NO_TIMESTAMP) {
+            var first = samples.peekColor();
+            if (first == null) {
+                exhausted = true;
+                return;
+            }
+            colorBase = first.pts();
+        }
+        var base = colorTrack.timeBase().toMicros(colorBase);
+        restart(base + target);
+        Packet color;
+        while (true) {
+            color = nextColor();
+            if (color == null) {
+                exhausted = true;
+                return;
+            }
+            if (relative(color.pts() + Math.max(0, color.duration())) > target) {
+                break;
+            }
+            skip(colorDecoder, colorTrack, color);
+        }
+        Packet alpha = null;
+        if (alphaTrack != null) {
+            var index = color.sampleIndex();
+            if (!alphaRestartsBy(index)) {
+                var time = target;
+                do {
+                    time /= 2;
+                    // the last attempt restarts every track at its first sync sample, which an alpha track timed
+                    // faster than its color track may hold before the first color sample
+                    restart(time > 0 ? base + time : Math.min(0, base));
+                } while (time > 0 && !alphaRestartsBy(index));
+                if (!alphaRestartsBy(index)) {
+                    throw new MediaException.Malformed("avif: the alpha track has no sample for color sample " + index);
+                }
+                color = colorSample(index);
+            }
+            alpha = alphaSample(index);
+        }
+        pending = frame(color, alpha);
+    }
+
+    /**
+     * Seeks the demuxer and resets the decoders.
+     *
+     * @param micros the presentation time the demuxer seeks to, in microseconds
+     */
+    private void restart(long micros) {
+        samples.seek(micros);
+        colorDecoder.close();
+        if (alphaDecoder != null) {
+            alphaDecoder.close();
+        }
+        frames = 0;
+    }
+
+    /**
+     * {@return whether the next alpha sample comes at or before a sample, so that its frame can be decoded}
+     *
+     * @param index the index of the sample
+     */
+    private boolean alphaRestartsBy(long index) {
+        var first = samples.peekAlpha();
+        return first != null && first.sampleIndex() <= index;
+    }
+
+    /**
+     * Decodes the color samples before a sample and returns that sample.
+     *
+     * @param index the index of the sample
+     * @return the sample
+     * @throws MediaException.Malformed if the color track has no such sample after where it restarted
+     */
+    private Packet colorSample(long index) {
+        while (true) {
+            var color = nextColor();
+            if (color == null || color.sampleIndex() > index) {
+                throw new MediaException.Malformed("avif: the color track has no sample " + index);
+            }
+            if (color.sampleIndex() == index) {
+                return color;
+            }
+            skip(colorDecoder, colorTrack, color);
+        }
+    }
+
+    /**
+     * Decodes the alpha samples before a sample and returns that sample.
+     *
+     * @param index the index of the sample
+     * @return the sample
+     * @throws MediaException.Malformed if the alpha track has no such sample
+     */
+    private Packet alphaSample(long index) {
+        while (true) {
+            var alpha = nextAlpha();
+            if (alpha == null || alpha.sampleIndex() > index) {
+                throw new MediaException.Malformed("avif: the alpha track has no sample for color sample " + index);
+            }
+            if (alpha.sampleIndex() == index) {
+                return alpha;
+            }
+            skip(alphaDecoder, alphaTrack, alpha);
+        }
+    }
+
+    /**
+     * Decodes a sample for the decoding state of the samples after it and drops its picture.
+     *
+     * @param decoder the decoder of the track
+     * @param track the track the sample belongs to
+     * @param sample the sample decoded and dropped
+     */
+    private static void skip(ItemDecoder decoder, VideoTrack track, Packet sample) {
+        var picture = decoder.decodeSample(track.codecConfig().orElse(null), sample.data());
+        if (picture != null) {
+            picture.release();
+        }
+    }
+
+    /**
      * Decodes the first frame as a planar picture, for still decoding.
+     *
+     * <p>Without {@code highBitDepth}, a YCgCo-Re or YCgCo-Ro source of more than 8 bits decodes to 8-bit RGBA
+     * (see {@link Colors#toEightBit}), and color premultiplied by alpha to straight RGBA.
      *
      * @param highBitDepth whether a source of more than 8 bits keeps its depth
      * @return the picture of the first frame
      * @throws MediaException.Malformed if the sequence has no frame
      */
     public Picture readFirstPicture(boolean highBitDepth) {
-        var color = next(colorPackets, colorTrack.id());
+        var color = nextColor();
         if (color == null) {
             throw new MediaException.Malformed("avif: the sequence has no frame");
         }
-        Packet alpha = alphaTrack == null ? null : next(alphaPackets, alphaTrack.id());
+        Packet alpha = alphaTrack == null ? null : nextAlpha();
         if (alphaTrack != null && alpha == null) {
             throw new MediaException.Malformed("avif: the alpha track has no sample");
         }
         var picture = decode(color, alpha, highBitDepth);
-        return premultiplied ? HeifPictures.unpremultiply(picture) : picture;
+        var straight = premultiplied ? HeifPictures.unpremultiply(picture) : picture;
+        return highBitDepth ? straight : Colors.toEightBit(straight);
     }
 
     /**
@@ -304,7 +549,8 @@ public final class SequenceReader implements AnimationReader {
      *
      * @param color the color sample
      * @param alpha the alpha sample, or {@code null}
-     * @param wide whether a source of more than 8 bits keeps its depth
+     * @param wide whether a source of more than 8 bits keeps its depth; a YCgCo-Re or YCgCo-Ro source keeps it
+     * regardless (see {@link Colors#reducesToRgb})
      * @return the picture
      */
     private Picture decode(Packet color, Packet alpha, boolean wide) {
@@ -313,8 +559,14 @@ public final class SequenceReader implements AnimationReader {
             throw new MediaException.Malformed("avif: a color sample shows no frame");
         }
         try {
+            var lightProperty = info.property(HeifProperty.ContentLightLevel.class);
+            var masteringProperty = info.property(HeifProperty.MasteringDisplay.class);
+            var description = Colors.colorInfo(nclx, colorFrame.seqHdr,
+                    masteringProperty != null ? HeifPictures.masteringDisplay(masteringProperty) : colorDecoder.masteringDisplay(),
+                    lightProperty != null ? HeifPictures.contentLightLevel(lightProperty) : colorDecoder.contentLightLevel());
             var canvas = new Canvas(limits, colorFrame.w, colorFrame.h, SequenceHeader.chromaFormat(colorFrame.layout),
-                    colorFrame.bpc, wide && colorFrame.bpc > 8, alpha != null);
+                    colorFrame.bpc, colorFrame.bpc > 8 && (wide || Colors.reducesToRgb(description.matrix(),
+                    colorFrame.bpc)), alpha != null);
             canvas.writeColor(colorFrame, 0, 0, colorFrame.w, colorFrame.h, true);
             if (alpha != null) {
                 var alphaFrame = alphaDecoder.decodeSample(alphaTrack.codecConfig().orElse(null), alpha.data());
@@ -322,47 +574,23 @@ public final class SequenceReader implements AnimationReader {
                     throw new MediaException.Malformed("avif: an alpha sample shows no frame");
                 }
                 try {
-                    if (alphaFrame.w != colorFrame.w || alphaFrame.h != colorFrame.h || alphaFrame.bpc != colorFrame.bpc) {
-                        throw new MediaException.Unsupported("avif", "the alpha frames differ from the color frames in size or depth");
+                    var limited = !alphaFrame.seqHdr.colorRange;
+                    if (alphaFrame.w == colorFrame.w && alphaFrame.h == colorFrame.h) {
+                        canvas.writeAlpha(alphaFrame, 0, 0, colorFrame.w, colorFrame.h, limited);
+                    } else {
+                        var luma = HeifPictures.lumaPicture(alphaFrame.data[0], 0, alphaFrame.stride[0], alphaFrame.w,
+                                alphaFrame.h, alphaFrame.bpc);
+                        canvas.writeAlpha(HeifPictures.resampleAlpha(luma, colorFrame.w, colorFrame.h), 0, 0,
+                                colorFrame.w, colorFrame.h, limited);
                     }
-                    canvas.writeAlpha(alphaFrame, 0, 0, colorFrame.w, colorFrame.h, !alphaFrame.seqHdr.colorRange);
                 } finally {
                     alphaFrame.release();
                 }
             }
-            var lightProperty = info.property(HeifProperty.ContentLightLevel.class);
-            var masteringProperty = info.property(HeifProperty.MasteringDisplay.class);
-            var description = Colors.colorInfo(nclx, colorFrame.seqHdr,
-                    masteringProperty != null ? HeifPictures.masteringDisplay(masteringProperty) : colorDecoder.masteringDisplay(),
-                    lightProperty != null ? HeifPictures.contentLightLevel(lightProperty) : colorDecoder.contentLightLevel());
             return canvas.toPicture(description);
         } finally {
             colorFrame.release();
         }
-    }
-
-    /**
-     * Returns the next sample of a track, reading ahead through the demuxer.
-     *
-     * @param queue the samples of the track already read
-     * @param trackId the track identifier
-     * @return the sample, or {@code null} when the track has no more
-     */
-    private Packet next(ArrayDeque<Packet> queue, int trackId) {
-        while (queue.isEmpty() && !drained) {
-            var packet = demuxer.read();
-            if (packet == null) {
-                drained = true;
-            } else if (packet.trackId() == colorTrack.id()) {
-                colorPackets.add(packet);
-            } else if (alphaTrack != null && packet.trackId() == alphaTrack.id()) {
-                alphaPackets.add(packet);
-            }
-            if (colorPackets.size() + alphaPackets.size() > limits.maxFrames()) {
-                throw new MediaException.LimitExceeded("avif: the color and alpha samples are too far apart");
-            }
-        }
-        return queue.poll();
     }
 
     @Override
@@ -372,7 +600,6 @@ public final class SequenceReader implements AnimationReader {
             alphaDecoder.close();
         }
         demuxer.close();
-        colorPackets.clear();
-        alphaPackets.clear();
+        samples.clear();
     }
 }

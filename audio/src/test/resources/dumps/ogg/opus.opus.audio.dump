@@ -1,0 +1,39 @@
+# audio decode dump of ogg/opus.opus; regenerate with -Dsmalt.test.updateDumps=true
+format OGG
+duration 2000000
+seekable true
+track 0 OPUS rate=48000 layout=[FRONT_LEFT, FRONT_RIGHT]
+0 frames=4096 crc16=45e75339
+1 frames=4096 crc16=d4126d73
+2 frames=4096 crc16=bd2238dc
+3 frames=4096 crc16=89d69bbe
+4 frames=4096 crc16=71b822af
+5 frames=4096 crc16=c463d037
+6 frames=4096 crc16=1152cc9f
+7 frames=4096 crc16=94b3fa0c
+8 frames=4096 crc16=ec2ad21b
+9 frames=4096 crc16=6eda7c9f
+10 frames=4096 crc16=9656fd76
+11 frames=4096 crc16=f4014101
+12 frames=4096 crc16=a6f402d1
+13 frames=4096 crc16=7fe5e414
+14 frames=4096 crc16=262ee0a0
+15 frames=4096 crc16=fdf68eec
+16 frames=4096 crc16=f4dc4c1a
+17 frames=4096 crc16=286bb386
+18 frames=4096 crc16=030a8e91
+19 frames=4096 crc16=f7261e22
+20 frames=4096 crc16=5f63d42e
+21 frames=4096 crc16=2e2ee774
+22 frames=4096 crc16=5dc1b72a
+23 frames=1792 crc16=4cf63608
+seek 0: @sample 0
+seek 666666: @sample 32000
+seek 1333333: @sample 64000
+seek 2000000: end
+seek -1000000: @sample 0
+header over READ_ONCE_UNKNOWN_LENGTH:
+  format OGG
+  duration -1
+  seekable false
+  track 0 OPUS rate=48000 layout=[FRONT_LEFT, FRONT_RIGHT]

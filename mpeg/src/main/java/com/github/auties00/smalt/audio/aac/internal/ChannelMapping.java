@@ -9,6 +9,7 @@ import com.github.auties00.smalt.internal.limits.LimitChecks;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.function.Consumer;
 
 /**
  * Maps the channel elements of an AAC frame to output channels in WAVE order.
@@ -38,7 +39,9 @@ public final class ChannelMapping {
             null, null, null,
             {ElementId.SCE, ElementId.CPE, ElementId.CPE, ElementId.SCE, ElementId.LFE},
             {ElementId.SCE, ElementId.CPE, ElementId.CPE, ElementId.CPE, ElementId.LFE},
-            null,
+            {ElementId.SCE, ElementId.CPE, ElementId.CPE, ElementId.CPE, ElementId.CPE, ElementId.SCE, ElementId.LFE,
+                    ElementId.LFE, ElementId.SCE, ElementId.CPE, ElementId.CPE, ElementId.SCE, ElementId.CPE,
+                    ElementId.SCE, ElementId.SCE, ElementId.CPE},
             {ElementId.SCE, ElementId.CPE, ElementId.CPE, ElementId.LFE, ElementId.CPE}
     };
 
@@ -61,7 +64,12 @@ public final class ChannelMapping {
                     Speaker.BACK_CENTER, Speaker.LOW_FREQUENCY},
             {Speaker.FRONT_CENTER, Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.SIDE_LEFT, Speaker.SIDE_RIGHT,
                     Speaker.BACK_LEFT, Speaker.BACK_RIGHT, Speaker.LOW_FREQUENCY},
-            null,
+            {Speaker.FRONT_CENTER, Speaker.FRONT_LEFT_OF_CENTER, Speaker.FRONT_RIGHT_OF_CENTER, Speaker.FRONT_LEFT,
+                    Speaker.FRONT_RIGHT, Speaker.SIDE_LEFT, Speaker.SIDE_RIGHT, Speaker.BACK_LEFT, Speaker.BACK_RIGHT,
+                    Speaker.BACK_CENTER, Speaker.LOW_FREQUENCY, Speaker.LOW_FREQUENCY_2, Speaker.TOP_FRONT_CENTER,
+                    Speaker.TOP_FRONT_LEFT, Speaker.TOP_FRONT_RIGHT, Speaker.TOP_SIDE_LEFT, Speaker.TOP_SIDE_RIGHT,
+                    Speaker.TOP_CENTER, Speaker.TOP_BACK_LEFT, Speaker.TOP_BACK_RIGHT, Speaker.TOP_BACK_CENTER,
+                    Speaker.BOTTOM_FRONT_CENTER, Speaker.BOTTOM_FRONT_LEFT, Speaker.BOTTOM_FRONT_RIGHT},
             {Speaker.FRONT_CENTER, Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.BACK_LEFT, Speaker.BACK_RIGHT,
                     Speaker.LOW_FREQUENCY, Speaker.TOP_FRONT_LEFT, Speaker.TOP_FRONT_RIGHT}
     };
@@ -144,15 +152,17 @@ public final class ChannelMapping {
     /**
      * Returns the mapping a program configuration describes.
      *
-     * <p>Loudspeakers are assigned from the channel positions each list implies, whatever mix
-     * of single and pair elements carries them. Front channels: an odd count starts with the
-     * center; the remaining channels form left and right pairs from the center outwards, the
-     * outermost pair feeding front left and right and the next one the left and right of
-     * center. Side channels: the first pair feeds the side speakers. Back channels: an odd count
-     * ends with the back center; the last pair feeds back left and right and the one before it
-     * the side speakers when no side pair did. LFE channels feed the LFE speaker. Any further
-     * channel feeds {@link Speaker#UNKNOWN} and is output after the positioned channels, in
-     * coding order.
+     * <p>Loudspeakers are assigned from the channel positions each list implies within each height
+     * layer, whatever mix of single and pair elements carries them. Front channels at normal height:
+     * an odd count starts with the center; the remaining channels form left and right pairs from the
+     * center outwards, the outermost pair feeding front left and right and the next one the left and
+     * right of center. Side channels at normal height: the first pair feeds the side speakers. Back
+     * channels at normal height: an odd count ends with the back center; the last pair feeds back left
+     * and right and the one before it the side speakers when no side pair did. The top layer follows
+     * the same rules with the top front, top side and top back speakers, an odd side count ending with
+     * the top center; the bottom layer places front channels on the bottom front speakers and has no
+     * side or back speakers. LFE channels feed the LFE speaker. Any further channel feeds
+     * {@link Speaker#UNKNOWN} and is output after the positioned channels, in coding order.
      *
      * @param config the program configuration
      * @param limits the resource limits
@@ -165,47 +175,22 @@ public final class ChannelMapping {
         var tags = new ArrayList<Integer>();
         var speakers = new ArrayList<Speaker>();
         var used = new boolean[Speaker.values().length];
-        var front = addElements(config.front(), types, tags);
-        var frontPairs = front / 2;
-        for (var channel = 0; channel < front; channel++) {
-            if (front % 2 == 1 && channel == 0) {
-                addSingle(speakers, used, Speaker.FRONT_CENTER);
-                continue;
-            }
-            var pair = (channel - front % 2) / 2;
-            var left = (channel - front % 2) % 2 == 0;
-            var fromOutside = frontPairs - 1 - pair;
-            if (fromOutside == 0) {
-                addSingle(speakers, used, left ? Speaker.FRONT_LEFT : Speaker.FRONT_RIGHT);
-            } else if (fromOutside == 1) {
-                addSingle(speakers, used, left ? Speaker.FRONT_LEFT_OF_CENTER : Speaker.FRONT_RIGHT_OF_CENTER);
-            } else {
-                addSingle(speakers, used, Speaker.UNKNOWN);
-            }
-        }
-        var side = addElements(config.side(), types, tags);
-        for (var channel = 0; channel < side; channel++) {
-            addSingle(speakers, used, channel < 2 && side >= 2
-                    ? (channel == 0 ? Speaker.SIDE_LEFT : Speaker.SIDE_RIGHT) : Speaker.UNKNOWN);
-        }
-        var back = addElements(config.back(), types, tags);
-        var backPairs = back / 2;
-        for (var channel = 0; channel < back; channel++) {
-            if (back % 2 == 1 && channel == back - 1) {
-                addSingle(speakers, used, Speaker.BACK_CENTER);
-                continue;
-            }
-            var pair = channel / 2;
-            var left = channel % 2 == 0;
-            var fromLast = backPairs - 1 - pair;
-            if (fromLast == 0) {
-                addSingle(speakers, used, left ? Speaker.BACK_LEFT : Speaker.BACK_RIGHT);
-            } else if (fromLast == 1 && side < 2) {
-                addSingle(speakers, used, left ? Speaker.SIDE_LEFT : Speaker.SIDE_RIGHT);
-            } else {
-                addSingle(speakers, used, Speaker.UNKNOWN);
-            }
-        }
+        addElements(config.front(), types, tags);
+        var front = layerChannels(config.front());
+        var frontSeen = new int[front.length];
+        forEachChannel(config.front(), height -> addSingle(speakers, used,
+                frontSpeaker(height, frontSeen[height.ordinal()]++, front[height.ordinal()])));
+        addElements(config.side(), types, tags);
+        var side = layerChannels(config.side());
+        var sideSeen = new int[side.length];
+        forEachChannel(config.side(), height -> addSingle(speakers, used,
+                sideSpeaker(height, sideSeen[height.ordinal()]++, side[height.ordinal()])));
+        addElements(config.back(), types, tags);
+        var back = layerChannels(config.back());
+        var backSeen = new int[back.length];
+        var sidePair = side[ProgramConfig.Height.NORMAL.ordinal()] >= 2;
+        forEachChannel(config.back(), height -> addSingle(speakers, used,
+                backSpeaker(height, backSeen[height.ordinal()]++, back[height.ordinal()], sidePair)));
         for (var tag : config.lfe()) {
             types.add(ElementId.LFE);
             tags.add(tag);
@@ -215,21 +200,172 @@ public final class ChannelMapping {
     }
 
     /**
-     * Appends the slots of an element list and counts its channels.
+     * Counts the channels of each height layer of an element list.
+     *
+     * @param elements the elements of one list
+     * @return the channel count, indexed by {@link ProgramConfig.Height} ordinal
+     */
+    private static int[] layerChannels(List<ProgramConfig.Element> elements) {
+        var counts = new int[ProgramConfig.Height.values().length];
+        for (var element : elements) {
+            counts[element.height().ordinal()] += element.pair() ? 2 : 1;
+        }
+        return counts;
+    }
+
+    /**
+     * Visits the height layer of every channel of an element list, in coding order.
+     *
+     * @param elements the elements of one list
+     * @param action receives the layer of each channel
+     */
+    private static void forEachChannel(List<ProgramConfig.Element> elements, Consumer<ProgramConfig.Height> action) {
+        for (var element : elements) {
+            action.accept(element.height());
+            if (element.pair()) {
+                action.accept(element.height());
+            }
+        }
+    }
+
+    /**
+     * Returns the loudspeaker of a front channel.
+     *
+     * @param height the channel's layer
+     * @param channel the channel's index among the front channels of its layer
+     * @param count the number of front channels of its layer
+     * @return the speaker, or {@link Speaker#UNKNOWN} when the layer has no such position
+     */
+    private static Speaker frontSpeaker(ProgramConfig.Height height, int channel, int count) {
+        return switch (height) {
+            case NORMAL -> frontSpeaker(channel, count, Speaker.FRONT_CENTER, Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT,
+                    Speaker.FRONT_LEFT_OF_CENTER, Speaker.FRONT_RIGHT_OF_CENTER);
+            case TOP -> frontSpeaker(channel, count, Speaker.TOP_FRONT_CENTER, Speaker.TOP_FRONT_LEFT,
+                    Speaker.TOP_FRONT_RIGHT, Speaker.UNKNOWN, Speaker.UNKNOWN);
+            case BOTTOM -> frontSpeaker(channel, count, Speaker.BOTTOM_FRONT_CENTER, Speaker.BOTTOM_FRONT_LEFT,
+                    Speaker.BOTTOM_FRONT_RIGHT, Speaker.UNKNOWN, Speaker.UNKNOWN);
+        };
+    }
+
+    /**
+     * Places a channel on the front speakers of one layer.
+     *
+     * @param channel the channel's index among the front channels of the layer
+     * @param count the number of front channels of the layer
+     * @param center the center speaker
+     * @param left the outermost left speaker
+     * @param right the outermost right speaker
+     * @param innerLeft the left speaker of the next pair inwards
+     * @param innerRight the right speaker of the next pair inwards
+     * @return the speaker
+     */
+    private static Speaker frontSpeaker(int channel, int count, Speaker center, Speaker left, Speaker right,
+                                        Speaker innerLeft, Speaker innerRight) {
+        if (count % 2 == 1 && channel == 0) {
+            return center;
+        }
+        var position = channel - count % 2;
+        var isLeft = position % 2 == 0;
+        var fromOutside = count / 2 - 1 - position / 2;
+        return switch (fromOutside) {
+            case 0 -> isLeft ? left : right;
+            case 1 -> isLeft ? innerLeft : innerRight;
+            default -> Speaker.UNKNOWN;
+        };
+    }
+
+    /**
+     * Returns the loudspeaker of a side channel.
+     *
+     * @param height the channel's layer
+     * @param channel the channel's index among the side channels of its layer
+     * @param count the number of side channels of its layer
+     * @return the speaker, or {@link Speaker#UNKNOWN} when the layer has no such position
+     */
+    private static Speaker sideSpeaker(ProgramConfig.Height height, int channel, int count) {
+        return switch (height) {
+            case NORMAL -> channel < 2 && count >= 2
+                    ? (channel == 0 ? Speaker.SIDE_LEFT : Speaker.SIDE_RIGHT) : Speaker.UNKNOWN;
+            case TOP -> {
+                if (count % 2 == 1 && channel == count - 1) {
+                    yield Speaker.TOP_CENTER;
+                }
+                yield channel < 2 ? (channel == 0 ? Speaker.TOP_SIDE_LEFT : Speaker.TOP_SIDE_RIGHT) : Speaker.UNKNOWN;
+            }
+            case BOTTOM -> Speaker.UNKNOWN;
+        };
+    }
+
+    /**
+     * Returns the loudspeaker of a back channel.
+     *
+     * @param height the channel's layer
+     * @param channel the channel's index among the back channels of its layer
+     * @param count the number of back channels of its layer
+     * @param sidePair whether a side pair at normal height took the side speakers
+     * @return the speaker, or {@link Speaker#UNKNOWN} when the layer has no such position
+     */
+    private static Speaker backSpeaker(ProgramConfig.Height height, int channel, int count, boolean sidePair) {
+        if (height == ProgramConfig.Height.BOTTOM) {
+            return Speaker.UNKNOWN;
+        }
+        var top = height == ProgramConfig.Height.TOP;
+        if (count % 2 == 1 && channel == count - 1) {
+            return top ? Speaker.TOP_BACK_CENTER : Speaker.BACK_CENTER;
+        }
+        var isLeft = channel % 2 == 0;
+        var fromLast = count / 2 - 1 - channel / 2;
+        if (fromLast == 0) {
+            return top ? (isLeft ? Speaker.TOP_BACK_LEFT : Speaker.TOP_BACK_RIGHT)
+                    : (isLeft ? Speaker.BACK_LEFT : Speaker.BACK_RIGHT);
+        }
+        return fromLast == 1 && !top && !sidePair
+                ? (isLeft ? Speaker.SIDE_LEFT : Speaker.SIDE_RIGHT) : Speaker.UNKNOWN;
+    }
+
+    /**
+     * Appends the slots of an element list.
      *
      * @param elements the channel elements of one program configuration position
      * @param types the slot types, appended to
      * @param tags the slot tags, appended to
-     * @return the number of channels the elements carry
      */
-    private static int addElements(List<ProgramConfig.Element> elements, List<Integer> types, List<Integer> tags) {
-        var channels = 0;
+    private static void addElements(List<ProgramConfig.Element> elements, List<Integer> types, List<Integer> tags) {
         for (var element : elements) {
             types.add(element.pair() ? ElementId.CPE : ElementId.SCE);
             tags.add(element.tag());
-            channels += element.pair() ? 2 : 1;
         }
-        return channels;
+    }
+
+    /**
+     * Returns the mapping of an element sequence whose elements name their loudspeakers, as the elements of
+     * ER BSAC do.
+     *
+     * <p>A loudspeaker that an earlier element took already is replaced by {@link Speaker#UNKNOWN}, a pair as a
+     * whole.
+     *
+     * @param types the element types in coding order
+     * @param speakers the preferred loudspeaker of each coded channel, two per pair element
+     * @param limits the resource limits
+     * @return the mapping
+     * @throws MediaException.LimitExceeded if the channel count exceeds the limits
+     */
+    public static ChannelMapping ofSpeakers(int[] types, Speaker[] speakers, MediaLimits limits) {
+        LimitChecks.checkChannels(limits, Math.max(speakers.length, 1));
+        var assigned = new ArrayList<Speaker>(speakers.length);
+        var used = new boolean[Speaker.values().length];
+        var channel = 0;
+        for (var type : types) {
+            if (type == ElementId.CPE) {
+                addPair(assigned, used, speakers[channel], speakers[channel + 1]);
+                channel += 2;
+            } else {
+                addSingle(assigned, used, speakers[channel++]);
+            }
+        }
+        var tags = new int[types.length];
+        Arrays.fill(tags, -1);
+        return new ChannelMapping(types.clone(), tags, assigned.toArray(Speaker[]::new), limits);
     }
 
     /**
@@ -290,6 +426,19 @@ public final class ChannelMapping {
     }
 
     /**
+     * Returns the coded channel each output channel receives.
+     *
+     * @return a new array holding, for every output channel, the coded channel index
+     */
+    public int[] codedOrder() {
+        var coded = new int[outputIndex.length];
+        for (var channel = 0; channel < outputIndex.length; channel++) {
+            coded[outputIndex[channel]] = channel;
+        }
+        return coded;
+    }
+
+    /**
      * Returns the output channel that receives a coded channel.
      *
      * @param codedChannel the coded channel index
@@ -297,6 +446,25 @@ public final class ChannelMapping {
      */
     public int outputIndex(int codedChannel) {
         return outputIndex[codedChannel];
+    }
+
+    /**
+     * Returns the loudspeaker a coded channel feeds.
+     *
+     * @param codedChannel the coded channel index
+     * @return the speaker
+     */
+    public Speaker speaker(int codedChannel) {
+        return layout.speakers().get(outputIndex[codedChannel]);
+    }
+
+    /**
+     * Returns the element type of each slot, in coding order.
+     *
+     * @return a new array of {@link ElementId} values
+     */
+    public int[] elementTypes() {
+        return slotTypes.clone();
     }
 
     /**

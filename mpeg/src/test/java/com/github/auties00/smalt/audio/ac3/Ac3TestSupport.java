@@ -150,6 +150,7 @@ final class Ac3TestSupport {
                         total, buffer));
                 timestamp += samples(unit);
             }
+            decoder.flush(buffer -> append(planes, layout, total, buffer));
             return new Decoded(layout[0], planes, total[0], decoder.sampleRate());
         }
     }

@@ -375,7 +375,12 @@ final class Mp3Tables {
     };
 
     /**
-     * Holds the mixed-block scalefactor band widths, zero-terminated (minimp3 {@code g_scf_mixed}).
+     * Holds the mixed-block scalefactor band widths, zero-terminated (minimp3 {@code g_scf_mixed}): the long bands
+     * of the low subbands, then the short bands of every window from the band where those subbands end.
+     *
+     * <p>The 8 kHz row is not minimp3's, whose long part covers 48 coefficients and whose short part runs 24
+     * coefficients past the granule; it is built as the other rows are, from the 8 kHz long and short tables: six
+     * long bands of 12 cover the four long subbands, and the short bands start at the fourth.
      */
     static final int[][] SFB_MIXED = {
             {
@@ -383,8 +388,8 @@ final class Mp3Tables {
                 14, 18, 18, 18, 24, 24, 24, 30, 30, 30, 40, 40, 40, 18, 18, 18, 0, 0, 0, 0
             },
             {
-                12, 12, 12, 4, 4, 4, 8, 8, 8, 12, 12, 12, 16, 16, 16, 20, 20, 20, 24, 24,
-                24, 28, 28, 28, 36, 36, 36, 2, 2, 2, 2, 2, 2, 2, 2, 2, 26, 26, 26, 0
+                12, 12, 12, 12, 12, 12, 12, 12, 12, 16, 16, 16, 20, 20, 20, 24, 24, 24, 28, 28,
+                28, 36, 36, 36, 2, 2, 2, 2, 2, 2, 2, 2, 2, 26, 26, 26, 0, 0, 0, 0
             },
             {
                 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 8, 8, 8, 10, 10, 10, 14, 14,
