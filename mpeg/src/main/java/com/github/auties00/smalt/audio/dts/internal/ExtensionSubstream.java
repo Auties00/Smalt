@@ -237,8 +237,8 @@ public final class ExtensionSubstream {
     }
 
     /**
-     * {@return the ratio of the rate of the XLL channels coded against a core to the rate of that core, 1 or 2, when
-     * this decoder can add them to the core, or {@code 0}}
+     * {@return the ratio of the rate of band 0 of the XLL channels coded against a core to the rate of that core, 1 or
+     * 2, when this decoder can add them to the core, or {@code 0}}
      *
      * <p>A frame that breaks the syntax or needs a peak bit rate smoothing buffer codes none this decoder can add.
      *

@@ -8,7 +8,8 @@ import java.util.Arrays;
 /**
  * Decodes the XLL lossless extension (ETSI TS 102 114 clause 8): the residuals of every channel set, inverse fixed
  * and adaptive prediction, pairwise channel decorrelation, the MSB and LSB parts, the reversal of the embedded
- * downmixes, and the sum with the core where the residual is coded against it.
+ * downmixes, the sum with the core where the residual is coded against it, and the joining of the two frequency bands
+ * of the rates above 96 kHz ({@link XllBandSynthesis}).
  *
  * <p>Instances are not thread-safe.
  */
@@ -42,6 +43,16 @@ final class XllDecoder {
     private static final int MAX_FRAME = 1 << 13;
 
     /**
+     * The largest number of frequency bands this decoder joins.
+     */
+    private static final int BANDS = 2;
+
+    /**
+     * The highest sample rate this decoder decodes.
+     */
+    private static final int MAX_RATE = 192000;
+
+    /**
      * The reader of the extension.
      */
     private final MsbBitReader reader = new MsbBitReader(new byte[0]);
@@ -57,14 +68,24 @@ final class XllDecoder {
     private final int[][][] naviSizes = new int[4][][];
 
     /**
-     * The decoded samples by channel.
+     * The decoded samples by frequency band and channel; band 1 is allocated by the first frame that has it.
      */
-    private final int[][] samples = new int[64][MAX_FRAME];
+    private final int[][][] samples = new int[BANDS][][];
 
     /**
-     * The least significant bits of the scalable channels, by channel.
+     * The least significant bits of the scalable channels, by frequency band and channel.
      */
-    private final int[][] lsbs = new int[64][MAX_FRAME];
+    private final int[][][] lsbs = new int[BANDS][][];
+
+    /**
+     * The decimator history by channel.
+     */
+    private final int[][] history = new int[64][XllBandSynthesis.HISTORY];
+
+    /**
+     * The samples of a channel with its frequency bands joined.
+     */
+    private int[] joined;
 
     /**
      * Scratch space of the prediction.
@@ -158,6 +179,8 @@ final class XllDecoder {
         for (var i = 0; i < MAX_SETS; i++) {
             sets[i] = new ChannelSetHeader();
         }
+        samples[0] = new int[64][MAX_FRAME];
+        lsbs[0] = new int[64][MAX_FRAME];
     }
 
     /**
@@ -177,12 +200,8 @@ final class XllDecoder {
         for (var s = 0; s < sets0; s++) {
             bands = Math.max(bands, sets[s].bands);
         }
+        checkBands(bands);
         position = readNavigation(data, position, frameEnd, bands);
-        if (bands > 1) {
-            // TODO: frequency bands above 96 kHz need the band synthesis filter, which ETSI TS 102 114 does not
-            // specify.
-            throw new MediaException.Unsupported("DTS", "XLL frequency bands above 96 kHz are not supported");
-        }
         if (core != null) {
             if (codesAgainstCore() && !core.losslessReference()) {
                 // TODO: a core with a 128 times interpolated LFE channel has no oracle: ETSI TS 102 114 does not give
@@ -202,22 +221,25 @@ final class XllDecoder {
                     if (position + size > frameEnd) {
                         throw new MediaException.Malformed("DTS XLL band data overruns the frame");
                     }
-                    readBandData(data, position, size, set, segment);
+                    readBandData(data, position, size, set, band, segment);
                     position += size;
                 }
             }
         }
         var frameSamples = segments * segmentSamples;
         for (var s = 0; s < sets0; s++) {
-            reconstruct(sets[s], frameSamples);
+            for (var band = 0; band < bands; band++) {
+                reconstruct(sets[s], band, frameSamples);
+            }
         }
         addCore(core, frameSamples);
         render(frameSamples, channelBase);
     }
 
     /**
-     * {@return the ratio of the rate of an XLL component to the rate of a core, when the component has band 0 alone
-     * and every channel set at one rate, the rate of the core or twice it; else {@code 0}}
+     * {@return the ratio of the rate of band 0 of an XLL component to the rate of a core, when the component has
+     * frequency bands this decoder joins and every channel set has them at one rate, the rate of the core or twice it;
+     * else {@code 0}}
      *
      * <p>A component with no channel coded against the core is included: the frames after it may need the history its
      * core frame leaves in the fixed-point reconstruction.
@@ -232,13 +254,48 @@ final class XllDecoder {
      */
     int coreRatio(byte[] data, int offset, int length, ExtensionSubstream substream, int coreRate) {
         readHeaders(data, offset, length, substream);
-        var ratio = sets[0].sampleRate == 2 * coreRate ? 2 : 1;
+        var bands = sets[0].bands;
+        if (bands > BANDS || sets[0].sampleRate > MAX_RATE) {
+            return 0;
+        }
+        var ratio = sets[0].sampleRate / bands == 2 * coreRate ? 2 : 1;
         for (var s = 0; s < sets0; s++) {
-            if (sets[s].bands > 1 || sets[s].sampleRate != ratio * coreRate) {
+            if (sets[s].bands != bands || sets[s].sampleRate != ratio * coreRate * bands) {
                 return 0;
             }
         }
         return ratio;
+    }
+
+    /**
+     * Rejects the frequency bands this decoder does not join.
+     *
+     * @param bands the largest number of frequency bands of a channel set
+     * @throws MediaException.Unsupported if a channel set has four frequency bands or a rate above 192 kHz, or the
+     *         channel sets do not all have the same number of frequency bands
+     */
+    private void checkBands(int bands) {
+        if (bands > BANDS) {
+            // TODO: four frequency bands (bXtraFreqBands set) need a filter ETSI TS 102 114 does not give, and ffmpeg
+            // refuses them, so nothing shows what it is.
+            throw new MediaException.Unsupported("DTS", "XLL with four frequency bands");
+        }
+        for (var s = 0; s < sets0; s++) {
+            if (sets[s].sampleRate > MAX_RATE) {
+                // TODO: ffmpeg refuses 352.8 and 384 kHz, so nothing shows how their two frequency bands are joined.
+                throw new MediaException.Unsupported("DTS", "XLL at " + sets[s].sampleRate + " Hz");
+            }
+            if (sets[s].bands != bands) {
+                // TODO: channel sets at rates with different numbers of frequency bands would output channels at
+                // different rates, and ffmpeg refuses them.
+                throw new MediaException.Unsupported("DTS", "XLL channel sets with different frequency bands");
+            }
+        }
+        if (bands > 1 && samples[1] == null) {
+            samples[1] = new int[64][MAX_FRAME];
+            lsbs[1] = new int[64][MAX_FRAME];
+            joined = new int[2 * MAX_FRAME];
+        }
     }
 
     /**
@@ -304,7 +361,7 @@ final class XllDecoder {
             channelBase += set.channels;
             position += size;
         }
-        if (channelBase > samples.length) {
+        if (channelBase > samples[0].length) {
             throw new MediaException.Malformed("DTS XLL frame codes " + channelBase + " channels");
         }
         frameEnd = offset + frameSize;
@@ -341,11 +398,13 @@ final class XllDecoder {
     }
 
     /**
-     * Reads the band 0 data of one channel set in one segment (clauses 8.5.2.2 to 8.5.2.5).
+     * Reads the data of one frequency band of one channel set in one segment (clauses 8.5.2.2 to 8.5.2.5).
      */
-    private void readBandData(byte[] data, int position, int size, ChannelSetHeader set, int segment) {
-        var lsbSize = scalableLsbs ? set.lsbSize : 0;
-        var msbSize = size - lsbSize;
+    private void readBandData(byte[] data, int position, int size, ChannelSetHeader set, int band, int segment) {
+        var lsbSize = band > 0 || scalableLsbs ? set.lsbSize[band] : 0;
+        var covered = band == 0 || bandCrc == 3;
+        var lsbPart = lsbSize + (lsbSize > 0 && bandCrc >= 2 && covered ? 2 : 0);
+        var msbSize = size - lsbPart - (bandCrc >= 1 && covered ? 2 : 0);
         if (msbSize < 0) {
             throw new MediaException.Malformed("DTS XLL LSB part larger than its band data");
         }
@@ -377,8 +436,8 @@ final class XllDecoder {
         var lociBits = Integer.numberOfTrailingZeros(segmentSamples);
         for (var ch = 0; ch < set.channels; ch++) {
             var p = set.segmentType == 0 ? ch : 0;
-            var part0 = segment == 0 ? (set.segmentType == 0 ? set.adaptiveOrder[0][ch] : set.highestOrder[0]) : 0;
-            var buffer = samples[set.firstChannel + ch];
+            var part0 = segment == 0 ? (set.segmentType == 0 ? set.adaptiveOrder[band][ch] : set.highestOrder[band]) : 0;
+            var buffer = samples[band][set.firstChannel + ch];
             var index = base;
             if (!set.rice[p]) {
                 for (var n = 0; n < part0; n++) {
@@ -408,18 +467,39 @@ final class XllDecoder {
                 }
             }
         }
+        if (segment == 0 && band == 1) {
+            readHistory(set);
+        }
         reader.checkNotOverrun();
         if (lsbSize > 0) {
-            var lsbStart = position + size - lsbSize;
+            var lsbStart = position + size - lsbPart;
             reader.reset(data, lsbStart, lsbSize);
             for (var ch = 0; ch < set.channels; ch++) {
-                var bits = set.scalableBits[0][ch];
-                var buffer = lsbs[set.firstChannel + ch];
+                var bits = set.scalableBits[band][ch];
+                var buffer = lsbs[band][set.firstChannel + ch];
                 for (var n = 0; n < segmentSamples; n++) {
                     buffer[base + n] = bits > 0 ? reader.read(bits) : 0;
                 }
             }
             reader.checkNotOverrun();
+        } else if (band > 0 || scalableLsbs) {
+            // a band without an LSB part still shifts by its width adjustment or the fixed LSB width, over zeros
+            for (var ch = 0; ch < set.channels; ch++) {
+                Arrays.fill(lsbs[band][set.firstChannel + ch], base, base + segmentSamples, 0);
+            }
+        }
+    }
+
+    /**
+     * Reads the decimator history of a channel set (clause 8.5.2.4), signed values of a coded width.
+     */
+    private void readHistory(ChannelSetHeader set) {
+        var bits = reader.read(5) + 1;
+        for (var ch = 0; ch < set.channels; ch++) {
+            var target = history[set.firstChannel + ch];
+            for (var n = 0; n < target.length; n++) {
+                target[n] = reader.read(bits) << 32 - bits >> 32 - bits;
+            }
         }
     }
 
@@ -448,12 +528,13 @@ final class XllDecoder {
 
     /**
      * Runs the inverse fixed and adaptive prediction, the pairwise decorrelation, the channel reordering and the
-     * MSB/LSB assembly over band 0 of one channel set.
+     * MSB/LSB assembly over one frequency band of one channel set.
      */
-    private void reconstruct(ChannelSetHeader set, int frameSamples) {
+    private void reconstruct(ChannelSetHeader set, int band, int frameSamples) {
+        var bandSamples = samples[band];
         for (var ch = 0; ch < set.channels; ch++) {
-            var buffer = samples[set.firstChannel + ch];
-            var fixed = set.fixedOrder[0][ch];
+            var buffer = bandSamples[set.firstChannel + ch];
+            var fixed = set.fixedOrder[band][ch];
             if (fixed > 0) {
                 Arrays.fill(work, 0);
                 for (var n = 0; n < frameSamples; n++) {
@@ -465,9 +546,9 @@ final class XllDecoder {
                     buffer[n] = (int) work[2 * fixed];
                 }
             }
-            var order = set.adaptiveOrder[0][ch];
+            var order = set.adaptiveOrder[band][ch];
             if (order > 0) {
-                var coefficients = set.predictor(0, ch);
+                var coefficients = set.predictor(band, ch);
                 for (var n = order; n < frameSamples; n++) {
                     long sum = 0;
                     for (var k = 0; k < order; k++) {
@@ -479,12 +560,12 @@ final class XllDecoder {
                 }
             }
         }
-        if (set.pairwise[0]) {
+        if (set.pairwise[band]) {
             for (var pair = 0; pair < set.channels >> 1; pair++) {
-                var coefficient = set.pairCoefficients[0][pair];
+                var coefficient = set.pairCoefficients[band][pair];
                 if (coefficient != 0) {
-                    var basis = samples[set.firstChannel + 2 * pair];
-                    var target = samples[set.firstChannel + 2 * pair + 1];
+                    var basis = bandSamples[set.firstChannel + 2 * pair];
+                    var target = bandSamples[set.firstChannel + 2 * pair + 1];
                     for (var n = 0; n < frameSamples; n++) {
                         target[n] += (int) (((long) coefficient * basis[n] + 4) >> 3);
                     }
@@ -492,18 +573,18 @@ final class XllDecoder {
             }
             var ordered = reordered;
             for (var ch = 0; ch < set.channels; ch++) {
-                ordered[set.originalOrder[0][ch]] = samples[set.firstChannel + ch];
+                ordered[set.originalOrder[band][ch]] = bandSamples[set.firstChannel + ch];
             }
             for (var ch = 0; ch < set.channels; ch++) {
-                samples[set.firstChannel + ch] = ordered[ch];
+                bandSamples[set.firstChannel + ch] = ordered[ch];
             }
         }
         for (var ch = 0; ch < set.channels; ch++) {
-            var shift = lsbShift(set, ch);
+            var shift = lsbShift(set, band, ch);
             if (shift > 0) {
-                var adjust = set.widthAdjust[0][ch];
-                var buffer = samples[set.firstChannel + ch];
-                var low = lsbs[set.firstChannel + ch];
+                var adjust = set.widthAdjust[band][ch];
+                var buffer = bandSamples[set.firstChannel + ch];
+                var low = lsbs[band][set.firstChannel + ch];
                 for (var n = 0; n < frameSamples; n++) {
                     buffer[n] = (buffer[n] << shift) + (low[n] << adjust);
                 }
@@ -515,23 +596,24 @@ final class XllDecoder {
      * {@return the number of low bits of a channel that the MSB part of its band data does not code}
      *
      * @param set the channel set
+     * @param band the frequency band
      * @param ch the channel within the set
      */
-    private int lsbShift(ChannelSetHeader set, int ch) {
-        if (!scalableLsbs) {
+    private int lsbShift(ChannelSetHeader set, int band, int ch) {
+        if (!scalableLsbs && band == 0) {
             return 0;
         }
         if (fixedLsbWidth != 0) {
             return fixedLsbWidth;
         }
-        var bits = set.scalableBits[0][ch];
-        var adjust = set.widthAdjust[0][ch];
+        var bits = set.scalableBits[band][ch];
+        var adjust = set.widthAdjust[band][ch];
         return (adjust > 0 && bits > 0 ? bits - 1 : bits) + adjust;
     }
 
     /**
-     * Brings every channel to its storage width with the core added to the channels coded against it, then undoes
-     * the downmixes the later channel sets embedded into the earlier ones.
+     * Adds the core to the channels coded against it, then undoes the downmixes the later channel sets embedded into
+     * the earlier ones: in band 0 and, when flagged ({@code bEmbDMixInExtBand}), in band 1 and its decimator history.
      *
      * <p>A channel coded against the core adds the core sample, multiplied by the inverse downmix scales of the later
      * channel sets and rounded to the precision of the channel's MSB part, then clipped to 24 bits. A channel coded
@@ -557,22 +639,19 @@ final class XllDecoder {
                         throw new MediaException.Malformed("DTS XLL frame of " + frameSamples
                                 + " samples over a core frame of " + core.fixedOutputSamples());
                     }
-                    addCoreChannel(samples[set.firstChannel + ch], core.fixedChannelOutput(masks[ch]),
-                            coreGain(s, ch), lsbShift(set, ch), CORE_BITS - set.bitResolution, frameSamples);
+                    addCoreChannel(samples[0][set.firstChannel + ch], core.fixedChannelOutput(masks[ch]),
+                            coreGain(s, ch), lsbShift(set, 0, ch), CORE_BITS - set.bitResolution, frameSamples);
                 }
             }
         }
         for (var s = 0; s < sets0; s++) {
             var set = sets[s];
-            var widen = set.bitWidth - set.bitResolution;
             for (var ch = 0; ch < set.channels; ch++) {
                 for (var t = s + 1; t < sets0; t++) {
-                    undoDownmix(t, s, ch, frameSamples);
-                }
-                if (widen > 0) {
-                    var buffer = samples[set.firstChannel + ch];
-                    for (var n = 0; n < frameSamples; n++) {
-                        buffer[n] <<= widen;
+                    undoDownmix(t, s, samples[0], ch, frameSamples);
+                    if (set.bands > 1 && sets[t].downmixInBand1) {
+                        undoDownmix(t, s, samples[1], ch, frameSamples);
+                        undoDownmix(t, s, history, ch, XllBandSynthesis.HISTORY);
                     }
                 }
             }
@@ -621,17 +700,18 @@ final class XllDecoder {
      *
      * @param source the index of the later channel set
      * @param target the index of the channel set of the channel
+     * @param buffers the samples by channel, of a frequency band or of the decimator history
      * @param channel the channel within its set
-     * @param frameSamples the number of samples per channel of the frame
+     * @param frameSamples the number of samples of each channel to process
      */
-    private void undoDownmix(int source, int target, int channel, int frameSamples) {
+    private void undoDownmix(int source, int target, int[][] buffers, int channel, int frameSamples) {
         if (!mixesInto(source, target)) {
             return;
         }
         var set = sets[source];
         var column = column(source, target, channel);
         var inverse = Math.abs(set.inverseScale(column));
-        var buffer = samples[sets[target].firstChannel + channel];
+        var buffer = buffers[sets[target].firstChannel + channel];
         for (var k = 0; k < set.channels; k++) {
             var coefficient = set.undoCoefficient(k, column, inverse);
             if (coefficient == 0) {
@@ -643,7 +723,7 @@ final class XllDecoder {
                     coefficient = (int) (((long) coefficient * sets[w].scale(column(w, source, k)) + (1 << 14)) >> 15);
                 }
             }
-            var later = samples[set.firstChannel + k];
+            var later = buffers[set.firstChannel + k];
             var drop = 15 + set.bitResolution - sets[target].bitResolution;
             if (drop > 0) {
                 for (var n = 0; n < frameSamples; n++) {
@@ -702,9 +782,9 @@ final class XllDecoder {
     }
 
     /**
-     * Converts every channel to float.
+     * Joins the frequency bands of every channel and converts it to float, at the storage width of its set.
      *
-     * @param frameSamples the number of samples per channel of the frame
+     * @param frameSamples the number of samples per channel and frequency band of the frame
      * @param channels the number of channels of the frame
      */
     private void render(int frameSamples, int channels) {
@@ -725,20 +805,27 @@ final class XllDecoder {
             outputRate = Math.max(outputRate, set.sampleRate);
             var masks = set.channelMasks();
             for (var ch = 0; ch < set.channels; ch++) {
-                var buffer = samples[set.firstChannel + ch];
+                var buffer = samples[0][set.firstChannel + ch];
+                if (set.bands > 1) {
+                    XllBandSynthesis.synthesize(buffer, samples[1][set.firstChannel + ch],
+                            history[set.firstChannel + ch], joined, frameSamples);
+                    buffer = joined;
+                }
+                var total = frameSamples * set.bands;
                 var full = 1 << (set.bitWidth - 1);
-                if (output[out] == null || output[out].length < frameSamples) {
-                    output[out] = new float[Math.max(frameSamples, MAX_FRAME)];
+                var widen = set.bitWidth - set.bitResolution;
+                if (output[out] == null || output[out].length < total) {
+                    output[out] = new float[Math.max(total, MAX_FRAME)];
                 }
                 var target = output[out];
-                for (var n = 0; n < frameSamples; n++) {
-                    target[n] = Math.clamp(buffer[n], -full, full - 1) / (float) full;
+                for (var n = 0; n < total; n++) {
+                    target[n] = Math.clamp((long) buffer[n] << widen, -full, full - 1) / (float) full;
                 }
                 outputMasks[out] = masks[ch];
                 out++;
             }
         }
-        outputSamples = frameSamples;
+        outputSamples = frameSamples * sets[0].bands;
     }
 
     /**
@@ -892,6 +979,11 @@ final class XllDecoder {
         boolean downmixEmbedded;
 
         /**
+         * Whether the embedded downmix of the set is also in frequency band 1 ({@code bEmbDMixInExtBand}).
+         */
+        boolean downmixInBand1;
+
+        /**
          * The downmix type of the primary set.
          */
         int downmixType;
@@ -922,9 +1014,9 @@ final class XllDecoder {
         int bands;
 
         /**
-         * The size in bytes of the least significant bits section.
+         * The size in bytes of the least significant bits section by frequency band.
          */
-        int lsbSize;
+        final int[] lsbSize = new int[4];
 
         /**
          * The width of the bit allocation fields.
@@ -1101,6 +1193,7 @@ final class XllDecoder {
                     }
                 }
             }
+            // the syntax of clause 8.3.2: its semantics make a clear flag one band, but no stream or decoder does
             bands = sampleRate > 96000 ? (reader.readFlag() ? 4 : 2) : 1;
             var orderBits = 0;
             while (1 << orderBits < channels) {
@@ -1137,9 +1230,11 @@ final class XllDecoder {
                     }
                 }
                 if (band == 0) {
-                    lsbSize = xll.scalableLsbs() ? reader.read(xll.bitsForSize()) : 0;
+                    lsbSize[0] = xll.scalableLsbs() ? reader.read(xll.bitsForSize()) : 0;
+                    // the second frequency band widens the field as a second channel set does, which the 16-bit
+                    // FATE streams at 192 kHz show and clause 8.3.2 does not say
                     bitsForAbit = bitWidth > 16 ? 5 : bitWidth > 8 ? 4 : 3;
-                    if (xll.setCount() > 1 && bitsForAbit < 5) {
+                    if ((xll.setCount() > 1 || bands > 1) && bitsForAbit < 5) {
                         bitsForAbit++;
                     }
                     for (var ch = 0; ch < channels; ch++) {
@@ -1149,13 +1244,9 @@ final class XllDecoder {
                         widthAdjust[0][ch] = xll.scalableLsbs() ? reader.read(4) : 0;
                     }
                 } else {
-                    if (downmixEmbedded) {
-                        reader.skip(1);
-                    }
+                    downmixInBand1 = downmixEmbedded && reader.readFlag();
                     var split = reader.readFlag();
-                    if (split) {
-                        reader.skip(xll.bitsForSize());
-                    }
+                    lsbSize[band] = split ? reader.read(xll.bitsForSize()) : 0;
                     for (var ch = 0; ch < channels; ch++) {
                         scalableBits[band][ch] = split ? reader.read(4) : 0;
                     }

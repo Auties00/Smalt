@@ -94,7 +94,7 @@ class MpegDecoderBehaviorTest {
     @ValueSource(strings = {"mpegff-male_amr122.3gp", "mpeg4audio-al00_08.mp4", "eac3-csi_miami_5.1_256_spx_small.eac3",
             "dts-xll_51_24_48_none.dtshd", "dts-xxch_71_24_48_2046.dtshd", "dts-x96_51_24_96_1509.dtshd",
             "dts-xll_51_24_48_768.dtshd", "dts-xll_71_24_48_768_0.dtshd", "dts-xll_71_24_96_768.dtshd",
-            "dts-xll_x96_51_24_96_1509.dtshd"})
+            "dts-xll_x96_51_24_96_1509.dtshd", "dts-xll_51_16_192_768_0.dtshd", "dts-xll_51_16_192_768_1.dtshd"})
     @DisplayName("audio smoke vectors: identical samples under every source behavior and clean faults")
     void audioVector(String name) throws IOException {
         ReaderAsserts.audio("vectors/" + name, Files.readAllBytes(Conformance.fetchListed(name))).run();

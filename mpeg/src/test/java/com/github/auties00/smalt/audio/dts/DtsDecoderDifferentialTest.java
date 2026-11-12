@@ -120,12 +120,30 @@ final class DtsDecoderDifferentialTest {
     @DisplayName("lossless streams above 96 kHz")
     final class Above96 {
         @ParameterizedTest(name = "{0}")
-        @ValueSource(strings = {"xll_51_16_192_768_0", "xll_51_16_192_768_1"})
-        @DisplayName("output their core, as ffmpeg's core-only decoding does")
-        void core(String name) {
+        @CsvSource({"xll_51_16_192_768_0, 0", "xll_51_16_192_768_1, 2048"})
+        @DisplayName("match ffmpeg sample for sample")
+        void lossless(String name, int from) {
+            // as for the 7.1 streams over a core, ffmpeg outputs the core alone for the first frame of a stream with
+            // several channel sets
             Oracle.assume(Oracle.Tool.FFMPEG);
             var file = vector(name);
             var decoded = DtsTestSupport.decodeFile(file, DtsDecoderOptions.defaults());
+            var reference = DtsTestSupport.ffmpegIntegers(file);
+            var actual = DtsTestSupport.toInt32(decoded.samples());
+            assertEquals(192000, decoded.sampleRate());
+            assertEquals(reference.length, actual.length, "sample count");
+            var start = from * decoded.channels();
+            Tolerance.exact().assertWithin(name, Arrays.copyOfRange(reference, start, reference.length),
+                    Arrays.copyOfRange(actual, start, actual.length));
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"xll_51_16_192_768_0", "xll_51_16_192_768_1"})
+        @DisplayName("core-only decoding outputs their core, as ffmpeg's core-only decoding does")
+        void core(String name) {
+            Oracle.assume(Oracle.Tool.FFMPEG);
+            var file = vector(name);
+            var decoded = DtsTestSupport.decodeFile(file, DtsDecoderOptions.coreOnly());
             var reference = DtsTestSupport.ffmpegFloats(file, List.of("-core_only", "1"));
             assertEquals(48000, decoded.sampleRate());
             assertEquals(reference.length, decoded.samples().length, "sample count");

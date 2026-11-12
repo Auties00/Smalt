@@ -1729,6 +1729,8 @@ class FuzzSeedWriter {
                 com.github.auties00.smalt.audio.dts.internal.XllFuzzSeeds.overCore(1), 48000, 7));
         write(MpegFuzzTest.class, "dts", "valid-xll-over-core-96k.bin", dtsSeed(
                 com.github.auties00.smalt.audio.dts.internal.XllFuzzSeeds.overCore(2), 48000, 7));
+        write(MpegFuzzTest.class, "dts", "valid-xll-two-bands-192k.bin", dtsSeed(
+                com.github.auties00.smalt.audio.dts.internal.XllFuzzSeeds.twoBands(), 48000, 7));
         write(MpegFuzzTest.class, "dts", "valid-xll-over-xxch.bin", dtsSeed(
                 com.github.auties00.smalt.audio.dts.internal.XllFuzzSeeds.overXxch(), 48000, 8));
         write(MpegFuzzTest.class, "dts", "valid-xll-rice.bin", dtsSeed(

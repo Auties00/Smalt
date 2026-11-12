@@ -34,13 +34,13 @@ import java.util.function.Consumer;
  * store it in 16-bit PCM.
  *
  * <p>The decoder implements the core (5.1 channels up to 48 kHz) and its extensions: XCh (6.1), XXCH (up to 32
- * extra channels), X96 (96 kHz), XBR (higher bit rate) and XLL (lossless, DTS-HD Master Audio, up to 96 kHz). A
+ * extra channels), X96 (96 kHz), XBR (higher bit rate) and XLL (lossless, DTS-HD Master Audio, up to 192 kHz). A
  * stream with XLL is output at the lossless resolution, bit for bit, its channels coded against a core added to the
  * fixed-point reconstruction of that core, with the downmixes its channel sets embed undone. When the extension
  * substream of a frame with a core needs what the decoder does not implement (channels coded against a core with a
  * 128 times interpolated LFE channel, a peak bit rate smoothing buffer), the core is output; a stream without core
- * that needs it (XLL frequency bands above 96 kHz, a peak bit rate smoothing buffer), DTS Express (LBR) and
- * termination frames with a partial subsubframe raise {@link MediaException.Unsupported}.
+ * that needs it (XLL with four frequency bands or above 192 kHz, a peak bit rate smoothing buffer), DTS Express
+ * (LBR) and termination frames with a partial subsubframe raise {@link MediaException.Unsupported}.
  * {@link #layout()} and {@link #sampleRate()} report the track's declared format until the first access unit is
  * decoded and that unit's output format afterwards; every buffer carries its own layout, its channels in the order
  * of {@link Speaker}. Samples are scaled so that 24-bit full scale maps to 1.0.
