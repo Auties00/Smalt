@@ -12,10 +12,12 @@ import com.github.auties00.smalt.internal.tags.EbmlIds;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.metadata.MediaTags;
+import com.github.auties00.smalt.metadata.StandardTag;
 import com.github.auties00.smalt.metadata.TagEditor;
 import com.github.auties00.smalt.metadata.TagWriteOptions;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.validate.Validators;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -33,12 +35,14 @@ import java.util.Random;
 
 import static com.github.auties00.smalt.container.matroska.EbmlWriter.binary;
 import static com.github.auties00.smalt.container.matroska.EbmlWriter.file;
+import static com.github.auties00.smalt.container.matroska.EbmlWriter.floating;
 import static com.github.auties00.smalt.container.matroska.EbmlWriter.master;
 import static com.github.auties00.smalt.container.matroska.EbmlWriter.string;
 import static com.github.auties00.smalt.container.matroska.EbmlWriter.uint;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -238,6 +242,9 @@ class MatroskaChaptersTest {
                     EbmlWriter.encodeId(EbmlIds.EDITION_ENTRY), StandardCharsets.ISO_8859_1)), -1).length - 1,
                     "one EditionEntry");
             assertFalse(text.contains("DejaVuSans"), "WebM holds an attachment that is not a picture");
+            assertFalse(text.contains(new String(EbmlWriter.encodeId(EbmlIds.ATTACHMENTS), StandardCharsets.ISO_8859_1)),
+                    "WebM holds or indexes an Attachments element");
+            assertTrue(TagEditor.read(MediaSource.of(file)).pictures().isEmpty(), "WebM holds a picture");
             try (var demuxer = new MatroskaDemuxer(MediaSource.of(file))) {
                 var editions = demuxer.chapterEditions();
                 assertEquals(1, editions.size());
@@ -265,6 +272,144 @@ class MatroskaChaptersTest {
                     TagWriteOptions.defaults()));
             assertWebmChapters(edited);
             assertTrue(TagEditor.read(MediaSource.of(edited)).attachments().isEmpty());
+        }
+
+        /**
+         * Builds a WebM file of the Opus packets of a tone, holding the given cover as another writer would store it.
+         *
+         * @param cover the PNG cover, or {@code null} for a file without attachments
+         */
+        private static byte[] foreignWebm(byte[] cover) {
+            var source = MuxSupport.demux(Fixtures.read(Fixtures.tone("webm", 440, 48000, 1, 4,
+                    List.of("-c:a", "libopus"))));
+            var track = source.tracks().getFirst();
+            var entry = master(EbmlIds.TRACK_ENTRY, uint(EbmlIds.TRACK_NUMBER, 1), uint(EbmlIds.TRACK_UID, 1),
+                    uint(EbmlIds.TRACK_TYPE, 2), string(EbmlIds.CODEC_ID, "A_OPUS"),
+                    binary(EbmlIds.CODEC_PRIVATE, track.codecConfig().orElseThrow()),
+                    master(EbmlIds.AUDIO, floating(EbmlIds.SAMPLING_FREQUENCY, 48000), uint(EbmlIds.CHANNELS, 1)));
+            var blocks = new ArrayList<EbmlWriter.Node>();
+            blocks.add(uint(EbmlIds.TIMESTAMP, 0));
+            var packets = source.order();
+            for (var index = 0; index < 25 && index < packets.size(); index++) {
+                blocks.add(binary(EbmlIds.SIMPLE_BLOCK, EbmlWriter.block(1, index * 20, 0x80,
+                        packets.get(index).data())));
+            }
+            var children = new ArrayList<EbmlWriter.Node>(List.of(master(EbmlIds.INFO,
+                    uint(EbmlIds.TIMESTAMP_SCALE, 1_000_000), string(EbmlIds.MUXING_APP, "test"),
+                    string(EbmlIds.WRITING_APP, "test")), master(EbmlIds.TRACKS, entry)));
+            if (cover != null) {
+                children.add(master(EbmlIds.ATTACHMENTS, master(EbmlIds.ATTACHED_FILE,
+                        string(EbmlIds.FILE_NAME, "cover.png"), string(EbmlIds.FILE_MEDIA_TYPE, "image/png"),
+                        binary(EbmlIds.FILE_DATA, cover), uint(EbmlIds.FILE_UID, 77))));
+            }
+            children.add(master(EbmlIds.CLUSTER, blocks));
+            return file("webm", false, withSeekHead(children).toArray(EbmlWriter.Node[]::new));
+        }
+
+        /** {@return the segment children behind a SeekHead indexing every one of them but the clusters} */
+        private static List<EbmlWriter.Node> withSeekHead(List<EbmlWriter.Node> children) {
+            var ids = new long[]{EbmlIds.INFO, EbmlIds.TRACKS, EbmlIds.ATTACHMENTS};
+            var seekHead = master(EbmlIds.SEEK_HEAD);
+            // the positions depend on the SeekHead size, which depends on their widths: iterate to the fixed point
+            for (var round = 0; round < 4; round++) {
+                var seeks = new ArrayList<EbmlWriter.Node>();
+                var position = (long) seekHead.encode().length;
+                for (var child : children) {
+                    var encoded = child.encode();
+                    var id = Ebml.header(encoded, 0, encoded.length).id();
+                    for (var indexed : ids) {
+                        if (indexed == id) {
+                            seeks.add(master(EbmlIds.SEEK, binary(EbmlIds.SEEK_ID, EbmlWriter.encodeId(id)),
+                                    uint(EbmlIds.SEEK_POSITION, position)));
+                        }
+                    }
+                    position += encoded.length;
+                }
+                seekHead = master(EbmlIds.SEEK_HEAD, seeks);
+            }
+            var result = new ArrayList<EbmlWriter.Node>();
+            result.add(seekHead);
+            result.addAll(children);
+            return result;
+        }
+
+        private static byte[] png(int size) {
+            return Fixtures.read(Fixtures.testImage("png", size, size, List.of()));
+        }
+
+        @Test
+        @DisplayName("fails the validators on an Attachments element in WebM, and passes the same file without it")
+        void validatorRejectsAttachments() {
+            Validators.assertValid("webm-foreign-plain.webm", foreignWebm(null));
+            var error = assertThrows(AssertionError.class,
+                    () -> Validators.assertValid("webm-foreign-cover.webm", foreignWebm(png(16))));
+            assertTrue(error.getMessage().contains("Attachments element in WebM"), error.getMessage());
+        }
+
+        @Test
+        @DisplayName("adds no picture or attachment to a WebM file, keeping the cover another writer stored in it")
+        void tagEditorKeepsForeignCover() {
+            var cover = png(16);
+            var original = foreignWebm(cover);
+            var read = TagEditor.read(MediaSource.of(original));
+            assertEquals(1, read.pictures().size());
+            var retitled = TagEditor.write(original, read.toBuilder().set(StandardTag.TITLE, "kept").build(),
+                    TagWriteOptions.defaults());
+            var kept = TagEditor.read(MediaSource.of(retitled));
+            assertEquals("kept", kept.get(StandardTag.TITLE).orElseThrow());
+            assertEquals(1, kept.pictures().size());
+            assertArrayEquals(cover, kept.pictures().getFirst().data());
+            var added = TagEditor.write(original, read.toBuilder()
+                    .addPicture(AttachedPicture.of(AttachedPicture.Type.BACK_COVER, "image/png", "", png(24)))
+                    .addAttachment(Attachment.of("DejaVuSans.ttf", "font/ttf", "subtitle font", FONT)).build(),
+                    TagWriteOptions.defaults());
+            var unchanged = TagEditor.read(MediaSource.of(added));
+            assertEquals(1, unchanged.pictures().size(), unchanged.pictures().toString());
+            assertArrayEquals(cover, unchanged.pictures().getFirst().data());
+            assertTrue(unchanged.attachments().isEmpty());
+            assertFalse(new String(added, StandardCharsets.ISO_8859_1).contains("DejaVuSans"));
+            var copied = TagEditor.write(original, read.toBuilder()
+                    .addPicture(read.pictures().getFirst()).build(), TagWriteOptions.defaults());
+            var once = TagEditor.read(MediaSource.of(copied));
+            assertEquals(1, once.pictures().size(), "a copy of the held cover was added: " + once.pictures());
+            assertArrayEquals(cover, once.pictures().getFirst().data());
+            var described = TagEditor.write(original, read.toBuilder().pictures(List.of(AttachedPicture.of(
+                    AttachedPicture.Type.FRONT_COVER, "image/png", "changed", cover))).build(),
+                    TagWriteOptions.defaults());
+            // a changed picture is a new one, so it is not written and the held cover it replaced goes
+            assertTrue(TagEditor.read(MediaSource.of(described)).pictures().isEmpty());
+        }
+
+        @Test
+        @DisplayName("removes the cover another writer stored in a WebM file, leaving a valid WebM file")
+        void tagEditorRemovesForeignCover() {
+            var original = foreignWebm(png(16));
+            var read = TagEditor.read(MediaSource.of(original));
+            var removed = MuxSupport.validated("webm-cover-removed", TagEditor.write(original,
+                    read.toBuilder().pictures(List.of()).build(), TagWriteOptions.defaults()));
+            assertTrue(TagEditor.read(MediaSource.of(removed)).pictures().isEmpty());
+            try (var demuxer = new MatroskaDemuxer(MediaSource.of(removed))) {
+                assertTrue(demuxer.attachments().isEmpty());
+                assertTrue(demuxer.read() != null);
+            }
+        }
+
+        @Test
+        @DisplayName("writes no Attachments element to a live WebM file")
+        void liveMuxer() {
+            var source = MuxSupport.demux(Fixtures.read(Fixtures.tone("webm", 440, 48000, 1, 4,
+                    List.of("-c:a", "libopus"))));
+            var sink = MediaSink.memory();
+            try (var muxer = new MatroskaMuxer(sink, MatroskaMuxerOptions.webm().toBuilder().live(true).build())) {
+                source.tracks().forEach(muxer::addTrack);
+                muxer.setTags(tags());
+                source.order().forEach(muxer::writePacket);
+                muxer.finish();
+            }
+            var file = sink.toByteArray();
+            assertFalse(new String(file, StandardCharsets.ISO_8859_1).contains(new String(
+                    EbmlWriter.encodeId(EbmlIds.ATTACHMENTS), StandardCharsets.ISO_8859_1)));
+            assertTrue(TagEditor.read(MediaSource.of(file)).pictures().isEmpty());
         }
     }
 

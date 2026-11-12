@@ -36,8 +36,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Re-encodes tagged inputs with the codecs of the other artifacts (MP3 to AAC in M4A, FLAC to Opus in Ogg, M4A to
  * MP3, a Matroska video to VP9 and Opus in WebM, trimmed) and checks with {@link TagEditor} and ffprobe that the
- * tags, the cover and the chapters (cut to the kept range) reach the output, while the encoder and ReplayGain tags
- * that described the input's streams do not.
+ * tags, the cover (except in WebM, which stores none) and the chapters (cut to the kept range) reach the output, while
+ * the encoder and ReplayGain tags that described the input's streams do not.
  */
 @DisplayName("Tags through re-encoding transcodes")
 class TranscodeTagsCodecTest {
@@ -137,7 +137,7 @@ class TranscodeTagsCodecTest {
     }
 
     @Test
-    @DisplayName("cuts the chapters of a trimmed video transcode and keeps the cover")
+    @DisplayName("cuts the chapters of a trimmed video transcode to WebM, which stores no cover")
     void video() throws IOException {
         var input = tagged("mkv", List.of("-f", "lavfi", "-i", "testsrc2=size=96x64:rate=25:duration=3", "-f", "lavfi",
                 "-i", "sine=frequency=440:sample_rate=48000:duration=3"), List.of("-c:v", "libx264", "-preset",
@@ -150,7 +150,7 @@ class TranscodeTagsCodecTest {
         assertEquals(List.of("Encoded Title"), read.getAll(StandardTag.TITLE));
         assertEquals(List.of(Chapter.of(0, 500_000, "Middle"), Chapter.of(500_000, 1_300_000, "Closing")),
                 read.chapters());
-        assertArrayEquals(cover(), read.pictures().getFirst().data());
+        assertTrue(read.pictures().isEmpty(), read.pictures().toString());
         Oracle.assume(Oracle.Tool.FFPROBE);
         var file = save("trimmed.webm", output);
         Oracle.assertDecodesCleanly(file);

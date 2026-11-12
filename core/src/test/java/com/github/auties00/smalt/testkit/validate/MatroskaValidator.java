@@ -13,8 +13,9 @@ import java.util.zip.CRC32;
 /**
  * Checks a Matroska or WebM file against EBML (RFC 8794) and Matroska (RFC 9559), independently of Smalt's demuxer:
  * variable-size integers, element sizes that nest, unknown sizes only where allowed, the EBML header, the elements
- * each master requires and the ones that must be unique, track numbers and UIDs, the codec ids of WebM, every block's
- * track and lacing, cluster timestamps, the positions the SeekHead and the Cues point at, and CRC-32 elements.
+ * each master requires and the ones that must be unique, track numbers and UIDs, the codec ids of WebM and the absence
+ * of attachments from it, every block's track and lacing, cluster timestamps, the positions the SeekHead and the Cues
+ * point at, and CRC-32 elements.
  */
 public final class MatroskaValidator {
     /** The element types of the schema. */
@@ -364,6 +365,9 @@ public final class MatroskaValidator {
                     + SCHEMA.get(id).name() + " elements, at most one allowed");
         }
         findings.require(segment.all(SEEK_HEAD).size() <= 2, where, "more than two SeekHead elements");
+        // the WebM container guidelines list Attachments and every element under it as unsupported
+        findings.require(!docType.equals("webm") || segment.child(ATTACHMENTS).isEmpty(), where,
+                "an Attachments element in WebM");
         var info = segment.child(INFO);
         findings.require(info.isPresent(), where, "no Info");
         info.ifPresent(node -> {

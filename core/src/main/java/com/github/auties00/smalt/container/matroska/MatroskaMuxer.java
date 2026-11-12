@@ -767,8 +767,8 @@ public final class MatroskaMuxer implements Muxer {
      * become its {@code Name} (the title), its flag elements (the dispositions, replacing those
      * of {@link #addTrack(Track, Set)}) and a {@code Tag} targeting its {@code TrackUID} (the other
      * entries). A WebM file stores the default edition alone, without edition flags or names and keeping
-     * only the localized titles in ISO 639-2 languages, and no attachment that is not a picture, as the WebM
-     * specification allows none of them.
+     * only the localized titles in ISO 639-2 languages, and no {@code Attachments} element: the pictures and
+     * the other attachments are left out, as the WebM specification allows none of them.
      */
     @Override
     public void setTags(MediaTags tags) {

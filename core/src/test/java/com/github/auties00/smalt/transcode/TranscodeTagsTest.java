@@ -255,11 +255,16 @@ class TranscodeTagsTest {
      * @param input the kind of input
      * @param container the output
      * @param full whether the container stores every tag, the cover and the chapters (AVI stores the first value of
-     * the RIFF tags only)
+     * the RIFF tags only, WebM no cover)
      * @param probeChapters whether ffprobe reads the chapters of the container
      * @param probeCover whether ffprobe exposes the cover as an attached picture
      */
     record Case(Input input, OutputContainer container, boolean full, boolean probeChapters, boolean probeCover) {
+        /** {@return the number of covers the output stores when the input's are copied} */
+        int covers() {
+            return full && container != OutputContainer.WEBM ? 1 : 0;
+        }
+
         @Override
         public String toString() {
             return input + " -> " + container;
@@ -309,9 +314,11 @@ class TranscodeTagsTest {
                 assertEquals(sample.getAll(StandardTag.ARTIST), read.getAll(StandardTag.ARTIST));
                 assertEquals(sample.get(StandardTag.TRACK), read.get(StandardTag.TRACK));
                 assertEquals(List.of("calm"), read.getAll("MOOD"));
-                assertEquals(1, read.pictures().size(), read.pictures().toString());
-                assertArrayEquals(sample.pictures().getFirst().data(), read.pictures().getFirst().data());
-                assertEquals(AttachedPicture.Type.FRONT_COVER, read.pictures().getFirst().type());
+                assertEquals(test.covers(), read.pictures().size(), read.pictures().toString());
+                if (test.covers() > 0) {
+                    assertArrayEquals(sample.pictures().getFirst().data(), read.pictures().getFirst().data());
+                    assertEquals(AttachedPicture.Type.FRONT_COVER, read.pictures().getFirst().type());
+                }
                 assertEquals(titles(CHAPTERS), titles(read.chapters()));
                 assertEquals(starts(CHAPTERS), starts(read.chapters()));
             } else {
@@ -375,7 +382,7 @@ class TranscodeTagsTest {
             assertEquals(List.of("Merged Title"), merged.getAll(StandardTag.TITLE));
             assertEquals(sample().get(StandardTag.ALBUM), merged.get(StandardTag.ALBUM));
             assertTrue(merged.get(StandardTag.GENRE).isEmpty());
-            assertEquals(test.full() ? 1 : 0, merged.pictures().size());
+            assertEquals(test.covers(), merged.pictures().size());
             assertEquals(test.full() ? titles(CHAPTERS) : List.of(), titles(merged.chapters()));
         }
     }

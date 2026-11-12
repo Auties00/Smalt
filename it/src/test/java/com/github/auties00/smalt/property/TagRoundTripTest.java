@@ -92,7 +92,10 @@ class TagRoundTripTest {
         assertEquals(List.of("first artist", "second artist"), values(read, StandardTag.ARTIST), base + " artists");
         assertEquals(tags.get(StandardTag.LYRICS).map(String::length), read.get(StandardTag.LYRICS).map(String::length),
                 base + " long lyrics");
-        if (cover) {
+        if (cover && base.container() == OutputContainer.WEBM) {
+            // the WebM specification allows no attachments
+            assertEquals(0, read.pictures().size(), base + " pictures");
+        } else if (cover) {
             assertEquals(1, read.pictures().size(), base + " pictures");
             assertArrayEquals(tags.pictures().getFirst().data(), read.pictures().getFirst().data(), base + " cover");
         }

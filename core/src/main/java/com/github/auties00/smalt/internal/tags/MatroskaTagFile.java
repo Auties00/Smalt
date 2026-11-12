@@ -99,8 +99,8 @@ final class MatroskaTagFile implements TagFile {
     private final long docTypeVersion;
 
     /**
-     * Whether the {@code DocType} of the file is {@code webm}, whose {@code Chapters} and {@code Attachments}
-     * hold less than Matroska's.
+     * Whether the {@code DocType} of the file is {@code webm}, whose {@code Chapters} hold less than Matroska's and
+     * which gains no attachment, as the WebM specification does not support attachments.
      */
     private final boolean webm;
 
@@ -599,14 +599,16 @@ final class MatroskaTagFile implements TagFile {
             replacements.add(new Replacement(EbmlIds.CHAPTERS, MatroskaTags.encodeEditions(newTags.editions(),
                     webm)));
         }
-        if (!newTags.pictures().equals(tags.pictures()) || !newTags.attachments().equals(tags.attachments())
+        var pictures = newTags.pictures();
+        var files = newTags.attachments();
+        if (webm) {
+            pictures = held(pictures, tags.pictures());
+            files = held(files, tags.attachments());
+        }
+        if (!pictures.equals(tags.pictures()) || !files.equals(tags.attachments())
                 || (!keepOpaque && !opaqueFiles.isEmpty())) {
-            var files = newTags.attachments();
-            if (webm) {
-                files = files.stream().filter(tags.attachments()::contains).toList();
-            }
-            replacements.add(new Replacement(EbmlIds.ATTACHMENTS, MatroskaTags.encodeAttachments(newTags.pictures(),
-                    files, keepOpaque ? opaqueFiles : List.of())));
+            replacements.add(new Replacement(EbmlIds.ATTACHMENTS, MatroskaTags.encodeAttachments(pictures, files,
+                    keepOpaque ? opaqueFiles : List.of())));
         }
         if (replacements.isEmpty()) {
             return EditPlan.builder().copy(0, source.size()).build();
@@ -616,6 +618,26 @@ final class MatroskaTagFile implements TagFile {
         // SeekHead entry, as mkvpropedit does, instead of rewriting the whole segment.
         var inPlace = planInPlace(replacements, version);
         return inPlace != null ? inPlace : planRewrite(replacements, version, options);
+    }
+
+    /**
+     * Keeps the wanted items the file already holds, each held item at most as many times as the file holds it, so
+     * an edit never adds an item, a copy of an existing one included.
+     *
+     * @param wanted the items the new tags carry, in their order
+     * @param held the items the file holds
+     * @param <T> the item type
+     * @return the wanted items that match a distinct held item
+     */
+    private static <T> List<T> held(List<T> wanted, List<T> held) {
+        var available = new ArrayList<>(held);
+        var result = new ArrayList<T>(wanted.size());
+        for (var item : wanted) {
+            if (available.remove(item)) {
+                result.add(item);
+            }
+        }
+        return result;
     }
 
     /**

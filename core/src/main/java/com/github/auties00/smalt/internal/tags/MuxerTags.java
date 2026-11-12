@@ -218,14 +218,15 @@ public final class MuxerTags {
      * @param tags the tags, pictures and chapters to store
      * @param trackTags the complete {@code Tag} elements of the tracks
      * @param webm whether the elements are for a WebM file, which stores the chapters in their
-     * {@linkplain MatroskaTags#webmEditions WebM form} and no attachment that is not a picture
+     * {@linkplain MatroskaTags#webmEditions WebM form} and no {@code Attachments} element, as the WebM
+     * specification does not support attachments
      * @return the three elements in this order, each empty when there is nothing to write
      */
     public static byte[][] matroska(MediaTags tags, List<byte[]> trackTags, boolean webm) {
         return new byte[][]{
                 MatroskaTags.encodeTags(tags, trackTags),
                 MatroskaTags.encodeEditions(tags.editions(), webm),
-                MatroskaTags.encodeAttachments(tags.pictures(), webm ? List.of() : tags.attachments(), List.of())
+                webm ? new byte[0] : MatroskaTags.encodeAttachments(tags.pictures(), tags.attachments(), List.of())
         };
     }
 

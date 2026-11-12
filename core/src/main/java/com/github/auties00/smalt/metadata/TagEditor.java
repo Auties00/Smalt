@@ -60,8 +60,9 @@ import java.util.Objects;
  *       {@linkplain MediaTags#attachments() attachments}); edition names raise the {@code DocTypeVersion} of
  *       a Matroska file to 5, the version of their {@code EditionDisplay} elements. A WebM file is
  *       written the chapters of the default edition alone, without edition flags or names and keeping only
- *       the localized titles in ISO 639-2 languages, and gains no attachment that is not a picture, as the
- *       WebM specification allows none of them;</li>
+ *       the localized titles in ISO 639-2 languages, and gains no attachment, as the WebM specification allows
+ *       none of them: new pictures and other attachments are left out (a changed or repeated one counts as
+ *       new), while those the file already holds are kept or removed as the tags say;</li>
  *   <li>WAV (RIFF, big-endian RIFX, RF64 and BW64): the {@code LIST/INFO} chunk, an {@code id3 }
  *       chunk and the XMP packet of a {@code _PMX} chunk, a RIFF file the edit takes past 4 GiB becoming an RF64
  *       file; AIFF: the text chunks, an {@code ID3 } chunk and the XMP packet of an {@code APPL} chunk of signature

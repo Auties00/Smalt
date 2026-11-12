@@ -86,11 +86,8 @@ public final class Validators {
             Pattern.compile("ERR201: Invalid '(MaxBlockAdditionID|BlockAdditionMapping|BlockAddIDValue|BlockAddIDType"
                     + "|BlockAddIDName|BlockAddIDExtraData)' for profile 'webm' .*"),
             "the WebM container guidelines list the block addition mapping elements as supported",
-            // FIXME: TagEditor and MatroskaMuxer write picture attachments into WebM, which the WebM container
-            // guidelines mark unsupported; EditionUID stays accepted for the Chapters an edit keeps from other writers
-            Pattern.compile("ERR201: Invalid '(EditionUID|AttachedFile|FileDescription|FileName|FileMediaType"
-                    + "|FileData|FileUID)' for profile 'webm' .*"),
-            "TagEditor writes picture attachments into WebM files and keeps other writers' chapters");
+            Pattern.compile("ERR201: Invalid 'EditionUID' for profile 'webm' .*"),
+            "a WebM tag edit keeps the Chapters other writers stored with an EditionUID");
 
     private Validators() {
         throw new AssertionError();
