@@ -1,0 +1,21 @@
+# demux dump of mp4/mace6.mov; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 600272
+seekable true
+metadata compatible_brands="qt  "
+metadata major_brand="qt  "
+metadata minor_version="537199360"
+track 1 AUDIO MACE6 timebase=1/11025 duration=6618 language=eng config=none
+  audio rate=11025 bits=0 skip=0 layout=[FRONT_CENTER]
+packets 5
+0 t1 pts=0 dts=0 dur=1536 flags=KEY size=256 crc=0ec96769
+1 t1 pts=1536 dts=1536 dur=1536 flags=KEY size=256 crc=fd29607a
+2 t1 pts=3072 dts=3072 dur=1536 flags=KEY size=256 crc=80a5d9c5
+3 t1 pts=4608 dts=4608 dur=1536 flags=KEY size=256 crc=9ca6b10b
+4 t1 pts=6144 dts=6144 dur=474 flags=KEY size=79 crc=feafcdb8
+seek 0: t1@0
+seek 200090: t1@1
+seek 400181: t1@2
+seek 600273: end
+seek 600272: t1@4
+seek -1000000: t1@0

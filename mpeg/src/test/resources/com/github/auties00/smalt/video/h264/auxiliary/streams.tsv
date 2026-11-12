@@ -1,0 +1,6 @@
+# H.264 streams with alpha auxiliary pictures, made by tools/testdata/h264-aux/make-vectors.py. Columns:
+# name	sha256	bytes	primary bit depth	bit_depth_aux	alpha_incr_flag	alpha_opaque_value	alpha_transparent_value	frames	JM lencod parameters
+aux10-cabac-ibp	44a069a4aec77c9b3601561e8e989642b5c201f6b90576fab78ae26087cec13b	10019	8	10	0	1023	0	10	SymbolMode=1 NumberBFrames=1 IntraPeriod=5 IDRPeriod=10
+aux8-cavlc-fields-inverted	a83b0b3bc457df9e9c7c137f23b9e55ef22819ce6709f0f3d2d79ce240caf0c6	10823	8	8	1	0	128	8	SymbolMode=0 PicInterlace=1 NumberBFrames=0 Transform8x8Mode=0
+aux9-cabac-slices	84bef5ec54442768d9ca4067a71160ff58003177d7681fc7480fc0d8fe50d6b0	6879	8	9	0	400	100	6	SymbolMode=1 NumberBFrames=1 SliceMode=1 SliceArgument=30
+aux10-high10	ce471b2e05d2fedc177d02bd5c74f9f26a9f2464b7bc768ac8810b69b6d67f8b	6505	10	10	0	0	1023	6	SymbolMode=1 NumberBFrames=1

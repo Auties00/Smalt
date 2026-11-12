@@ -23,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Decodes third-party samples from the FFmpeg FATE suite (a DivX-style packed bitstream in AVI, a
- * raw Simple Profile stream, an unsupported Studio Profile stream) and raw elementary streams
+ * raw Simple Profile stream, a Simple Studio Profile stream) and raw elementary streams
  * written by ffmpeg, comparing against ffmpeg's decode within the IDCT noise floor that the
  * differential tests use.
  */
@@ -71,12 +71,24 @@ class Mpeg4SamplesTest {
         }
 
         @Test
-        @DisplayName("rejects the Studio Profile as unsupported")
+        @DisplayName("decodes a Simple Studio Profile stream")
         void studioProfile() {
             var file = Conformance.fetch("fate-mpeg4-mpeg4_sstp_dpcm.m4v", FATE + "mpeg4_sstp_dpcm.m4v",
                     "c7389f15ceb3381be18ab21c932ef3cda952466bcd2ade824faf36a880ea860e");
-            assertThrows(MediaException.Unsupported.class,
-                    () -> Mpeg4TestStreams.decodeElementary(file, Mpeg4Decoder::new));
+            var options = com.github.auties00.smalt.video.VideoDecoderOptions.builder().highBitDepth(true).build();
+            var frames = new java.util.ArrayList<com.github.auties00.smalt.image.Picture>();
+            try (var source = MediaSource.of(file); var stream = Mpeg4ElementaryStream.open(source);
+                 var decoder = new Mpeg4Decoder(stream.track(), options)) {
+                for (var packet = stream.read(); packet != null; packet = stream.read()) {
+                    decoder.decode(packet, frame -> frames.add(frame.picture()));
+                }
+                decoder.flush(frame -> frames.add(frame.picture()));
+            }
+            assertEquals(1, frames.size());
+            var picture = (com.github.auties00.smalt.image.Yuv16Picture) frames.getFirst();
+            assertEquals(720, picture.width());
+            assertEquals(10, picture.bitDepth());
+            assertEquals(com.github.auties00.smalt.image.ChromaFormat.YUV422, picture.chromaFormat());
         }
     }
 
@@ -99,7 +111,22 @@ class Mpeg4SamplesTest {
                 var second = stream.read();
                 assertFalse(second.keyframe());
             }
-            assertWithinNoiseFloor(file, Mpeg4TestStreams.decodeElementary(file, Mpeg4Decoder::new));
+            var decoded = Mpeg4TestStreams.decodeElementary(file, Mpeg4Decoder::new);
+            assertEquals(packetTimes(file), decoded.timestamps(), "the frames carry the packets' VOP times");
+            assertWithinNoiseFloor(file, decoded);
+        }
+
+        /** Returns the presentation times of the packets of an elementary stream, sorted. */
+        private static List<Long> packetTimes(Path file) {
+            var times = new java.util.ArrayList<Long>();
+            try (var source = MediaSource.of(file); var stream = Mpeg4ElementaryStream.open(source)) {
+                for (var packet = stream.read(); packet != null; packet = stream.read()) {
+                    assertTrue(packet.dts() <= packet.pts(), "decoded before presented");
+                    times.add(packet.pts());
+                }
+            }
+            times.sort(null);
+            return times;
         }
 
         @Test
@@ -118,7 +145,9 @@ class Mpeg4SamplesTest {
                 assertEquals(15, count);
                 assertEquals(3, keys);
             }
-            assertWithinNoiseFloor(file, Mpeg4TestStreams.decodeElementary(file, H263Decoder::new));
+            var decoded = Mpeg4TestStreams.decodeElementary(file, H263Decoder::new);
+            assertEquals(packetTimes(file), decoded.timestamps(), "the frames carry the temporal references");
+            assertWithinNoiseFloor(file, decoded);
         }
 
         @Test

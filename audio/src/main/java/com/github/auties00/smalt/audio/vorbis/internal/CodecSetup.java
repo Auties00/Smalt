@@ -9,12 +9,14 @@ import java.util.List;
  * parameters the analysis uses.
  *
  * <p>{@link #variableBitrate(int, int, float)} builds it from libvorbis's templates for a quality
- * between -0.1 and 1.0.
+ * between -0.1 and 1.0, {@link #nominalBitrate(int, int, int)} for the quality approximating a
+ * bitrate, and {@link #managedQuality} and {@link #managedBitrate} for the bitrate managed modes,
+ * which also carry the {@link Management} parameters of the bit reservoir.
  *
  * @implNote This implementation ports libvorbis 1.3.7's {@code vorbisenc.c} (BSD-3): template
- * selection, the interpolation of the psychoacoustic settings between quality steps, and the
- * floor, residue and mapping setup with the lowpass and point stereo limits. Bitrate-managed
- * modes are not ported.
+ * selection, the interpolation of the psychoacoustic settings between quality steps, the floor,
+ * residue and mapping setup with the lowpass and point stereo limits, and the managed setup (the
+ * per-blob point stereo and lowpass limits and the managed residue books).
  */
 public final class CodecSetup {
     /**
@@ -86,6 +88,37 @@ public final class CodecSetup {
      * The nominal bitrate written into the identification header, or {@code -1}.
      */
     public int bitrateNominal;
+
+    /**
+     * The maximum bitrate written into the identification header, {@code 0} when unset.
+     */
+    public int bitrateUpper;
+
+    /**
+     * The minimum bitrate written into the identification header, {@code 0} when unset.
+     */
+    public int bitrateLower;
+
+    /**
+     * The bit reservoir parameters ({@code bitrate_manager_info}), or {@code null} for an unmanaged
+     * stream, which codes only the middle packet blob.
+     */
+    public Management management;
+
+    /**
+     * The parameters of the bit reservoir of a managed stream ({@code bitrate_manager_info}).
+     *
+     * @param averageRate the average bitrate the reservoir steers to, in bits per second, {@code 0}
+     * for none
+     * @param minimumRate the hard minimum bitrate in bits per second, {@code 0} for none
+     * @param maximumRate the hard maximum bitrate in bits per second, {@code 0} for none
+     * @param reservoirBits the reservoir size in bits, positive
+     * @param reservoirBias the preferred fill of the reservoir, from 0 to 1
+     * @param slewDamp the seconds the average tracker takes to sweep the whole blob range, positive
+     */
+    public record Management(long averageRate, long minimumRate, long maximumRate, long reservoirBits,
+                             double reservoirBias, double slewDamp) {
+    }
 
     /**
      * The template the setup comes from.
@@ -164,6 +197,69 @@ public final class CodecSetup {
         var setup = new CodecSetup(channels, rate);
         setup.selectTemplate(bitrate, true);
         setup.applySetting();
+        setup.initialize();
+        return setup;
+    }
+
+    /**
+     * Builds the setup of a bitrate managed stream at a quality, with hard limits and no average
+     * ({@code vorbis_encode_setup_vbr} followed by {@code OV_ECTL_RATEMANAGE2_SET}).
+     *
+     * @param channels the number of channels, 1 to 255
+     * @param rate the sampling rate in hertz
+     * @param quality the quality, from -0.1 to 1.0
+     * @param minimum the hard minimum bitrate in bits per second, {@code 0} for none
+     * @param maximum the hard maximum bitrate in bits per second, {@code 0} for none
+     * @param reservoirBits the reservoir size in bits, or {@code 0} for twice the approximate bitrate
+     * of the setting (twice the maximum, or the minimum, when the setting has none)
+     * @param reservoirBias the preferred fill of the reservoir, from 0 to 1
+     * @param damping the average damping in seconds, unused without an average
+     * @return the setup
+     * @throws IllegalArgumentException if no template covers the rate, channels and quality
+     */
+    public static CodecSetup managedQuality(int channels, int rate, float quality, int minimum, int maximum,
+                                            long reservoirBits, double reservoirBias, double damping) {
+        var setup = new CodecSetup(channels, rate);
+        quality += .0000001f;
+        if (quality >= 1.f) {
+            quality = .9999f;
+        }
+        setup.selectTemplate(quality, false);
+        setup.applySetting();
+        if (reservoirBits <= 0) {
+            var approximate = setup.approximateBitrate();
+            reservoirBits = approximate > 0 ? approximate * 2L : 2L * (maximum > 0 ? maximum : minimum);
+        }
+        setup.management = new Management(0, minimum, maximum, reservoirBits, reservoirBias, damping);
+        setup.initialize();
+        return setup;
+    }
+
+    /**
+     * Builds the setup of a bitrate managed stream whose settings are chosen from a nominal bitrate
+     * ({@code vorbis_encode_setup_managed}, with {@code OV_ECTL_RATEMANAGE2_SET} for the reservoir
+     * parameters and to turn the average off).
+     *
+     * @param channels the number of channels, 1 to 255
+     * @param rate the sampling rate in hertz
+     * @param nominal the bitrate the settings are chosen from, in bits per second, positive
+     * @param average the average bitrate the reservoir steers to, in bits per second, {@code 0} for
+     * none
+     * @param minimum the hard minimum bitrate in bits per second, {@code 0} for none
+     * @param maximum the hard maximum bitrate in bits per second, {@code 0} for none
+     * @param reservoirBits the reservoir size in bits, or {@code 0} for twice {@code nominal}
+     * @param reservoirBias the preferred fill of the reservoir, from 0 to 1
+     * @param damping the average damping in seconds, positive
+     * @return the setup
+     * @throws IllegalArgumentException if no template covers the rate, channels and bitrate
+     */
+    public static CodecSetup managedBitrate(int channels, int rate, int nominal, int average, int minimum,
+                                            int maximum, long reservoirBits, double reservoirBias, double damping) {
+        var setup = new CodecSetup(channels, rate);
+        setup.selectTemplate(nominal, true);
+        setup.applySetting();
+        setup.management = new Management(average, minimum, maximum,
+                reservoirBits > 0 ? reservoirBits : nominal * 2L, reservoirBias, damping);
         setup.initialize();
         return setup;
     }
@@ -345,12 +441,29 @@ public final class CodecSetup {
             athSetup(3);
         }
         mapAndResidueSetup(is);
-        if (t.rateMapping == null) {
-            bitrateNominal = -1;
+        if (management != null) {
+            bitrateNominal = management.averageRate() > 0 ? (int) management.averageRate() : approximateBitrate();
+            bitrateUpper = (int) management.maximumRate();
+            bitrateLower = (int) management.minimumRate();
         } else {
-            var ds = baseSetting - is;
-            bitrateNominal = (int) ((t.rateMapping[is] * (1. - ds) + t.rateMapping[is + 1] * ds) * channels);
+            bitrateNominal = approximateBitrate();
         }
+    }
+
+    /**
+     * Returns the typical bitrate of the setting, truncated ({@code setting_to_approx_bitrate}).
+     *
+     * @return the bitrate in bits per second, or {@code -1} when the template has no typical
+     * bitrates
+     */
+    private int approximateBitrate() {
+        var t = template;
+        if (t.rateMapping == null) {
+            return -1;
+        }
+        var is = (int) baseSetting;
+        var ds = baseSetting - is;
+        return (int) ((t.rateMapping[is] * (1. - ds) + t.rateMapping[is + 1] * ds) * channels);
     }
 
     /**
@@ -407,8 +520,8 @@ public final class CodecSetup {
     }
 
     /**
-     * Sets the point stereo and sliding lowpass limits ({@code vorbis_encode_global_stereo},
-     * unmanaged).
+     * Sets the point stereo and sliding lowpass limits ({@code vorbis_encode_global_stereo}): one
+     * limit per packet blob in a managed stream, the middle blob's everywhere otherwise.
      *
      * @param setting the stereo point setting
      */
@@ -419,7 +532,19 @@ public final class CodecSetup {
         var g = psyGlobal;
         var p = template.stereoModes;
         var blobs = PsyGlobal.PACKET_BLOBS;
-        if (p != null) {
+        if (p != null && management != null) {
+            System.arraycopy(p[is].prePoint(), 0, g.couplingPrePointAmp, 0, blobs);
+            System.arraycopy(p[is].postPoint(), 0, g.couplingPostPointAmp, 0, blobs);
+            for (var i = 0; i < blobs; i++) {
+                var khz = (float) (p[is].khz()[i] * (1. - ds) + p[is + 1].khz()[i] * ds);
+                g.couplingPointLimit[0][i] = (int) (khz * 1000. / rate * blockSizes[0]);
+                g.couplingPointLimit[1][i] = (int) (khz * 1000. / rate * blockSizes[1]);
+                g.couplingKhz[i] = (int) khz;
+                khz = (float) (p[is].lowpassKhz()[i] * (1. - ds) + p[is + 1].lowpassKhz()[i] * ds);
+                g.slidingLowpass[0][i] = (int) (khz * 1000. / rate * blockSizes[0]);
+                g.slidingLowpass[1][i] = (int) (khz * 1000. / rate * blockSizes[1]);
+            }
+        } else if (p != null) {
             System.arraycopy(p[is].prePoint(), 0, g.couplingPrePointAmp, 0, blobs);
             System.arraycopy(p[is].postPoint(), 0, g.couplingPostPointAmp, 0, blobs);
             var khz = (float) (p[is].khz()[blobs / 2] * (1. - ds) + p[is + 1].khz()[blobs / 2] * ds);
@@ -617,18 +742,19 @@ public final class CodecSetup {
         r.grouping = residue.grouping();
         residueTypes[number] = residue.type();
         var booklist = 0;
+        var stageBooks = management != null ? residue.managedBooks() : residue.books();
         for (var i = 0; i < r.partitions; i++) {
             for (var k = 0; k < 4; k++) {
-                if (residue.books()[i][k] >= 0) {
+                if (stageBooks[i][k] >= 0) {
                     r.secondStages[i] |= 1 << k;
                 }
             }
         }
-        r.groupBook = bookIndex(residue.auxBook());
+        r.groupBook = bookIndex(management != null ? residue.managedAuxBook() : residue.auxBook());
         for (var i = 0; i < r.partitions; i++) {
             for (var k = 0; k < 4; k++) {
-                if (residue.books()[i][k] >= 0) {
-                    r.bookList[booklist++] = bookIndex(residue.books()[i][k]);
+                if (stageBooks[i][k] >= 0) {
+                    r.bookList[booklist++] = bookIndex(stageBooks[i][k]);
                 }
             }
         }
@@ -642,7 +768,8 @@ public final class CodecSetup {
         f.n = (int) (freq / nyquist * blockSize);
         switch (residue.limitType()) {
             case 1 -> {
-                freq = psyGlobal.couplingKhz[PsyGlobal.PACKET_BLOBS / 2] * 1000.;
+                freq = psyGlobal.couplingKhz[management != null ? PsyGlobal.PACKET_BLOBS - 1 : PsyGlobal.PACKET_BLOBS / 2]
+                        * 1000.;
                 if (freq > nyquist) {
                     freq = nyquist;
                 }

@@ -10,6 +10,8 @@ import com.github.auties00.smalt.container.mp4.RemuxOptions;
 import com.github.auties00.smalt.container.ogg.OggMuxerOptions;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.ImageEncoderOptions;
+import com.github.auties00.smalt.image.ops.Region;
+import com.github.auties00.smalt.io.DataReferenceResolver;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.video.VideoDecoderOptions;
 import com.github.auties00.smalt.video.VideoEncoderOptions;
@@ -53,6 +55,27 @@ class OptionsTest {
         assertEquals(0, defaults.minHeight());
         assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().minSize(-1, 0).build());
         assertThrows(NullPointerException.class, () -> defaults.toBuilder().limits(null).build());
+        assertEquals(DataReferenceResolver.none(), defaults.dataReferences());
+        var resolver = DataReferenceResolver.directory(Path.of("media"));
+        var resolving = defaults.toBuilder().dataReferences(resolver).build();
+        assertEquals(resolver, resolving.dataReferences());
+        assertEquals(resolving, resolving.toBuilder().build());
+        assertNotEquals(defaults, resolving);
+        assertEquals(defaults, resolving.toBuilder().noDataReferences().build());
+        assertThrows(NullPointerException.class, () -> defaults.toBuilder().dataReferences(null));
+        assertEquals(Optional.empty(), defaults.region());
+        var region = new Region(3, 4, 5, 6);
+        var cropped = defaults.toBuilder().region(region).build();
+        assertEquals(Optional.of(region), cropped.region());
+        assertEquals(cropped, defaults.toBuilder().region(3, 4, 5, 6).build());
+        assertEquals(cropped.hashCode(), defaults.toBuilder().region(3, 4, 5, 6).build().hashCode());
+        assertEquals(cropped, cropped.toBuilder().build());
+        assertNotEquals(defaults, cropped);
+        assertEquals(defaults, cropped.toBuilder().wholeImage().build());
+        assertTrue(cropped.toString().contains("region=Region[x=3, y=4, width=5, height=6]"), cropped.toString());
+        assertThrows(NullPointerException.class, () -> defaults.toBuilder().region(null));
+        assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().region(-1, 0, 1, 1));
+        assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().region(0, 0, 0, 1));
     }
 
     @Test
@@ -135,6 +158,14 @@ class OptionsTest {
     void readers() {
         assertEquals(MediaLimits.DEFAULT, DemuxerOptions.defaults().limits());
         assertEquals(SMALL, DemuxerOptions.builder().limits(SMALL).build().limits());
+        assertEquals(DataReferenceResolver.none(), DemuxerOptions.defaults().dataReferences());
+        var resolver = DataReferenceResolver.directory(Path.of("media"));
+        var resolving = DemuxerOptions.builder().dataReferences(resolver).limits(SMALL).build();
+        assertEquals(resolver, resolving.dataReferences());
+        assertEquals(resolving, resolving.toBuilder().build());
+        assertEquals(resolving.hashCode(), resolving.toBuilder().build().hashCode());
+        assertEquals(DemuxerOptions.builder().limits(SMALL).build(), resolving.toBuilder().noDataReferences().build());
+        assertThrows(NullPointerException.class, () -> DemuxerOptions.builder().dataReferences(null));
         var audio = AudioReaderOptions.defaults();
         assertEquals(OptionalInt.empty(), audio.sampleRate());
         assertEquals(Optional.empty(), audio.layout());
@@ -175,7 +206,9 @@ class OptionsTest {
         assertFalse(picked.includesAudio());
         assertEquals(picked, RemuxOptions.builder().videoTrack(2).noAudio().build());
         assertEquals(remux, picked.toBuilder().firstVideoTrack().firstAudioTrack().build());
-        assertThrows(IllegalArgumentException.class, () -> remux.toBuilder().audioTrack(0).build());
+        assertThrows(IllegalArgumentException.class, () -> remux.toBuilder().audioTracks().build());
+        // Ogg serial numbers and AVI stream numbers are identifiers too, zero and negative ones included
+        assertEquals(OptionalInt.of(0), remux.toBuilder().audioTrack(0).build().audioTrackId());
         var comments = new LinkedHashMap<String, String>();
         comments.put("TITLE", "x");
         var ogg = OggMuxerOptions.builder().vendor("v").comments(comments).serial(7)

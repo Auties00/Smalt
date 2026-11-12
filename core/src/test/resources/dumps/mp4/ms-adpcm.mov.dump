@@ -1,0 +1,22 @@
+# demux dump of mp4/ms-adpcm.mov; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 600000
+seekable true
+metadata compatible_brands="qt  "
+metadata encoder="Lavf61.7.100"
+metadata major_brand="qt  "
+metadata minor_version="512"
+track 1 AUDIO ADPCM_MS timebase=1/8000 duration=4800 config=32:175f18ca
+  audio rate=8000 bits=4 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 5
+0 t1 pts=0 dts=0 dur=1012 flags=KEY size=1024 crc=4ee42c72
+1 t1 pts=1012 dts=1012 dur=1012 flags=KEY size=1024 crc=f38abbed
+2 t1 pts=2024 dts=2024 dur=1012 flags=KEY size=1024 crc=625c533c
+3 t1 pts=3036 dts=3036 dur=1012 flags=KEY size=1024 crc=4b229015
+4 t1 pts=4048 dts=4048 dur=1012 flags=KEY size=1024 crc=cd486537
+seek 0: t1@0
+seek 200000: t1@1
+seek 400000: t1@3
+seek 632500: end
+seek 600000: t1@4
+seek -1000000: t1@0
