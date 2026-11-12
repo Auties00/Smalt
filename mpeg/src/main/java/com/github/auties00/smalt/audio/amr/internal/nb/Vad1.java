@@ -25,9 +25,9 @@ import static com.github.auties00.smalt.audio.amr.internal.nb.Constants.*;
  *
  * <p>The pitch, tone and complex flags are fed by the open-loop pitch search through
  * {@link #toneDetection(int, int, Flag)}, {@link #toneDetectionUpdate(boolean, Flag)},
- * {@link #complexDetectionUpdate(short)} and {@link #pitchDetection(short[], Flag)}.
+ * {@link #complexDetectionUpdate(short)} and {@link #openLoopEnd(int, short[], Flag)}.
  */
-final class Vad1 {
+final class Vad1 implements VoiceActivityDetector {
     /**
      * The background noise estimate of every band.
      */
@@ -155,10 +155,8 @@ final class Vad1 {
         reset();
     }
 
-    /**
-     * Resets the detector.
-     */
-    void reset() {
+    @Override
+    public void reset() {
         oldlagCount = 0;
         oldlag = 0;
         pitch = 0;
@@ -578,36 +576,35 @@ final class Vad1 {
         return speechVadDecision;
     }
 
-    /**
-     * Records the high-pass filtered correlation maximum of the open-loop pitch search.
-     *
-     * @param bestCorrHp the correlation, Q15
-     */
-    void complexDetectionUpdate(short bestCorrHp) {
+    @Override
+    public void openLoopStart() {
+    }
+
+    @Override
+    public boolean usesComplexDetection() {
+        return true;
+    }
+
+    @Override
+    public void complexDetectionUpdate(short bestCorrHp) {
         this.bestCorrHp = bestCorrHp;
     }
 
     /**
-     * Sets the tone flag when the open-loop correlation is close to the energy.
+     * {@inheritDoc}
      *
-     * @param t0 the maximum correlation
-     * @param t1 the energy
-     * @param overflow the saturation flag
+     * <p>Sets the tone flag when the correlation is close to the energy.
      */
-    void toneDetection(int t0, int t1, Flag overflow) {
+    @Override
+    public void toneDetection(int t0, int t1, Flag overflow) {
         var temp = round(t1, overflow);
         if (temp > 0 && lMsu(t0, temp, TONE_THR, overflow) > 0) {
             tone |= 0x4000;
         }
     }
 
-    /**
-     * Shifts the tone flags at the start of an open-loop search.
-     *
-     * @param oneLagPerFrame whether the mode searches one lag per frame
-     * @param overflow the saturation flag
-     */
-    void toneDetectionUpdate(boolean oneLagPerFrame, Flag overflow) {
+    @Override
+    public void toneDetectionUpdate(boolean oneLagPerFrame, Flag overflow) {
         tone = shr(tone, (short) 1, overflow);
         if (oneLagPerFrame) {
             tone = shr(tone, (short) 1, overflow);
@@ -615,13 +612,17 @@ final class Vad1 {
         }
     }
 
+    @Override
+    public void pitchSelected(int rmax, int r0, Flag overflow) {
+    }
+
     /**
-     * Updates the pitch flags from the open-loop lags of the frame.
+     * {@inheritDoc}
      *
-     * @param tOp the two open-loop lags
-     * @param overflow the saturation flag
+     * <p>Updates the pitch flags from the open-loop lags ({@code vad_pitch_detection}).
      */
-    void pitchDetection(short[] tOp, Flag overflow) {
+    @Override
+    public void openLoopEnd(int mode, short[] tOp, Flag overflow) {
         short lagcount = 0;
         for (var i = 0; i < 2; i++) {
             var temp = abs(sub(oldlag, tOp[i], overflow));
@@ -638,15 +639,8 @@ final class Vad1 {
         oldlagCount = lagcount;
     }
 
-    /**
-     * Decides whether a frame holds speech.
-     *
-     * @param in the speech buffer, with the 40 samples before the frame available
-     * @param inOffset the first sample of the frame
-     * @param overflow the saturation flag
-     * @return 1 for speech, 0 otherwise
-     */
-    short vad(short[] in, int inOffset, Flag overflow) {
+    @Override
+    public short vad(short[] in, int inOffset, Flag overflow) {
         var powSum = 0;
         for (var i = 0; i < FRAME_LEN; i++) {
             var x = in[inOffset + i - LOOKAHEAD];

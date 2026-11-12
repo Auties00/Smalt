@@ -193,11 +193,17 @@ class TiffColorTest {
         }
 
         @Test
-        @DisplayName("L*a*b* of other depths is unsupported")
+        @DisplayName("L*a*b* of other depths renders as the equivalent 16-bit codes")
         void otherDepths() {
-            var file = lab(8, 4, TiffFiles.pattern(WIDTH, HEIGHT, 3, 15, 1));
-            var failure = assertThrows(MediaException.Unsupported.class, () -> decode(file));
-            assertTrue(failure.format().startsWith("tiff cielab"));
+            var values = TiffFiles.pattern(WIDTH, HEIGHT, 3, 15, 1);
+            var codes = new long[values.length];
+            for (var i = 0; i < values.length; i++) {
+                // L* scaled to 16 bits; a* and b* signed, shifted by the 12 bits the 4-bit codes lack
+                codes[i] = i % 3 == 0 ? Math.round(values[i] * 65535.0 / 15) : (values[i] << 60 >> 60 << 12) & 0xFFFF;
+            }
+            var expected = RasterTesting.tight((RgbaPicture) decode(lab(8, 16, codes)).picture());
+            var actual = RasterTesting.tight((RgbaPicture) decode(lab(8, 4, values)).picture());
+            assertArrayEquals(expected, actual);
         }
     }
 
@@ -467,7 +473,7 @@ class TiffColorTest {
         @Test
         @DisplayName("an undecodable level gives way to the next larger one")
         void undecodableLevel() {
-            var file = pyramid(List.of(new Level(400, 300, 0, 1), new Level(200, 150, 1, 1), new Level(100, 75, 1, 34661)),
+            var file = pyramid(List.of(new Level(400, 300, 0, 1), new Level(200, 150, 1, 1), new Level(100, 75, 1, 32908)),
                     true);
             assertEquals(200, decodeAt(file, 60, 40).picture().width());
         }

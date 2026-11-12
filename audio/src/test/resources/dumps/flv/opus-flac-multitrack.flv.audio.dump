@@ -1,0 +1,22 @@
+# audio decode dump of flv/opus-flac-multitrack.flv; regenerate with -Dsmalt.test.updateDumps=true
+format FLV
+duration 1020000
+seekable true
+track 1 OPUS rate=48000 layout=[FRONT_CENTER]
+0 frames=4096 crc16=1775cb90
+1 frames=4096 crc16=07f564de
+2 frames=4096 crc16=b34c02a9
+3 frames=4096 crc16=f0dafa07
+4 frames=4096 crc16=dbec3179
+5 frames=4096 crc16=81ce1598
+6 frames=4096 crc16=f09beea8
+7 frames=4096 crc16=56e0e5f3
+8 frames=4096 crc16=c456fc5d
+9 frames=4096 crc16=65da090b
+10 frames=4096 crc16=e4895036
+11 frames=3592 crc16=6ee19f44
+seek 0: @sample 0
+seek 340000: @sample 16320
+seek 680000: @sample 32640
+seek 1020000: end
+seek -1000000: @sample 0

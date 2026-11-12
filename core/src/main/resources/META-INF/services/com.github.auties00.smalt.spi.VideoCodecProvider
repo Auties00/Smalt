@@ -1,0 +1,2 @@
+com.github.auties00.smalt.internal.provider.RawVideoCodecProvider
+com.github.auties00.smalt.internal.provider.UncompressedVideoCodecProvider
