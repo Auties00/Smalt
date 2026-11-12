@@ -715,6 +715,7 @@ final class MuxTrack {
             case AAC -> 1024;
             case CELP -> audio.codecConfig().map(Latm::audioSpecificConfigFrameSamples).filter(n -> n > 0).orElse(0);
             case TWINVQ -> audio.codecConfig().map(MuxTrack::twinVqFrameSamples).orElse(0);
+            case HVXC -> 160;
             case MP3 -> audio.sampleRate() >= 32000 ? 1152 : 576;
             case OPUS -> 960 * audio.sampleRate() / 48000;
             case AMR_NB, AMR_WB -> audio.sampleRate() / 50;

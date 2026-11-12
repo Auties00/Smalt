@@ -221,19 +221,19 @@ public final class LoasPayloadDemuxer implements Demuxer {
                 throw new MediaException.Malformed("LOAS stream without a supported StreamMuxConfig");
             }
         }
-        var layout = config.celp() ? ChannelLayout.MONO : AudioConfigs.aacLayout(config.channels());
+        var layout = config.codec() != Codec.AAC ? ChannelLayout.MONO : AudioConfigs.aacLayout(config.channels());
         var count = layout != null ? layout.channels() : config.declaredChannels();
         LimitChecks.checkChannels(limits, count);
         this.trackRate = config.coreRate();
         this.baseConfig = config.audioSpecificConfig();
         var described = AudioTrack.builder()
-                .codec(config.celp() ? Codec.CELP : Codec.AAC)
+                .codec(config.codec())
                 .timeBase(Rational.timeBaseOf(trackRate))
                 .codecConfig(config.audioSpecificConfig())
                 .sampleRate(trackRate)
                 .layout(layout)
                 .build();
-        if (!config.celp()) {
+        if (config.codec() == Codec.AAC) {
             described = AacExtensions.refine(described, payloads[0]);
         }
         var size = this.dataEnd - dataStart;
@@ -344,7 +344,7 @@ public final class LoasPayloadDemuxer implements Demuxer {
         try {
             if (!bits.readFlag()) {
                 var parsed = Latm.readStreamMuxConfig(bits);
-                if (parsed == null || (config != null && parsed.celp() != config.celp())) {
+                if (parsed == null || (config != null && parsed.codec() != config.codec())) {
                     return;
                 }
                 if (reported != null && !Arrays.equals(parsed.audioSpecificConfig(), reported)) {
@@ -495,7 +495,7 @@ public final class LoasPayloadDemuxer implements Demuxer {
                     }
                     var sideData = PacketSideData.NONE;
                     if (pending != null) {
-                        var announced = pending.celp() ? track.toBuilder()
+                        var announced = pending.codec() != Codec.AAC ? track.toBuilder()
                                 .codecConfig(pending.audioSpecificConfig())
                                 .sampleRate(pending.coreRate())
                                 .build() : AacExtensions.refine(track.toBuilder()

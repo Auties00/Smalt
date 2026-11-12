@@ -134,6 +134,7 @@ Contents
   77. 3DV-ATM, the ITU-T H.264.2 3D-AVC reference software
   78. ISO/IEC 14496-5 MPEG-4 Audio reference software, TwinVQ modules
   79. MPEG-4 Visual Studio Profile reference software (MoMuSys)
+  80. ISO/IEC 14496-5 MPEG-4 Audio reference software, HVXC modules
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -2711,6 +2712,41 @@ Copyright:
 EOF
 license_start "License notice (vm_dec/src/vm_get_blk_studio.c and the other source files)"
 cat "$LIC/mpeg4-momusys-studio-notice.txt"
+
+section "80. ISO/IEC 14496-5 MPEG-4 Audio reference software, HVXC modules"
+cat <<'EOF'
+Project:      the HVXC decoder modules and code books of the MPEG-4 Audio
+              reference software of ISO/IEC 14496-5, with the LSP decoder of
+              its parametric core and the random number generator of its
+              framework
+Source:       the src_par, src_lpc and src_frame directories of the MPEG-4
+              Audio reference software as the ISO/IEC 23003-3:2019 reference
+              software distributes it (MPEG-D_USAC_refSoft_src_v02_03_00_20190711)
+License text: the notices of the source files
+License:      free license to the software modules or modifications thereof
+              for use in products claiming conformance to the MPEG-4 Audio
+              standards (ISO/IEC 14496-3)
+
+Derived Smalt packages:
+  audio.hvxc.internal (HvxcCore: the parameter decoding, interpolation and
+  synthesis control of hvxcDec.c, hvxcQAmDec.c, hvxcQLspDec.c, hvxcVxcDec.c,
+  hvxcItpDec.c and hvxcProtect.c, with pan_lspdec.c, pan_stab.c and
+  pan_sort.c; VoicedSynthesizer, UnvoicedSynthesizer, HvxcFilters: the
+  synthesis and the postfilter of hvxcSynVDec.c, hvxcVExtGenDec.c,
+  hvxcSynUVDec.c, hvxcUVExtGenDec.c and hvxcFltDec.c; HvxcDsp: hvxcCommon.c;
+  HvxcRandom: random1 of common_m4a.c; HvxcObject: the frame assembly of
+  dec_par.c; hvxc-tables.txt: the code books of hvxcCb*.h and
+  inc_lsp_575.tbl)
+
+Derivation: C code translated to Java and tables transcribed.
+
+Copyright:
+  Sony Corporation, Matsushita Communication Industrial Co., Ltd., Robert
+  Bosch GmbH, University of Hannover and Deutsche Telekom Berkom (1996-2002),
+  and the other developers the notices name
+EOF
+license_start "Notices of the source files"
+cat "$LIC/iso14496-3-hvxc-refsoft-notice.txt"
 
 } > "$OUT"
 

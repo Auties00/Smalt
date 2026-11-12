@@ -393,8 +393,8 @@ public final class FragmentedMp4Muxer implements Muxer {
      * @param codec the codec to look up
      * @return {@code true} for the codecs {@link Mp4Muxer#supports} lists for the
      * {@link Mp4MuxerOptions.Brand#MP4} brand (H.264, HEVC, VVC, VP8, VP9, AV1, MPEG-4 Part 2, H.263,
-     * Motion-JPEG, Motion JPEG 2000, AAC, MPEG-4 CELP, Opus, MP3, MP2, ALAC, FLAC, AMR-NB, AMR-WB, AC-3, E-AC-3, the
-     * 16-, 24-
+     * Motion-JPEG, Motion JPEG 2000, AAC, MPEG-4 CELP, TwinVQ and HVXC, Opus, MP3, MP2, ALAC, FLAC, AMR-NB, AMR-WB,
+     * AC-3, E-AC-3, the 16-, 24-
      * and 32-bit integer and 32- and 64-bit float PCM formats, {@link Codec#MOV_TEXT},
      * {@link Codec#WEBVTT} and {@link Codec#TTML}), and for ProRes and DNxHD
      */

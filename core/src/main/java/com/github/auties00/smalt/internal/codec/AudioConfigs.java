@@ -367,6 +367,31 @@ public final class AudioConfigs {
     }
 
     /**
+     * Returns the sampling rate of an {@code AudioSpecificConfig} of an HVXC object (audio object types 9 and 25 of
+     * ISO/IEC 14496-3 subpart 2).
+     *
+     * @param config the configuration
+     * @return the rate in hertz, or 0 when the configuration is not of an HVXC object, is truncated or names a
+     * reserved rate
+     */
+    public static int hvxcSampleRate(byte[] config) {
+        if (config.length < 2) {
+            return 0;
+        }
+        var bits = new MsbBitReader(config);
+        var objectType = bits.read(5);
+        if (objectType == 31) {
+            objectType = 32 + bits.read(6);
+        }
+        if (objectType != 9 && objectType != 25) {
+            return 0;
+        }
+        var index = bits.read(4);
+        var rate = index == AacRates.ESCAPE ? bits.read(24) : AacRates.rate(index);
+        return bits.overrun() ? 0 : rate;
+    }
+
+    /**
      * Returns the sampling rate an {@code AudioSpecificConfig} of a TwinVQ object names.
      *
      * @param config the configuration

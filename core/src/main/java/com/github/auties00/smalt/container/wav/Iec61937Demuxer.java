@@ -1211,7 +1211,7 @@ final class Iec61937Demuxer implements Demuxer {
             byte[][] payloads = null;
             if (!loasReader.readFlag()) {
                 var parsed = Latm.readStreamMuxConfig(loasReader);
-                if (parsed != null && parsed.celp()) {
+                if (parsed != null && parsed.codec() != Codec.AAC) {
                     parsed = null;
                 }
                 if (parsed != null && loasConfig == null) {

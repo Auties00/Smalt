@@ -12,6 +12,8 @@ import com.github.auties00.smalt.audio.ac3.Ac3DecoderOptions;
 import com.github.auties00.smalt.audio.ac3.Ac3Downmix;
 import com.github.auties00.smalt.audio.celp.CelpDecoder;
 import com.github.auties00.smalt.audio.celp.CelpDecoderOptions;
+import com.github.auties00.smalt.audio.hvxc.HvxcDecoder;
+import com.github.auties00.smalt.audio.hvxc.HvxcDecoderOptions;
 import com.github.auties00.smalt.audio.twinvq.TwinVqDecoder;
 import com.github.auties00.smalt.audio.twinvq.TwinVqDecoderOptions;
 import com.github.auties00.smalt.container.DemuxerOptions;
@@ -66,7 +68,8 @@ import java.util.function.Consumer;
  * or over a CELP core (see {@link #aacCelpCore}) or a downmix with a separate MPEG Surround elementary stream (see
  * {@link #aacSurround}), of the CELP decoder
  * decoding the layers and categories of an object from several elementary streams (see {@link #celpLayers}), of the
- * TwinVQ decoder likewise (see {@link #twinVqLayers}) and under scalable AAC layers (see {@link #aacTwinVqCore}), and of
+ * TwinVQ decoder likewise (see {@link #twinVqLayers}) and under scalable AAC layers (see {@link #aacTwinVqCore}), of the
+ * HVXC decoder likewise, with its delay, speed and pitch options (see {@link #hvxcLayers}), and of
  * the H.264 first pass statistics (see {@link #h264FirstPassStats}).
  */
 class MpegFuzzTest {
@@ -560,6 +563,73 @@ class MpegFuzzTest {
                 var packets = new ArrayList<Packet>();
                 for (var unit : units(input.packets().get(index).data())) {
                     packets.add(new Packet(1, unit, index * 1024L, index * 1024L, 1024, true));
+                }
+                if (packets.isEmpty()) {
+                    continue;
+                }
+                run.step("packet " + index, () -> opened.decode(packets, sink));
+            }
+        }
+    }
+
+    @FuzzTest
+    void hvxc(byte[] data) {
+        FuzzMedia.audio(Codec.HVXC, data);
+    }
+
+    /**
+     * Decodes an HVXC object whose layers or error sensitivity categories come in several elementary streams: the
+     * codec configuration of the {@link FuzzPackets} input lists the {@code AudioSpecificConfig} of each stream and
+     * every packet the access units of one frame, in the format of {@link #units(byte[])}; bit 0 of the options gives
+     * the highest layer to decode, bit 1 every layer, bit 2 turns the postfilter off, bit 3 selects the low delay mode
+     * and bits 4 to 7 the speed and the pitch change factors. Inputs whose first configuration is not of object type 9
+     * or 25 are skipped.
+     */
+    @FuzzTest
+    void hvxcLayers(byte[] data) {
+        var run = Fuzz.start("hvxcLayers");
+        var input = FuzzPackets.parse(data, FuzzPackets.AUDIO_FIELDS);
+        var configs = units(input.header().config().orElse(new byte[0]));
+        var type = configs.isEmpty() || configs.getFirst().length == 0 ? 0 : (configs.getFirst()[0] & 0xFF) >>> 3;
+        if (type != 9 && type != 25) {
+            run.skip("not HVXC");
+            return;
+        }
+        var flags = input.header().options();
+        var factors = new float[]{1f, 0.2f, 0.75f, 1.6f};
+        var options = HvxcDecoderOptions.builder().limits(Fuzz.LIMITS).postFilter((flags & 4) == 0)
+                .lowDelay((flags & 8) != 0).speedFactor(factors[(flags >>> 4) & 3])
+                .pitchFactor(factors[(flags >>> 6) & 3] + 0.25f);
+        if ((flags & 2) == 0) {
+            options.maxLayer(flags & 1);
+        }
+        var tracks = new ArrayList<AudioTrack>();
+        for (var config : configs) {
+            tracks.add(AudioTrack.builder().id(tracks.size() + 1).codec(Codec.HVXC).timeBase(new Rational(1, 8000))
+                    .codecConfig(config).build());
+        }
+        var decoder = run.value("open", () -> new HvxcDecoder(tracks, options.build()));
+        if (decoder.isEmpty()) {
+            return;
+        }
+        Consumer<AudioBuffer> sink = buffer -> {
+            if (buffer.channels() != 1 || buffer.frames() % 160 != 0) {
+                throw new IllegalStateException("decoded a block of " + buffer.channels() + " channels and "
+                        + buffer.frames() + " samples");
+            }
+            for (var i = 0; i < buffer.frames(); i++) {
+                var sample = buffer.plane(0)[i];
+                if (!(Math.abs(sample) <= 1f)) {
+                    throw new IllegalStateException("decoded a sample outside full scale: " + sample);
+                }
+            }
+            run.output();
+        };
+        try (var opened = decoder.get()) {
+            for (var index = 0; index < input.packets().size(); index++) {
+                var packets = new ArrayList<Packet>();
+                for (var unit : units(input.packets().get(index).data())) {
+                    packets.add(new Packet(1, unit, index * 160L, index * 160L, 160, true));
                 }
                 if (packets.isEmpty()) {
                     continue;

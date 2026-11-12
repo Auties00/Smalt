@@ -31,6 +31,8 @@ audio.flac	audio
 audio.g722	audio
 audio.g726	audio
 audio.gsm	audio
+audio.hvxc	mpeg
+audio.hvxc.internal	mpeg
 audio.loudness	core
 audio.mace	audio
 audio.mp3	audio

@@ -431,6 +431,16 @@ public enum Codec {
     TWINVQ(TrackKind.AUDIO, "twinvq"),
 
     /**
+     * MPEG-4 HVXC parametric speech, audio object types 9 (HVXC) and 25 (ER HVXC) of ISO/IEC 14496-3 subpart 2: 8 kHz
+     * speech at 2 and 4 kbit/s, fixed or variable rate, with a 2 kbit/s enhancement layer over a 2 kbit/s base layer.
+     *
+     * <p>A packet is one access unit of one elementary stream: a 20 millisecond frame of the base layer or of the
+     * enhancement layer, which an MP4 file carries in a track of its own. The configuration is the MPEG-4
+     * {@code AudioSpecificConfig} with its {@code HvxcSpecificConfig} or {@code ErrorResilientHvxcSpecificConfig}.
+     */
+    HVXC(TrackKind.AUDIO, "hvxc"),
+
+    /**
      * Sony ATRAC9, the audio of the PlayStation Vita and PlayStation 4 ({@code .at9} files): a WAVE
      * {@code WAVEFORMATEXTENSIBLE} sub-format, GUID {@code 47E142D2-36BA-4D8D-88FC-61654F8C836C}.
      *

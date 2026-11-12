@@ -395,6 +395,49 @@ class TsLatmTest {
     }
 
     @Test
+    @DisplayName("exposes a variable rate HVXC stream with the payload lengths of its frame length table")
+    void hvxcTrack() {
+        var random = new java.util.Random(9);
+        var elements = new ArrayList<byte[]>();
+        var expected = new ArrayList<byte[]>();
+        var lengths = new int[]{80, 40, 25, 3};
+        for (var index = 0; index < 8; index++) {
+            var writer = new MsbBitWriter(64);
+            writer.write(0, 1);
+            writer.write(0, 1);
+            writer.write(1, 1);
+            writer.write(0, 6);
+            writer.write(0, 4);
+            writer.write(0, 3);
+            // an ER HVXC base layer at 8 kHz, variable rate 4 kbit/s with the extension, epConfig 0
+            copy(writer, new byte[]{(byte) 0xCD, (byte) 0x8E, (byte) 0xC0}, 21);
+            writer.write(7, 3);
+            writer.write(1, 1);
+            writer.write(0, 1);
+            writer.write(0, 1);
+            var coded = index % 4;
+            writer.write(coded, 2);
+            var bits = lengths[coded];
+            var payload = new byte[(bits + 7) / 8];
+            random.nextBytes(payload);
+            if (bits % 8 != 0) {
+                payload[payload.length - 1] &= (byte) (0xFF << (8 - bits % 8));
+            }
+            for (var bit = 0; bit < bits; bit++) {
+                writer.write((payload[bit >>> 3] >> (7 - (bit & 7))) & 1, 1);
+            }
+            writer.alignWithZeros();
+            elements.add(writer.toByteArray());
+            expected.add(payload);
+        }
+        var demuxed = TsTesting.demux(transportStream(elements));
+        var track = (AudioTrack) demuxed.tracks().getFirst();
+        assertEquals(Codec.HVXC, track.codec());
+        assertEquals(8000, track.sampleRate());
+        assertPayloads(expected, payloads(demuxed));
+    }
+
+    @Test
     @DisplayName("does not expose an AAC stream with a CELP frame length type")
     void celp() {
         var writer = new MsbBitWriter(64);

@@ -395,6 +395,47 @@ class FuzzSeedWriter {
     }
 
     @Test
+    @DisplayName("writes the HVXC seeds of the HVXC targets")
+    void hvxc() {
+        // no available encoder writes MPEG-4 HVXC, and every field of an HVXC frame has a fixed width, so the frames
+        // are random bits: fixed rate 2 and 4 kbit/s, variable rate 2 kbit/s, ER HVXC at 3.7 kbit/s and variable
+        // rate 4 kbit/s, and the configuration of the conformance stream er_hv03_ep2_crc (the error protection tool)
+        var random = new java.util.Random(144962);
+        seedHvxc("valid-2k.bin", new byte[]{0x4D, (byte) 0x8C, 0x00}, 5, random);
+        seedHvxc("valid-4k.bin", new byte[]{0x4D, (byte) 0x8C, (byte) 0x80}, 10, random);
+        seedHvxc("valid-variable-2k.bin", new byte[]{0x4D, (byte) 0x8E, 0x00}, 5, random);
+        seedHvxc("valid-er-3k.bin", new byte[]{(byte) 0xCD, (byte) 0x8D, 0x40}, 10, random);
+        seedHvxc("valid-er-variable-4k.bin", new byte[]{(byte) 0xCD, (byte) 0x8E, (byte) 0xC0}, 10, random);
+        seedHvxc("valid-er-protected.bin", java.util.HexFormat.of()
+                .parseHex("cd8c500850820002c03000002002000008008800050000"), 9, random);
+        // a 2 + 2 kbit/s scalable object, and an ER object at 2 kbit/s with its four error sensitivity categories in
+        // streams of their own (epConfig 1)
+        var layered = new ArrayList<FuzzPackets.Part>();
+        var categories = new ArrayList<FuzzPackets.Part>();
+        for (var frame = 0; frame < 12; frame++) {
+            layered.add(new FuzzPackets.Part(MpegFuzzTest.units(List.of(randomBytes(random, 5),
+                    randomBytes(random, 5))), true));
+            categories.add(new FuzzPackets.Part(MpegFuzzTest.units(List.of(randomBytes(random, 3),
+                    randomBytes(random, 1), randomBytes(random, 1), randomBytes(random, 2))), true));
+        }
+        write(MpegFuzzTest.class, "hvxcLayers", "valid-scalable.bin", FuzzPackets.audio(2, 8000, 1, 0,
+                MpegFuzzTest.units(List.of(new byte[]{(byte) 0xCD, (byte) 0x8C, 0x40},
+                        new byte[]{(byte) 0xCD, (byte) 0x88, 0x00})), layered));
+        var categoryConfig = new byte[]{(byte) 0xCD, (byte) 0x8C, 0x48};
+        write(MpegFuzzTest.class, "hvxcLayers", "valid-er-categories.bin", FuzzPackets.audio(2 | 8 | 0x10, 8000, 1,
+                0, MpegFuzzTest.units(List.of(categoryConfig, categoryConfig, categoryConfig, categoryConfig)),
+                categories));
+    }
+
+    private static void seedHvxc(String name, byte[] config, int bytes, java.util.Random random) {
+        var parts = new ArrayList<FuzzPackets.Part>();
+        for (var frame = 0; frame < 16; frame++) {
+            parts.add(new FuzzPackets.Part(randomBytes(random, bytes), true));
+        }
+        write(MpegFuzzTest.class, "hvxc", name, FuzzPackets.audio(0, 8000, 1, 0, config, parts));
+    }
+
+    @Test
     @DisplayName("writes the TwinVQ seeds of the TwinVQ targets")
     void twinVq() {
         // no available encoder writes TwinVQ, and the fields of a frame have fixed widths given by its length, so the

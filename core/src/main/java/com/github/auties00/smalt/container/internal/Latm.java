@@ -5,6 +5,7 @@ import com.github.auties00.smalt.internal.bits.MsbBitReader;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.bits.MsbBitWriter;
 import com.github.auties00.smalt.internal.header.AacRates;
+import com.github.auties00.smalt.track.Codec;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -20,14 +21,14 @@ import java.util.Arrays;
  * and HVXC payloads, whose lengths in bits come from the frame length tables of ISO/IEC 14496-3 Tables 1.46 to
  * 1.48); the payloads of the first stream, program 0 and layer 0, are the ones returned. Its
  * {@code AudioSpecificConfig} is copied byte aligned, a program config element included (channel configuration
- * zero), and must be of AAC Main, LC, SSR or LTP, alone or under HE-AAC or HE-AAC v2, or of CELP or ER CELP. An ER
- * CELP stream may apply the error protection tool ({@code epConfig} 2 or 3, its {@code ErrorProtectionSpecificConfig}
- * copied with the configuration), whose protected payloads take their lengths from {@code PayloadLengthInfo} or a
- * fixed frame length, not from the CELP frame length tables; {@code epConfig} 1 is rejected, as subclause 1.7.1
- * excludes it from LATM. A payload whose length is not a whole number of bytes is returned
- * with its last byte padded with zero bits. A stream keeps the codec its first configuration names: the callers skip
- * the frames of a later configuration that turns from AAC to CELP or back. Not supported: {@code audioMuxVersionA} 1,
- * whose syntax the standard leaves to be defined.
+ * zero), and must be of AAC Main, LC, SSR or LTP, alone or under HE-AAC or HE-AAC v2, of CELP or ER CELP, or of HVXC
+ * or ER HVXC. An ER CELP or ER HVXC stream may apply the error protection tool ({@code epConfig} 2 or 3, its
+ * {@code ErrorProtectionSpecificConfig} copied with the configuration), whose protected payloads take their lengths
+ * from {@code PayloadLengthInfo} or a fixed frame length, not from the CELP and HVXC frame length tables;
+ * {@code epConfig} 1 is rejected, as subclause 1.7.1 excludes it from LATM. A payload whose length is not a whole
+ * number of bytes is returned with its last byte padded with zero bits. A stream keeps the codec its first
+ * configuration names: the callers skip the frames of a later configuration of another codec. Not supported:
+ * {@code audioMuxVersionA} 1, whose syntax the standard leaves to be defined.
  */
 public final class Latm {
     /**
@@ -61,7 +62,8 @@ public final class Latm {
      * @param frameLengths the payload lengths in bits of every stream by stream index, indexed by
      * {@code MuxSlotLengthCoded} for {@code frameLengthType} 3, 5 and 7 and all four equal for the fixed lengths of
      * {@code frameLengthType} 1, 4 and 6; {@code null} for {@code frameLengthType} 0
-     * @param objectType the audio object type of the first stream: 1 to 4 for AAC, 8 or 24 for CELP
+     * @param objectType the audio object type of the first stream: 1 to 4 for AAC, 8 or 24 for CELP, 9 or 25 for
+     * HVXC
      * @param frameSamples the samples one payload of the first stream codes at {@code coreRate}
      */
     public record Config(byte[] audioSpecificConfig, int version, int subframes, boolean otherData,
@@ -78,12 +80,17 @@ public final class Latm {
         }
 
         /**
-         * Returns whether the first stream is CELP rather than AAC.
+         * Returns the codec of the first stream.
          *
-         * @return whether its object type is CELP (8) or ER CELP (24)
+         * @return {@link Codec#CELP} for CELP (8) and ER CELP (24), {@link Codec#HVXC} for HVXC (9) and ER HVXC
+         * (25), {@link Codec#AAC} otherwise
          */
-        public boolean celp() {
-            return objectType == 8 || objectType == 24;
+        public Codec codec() {
+            return switch (objectType) {
+                case 8, 24 -> Codec.CELP;
+                case 9, 25 -> Codec.HVXC;
+                default -> Codec.AAC;
+            };
         }
     }
 
@@ -281,8 +288,9 @@ public final class Latm {
      * Returns the samples one access unit of a stream codes, as the frame lengths of LATM take them.
      *
      * @param config the {@code AudioSpecificConfig}, byte aligned
-     * @return 1024 for an AAC configuration, the frame samples of a CELP base layer, {@code 0} for a CELP enhancement
-     * layer, or {@code -1} when {@link #audioSpecificConfigBits(byte[])} rejects the configuration
+     * @return 1024 for an AAC configuration, the frame samples of a CELP base layer, 160 for an HVXC base layer,
+     * {@code 0} for a CELP or HVXC enhancement layer, or {@code -1} when {@link #audioSpecificConfigBits(byte[])}
+     * rejects the configuration
      */
     public static int audioSpecificConfigFrameSamples(byte[] config) {
         try {
@@ -589,6 +597,15 @@ public final class Latm {
             writer.alignWithZeros();
             return new Asc(writer.toByteArray(), coreRate, channels, 1, objectType, frameSamples, protection[0]);
         }
+        if (objectType == 9 || objectType == 25) {
+            var protection = new boolean[1];
+            var frameSamples = copyHvxcSpecificConfig(bits, writer, objectType, protection);
+            if (frameSamples < 0) {
+                return null;
+            }
+            writer.alignWithZeros();
+            return new Asc(writer.toByteArray(), coreRate, channels, 1, objectType, frameSamples, protection[0]);
+        }
         if (objectType < 1 || objectType > 4 || channels > 7 || coreRate <= 0) {
             return null;
         }
@@ -647,6 +664,36 @@ public final class Latm {
             return -1;
         }
         return frameSamples > 0 ? frameSamples : -1;
+    }
+
+    /**
+     * Copies an {@code HvxcSpecificConfig}, or an {@code ErrorResilientHvxcSpecificConfig} followed by its
+     * {@code epConfig} and, for {@code epConfig} 2 and 3, its {@code ErrorProtectionSpecificConfig} and
+     * {@code directMapping} (ISO/IEC 14496-3 Tables 2.1 and 2.19 and subclause 1.8.2.1).
+     *
+     * @param bits the reader
+     * @param writer the configuration being written
+     * @param objectType 9 for HVXC, 25 for ER HVXC
+     * @param protection receives in its first entry whether the stream applies the error protection tool
+     * @return 160, the samples of a frame of a base layer, {@code 0} for an enhancement layer, or {@code -1} for
+     * {@code epConfig} 1, the reserved {@code HVXCrateMode} or a reserved error protection configuration
+     */
+    private static int copyHvxcSpecificConfig(MsbBitReader bits, MsbBitWriter writer, int objectType,
+                                              boolean[] protection) {
+        var base = copy(bits, writer, 1);
+        if (base == 1) {
+            copy(bits, writer, 1);
+            if (copy(bits, writer, 2) == 3) {
+                return -1;
+            }
+            if (copy(bits, writer, 1) == 1) {
+                copy(bits, writer, 1);
+            }
+        }
+        if (objectType == 25 && !copyErrorProtection(bits, writer, protection)) {
+            return -1;
+        }
+        return bits.overrun() ? -1 : base == 1 ? 160 : 0;
     }
 
     /**

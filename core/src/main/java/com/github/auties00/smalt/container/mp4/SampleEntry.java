@@ -947,6 +947,11 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                     channels = 1;
                     sampleRate = AudioConfigs.celpSampleRate(config);
                 }
+                if (codec == Codec.AAC && config != null && AudioConfigs.hvxcSampleRate(config) > 0) {
+                    codec = Codec.HVXC;
+                    channels = 1;
+                    sampleRate = AudioConfigs.hvxcSampleRate(config);
+                }
                 if (codec == Codec.AAC && config != null && AudioConfigs.twinVqSampleRate(config) > 0) {
                     codec = Codec.TWINVQ;
                     if (AudioConfigs.twinVqChannels(config) > 0) {

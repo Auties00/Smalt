@@ -7,7 +7,7 @@ the ADTS profile, sampling frequency index and channel configuration, the instan
 channel element of the first block.
 The AU file of 3-bit G.723 codes is assembled here too, since ffmpeg declares every G.726 code size as G.721
 (encoding 23): its codes are ffmpeg's adpcm_g726le output and its header declares encoding 25.
-The LOAS file of CELP is assembled here too, as no encoder writes CELP: see celp_loas.
+The LOAS files of CELP and HVXC are assembled here too, as no encoder writes either: see celp_loas and hvxc_loas.
 
     python -I tools/testdata/behavior/make-audio-container-samples.py [samples directory]
 """
@@ -180,6 +180,44 @@ def celp_loas():
     return bytes(out)
 
 
+def hvxc_loas():
+    """LOAS of a variable rate HVXC base layer at 2 kbit/s: no encoder writes one, and every field of an HVXC frame has
+    a fixed width, so the frames are seeded random bits whose 2-bit VUV selects the length of the variable rate frame
+    (frameLengthType 7, table index 0: 40 bits voiced, 28 unvoiced, 2 background noise), with the StreamMuxConfig in
+    every eighth frame."""
+    random = Random(14462)
+    out = bytearray()
+    for frame in range(32):
+        element = Bits()
+        carries_config = frame % 8 == 0
+        element.write(0 if carries_config else 1, 1)
+        if carries_config:
+            element.write(0, 1)  # audioMuxVersion
+            element.write(1, 1)  # allStreamsSameTimeFraming
+            element.write(0, 6)  # numSubFrames
+            element.write(0, 4)  # numProgram
+            element.write(0, 3)  # numLayer
+            element.write(9, 5)  # audioObjectType
+            element.write(11, 4)  # samplingFrequencyIndex
+            element.write(1, 4)  # channelConfiguration
+            element.write(1, 1)  # isBaseLayer
+            element.write(1, 1)  # HVXCvarMode
+            element.write(0, 2)  # HVXCrateMode
+            element.write(0, 1)  # extensionFlag
+            element.write(7, 3)  # frameLengthType
+            element.write(0, 1)  # HVXCframeLengthTableIndex
+            element.write(0, 2)  # otherDataPresent, crcCheckPresent
+        vuv = random.getrandbits(2)
+        coded = {0: 1, 1: 2}.get(vuv, 0)
+        element.write(coded, 2)  # MuxSlotLengthCoded
+        element.write(vuv, 2)
+        for _ in range((40, 28, 2)[coded] - 2):
+            element.write(random.getrandbits(1), 1)
+        payload = element.to_bytes()
+        out += bytes((0x56, 0xE0 | (len(payload) >> 8), len(payload) & 0xFF)) + payload
+    return bytes(out)
+
+
 def main():
     if len(sys.argv) > 1 and sys.argv[1].startswith('-'):
         sys.exit(__doc__ or 'usage: ' + sys.argv[0] + ' [path]')
@@ -213,6 +251,8 @@ def main():
         file.write(adif(data))
     with open(os.path.join(out, "loas", "celp.loas"), "wb") as file:
         file.write(celp_loas())
+    with open(os.path.join(out, "loas", "hvxc.loas"), "wb") as file:
+        file.write(hvxc_loas())
 
 
 if __name__ == "__main__":

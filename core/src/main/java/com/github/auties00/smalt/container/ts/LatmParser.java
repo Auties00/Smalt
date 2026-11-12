@@ -98,7 +98,7 @@ final class LatmParser extends FrameParser {
         try {
             if (!bits.readFlag()) {
                 var parsed = Latm.readStreamMuxConfig(bits);
-                if (parsed == null || (config != null && parsed.celp() != config.celp())) {
+                if (parsed == null || (config != null && parsed.codec() != config.codec())) {
                     return;
                 }
                 if (track == null) {
@@ -117,7 +117,7 @@ final class LatmParser extends FrameParser {
             for (var payload : payloads) {
                 if (refinePending) {
                     refinePending = false;
-                    if (!config.celp()) {
+                    if (config.codec() == Codec.AAC) {
                         track = AacExtensions.refine((AudioTrack) track, payload);
                     }
                 }
@@ -145,7 +145,7 @@ final class LatmParser extends FrameParser {
         LimitChecks.checkChannels(limits, parsed.declaredChannels());
         var described = AudioTrack.builder()
                 .id(trackId())
-                .codec(parsed.celp() ? Codec.CELP : Codec.AAC)
+                .codec(parsed.codec())
                 .timeBase(Rational.timeBaseOf(parsed.coreRate()))
                 .codecConfig(parsed.audioSpecificConfig())
                 .language(entry.language())
@@ -168,7 +168,7 @@ final class LatmParser extends FrameParser {
      * the channels, as for ADTS
      */
     private static ChannelLayout layoutOf(Config parsed) {
-        if (parsed.celp()) {
+        if (parsed.codec() != Codec.AAC) {
             return ChannelLayout.MONO;
         }
         var count = parsed.channels() == 7 ? 8 : parsed.channels();
@@ -187,7 +187,7 @@ final class LatmParser extends FrameParser {
                 .sampleRate(parsed.coreRate())
                 .layout(layoutOf(parsed))
                 .build();
-        if (!parsed.celp()) {
+        if (parsed.codec() == Codec.AAC) {
             described = AacExtensions.refine(described, payload);
         }
         reportedConfig = parsed.audioSpecificConfig();

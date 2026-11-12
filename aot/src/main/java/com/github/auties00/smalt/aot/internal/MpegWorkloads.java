@@ -23,6 +23,8 @@ import com.github.auties00.smalt.audio.dts.DtsDecoder;
 import com.github.auties00.smalt.audio.amr.AmrDecoder;
 import com.github.auties00.smalt.audio.celp.CelpDecoder;
 import com.github.auties00.smalt.audio.celp.CelpDecoderOptions;
+import com.github.auties00.smalt.audio.hvxc.HvxcDecoder;
+import com.github.auties00.smalt.audio.hvxc.HvxcDecoderOptions;
 import com.github.auties00.smalt.audio.twinvq.TwinVqDecoder;
 import com.github.auties00.smalt.audio.twinvq.TwinVqDecoderOptions;
 import com.github.auties00.smalt.audio.amr.AmrEncoder;
@@ -264,7 +266,8 @@ final class MpegWorkloads {
                 file("amr-wb-encode", () -> amrEncode("amr-wb-encode", Codec.AMR_WB, 4)),
                 file("amr-wb-decode", () -> amrDecode("amr-wb-decode", Codec.AMR_WB, 1)),
                 file("celp-decode", MpegWorkloads::celpDecode),
-                file("twinvq-decode", MpegWorkloads::twinVqDecode));
+                file("twinvq-decode", MpegWorkloads::twinVqDecode),
+                file("hvxc-decode", MpegWorkloads::hvxcDecode));
     }
 
     /**
@@ -2374,6 +2377,73 @@ final class MpegWorkloads {
                 }
             }
         });
+    }
+
+    /**
+     * Returns a workload that decodes MPEG-4 HVXC: fixed rate at 2 and 4 kbit/s in both delay modes, the 2 + 2 kbit/s
+     * scalable object, variable rate ER HVXC at 4 kbit/s, and speed and pitch change, with and without the postfilter.
+     * No encoder writes HVXC and every field of a frame has a fixed width, so the frames are seeded random bits.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload hvxcDecode() {
+        var random = new Random(144962);
+        var plain = HvxcDecoderOptions.builder().postFilter(false).build();
+        var decoders = List.of(
+                new HvxcDecoder(hvxcTracks(new byte[]{0x4D, (byte) 0x8C, 0x00}), HvxcDecoderOptions.defaults()),
+                new HvxcDecoder(hvxcTracks(new byte[]{0x4D, (byte) 0x8C, (byte) 0x80}),
+                        HvxcDecoderOptions.builder().lowDelay(true).build()),
+                new HvxcDecoder(hvxcTracks(new byte[]{(byte) 0xCD, (byte) 0x8C, 0x40},
+                        new byte[]{(byte) 0xCD, (byte) 0x88, 0x00}), plain),
+                new HvxcDecoder(hvxcTracks(new byte[]{(byte) 0xCD, (byte) 0x8E, (byte) 0xC0}),
+                        HvxcDecoderOptions.builder().speedFactor(0.75f).pitchFactor(1.3f).build()));
+        var streams = List.of(hvxcFrames(random, new int[]{5}), hvxcFrames(random, new int[]{10}),
+                hvxcFrames(random, new int[]{5, 5}), hvxcFrames(random, new int[]{10}));
+        Consumer<AudioBuffer> output = AudioStreams::consume;
+        return TrainingWorkload.of("hvxc-decode", () -> {
+            for (var i = 0; i < decoders.size(); i++) {
+                var decoder = decoders.get(i);
+                for (var units : streams.get(i)) {
+                    decoder.decode(units, output);
+                }
+            }
+        });
+    }
+
+    /**
+     * Returns the frames of an HVXC object in random bits.
+     *
+     * @param random the source of the bits
+     * @param sizes the bytes of an access unit of each elementary stream
+     * @return the access units of each frame
+     */
+    private static List<List<Packet>> hvxcFrames(Random random, int[] sizes) {
+        var frames = new ArrayList<List<Packet>>(64);
+        for (var frame = 0; frame < 64; frame++) {
+            var units = new ArrayList<Packet>(sizes.length);
+            for (var stream = 0; stream < sizes.length; stream++) {
+                var data = new byte[sizes[stream]];
+                random.nextBytes(data);
+                units.add(new Packet(stream + 1, data, 160L * frame, 160L * frame, 160, true));
+            }
+            frames.add(units);
+        }
+        return frames;
+    }
+
+    /**
+     * Returns the tracks of the elementary streams of an HVXC object.
+     *
+     * @param configs the {@code AudioSpecificConfig} of each stream
+     * @return the tracks
+     */
+    private static List<AudioTrack> hvxcTracks(byte[]... configs) {
+        var tracks = new ArrayList<AudioTrack>(configs.length);
+        for (var config : configs) {
+            tracks.add(AudioTrack.builder().id(tracks.size() + 1).codec(Codec.HVXC).timeBase(new Rational(1, 8000))
+                    .codecConfig(config).build());
+        }
+        return tracks;
     }
 
     /**

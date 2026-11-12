@@ -30,8 +30,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Covers CELP in LOAS/LATM (ISO/IEC 14496-3 clause 1.7): streams written bit by bit with each CELP and HVXC frame
- * length type (Tables 1.46 to 1.48), whose payloads of the first stream the demuxer must return bit exact (the last
+ * Covers CELP in LOAS/LATM (ISO/IEC 14496-3 clause 1.7): streams written bit by bit with each CELP frame length
+ * type (Tables 1.47 and 1.48), whose payloads of the first stream the demuxer must return bit exact (the last
  * byte padded with zero bits) on a CELP track with the frame duration of the configuration; ER CELP with the error
  * protection tool, whose {@code ErrorProtectionSpecificConfig} the track's configuration keeps bit exact; and the
  * CELP tracks {@link LoasMuxer} writes, read back by the demuxer.

@@ -15,27 +15,29 @@ import java.nio.ByteBuffer;
 import java.util.Objects;
 
 /**
- * Writes AAC and CELP elementary streams in LOAS framing (ISO/IEC 14496-3 clause 1.7) from the packets of one AAC or
- * CELP track.
+ * Writes AAC, CELP and HVXC elementary streams in LOAS framing (ISO/IEC 14496-3 clause 1.7) from the packets of one
+ * AAC, CELP or HVXC track.
  *
- * <p>Each packet must be one access unit: a raw AAC {@code raw_data_block}, or a CELP frame, as the MP4, Matroska,
- * ADTS and LOAS demuxers produce; it becomes one {@code AudioSyncStream} frame: the sync word {@code 0x2B7}, the
- * 13-bit length and an {@code AudioMuxElement} of one subframe of one program and layer, whose payload length is coded
- * in the element ({@code frameLengthType} 0, a buffer fullness of {@code 0xFF}, variable bitrate). The element of the
- * first frame, of every {@linkplain LoasMuxerOptions#configInterval() configuration interval} and of a packet that
- * changes the {@code AudioSpecificConfig} carries the {@code StreamMuxConfig}; the others refer back to it. The
- * configuration is written with {@code audioMuxVersion} 0, as most readers expect, unless the
+ * <p>Each packet must be one access unit: a raw AAC {@code raw_data_block}, or a CELP or HVXC frame, as the MP4,
+ * Matroska, ADTS and LOAS demuxers produce; it becomes one {@code AudioSyncStream} frame: the sync word
+ * {@code 0x2B7}, the 13-bit length and an {@code AudioMuxElement} of one subframe of one program and layer, whose
+ * payload length is coded in the element ({@code frameLengthType} 0, a buffer fullness of {@code 0xFF}, variable
+ * bitrate). The element of the first frame, of every
+ * {@linkplain LoasMuxerOptions#configInterval() configuration interval} and of a packet that changes the
+ * {@code AudioSpecificConfig} carries the {@code StreamMuxConfig}; the others refer back to it. The configuration is
+ * written with {@code audioMuxVersion} 0, as most readers expect, unless the
  * {@code AudioSpecificConfig} carries data after its {@code GASpecificConfig} (an explicit, backward-compatible
  * signaling of HE-AAC), which only {@code audioMuxVersion} 1 delimits. Timestamps are ignored.
  *
  * <p>The track's {@code AudioSpecificConfig} must be of AAC Main, Low Complexity, Scalable Sample Rate or Long Term
- * Prediction, alone or under HE-AAC or HE-AAC v2 (object types 5 and 29), or the base layer of a CELP or ER CELP
- * object (object types 8 and 24) without error protection or with the error protection tool ({@code epConfig} 0, 2
- * or 3): the configurations whose length a reader of {@code audioMuxVersion} 0 can find. A CELP frame, whose length
- * in bits need not be a whole number of bytes, is written as the bytes of its access unit; the decoder ignores the
- * padding bits of its last byte. The enhancement layers of a CELP object are elementary streams of their own, which
- * this one-track muxer does not carry. The output is written strictly in order, so any {@link MediaSink} works, a
- * streaming one included; the sink is written from its position and is never closed by the muxer.
+ * Prediction, alone or under HE-AAC or HE-AAC v2 (object types 5 and 29), or the base layer of a CELP, ER CELP, HVXC
+ * or ER HVXC object (object types 8, 24, 9 and 25) without error protection or with the error protection tool
+ * ({@code epConfig} 0, 2 or 3): the configurations whose length a reader of {@code audioMuxVersion} 0 can find. A
+ * CELP or HVXC frame, whose length in bits need not be a whole number of bytes, is written as the bytes of its access
+ * unit; the decoder ignores the padding bits of its last byte. The enhancement layers of a CELP or HVXC object are
+ * elementary streams of their own, which this one-track muxer does not carry. The output is written strictly in
+ * order, so any {@link MediaSink} works, a streaming one included; the sink is written from its position and is
+ * never closed by the muxer.
  *
  * <p>Instances are not thread-safe.
  */
@@ -120,18 +122,18 @@ public final class LoasMuxer implements Muxer {
      * Returns whether LOAS can carry a codec.
      *
      * @param codec the codec to look up
-     * @return {@code true} for {@link Codec#AAC} and {@link Codec#CELP}
+     * @return {@code true} for {@link Codec#AAC}, {@link Codec#CELP} and {@link Codec#HVXC}
      */
     public static boolean supports(Codec codec) {
         Objects.requireNonNull(codec, "codec");
-        return codec == Codec.AAC || codec == Codec.CELP;
+        return codec == Codec.AAC || codec == Codec.CELP || codec == Codec.HVXC;
     }
 
     /**
      * {@inheritDoc}
      *
-     * @throws IllegalArgumentException if the track is neither AAC nor CELP, has no {@code AudioSpecificConfig}, or
-     * its configuration is not of an object type the class description lists
+     * @throws IllegalArgumentException if the track is neither AAC, CELP nor HVXC, has no
+     * {@code AudioSpecificConfig}, or its configuration is not of an object type the class description lists
      * @throws IllegalStateException if a track was already declared, a packet was already written or the muxer is
      * finished
      */
@@ -162,7 +164,7 @@ public final class LoasMuxer implements Muxer {
         var bits = Latm.audioSpecificConfigBits(config);
         if (bits < 0 || Latm.audioSpecificConfigFrameSamples(config) == 0) {
             throw new IllegalArgumentException("LOAS cannot carry an AudioSpecificConfig that is not of AAC Main, LC,"
-                    + " SSR or LTP, alone or under HE-AAC, or of a CELP base layer without epConfig 1");
+                    + " SSR or LTP, alone or under HE-AAC, or of a CELP or HVXC base layer without epConfig 1");
         }
         var trailing = false;
         for (var bit = bits; bit < 8L * config.length; bit++) {

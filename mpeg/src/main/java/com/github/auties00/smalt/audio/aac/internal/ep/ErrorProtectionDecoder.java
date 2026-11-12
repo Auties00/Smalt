@@ -341,6 +341,18 @@ public final class ErrorProtectionDecoder {
     }
 
     /**
+     * Returns whether one class of one source coder frame of the last decoded EP frame is intact: the frame header
+     * decoded, its lengths fit the frame and the class passed its CRC after error correction.
+     *
+     * @param frame the source coder frame
+     * @param index the class, in output order, below {@link #classCount()}
+     * @return {@code true} when the class can be used
+     */
+    public boolean classIntact(int frame, int index) {
+        return decodedFrame && classIntact[frame][index];
+    }
+
+    /**
      * Returns the bit length of one source coder frame, the sum of its classes.
      *
      * @param frame the source coder frame

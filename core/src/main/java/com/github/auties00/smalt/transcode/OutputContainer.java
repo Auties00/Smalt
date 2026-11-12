@@ -527,7 +527,7 @@ public enum OutputContainer {
     boolean needsConfig(Codec codec) {
         return switch (format) {
             case MP4 -> switch (codec) {
-                case H264, HEVC, VVC, AAC, CELP, TWINVQ, OPUS, ALAC, FLAC -> true;
+                case H264, HEVC, VVC, AAC, CELP, TWINVQ, HVXC, OPUS, ALAC, FLAC -> true;
                 default -> false;
             };
             case MATROSKA -> switch (codec) {
@@ -546,7 +546,7 @@ public enum OutputContainer {
             case MXF -> codec == Codec.H264;
             case WAV, W64 -> codec == Codec.AAC || codec == Codec.FLAC;
             case CAF -> codec == Codec.AAC || codec == Codec.ALAC || codec == Codec.OPUS;
-            case LOAS -> codec == Codec.AAC || codec == Codec.CELP;
+            case LOAS -> codec == Codec.AAC || codec == Codec.CELP || codec == Codec.HVXC;
             case ADIF -> codec == Codec.AAC;
             case H264 -> codec == Codec.H264;
             case HEVC -> codec == Codec.HEVC;

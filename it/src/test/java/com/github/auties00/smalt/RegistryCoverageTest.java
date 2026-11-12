@@ -107,6 +107,7 @@ class RegistryCoverageTest {
         assertTrue(AudioDecoders.isSupported(Codec.AMR_WB));
         assertTrue(AudioDecoders.isSupported(Codec.CELP));
         assertTrue(AudioDecoders.isSupported(Codec.TWINVQ));
+        assertTrue(AudioDecoders.isSupported(Codec.HVXC));
         assertTrue(AudioEncoders.isSupported(Codec.AMR_NB));
         assertTrue(AudioEncoders.isSupported(Codec.AMR_WB));
         assertTrue(AudioEncoders.isSupported(Codec.FLAC));
