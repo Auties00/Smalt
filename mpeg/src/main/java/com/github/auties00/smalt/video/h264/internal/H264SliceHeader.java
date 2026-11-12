@@ -61,6 +61,38 @@ public final class H264SliceHeader {
     public boolean idr;
 
     /**
+     * Whether the slice is a coded slice MVC extension ({@code nal_unit_type} 20), whose list
+     * modifications may name inter-view references.
+     */
+    public boolean mvc;
+
+    /**
+     * The view order index {@code VOIdx} of the view the slice belongs to, 0 for the base view.
+     */
+    public int voIdx;
+
+    /**
+     * The {@code view_id} of the view the slice belongs to.
+     */
+    public int viewId;
+
+    /**
+     * The {@code temporal_id} of the slice, 0 when its NAL unit has no header extension.
+     */
+    public int temporalId;
+
+    /**
+     * The {@code anchor_pic_flag} of the slice's access unit.
+     */
+    public boolean anchor;
+
+    /**
+     * The {@code inter_view_flag} of the slice: whether its view component may be an inter-view
+     * reference of the other view components of its access unit.
+     */
+    public boolean interView = true;
+
+    /**
      * The {@code first_mb_in_slice}.
      */
     public int firstMbInSlice;
@@ -85,6 +117,12 @@ public final class H264SliceHeader {
      * The sequence parameter set in effect.
      */
     public H264Sps sps;
+
+    /**
+     * The {@code colour_plane_id} of a slice of a picture whose color planes are coded
+     * separately: 0 for Y, 1 for Cb, 2 for Cr; 0 otherwise.
+     */
+    public int colorPlaneId;
 
     /**
      * The {@code frame_num}.
@@ -256,6 +294,23 @@ public final class H264SliceHeader {
     public int sliceQp;
 
     /**
+     * The {@code sp_for_switch_flag} of an SP slice: whether its inter macroblocks are decoded
+     * with the switching process of ITU-T H.264 8.6.2 rather than 8.6.1.
+     */
+    public boolean spForSwitch;
+
+    /**
+     * The quantization parameter {@code QSY} of an SP or SI slice,
+     * {@code 26 + pic_init_qs_minus26 + slice_qs_delta}, 0 to 51.
+     */
+    public int sliceQs;
+
+    /**
+     * The {@code slice_id} of a slice data partition A, which its partitions B and C repeat.
+     */
+    public int sliceId;
+
+    /**
      * The {@code disable_deblocking_filter_idc}.
      */
     public int disableDeblockingFilterIdc;
@@ -279,6 +334,44 @@ public final class H264SliceHeader {
      * The bit position of the first bit of {@code slice_data()} within the payload.
      */
     public long dataBitPosition;
+
+    /**
+     * Whether the slice is coded in the 3D-AVC extension ({@code nal_unit_type} 21 with
+     * {@code avc_3d_extension_flag} 1, ITU-T H.264 I.7.3.3.4).
+     */
+    public boolean avc3d;
+
+    /**
+     * Whether the slice belongs to a depth view component ({@code DepthFlag}).
+     */
+    public boolean depthFlag;
+
+    /**
+     * The {@code dmvp_flag} of a 3D-AVC texture slice: depth-based motion vector prediction.
+     */
+    public boolean dmvp;
+
+    /**
+     * The {@code slice_vsp_flag} of a 3D-AVC texture slice: view synthesis prediction.
+     */
+    public boolean sliceVsp;
+
+    /**
+     * The {@code depth_weighted_pred_flag} of a 3D-AVC depth slice: depth-range-based weighted prediction.
+     */
+    public boolean depthRangeWeights;
+
+    /**
+     * The {@code dps_id}: the depth parameter set the slice refers to, 0 for the camera parameters of the
+     * sequence parameter set.
+     */
+    public int dpsId;
+
+    /**
+     * Whether a 3D-AVC depth slice takes the depth representation of the depth parameter sets
+     * ({@code adaptive_NDR_flag} of 3DV-ATM).
+     */
+    public boolean adaptiveDepthRepresentation;
 
     /**
      * Constructs an empty header.
@@ -335,14 +428,41 @@ public final class H264SliceHeader {
      * @throws MediaException.Malformed if a field is out of range or the header is truncated
      */
     public void parseRest(H264BitReader reader, H264Pps pps, int nalUnitType, int nalRefIdc) {
+        parseRest(reader, pps, nalUnitType, nalRefIdc, nalUnitType == H264Nal.IDR_SLICE);
+    }
+
+    /**
+     * Parses the rest of the slice header after {@link #parseStart(H264BitReader)}, for a slice
+     * whose IDR status the NAL unit header extension gives.
+     *
+     * @param reader the reader positioned after {@code pic_parameter_set_id}
+     * @param pps the picture parameter set named by {@link #ppsId}
+     * @param nalUnitType the {@code nal_unit_type}
+     * @param nalRefIdc the {@code nal_ref_idc}
+     * @param idr whether the slice belongs to an IDR picture ({@code IdrPicFlag})
+     * @throws MediaException.Malformed if a field is out of range or the header is truncated
+     */
+    public void parseRest(H264BitReader reader, H264Pps pps, int nalUnitType, int nalRefIdc, boolean idr) {
         var sps = pps.sps;
         this.pps = pps;
         this.sps = sps;
         this.nalUnitType = nalUnitType;
         this.nalRefIdc = nalRefIdc;
-        this.idr = nalUnitType == H264Nal.IDR_SLICE;
+        this.idr = idr;
+        this.mvc = nalUnitType == H264Nal.SLICE_EXTENSION;
+        avc3d = false;
+        depthFlag = false;
+        dmvp = false;
+        sliceVsp = false;
+        depthRangeWeights = false;
+        dpsId = 0;
+        adaptiveDepthRepresentation = false;
+        colorPlaneId = 0;
         if (sps.separateColorPlane) {
-            reader.readBits(2);
+            colorPlaneId = reader.readBits(2);
+            if (colorPlaneId > 2) {
+                throw new MediaException.Malformed("colour_plane_id " + colorPlaneId + " out of range");
+            }
         }
         frameNum = reader.readBits(sps.log2MaxFrameNum);
         fieldPic = false;
@@ -438,11 +558,16 @@ public final class H264SliceHeader {
         if (sliceQp < -6 * (sps.bitDepthLuma - 8) || sliceQp > 51) {
             throw new MediaException.Malformed("slice QP " + sliceQp + " out of range");
         }
+        spForSwitch = false;
+        sliceQs = 0;
         if (sliceType == SP || sliceType == SI) {
             if (sliceType == SP) {
-                reader.readFlag();
+                spForSwitch = reader.readFlag();
             }
-            reader.readSe();
+            sliceQs = pps.initQs + reader.readSe();
+            if (sliceQs < 0 || sliceQs > 51) {
+                throw new MediaException.Malformed("slice QS " + sliceQs + " out of range");
+            }
         }
         disableDeblockingFilterIdc = 0;
         filterOffsetA = 0;
@@ -467,10 +592,259 @@ public final class H264SliceHeader {
             var bits = 32 - Integer.numberOfLeadingZeros(value - 1);
             sliceGroupChangeCycle = reader.readBits(bits);
         }
+        sliceId = 0;
+        if (nalUnitType == H264Nal.SLICE_PARTITION_A) {
+            sliceId = reader.readUe();
+            var limit = sps.widthInMbs * sps.frameHeightInMbs;
+            if (sliceId >= limit) {
+                throw new MediaException.Malformed("slice_id " + sliceId + " out of range");
+            }
+        }
         if (reader.overrun()) {
             throw new MediaException.Malformed("truncated slice header");
         }
         dataBitPosition = reader.bitPosition();
+    }
+
+    /**
+     * Parses the rest of a {@code slice_header_in_3davc_extension()} (ITU-T H.264 I.7.3.3.4) after
+     * {@link #parseStart(H264BitReader)}: with slice header prediction, the fields each
+     * {@code pre_*_src} names are taken from the first slice of an earlier view component of the access unit;
+     * the 3D-AVC fields close the header.
+     *
+     * @implNote This implementation follows the 3D-AVC conformance bitstreams of ITU-T H.264.1 (02/2016) and
+     * 3DV-ATM where they depart from the syntax table: {@code cabac_init_idc} and the SP fields of a predicted
+     * header come from the source view's component of the other {@code DepthFlag}, the reference counts copied
+     * from an I slice are the defaults of its picture parameter set, a depth slice reads
+     * {@code depth_weighted_pred_flag} only without explicit weighted prediction, and a depth slice ends with
+     * the depth representation flag.
+     * @param reader the reader positioned after {@code pic_parameter_set_id}
+     * @param pps the picture parameter set named by {@link #ppsId}
+     * @param nalUnitType the {@code nal_unit_type} the slice is decoded as: {@link H264Nal#SLICE_EXTENSION}, or
+     * that of a base view slice for the depth view component of the base view
+     * @param nalRefIdc the {@code nal_ref_idc}
+     * @param idr whether the slice belongs to an IDR view component
+     * @param depth whether the slice belongs to a depth view component
+     * @param voIdx the view order index of the slice's view
+     * @param tools the 3D-AVC extension of the latest subset sequence parameter set, whose slice header
+     * prediction and view synthesis flags apply to every slice, or {@code null} when it has none
+     * @param history the first slices of the view components decoded so far in the access unit
+     * @throws MediaException.Malformed if a field is out of range, a predicted header names a view component
+     * that was not decoded or the header is truncated
+     */
+    public void parseRest3d(H264BitReader reader, H264Pps pps, int nalUnitType, int nalRefIdc, boolean idr,
+                            boolean depth, int voIdx, H264Avc3dExtension tools, Avc3dSliceHistory history) {
+        var sps = pps.sps;
+        var predicted = tools != null && tools.sliceHeaderPrediction && (voIdx != 0 || depth);
+        if (!predicted) {
+            parseRest(reader, pps, nalUnitType, nalRefIdc, idr);
+        } else {
+            this.pps = pps;
+            this.sps = sps;
+            this.nalUnitType = nalUnitType;
+            this.nalRefIdc = nalRefIdc;
+            this.idr = idr;
+            this.mvc = nalUnitType == H264Nal.SLICE_EXTENSION;
+            var source = predictionSource(reader.readBits(2), voIdx, depth, history);
+            if (source == null) {
+                throw new MediaException.Malformed("pre_slice_header_src 0 in a predicted slice header");
+            }
+            colorPlaneId = source.colorPlaneId;
+            frameNum = source.frameNum;
+            fieldPic = source.fieldPic;
+            bottomField = source.bottomField;
+            idrPicId = source.idrPicId;
+            pocLsb = source.pocLsb;
+            deltaPocBottom = source.deltaPocBottom;
+            deltaPoc0 = source.deltaPoc0;
+            deltaPoc1 = source.deltaPoc1;
+            redundantPicCnt = source.redundantPicCnt;
+            sliceGroupChangeCycle = source.sliceGroupChangeCycle;
+            disableDeblockingFilterIdc = source.disableDeblockingFilterIdc;
+            filterOffsetA = source.filterOffsetA;
+            filterOffsetB = source.filterOffsetB;
+            directSpatialMvPred = sliceType == B && source.directSpatialMvPred;
+            var other = history.first(source.voIdx, !depth);
+            cabacInitIdc = 0;
+            spForSwitch = false;
+            sliceQs = 0;
+            if (other != null) {
+                cabacInitIdc = other.cabacInitIdc;
+                spForSwitch = other.spForSwitch;
+                sliceQs = other.sliceQs;
+            }
+            numRefIdxActive[0] = 0;
+            numRefIdxActive[1] = 0;
+            refPicListModification[0] = false;
+            refPicListModification[1] = false;
+            modificationCount[0] = 0;
+            modificationCount[1] = 0;
+            if (sliceType == P || sliceType == SP || sliceType == B) {
+                var lists = predictionSource(reader.readBits(2), voIdx, depth, history);
+                numRefIdxActive[0] = pps.numRefIdxL0Default;
+                numRefIdxActive[1] = sliceType == B ? pps.numRefIdxL1Default : 0;
+                if (lists == null) {
+                    if (reader.readFlag()) {
+                        numRefIdxActive[0] = reader.readUe() + 1;
+                        if (sliceType == B) {
+                            numRefIdxActive[1] = reader.readUe() + 1;
+                        }
+                    }
+                    parseModification(reader, 0);
+                    if (sliceType == B) {
+                        parseModification(reader, 1);
+                    }
+                } else {
+                    for (var list = 0; list < 2; list++) {
+                        numRefIdxActive[list] = !lists.isIntra() ? lists.numRefIdxActive[list]
+                                : list == 0 ? lists.pps.numRefIdxL0Default : 0;
+                        refPicListModification[list] = lists.refPicListModification[list];
+                        modificationCount[list] = lists.modificationCount[list];
+                        System.arraycopy(lists.modificationIdc[list], 0, modificationIdc[list], 0, MAX_MODIFICATIONS);
+                        System.arraycopy(lists.modificationValue[list], 0, modificationValue[list], 0,
+                                MAX_MODIFICATIONS);
+                    }
+                    if (sliceType != B) {
+                        numRefIdxActive[1] = 0;
+                        modificationCount[1] = 0;
+                        refPicListModification[1] = false;
+                    }
+                }
+                if (numRefIdxActive[0] > 16 || numRefIdxActive[1] > 16) {
+                    throw new MediaException.Malformed("num_ref_idx_active_minus1 out of range");
+                }
+            }
+            hasWeightTable = (pps.weightedPred && (sliceType == P || sliceType == SP))
+                    || (pps.weightedBipredIdc == 1 && sliceType == B);
+            if (hasWeightTable) {
+                var weights = predictionSource(reader.readBits(2), voIdx, depth, history);
+                if (weights == null) {
+                    parseWeightTable(reader, sps.chromaArrayType());
+                } else {
+                    copyWeights(weights);
+                }
+            }
+            noOutputOfPriorPics = false;
+            longTermReference = false;
+            adaptiveRefPicMarking = false;
+            mmcoCount = 0;
+            if (nalRefIdc != 0) {
+                var marking = predictionSource(reader.readBits(2), voIdx, depth, history);
+                if (marking == null) {
+                    if (idr) {
+                        noOutputOfPriorPics = reader.readFlag();
+                        longTermReference = reader.readFlag();
+                    } else {
+                        adaptiveRefPicMarking = reader.readFlag();
+                        if (adaptiveRefPicMarking) {
+                            parseMarking(reader);
+                        }
+                    }
+                } else {
+                    noOutputOfPriorPics = marking.noOutputOfPriorPics;
+                    longTermReference = marking.longTermReference;
+                    adaptiveRefPicMarking = marking.adaptiveRefPicMarking;
+                    mmcoCount = marking.mmcoCount;
+                    System.arraycopy(marking.mmcoOp, 0, mmcoOp, 0, MAX_MMCO);
+                    System.arraycopy(marking.mmcoArg1, 0, mmcoArg1, 0, MAX_MMCO);
+                    System.arraycopy(marking.mmcoArg2, 0, mmcoArg2, 0, MAX_MMCO);
+                }
+            }
+            var qpDelta = reader.readSe();
+            sliceQp = pps.initQp + qpDelta;
+            if (sliceQp < -6 * (sps.bitDepthLuma - 8) || sliceQp > 51) {
+                throw new MediaException.Malformed("slice QP " + sliceQp + " out of range");
+            }
+            sliceId = 0;
+        }
+        avc3d = true;
+        depthFlag = depth;
+        parse3dTrailer(reader, pps, depth, tools);
+        if (reader.overrun()) {
+            throw new MediaException.Malformed("truncated slice header");
+        }
+        dataBitPosition = reader.bitPosition();
+    }
+
+    /**
+     * Parses the fields that close the header of a slice of a depth view component or of a 3D-AVC slice.
+     *
+     * @param reader the reader positioned after the fields of the plain slice header
+     * @param pps the active picture parameter set
+     * @param depth whether the slice belongs to a depth view component
+     * @param tools the 3D-AVC extension whose view synthesis flag applies, or {@code null}
+     */
+    private void parse3dTrailer(H264BitReader reader, H264Pps pps, boolean depth, H264Avc3dExtension tools) {
+        dmvp = false;
+        sliceVsp = false;
+        depthRangeWeights = false;
+        dpsId = 0;
+        adaptiveDepthRepresentation = false;
+        var extension = pps.sps.avc3d;
+        if (extension == null) {
+            return;
+        }
+        if (sliceType != I && sliceType != SI) {
+            if (depth) {
+                var explicit = sliceType == B ? pps.weightedBipredIdc != 0 : pps.weightedPred;
+                if (!explicit) {
+                    depthRangeWeights = reader.readFlag();
+                }
+            } else {
+                dmvp = reader.readFlag();
+                if (tools != null && tools.viewSynthesis) {
+                    sliceVsp = reader.readFlag();
+                }
+            }
+            if (extension.acquisitionIdc != 1 && (depthRangeWeights || dmvp || sliceVsp)) {
+                dpsId = reader.readUe(63, "dps_id");
+            }
+        }
+        if (depth) {
+            adaptiveDepthRepresentation = reader.readFlag();
+        }
+    }
+
+    /**
+     * Returns the first slice of the view component a {@code pre_*_src} value names.
+     *
+     * @param src the value, 0 to 3
+     * @param voIdx the view order index of the current slice
+     * @param depth whether the current slice belongs to a depth view component
+     * @param history the first slices of the view components decoded so far in the access unit
+     * @return the slice, or {@code null} for 0
+     * @throws MediaException.Malformed if the named view component was not decoded
+     */
+    private static H264SliceHeader predictionSource(int src, int voIdx, boolean depth, Avc3dSliceHistory history) {
+        if (src == 0) {
+            return null;
+        }
+        var sourceVoIdx = src == 1 ? voIdx - 1 : src == 2 ? voIdx : 0;
+        var sourceDepth = src == 2 != depth;
+        var source = sourceVoIdx < 0 ? null : history.first(sourceVoIdx, sourceDepth);
+        if (source == null) {
+            throw new MediaException.Malformed("slice header predicted from a view component not decoded");
+        }
+        return source;
+    }
+
+    /**
+     * Copies the prediction weight table of another header.
+     *
+     * @param other the header to copy
+     */
+    private void copyWeights(H264SliceHeader other) {
+        lumaLog2WeightDenom = other.lumaLog2WeightDenom;
+        chromaLog2WeightDenom = other.chromaLog2WeightDenom;
+        for (var list = 0; list < 2; list++) {
+            System.arraycopy(other.lumaWeight[list], 0, lumaWeight[list], 0, lumaWeight[list].length);
+            System.arraycopy(other.lumaOffset[list], 0, lumaOffset[list], 0, lumaOffset[list].length);
+            System.arraycopy(other.lumaWeightFlag[list], 0, lumaWeightFlag[list], 0, lumaWeightFlag[list].length);
+            System.arraycopy(other.chromaWeight[list], 0, chromaWeight[list], 0, chromaWeight[list].length);
+            System.arraycopy(other.chromaOffset[list], 0, chromaOffset[list], 0, chromaOffset[list].length);
+            System.arraycopy(other.chromaWeightFlag[list], 0, chromaWeightFlag[list], 0,
+                    chromaWeightFlag[list].length);
+        }
     }
 
     /**
@@ -479,7 +853,7 @@ public final class H264SliceHeader {
      * @param reader the reader positioned at the list modification
      * @param list the list index, 0 or 1
      */
-    private void parseModification(H264BitReader reader, int list) {
+    void parseModification(H264BitReader reader, int list) {
         refPicListModification[list] = reader.readFlag();
         if (!refPicListModification[list]) {
             return;
@@ -493,8 +867,9 @@ public final class H264SliceHeader {
             if (idc > 5 || count >= MAX_MODIFICATIONS || reader.overrun()) {
                 throw new MediaException.Malformed("invalid reference picture list modification");
             }
-            if (idc > 2) {
-                throw new MediaException.Unsupported("h264 mvc", "inter-view reference list modification");
+            if (idc > 2 && !mvc) {
+                throw new MediaException.Malformed("inter-view reference list modification outside a multiview "
+                        + "slice");
             }
             modificationIdc[list][count] = idc;
             modificationValue[list][count] = reader.readUe();
@@ -509,7 +884,7 @@ public final class H264SliceHeader {
      * @param reader the reader positioned at the prediction weight table
      * @param chromaArrayType the {@code ChromaArrayType}
      */
-    private void parseWeightTable(H264BitReader reader, int chromaArrayType) {
+    void parseWeightTable(H264BitReader reader, int chromaArrayType) {
         lumaLog2WeightDenom = reader.readUe();
         if (lumaLog2WeightDenom > 7) {
             throw new MediaException.Malformed("luma_log2_weight_denom out of range");
@@ -564,7 +939,7 @@ public final class H264SliceHeader {
      *
      * @param reader the reader positioned at the reference picture marking
      */
-    private void parseMarking(H264BitReader reader) {
+    void parseMarking(H264BitReader reader) {
         var count = 0;
         while (true) {
             var op = reader.readUe();
@@ -603,11 +978,19 @@ public final class H264SliceHeader {
         nalUnitType = other.nalUnitType;
         nalRefIdc = other.nalRefIdc;
         idr = other.idr;
+        mvc = other.mvc;
+        voIdx = other.voIdx;
+        viewId = other.viewId;
+        temporalId = other.temporalId;
+        anchor = other.anchor;
+        interView = other.interView;
+
         firstMbInSlice = other.firstMbInSlice;
         sliceType = other.sliceType;
         ppsId = other.ppsId;
         pps = other.pps;
         sps = other.sps;
+        colorPlaneId = other.colorPlaneId;
         frameNum = other.frameNum;
         fieldPic = other.fieldPic;
         bottomField = other.bottomField;
@@ -657,10 +1040,20 @@ public final class H264SliceHeader {
         System.arraycopy(other.mmcoArg2, 0, mmcoArg2, 0, mmcoArg2.length);
         cabacInitIdc = other.cabacInitIdc;
         sliceQp = other.sliceQp;
+        spForSwitch = other.spForSwitch;
+        sliceQs = other.sliceQs;
+        sliceId = other.sliceId;
         disableDeblockingFilterIdc = other.disableDeblockingFilterIdc;
         filterOffsetA = other.filterOffsetA;
         filterOffsetB = other.filterOffsetB;
         sliceGroupChangeCycle = other.sliceGroupChangeCycle;
         dataBitPosition = other.dataBitPosition;
+        avc3d = other.avc3d;
+        depthFlag = other.depthFlag;
+        dmvp = other.dmvp;
+        sliceVsp = other.sliceVsp;
+        depthRangeWeights = other.depthRangeWeights;
+        dpsId = other.dpsId;
+        adaptiveDepthRepresentation = other.adaptiveDepthRepresentation;
     }
 }

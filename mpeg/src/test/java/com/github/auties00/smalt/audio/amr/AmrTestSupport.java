@@ -42,7 +42,9 @@ final class AmrTestSupport {
 
     /**
      * Returns three seconds of test signal: a harmonic glide with vibrato, low-level noise, then
-     * digital silence, so that speech-like coding and the voice activity detector both run.
+     * digital silence, so that speech-like coding and the voice activity detector both run. The
+     * signal is the same on every platform: {@code StrictMath} rounds alike everywhere, while
+     * {@code Math.sin} may differ by an ulp between x86 and arm64.
      */
     static short[] signal(int sampleRate) {
         var seconds = 3;
@@ -51,15 +53,15 @@ final class AmrTestSupport {
         var phase = 0.0;
         for (var i = 0; i < sampleRate; i++) {
             var t = (double) i / sampleRate;
-            var f0 = 140 + 60 * t + 8 * Math.sin(2 * Math.PI * 5 * t);
+            var f0 = 140 + 60 * t + 8 * StrictMath.sin(2 * Math.PI * 5 * t);
             phase += 2 * Math.PI * f0 / sampleRate;
             var value = 0.0;
             for (var harmonic = 1; harmonic <= 12; harmonic++) {
                 if (harmonic * f0 < sampleRate / 2.0) {
-                    value += Math.sin(harmonic * phase) / harmonic;
+                    value += StrictMath.sin(harmonic * phase) / harmonic;
                 }
             }
-            var envelope = 0.5 - 0.5 * Math.cos(2 * Math.PI * Math.min(1, t * 1.2));
+            var envelope = 0.5 - 0.5 * StrictMath.cos(2 * Math.PI * Math.min(1, t * 1.2));
             samples[i] = (short) Math.round(6000 * envelope * value);
         }
         for (var i = sampleRate; i < 2 * sampleRate; i++) {

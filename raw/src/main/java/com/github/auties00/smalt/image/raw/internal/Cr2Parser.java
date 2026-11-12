@@ -157,7 +157,7 @@ final class Cr2Parser {
             LimitChecks.checkAllocation(limits, length);
             var data = reader.bytes(offset, length);
             var jpeg = new LosslessJpeg(data, 0, data.length, true);
-            var layout = new SensorPlane(unitColumns * perUnit, unitRows, 1, false, limits);
+            var layout = new SensorPlane(unitColumns, unitRows, perUnit, false, limits);
             var cursor = new int[]{0, 0, 0, 0};
             jpeg.decodeUnits((row, samples) -> lay(samples, samples.length, widths, cursor, layout));
             CanonSraw.convert(layout.integers, unitColumns, unitRows, mraw, kind, lumaOffset, plane.width, plane.height,
@@ -209,7 +209,7 @@ final class Cr2Parser {
             var y = cursor[1];
             var x = cursor[2];
             var run = Math.min(count - index, sliceWidth - x);
-            var target = y * plane.width + cursor[3] + x;
+            var target = y * plane.width * plane.samplesPerPixel + cursor[3] + x;
             for (var k = 0; k < run; k++) {
                 out[target + k] = (short) samples[index + k];
             }
@@ -326,6 +326,17 @@ final class Cr2Parser {
                 sensor.activeArea = new int[]{top, left, bottom + 1, right + 1};
             }
         }
+        colorData(note, sensor, file);
+    }
+
+    /**
+     * Reads the white balance and the levels from the {@code ColorData} tag of a Canon maker note.
+     *
+     * @param note the maker note directory
+     * @param sensor the sensor description to fill, its active area already set
+     * @param file the description to fill
+     */
+    static void colorData(Ifd note, Sensor sensor, RawFile file) {
         var color = note.longs(COLOR_DATA);
         if (color == null || color.length < 70) {
             return;
@@ -401,7 +412,7 @@ final class Cr2Parser {
             case 16, 17, 18, 19 -> new int[]{71, 329, 797};
             case 32, 33 -> new int[]{85, 343, 811};
             case 34, 48 -> new int[]{105, 363, 641};
-            case 64, 65 -> new int[]{105, 383, 661};
+            case 64, 65, 66 -> new int[]{105, 383, 661};
             default -> count == 582 ? new int[]{25, 0, 0} : count == 653 ? new int[]{34, 0, 0} : new int[]{0, 0, 0};
         };
     }

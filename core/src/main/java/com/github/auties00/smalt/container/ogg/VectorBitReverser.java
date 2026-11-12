@@ -18,6 +18,12 @@ final class VectorBitReverser implements BitReverser {
     private static final VectorSpecies<Byte> BYTES = ByteVector.SPECIES_PREFERRED;
 
     /**
+     * The concrete class of the vectors of {@link #BYTES}.
+     */
+    @SuppressWarnings("unchecked")
+    private static final Class<ByteVector> BYTE_VECTOR = (Class<ByteVector>) BYTES.vectorType();
+
+    /**
      * Reverses the tail shorter than one vector.
      */
     private final ScalarBitReverser tail;
@@ -43,7 +49,7 @@ final class VectorBitReverser implements BitReverser {
         var bound = BYTES.loopBound(length);
         var index = 0;
         for (; index < bound; index += BYTES.length()) {
-            ByteVector.fromArray(BYTES, source, sourceOffset + index)
+            BYTE_VECTOR.cast(ByteVector.fromArray(BYTES, source, sourceOffset + index))
                     .lanewise(VectorOperators.REVERSE)
                     .intoArray(target, targetOffset + index);
         }

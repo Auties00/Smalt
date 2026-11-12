@@ -1,0 +1,18 @@
+<SAMI>
+<HEAD>
+<STYLE TYPE="text/css">
+<!--
+.ENCC { Name: English; lang: en-US; }
+.FRCC { Name: French; lang: fr-FR; }
+-->
+</STYLE>
+</HEAD>
+<BODY>
+<SYNC Start=0><P Class=ENCC>Hello<P Class=FRCC>Bonjour
+<SYNC Start=400><P Class=ENCC>&nbsp;<P Class=FRCC>&nbsp;
+<SYNC Start=500><P Class=ENCC><i>World</i><P Class=FRCC><i>Monde</i>
+<SYNC Start=900><P Class=ENCC>&nbsp;<P Class=FRCC>&nbsp;
+<SYNC Start=1250><P Class=ENCC>Two<br>lines<P Class=FRCC>Deux<br>lignes
+<SYNC Start=2000><P Class=ENCC>&nbsp;<P Class=FRCC>&nbsp;
+</BODY>
+</SAMI>
