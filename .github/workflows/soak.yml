@@ -1,0 +1,82 @@
+# Weekly: the soak test (long real-time encode and decode loops, transcodes and picture operations under a
+# JFR recording, checking that heap, threads, file descriptors and allocation per round stay flat) and the
+# jcstress tests of the concurrent structures. Real capture devices need a self-hosted machine, so capture
+# is not soaked here.
+name: Soak
+
+on:
+  schedule:
+    - cron: '0 4 * * 6'
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: Minutes the soak loop runs
+        default: '300'
+      jcstress:
+        description: jcstress mode (sanity, quick, default, tough, stress)
+        default: default
+
+concurrency:
+  group: soak
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  JAVA_VERSION: '26'
+  SMALT_CONFORMANCE_DOWNLOAD: 'false'
+
+jobs:
+  soak:
+    name: soak
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Soak
+        shell: bash
+        run: >
+          mvn -B -ntp -pl it -am verify -Dtest=SoakTest -Dsurefire.failIfNoSpecifiedTests=false
+          -Dsmalt.soak.minutes=${{ inputs.minutes || '300' }} -Dsmalt.test.jvmArgs=-Xmx2g
+
+      - name: Upload the recording and the reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak
+          path: |
+            it/target/soak/
+            it/target/surefire-reports/
+          retention-days: 30
+
+  jcstress:
+    name: jcstress
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: jcstress
+        run: mvn -B -ntp -Pjcstress -pl it -am verify -DskipTests -Djcstress.mode=${{ inputs.jcstress || 'default' }}
+
+      - name: Upload the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jcstress
+          path: it/target/jcstress/
+          retention-days: 30

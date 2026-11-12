@@ -43,6 +43,18 @@ class Vp8EncoderExactTest {
         var args = new ArrayList<>(List.of("-q", Float.toString(options.quality()), "-m", Integer.toString(options.method()),
                 "-segments", Integer.toString(options.segments()), "-f", Integer.toString(options.filterStrength()),
                 "-sharpness", Integer.toString(options.sharpness()), "-sns", Integer.toString(options.snsStrength())));
+        if (options.simpleFilter()) {
+            args.add("-nostrong");
+        }
+        if (options.autoFilter()) {
+            args.add("-af");
+        }
+        if (options.passes() > 1) {
+            args.addAll(List.of("-pass", Integer.toString(options.passes())));
+        }
+        if (options.targetPsnr() > 0) {
+            args.addAll(List.of("-psnr", Float.toString(options.targetPsnr())));
+        }
         var expected = Ivf.vp8Chunk(WebpTools.cwebpYuv(yuv, width, height, args));
         var actual = Vp8.encodeKeyFrame(picture(yuv, width, height), options);
         var length = Math.min(expected.length, actual.length);
@@ -65,6 +77,35 @@ class Vp8EncoderExactTest {
             }
         }
         return arguments.stream();
+    }
+
+    static Stream<Arguments> modes() {
+        var arguments = new ArrayList<Arguments>();
+        for (var m : new int[]{0, 2, 3, 4, 6}) {
+            arguments.add(Arguments.of("af", new Vp8KeyFrameSettings(75, m, 4, 60, 0, 1, 50, false, true, 1, 0)));
+            arguments.add(Arguments.of("af, no filter", new Vp8KeyFrameSettings(60, m, 4, 0, 2, 1, 50, false, true, 1, 0)));
+            arguments.add(Arguments.of("af simple", new Vp8KeyFrameSettings(40, m, 3, 30, 4, 1, 70, true, true, 1, 0)));
+            arguments.add(Arguments.of("simple", new Vp8KeyFrameSettings(80, m, 4, 50, 0, 1, 50, true, false, 1, 0)));
+            arguments.add(Arguments.of("3 passes", new Vp8KeyFrameSettings(75, m, 4, 60, 0, 1, 50, false, false, 3, 0)));
+            arguments.add(Arguments.of("psnr 34", new Vp8KeyFrameSettings(75, m, 4, 60, 0, 1, 50, false, false, 6, 34)));
+            arguments.add(Arguments.of("psnr 41.5 from q10", new Vp8KeyFrameSettings(10, m, 2, 20, 1, 1, 30, false, false, 6, 41.5f)));
+            arguments.add(Arguments.of("psnr 37, 2 passes, af", new Vp8KeyFrameSettings(75, m, 4, 60, 0, 1, 50, false, true, 2, 37)));
+        }
+        return arguments.stream();
+    }
+
+    @ParameterizedTest(name = "{0}: {1}")
+    @MethodSource("modes")
+    @DisplayName("testsrc2 320x240 with automatic and simple filtering, passes and PSNR targets")
+    void modes(String name, Vp8KeyFrameSettings settings) {
+        assertSameAsCwebp("testsrc2=size=320x240:rate=1", 320, 240, settings);
+    }
+
+    @ParameterizedTest(name = "{0}: {1}")
+    @MethodSource("modes")
+    @DisplayName("odd-sized mandelbrot 201x133 with the same modes")
+    void oddModes(String name, Vp8KeyFrameSettings settings) {
+        assertSameAsCwebp("mandelbrot=size=201x133:rate=1", 201, 133, settings);
     }
 
     @ParameterizedTest(name = "q{0} m{1}")

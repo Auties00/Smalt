@@ -6,13 +6,14 @@ import com.github.auties00.smalt.image.ColorPrimaries;
 import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.TransferCharacteristics;
+import com.github.auties00.smalt.internal.codec.Jp2Frames;
 
 import java.nio.charset.StandardCharsets;
 
 /**
- * Reads the stream parameters of the professional intra codecs from the header of a frame: the
- * ProRes frame header (SMPTE RDD 36 clause 5.1.1) and the VC-3 coding unit header (SMPTE ST 2019-1
- * clause 7.2), for {@link Prober}.
+ * Reads the stream parameters of the intra codecs from the header of a frame: the ProRes frame header (SMPTE
+ * RDD 36 clause 5.1.1), the VC-3 coding unit header (SMPTE ST 2019-1 clause 7.2) and the JPEG 2000 main header
+ * (ISO/IEC 15444-1 annex A), for {@link Prober}.
  */
 final class IntraFrameHeaders {
     /**
@@ -33,6 +34,43 @@ final class IntraFrameHeaders {
      * @param color the color description, or {@code null}
      */
     record Header(String profile, int bitDepth, ChromaFormat chroma, int width, int height, ColorInfo color) {
+    }
+
+    /**
+     * Reads the main header of the first codestream of a Motion JPEG 2000 frame.
+     *
+     * <p>The bit depth is the largest component precision. The chroma layout is monochrome for one component,
+     * the layout of the chroma subsampling for subsampled Y'CbCr, 4:4:4 for three unsubsampled components the
+     * JP2 Header box of the frame or the track declares as sYCC, and unknown otherwise (RGB, or an undeclared
+     * color space).
+     *
+     * @param frame the coded frame
+     * @param config the track's configuration (its JP2 Header box), or {@code null}
+     * @return the description, without a color, with the profile of a digital cinema codestream ({@code Rsiz} 3 or 4)
+     * named as ffprobe names it, or {@code null} when the frame holds no valid main header
+     */
+    static Header jpeg2000(byte[] frame, byte[] config) {
+        var siz = Jp2Frames.firstSiz(frame);
+        if (siz == null || siz.width() > Integer.MAX_VALUE || siz.height() > Integer.MAX_VALUE) {
+            return null;
+        }
+        ChromaFormat chroma = null;
+        if (siz.components() < 3) {
+            chroma = ChromaFormat.MONOCHROME;
+        } else if (siz.subsampledChroma()) {
+            var dx = siz.subsamplingX()[1];
+            var dy = siz.subsamplingY()[1];
+            chroma = dx == 2 && dy == 2 ? ChromaFormat.YUV420 : dx == 2 && dy == 1 ? ChromaFormat.YUV422 : null;
+        } else if (!siz.componentTransform() && Jp2Frames.headerColorSpace(Jp2Frames.isHeader(config) ? config
+                : Jp2Frames.header(frame, 0, frame.length)) == 18) {
+            chroma = ChromaFormat.YUV444;
+        }
+        var profile = switch (siz.profile()) {
+            case 3 -> "JPEG 2000 digital cinema 2K";
+            case 4 -> "JPEG 2000 digital cinema 4K";
+            default -> null;
+        };
+        return new Header(profile, siz.maxDepth(), chroma, (int) siz.width(), (int) siz.height(), null);
     }
 
     /**

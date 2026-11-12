@@ -28,7 +28,7 @@ import java.util.Arrays;
  *
  * @implNote This implementation follows libwebp: {@code UpsampleRgbaLinePair} of
  * {@code src/dsp/upsampling.c} and {@code EmitFancyRGB} of {@code src/dec/io_dec.c} for the
- * decoder, {@code ImportYUVAFromRGBA} (without dithering or sharp YUV) of
+ * decoder, {@code ImportYUVAFromRGBA} (without sharp YUV, which {@link SharpYuv} ports) of
  * {@code src/enc/picture_csp_enc.c} and {@code WebPCleanupTransparentArea} of
  * {@code src/enc/picture_tools_enc.c} for the encoder. The gamma tables are the values libwebp
  * computes at run time with {@code pow()}, stored as constants so that the output does not
@@ -290,6 +290,106 @@ public final class YuvConverter {
                 .chroma(u, v, uvWidth)
                 .alpha(a, width)
                 .build();
+    }
+
+    /**
+     * Converts RGBA to a 4:2:0 picture like {@link #fromRgba(byte[], int, int, int, boolean, MediaLimits)},
+     * adding pseudo-random dithering to the rounding of every sample.
+     *
+     * <p>The dithering sequence is fixed, so the output is deterministic; it is generated in raster
+     * order, so this conversion runs on the calling thread.
+     *
+     * @param rgba the RGBA samples, the first row first
+     * @param stride the distance in bytes between rows
+     * @param width the width in pixels
+     * @param height the height in pixels
+     * @param considerAlpha whether the alpha channel is meaningful; when {@code false} every
+     * pixel is treated as opaque
+     * @param dithering the dithering amplitude, from 0 (none) to 1 (one unit)
+     * @param limits the resource bounds
+     * @return the picture, tagged {@link ColorInfo#BT601_LIMITED}
+     */
+    public static YuvPicture fromRgbaDithered(byte[] rgba, int stride, int width, int height, boolean considerAlpha,
+                                              float dithering, MediaLimits limits) {
+        if (!(dithering > 0)) {
+            return fromRgba(rgba, stride, width, height, considerAlpha, limits);
+        }
+        var hasAlpha = considerAlpha && hasTransparency(rgba, stride, width, height);
+        var uvWidth = (width + 1) >> 1;
+        var uvHeight = (height + 1) >> 1;
+        LimitChecks.checkAllocation(limits, (long) width * height * (hasAlpha ? 2 : 1) + 2L * uvWidth * uvHeight);
+        var y = new byte[width * height];
+        var u = new byte[uvWidth * uvHeight];
+        var v = new byte[uvWidth * uvHeight];
+        var a = hasAlpha ? new byte[width * height] : null;
+        var random = new DitherRandom(dithering);
+        var tmp = new int[4 * uvWidth];
+        for (var pair = 0; pair < (height >> 1); pair++) {
+            var src = 2 * pair * stride;
+            ditheredLuma(rgba, src, y, 2 * pair * width, width, random);
+            ditheredLuma(rgba, src + stride, y, (2 * pair + 1) * width, width, random);
+            var rowsHaveAlpha = hasAlpha && extractAlpha(rgba, src, stride, width, 2, a, 2 * pair * width);
+            if (rowsHaveAlpha) {
+                accumulateRgba(rgba, src, stride, tmp, width);
+            } else {
+                accumulateRgb(rgba, src, stride, tmp, width);
+            }
+            ditheredChroma(tmp, u, v, pair * uvWidth, uvWidth, random);
+        }
+        if ((height & 1) != 0) {
+            var src = (height - 1) * stride;
+            ditheredLuma(rgba, src, y, (height - 1) * width, width, random);
+            var rowHasAlpha = hasAlpha && extractAlpha(rgba, src, 0, width, 1, a, (height - 1) * width);
+            if (rowHasAlpha) {
+                accumulateRgba(rgba, src, 0, tmp, width);
+            } else {
+                accumulateRgb(rgba, src, 0, tmp, width);
+            }
+            ditheredChroma(tmp, u, v, (uvHeight - 1) * uvWidth, uvWidth, random);
+        }
+        return YuvPicture.builder().size(width, height).chromaFormat(ChromaFormat.YUV420).color(ColorInfo.BT601_LIMITED)
+                .luma(y, width)
+                .chroma(u, v, uvWidth)
+                .alpha(a, width)
+                .build();
+    }
+
+    /**
+     * Converts one RGBA row to luma with dithered rounding.
+     *
+     * @param rgba the RGBA samples
+     * @param src the index of the row's first byte
+     * @param y the luma plane
+     * @param pos the index of the row's first luma sample
+     * @param width the width in pixels
+     * @param random the rounding terms, consumed one per pixel
+     */
+    private static void ditheredLuma(byte[] rgba, int src, byte[] y, int pos, int width, DitherRandom random) {
+        for (var i = 0; i < width; i++) {
+            var p = src + 4 * i;
+            y[pos + i] = (byte) ScalarYuvDsp.rgbToY(rgba[p] & 0xFF, rgba[p + 1] & 0xFF, rgba[p + 2] & 0xFF,
+                    random.next(16));
+        }
+    }
+
+    /**
+     * Converts accumulated RGB sums to one row of Cb and Cr with dithered rounding.
+     *
+     * @param rgb the accumulated sums, four entries per chroma sample
+     * @param u the Cb plane
+     * @param v the Cr plane
+     * @param pos the index of the chroma row
+     * @param width the chroma width
+     * @param random the rounding terms, consumed two per chroma sample, Cb first
+     */
+    private static void ditheredChroma(int[] rgb, byte[] u, byte[] v, int pos, int width, DitherRandom random) {
+        for (var i = 0; i < width; i++) {
+            var r = rgb[4 * i];
+            var g = rgb[4 * i + 1];
+            var b = rgb[4 * i + 2];
+            u[pos + i] = (byte) ScalarYuvDsp.rgbToU(r, g, b, random.next(18));
+            v[pos + i] = (byte) ScalarYuvDsp.rgbToV(r, g, b, random.next(18));
+        }
     }
 
     /**
