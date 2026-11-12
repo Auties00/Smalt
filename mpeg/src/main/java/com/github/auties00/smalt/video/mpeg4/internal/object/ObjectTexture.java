@@ -596,6 +596,9 @@ abstract class ObjectTexture extends ObjectShape {
         }
         var part = t - tPastRef;
         var full = tFutureRef - tPastRef;
+        if (full == 0) {
+            throw CorruptStream.INSTANCE;
+        }
         var refOff = refIndex * PVOP_MV_PER_REF_PER_MB;
         if (!mbmdRef[refIndex].has4MVForward) {
             var ref = mvRef[refOff];
@@ -617,6 +620,9 @@ abstract class ObjectTexture extends ObjectShape {
     final void backwardMVFromForwardMV(MotionVector backward, MotionVector forward, MotionVector ref, int deltaX,
                                        int deltaY) {
         var full = tFutureRef - tPastRef;
+        if (full == 0 && (deltaX == 0 || deltaY == 0)) {
+            throw CorruptStream.INSTANCE;
+        }
         var bx = deltaX == 0 ? (t - tFutureRef) * ref.trueX / full : forward.trueX - ref.trueX;
         var by = deltaY == 0 ? (t - tFutureRef) * ref.trueY / full : forward.trueY - ref.trueY;
         backward.setHalfPel(bx, by);

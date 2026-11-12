@@ -1177,8 +1177,14 @@ abstract class ObjectMacroblocks extends ObjectShapeDecoder {
 
     private int colocatedBShape(boolean forward, int mbx, int mby) {
         if (forward) {
+            if (refShpNumMBX <= 0 || refShpNumMBY <= 0) {
+                throw CorruptStream.INSTANCE;
+            }
             return refShapeModes[Math.min(Math.max(0, mbx), refShpNumMBX - 1)
                     + Math.min(Math.max(0, mby), refShpNumMBY - 1) * refShpNumMBX];
+        }
+        if (numMBXRef <= 0 || numMBYRef <= 0) {
+            throw CorruptStream.INSTANCE;
         }
         return mbmdRef[Math.min(Math.max(0, mbx), numMBXRef - 1)
                 + Math.min(Math.max(0, mby), numMBYRef - 1) * numMBXRef].shpmd;

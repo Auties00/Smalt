@@ -478,6 +478,9 @@ abstract class ObjectMotion extends ObjectGmc {
         var dx = mode.directDeltaX;
         var dy = mode.directDeltaY;
         if (mbx < numMBXRef && mbx >= 0 && mby < numMBYRef && mby >= 0) {
+            if (tempRefD == 0) {
+                throw CorruptStream.INSTANCE;
+            }
             if (modeRef.has4MVForward || volmd.quarterSample) {
                 for (var blk = 0; blk < 4; blk++) {
                     if (mode.transpStatus[blk + 1] == MbMode.ALL) {
