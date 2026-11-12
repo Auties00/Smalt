@@ -5,6 +5,7 @@ import com.github.auties00.smalt.internal.codec.AmrConfigs;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.internal.codec.MpegVideoHeaders;
+import com.github.auties00.smalt.internal.bits.MsbBitReader;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -683,6 +684,25 @@ final class MuxTrack {
     }
 
     /**
+     * Returns the samples of a frame of a TwinVQ object.
+     *
+     * @param config its {@code AudioSpecificConfig}, of which {@code frameLengthFlag} follows the channel configuration
+     * @return 960 or 1024, or 0 when the configuration is truncated
+     */
+    private static int twinVqFrameSamples(byte[] config) {
+        var bits = new MsbBitReader(config);
+        if (bits.read(5) == 31) {
+            bits.read(6);
+        }
+        if (bits.read(4) == 15) {
+            bits.read(24);
+        }
+        bits.read(4);
+        var flag = bits.read(1);
+        return bits.overrun() ? 0 : flag == 1 ? 960 : 1024;
+    }
+
+    /**
      * Returns the duration of one frame of an audio codec with fixed frames, in media units.
      *
      * @return the frame duration, or {@code 0} when unknown
@@ -694,6 +714,7 @@ final class MuxTrack {
         var samples = switch (audio.codec()) {
             case AAC -> 1024;
             case CELP -> audio.codecConfig().map(Latm::audioSpecificConfigFrameSamples).filter(n -> n > 0).orElse(0);
+            case TWINVQ -> audio.codecConfig().map(MuxTrack::twinVqFrameSamples).orElse(0);
             case MP3 -> audio.sampleRate() >= 32000 ? 1152 : 576;
             case OPUS -> 960 * audio.sampleRate() / 48000;
             case AMR_NB, AMR_WB -> audio.sampleRate() / 50;

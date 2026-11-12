@@ -19,8 +19,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Decodes, at the level of the error protection tool, the ISO/IEC 14496-26 streams that protect an object type Smalt
- * has no decoder for: ER CELP ({@code er_ce}, {@code epConfig} 3), ER HILN ({@code er_hi}, {@code epConfig} 3), ER
+ * Decodes, at the level of the error protection tool, the ISO/IEC 14496-26 streams that protect an object type outside
+ * AAC: ER CELP ({@code er_ce}, {@code epConfig} 3), ER HILN ({@code er_hi}, {@code epConfig} 3), ER
  * HVXC ({@code er_hv}, {@code epConfig} 2, two concatenated source frames per EP frame) and ER TwinVQ ({@code er_tv},
  * {@code epConfig} 2), and the CELP and TwinVQ core layers of the scalable AAC streams {@code er_ac211} to
  * {@code er_ac321}. The test reads the object type's specific configuration itself (ISO/IEC 14496-3 Tables 2.19,

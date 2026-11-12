@@ -6,6 +6,7 @@ import com.github.auties00.smalt.audio.aac.AacEncoder;
 import com.github.auties00.smalt.audio.aac.AacEncoderOptions;
 import com.github.auties00.smalt.audio.aac.internal.AudioSpecificConfig;
 import com.github.auties00.smalt.audio.aac.internal.ep.EpFrameEncoder;
+import com.github.auties00.smalt.audio.aac.internal.ep.EpStreams;
 import com.github.auties00.smalt.audio.aac.internal.usac.UsacTestStream;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.image.RgbaPicture;
@@ -383,6 +384,147 @@ class FuzzSeedWriter {
         // the 60-sample subframes of MPE_Configuration 27 under silence compression
         seedCelp("valid-er-mpe27-silence.bin", 8000, celpConfig(24, false, false, false, true, 27, 0, false), 40, true,
                 random);
+    }
+
+    @Test
+    @DisplayName("writes the TwinVQ seeds of the TwinVQ targets")
+    void twinVq() {
+        // no available encoder writes TwinVQ, and the fields of a frame have fixed widths given by its length, so the
+        // frames are random bits under a header that selects the window sequence and turns M/S, long term prediction
+        // and TNS off; the configurations are those of the conformance streams: mono at 16 kHz, stereo at 32 kHz,
+        // 960-sample frames, ER TwinVQ
+        var random = new java.util.Random(144967);
+        seedTwinVq("valid-mono-16k.bin", 16000, 1, new byte[]{0x3C, 0x08}, 128, random);
+        seedTwinVq("valid-stereo-32k.bin", 32000, 2, new byte[]{0x39, (byte) 0x90}, 85, random);
+        seedTwinVq("valid-960.bin", 16000, 1, new byte[]{0x3C, 0x0C}, 120, random);
+        seedTwinVq("valid-er-stereo.bin", 32000, 2, new byte[]{(byte) 0xAA, (byte) 0x90, 0x00}, 128, random);
+        // scalable layers, and an ER object with its categories in streams of their own (epConfig 1)
+        var layered = new ArrayList<FuzzPackets.Part>();
+        var categories = new ArrayList<FuzzPackets.Part>();
+        for (var frame = 0; frame < 8; frame++) {
+            var data = twinVqFrame(random, 64, 1, frame == 4 ? 2 : 0);
+            layered.add(new FuzzPackets.Part(MpegFuzzTest.units(List.of(data, randomBytes(random, 64),
+                    randomBytes(random, 64))), true));
+            // 154 bits of side information without the optional tools, in 20 bytes, then 862 bits of shape code
+            var side = twinVqFrame(random, 20, 2, 0);
+            side[1] &= (byte) 0x0F;
+            categories.add(new FuzzPackets.Part(MpegFuzzTest.units(List.of(side, randomBytes(random, 108))), true));
+        }
+        var layer = new byte[]{0x3A, (byte) 0x88};
+        write(MpegFuzzTest.class, "twinVqLayers", "valid-scalable.bin", FuzzPackets.audio(7, 16000, 1, 0,
+                MpegFuzzTest.units(List.of(layer, layer, layer)), layered));
+        var category = new byte[]{(byte) 0xAA, (byte) 0x90, 0x40};
+        write(MpegFuzzTest.class, "twinVqLayers", "valid-er-categories.bin", FuzzPackets.audio(7, 32000, 2, 0,
+                MpegFuzzTest.units(List.of(category, category)), categories));
+        // the error protection tool: frames concatenated three to an EP frame (epConfig 2), and the two categories of
+        // each frame in the classes of an EP frame (epConfig 3)
+        var frames = new ArrayList<byte[]>();
+        var instances = new ArrayList<List<byte[]>>();
+        for (var frame = 0; frame < 6; frame++) {
+            frames.add(twinVqFrame(random, 128, 2, 0));
+            var side = twinVqFrame(random, 20, 2, 0);
+            side[1] &= (byte) 0x0F;
+            instances.add(List.of(side, randomBytes(random, 108)));
+        }
+        seedProtected("valid-er-ep2.bin", EpStreams.unmapped(new byte[]{(byte) 0xAA, (byte) 0x90, 0x00}, frames, 3, random,
+                0));
+        seedProtected("valid-er-ep3.bin", EpStreams.mapped(category, instances, random, 0));
+    }
+
+    /**
+     * Writes a stereo seed of the single-stream TwinVQ target from a stream of the error protection tool.
+     *
+     * @param name the seed name
+     * @param built the stream
+     */
+    private static void seedProtected(String name, EpStreams.Built built) {
+        var parts = new ArrayList<FuzzPackets.Part>();
+        for (var unit : built.units()) {
+            parts.add(new FuzzPackets.Part(unit, true));
+        }
+        write(MpegFuzzTest.class, "twinVq", name, FuzzPackets.audio(0, 32000, 2, 0, built.config(), parts));
+    }
+
+    /**
+     * Returns a frame of random bits that codes a window sequence and no M/S, long term prediction or TNS.
+     *
+     * @param random the source of the bits
+     * @param bytes the length of the frame
+     * @param channels the channels of the object
+     * @param sequence the window sequence
+     * @return the frame
+     */
+    private static byte[] twinVqFrame(java.util.Random random, int bytes, int channels, int sequence) {
+        var data = randomBytes(random, bytes);
+        if (channels == 1) {
+            data[0] = (byte) (sequence << 6 | (data[0] & 0x27));
+        } else {
+            data[0] = (byte) (sequence << 6 | (data[0] & 0x20));
+            data[1] &= 0x7F;
+        }
+        return data;
+    }
+
+    private static void seedTwinVq(String name, int sampleRate, int channels, byte[] config, int bytes,
+                                   java.util.Random random) {
+        var parts = new ArrayList<FuzzPackets.Part>();
+        for (var frame = 0; frame < 12; frame++) {
+            // long windows, a start window and eight short windows
+            var sequence = frame == 5 ? 1 : frame == 6 ? 2 : frame == 7 ? 3 : 0;
+            parts.add(new FuzzPackets.Part(twinVqFrame(random, bytes, channels, sequence), true));
+        }
+        write(MpegFuzzTest.class, "twinVq", name, FuzzPackets.audio(0, sampleRate, channels, 0, config, parts));
+    }
+
+    @Test
+    @DisplayName("writes the seeds of the scalable AAC over a TwinVQ core target")
+    void aacTwinVqCore() {
+        // the configurations of the mono TwinVQ core and the mono and stereo AAC layers of ac16 (16 kHz core, a mono
+        // layer depending on it, a stereo layer) and of er_ac311, with frames of one core access unit and one of each
+        // AAC layer: the valid seeds have random core frames and empty AAC layers (all zero: a max_sfb of 0, so the mono
+        // layer outputs the core spectrum and the stereo layer silence)
+        var random = new java.util.Random(144968);
+        var plain = MpegFuzzTest.units(List.of(new byte[]{0x3C, (byte) 0x88}, new byte[]{0x34, (byte) 0x8A, 0, 0, 0},
+                new byte[]{0x34, (byte) 0x90, 0x20}));
+        var resilient = MpegFuzzTest.units(List.of(new byte[]{(byte) 0xAA, (byte) 0x89, 0x00},
+                new byte[]{(byte) 0xA2, (byte) 0x8A, 0x00, 0x04, 0x40}, new byte[]{(byte) 0xA2, (byte) 0x91, 0x3C, 0x00}));
+        var empty = new ArrayList<FuzzPackets.Part>();
+        var randomParts = new ArrayList<FuzzPackets.Part>();
+        var resilientParts = new ArrayList<FuzzPackets.Part>();
+        for (var frame = 0; frame < 10; frame++) {
+            var core = twinVqFrame(random, 85, 1, 0);
+            empty.add(new FuzzPackets.Part(MpegFuzzTest.units(List.of(tagged(0, core), tagged(1, new byte[16]),
+                    tagged(2, new byte[16]))), true));
+            randomParts.add(new FuzzPackets.Part(MpegFuzzTest.units(List.of(tagged(0, core),
+                    tagged(1, randomBytes(random, 96)), tagged(2, randomBytes(random, 192)))), true));
+            var coreEr = twinVqFrame(random, 32, 1, 0);
+            resilientParts.add(new FuzzPackets.Part(MpegFuzzTest.units(List.of(tagged(0, coreEr),
+                    tagged(1, randomBytes(random, 96)), tagged(2, randomBytes(random, 192)))), true));
+        }
+        write(MpegFuzzTest.class, "aacTwinVqCore", "valid-mono-stereo.bin", FuzzPackets.audio(7, 16000, 2, 0, plain,
+                empty));
+        write(MpegFuzzTest.class, "aacTwinVqCore", "valid-core-layer.bin", FuzzPackets.audio(0, 16000, 1, 0, plain,
+                empty));
+        write(MpegFuzzTest.class, "aacTwinVqCore", "valid-mono-layer.bin", FuzzPackets.audio(1, 16000, 1, 0, plain,
+                empty));
+        write(MpegFuzzTest.class, "aacTwinVqCore", "random-layers.bin", FuzzPackets.audio(7, 16000, 2, 0, plain,
+                randomParts));
+        write(MpegFuzzTest.class, "aacTwinVqCore", "random-er-layers.bin", FuzzPackets.audio(7, 32000, 2, 0, resilient,
+                resilientParts));
+    }
+
+    /**
+     * Prefixes an access unit with the index of its stream.
+     *
+     * @param stream the stream index
+     * @param data the access unit
+     * @return the tagged unit
+     */
+    private static byte[] tagged(int stream, byte[] data) {
+        var unit = new byte[data.length + 1];
+        unit[0] = (byte) stream;
+        System.arraycopy(data, 0, unit, 1, data.length);
+        return unit;
     }
 
     @Test

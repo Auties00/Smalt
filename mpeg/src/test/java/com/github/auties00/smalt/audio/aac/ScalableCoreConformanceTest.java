@@ -1,7 +1,9 @@
 package com.github.auties00.smalt.audio.aac;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.audio.twinvq.internal.TwinVqObject;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Conformance;
@@ -28,14 +30,18 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Decodes the scalable AAC conformance streams of ISO/IEC 14496-26 whose base layer is a CELP core: of object type 20,
+ * Decodes the scalable AAC conformance streams of ISO/IEC 14496-26 whose base layer is a CELP or TwinVQ core. Over a
+ * CELP core: of object type 20,
  * {@code er_ac211} (an 8 kHz ER CELP core, two CELP frames per AAC frame, under a mono and a stereo ER AAC layer at
  * 24 kHz) and {@code er_ac221} (a 7.35 kHz core, four CELP frames per three AAC frames, under two stereo layers at
  * 22.05 kHz), each with {@code epConfig} 0, 1 (every category instance in a track of its own) and 3 (the error
  * protection tool); of object type 6, {@code ac04} (a 7.35 kHz core under three mono and four stereo layers at 44.1
  * kHz, a {@code coreCoderDelay} of 8000 samples), {@code ac06} (a core with a bitrate scalable layer under four
  * layers at 22.05 kHz), {@code ac12} (a core and an AAC layer both at 8 kHz), {@code ac13} (24 kHz) and {@code ac14}
- * (a mono core under two stereo layers at 32 kHz). The streams are read through Smalt's MP4 demuxer. Every frame of the decoder gets the core packets whose timestamps fall within it,
+ * (a mono core under two stereo layers at 32 kHz). Over a mono TwinVQ core, which shares the rate and the windows of
+ * the AAC layers: of object type 20, {@code er_ac311} (two layers at 32 kHz) and {@code er_ac321} (960-sample frames at
+ * 24 kHz), each with {@code epConfig} 0, 1 and 2 in the core and 3 in the layers; of object type 6, {@code ac08} to
+ * {@code ac10} and {@code ac16} to {@code ac20}. The streams are read through Smalt's MP4 demuxer. Every frame of the decoder gets the core packets whose timestamps fall within it,
  * followed by one access unit of each AAC layer track, and each stream is decoded at the layer of each {@code _layN}
  * reference: layer 0 is the core alone at its own rate, the others the core up-sampled, transformed and switched
  * into the AAC layers.
@@ -47,11 +53,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * the TODO in {@code ScalableDecoder}); every other frame meets the full criterion. The CELP core of {@code ac04}
  * meets the RMS criterion at every layer, but 24 of its samples, in a loud passage of frames 961 to 964 of the core,
  * exceed the peak criterion by up to 0.7 LSB, for a cause not established (single precision synthesis does not change
- * it); its peak error must stay below 3 LSB.
+ * it); its peak error must stay below 3 LSB. The first layer of {@code er_ac321} meets the full criterion except in up
+ * to 20 frames per channel, eight short sequences and the frames they overlap, where it codes noise substitution in window
+ * groups after the first: the reference decoder takes the energy of those bands from the first group, up to a burst near
+ * full scale when that group codes a scalefactor there, and Smalt from their own group.
  *
  * <p>The smoke tier decodes {@code er_ac211_ep0} at all three layers.
  */
-@DisplayName("Scalable AAC over a CELP core conformance (ISO/IEC 14496-26)")
+@DisplayName("Scalable AAC over a CELP or TwinVQ core conformance (ISO/IEC 14496-26)")
 class ScalableCoreConformanceTest {
     private static final double RMS_LIMIT = Math.pow(2, -15) / Math.sqrt(12);
 
@@ -74,6 +83,19 @@ class ScalableCoreConformanceTest {
         STREAMS.put("ac12", 2);
         STREAMS.put("ac13", 2);
         STREAMS.put("ac14", 3);
+        STREAMS.put("ac15", 3);
+        for (var stream : List.of("er_ac311_ep0", "er_ac311_ep1", "er_ac311_ep3_cplx05", "er_ac321_ep0", "er_ac321_ep1",
+                "er_ac321_ep3_cplx06")) {
+            STREAMS.put(stream, 3);
+        }
+        STREAMS.put("ac08", 8);
+        STREAMS.put("ac09", 8);
+        STREAMS.put("ac10", 5);
+        STREAMS.put("ac16", 3);
+        STREAMS.put("ac17", 3);
+        STREAMS.put("ac18", 3);
+        STREAMS.put("ac19", 3);
+        STREAMS.put("ac20", 5);
     }
 
     /**
@@ -157,6 +179,41 @@ class ScalableCoreConformanceTest {
             assertEquals(ChannelLayout.STEREO, top.layout());
             assertEquals(960, top.frameLength());
         }
+    }
+
+    @TestFactory
+    @DisplayName("no TwinVQ core of the suite carries TNS, whose frames the reference decoder and the standard parse apart")
+    Stream<DynamicTest> twinVqCoreWithoutTns() {
+        return Stream.of("ac08", "ac09", "ac10", "ac16", "ac17", "ac18", "ac19", "ac20", "er_ac311_ep0", "er_ac321_ep0")
+                .map(name -> DynamicTest.dynamicTest(name, () -> {
+                    var layers = layers(name);
+                    var core = new TwinVqObject(List.of(layers.tracks().getFirst().codecConfig().orElseThrow()), -1,
+                            MediaLimits.defaults());
+                    for (var packet : layers.units().getFirst()) {
+                        var data = packet.data();
+                        core.decodeCore(new byte[][]{data}, new int[]{data.length}, 1);
+                        assertTrue(!core.tnsPresent(0), name + " frame at " + packet.pts());
+                    }
+                }));
+    }
+
+    @Test
+    @DisplayName("rejects a stereo TwinVQ core")
+    void stereoTwinVqCore() {
+        var layers = layers("ac16");
+        var tracks = new ArrayList<>(layers.tracks());
+        tracks.set(0, tracks.getFirst().toBuilder().codecConfig(new byte[]{0x3C, (byte) 0x90}).build());
+        var exception = assertThrows(MediaException.Unsupported.class, () -> new AacDecoder(tracks));
+        assertEquals("aac scalable core", exception.format());
+    }
+
+    @Test
+    @DisplayName("rejects a TwinVQ core at another rate than its AAC layers")
+    void twinVqCoreRate() {
+        var layers = layers("ac16");
+        var tracks = new ArrayList<>(layers.tracks());
+        tracks.set(0, tracks.getFirst().toBuilder().codecConfig(new byte[]{0x3B, (byte) 0x88}).build());
+        assertThrows(MediaException.Malformed.class, () -> new AacDecoder(tracks));
     }
 
     @Test
@@ -323,7 +380,16 @@ class ScalableCoreConformanceTest {
         for (var c = 0; c < expected.length; c++) {
             assertEquals(expected[c].length, decoded[c].length, name + " channel " + c + " length");
             var error = error(expected[c], decoded[c], 0, expected[c].length);
-            if (limited) {
+            if (name.equals("er_ac321_lay1")) {
+                var failing = 0;
+                for (var start = 0; start < expected[c].length; start += 960) {
+                    var frame = error(expected[c], decoded[c], start, Math.min(start + 960, expected[c].length));
+                    if (frame[0] > RMS_LIMIT || frame[1] > PEAK_LIMIT) {
+                        failing++;
+                    }
+                }
+                assertTrue(failing <= 20, name + " channel " + c + ": " + failing + " frames beyond the full criterion");
+            } else if (limited) {
                 assertTrue(error[0] <= LIMITED_RMS, name + " channel " + c + ": RMS " + error[0] * 32768 + " LSB16");
                 var failing = 0;
                 for (var start = 0; start < expected[c].length; start += 960) {
@@ -365,8 +431,9 @@ class ScalableCoreConformanceTest {
                 }
             }
         }
-        var cores = (int) tracks.values().stream().filter(track -> track.codec() == Codec.CELP).count();
-        assertTrue(cores > 0, stream + " has a CELP core track");
+        var cores = (int) tracks.values().stream()
+                .filter(track -> track.codec() == Codec.CELP || track.codec() == Codec.TWINVQ).count();
+        assertTrue(cores > 0, stream + " has a core track");
         return new Layers(List.copyOf(tracks.values()), List.copyOf(units.values()), cores);
     }
 

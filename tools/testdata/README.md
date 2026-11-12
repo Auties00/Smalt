@@ -947,6 +947,14 @@ from the new resources), and the script decodes them with libxaac into `eld-sbr-
 with the FDK AAC decoder into `eld-sbr-fdk/smalt`, which the test compares with Smalt's decodes. The CI cache entry
 of these files hashes the pinned streams too, so a rewrite decodes them again.
 
+## MPEG-4 TwinVQ code books
+
+`mpeg/src/main/resources/com/github/auties00/smalt/audio/twinvq/internal/twinvq-tables.txt` is written by
+`python -I tools/testdata/twinvq-tables.py <tf_vq_tbls directory> <output file> [<text of ISO/IEC 14496-3:2009>]` from
+the tables of the ISO/IEC 14496-5 audio reference software; with the text of the standard, which is never committed, it
+also checks every value against Annex 4.A.4. The ISO/IEC 14496-26 `tv`, `er_tv`, `ac08` to `ac10`, `ac16` to `ac20` and
+`er_ac3xx` streams and their reference waveforms are listed in `vectors.tsv`.
+
 ## MPEG-4 CELP oracle
 
 The ISO/IEC 14496-26 streams use a part of the CELP configurations, and no encoder writes CELP, but every field of a

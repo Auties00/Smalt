@@ -1,7 +1,7 @@
 /**
  * Codecs of Smalt whose standards are licensed through patent pools or by Dolby: the H.264 decoder
  * and encoder, the HEVC decoder, the HEIC image decoder built on it, the VVC decoder, the AAC decoder and encoder,
- * the AMR-NB and AMR-WB decoders and encoders, the MPEG-4 CELP decoder, the MPEG-4 Part 2 Visual and H.263
+ * the AMR-NB and AMR-WB decoders and encoders, the MPEG-4 CELP and TwinVQ decoders, the MPEG-4 Part 2 Visual and H.263
  * decoders, the MPEG-1 and MPEG-2 video decoder, the VC-1 decoder, the AC-3 decoder and encoder with the E-AC-3
  * decoder, and the DTS decoder with its DTS-HD extensions.
  *
@@ -16,8 +16,8 @@
  * <p>The launch requirements (the optional {@code --add-modules jdk.incubator.vector}) and the threading
  * model are those of the core module ({@code com.github.auties00.smalt}).
  *
- * @provides com.github.auties00.smalt.spi.AudioCodecProvider AAC, AMR-NB and AMR-WB, MPEG-4 CELP (decoding), AC-3 and
- * E-AC-3, DTS
+ * @provides com.github.auties00.smalt.spi.AudioCodecProvider AAC, AMR-NB and AMR-WB, MPEG-4 CELP and TwinVQ (decoding),
+ * AC-3 and E-AC-3, DTS
  * @provides com.github.auties00.smalt.spi.VideoCodecProvider H.264, HEVC, VVC, MPEG-4 Part 2 Visual, H.263,
  * MPEG-1 and MPEG-2 video, VC-1, and JPEG XS
  * @provides com.github.auties00.smalt.spi.ImageCodecProvider HEIC and JPEG XS
@@ -48,6 +48,7 @@ module com.github.auties00.smalt.mpeg {
     exports com.github.auties00.smalt.audio.aac;
     exports com.github.auties00.smalt.audio.amr;
     exports com.github.auties00.smalt.audio.celp;
+    exports com.github.auties00.smalt.audio.twinvq;
     exports com.github.auties00.smalt.audio.ac3;
     exports com.github.auties00.smalt.audio.dts;
 
@@ -56,6 +57,7 @@ module com.github.auties00.smalt.mpeg {
             com.github.auties00.smalt.internal.provider.mpeg.AacCodecProvider,
             com.github.auties00.smalt.internal.provider.mpeg.AmrCodecProvider,
             com.github.auties00.smalt.internal.provider.mpeg.CelpCodecProvider,
+            com.github.auties00.smalt.internal.provider.mpeg.TwinVqCodecProvider,
             com.github.auties00.smalt.internal.provider.mpeg.Ac3CodecProvider,
             com.github.auties00.smalt.internal.provider.mpeg.DtsCodecProvider;
     provides com.github.auties00.smalt.spi.VideoCodecProvider with

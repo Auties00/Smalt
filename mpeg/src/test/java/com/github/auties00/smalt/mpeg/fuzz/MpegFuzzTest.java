@@ -12,6 +12,8 @@ import com.github.auties00.smalt.audio.ac3.Ac3DecoderOptions;
 import com.github.auties00.smalt.audio.ac3.Ac3Downmix;
 import com.github.auties00.smalt.audio.celp.CelpDecoder;
 import com.github.auties00.smalt.audio.celp.CelpDecoderOptions;
+import com.github.auties00.smalt.audio.twinvq.TwinVqDecoder;
+import com.github.auties00.smalt.audio.twinvq.TwinVqDecoderOptions;
 import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.image.AuxiliaryImage;
 import com.github.auties00.smalt.image.ChromaFormat;
@@ -63,7 +65,8 @@ import java.util.function.Consumer;
  * AAC decoder decoding the layers of a scalable object from several elementary streams (see {@link #aacScalable})
  * or over a CELP core (see {@link #aacCelpCore}) or a downmix with a separate MPEG Surround elementary stream (see
  * {@link #aacSurround}), of the CELP decoder
- * decoding the layers and categories of an object from several elementary streams (see {@link #celpLayers}), and of
+ * decoding the layers and categories of an object from several elementary streams (see {@link #celpLayers}), of the
+ * TwinVQ decoder likewise (see {@link #twinVqLayers}) and under scalable AAC layers (see {@link #aacTwinVqCore}), and of
  * the H.264 first pass statistics (see {@link #h264FirstPassStats}).
  */
 class MpegFuzzTest {
@@ -497,6 +500,126 @@ class MpegFuzzTest {
                 }
                 if (packets.isEmpty()) {
                     continue;
+                }
+                run.step("packet " + index, () -> opened.decode(packets, sink));
+            }
+        }
+    }
+
+    @FuzzTest
+    void twinVq(byte[] data) {
+        FuzzMedia.audio(Codec.TWINVQ, data);
+    }
+
+    /**
+     * Decodes a TwinVQ object whose layers or error sensitivity categories come in several elementary streams: the
+     * codec configuration of the {@link FuzzPackets} input lists the {@code AudioSpecificConfig} of each stream and
+     * every packet the access units of one frame, in the format of {@link #units(byte[])}; bits 0 to 2 of the options
+     * give the highest layer to decode, 7 for every layer. Inputs whose first configuration is not of object type 7 or
+     * 21 are skipped.
+     */
+    @FuzzTest
+    void twinVqLayers(byte[] data) {
+        var run = Fuzz.start("twinVqLayers");
+        var input = FuzzPackets.parse(data, FuzzPackets.AUDIO_FIELDS);
+        var configs = units(input.header().config().orElse(new byte[0]));
+        var type = configs.isEmpty() || configs.getFirst().length == 0 ? 0 : (configs.getFirst()[0] & 0xFF) >>> 3;
+        if (type != 7 && type != 21) {
+            run.skip("not TwinVQ");
+            return;
+        }
+        var options = TwinVqDecoderOptions.builder().limits(Fuzz.LIMITS);
+        var layer = input.header().options() & 7;
+        if (layer != 7) {
+            options.maxLayer(layer);
+        }
+        var tracks = new ArrayList<AudioTrack>();
+        for (var config : configs) {
+            tracks.add(AudioTrack.builder().id(tracks.size() + 1).codec(Codec.TWINVQ)
+                    .timeBase(new Rational(1, 16_000)).codecConfig(config).build());
+        }
+        var decoder = run.value("open", () -> new TwinVqDecoder(tracks, options.build()));
+        if (decoder.isEmpty()) {
+            return;
+        }
+        Consumer<AudioBuffer> sink = buffer -> {
+            if (buffer.frames() != decoder.get().frameSize()) {
+                throw new IllegalStateException("decoded a block of " + buffer.frames() + " samples");
+            }
+            for (var channel = 0; channel < buffer.channels(); channel++) {
+                for (var i = 0; i < buffer.frames(); i++) {
+                    if (!Float.isFinite(buffer.plane(channel)[i])) {
+                        throw new IllegalStateException("decoded a non-finite sample");
+                    }
+                }
+            }
+            run.output();
+        };
+        try (var opened = decoder.get()) {
+            for (var index = 0; index < input.packets().size(); index++) {
+                var packets = new ArrayList<Packet>();
+                for (var unit : units(input.packets().get(index).data())) {
+                    packets.add(new Packet(1, unit, index * 1024L, index * 1024L, 1024, true));
+                }
+                if (packets.isEmpty()) {
+                    continue;
+                }
+                run.step("packet " + index, () -> opened.decode(packets, sink));
+            }
+        }
+    }
+
+    /**
+     * Decodes a scalable AAC object over a TwinVQ core, in the input format of {@link #aacCelpCore}. Inputs whose first
+     * configuration is not of object type 7 or 21 are skipped.
+     */
+    @FuzzTest
+    void aacTwinVqCore(byte[] data) {
+        var run = Fuzz.start("aacTwinVqCore");
+        var input = FuzzPackets.parse(data, FuzzPackets.AUDIO_FIELDS);
+        var configs = units(input.header().config().orElse(new byte[0]));
+        var type = configs.isEmpty() || configs.getFirst().length == 0 ? 0 : (configs.getFirst()[0] & 0xFF) >>> 3;
+        if (type != 7 && type != 21) {
+            run.skip("not a TwinVQ core");
+            return;
+        }
+        var options = AacDecoderOptions.builder().limits(Fuzz.LIMITS);
+        var layer = input.header().options() & 7;
+        if (layer != 7) {
+            options.maxLayer(layer);
+        }
+        var tracks = new ArrayList<AudioTrack>();
+        var core = true;
+        for (var config : configs) {
+            var objectType = config.length == 0 ? 0 : (config[0] & 0xFF) >>> 3;
+            core &= objectType == 7 || objectType == 21;
+            tracks.add(AudioTrack.builder().id(tracks.size() + 1).codec(core ? Codec.TWINVQ : Codec.AAC)
+                    .timeBase(new Rational(1, 48_000)).codecConfig(config).build());
+        }
+        var built = options.build();
+        var decoder = run.value("open", () -> new AacDecoder(tracks, built));
+        if (decoder.isEmpty()) {
+            return;
+        }
+        Consumer<AudioBuffer> sink = buffer -> {
+            for (var channel = 0; channel < buffer.channels(); channel++) {
+                var plane = buffer.plane(channel);
+                for (var i = 0; i < buffer.frames(); i++) {
+                    if (!Float.isFinite(plane[i])) {
+                        throw new IllegalStateException("decoded a non-finite sample");
+                    }
+                }
+            }
+            run.output();
+        };
+        try (var opened = decoder.get()) {
+            for (var index = 0; index < input.packets().size(); index++) {
+                var packets = new ArrayList<Packet>();
+                for (var unit : units(input.packets().get(index).data())) {
+                    if (unit.length > 0) {
+                        packets.add(new Packet(1 + (unit[0] & 0xFF) % tracks.size(), Arrays.copyOfRange(unit, 1,
+                                unit.length), index * 1024L, index * 1024L, 1024, true));
+                    }
                 }
                 run.step("packet " + index, () -> opened.decode(packets, sink));
             }

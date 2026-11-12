@@ -24,7 +24,7 @@ public final class EpStreams {
 
     /**
      * Returns the bit position of {@code epConfig} in an ER AAC LC, LTP, LD or ER BSAC configuration with
-     * extensionFlag 1.
+     * extensionFlag 1, or in an ER TwinVQ configuration.
      */
     private static int epConfigPosition(byte[] config) {
         var reader = new AacBitReader(config);
@@ -36,6 +36,12 @@ public final class EpStreams {
         reader.read(1);
         if (reader.readFlag()) {
             reader.read(14);
+        }
+        if (objectType == 21) {
+            if (reader.readFlag()) {
+                reader.read(1);
+            }
+            return (int) reader.bitPosition();
         }
         if (!reader.readFlag() || (objectType != 17 && objectType != 19 && objectType != 22 && objectType != 23)) {
             throw new IllegalArgumentException("not an ER AAC LC, LTP, LD or BSAC configuration with extensionFlag 1");

@@ -1979,7 +1979,8 @@ public final class AudioStreamDecoder implements AutoCloseable {
          * AAC-ELD with low delay spectral band replication, whose SBR state no pre-roll of a few frames
          * reproduces, USAC, whose arithmetic coder context, linear prediction state and enhanced SBR state
          * reach back to the last independent frame and beyond, and MPEG-4 CELP, whose predicted spectral parameters,
-         * adaptive codebook and synthesis filter have no independent frame.
+         * adaptive codebook and synthesis filter have no independent frame, like the predicted envelopes and long term
+         * prediction of MPEG-4 TwinVQ.
          *
          * @param track the track to restart, whose codec configuration names the AAC object type
          * @return {@code true} when every restart must begin at the track's first packet
@@ -1989,7 +1990,7 @@ public final class AudioStreamDecoder implements AutoCloseable {
                 // an ima4 frame continues the full predictor of the frame before it, which no restart recovers
                 return true;
             }
-            if (track.codec() == Codec.CELP) {
+            if (track.codec() == Codec.CELP || track.codec() == Codec.TWINVQ) {
                 return true;
             }
             if (track.codec() == Codec.MACE3 || track.codec() == Codec.MACE6) {

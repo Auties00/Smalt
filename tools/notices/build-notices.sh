@@ -132,6 +132,7 @@ Contents
   75. DirectXTex
   76. psd-tools
   77. 3DV-ATM, the ITU-T H.264.2 3D-AVC reference software
+  78. ISO/IEC 14496-5 MPEG-4 Audio reference software, TwinVQ modules
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -2653,6 +2654,32 @@ of ITU-T H.264.1 depart from the text of ITU-T H.264 Annex I.
 EOF
 license_start "ITU disclaimer of warranty (disclaimer_itu.txt)"
 cat "$LIC/3dv-atm-disclaimer_itu.txt"
+
+section "78. ISO/IEC 14496-5 MPEG-4 Audio reference software, TwinVQ modules"
+cat <<'EOF'
+Project:      the TwinVQ decoder modules and code books of the MPEG-4 Audio
+              reference software of ISO/IEC 14496-5
+Source:       ISO/IEC 14496-5:2001 reference software (audio.zip,
+              audio/natural/refSoft/mp4AudVm/src_tf and tables/tf_vq_tbls)
+License text: the notices of the source files
+License:      free license to the software modules or modifications thereof
+              for use in products claiming conformance to the MPEG-2 NBC/MPEG-4
+              Audio standards
+
+Derived Smalt packages:
+  audio.twinvq.internal (TwinVqLayer: the interleaved vector quantization and
+  spectrum normalization tools of the ntt_ and mat_ modules; TwinVqObject: the
+  frame decoder of tvqAUDecode.c, ntt_headerdec.c and ntt_scale_init.c;
+  twinvq-tables.txt: the code books)
+
+Derivation: C code translated to Java.
+
+Copyright:
+  NTT and Matsushita Electric Industrial Co Ltd. (1996-2000), and the other
+  developers the notices name
+EOF
+license_start "Notices of the source files"
+cat "$LIC/iso14496-5-twinvq-notice.txt"
 
 } > "$OUT"
 

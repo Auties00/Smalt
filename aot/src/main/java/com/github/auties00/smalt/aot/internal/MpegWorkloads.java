@@ -23,6 +23,8 @@ import com.github.auties00.smalt.audio.dts.DtsDecoder;
 import com.github.auties00.smalt.audio.amr.AmrDecoder;
 import com.github.auties00.smalt.audio.celp.CelpDecoder;
 import com.github.auties00.smalt.audio.celp.CelpDecoderOptions;
+import com.github.auties00.smalt.audio.twinvq.TwinVqDecoder;
+import com.github.auties00.smalt.audio.twinvq.TwinVqDecoderOptions;
 import com.github.auties00.smalt.audio.amr.AmrEncoder;
 import com.github.auties00.smalt.audio.amr.AmrEncoderOptions;
 import com.github.auties00.smalt.audio.amr.AmrMode;
@@ -259,7 +261,8 @@ final class MpegWorkloads {
                 file("amr-nb-dtx-encode", () -> amrDtxEncode(4)),
                 file("amr-wb-encode", () -> amrEncode("amr-wb-encode", Codec.AMR_WB, 4)),
                 file("amr-wb-decode", () -> amrDecode("amr-wb-decode", Codec.AMR_WB, 1)),
-                file("celp-decode", MpegWorkloads::celpDecode));
+                file("celp-decode", MpegWorkloads::celpDecode),
+                file("twinvq-decode", MpegWorkloads::twinVqDecode));
     }
 
     /**
@@ -2250,6 +2253,77 @@ final class MpegWorkloads {
                 }
             }
         });
+    }
+
+    /**
+     * Returns a workload that decodes MPEG-4 TwinVQ: a mono object with a scalable layer and an ER stereo object. No
+     * encoder writes TwinVQ and the fields of a frame have fixed widths, so the frames are seeded random bits under a
+     * header that turns M/S, long term prediction and TNS off and cycles through the long, start, eight short and stop
+     * windows.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload twinVqDecode() {
+        var random = new Random(144967);
+        var decoders = List.of(new TwinVqDecoder(twinVqTracks(new byte[]{0x3C, 0x08}, 2),
+                        TwinVqDecoderOptions.defaults()),
+                new TwinVqDecoder(twinVqTracks(new byte[]{(byte) 0xAA, (byte) 0x90, 0x00}, 1),
+                        TwinVqDecoderOptions.defaults()));
+        var streams = List.of(twinVqFrames(random, new int[]{128, 128}, 1), twinVqFrames(random, new int[]{128}, 2));
+        Consumer<AudioBuffer> output = AudioStreams::consume;
+        return TrainingWorkload.of("twinvq-decode", () -> {
+            for (var i = 0; i < decoders.size(); i++) {
+                var decoder = decoders.get(i);
+                for (var units : streams.get(i)) {
+                    decoder.decode(units, output);
+                }
+            }
+        });
+    }
+
+    /**
+     * Returns the frames of a TwinVQ object in random bits.
+     *
+     * @param random the source of the bits
+     * @param sizes the bytes of an access unit of each elementary stream
+     * @param channels the channels of the object
+     * @return the access units of each frame
+     */
+    private static List<List<Packet>> twinVqFrames(Random random, int[] sizes, int channels) {
+        var frames = new ArrayList<List<Packet>>(64);
+        for (var frame = 0; frame < 64; frame++) {
+            var units = new ArrayList<Packet>(sizes.length);
+            var sequence = frame % 8 == 5 ? 1 : frame % 8 == 6 ? 2 : frame % 8 == 7 ? 3 : 0;
+            for (var stream = 0; stream < sizes.length; stream++) {
+                var data = new byte[sizes[stream]];
+                random.nextBytes(data);
+                if (stream == 0 && channels == 1) {
+                    data[0] = (byte) (sequence << 6 | (data[0] & 0x27));
+                } else if (stream == 0) {
+                    data[0] = (byte) (sequence << 6 | (data[0] & 0x20));
+                    data[1] &= 0x7F;
+                }
+                units.add(new Packet(stream + 1, data, frame, frame, 1, true));
+            }
+            frames.add(units);
+        }
+        return frames;
+    }
+
+    /**
+     * Returns the tracks of the elementary streams of a TwinVQ object.
+     *
+     * @param config the {@code AudioSpecificConfig} of every stream
+     * @param count the number of streams
+     * @return the tracks
+     */
+    private static List<AudioTrack> twinVqTracks(byte[] config, int count) {
+        var tracks = new ArrayList<AudioTrack>(count);
+        for (var i = 0; i < count; i++) {
+            tracks.add(AudioTrack.builder().id(i + 1).codec(Codec.TWINVQ).timeBase(new Rational(1, 16000))
+                    .codecConfig(config).build());
+        }
+        return tracks;
     }
 
     /**

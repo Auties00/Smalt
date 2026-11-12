@@ -43,6 +43,8 @@ audio.opus.internal.silk	audio
 audio.pcm	core
 audio.process	core
 audio.speex	audio
+audio.twinvq	mpeg
+audio.twinvq.internal	mpeg
 audio.voice	audio
 audio.voice.internal	audio
 audio.voice.internal.aec3	audio

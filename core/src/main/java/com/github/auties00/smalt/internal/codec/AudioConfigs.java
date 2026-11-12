@@ -367,6 +367,47 @@ public final class AudioConfigs {
     }
 
     /**
+     * Returns the sampling rate an {@code AudioSpecificConfig} of a TwinVQ object names.
+     *
+     * @param config the configuration
+     * @return the rate in hertz, or 0 when the configuration is not of a TwinVQ object, is truncated or names a
+     * reserved rate
+     */
+    public static int twinVqSampleRate(byte[] config) {
+        if (config.length < 2) {
+            return 0;
+        }
+        var bits = new MsbBitReader(config);
+        var objectType = bits.read(5);
+        if (objectType == 31) {
+            objectType = 32 + bits.read(6);
+        }
+        if (objectType != 7 && objectType != 21) {
+            return 0;
+        }
+        var index = bits.read(4);
+        var rate = index == AacRates.ESCAPE ? bits.read(24) : AacRates.rate(index);
+        return bits.overrun() ? 0 : rate;
+    }
+
+    /**
+     * Returns the channels an {@code AudioSpecificConfig} of a TwinVQ object names.
+     *
+     * @param config a configuration {@link #twinVqSampleRate(byte[])} accepts
+     * @return the {@code channelConfiguration}
+     */
+    public static int twinVqChannels(byte[] config) {
+        var bits = new MsbBitReader(config);
+        if (bits.read(5) == 31) {
+            bits.read(6);
+        }
+        if (bits.read(4) == AacRates.ESCAPE) {
+            bits.read(24);
+        }
+        return bits.read(4);
+    }
+
+    /**
      * Returns the samples of a frame of the multi-pulse CELP coder (ISO/IEC 14496-3 Tables 3.74 and 3.75).
      *
      * @param configuration {@code MPE_Configuration}

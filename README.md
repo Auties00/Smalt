@@ -672,6 +672,7 @@ them, so files exchanged with ffmpeg differ in these known ways:
 | ATRAC1 | no (see Known limits); Matroska `A_ATRAC/AT1` tracks are read and written | no | - | - | - | Sony patents |
 | PCM (integer and float, any layout) | yes; integer formats up to 32 bits and G.711 also as their integers bit for bit, every format as doubles (64-bit floats unchanged) | 8 to 64-bit, integer and float, either byte order, G.711 A-law and mu-law, through the containers that carry it, from float, integer or double samples; triangular, high-pass triangular or noise-shaped dither for 8, 16 and 24-bit output (`PcmEncoderOptions.dither`) | `smalt-core` | `audio.pcm` | spec; Lipshitz, Vanderkooy and Wannamaker (dither, E-weighted noise shaping) | none |
 | AMR-NB, AMR-WB | yes, bit-exact with the 3GPP fixed-point decoders (TS 26.073, TS 26.173): every mode, mode changes on any frame, comfort noise (SID) and DTX, bad and lost frame concealment, homing; storage-format frames from `.amr`, MP4/3GP `samr`/`sawb` and Matroska (`A_AMR/NB`, `A_AMR/WB`, `A_MS/ACM`), and the frame-blocks of multichannel `.amr` files (one decoder state per channel); the TS 26.074 sequences pass in linear PCM and through G.711 A-law and mu-law | yes, bit-exact with the 3GPP encoders: AMR-NB in every mode with DTX and VAD option 1 or 2, AMR-WB in every mode with VAD and DTX; mode changes on any frame | `smalt-mpeg` | `audio.amr` | AMR-NB decoder and encoder and AMR-WB decoder: opencore-amr (PacketVideo, Apache-2.0); AMR-WB encoder: vo-amrwbenc (VisualOn, Apache-2.0), its arithmetic aligned with TS 26.173 (passes TS 26.174, so its frames differ from `libvo_amrwbenc` on loud or unusual input); both derived from the 3GPP reference code | **patent pool** (VoiceAge, AMR-WB); AMR-NB patents are held by its developers; not covered by the MIT license |
+| MPEG-4 TwinVQ, ER TwinVQ | yes (`TwinVqDecoder`): mono and stereo, frames of 1024 and 960 samples, the interleaved vector quantizer, the LPC, Bark-scale and gain envelopes, periodic peak components, window switching and shapes, long term prediction, TNS, M/S stereo, the scalable layers, the error sensitivity categories of ER TwinVQ in one stream or in separate streams (`epConfig` 1) and the error protection tool (`epConfig` 2 and 3); the layers and categories of an object decode together through `TwinVqDecoder.decode(List, Consumer)`, up to `TwinVqDecoderOptions.maxLayer()`; MP4 `mp4a` tracks (read and written); the mono core layer of scalable AAC through `AacDecoder`; the ISO/IEC 14496-26 `tv` and `er_tv` streams match their reference waveforms at every layer and `epConfig` to full accuracy | no | `smalt-mpeg` | `audio.twinvq` | ISO/IEC 14496-3 subpart 4 (with the ISO/IEC 14496-5 reference software) | held by its developers; no licensing pool |
 | MPEG-4 CELP, ER CELP | yes (`CelpDecoder`): the multi-pulse coder at 8 and 16 kHz and the regular pulse coder at 16 kHz, every `MPE_Configuration` and `RPE_Configuration`, fine rate control, up to three bitrate scalable layers, the bandwidth scalable layer that extends 8 kHz speech to 16 kHz, the silence compression of ER CELP with its comfort noise, the error sensitivity categories of ER CELP in one stream or in separate streams (`epConfig` 1) and the error protection tool (`epConfig` 2 and 3); the layers and categories of an object decode together through `CelpDecoder.decode(List, Consumer)`, up to `CelpDecoderOptions.maxLayer()`; the informative post-processor (on by default); MP4 `mp4a` tracks and LOAS/LATM (read and written); the core layer of scalable AAC through `AacDecoder`; the ISO/IEC 14496-26 `ce` and `er_ce` streams match their reference waveforms at every layer and `epConfig` to the full accuracy of ISO/IEC 11172-4 | no | `smalt-mpeg` | `audio.celp` | spec (ISO/IEC 14496-3 subpart 3), its undefined details derived from the ISO/IEC 14496-26 references; the comfort noise constants and the bandwidth extension LSP prediction through non-active frames from the CELP decoder of the ISO/IEC 14496-3 reference software (as distributed with the ISO/IEC 23003-3 reference software) | held by its developers; no licensing pool |
 | IMA ADPCM (WAVE `0x0011` blocks, Apple `ima4`) | yes: 4-bit, any channel count, from WAV, AVI, Matroska `A_MS/ACM` and QuickTime (`ms\0\x11`), and `ima4` from AIFF-C and QuickTime (`ima4`, classic and per-packet tables); bit-exact with Microsoft's `imaadp32.acm` (the recommendation's shift-and-add quantizer) and with ffmpeg's `adpcm_ima_qt`; also as 16-bit integers or doubles | yes: both layouts, 1-8 channels, any rate, WAVE blocks of any valid size and at most 65535 samples (256 bytes per channel per 11.025 kHz by default), each sample coded to the nearest code; the WAVE blocks byte-identical to Microsoft's `imaadp32.acm` | `smalt-audio` | `audio.adpcm` | spec (IMA Digital Audio Focus recommendation, Microsoft RIFF, Apple TN1081) | none |
 | Microsoft ADPCM (WAVE `0x0002`) | yes: 4-bit, any channel count and coefficient table, from WAV, AVI, Matroska `A_MS/ACM` and QuickTime (`ms\0\x02`); bit-exact with Microsoft's `msadp32.acm`, including its 32-bit arithmetic on streams whose deltas overflow 16 bits; also as 16-bit integers or doubles | yes: 1-8 channels, any rate and valid block size of at most 65535 samples, the coefficient pair and initial delta of each channel of each block chosen for the smallest squared error (about 10 dB more accurate than `msadp32.acm` on speech) | `smalt-audio` | `audio.adpcm` | spec (Microsoft RIFF) | none |
@@ -1694,10 +1695,10 @@ channels, or two tracks, at 32 kHz in 12 bits. A DV source is copied when no for
   raises `MediaException.Malformed`.
 - Every ISO/IEC 14496-26 stream of the error protection tool over an AAC object type yields the category instances
   of its `epConfig` 1 twin and decodes to the same audio bit for bit; so do the ER CELP streams through
-  `CelpDecoder` and the scalable streams over a CELP core through `AacDecoder`. For the scalable streams over a
-  TwinVQ core, and for the ER HVXC, ER TwinVQ and ER HILN streams, only the error protection layer is checked (its
-  output equals the `epConfig` 0 and 1 twins): `AacDecoder` and `AudioSpecificConfig` reject those object types
-  and cores with `MediaException.Unsupported`.
+  `CelpDecoder`, the ER TwinVQ streams through `TwinVqDecoder` and the scalable streams over a CELP or TwinVQ core
+  through `AacDecoder`. For the ER HVXC and ER HILN streams only the error protection layer is checked (its output
+  equals the `epConfig` 0 and 1 twins): `AacDecoder` and `AudioSpecificConfig` reject those object types with
+  `MediaException.Unsupported`.
 - The ER AAC LC, ER AAC LTP, AAC-LD and AAC-ELD conformance streams without SBR match their reference waveforms
   (in band energy where they use noise substitution), and those ffmpeg's native decoder handles (no resilience
   tools, no LTP, 512-sample LD) also match it to single precision rounding. AAC-ELD with low delay SBR is checked
@@ -1730,16 +1731,23 @@ channels, or two tracks, at 32 kHz in 12 bits. A DV source is copied when no for
   (`epConfig` 3 with `directMapping` 0) are rejected, as ISO/IEC 14496-3 does not define them.
 - Spectral band replication or parametric stereo signaled around ER AAC LC, ER AAC LTP, AAC-LD or AAC-ELD
   (object type 5 or 29) is not decoded: the core decodes alone at its own rate, as is the case around a
-  scalable AAC core, whose extension payloads are skipped. Scalable AAC over a TwinVQ core layer (the `ac08` to
-  `ac10`, `ac16` to `ac20` and `er_ac3xx` streams of ISO/IEC 14496-26) raises `MediaException.Unsupported`, as
-  Smalt has no TwinVQ decoder. The scalable streams over a CELP core (`ac04`, `ac06`, `ac12` to `ac14`,
+  scalable AAC core, whose extension payloads are skipped. The scalable streams over a mono TwinVQ core (`ac08` to
+  `ac10`, `ac16` to `ac20`, `er_ac311` and `er_ac321`) match their reference waveforms at every layer to the full
+  accuracy of ISO/IEC 11172-4, but for up to 20 frames per channel of the first layer of `er_ac321`, eight short
+  sequences with noise substitution in window groups after the first and the frames they overlap: the reference decoder
+  takes the energy of those bands from the first group, which gives a burst near full scale where that group
+  codes a scalefactor there, and Smalt from their own group. Scalable AAC over a stereo TwinVQ core raises
+  `MediaException.Unsupported`: no stream uses it and the reference decoder switches its first channel alone, so nothing could check it. No stream has a TwinVQ
+  core with TNS under AAC layers either, where the reference decoder, which Smalt follows, reads the fields of the first
+  AAC layer that ISO/IEC 14496-3 Table 4.90 leaves out. A layer below the stereo layers of a scalable object decodes as
+  if they were absent, as its reference waveform does. The scalable streams over a CELP core (`ac04`, `ac06`, `ac12` to `ac14`,
   `er_ac211` and `er_ac221`) match their reference waveforms at every layer to the full accuracy of ISO/IEC 11172-4
   but two: the CELP core of `ac04` exceeds the peak criterion by up to 0.7 LSB in 24 samples of a loud passage (the
   cause is not established; single precision synthesis does not change it; the RMS criterion holds), and two frames of the stereo layer of `er_ac211`, eight short sequences whose mono layer codes noise
   substitution in window groups after the first, differ by up to 240 LSB in the left channel (limited accuracy).
-  Noise substitution of scalable AAC follows the generator of the reference decoder band for band, so the AAC-only
-  scalable streams match their reference waveforms at every layer, except the stereo noise bands of `er_ac123`
-  (compared by band energy); long term prediction runs on the first layer alone.
+  Noise substitution of scalable AAC follows the generator of the reference decoder band for band, the left channel
+  before the right, so the AAC-only scalable streams match their reference waveforms at every layer, except the noise
+  bands of the second layer of `er_ac123` (compared by band energy); long term prediction runs on the first layer alone.
   MPEG Surround (object type 30, ISO/IEC 23003-1) has no public conformance streams: its spatial decoder is
   checked against the decoder of the ISO/IEC 23003-3 reference software (which carries the full 23003-1
   decoder), bit for bit except the residual signals (within 0.002 of a 16-bit step, the reference dequantizes
@@ -2466,8 +2474,8 @@ channels, or two tracks, at 32 kHz in 12 bits. A DV source is copied when no for
   read fragment by fragment or Matroska with its `Tags` at the end, costs a request per jump. A server that ignores
   range requests or sends no length gives a forward-only source, which cannot seek back past what was released and
   is not resumed when its response breaks off.
-  `AudioReader.seek` on Matroska Vorbis or AAC, and on AAC Main, LTP, LD and ELD with SBR and MPEG-4 CELP in any
-  container, restarts from the start of the track (exact, but slower), and AAC seeks are bit-identical only
+  `AudioReader.seek` on Matroska Vorbis or AAC, and on AAC Main, LTP, LD and ELD with SBR and MPEG-4 CELP and TwinVQ
+  in any container, restarts from the start of the track (exact, but slower), and AAC seeks are bit-identical only
   without perceptual noise substitution.
 - The capture backends run on the Windows, macOS and Linux CI runners against virtual devices (loopback audio
   pairs, the runners' displays, `v4l2loopback` and `vivid` cameras on Linux), except the Windows and macOS

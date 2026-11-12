@@ -9,6 +9,7 @@
 package com.github.auties00.smalt.audio.aac.internal;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.audio.twinvq.internal.TwinVqObject;
 
 import java.util.Arrays;
 import java.util.List;
@@ -38,6 +39,10 @@ import java.util.List;
  * frequency selective switch adds the up-sampled core spectrum, run through the TNS analysis filters of the first
  * layer, to the combined mono spectrum, or with a stereo first layer, as {@code diff_control_lr} tells per band and
  * channel, to the combined stereo spectra before the inverse M/S matrix (subclause 4.6.14.1).
+ *
+ * <p>Over a TwinVQ core ({@link TwinVqObject}, subclause 4.5.2.2.6), the core decodes first and gives the window
+ * sequence and shape of the frame, which the first AAC layer then does not code; the core's spectrum takes the place of
+ * the CELP core's, and its bandwidth, through the {@code max_sfb} it stands for, gives the dc groups.
  */
 final class ScalableDecoder {
     /**
@@ -274,6 +279,16 @@ final class ScalableDecoder {
     private final CelpCoreLayer celp;
 
     /**
+     * The TwinVQ core layer, or {@code null} when it has none.
+     */
+    private final TwinVqObject twinVq;
+
+    /**
+     * Whether the first AAC layer has a core under it.
+     */
+    private final boolean hasCore;
+
+    /**
      * The up-sampled spectrum of the core of the current frame, or {@code null} without a core.
      */
     private final float[] coreSpectrum;
@@ -281,9 +296,9 @@ final class ScalableDecoder {
     /**
      * The number of dc groups of a long window and the lines of the dc group of a short window.
      */
-    private final int dcGroups;
+    private int dcGroups;
 
-    private final int diffShortLines;
+    private int diffShortLines;
 
     /**
      * The decoded {@code diff_control} flags of the first layer over a core, {@code true} where the switch takes the
@@ -303,25 +318,22 @@ final class ScalableDecoder {
     private boolean tnsFromRight;
 
     /**
-     * The noise generator seed of each band and window of the left channel of the stereo layer being filled,
-     * indexed {@code window * MAX_BANDS + band}.
-     */
-    private final int[] noiseSeeds = new int[8 * ChannelStream.MAX_BANDS];
-
-    /**
      * Creates a decoder for the layers of a scalable audio object.
      *
      * @param configs the configuration of each elementary stream, in stream order: one per layer, or with
      * {@code epConfig} 1 one per category instance
      * @param maxLayer the highest layer to output, or -1 for the last one
      * @param kernel the inverse quantization kernel
-     * @param celp the CELP core layer, or {@code null} when every layer is AAC
+     * @param celp the CELP core layer, or {@code null} when it has none
+     * @param twinVq the TwinVQ core layer, decoded before each frame, or {@code null} when it has none
      * @throws MediaException.Unsupported if the first layer depends on a core coder and no core is given
      * @throws MediaException.Malformed if the configurations do not describe the layers of one object
      */
-    ScalableDecoder(List<AudioSpecificConfig> configs, int maxLayer, AacKernel kernel, CelpCoreLayer celp) {
+    ScalableDecoder(List<AudioSpecificConfig> configs, int maxLayer, AacKernel kernel, CelpCoreLayer celp,
+                    TwinVqObject twinVq) {
         var first = configs.getFirst();
-        if (first.coreCoderDelay() >= 0 && celp == null) {
+        this.hasCore = celp != null || twinVq != null;
+        if (first.coreCoderDelay() >= 0 && !hasCore) {
             throw new MediaException.Unsupported("aac scalable core",
                     "scalable AAC over a core coder decodes only with the tracks of its core layer");
         }
@@ -329,6 +341,7 @@ final class ScalableDecoder {
             throw new MediaException.Malformed("a CELP core under scalable AAC layers that do not depend on it");
         }
         this.celp = celp;
+        this.twinVq = twinVq;
         var layers = new AudioSpecificConfig[8];
         var count = 0;
         for (var config : configs) {
@@ -398,7 +411,7 @@ final class ScalableDecoder {
         this.predictionOverlaps = new float[layerChannels[0]][frameLength];
         this.scratch = new float[frameLength];
         this.reconstruction = new float[frameLength];
-        this.coreSpectrum = celp != null ? new float[frameLength] : null;
+        this.coreSpectrum = hasCore ? new float[frameLength] : null;
         var index = Math.min(first.tableIndex(), DC_GROUPS.length - 1);
         var wideband = celp != null && celp.sampleRate() > 12000 && index < WIDEBAND_DC_GROUPS.length;
         this.dcGroups = wideband ? WIDEBAND_DC_GROUPS[index] : DC_GROUPS[index];
@@ -490,6 +503,10 @@ final class ScalableDecoder {
         }
         if (celp != null) {
             celp.transform(windowSequence, previousShape, windowShape, coreSpectrum);
+        } else if (twinVq != null) {
+            System.arraycopy(twinVq.spectrum(0), 0, coreSpectrum, 0, frameLength);
+        }
+        if (hasCore) {
             streams[0][layerChannels[0] == 2 && tnsFromRight ? 1 : 0].applyTnsAnalysis(coreSpectrum);
         }
         combine(Math.min(outputLayer, present - 1), present);
@@ -537,8 +554,20 @@ final class ScalableDecoder {
     private void readMainLayer() {
         var reader = header(0);
         reader.read(1);
-        windowSequence = reader.read(2);
-        windowShape = reader.read(1);
+        if (twinVq != null) {
+            windowSequence = twinVq.windowSequence();
+            windowShape = twinVq.windowShape();
+            // TODO: the standard omits tns_channel_mono_layer and the first layer's TNS fields under a TwinVQ core with
+            //  TNS (ISO/IEC 14496-3 Table 4.90) and runs the core's filters over the combined spectrum (Figures 4.9,
+            //  4.10, 4.14 and 4.15); the reference decoder, which this follows, reads them always and leaves the
+            //  filters out. No ISO/IEC 14496-26 stream has such a frame.
+            var coreBands = twinVq.maxBand();
+            dcGroups = (coreBands + 3) / 4;
+            diffShortLines = windowSequence == ChannelStream.EIGHT_SHORT_SEQUENCE ? shortOffsets[coreBands] : 0;
+        } else {
+            windowSequence = reader.read(2);
+            windowShape = reader.read(1);
+        }
         grouping = 0;
         if (windowSequence == ChannelStream.EIGHT_SHORT_SEQUENCE) {
             maxBands[0] = reader.read(4);
@@ -552,7 +581,7 @@ final class ScalableDecoder {
         }
         if (channels == 2) {
             readMidSide(reader, 0, maxBands[0], streams[0][0]);
-            tnsFromRight = celp != null && reader.readFlag();
+            tnsFromRight = hasCore && reader.readFlag();
         }
         reader.checkNotOverrun();
         for (var channel = 0; channel < channels; channel++) {
@@ -562,7 +591,7 @@ final class ScalableDecoder {
             if (!errorResilient && tns) {
                 stream.readScalableTns(side);
             }
-            if (celp != null) {
+            if (hasCore) {
                 if (channel == 0) {
                     readCoreControl(side);
                 }
@@ -608,7 +637,7 @@ final class ScalableDecoder {
         }
         reader.checkNotOverrun();
         var monoStereo = stereo && layerChannels[layer - 1] == 1;
-        var switched = stereo && (layerChannels[0] == 1 || celp != null);
+        var switched = stereo && (layerChannels[0] == 1 || hasCore);
         if (errorResilient) {
             for (var channel = 0; channel < channels; channel++) {
                 var side = source(layer, channel, SIDE);
@@ -742,7 +771,7 @@ final class ScalableDecoder {
             }
             return;
         }
-        var bands = Math.min(4 * dcGroups, maxBands[0]);
+        var bands = Math.min(twinVq != null ? twinVq.maxBand() : 4 * dcGroups, maxBands[0]);
         coreDiffBands = bands;
         for (var band = 0; band < bands; band++) {
             if (!msUsed[band]) {
@@ -756,9 +785,13 @@ final class ScalableDecoder {
 
     /**
      * {@return the {@code max_sfb} the core stands for as the last mono layer: {@code 4 * no_of_dc_groups - 1} for a
-     * long window, the band holding the last of the {@code diff_short_lines} for short windows}
+     * long window, the band holding the last of the {@code diff_short_lines} for short windows, and the {@code max_sfb}
+     * of a TwinVQ core}
      */
     private int coreBands() {
+        if (twinVq != null) {
+            return twinVq.maxBand();
+        }
         if (windowSequence == ChannelStream.EIGHT_SHORT_SEQUENCE) {
             var band = 0;
             while (band < shortOffsets.length - 1 && shortOffsets[band] < diffShortLines) {
@@ -805,7 +838,7 @@ final class ScalableDecoder {
             System.arraycopy(streams[0][1].spectrum(), 0, spectra[1], 0, frameLength);
             setTools(stereoTools, 0);
         }
-        if (celp == null) {
+        if (!hasCore) {
             predict();
         } else if (!mono) {
             matrix(1.0f);
@@ -839,7 +872,7 @@ final class ScalableDecoder {
                         }
                     }
                 }
-                if (celp != null) {
+                if (hasCore) {
                     switchCore(spectra[0]);
                 }
                 switchFrequencies();
@@ -847,14 +880,18 @@ final class ScalableDecoder {
                 for (var layer = 1; layer <= output; layer++) {
                     addStereo(layer, spectra[0]);
                 }
-                if (celp != null) {
+                if (hasCore) {
+                    // the core adds to both channels of an intensity band, after its right channel takes the left
+                    applyIntensity();
                     switchCoreStereo();
                 }
             }
             matrix(1.0f);
-            applyIntensity();
+            if (mono || !hasCore) {
+                applyIntensity();
+            }
         } else {
-            if (celp != null) {
+            if (hasCore) {
                 switchCore(spectra[0]);
             }
             if (channels() == 2) {
@@ -926,53 +963,61 @@ final class ScalableDecoder {
     }
 
     /**
-     * Fills the noise substitution bands of a layer with scaled pseudo-random noise; a band coded with noise in
-     * both channels of a stereo layer and flagged for M/S uses one noise vector for both.
+     * Fills the noise substitution bands of a layer with scaled pseudo-random noise, band by band, the left channel
+     * before the right; a band coded with noise in both channels of a stereo layer and flagged for M/S uses one noise
+     * vector for both.
      *
      * @param layer the layer index, 0 for the base layer
      */
     private void fillNoise(int layer) {
         var channels = layerChannels[layer];
-        for (var channel = 0; channel < channels; channel++) {
-            var stream = streams[layer][channel];
-            var spectrum = stream.spectrum();
-            for (var group = 0; group < groupCount; group++) {
-                for (var window = groupStarts[group]; window < groupStarts[group + 1]; window++) {
-                    for (var band = 0; band < maxBands[layer]; band++) {
-                        var index = group * ChannelStream.MAX_BANDS + band;
-                        if (stream.bandType(index) != Codebooks.NOISE_HCB) {
-                            continue;
-                        }
-                        var reuse = channel == 1 && streams[layer][0].bandType(index) == Codebooks.NOISE_HCB
-                                && msUsed[groupStarts[group] * ChannelStream.MAX_BANDS + band];
-                        var gain = Dequantizer.gain(stream.bandValue(index));
-                        var seedIndex = window * ChannelStream.MAX_BANDS + band;
-                        int state;
-                        if (reuse) {
-                            state = noiseSeeds[seedIndex];
-                        } else {
-                            state = noiseState;
-                            noiseSeeds[seedIndex] = state;
-                        }
-                        var start = window * windowLength + offsets[band];
-                        var end = window * windowLength + offsets[band + 1];
-                        var energy = 0.0;
-                        for (var k = start; k < end; k++) {
-                            state = state * 1664525 + 1013904223;
-                            var value = (float) state;
-                            spectrum[k] = value;
-                            energy += (double) value * value;
-                        }
-                        if (!reuse) {
+        var left = streams[layer][0];
+        var right = channels == 2 ? streams[layer][1] : null;
+        for (var group = 0; group < groupCount; group++) {
+            for (var window = groupStarts[group]; window < groupStarts[group + 1]; window++) {
+                var base = window * windowLength;
+                for (var band = 0; band < maxBands[layer]; band++) {
+                    var index = group * ChannelStream.MAX_BANDS + band;
+                    var start = base + offsets[band];
+                    var end = base + offsets[band + 1];
+                    var state = noiseState;
+                    var leftNoise = left.bandType(index) == Codebooks.NOISE_HCB;
+                    if (leftNoise) {
+                        fillNoiseBand(left, index, start, end);
+                    }
+                    if (right != null && right.bandType(index) == Codebooks.NOISE_HCB) {
+                        if (leftNoise && msUsed[groupStarts[group] * ChannelStream.MAX_BANDS + band]) {
                             noiseState = state;
                         }
-                        var scale = (float) (gain / Math.sqrt(energy));
-                        for (var k = start; k < end; k++) {
-                            spectrum[k] *= scale;
-                        }
+                        fillNoiseBand(right, index, start, end);
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * Fills one band of one window of a channel with pseudo-random noise of the energy its scalefactor gives.
+     *
+     * @param stream the channel
+     * @param index the index of the band among the bands of the frame
+     * @param start the first line
+     * @param end the line after the last one
+     */
+    private void fillNoiseBand(ChannelStream stream, int index, int start, int end) {
+        var spectrum = stream.spectrum();
+        var state = noiseState;
+        var energy = 0.0;
+        for (var k = start; k < end; k++) {
+            state = state * 1664525 + 1013904223;
+            var value = (float) state;
+            spectrum[k] = value;
+            energy += (double) value * value;
+        }
+        noiseState = state;
+        var scale = (float) (Dequantizer.gain(stream.bandValue(index)) / Math.sqrt(energy));
+        for (var k = start; k < end; k++) {
+            spectrum[k] *= scale;
         }
     }
 
@@ -1333,7 +1378,8 @@ final class ScalableDecoder {
         var extension = firstStereo >= 1 ? streams[firstStereo] : null;
         for (var channel = 0; channel < channels; channel++) {
             var main = streams[0][layerChannels[0] == 1 ? 0 : channel];
-            var hasExtension = extension != null && extensionTns[channel];
+            // a layer below the stereo layers decodes as if they were absent, so their TNS data leaves it alone
+            var hasExtension = extension != null && output >= firstStereo && extensionTns[channel];
             if (hasExtension) {
                 limit = monoTop;
             }

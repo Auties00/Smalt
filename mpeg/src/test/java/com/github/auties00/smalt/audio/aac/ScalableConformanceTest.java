@@ -30,8 +30,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>The references hold more than 16 bits, so the decoded samples are compared unrounded under the criterion of
  * the standard: an RMS error of at most {@code 2^-15 / sqrt(12)} and a peak error of at most {@code 2^-14} of full
- * scale. The noise substitution of {@code er_ac123} cannot match sample by sample; its band energies must match
- * within half a decibel on average.
+ * scale, which holds in the noise substitution bands of a first layer too, as the decoder runs the generator of the
+ * reference decoder. The noise substitution of the second layer of {@code er_ac123} cannot match sample by sample; its
+ * band energies must match within half a decibel on average.
  *
  * <p>The smoke tier decodes {@code er_ac121_ep0} at its base and top layers, {@code er_ac111_ep1} (category instances
  * in separate tracks, a mono and a stereo layer) at its top layer and {@code ac01} at its base layer. The streams over
@@ -211,12 +212,10 @@ class ScalableConformanceTest {
             assertEquals(expected.length, decoded.planes().length, name + " channels");
             for (var c = 0; c < expected.length; c++) {
                 var actual = decoded.planes()[c];
-                if (noise) {
+                if (noise && layer > 0) {
                     var deviation = PnsEnergy.meanBandDeviation(expected[c], actual, decoded.sampleRate());
                     assertTrue(deviation < 0.5, name + " channel " + c + ": mean band energy deviation " + deviation
                             + " dB");
-                    assertTrue(error(expected[c], actual)[0] > RMS_LIMIT, name + " channel " + c
-                            + " matches sample by sample, so it holds no noise substitution");
                 } else {
                     compare(name + " channel " + c, expected[c], actual);
                 }

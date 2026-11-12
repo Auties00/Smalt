@@ -17,6 +17,7 @@ import com.github.auties00.smalt.audio.aac.internal.mps.MpsConfig;
 import com.github.auties00.smalt.audio.aac.internal.usac.UsacConfig;
 import com.github.auties00.smalt.audio.aac.internal.usac.UsacDecoder;
 import com.github.auties00.smalt.audio.celp.internal.CelpObject;
+import com.github.auties00.smalt.audio.twinvq.internal.TwinVqObject;
 import com.github.auties00.smalt.internal.check.Checks;
 import com.github.auties00.smalt.internal.codec.ConsumerFailure;
 import com.github.auties00.smalt.track.AudioTrack;
@@ -124,8 +125,16 @@ import java.util.function.Consumer;
  * units of an AAC frame, the core access units that start within it, told apart by their track ids, and an AAC frame
  * whose core samples have not arrived uses silence in their place. The layers count the core's first:
  * {@link AacDecoderOptions#maxLayer()} below the number of CELP layers outputs the CELP speech of that layer, mono at
- * the core rate, in blocks of one CELP frame. Layers over a TwinVQ core raise {@link MediaException.Unsupported}
- * ({@code "aac scalable core"}), as do AAC layers that depend on a core without its tracks.
+ * the core rate, in blocks of one CELP frame.
+ *
+ * <p>The base layer may also be a TwinVQ or ER TwinVQ object (object types 7 and 21, subclause 4.5.2.2.6), carried in
+ * tracks of its own ahead of the AAC layers, one access unit of each per AAC frame. It shares the rate and the frame of
+ * the AAC layers and codes their window sequence and shape; its spectrum, run through the TNS analysis filters of the
+ * first AAC layer, is switched into theirs the same way, with the dc groups its bandwidth gives. A
+ * {@link AacDecoderOptions#maxLayer()} below the number of TwinVQ layers outputs that layer of the TwinVQ object.
+ * An AAC frame whose TwinVQ access unit has not arrived decodes as long windows over a silent core. A stereo TwinVQ
+ * core raises {@link MediaException.Unsupported} ({@code "aac scalable core"}), as do AAC layers that depend on a core
+ * without its tracks.
  *
  * <p>USAC (object type 42, ISO/IEC 23003-3) decodes with its frequency domain coder (arithmetic coded spectra,
  * noise filling, complex prediction stereo, the time-warped transform, 768- and 1024-sample frames) and its linear
@@ -240,6 +249,26 @@ public final class AacDecoder implements AudioDecoder {
      * The CELP decoder of a scalable AAC object decoded at a layer of its core, or {@code null}.
      */
     private final CelpObject coreOutput;
+
+    /**
+     * The TwinVQ core layer of a scalable AAC object decoded with its AAC layers, or {@code null}.
+     */
+    private final TwinVqObject twinVqCore;
+
+    /**
+     * The TwinVQ decoder of a scalable AAC object decoded at a layer of its core, or {@code null}, the samples of one
+     * call and the buffer it is handed out in.
+     */
+    private final TwinVqObject twinVqOutput;
+
+    private final float[][] twinVqSamples;
+
+    private final AudioBuffer twinVqBuffer;
+
+    /**
+     * Whether {@link #twinVqCore} holds a frame that no AAC frame has used yet.
+     */
+    private boolean twinVqCoreReady;
 
     /**
      * The track ids of the elementary streams of the CELP core, in stream order, or {@code null} without a core.
@@ -368,20 +397,21 @@ public final class AacDecoder implements AudioDecoder {
      * SSR or LTP stream may be followed by the track of its MPEG Surround elementary stream (object type 30): the
      * first such track configures the upmix while {@link AacDecoderOptions#mpegSurround()} is on, and unless its
      * configuration embeds the spatial frames in the downmix, {@link #decode(List, Consumer)} then receives the
-     * access units of both. A scalable AAC object over a CELP core lists the tracks of the core first, of codec
-     * {@link Codec#CELP} (or {@link Codec#AAC}, as their configurations tell the object type), then those of the AAC
+     * access units of both. A scalable AAC object over a CELP or TwinVQ core lists the tracks of the core first, of
+     * codec {@link Codec#CELP} or {@link Codec#TWINVQ} (or {@link Codec#AAC}, as their configurations tell the object
+     * type), then those of the AAC
      * layers; every track then needs an id of its own. Every other track is ignored, and every other object type
      * takes its configuration from the first track alone, so this constructor then equals the single-track one.
      *
      * @param tracks the tracks of the object's elementary streams, in stream order, the base layer first
      * @param options the resource limits and the extensions to decode
-     * @throws IllegalArgumentException if {@code tracks} is empty, a track is neither an AAC track nor a CELP track
-     * of the core of a scalable object, or the tracks of a scalable object over a core share a track id
+     * @throws IllegalArgumentException if {@code tracks} is empty, a track is neither an AAC track nor a CELP or
+     * TwinVQ track of the core of a scalable object, or the tracks of a scalable object over a core share a track id
      * @throws NullPointerException if a track of {@code tracks} is {@code null}
      * @throws MediaException.Malformed if a configuration is invalid, or the configurations of a scalable
      * object do not describe its layers
      * @throws MediaException.Unsupported if the configuration uses an unsupported feature, including scalable
-     * AAC over a TwinVQ core or without the tracks of its core ({@code "aac scalable core"})
+     * AAC over a stereo TwinVQ core or without the tracks of its core ({@code "aac scalable core"})
      * @throws MediaException.LimitExceeded if the configuration declares more channels than the
      * options' limits allow
      */
@@ -394,20 +424,17 @@ public final class AacDecoder implements AudioDecoder {
         var coreCount = coreTrackCount(tracks);
         var layerMax = options.maxLayer().orElse(-1);
         CelpCoreLayer layerCore = null;
+        TwinVqObject layerTwinVq = null;
         for (var i = 0; i < tracks.size(); i++) {
             var other = Objects.requireNonNull(tracks.get(i), "track");
-            if (other.codec() != Codec.AAC && !(i < coreCount && other.codec() == Codec.CELP)) {
+            if (other.codec() != Codec.AAC
+                    && !(i < coreCount && (other.codec() == Codec.CELP || other.codec() == Codec.TWINVQ))) {
                 throw new IllegalArgumentException(other.codec() + " is not AAC");
             }
         }
         var limits = options.limits();
         if (coreCount > 0) {
             var type = AudioSpecificConfig.objectTypeOf(tracks.getFirst().codecConfig().orElseThrow());
-            if (type != 8 && type != 24) {
-                // TODO: the TwinVQ core layers (object types 7 and 21) of scalable AAC need a TwinVQ decoder.
-                throw new MediaException.Unsupported("aac scalable core",
-                        "scalable AAC over a TwinVQ core layer is not supported");
-            }
             var ids = new int[coreCount];
             for (var i = 0; i < tracks.size(); i++) {
                 var id = tracks.get(i).id();
@@ -435,22 +462,52 @@ public final class AacDecoder implements AudioDecoder {
             for (var i = 0; i < coreCount; i++) {
                 coreConfigs.add(tracks.get(i).codecConfig().orElseThrow());
             }
-            var coreLayer = new CelpCoreLayer(coreConfigs, layerConfig.sampleRate(), layerConfig.frameLength(),
-                    Math.max(layerConfig.coreCoderDelay(), 0), limits, AacKernels.INSTANCE);
-            var coreLayers = coreLayer.layers();
-            layerCore = coreLayer;
+            int coreLayers;
             var requested = options.maxLayer().orElse(-1);
-            if (requested >= 0 && requested < coreLayers) {
-                var object = new CelpObject(coreConfigs, requested, false, limits);
-                this.core = null;
-                this.coreOutput = object;
-                this.coreSamples = new float[object.frameSize() * object.framesPerUnit()];
-                this.coreBuffer = new AudioBuffer(ChannelLayout.MONO, object.sampleRate(), object.frameSize());
+            if (type == 8 || type == 24) {
+                var coreLayer = new CelpCoreLayer(coreConfigs, layerConfig.sampleRate(), layerConfig.frameLength(),
+                        Math.max(layerConfig.coreCoderDelay(), 0), limits, AacKernels.INSTANCE);
+                coreLayers = coreLayer.layers();
+                layerCore = coreLayer;
+                this.twinVqCore = null;
+                this.twinVqOutput = null;
+                this.twinVqSamples = null;
+                this.twinVqBuffer = null;
+                if (requested >= 0 && requested < coreLayers) {
+                    var object = new CelpObject(coreConfigs, requested, false, limits);
+                    this.core = null;
+                    this.coreOutput = object;
+                    this.coreSamples = new float[object.frameSize() * object.framesPerUnit()];
+                    this.coreBuffer = new AudioBuffer(ChannelLayout.MONO, object.sampleRate(), object.frameSize());
+                } else {
+                    this.core = coreLayer;
+                    this.coreOutput = null;
+                    this.coreSamples = null;
+                    this.coreBuffer = null;
+                }
             } else {
-                this.core = coreLayer;
+                var twinVq = new TwinVqObject(coreConfigs, -1, limits);
+                checkTwinVqCore(twinVq, layerConfig);
+                coreLayers = twinVq.layers();
+                this.core = null;
                 this.coreOutput = null;
                 this.coreSamples = null;
                 this.coreBuffer = null;
+                if (requested >= 0 && requested < coreLayers) {
+                    var object = new TwinVqObject(coreConfigs, requested, limits);
+                    layerTwinVq = twinVq;
+                    this.twinVqCore = null;
+                    this.twinVqOutput = object;
+                    this.twinVqSamples = new float[object.channels()][object.frameLength() * object.framesPerUnit()];
+                    this.twinVqBuffer = new AudioBuffer(object.channels() == 1 ? ChannelLayout.MONO
+                            : ChannelLayout.STEREO, object.sampleRate(), object.frameLength());
+                } else {
+                    layerTwinVq = twinVq;
+                    this.twinVqCore = twinVq;
+                    this.twinVqOutput = null;
+                    this.twinVqSamples = null;
+                    this.twinVqBuffer = null;
+                }
             }
             this.coreUnits = new byte[coreCount][];
             this.coreSizes = new int[coreCount];
@@ -463,6 +520,10 @@ public final class AacDecoder implements AudioDecoder {
             this.coreSizes = null;
             this.coreSamples = null;
             this.coreBuffer = null;
+            this.twinVqCore = null;
+            this.twinVqOutput = null;
+            this.twinVqSamples = null;
+            this.twinVqBuffer = null;
         }
         var track = tracks.get(coreCount);
         if (track.codec() != Codec.AAC) {
@@ -505,7 +566,7 @@ public final class AacDecoder implements AudioDecoder {
                     compression == AacCompression.HEAVY, options.cutScale(), options.boostScale(),
                     options.targetLevel().orElse(-1), config.frameLength(), config.lowDelaySbr() != null);
             this.decoder = new FrameDecoder(configs, limits, fallback, mode, stereo, dynamicRange, layerMax,
-                    layerCore);
+                    layerCore, layerTwinVq);
             var surroundIndex = -1;
             if (options.mpegSurround() && carriesSurround(config)) {
                 MpsConfig surround = null;
@@ -589,6 +650,42 @@ public final class AacDecoder implements AudioDecoder {
      */
     private static boolean carriesSurround(AudioSpecificConfig config) {
         return !config.errorResilient() && !config.bsac() && !config.scalable();
+    }
+
+    /**
+     * {@return the coded channel order of the output of a TwinVQ core: one channel, or left and right}
+     */
+    private int[] twinVqOrder() {
+        return twinVqOutput.channels() == 1 ? new int[]{0} : new int[]{0, 1};
+    }
+
+    /**
+     * Checks that a TwinVQ core fits the AAC layers above it: they share the sampling frequency, frame length and
+     * spectral lines, and the core is mono.
+     *
+     * @param twinVq the core
+     * @param layer the configuration of the first AAC layer
+     * @throws MediaException.Malformed if the sampling frequency or the frame length differ
+     * @throws MediaException.Unsupported if the core is stereo or concatenates frames ({@code "aac scalable core"})
+     */
+    private static void checkTwinVqCore(TwinVqObject twinVq, AudioSpecificConfig layer) {
+        if (twinVq.sampleRate() != layer.sampleRate() || twinVq.frameLength() != layer.frameLength()) {
+            throw new MediaException.Malformed("scalable AAC at " + layer.sampleRate() + " Hz over a TwinVQ core at "
+                    + twinVq.sampleRate() + " Hz");
+        }
+        if (twinVq.channels() != 1) {
+            // TODO: a stereo TwinVQ core (the TVQ-AAC-SS configuration, ISO/IEC 14496-3 subclause 4.5.2.2.6.3) needs
+            //  the switching of Figures 4.13 and 4.14; no ISO/IEC 14496-26 stream uses it and the reference decoder
+            //  switches its first channel alone, so nothing could check an implementation.
+            throw new MediaException.Unsupported("aac scalable core",
+                    "scalable AAC over a stereo TwinVQ core layer is not supported");
+        }
+        if (twinVq.framesPerUnit() != 1) {
+            // TODO: the error protection tool may concatenate frames in the access units of a TwinVQ core, whose frames
+            //  would have to wait for the AAC frames they belong to; no ISO/IEC 14496-26 stream does.
+            throw new MediaException.Unsupported("aac scalable core",
+                    "scalable AAC over a TwinVQ core layer with concatenated frames is not supported");
+        }
     }
 
     /**
@@ -721,11 +818,12 @@ public final class AacDecoder implements AudioDecoder {
      *
      * <p>With spectral band replication at dual rate this is twice the core rate. When the
      * decision is left to the first packet, this is the core rate until then. When the output is a layer of the CELP
-     * core of a scalable object, this is the rate of the CELP speech.
+     * or TwinVQ core of a scalable object, this is the rate of that core.
      */
     @Override
     public int sampleRate() {
-        return coreOutput != null ? coreOutput.sampleRate() : usac != null ? usac.sampleRate() : decoder.sampleRate();
+        return twinVqOutput != null ? twinVqOutput.sampleRate() : coreOutput != null ? coreOutput.sampleRate()
+                : usac != null ? usac.sampleRate() : decoder.sampleRate();
     }
 
     /**
@@ -737,11 +835,12 @@ public final class AacDecoder implements AudioDecoder {
      * its own layout while its blocks are upmixed: from the start for a separate elementary stream, from the
      * first block whose fill elements carry the configuration for embedded side information. A block that is not
      * upmixed (before the first independent spatial frame, or under a configuration the decoder does not support)
-     * reports the downmix layout. The output of a layer of the CELP core of a scalable object is mono.
+     * reports the downmix layout. The output of a layer of the CELP or TwinVQ core of a scalable object is mono.
      */
     @Override
     public ChannelLayout layout() {
-        return coreOutput != null ? ChannelLayout.MONO : usac != null ? usac.layout() : decoder.layout();
+        return twinVqOutput != null ? twinVqBuffer.layout() : coreOutput != null ? ChannelLayout.MONO
+                : usac != null ? usac.layout() : decoder.layout();
     }
 
     /**
@@ -751,18 +850,19 @@ public final class AacDecoder implements AudioDecoder {
      */
     @Override
     public int[] codedChannelOrder() {
-        return coreOutput != null ? new int[]{0} : usac != null ? usac.codedChannelOrder()
-                : decoder.codedChannelOrder();
+        return twinVqOutput != null ? twinVqOrder() : coreOutput != null ? new int[]{0}
+                : usac != null ? usac.codedChannelOrder() : decoder.codedChannelOrder();
     }
 
     /**
      * {@return the number of samples per channel each raw data block decodes to: 1024, or 960 when
      * the configuration sets the frame length flag (512 or 480 for AAC-LD and AAC-ELD), doubled
-     * when spectral band replication doubles the rate, or the samples of a CELP frame when the output is a layer of
-     * the CELP core of a scalable object}
+     * when spectral band replication doubles the rate, or the samples of a core frame when the output is a layer of
+     * the CELP or TwinVQ core of a scalable object}
      */
     public int frameLength() {
-        return coreOutput != null ? coreOutput.frameSize() : usac != null ? usac.frameLength()
+        return twinVqOutput != null ? twinVqOutput.frameLength() : coreOutput != null ? coreOutput.frameSize()
+                : usac != null ? usac.frameLength()
                 : decoder.frameLength();
     }
 
@@ -821,9 +921,10 @@ public final class AacDecoder implements AudioDecoder {
      * concealed when the frame cannot be corrected. A decoder built with
      * a separate MPEG Surround elementary stream decodes the packet as a block whose spatial frame is
      * missing: the upmix keeps the parameters of the last frame, and the downmix is the output before the
-     * first one ({@link #decode(List, Consumer)} takes both access units). Over a CELP core, a packet of a core
-     * track is decoded and queued for the AAC frames, emitting nothing unless the output is a layer of the core, and
-     * any other packet is the access unit of the first AAC layer, as {@link #decode(List, Consumer)} takes it alone.
+     * first one ({@link #decode(List, Consumer)} takes both access units). Over a CELP or TwinVQ core, a packet of a
+     * core track is decoded and queued for the AAC frames, emitting nothing unless the output is a layer of the core,
+     * and any other packet is the access unit of the first AAC layer, as {@link #decode(List, Consumer)} takes it
+     * alone.
      * An exception thrown by {@code output} propagates unchanged.
      *
      * @throws MediaException.Malformed if the packet is corrupt
@@ -882,7 +983,7 @@ public final class AacDecoder implements AudioDecoder {
      * stream order (the base layer first); they are concatenated into the frame, and the layers of
      * missing trailing streams decode as absent. For scalable AAC, {@code instances} holds the access unit of each
      * layer, or with {@code epConfig} 1 of each category instance of each layer, in the order of the tracks the
-     * decoder was built from; the layers from the first missing one on are not decoded. Over a CELP core,
+     * decoder was built from; the layers from the first missing one on are not decoded. Over a CELP or TwinVQ core,
      * {@code instances} also holds, anywhere among them, the core access units that start within the frame, of each
      * core track in time order: they are told apart by their track ids and decoded first, frame by frame. For a
      * separate MPEG
@@ -915,7 +1016,7 @@ public final class AacDecoder implements AudioDecoder {
     }
 
     /**
-     * Decodes the access units of one frame of a stream without a CELP core.
+     * Decodes the access units of one frame of a stream without a CELP or TwinVQ core.
      *
      * @param instances the access units, as {@link #decode(List, Consumer)} takes them
      * @param output receives the samples
@@ -957,8 +1058,10 @@ public final class AacDecoder implements AudioDecoder {
     }
 
     /**
-     * Decodes the access units of a scalable AAC object over a CELP core: the core frames first, in the order their
-     * packets come, then the AAC frame of the layer packets, unless the output is a layer of the core.
+     * Decodes the access units of a scalable AAC object over a CELP or TwinVQ core: the core frames first, in the
+     * order their packets come, then the AAC frame of the layer packets, unless the output is a layer of the core.
+     * The AAC layers take the windows and the spectrum of a TwinVQ frame, so an AAC frame with no new one decodes over
+     * a silent core instead of repeating the last.
      *
      * @param instances the access units, the core ones told apart by their track ids
      * @param output receives the samples
@@ -981,7 +1084,11 @@ public final class AacDecoder implements AudioDecoder {
                     decodeCoreFrame(count, emit);
                 }
             });
-            if (coreOutput == null && !layerPackets.isEmpty()) {
+            if (coreOutput == null && twinVqOutput == null && !layerPackets.isEmpty()) {
+                if (twinVqCore != null && !twinVqCoreReady) {
+                    twinVqCore.decodeCore(coreUnits, coreSizes, 0);
+                }
+                twinVqCoreReady = false;
                 decodeUnits(layerPackets, output);
             }
         } finally {
@@ -1029,6 +1136,23 @@ public final class AacDecoder implements AudioDecoder {
     private void decodeCoreFrame(int count, Consumer<AudioBuffer> output) {
         if (core != null) {
             core.decode(coreUnits, coreSizes, count);
+            return;
+        }
+        if (twinVqCore != null) {
+            twinVqCore.decodeCore(coreUnits, coreSizes, count);
+            twinVqCoreReady = true;
+            return;
+        }
+        if (twinVqOutput != null) {
+            var frames = twinVqOutput.decode(coreUnits, coreSizes, count, twinVqSamples);
+            var size = twinVqOutput.frameLength();
+            for (var f = 0; f < frames; f++) {
+                for (var channel = 0; channel < twinVqSamples.length; channel++) {
+                    System.arraycopy(twinVqSamples[channel], f * size, twinVqBuffer.plane(channel), 0, size);
+                }
+                twinVqBuffer.setFrames(size);
+                output.accept(twinVqBuffer);
+            }
             return;
         }
         var frames = coreOutput.decode(coreUnits, coreSizes, count, coreSamples);
@@ -1250,6 +1374,12 @@ public final class AacDecoder implements AudioDecoder {
                     Arrays.fill(coreBuffer.plane(0), 0, unit, 0);
                     coreBuffer.setFrames(unit);
                     emit.accept(coreBuffer);
+                } else if (twinVqOutput != null) {
+                    for (var channel = 0; channel < twinVqSamples.length; channel++) {
+                        Arrays.fill(twinVqBuffer.plane(channel), 0, unit, 0);
+                    }
+                    twinVqBuffer.setFrames(unit);
+                    emit.accept(twinVqBuffer);
                 } else {
                     emit.accept(decoder.conceal());
                 }

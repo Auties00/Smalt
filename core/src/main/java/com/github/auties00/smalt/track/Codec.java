@@ -421,6 +421,16 @@ public enum Codec {
     CELP(TrackKind.AUDIO, "celp"),
 
     /**
+     * MPEG-4 TwinVQ, audio object types 7 (TwinVQ) and 21 (ER TwinVQ) of ISO/IEC 14496-3 subpart 4: transform coded
+     * audio at low bitrates, mono or stereo, with scalable layers.
+     *
+     * <p>A packet is one access unit of one elementary stream: a frame of 1024 or 960 samples per channel of the base
+     * layer or of one scalable layer, which an MP4 file carries in a track of its own. The configuration is the MPEG-4
+     * {@code AudioSpecificConfig} with its {@code GASpecificConfig}.
+     */
+    TWINVQ(TrackKind.AUDIO, "twinvq"),
+
+    /**
      * Sony ATRAC9, the audio of the PlayStation Vita and PlayStation 4 ({@code .at9} files): a WAVE
      * {@code WAVEFORMATEXTENSIBLE} sub-format, GUID {@code 47E142D2-36BA-4D8D-88FC-61654F8C836C}.
      *

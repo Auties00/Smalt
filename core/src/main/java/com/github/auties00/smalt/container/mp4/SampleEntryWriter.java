@@ -1245,6 +1245,14 @@ final class SampleEntryWriter {
                     sampleRate = AudioConfigs.celpSampleRate(config);
                 }
             }
+            case TWINVQ -> {
+                if (AudioConfigs.twinVqChannels(config) > 0) {
+                    channels = AudioConfigs.twinVqChannels(config);
+                }
+                if (sampleRate == 0) {
+                    sampleRate = AudioConfigs.twinVqSampleRate(config);
+                }
+            }
             case AMR_NB, AMR_WB -> {
                 var wideband = audio.codec() == Codec.AMR_WB;
                 format = wideband ? BoxTypes.SAWB : BoxTypes.SAMR;
@@ -1263,8 +1271,8 @@ final class SampleEntryWriter {
         writer.u32(0);
         writer.u32(sampleRate > 0 && sampleRate <= 0xFFFF ? (long) sampleRate << 16 : 0);
         switch (audio.codec()) {
-            case AAC, CELP, MP3, MP2 -> {
-                var mpeg4 = audio.codec() == Codec.AAC || audio.codec() == Codec.CELP;
+            case AAC, CELP, TWINVQ, MP3, MP2 -> {
+                var mpeg4 = audio.codec() == Codec.AAC || audio.codec() == Codec.CELP || audio.codec() == Codec.TWINVQ;
                 var objectType = mpeg4 ? EsDescriptor.MPEG4_AUDIO
                         : sampleRate >= 32000 || sampleRate == 0 ? EsDescriptor.MPEG1_AUDIO : EsDescriptor.MPEG2_AUDIO;
                 var descriptor = new EsDescriptor(objectType, EsDescriptor.AUDIO_STREAM, maxSampleSize(plan),

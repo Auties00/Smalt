@@ -17,7 +17,7 @@ import java.nio.file.Path;
 
 /**
  * Runs the H.264, HEVC, VVC, MPEG-4 Part 2, H.263, MPEG-1 and MPEG-2 video and VC-1 decoders and the AAC, AC-3,
- * E-AC-3 and AMR audio decoders ({@link ReaderAsserts}) and the HEIC and JPEG XS image decoders ({@link ImageDecoderAsserts}) of this artifact through
+ * E-AC-3, AMR and TwinVQ audio decoders ({@link ReaderAsserts}) and the HEIC and JPEG XS image decoders ({@link ImageDecoderAsserts}) of this artifact through
  * the I/O behavior harness over the container samples (core's {@code src/test/resources/samples}), smoke-tier
  * vectors, the HEIF fuzz seeds of AVC, uncompressed and layered HEVC items, the HEVC screen content coding and
  * separate color plane vectors and the multi-layer HEVC vectors ({@link HevcSamples}), the VVenC vectors
@@ -91,7 +91,8 @@ class MpegDecoderBehaviorTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @ValueSource(strings = {"mpegff-male_amr122.3gp", "mpeg4audio-al00_08.mp4", "eac3-csi_miami_5.1_256_spx_small.eac3",
+    @ValueSource(strings = {"mpegff-male_amr122.3gp", "mpeg4audio-al00_08.mp4", "mpeg4audio-tv00.mp4",
+            "eac3-csi_miami_5.1_256_spx_small.eac3",
             "dts-xll_51_24_48_none.dtshd", "dts-xxch_71_24_48_2046.dtshd", "dts-x96_51_24_96_1509.dtshd",
             "dts-xll_51_24_48_768.dtshd", "dts-xll_71_24_48_768_0.dtshd", "dts-xll_71_24_96_768.dtshd",
             "dts-xll_x96_51_24_96_1509.dtshd", "dts-xll_51_16_192_768_0.dtshd", "dts-xll_51_16_192_768_1.dtshd"})

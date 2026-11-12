@@ -11,6 +11,7 @@ import com.github.auties00.smalt.audio.aac.internal.mps.MpsUpmixer;
 import com.github.auties00.smalt.audio.aac.internal.sbr.SbrElement;
 
 import com.github.auties00.smalt.internal.limits.LimitChecks;
+import com.github.auties00.smalt.audio.twinvq.internal.TwinVqObject;
 import java.util.Arrays;
 import java.util.List;
 import java.util.function.Consumer;
@@ -566,7 +567,7 @@ public final class FrameDecoder {
      */
     public FrameDecoder(AudioSpecificConfig config, MediaLimits limits, ChannelLayout fallbackLayout, SbrMode sbrMode,
                         boolean parametricStereo, DynamicRangeControl dynamicRange, int maxLayer) {
-        this(List.of(config), limits, fallbackLayout, sbrMode, parametricStereo, dynamicRange, maxLayer, null);
+        this(List.of(config), limits, fallbackLayout, sbrMode, parametricStereo, dynamicRange, maxLayer, null, null);
     }
 
     /**
@@ -586,13 +587,14 @@ public final class FrameDecoder {
      * @param dynamicRange the dynamic range control, or {@code null}
      * @param maxLayer the highest ER BSAC or scalable AAC layer to decode, or -1 for every layer
      * @param core the CELP core layer of a scalable AAC object, or {@code null} when it has none
+     * @param twinVqCore the TwinVQ core layer of a scalable AAC object, or {@code null} when it has none
      * @throws MediaException.LimitExceeded if the configuration exceeds the limits
      * @throws MediaException.Unsupported if a scalable AAC layer depends on a core coder and no core is given
      * @throws MediaException.Malformed if the scalable AAC configurations do not describe the layers of one object
      */
     public FrameDecoder(List<AudioSpecificConfig> configs, MediaLimits limits, ChannelLayout fallbackLayout,
                         SbrMode sbrMode, boolean parametricStereo, DynamicRangeControl dynamicRange, int maxLayer,
-                        CelpCoreLayer core) {
+                        CelpCoreLayer core, TwinVqObject twinVqCore) {
         var config = configs.getFirst();
         this.dynamicRange = dynamicRange != null && dynamicRange.active() ? dynamicRange : null;
         this.frameLength = config.frameLength();
@@ -605,7 +607,8 @@ public final class FrameDecoder {
         this.resilience = config.resilience();
         this.lowDelaySbr = config.lowDelaySbr();
         this.bsac = config.bsac() ? new BsacDecoder(config, maxLayer, limits) : null;
-        this.scalable = config.scalable() ? new ScalableDecoder(configs, maxLayer, AacKernels.INSTANCE, core) : null;
+        this.scalable = config.scalable() ? new ScalableDecoder(configs, maxLayer, AacKernels.INSTANCE, core, twinVqCore)
+                : null;
         this.separateCategories = (config.epConfig() == 1 || config.epConfig() == 3) && bsac == null
                 && scalable == null;
         this.reversibleScalefactors = (config.resilience() & AudioSpecificConfig.RVLC_SCALEFACTORS) != 0;
