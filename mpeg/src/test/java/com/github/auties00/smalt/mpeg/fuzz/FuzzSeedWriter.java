@@ -1971,6 +1971,48 @@ class FuzzSeedWriter {
         write(MpegFuzzTest.class, "aac", "valid-mps-long5151-embedded.bin",
                 FuzzPackets.audio(0, 48000, 1, 0, core.getFirst(), embedLong(core, "mps-long5151")));
         threeDimensionalSeeds();
+        largeResidualSeed();
+    }
+
+    /**
+     * Writes the residual frames of 4096 QMF samples of {@code mps-res96} in a separate stream over a 96 kHz mono
+     * downmix of Smalt's encoder, a spatial frame every four blocks.
+     */
+    private static void largeResidualSeed() throws IOException {
+        var noise = new float[1][9 * 1024];
+        var random = new java.util.Random(29);
+        for (var i = 0; i < noise[0].length; i++) {
+            noise[0][i] = 0.2f * (float) random.nextGaussian();
+        }
+        var units = new ArrayList<byte[]>();
+        byte[] coreConfig;
+        try (var encoder = new AacEncoder(AacEncoderOptions.of(96000, ChannelLayout.MONO, 96000))) {
+            encoder.encode(new AudioBuffer(ChannelLayout.MONO, 96000, noise, noise[0].length),
+                    packet -> units.add(packet.data()));
+            coreConfig = encoder.codecConfig().orElseThrow();
+        }
+        var spatial = new ArrayList<byte[]>();
+        var data = Files.readAllBytes(SURROUND_RESOURCES.resolve("mps-res96.bs"));
+        var buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
+        for (var position = 0; position + 4 <= data.length; position += 4 + buffer.getInt(position)) {
+            spatial.add(Arrays.copyOfRange(data, position + 4, position + 4 + buffer.getInt(position)));
+        }
+        var header = spatial.getFirst();
+        var config = new MsbBitWriter();
+        config.write(30, 5);
+        config.write(0, 4);
+        config.write(0, 4);
+        config.write(0, 1);
+        for (var i = 1; i < header.length; i++) {
+            config.write(header[i] & 0xFF, 8);
+        }
+        var parts = new ArrayList<FuzzPackets.Part>();
+        for (var block = 0; block < 8; block++) {
+            var unit = block % 4 == 0 ? spatial.get(block / 4 + 1) : new byte[0];
+            parts.add(new FuzzPackets.Part(MpegFuzzTest.units(List.of(units.get(block), unit)), true));
+        }
+        write(MpegFuzzTest.class, "aacSurround", "valid-mps-res96-separate.bin", FuzzPackets.audio(0, 96000, 1, 0,
+                MpegFuzzTest.units(List.of(coreConfig, config.toByteArray())), parts));
     }
 
     /**

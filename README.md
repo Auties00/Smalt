@@ -1753,7 +1753,12 @@ channels, or two tracks, at 32 kHz in 12 bits. A DV source is copied when no for
   decoder), bit for bit except the residual signals (within 0.002 of a 16-bit step, the reference dequantizes
   them in double precision), on synthetic streams of every tree and tool and on the reference encoder's streams; the reference decoder
   parses the arbitrary tree extension but never runs its boxes, so the oracle script patches it to run them
-  between the subband domain temporal processing and the hybrid synthesis, where Smalt runs them.
+  between the subband domain temporal processing and the hybrid synthesis, where Smalt runs them. At 128 QMF
+  subbands (from 55426 Hz) a residual frame lasts up to 4096 QMF samples, past the 2048 lines the reference
+  software's conversion to the QMF domain holds, and its short windows are converted for 64 subbands there: Smalt
+  pads each window's spectrum with zero lines to its QMF samples, as the long windows are padded (ISO/IEC 23003-1,
+  not available, may define the short windows otherwise), and the oracle script patches the reference software the
+  same way.
   A 3D stereo downmix (`bs3DaudioMode`) is inverted with the HRTF parameters of its configuration on the stereo
   trees (5-2-5, 7-2-7) and left as it is on the others, as the reference software does: the matrix inversion takes
   precedence over it, the band indices of a larger HRTF table are those of the stream's parameter bands, and the

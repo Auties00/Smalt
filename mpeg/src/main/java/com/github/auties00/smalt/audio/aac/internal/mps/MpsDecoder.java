@@ -214,7 +214,6 @@ public final class MpsDecoder {
      * @param sampleRate the sampling frequency of the downmix and the output, which selects the QMF bank: 32 subbands
      *                   below 27713 Hz, 128 from 55426 Hz and 64 between
      * @throws MediaException.Malformed if the configuration is inconsistent
-     * @throws MediaException.Unsupported if residual frames need a longer MDCT than the reference decoder supports
      */
     public MpsDecoder(MpsConfig config, int sampleRate) {
         this(config, sampleRate, null);
@@ -228,7 +227,6 @@ public final class MpsDecoder {
      *                   below 27713 Hz, 128 from 55426 Hz and 64 between
      * @param binaural the binaural rendering of a tree it applies to, or {@code null} for the loudspeaker upmix
      * @throws MediaException.Malformed if the configuration is inconsistent
-     * @throws MediaException.Unsupported if residual frames need a longer MDCT than the reference decoder supports
      */
     public MpsDecoder(MpsConfig config, int sampleRate, MpsBinaural binaural) {
         this.config = config;

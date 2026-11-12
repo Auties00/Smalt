@@ -55,7 +55,9 @@ class MpegSurroundOracleTest {
         var synthetic = Stream.of("t5151", "t5152", "t5151q2", "t525cpc", "t525cld", "t525dual", "t525inv",
                 "t525mode4", "t7271", "t7272", "t7571", "t7572", "stp5151", "stp525", "stp7271", "ges5152", "ges525",
                 "ges7572", "rate24", "rate96", "slots16", "arbdmx5151", "arbdmx525", "res5151", "res525", "res525cpc0",
-                "res7272", "res7571", "res5152x2", "arbres5151", "arbres525", "slots18res", "v_q1", "v_q2", "v_oneicc",
+                "res7272", "res7571", "res5152x2", "res96u32", "res96u30", "res96u24", "res96u18", "res96u16",
+                "res96u15", "res88u32", "res88u24", "arbres96", "arbres96s", "arbres5151", "arbres525", "slots18res",
+                "v_q1", "v_q2", "v_oneicc",
                 "v_fr3", "v_fr2", "v_gains", "v_q1b", "v_5152", "atpass", "at5151", "at5152", "at525", "at7271",
                 "at7572", "atres5151", "at13", "long64", "long30", "long45", "long24", "long96", "atlong", "short8",
                 "short4", "short15", "short24k", "short96", "atshort", "3d525", "3d525cpc", "3d525m2", "3d525m3",
@@ -122,7 +124,7 @@ class MpegSurroundOracleTest {
     static final List<String> BINAURAL_ALL = List.of("t5151", "t5152", "t5151q2", "t525cpc", "t525cld", "t525dual",
             "t525inv", "t525mode4", "t7271", "t7272", "stp5151", "stp525", "ges5152", "ges525", "rate24", "rate96",
             "slots16", "arbdmx5151", "arbdmx525", "res5151", "res5152x2", "res525", "res525cpc0", "res7272",
-            "arbres5151", "arbres525", "v_fr3", "v_fr2", "at5151", "at525", "at7271", "long64", "long24", "short8", "short96",
+            "arbres5151", "arbres525", "arbres96", "arbres96s", "v_fr3", "v_fr2", "at5151", "at525", "at7271", "long64", "long24", "short8", "short96",
             "3d525", "3d525inv", "3dbands", "3d7271", "3dstp", "3darbres", "enc5151_32", "enc5152_32", "enc525_32", "bfr5",
             "bfr6", "bfr7", "bfr5m", "bfrdual", "bfrarb", "bfrarbm", "3dbdual");
     static final List<String> BINAURAL_MODELS = List.of("t5151", "t5152", "t525cpc", "t525cld", "t525inv", "t7271",
@@ -132,7 +134,8 @@ class MpegSurroundOracleTest {
      * The binaural streams with an arbitrary downmix residual, the one input of the rendering the reference decoder
      * dequantizes in double precision; the others match bit for bit.
      */
-    static final Set<String> BINAURAL_INEXACT = Set.of("arbres5151", "arbres525", "3darbres", "bfrarb", "bfrarbm");
+    static final Set<String> BINAURAL_INEXACT = Set.of("arbres5151", "arbres525", "arbres96", "arbres96s", "3darbres",
+            "bfrarb", "bfrarbm");
 
     static Stream<Arguments> binauralCases() {
         var cases = new ArrayList<Arguments>();

@@ -43,7 +43,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * with that encoder's spatial frames ({@code mps-*.bs}, length-prefixed blocks: the header, then one frame per block)
  * embedded in their fill elements, the plain downmix stream ({@code mps-lc5151-core}), and three synthetic streams of
  * {@code tools/testdata/mps-oracle/mpsgen.py}: frames of two AAC blocks ({@code mps-long5151.bs}), frames of half a
- * block ({@code mps-short5151.bs}) and an arbitrary tree that splits the surround channels into side and rear pairs ({@code mps-at71.bs}), which the tests embed in the
+ * block ({@code mps-short5151.bs}), an arbitrary tree that splits the surround channels into side and rear pairs
+ * ({@code mps-at71.bs}) and residual frames of 4096 QMF samples at 96 kHz ({@code mps-res96.bs}), which the tests
+ * embed in the
  * fill elements of the plain downmix themselves or pass as a separate stream. The decoder's spatial decoder itself is
  * checked against the reference decoder by {@code MpegSurroundOracleTest}; this suite checks the plumbing: the
  * embedded and separate side information reach the same upmix as decoding the downmix and running the spatial decoder
@@ -2072,7 +2074,7 @@ class MpegSurroundTest {
         }
 
         @ParameterizedTest(name = "{0}")
-        @ValueSource(strings = {"mps-at71.bs", "mps-long5151.bs", "mps-short5151.bs"})
+        @ValueSource(strings = {"mps-at71.bs", "mps-long5151.bs", "mps-short5151.bs", "mps-res96.bs"})
         @DisplayName("fails on damaged side information only with a media exception")
         void damagedSideInformation(String name) {
             var spatial = blocks(resource(name));
@@ -2123,6 +2125,64 @@ class MpegSurroundTest {
                     // what the test allows
                 }
             }
+        }
+    }
+
+    @Nested
+    @DisplayName("residual frames of more than 2048 QMF samples")
+    class LargeResidualFrames {
+        @Test
+        @DisplayName("upmixes residual frames of 32 slots at 128 QMF subbands, which alone reach the output of a silent "
+                + "downmix")
+        void residualAlone() {
+            var spatial = blocks(resource("mps-res96.bs"));
+            var config = config(spatial.getFirst());
+            assertEquals(96000, config.samplingFrequency());
+            var decoder = new MpsDecoder(config, 96000);
+            assertEquals(128, decoder.qmfBands());
+            assertEquals(4096, decoder.frameLength());
+            var frames = spatial.size() - 1;
+            var upmix = upmix(spatial, new float[1][frames * decoder.frameLength()], 96000);
+            assertEquals(6, upmix.length);
+            var energy = 0.0;
+            for (var channel : upmix) {
+                for (var value : channel) {
+                    assertTrue(Float.isFinite(value));
+                    energy += value * value;
+                }
+            }
+            assertTrue(energy > 0.0, "the residual signals take no part in the upmix");
+        }
+
+        @Test
+        @DisplayName("upmixes them in AAC blocks of the downmix, a frame spanning four blocks")
+        void inBlocks() {
+            var spatial = blocks(resource("mps-res96.bs"));
+            var upmixer = new MpsUpmixer();
+            upmixer.configure(config(spatial.getFirst()));
+            var block = new float[1][1024];
+            var out = new float[6][1024];
+            var upmixed = 0;
+            var energy = 0.0;
+            for (var k = 0; k < 4 * (spatial.size() - 1); k++) {
+                if (k % 4 == 0) {
+                    var frame = spatial.get(1 + k / 4);
+                    upmixer.addFrame(frame, 0, frame.length);
+                }
+                if (upmixer.prepare(96000, 1024)) {
+                    upmixer.upmix(block, out);
+                    if (upmixer.upmixed()) {
+                        upmixed++;
+                        for (var channel : out) {
+                            for (var value : channel) {
+                                energy += value * value;
+                            }
+                        }
+                    }
+                }
+            }
+            assertTrue(upmixed > 0, "the upmixer outputs the downmix");
+            assertTrue(energy > 0.0, "the residual signals take no part in the upmix");
         }
     }
 }

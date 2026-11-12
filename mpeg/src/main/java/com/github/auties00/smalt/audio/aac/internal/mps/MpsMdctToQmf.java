@@ -11,7 +11,9 @@ import com.github.auties00.smalt.MediaException;
  * 6.9.2).
  *
  * <p>The conversion folds the spectrum with frequency windows, transforms it with short complex modulations and
- * adds the result, weighted by time windows, into a QMF buffer of two spatial frames. Instances keep scratch arrays;
+ * adds the result, weighted by time windows, into a QMF buffer of two spatial frames. A window whose QMF samples
+ * outnumber its spectral lines (a long window of more than 1024 samples, a short window at 128 QMF subbands) takes
+ * zero lines above its spectrum, so its signal is limited to the band its lines cover. Instances keep scratch arrays;
  * they are not thread-safe.
  */
 final class MpsMdctToQmf {
@@ -64,14 +66,29 @@ final class MpsMdctToQmf {
 
     private final float[] frequencyWindow = new float[144];
     private final float[] timeWindow = new float[144];
-    private final float[] main = new float[2 * FRAME];
-    private final float[] slave = new float[2 * FRAME];
-    private final float[] shortSpectrum = new float[3 * SHORT_FRAME];
+    private final float[] main;
+    private final float[] slave;
+    private final float[] shortSpectrum = new float[4 * SHORT_FRAME];
     private final float[][] zReal;
     private final float[][] zImag;
     private final float[] twiddleReal;
     private final float[] twiddleImag;
+    /**
+     * The cosine and sine modulations of the transforms by number of slots (2, 3 and 4 for the short windows, the
+     * update lengths for the long ones), computed once so that a frame of 128 subbands takes no trigonometric calls.
+     */
+    private static final float[][] MODULATION_COS = new float[33][];
+    private static final float[][] MODULATION_SIN = new float[33][];
+
+    static {
+        for (var length = 1; length < MODULATION_COS.length; length++) {
+            MODULATION_COS[length] = modulation(length, false);
+            MODULATION_SIN[length] = modulation(length, true);
+        }
+    }
+
     private final float[] fold = new float[64];
+    private final float[] scaled = new float[64];
     private final int qmfBands;
 
     /**
@@ -81,6 +98,8 @@ final class MpsMdctToQmf {
      */
     MpsMdctToQmf(int qmfBands) {
         this.qmfBands = qmfBands;
+        this.main = new float[Math.max(2 * FRAME, 32 * qmfBands)];
+        this.slave = new float[main.length];
         this.zReal = new float[Math.max(qmfBands, 64)][64];
         this.zImag = new float[Math.max(qmfBands, 64)][64];
         this.twiddleReal = new float[qmfBands];
@@ -105,7 +124,8 @@ final class MpsMdctToQmf {
      * Adds the QMF slots of one residual frame ({@code SPACE_MDCT2QMF_Process}).
      *
      * @param update the number of QMF slots of the residual frame, 15, 16, 18, 24, 30 or 32
-     * @param mdct the spectrum, 1024 lines and room for 1024 more; modified
+     * @param mdct the spectrum, 1024 lines (2048 for two short window halves) and room for the zero lines of a long
+     *             window: at least {@code max(2048, update * qmfBands)} values; modified
      * @param qmfReal the real parts of the QMF buffer, {@code [slot][band]}, updated
      * @param qmfImag the imaginary parts of the QMF buffer, updated
      * @param windowSequence the AAC window sequence of the residual frame
@@ -192,8 +212,15 @@ final class MpsMdctToQmf {
                     shortSpectrum[SHORT_FRAME + i] = 0.0f;
                 }
             }
-            foldOut(shortSpectrum, mdctLength, frequencyWindow, windowOffset, length);
-            toQmf(mdctLength, timeWindow, windowOffset, length);
+            // TODO: ISO/IEC 23003-1, which is not available, may say how a short window fills a 128-band bank; the
+            // reference software sizes the short windows for 64 subbands and leaves the upper ones unwritten, so the
+            // window is padded with zero lines as the long windows are
+            var paddedLength = Math.max(mdctLength, length / 2 * qmfBands);
+            for (var i = mdctLength; i < paddedLength; i++) {
+                shortSpectrum[i] = 0.0f;
+            }
+            foldOut(shortSpectrum, paddedLength, frequencyWindow, windowOffset, length);
+            toQmf(paddedLength, timeWindow, windowOffset, length);
             accumulate(qmfReal, qmfImag, qmfOffset + offset, length);
             mdctOffset += SHORT_FRAME;
             qmfOffset += qmfShift;
@@ -277,21 +304,47 @@ final class MpsMdctToQmf {
 
     private void transform(float[] x, float[] w, int wOffset, int length, int band) {
         var lw = 2 * length;
-        var kMin = -(int) Math.floor(length / 2.0f);
         var gain = (float) Math.sqrt(1.0f / lw);
+        var cos = MODULATION_COS[length];
+        var sin = MODULATION_SIN[length];
         var real = zReal[band];
         var imag = zImag[band];
-        for (var k = 0; k < lw; k++) {
+        for (var n = 0; n < lw; n++) {
+            scaled[n] = x[n] * gain;
+        }
+        for (int k = 0, row = 0; k < lw; k++, row += lw) {
             var re = 0.0f;
             var im = 0.0f;
             for (var n = 0; n < lw; n++) {
-                var argument = (k + kMin + 0.5f) * (n - length + 0.5f) * PI / length;
-                re += x[n] * gain * (float) StrictMath.cos(argument);
-                im += x[n] * gain * (float) StrictMath.sin(argument);
+                re += scaled[n] * cos[row + n];
+                im += scaled[n] * sin[row + n];
             }
             real[k] = re * w[wOffset + k];
             imag[k] = im * w[wOffset + k];
         }
+    }
+
+    /**
+     * {@return the modulation of a transform of {@code length} slots, {@code [k * 2 * length + n]}, or an empty
+     * array for a length no window takes}
+     *
+     * @param length the number of slots, 1 to 32
+     * @param sine whether the sine or the cosine is tabulated
+     */
+    private static float[] modulation(int length, boolean sine) {
+        if (length != 2 && length != 3 && length != 4 && !supports(length)) {
+            return new float[0];
+        }
+        var lw = 2 * length;
+        var kMin = -(int) Math.floor(length / 2.0f);
+        var table = new float[lw * lw];
+        for (var k = 0; k < lw; k++) {
+            for (var n = 0; n < lw; n++) {
+                var argument = (k + kMin + 0.5f) * (n - length + 0.5f) * PI / length;
+                table[k * lw + n] = sine ? (float) StrictMath.sin(argument) : (float) StrictMath.cos(argument);
+            }
+        }
+        return table;
     }
 
     private static void sine(int t, int p, int count, float[] out, int offset) {

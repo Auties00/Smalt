@@ -157,7 +157,12 @@ final class MpsParameters {
     final float[][] envelopeShape;
     private final int[] envelopeCodes;
 
-    final float[][][] residualSpectra = new float[10][4][2048];
+    /**
+     * The spectrum of each residual frame, by residual channel and frame: the 1024 lines of an AAC frame (or two, for
+     * a frame of 18, 24 or 30 slots in short windows), with room for the zero lines that pad a long window to the
+     * QMF samples of its frame.
+     */
+    final float[][][] residualSpectra;
     boolean residualFresh;
     final int[][] residualWindows = new int[10][4];
     private final ChannelStream residualStream;
@@ -176,7 +181,6 @@ final class MpsParameters {
      * @param config the configuration
      * @param qmfBands the number of QMF subbands of the decoder
      * @throws MediaException.Malformed if the residual frames do not divide the spatial frame
-     * @throws MediaException.Unsupported if a residual frame needs an MDCT longer than two AAC frames
      */
     MpsParameters(MpsConfig config, int qmfBands) {
         this(config, qmfBands, false);
@@ -190,7 +194,6 @@ final class MpsParameters {
      * @param mapBands whether every decoded parameter is mapped to 28 parameter bands, as the binaural rendering takes
      *                 them
      * @throws MediaException.Malformed if the residual frames do not divide the spatial frame
-     * @throws MediaException.Unsupported if a residual frame needs an MDCT longer than two AAC frames
      */
     MpsParameters(MpsConfig config, int qmfBands, boolean mapBands) {
         this.config = config;
@@ -234,12 +237,16 @@ final class MpsParameters {
         this.downmixResidualBands = config.arbitraryDownmix == 2 ? config.downmixResidualBands : 0;
         this.downmixResidualFrames = config.downmixResidualFrames;
         this.downmixResidualUpdate = downmixResidualFrames > 0 ? slots / downmixResidualFrames : 0;
+        var spectrumLength = 2048;
         if (config.residualCoding) {
-            checkResidualFrames(residualFrames, residualUpdate, qmfBands);
+            checkResidualFrames(residualFrames, residualUpdate);
+            spectrumLength = Math.max(spectrumLength, residualUpdate * qmfBands);
         }
         if (config.arbitraryDownmix == 2) {
-            checkResidualFrames(downmixResidualFrames, downmixResidualUpdate, qmfBands);
+            checkResidualFrames(downmixResidualFrames, downmixResidualUpdate);
+            spectrumLength = Math.max(spectrumLength, downmixResidualUpdate * qmfBands);
         }
+        this.residualSpectra = new float[10][4][spectrumLength];
         switch (tree) {
             case MpsConfig.TREE_5151 -> {
                 ottCldDefault[0] = 15;
@@ -276,15 +283,10 @@ final class MpsParameters {
                 ? residualStream(config.downmixResidualSamplingIndex) : null;
     }
 
-    private void checkResidualFrames(int frames, int update, int qmfBands) {
+    private void checkResidualFrames(int frames, int update) {
         if (slots % frames != 0 || !MpsMdctToQmf.supports(update)) {
             throw new MediaException.Malformed("MPEG Surround residual frames do not divide a spatial frame of "
                     + slots + " slots");
-        }
-        if (update * qmfBands > 2048) {
-            throw new MediaException.Unsupported("mpeg surround residual at " + qmfBands + " qmf bands",
-                    "MPEG Surround residual frames of " + update + " slots of " + qmfBands
-                            + " QMF bands are not supported");
         }
     }
 

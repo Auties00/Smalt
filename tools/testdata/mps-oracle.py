@@ -8,7 +8,7 @@ streams:
 
 1. Synthetic streams written by mps-oracle/mpsgen.py: every tree configuration (5151 to 7572), quantization and
    TTT mode, temporal shaping, arbitrary downmix gains, residual and arbitrary downmix residual coding, the
-   arbitrary tree extension, at 24, 48 and 96 kHz and frames of 15 to 64 slots, each with a synthetic downmix:
+   arbitrary tree extension, at 24, 48, 88.2 and 96 kHz and frames of 15 to 64 slots, each with a synthetic downmix:
    <case>.bs, <case>_dmx.wav and <case>_ref.wav.
 2. Streams of the reference encoder (mp4spatialenc, trees 5151, 5152 and 525 at 16 and 32 slots per frame) of a
    synthetic 5.1 signal: enc<tree>_<slots>.bs, its downmix enc<tree>_<slots>_dmx.wav and the decode
@@ -26,7 +26,9 @@ mode outside 2-1-2), patches copies of sac_TPprocess.c and sac_arbitraryTree.c s
 arbitrary tree it parses (it never calls arbitraryTreeProcess, whose buffers it keeps on the stack), patches a copy of
 sac_calcM1andM2.c so that a singular 3D stereo product leaves no NaN in the decoder's filter states (see
 CALC_PATCHES), patches the binaural path to take every sampling frequency, a chosen data set and the delay of each QMF
-bank (see the BINAURAL patches; the frontend feeds the reverb, which the decoder declares but never feeds), and builds
+bank (see the BINAURAL patches; the frontend feeds the reverb, which the decoder declares but never feeds), patches a
+copy of sac_mdct2qmf.c so that residual frames of more than 2048 QMF samples and short residual windows of the
+128-band bank fill every subband (see MDCT2QMF_PATCHES), and builds
 the decoder and encoder libraries with gcc (on Windows from an MSYS2 UCRT64 shell).
 
 The binaural decodes (<case>_b<model><quality>_ref.wav, of the streams of BINAURAL_ALL with data set 0 and of
@@ -217,10 +219,55 @@ BINAURAL_REVERB_PATCHES = [(
     """  self->systemDelay = 20 * self->qmfBands + 1;
 """)]
 
+# The conversion of residual spectra into the QMF domain keeps 2048 lines (and the long windows zero their padding in
+# the 2048 floats of the decoder's residual buffer), though a residual frame of 18 to 32 slots at 128 QMF subbands pads
+# its spectrum to 4096 lines: the patches convert a copy of the spectrum in buffers of 4096. Its short windows pad
+# their 128 lines to 64 subbands alone, leaving the upper half of a 128-band bank unwritten: the patches pad each
+# window to its slots at the bank's subbands where that is longer, as the long windows pad, which changes nothing at
+# 64 subbands or fewer.
+MDCT2QMF_PATCHES = [(
+    """    float        *   const   mdctIn,
+""",
+    """    float        *   const   mdctSource,
+"""), (
+    """    float V1[ MDCT_LENGTH_HI ];
+    float V2[ MDCT_LENGTH_HI ];
+""",
+    """    float V1[ 4 * AAC_FRAME_LENGTH ];
+    float V2[ 4 * AAC_FRAME_LENGTH ];
+    float mdctIn[ 4 * AAC_FRAME_LENGTH ];
+"""), (
+    """    float mdctSF[ MDCT_LENGTH_SF ];""",
+    """    float mdctSF[ 4 * AAC_SHORT_FRAME_LENGTH ];"""), (
+    """    errorCode = LOCAL_MDCT_windows( updQMF, windowType, &wf[ 0 ], &wt[ 0 ] );
+""",
+    """    for ( i = 0; i < MDCT_LENGTH_HI; i++ )
+    {
+        mdctIn[ i ] = mdctSource[ i ];
+    }
+
+    errorCode = LOCAL_MDCT_windows( updQMF, windowType, &wf[ 0 ], &wt[ 0 ] );
+"""), (
+    """            LOCAL_fold_out( mdctSF, mdctLength, &wf[ windowOffset ], L, &V1[ 0 ], &V2[ 0 ] );
+            LOCAL_hybcmdct2qmf( &V1[ 0 ], &V2[ 0 ], mdctLength, &wt[ windowOffset ], L, Z1Real, Z1Imag );
+""",
+    """            {
+                int paddedLength = mdctLength;
+                if ( ( L / 2 ) * qmfBands > paddedLength )
+                {
+                    paddedLength = ( L / 2 ) * qmfBands;
+                    LOCAL_zero( paddedLength - mdctLength, &mdctSF[ mdctLength ] );
+                }
+                LOCAL_fold_out( mdctSF, paddedLength, &wf[ windowOffset ], L, &V1[ 0 ], &V2[ 0 ] );
+                LOCAL_hybcmdct2qmf( &V1[ 0 ], &V2[ 0 ], paddedLength, &wt[ windowOffset ], L, Z1Real, Z1Imag );
+            }
+""")]
+
 BINAURAL_ALL = ['t5151', 't5152', 't5151q2', 't525cpc', 't525cld', 't525dual', 't525inv', 't525mode4',
                 't7271', 't7272', 'stp5151', 'stp525', 'ges5152', 'ges525', 'rate24', 'rate96', 'slots16',
                 'arbdmx5151', 'arbdmx525', 'res5151', 'res5152x2', 'res525', 'res525cpc0', 'res7272',
-                'arbres5151', 'arbres525', 'v_fr3', 'v_fr2', 'at5151', 'at525', 'at7271', 'long64', 'long24',
+                'arbres5151', 'arbres525', 'arbres96', 'arbres96s', 'v_fr3', 'v_fr2', 'at5151', 'at525', 'at7271',
+                'long64', 'long24',
                 'short8', 'short96', '3d525', '3d525inv', '3dbands', '3d7271', '3dstp', '3darbres',
                 'enc5151_32', 'enc5152_32', 'enc525_32', 'bfr5', 'bfr6', 'bfr7', 'bfr5m', 'bfrdual', 'bfrarb', 'bfrarbm',
                 '3dbdual']
@@ -320,6 +367,7 @@ def build(work):
           BINAURAL_FILTER_PATCHES)
     patch(os.path.join(decoder, 'src', 'sac_parallelReverb.c'), os.path.join(patched, 'sac_parallelReverb.c'),
           BINAURAL_REVERB_PATCHES)
+    patch(os.path.join(decoder, 'src', 'sac_mdct2qmf.c'), os.path.join(patched, 'sac_mdct2qmf.c'), MDCT2QMF_PATCHES)
     patch(os.path.join(encoder, 'src', 'bitstream.c'), os.path.join(patched, 'bitstream.c'), BITSTREAM_PATCHES)
     shutil.copy(os.path.join(SOURCES, 'libtsp.h'), stub)
     shared = ['-I' + os.path.join(common, 'src_frame'), '-I' + os.path.join(common, 'include'),
@@ -332,7 +380,7 @@ def build(work):
                         objects, 'dec_', {name: os.path.join(patched, name)
                                           for name in ('sac_bitdec.c', 'sac_TPprocess.c', 'sac_arbitraryTree.c',
                                                        'sac_calcM1andM2.c', 'sac_dec.c', 'sac_hrtffilter.c',
-                                                       'sac_parallelReverb.c')})
+                                                       'sac_parallelReverb.c', 'sac_mdct2qmf.c')})
     built += compile_all(os.path.join(encoder, 'src'), encoder_includes, ['-std=gnu89'], objects, 'enc_',
                          {'bitstream.c': os.path.join(patched, 'bitstream.c')})
     for name, includes in (('mpsref.c', decoder_includes + ['-I' + os.path.join(encoder, 'include'),

@@ -625,6 +625,18 @@ CASES = {
     'res7272': base(4, residual=[0, 4, 4, 3, 3, 8], residual_sfi=6, residual_frames=1, ttt_low=1),
     'res7571': base(5, residual=[6, 6], residual_sfi=6, residual_frames=1),
     'res5152x2': base(1, residual=[3, 3, 0, 5, 5], residual_sfi=3, residual_frames=2),
+    # Residual frames of the 128-band bank: past 2048 QMF samples (18, 24, 30 and 32 slots), at that length (16) and
+    # below it (15), at both rates of the bank.
+    'res96u32': base(0, rate=96000, residual=[4, 8, 3, 6, 0], residual_sfi=6, residual_frames=1),
+    'res96u30': base(2, rate=96000, slots=60, residual=[0, 5, 5, 10], residual_sfi=6, residual_frames=2, ttt_low=1),
+    'res96u24': base(1, rate=96000, slots=48, residual=[3, 3, 0, 5, 5], residual_sfi=6, residual_frames=2),
+    'res96u18': base(0, rate=96000, slots=36, residual=[3, 3, 3, 3, 0], residual_sfi=3, residual_frames=2),
+    'res96u16': base(2, rate=96000, residual=[2, 6, 6, 12], residual_sfi=3, residual_frames=2, ttt_low=0),
+    'res96u15': base(0, rate=96000, slots=15, residual=[4, 8, 3, 6, 0], residual_sfi=3, residual_frames=1),
+    'res88u32': base(4, rate=88200, residual=[0, 4, 4, 3, 3, 8], residual_sfi=6, residual_frames=1, ttt_low=1),
+    'res88u24': base(5, rate=88200, slots=24, residual=[6, 6], residual_sfi=3, residual_frames=1),
+    'arbres96': base(0, rate=96000, arbdmx=2, dmx_sfi=6, dmx_frames=1, dmx_bands=7),
+    'arbres96s': base(2, rate=96000, slots=48, arbdmx=2, dmx_sfi=3, dmx_frames=2, dmx_bands=5, ttt_low=1),
     'arbres5151': base(0, arbdmx=2, dmx_sfi=6, dmx_frames=1, dmx_bands=7),
     'arbres525': base(2, arbdmx=2, dmx_sfi=6, dmx_frames=2, dmx_bands=5, ttt_low=1),
     'slots18res': base(0, slots=36, residual=[3, 3, 3, 3, 0], residual_sfi=6, residual_frames=2),
@@ -718,8 +730,9 @@ CASES = {
 }
 
 # The streams of smalt-mpeg's MpegSurroundTest resources, written only when named: a frame of two AAC blocks, a frame
-# of half a block, and an arbitrary tree that splits the surround channels into side and rear pairs (positions the
-# reference decoder cannot write, since they are not 0 to n - 1).
+# of half a block, an arbitrary tree that splits the surround channels into side and rear pairs (positions the
+# reference decoder cannot write, since they are not 0 to n - 1), 3D stereo downmixes and residual frames of 4096 QMF
+# samples.
 RESOURCES = {
     'mps-long5151': base(0),
     'mps-short5151': base(0, slots=8),
@@ -728,6 +741,7 @@ RESOURCES = {
                                                      dense=False)),
     'mps-3d525': base(2, slots=16, freq_res=4, ttt_low=1, hrtf=hrtf(30, freq_res=4)),
     'mps-3d-large': base(2, slots=16, ttt_low=1, hrtf=hrtf(31)),
+    'mps-res96': base(0, rate=96000, residual=[4, 0, 3, 0, 0], residual_sfi=6, residual_frames=1),
 }
 
 if __name__ == '__main__':

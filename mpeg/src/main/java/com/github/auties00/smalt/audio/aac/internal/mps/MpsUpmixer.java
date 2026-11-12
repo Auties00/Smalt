@@ -420,12 +420,7 @@ public final class MpsUpmixer {
             this.resynchronizing = false;
             this.decoder = null;
             this.delayed = 0;
-            try {
-                this.decoder = new MpsDecoder(config, sampleRate, binaural);
-            } catch (MediaException.Unsupported _) {
-                unsupported();
-                return false;
-            }
+            this.decoder = new MpsDecoder(config, sampleRate, binaural);
             var length = decoder.frameLength();
             if (length >= blockLength && length % blockLength == 0) {
                 blocksPerFrame = length / blockLength;
