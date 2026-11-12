@@ -73,7 +73,7 @@ parameters of a Panasonic file, and the copies
 of CODE_COPIES, CRW files whose streams use every code of their table sets, which the script builds as the raw
 module's test-scope CrwCodeCopies does (both are pinned by SHA-256).
 
-For the Nikon HE and HE* samples of WINDOW_SAMPLES it keeps instead of the DNG file a <stem>.windows file (see
+For the Phase One IIQ, Nikon HE and HE* samples of WINDOW_SAMPLES it keeps instead of the DNG file a <stem>.windows file (see
 write_windows: the SHA-256 of every photosite, the sums of the photosites of every band of 64 rows and the photosites
 of the four corners, the center and the first and last rows) and a <stem>.levels file, which NikonHighEfficiencyOracleTest compares the decoder with.
 
@@ -476,6 +476,42 @@ SAMPLES += GAP_SAMPLES
 # Nikon HE and HE* files, whose DNG files the tests read only in part: each is kept as a <stem>.windows file (see
 # write_windows) and a <stem>.levels file
 WINDOW_SAMPLES = [
+    'rawpixls-iiq-p20-cf051544.iiq',
+    'rawpixls-iiq-p20-cf051545.iiq',
+    'rawpixls-iiq-p20-cf051552.tif',
+    'rawpixls-iiq-p20-cf051553.tif',
+    'rawpixls-iiq-p25plus-cf028662.iiq',
+    'rawpixls-iiq-p25plus-cf028663.iiq',
+    'rawpixls-iiq-p25-cf082161.tif',
+    'rawpixls-iiq-p25-cf082166.tif',
+    'rawpixls-iiq-h25-it8.tif',
+    'rawpixls-iiq-h25-outdoor.iiq',
+    'rawpixls-iiq-iq150-cf006803.iiq',
+    'rawpixls-iiq-iq3-100mp-l.iiq',
+    'rawpixls-iiq-iq3-100mp-l16.iiq',
+    'rawpixls-iiq-iq3-100mp-trichromatic.iiq',
+    'rawpixls-iiq-iq4-150mp-l14.iiq',
+    'rawpixls-iiq-iq4-150mp-l16.iiq',
+    'rawpixls-iiq-iq4-150mp-l16-ex.iiq',
+    'rawpixls-iiq-credo40-0001.iiq',
+    'rawpixls-iiq-credo40-0008.iiq',
+    'rawpixls-iiq-credo40-cf003914.iiq',
+    'rawpixls-iiq-p40plus-cf100602.iiq',
+    'rawpixls-iiq-iq140-l.tif',
+    'rawpixls-iiq-iq180-9561.iiq',
+    'rawpixls-iiq-iq180-9565.iiq',
+    'rawpixls-iiq-p30-cf098736.tif',
+    'rawpixls-iiq-p45plus-cf125838.iiq',
+    'rawpixls-iiq-p45plus-cf125839.iiq',
+    'rawpixls-iiq-p45-3809.tif',
+    'rawpixls-iiq-p45-3810.tif',
+    'rawpixls-iiq-p65plus-cf027310.iiq',
+    'rawpixls-iiq-p65plus-cf027311.iiq',
+    'rawpixls-iiq-p65plus-cf027312.iiq',
+    'rawpixls-iiq-p65plus-cf027313.iiq',
+    'rawpixls-iiq-p65plus-cf028114.iiq',
+    'rawpixls-iiq-p40plus-cf100585.iiq',
+    'rawpixls-iiq-iq140-sensorplus-l.tif',
     'rawpixls-nikon-z-9-8bit-8bit-compressed-3-2-5147.nef',
     'rawpixls-nikon-z-9-8bit-8bit-compressed-3-2-5148.nef',
     'rawpixls-nikon-z-8-8bit-8bit-compressed-3-2-6616.nef',

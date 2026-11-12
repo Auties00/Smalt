@@ -86,6 +86,70 @@ class FuzzSeedWriter {
     }
 
     @Test
+    @DisplayName("writes the IIQ seeds of each compression, with black tables, grids and defects")
+    void iiq() {
+        for (var compression : new int[]{0, 3, 5, 8}) {
+            var writer = new com.github.auties00.smalt.image.raw.IiqWriter(48, 24);
+            writer.compression = compression;
+            writer.rowBlack = new short[24];
+            writer.levelGrid = 33000;
+            writer.redGrid = 33500;
+            writer.blueGrid = 32000;
+            writer.defects.add(new int[]{20, 10, 129});
+            writer.defects.add(new int[]{30, 0, 131});
+            for (var index = 0; index < writer.numbers.length; index++) {
+                writer.numbers[index] = compression == 5 ? 40 + index % 200 : 300 + index * 7 % 5000;
+            }
+            write(RawFuzzTest.class, "iiq", "valid-compression-" + compression + ".iiq", writer.write());
+        }
+    }
+
+    @Test
+    @DisplayName("writes the IIQ seeds of the backs of four outputs (level tables, response) and of two (half gain)")
+    void iiqOutputs() {
+        var four = new com.github.auties00.smalt.image.raw.IiqWriter(48, 16);
+        four.scalars.put(0x222, 24);
+        four.scalars.put(0x224, 8);
+        four.scalars.put(0x20B, 1);
+        four.scalars.put(0x21E, 1);
+        var levels = java.nio.ByteBuffer.allocate(13 * 4).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        for (var level : new int[]{1000, 4000, 16000, 1100, 4100, 16500, 900, 3900, 15800, 1050, 4050, 16200, 1}) {
+            levels.putInt(level);
+        }
+        four.calibrations.add(java.util.Map.entry(0x41F, levels.array()));
+        four.calibrations.add(java.util.Map.entry(0x421, levels.array()));
+        var gains = java.nio.ByteBuffer.allocate(84).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(84297);
+        for (var index = 0; index < 20; index++) {
+            gains.putFloat(index >= 4 && index % 4 < 2 ? 0.01f * (index / 4) : 0);
+        }
+        four.calibrations.add(java.util.Map.entry(0x41E, gains.array()));
+        var response = java.nio.ByteBuffer.allocate(11 * 4).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        for (var number : new int[]{2000, 20000, 10000, 10000, 10200, 10100, 10400, 10300, 10600, 10500, 1}) {
+            response.putInt(number);
+        }
+        four.calibrations.add(java.util.Map.entry(0x431, response.array()));
+        for (var index = 0; index < four.numbers.length; index++) {
+            four.numbers[index] = 300 + index * 11 % 6000;
+        }
+        write(RawFuzzTest.class, "iiq", "valid-four-outputs.iiq", four.write());
+        var two = new com.github.auties00.smalt.image.raw.IiqWriter(48, 12);
+        two.scalars.put(0x222, 24);
+        two.scalars.put(0x210, Float.floatToIntBits(20.5f));
+        var half = java.nio.ByteBuffer.allocate(36).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(84297);
+        for (var number : new float[]{0, 0, 0.007f, -0.035f, 4e-8f, 1.4e-7f, 1.2e-4f, 31.7f}) {
+            half.putFloat(number);
+        }
+        two.calibrations.add(java.util.Map.entry(0x419, half.array()));
+        var polynomial = java.nio.ByteBuffer.allocate(16).order(java.nio.ByteOrder.LITTLE_ENDIAN).putFloat(0)
+                .putFloat(0.01f).putFloat(-9e-7f).putFloat(0).array();
+        two.calibrations.add(java.util.Map.entry(0x41A, polynomial));
+        for (var index = 0; index < two.numbers.length; index++) {
+            two.numbers[index] = 300 + index * 13 % 9000;
+        }
+        write(RawFuzzTest.class, "iiq", "valid-two-outputs.iiq", two.write());
+    }
+
+    @Test
     @DisplayName("writes the DNG seed of the semantic masks, camera profiles and private data a conversion carries")
     void dngCarryOver() {
         write(RawFuzzTest.class, "dng", "valid-carry-over.dng", DngSpecSamples.carryOver());

@@ -189,6 +189,7 @@ linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.DualPi
 linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.ErfParserTest	opt-in:fuzz-seeds	1
 linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.FourColorMatricesTest	data:vector	11
 linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.HasselbladParserTest	opt-in:fuzz-seeds	1
+linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.IiqOracleTest	data:vector	36
 linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.JpegXlTilesTest	data:vector	1
 linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.KodakParserTest	opt-in:fuzz-seeds	1
 linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.LeafParserTest	opt-in:fuzz-seeds	1
@@ -391,6 +392,7 @@ linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.DualPixe
 linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.ErfParserTest	opt-in:fuzz-seeds	1
 linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.FourColorMatricesTest	data:vector	11
 linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.HasselbladParserTest	opt-in:fuzz-seeds	1
+linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.IiqOracleTest	data:vector	36
 linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.JpegXlTilesTest	data:vector	1
 linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.KodakParserTest	opt-in:fuzz-seeds	1
 linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.LeafParserTest	opt-in:fuzz-seeds	1
@@ -637,6 +639,7 @@ linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.DualPixe
 linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.ErfParserTest	opt-in:fuzz-seeds	1
 linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.FourColorMatricesTest	data:vector	11
 linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.HasselbladParserTest	opt-in:fuzz-seeds	1
+linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.IiqOracleTest	data:vector	36
 linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.JpegXlTilesTest	data:vector	1
 linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.KodakParserTest	opt-in:fuzz-seeds	1
 linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.LeafParserTest	opt-in:fuzz-seeds	1
@@ -846,6 +849,7 @@ macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.DualPi
 macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.ErfParserTest	opt-in:fuzz-seeds	1
 macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.FourColorMatricesTest	data:vector	11
 macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.HasselbladParserTest	opt-in:fuzz-seeds	1
+macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.IiqOracleTest	data:vector	36
 macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.JpegXlTilesTest	data:vector	1
 macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.KodakParserTest	opt-in:fuzz-seeds	1
 macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.LeafParserTest	opt-in:fuzz-seeds	1
@@ -1072,6 +1076,7 @@ windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.DualPi
 windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.ErfParserTest	opt-in:fuzz-seeds	1
 windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.FourColorMatricesTest	data:vector	11
 windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.HasselbladParserTest	opt-in:fuzz-seeds	1
+windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.IiqOracleTest	data:vector	36
 windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.JpegXlTilesTest	data:vector	1
 windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.KodakParserTest	opt-in:fuzz-seeds	1
 windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.LeafParserTest	opt-in:fuzz-seeds	1

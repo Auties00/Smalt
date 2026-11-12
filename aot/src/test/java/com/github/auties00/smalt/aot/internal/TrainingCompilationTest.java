@@ -28,6 +28,7 @@ class TrainingCompilationTest {
 
     static Stream<Arguments> workloads() {
         return Stream.of(
+                Arguments.of(TrainingFamily.RAW, "raw-decode-iiq", List.of(RAW + "IiqDecoder", RAW + "IiqCalibration")),
                 Arguments.of(TrainingFamily.RAW, "raw-decode-nef", List.of(RAW + "NefParser")),
                 Arguments.of(TrainingFamily.RAW, "raw-decode-cr2", List.of(RAW + "Cr2Parser")),
                 Arguments.of(TrainingFamily.RAW, "raw-decode-pef", List.of(RAW + "PefParser")),

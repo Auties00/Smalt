@@ -10,8 +10,7 @@ import java.util.stream.Stream;
 
 @DisplayName("raw fuzz targets: seeds and saved findings")
 class FuzzRegressionTest {
-    // IIQ files are described but their sensor data is never decoded, so no IIQ seed is accepted by every step
-    private static final Set<String> PARTIAL = Set.of("RawFuzzTest.iiq");
+    private static final Set<String> PARTIAL = Set.of();
 
     @TestFactory
     @DisplayName("replays every seed and finding, and accepts every valid seed")

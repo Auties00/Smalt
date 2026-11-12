@@ -37,7 +37,6 @@ final class RawWorkloads {
      * @return the factories, in order
      */
     static List<WorkloadFactory> factories() {
-        // TODO: train Phase One IIQ once the raw decoder reads its sensor data, which it rejects for want of a spec
         return List.of(
                 file("raw-decode-bayer", RawWorkloads::bayer),
                 file("raw-decode-linear", RawWorkloads::linear),
@@ -53,6 +52,7 @@ final class RawWorkloads {
                 file("raw-decode-erf-mef-srw", RawWorkloads::packed),
                 file("raw-decode-dcr", RawWorkloads::kodak),
                 file("raw-decode-mos", RawWorkloads::leaf),
+                file("raw-decode-iiq", RawWorkloads::iiq),
                 file("raw-decode-3fr", RawWorkloads::hasselblad),
                 file("raw-decode-mrw", RawWorkloads::mrw),
                 file("raw-decode-crw", RawWorkloads::crw),
@@ -256,6 +256,19 @@ final class RawWorkloads {
         var picture = picture(1024, 768);
         return vendor("raw-decode-mos", List.of(SyntheticVendorTiff.leaf(picture, true),
                 SyntheticVendorTiff.leaf(picture, false)));
+    }
+
+    /**
+     * Returns a workload that describes, extracts the sensor values of and decodes with Menon
+     * demosaicing 1024x768 Phase One IIQ files: IIQ L, 16-bit IIQ L, tone-coded IIQ S and uncompressed data, with row
+     * blacks and gain grids.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload iiq() {
+        var picture = picture(1024, 768);
+        return vendor("raw-decode-iiq", List.of(SyntheticVendorTiff.iiq(picture, 3), SyntheticVendorTiff.iiq(picture, 8),
+                SyntheticVendorTiff.iiq(picture, 5), SyntheticVendorTiff.iiq(picture, 0)));
     }
 
     /**

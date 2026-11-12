@@ -1258,6 +1258,180 @@ final class SyntheticVendorTiff {
     }
 
     /**
+     * {@return a Phase One IIQ file of a picture: a TIFF header, Phase One's block from byte 8 with its row-coded
+     * sensor data, row table, row blacks and two grids, and a directory naming the camera}
+     *
+     * @param picture the source of the mosaic
+     * @param compression the compression: 0, 3, 5 or 8
+     */
+    static byte[] iiq(RgbaPicture picture, int compression) {
+        var width = picture.width();
+        var height = picture.height();
+        var photosites = SyntheticVendorRaw.mosaic(picture, 1024, 15000);
+        var sensor = new java.io.ByteArrayOutputStream();
+        var rows = ByteBuffer.allocate(height * 4).order(ByteOrder.LITTLE_ENDIAN);
+        var row = new int[width];
+        for (var y = 0; y < height; y++) {
+            for (var x = 0; x < width; x++) {
+                var value = photosites[y * width + x];
+                row[x] = compression == 5 ? (int) (255 * Math.sqrt(value / 65535.0)) : compression == 8 ? value : value / 4;
+            }
+            rows.putInt(sensor.size());
+            if (compression == 0) {
+                for (var value : row) {
+                    sensor.write(value);
+                    sensor.write(value >>> 8);
+                }
+            } else {
+                sensor.writeBytes(iiqRow(row));
+            }
+        }
+        var grid = ByteBuffer.allocate(16 + 2 * 2 * 4 * 4).order(ByteOrder.LITTLE_ENDIAN);
+        grid.putShort((short) 0).putShort((short) 0).putShort((short) (2 * width)).putShort((short) (2 * height));
+        grid.putShort((short) width).putShort((short) height).putInt(0);
+        for (var node = 0; node < 16; node++) {
+            grid.putShort((short) (32768 + node * 64));
+        }
+        var levelGrid = Arrays.copyOf(grid.array(), 16 + 4 * 2);
+        var calibration = ByteBuffer.allocate(12 + levelGrid.length + grid.capacity() + 8 + 24).order(ByteOrder.LITTLE_ENDIAN);
+        calibration.put("IIII".getBytes(StandardCharsets.US_ASCII)).putInt(1).putInt(12 + levelGrid.length + grid.capacity());
+        calibration.put(levelGrid).put(grid.array());
+        calibration.putInt(2).putInt(0);
+        calibration.putInt(0x410).putInt(levelGrid.length).putInt(12);
+        calibration.putInt(0x40B).putInt(grid.capacity()).putInt(12 + levelGrid.length);
+        var data = sensor.toByteArray();
+        var rowBlack = new byte[height * 2];
+        var tables = new byte[][]{rows.array(), rowBlack, calibration.array()};
+        var tableTags = new int[]{0x21C, 0x21F, 0x110};
+        var scalars = new int[][]{{0x108, width}, {0x109, height}, {0x10A, 0}, {0x10B, 0}, {0x10C, width}, {0x10D, height},
+                {0x10E, compression}, {0x21D, 1024}};
+        var count = 1 + scalars.length + tables.length;
+        var at = 12 + data.length;
+        var directory = ByteBuffer.allocate(8 + count * 16).order(ByteOrder.LITTLE_ENDIAN);
+        directory.putInt(count).putInt(0).putInt(0x10F).putInt(2).putInt(data.length).putInt(12);
+        for (var scalar : scalars) {
+            directory.putInt(scalar[0]).putInt(4).putInt(4).putInt(scalar[1]);
+        }
+        for (var index = 0; index < tables.length; index++) {
+            directory.putInt(tableTags[index]).putInt(1).putInt(tables[index].length).putInt(at);
+            at += tables[index].length;
+        }
+        var ifdAt = 8 + at + directory.capacity();
+        var make = "Phase One\0".getBytes(StandardCharsets.US_ASCII);
+        var ifd = ByteBuffer.allocate(2 + 12 + 4 + make.length).order(ByteOrder.LITTLE_ENDIAN);
+        ifd.putShort((short) 1).putShort((short) 271).putShort((short) 2).putInt(make.length).putInt(ifdAt + 18);
+        ifd.putInt(0).put(make);
+        var head = ByteBuffer.allocate(20).order(ByteOrder.LITTLE_ENDIAN);
+        head.put((byte) 'I').put((byte) 'I').putShort((short) 42).putInt(ifdAt);
+        head.put("IIIICwaR".getBytes(StandardCharsets.US_ASCII)).putInt(at);
+        var file = new java.io.ByteArrayOutputStream();
+        file.writeBytes(head.array());
+        file.writeBytes(data);
+        for (var table : tables) {
+            file.writeBytes(table);
+        }
+        file.writeBytes(directory.array());
+        file.writeBytes(ifd.array());
+        return file.toByteArray();
+    }
+
+    /**
+     * {@return a row in Phase One's coding, each group taking the smallest widths that hold its differences and the
+     * photosites after the last whole group taking 16 bits each}
+     *
+     * @param row the row's numbers
+     */
+    private static byte[] iiqRow(int[] row) {
+        var out = new java.io.ByteArrayOutputStream();
+        var buffer = 0L;
+        var count = 0;
+        int[] last = {0, 0}, widths = {-1, -1};
+        for (var x = 0; x < row.length; x += 8) {
+            if (row.length - x < 8) {
+                for (var at = x; at < row.length; at++) {
+                    while (count >= 32) {
+                        count -= 32;
+                        putWord(out, (int) (buffer >>> count));
+                    }
+                    buffer = buffer << 16 | (row[at] & 0xFFFF);
+                    count += 16;
+                }
+                while (count >= 32) {
+                    count -= 32;
+                    putWord(out, (int) (buffer >>> count));
+                }
+                break;
+            }
+            var next = new int[2];
+            for (var lane = 0; lane < 2; lane++) {
+                var previous = last[lane];
+                var largest = 0;
+                for (var index = lane; index < 8; index += 2) {
+                    var value = row[Math.min(x + index, row.length - 1)];
+                    largest = Math.max(largest, Math.abs(value - previous));
+                    previous = value;
+                }
+                next[lane] = x == 0 || largest >= 4095 ? 16 : Math.max(5, 33 - Integer.numberOfLeadingZeros(largest + 1));
+                var code = next[lane] == widths[lane] ? 1 : switch (next[lane]) {
+                    case 5 -> 0b000010;
+                    case 6 -> 0b0010;
+                    case 7 -> 0b011;
+                    case 8 -> 0b010;
+                    case 9 -> 0b0011;
+                    case 10 -> 0b00011;
+                    case 11 -> 0b00010;
+                    case 12 -> 0b000011;
+                    case 13 -> 0b000001;
+                    default -> 0;
+                };
+                var bits = next[lane] == widths[lane] ? 1 : switch (next[lane]) {
+                    case 7, 8 -> 3;
+                    case 6, 9 -> 4;
+                    case 10, 11 -> 5;
+                    default -> 6;
+                };
+                buffer = buffer << bits | code;
+                count += bits;
+                widths[lane] = next[lane];
+            }
+            for (var index = 0; index < 8; index++) {
+                var lane = index & 1;
+                var value = row[Math.min(x + index, row.length - 1)];
+                var bits = widths[lane];
+                var number = bits == 16 ? value : value - last[lane] + (1 << (bits - 1)) - 1;
+                last[lane] = value;
+                while (count >= 32) {
+                    count -= 32;
+                    putWord(out, (int) (buffer >>> count));
+                }
+                buffer = buffer << bits | (number & ((1L << bits) - 1));
+                count += bits;
+            }
+            while (count >= 32) {
+                count -= 32;
+                putWord(out, (int) (buffer >>> count));
+            }
+        }
+        if (count > 0) {
+            putWord(out, (int) (buffer << (32 - count)));
+        }
+        return out.toByteArray();
+    }
+
+    /**
+     * Writes a little-endian word.
+     *
+     * @param out the stream
+     * @param word the 32 bits
+     */
+    private static void putWord(java.io.ByteArrayOutputStream out, int word) {
+        out.write(word);
+        out.write(word >>> 8);
+        out.write(word >>> 16);
+        out.write(word >>> 24);
+    }
+
+    /**
      * {@return a Leaf packet value: the text and a terminating zero}
      *
      */

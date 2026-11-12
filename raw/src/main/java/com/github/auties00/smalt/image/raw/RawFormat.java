@@ -91,8 +91,9 @@ public enum RawFormat {
     MOS("mos"),
 
     /**
-     * Phase One IIQ, the format of Phase One's digital backs and of Leaf's Credo backs. Its files give
-     * their metadata, not their sensor data.
+     * Phase One IIQ, the format of Phase One's digital backs and of Leaf's Credo backs: IIQ L, the older
+     * backs' IIQ S and uncompressed sensor data. The IIQ S of the newer backs (compression 6) is described,
+     * not decoded.
      */
     IIQ("iiq"),
 
