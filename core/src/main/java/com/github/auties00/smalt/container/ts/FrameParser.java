@@ -19,7 +19,9 @@ import java.util.Set;
  * the file or after a seek, and a PES time within half a frame of where the previous frame ends
  * is taken as that end, so the jitter of 90 kHz rounding does not reach the packets; a farther
  * one (lost frames, a splice) moves the timeline. Frames before the first timestamp of the
- * stream are dropped. Instances are not thread-safe.
+ * stream are dropped. A parser that meets a new stream configuration announces it on the next
+ * packet as its {@link PacketSideData#newCodecConfig() new codec configuration}, and converts the
+ * durations of frames at another sampling rate to the track's. Instances are not thread-safe.
  */
 abstract class FrameParser extends ElementaryParser {
     /**
@@ -43,9 +45,9 @@ abstract class FrameParser extends ElementaryParser {
     private final StreamBuffer buffer = new StreamBuffer(CAPACITY);
 
     /**
-     * The time at which the previous frame ends, in samples, or {@link TsClock#NONE}.
+     * The timestamps of the units.
      */
-    private long next = TsClock.NONE;
+    private final SampleClock samples = new SampleClock();
 
     /**
      * Whether the parser is synchronized on the frame stream.
@@ -61,12 +63,6 @@ abstract class FrameParser extends ElementaryParser {
      * The sampling rate of the timestamps, set when the track is configured.
      */
     int timestampRate;
-
-    /**
-     * The first PES time of the stream, in absolute 90 kHz ticks (before the clock's origin is
-     * subtracted), from which PES times are measured, or {@link TsClock#NONE} before the first.
-     */
-    private long baseTicks = TsClock.NONE;
 
     /**
      * The origin of the clock of the current read pass, in 90 kHz ticks.
@@ -101,13 +97,41 @@ abstract class FrameParser extends ElementaryParser {
     private final FrameOutput output = this::unit;
 
     /**
+     * The codec configuration the next emitted packet establishes, or {@code null}.
+     */
+    private byte[] announced;
+
+    /**
+     * The remainder of converting durations at a rate other than {@link #timestampRate}, in
+     * units of one over that rate times the timestamp rate.
+     */
+    private long rateRemainder;
+
+    /**
+     * The decryptor of a {@code SAMPLE-AES} stream, or {@code null} for a clear one.
+     */
+    final SampleAesDecryptor sampleAes;
+
+    /**
      * Constructs a parser.
      *
      * @param entry the program map entry of the stream
      * @param limits the resource bounds
      */
     FrameParser(Psi.StreamEntry entry, MediaLimits limits) {
+        this(entry, limits, null);
+    }
+
+    /**
+     * Constructs a parser of a stream that may be encrypted.
+     *
+     * @param entry the program map entry of the stream
+     * @param limits the resource bounds
+     * @param sampleAes the decryptor of a {@code SAMPLE-AES} stream, or {@code null} for a clear one
+     */
+    FrameParser(Psi.StreamEntry entry, MediaLimits limits, SampleAesDecryptor sampleAes) {
         super(entry, limits);
+        this.sampleAes = sampleAes;
     }
 
     /**
@@ -155,6 +179,48 @@ abstract class FrameParser extends ElementaryParser {
     abstract void frame(byte[] data, int offset, int length, boolean first, FrameOutput output);
 
     /**
+     * Decrypts a frame of a {@code SAMPLE-AES} stream in place, before it is decoded.
+     *
+     * <p>The default implementation does nothing; it is called only when {@link #sampleAes} is set.
+     *
+     * @param data the bytes
+     * @param offset the index of the frame
+     * @param length the frame length
+     * @param fileOffset the offset of the transport packet that started the PES packet holding the frame
+     * @param corrupt whether a damaged PES packet contributed to the frame
+     */
+    void decrypt(byte[] data, int offset, int length, long fileOffset, boolean corrupt) {
+    }
+
+    /**
+     * Makes the next packet emitted carry a new codec configuration, which replaces the track's
+     * from that packet on.
+     *
+     * @param config the configuration
+     */
+    final void announce(byte[] config) {
+        announced = config;
+    }
+
+    /**
+     * Converts a duration in samples of a stream rate to samples of the timestamp rate, carrying
+     * the rounding remainder over to the next conversion so that durations add up exactly.
+     *
+     * @param samples the duration at {@code rate}
+     * @param rate the sampling rate of the frame, after a configuration change the stream's new
+     * rate
+     * @return the duration at the timestamp rate
+     */
+    final int toTimestampRate(int samples, int rate) {
+        if (rate == timestampRate || rate <= 0 || timestampRate <= 0) {
+            return samples;
+        }
+        var scaled = (long) samples * timestampRate + rateRemainder;
+        rateRemainder = scaled % rate;
+        return (int) (scaled / rate);
+    }
+
+    /**
      * Returns whether the input ended, so that a frame whose length depends on what follows it
      * can be measured on the buffered bytes alone.
      *
@@ -174,14 +240,14 @@ abstract class FrameParser extends ElementaryParser {
     final <T extends FrameParser> T inheritTiming(T fresh) {
         fresh.track = track;
         fresh.timestampRate = timestampRate;
-        ((FrameParser) fresh).baseTicks = baseTicks;
+        ((FrameParser) fresh).samples.inherit(samples);
         return fresh;
     }
 
     @Override
     final void accept(Pes pes, TsClock clock, UnitSink sink) {
         origin = clock.origin();
-        var pts = pes.pts() == TsClock.NONE ? TsClock.NONE : clock.ticks(pid(), pes.pts(), true);
+        var pts = pes.pts() == TsClock.NONE ? TsClock.NONE : clock.ticks(trackId(), pes.pts(), true);
         if (buffer.append(pes, pts, TsClock.NONE)) {
             synced = false;
         }
@@ -277,6 +343,9 @@ abstract class FrameParser extends ElementaryParser {
         currentSink = sink;
         currentOffset = marker.fileOffset;
         currentCorrupt = buffer.corrupt(position, position + length);
+        if (sampleAes != null) {
+            decrypt(data, start, length, marker.fileOffset, currentCorrupt);
+        }
         frame(data, start, length, first, output);
         currentSink = null;
     }
@@ -292,26 +361,17 @@ abstract class FrameParser extends ElementaryParser {
         if (timestampRate <= 0) {
             return;
         }
-        var timestamp = next;
-        if (pendingAnchor != TsClock.NONE) {
-            if (baseTicks == TsClock.NONE) {
-                baseTicks = pendingAnchor + origin;
-            }
-            var base = baseTicks - origin;
-            var anchored = Math.floorDiv(base * timestampRate + 45_000, 90_000)
-                    + Math.floorDiv((pendingAnchor - base) * timestampRate + 45_000, 90_000);
-            pendingAnchor = TsClock.NONE;
-            if (next == TsClock.NONE || Math.abs(anchored - next) > samples / 2) {
-                timestamp = anchored;
-            }
-        }
+        var timestamp = this.samples.stamp(pendingAnchor, origin, timestampRate, samples);
+        pendingAnchor = TsClock.NONE;
         if (timestamp == TsClock.NONE) {
             return;
         }
-        next = timestamp + samples;
         if (track != null && currentSink != null) {
-            currentSink.accept(new Packet(pid(), payload, timestamp, timestamp, Math.max(0, Math.min(samples, duration)),
-                    currentCorrupt ? KEY_CORRUPT : KEY, PacketSideData.NONE), currentOffset);
+            var sideData = announced == null ? PacketSideData.NONE
+                    : PacketSideData.builder().newCodecConfig(announced).build();
+            announced = null;
+            currentSink.accept(new Packet(trackId(), payload, timestamp, timestamp, Math.max(0, Math.min(samples, duration)),
+                    currentCorrupt ? KEY_CORRUPT : KEY, sideData), currentOffset);
         }
     }
 }
