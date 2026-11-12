@@ -29,6 +29,8 @@ SAMPLES = [
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1].startswith('-'):
+        sys.exit(__doc__ or 'usage: ' + sys.argv[0] + ' [path]')
     root = sys.argv[1] if len(sys.argv) > 1 else os.path.join("core", "src", "test", "resources", "samples")
     for path, arguments in SAMPLES:
         target = os.path.join(root, path)

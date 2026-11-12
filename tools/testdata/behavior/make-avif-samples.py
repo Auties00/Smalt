@@ -199,6 +199,8 @@ def overlay(fill, width, height, *offsets):
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1].startswith('-'):
+        sys.exit(__doc__ or 'usage: ' + sys.argv[0] + ' [path]')
     root = sys.argv[1] if len(sys.argv) > 1 else os.getcwd()
     samples = os.path.join(root, "video", "src", "test", "resources", "samples", "avif")
     seeds = os.path.join(root, "video", "src", "test", "resources", "com", "github", "auties00", "smalt", "video",

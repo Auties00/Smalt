@@ -947,6 +947,13 @@ from the new resources), and the script decodes them with libxaac into `eld-sbr-
 with the FDK AAC decoder into `eld-sbr-fdk/smalt`, which the test compares with Smalt's decodes. The CI cache entry
 of these files hashes the pinned streams too, so a rewrite decodes them again.
 
+`python -I tools/testdata/eld-sbr-oracle.py <work directory> --encoder <directory>` only builds the test
+applications and copies `xaacenc`, with the `impd_drc_config_params.txt` its `-drc:1` reads from its working
+directory, into the directory. `FuzzSeedWriter.usac` (`smalt-mpeg`, `-Dsmalt.fuzz.xaacenc=<directory>/xaacenc`)
+writes the USAC fuzz seeds of the AAC target with it, and fails when the DRC seed's configuration is missing or the
+encoder's metadata does not describe its whole stream. The nightly opt-in job builds the encoder this way, caches it
+under `~/.smalt/xaacenc` (keyed by the script), and runs the seed writer with it.
+
 ## MPEG-4 TwinVQ code books
 
 `mpeg/src/main/resources/com/github/auties00/smalt/audio/twinvq/internal/twinvq-tables.txt` is written by

@@ -7,6 +7,7 @@
 #   bash tools/testdata/behavior/make-image-samples.sh [output directory]
 set -euo pipefail
 
+case "${1:-}" in -*) echo "usage: $0 [output directory]" >&2; exit 2 ;; esac
 out="${1:-image/src/test/resources/samples}"
 mkdir -p "$out"/{gif,bmp,ico,tiff,webp,png,jp2,jpeg}
 

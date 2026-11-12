@@ -108,6 +108,8 @@ def movie(width, height, entry_boxes, samples):
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1].startswith('-'):
+        sys.exit(__doc__ or 'usage: ' + sys.argv[0] + ' [path]')
     directory = sys.argv[1] if len(sys.argv) > 1 else "core/src/test/resources/samples/mp4"
     files = {
         "uncv-yuv420.mp4": movie(32, 16, [cmpd([1, 2, 3]), unc_c([0, 1, 2], 8, 0, 2, 0, False, 0)],

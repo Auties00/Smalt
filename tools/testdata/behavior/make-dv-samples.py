@@ -37,6 +37,8 @@ def type_one_avi(dv, scale, rate):
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1].startswith('-'):
+        sys.exit(__doc__ or 'usage: ' + sys.argv[0] + ' [path]')
     out = sys.argv[1] if len(sys.argv) > 1 else "core/src/test/resources/samples"
     os.makedirs(os.path.join(out, "dv"), exist_ok=True)
     os.makedirs(os.path.join(out, "avi"), exist_ok=True)

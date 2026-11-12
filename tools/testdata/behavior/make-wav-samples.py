@@ -127,6 +127,8 @@ def self_delimited(packet):
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1].startswith('-'):
+        sys.exit(__doc__ or 'usage: ' + sys.argv[0] + ' [path]')
     out = os.path.join(sys.argv[1] if len(sys.argv) > 1 else os.path.join("core", "src", "test", "resources",
                                                                            "samples"), "wav")
     os.makedirs(out, exist_ok=True)

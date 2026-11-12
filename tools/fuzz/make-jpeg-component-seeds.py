@@ -91,6 +91,8 @@ def write(width, height, sampling):
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1].startswith('-'):
+        sys.exit(__doc__ or 'usage: ' + sys.argv[0] + ' [path]')
     directory = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
         "image", "src", "test", "resources", "com", "github", "auties00", "smalt", "image", "fuzz",
         "ImageMetadataFuzzTestInputs", "jpegTransform")

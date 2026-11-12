@@ -76,6 +76,8 @@ def compress_fragments(data):
 
 
 def main():
+    if len(sys.argv) not in (2, 3) or any(argument.startswith('-') for argument in sys.argv[1:]):
+        sys.exit(__doc__)
     scratch = sys.argv[1]
     seeds = sys.argv[2] if len(sys.argv) > 2 else os.path.join("core", "src", "test", "resources", "com", "github",
                                                                  "auties00", "smalt", "fuzz", "TagFuzzTestInputs", "tags")

@@ -574,8 +574,38 @@ jobs:
           mvn -B -ntp -fae -pl core -am verify -Dtest=HlsSampleAesStreamTest -Dsurefire.failIfNoSpecifiedTests=false \
             -Dsmalt.test.sampleAesStream="$RUNNER_TEMP/sample-aes"
 
-      # The writers derive some seeds with the runner's ffmpeg, so a seed that differs from the committed one is
-      # listed, not failed; the fuzz targets must then accept every written seed.
+      # libxaac's encoder (Apache-2.0), built from the commit tools/testdata/eld-sbr-oracle.py pins, writes the
+      # USAC seeds of smalt-mpeg's FuzzSeedWriter; the entry is saved as .github/scripts/cache-policy.sh decides.
+      - name: Restore the libxaac encoder
+        id: xaacenc
+        if: ${{ !cancelled() && steps.test.outcome != 'skipped' }}
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.smalt/xaacenc
+          key: xaacenc-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/testdata/eld-sbr-oracle.py') }}
+
+      - name: Build the libxaac encoder
+        id: xaacenc-build
+        if: ${{ !cancelled() && steps.test.outcome != 'skipped' && steps.xaacenc.outputs.cache-hit != 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          bash .github/scripts/cache-policy.sh save auto '${{ steps.xaacenc.outputs.cache-primary-key }}' \
+            'xaacenc-${{ runner.os }}-${{ runner.arch }}-'
+          command -v ninja > /dev/null || { sudo apt-get update -q && sudo apt-get install -y -q ninja-build; }
+          python -I tools/testdata/eld-sbr-oracle.py "$RUNNER_TEMP/xaac" --encoder ~/.smalt/xaacenc
+
+      - name: Save the libxaac encoder
+        if: ${{ !cancelled() && steps.xaacenc-build.outcome == 'success' && steps.xaacenc-build.outputs.save == 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.smalt/xaacenc
+          key: ${{ steps.xaacenc.outputs.cache-primary-key }}
+
+      # The writers derive some seeds with the runner's ffmpeg and libxaac, so a seed that differs from the committed
+      # one is listed, not failed; the fuzz targets must then accept every written seed.
       - name: Write the fuzz seeds and run the fuzz targets on them
         id: seeds
         if: ${{ !cancelled() && steps.test.outcome != 'skipped' }}
@@ -584,6 +614,7 @@ jobs:
           SMALT_CONFORMANCE_DOWNLOAD: 'true'
         run: |
           mvn -B -ntp -fae -pl core,audio,image,video,mpeg,raw -am verify -Dsmalt.fuzz.writeSeeds=true \
+            -Dsmalt.fuzz.xaacenc="$HOME/.smalt/xaacenc/xaacenc" \
             -Dtest='FuzzSeedWriter,*Test#fuzzSeeds' -Dsurefire.failIfNoSpecifiedTests=false
           {
             echo "### Fuzz seeds that differ from the committed ones"

@@ -9,6 +9,7 @@
 #   FFMPEG=/path/to/ffmpeg bash tools/testdata/behavior/make-intermediate-samples.sh [output directory]
 set -euo pipefail
 
+case "${1:-}" in -*) echo "usage: $0 [output directory]" >&2; exit 2 ;; esac
 out="${1:-core/src/test/resources/samples}"
 mkdir -p "$out"/{mp4,avi,matroska}
 

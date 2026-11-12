@@ -295,6 +295,9 @@ class FuzzSeedWriter {
         var parameters = Path.of(encoder).resolveSibling("impd_drc_config_params.txt");
         if (java.nio.file.Files.exists(parameters)) {
             java.nio.file.Files.copy(parameters, directory.resolve(parameters.getFileName()));
+        } else if (List.of(options).contains("-drc:1")) {
+            // the encoder codes no DRC, and says nothing, when it cannot open the configuration
+            throw new IllegalStateException(name + ": " + parameters + " is missing beside the encoder");
         }
         var frames = (int) (0.4 * rate);
         var wave = new ByteArrayOutputStream();
@@ -320,9 +323,11 @@ class FuzzSeedWriter {
         var command = new ArrayList<>(List.of(encoder, "-ifile:in.wav", "-ofile:out.es", "-aot:42"));
         command.addAll(List.of(options));
         var process = new ProcessBuilder(command).directory(directory.toFile()).redirectErrorStream(true)
-                .redirectOutput(ProcessBuilder.Redirect.DISCARD).start();
+                .redirectOutput(directory.resolve("encoder.log").toFile()).start();
         if (process.waitFor() != 0) {
-            throw new IllegalStateException(name + ": the encoder failed");
+            throw new IllegalStateException(name + ": the encoder failed with status " + process.exitValue() + ":\n"
+                    + java.nio.file.Files.readString(directory.resolve("encoder.log"),
+                    java.nio.charset.StandardCharsets.ISO_8859_1));
         }
         var stream = java.nio.file.Files.readAllBytes(directory.resolve("out.es"));
         var position = 0;
@@ -338,6 +343,9 @@ class FuzzSeedWriter {
                 parts.add(new FuzzPackets.Part(Arrays.copyOfRange(stream, position, position + size), true));
                 position += size;
             }
+        }
+        if (config == null || parts.isEmpty() || position != stream.length) {
+            throw new IllegalStateException(name + ": the encoder's metadata does not describe its stream");
         }
         write(MpegFuzzTest.class, "aac", name, FuzzPackets.audio(0, rate, channels, 0, config, parts));
     }

@@ -7,6 +7,7 @@
 #   bash tools/testdata/behavior/make-samples.sh [output directory]
 set -euo pipefail
 
+case "${1:-}" in -*) echo "usage: $0 [output directory]" >&2; exit 2 ;; esac
 out="${1:-core/src/test/resources/samples}"
 mkdir -p "$out"/{mp4,matroska,ogg,ts,ps,avi,asf,wav,aiff,mp3,adts,amr,ac3,dts,ivf,flac,subtitle,elementary,y4m,rawvideo}
 

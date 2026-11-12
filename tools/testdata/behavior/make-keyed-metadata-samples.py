@@ -92,6 +92,8 @@ def extend_moov(data, moov_children, udta_children):
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
     repository = os.path.dirname(os.path.dirname(os.path.dirname(here)))
+    if len(sys.argv) > 1 and sys.argv[1].startswith('-'):
+        sys.exit(__doc__ or 'usage: ' + sys.argv[0] + ' [path]')
     samples = sys.argv[1] if len(sys.argv) > 1 else os.path.join(repository, "core", "src", "test", "resources",
                                                                  "samples")
     mp4 = os.path.join(samples, "mp4")

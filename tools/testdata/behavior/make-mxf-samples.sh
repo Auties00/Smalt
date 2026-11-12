@@ -12,6 +12,8 @@
 #   bash tools/testdata/behavior/make-mxf-samples.sh [output directory] [fuzz seed directory]
 set -euo pipefail
 
+case "${1:-}" in -*) echo "usage: $0 [output directory] [fuzz seed directory]" >&2; exit 2 ;; esac
+case "${2:-}" in -*) echo "usage: $0 [output directory] [fuzz seed directory]" >&2; exit 2 ;; esac
 out="${1:-core/src/test/resources/samples}/mxf"
 seeds="${2:-core/src/test/resources/com/github/auties00/smalt/fuzz/DemuxerFuzzTestInputs}/mxf"
 mkdir -p "$out"

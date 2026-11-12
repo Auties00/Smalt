@@ -15,6 +15,10 @@ import os
 import struct
 import sys
 
+# before the imports this Python may lack, so that an option prints the usage
+if len(sys.argv) > 1 and sys.argv[1].startswith('-'):
+    sys.exit(__doc__)
+
 import numpy as np
 import OpenEXR as E
 

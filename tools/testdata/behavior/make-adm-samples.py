@@ -46,6 +46,8 @@ def ambix(channels):
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1].startswith('-'):
+        sys.exit(__doc__ or 'usage: ' + sys.argv[0] + ' [path]')
     out = sys.argv[1] if len(sys.argv) > 1 else "core/src/test/resources/samples"
     ear = sys.argv[2] if len(sys.argv) > 2 else "ear-utils"
     os.makedirs(os.path.join(out, "wav"), exist_ok=True)

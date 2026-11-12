@@ -299,6 +299,10 @@ jobs:
       - name: Benchmark tool tests
         run: python -m unittest discover -s tools/bench -p "test_*.py"
 
+      # The scripts that take an optional output path refuse an option in its place instead of writing under it.
+      - name: Test data tool tests
+        run: python -m unittest discover -s tools/testdata -p "test_*.py"
+
       # Every downloaded vector, clip and archive set names its licence or terms of use (tools/testdata/licences.tsv).
       - name: Test data licence notes
         run: python tools/testdata/testdata.py licences

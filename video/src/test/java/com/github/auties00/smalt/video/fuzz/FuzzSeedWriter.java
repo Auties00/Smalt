@@ -103,8 +103,11 @@ class FuzzSeedWriter {
         while (data.hasRemaining()) {
             var sample = new byte[data.getInt()];
             data.get(sample);
-            data.position(data.position() + data.getInt());
-            data.position(data.position() + data.getInt());
+            // the mosaic and the RGB reference that follow each sample
+            for (var block = 0; block < 2; block++) {
+                var length = data.getInt();
+                data.position(data.position() + length);
+            }
             parts.add(new FuzzPackets.Part(sample, true));
         }
         write(VideoFuzzTest.class, method, name, FuzzPackets.video(0, width, height, null, parts));

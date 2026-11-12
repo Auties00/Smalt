@@ -6,6 +6,7 @@
 #   bash tools/testdata/behavior/make-raster-samples.sh [output directory]
 set -euo pipefail
 
+case "${1:-}" in -*) echo "usage: $0 [output directory]" >&2; exit 2 ;; esac
 out="${1:-image/src/test/resources/samples}"
 mkdir -p "$out"/{pnm,tga,qoi,hdr,exr}
 

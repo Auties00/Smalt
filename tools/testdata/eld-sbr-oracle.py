@@ -24,6 +24,12 @@ deterministic for a given build; ENCODED_SHA256 pins those of the reference buil
 different digest is reported, not rejected, since the tests compare each stream with its own oracle decode.
 
     python -I tools/testdata/eld-sbr-oracle.py <work directory> [--fdk [library]]
+
+With --encoder DIR the script only builds the test applications and copies xaacenc with the
+impd_drc_config_params.txt it reads from its working directory into DIR, for the USAC seeds of smalt-mpeg's
+FuzzSeedWriter (-Dsmalt.fuzz.xaacenc=DIR/xaacenc), and prints the encoder's path:
+
+    python -I tools/testdata/eld-sbr-oracle.py <work directory> --encoder DIR
 """
 import ctypes
 import hashlib
@@ -48,6 +54,10 @@ SMALT_STREAMS = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '
 
 FDK_URL = 'https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-fdk-aac-2.0.3-1-any.pkg.tar.zst'
 FDK_SHA256 = 'e08846148086d898d4affa0303a3fcccd0dc97017487017e4cb18dab95a10150'
+
+# the MPEG-D DRC configuration the encoder's -drc:1 reads from its working directory; without it the encoder
+# silently codes no DRC
+DRC_CONFIG = 'impd_drc_config_params.txt'
 
 STREAMS = ['er_eld_sbr_%s_%d_%s' % (signal, channels, rate) for signal in ('e', 'gh', 'i', 's')
            for channels in (1, 2) for rate in ('32', '44', '48')] + ['er_eld_sbr_twi_1_24', 'er_eld_sbr_twi_1_48']
@@ -118,6 +128,19 @@ def build(work):
         if not os.path.exists(executable):
             raise SystemExit('the build produced no ' + executable)
     return executables
+
+
+def install_encoder(work, target):
+    """Builds xaacenc and copies it with the DRC configuration its USAC mode reads into target."""
+    encoder = build(work)[1]
+    parameters = os.path.join(work, 'download', 'libxaac-' + COMMIT, 'test', 'encoder', DRC_CONFIG)
+    if not os.path.isfile(parameters):
+        raise SystemExit('libxaac ' + COMMIT + ' has no ' + parameters)
+    os.makedirs(target, exist_ok=True)
+    installed = os.path.join(target, os.path.basename(encoder))
+    shutil.copy2(encoder, installed)
+    shutil.copy2(parameters, os.path.join(target, DRC_CONFIG))
+    return installed
 
 
 def boxes(data, start, end):
@@ -495,6 +518,12 @@ def main():
     if not arguments or arguments[0].startswith('-'):
         raise SystemExit(__doc__)
     work = os.path.abspath(arguments[0])
+    if '--encoder' in arguments:
+        rest = arguments[arguments.index('--encoder') + 1:]
+        if not rest or rest[0].startswith('-'):
+            raise SystemExit(__doc__)
+        print(install_encoder(work, os.path.abspath(rest[0])))
+        return
     use_fdk = '--fdk' in arguments
     named = None
     if use_fdk:

@@ -13,6 +13,7 @@
 set -euo pipefail
 
 here="$(dirname "$0")"
+case "${1:-}" in -*) echo "usage: $0 [output directory]" >&2; exit 2 ;; esac
 out="${1:-core/src/test/resources/samples}"
 mkdir -p "$out"/{mp4,matroska,ts,avi,asf}
 

@@ -17,6 +17,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from qt import run
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+if len(sys.argv) > 1 and sys.argv[1].startswith('-'):
+    sys.exit(__doc__ or 'usage: ' + sys.argv[0] + ' [path]')
 ROOT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "..", "..", "..")
 OUT = os.path.join(ROOT, "audio", "src", "test", "resources", "com", "github", "auties00", "smalt", "audio", "mace")
 SAMPLES = os.path.join(ROOT, "core", "src", "test", "resources", "samples")
