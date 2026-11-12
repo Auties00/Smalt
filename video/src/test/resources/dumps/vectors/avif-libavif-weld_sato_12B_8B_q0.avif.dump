@@ -1,0 +1,19 @@
+# image dump of vectors/avif-libavif-weld_sato_12B_8B_q0.avif; regenerate with -Dsmalt.test.updateDumps=true
+format AVIF
+info ImageInfo[format=AVIF, width=1024, height=684, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 1024x684 yuv8 YUV444 color=UNSPECIFIED/FULL/UNSPECIFIED/UNSPECIFIED y=91926200 u=c60d75ba v=85df57b1
+  format=AVIF orientation=NORMAL source=1024x684
+  icc=none exif=none xmp=none
+  profile=none
+scaled 256x171
+picture 1024x684 yuv8 YUV444 color=UNSPECIFIED/FULL/UNSPECIFIED/UNSPECIFIED y=91926200 u=c60d75ba v=85df57b1
+  format=AVIF orientation=NORMAL source=1024x684
+  icc=none exif=none xmp=none
+  profile=none
+pages 1
+page 0 ImageInfo[format=AVIF, width=1024, height=684, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+picture 1024x684 yuv8 YUV444 color=UNSPECIFIED/FULL/UNSPECIFIED/UNSPECIFIED y=91926200 u=c60d75ba v=85df57b1
+  format=AVIF orientation=NORMAL source=1024x684
+  icc=none exif=none xmp=none
+  profile=none

@@ -35,8 +35,9 @@ class AvifEncoderOutputTest {
             Map.entry("still lossless", 1809451712L),
             Map.entry("still 10-bit 4:4:4", 969899688L),
             Map.entry("still with metadata", 1896312792L),
-            Map.entry("animation of key frames with alpha", 3313142257L),
-            Map.entry("animation of predicted frames", 2315596843L)
+            // the edit of an animation lasts one play and repeats until the track duration, as libavif writes it
+            Map.entry("animation of key frames with alpha", 72768672L),
+            Map.entry("animation of predicted frames", 3315984828L)
     );
 
     static RgbaPicture rgba(int width, int height, int frame, boolean alpha) {

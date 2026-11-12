@@ -1,0 +1,19 @@
+# image dump of webp/animated.webp; regenerate with -Dsmalt.test.updateDumps=true
+format WEBP
+info ImageInfo[format=WEBP, width=48, height=32, hasAlpha=false, animated=true, frameCount=5, orientation=NORMAL]
+decode
+picture 48x32 rgba8 alpha=true crc=b30ae35b
+  format=WEBP orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=none
+scaled 12x8
+picture 48x32 rgba8 alpha=true crc=b30ae35b
+  format=WEBP orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=none
+animation 48x32 loops=0 frames=5
+frame 0 ts=0 dur=200000 48x32 rgba8 alpha=true crc=b30ae35b
+frame 1 ts=200000 dur=200000 48x32 rgba8 alpha=true crc=38ef6ca3
+frame 2 ts=400000 dur=200000 48x32 rgba8 alpha=true crc=6b543ab4
+frame 3 ts=600000 dur=200000 48x32 rgba8 alpha=true crc=19c7e7e2
+frame 4 ts=800000 dur=200000 48x32 rgba8 alpha=true crc=d45d10af

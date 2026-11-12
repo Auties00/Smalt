@@ -161,13 +161,10 @@ class Mp4SyntheticMuxTest {
             packets.add(out.toByteArray());
             keyframes.add(key);
         }
-        var avcC = new ByteArrayOutputStream();
-        avcC.writeBytes(new byte[]{1, sps[1], sps[2], sps[3], (byte) 0xFF, (byte) 0xE1, (byte) (sps.length >> 8), (byte) sps.length});
-        avcC.writeBytes(sps);
-        avcC.writeBytes(new byte[]{1, (byte) (pps.length >> 8), (byte) pps.length});
-        avcC.writeBytes(pps);
+        // the record of ISO/IEC 14496-15 clause 5.3.3.1, with the chroma format and bit depth fields of High profile
+        var avcC = com.github.auties00.smalt.internal.codec.NalConfigs.avcConfig(List.of(sps), List.of(pps));
         var track = VideoTrack.builder().id(1).codec(Codec.H264).timeBase(new Rational(1, 25))
-                .codecConfig(avcC.toByteArray())
+                .codecConfig(avcC)
                 .width(128)
                 .height(96)
                 .orientation(Orientation.ROTATE_90)
