@@ -42,7 +42,7 @@ class BFrameTest {
             core.setReconstructUnreferenced(true);
             long pts = 0;
             for (var picture : pictures) {
-                var packet = core.encode(picture, pts++, 0);
+                var packet = core.encode(picture, pts++, 0, null);
                 if (packet != null) {
                     packets.add(packet);
                     byDisplay.put(core.lastDisplayIndex(), core.lastReconstructionI420());

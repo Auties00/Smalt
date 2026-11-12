@@ -18,7 +18,11 @@ public enum AudioShareMode {
      * Takes the device for this stream alone, at one of its {@linkplain AudioDevice#formats()
      * formats}, bypassing the mixer for the lowest latency. Windows supports it (WASAPI exclusive
      * mode, which the user may forbid per device); on Linux it opens the ALSA device without
-     * software resampling; macOS does not support it.
+     * software resampling; on macOS the process takes the device's hog mode, which keeps other
+     * processes off the device until the session closes, sets the device to the stream's rate and
+     * restores that rate afterwards. A macOS device has one owner, so its input and output streams
+     * may both be exclusive in one process only at one rate, and a shared capture the process already
+     * has on the device stops delivering while the device runs at another rate than it opened at.
      */
     EXCLUSIVE
 }

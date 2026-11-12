@@ -6,6 +6,7 @@ import com.github.auties00.smalt.capture.audio.AudioSampleFormat;
 
 import java.lang.foreign.Arena;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
@@ -153,7 +154,8 @@ final class CoreAudioDevices {
     }
 
     /**
-     * Lists the audio objects of every device.
+     * Lists the audio objects of every device, except the aggregates of this process's own process
+     * taps, which are private to it but visible to it.
      *
      * @return the {@code AudioObjectID}s
      */
@@ -170,10 +172,15 @@ final class CoreAudioDevices {
                 return new int[0];
             }
             var objects = new int[written / 4];
+            var count = 0;
             for (var i = 0; i < objects.length; i++) {
-                objects[i] = value.getAtIndex(JAVA_INT, i);
+                var object = value.getAtIndex(JAVA_INT, i);
+                var uid = CoreAudio.stringProperty(object, CoreAudio.DEVICE_UID);
+                if (uid == null || !uid.startsWith(CoreAudioTap.NAME_PREFIX)) {
+                    objects[count++] = object;
+                }
             }
-            return objects;
+            return Arrays.copyOf(objects, count);
         }
     }
 
@@ -223,7 +230,7 @@ final class CoreAudioDevices {
      * @param channels its channel count in the listed direction
      * @return the formats
      */
-    private static List<AudioDeviceFormat> formats(int object, int channels) {
+    static List<AudioDeviceFormat> formats(int object, int channels) {
         var formats = new LinkedHashSet<AudioDeviceFormat>();
         var nominal = (int) Math.round(CoreAudio.doubleProperty(object, CoreAudio.NOMINAL_SAMPLE_RATE, CoreAudio.SCOPE_GLOBAL, 0));
         if (nominal > 0) {

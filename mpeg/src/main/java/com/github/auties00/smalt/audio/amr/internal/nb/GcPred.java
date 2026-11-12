@@ -95,15 +95,13 @@ final class GcPred {
      * @param overflow the flag raised on saturation
      */
     void gcPred(int mode, short[] code, int codeOffset, short[] out, int outOffset, Flag overflow) {
-        var enerCode = 0;
+        var energy = 0L;
         for (var i = 0; i < L_SUBFR; i++) {
             var tmp = code[codeOffset + i];
-            enerCode += (tmp * tmp) >> 3;
+            energy += tmp * tmp;
         }
-        enerCode <<= 4;
-        if ((enerCode >> 31) != 0) {
-            enerCode = MAX_32;
-        }
+        // the saturated sum of the doubled squares of the reference
+        var enerCode = (int) Math.min(energy << 1, MAX_32);
         if (mode == Mode.MR122) {
             enerCode = (round(enerCode, overflow) * 26214) << 1;
             var log = FixedMath.log2(enerCode);

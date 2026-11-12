@@ -7,6 +7,8 @@ import com.github.auties00.smalt.internal.io.SourceReader;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.io.MediaSource;
 
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 /**
@@ -24,7 +26,12 @@ import java.util.Arrays;
  *   <li>comment, plain text and unknown application extensions are skipped; a graphic control
  *       extension applies to the next image (the last one wins when several precede it); the
  *       loop count comes from the first {@code NETSCAPE2.0} or {@code ANIMEXTS1.0}
- *       extension.</li>
+ *       extension;</li>
+ *   <li>the ICC profile is the data of the first {@code ICCRGBG1} {@code 012} application
+ *       extension before the first image, and the XMP packet the content of the first
+ *       {@code XMP DataXMP} application extension before the first image, cut after its
+ *       closing {@code xpacket} instruction; an extension the input ends inside of is left
+ *       out.</li>
  * </ul>
  */
 final class GifReader {
@@ -47,6 +54,46 @@ final class GifReader {
      * The label of the application extension.
      */
     private static final int APPLICATION = 0xFF;
+
+    /**
+     * The application identifier and authentication code of the ICC profile extension.
+     */
+    private static final String ICC_IDENTIFIER = "ICCRGBG1012";
+
+    /**
+     * The application identifier and authentication code of the XMP extension.
+     */
+    private static final String XMP_IDENTIFIER = "XMP DataXMP";
+
+    /**
+     * The opening of the processing instruction that closes an XMP packet.
+     */
+    private static final byte[] XMP_END = "<?xpacket end".getBytes(StandardCharsets.US_ASCII);
+
+    /**
+     * Classifies the application extensions by what is kept of their content.
+     */
+    private enum Application {
+        /**
+         * An extension whose data is skipped.
+         */
+        OTHER,
+
+        /**
+         * The {@code NETSCAPE2.0} or {@code ANIMEXTS1.0} looping extension.
+         */
+        LOOP,
+
+        /**
+         * The ICC profile extension.
+         */
+        ICC,
+
+        /**
+         * The XMP extension, whose sub-block length bytes are part of the packet.
+         */
+        XMP
+    }
 
     /**
      * The buffered cursor over the input.
@@ -114,6 +161,21 @@ final class GifReader {
     private boolean ended;
 
     /**
+     * Whether an image has been read, after which ICC and XMP extensions are skipped.
+     */
+    private boolean imageRead;
+
+    /**
+     * The ICC profile, or {@code null}.
+     */
+    private byte[] iccProfile;
+
+    /**
+     * The XMP packet, or {@code null}.
+     */
+    private byte[] xmp;
+
+    /**
      * Constructs a reader positioned at the start of the datastream.
      *
      * @param source the input
@@ -154,6 +216,26 @@ final class GifReader {
      */
     int loopCount() {
         return loopCount;
+    }
+
+    /**
+     * Returns the ICC profile read so far.
+     *
+     * @return the profile bytes, or {@code null} when no profile extension precedes the images
+     * read
+     */
+    byte[] iccProfile() {
+        return iccProfile;
+    }
+
+    /**
+     * Returns the XMP packet read so far.
+     *
+     * @return the packet bytes, UTF-8 XML, or {@code null} when no XMP extension precedes the
+     * images read
+     */
+    byte[] xmp() {
+        return xmp;
     }
 
     /**
@@ -217,6 +299,7 @@ final class GifReader {
      * @return {@code false} when the input ends before the image data starts
      */
     private boolean readImage(GifFrame frame, boolean withData) {
+        imageRead = true;
         if (!read(scratch, 9)) {
             return false;
         }
@@ -325,21 +408,77 @@ final class GifReader {
             if (size == 0) {
                 return true;
             }
-            var looping = size == 11 && (identifier("NETSCAPE2.0") || identifier("ANIMEXTS1.0"));
+            var kind = application(size);
+            var content = kind == Application.ICC || kind == Application.XMP ? new ByteArrayOutputStream() : null;
             while (true) {
                 var block = read();
                 if (block < 0 || !read(scratch, block)) {
                     return false;
                 }
                 if (block == 0) {
+                    if (kind == Application.ICC) {
+                        iccProfile = content.toByteArray();
+                    } else if (kind == Application.XMP) {
+                        xmp = packet(content.toByteArray());
+                    }
                     return true;
                 }
-                if (looping && block >= 3 && scratch[0] == 1 && loopCount < 0) {
+                if (kind == Application.LOOP && block >= 3 && scratch[0] == 1 && loopCount < 0) {
                     loopCount = ByteArrays.u16le(scratch, 1);
+                } else if (content != null) {
+                    LimitChecks.checkAllocation(limits, content.size() + 1L + block);
+                    if (kind == Application.XMP) {
+                        content.write(block);
+                    }
+                    content.write(scratch, 0, block);
                 }
             }
         }
         return skipSubBlocks();
+    }
+
+    /**
+     * Classifies the application extension whose identifier block is in the scratch bytes.
+     *
+     * @param size the size of the identifier block
+     * @return what is kept of the extension: only the first ICC and XMP extensions before the
+     * first image are
+     */
+    private Application application(int size) {
+        if (size != 11) {
+            return Application.OTHER;
+        }
+        if (identifier("NETSCAPE2.0") || identifier("ANIMEXTS1.0")) {
+            return Application.LOOP;
+        }
+        if (!imageRead && iccProfile == null && identifier(ICC_IDENTIFIER)) {
+            return Application.ICC;
+        }
+        if (!imageRead && xmp == null && identifier(XMP_IDENTIFIER)) {
+            return Application.XMP;
+        }
+        return Application.OTHER;
+    }
+
+    /**
+     * Cuts the content of an XMP extension after the packet's closing processing instruction,
+     * dropping the trailer that follows it.
+     *
+     * @param content the extension content, sub-block length bytes included
+     * @return the packet, or {@code content} when it has no closing instruction
+     */
+    private static byte[] packet(byte[] content) {
+        for (var i = content.length - XMP_END.length; i >= 0; i--) {
+            if (Arrays.equals(content, i, i + XMP_END.length, XMP_END, 0, XMP_END.length)) {
+                for (var j = i + XMP_END.length; j + 1 < content.length; j++) {
+                    if (content[j] == '?' && content[j + 1] == '>') {
+                        return Arrays.copyOf(content, j + 2);
+                    }
+                }
+                return content;
+            }
+        }
+        return content;
     }
 
     /**

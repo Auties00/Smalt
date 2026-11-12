@@ -1175,7 +1175,7 @@ final class VectorFwdTxfm {
      * @param cosBit the precision of the cosine table
      */
     private static void fadst8Part0(int[] in, int[] out, int[] cospi, int cosBit) {
-        var zero = IntVector.zero(I256);
+        var zero = INTS_8.cast(IntVector.zero(I256));
         System.arraycopy(in, 0, out, 0, 8);
         {
             var a = INTS_8.cast(IntVector.fromArray(I256, in, 56));
@@ -1547,7 +1547,7 @@ final class VectorFwdTxfm {
      * @param cosBit the precision of the cosine table
      */
     private static void fadst16Part0(int[] in, int[] out, int[] cospi, int cosBit) {
-        var zero = IntVector.zero(I256);
+        var zero = INTS_8.cast(IntVector.zero(I256));
         System.arraycopy(in, 0, out, 0, 8);
         {
             var a = INTS_8.cast(IntVector.fromArray(I256, in, 120));
@@ -1589,7 +1589,7 @@ final class VectorFwdTxfm {
      * @param cosBit the precision of the cosine table
      */
     private static void fadst16Part1(int[] in, int[] out, int[] cospi, int cosBit) {
-        var zero = IntVector.zero(I256);
+        var zero = INTS_8.cast(IntVector.zero(I256));
         System.arraycopy(in, 16, out, 96, 8);
         {
             var a = INTS_8.cast(IntVector.fromArray(I256, in, 104));
