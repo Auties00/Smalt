@@ -469,6 +469,16 @@ final class BoxTypes {
     static final int MJPB = 0x6D6A7062;
 
     /**
+     * The sample description extension holding the default quantization tables of Motion-JPEG frames ({@code mjqt}).
+     */
+    static final int MJQT = 0x6D6A7174;
+
+    /**
+     * The sample description extension holding the default Huffman tables of Motion-JPEG frames ({@code mjht}).
+     */
+    static final int MJHT = 0x6D6A6874;
+
+    /**
      * The QuickTime sample entry of planar 4:2:0 YUV frames in full range ({@code j420}).
      */
     static final int J420 = 0x6A343230;

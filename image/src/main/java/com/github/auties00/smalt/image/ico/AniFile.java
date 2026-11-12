@@ -179,7 +179,9 @@ final class AniFile {
         }
         var file = new AniFile(source, limits, frameOffsets, frameSizes, null);
         if ((ByteArrays.i32le(anih, 32) & AF_ICON) == 0 && !file.framesAreIcons()) {
-            // TODO: decode raw frames (anih without AF_ICON), whose layout no published document specifies
+            // TODO: decode raw frames (anih without AF_ICON). No published document specifies their layout and Windows
+            //  11 user32 refuses every such file (tools/testdata/ani-raw), so nothing here can measure one; an older
+            //  Windows that loads them would be the reference
             throw new MediaException.Unsupported("ani", "animated cursors with raw frame data are not supported");
         }
         var displayRate = ByteArrays.u32le(anih, 28);

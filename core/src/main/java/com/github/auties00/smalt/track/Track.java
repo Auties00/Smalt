@@ -21,6 +21,8 @@ import java.util.OptionalLong;
  *   <li>ALAC: the {@code ALACSpecificConfig}</li>
  *   <li>ProRes and DNxHD: the four-character QuickTime sample entry type in ASCII (for example
  *       {@code apch} or {@code AVdh}), which names the ProRes flavor</li>
+ *   <li>Motion-JPEG: the default tables of a QuickTime sample description, as a DQT marker segment (the {@code mjqt}
+ *       box) followed by a DHT marker segment (the {@code mjht} box), either one absent when its box is</li>
  * </ul>
  * and is empty when the codec needs none or the container stores the configuration in band.
  *

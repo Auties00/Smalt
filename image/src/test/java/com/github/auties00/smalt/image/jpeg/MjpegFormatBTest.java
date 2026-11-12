@@ -107,15 +107,14 @@ class MjpegFormatBTest {
     }
 
     @Test
-    @DisplayName("reject headers that point outside their field, and quantization tables kept in the sample description")
+    @DisplayName("reject headers that point outside their field, and frames without quantization tables")
     void rejects() {
         var jpeg = jpeg(ChromaFormat.YUV420, true, 2);
         var frame = MotionJpegTesting.toFormatB(true, jpeg);
         var decoder = new MjpegDecoder();
         var noTables = frame.clone();
         ByteBuffer.wrap(noTables).putInt(20, 0);
-        assertEquals("mjpeg format b", assertThrows(MediaException.Unsupported.class,
-                () -> decoder.decodeFrame(noTables, 0, noTables.length)).format());
+        assertThrows(MediaException.Malformed.class, () -> decoder.decodeFrame(noTables, 0, noTables.length));
         for (var slot : new int[]{20, 24, 28, 32, 36}) {
             var outside = frame.clone();
             ByteBuffer.wrap(outside).putInt(slot, frame.length + 100);

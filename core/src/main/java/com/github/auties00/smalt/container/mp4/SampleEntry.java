@@ -368,7 +368,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         var colorTable = colorTableId == 0 && indexed ? parseColorTable(payload) : null;
         var sinfs = new ArrayList<BoxCursor>();
         byte[] avcC = null, hvcC = null, lhvC = null, vvcC = null, vpcC = null, av1C = null, jp2h = null, glbl = null,
-                dvc1 = null;
+                dvc1 = null, mjqt = null, mjht = null;
         var layerConfigs = new ArrayList<byte[]>();
         EsDescriptor esds = null;
         ColorInfo color = null;
@@ -404,6 +404,8 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                 case BoxTypes.GLBL -> glbl = body.rest();
                 case BoxTypes.DVC1 -> dvc1 = body.rest();
                 case BoxTypes.JP2H -> jp2h = withHeader(BoxTypes.JP2H, body.rest());
+                case BoxTypes.MJQT -> mjqt = mjqt == null ? body.rest() : mjqt;
+                case BoxTypes.MJHT -> mjht = mjht == null ? body.rest() : mjht;
                 case BoxTypes.JPVI, BoxTypes.JXPL -> jxs.writeBytes(withHeader(box.type(), body.rest()));
                 case BoxTypes.UNCC, BoxTypes.CMPD, BoxTypes.CMPC, BoxTypes.ICEF, BoxTypes.CPAL, BoxTypes.CPAT,
                      BoxTypes.CLOC, BoxTypes.SPLZ, BoxTypes.SBPM, BoxTypes.SNUC ->
@@ -504,7 +506,10 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                 config = vc1Config(dvc1);
             }
             case BoxTypes.S263, BoxTypes.H263 -> codec = Codec.H263;
-            case BoxTypes.JPEG, BoxTypes.MJPA, BoxTypes.MJPB -> codec = Codec.MJPEG;
+            case BoxTypes.JPEG, BoxTypes.MJPA, BoxTypes.MJPB -> {
+                codec = Codec.MJPEG;
+                config = MotionJpegTables.toConfig(mjqt, mjht);
+            }
             case BoxTypes.MJP2 -> {
                 codec = Codec.JPEG2000;
                 config = Jp2Frames.isHeader(jp2h) ? jp2h : null;

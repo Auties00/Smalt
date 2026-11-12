@@ -9,6 +9,8 @@ import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 
+import java.util.Arrays;
+
 /**
  * Locates the fields of a Motion-JPEG frame, converts QuickTime Motion-JPEG format B frames to
  * interchange JPEG streams, and weaves two decoded fields into one frame.
@@ -66,11 +68,12 @@ public final class MotionJpegFields {
      *
      * <p>Each field starts with a header of 32-bit big-endian integers: a reserved word, the tag
      * {@code 'mjpg'}, the field size, the padded field size, and the offsets, from the start of the
-     * field, of the next field (0 for the last), of the quantization tables, of the Huffman tables
-     * (0 for the tables of T.81 Annex K), of the frame header, of the scan header and of the
-     * entropy-coded data. The tables and headers are marker segments without their marker codes,
-     * and the entropy-coded data has no stuffed zero bytes; each field becomes SOI, DQT, DHT (when
-     * present), SOF0, SOS, the data with its {@code 0xFF} bytes stuffed, and EOI. The data runs to
+     * field, of the next field (0 for the last), of the quantization tables and of the Huffman tables
+     * (each 0 when the field takes them from elsewhere: {@link #withDefaultTables}, and T.81 Annex K
+     * for Huffman tables), of the frame header, of the scan header and of the entropy-coded data.
+     * The tables and headers are marker segments without their marker codes, and the entropy-coded
+     * data has no stuffed zero bytes; each field becomes SOI, DQT and DHT (when present), SOF0, SOS,
+     * the data with its {@code 0xFF} bytes stuffed, and EOI. The data runs to
      * the end of the field: its size, or the start of the next field, or the end of the frame,
      * whichever comes first. At most two fields are converted.
      *
@@ -80,8 +83,6 @@ public final class MotionJpegFields {
      * @param limits the resource bounds checked before the allocation
      * @return the interchange streams
      * @throws MediaException.Malformed if a header or a segment it points to is invalid
-     * @throws MediaException.Unsupported if a field takes its quantization tables from the sample
-     * description, which this conversion does not read
      * @throws MediaException.LimitExceeded if the converted frame exceeds the limits
      */
     public static byte[] toInterchange(byte[] data, int offset, int length, MediaLimits limits) {
@@ -189,22 +190,17 @@ public final class MotionJpegFields {
      * @param end the index after the field
      * @param slot 0 for the quantization tables, 1 for the Huffman tables, 2 for the frame header
      * and 3 for the scan header
-     * @return the index, or {@code -1} for Huffman tables the field does not carry
+     * @return the index, or {@code -1} for tables the field does not carry
      * @throws MediaException.Malformed if the offset or the segment is out of the field
-     * @throws MediaException.Unsupported if the field carries no quantization tables
      */
     private static int segment(byte[] data, int start, int end, int slot) {
         var offset = u32(data, start + 20 + 4 * slot);
         if (offset == 0) {
-            // TODO: read the quantization tables of the sample description's mjqt box, whose layout the QuickTime
-            //  File Format does not give and of which no sample is at hand
-            return switch (slot) {
-                case 0 -> throw new MediaException.Unsupported("mjpeg format b",
-                        "the Motion-JPEG format B field takes its quantization tables from the sample description");
-                case 1 -> -1;
-                default -> throw new MediaException.Malformed("Motion-JPEG format B field without "
-                        + (slot == 2 ? "a frame" : "a scan") + " header");
-            };
+            if (slot < 2) {
+                return -1;
+            }
+            throw new MediaException.Malformed("Motion-JPEG format B field without "
+                    + (slot == 2 ? "a frame" : "a scan") + " header");
         }
         if (offset < FORMAT_B_HEADER || offset > end - start - 2) {
             throw new MediaException.Malformed("Motion-JPEG format B header points outside its field");
@@ -237,6 +233,102 @@ public final class MotionJpegFields {
             throw new MediaException.Malformed("Motion-JPEG format B data offset points outside its field");
         }
         return start + (int) offset;
+    }
+
+    /**
+     * Reads the default tables of a Motion-JPEG track from its codec configuration.
+     *
+     * @param config the configuration: a DQT marker segment, a DHT marker segment or both; a track from a
+     * container that stores something else in this place has no default tables
+     * @return the tables, or {@code null} when the configuration holds none
+     */
+    public static DefaultTables defaultTables(byte[] config) {
+        byte[] quantization = null;
+        byte[] huffman = null;
+        var at = 0;
+        while (at < config.length) {
+            if (at + 4 > config.length || config[at] != (byte) 0xFF) {
+                return null;
+            }
+            var size = u16(config, at + 2);
+            if (size < 2 || at + 2 + size > config.length) {
+                return null;
+            }
+            var segment = Arrays.copyOfRange(config, at, at + 2 + size);
+            switch (config[at + 1] & 0xFF) {
+                case 0xDB -> quantization = segment;
+                case 0xC4 -> huffman = segment;
+                default -> {
+                    return null;
+                }
+            }
+            at += 2 + size;
+        }
+        return quantization == null && huffman == null ? null : new DefaultTables(quantization, huffman);
+    }
+
+    /**
+     * Gives an interchange image the default tables it lacks.
+     *
+     * <p>QuickTime reads a sample description's tables for a field with none of that kind of its own, whatever its
+     * format, and ignores them otherwise: a field that has a DQT or a DHT segment before its first scan keeps it,
+     * even when it does not define every table the scan uses.
+     *
+     * @param data the array holding the image
+     * @param start the index of the image's SOI marker
+     * @param end the index after the image
+     * @param tables the default tables
+     * @param limits the resource bounds checked before the allocation
+     * @return the image with the missing segments inserted after SOI, or {@code null} when it needs none
+     * @throws MediaException.LimitExceeded if the image exceeds the limits
+     */
+    public static byte[] withDefaultTables(byte[] data, int start, int end, DefaultTables tables, MediaLimits limits) {
+        var quantization = tables.quantization();
+        var huffman = tables.huffman();
+        var at = start + 2;
+        while (at + 4 <= end && data[at] == (byte) 0xFF && (quantization != null || huffman != null)) {
+            var marker = data[at + 1] & 0xFF;
+            if (marker == 0xDA || marker == 0xD9) {
+                break;
+            }
+            if (marker == 0xDB) {
+                quantization = null;
+            } else if (marker == 0xC4) {
+                huffman = null;
+            }
+            var size = u16(data, at + 2);
+            if (size < 2) {
+                break;
+            }
+            at += 2 + size;
+        }
+        var added = (quantization == null ? 0 : quantization.length) + (huffman == null ? 0 : huffman.length);
+        if (added == 0 || end - start < 2) {
+            return null;
+        }
+        LimitChecks.checkAllocation(limits, (long) end - start + added);
+        var out = new byte[end - start + added];
+        System.arraycopy(data, start, out, 0, 2);
+        var to = 2;
+        if (quantization != null) {
+            System.arraycopy(quantization, 0, out, to, quantization.length);
+            to += quantization.length;
+        }
+        if (huffman != null) {
+            System.arraycopy(huffman, 0, out, to, huffman.length);
+            to += huffman.length;
+        }
+        System.arraycopy(data, start + 2, out, to, end - start - 2);
+        return out;
+    }
+
+    /**
+     * The tables a QuickTime sample description declares for the fields that carry none.
+     *
+     * @param quantization the DQT marker segment, with its marker code, or {@code null}
+     * @param huffman the DHT marker segment, with its marker code, or {@code null}
+     */
+    public record DefaultTables(byte[] quantization, byte[] huffman) {
     }
 
     /**

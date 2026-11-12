@@ -456,7 +456,8 @@ public final class Mp4Muxer implements Muxer {
      * holds the track's sequence header or that of the first frame; H.263 is {@code s263} with a {@code d263}
      * box ({@code h263} in a QuickTime file); Motion-JPEG is {@code mp4v} with the JPEG object
      * type in an ISO file and {@code jpeg} ({@code mjpa} for Motion-JPEG format A frames,
-     * {@code mjpb} for format B frames) in a QuickTime file. Motion JPEG 2000 is {@code mjp2} with a {@code jp2h}
+     * {@code mjpb} for format B frames) in a QuickTime file, with the {@code mjqt} and {@code mjht} boxes of the
+     * track's configuration. Motion JPEG 2000 is {@code mjp2} with a {@code jp2h}
      * box, the track's configuration or, without one, the JP2 Header box of the first frame or one built from its
      * main codestream header; a Motion JPEG 2000 file adds the {@code fiel}, {@code jsub} and {@code orfo} boxes and
      * stores each frame as its Contiguous Codestream boxes, dropping the other boxes of a JP2 file. JPEG XS is

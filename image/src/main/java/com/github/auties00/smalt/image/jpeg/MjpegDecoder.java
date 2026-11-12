@@ -16,6 +16,7 @@ import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Interlacing;
 import com.github.auties00.smalt.track.Packet;
+import com.github.auties00.smalt.track.PacketSideData;
 import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.VideoTrack;
 import com.github.auties00.smalt.video.VideoDecoder;
@@ -64,9 +65,15 @@ import java.util.function.Consumer;
  *   high, decodes to the track height with the field supplying both fields.</li>
  *   <li>A QuickTime Motion-JPEG format B frame (sample entry {@code mjpb}), recognized by its
  *   marker-less {@code mjpg} header in place of SOI, has each field rebuilt into an interchange
- *   JPEG stream from the header's offsets and is then decoded the same way; a field without a
- *   Huffman table offset uses the tables of Annex K.</li>
+ *   JPEG stream from the header's offsets and is then decoded the same way.</li>
  * </ul>
+ *
+ * <p>A field of any of these forms without a DQT or DHT segment before its scan (without the
+ * corresponding offset, in format B) takes those tables from the sample description's {@code mjqt}
+ * or {@code mjht} box, which the track's {@linkplain Track#codecConfig() configuration} carries
+ * and a packet's {@linkplain PacketSideData#newCodecConfig() new configuration} replaces from that
+ * packet on. A field with such a segment ignores the box. Without either, Huffman tables are those of Annex K
+ * and missing quantization tables make the frame {@link MediaException.Malformed}.
  *
  * <p>A decoder reads either the packets of a {@link Codec#MJPEG} track through
  * {@link #decode(Packet, Consumer)}, where every packet yields one key frame with the packet's
@@ -106,6 +113,11 @@ public final class MjpegDecoder implements VideoDecoder {
     private final int[] bounds = new int[4];
 
     /**
+     * The tables the current sample description declares, or {@code null} for none.
+     */
+    private MotionJpegFields.DefaultTables defaultTables;
+
+    /**
      * Creates a decoder for frames that come with no track, under the
      * {@link VideoDecoderOptions#defaults()}.
      */
@@ -122,6 +134,7 @@ public final class MjpegDecoder implements VideoDecoder {
     public MjpegDecoder(VideoDecoderOptions options) {
         this.track = null;
         this.options = Objects.requireNonNull(options, "options");
+        this.defaultTables = null;
     }
 
     /**
@@ -151,6 +164,7 @@ public final class MjpegDecoder implements VideoDecoder {
         }
         this.track = track;
         this.options = options;
+        this.defaultTables = track.codecConfig().map(MotionJpegFields::defaultTables).orElse(null);
     }
 
     /**
@@ -169,15 +183,18 @@ public final class MjpegDecoder implements VideoDecoder {
      * @param output receives the frame, a key frame carrying the packet's timestamps
      * @throws MediaException.Malformed if the frame is invalid or holds no decodable data
      * @throws MediaException.Unsupported if the frame uses a coding feature {@link JpegDecoder}
-     * lacks, is coded as RGB (other than through the reversible transform), CMYK or YCCK, has two
-     * or more than four components ({@code "jpeg with N components"}), or is a format B frame that
-     * takes its quantization tables from the sample description
+     * lacks, is coded as RGB (other than through the reversible transform), CMYK or YCCK, or has two
+     * or more than four components ({@code "jpeg with N components"})
      * @throws MediaException.LimitExceeded if the frame exceeds the limits
      */
     @Override
     public void decode(Packet packet, Consumer<VideoFrame> output) {
         Objects.requireNonNull(packet, "packet");
         Objects.requireNonNull(output, "output");
+        var config = packet.sideData().newCodecConfig();
+        if (config.isPresent()) {
+            defaultTables = MotionJpegFields.defaultTables(config.get());
+        }
         var data = packet.data();
         var picture = decodeFrame(data, 0, data.length);
         output.accept(new VideoFrame(picture, packet.pts(),
@@ -197,9 +214,8 @@ public final class MjpegDecoder implements VideoDecoder {
      * @throws IndexOutOfBoundsException if the range is invalid
      * @throws MediaException.Malformed if the frame is invalid or holds no decodable data
      * @throws MediaException.Unsupported if the frame uses a coding feature {@link JpegDecoder}
-     * lacks, is coded as RGB (other than through the reversible transform), CMYK or YCCK, has two
-     * or more than four components ({@code "jpeg with N components"}), or is a format B frame that
-     * takes its quantization tables from the sample description
+     * lacks, is coded as RGB (other than through the reversible transform), CMYK or YCCK, or has two
+     * or more than four components ({@code "jpeg with N components"})
      * @throws MediaException.LimitExceeded if the frame exceeds the limits
      */
     public Picture decodeFrame(byte[] data, int offset, int length) {
@@ -284,7 +300,10 @@ public final class MjpegDecoder implements VideoDecoder {
      */
     private Picture decodeField(byte[] data, int start, int end) {
         var limits = options.limits();
-        var reader = new JpegReader(data, start, end - start, limits);
+        var complete = defaultTables == null ? null
+                : MotionJpegFields.withDefaultTables(data, start, end, defaultTables, limits);
+        var reader = complete != null ? new JpegReader(complete, 0, complete.length, limits)
+                : new JpegReader(data, start, end - start, limits);
         var frame = reader.readHeaders();
         reader.checkSupported();
         if (LosslessOutput.reversibleRgb(reader)) {

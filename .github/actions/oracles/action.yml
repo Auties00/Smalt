@@ -77,17 +77,24 @@ runs:
           bash $policy apt '${{ inputs.save }}' '${{ steps.apt.outputs.cache-primary-key }}' 'oracle-apt-${{ runner.os }}-${{ runner.arch }}-'
         fi
 
+    # Recorded before the tool directories go on PATH: on Windows the MSYS2 ucrt64 directory holds a Python without
+    # pip (a dependency of the packages installed there), which would otherwise shadow the Python of setup-python.
+    # The tests run Python oracles with SMALT_TEST_PYTHON.
+    - name: Record the Python of the tests
+      shell: bash
+      run: echo "SMALT_TEST_PYTHON=$(python -c 'import sys; print(sys.executable)')" >> "$GITHUB_ENV"
+
     - name: Install the oracle tools
       shell: bash
       run: python tools/testdata/oracles.py install --github
 
-    # Pillow is the oracle of tools/testdata/bmp-oracle/pillow-bmp-dump.py, which the tests run with the first python3
-    # or python on PATH, the Python of setup-python. A Python without a Pillow wheel leaves that test to skip.
+    # Pillow is the oracle of tools/testdata/bmp-oracle/pillow-bmp-dump.py. A Python without a Pillow wheel leaves
+    # that test to skip.
     - name: Install Pillow
       shell: bash
       continue-on-error: true
       run: |
-        python -m pip install --quiet --only-binary=:all: "pillow>=12,<14"
+        "$SMALT_TEST_PYTHON" -m pip install --quiet --only-binary=:all: "pillow>=12,<14"
 
     # apt leaves its lock and the downloads in progress root-owned and unreadable to the cache's tar.
     - name: Prepare the apt archives for the cache

@@ -151,6 +151,7 @@ final class SampleEntryWriter {
                     var format = isMotionJpegA(track.firstBytes) ? BoxTypes.MJPA
                             : isMotionJpegB(track.firstBytes) ? BoxTypes.MJPB : BoxTypes.JPEG;
                     writeVisualHeader(writer, format, (VideoTrack) described, "Photo - JPEG");
+                    MotionJpegTables.write(writer, config);
                     writeVisualTrailer(writer, (VideoTrack) described);
                 } else {
                     writeVisualEsds(writer, plan, JPEG_VISUAL, (VideoTrack) described, null);

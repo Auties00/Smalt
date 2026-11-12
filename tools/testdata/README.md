@@ -229,8 +229,10 @@ independent readers besides `BmpDecoder`, and skips the comparisons whose reader
 
 - `bmp-oracle/ImageIoBmpDump.java`, run by the tests as a source-file program in a separate JVM: the JDK's own BMP
   reader, writing the pixels as RGBA8.
-- `bmp-oracle/pillow-bmp-dump.py`, run with `python -P` by the Python of `-Dsmalt.test.python` or the first
-  `python3` or `python` on `PATH`: Pillow's reader (checked with Pillow 12.0.0, whose RLE4 reader the test leaves
+- `bmp-oracle/pillow-bmp-dump.py`, run with `python -P` by the Python of `-Dsmalt.test.python`, of the
+  `SMALT_TEST_PYTHON` environment variable (which the CI oracles action sets to the Python of setup-python, since
+  the MSYS2 directory it puts on `PATH` on Windows holds a Python without pip), or else the first `python3` or
+  `python` on `PATH`: Pillow's reader (checked with Pillow 12.0.0, whose RLE4 reader the test leaves
   out because it misreads BMP Suite's `g/pal4rle.bmp` too).
 - ffmpeg.
 

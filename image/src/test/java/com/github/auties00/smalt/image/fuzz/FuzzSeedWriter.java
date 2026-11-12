@@ -597,6 +597,10 @@ class FuzzSeedWriter {
     void videos() {
         var mjpeg = ffmpeg("avi", video(32, 32, 3), "-c:v", "mjpeg", "-q:v", "20");
         write(ImageVideoFuzzTest.class, "mjpeg", "valid-avi.bin", FuzzSeeds.packets(mjpeg, Codec.MJPEG, 0, 3));
+        write(ImageVideoFuzzTest.class, "mjpeg", "valid-table-boxes.bin", FuzzSeeds.packets(
+                VECTORS.resolve("jpeg/quicktime/both-boxes.mov"), Codec.MJPEG, 0, 1));
+        write(ImageVideoFuzzTest.class, "mjpeg", "valid-format-a-table-boxes.bin", FuzzSeeds.packets(
+                VECTORS.resolve("jpeg/quicktime/a-both-boxes.mov"), Codec.MJPEG, 0, 1));
         write(ImageVideoFuzzTest.class, "mjpeg", "valid-lossless.bin", FuzzSeeds.packets(
                 VECTORS.resolve("jpeg/mjpeg/ljpeg-yuvj420p-pred1.avi"), Codec.MJPEG, 0, 2));
         // JP2 file frames as ffmpeg's encoder writes them, and the jp2c samples of a Motion JPEG 2000 file whose

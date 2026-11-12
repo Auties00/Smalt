@@ -17,8 +17,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * Runs the independent BMP readers the encoder tests compare against: the JDK's ImageIO reader in a separate JVM
  * ({@code tools/testdata/bmp-oracle/ImageIoBmpDump.java}, so this module never reads {@code java.desktop}), Pillow
- * ({@code pillow-bmp-dump.py} there, run by the Python of {@code -Dsmalt.test.python} or the first {@code python3}
- * or {@code python} on {@code PATH}) and ffmpeg. A reader that cannot read a file yields {@code null} for it.
+ * ({@code pillow-bmp-dump.py} there, run by the Python of {@code -Dsmalt.test.python}, of the {@code SMALT_TEST_PYTHON}
+ * environment variable, or else the first {@code python3} or {@code python} on {@code PATH}) and ffmpeg. A reader that cannot read a file yields {@code null} for it.
  */
 final class BmpOracles {
     private static final Path DIRECTORY = Path.of("..", "tools", "testdata", "bmp-oracle");
@@ -37,6 +37,10 @@ final class BmpOracles {
         var configured = System.getProperty("smalt.test.python");
         if (configured != null && !configured.isBlank()) {
             return Optional.of(configured);
+        }
+        var environment = System.getenv("SMALT_TEST_PYTHON");
+        if (environment != null && !environment.isBlank()) {
+            return Optional.of(environment);
         }
         return Oracle.find("python3").or(() -> Oracle.find("python")).map(Path::toString);
     }

@@ -21,6 +21,9 @@ image/src/test/resources/com/github/auties00/smalt/image/jp2/kakadu-e5/** -text 
 image/src/test/resources/com/github/auties00/smalt/image/jp2/kakadu-cbap/** -text -diff
 # The MACE streams and QuickTime's decodes of them are byte-exact.
 audio/src/test/resources/com/github/auties00/smalt/audio/mace/** -text -diff
+# QuickTime's Motion-JPEG files and drawings, and the animated cursors user32 was shown, are byte-exact.
+image/src/test/resources/com/github/auties00/smalt/image/jpeg/quicktime/** -text -diff
+image/src/test/resources/com/github/auties00/smalt/image/ico/user32/** -text -diff
 # Reference outputs stored as raw float32 samples are byte-exact.
 **/src/test/resources/**/*.f32 -text -diff
 # Little CMS reference outputs of the color tests are raw samples, byte-exact.
