@@ -1,0 +1,44 @@
+# demux dump of mxf/bmx-op1a-avci50-headerless.mxf; regenerate with -Dsmalt.test.updateDumps=true
+format MXF
+duration 20000
+seekable true
+metadata application_platform="libMXF (Linux)"
+metadata company_name="RegCo"
+metadata material_package_umid="0000000000000000000000000000000000000000000000000000000000000001"
+metadata operational_pattern="OP1a"
+metadata product_name="RegLib"
+metadata product_version="0.0.0"
+timecode 00:00:00:00 fps=50
+track 1001 VIDEO H264 timebase=1/50 duration=1 config=76:c1617f38
+  video 960x720 orientation=NORMAL rate=50/1 sar=4/3 interlacing=PROGRESSIVE
+  metadata title="V1"
+track 2001 AUDIO PCM_S24LE timebase=1/48000 duration=960 config=none
+  audio rate=48000 bits=24 skip=0 layout=[FRONT_CENTER]
+  metadata title="A1"
+packets 2
+0 t1001 pts=0 dts=0 dur=1 flags=KEY size=53935 crc=3cbecb1b
+1 t2001 pts=0 dts=0 dur=960 flags=KEY size=2880 crc=328d488a
+seek 0: t1001@0 t2001@0
+seek 6666: t1001@0 t2001@0
+seek 13333: t1001@0 t2001@0
+seek 20000: end
+seek -1000000: t1001@0 t2001@0
+header over READ_ONCE, READ_ONCE_UNKNOWN_LENGTH:
+  format MXF
+  duration 20000
+  seekable false
+  metadata application_platform="libMXF (Linux)"
+  metadata company_name="RegCo"
+  metadata material_package_umid="0000000000000000000000000000000000000000000000000000000000000001"
+  metadata operational_pattern="OP1a"
+  metadata product_name="RegLib"
+  metadata product_version="0.0.0"
+  timecode 00:00:00:00 fps=50
+  track 1001 VIDEO H264 timebase=1/50 duration=1 config=76:c1617f38
+    video 960x720 orientation=NORMAL rate=50/1 sar=4/3 interlacing=PROGRESSIVE
+    metadata title="V1"
+  track 2001 AUDIO PCM_S24LE timebase=1/48000 duration=960 config=none
+    audio rate=48000 bits=24 skip=0 layout=[FRONT_CENTER]
+    metadata title="A1"
+not seekable over READ_ONCE
+not seekable over READ_ONCE_UNKNOWN_LENGTH

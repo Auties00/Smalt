@@ -1,0 +1,12 @@
+# video decode dump of h264-extended/si-model; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 80000
+seekable true
+track 1 H264 32x32 timebase=1/90000
+0 pts=0 dur=3600 key=true 32x32 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=72e93ffa u=bc32701a v=c2940157
+1 pts=3600 dur=3600 key=false 32x32 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=f9943cc1 u=31e6f605 v=a43a30ae
+seek 0: @0
+seek 26666: @0
+seek 53333: @1
+seek 80000: end
+seek -1000000: @0
