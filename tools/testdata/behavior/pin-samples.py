@@ -28,6 +28,8 @@ def generator(root, relative):
         return "make-cineform-raw-sample.py"
     if root.startswith("video/"):
         return "make-avif-samples.py"
+    if relative == "elementary/mpeg4-studio.m4v":
+        return "tools/testdata/mpeg4-studio/make-vectors.py (the studio-dpcm-options vector)"
     if relative == "elementary/vvc.266":
         return "tools/testdata/vvc-vectors/make-vectors.py (the ra-420-10bit vector)"
     if relative in ("dv/dv25-audio.dv", "avi/dv-type1.avi"):

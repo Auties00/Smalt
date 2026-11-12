@@ -133,6 +133,7 @@ Contents
   76. psd-tools
   77. 3DV-ATM, the ITU-T H.264.2 3D-AVC reference software
   78. ISO/IEC 14496-5 MPEG-4 Audio reference software, TwinVQ modules
+  79. MPEG-4 Visual Studio Profile reference software (MoMuSys)
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -2680,6 +2681,36 @@ Copyright:
 EOF
 license_start "Notices of the source files"
 cat "$LIC/iso14496-5-twinvq-notice.txt"
+section "79. MPEG-4 Visual Studio Profile reference software (MoMuSys)"
+cat <<'EOF'
+Project:      the MoMuSys MPEG-4 Visual reference software for the Studio
+              Profile of ISO/IEC 14496-5:2001/Amd.1:2002 (version 3, derived
+              from MoMuSys-FPDAM1-1.0-001220_sony, 2002-03-08)
+Source:       ISO/IEC 14496-5:2001/Amd.1:2002 reference software
+              (video/natural/StudioProfile-MoMuSys) of ISO's Publicly
+              Available Standards
+License text: the notice at the head of every source file
+License:      free license for use in hardware or software products claiming
+              conformance to MPEG-4 Video (ISO/IEC 14496-2); the copyright
+              notice must be included in all copies or derivative works
+
+Derived Smalt packages:
+  video.mpeg4.internal.studio (the studio DC size codes of
+  vm_common/include/studio_vlc_table.h, the DPCM block decoding of
+  vm_dec/src/combined_decode.c, the intra dequantization of
+  vm_common/src/text_quant.c and studio_quantizer.c, and the inverse DCT of
+  vm_common/src/text_util.c)
+
+Derivation: C code translated to Java and tables transcribed; the final
+syntax of the Studio profiles departs from this software where the
+ISO/IEC 14496-4 conformance streams do.
+
+Copyright:
+  Copyright (c) 1996-2002 the ACTS-MoMuSys partners and Sony Corporation,
+  with the developers and editors named in the source files
+EOF
+license_start "License notice (vm_dec/src/vm_get_blk_studio.c and the other source files)"
+cat "$LIC/mpeg4-momusys-studio-notice.txt"
 
 } > "$OUT"
 

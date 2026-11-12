@@ -18,10 +18,11 @@ import com.github.auties00.smalt.internal.limits.LimitChecks;
  * {@code VideoObjectLayer()} header. A layer that uses a tool the fast engine lacks (arbitrary
  * shape, static sprites, sprite brightness change, N-bit video, NEWPRED, reduced resolution VOPs
  * or scalability) is marked {@link #objectTools}: its header is read up to that tool and the
- * object decoder of {@code video.mpeg4.internal.object} decodes it. The Studio profiles, Fine
- * Granularity Scalable enhancement layers and chroma formats other than 4:2:0 are rejected with
- * {@link MediaException.Unsupported}. A layer for H.263
- * pictures or the short video header is created with {@link #shortHeader(int, int)}.
+ * object decoder of {@code video.mpeg4.internal.object} decodes it. Fine Granularity Scalable
+ * enhancement layers and chroma formats other than 4:2:0 are rejected with {@link MediaException.Unsupported};
+ * Studio profile layers, whose header has another syntax, are read by {@code video.mpeg4.internal.studio}
+ * instead. A layer for H.263 pictures or the short video header is created with
+ * {@link #shortHeader(int, int)}.
  *
  * <p>Instances are mutable value holders owned by one decoder; they are not thread-safe.
  */
@@ -307,14 +308,6 @@ public final class VideoObjectLayer {
                                          VideoObjectLayer signal) {
         var layer = new VideoObjectLayer();
         layer.profileAndLevel = profileAndLevel;
-        if (profileAndLevel >= 0xE1 && profileAndLevel <= 0xE8) {
-            // TODO: decode the Studio profiles of ISO/IEC 14496-2 Amd 1. Blocked on the final syntax: the
-            //  MoMuSys reference decoder of ISO/IEC 14496-5 Amd 1 implements the FDAM 1 text (N3898), whose
-            //  time_code and macroblock layer differ from the vcon-stp streams of ISO/IEC 14496-4, and no
-            //  available decoder reconstructs those streams to compare against.
-            throw new MediaException.Unsupported("mpeg-4 studio profile", "profile_and_level_indication 0x"
-                    + Integer.toHexString(profileAndLevel) + " is a Studio profile");
-        }
         layer.verid = visualVerid;
         if (signal != null) {
             layer.fullRange = signal.fullRange;
@@ -324,11 +317,6 @@ public final class VideoObjectLayer {
         }
         reader.skip(1);
         layer.objectType = reader.read(8);
-        if (layer.objectType == 0x0F || layer.objectType == 0x10) {
-            // TODO: decode the Simple Studio and Core Studio object types (blocked as the Studio profiles above).
-            throw new MediaException.Unsupported("mpeg-4 studio profile", "video_object_type_indication "
-                    + layer.objectType + " is a Studio object type");
-        }
         if (layer.objectType == FINE_GRANULARITY_SCALABLE) {
             // TODO: decode the FGS and FGST enhancement layers of ISO/IEC 14496-2 Amd 2. Blocked: the FGS reference
             //  software of ISO/IEC 14496-5 Amd 1 predates the final syntax (its own sources mark the

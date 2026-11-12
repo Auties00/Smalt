@@ -60,6 +60,12 @@ import java.util.PriorityQueue;
  * pictures are flagged as key frames, and packets last {@code fixed_vop_time_increment} when the video object layer
  * fixes the VOP rate.
  *
+ * <p>A Studio profile layer (the Simple Studio or Core Studio object type, or a Studio
+ * {@code profile_and_level_indication}) carries slices, extension data and user data after each VOP header, which
+ * stay in the VOP's packet. It is timed in frame periods of its {@code frame_rate_code} (ISO/IEC 13818-2 Table 6-4,
+ * 1001/30000 second for a reserved code): every frame VOP and the second field VOP of a frame take the next period,
+ * which every packet lasts, and the first field VOP of a frame carries no timestamp.
+ *
  * <p>The demuxer is seekable: the first {@link #seek(long)} reads the whole stream once to index its intra pictures,
  * and every seek then resumes from the intra picture at or before the target, with the timestamps a linear read
  * gives. The source is read sequentially between seeks and not closed. Instances are not thread-safe.
@@ -74,6 +80,30 @@ public final class Mpeg4VideoDemuxer implements Demuxer {
      * The H.263 picture clock without a custom picture clock frequency, 30000/1001 hertz.
      */
     private static final Rational H263_CLOCK = new Rational(1001, 30_000);
+
+    /**
+     * The {@code video_object_type_indication} of the Simple Studio object type.
+     */
+    private static final int STUDIO_SIMPLE = 0x0F;
+
+    /**
+     * The {@code video_object_type_indication} of the Core Studio object type.
+     */
+    private static final int STUDIO_CORE = 0x10;
+
+    /**
+     * The byte, from a Studio VOP start code, holding {@code vop_structure} (bits 5 and 4) and
+     * {@code vop_prediction_type} (bits 3 and 2): the start code and the 82 bits of time code and temporal
+     * reference precede it.
+     */
+    private static final int STUDIO_TYPE_BYTE = 14;
+
+    /**
+     * The frame periods of {@code frame_rate_code} 1 to 8 (ISO/IEC 13818-2 Table 6-4), index 0 unused.
+     */
+    private static final Rational[] STUDIO_RATES = {null, new Rational(1001, 24_000), new Rational(1, 24),
+            new Rational(1, 25), new Rational(1001, 30_000), new Rational(1, 30), new Rational(1, 50),
+            new Rational(1001, 60_000), new Rational(1, 60)};
 
     /**
      * The pixel aspect ratio the standard H.263 source formats imply.
@@ -176,6 +206,12 @@ public final class Mpeg4VideoDemuxer implements Demuxer {
     private final boolean reordered;
 
     /**
+     * Whether the stream is a Studio profile layer, whose VOPs carry slices, extension data and user data after
+     * their headers and are timed by their frame rate.
+     */
+    private final boolean studio;
+
+    /**
      * The reader the packets come from.
      */
     private Reader reader;
@@ -266,6 +302,7 @@ public final class Mpeg4VideoDemuxer implements Demuxer {
         Rational aspect;
         if (shortHeader) {
             firstLayer = null;
+            studio = false;
             while (first.end - first.start < 16 && !first.exhausted) {
                 first.fill();
             }
@@ -283,10 +320,19 @@ public final class Mpeg4VideoDemuxer implements Demuxer {
             if (vop > first.start) {
                 config = Arrays.copyOfRange(first.buffer, first.start, vop);
             }
-            firstLayer = config == null ? null : Layer.find(config, 0, config.length);
-            timeBase = firstLayer == null ? UNTIMED : new Rational(1, firstLayer.resolution);
-            reordered = firstLayer == null || !firstLayer.lowDelay;
-            aspect = firstLayer == null ? null : firstLayer.aspect;
+            var studioLayer = config == null ? null : studioLayer(config);
+            studio = studioLayer != null;
+            if (studio) {
+                firstLayer = null;
+                timeBase = studioLayer.period();
+                reordered = false;
+                aspect = studioLayer.aspect();
+            } else {
+                firstLayer = config == null ? null : Layer.find(config, 0, config.length);
+                timeBase = firstLayer == null ? UNTIMED : new Rational(1, firstLayer.resolution);
+                reordered = firstLayer == null || !firstLayer.lowDelay;
+                aspect = firstLayer == null ? null : firstLayer.aspect;
+            }
         }
         var builder = VideoTrack.builder()
                 .id(1)
@@ -613,8 +659,20 @@ public final class Mpeg4VideoDemuxer implements Demuxer {
          */
         boolean customClock;
 
+        /**
+         * The number of Studio frames before the next VOP.
+         */
+        long studioFrames;
+
+        /**
+         * Whether the first field of a Studio frame was read and its second field was not.
+         */
+        boolean studioField;
+
         Clock copy() {
             var copy = new Clock();
+            copy.studioFrames = studioFrames;
+            copy.studioField = studioField;
             copy.referenceBase = referenceBase;
             copy.previousBase = previousBase;
             copy.layer = layer;
@@ -903,7 +961,7 @@ public final class Mpeg4VideoDemuxer implements Demuxer {
                 lastDts = dts;
             }
             var layer = clock.layer;
-            var duration = layer != null && layer.fixedIncrement > 0 ? layer.fixedIncrement
+            var duration = owner.studio ? 1 : layer != null && layer.fixedIncrement > 0 ? layer.fixedIncrement
                     : Packet.UNKNOWN_DURATION;
             ready.add(new Packet(1, picture.data, pts, dts, duration, picture.key));
         }
@@ -927,6 +985,9 @@ public final class Mpeg4VideoDemuxer implements Demuxer {
          */
         private long time(byte[] data) {
             long time;
+            if (owner.studio) {
+                return studioTime(data);
+            }
             if (owner.shortHeader) {
                 var picture = owner.findPicture(data, 0, data.length);
                 var header = picture < 0 ? null : h263Picture(data, picture, data.length - picture,
@@ -985,6 +1046,27 @@ public final class Mpeg4VideoDemuxer implements Demuxer {
                 clock.origin = time;
             }
             return time - clock.origin;
+        }
+
+        /**
+         * Returns the time of a Studio VOP in frame periods, counting frames in decoding order: a frame VOP and
+         * the second field of a frame take the next frame time, the first field of a frame takes none.
+         *
+         * @param data the packet
+         * @return the time, or {@link Packet#NO_TIMESTAMP} for a first field or a packet without a VOP
+         */
+        private long studioTime(byte[] data) {
+            var picture = owner.findPicture(data, 0, data.length);
+            if (picture < 0 || picture + STUDIO_TYPE_BYTE >= data.length) {
+                return Packet.NO_TIMESTAMP;
+            }
+            var structure = (data[picture + STUDIO_TYPE_BYTE] >>> 4) & 3;
+            if ((structure == 1 || structure == 2) && !clock.studioField) {
+                clock.studioField = true;
+                return Packet.NO_TIMESTAMP;
+            }
+            clock.studioField = false;
+            return clock.studioFrames++;
         }
 
         /**
@@ -1057,6 +1139,9 @@ public final class Mpeg4VideoDemuxer implements Demuxer {
             for (var i = from; i + 3 < end; i++) {
                 if (buffer[i] == 0 && buffer[i + 1] == 0) {
                     if (owner.shortHeader ? (buffer[i + 2] & 0xFC) == 0x80 : buffer[i + 2] == 1) {
+                        if (owner.studio && isStudioPayload(buffer[i + 3] & 0xFF)) {
+                            continue;
+                        }
                         return i;
                     }
                 }
@@ -1118,6 +1203,10 @@ public final class Mpeg4VideoDemuxer implements Demuxer {
      * @return {@code true} for an intra picture
      */
     private boolean isIntra(byte[] data, int offset) {
+        if (studio) {
+            return offset >= 0 && offset + STUDIO_TYPE_BYTE < data.length
+                    && ((data[offset + STUDIO_TYPE_BYTE] >>> 2) & 3) == 0;
+        }
         if (offset < 0 || offset + 8 > data.length) {
             return false;
         }
@@ -1137,5 +1226,77 @@ public final class Mpeg4VideoDemuxer implements Demuxer {
         var ufep = (int) (bits >>> (plusptype - UFEP_BITS)) & 7;
         var typeShift = plusptype - UFEP_BITS - (ufep == 1 ? OPPTYPE_BITS : 0) - TYPE_BITS;
         return ((bits >>> typeShift) & 7) == 0;
+    }
+
+    /**
+     * Returns whether a start code belongs to the Studio VOP before it: a slice, extension or user data start code.
+     *
+     * @param code the start code value after the prefix
+     * @return {@code true} for a code inside a Studio VOP
+     */
+    private static boolean isStudioPayload(int code) {
+        return code == 0xB2 || code == 0xB7 || code == 0xB8;
+    }
+
+    /**
+     * The timing and shape of a Studio profile layer.
+     *
+     * @param period the frame period in seconds
+     * @param aspect the pixel aspect ratio of its {@code aspect_ratio_info}, or {@code null} when unspecified
+     */
+    private record StudioHeader(Rational period, Rational aspect) {
+    }
+
+    /**
+     * Reads a Studio profile layer from the headers before the first VOP: the period of its {@code frame_rate_code}
+     * (ISO/IEC 13818-2 Table 6-4, 1001/30000 seconds when the code is reserved) and the pixel aspect ratio of its
+     * {@code aspect_ratio_info}.
+     *
+     * @param config the headers
+     * @return the layer, or {@code null} when the headers declare no Studio layer
+     */
+    private static StudioHeader studioLayer(byte[] config) {
+        var profile = 0;
+        for (var i = 0; i + 4 < config.length; i++) {
+            if (config[i] != 0 || config[i + 1] != 0 || config[i + 2] != 1) {
+                continue;
+            }
+            var code = config[i + 3] & 0xFF;
+            if (code == 0xB0) {
+                profile = config[i + 4] & 0xFF;
+            } else if ((code & 0xF0) == 0x20) {
+                var bits = new MsbBitReader(config, i + 4, config.length - i - 4);
+                bits.skip(1);
+                var type = bits.read(8);
+                if (type != STUDIO_SIMPLE && type != STUDIO_CORE && (profile < 0xE1 || profile > 0xE8)) {
+                    return null;
+                }
+                bits.skip(4);
+                var shape = bits.read(2);
+                bits.skip(4 + 1);
+                if (shape != 3) {
+                    bits.skip(1 + 2 + 4);
+                }
+                if (shape == 0) {
+                    bits.skip(1 + 14 + 1 + 14 + 1);
+                }
+                Rational aspect;
+                var aspectInfo = bits.read(4);
+                if (aspectInfo == SampleAspects.EXTENDED_PIXEL_ASPECT) {
+                    var parWidth = bits.read(8);
+                    var parHeight = bits.read(8);
+                    aspect = parWidth > 0 && parHeight > 0 ? new Rational(parWidth, parHeight).reduce() : null;
+                } else {
+                    aspect = SampleAspects.pixelAspectOf(aspectInfo);
+                }
+                var rate = bits.read(4);
+                if (bits.overrun()) {
+                    return new StudioHeader(new Rational(1001, 30000), null);
+                }
+                return new StudioHeader(rate < 1 || rate >= STUDIO_RATES.length ? new Rational(1001, 30000)
+                        : STUDIO_RATES[rate], aspect);
+            }
+        }
+        return null;
     }
 }

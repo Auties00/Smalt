@@ -42,6 +42,7 @@ Contents
   74. SVT-JPEG-XS
   77. 3DV-ATM, the ITU-T H.264.2 3D-AVC reference software
   78. ISO/IEC 14496-5 MPEG-4 Audio reference software, TwinVQ modules
+  79. MPEG-4 Visual Studio Profile reference software (MoMuSys)
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -3737,3 +3738,74 @@ TwinVQ decoder modules (ISO/IEC 14496-5 audio, src_tf: ntt_scale_init.c):
 /* This copyright notice must be included in all copies or derivative works. */
 /* Copyright (c)1997.                                                        */
 /*****************************************************************************/
+
+
+===============================================================================
+79. MPEG-4 Visual Studio Profile reference software (MoMuSys)
+===============================================================================
+
+Project:      the MoMuSys MPEG-4 Visual reference software for the Studio
+              Profile of ISO/IEC 14496-5:2001/Amd.1:2002 (version 3, derived
+              from MoMuSys-FPDAM1-1.0-001220_sony, 2002-03-08)
+Source:       ISO/IEC 14496-5:2001/Amd.1:2002 reference software
+              (video/natural/StudioProfile-MoMuSys) of ISO's Publicly
+              Available Standards
+License text: the notice at the head of every source file
+License:      free license for use in hardware or software products claiming
+              conformance to MPEG-4 Video (ISO/IEC 14496-2); the copyright
+              notice must be included in all copies or derivative works
+
+Derived Smalt packages:
+  video.mpeg4.internal.studio (the studio DC size codes of
+  vm_common/include/studio_vlc_table.h, the DPCM block decoding of
+  vm_dec/src/combined_decode.c, the intra dequantization of
+  vm_common/src/text_quant.c and studio_quantizer.c, and the inverse DCT of
+  vm_common/src/text_util.c)
+
+Derivation: C code translated to Java and tables transcribed; the final
+syntax of the Studio profiles departs from this software where the
+ISO/IEC 14496-4 conformance streams do.
+
+Copyright:
+  Copyright (c) 1996-2002 the ACTS-MoMuSys partners and Sony Corporation,
+  with the developers and editors named in the source files
+
+-------------------------------------------------------------------------------
+License notice (vm_dec/src/vm_get_blk_studio.c and the other source files)
+-------------------------------------------------------------------------------
+
+This software module was originally developed by
+
+  Karl Lillevold (Telenor / ACTS-MoMuSyS)
+
+and edited by
+
+  Paulo Nunes (IST / ACTS-MoMuSyS)
+  Robert Danielsen (Telenor / ACTS-MoMuSyS)
+  Osamu Sunohara (SONY)
+
+in the course of development of the MPEG-4 Video (ISO/IEC 14496-2) standard.
+This software module is an implementation of a part of one or more MPEG-4
+Video (ISO/IEC 14496-2) tools as specified by the MPEG-4 Video (ISO/IEC
+14496-2) standard.
+
+ISO/IEC gives users of the MPEG-4 Video (ISO/IEC 14496-2) standard free
+license to this software module or modifications thereof for use in hardware
+or software products claiming conformance to the MPEG-4 Video (ISO/IEC
+14496-2) standard.
+
+Those intending to use this software module in hardware or software products
+are advised that its use may infringe existing patents. The original
+developer of this software module and his/her company, the subsequent
+editors and their companies, and ISO/IEC have no liability for use of this
+software module or modifications thereof in an implementation. Copyright is
+not released for non MPEG-4 Video (ISO/IEC 14496-2) Standard conforming
+products.
+
+ACTS-MoMuSys partners retain full right to use the code for his/her own
+purpose, assign or donate the code to a third party and to inhibit third
+parties from using the code for non MPEG-4 Video (ISO/IEC 14496-2) Standard
+conforming products. This copyright notice must be included in all copies or
+derivative works.
+
+Copyright (c) 1996

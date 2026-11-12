@@ -10,6 +10,8 @@ import com.github.auties00.smalt.video.FrameSideData;
 import com.github.auties00.smalt.video.VideoLayer;
 import com.github.auties00.smalt.video.h263.internal.H263PlusStream;
 import com.github.auties00.smalt.video.mpeg4.internal.object.ObjectStream;
+import com.github.auties00.smalt.video.mpeg4.internal.studio.StudioLayer;
+import com.github.auties00.smalt.video.mpeg4.internal.studio.StudioStream;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
@@ -355,6 +357,21 @@ public final class Mpeg4DecoderEngine {
     private final ObjectStream.Sink objectSink = this::emitObject;
 
     /**
+     * The decoder of the active layer when it is a Studio profile layer, or {@code null}.
+     */
+    private StudioStream studio;
+
+    /**
+     * Whether a VOP of the Studio layer was seen since its header, after which extension data belongs to VOPs.
+     */
+    private boolean studioVops;
+
+    /**
+     * The receiver of the frames of the Studio decoder.
+     */
+    private final StudioStream.Sink studioSink = this::emitStudio;
+
+    /**
      * The decoder of H.263 streams with the modes the macroblock engine lacks, or {@code null} while the engine
      * decodes the stream.
      */
@@ -523,6 +540,9 @@ public final class Mpeg4DecoderEngine {
             object.reset();
             objectGov = -1;
         }
+        if (studio != null) {
+            studio.reset();
+        }
         if (plus != null) {
             plus.reset();
             plusBasePts = Long.MIN_VALUE;
@@ -591,6 +611,30 @@ public final class Mpeg4DecoderEngine {
             var start = position + 4;
             var next = nextStartCode(data, start);
             var end = next < 0 ? length : next;
+            if (studio != null && (code == 0xB6 || code == 0xB2 || code == 0xB3 || code == 0xB7 || code == 0xB8)) {
+                if (code == 0xB6) {
+                    studioVops = true;
+                    next = studioVopEnd(data, start);
+                    end = next < 0 ? length : next;
+                    if (decode) {
+                        if (!timestampAdded && pts != Long.MIN_VALUE) {
+                            timestamps.add(pts);
+                            timestampAdded = true;
+                        }
+                        if (studio.decode(data, start, end, studioSink)) {
+                            vops++;
+                        } else if (owed > 0) {
+                            owed--;
+                        } else {
+                            dropTimestamp(pts, vops);
+                        }
+                    }
+                } else if (code == 0xB8 && !studioVops) {
+                    studio.extension(data, start, end - start);
+                }
+                position = next;
+                continue;
+            }
             if (object != null && code == 0xB3) {
                 objectGov = position;
             } else if (code == 0xB6) {
@@ -695,9 +739,16 @@ public final class Mpeg4DecoderEngine {
         } else if (code >= 0x20 && code <= 0x2F) {
             framePeriod = 0;
             var bytes = Arrays.copyOfRange(data, offset, offset + length);
-            if (layer != null && layerBytes != null && Arrays.equals(bytes, layerBytes)) {
+            if ((layer != null || studio != null) && layerBytes != null && Arrays.equals(bytes, layerBytes)) {
+                studioVops = false;
                 return;
             }
+            if (StudioLayer.isStudio(data, offset, length, profileAndLevel)) {
+                activateStudio(data, offset, length);
+                layerBytes = bytes;
+                return;
+            }
+            studio = null;
             reader.load(data, offset, length);
             var parsed = VideoObjectLayer.parse(reader, profileAndLevel, visualVerid, limits, signal);
             if (parsed.objectTools) {
@@ -782,6 +833,83 @@ public final class Mpeg4DecoderEngine {
         layer = parsed;
         delayed = !parsed.lowDelay || h263;
         parser.configure(parsed);
+    }
+
+    /**
+     * Makes a Studio profile layer active.
+     *
+     * @param data the bytes
+     * @param offset the index after the layer's start code
+     * @param length the length of the layer header
+     */
+    private void activateStudio(byte[] data, int offset, int length) {
+        if (future != null && !futureShown) {
+            futureShown = true;
+            emit(future);
+        }
+        if (object != null) {
+            object.flush(objectSink);
+            object = null;
+        }
+        if (frameThreads) {
+            try {
+                drain(true);
+            } finally {
+                finishJobs();
+                frames.clear();
+            }
+        }
+        pool.clear();
+        past = null;
+        future = null;
+        bFrame = null;
+        layer = null;
+        studio = new StudioStream(data, offset, length, signal == null ? null : signal.color(), highBitDepth, limits);
+        studioVops = false;
+    }
+
+    /**
+     * Returns where a Studio VOP ends: at the next start code that is not a slice, extension or user data start
+     * code.
+     *
+     * @param data the bytes
+     * @param from the index after the VOP start code
+     * @return the index, or {@code -1} when the VOP runs to the end of the data
+     */
+    private static int studioVopEnd(byte[] data, int from) {
+        var position = nextStartCode(data, from);
+        while (position >= 0 && position + 3 < data.length) {
+            var code = data[position + 3] & 0xFF;
+            if (code != 0xB2 && code != 0xB7 && code != 0xB8) {
+                return position;
+            }
+            position = nextStartCode(data, position + 4);
+        }
+        return -1;
+    }
+
+    /**
+     * Hands a frame of the Studio decoder out with its timestamp.
+     *
+     * @param picture the frame, valid until the call returns
+     * @param time the frame time in ticks of the layer's frame rate
+     */
+    private void emitStudio(Picture picture, long time) {
+        long pts;
+        var polled = timestamps.poll();
+        var duration = timeScale.convert(studio.framePeriod(), studio.timeResolution());
+        if (polled != null) {
+            pts = lastPts != Long.MIN_VALUE && polled <= lastPts ? lastPts + Math.max(1, duration) : polled;
+        } else if (lastPts != Long.MIN_VALUE) {
+            var delta = time - lastTime;
+            pts = lastPts + (delta > 0 ? timeScale.convert(delta, studio.timeResolution()) : duration);
+        } else {
+            pts = Long.MIN_VALUE;
+        }
+        lastPts = pts;
+        lastTime = time;
+        output.emitPicture(picture, null, pts, frameDuration() > 0 ? frameDuration() : duration, true,
+                FrameSideData.NONE);
     }
 
     /**

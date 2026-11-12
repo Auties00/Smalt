@@ -41,6 +41,14 @@ import java.util.function.Consumer;
  * track has none, the extent of the first VOP with a bounding rectangle (its right and bottom edges, rounded up to
  * even).
  *
+ * <p>Layers of the Simple Studio and Core Studio object types (the Studio profiles) decode their I-VOPs, frame and
+ * field structured, with DCT and DPCM macroblocks, field DCT, 4:2:0, 4:2:2 and 4:4:4 chroma, 8-, 10- and 12-bit
+ * samples, R'G'B' components (pictures whose planes hold G, B and R under the identity matrix) and downloaded
+ * quantiser matrices. Their frames come in the layer's chroma format: with {@link VideoDecoderOptions#highBitDepth()}
+ * a layer of more than 8 bits gives {@link com.github.auties00.smalt.image.Yuv16Picture}s of its precision, reduced
+ * to 8 bits otherwise. The P-VOPs of the Core Studio profile, arbitrarily shaped Studio layers, Studio sprites and
+ * VLC code extensions raise {@link MediaException.Unsupported}.
+ *
  * <p>Packets are the coded VOPs of the track; {@link VideoTrack#codecConfig()} may hold the
  * visual object sequence, visual object and video object layer headers (the
  * {@code DecoderSpecificInfo} of {@code esds}, Matroska's {@code CodecPrivate}, the extra data
@@ -64,7 +72,9 @@ import java.util.function.Consumer;
  * by picture size for components left unspecified. A frame is a keyframe when it is an I-VOP.
  *
  * <p>Unsupported but valid streams raise {@link MediaException.Unsupported} naming the feature:
- * {@code "mpeg-4 chroma format"}, {@code "mpeg-4 studio profile"}, {@code "mpeg-4 fine granularity scalability"},
+ * {@code "mpeg-4 chroma format"}, {@code "mpeg-4 core studio inter vops"}, {@code "mpeg-4 studio arbitrary shape"},
+ * {@code "mpeg-4 studio sprites"}, {@code "mpeg-4 studio vlc code extension"},
+ * {@code "mpeg-4 fine granularity scalability"},
  * {@code "mpeg-4 temporal scalability with background composition over an arbitrarily shaped base layer"}, {@code
  * "mpeg-4 scalability of sprite layers"} and {@code "mpeg-4 scalability"} for a single track that carries an
  * enhancement layer.

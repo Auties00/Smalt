@@ -1173,6 +1173,11 @@ class FuzzSeedWriter {
         copy(DemuxerFuzzTest.class, "av1AnnexB", "valid-av1-annexb.obu", annexB);
         copy(DemuxerFuzzTest.class, "mpeg4Video", "valid-mpeg4.m4v", ffmpeg("m4v", video(32, 32, 6), "-c:v",
                 "mpeg4", "-bf", "1", "-q:v", "20", "-f", "m4v"));
+        // a Studio profile layer, whose VOPs carry slices and user data, from tools/testdata/mpeg4-studio
+        var studio = com.github.auties00.smalt.testkit.Scratch.directory("mpeg4-studio");
+        Oracle.run("python", java.time.Duration.ofMinutes(2), null, List.of("-I",
+                Path.of("..", "tools", "testdata", "mpeg4-studio", "make-vectors.py").toString(), studio.toString()));
+        copy(DemuxerFuzzTest.class, "mpeg4Video", "valid-mpeg4-studio.m4v", studio.resolve("studio-dpcm-options.m4v"));
         copy(DemuxerFuzzTest.class, "h263", "valid-h263.263", ffmpeg("h263", video(128, 96, 3), "-c:v", "h263",
                 "-q:v", "20"));
         // one 525/60 frame with its audio; both inputs end on their own, since the DV muxer writes nothing when

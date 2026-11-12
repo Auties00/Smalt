@@ -48,6 +48,7 @@ core/src/test/resources/samples/elementary/av1.obu	15577	c2b46137baf88f641c5a1e8
 core/src/test/resources/samples/elementary/h263.263	31736	1bbd3e459ac6c382583220c98331ac2bce55d933c828c4d1228b0e104abedeba	make-samples.sh
 core/src/test/resources/samples/elementary/h264.h264	31309	5db9e92e8162fa8e37ecab7f699726af7ec8f9864339d4c863ffb87e5bda09c8	make-samples.sh
 core/src/test/resources/samples/elementary/hevc.h265	18756	f173383521ea3912fbc79d4237392bd49d7e9037f3dc4ecbe5b58bbf352182e6	make-samples.sh
+core/src/test/resources/samples/elementary/mpeg4-studio.m4v	13840	09a01531cd3106b77062edfbcc18e289f8b92ff21d21eae666a0b26f4d9b513f	tools/testdata/mpeg4-studio/make-vectors.py (the studio-dpcm-options vector)
 core/src/test/resources/samples/elementary/mpeg4.m4v	48722	fab0246b11352d4b08a0d7b6bba3af4197175065f1e8a13cee68ae0d47f1e0b9	make-samples.sh
 core/src/test/resources/samples/elementary/vvc.266	3522	899ef84f73005bd377d9b77600b80472fa4c8f8c36dd14f7e449e023f07c06b2	tools/testdata/vvc-vectors/make-vectors.py (the ra-420-10bit vector)
 core/src/test/resources/samples/flac/cuesheet.flac	20925	2d20344714a889ebde9731b78362990881e8327df711c8cf5705e7c00fe126d8	make-descriptive-samples.py

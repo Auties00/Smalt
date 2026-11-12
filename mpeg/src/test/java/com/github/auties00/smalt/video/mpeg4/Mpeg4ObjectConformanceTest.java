@@ -207,22 +207,6 @@ class Mpeg4ObjectConformanceTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @CsvSource({"profile 0xE1, 225, 0", "profile 0xE8, 232, 0", "Simple Studio object, 0, 15",
-            "Core Studio object, 0, 16"})
-    @DisplayName("the Studio profiles and object types are rejected as unsupported")
-    void studio(String name, int profile, int objectType) {
-        var data = resource("object/rrv.m4v").clone();
-        if (profile != 0) {
-            // profile_and_level_indication follows the visual object sequence start code
-            assertEquals(0xB0, data[3] & 0xFF, "visual object sequence start code");
-            data[4] = (byte) profile;
-        }
-        var patched = objectType != 0 ? withObjectType(data, objectType) : data;
-        var error = assertThrows(MediaException.Unsupported.class, () -> decode(patched, 176, 144, false));
-        assertEquals("mpeg-4 studio profile", error.format());
-    }
-
-    @ParameterizedTest(name = "{0}")
     @CsvSource({"gray", "shape-v1", "rrv", "nbit10-shape"})
     @DisplayName("a layer cut after its I-VOP produces no frame from the VOPs whose references were not decoded")
     void missingReferences(String name) {

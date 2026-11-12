@@ -1459,6 +1459,12 @@ class FuzzSeedWriter {
             write(MpegFuzzTest.class, "elementaryStream", "valid-mpeg4-" + name + ".m4v",
                     resource("/com/github/auties00/smalt/video/mpeg4/object/" + name + ".m4v"));
         }
+        // Studio profile layers, from the vectors of tools/testdata/mpeg4-studio
+        for (var name : List.of("studio-dpcm-420-8-progressive", "studio-dct-422-10-tools",
+                "studio-dpcm-422-10-fields-tff", "studio-mixed-422-10", "studio-dct-444-12-progressive")) {
+            write(MpegFuzzTest.class, "elementaryStream", "valid-mpeg4-" + name + ".m4v",
+                    resource("/com/github/auties00/smalt/video/mpeg4/studio/" + name + ".m4v"));
+        }
         // the two layers of scalable objects: the base layer's length, the base layer and the enhancement layer
         for (var name : List.of("tps-bgc", "tps-bgc-bbase", "tps-bgc-next", "obss-bgc", "obss-bgc-own")) {
             var base = resource("/com/github/auties00/smalt/video/mpeg4/object/" + name + ".m4v");

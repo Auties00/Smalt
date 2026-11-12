@@ -197,6 +197,7 @@ final class MpegWorkloads {
                         new Mpeg4Encoder(WIDTH, HEIGHT, mpeg4Options(false, 1)))),
                 file("mpeg4-decode-t1", () -> mpeg4Decode(1)),
                 file("mpeg4-decode-t2", () -> mpeg4Decode(2)),
+                file("mpeg4-studio-decode", MpegWorkloads::mpeg4StudioDecode),
                 file("h263-encode-baseline", () -> h263Encode("h263-encode-baseline", false)),
                 file("h263-encode-annexes", () -> h263Encode("h263-encode-annexes", true)),
                 file("h263-decode", MpegWorkloads::h263Decode),
@@ -873,6 +874,24 @@ final class MpegWorkloads {
                     codecConfig), VideoDecoderOptions.builder().threads(threads).build())));
         }
         return TrainingWorkload.of("mpeg4-decode-t" + threads, () -> rounds.forEach(Runnable::run));
+    }
+
+    /**
+     * Returns the workload that decodes synthetic MPEG-4 Studio profile streams: 10-bit 4:2:2 interlaced, 12-bit
+     * 4:4:4 progressive and 8-bit 4:2:0 progressive layers of DCT (field DCT on the interlaced layer) and DPCM
+     * macroblocks, with the slices on the shared pool.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload mpeg4StudioDecode() {
+        var rounds = new ArrayList<Runnable>();
+        for (var layer : new int[][]{{320, 192, 2, 10, 1}, {160, 96, 3, 12, 0}, {160, 96, 1, 8, 0}}) {
+            var stream = SyntheticStudio.write(layer[0], layer[1], layer[2], layer[3], layer[4] == 1, 4);
+            rounds.add(VideoStreams.decodeRound(stream.packets(), new Mpeg4Decoder(VideoStreams.track(
+                    Codec.MPEG4_PART2, layer[0], layer[1], stream.config()), VideoDecoderOptions.builder()
+                    .highBitDepth(true).build())));
+        }
+        return TrainingWorkload.of("mpeg4-studio-decode", () -> rounds.forEach(Runnable::run));
     }
 
     /**

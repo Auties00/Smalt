@@ -244,6 +244,7 @@ video.mpeg4	mpeg
 video.mpeg4.internal	mpeg
 video.mpeg4.internal.encoder	mpeg
 video.mpeg4.internal.object	mpeg
+video.mpeg4.internal.studio	mpeg
 video.prores	video
 video.prores.internal	video
 video.qtrle	video
