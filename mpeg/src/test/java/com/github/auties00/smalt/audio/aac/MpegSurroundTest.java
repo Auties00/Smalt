@@ -5,6 +5,7 @@ import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.aac.internal.AacBitReader;
 import com.github.auties00.smalt.audio.aac.internal.OutputChannelPositions;
+import com.github.auties00.smalt.audio.aac.internal.mps.MpsBinaural;
 import com.github.auties00.smalt.audio.aac.internal.mps.MpsConfig;
 import com.github.auties00.smalt.audio.aac.internal.mps.MpsDecoder;
 import com.github.auties00.smalt.audio.aac.internal.mps.MpsUpmixer;
@@ -82,13 +83,20 @@ class MpegSurroundTest {
     static MpsConfig config(byte[] header) {
         var reader = new AacBitReader(header);
         reader.readFlag();
-        reader.read(7);
-        return MpsConfig.read(reader, 8L * (header.length - 1));
+        var escaped = reader.read(7) == 127;
+        if (escaped) {
+            reader.read(16);
+        }
+        return MpsConfig.read(reader, 8L * (header.length - (escaped ? 3 : 1)));
     }
 
     /** Runs the spatial decoder over a downmix, as the decoder's time domain path does. */
     static float[][] upmix(List<byte[]> blocks, float[][] downmix, int sampleRate) {
-        var decoder = new MpsDecoder(config(blocks.getFirst()), sampleRate);
+        return upmix(blocks, downmix, sampleRate, null);
+    }
+
+    static float[][] upmix(List<byte[]> blocks, float[][] downmix, int sampleRate, MpsBinaural binaural) {
+        var decoder = new MpsDecoder(config(blocks.getFirst()), sampleRate, binaural);
         var frameLength = decoder.frameLength();
         var frames = Math.min(blocks.size() - 1, downmix[0].length / frameLength);
         var input = new float[decoder.inputChannels()][frames * frameLength];
@@ -124,8 +132,10 @@ class MpegSurroundTest {
             var part = Arrays.copyOfRange(frame, from, to);
             if (b == 0 && header != null) {
                 var fixed = header.clone();
-                assertTrue(header.length - 1 < 127, "header of " + header.length + " bytes");
-                fixed[0] = (byte) (header[0] & 0x80 | header.length - 1);
+                if ((header[0] & 0x7F) != 127) {
+                    assertTrue(header.length - 1 < 127, "header of " + header.length + " bytes");
+                    fixed[0] = (byte) (header[0] & 0x80 | header.length - 1);
+                }
                 part = Arrays.copyOf(fixed, fixed.length + part.length);
                 System.arraycopy(frame, from, part, fixed.length, to - from);
             }
@@ -227,7 +237,7 @@ class MpegSurroundTest {
 
     static byte[] specificConfig(List<byte[]> spatial) {
         var header = spatial.getFirst();
-        return Arrays.copyOfRange(header, 1, header.length);
+        return Arrays.copyOfRange(header, (header[0] & 0x7F) == 127 ? 3 : 1, header.length);
     }
 
     static final int[] IDENTITY_5_1 = {0, 1, 2, 3, 4, 5};
@@ -1526,6 +1536,397 @@ class MpegSurroundTest {
             assertThrows(MediaException.Malformed.class, () -> fill(upmixer, 1, true, true, header));
             assertThrows(MediaException.Malformed.class, () -> fill(upmixer, 1, true, true, header));
             assertFalse(upmixer.configured());
+        }
+    }
+
+    @Nested
+    @DisplayName("3D stereo downmixes")
+    class ThreeDimensional {
+        static final int BLOCK = 1024;
+
+        /** The fields of a {@code SpatialSpecificConfig} around its HRTF parameters. */
+        static Bits fields(int tree, int slots, int frequencyResolution, boolean matrixMode, boolean threeDimensional) {
+            var bits = new Bits().put(3, 4).put(slots - 1, 7).put(frequencyResolution, 3).put(tree, 4).put(0, 2)
+                    .put(0, 1).put(0, 1).put(2, 3).put(1, 3).put(0, 3).put(matrixMode ? 1 : 0, 1).put(0, 2).put(0, 2)
+                    .put(threeDimensional ? 1 : 0, 1);
+            if (tree == MpsConfig.TREE_525) {
+                bits.put(4, 5).put(0, 1).put(1, 3);
+            } else {
+                bits.put(4, 5);
+            }
+            return bits;
+        }
+
+        /** The stereo tree's configuration of the {@code mps-3d525} and {@code mps-3d-large} frames. */
+        static Bits fields(int frequencyResolution, boolean matrixMode, boolean threeDimensional) {
+            return fields(MpsConfig.TREE_525, 16, frequencyResolution, matrixMode, threeDimensional);
+        }
+
+        /** Levels and phases that follow from the channel and band alone, offset to set the gain of the HRTFs. */
+        record Hrtf(int frequencyResolution, int channels, boolean asymmetric, boolean phase, boolean icc, int offset) {
+            static final Hrtf BASE = new Hrtf(4, 5, true, true, true, 30);
+
+            int left(int channel, int band) {
+                return offset + (7 * channel + 3 * band) % 11;
+            }
+
+            int right(int channel, int band) {
+                return asymmetric ? offset + 2 + (5 * channel + 2 * band) % 9 : left(channel, band);
+            }
+
+            int phase(int channel, int band) {
+                return (channel + band) % 8;
+            }
+
+            Bits write(Bits bits) {
+                bits.put(0, 2).put(frequencyResolution, 3).put(channels, 4).put(asymmetric ? 1 : 0, 1);
+                var bands = new int[]{0, 28, 20, 14, 10, 7, 5, 4}[frequencyResolution];
+                for (var channel = 0; channel < channels; channel++) {
+                    for (var band = 0; band < bands; band++) {
+                        bits.put(left(channel, band), 6);
+                    }
+                    if (asymmetric) {
+                        for (var band = 0; band < bands; band++) {
+                            bits.put(right(channel, band), 6);
+                        }
+                    }
+                    bits.put(phase ? 1 : 0, 1);
+                    for (var band = 0; phase && band < bands; band++) {
+                        bits.put(phase(channel, band), 6);
+                    }
+                    bits.put(icc ? 1 : 0, 1);
+                    for (var band = 0; icc && band < bands; band++) {
+                        bits.put((channel * band) % 8, 6);
+                    }
+                }
+                return bits;
+            }
+        }
+
+        static byte[] header(byte[] specific) {
+            var bits = new Bits().put(0, 1);
+            if (specific.length < 127) {
+                bits.put(specific.length, 7);
+            } else {
+                bits.put(127, 7).put(specific.length - 127, 16);
+            }
+            for (var value : specific) {
+                bits.put(value & 0xFF, 8);
+            }
+            return bits.bytes();
+        }
+
+        static float[][] noise(int channels, int length) {
+            var random = new java.util.Random(23);
+            var planes = new float[channels][length];
+            for (var c = 0; c < channels; c++) {
+                var state = 0.0f;
+                for (var i = 0; i < length; i++) {
+                    state += 0.05f * ((float) random.nextGaussian() - state);
+                    planes[c][i] = 0.3f * state + 0.1f * (float) Math.sin(i * 0.02 * (c + 1));
+                }
+            }
+            return planes;
+        }
+
+        static float[][] upmixWith(byte[] specific, String frames) {
+            var spatial = blocks(resource(frames + ".bs"));
+            var blocks = new ArrayList<byte[]>();
+            blocks.add(header(specific));
+            blocks.addAll(spatial.subList(1, spatial.size()));
+            var config = MpegSurroundTest.config(blocks.getFirst());
+            var length = (blocks.size() - 1) * config.frameLength() * 64;
+            return upmix(blocks, noise(config.inputChannels(), length), 48000);
+        }
+
+        static float[][] upmix3d(Hrtf hrtf, String frames, int parameterResolution) {
+            return upmixWith(hrtf.write(fields(parameterResolution, false, true)).bytes(), frames);
+        }
+
+        static float[][] upmix3d(Hrtf hrtf) {
+            return upmix3d(hrtf, "mps-3d525", 4);
+        }
+
+        static double energy(float[][] planes) {
+            var sum = 0.0;
+            for (var plane : planes) {
+                for (var value : plane) {
+                    assertTrue(Float.isFinite(value), "non-finite sample");
+                    sum += value * value;
+                }
+            }
+            return sum;
+        }
+
+        static float[][] encodedStereo(int blocks, List<byte[]> units, byte[][] config) {
+            try (var encoder = new com.github.auties00.smalt.audio.aac.AacEncoder(AacEncoderOptions.of(48000,
+                    ChannelLayout.STEREO, 128000))) {
+                var noise = noise(2, blocks * BLOCK);
+                encoder.encode(new AudioBuffer(ChannelLayout.STEREO, 48000, noise, noise[0].length),
+                        packet -> units.add(packet.data()));
+                encoder.flush(packet -> units.add(packet.data()));
+                config[0] = encoder.codecConfig().orElseThrow();
+                return noise;
+            }
+        }
+
+        static AacTestSupport.Stream stereoCore(int blocks) {
+            var units = new ArrayList<byte[]>();
+            var config = new byte[1][];
+            encodedStereo(blocks, units, config);
+            return new AacTestSupport.Stream(config[0], List.copyOf(units.subList(0, blocks)), 48000, 2);
+        }
+
+        @Test
+        @DisplayName("reads the header of more than 126 bytes and the HRTF parameters of a stream")
+        void reads() {
+            var header = blocks(resource("mps-3d525.bs")).getFirst();
+            assertEquals(127, header[0] & 0x7F);
+            var config = MpegSurroundTest.config(header);
+            assertEquals(2, config.inputChannels());
+            assertEquals(6, config.outputChannels());
+        }
+
+        @Test
+        @DisplayName("divides the upmix by the gain of the HRTFs, the inverse of what the downmix went through")
+        void invertsTheGain() {
+            var base = upmix3d(Hrtf.BASE);
+            var louder = upmix3d(new Hrtf(4, 5, true, true, true, 50));
+            assertTrue(energy(base) > 0);
+            for (var c = 0; c < base.length; c++) {
+                var peak = 0.0f;
+                for (var value : base[c]) {
+                    peak = Math.max(peak, Math.abs(value));
+                }
+                for (var i = 0; i < base[c].length; i++) {
+                    assertEquals(base[c][i] / 10.0f, louder[c][i], peak * 1e-3f, "channel " + c + " sample " + i);
+                }
+            }
+        }
+
+        @Test
+        @DisplayName("upmixes differently from the same stream without the 3D stereo signaling")
+        void differsFromPlain() {
+            var plain = upmixWith(fields(4, false, false).bytes(), "mps-3d525");
+            var inverted = upmix3d(Hrtf.BASE);
+            assertFalse(Arrays.deepEquals(plain, inverted));
+            var difference = new float[plain.length][plain[0].length];
+            for (var c = 0; c < plain.length; c++) {
+                for (var i = 0; i < plain[c].length; i++) {
+                    difference[c][i] = plain[c][i] - inverted[c][i];
+                }
+            }
+            assertTrue(energy(difference) > 0.1 * energy(plain));
+        }
+
+        @Test
+        @DisplayName("takes right levels equal to the left ones the same whether they are coded or implied")
+        void symmetricLevels() {
+            var bits = fields(4, false, true).put(0, 2).put(4, 3).put(5, 4).put(1, 1);
+            var implied = new Hrtf(4, 5, false, true, true, 30);
+            for (var channel = 0; channel < 5; channel++) {
+                for (var pass = 0; pass < 2; pass++) {
+                    for (var band = 0; band < 10; band++) {
+                        bits.put(implied.left(channel, band), 6);
+                    }
+                }
+                bits.put(1, 1);
+                for (var band = 0; band < 10; band++) {
+                    bits.put(implied.phase(channel, band), 6);
+                }
+                bits.put(0, 1);
+            }
+            assertArrayEquals(upmix3d(implied), upmixWith(bits.bytes(), "mps-3d525"));
+        }
+
+        @Test
+        @DisplayName("takes the phases of a clear flag as zero, and ignores the channel ICCs")
+        void flags() {
+            var noPhase = new Hrtf(4, 5, true, false, true, 30);
+            var bits = fields(4, false, true).put(0, 2).put(4, 3).put(5, 4).put(1, 1);
+            for (var channel = 0; channel < 5; channel++) {
+                for (var band = 0; band < 10; band++) {
+                    bits.put(noPhase.left(channel, band), 6);
+                }
+                for (var band = 0; band < 10; band++) {
+                    bits.put(noPhase.right(channel, band), 6);
+                }
+                bits.put(1, 1);
+                for (var band = 0; band < 10; band++) {
+                    bits.put(0, 6);
+                }
+                bits.put(0, 1);
+            }
+            assertArrayEquals(upmix3d(noPhase), upmixWith(bits.bytes(), "mps-3d525"));
+            assertArrayEquals(upmix3d(Hrtf.BASE), upmix3d(new Hrtf(4, 5, true, true, false, 30)));
+            assertFalse(Arrays.deepEquals(upmix3d(Hrtf.BASE), upmix3d(noPhase)));
+        }
+
+        @Test
+        @DisplayName("applies the phases to the bands below 12 only")
+        void phasedBands() {
+            var flat = new Hrtf(1, 5, true, false, false, 30);
+            var plain = upmix3d(flat, "mps-3d-large", 1);
+            for (var phased : new boolean[]{false, true}) {
+                var bits = fields(1, false, true).put(0, 2).put(1, 3).put(5, 4).put(1, 1);
+                for (var channel = 0; channel < 5; channel++) {
+                    for (var band = 0; band < 28; band++) {
+                        bits.put(flat.left(channel, band), 6);
+                    }
+                    for (var band = 0; band < 28; band++) {
+                        bits.put(flat.right(channel, band), 6);
+                    }
+                    bits.put(1, 1);
+                    for (var band = 0; band < 28; band++) {
+                        bits.put(band < 12 == phased ? 5 : 0, 6);
+                    }
+                    bits.put(0, 1);
+                }
+                var upmix = upmixWith(bits.bytes(), "mps-3d-large");
+                if (phased) {
+                    assertFalse(Arrays.deepEquals(plain, upmix));
+                } else {
+                    assertArrayEquals(plain, upmix);
+                }
+            }
+        }
+
+        @Test
+        @DisplayName("uses the first five channels and the bands up to the parameter bands of larger HRTF tables")
+        void largerTables() {
+            assertArrayEquals(upmix3d(Hrtf.BASE), upmix3d(new Hrtf(4, 9, true, true, true, 30)));
+            // the levels of the first bands of each resolution follow from the channel and the band alike
+            assertArrayEquals(upmix3d(Hrtf.BASE), upmix3d(new Hrtf(1, 5, true, true, true, 30)));
+        }
+
+        @Test
+        @DisplayName("gives the matrix inversion precedence over the 3D stereo inversion")
+        void matrixInversionFirst() {
+            var plain = upmixWith(fields(4, true, false).bytes(), "mps-3d525");
+            var both = upmixWith(Hrtf.BASE.write(fields(4, true, true)).bytes(), "mps-3d525");
+            assertArrayEquals(plain, both);
+            assertFalse(Arrays.deepEquals(plain, upmix3d(Hrtf.BASE)));
+        }
+
+        @Test
+        @DisplayName("skips the HRTF parameters of a mono tree, which it does not invert, of any size")
+        void monoTree() {
+            var plain = upmixWith(fields(MpsConfig.TREE_5151, 32, 1, false, false).bytes(), "mps-long5151");
+            var channels = new Hrtf(7, 2, true, true, true, 30);
+            assertArrayEquals(plain, upmixWith(channels.write(fields(MpsConfig.TREE_5151, 32, 1, false, true)).bytes(),
+                    "mps-long5151"));
+        }
+
+        @Test
+        @DisplayName("regularizes a product of rank one, from HRTFs equal at both ears, to a finite upmix")
+        void rankOne() {
+            var upmix = upmix3d(new Hrtf(4, 5, false, false, false, 30));
+            assertTrue(energy(upmix) > 0);
+        }
+
+        @ParameterizedTest(name = "set {0}")
+        @ValueSource(ints = {1, 2, 3})
+        @DisplayName("rejects the HRTF sets the stream does not carry, and outputs the downmix")
+        void otherSets(int set) {
+            var specific = fields(4, false, true).put(set, 2).bytes();
+            assertThrows(MediaException.Unsupported.class,
+                    () -> MpsConfig.readAudioSpecificConfig(surroundConfig(false, specific)));
+            var core = stereoCore(4);
+            var frames = blocks(resource("mps-3d525.bs")).subList(1, 5);
+            var decoded = decodeSeparate(core, surroundConfig(false, specific), frames);
+            assertEquals(ChannelLayout.STEREO, decoded.layout());
+            assertSameUpmix(decode(core, false).planes(), decoded.planes());
+        }
+
+        @ParameterizedTest(name = "resolution {0}, {1} channels")
+        @CsvSource({"4, 0", "4, 4", "5, 5", "7, 5"})
+        @DisplayName("rejects HRTF parameters with fewer channels or bands than a stereo tree inverts with")
+        void tooFew(int resolution, int channels) {
+            var specific = new Hrtf(resolution, channels, true, true, true, 30).write(fields(4, false, true)).bytes();
+            assertThrows(MediaException.Unsupported.class,
+                    () -> MpsConfig.readAudioSpecificConfig(surroundConfig(false, specific)));
+        }
+
+        @Test
+        @DisplayName("rejects the reserved HRTF frequency resolution and truncated parameters as malformed")
+        void malformed() {
+            var reserved = fields(4, false, true).put(0, 2).put(0, 3).put(5, 4).put(0, 1).bytes();
+            assertThrows(MediaException.Malformed.class, () -> MpegSurroundTest.config(header(reserved)));
+            var whole = Hrtf.BASE.write(fields(4, false, true)).bytes();
+            for (var length = whole.length - 1; length >= 8; length -= 7) {
+                var cut = Arrays.copyOf(whole, length);
+                assertThrows(MediaException.Malformed.class,
+                        () -> MpegSurroundTest.config(header(cut)), "length " + length);
+            }
+        }
+
+        @Test
+        @DisplayName("keeps every upmix finite, or rejects the configuration, when the bits of its header flip")
+        void flippedHeader() {
+            var whole = header(Hrtf.BASE.write(fields(4, false, true)).bytes());
+            var frames = blocks(resource("mps-3d525.bs")).subList(1, 3);
+            var input = noise(2, 2 * BLOCK);
+            for (var bit = 8 * 3; bit < 8 * whole.length; bit += 11) {
+                var flipped = whole.clone();
+                flipped[bit >>> 3] ^= (byte) (0x80 >>> (bit & 7));
+                try {
+                    var blocks = new ArrayList<byte[]>();
+                    blocks.add(flipped);
+                    blocks.addAll(frames);
+                    var config = MpegSurroundTest.config(flipped);
+                    if (config.inputChannels() == 2 && config.samplingFrequency() == 48000) {
+                        energy(upmix(blocks, input, 48000));
+                    }
+                } catch (MediaException expected) {
+                    // an invalid configuration or a frame that no longer parses under it
+                }
+            }
+        }
+
+        @Test
+        @DisplayName("upmixes the frames of a separate stream, under a header of over 127 bytes, as the spatial decoder")
+        void separateStream() {
+            var spatial = blocks(resource("mps-3d525.bs"));
+            var core = stereoCore(spatial.size() - 1);
+            var downmix = decode(core, false);
+            var decoded = decodeSeparate(core, surroundConfig(false, specificConfig(spatial)),
+                    spatial.subList(1, spatial.size()));
+            assertEquals(ChannelLayout.SURROUND_5_1, decoded.layout());
+            assertSameUpmix(upmix(spatial, downmix.planes(), 48000), decoded.planes());
+        }
+
+        @Test
+        @DisplayName("upmixes frames embedded in fill elements, under a header of over 127 bytes, as the spatial decoder")
+        void embedded() {
+            var spatial = blocks(resource("mps-3d525.bs"));
+            var core = stereoCore(spatial.size() - 1);
+            var downmix = decode(core, false);
+            var muxed = embed(core, spatial, 1);
+            var decoded = decode(muxed, true);
+            assertEquals(ChannelLayout.SURROUND_5_1, decoded.layout());
+            assertSameUpmix(upmix(spatial, downmix.planes(), 48000), decoded.planes());
+        }
+
+        @Test
+        @DisplayName("reads a header too long for one fill element from the fragments it spans")
+        void headerAcrossFragments() {
+            var spatial = blocks(resource("mps-3d-large.bs"));
+            var header = spatial.getFirst();
+            assertTrue(header.length > 15 + 255 - 1, "header of " + header.length + " bytes");
+            var input = noise(2, BLOCK);
+            var upmixer = new MpsUpmixer();
+            var frame = spatial.get(1);
+            LongFrames.fill(upmixer, 1, true, false, Arrays.copyOfRange(header, 0, 200));
+            var rest = Arrays.copyOf(Arrays.copyOfRange(header, 200, header.length),
+                    header.length - 200 + frame.length);
+            System.arraycopy(frame, 0, rest, header.length - 200, frame.length);
+            LongFrames.fill(upmixer, 1, false, true, rest);
+            assertTrue(upmixer.prepare(48000, BLOCK));
+            assertTrue(upmixer.upmixed());
+            var output = new float[6][BLOCK];
+            var expected = upmix(spatial.subList(0, 2), input, 48000);
+            upmixer.upmix(input, output);
+            assertSameUpmix(expected, output);
         }
     }
 

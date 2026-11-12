@@ -1,7 +1,8 @@
 /* Ports the ISO/IEC 23003-3:2019 reference software MPEG Surround decoder (sac_calcM1andM2.c
    SpatialDecCalculateM1andM2, bufferM1andM2, updateAlpha, CalculateArbDmxMtx, SpatialDecCalculateM1andM2_5151,
    _5152, _5251, _7271, _7272, _7571 and _7572, CalculateTTT, CalculateMTXinv, getMatrixInversionWeights,
-   invertMatrix, param2UMX_PS and param2UMX_PS_Core; sac_smoothing.c SpatialDecSmoothM1andM2 and calcFilterCoeff).
+   invertMatrix, Calculate3Dinv, Unsingularize3DMatrix, svd2x2, param2UMX_PS and param2UMX_PS_Core; sac_smoothing.c
+   SpatialDecSmoothM1andM2 and calcFilterCoeff).
    Copyright Agere Systems, Coding Technologies, Fraunhofer IIS, Philips and ISO/IEC 2008; ISO/IEC reference software
    licence (use in products conforming to ISO/IEC 23003). Modified for Smalt. */
 package com.github.auties00.smalt.audio.aac.internal.mps;
@@ -16,7 +17,7 @@ package com.github.auties00.smalt.audio.aac.internal.mps;
 final class MpsMatrices {
     static final int STRIDE = 8;
     private static final int SIZE = STRIDE * STRIDE;
-    private static final int MAX_SETS = MpsParameters.MAX_SETS + 1;
+    static final int MAX_SETS = MpsParameters.MAX_SETS + 1;
     private static final int MAX_BANDS = MpsParameters.MAX_BANDS;
     private static final int H11 = 0;
     private static final int H12 = 1;
@@ -26,13 +27,20 @@ final class MpsMatrices {
     private static final int H22_RES = 5;
     private static final int C_L = 6;
     private static final int C_R = 7;
+    private static final float DETERMINANT_THRESHOLD = 0.1f;
+    private static final float DETERMINANT_THRESHOLD_SQRT = 0.3162277660168379f;
 
-    private final MpsParameters parameters;
+    final MpsParameters parameters;
     private final int bands;
     private final int inputs;
     final int xChannels;
-    private final boolean matrixMode;
+    final boolean matrixMode;
     private final int arbitraryDownmix;
+    final boolean threeDimensional;
+    final float surroundGain;
+    private final float[][] hrtfPowerLeft;
+    private final float[][] hrtfPowerRight;
+    private final float[][] hrtfPhase;
 
     final float[][][] m1Real = new float[MAX_SETS][MAX_BANDS][SIZE];
     final float[][][] m1Imag = new float[MAX_SETS][MAX_BANDS][SIZE];
@@ -42,6 +50,23 @@ final class MpsMatrices {
     final float[][] m1ImagPrevious = new float[MAX_BANDS][SIZE];
     final float[][] m2DecorPrevious = new float[MAX_BANDS][SIZE];
     final float[][] m2ResidPrevious = new float[MAX_BANDS][SIZE];
+    /**
+     * The imaginary parts of {@code M2}, which only the binaural rendering has.
+     */
+    final float[][][] m2DecorImag;
+    final float[][][] m2ResidImag;
+    final float[][] m2DecorImagPrevious;
+    final float[][] m2ResidImagPrevious;
+    /**
+     * The binaural rendering, or {@code null} for the loudspeaker upmix.
+     */
+    private final MpsBinauralMatrices binaural;
+    /**
+     * The band of the HRTF parameters of a 3D downmix for each of 28 bands, when they are fewer; otherwise
+     * {@code null} and the bands are the same.
+     */
+    private final int[] hrtfBand;
+    private final int tttResidualBands;
 
     private final float[][][] boxes = new float[5][8][MAX_BANDS];
     private final float[] cLfeLeft = new float[MAX_BANDS];
@@ -51,12 +76,14 @@ final class MpsMatrices {
     private final float[] decorrelatedGain = new float[MAX_BANDS];
     private final float[] alpha = new float[6];
     private final float[] alphaPrevious = new float[6];
-    private final float[] gains = new float[6];
-    private final float[][] pre = new float[3][5];
-    private final float[][] ttt = new float[3][3];
-    private final float[][] inverseReal = new float[2][2];
-    private final float[][] inverseImag = new float[2][2];
+    final float[] gains = new float[6];
+    final float[][] pre = new float[3][5];
+    final float[][] ttt = new float[3][3];
+    final float[][] inverseReal = new float[2][2];
+    final float[][] inverseImag = new float[2][2];
     private final float[] weights = new float[2];
+    private final float[] hrtfReal = new float[4];
+    private final float[] hrtfImag = new float[4];
 
     /**
      * Constructs the matrices of a stream.
@@ -65,12 +92,65 @@ final class MpsMatrices {
      * @param xChannels the number of columns of {@code M1}
      */
     MpsMatrices(MpsParameters parameters, int xChannels) {
+        this(parameters, xChannels, null, 0, null);
+    }
+
+    /**
+     * Constructs the matrices of a stream.
+     *
+     * @param parameters the stream's mapped parameters, mapped to 28 bands for a binaural rendering
+     * @param xChannels the number of columns of {@code M1}
+     * @param rendering the binaural rendering, or {@code null} for the loudspeaker upmix
+     * @param qmfBands the number of QMF subbands of a binaural rendering
+     * @param kernelBand the parameter band of each hybrid subband of a binaural rendering
+     */
+    MpsMatrices(MpsParameters parameters, int xChannels, MpsBinaural rendering, int qmfBands, int[] kernelBand) {
         this.parameters = parameters;
-        this.bands = parameters.bands;
+        this.bands = rendering != null ? MAX_BANDS : parameters.bands;
+        this.tttResidualBands = rendering != null ? 0 : parameters.residualBands[3];
         this.inputs = parameters.inputs;
         this.xChannels = xChannels;
         this.matrixMode = parameters.config.matrixMode;
         this.arbitraryDownmix = parameters.config.arbitraryDownmix;
+        var config = parameters.config;
+        this.threeDimensional = config.threeDimensional && parameters.inputs == 2;
+        this.surroundGain = MpsDecoder.SURROUND_GAINS[config.fixedGainSurround];
+        this.hrtfPowerLeft = hrtfPowers(config.hrtfLevelLeft);
+        this.hrtfPowerRight = hrtfPowers(config.hrtfLevelRight);
+        this.hrtfPhase = new float[config.hrtfPhase.length][];
+        for (var channel = 0; channel < hrtfPhase.length; channel++) {
+            var coded = config.hrtfPhase[channel];
+            hrtfPhase[channel] = new float[coded.length];
+            for (var band = 0; band < coded.length; band++) {
+                hrtfPhase[channel][band] = coded[band] * ((float) Math.PI / 16.0f);
+            }
+        }
+        var tableBands = hrtfPowerLeft.length == 0 ? MAX_BANDS : hrtfPowerLeft[0].length;
+        this.hrtfBand = rendering != null && tableBands < MAX_BANDS ? MpsParameters.bandMapping(tableBands) : null;
+        var imaginaryBands = rendering != null ? MAX_BANDS : 0;
+        this.m2DecorImag = new float[MAX_SETS][imaginaryBands][SIZE];
+        this.m2ResidImag = new float[MAX_SETS][imaginaryBands][SIZE];
+        this.m2DecorImagPrevious = new float[imaginaryBands][SIZE];
+        this.m2ResidImagPrevious = new float[imaginaryBands][SIZE];
+        this.binaural = rendering != null ? new MpsBinauralMatrices(this, rendering, qmfBands, kernelBand) : null;
+    }
+
+    /**
+     * {@return the filterbank of a binaural rendering that has one, otherwise {@code null}}
+     */
+    MpsHrtfFilterbank filterbank() {
+        return binaural == null ? null : binaural.filterbank();
+    }
+
+    private static float[][] hrtfPowers(int[][] levels) {
+        var powers = new float[levels.length][];
+        for (var channel = 0; channel < levels.length; channel++) {
+            powers[channel] = new float[levels[channel].length];
+            for (var band = 0; band < levels[channel].length; band++) {
+                powers[channel][band] = (float) StrictMath.pow(10.0f, (levels[channel][band] - 16) / 20.0f);
+            }
+        }
+        return powers;
     }
 
     /**
@@ -84,18 +164,26 @@ final class MpsMatrices {
             System.arraycopy(m1Imag[previous][pb], 0, m1ImagPrevious[pb], 0, SIZE);
             System.arraycopy(m2Decor[previous][pb], 0, m2DecorPrevious[pb], 0, SIZE);
             System.arraycopy(m2Resid[previous][pb], 0, m2ResidPrevious[pb], 0, SIZE);
+            if (binaural != null) {
+                System.arraycopy(m2DecorImag[previous][pb], 0, m2DecorImagPrevious[pb], 0, SIZE);
+                System.arraycopy(m2ResidImag[previous][pb], 0, m2ResidImagPrevious[pb], 0, SIZE);
+            }
         }
         if (arbitraryDownmix != 0) {
             updateAlpha();
         }
-        switch (parameters.tree) {
-            case MpsConfig.TREE_5151 -> calculate5151();
-            case MpsConfig.TREE_5152 -> calculate5152();
-            case MpsConfig.TREE_525 -> calculate525();
-            case MpsConfig.TREE_7271 -> calculate7271();
-            case MpsConfig.TREE_7272 -> calculate7272();
-            case MpsConfig.TREE_7571 -> calculate7571();
-            default -> calculate7572();
+        if (binaural != null) {
+            binaural.calculate();
+        } else {
+            switch (parameters.tree) {
+                case MpsConfig.TREE_5151 -> calculate5151();
+                case MpsConfig.TREE_5152 -> calculate5152();
+                case MpsConfig.TREE_525 -> calculate525();
+                case MpsConfig.TREE_7271 -> calculate7271();
+                case MpsConfig.TREE_7272 -> calculate7272();
+                case MpsConfig.TREE_7571 -> calculate7571();
+                default -> calculate7572();
+            }
         }
         smooth();
     }
@@ -124,7 +212,7 @@ final class MpsMatrices {
         }
     }
 
-    private void downmixGains(int ps, int pb) {
+    void downmixGains(int ps, int pb) {
         for (var ch = 0; ch < inputs; ch++) {
             var gain = (float) StrictMath.pow(10.0f, parameters.downmixGain[ch][ps][pb] / 20.0f);
             if (pb < parameters.downmixResidualBands) {
@@ -202,11 +290,11 @@ final class MpsMatrices {
         }
     }
 
-    private static void set(float[] matrix, int row, int column, float value) {
+    static void set(float[] matrix, int row, int column, float value) {
         matrix[row * STRIDE + column] = value;
     }
 
-    private static float get(float[] matrix, int row, int column) {
+    static float get(float[] matrix, int row, int column) {
         return matrix[row * STRIDE + column];
     }
 
@@ -426,7 +514,7 @@ final class MpsMatrices {
     /**
      * Computes the TTT box matrix ({@code CalculateTTT}).
      */
-    private void tttMatrix(int ps, int pb, int mode) {
+    void tttMatrix(int ps, int pb, int mode) {
         if (mode < 2) {
             var c1 = parameters.cpc1[ps][pb];
             var c2 = parameters.cpc2[ps][pb];
@@ -436,7 +524,7 @@ final class MpsMatrices {
             ttt[1][1] = c2 + 2;
             ttt[2][0] = 1 - c1;
             ttt[2][1] = 1 - c2;
-            if (pb >= parameters.residualBands[3]) {
+            if (pb >= tttResidualBands) {
                 var icc = parameters.tttIcc[ps][pb];
                 ttt[0][0] /= icc;
                 ttt[0][1] /= icc;
@@ -486,7 +574,7 @@ final class MpsMatrices {
      * Computes the matrix inversion of a matrix compatible stereo downmix ({@code CalculateMTXinv},
      * {@code getMatrixInversionWeights}, {@code invertMatrix}).
      */
-    private void inverse(int ps, int pb, int mode) {
+    void inverse(int ps, int pb, int mode) {
         var iidLeft = parameters.cld[1][ps][pb];
         var iidRight = parameters.cld[2][ps][pb];
         float c1;
@@ -536,6 +624,192 @@ final class MpsMatrices {
         inverseImag[1][1] = (h11Real * normImag + h11Imag * normReal);
     }
 
+    /**
+     * Computes the inverse of the filtering of a 3D stereo downmix for one band ({@code Calculate3Dinv}): the two
+     * downmix channels hold the five loudspeaker channels through the HRTF parameters, so the inverse of the product of
+     * {@link #pre} and those parameters undoes the HRTFs. The two channels of a side share one combined HRTF, weighted
+     * by the band's front and surround powers; only the bands below 12 have phases. A nearly singular product is first
+     * pushed away from singularity, and a band the decomposition cannot resolve is silent.
+     */
+    void inverse3d(int ps, int pb) {
+        var band = hrtfBand == null ? pb : hrtfBand[pb];
+        var powerLeft = hrtfPowerLeft;
+        var powerRight = hrtfPowerRight;
+        var phase = hrtfPhase;
+        var phased = pb < 12;
+        var centerLeft = (float) Math.sqrt(2) * powerLeft[2][band];
+        var centerRight = (float) Math.sqrt(2) * powerRight[2][band];
+        var pc1Real = centerLeft;
+        var pc1Imag = 0.0f;
+        var pc2Real = centerRight;
+        var pc2Imag = 0.0f;
+        if (phased) {
+            pc1Real = (float) StrictMath.cos(phase[2][band] / 2) * centerLeft;
+            pc1Imag = (float) StrictMath.sin(phase[2][band] / 2) * centerLeft;
+            pc2Real = (float) StrictMath.cos(-phase[2][band] / 2) * centerRight;
+            pc2Imag = (float) StrictMath.sin(-phase[2][band] / 2) * centerRight;
+        }
+        var gain = surroundGain;
+        var iid = (float) StrictMath.pow(10.0f, parameters.cld[1][ps][pb] / 10.0f);
+        var front = iid / (1 + iid);
+        var surround = 1 / (1 + iid);
+        var frontLeft = front * powerLeft[0][band] * powerLeft[0][band];
+        var frontRight = front * powerRight[0][band] * powerRight[0][band];
+        var surroundLeft = surround * powerLeft[3][band] * powerLeft[3][band] * gain * gain;
+        var surroundRight = surround * powerRight[3][band] * powerRight[3][band] * gain * gain;
+        var pl1Real = (float) Math.sqrt(frontLeft + surroundLeft);
+        var pl1Imag = 0.0f;
+        var cross = (float) Math.sqrt(frontRight + surroundRight);
+        var pl2Real = cross;
+        var pl2Imag = 0.0f;
+        if (phased) {
+            var angle = -(frontRight * phase[0][band] + surroundRight * phase[3][band]) / (frontRight + surroundRight);
+            pl2Real = (float) StrictMath.cos(angle) * cross;
+            pl2Imag = (float) StrictMath.sin(angle) * cross;
+        }
+        iid = (float) StrictMath.pow(10.0f, parameters.cld[2][ps][pb] / 10.0f);
+        front = iid / (1 + iid);
+        surround = 1 / (1 + iid);
+        frontLeft = front * powerLeft[1][band] * powerLeft[1][band];
+        frontRight = front * powerRight[1][band] * powerRight[1][band];
+        surroundLeft = surround * powerLeft[4][band] * powerLeft[4][band] * gain * gain;
+        surroundRight = surround * powerRight[4][band] * powerRight[4][band] * gain * gain;
+        cross = (float) Math.sqrt(frontLeft + surroundLeft);
+        var pr2Real = (float) Math.sqrt(frontRight + surroundRight);
+        var pr2Imag = 0.0f;
+        var pr1Real = cross;
+        var pr1Imag = 0.0f;
+        if (phased) {
+            var angle = (frontLeft * phase[1][band] + surroundLeft * phase[4][band]) / (frontLeft + surroundLeft);
+            pr1Real = (float) StrictMath.cos(angle) * cross;
+            pr1Imag = (float) StrictMath.sin(angle) * cross;
+        }
+        var hr = hrtfReal;
+        var hi = hrtfImag;
+        hr[0] = pre[0][0] * pl1Real + pre[1][0] * pr1Real + pre[2][0] * pc1Real;
+        hi[0] = pre[0][0] * pl1Imag + pre[1][0] * pr1Imag + pre[2][0] * pc1Imag;
+        hr[1] = pre[0][1] * pl1Real + pre[1][1] * pr1Real + pre[2][1] * pc1Real;
+        hi[1] = pre[0][1] * pl1Imag + pre[1][1] * pr1Imag + pre[2][1] * pc1Imag;
+        hr[2] = pre[0][0] * pl2Real + pre[1][0] * pr2Real + pre[2][0] * pc2Real;
+        hi[2] = pre[0][0] * pl2Imag + pre[1][0] * pr2Imag + pre[2][0] * pc2Imag;
+        hr[3] = pre[0][1] * pl2Real + pre[1][1] * pr2Real + pre[2][1] * pc2Real;
+        hi[3] = pre[0][1] * pl2Imag + pre[1][1] * pr2Imag + pre[2][1] * pc2Imag;
+        var normReal = hr[0] * hr[3] - hi[0] * hi[3] - hr[1] * hr[2] + hi[1] * hi[2];
+        var normImag = hr[0] * hi[3] + hi[0] * hr[3] - hr[2] * hi[1] - hi[2] * hr[1];
+        var norm = normReal * normReal + normImag * normImag;
+        if (Math.sqrt(norm) < DETERMINANT_THRESHOLD) {
+            unsingularize(hr, hi);
+            normReal = hr[0] * hr[3] - hi[0] * hi[3] - hr[1] * hr[2] + hi[1] * hi[2];
+            normImag = hr[0] * hi[3] + hi[0] * hr[3] - hr[2] * hi[1] - hi[2] * hr[1];
+            norm = normReal * normReal + normImag * normImag;
+        }
+        if (norm != 0.0f) {
+            normReal /= norm;
+            normImag /= -norm;
+        }
+        inverseReal[0][0] = hr[3] * normReal - hi[3] * normImag;
+        inverseImag[0][0] = hr[3] * normImag + hi[3] * normReal;
+        inverseReal[0][1] = -hr[1] * normReal + hi[1] * normImag;
+        inverseImag[0][1] = -hr[1] * normImag - hi[1] * normReal;
+        inverseReal[1][0] = -hr[2] * normReal + hi[2] * normImag;
+        inverseImag[1][0] = -hr[2] * normImag - hi[2] * normReal;
+        inverseReal[1][1] = hr[0] * normReal - hi[0] * normImag;
+        inverseImag[1][1] = hr[0] * normImag + hi[0] * normReal;
+        // a product of zero has no decomposition; a non-finite matrix would stay in the decorrelators' filter states
+        for (var row = 0; row < 2; row++) {
+            for (var col = 0; col < 2; col++) {
+                if (!Float.isFinite(inverseReal[row][col]) || !Float.isFinite(inverseImag[row][col])) {
+                    inverseReal[0][0] = inverseReal[0][1] = inverseReal[1][0] = inverseReal[1][1] = 0.0f;
+                    inverseImag[0][0] = inverseImag[0][1] = inverseImag[1][0] = inverseImag[1][1] = 0.0f;
+                    return;
+                }
+            }
+        }
+    }
+
+    /**
+     * Raises the singular values of a 2 by 2 matrix, h11, h12, h21 and h22 in order, until its determinant reaches the
+     * threshold ({@code Unsingularize3DMatrix}, {@code svd2x2}). Where the reference decoder's decomposition divides by
+     * zero, on a matrix of rank one whose null vector it cannot normalize, this one completes the vectors to an
+     * orthonormal pair, so such a band is regularized like its neighbors.
+     */
+    private static void unsingularize(float[] hr, float[] hi) {
+        var p00 = hr[0] * hr[0] + hi[0] * hi[0] + hr[2] * hr[2] + hi[2] * hi[2];
+        var p01Real = hr[0] * hr[1] + hi[0] * hi[1] + hr[2] * hr[3] + hi[2] * hi[3];
+        var p01Imag = hr[0] * hi[1] - hr[1] * hi[0] + hr[2] * hi[3] - hr[3] * hi[2];
+        var p11 = hr[1] * hr[1] + hi[1] * hi[1] + hr[3] * hr[3] + hi[3] * hi[3];
+        var sum = p00 + p11;
+        var product = p00 * p11 - p01Real * p01Real + p01Imag * -p01Imag;
+        // rounding can leave the discriminant of a nearly singular matrix just below zero
+        var root = (float) Math.sqrt(Math.max(0.0f, sum * sum - 4 * product));
+        var root0 = (sum + root) / 2.0f;
+        var root1 = (sum - root) / 2.0f;
+        if (root0 < root1) {
+            var swap = root0;
+            root0 = root1;
+            root1 = swap;
+        }
+        var s0 = (float) Math.sqrt(root0);
+        var s1 = (float) Math.sqrt(Math.max(0.0f, root1));
+        root0 -= p00;
+        root1 -= p00;
+        var temp = (float) -Math.sqrt(p01Real * p01Real + p01Imag * p01Imag + root0 * root0);
+        var v00Real = temp == 0.0f ? 1.0f : p01Real / temp;
+        var v00Imag = temp == 0.0f ? 0.0f : p01Imag / temp;
+        var v10Real = temp == 0.0f ? 0.0f : root0 / temp;
+        temp = (float) -Math.sqrt(p01Real * p01Real + p01Imag * p01Imag + root1 * root1);
+        var v01Real = temp == 0.0f ? 1.0f : p01Real / temp;
+        var v01Imag = temp == 0.0f ? 0.0f : p01Imag / temp;
+        var v11Real = temp == 0.0f ? 0.0f : root1 / temp;
+        var u00Real = hr[0] * v00Real - hi[0] * v00Imag + v10Real * hr[1];
+        var u00Imag = hi[0] * v00Real + hr[0] * v00Imag + v10Real * hi[1];
+        var u01Real = hr[0] * v01Real - hi[0] * v01Imag + v11Real * hr[1];
+        var u01Imag = hi[0] * v01Real + hr[0] * v01Imag + v11Real * hi[1];
+        var u10Real = hr[2] * v00Real - hi[2] * v00Imag + v10Real * hr[3];
+        var u10Imag = hi[2] * v00Real + hr[2] * v00Imag + v10Real * hi[3];
+        var u11Real = hr[2] * v01Real - hi[2] * v01Imag + v11Real * hr[3];
+        var u11Imag = hi[2] * v01Real + hr[2] * v01Imag + v11Real * hi[3];
+        temp = (float) Math.sqrt(u00Real * u00Real + u00Imag * u00Imag + u10Real * u10Real + u10Imag * u10Imag);
+        u00Real /= temp;
+        u00Imag /= temp;
+        u10Real /= temp;
+        u10Imag /= temp;
+        temp = (float) Math.sqrt(u01Real * u01Real + u01Imag * u01Imag + u11Real * u11Real + u11Imag * u11Imag);
+        if (temp == 0.0f) {
+            u01Real = -u10Real;
+            u01Imag = u10Imag;
+            u11Real = u00Real;
+            u11Imag = -u00Imag;
+        } else {
+            u01Real /= temp;
+            u01Imag /= temp;
+            u11Real /= temp;
+            u11Imag /= temp;
+        }
+        if (s0 < DETERMINANT_THRESHOLD_SQRT && s1 < DETERMINANT_THRESHOLD_SQRT) {
+            s0 = DETERMINANT_THRESHOLD_SQRT;
+            s1 = DETERMINANT_THRESHOLD_SQRT;
+        } else {
+            s1 += (DETERMINANT_THRESHOLD - s0 * s1) / s0;
+        }
+        u00Real *= s0;
+        u00Imag *= s0;
+        u01Real *= s1;
+        u01Imag *= s1;
+        u10Real *= s0;
+        u10Imag *= s0;
+        u11Real *= s1;
+        u11Imag *= s1;
+        hr[0] = u00Real * v00Real + u00Imag * v00Imag + u01Real * v01Real + u01Imag * v01Imag;
+        hi[0] = u00Imag * v00Real - u00Real * v00Imag + u01Imag * v01Real - u01Real * v01Imag;
+        hr[2] = u10Real * v00Real + u10Imag * v00Imag + u11Real * v01Real + u11Imag * v01Imag;
+        hi[2] = u10Imag * v00Real - u10Real * v00Imag + u11Imag * v01Real - u11Real * v01Imag;
+        hr[1] = u00Real * v10Real + u01Real * v11Real;
+        hi[1] = u00Imag * v10Real + u01Imag * v11Real;
+        hr[3] = u10Real * v10Real + u11Real * v11Real;
+        hi[3] = u10Imag * v10Real + u11Imag * v11Real;
+    }
+
     private static float predictionWeight(float c) {
         if (Math.abs(c) >= 1.0f) {
             return 1.0f;
@@ -579,8 +853,12 @@ final class MpsMatrices {
         }
         var m1r = m1Real[ps][pb];
         var m1i = m1Imag[ps][pb];
-        if (inversion) {
-            inverse(ps, pb, mode);
+        if (inversion || threeDimensional) {
+            if (inversion) {
+                inverse(ps, pb, mode);
+            } else {
+                inverse3d(ps, pb);
+            }
             for (var row = 0; row < 3; row++) {
                 set(m1r, row, 0, pre[row][0] * inverseReal[0][0] + pre[row][1] * inverseReal[1][0]);
                 set(m1r, row, 1, pre[row][0] * inverseReal[0][1] + pre[row][1] * inverseReal[1][1]);
@@ -1117,7 +1395,7 @@ final class MpsMatrices {
      */
     private void smooth() {
         var residual = 0;
-        if (parameters.config.residualCoding) {
+        if (parameters.config.residualCoding && binaural == null) {
             for (var value : parameters.residualBands) {
                 residual = Math.max(residual, value);
             }
@@ -1137,6 +1415,10 @@ final class MpsMatrices {
                 blend(m1Imag[ps][pb], ps > 0 ? m1Imag[ps - 1][pb] : m1ImagPrevious[pb], delta);
                 blend(m2Decor[ps][pb], ps > 0 ? m2Decor[ps - 1][pb] : m2DecorPrevious[pb], delta);
                 blend(m2Resid[ps][pb], ps > 0 ? m2Resid[ps - 1][pb] : m2ResidPrevious[pb], delta);
+                if (binaural != null) {
+                    blend(m2DecorImag[ps][pb], ps > 0 ? m2DecorImag[ps - 1][pb] : m2DecorImagPrevious[pb], delta);
+                    blend(m2ResidImag[ps][pb], ps > 0 ? m2ResidImag[ps - 1][pb] : m2ResidImagPrevious[pb], delta);
+                }
             }
         }
     }

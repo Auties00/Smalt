@@ -4,6 +4,8 @@ import com.code_intelligence.jazzer.junit.FuzzTest;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.aac.AacDecoder;
+import com.github.auties00.smalt.audio.aac.AacBinauralHrtf;
+import com.github.auties00.smalt.audio.aac.AacBinauralQuality;
 import com.github.auties00.smalt.audio.aac.AacDecoderOptions;
 import com.github.auties00.smalt.audio.ac3.Ac3Decoder;
 import com.github.auties00.smalt.audio.ac3.Ac3DecoderOptions;
@@ -343,9 +345,16 @@ class MpegFuzzTest {
             run.skip("no MPEG Surround stream");
             return;
         }
-        var options = AacDecoderOptions.builder().limits(Fuzz.LIMITS)
-                .mpegSurround((input.header().options() & 1) == 0).build();
-        decodeStreams(run, input, configs, options);
+        var flags = input.header().options();
+        var builder = AacDecoderOptions.builder().limits(Fuzz.LIMITS).mpegSurround((flags & 1) == 0);
+        // bits 1 and 2 pick the data set of a binaural rendering, 0 for none; bit 3 asks for its filterbank
+        var set = flags >> 1 & 3;
+        if (set != 0) {
+            builder.mpegSurroundBinaural(AacBinauralHrtf.values()[set - 1])
+                    .mpegSurroundBinauralQuality((flags & 8) != 0 ? AacBinauralQuality.FILTERED
+                            : AacBinauralQuality.PARAMETRIC);
+        }
+        decodeStreams(run, input, configs, builder.build());
     }
 
     /**

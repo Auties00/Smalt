@@ -961,18 +961,26 @@ gcc; on Windows from an MSYS2 UCRT64 shell) downloads the reference software fro
 Standards (pinned by SHA-256), patches copies of `sac_bitdec.c` and `bitstream.c`, which the USAC distribution
 trims to the 2-1-2 tree, to read and write the full `SpatialSpecificConfig`, and copies of `sac_TPprocess.c` and
 `sac_arbitraryTree.c`, so that the decoder runs the arbitrary tree it parses (it never calls `arbitraryTreeProcess`,
-whose buffers it keeps on the stack), builds the decoder and encoder libraries with the frontend
+whose buffers it keeps on the stack), and of `sac_calcM1andM2.c`, so that a singular 3D stereo product is regularized
+where the decomposition would leave a NaN in the decoder's filter states (no finite result changes), builds the
+decoder and encoder libraries with the frontend
 `mps-oracle/mpsref.c`, and writes into `<conformance cache>/mps-oracle`
 (`-Dsmalt.test.mpsOracle` overrides the directory the test reads), for each case, the side information as
 length-prefixed blocks (`.bs`: the header, then one spatial frame per block), the downmix (`_dmx.wav`) and the
 reference decoder's upmix (`_ref.wav`, float):
 
 - the synthetic streams of `mps-oracle/mpsgen.py`, which covers every tree, quantization and TTT mode, temporal
-  shaping, arbitrary downmix gains, residual and downmix residual coding and the arbitrary tree (up to the 13
+  shaping, arbitrary downmix gains, residual and downmix residual coding, 3D stereo downmixes (HRTF parameters from
+  seeded random levels, phases and ICCs, on the inverting trees and the others, with larger tables and products of rank
+  one) and the arbitrary tree (up to the 13
   output channels the reference decoder holds, on positions 0 to n - 1, which it uses as output indices) at 24, 48
   and 96 kHz, with frames of 4 to 64 slots, so that a frame spans one to four AAC blocks of 960 or 1024 samples or
   is a half or a quarter of a block of 960 to 2048 samples;
 - the reference encoder's streams of a synthetic 5.1 signal (both 5-1-5 trees and 5-2-5, 16 and 32 slots per frame).
+- the binaural decodes of most of those streams (`<case>_b<model><quality>_ref.wav`: upmix type 2 of the reference
+  decoder, with the Kemar data set and on a subset with Vast and MPSVT, at both qualities), the script patching the
+  decoder to take every sampling frequency and a chosen data set and the frontend feeding the reverb the decoder never
+  feeds. `mps-oracle/hrtftable.py` writes Smalt's resource of the data sets from `sac_hrtf.c`.
 
 Without these files the comparisons are skipped. `MpegSurroundOracleTest` also runs the AAC decoder's upmixer over
 the downmix in AAC blocks, with the side information of a separate stream and embedded in fragments, so that frames
@@ -983,7 +991,11 @@ written by `mpsgen.py` (`python -I mpsgen.py <mp4spatialdec/src> <out> mps-long5
 e84963f26f72ddac54d380d832d754852ef14b08a0a83792c55f1e97de8181eb), frames of half a block (`mps-short5151.bs`,
 SHA-256 3f2325f697ccc0089133d24bf15542c3921a9ce3e7094fd8dbf5f8612ba9a8ae) and an
 arbitrary tree on side and rear positions (`mps-at71.bs`, SHA-256
-ca81e1936c1fe8400c9f9b3e98de8c05d1a46d6a04ebc6e92b51cb493b9a4bb7).
+ca81e1936c1fe8400c9f9b3e98de8c05d1a46d6a04ebc6e92b51cb493b9a4bb7); `python -I mpsgen.py <mp4spatialdec/src> <out>
+mps-3d525 mps-3d-large` writes the 3D stereo downmixes (`mps-3d525.bs`, SHA-256
+88fa2a6bd7590888e493cb8da6a74ccbf684a84ead69f81d56c4064ed27094a1, with 10 HRTF bands, and `mps-3d-large.bs`,
+SHA-256 e1bbda0d40d09123db2796f4efcceafd851df6dd3b47af7f778f18b43585f6bd, with 28 bands, a header too long for one
+fill element).
 
 ## USAC time-warped filterbank oracle
 

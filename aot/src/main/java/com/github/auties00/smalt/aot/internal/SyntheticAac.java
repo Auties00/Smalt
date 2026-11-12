@@ -431,6 +431,60 @@ final class SyntheticAac {
     }
 
     /**
+     * Returns the {@code AudioSpecificConfig} of a separate MPEG Surround elementary stream at 48 kHz over a stereo
+     * downmix: the 5-2-5 tree with 28 parameter bands, spatial frames of 16 slots (one 1024-sample block) and a
+     * prediction based TTT box.
+     *
+     * @return the configuration
+     */
+    static byte[] stereoSurroundConfig() {
+        var bits = new Bits();
+        bits.write(30, 5);
+        bits.write(3, 4);
+        bits.write(0, 4);
+        bits.write(0, 1);
+        bits.write(3, 4);
+        bits.write(15, 7);
+        bits.write(1, 3);
+        bits.write(2, 4);
+        bits.write(0, 2);
+        bits.write(0, 1);
+        bits.write(0, 1);
+        bits.write(0, 3);
+        bits.write(0, 3);
+        bits.write(0, 3);
+        bits.write(0, 1);
+        bits.write(0, 2);
+        bits.write(0, 2);
+        bits.write(0, 1);
+        // the parameter bands of the LFE box, the TTT dual mode and mode, then the byte alignment
+        bits.write(3, 5);
+        bits.write(0, 1);
+        bits.write(0, 3);
+        bits.write(0, 2);
+        return bits.toByteArray();
+    }
+
+    /**
+     * Returns one independent spatial frame of {@link #stereoSurroundConfig}: a single parameter set with the default
+     * values of the level differences of the three boxes, the coherences of the two that are not the LFE box and the
+     * two prediction coefficients and coherence of the TTT box, without smoothing.
+     *
+     * @return the frame
+     */
+    static byte[] stereoSurroundFrame() {
+        var bits = new Bits();
+        bits.write(0, 1);
+        bits.write(0, 3);
+        bits.write(1, 1);
+        for (var parameter = 0; parameter < 8; parameter++) {
+            bits.write(0, 2);
+        }
+        bits.write(0, 2);
+        return bits.toByteArray();
+    }
+
+    /**
      * Collects bits, most significant first.
      */
     private static final class Bits {

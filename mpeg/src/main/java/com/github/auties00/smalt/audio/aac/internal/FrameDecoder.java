@@ -5,6 +5,7 @@ import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.Speaker;
+import com.github.auties00.smalt.audio.aac.internal.mps.MpsBinaural;
 import com.github.auties00.smalt.audio.aac.internal.mps.MpsConfig;
 import com.github.auties00.smalt.audio.aac.internal.mps.MpsUpmixer;
 import com.github.auties00.smalt.audio.aac.internal.sbr.SbrElement;
@@ -646,9 +647,10 @@ public final class FrameDecoder {
      * downmix layout does not match the configuration, the downmix is output.
      *
      * @param config the configuration of a separate MPEG Surround elementary stream, or {@code null}
+     * @param binaural the binaural rendering, or {@code null} for the loudspeaker upmix
      */
-    public void enableSurround(MpsConfig config) {
-        surround = new MpsUpmixer();
+    public void enableSurround(MpsConfig config, MpsBinaural binaural) {
+        surround = new MpsUpmixer(binaural);
         if (config != null) {
             surround.configure(config);
         }

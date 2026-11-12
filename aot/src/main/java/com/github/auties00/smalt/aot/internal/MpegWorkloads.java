@@ -4,6 +4,8 @@ import com.github.auties00.smalt.aot.TrainingFamily;
 import com.github.auties00.smalt.aot.TrainingWorkload;
 import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.audio.aac.AacBinauralHrtf;
+import com.github.auties00.smalt.audio.aac.AacBinauralQuality;
 import com.github.auties00.smalt.audio.aac.AacCompression;
 import com.github.auties00.smalt.audio.aac.AacDecoder;
 import com.github.auties00.smalt.audio.aac.AacDecoderOptions;
@@ -244,6 +246,8 @@ final class MpegWorkloads {
                 file("aac-er-bsac-decode", () -> aacBsacDecode(2)),
                 file("aac-scalable-decode", () -> aacScalableDecode(2)),
                 file("aac-surround-decode", () -> aacSurroundDecode(4)),
+                file("aac-surround-binaural-decode", () -> aacSurroundBinauralDecode(4)),
+                file("aac-surround-binaural-filtered-decode", () -> aacSurroundBinauralFilteredDecode(2)),
                 file("ac3", () -> ac3(6)),
                 file("eac3", () -> eac3("eac3", Eac3EncoderOptions.defaults(), 6)),
                 file("eac3-tpnp-holdback", () -> eac3Holdback(4)),
@@ -1722,6 +1726,84 @@ final class MpegWorkloads {
                 decoder.decode(units, output);
             }
         });
+    }
+
+    /**
+     * Returns a workload that renders a 48 kHz mono AAC-LC downmix of synthetic speech to the ears with MPEG Surround,
+     * from the spatial frames of a separate elementary stream: the matrices of the band parameters, the complex mix
+     * to the ears and the reverb of the data set that has one.
+     *
+     * @param seconds the audio decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacSurroundBinauralDecode(double seconds) {
+        var encoder = new AacEncoder(AacEncoderOptions.of(48000, ChannelLayout.MONO, 64000));
+        var core = AudioStreams.encodeAll(encoder, new float[][]{SyntheticAudio.speech(48000, seconds)},
+                ChannelLayout.MONO, 48000);
+        var coreTrack = AudioStreams.track(Codec.AAC, 48000, ChannelLayout.MONO, encoder.codecConfig().orElseThrow());
+        var surroundTrack = AudioTrack.builder().id(2).codec(Codec.AAC).timeBase(new Rational(1, 48000))
+                .sampleRate(48000).codecConfig(SyntheticAac.surroundConfig()).build();
+        var decoder = new AacDecoder(List.of(coreTrack, surroundTrack), AacDecoderOptions.builder()
+                .mpegSurroundBinaural(AacBinauralHrtf.MPSVT).build());
+        var blocks = new ArrayList<List<Packet>>(core.size());
+        for (var block = 0; block < core.size(); block++) {
+            var spatial = new Packet(2, SyntheticAac.surroundFrame(block), core.get(block).pts(), core.get(block).dts(),
+                    1024, true);
+            blocks.add(List.of(core.get(block), spatial));
+        }
+        Consumer<AudioBuffer> output = binauralOutput("aac-surround-binaural-decode");
+        return TrainingWorkload.of("aac-surround-binaural-decode", () -> {
+            for (var units : blocks) {
+                decoder.decode(units, output);
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that renders a 48 kHz stereo AAC-LC downmix of synthetic speech to the ears with MPEG
+     * Surround, from the spatial frames of a separate elementary stream, through the filterbank of the impulse
+     * responses of a data set in the QMF domain.
+     *
+     * @param seconds the audio decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacSurroundBinauralFilteredDecode(double seconds) {
+        var encoder = new AacEncoder(AacEncoderOptions.of(48000, ChannelLayout.STEREO, 96000));
+        var speech = SyntheticAudio.speech(48000, seconds);
+        var core = AudioStreams.encodeAll(encoder, new float[][]{speech, speech}, ChannelLayout.STEREO, 48000);
+        var coreTrack = AudioStreams.track(Codec.AAC, 48000, ChannelLayout.STEREO, encoder.codecConfig().orElseThrow());
+        var surroundTrack = AudioTrack.builder().id(2).codec(Codec.AAC).timeBase(new Rational(1, 48000))
+                .sampleRate(48000).codecConfig(SyntheticAac.stereoSurroundConfig()).build();
+        var decoder = new AacDecoder(List.of(coreTrack, surroundTrack), AacDecoderOptions.builder()
+                .mpegSurroundBinaural(AacBinauralHrtf.KEMAR).mpegSurroundBinauralQuality(AacBinauralQuality.FILTERED)
+                .build());
+        var frame = SyntheticAac.stereoSurroundFrame();
+        var blocks = new ArrayList<List<Packet>>(core.size());
+        for (var block = 0; block < core.size(); block++) {
+            var spatial = new Packet(2, frame, core.get(block).pts(), core.get(block).dts(), 1024, true);
+            blocks.add(List.of(core.get(block), spatial));
+        }
+        Consumer<AudioBuffer> output = binauralOutput("aac-surround-binaural-filtered-decode");
+        return TrainingWorkload.of("aac-surround-binaural-filtered-decode", () -> {
+            for (var units : blocks) {
+                decoder.decode(units, output);
+            }
+        });
+    }
+
+    /**
+     * {@return a consumer of decoded audio that fails on an output other than the two ears, so that a change of the
+     * synthetic syntax that drops the rendering does not go unnoticed}
+     *
+     * @param name the name of the workload
+     */
+    private static Consumer<AudioBuffer> binauralOutput(String name) {
+        return buffer -> {
+            if (!buffer.layout().equals(ChannelLayout.STEREO)) {
+                throw new IllegalStateException(name + " output " + buffer.layout());
+            }
+            AudioStreams.consume(buffer);
+        };
     }
 
     /**

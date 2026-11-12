@@ -1,5 +1,9 @@
 package com.github.auties00.smalt.mpeg.fuzz;
 
+import com.github.auties00.smalt.audio.AudioBuffer;
+import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.audio.aac.AacEncoder;
+import com.github.auties00.smalt.audio.aac.AacEncoderOptions;
 import com.github.auties00.smalt.audio.aac.internal.AudioSpecificConfig;
 import com.github.auties00.smalt.audio.aac.internal.ep.EpFrameEncoder;
 import com.github.auties00.smalt.audio.aac.internal.usac.UsacTestStream;
@@ -1807,6 +1811,9 @@ class FuzzSeedWriter {
         }
         write(MpegFuzzTest.class, "aacSurround", "valid-mps-lc5151-separate.bin", FuzzPackets.audio(0, 48000, 1, 0,
                 MpegFuzzTest.units(List.of(core.getFirst(), config.toByteArray())), parts));
+        // the same stream rendered to the ears with the reverb of the third data set
+        write(MpegFuzzTest.class, "aacSurround", "valid-mps-lc5151-binaural.bin", FuzzPackets.audio(6, 48000, 1, 0,
+                MpegFuzzTest.units(List.of(core.getFirst(), config.toByteArray())), parts));
         // the synthetic MpegSurroundTest streams over the same downmix: an arbitrary tree on side and rear
         // positions, and spatial frames of two blocks, whose second blocks carry an empty access unit
         separateSeed("valid-mps-at71-separate.bin", core, "mps-at71", 1);
@@ -1819,6 +1826,83 @@ class FuzzSeedWriter {
         // spatial frames of two blocks embedded in fragments, the header in the first fragment of the first frame
         write(MpegFuzzTest.class, "aac", "valid-mps-long5151-embedded.bin",
                 FuzzPackets.audio(0, 48000, 1, 0, core.getFirst(), embedLong(core, "mps-long5151")));
+        threeDimensionalSeeds();
+    }
+
+    /**
+     * Writes a 3D stereo downmix whose HRTF parameters take a header of more than 127 bytes, over a stereo downmix of
+     * Smalt's encoder: the frames embedded in fill elements, the first with the header, and in a separate stream.
+     */
+    private static void threeDimensionalSeeds() throws IOException {
+        var noise = new float[2][9 * 1024];
+        var random = new java.util.Random(23);
+        for (var channel : noise) {
+            for (var i = 0; i < channel.length; i++) {
+                channel[i] = 0.2f * (float) random.nextGaussian();
+            }
+        }
+        var units = new ArrayList<byte[]>();
+        byte[] coreConfig;
+        try (var encoder = new AacEncoder(AacEncoderOptions.of(48000, ChannelLayout.STEREO, 64000))) {
+            encoder.encode(new AudioBuffer(ChannelLayout.STEREO, 48000, noise, noise[0].length),
+                    packet -> units.add(packet.data()));
+            coreConfig = encoder.codecConfig().orElseThrow();
+        }
+        var spatial = new ArrayList<byte[]>();
+        var data = Files.readAllBytes(SURROUND_RESOURCES.resolve("mps-3d525.bs"));
+        var buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
+        for (var position = 0; position + 4 <= data.length; position += 4 + buffer.getInt(position)) {
+            spatial.add(Arrays.copyOfRange(data, position + 4, position + 4 + buffer.getInt(position)));
+        }
+        var header = spatial.getFirst();
+        var embedded = new ArrayList<FuzzPackets.Part>();
+        var separate = new ArrayList<FuzzPackets.Part>();
+        for (var block = 0; block < 8; block++) {
+            var frame = spatial.get(block + 1);
+            var withHeader = block == 0;
+            var count = 1 + frame.length + (withHeader ? header.length : 0);
+            var bits = new MsbBitWriter();
+            bits.write(6, 3);
+            if (count < 15) {
+                bits.write(count, 4);
+            } else {
+                bits.write(15, 4);
+                bits.write(count - 14, 8);
+            }
+            bits.write(12, 4);
+            bits.write(withHeader ? 1 : 0, 2);
+            bits.write(1, 1);
+            bits.write(1, 1);
+            if (withHeader) {
+                for (var value : header) {
+                    bits.write(value & 0xFF, 8);
+                }
+            }
+            for (var value : frame) {
+                bits.write(value & 0xFF, 8);
+            }
+            for (var value : units.get(block)) {
+                bits.write(value & 0xFF, 8);
+            }
+            bits.alignWithZeros();
+            embedded.add(new FuzzPackets.Part(bits.toByteArray(), true));
+            separate.add(new FuzzPackets.Part(MpegFuzzTest.units(List.of(units.get(block), frame)), true));
+        }
+        write(MpegFuzzTest.class, "aac", "valid-mps-3d525-embedded.bin",
+                FuzzPackets.audio(0, 48000, 2, 0, coreConfig, embedded));
+        var config = new MsbBitWriter();
+        config.write(30, 5);
+        config.write(3, 4);
+        config.write(0, 4);
+        config.write(0, 1);
+        for (var i = 3; i < header.length; i++) {
+            config.write(header[i] & 0xFF, 8);
+        }
+        write(MpegFuzzTest.class, "aacSurround", "valid-mps-3d525-separate.bin", FuzzPackets.audio(0, 48000, 2, 0,
+                MpegFuzzTest.units(List.of(coreConfig, config.toByteArray())), separate));
+        // the same stream rendered to the ears through the filterbank of the first data set
+        write(MpegFuzzTest.class, "aacSurround", "valid-mps-3d525-binaural.bin", FuzzPackets.audio(10, 48000, 2, 0,
+                MpegFuzzTest.units(List.of(coreConfig, config.toByteArray())), separate));
     }
 
     /**

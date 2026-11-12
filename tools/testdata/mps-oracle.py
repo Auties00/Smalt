@@ -23,8 +23,15 @@ The reference software, which this script downloads from standards.iso.org (pinn
 script patches copies of sac_bitdec.c and bitstream.c to read and write the full SpatialSpecificConfig of
 ISO/IEC 23003-1 (sampling frequency index, frame length and tree, differential parameter slots, the high rate
 mode outside 2-1-2), patches copies of sac_TPprocess.c and sac_arbitraryTree.c so that the decoder runs the
-arbitrary tree it parses (it never calls arbitraryTreeProcess, whose buffers it keeps on the stack), and builds the
-decoder and encoder libraries with gcc (on Windows from an MSYS2 UCRT64 shell).
+arbitrary tree it parses (it never calls arbitraryTreeProcess, whose buffers it keeps on the stack), patches a copy of
+sac_calcM1andM2.c so that a singular 3D stereo product leaves no NaN in the decoder's filter states (see
+CALC_PATCHES), patches the binaural path to take every sampling frequency, a chosen data set and the delay of each QMF
+bank (see the BINAURAL patches; the frontend feeds the reverb, which the decoder declares but never feeds), and builds
+the decoder and encoder libraries with gcc (on Windows from an MSYS2 UCRT64 shell).
+
+The binaural decodes (<case>_b<model><quality>_ref.wav, of the streams of BINAURAL_ALL with data set 0 and of
+BINAURAL_MODELS with every data set, model 0 Kemar, 1 Vast and 2 MPSVT, quality 0 the band parameters and 1 the
+filterbank) run the same streams through upmix type 2 of the decoder.
 
     python -I tools/testdata/mps-oracle.py <work directory>
 """
@@ -93,7 +100,11 @@ BITDEC_PATCHES = [(
     self->bsHighRateMode = config->bsHighRateMode;
   } else {
     self->bsHighRateMode = 1;
-  }""")]
+  }"""), (
+    """  if(self->bsConfig.arbitraryTree == 1)
+    self->numOutputChannelsAT""",
+    """  if(self->bsConfig.arbitraryTree == 1 && self->upmixType != 2)
+    self->numOutputChannelsAT""")]
 
 # The decoder parses the arbitrary tree extension but never calls arbitraryTreeProcess, whose temporary buffers are
 # also too large for a thread stack: the patches call it where tpProcess declares it, between the subband domain
@@ -105,7 +116,7 @@ TPPROCESS_PATCHES = [(
 """,
     """#endif
 
-  arbitraryTreeProcess(self);
+  if (self->upmixType != 2) arbitraryTreeProcess(self);
 
   SpatialDecHybridQMFSynthesis(self);
 """)]
@@ -115,6 +126,106 @@ ARBITRARY_TREE_PATCHES = [(
   float pTempImag [MAX_OUTPUT_CHANNELS_AT][MAX_TIME_SLOTS][MAX_HYBRID_BANDS];""",
     """  static float pTempReal [MAX_OUTPUT_CHANNELS_AT][MAX_TIME_SLOTS][MAX_HYBRID_BANDS];
   static float pTempImag [MAX_OUTPUT_CHANNELS_AT][MAX_TIME_SLOTS][MAX_HYBRID_BANDS];""")]
+
+# The decomposition of a singular 3D stereo product takes the square root of a discriminant and of a singular value
+# that rounding can leave just below zero, and divides by zero when a singular vector of a matrix of rank one cannot be
+# normalized (always for the null vector of an exact rank one, as with HRTFs equal at both ears). A NaN then stays in
+# the decorrelators and hybrid filters until the end of the stream, so nothing after it could be compared. The patches,
+# which change no finite result, clamp both square roots to zero, complete the vectors to an orthonormal pair as the
+# decomposition means to, and make a band with a product of zero (an arbitrary downmix with both gains at zero) silent.
+CALC_PATCHES = [(
+    """  temp = (float) sqrt(poly[1] * poly[1] - 4 * poly[0]);
+""",
+    """  temp = poly[1] * poly[1] - 4 * poly[0];
+  temp = (float) sqrt(temp > 0.0f ? temp : 0.0f);
+"""), (
+    """  s[1] = (float) sqrt(root[1]);
+""",
+    """  s[1] = (float) sqrt(root[1] > 0.0f ? root[1] : 0.0f);
+"""), (
+    """  v_real[0][0] = p_real[0][1] / temp;
+  v_imag[0][0] = p_imag[0][1] / temp;
+  v_real[1][0] = root[0] / temp;
+""",
+    """  v_real[0][0] = temp == 0.0f ? 1.0f : p_real[0][1] / temp;
+  v_imag[0][0] = temp == 0.0f ? 0.0f : p_imag[0][1] / temp;
+  v_real[1][0] = temp == 0.0f ? 0.0f : root[0] / temp;
+"""), (
+    """  v_real[0][1] = p_real[0][1] / temp;
+  v_imag[0][1] = p_imag[0][1] / temp;
+  v_real[1][1] = root[1] / temp;
+""",
+    """  v_real[0][1] = temp == 0.0f ? 1.0f : p_real[0][1] / temp;
+  v_imag[0][1] = temp == 0.0f ? 0.0f : p_imag[0][1] / temp;
+  v_real[1][1] = temp == 0.0f ? 0.0f : root[1] / temp;
+"""), (
+    """  u_real[0][1] /= temp;
+  u_imag[0][1] /= temp;
+  u_real[1][1] /= temp;
+  u_imag[1][1] /= temp;
+""",
+    """  if (temp == 0.0f) {
+    u_real[0][1] = -u_real[1][0];
+    u_imag[0][1] = u_imag[1][0];
+    u_real[1][1] = u_real[0][0];
+    u_imag[1][1] = -u_imag[0][0];
+  } else {
+    u_real[0][1] /= temp;
+    u_imag[0][1] /= temp;
+    u_real[1][1] /= temp;
+    u_imag[1][1] /= temp;
+  }
+"""), (
+    """  Q_imag[ 1 ][ 1 ] =  h11_real*inv_norm_imag + h11_imag*inv_norm_real;
+""",
+    """  Q_imag[ 1 ][ 1 ] =  h11_real*inv_norm_imag + h11_imag*inv_norm_real;
+  if (!isfinite(Q_real[0][0]) || !isfinite(Q_imag[0][0]) || !isfinite(Q_real[0][1]) || !isfinite(Q_imag[0][1])
+      || !isfinite(Q_real[1][0]) || !isfinite(Q_imag[1][0]) || !isfinite(Q_real[1][1]) || !isfinite(Q_imag[1][1])) {
+    memset(Q_real, 0, 4 * sizeof(float));
+    memset(Q_imag, 0, 4 * sizeof(float));
+  }
+""")]
+
+# The data sets are of 44.1 kHz and the decoder asserts that rate, though it applies a set per QMF subband alike at any
+# rate of the same bank: the patch lets every rate through.
+CALC_PATCHES.append((
+    """    assert((self->samplingFreq == self->hrtfData->sampleRate) || (0 == self->hrtfData->sampleRate));
+""",
+    """"""))
+
+# The decoder takes data set 0; the patch takes the frontend's.
+BINAURAL_DEC_PATCHES = [(
+    """#include "sac_parallelReverb.h"
+""",
+    """#include "sac_parallelReverb.h"
+extern int mpsrefHrtfModel;
+"""), (
+    """  SpatialDecInitM1andM2(self, 0);
+""",
+    """  SpatialDecInitM1andM2(self, mpsrefHrtfModel);
+""")]
+
+# The 2048 samples of the MPSVT responses need 66 slots at 32 QMF subbands, past the limit the decoder asserts.
+BINAURAL_FILTER_PATCHES = [(
+    """#define MAX_MASK_SLOTS                  (40)""",
+    """#define MAX_MASK_SLOTS                  (80)""")]
+
+# The delay the reverb lines up with is that of the 64-band bank; the patch scales it to the bank in use.
+BINAURAL_REVERB_PATCHES = [(
+    """  self->systemDelay = SYSTEM_DELAY_HQ;
+""",
+    """  self->systemDelay = 20 * self->qmfBands + 1;
+""")]
+
+BINAURAL_ALL = ['t5151', 't5152', 't5151q2', 't525cpc', 't525cld', 't525dual', 't525inv', 't525mode4',
+                't7271', 't7272', 'stp5151', 'stp525', 'ges5152', 'ges525', 'rate24', 'rate96', 'slots16',
+                'arbdmx5151', 'arbdmx525', 'res5151', 'res5152x2', 'res525', 'res525cpc0', 'res7272',
+                'arbres5151', 'arbres525', 'v_fr3', 'v_fr2', 'at5151', 'at525', 'at7271', 'long64', 'long24',
+                'short8', 'short96', '3d525', '3d525inv', '3dbands', '3d7271', '3dstp', '3darbres',
+                'enc5151_32', 'enc5152_32', 'enc525_32', 'bfr5', 'bfr6', 'bfr7', 'bfr5m', 'bfrdual', 'bfrarb', 'bfrarbm',
+                '3dbdual']
+BINAURAL_MODELS = ['t5151', 't5152', 't525cpc', 't525cld', 't525inv', 't7271', 'rate24', 'rate96',
+                   'arbres525', '3d525', 'enc525_32', 'bfr5']
 
 BITSTREAM_PATCHES = [(
     """int FreqResBinTable[] = {0, 28, 20, 14, 10, 7, 5, 4};""",
@@ -203,6 +314,12 @@ def build(work):
           TPPROCESS_PATCHES)
     patch(os.path.join(decoder, 'src', 'sac_arbitraryTree.c'), os.path.join(patched, 'sac_arbitraryTree.c'),
           ARBITRARY_TREE_PATCHES)
+    patch(os.path.join(decoder, 'src', 'sac_calcM1andM2.c'), os.path.join(patched, 'sac_calcM1andM2.c'), CALC_PATCHES)
+    patch(os.path.join(decoder, 'src', 'sac_dec.c'), os.path.join(patched, 'sac_dec.c'), BINAURAL_DEC_PATCHES)
+    patch(os.path.join(decoder, 'src', 'sac_hrtffilter.c'), os.path.join(patched, 'sac_hrtffilter.c'),
+          BINAURAL_FILTER_PATCHES)
+    patch(os.path.join(decoder, 'src', 'sac_parallelReverb.c'), os.path.join(patched, 'sac_parallelReverb.c'),
+          BINAURAL_REVERB_PATCHES)
     patch(os.path.join(encoder, 'src', 'bitstream.c'), os.path.join(patched, 'bitstream.c'), BITSTREAM_PATCHES)
     shutil.copy(os.path.join(SOURCES, 'libtsp.h'), stub)
     shared = ['-I' + os.path.join(common, 'src_frame'), '-I' + os.path.join(common, 'include'),
@@ -213,7 +330,9 @@ def build(work):
                         '-I' + os.path.join(encoder, 'src')] + shared
     built = compile_all(os.path.join(decoder, 'src'), decoder_includes, ['-DTP_BUG_FIX', '-DHRTF_DYNAMIC_UPDATE'],
                         objects, 'dec_', {name: os.path.join(patched, name)
-                                          for name in ('sac_bitdec.c', 'sac_TPprocess.c', 'sac_arbitraryTree.c')})
+                                          for name in ('sac_bitdec.c', 'sac_TPprocess.c', 'sac_arbitraryTree.c',
+                                                       'sac_calcM1andM2.c', 'sac_dec.c', 'sac_hrtffilter.c',
+                                                       'sac_parallelReverb.c')})
     built += compile_all(os.path.join(encoder, 'src'), encoder_includes, ['-std=gnu89'], objects, 'enc_',
                          {'bitstream.c': os.path.join(patched, 'bitstream.c')})
     for name, includes in (('mpsref.c', decoder_includes + ['-I' + os.path.join(encoder, 'include'),
@@ -224,7 +343,9 @@ def build(work):
                               + ['-o', target, os.path.join(SOURCES, name)])
         built.append(target)
     executable = os.path.join(work, 'mpsref' + ('.exe' if os.name == 'nt' else ''))
-    subprocess.check_call(['gcc', '-fcommon', '-o', executable] + built + ['-lm'])
+    # the filterbank's prototype solver keeps megabytes on the stack
+    stack = ['-Wl,--stack=67108864'] if os.name == 'nt' else []
+    subprocess.check_call(['gcc', '-fcommon', '-o', executable] + built + ['-lm'] + stack)
     return executable, os.path.join(decoder, 'src')
 
 
@@ -274,6 +395,14 @@ def main():
     for name in cases:
         subprocess.check_call([mpsref, 'dec', os.path.join(directory, name + '_dmx.wav'),
                                os.path.join(directory, name + '.bs'), os.path.join(directory, name + '_ref.wav')])
+    for name in BINAURAL_ALL + BINAURAL_MODELS:
+        models = (0, 1, 2) if name in BINAURAL_MODELS else (0,)
+        for model in models:
+            for quality in (0, 1):
+                target = os.path.join(directory, '%s_b%d%d_ref.wav' % (name, model, quality))
+                subprocess.check_call([mpsref, 'dec', os.path.join(directory, name + '_dmx.wav'),
+                                       os.path.join(directory, name + '.bs'), target, '0', '2', str(quality),
+                                       str(model)])
     for name in cases:
         digest = hashlib.sha256(open(os.path.join(directory, name + '.bs'), 'rb').read()).hexdigest()
         print(name, digest)

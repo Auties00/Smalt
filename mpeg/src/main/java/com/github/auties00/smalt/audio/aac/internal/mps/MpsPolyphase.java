@@ -1,7 +1,7 @@
 /* Ports the ISO/IEC 23003-3:2019 reference software MPEG Surround decoder (sac_polyphase.c: the complex QMF analysis
-   and synthesis banks and their prototype). Copyright Agere Systems, Coding Technologies, Fraunhofer IIS, Philips and
-   ISO/IEC 2008; ISO/IEC reference software licence (use in products conforming to ISO/IEC 23003). Modified for
-   Smalt. */
+   and synthesis banks and their prototype, SacGetFilterbankPrototype). Copyright Agere Systems, Coding Technologies,
+   Fraunhofer IIS, Philips and ISO/IEC 2008; ISO/IEC reference software licence (use in products conforming to
+   ISO/IEC 23003). Modified for Smalt. */
 package com.github.auties00.smalt.audio.aac.internal.mps;
 
 /**
@@ -316,6 +316,26 @@ public final class MpsPolyphase {
         }
         this.z = new float[10 * bands];
         this.y = new float[2 * bands];
+    }
+
+    /**
+     * {@return the prototype filter of a number of subbands in single precision, with the signs of the sections the
+     * filterbank negates undone ({@code SacGetFilterbankPrototype})}
+     *
+     * @param bands the number of subbands, 32, 64 or 128
+     */
+    static float[] signedPrototype(int bands) {
+        var prototype = new float[10 * bands];
+        for (var i = 0; i < 10 * bands; i++) {
+            prototype[i] = (float) PROTOTYPE[i * MAX_BANDS / bands];
+        }
+        for (var i = 2 * bands; i < 4 * bands; i++) {
+            prototype[i] = -prototype[i];
+        }
+        for (var i = 6 * bands; i < 8 * bands; i++) {
+            prototype[i] = -prototype[i];
+        }
+        return prototype;
     }
 
     /**

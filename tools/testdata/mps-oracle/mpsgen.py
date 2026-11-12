@@ -8,7 +8,8 @@ Every case is a SpatialSpecificConfig with random but valid SpatialFrame() paylo
 envelopes Huffman coded with the reference tree), arbitrary downmix gains, residual or downmix residual frames
 coded as AAC individual channel streams with codebook 11 (Huffman codes read from the reference tables), and the
 arbitrary tree extension (its OTT boxes, given per output channel of the tree as the preorder bsOttBoxPresentAT
-flags, with their CLDs in the extension frame).
+flags, with their CLDs in the extension frame). A case with an hrtf entry signals a 3D stereo downmix with the HRTF
+parameters that entry describes; its downmix stays the synthetic one, which is all the inversion needs to be compared.
 """
 import math
 import os
@@ -227,7 +228,7 @@ def ssc(cfg):
     b.put(cfg['matrix_mode'], 1)
     b.put(cfg['temp_shape'], 2)
     b.put(cfg['decorr'], 2)
-    b.put(0, 1)
+    b.put(1 if cfg.get('hrtf') else 0, 1)
     inputs, outputs, otts, ttts, lfe = TREE[cfg['tree']]
     for i in range(otts):
         if lfe[i]:
@@ -240,6 +241,8 @@ def ssc(cfg):
             b.put(cfg['ttt_bands_low'], 5)
     if cfg['temp_shape'] == 2:
         b.put(cfg['env_quant'], 1)
+    if cfg.get('hrtf'):
+        write_hrtf(b, cfg['hrtf'])
     b.align()
     if cfg.get('residual'):
         ext = Bits()
@@ -275,6 +278,36 @@ def ssc(cfg):
         ext.align()
         extension(b, 2, ext.data())
     return b.data()
+
+
+def hrtf(seed, freq_res=1, channels=5, asymmetric=1, phase=1, icc=1, levels=(10, 40)):
+    """Describes the HRTF parameters of a 3D stereo downmix (bs3DaudioHRTFset 0): random levels in the range, phases
+    of 0 to 15 steps of pi/16, and ICC indices, which the reference decoder uses as table indices, of 0 to 7."""
+    return dict(seed=seed, freq_res=freq_res, channels=channels, asymmetric=asymmetric, phase=phase, icc=icc,
+                levels=levels)
+
+
+def write_hrtf(b, cfg):
+    rng = random.Random(cfg['seed'])
+    bands = FREQ_RES[cfg['freq_res']]
+    b.put(0, 2)
+    b.put(cfg['freq_res'], 3)
+    b.put(cfg['channels'], 4)
+    b.put(cfg['asymmetric'], 1)
+    for _ in range(cfg['channels']):
+        for _ in range(bands):
+            b.put(rng.randint(*cfg['levels']), 6)
+        if cfg['asymmetric']:
+            for _ in range(bands):
+                b.put(rng.randint(*cfg['levels']), 6)
+        b.put(cfg['phase'], 1)
+        if cfg['phase']:
+            for _ in range(bands):
+                b.put(rng.randint(0, 15), 6)
+        b.put(cfg['icc'], 1)
+        if cfg['icc']:
+            for _ in range(bands):
+                b.put(rng.randint(0, 7), 6)
 
 
 def extension(b, kind, payload):
@@ -525,7 +558,11 @@ def write_case(name, cfg, frames=24, seed=1):
     header = Bits()
     config = ssc(cfg)
     header.put(0, 1)
-    header.put(len(config), 7)
+    if len(config) < 127:
+        header.put(len(config), 7)
+    else:
+        header.put(127, 7)
+        header.put(len(config) - 127, 16)
     for byte in config:
         header.put(byte, 8)
     stream = Stream(cfg, rng)
@@ -635,6 +672,49 @@ CASES = {
     'short96': base(2, rate=96000, slots=8, ttt_low=0, decorr=1),
     'atshort': base(0, slots=8, at=arbitrary_tree([[0], [0], [1, 0, 0], [0], [1, 0, 0], [0]], [(0, 0, 0), (0, 0, 0)],
                                                   [0, 1, 2, 3, 4, 5, 6, 7])),
+    # 3D stereo downmixes: every TTT mode and how each meets the matrix inversion (which wins in modes 0, 1, 2 and 4),
+    # the trees that invert and those that only skip the parameters, more HRTF bands than parameter bands, products
+    # that need pushing away from singularity, and the other tools over the inverted downmix.
+    '3d525': base(2, ttt_low=1, hrtf=hrtf(1)),
+    '3d525cpc': base(2, ttt_low=0, decorr=1, hrtf=hrtf(2)),
+    '3d525m2': base(2, ttt_low=2, hrtf=hrtf(3)),
+    '3d525m3': base(2, ttt_low=3, matrix_mode=1, hrtf=hrtf(4)),
+    '3d525m5': base(2, ttt_low=5, matrix_mode=1, decorr=2, hrtf=hrtf(5)),
+    '3d525inv': base(2, ttt_low=1, matrix_mode=1, hrtf=hrtf(6)),
+    '3d525dual': base(2, ttt_dual=1, ttt_low=0, ttt_high=3, ttt_bands_low=9, freq_res=2, hrtf=hrtf(7, freq_res=2)),
+    '3d7271': base(3, ttt_low=0, hrtf=hrtf(8)),
+    '3d7272': base(4, ttt_low=1, gain_sur=4, hrtf=hrtf(9)),
+    '3d5151': base(0, hrtf=hrtf(10, freq_res=6, channels=3)),
+    '3d5152': base(1, hrtf=hrtf(11)),
+    '3d7572': base(6, freq_res=5, hrtf=hrtf(12, freq_res=7, channels=2)),
+    '3dbands': base(2, ttt_low=1, freq_res=3, hrtf=hrtf(13, freq_res=1)),
+    '3dsym': base(2, ttt_low=1, freq_res=2, hrtf=hrtf(14, freq_res=2, asymmetric=0, phase=0, icc=0)),
+    '3dflat': base(2, ttt_low=1, freq_res=4, hrtf=hrtf(15, freq_res=4, asymmetric=0, phase=0, icc=0, levels=(16, 16))),
+    '3dlow': base(2, ttt_low=0, freq_res=2, hrtf=hrtf(16, freq_res=2, levels=(0, 3))),
+    '3dlowflat': base(2, ttt_low=1, freq_res=5, hrtf=hrtf(17, freq_res=5, asymmetric=0, phase=0, icc=0, levels=(0, 0))),
+    '3dhigh': base(2, ttt_low=1, freq_res=3, gain_sur=3, hrtf=hrtf(18, freq_res=3, levels=(58, 63))),
+    '3dnoasym': base(3, ttt_low=1, freq_res=3, hrtf=hrtf(19, freq_res=3, asymmetric=0)),
+    '3dstp': base(2, temp_shape=1, ttt_low=1, hrtf=hrtf(20)),
+    '3dges': base(2, temp_shape=2, ttt_low=1, hrtf=hrtf(21)),
+    '3darb': base(2, arbdmx=1, ttt_low=1, hrtf=hrtf(22)),
+    '3darbres': base(2, arbdmx=2, dmx_sfi=6, dmx_frames=2, dmx_bands=5, ttt_low=1, hrtf=hrtf(23)),
+    '3dres': base(2, residual=[0, 5, 5, 10], residual_sfi=6, residual_frames=1, ttt_low=1, hrtf=hrtf(24)),
+    '3dat': base(2, ttt_low=0, decorr=1, hrtf=hrtf(25),
+                 at=arbitrary_tree([[0], [0], [1, 0, 0], [0], [0], [0]], [(0, 0, 0)], [0, 1, 2, 3, 4, 5, 6])),
+    '3dlong': base(2, slots=64, ttt_low=1, hrtf=hrtf(26)),
+    '3dshort': base(2, slots=8, ttt_low=1, hrtf=hrtf(27)),
+    '3d24k': base(2, rate=24000, slots=32, freq_res=2, ttt_low=1, hrtf=hrtf(28, freq_res=2)),
+    '3d96k': base(2, rate=96000, slots=16, ttt_low=1, hrtf=hrtf(29)),
+    # The coarse frequency resolutions the binaural rendering maps to 28 bands, with the band limits that map with them
+    # (the TTT split) and those that do not (the arbitrary downmix residual).
+    'bfr5': base(2, freq_res=5, ttt_low=0),
+    'bfr6': base(0, freq_res=6),
+    'bfr7': base(2, freq_res=7, ttt_low=1),
+    'bfr5m': base(1, freq_res=5, gain_sur=3),
+    'bfrdual': base(2, ttt_dual=1, ttt_low=0, ttt_high=3, ttt_bands_low=3, freq_res=5),
+    'bfrarb': base(2, arbdmx=2, dmx_sfi=6, dmx_frames=2, dmx_bands=3, ttt_low=1, freq_res=5),
+    'bfrarbm': base(0, arbdmx=2, dmx_sfi=6, dmx_frames=1, dmx_bands=3, freq_res=6),
+    '3dbdual': base(2, ttt_dual=1, ttt_low=0, ttt_high=3, ttt_bands_low=5, freq_res=3, hrtf=hrtf(32)),
 }
 
 # The streams of smalt-mpeg's MpegSurroundTest resources, written only when named: a frame of two AAC blocks, a frame
@@ -646,6 +726,8 @@ RESOURCES = {
     'mps-at71': base(0, slots=16, at=arbitrary_tree([[0], [0], [0], [0], [1, 0, 0], [1, 0, 0]],
                                                      [(0, 0, 0), (0, 0, 0)], [0, 1, 2, 3, 4, 8, 5, 9],
                                                      dense=False)),
+    'mps-3d525': base(2, slots=16, freq_res=4, ttt_low=1, hrtf=hrtf(30, freq_res=4)),
+    'mps-3d-large': base(2, slots=16, ttt_low=1, hrtf=hrtf(31)),
 }
 
 if __name__ == '__main__':

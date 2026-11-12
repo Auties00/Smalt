@@ -2,13 +2,15 @@
    SpatialDecApplyFrame; sac_process.c SpatialDecMDCT2QMF, SpatialDecHybridQMFAnalysis, SpatialDecDecorrelate,
    SpatialDecMergeResDecor, SpatialDecCreateX and SpatialDecUpdateBuffers; sac_calcM1andM2.c SpatialDecApplyM1,
    SpatialDecApplyM2, interp_UMX and applyAbsKernels; sac_TPprocess.c subbandTP and tpProcess; sac_reshapeBBEnv.c
-   extractBBEnv and spatialDecReshapeBBEnv; sac_arbitraryTree.c arbitraryTreeProcess), for the trees of
+   extractBBEnv and spatialDecReshapeBBEnv; sac_arbitraryTree.c arbitraryTreeProcess; the complex M2 and the output of
+   the binaural rendering of SpatialDecApplyM2 and sac_parallelReverb.c), for the trees of
    ISO/IEC 23003-1 other than the 2-1-2 tree. Copyright
    Agere Systems, Coding Technologies, Fraunhofer IIS, Philips and ISO/IEC 2008; ISO/IEC reference software licence
    (use in products conforming to ISO/IEC 23003). Modified for Smalt. */
 package com.github.auties00.smalt.audio.aac.internal.mps;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.audio.aac.AacBinauralQuality;
 import com.github.auties00.smalt.audio.aac.internal.AacBitReader;
 
 import java.util.Arrays;
@@ -22,15 +24,21 @@ import java.util.Arrays;
  * order left, right, center, LFE, left surround, right surround and, for the 7.1 trees, the two added channels (left
  * and right center for trees 3 and 5, left and right rear surround for trees 4 and 6). With the arbitrary tree
  * extension, its boxes split the outputs of the tree further, and the output channels are those of the arbitrary tree
- * in ascending order of their loudspeaker position. Binaural, 3D stereo and blind
- * upmixing are not implemented.
+ * in ascending order of their loudspeaker position. A 3D stereo downmix is inverted back to its loudspeaker signals.
+ * A binaural rendering ({@link MpsBinaural}) replaces the loudspeaker outputs of a mono or stereo downmix with the two
+ * ears: the parameters are mapped to 28 bands, the residual signals of the tree and the temporal shaping take no part
+ * and the arbitrary tree does not run. The blind upmix is not implemented.
  *
  * <p>Instances keep the state of one stream; they are not thread-safe.
  */
 public final class MpsDecoder {
     private static final float ABS_THR = 1e-9f * 32768 * 32768;
+    /**
+     * The samples the upmix of the QMF slots of spectral band replication leads the upmix of its time samples.
+     */
+    private static final int SBR_SYNTHESIS_LEAD = 577;
     private static final int[] KERNEL_BANDS = {4, 5, 7, 10, 14, 20, 28};
-    private static final float[] SURROUND_GAINS = {1.000000f, 1.189207f, 1.414213f, 1.681792f, 2.000000f};
+    static final float[] SURROUND_GAINS = {1.000000f, 1.189207f, 1.414213f, 1.681792f, 2.000000f};
     private static final float[] LFE_GAINS = {1.000000f, 3.162277f, 10.000000f, 31.622776f, 100.000000f};
     private static final float[] CLIP_GAINS = {1.000000f, 1.189207f, 1.414213f, 1.681792f, 2.000000f, 2.378414f,
             2.828427f, 4.000000f};
@@ -110,6 +118,22 @@ public final class MpsDecoder {
     private final boolean residualCoding;
     private final int arbitraryDownmix;
     private final boolean arbitraryTree;
+    /**
+     * Whether the outputs are the two ears of a binaural rendering.
+     */
+    private final boolean binaural;
+    /**
+     * The filterbank of a binaural rendering of a stereo downmix through impulse responses, otherwise {@code null}.
+     */
+    private final MpsHrtfFilterbank filterbank;
+    /**
+     * The reverb of a binaural rendering, {@code null} when it has none.
+     */
+    private final MpsReverb reverb;
+    /**
+     * The delay of the output against time samples through the QMF path: of 1281 samples at 64 QMF subbands.
+     */
+    private final int maxReverbDelay;
     private final int channelsOut;
     private final int[] leafOutput;
     private final float[][] treeGain;
@@ -148,11 +172,16 @@ public final class MpsDecoder {
     private final float[][] qmfOutReal;
     private final float[][] qmfOutImag;
     private final double[][] timeOut;
+    private float[][] reverbInput;
+    private int reverbOffset;
+    private int reverbDelay;
 
     private final float[][] r1Real;
     private final float[][] r1Imag;
     private final float[][] r2Decor;
     private final float[][] r2Resid;
+    private final float[][] r2DecorImag;
+    private final float[][] r2ResidImag;
 
     private final float[] runDryEnergy = new float[6];
     private final float[] runWetEnergy = new float[8];
@@ -188,21 +217,36 @@ public final class MpsDecoder {
      * @throws MediaException.Unsupported if residual frames need a longer MDCT than the reference decoder supports
      */
     public MpsDecoder(MpsConfig config, int sampleRate) {
+        this(config, sampleRate, null);
+    }
+
+    /**
+     * Constructs a decoder.
+     *
+     * @param config the {@code SpatialSpecificConfig}
+     * @param sampleRate the sampling frequency of the downmix and the output, which selects the QMF bank: 32 subbands
+     *                   below 27713 Hz, 128 from 55426 Hz and 64 between
+     * @param binaural the binaural rendering of a tree it applies to, or {@code null} for the loudspeaker upmix
+     * @throws MediaException.Malformed if the configuration is inconsistent
+     * @throws MediaException.Unsupported if residual frames need a longer MDCT than the reference decoder supports
+     */
+    public MpsDecoder(MpsConfig config, int sampleRate, MpsBinaural binaural) {
         this.config = config;
         this.qmfBands = sampleRate < 27713 ? 32 : sampleRate >= 55426 ? 128 : 64;
         this.hybridBands = MpsHybrid.bands(qmfBands);
-        this.parameters = new MpsParameters(config, qmfBands);
+        this.binaural = binaural != null && MpsBinaural.appliesTo(config.treeConfig);
+        this.parameters = new MpsParameters(config, qmfBands, this.binaural);
         this.tree = parameters.tree;
         this.slots = parameters.slots;
-        this.bands = parameters.bands;
+        this.bands = this.binaural ? MpsParameters.MAX_BANDS : parameters.bands;
         this.inputs = parameters.inputs;
-        this.outputs = parameters.outputs;
+        this.outputs = this.binaural ? 2 : parameters.outputs;
         this.ottCount = parameters.ottCount;
         this.tttCount = parameters.tttCount;
-        this.residualCoding = config.residualCoding;
+        this.residualCoding = config.residualCoding && !this.binaural;
         this.arbitraryDownmix = config.arbitraryDownmix;
-        this.arbitraryTree = config.arbitraryTreeActive();
-        this.channelsOut = config.outputChannels();
+        this.arbitraryTree = config.arbitraryTreeActive() && !this.binaural;
+        this.channelsOut = this.binaural ? 2 : config.outputChannels();
         var positions = config.arbitraryTreePositions();
         this.leafOutput = new int[arbitraryTree ? channelsOut : 0];
         for (var leaf = 0; leaf < leafOutput.length; leaf++) {
@@ -227,17 +271,17 @@ public final class MpsDecoder {
         switch (tree) {
             case MpsConfig.TREE_5151, MpsConfig.TREE_5152 -> {
                 direct = 1;
-                decorrelated = 4;
+                decorrelated = this.binaural ? 1 : 4;
                 xChannels = arbitraryDownmix == 2 ? 2 : 1;
             }
             case MpsConfig.TREE_525 -> {
-                direct = 3;
-                decorrelated = parameters.tttDecorrelated[1] ? 3 : 2;
+                direct = this.binaural ? arbitraryDownmix == 2 ? 4 : 2 : 3;
+                decorrelated = this.binaural ? 0 : parameters.tttDecorrelated[1] ? 3 : 2;
                 xChannels = arbitraryDownmix == 2 ? 5 : residualCoding ? 3 : 2;
             }
             case MpsConfig.TREE_7271, MpsConfig.TREE_7272 -> {
-                direct = 3;
-                decorrelated = 5;
+                direct = this.binaural ? arbitraryDownmix == 2 ? 4 : 2 : 3;
+                decorrelated = this.binaural ? 0 : 5;
                 xChannels = arbitraryDownmix == 2 ? 5 : residualCoding ? 3 : 2;
             }
             default -> {
@@ -248,7 +292,12 @@ public final class MpsDecoder {
         }
         this.vChannels = direct + decorrelated;
         this.wChannels = vChannels;
-        this.matrices = new MpsMatrices(parameters, xChannels);
+        this.matrices = new MpsMatrices(parameters, xChannels, this.binaural ? binaural : null, qmfBands, kernelBand);
+        this.filterbank = matrices.filterbank();
+        var hrtf = this.binaural ? MpsHrtf.of(binaural.hrtf()) : null;
+        this.maxReverbDelay = 20 * qmfBands + 1;
+        this.reverb = this.binaural && filterbank == null && binaural.quality() == AacBinauralQuality.PARAMETRIC
+                && hrtf.reverbLeft.length > 0 ? new MpsReverb(hrtf, slots * qmfBands, maxReverbDelay) : null;
         this.polyphase = new MpsPolyphase(qmfBands);
         this.analysisStates = new double[inputs][];
         for (var i = 0; i < inputs; i++) {
@@ -268,7 +317,7 @@ public final class MpsDecoder {
         }
         this.decorrelators = new MpsDecorrelator[decorrelated];
         for (var i = 0; i < decorrelated; i++) {
-            decorrelators[i] = new MpsDecorrelator(slots, config.decorrelator, hybridBands);
+            decorrelators[i] = new MpsDecorrelator(slots, this.binaural ? 0 : config.decorrelator, hybridBands);
         }
         var anyResidual = residualCoding || arbitraryDownmix == 2;
         this.converter = anyResidual ? new MpsMdctToQmf(qmfBands) : null;
@@ -303,6 +352,9 @@ public final class MpsDecoder {
         this.r1Imag = new float[bands][MpsMatrices.STRIDE * MpsMatrices.STRIDE];
         this.r2Decor = new float[bands][MpsMatrices.STRIDE * MpsMatrices.STRIDE];
         this.r2Resid = new float[bands][MpsMatrices.STRIDE * MpsMatrices.STRIDE];
+        var imaginaryBands = this.binaural ? bands : 0;
+        this.r2DecorImag = new float[imaginaryBands][MpsMatrices.STRIDE * MpsMatrices.STRIDE];
+        this.r2ResidImag = new float[imaginaryBands][MpsMatrices.STRIDE * MpsMatrices.STRIDE];
         Arrays.fill(oldDryEnergy, 32768 * 32768);
         Arrays.fill(oldWetEnergy, 32768 * 32768);
         Arrays.fill(previousStpScale, 1.0f);
@@ -400,6 +452,9 @@ public final class MpsDecoder {
                 scale(qmfInImag[ch][ts]);
             }
         }
+        reverbInput = input;
+        reverbOffset = inputOffset;
+        reverbDelay = maxReverbDelay;
         process(output, outputOffset);
     }
 
@@ -412,6 +467,34 @@ public final class MpsDecoder {
      * @param outputOffset the index of the first output sample
      */
     public void decodeQmf(float[][][] inputReal, float[][][] inputImag, float[][] output, int outputOffset) {
+        decodeQmf(inputReal, inputImag, null, 0, output, outputOffset);
+    }
+
+    /**
+     * {@return whether {@link #decodeQmf(float[][][], float[][][], float[][], int, float[][], int)} reads the time
+     * samples of the downmix}
+     */
+    public boolean needsTimeInput() {
+        return reverb != null;
+    }
+
+    /**
+     * Upmixes one spatial frame of QMF slots of a spectral band replication decoder, with the parameters of the last
+     * frame read.
+     *
+     * @param inputReal the real parts of the downmix, {@code [channel][slot][band]}
+     * @param inputImag the imaginary parts of the downmix
+     * @param time the time samples the decoder made of the slots, which a reverb reads; {@code null} leaves the reverb
+     *             without its input
+     * @param timeOffset the index of the first time sample
+     * @param output receives the output channels, {@link #frameLength()} samples each from {@code outputOffset}
+     * @param outputOffset the index of the first output sample
+     */
+    public void decodeQmf(float[][][] inputReal, float[][][] inputImag, float[][] time, int timeOffset,
+                          float[][] output, int outputOffset) {
+        reverbInput = time;
+        reverbOffset = timeOffset;
+        reverbDelay = maxReverbDelay - SBR_SYNTHESIS_LEAD;
         for (var ch = 0; ch < inputs; ch++) {
             for (var ts = 0; ts < slots; ts++) {
                 for (var qs = 0; qs < qmfBands; qs++) {
@@ -436,13 +519,19 @@ public final class MpsDecoder {
         matrices.calculate();
         applyM1();
         decorrelate();
-        mergeResidual();
-        applyM2();
-        if (config.temporalShaping == 2) {
-            reshapeEnvelope();
+        if (binaural) {
+            mergeBinaural();
+            applyM2Binaural();
+            binauralOutput();
+        } else {
+            mergeResidual();
+            applyM2();
+            if (config.temporalShaping == 2) {
+                reshapeEnvelope();
+            }
+            temporalProcess();
         }
-        temporalProcess();
-        if (!arbitraryTree) {
+        if (!arbitraryTree && !binaural) {
             for (var n = 0; n < slots * qmfBands; n++) {
                 timeOut[3][n] *= lfeGain;
                 timeOut[4][n] *= surroundGain;
@@ -647,6 +736,87 @@ public final class MpsDecoder {
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * Takes the direct signals as they are: a binaural rendering has no residual of the tree.
+     */
+    private void mergeBinaural() {
+        for (var ts = 0; ts < slots; ts++) {
+            for (var row = 0; row < direct; row++) {
+                System.arraycopy(vReal[row][ts], 0, wDryReal[row][ts], 0, hybridBands);
+                System.arraycopy(vImag[row][ts], 0, wDryImag[row][ts], 0, hybridBands);
+                Arrays.fill(wWetReal[row][ts], 0.0f);
+                Arrays.fill(wWetImag[row][ts], 0.0f);
+            }
+            for (var row = direct; row < wChannels; row++) {
+                Arrays.fill(wDryReal[row][ts], 0.0f);
+                Arrays.fill(wDryImag[row][ts], 0.0f);
+            }
+        }
+    }
+
+    /**
+     * Mixes to the two ears with the complex {@code M2}, or through the filterbank, whose output takes its place.
+     */
+    private void applyM2Binaural() {
+        if (filterbank != null) {
+            filterbank.apply(wDryReal, wDryImag, dryReal, dryImag, wChannels);
+            return;
+        }
+        for (var ts = 0; ts < slots; ts++) {
+            interpolate(matrices.m2Decor, matrices.m2DecorPrevious, ts, r2Decor, outputs, wChannels);
+            interpolate(matrices.m2Resid, matrices.m2ResidPrevious, ts, r2Resid, outputs, wChannels);
+            interpolate(matrices.m2DecorImag, matrices.m2DecorImagPrevious, ts, r2DecorImag, outputs, wChannels);
+            interpolate(matrices.m2ResidImag, matrices.m2ResidImagPrevious, ts, r2ResidImag, outputs, wChannels);
+            for (var qs = 0; qs < hybridBands; qs++) {
+                var band = kernelBand[qs];
+                var sign = kernelSign[qs];
+                var decor = r2Decor[band];
+                var resid = r2Resid[band];
+                var decorImag = r2DecorImag[band];
+                var residImag = r2ResidImag[band];
+                for (var row = 0; row < outputs; row++) {
+                    var dr = 0.0f;
+                    var di = 0.0f;
+                    var wr = 0.0f;
+                    var wi = 0.0f;
+                    for (var col = 0; col < wChannels; col++) {
+                        var cr = resid[row * MpsMatrices.STRIDE + col];
+                        var cw = decor[row * MpsMatrices.STRIDE + col];
+                        dr += wDryReal[col][ts][qs] * cr;
+                        di += wDryImag[col][ts][qs] * cr;
+                        wr += wWetReal[col][ts][qs] * cw;
+                        wi += wWetImag[col][ts][qs] * cw;
+                    }
+                    for (var col = 0; col < wChannels; col++) {
+                        var cr = residImag[row * MpsMatrices.STRIDE + col];
+                        var cw = decorImag[row * MpsMatrices.STRIDE + col];
+                        dr -= wDryImag[col][ts][qs] * sign * cr;
+                        di += wDryReal[col][ts][qs] * sign * cr;
+                        wr -= wWetImag[col][ts][qs] * sign * cw;
+                        wi += wWetReal[col][ts][qs] * sign * cw;
+                    }
+                    dryReal[row][ts][qs] = dr + wr;
+                    dryImag[row][ts][qs] = di + wi;
+                }
+            }
+        }
+    }
+
+    /**
+     * Synthesizes the two ears and adds the reverb.
+     */
+    private void binauralOutput() {
+        for (var ch = 0; ch < channelsOut; ch++) {
+            MpsHybrid.synthesize(dryReal[ch], dryImag[ch], slots, qmfOutReal, qmfOutImag, qmfBands);
+            for (var ts = 0; ts < slots; ts++) {
+                polyphase.synthesize(synthesisStates[ch], qmfOutReal[ts], qmfOutImag[ts], timeOut[ch], qmfBands * ts);
+            }
+        }
+        if (reverb != null && reverbInput != null) {
+            reverb.process(reverbInput, reverbOffset, clipGain, reverbDelay, timeOut);
         }
     }
 

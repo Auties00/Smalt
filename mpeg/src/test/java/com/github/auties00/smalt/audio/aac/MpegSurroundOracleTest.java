@@ -2,6 +2,7 @@ package com.github.auties00.smalt.audio.aac;
 
 import com.github.auties00.smalt.audio.aac.internal.AacBitReader;
 import com.github.auties00.smalt.audio.aac.internal.OutputChannelPositions;
+import com.github.auties00.smalt.audio.aac.internal.mps.MpsBinaural;
 import com.github.auties00.smalt.audio.aac.internal.mps.MpsConfig;
 import com.github.auties00.smalt.audio.aac.internal.mps.MpsDecoder;
 import com.github.auties00.smalt.audio.aac.internal.mps.MpsUpmixer;
@@ -20,6 +21,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -31,9 +33,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * (mp4spatialdec, the full ISO/IEC 23003-1 decoder), whose decodes {@code tools/testdata/mps-oracle.py} writes into
  * {@code <conformance cache>/mps-oracle} ({@code -Dsmalt.test.mpsOracle} overrides the directory); MPEG Surround
  * conformance streams are not public. The streams are synthetic ones covering every tree, quantization and TTT
- * mode, temporal shaping, arbitrary downmix, residual coding and the arbitrary tree at 24, 48 and 96 kHz with frames
- * of 4 to 64 slots, and the reference encoder's streams of a 5.1 signal. Without those files the comparisons are
- * skipped.
+ * mode, temporal shaping, arbitrary downmix, residual coding, the arbitrary tree and 3D stereo downmixes at 24, 48 and
+ * 96 kHz with frames of 4 to 64 slots, and the reference encoder's streams of a 5.1 signal. Without those files the
+ * comparisons are skipped.
+ *
+ * <p>A subset of the streams also runs through the binaural rendering of the reference decoder, with every data set
+ * and quality, the oracle script patching it as its description says.
  *
  * <p>Both decoders compute the same single precision operations in the same order, so the upmixes agree bit for bit,
  * except for the residual signals, which the reference software dequantizes in double precision: those agree to a few
@@ -53,7 +58,11 @@ class MpegSurroundOracleTest {
                 "res7272", "res7571", "res5152x2", "arbres5151", "arbres525", "slots18res", "v_q1", "v_q2", "v_oneicc",
                 "v_fr3", "v_fr2", "v_gains", "v_q1b", "v_5152", "atpass", "at5151", "at5152", "at525", "at7271",
                 "at7572", "atres5151", "at13", "long64", "long30", "long45", "long24", "long96", "atlong", "short8",
-                "short4", "short15", "short24k", "short96", "atshort");
+                "short4", "short15", "short24k", "short96", "atshort", "3d525", "3d525cpc", "3d525m2", "3d525m3",
+                "3d525m5", "3d525inv", "3d525dual", "3d7271", "3d7272", "3d5151", "3d5152", "3d7572", "3dbands", "3dsym",
+                "3dflat", "3dlow", "3dlowflat", "3dhigh", "3dnoasym", "3dstp", "3dges", "3darb", "3darbres", "3dres",
+                "3dat", "3dlong", "3dshort", "3d24k", "3d96k", "bfr5", "bfr6", "bfr7", "bfr5m", "bfrdual", "bfrarb", "bfrarbm",
+                "3dbdual");
         var encoded = Stream.of("5151", "5152", "525").flatMap(tree -> Stream.of("16", "32")
                 .map(slots -> "enc" + tree + "_" + slots));
         return Stream.concat(synthetic, encoded);
@@ -107,6 +116,55 @@ class MpegSurroundOracleTest {
         for (var c = 0; c < reference.length; c++) {
             assertEquals(reference[c].length, upmix[c].length, name + " length");
             TOLERANCE.assertPcm(name + " channel " + c, reference[c], upmix[c]);
+        }
+    }
+
+    static final List<String> BINAURAL_ALL = List.of("t5151", "t5152", "t5151q2", "t525cpc", "t525cld", "t525dual",
+            "t525inv", "t525mode4", "t7271", "t7272", "stp5151", "stp525", "ges5152", "ges525", "rate24", "rate96",
+            "slots16", "arbdmx5151", "arbdmx525", "res5151", "res5152x2", "res525", "res525cpc0", "res7272",
+            "arbres5151", "arbres525", "v_fr3", "v_fr2", "at5151", "at525", "at7271", "long64", "long24", "short8", "short96",
+            "3d525", "3d525inv", "3dbands", "3d7271", "3dstp", "3darbres", "enc5151_32", "enc5152_32", "enc525_32", "bfr5",
+            "bfr6", "bfr7", "bfr5m", "bfrdual", "bfrarb", "bfrarbm", "3dbdual");
+    static final List<String> BINAURAL_MODELS = List.of("t5151", "t5152", "t525cpc", "t525cld", "t525inv", "t7271",
+            "rate24", "rate96", "arbres525", "3d525", "enc525_32", "bfr5");
+
+    /**
+     * The binaural streams with an arbitrary downmix residual, the one input of the rendering the reference decoder
+     * dequantizes in double precision; the others match bit for bit.
+     */
+    static final Set<String> BINAURAL_INEXACT = Set.of("arbres5151", "arbres525", "3darbres", "bfrarb", "bfrarbm");
+
+    static Stream<Arguments> binauralCases() {
+        var cases = new ArrayList<Arguments>();
+        for (var name : BINAURAL_ALL) {
+            for (var hrtf : BINAURAL_MODELS.contains(name) ? AacBinauralHrtf.values()
+                    : new AacBinauralHrtf[]{AacBinauralHrtf.KEMAR}) {
+                for (var quality : AacBinauralQuality.values()) {
+                    cases.add(Arguments.of(name, hrtf, quality));
+                }
+            }
+        }
+        return cases.stream();
+    }
+
+    @ParameterizedTest(name = "{0} {1} {2}")
+    @MethodSource("binauralCases")
+    @DisplayName("renders the downmix to the ears like the reference decoder")
+    void matchesReferenceBinaural(String name, AacBinauralHrtf hrtf, AacBinauralQuality quality) {
+        var directory = directory();
+        var reference = AacTestSupport.readWav(read(directory.resolve(
+                name + "_b" + hrtf.ordinal() + quality.ordinal() + "_ref.wav")));
+        var downmix = AacTestSupport.readWav(read(directory.resolve(name + "_dmx.wav")));
+        var blocks = MpegSurroundTest.blocks(read(directory.resolve(name + ".bs")));
+        var config = MpegSurroundTest.config(blocks.getFirst());
+        var upmix = MpegSurroundTest.upmix(blocks, downmix, config.samplingFrequency(),
+                new MpsBinaural(hrtf, quality));
+        assertEquals(2, reference.length, name + " reference channels");
+        assertEquals(2, upmix.length, name + " channels");
+        for (var c = 0; c < 2; c++) {
+            assertEquals(reference[c].length, upmix[c].length, name + " length");
+            (BINAURAL_INEXACT.contains(name) ? TOLERANCE : Tolerance.exact())
+                    .assertPcm(name + " " + hrtf + " " + quality + " channel " + c, reference[c], upmix[c]);
         }
     }
 

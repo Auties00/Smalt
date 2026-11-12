@@ -12,6 +12,7 @@ import com.github.auties00.smalt.audio.aac.internal.DynamicRangeControl;
 import com.github.auties00.smalt.audio.aac.internal.FrameDecoder;
 import com.github.auties00.smalt.audio.aac.internal.SamplingTables;
 import com.github.auties00.smalt.audio.aac.internal.ep.ErrorProtectionDecoder;
+import com.github.auties00.smalt.audio.aac.internal.mps.MpsBinaural;
 import com.github.auties00.smalt.audio.aac.internal.mps.MpsConfig;
 import com.github.auties00.smalt.audio.aac.internal.usac.UsacConfig;
 import com.github.auties00.smalt.audio.aac.internal.usac.UsacDecoder;
@@ -154,8 +155,11 @@ import java.util.function.Consumer;
  * USAC {@code bsOutputChannelPos}), in WAVE order; under the non-uniform CLD quantization of {@code bsQuantMode} 1
  * and 2 the upmix is the tree's alone. With spectral band replication at dual rate, the upmix takes the 64-band QMF
  * matrices of the extension directly, without a second filterbank, and leads the time domain upmix by 577 samples.
- * A configuration the decoder does not support (3D audio downmixes) leaves the downmix as the output, as a decoder
- * without MPEG Surround would.
+ * A 3D stereo downmix is inverted with the HRTF parameters of its configuration; a configuration the decoder does not
+ * support (an HRTF set the configuration does not carry) leaves the downmix as the output, as a decoder without MPEG
+ * Surround would.
+ * With {@link AacDecoderOptions#mpegSurroundBinaural()} a tree with a mono or stereo downmix renders to stereo for
+ * headphones, through the head related transfer functions of the chosen data set, instead of to its loudspeakers.
  * A spatial frame lasts one block, a whole number {@code n} of blocks or a {@code m}-th of a block; a configuration
  * whose frame is neither is not upmixed. A block of {@code m} frames carries them in its fill elements and is
  * upmixed without delay; in a separate elementary stream its access unit holds the first of them, and the rest of
@@ -520,7 +524,8 @@ public final class AacDecoder implements AudioDecoder {
                         }
                     }
                 }
-                decoder.enableSurround(surround);
+                decoder.enableSurround(surround, options.mpegSurroundBinaural()
+                        .map(hrtf -> new MpsBinaural(hrtf, options.mpegSurroundBinauralQuality())).orElse(null));
             }
             this.surroundTrack = surroundIndex;
             this.protection = config.errorProtection() == null ? null

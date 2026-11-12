@@ -4,6 +4,7 @@ import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.internal.check.Checks;
 
 import java.util.Objects;
+import java.util.Optional;
 import java.util.OptionalInt;
 
 /**
@@ -39,6 +40,10 @@ public final class AacDecoderOptions {
 
     private final boolean mpegSurround;
 
+    private final AacBinauralHrtf mpegSurroundBinaural;
+
+    private final AacBinauralQuality mpegSurroundBinauralQuality;
+
     private AacDecoderOptions(Builder builder) {
         this.limits = builder.limits;
         this.spectralBandReplication = builder.spectralBandReplication;
@@ -49,6 +54,8 @@ public final class AacDecoderOptions {
         this.drcEffect = builder.drcEffect;
         this.maxLayer = builder.maxLayer == NO_TARGET ? -1 : builder.maxLayer;
         this.mpegSurround = builder.mpegSurround;
+        this.mpegSurroundBinaural = builder.mpegSurroundBinaural;
+        this.mpegSurroundBinauralQuality = builder.mpegSurroundBinauralQuality;
     }
 
     /**
@@ -199,19 +206,42 @@ public final class AacDecoderOptions {
         return mpegSurround;
     }
 
+    /**
+     * {@return the head related transfer functions MPEG Surround renders to headphones with; empty by default, for the
+     * loudspeaker upmix}
+     *
+     * <p>When present, the upmix of a mono or stereo downmix is stereo for headphones instead of 5.1 or 7.1. The data
+     * sets describe 44.1 kHz; other sampling frequencies apply them unchanged per QMF subband, so their frequencies
+     * shift by the ratio of the rates. The residual signals of the tree, temporal shaping and the arbitrary tree
+     * extension take no part. A 5.1 downmix has no binaural path and keeps its loudspeaker upmix. This setting has no
+     * effect while {@link #mpegSurround()} is {@code false}, and USAC ignores it.
+     */
+    public Optional<AacBinauralHrtf> mpegSurroundBinaural() {
+        return Optional.ofNullable(mpegSurroundBinaural);
+    }
+
+    /**
+     * {@return how the binaural rendering applies its head related transfer functions;
+     * {@link AacBinauralQuality#PARAMETRIC} by default}
+     */
+    public AacBinauralQuality mpegSurroundBinauralQuality() {
+        return mpegSurroundBinauralQuality;
+    }
+
     @Override
     public boolean equals(Object object) {
         return object instanceof AacDecoderOptions that && limits.equals(that.limits)
                 && spectralBandReplication == that.spectralBandReplication && compression == that.compression
                 && Float.compare(cutScale, that.cutScale) == 0 && Float.compare(boostScale, that.boostScale) == 0
                 && targetLevel == that.targetLevel && drcEffect == that.drcEffect && maxLayer == that.maxLayer
-                && mpegSurround == that.mpegSurround;
+                && mpegSurround == that.mpegSurround && mpegSurroundBinaural == that.mpegSurroundBinaural
+                && mpegSurroundBinauralQuality == that.mpegSurroundBinauralQuality;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(limits, spectralBandReplication, compression, cutScale, boostScale, targetLevel,
-                drcEffect, maxLayer, mpegSurround);
+                drcEffect, maxLayer, mpegSurround, mpegSurroundBinaural, mpegSurroundBinauralQuality);
     }
 
     @Override
@@ -219,7 +249,8 @@ public final class AacDecoderOptions {
         return "AacDecoderOptions[limits=" + limits + ", spectralBandReplication=" + spectralBandReplication
                 + ", compression=" + compression + ", cutScale=" + cutScale + ", boostScale=" + boostScale
                 + ", targetLevel=" + targetLevel() + ", drcEffect=" + drcEffect + ", maxLayer=" + maxLayer()
-                + ", mpegSurround=" + mpegSurround + "]";
+                + ", mpegSurround=" + mpegSurround + ", mpegSurroundBinaural=" + mpegSurroundBinaural()
+                + ", mpegSurroundBinauralQuality=" + mpegSurroundBinauralQuality + "]";
     }
 
     /**
@@ -247,6 +278,10 @@ public final class AacDecoderOptions {
 
         private boolean mpegSurround;
 
+        private AacBinauralHrtf mpegSurroundBinaural;
+
+        private AacBinauralQuality mpegSurroundBinauralQuality;
+
         private Builder() {
             this.limits = MediaLimits.DEFAULT;
             this.spectralBandReplication = true;
@@ -257,6 +292,7 @@ public final class AacDecoderOptions {
             this.drcEffect = AacDrcEffect.NONE;
             this.maxLayer = NO_TARGET;
             this.mpegSurround = true;
+            this.mpegSurroundBinauralQuality = AacBinauralQuality.PARAMETRIC;
         }
 
         private Builder(AacDecoderOptions options) {
@@ -269,6 +305,8 @@ public final class AacDecoderOptions {
             this.drcEffect = options.drcEffect;
             this.maxLayer = options.maxLayer < 0 ? NO_TARGET : options.maxLayer;
             this.mpegSurround = options.mpegSurround;
+            this.mpegSurroundBinaural = options.mpegSurroundBinaural;
+            this.mpegSurroundBinauralQuality = options.mpegSurroundBinauralQuality;
         }
 
         /**
@@ -388,6 +426,41 @@ public final class AacDecoderOptions {
          */
         public Builder mpegSurround(boolean enabled) {
             this.mpegSurround = enabled;
+            return this;
+        }
+
+        /**
+         * Renders MPEG Surround to headphones with a data set; see {@link AacDecoderOptions#mpegSurroundBinaural()}.
+         *
+         * @param hrtf the data set
+         * @return this builder
+         * @throws NullPointerException if {@code hrtf} is {@code null}
+         */
+        public Builder mpegSurroundBinaural(AacBinauralHrtf hrtf) {
+            this.mpegSurroundBinaural = Objects.requireNonNull(hrtf, "hrtf");
+            return this;
+        }
+
+        /**
+         * Goes back to the loudspeaker upmix of MPEG Surround; see {@link AacDecoderOptions#mpegSurroundBinaural()}.
+         *
+         * @return this builder
+         */
+        public Builder noMpegSurroundBinaural() {
+            this.mpegSurroundBinaural = null;
+            return this;
+        }
+
+        /**
+         * Sets how the binaural rendering applies its data set; see
+         * {@link AacDecoderOptions#mpegSurroundBinauralQuality()}.
+         *
+         * @param quality the way to apply the data set
+         * @return this builder
+         * @throws NullPointerException if {@code quality} is {@code null}
+         */
+        public Builder mpegSurroundBinauralQuality(AacBinauralQuality quality) {
+            this.mpegSurroundBinauralQuality = Objects.requireNonNull(quality, "quality");
             return this;
         }
 

@@ -56,6 +56,7 @@ public final class MpsUpmixer {
             Speaker.FRONT_CENTER, Speaker.LOW_FREQUENCY, Speaker.BACK_LEFT, Speaker.BACK_RIGHT,
             Speaker.FRONT_LEFT_OF_CENTER, Speaker.FRONT_RIGHT_OF_CENTER));
 
+    private final MpsBinaural binaural;
     private int sampleRate;
     private int blockLength;
     private MpsConfig config;
@@ -125,6 +126,16 @@ public final class MpsUpmixer {
      * Constructs an upmixer that waits for the configuration of the stream.
      */
     public MpsUpmixer() {
+        this(null);
+    }
+
+    /**
+     * Constructs an upmixer.
+     *
+     * @param binaural the binaural rendering of the trees it applies to, or {@code null} for the loudspeaker upmix
+     */
+    public MpsUpmixer(MpsBinaural binaural) {
+        this.binaural = binaural;
     }
 
     /**
@@ -137,6 +148,11 @@ public final class MpsUpmixer {
         this.config = config;
         this.reconfigured = true;
         this.queuedCount = 0;
+        if (binaural != null && MpsBinaural.appliesTo(config.treeConfig())) {
+            outputOrder = new int[]{0, 1};
+            layout = ChannelLayout.STEREO;
+            return;
+        }
         if (config.arbitraryTreeActive()) {
             var speakers = OutputChannelPositions.speakers(config.arbitraryTreePositions());
             outputOrder = OutputChannelPositions.waveOrder(speakers);
@@ -209,9 +225,9 @@ public final class MpsUpmixer {
     /**
      * Returns the layout of the upmix, in WAVE order.
      *
-     * <p>The 5.1 and 7.1 trees output their layouts; with the arbitrary tree extension, the speaker of each channel
-     * follows its {@code bsOutputChannelPosAT} (the position table of {@code bsOutputChannelPos}), a position taken
-     * twice or without a speaker being {@link Speaker#UNKNOWN}.
+     * <p>A binaural rendering outputs stereo. Otherwise the 5.1 and 7.1 trees output their layouts; with the arbitrary
+     * tree extension, the speaker of each channel follows its {@code bsOutputChannelPosAT} (the position table of
+     * {@code bsOutputChannelPos}), a position taken twice or without a speaker being {@link Speaker#UNKNOWN}.
      *
      * @return the layout
      * @throws IllegalStateException if no configuration is known
@@ -405,7 +421,7 @@ public final class MpsUpmixer {
             this.decoder = null;
             this.delayed = 0;
             try {
-                this.decoder = new MpsDecoder(config, sampleRate);
+                this.decoder = new MpsDecoder(config, sampleRate, binaural);
             } catch (MediaException.Unsupported _) {
                 unsupported();
                 return false;
@@ -612,6 +628,9 @@ public final class MpsUpmixer {
         if (framesPerBlock > 1) {
             var slots = decoder.slots();
             var length = decoder.frameLength();
+            if (decoder.needsTimeInput()) {
+                scaleInput(downmix, 0);
+            }
             for (var f = 0; f < framesPerBlock; f++) {
                 if (!advanceFraction(f)) {
                     silence(f * length, length);
@@ -627,7 +646,7 @@ public final class MpsUpmixer {
                         qmfImag[ch][ts] = rowImag;
                     }
                 }
-                decoder.decodeQmf(qmfReal, qmfImag, output, f * length);
+                decoder.decodeQmf(qmfReal, qmfImag, input, f * length, output, f * length);
             }
             emit(out, 0);
             return;
@@ -644,7 +663,10 @@ public final class MpsUpmixer {
                     qmfImag[ch][ts] = rowImag;
                 }
             }
-            decoder.decodeQmf(qmfReal, qmfImag, output, 0);
+            if (decoder.needsTimeInput()) {
+                scaleInput(downmix, 0);
+            }
+            decoder.decodeQmf(qmfReal, qmfImag, input, 0, output, 0);
             emit(out, 0);
             return;
         }
@@ -706,8 +728,11 @@ public final class MpsUpmixer {
                         qmfImag[ch][j * slots + ts] = ringImag[block][ch][ts];
                     }
                 }
+                if (decoder.needsTimeInput()) {
+                    scaleInput(ring[block], j * blockLength);
+                }
             }
-            decoder.decodeQmf(qmfReal, qmfImag, output, 0);
+            decoder.decodeQmf(qmfReal, qmfImag, input, 0, output, 0);
             return;
         }
         for (var j = 0; j < blocksPerFrame; j++) {

@@ -1,7 +1,7 @@
 /* Oracle frontend over the MPEG Surround encoder and decoder libraries of the ISO/IEC 23003-3 reference software.
 
    mpsref enc <tree 5151|5152|525> <in.wav (6 ch)> <dmx.wav> <out.bs>
-   mpsref dec <dmx.wav> <in.bs> <out.wav> [decType] [upmixType]
+   mpsref dec <dmx.wav> <in.bs> <out.wav> [decType] [upmixType] [binauralQuality] [hrtfModel]
 
    The .bs file holds the SpatialSpecificConfig block (sacTimeAlignFlag, header length, config, byte aligned) and then
    one byte-aligned SpatialFrame per frame, each block preceded by its length as a 32-bit little-endian integer.
@@ -13,6 +13,10 @@
 
 #include "sac_dec_interface.h"
 #include "sac_polyphase.h"
+#include "sac_parallelReverb.h"
+
+/* The HRTF model of a binaural decode, which the patched sac_dec.c hands to SpatialDecInitM1andM2. */
+int mpsrefHrtfModel = 0;
 void mpsref_dump(void *decoder, int frame);
 int mpsref_output_channels(void *decoder);
 
@@ -147,7 +151,7 @@ static unsigned char *readBlocks(const char *path, int *count, int **lengths) {
     return b;
 }
 
-static int decode(const char *dmx, const char *in, const char *out, int decType, int upmixType) {
+static int decode(const char *dmx, const char *in, const char *out, int decType, int upmixType, int quality) {
     Wave w = readWave(dmx);
     int blocks;
     int *lengths;
@@ -156,7 +160,7 @@ static int decode(const char *dmx, const char *in, const char *out, int decType,
     int timeSlots = 0, bitsRead = 0;
     int qmfBands = w.rate < 27713 ? 32 : w.rate >= 55426 ? 128 : 64;
     spatialDec *dec = SpatialDecOpen(&reader.reader, "", w.rate, w.channels, &timeSlots, qmfBands, 0, 0, decType,
-                                     upmixType, 0, 0, lengths[0] * 8, &bitsRead, NULL);
+                                     upmixType, quality, 0, lengths[0] * 8, &bitsRead, NULL);
     if (!dec) { fprintf(stderr, "open failed\n"); return 1; }
     int outChannels = mpsref_output_channels(dec);
     int frameLength = timeSlots * qmfBands;
@@ -198,6 +202,8 @@ static int decode(const char *dmx, const char *in, const char *out, int decType,
                 SacCalculateAnaFilterbank(analysis[c], slot, real[c][t], imag[c][t]);
             }
         }
+        /* the decoder declares the reverb of a data set but never feeds it: its input is the time domain downmix */
+        BinauralDoParallelReverb(dec, w.data + (long) f * frameLength * w.channels, SpatialGetClipProtectGain(dec));
         SpatialDecApplyFrame(dec, timeSlots, pointers, timeOut, 1.0f, 0);
         if (getenv("MPSREF_DUMP")) mpsref_dump(dec, f);
         for (int c = 0; c < outChannels; c++) {
@@ -215,8 +221,10 @@ static int decode(const char *dmx, const char *in, const char *out, int decType,
 int main(int argc, char **argv) {
     if (argc >= 6 && !strcmp(argv[1], "enc")) return encode(atoi(argv[2]), argv[3], argv[4], argv[5], argc > 6 ? atoi(argv[6]) : 32);
     if (argc >= 5 && !strcmp(argv[1], "dec")) {
-        return decode(argv[2], argv[3], argv[4], argc > 5 ? atoi(argv[5]) : 0, argc > 6 ? atoi(argv[6]) : 0);
+        mpsrefHrtfModel = argc > 8 ? atoi(argv[8]) : 0;
+        return decode(argv[2], argv[3], argv[4], argc > 5 ? atoi(argv[5]) : 0, argc > 6 ? atoi(argv[6]) : 0,
+                      argc > 7 ? atoi(argv[7]) : 0);
     }
-    fprintf(stderr, "usage: mpsref enc <tree> <in.wav> <dmx.wav> <out.bs> | dec <dmx.wav> <in.bs> <out.wav> [decType] [upmixType]\n");
+    fprintf(stderr, "usage: mpsref enc <tree> <in.wav> <dmx.wav> <out.bs> | dec <dmx.wav> <in.bs> <out.wav> [decType] [upmixType] [binauralQuality] [hrtfModel]\n");
     return 2;
 }

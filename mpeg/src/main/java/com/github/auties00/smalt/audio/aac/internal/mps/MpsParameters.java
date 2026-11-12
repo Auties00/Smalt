@@ -1,7 +1,8 @@
 /* Ports the ISO/IEC 23003-3:2019 reference software MPEG Surround decoder (sac_bitdec.c SpatialDecDecodeHeader,
    SpatialDecParseFrame, SpatialDecDecodeFrame, mapIndexData, factorFunct, factorCLD, createMapping, mapFrequency,
    decodeAndMapFrameOtt, decodeAndMapFrameTtt, decodeAndMapFrameSmg, decodeAndMapFrameArbdmx,
-   decodeAndMapFrameArbTree, parseArbitraryDownmixData, parseResidualData and SpatialDecParseExtensionFrame;
+   decodeAndMapFrameArbTree, mapFloatDataTo28Bands, mapNumberOfBandsTo28Bands, parseArbitraryDownmixData,
+   parseResidualData and SpatialDecParseExtensionFrame;
    sac_resdecode.c decodeIcs and decodeCpe), with the
    SpatialFrame() syntax of ISO/IEC 23003-1 subclause 5.2 that the reference software trims to the 2-1-2 tree.
    Copyright Agere Systems, Coding Technologies, Fraunhofer IIS, Philips and ISO/IEC 2008; ISO/IEC reference software
@@ -16,6 +17,7 @@ import com.github.auties00.smalt.audio.aac.internal.ChannelStream;
 import com.github.auties00.smalt.audio.aac.internal.SamplingTables;
 
 import java.util.Arrays;
+import java.util.Map;
 
 /**
  * Reads the {@code SpatialFrame()} of the MPEG Surround trees of ISO/IEC 23003-1 and maps its parameters onto
@@ -42,6 +44,14 @@ final class MpsParameters {
             -1.0f, -0.9f, -0.8f, -0.7f, -0.6f, -0.5f, -0.4f, -0.3f, -0.2f, -0.1f, 0.0f, 0.1f, 0.2f, 0.3f, 0.4f, 0.5f,
             0.6f, 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f, 1.7f, 1.8f, 1.9f, 2.0f, 2.1f, 2.2f,
             2.3f, 2.4f, 2.5f, 2.6f, 2.7f, 2.8f, 2.9f, 3.0f};
+    private static final Map<Integer, int[]> BAND_MAPPINGS = Map.of(
+            4, new int[]{0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3},
+            5, new int[]{0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4},
+            7, new int[]{0, 0, 0, 0, 1, 1, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6},
+            10, new int[]{0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 7, 7, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9},
+            14, new int[]{0, 0, 1, 1, 2, 3, 4, 4, 5, 6, 6, 7, 7, 8, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 12, 13, 13, 13},
+            20, new int[]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 14, 15, 15, 16, 16, 17, 17, 18, 18, 18, 19,
+                    19, 19});
     private static final float[] DEQUANT_ICC = {1.0000f, 0.9370f, 0.84118f, 0.60092f, 0.36764f, 0.0f, -0.5890f,
             -0.9900f};
 
@@ -57,6 +67,14 @@ final class MpsParameters {
     final boolean[] ottLfe = new boolean[5];
     final int[] ottCldDefault = new int[5];
     final int[] tttMode = new int[2];
+    /**
+     * The coded band of each of 28 parameter bands, {@code null} while the parameters keep their coded bands.
+     */
+    private final int[] bandMapping;
+    /**
+     * Whether the parameters serve a binaural rendering, which has no residual signals and so no ICC differences.
+     */
+    private final boolean binaural;
     final int[] tttStart = new int[2];
     final int[] tttStop = new int[2];
     final boolean[] tttDecorrelated = new boolean[2];
@@ -161,10 +179,26 @@ final class MpsParameters {
      * @throws MediaException.Unsupported if a residual frame needs an MDCT longer than two AAC frames
      */
     MpsParameters(MpsConfig config, int qmfBands) {
+        this(config, qmfBands, false);
+    }
+
+    /**
+     * Derives the frame layout of a configuration ({@code SpatialDecDecodeHeader}).
+     *
+     * @param config the configuration
+     * @param qmfBands the number of QMF subbands of the decoder
+     * @param mapBands whether every decoded parameter is mapped to 28 parameter bands, as the binaural rendering takes
+     *                 them
+     * @throws MediaException.Malformed if the residual frames do not divide the spatial frame
+     * @throws MediaException.Unsupported if a residual frame needs an MDCT longer than two AAC frames
+     */
+    MpsParameters(MpsConfig config, int qmfBands, boolean mapBands) {
         this.config = config;
         this.tree = config.treeConfig;
         this.slots = config.frameLength;
         this.bands = MpsConfig.FREQUENCY_RESOLUTIONS[config.frequencyResolution];
+        this.binaural = mapBands;
+        this.bandMapping = mapBands ? BAND_MAPPINGS.get(bands) : null;
         var properties = MpsConfig.TREE_PROPERTIES[tree];
         this.inputs = properties[0];
         this.outputs = properties[1];
@@ -457,7 +491,7 @@ final class MpsParameters {
             parameterSlot[0] = slots - 1;
         }
         smoothingTime[0] = 256;
-        Arrays.fill(smoothingData[0], 0, bands, 0);
+        Arrays.fill(smoothingData[0], 0);
     }
 
     private static void keepLastSet(float[][][] values, int last) {
@@ -611,6 +645,64 @@ final class MpsParameters {
             sets++;
             parameterSlot[sets - 1] = slots - 1;
         }
+        if (bandMapping != null) {
+            mapBands();
+        }
+    }
+
+    /**
+     * Maps the parameters of the frame to 28 bands ({@code mapFloatDataTo28Bands}).
+     */
+    private void mapBands() {
+        for (var ps = 0; ps < sets; ps++) {
+            for (var box = 0; box < ottCount; box++) {
+                mapBands(cld[box][ps]);
+                mapBands(icc[box][ps]);
+            }
+            mapBands(cpc1[ps]);
+            mapBands(cpc2[ps]);
+            mapBands(tttIcc[ps]);
+            mapBands(tttCld1[ps]);
+            mapBands(tttCld2[ps]);
+            for (var ch = 0; ch < inputs; ch++) {
+                mapBands(downmixGain[ch][ps]);
+            }
+            for (var pb = MAX_BANDS - 1; pb >= 0; pb--) {
+                smoothingData[ps][pb] = smoothingData[ps][bandMapping[pb]];
+            }
+        }
+    }
+
+    private void mapBands(float[] data) {
+        for (var pb = MAX_BANDS - 1; pb >= 0; pb--) {
+            data[pb] = data[bandMapping[pb]];
+        }
+    }
+
+    /**
+     * {@return the band of a table of coded bands for each of 28 parameter bands}
+     *
+     * @param codedBands the number of coded bands, under 28
+     */
+    static int[] bandMapping(int codedBands) {
+        return BAND_MAPPINGS.get(codedBands);
+    }
+
+    /**
+     * {@return the first of the 28 parameter bands above a number of coded bands ({@code mapNumberOfBandsTo28Bands})}
+     *
+     * @param codedBands the number of coded bands
+     */
+    int mappedBand(int codedBands) {
+        if (bandMapping == null) {
+            return codedBands;
+        }
+        for (var pb = 0; pb < MAX_BANDS; pb++) {
+            if (bandMapping[pb] == codedBands) {
+                return pb;
+            }
+        }
+        return MAX_BANDS;
     }
 
     private void decodeOtt() {
@@ -655,7 +747,7 @@ final class MpsParameters {
                 if (config.oneIcc) {
                     iccModes[0].quantCoarsePrevious = shared;
                 }
-                map(iccModes[config.oneIcc ? 0 : i], icc[i], iccIndex[i], iccCoded[i], iccDifference[i],
+                map(iccModes[config.oneIcc ? 0 : i], icc[i], iccIndex[i], iccCoded[i], binaural ? null : iccDifference[i],
                         iccIndexPrevious[i], MpsLossless.ICC, 0, ottBands[i], 0, 0, null, null, null);
             }
         }

@@ -2135,8 +2135,10 @@ Derived Smalt packages:
   mp4spatialdec: the SpatialSpecificConfig and SpatialFrame parsers, the
   parameter mapping, the M1 and M2 matrices of every tree, smoothing, the
   decorrelators, the hybrid and QMF filterbanks, subband domain temporal
-  processing, guided envelope shaping, the arbitrary tree and the MDCT to QMF
-  conversion of the residual signals)
+  processing, guided envelope shaping, the arbitrary tree, the MDCT to QMF
+  conversion of the residual signals and the binaural rendering, with the
+  HRTF data sets of sac_hrtf.c, the filterbank of sac_hrtffilter.c and the
+  reverb of sac_parallelReverb.c)
 
 Derivation: C code translated to Java and tables transcribed.
 

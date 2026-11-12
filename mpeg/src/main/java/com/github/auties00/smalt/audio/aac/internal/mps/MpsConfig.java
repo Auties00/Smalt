@@ -106,6 +106,20 @@ public final class MpsConfig {
     final int temporalShaping;
     final int decorrelator;
     final boolean threeDimensional;
+    /**
+     * The {@code bsHRTFlevelLeft} of each loudspeaker channel and parameter band of a 3D stereo downmix (left front,
+     * right front, center, left surround, right surround first), empty without one.
+     */
+    final int[][] hrtfLevelLeft;
+    /**
+     * The {@code bsHRTFlevelRight} of each channel and band, which equal the left levels when {@code
+     * bsHRTFasymmetric} is clear.
+     */
+    final int[][] hrtfLevelRight;
+    /**
+     * The {@code bsHRTFphaseLR} of each channel and band, 0 where the channel codes no phase.
+     */
+    final int[][] hrtfPhase;
     final int[] ottBands = new int[5];
     final boolean[] ottLfe = new boolean[5];
     final boolean tttDualMode;
@@ -152,6 +166,9 @@ public final class MpsConfig {
         this.temporalShaping = builder.temporalShaping;
         this.decorrelator = builder.decorrelator;
         this.threeDimensional = builder.threeDimensional;
+        this.hrtfLevelLeft = builder.hrtfLevelLeft;
+        this.hrtfLevelRight = builder.hrtfLevelRight;
+        this.hrtfPhase = builder.hrtfPhase;
         System.arraycopy(builder.ottBands, 0, ottBands, 0, 5);
         System.arraycopy(builder.ottLfe, 0, ottLfe, 0, 5);
         this.tttDualMode = builder.tttDualMode;
@@ -195,6 +212,9 @@ public final class MpsConfig {
         int temporalShaping;
         int decorrelator;
         boolean threeDimensional;
+        int[][] hrtfLevelLeft = new int[0][];
+        int[][] hrtfLevelRight = new int[0][];
+        int[][] hrtfPhase = new int[0][];
         final int[] ottBands = new int[5];
         final boolean[] ottLfe = new boolean[5];
         boolean tttDualMode;
@@ -231,7 +251,8 @@ public final class MpsConfig {
      * @param bits the length of the configuration in bits
      * @return the configuration
      * @throws MediaException.Malformed if the configuration is truncated or uses reserved values
-     * @throws MediaException.Unsupported if it signals a tree outside 0 to 6, or the 3D stereo downmix
+     * @throws MediaException.Unsupported if it signals a tree outside 0 to 6, or a 3D stereo downmix under an HRTF set
+     * other than the one it carries, or whose stereo tree needs channels or bands its HRTF parameters lack
      */
     public static MpsConfig read(AacBitReader reader, long bits) {
         var start = reader.bitPosition();
@@ -310,10 +331,7 @@ public final class MpsConfig {
             b.envelopeQuantization = reader.read(1);
         }
         if (b.threeDimensional) {
-            // TODO: a 3D stereo downmix (bs3DaudioMode of ISO/IEC 23003-1) needs its HRTF parameters
-            //  (bs3DaudioHRTFset) and the 3D upmix of the reference decoder's binaural processing.
-            throw new MediaException.Unsupported("mpeg surround 3d downmix",
-                    "MPEG Surround with a 3D stereo downmix (bs3DaudioMode) is not supported");
+            readHrtf(reader, b, properties, parameterBands);
         }
         var aligned = (int) ((reader.bitPosition() - start) & 7);
         if (aligned != 0) {
@@ -322,6 +340,61 @@ public final class MpsConfig {
         readExtensions(reader, b, properties, parameterBands, bits - (reader.bitPosition() - start));
         reader.checkNotOverrun();
         return new MpsConfig(b);
+    }
+
+    /**
+     * Reads the HRTF parameters of a 3D stereo downmix.
+     *
+     * <p>A stereo tree inverts the HRTF filtering with the parameters of the first five channels at the index of each
+     * parameter band, so it needs five channels and as many bands as the stream has parameter bands; the other trees
+     * leave the downmix uninverted and only skip the parameters. The channel ICCs take no part in the inversion.
+     */
+    private static void readHrtf(AacBitReader reader, Builder b, int[] properties, int parameterBands) {
+        var set = reader.read(2);
+        if (set != 0) {
+            // TODO: the meaning of the HRTF sets above 0 needs ISO/IEC 23003-1, which is not available; the reference
+            //  decoder implements none of them.
+            throw new MediaException.Unsupported("mpeg surround hrtf set " + set,
+                    "MPEG Surround 3D stereo downmix under HRTF set " + set + " is not supported");
+        }
+        var frequencyResolution = reader.read(3);
+        if (frequencyResolution == 0) {
+            throw new MediaException.Malformed("MPEG Surround HRTF frequency resolution 0 is reserved");
+        }
+        var bands = FREQUENCY_RESOLUTIONS[frequencyResolution];
+        var channels = reader.read(4);
+        var asymmetric = reader.readFlag();
+        var left = new int[channels][bands];
+        var right = new int[channels][bands];
+        var phase = new int[channels][bands];
+        for (var channel = 0; channel < channels; channel++) {
+            for (var band = 0; band < bands; band++) {
+                left[channel][band] = reader.read(6);
+            }
+            for (var band = 0; band < bands; band++) {
+                right[channel][band] = asymmetric ? reader.read(6) : left[channel][band];
+            }
+            if (reader.readFlag()) {
+                for (var band = 0; band < bands; band++) {
+                    phase[channel][band] = reader.read(6);
+                }
+            }
+            if (reader.readFlag()) {
+                for (var band = 0; band < bands; band++) {
+                    reader.read(6);
+                }
+            }
+        }
+        if (properties[0] == 2 && (channels < 5 || bands < parameterBands)) {
+            // TODO: ISO/IEC 23003-1, which is not available, may define the inversion of fewer HRTF channels and the
+            //  mapping of fewer HRTF bands; the reference decoder reads past its parameters.
+            throw new MediaException.Unsupported("mpeg surround hrtf of " + channels + " channels and " + bands
+                    + " bands", "MPEG Surround 3D stereo downmix with HRTF parameters of " + channels
+                    + " channels and " + bands + " bands over " + parameterBands + " parameter bands is not supported");
+        }
+        b.hrtfLevelLeft = left;
+        b.hrtfLevelRight = right;
+        b.hrtfPhase = phase;
     }
 
     /**
