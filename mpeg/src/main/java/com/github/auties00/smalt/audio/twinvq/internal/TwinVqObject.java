@@ -177,6 +177,21 @@ public final class TwinVqObject {
     private int protectedCount;
 
     /**
+     * The number of frames of the EP frame the last {@link #decodeCore} call took, 0 when it took none.
+     */
+    private int coreFrames;
+
+    /**
+     * The frame of that EP frame {@link #decodeNextCore()} decodes next.
+     */
+    private int nextCoreFrame;
+
+    /**
+     * The number of streams that had an access unit in the last {@link #decodeCore} call.
+     */
+    private int coreAvailable;
+
+    /**
      * Creates the decoder of an object.
      *
      * @param configs the {@code AudioSpecificConfig} of each elementary stream, in stream order, the base layer first
@@ -398,7 +413,9 @@ public final class TwinVqObject {
 
     /**
      * Decodes the access units of one core frame into {@link #spectrum(int)}, without the TNS filters and the
-     * filterbank of the output, for the AAC layers above a TwinVQ core.
+     * filterbank of the output, for the AAC layers above a TwinVQ core. When the error protection tool concatenates
+     * frames, the units hold an EP frame and this decodes its first frame; {@link #decodeNextCore()} decodes the
+     * others.
      *
      * @param data the access units, in stream order
      * @param lengths the length of each access unit
@@ -407,6 +424,7 @@ public final class TwinVqObject {
      * rejects it
      */
     public void decodeCore(byte[][] data, int[] lengths, int count) {
+        coreFrames = 0;
         if (protection == null) {
             decodeSpectrum(data, lengths, Math.min(count, streams));
             previousShape = windowShape;
@@ -418,6 +436,29 @@ public final class TwinVqObject {
         }
         decodeSpectrum(protectedUnits(available, 0), sizes, protectedCount);
         previousShape = windowShape;
+        if (available > 0) {
+            coreFrames = protection[0].frames();
+            nextCoreFrame = 1;
+            coreAvailable = available;
+        }
+    }
+
+    /**
+     * Decodes the next frame of the EP frame the last {@link #decodeCore} call took into {@link #spectrum(int)}, as
+     * that call decodes its first.
+     *
+     * @return {@code false}, leaving the spectrum as it is, when that EP frame has no frame left, or the last call
+     * took no EP frame
+     * @throws MediaException.Malformed if the frame is too short for its fields
+     */
+    public boolean decodeNextCore() {
+        if (nextCoreFrame >= coreFrames) {
+            return false;
+        }
+        var frame = nextCoreFrame++;
+        decodeSpectrum(protectedUnits(coreAvailable, frame), sizes, protectedCount);
+        previousShape = windowShape;
+        return true;
     }
 
     /**

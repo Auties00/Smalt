@@ -198,16 +198,6 @@ class ScalableCoreConformanceTest {
     }
 
     @Test
-    @DisplayName("rejects a stereo TwinVQ core")
-    void stereoTwinVqCore() {
-        var layers = layers("ac16");
-        var tracks = new ArrayList<>(layers.tracks());
-        tracks.set(0, tracks.getFirst().toBuilder().codecConfig(new byte[]{0x3C, (byte) 0x90}).build());
-        var exception = assertThrows(MediaException.Unsupported.class, () -> new AacDecoder(tracks));
-        assertEquals("aac scalable core", exception.format());
-    }
-
-    @Test
     @DisplayName("rejects a TwinVQ core at another rate than its AAC layers")
     void twinVqCoreRate() {
         var layers = layers("ac16");

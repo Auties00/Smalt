@@ -289,9 +289,21 @@ final class ScalableDecoder {
     private final boolean hasCore;
 
     /**
-     * The up-sampled spectrum of the core of the current frame, or {@code null} without a core.
+     * The up-sampled spectrum of the core of the current frame, or {@code null} without a core; the left channel of a
+     * stereo core.
      */
     private final float[] coreSpectrum;
+
+    /**
+     * The right channel of a stereo TwinVQ core of the current frame, or {@code null} without one.
+     */
+    private final float[] coreRight;
+
+    /**
+     * Whether the base layer of a TwinVQ core carries TNS data in each of its channels in the current frame
+     * ({@code tvq_mono_tns}, or {@code tvq_stereo_tns_left} and {@code tvq_stereo_tns_right}).
+     */
+    private final boolean[] coreTns = new boolean[2];
 
     /**
      * The number of dc groups of a long window and the lines of the dc group of a short window.
@@ -305,6 +317,12 @@ final class ScalableDecoder {
      * AAC spectrum alone: per band of a long window, per window of an eight short sequence.
      */
     private final boolean[] coreControl = new boolean[ChannelStream.MAX_BANDS];
+
+    /**
+     * The {@code diff_control} flags of the right channel of a stereo first layer over a stereo TwinVQ core, laid out
+     * as {@link #coreControl}.
+     */
+    private final boolean[] coreControlRight = new boolean[ChannelStream.MAX_BANDS];
 
     /**
      * The number of bands the {@code diff_control_lr} flags of a stereo first layer over a core cover.
@@ -327,7 +345,8 @@ final class ScalableDecoder {
      * @param celp the CELP core layer, or {@code null} when it has none
      * @param twinVq the TwinVQ core layer, decoded before each frame, or {@code null} when it has none
      * @throws MediaException.Unsupported if the first layer depends on a core coder and no core is given
-     * @throws MediaException.Malformed if the configurations do not describe the layers of one object
+     * @throws MediaException.Malformed if the configurations do not describe the layers of one object, or a stereo
+     * TwinVQ core lies under a mono layer
      */
     ScalableDecoder(List<AudioSpecificConfig> configs, int maxLayer, AacKernel kernel, CelpCoreLayer celp,
                     TwinVqObject twinVq) {
@@ -389,6 +408,9 @@ final class ScalableDecoder {
                         config.resilience(), kernel);
             }
         }
+        if (twinVq != null && twinVq.channels() == 2 && layerChannels[0] != 2) {
+            throw new MediaException.Malformed("a stereo TwinVQ core under a mono scalable AAC layer");
+        }
         this.firstStereo = stereo;
         this.lastMono = stereo >= 0 ? stereo - 1 : count - 1;
         this.outputLayer = maxLayer < 0 ? count - 1 : Math.min(maxLayer, count - 1);
@@ -412,6 +434,7 @@ final class ScalableDecoder {
         this.scratch = new float[frameLength];
         this.reconstruction = new float[frameLength];
         this.coreSpectrum = hasCore ? new float[frameLength] : null;
+        this.coreRight = twinVq != null && twinVq.channels() == 2 ? new float[frameLength] : null;
         var index = Math.min(first.tableIndex(), DC_GROUPS.length - 1);
         var wideband = celp != null && celp.sampleRate() > 12000 && index < WIDEBAND_DC_GROUPS.length;
         this.dcGroups = wideband ? WIDEBAND_DC_GROUPS[index] : DC_GROUPS[index];
@@ -491,6 +514,8 @@ final class ScalableDecoder {
         diffBands = 0;
         coreDiffBands = 0;
         tnsFromRight = false;
+        coreTns[0] = twinVq != null && twinVq.tnsPresent(0);
+        coreTns[1] = coreRight != null && twinVq.tnsPresent(1);
         extensionTns[0] = false;
         extensionTns[1] = false;
         readMainLayer();
@@ -505,8 +530,16 @@ final class ScalableDecoder {
             celp.transform(windowSequence, previousShape, windowShape, coreSpectrum);
         } else if (twinVq != null) {
             System.arraycopy(twinVq.spectrum(0), 0, coreSpectrum, 0, frameLength);
+            if (coreRight != null) {
+                System.arraycopy(twinVq.spectrum(1), 0, coreRight, 0, frameLength);
+            }
         }
-        if (hasCore) {
+        // a core channel with TNS takes its own filters after the switch instead, and the first layer carries no TNS
+        // data for a channel of a stereo core with TNS
+        if (coreRight != null) {
+            streams[0][0].applyTnsAnalysis(coreSpectrum);
+            streams[0][1].applyTnsAnalysis(coreRight);
+        } else if (hasCore && !coreTns[0]) {
             streams[0][layerChannels[0] == 2 && tnsFromRight ? 1 : 0].applyTnsAnalysis(coreSpectrum);
         }
         combine(Math.min(outputLayer, present - 1), present);
@@ -557,10 +590,6 @@ final class ScalableDecoder {
         if (twinVq != null) {
             windowSequence = twinVq.windowSequence();
             windowShape = twinVq.windowShape();
-            // TODO: the standard omits tns_channel_mono_layer and the first layer's TNS fields under a TwinVQ core with
-            //  TNS (ISO/IEC 14496-3 Table 4.90) and runs the core's filters over the combined spectrum (Figures 4.9,
-            //  4.10, 4.14 and 4.15); the reference decoder, which this follows, reads them always and leaves the
-            //  filters out. No ISO/IEC 14496-26 stream has such a frame.
             var coreBands = twinVq.maxBand();
             dcGroups = (coreBands + 3) / 4;
             diffShortLines = windowSequence == ChannelStream.EIGHT_SHORT_SEQUENCE ? shortOffsets[coreBands] : 0;
@@ -581,21 +610,24 @@ final class ScalableDecoder {
         }
         if (channels == 2) {
             readMidSide(reader, 0, maxBands[0], streams[0][0]);
-            tnsFromRight = hasCore && reader.readFlag();
+            // tns_channel_mono_layer: under a mono core, unless it is a TwinVQ core with TNS
+            tnsFromRight = hasCore && coreRight == null && !coreTns[0] && reader.readFlag();
         }
         reader.checkNotOverrun();
         for (var channel = 0; channel < channels; channel++) {
             var stream = streams[0][channel];
             var side = source(0, channel, SIDE);
-            var tns = side.readFlag();
+            var tns = tnsTransmitted(channel) && side.readFlag();
             if (!errorResilient && tns) {
                 stream.readScalableTns(side);
             }
             if (hasCore) {
                 if (channel == 0) {
-                    readCoreControl(side);
+                    readCoreControl(side, coreControl);
+                } else if (coreRight != null) {
+                    readCoreControl(side, coreControlRight);
                 }
-                if (channels == 2) {
+                if (channels == 2 && coreRight == null) {
                     readCoreControlLr(side, channel);
                 }
             } else if (side.readFlag()) {
@@ -637,7 +669,8 @@ final class ScalableDecoder {
         }
         reader.checkNotOverrun();
         var monoStereo = stereo && layerChannels[layer - 1] == 1;
-        var switched = stereo && (layerChannels[0] == 1 || hasCore);
+        // diff_control_lr follows a mono layer, which a mono core is
+        var switched = stereo && (layerChannels[0] == 1 || (hasCore && coreRight == null));
         if (errorResilient) {
             for (var channel = 0; channel < channels; channel++) {
                 var side = source(layer, channel, SIDE);
@@ -727,12 +760,13 @@ final class ScalableDecoder {
      * flags of its four bands. The bands above the dc groups take the AAC spectrum alone.
      *
      * @param reader the bit source
+     * @param target {@link #coreControl}, or {@link #coreControlRight} for the right channel over a stereo core
      */
-    private void readCoreControl(AacBitReader reader) {
-        Arrays.fill(coreControl, true);
+    private void readCoreControl(AacBitReader reader, boolean[] target) {
+        Arrays.fill(target, true);
         if (windowSequence == ChannelStream.EIGHT_SHORT_SEQUENCE) {
             for (var window = 0; window < 8; window++) {
-                coreControl[window] = reader.readFlag();
+                target[window] = reader.readFlag();
             }
             return;
         }
@@ -751,7 +785,7 @@ final class ScalableDecoder {
                 }
             }
             for (var i = 0; i < 4; i++) {
-                coreControl[group * 4 + i] = (flags & 8 >> i) != 0;
+                target[group * 4 + i] = (flags & 8 >> i) != 0;
             }
         }
     }
@@ -883,7 +917,11 @@ final class ScalableDecoder {
                 if (hasCore) {
                     // the core adds to both channels of an intensity band, after its right channel takes the left
                     applyIntensity();
-                    switchCoreStereo();
+                    if (coreRight != null) {
+                        switchStereoCore();
+                    } else {
+                        switchCoreStereo();
+                    }
                 }
             }
             matrix(1.0f);
@@ -1349,6 +1387,74 @@ final class ScalableDecoder {
     }
 
     /**
+     * Runs the frequency selective switch of a stereo first layer over a stereo TwinVQ core, before the inverse M/S
+     * matrix: each core channel is added to the channel of the same index where its {@code diff_control} flag is
+     * clear, in the bands the matrix leaves coded left and right as it is, and in the bands it inverts as the mid
+     * {@code (l + r) / 2} and side {@code (l - r) / 2} the matrix turns back into the core's left and right channels.
+     * Over short windows each flag covers the {@code diff_short_lines} of its window.
+     */
+    private void switchStereoCore() {
+        var shortWindows = windows == 8;
+        var group = 0;
+        for (var window = 0; window < windows; window++) {
+            if (window == groupStarts[group + 1]) {
+                group++;
+            }
+            var base = window * windowLength;
+            var top = base + (shortWindows ? Math.min(diffShortLines, windowLength) : windowLength);
+            var leftOff = shortWindows && coreControl[window];
+            var rightOff = shortWindows && coreControlRight[window];
+            for (var band = 0; band < bandCount; band++) {
+                var start = base + offsets[band];
+                if (start >= top) {
+                    break;
+                }
+                var addLeft = !(shortWindows ? leftOff : coreControl[band]);
+                var addRight = !(shortWindows ? rightOff : coreControlRight[band]);
+                if (!addLeft && !addRight) {
+                    continue;
+                }
+                var midSide = msUsed[window * ChannelStream.MAX_BANDS + band]
+                        && stereoTools[group * ChannelStream.MAX_BANDS + band] == 0;
+                var end = Math.min(base + offsets[band + 1], top);
+                for (var line = start; line < end; line++) {
+                    var l = coreSpectrum[line];
+                    var r = coreRight[line];
+                    if (midSide) {
+                        var m = 0.5f * (l + r);
+                        r = 0.5f * (l - r);
+                        l = m;
+                    }
+                    if (addLeft) {
+                        spectra[0][line] += l;
+                    }
+                    if (addRight) {
+                        spectra[1][line] += r;
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Returns whether the first layer codes the TNS data of a channel ({@code tns_aac_tvq_en} of ISO/IEC 14496-3 Table
+     * 4.90): always over a CELP core or without a core, never in a mono layer over a mono TwinVQ core with TNS nor in a
+     * channel of a stereo TwinVQ core with TNS, whose filters the switched spectrum takes instead.
+     *
+     * @param channel the channel index, 0 for left or mono, 1 for right
+     * @return {@code true} when {@code tns_data_present} is transmitted
+     */
+    private boolean tnsTransmitted(int channel) {
+        if (twinVq == null) {
+            return true;
+        }
+        if (coreRight != null) {
+            return !coreTns[channel];
+        }
+        return !coreTns[0] || layerChannels[0] == 2;
+    }
+
+    /**
      * Returns whether the frequency selective switch takes a band of a channel from the stereo spectrum alone.
      *
      * @param channel the channel index, 0 for left or mono, 1 for right
@@ -1396,6 +1502,14 @@ final class ScalableDecoder {
                     for (var window = 0; window < windows; window++) {
                         extension[channel].applyTns(spectra[channel], window, maxBands[output]);
                     }
+                }
+            }
+        }
+        if (twinVq != null) {
+            for (var channel = 0; channel < channels; channel++) {
+                var coreChannel = coreRight != null ? channel : 0;
+                if (coreTns[coreChannel]) {
+                    twinVq.applyTns(coreChannel, spectra[channel], twinVq.maxBand());
                 }
             }
         }

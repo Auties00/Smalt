@@ -562,6 +562,56 @@ class FuzzSeedWriter {
                 resilientParts));
     }
 
+    @Test
+    @DisplayName("writes the seeds of the scalable AAC over a stereo TwinVQ core target")
+    void aacTwinVqCoreStereo() {
+        // the configurations of the stereo TwinVQ cores of tv26 and er_tv01 (32 kHz) under a stereo AAC scalable and ER
+        // AAC scalable layer: the valid seeds have random core frames, long and short, and all-zero AAC layers, which
+        // take the core in every dc group of both channels
+        var random = new java.util.Random(144969);
+        var plain = MpegFuzzTest.units(List.of(new byte[]{0x3A, (byte) 0x90, 0, 0}, new byte[]{0x32, (byte) 0x90, 0}));
+        var resilient = MpegFuzzTest.units(List.of(new byte[]{(byte) 0xAA, (byte) 0x90, 0, 0},
+                new byte[]{(byte) 0xA2, (byte) 0x91, 0, 0}));
+        var empty = new ArrayList<FuzzPackets.Part>();
+        var randomParts = new ArrayList<FuzzPackets.Part>();
+        for (var frame = 0; frame < 10; frame++) {
+            var sequence = frame == 4 ? 1 : frame == 5 ? 2 : frame == 6 ? 3 : 0;
+            var core = twinVqFrame(random, 132, 2, sequence);
+            empty.add(new FuzzPackets.Part(MpegFuzzTest.units(List.of(tagged(0, core), tagged(1, new byte[24]))),
+                    true));
+            randomParts.add(new FuzzPackets.Part(MpegFuzzTest.units(List.of(tagged(0, core),
+                    tagged(1, randomBytes(random, 160)))), true));
+        }
+        write(MpegFuzzTest.class, "aacTwinVqCore", "valid-stereo-core.bin", FuzzPackets.audio(7, 32000, 2, 0, plain,
+                empty));
+        write(MpegFuzzTest.class, "aacTwinVqCore", "valid-er-stereo-core.bin", FuzzPackets.audio(7, 32000, 2, 0,
+                resilient, empty));
+        write(MpegFuzzTest.class, "aacTwinVqCore", "random-stereo-core.bin", FuzzPackets.audio(7, 32000, 2, 0, plain,
+                randomParts));
+        // the mono ER TwinVQ core of er_ac311 with epConfig 2 and two frames per EP frame, whose EP frames come with
+        // every other AAC frame, under its two ER AAC layers
+        var coreFrames = new ArrayList<byte[]>();
+        for (var frame = 0; frame < 10; frame++) {
+            coreFrames.add(twinVqFrame(random, 32, 1, 0));
+        }
+        var built = EpStreams.unmapped(
+                new byte[]{(byte) 0xAA, (byte) 0x89, 0x00}, coreFrames, 2, random, 0);
+        var concatenated = MpegFuzzTest.units(List.of(built.config(),
+                new byte[]{(byte) 0xA2, (byte) 0x8A, 0x00, 0x04, 0x40}, new byte[]{(byte) 0xA2, (byte) 0x91, 0x3C, 0x00}));
+        var concatenatedParts = new ArrayList<FuzzPackets.Part>();
+        for (var frame = 0; frame < 10; frame++) {
+            var units = new ArrayList<byte[]>();
+            if (frame % 2 == 0) {
+                units.add(tagged(0, built.units().get(frame / 2)));
+            }
+            units.add(tagged(1, new byte[16]));
+            units.add(tagged(2, new byte[16]));
+            concatenatedParts.add(new FuzzPackets.Part(MpegFuzzTest.units(units), true));
+        }
+        write(MpegFuzzTest.class, "aacTwinVqCore", "valid-concatenated-core.bin", FuzzPackets.audio(7, 32000, 2, 0,
+                concatenated, concatenatedParts));
+    }
+
     /**
      * Prefixes an access unit with the index of its stream.
      *

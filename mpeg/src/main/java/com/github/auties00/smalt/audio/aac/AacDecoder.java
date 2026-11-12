@@ -128,13 +128,16 @@ import java.util.function.Consumer;
  * the core rate, in blocks of one CELP frame.
  *
  * <p>The base layer may also be a TwinVQ or ER TwinVQ object (object types 7 and 21, subclause 4.5.2.2.6), carried in
- * tracks of its own ahead of the AAC layers, one access unit of each per AAC frame. It shares the rate and the frame of
- * the AAC layers and codes their window sequence and shape; its spectrum, run through the TNS analysis filters of the
- * first AAC layer, is switched into theirs the same way, with the dc groups its bandwidth gives. A
+ * tracks of its own ahead of the AAC layers, one access unit of each per AAC frame, or with the error protection tool
+ * concatenating frames one per EP frame, whose frames the AAC frames from the one it arrives with take in turn. It
+ * shares the rate and the frame of the AAC layers and codes their window sequence and shape; its spectrum is switched
+ * into theirs the same way, with the dc groups its bandwidth gives, after the TNS analysis filters of the first AAC
+ * layer, or, when the core has TNS, followed by the core's own TNS filters (Table 4.90 and Figures 4.8 to 4.15). A
+ * mono core may lie under mono and stereo layers; a stereo core lies under stereo layers, each of its channels
+ * switched into the channel of the same index, in the M/S domain where a band is coded M/S. A
  * {@link AacDecoderOptions#maxLayer()} below the number of TwinVQ layers outputs that layer of the TwinVQ object.
- * An AAC frame whose TwinVQ access unit has not arrived decodes as long windows over a silent core. A stereo TwinVQ
- * core raises {@link MediaException.Unsupported} ({@code "aac scalable core"}), as do AAC layers that depend on a core
- * without its tracks.
+ * An AAC frame whose TwinVQ access unit has not arrived decodes as long windows over a silent core. AAC layers that
+ * depend on a core without its tracks raise {@link MediaException.Unsupported} ({@code "aac scalable core"}).
  *
  * <p>USAC (object type 42, ISO/IEC 23003-3) decodes with its frequency domain coder (arithmetic coded spectra,
  * noise filling, complex prediction stereo, the time-warped transform, 768- and 1024-sample frames) and its linear
@@ -409,9 +412,9 @@ public final class AacDecoder implements AudioDecoder {
      * TwinVQ track of the core of a scalable object, or the tracks of a scalable object over a core share a track id
      * @throws NullPointerException if a track of {@code tracks} is {@code null}
      * @throws MediaException.Malformed if a configuration is invalid, or the configurations of a scalable
-     * object do not describe its layers
+     * object do not describe its layers, including a TwinVQ core whose rate, frame length or channels do not fit them
      * @throws MediaException.Unsupported if the configuration uses an unsupported feature, including scalable
-     * AAC over a stereo TwinVQ core or without the tracks of its core ({@code "aac scalable core"})
+     * AAC without the tracks of its core ({@code "aac scalable core"})
      * @throws MediaException.LimitExceeded if the configuration declares more channels than the
      * options' limits allow
      */
@@ -661,30 +664,20 @@ public final class AacDecoder implements AudioDecoder {
 
     /**
      * Checks that a TwinVQ core fits the AAC layers above it: they share the sampling frequency, frame length and
-     * spectral lines, and the core is mono.
+     * spectral lines, and a stereo core lies under a stereo layer.
      *
      * @param twinVq the core
      * @param layer the configuration of the first AAC layer
-     * @throws MediaException.Malformed if the sampling frequency or the frame length differ
-     * @throws MediaException.Unsupported if the core is stereo or concatenates frames ({@code "aac scalable core"})
+     * @throws MediaException.Malformed if the sampling frequency or the frame length differ, or a stereo core lies
+     * under a mono layer
      */
     private static void checkTwinVqCore(TwinVqObject twinVq, AudioSpecificConfig layer) {
         if (twinVq.sampleRate() != layer.sampleRate() || twinVq.frameLength() != layer.frameLength()) {
             throw new MediaException.Malformed("scalable AAC at " + layer.sampleRate() + " Hz over a TwinVQ core at "
                     + twinVq.sampleRate() + " Hz");
         }
-        if (twinVq.channels() != 1) {
-            // TODO: a stereo TwinVQ core (the TVQ-AAC-SS configuration, ISO/IEC 14496-3 subclause 4.5.2.2.6.3) needs
-            //  the switching of Figures 4.13 and 4.14; no ISO/IEC 14496-26 stream uses it and the reference decoder
-            //  switches its first channel alone, so nothing could check an implementation.
-            throw new MediaException.Unsupported("aac scalable core",
-                    "scalable AAC over a stereo TwinVQ core layer is not supported");
-        }
-        if (twinVq.framesPerUnit() != 1) {
-            // TODO: the error protection tool may concatenate frames in the access units of a TwinVQ core, whose frames
-            //  would have to wait for the AAC frames they belong to; no ISO/IEC 14496-26 stream does.
-            throw new MediaException.Unsupported("aac scalable core",
-                    "scalable AAC over a TwinVQ core layer with concatenated frames is not supported");
+        if (twinVq.channels() == 2 && layer.channelConfiguration() != 2) {
+            throw new MediaException.Malformed("a mono scalable AAC layer over a stereo TwinVQ core");
         }
     }
 
@@ -1060,8 +1053,9 @@ public final class AacDecoder implements AudioDecoder {
     /**
      * Decodes the access units of a scalable AAC object over a CELP or TwinVQ core: the core frames first, in the
      * order their packets come, then the AAC frame of the layer packets, unless the output is a layer of the core.
-     * The AAC layers take the windows and the spectrum of a TwinVQ frame, so an AAC frame with no new one decodes over
-     * a silent core instead of repeating the last.
+     * The AAC layers take the windows and the spectrum of a TwinVQ frame, so an AAC frame with no new one takes the
+     * next frame of the last EP frame that concatenates frames, or decodes over a silent core instead of repeating the
+     * last.
      *
      * @param instances the access units, the core ones told apart by their track ids
      * @param output receives the samples
@@ -1085,7 +1079,7 @@ public final class AacDecoder implements AudioDecoder {
                 }
             });
             if (coreOutput == null && twinVqOutput == null && !layerPackets.isEmpty()) {
-                if (twinVqCore != null && !twinVqCoreReady) {
+                if (twinVqCore != null && !twinVqCoreReady && !twinVqCore.decodeNextCore()) {
                     twinVqCore.decodeCore(coreUnits, coreSizes, 0);
                 }
                 twinVqCoreReady = false;
