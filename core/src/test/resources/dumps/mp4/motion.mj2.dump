@@ -1,0 +1,21 @@
+# demux dump of mp4/motion.mj2; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 400000
+seekable true
+metadata compatible_brands="mjp2mj2s"
+metadata major_brand="mjp2"
+metadata minor_version="0"
+track 1 VIDEO JPEG2000 timebase=1/15 duration=6 config=45:15bc8b96
+  video 64x48 orientation=NORMAL rate=15/1 interlacing=PROGRESSIVE
+packets 6
+0 t1 pts=0 dts=0 dur=1 flags=KEY size=2948 crc=e36faf8a
+1 t1 pts=1 dts=1 dur=1 flags=KEY size=2948 crc=e36faf8a
+2 t1 pts=2 dts=2 dur=1 flags=KEY size=2937 crc=83d5486d
+3 t1 pts=3 dts=3 dur=1 flags=KEY size=2937 crc=83d5486d
+4 t1 pts=4 dts=4 dur=1 flags=KEY size=2935 crc=d241183d
+5 t1 pts=5 dts=5 dur=1 flags=KEY size=2935 crc=d241183d
+seek 0: t1@0
+seek 133333: t1@1
+seek 266666: t1@3
+seek 400000: end
+seek -1000000: t1@0
