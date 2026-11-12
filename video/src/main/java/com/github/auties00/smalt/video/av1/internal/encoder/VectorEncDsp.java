@@ -516,11 +516,11 @@ final class VectorEncDsp extends EncDsp {
         if (iscan == null || (n & 7) != 0) {
             return scalar.quantizeLp(coeff, coeffOff, n, roundFp, quantFp, dequant, scan, iscan, qcoeff, dqcoeff);
         }
-        var zero = IntVector.zero(I256);
+        var zero = INTS_8.cast(IntVector.zero(I256));
         var max16 = INTS_8.cast(INT16_MAX_8);
-        var roundAc = IntVector.broadcast(I256, roundFp[1]);
-        var quantAc = IntVector.broadcast(I256, quantFp[1]);
-        var dequantAc = IntVector.broadcast(I256, dequant[1]);
+        var roundAc = INTS_8.cast(IntVector.broadcast(I256, roundFp[1]));
+        var quantAc = INTS_8.cast(IntVector.broadcast(I256, quantFp[1]));
+        var dequantAc = INTS_8.cast(IntVector.broadcast(I256, dequant[1]));
         var round0 = roundAc.blend(IntVector.broadcast(I256, roundFp[0]), DC_LANE);
         var quant0 = quantAc.blend(IntVector.broadcast(I256, quantFp[0]), DC_LANE);
         var dequant0 = dequantAc.blend(IntVector.broadcast(I256, dequant[0]), DC_LANE);

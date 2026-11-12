@@ -1,0 +1,15 @@
+# demux dump of aiff/mace3.aifc; regenerate with -Dsmalt.test.updateDumps=true
+format AIFF
+duration 600272
+seekable true
+track 0 AUDIO MACE3 timebase=1/11025 duration=6618 config=none
+  audio rate=11025 bits=0 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 2
+0 t0 pts=0 dts=0 dur=6144 flags=KEY size=4096 crc=b6624449
+1 t0 pts=6144 dts=6144 dur=474 flags=KEY size=316 crc=4199a9ff
+seek 0: t0@0
+seek 200090: t0@0
+seek 400181: t0@0
+seek 600273: end
+seek 600272: t0@1
+seek -1000000: t0@0

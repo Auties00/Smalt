@@ -1,0 +1,31 @@
+# demux dump of vectors/fate-dst-64fs44-2ch.dff; regenerate with -Dsmalt.test.updateDumps=true
+format DSDIFF
+duration 133333
+seekable true
+track 0 AUDIO DST timebase=1/2822400 duration=376320 config=none
+  audio rate=2822400 bits=1 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 10
+0 t0 pts=0 dts=0 dur=37632 flags=KEY size=4676 crc=b903a123
+1 t0 pts=37632 dts=37632 dur=37632 flags=KEY size=4824 crc=246ed6db
+2 t0 pts=75264 dts=75264 dur=37632 flags=KEY size=4709 crc=626b277d
+3 t0 pts=112896 dts=112896 dur=37632 flags=KEY size=4668 crc=1f03933b
+4 t0 pts=150528 dts=150528 dur=37632 flags=KEY size=4825 crc=673b9b73
+5 t0 pts=188160 dts=188160 dur=37632 flags=KEY size=4680 crc=0bee60ba
+6 t0 pts=225792 dts=225792 dur=37632 flags=KEY size=4715 crc=75c4e30b
+7 t0 pts=263424 dts=263424 dur=37632 flags=KEY size=4807 crc=077ec297
+8 t0 pts=301056 dts=301056 dur=37632 flags=KEY size=4710 crc=4029beee
+9 t0 pts=338688 dts=338688 dur=37632 flags=KEY size=4678 crc=81ca3400
+seek 0: t0@0
+seek 44444: t0@3
+seek 88888: t0@6
+seek 133334: end
+seek 133333: t0@9
+seek -1000000: t0@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format DSDIFF
+  duration 133333
+  seekable false
+  track 0 AUDIO DST timebase=1/2822400 duration=376320 config=none
+    audio rate=2822400 bits=1 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH

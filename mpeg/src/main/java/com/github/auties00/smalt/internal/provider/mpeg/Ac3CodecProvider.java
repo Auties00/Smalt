@@ -29,7 +29,7 @@ import com.github.auties00.smalt.track.Codec;
  * <tr><th scope="row">decoder limits</th><td>{@link Ac3DecoderOptions#limits()}</td></tr>
  * <tr><th scope="row">preferred sample rate</th><td>ignored: the stream's rate is output</td></tr>
  * <tr><th scope="row">everything else of the decoder</th><td>{@link Ac3DecoderOptions#defaults()}:
- * every coded channel, light dynamic range compression</td></tr>
+ * every coded channel, light dynamic range compression, no transient pre-noise holdback</td></tr>
  * <tr><th scope="row">encoder sample rate and layout</th><td>{@link Ac3EncoderOptions#of(int,
  * com.github.auties00.smalt.audio.ChannelLayout)}; a rate other than 32, 44.1 or 48 kHz codes at
  * 48 kHz and a layout AC-3 cannot carry codes the closest one, both reported through
@@ -59,6 +59,9 @@ public final class Ac3CodecProvider implements AudioCodecProvider {
 
     @Override
     public AudioDecoder createDecoder(AudioTrack track, AudioDecoderOptions options) {
+        // TODO: set Ac3DecoderOptions.preNoiseHoldback() here so that every E-AC-3 decode corrects the samples
+        //  before the frame completing a transient pre-noise buffer, once AudioStreamDecoder places and trims
+        //  a codec's output with its delay rather than by the packet that produced it.
         return new Ac3Decoder(track, Ac3DecoderOptions.builder().limits(options.limits()).build());
     }
 
