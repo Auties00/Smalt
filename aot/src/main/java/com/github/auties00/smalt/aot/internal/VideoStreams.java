@@ -82,7 +82,18 @@ final class VideoStreams {
      * @return the round
      */
     static Runnable encodeRound(VideoEncoder encoder) {
-        var pictures = SyntheticVideo.natural(WIDTH, HEIGHT, ENCODED_FRAMES);
+        return encodeRound(encoder, SyntheticVideo.natural(WIDTH, HEIGHT, ENCODED_FRAMES));
+    }
+
+    /**
+     * Returns the round of a workload that encodes the same pictures with an encoder every round, the
+     * timestamps going on across rounds.
+     *
+     * @param encoder the encoder, of {@link #WIDTH}x{@link #HEIGHT} pictures
+     * @param pictures the pictures each round encodes, in presentation order
+     * @return the round
+     */
+    static Runnable encodeRound(VideoEncoder encoder, List<? extends Picture> pictures) {
         long[] pts = {0};
         Consumer<Packet> output = packet -> Blackhole.consume(packet.size());
         return () -> {

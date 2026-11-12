@@ -32,6 +32,7 @@ import com.github.auties00.smalt.audio.amr.AmrVad;
 import com.github.auties00.smalt.container.wav.WavDemuxer;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
+import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.heic.HeicDecoder;
 import com.github.auties00.smalt.image.heic.HeicEncoder;
 import com.github.auties00.smalt.image.heic.HeicEncoderOptions;
@@ -554,62 +555,138 @@ final class MpegWorkloads {
     }
 
     /**
-     * The options of the streams of the H.264 extended engine the extended workloads code and decode: 10-bit
-     * 4:2:0, 10-bit 4:2:2 macroblock pairs, lossless 4:4:4 and 4:0:0, all four with B pictures, and field
-     * pictures with CAVLC, which have none.
-     *
-     * @return the options
+     * The number of frames each stream of the extended workloads codes per round, half of
+     * {@link VideoStreams#ENCODED_FRAMES}, which keeps a round of the twelve streams short: every training cycle
+     * runs one round of every workload.
      */
-    private static List<H264EncoderOptions> extendedOptions() {
+    static final int EXTENDED_FRAMES = VideoStreams.ENCODED_FRAMES / 2;
+
+    /**
+     * The number of frames of each stream the extended decode workload decodes per round.
+     */
+    static final int EXTENDED_DECODED_FRAMES = VideoStreams.DECODED_FRAMES / 8;
+
+    /**
+     * The options of the streams of the H.264 extended engine the extended workloads code and decode, each selecting
+     * decoder paths the others do not: the High profile's 4:0:0, macroblock pairs, field pictures with CABAC and
+     * field pictures with CAVLC; the High 10 profile's 10-bit 4:2:0; the High 4:2:2 profile's 10-bit macroblock pairs
+     * and 8-bit field pictures; and the High 4:4:4 Predictive profile's lossless 4:4:4, lossy 4:4:4 macroblock
+     * pairs, lossy 10-bit 4:4:4, lossless 4:2:0 with CAVLC and lossless 4:2:2 macroblock pairs with CAVLC. The
+     * CABAC streams have B pictures; CAVLC streams have none. The interlaced streams code
+     * {@linkplain SyntheticVideo#interlaced interlaced content}, so their frames of macroblock pairs mix field and
+     * frame pairs.
+     *
+     * @return the options, in a fixed order
+     */
+    static List<H264EncoderOptions> extendedOptions() {
         var base = H264EncoderOptions.forFile().toBuilder().timeBase(TIME_BASE).bitrate(BITRATE)
-                .speed(H264EncoderSpeed.FAST);
+                .speed(H264EncoderSpeed.FAST).build();
         return List.of(
-                base.profile(H264Profile.HIGH_10).bitDepth(10).build(),
-                base.profile(H264Profile.HIGH_422).chromaFormat(ChromaFormat.YUV422)
-                        .fieldOrder(FieldOrder.TOP_FIRST).build(),
-                base.profile(H264Profile.HIGH_444_PREDICTIVE).bitDepth(8)
-                        .chromaFormat(ChromaFormat.YUV444)
-                        .fieldOrder(FieldOrder.PROGRESSIVE).lossless(true).build(),
-                base.lossless(false).profile(H264Profile.HIGH)
-                        .chromaFormat(ChromaFormat.MONOCHROME).build(),
-                base.chromaFormat(ChromaFormat.YUV420)
-                        .fieldOrder(FieldOrder.BOTTOM_FIRST)
-                        .fieldCoding(H264FieldCoding.FIELD_PICTURES)
-                        .cavlc(true).build());
+                base.toBuilder().profile(H264Profile.HIGH_10).bitDepth(10).build(),
+                base.toBuilder().profile(H264Profile.HIGH_422).chromaFormat(ChromaFormat.YUV422).bitDepth(10)
+                        .fieldOrder(FieldOrder.TOP_FIRST).fieldCoding(H264FieldCoding.MBAFF).build(),
+                base.toBuilder().profile(H264Profile.HIGH_422).chromaFormat(ChromaFormat.YUV422)
+                        .fieldOrder(FieldOrder.BOTTOM_FIRST).fieldCoding(H264FieldCoding.FIELD_PICTURES).build(),
+                base.toBuilder().profile(H264Profile.HIGH_444_PREDICTIVE).chromaFormat(ChromaFormat.YUV444)
+                        .lossless(true).build(),
+                base.toBuilder().profile(H264Profile.HIGH_444_PREDICTIVE).chromaFormat(ChromaFormat.YUV444)
+                        .fieldOrder(FieldOrder.TOP_FIRST).fieldCoding(H264FieldCoding.MBAFF).build(),
+                base.toBuilder().profile(H264Profile.HIGH_444_PREDICTIVE).chromaFormat(ChromaFormat.YUV444)
+                        .bitDepth(10).build(),
+                base.toBuilder().profile(H264Profile.HIGH_444_PREDICTIVE).lossless(true).cavlc(true).build(),
+                base.toBuilder().profile(H264Profile.HIGH_444_PREDICTIVE).chromaFormat(ChromaFormat.YUV422)
+                        .lossless(true).fieldOrder(FieldOrder.TOP_FIRST).fieldCoding(H264FieldCoding.MBAFF)
+                        .cavlc(true).build(),
+                base.toBuilder().profile(H264Profile.HIGH).chromaFormat(ChromaFormat.MONOCHROME).build(),
+                base.toBuilder().profile(H264Profile.HIGH).fieldOrder(FieldOrder.TOP_FIRST)
+                        .fieldCoding(H264FieldCoding.MBAFF).build(),
+                base.toBuilder().profile(H264Profile.HIGH).fieldOrder(FieldOrder.BOTTOM_FIRST)
+                        .fieldCoding(H264FieldCoding.FIELD_PICTURES).build(),
+                base.toBuilder().profile(H264Profile.HIGH).fieldOrder(FieldOrder.BOTTOM_FIRST)
+                        .fieldCoding(H264FieldCoding.FIELD_PICTURES).cavlc(true).build());
     }
 
     /**
      * Returns a workload that encodes with the H.264 extended engine: high bit depths, 4:2:2, 4:4:4, 4:0:0,
-     * lossless coding, macroblock pairs, field pictures, B pictures and CAVLC.
+     * lossless coding, macroblock pairs, field pictures, B pictures and CAVLC, {@link #EXTENDED_FRAMES} frames of
+     * each stream per round.
      *
      * @return the workload
      */
     private static TrainingWorkload h264ExtendedEncode() {
         var rounds = new ArrayList<Runnable>();
-        var options = extendedOptions();
-        for (var option : options) {
-            rounds.add(VideoStreams.encodeRound(new H264Encoder(WIDTH, HEIGHT, option)));
+        for (var option : extendedOptions()) {
+            rounds.add(VideoStreams.encodeRound(new H264Encoder(WIDTH, HEIGHT, option),
+                    trainingInput(option, EXTENDED_FRAMES)));
         }
         return TrainingWorkload.of("h264-encode-extended", () -> rounds.forEach(Runnable::run));
     }
 
     /**
-     * Returns a workload that decodes the streams of the H.264 extended engine, which select the decoder's high bit
-     * depth, 4:2:2, 4:4:4, lossless, macroblock pair and field picture paths.
+     * Returns a workload that decodes the streams of {@link #extendedOptions()}, which select the decoder's high bit
+     * depth, 4:2:2, 4:4:4, lossless, macroblock pair and field picture paths with both entropy coders.
      *
      * @return the workload
      */
     private static TrainingWorkload h264ExtendedDecode() {
         var rounds = new ArrayList<Runnable>();
         for (var options : extendedOptions()) {
-            var encoder = new H264Encoder(WIDTH, HEIGHT, options);
-            var codecConfig = encoder.codecConfig().orElse(null);
-            var packets = VideoStreams.encodeAll(encoder, SyntheticVideo.natural(WIDTH, HEIGHT,
-                    VideoStreams.DECODED_FRAMES / 8));
-            rounds.add(VideoStreams.decodeRound(packets, new H264Decoder(VideoStreams.track(Codec.H264, codecConfig),
-                    H264DecoderOptions.builder().highBitDepth(true).build())));
+            var stream = extendedStream(options);
+            rounds.add(VideoStreams.decodeRound(stream.packets(), extendedDecoder(stream.codecConfig())));
         }
         return TrainingWorkload.of("h264-decode-extended", () -> rounds.forEach(Runnable::run));
+    }
+
+    /**
+     * Synthesizes the pictures an H.264 training stream codes: {@linkplain SyntheticVideo#interlaced interlaced
+     * content} in the stream's field order for an interlaced stream, {@linkplain SyntheticVideo#natural natural
+     * content} otherwise.
+     *
+     * @param options the encoder options
+     * @param frames the number of frames
+     * @return the pictures, in presentation order
+     */
+    static List<YuvPicture> trainingInput(H264EncoderOptions options, int frames) {
+        return switch (options.fieldOrder()) {
+            case PROGRESSIVE -> SyntheticVideo.natural(WIDTH, HEIGHT, frames);
+            case TOP_FIRST -> SyntheticVideo.interlaced(WIDTH, HEIGHT, frames, true);
+            case BOTTOM_FIRST -> SyntheticVideo.interlaced(WIDTH, HEIGHT, frames, false);
+        };
+    }
+
+    /**
+     * A stream of the extended workloads.
+     *
+     * @param codecConfig the {@code AVCDecoderConfigurationRecord}, or {@code null} if the encoder writes none
+     * @param packets the packets, in decoding order
+     */
+    record ExtendedStream(byte[] codecConfig, List<Packet> packets) {
+    }
+
+    /**
+     * Encodes {@link #EXTENDED_DECODED_FRAMES} frames of {@link #trainingInput} with the given options.
+     *
+     * @param options the encoder options, one of {@link #extendedOptions()}
+     * @return the stream
+     */
+    static ExtendedStream extendedStream(H264EncoderOptions options) {
+        var encoder = new H264Encoder(WIDTH, HEIGHT, options);
+        var codecConfig = encoder.codecConfig().orElse(null);
+        var packets = VideoStreams.encodeAll(encoder, trainingInput(options, EXTENDED_DECODED_FRAMES));
+        return new ExtendedStream(codecConfig, packets);
+    }
+
+    /**
+     * Returns the decoder the extended and separate-plane decode workloads decode a stream with, which keeps high
+     * bit depth samples.
+     *
+     * @param codecConfig the {@code AVCDecoderConfigurationRecord}, or {@code null} if the stream carries its
+     *                    parameter sets in band
+     * @return the decoder
+     */
+    static H264Decoder extendedDecoder(byte[] codecConfig) {
+        return new H264Decoder(VideoStreams.track(Codec.H264, codecConfig),
+                H264DecoderOptions.builder().highBitDepth(true).build());
     }
 
     /**
@@ -638,7 +715,8 @@ final class MpegWorkloads {
     private static TrainingWorkload h264SeparatePlanesEncode() {
         var rounds = new ArrayList<Runnable>();
         for (var option : separatePlaneOptions()) {
-            rounds.add(VideoStreams.encodeRound(new H264Encoder(WIDTH, HEIGHT, option)));
+            rounds.add(VideoStreams.encodeRound(new H264Encoder(WIDTH, HEIGHT, option),
+                    trainingInput(option, VideoStreams.ENCODED_FRAMES)));
         }
         return TrainingWorkload.of("h264-encode-separate-planes", () -> rounds.forEach(Runnable::run));
     }
@@ -654,10 +732,8 @@ final class MpegWorkloads {
         for (var options : separatePlaneOptions()) {
             var encoder = new H264Encoder(WIDTH, HEIGHT, options);
             var codecConfig = encoder.codecConfig().orElse(null);
-            var packets = VideoStreams.encodeAll(encoder, SyntheticVideo.natural(WIDTH, HEIGHT,
-                    VideoStreams.DECODED_FRAMES / 8));
-            rounds.add(VideoStreams.decodeRound(packets, new H264Decoder(VideoStreams.track(Codec.H264, codecConfig),
-                    H264DecoderOptions.builder().highBitDepth(true).build())));
+            var packets = VideoStreams.encodeAll(encoder, trainingInput(options, VideoStreams.DECODED_FRAMES / 8));
+            rounds.add(VideoStreams.decodeRound(packets, extendedDecoder(codecConfig)));
         }
         return TrainingWorkload.of("h264-decode-separate-planes", () -> rounds.forEach(Runnable::run));
     }
