@@ -1,0 +1,83 @@
+# The numbers behind the charts of the root README's Performance section.
+# Smalt's time relative to the native reference: lower is better, 1.0 is parity.
+# Columns (tab separated): chart, workload, reference, low, high, shown, note
+# - chart: the chart the row belongs to (see CHARTS in charts.py)
+# - low, high: the measured ratio, or the ends of a measured range
+# - shown: the figure as the README prints it
+# - note: quality or measurement caveat printed in the text list (may be empty)
+video-decode	H.264 decode, 720p and 1080p	FFmpeg	1.7	1.8	1.7-1.8x	
+video-decode	HEVC decode, 720p and 1080p (x265 medium), 1 thread	FFmpeg	1.9	1.9	1.9x	
+video-decode	HEVC decode, 720p and 1080p (x265 medium), all threads	FFmpeg	1.5	1.5	1.5x	
+video-decode	VP9 decode, 720p and 1080p, 1 thread	libvpx	1.9	1.9	1.9x	
+video-decode	VP9 decode, 720p and 1080p, all threads	libvpx	1.2	1.5	1.2-1.5x	
+video-decode	AV1 decode, 720p	libaom	1.3	1.3	1.3x	
+video-decode	AV1 decode, 720p	dav1d	2.8	2.8	2.8x	
+video-decode	AV1 decode, 720p, 8 threads, frame delay 8	dav1d	1.5	1.5	1.5x	
+video-decode	VP8 decode, 720p, 1 thread	libvpx / FFmpeg	1.7	1.7	about 1.7x	
+video-decode	MPEG-4 Part 2 ASP decode, 720p, 1 thread	FFmpeg	2	2	about 2x	
+video-decode	MPEG-4 Part 2 ASP decode, 720p, 8 threads	FFmpeg	3	3	about 3x	
+video-decode	ProRes 422 HQ decode, 1080p	FFmpeg (prores)	2.0	2.0	2.0x	
+video-decode	DNxHR HQ decode, 1080p	FFmpeg (dnxhd)	2.1	2.1	2.1x	
+video-encode	AV1 real-time encode, 720p, 1 thread	libaom realtime cpu-used 9	1.8	1.8	1.8x	BD-rate 3.7% PSNR-Y higher
+video-encode	AV1 real-time encode, 720p, 8 threads	libaom realtime cpu-used 9	1.3	1.3	1.3x	BD-rate 3.7% PSNR-Y higher
+video-encode	AV1 good-quality encode, 720p, FAST, 1 thread	libaom 3.12 good cpu-used 6	3.0	3.0	3.0x	BD-rate 15% PSNR-Y, 19% SSIM-Y higher
+video-encode	AV1 good-quality encode, 720p, FAST, 8 threads	libaom 3.12 good cpu-used 6	3.1	3.1	3.1x	BD-rate 15% PSNR-Y, 19% SSIM-Y higher
+video-encode	VP8 real-time encode, 480p and 720p	libvpx	1.4	1.4	1.4x	BD-rate 2.6% PSNR-Y, 2.9% SSIM-Y lower
+video-encode	VP9 real-time encode, 480p and 720p	libvpx	1.8	2.7	1.8-2.7x	BD-rate 14% PSNR-Y, 16.5% SSIM-Y lower
+video-encode	ProRes 422 HQ encode, 1080p	FFmpeg (prores_ks)	0.08	0.08	0.08x	
+video-encode	ProRes 422 HQ encode, 1080p, 1 thread	FFmpeg (prores, its faster encoder)	0.7	0.7	0.7x	
+video-encode	DNxHR HQ encode, 1080p, 1 thread	FFmpeg (dnxhd)	0.8	0.8	0.8x	
+video-encode	DNxHR HQ encode, 1080p, 8 threads	FFmpeg (dnxhd)	0.9	1.0	0.9-1.0x	
+audio	Opus decode	libopus	0.85	0.85	about 0.85x	
+audio	Opus encode, 60 ms frames	libopus	0.8	1.1	0.8-1.1x	
+audio	HE-AAC decode (SBR)	FFmpeg	1.0	1.0	about 1.0x	
+audio	AMR-WB decode	FFmpeg	1.3	1.3	about 1.3x	
+audio	AC-3 decode, 5.1	FFmpeg	1.3	1.3	1.3x	
+audio	E-AC-3 decode, 5.1	FFmpeg	1.3	1.3	1.3x	
+audio	E-AC-3 decode, 7.1 Atmos bed	FFmpeg	1.5	1.5	1.5x	
+audio	AC-3 encode, 5.1 at 448 kbit/s	FFmpeg	2.6	2.6	2.6x	with channel coupling
+audio	E-AC-3 encode, 5.1 at 384 kbit/s	FFmpeg	2.5	2.5	2.5x	with channel coupling
+audio	MP3 decode	FFmpeg (mp3float)	1.1	1.1	about 1.1x	
+audio	MP3 encode at 128 kbit/s	LAME	0.83	0.83	0.83x	
+audio	MP3 encode at V2	LAME	0.6	0.6	0.6x	
+audio	Vorbis encode	libvorbis	1.1	1.1	about 1.1x	
+audio	FLAC encode, level 5	libFLAC (flac)	0.85	0.85	about 0.85x	
+audio	FLAC encode, level 8	libFLAC (flac)	1.3	1.3	1.3x	
+audio	ALAC decode	FFmpeg	1.1	1.1	about 1.1x	
+audio	Voice processing (AEC3 + noise suppression), 10 ms frames	WebRTC APM	1.0	1.0	about 1.0x	
+audio	Loudness measurement (EBU R128, true peak)	FFmpeg (ebur128)	0.2	0.3	0.2-0.3x	
+images	AVIF decode, 2.5 MP, 1 thread	dav1d	3.2	3.2	3.2x	
+images	AVIF decode, 2.5 MP, 8 threads	dav1d	1.9	1.9	1.9x	
+images	AVIF encode, speed 6, 720p	libaom 3.12 all-intra	3.1	3.1	3.1x	BD-rate 0-7% lower
+images	AVIF encode, speed 6, 12 MP	libaom 3.12 all-intra	4.1	4.1	4.1x	BD-rate 0-7% lower
+images	AVIF encode, speed 6, 2.5 MP, 1 thread	libaom 3.12 all-intra cpu-used 6	2.9	2.9	2.9x	BD-rate 2% PSNR-Y, 5% SSIM-Y lower
+images	AVIF encode, speed 6, 2.5 MP, 8 threads	libaom 3.12 all-intra cpu-used 6	2.0	2.0	2.0x	BD-rate 2% PSNR-Y, 5% SSIM-Y lower
+images	JPEG XL decode, VarDCT	libjxl (djxl)	6.6	8	6.6-8x	
+images	JPEG XL decode, modular	libjxl (djxl)	1.9	2.4	1.9-2.4x	
+images	JPEG 2000 decode, 2048x1536 RGB, lossless 5-3	OpenJPEG 2.5.3 (opj_decompress)	1.2	1.2	about 1.2x	loaded machine, wide error bars
+images	JPEG 2000 decode, 2048x1536 RGB, lossy 9-7 at 20:1	OpenJPEG 2.5.3 (opj_decompress)	0.3	0.9	0.3-0.9x	loaded machine, wide error bars
+images	JPEG 2000 encode, 8 threads	OpenJPEG 2.5.3 (opj_compress)	0.3	0.5	0.3-0.5x	
+images	TIFF decode, 2048x1536 RGB, LZW	LibTIFF 4.7 (tiffcp, libdeflate)	0.9	0.9	0.9x	
+images	TIFF decode, 2048x1536 RGB, Deflate with predictor	LibTIFF 4.7 (tiffcp, libdeflate)	1.6	1.6	1.6x	
+images	TIFF encode, 2048x1536 RGB, LZW	LibTIFF 4.7 (tiffcp, libdeflate)	0.8	0.8	0.8x	
+images	TIFF encode, 2048x1536 RGB, Deflate with predictor	LibTIFF 4.7 (tiffcp, libdeflate)	2.7	2.7	2.7x	
+images	GIF encode with a palette search and dithering	FFmpeg (palettegen, paletteuse)	0.4	0.4	about 0.4x	8% smaller, 1.6 dB better
+images	Lossy WebP encode, 12 MP (q75, method 4), 1 thread	FFmpeg 7.1 (libwebp)	1.7	1.7	1.7x	byte-identical to libwebp
+images	Lossy WebP encode, 12 MP (q75, method 4), 8 threads	FFmpeg 7.1 (libwebp)	0.4	0.4	0.4x	byte-identical to libwebp; see the eight-thread caveat
+images	Lossless WebP encode, 2.5 MP, 1 thread	FFmpeg 7.1 (libwebp)	1.1	1.1	about 1.1x	
+images	Lossless WebP encode, 2.5 MP, 8 threads	FFmpeg 7.1 (libwebp)	0.8	0.8	0.8x	see the eight-thread caveat
+images	PNG encode, 12 MP (zlib level 6), 1 thread	FFmpeg 7.1 (zlib)	0.6	0.6	about 0.6x	Smalt's own deflate compressor, 0.4x of the JDK zlib's time at level 6
+images	PNG encode, 12 MP (zlib level 6), 8 threads	FFmpeg 7.1 (zlib)	0.3	0.3	0.3x	the PNG split into independently deflated bands of about 1 MiB; see the eight-thread caveat
+images	PNG decode, 12 MP, 1 thread	FFmpeg 7.1 (zlib)	0.6	0.6	0.6x	
+images	PNG decode, 12 MP, 8 threads	FFmpeg 7.1 (zlib)	0.5	0.5	0.5x	see the eight-thread caveat
+processing	ICC transforms, 12 MP: Display P3 to sRGB	Little CMS 2.17	0.3	0.3	0.3x	
+processing	ICC transforms, 12 MP: RGB lookup table	Little CMS 2.17	0.9	0.9	0.9x	
+processing	ICC transforms, 12 MP: CMYK to sRGB, 8-bit	Little CMS 2.17	0.7	0.7	0.7x	
+processing	Box blur, 12 MP	Pillow 12.3	0.5	0.5	0.5x	
+processing	Bicubic rotation, 12 MP	Pillow 12.3	0.4	0.4	0.4x	
+processing	Resize + unsharp mask, 12 MP	Pillow 12.3	0.5	0.5	0.5x	
+processing	3x3 median, 12 MP	Pillow 12.3	0.01	0.01	0.01x	
+processing	Gaussian blur sigma 2, 12 MP	libvips 8.18	4	5	4-5x	
+processing	Bicubic rotation, 12 MP	libvips 8.18	0.7	0.7	0.7x	
+processing	3x3 median, 12 MP	libvips 8.18	0.01	0.01	0.01x	
+processing	MPEG-TS demux	FFmpeg (-c copy)	1.25	1.25	about 1.25x	

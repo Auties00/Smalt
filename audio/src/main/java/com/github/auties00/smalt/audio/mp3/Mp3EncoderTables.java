@@ -174,7 +174,7 @@ final class Mp3EncoderTables {
         deriveQuadCodes(0, 0, 0);
         deriveQuadCodes(1, 0, 0);
         for (var i = 0; i < POW43.length; i++) {
-            POW43[i] = (float) Math.pow(i, 4.0 / 3.0);
+            POW43[i] = (float) StrictMath.pow(i, 4.0 / 3.0);
         }
     }
 

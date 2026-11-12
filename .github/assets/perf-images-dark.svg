@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 990" width="960" height="990" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" role="img" aria-label="Still images: time relative to the native reference">
+<title>Still images: Smalt's time relative to the native reference (lower is better)</title>
+<rect x="8" y="10" width="12" height="12" rx="3" fill="#3987e5"/>
+<text x="26" y="20.5" font-size="12" fill="#9198a1">faster than the reference</text>
+<rect x="188" y="10" width="12" height="12" rx="3" fill="#d95926"/>
+<text x="206" y="20.5" font-size="12" fill="#9198a1">slower than the reference</text>
+<path d="M370,12v8M370,16h22M392,12v8" stroke="#f0f6fc" stroke-width="1.5" fill="none"/>
+<text x="400" y="20.5" font-size="12" fill="#9198a1">measured range</text>
+<line x1="520.0" y1="56" x2="520.0" y2="976" stroke="#3d444d" stroke-width="1"/>
+<text x="520.0" y="50" font-size="11" text-anchor="middle" fill="#9198a1">0.25x</text>
+<line x1="588.0" y1="56" x2="588.0" y2="976" stroke="#3d444d" stroke-width="1"/>
+<text x="588.0" y="50" font-size="11" text-anchor="middle" fill="#9198a1">0.5x</text>
+<line x1="656.0" y1="56" x2="656.0" y2="976" stroke="#7d8590" stroke-width="1.5"/>
+<text x="656.0" y="50" font-size="11" text-anchor="middle" fill="#f0f6fc" font-weight="600">1x</text>
+<line x1="724.0" y1="56" x2="724.0" y2="976" stroke="#3d444d" stroke-width="1"/>
+<text x="724.0" y="50" font-size="11" text-anchor="middle" fill="#9198a1">2x</text>
+<line x1="792.0" y1="56" x2="792.0" y2="976" stroke="#3d444d" stroke-width="1"/>
+<text x="792.0" y="50" font-size="11" text-anchor="middle" fill="#9198a1">4x</text>
+<line x1="860.0" y1="56" x2="860.0" y2="976" stroke="#3d444d" stroke-width="1"/>
+<text x="860.0" y="50" font-size="11" text-anchor="middle" fill="#9198a1">8x</text>
+<text x="656.0" y="36" font-size="11" text-anchor="middle" fill="#9198a1">parity</text>
+<text x="8" y="81.0" font-size="13" fill="#f0f6fc">AVIF decode, 2.5 MP, 1 thread</text>
+<text x="8" y="95.0" font-size="11" fill="#9198a1">vs dav1d</text>
+<path d="M656.0,76.0H766.1a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4H656.0z" fill="#d95926"/>
+<text x="778.1" y="87.5" font-size="12" font-weight="600" fill="#f0f6fc">3.2x</text>
+<text x="8" y="119.0" font-size="13" fill="#f0f6fc">AVIF decode, 2.5 MP, 8 threads</text>
+<text x="8" y="133.0" font-size="11" fill="#9198a1">vs dav1d</text>
+<line x1="8" y1="102" x2="952" y2="102" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M656.0,114.0H715.0a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4H656.0z" fill="#d95926"/>
+<text x="727.0" y="125.5" font-size="12" font-weight="600" fill="#f0f6fc">1.9x</text>
+<text x="8" y="157.0" font-size="13" fill="#f0f6fc">AVIF encode, speed 6, 720p</text>
+<text x="8" y="171.0" font-size="11" fill="#9198a1">vs libaom 3.12 all-intra</text>
+<line x1="8" y1="140" x2="952" y2="140" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M656.0,152.0H763.0a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4H656.0z" fill="#d95926"/>
+<text x="775.0" y="163.5" font-size="12" font-weight="600" fill="#f0f6fc">3.1x</text>
+<text x="8" y="195.0" font-size="13" fill="#f0f6fc">AVIF encode, speed 6, 12 MP</text>
+<text x="8" y="209.0" font-size="11" fill="#9198a1">vs libaom 3.12 all-intra</text>
+<line x1="8" y1="178" x2="952" y2="178" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M656.0,190.0H790.4a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4H656.0z" fill="#d95926"/>
+<text x="802.4" y="201.5" font-size="12" font-weight="600" fill="#f0f6fc">4.1x</text>
+<text x="8" y="233.0" font-size="13" fill="#f0f6fc">AVIF encode, speed 6, 2.5 MP, 1 thread</text>
+<text x="8" y="247.0" font-size="11" fill="#9198a1">vs libaom 3.12 all-intra cpu-used 6</text>
+<line x1="8" y1="216" x2="952" y2="216" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M656.0,228.0H756.5a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4H656.0z" fill="#d95926"/>
+<text x="768.5" y="239.5" font-size="12" font-weight="600" fill="#f0f6fc">2.9x</text>
+<text x="8" y="271.0" font-size="13" fill="#f0f6fc">AVIF encode, speed 6, 2.5 MP, 8 threads</text>
+<text x="8" y="285.0" font-size="11" fill="#9198a1">vs libaom 3.12 all-intra cpu-used 6</text>
+<line x1="8" y1="254" x2="952" y2="254" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M656.0,266.0H720.0a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4H656.0z" fill="#d95926"/>
+<text x="732.0" y="277.5" font-size="12" font-weight="600" fill="#f0f6fc">2.0x</text>
+<text x="8" y="309.0" font-size="13" fill="#f0f6fc">JPEG XL decode, VarDCT</text>
+<text x="8" y="323.0" font-size="11" fill="#9198a1">vs libjxl (djxl)</text>
+<line x1="8" y1="292" x2="952" y2="292" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M656.0,304.0H846.6a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4H656.0z" fill="#d95926"/>
+<path d="M841.1,306.0v10M841.1,311.0H860.0M860.0,306.0v10" stroke="#f0f6fc" stroke-width="1.5" fill="none"/>
+<text x="868.0" y="315.5" font-size="12" font-weight="600" fill="#f0f6fc">6.6-8x</text>
+<text x="8" y="347.0" font-size="13" fill="#f0f6fc">JPEG XL decode, modular</text>
+<text x="8" y="361.0" font-size="11" fill="#9198a1">vs libjxl (djxl)</text>
+<line x1="8" y1="330" x2="952" y2="330" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M656.0,342.0H726.4a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4H656.0z" fill="#d95926"/>
+<path d="M719.0,344.0v10M719.0,349.0H741.9M741.9,344.0v10" stroke="#f0f6fc" stroke-width="1.5" fill="none"/>
+<text x="749.9" y="353.5" font-size="12" font-weight="600" fill="#f0f6fc">1.9-2.4x</text>
+<text x="8" y="385.0" font-size="13" fill="#f0f6fc">JPEG 2000 decode, 2048x1536 RGB, lossless 5-3</text>
+<text x="8" y="399.0" font-size="11" fill="#9198a1">vs OpenJPEG 2.5.3 (opj_decompress)</text>
+<line x1="8" y1="368" x2="952" y2="368" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M656.0,380.0H669.9a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4H656.0z" fill="#d95926"/>
+<text x="681.9" y="391.5" font-size="12" font-weight="600" fill="#f0f6fc">about 1.2x</text>
+<text x="8" y="423.0" font-size="13" fill="#f0f6fc">JPEG 2000 decode, 2048x1536 RGB, lossy 9-7 at 20:1</text>
+<text x="8" y="437.0" font-size="11" fill="#9198a1">vs OpenJPEG 2.5.3 (opj_decompress)</text>
+<line x1="8" y1="406" x2="952" y2="406" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M656.0,418.0H595.8a4,4 0 0 0 -4,4v6a4,4 0 0 0 4,4H656.0z" fill="#3987e5"/>
+<path d="M537.9,420.0v10M537.9,425.0H645.7M645.7,420.0v10" stroke="#f0f6fc" stroke-width="1.5" fill="none"/>
+<text x="529.9" y="429.5" font-size="12" font-weight="600" text-anchor="end" fill="#f0f6fc">0.3-0.9x</text>
+<text x="8" y="461.0" font-size="13" fill="#f0f6fc">JPEG 2000 encode, 8 threads</text>
+<text x="8" y="475.0" font-size="11" fill="#9198a1">vs OpenJPEG 2.5.3 (opj_compress)</text>
+<line x1="8" y1="444" x2="952" y2="444" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M656.0,456.0H566.9a4,4 0 0 0 -4,4v6a4,4 0 0 0 4,4H656.0z" fill="#3987e5"/>
+<path d="M537.9,458.0v10M537.9,463.0H588.0M588.0,458.0v10" stroke="#f0f6fc" stroke-width="1.5" fill="none"/>
+<text x="529.9" y="467.5" font-size="12" font-weight="600" text-anchor="end" fill="#f0f6fc">0.3-0.5x</text>
+<text x="8" y="499.0" font-size="13" fill="#f0f6fc">TIFF decode, 2048x1536 RGB, LZW</text>
+<text x="8" y="513.0" font-size="11" fill="#9198a1">vs LibTIFF 4.7 (tiffcp, libdeflate)</text>
+<line x1="8" y1="482" x2="952" y2="482" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M656.0,494.0H649.7a4,4 0 0 0 -4,4v6a4,4 0 0 0 4,4H656.0z" fill="#3987e5"/>
+<text x="637.7" y="505.5" font-size="12" font-weight="600" text-anchor="end" fill="#f0f6fc">0.9x</text>
+<text x="8" y="537.0" font-size="13" fill="#f0f6fc">TIFF decode, 2048x1536 RGB, Deflate with predictor</text>
+<text x="8" y="551.0" font-size="11" fill="#9198a1">vs LibTIFF 4.7 (tiffcp, libdeflate)</text>
+<line x1="8" y1="520" x2="952" y2="520" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M656.0,532.0H698.1a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4H656.0z" fill="#d95926"/>
+<text x="710.1" y="543.5" font-size="12" font-weight="600" fill="#f0f6fc">1.6x</text>
+<text x="8" y="575.0" font-size="13" fill="#f0f6fc">TIFF encode, 2048x1536 RGB, LZW</text>
+<text x="8" y="589.0" font-size="11" fill="#9198a1">vs LibTIFF 4.7 (tiffcp, libdeflate)</text>
+<line x1="8" y1="558" x2="952" y2="558" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M656.0,570.0H638.1a4,4 0 0 0 -4,4v6a4,4 0 0 0 4,4H656.0z" fill="#3987e5"/>
+<text x="626.1" y="581.5" font-size="12" font-weight="600" text-anchor="end" fill="#f0f6fc">0.8x</text>
+<text x="8" y="613.0" font-size="13" fill="#f0f6fc">TIFF encode, 2048x1536 RGB, Deflate with predictor</text>
+<text x="8" y="627.0" font-size="11" fill="#9198a1">vs LibTIFF 4.7 (tiffcp, libdeflate)</text>
+<line x1="8" y1="596" x2="952" y2="596" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M656.0,608.0H749.4a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4H656.0z" fill="#d95926"/>
+<text x="761.4" y="619.5" font-size="12" font-weight="600" fill="#f0f6fc">2.7x</text>
+<text x="8" y="651.0" font-size="13" fill="#f0f6fc">GIF encode with a palette search and dithering</text>
+<text x="8" y="665.0" font-size="11" fill="#9198a1">vs FFmpeg (palettegen, paletteuse)</text>
+<line x1="8" y1="634" x2="952" y2="634" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M656.0,646.0H570.1a4,4 0 0 0 -4,4v6a4,4 0 0 0 4,4H656.0z" fill="#3987e5"/>
+<text x="558.1" y="657.5" font-size="12" font-weight="600" text-anchor="end" fill="#f0f6fc">about 0.4x</text>
+<text x="8" y="689.0" font-size="13" fill="#f0f6fc">Lossy WebP encode, 12 MP (q75, method 4), 1 thread</text>
+<text x="8" y="703.0" font-size="11" fill="#9198a1">vs FFmpeg 7.1 (libwebp)</text>
+<line x1="8" y1="672" x2="952" y2="672" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M656.0,684.0H704.1a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4H656.0z" fill="#d95926"/>
+<text x="716.1" y="695.5" font-size="12" font-weight="600" fill="#f0f6fc">1.7x</text>
+<text x="8" y="727.0" font-size="13" fill="#f0f6fc">Lossy WebP encode, 12 MP (q75, method 4), 8 threads</text>
+<text x="8" y="741.0" font-size="11" fill="#9198a1">vs FFmpeg 7.1 (libwebp)</text>
+<line x1="8" y1="710" x2="952" y2="710" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M656.0,722.0H570.1a4,4 0 0 0 -4,4v6a4,4 0 0 0 4,4H656.0z" fill="#3987e5"/>
+<text x="558.1" y="733.5" font-size="12" font-weight="600" text-anchor="end" fill="#f0f6fc">0.4x</text>
+<text x="8" y="765.0" font-size="13" fill="#f0f6fc">Lossless WebP encode, 2.5 MP, 1 thread</text>
+<text x="8" y="779.0" font-size="11" fill="#9198a1">vs FFmpeg 7.1 (libwebp)</text>
+<line x1="8" y1="748" x2="952" y2="748" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M656.0,760.0H661.4a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4H656.0z" fill="#d95926"/>
+<text x="673.4" y="771.5" font-size="12" font-weight="600" fill="#f0f6fc">about 1.1x</text>
+<text x="8" y="803.0" font-size="13" fill="#f0f6fc">Lossless WebP encode, 2.5 MP, 8 threads</text>
+<text x="8" y="817.0" font-size="11" fill="#9198a1">vs FFmpeg 7.1 (libwebp)</text>
+<line x1="8" y1="786" x2="952" y2="786" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M656.0,798.0H638.1a4,4 0 0 0 -4,4v6a4,4 0 0 0 4,4H656.0z" fill="#3987e5"/>
+<text x="626.1" y="809.5" font-size="12" font-weight="600" text-anchor="end" fill="#f0f6fc">0.8x</text>
+<text x="8" y="841.0" font-size="13" fill="#f0f6fc">PNG encode, 12 MP (zlib level 6), 1 thread</text>
+<text x="8" y="855.0" font-size="11" fill="#9198a1">vs FFmpeg 7.1 (zlib)</text>
+<line x1="8" y1="824" x2="952" y2="824" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M656.0,836.0H609.9a4,4 0 0 0 -4,4v6a4,4 0 0 0 4,4H656.0z" fill="#3987e5"/>
+<text x="597.9" y="847.5" font-size="12" font-weight="600" text-anchor="end" fill="#f0f6fc">about 0.6x</text>
+<text x="8" y="879.0" font-size="13" fill="#f0f6fc">PNG encode, 12 MP (zlib level 6), 8 threads</text>
+<text x="8" y="893.0" font-size="11" fill="#9198a1">vs FFmpeg 7.1 (zlib)</text>
+<line x1="8" y1="862" x2="952" y2="862" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M656.0,874.0H541.9a4,4 0 0 0 -4,4v6a4,4 0 0 0 4,4H656.0z" fill="#3987e5"/>
+<text x="529.9" y="885.5" font-size="12" font-weight="600" text-anchor="end" fill="#f0f6fc">0.3x</text>
+<text x="8" y="917.0" font-size="13" fill="#f0f6fc">PNG decode, 12 MP, 1 thread</text>
+<text x="8" y="931.0" font-size="11" fill="#9198a1">vs FFmpeg 7.1 (zlib)</text>
+<line x1="8" y1="900" x2="952" y2="900" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M656.0,912.0H609.9a4,4 0 0 0 -4,4v6a4,4 0 0 0 4,4H656.0z" fill="#3987e5"/>
+<text x="597.9" y="923.5" font-size="12" font-weight="600" text-anchor="end" fill="#f0f6fc">0.6x</text>
+<text x="8" y="955.0" font-size="13" fill="#f0f6fc">PNG decode, 12 MP, 8 threads</text>
+<text x="8" y="969.0" font-size="11" fill="#9198a1">vs FFmpeg 7.1 (zlib)</text>
+<line x1="8" y1="938" x2="952" y2="938" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M656.0,950.0H592.0a4,4 0 0 0 -4,4v6a4,4 0 0 0 4,4H656.0z" fill="#3987e5"/>
+<text x="580.0" y="961.5" font-size="12" font-weight="600" text-anchor="end" fill="#f0f6fc">0.5x</text>
+</svg>

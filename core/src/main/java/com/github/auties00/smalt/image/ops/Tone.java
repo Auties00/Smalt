@@ -1,5 +1,9 @@
 package com.github.auties00.smalt.image.ops;
 
+import com.github.auties00.smalt.image.Channel16Picture;
+import com.github.auties00.smalt.image.Channel8Picture;
+import com.github.auties00.smalt.image.ChannelFloatPicture;
+import com.github.auties00.smalt.image.ChannelPicture;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
@@ -206,6 +210,83 @@ final class Tone {
             }
         }
         return histograms;
+    }
+
+    /**
+     * Counts the values of each channel of the pixels a selection holds.
+     *
+     * @param packed the packed picture
+     * @param selected whether each pixel is counted, row after row, or {@code null} to count every pixel
+     * @return four histograms (red, green, blue, alpha) of {@code max + 1} bins
+     */
+    static long[][] histograms(Picture packed, boolean[] selected) {
+        if (selected == null) {
+            return histograms(packed);
+        }
+        var max = max(packed);
+        var histograms = new long[4][max + 1];
+        var rgba = new int[4];
+        var width = packed.width();
+        for (var y = 0; y < packed.height(); y++) {
+            for (var x = 0; x < width; x++) {
+                if (!selected[y * width + x]) {
+                    continue;
+                }
+                read(packed, x, y, rgba);
+                histograms[0][rgba[0]]++;
+                histograms[1][rgba[1]]++;
+                histograms[2][rgba[2]]++;
+                histograms[3][rgba[3]]++;
+            }
+        }
+        return histograms;
+    }
+
+    /**
+     * Returns the pixels a mask selects: those whose color channels are not all zero.
+     *
+     * @param mask the mask, any picture; a {@link ChannelPicture} is read through its color channels and any other
+     * picture through its packed RGBA form, whose alpha is ignored
+     * @param width the width the mask must have
+     * @param height the height the mask must have
+     * @return whether each pixel is selected, row after row
+     * @throws IllegalArgumentException if the mask is not {@code width} by {@code height}
+     */
+    static boolean[] selection(Picture mask, int width, int height) {
+        if (mask.width() != width || mask.height() != height) {
+            throw new IllegalArgumentException("the " + mask.width() + "x" + mask.height() + " mask does not match the "
+                    + width + "x" + height + " picture");
+        }
+        var selected = new boolean[width * height];
+        if (mask instanceof ChannelPicture channels) {
+            var count = channels.channelCount();
+            var colors = channels.layout().colorChannels();
+            for (var y = 0; y < height; y++) {
+                var offset = y * channels.stride();
+                for (var x = 0; x < width; x++) {
+                    var any = false;
+                    for (var c = 0; c < colors && !any; c++) {
+                        var index = offset + x * count + c;
+                        any = switch (channels) {
+                            case Channel8Picture eight -> eight.pixels()[index] != 0;
+                            case Channel16Picture sixteen -> sixteen.pixels()[index] != 0;
+                            case ChannelFloatPicture floating -> floating.pixels()[index] != 0;
+                        };
+                    }
+                    selected[y * width + x] = any;
+                }
+            }
+            return selected;
+        }
+        var packed = Canvas.toPacked(mask);
+        var rgba = new int[4];
+        for (var y = 0; y < height; y++) {
+            for (var x = 0; x < width; x++) {
+                read(packed, x, y, rgba);
+                selected[y * width + x] = (rgba[0] | rgba[1] | rgba[2]) != 0;
+            }
+        }
+        return selected;
     }
 
     /**

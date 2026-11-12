@@ -77,9 +77,9 @@ class EncoderBehaviorTest {
                     H264RateControl.AVERAGE_BITRATE, 1000, 500, 0, 26, 30, H264EncoderSpeed.FAST, ColorInfo.BT709_LIMITED, 1));
             assertThrows(IllegalArgumentException.class, () -> H264Setup.of(16, 16, FPS, FPS, H264Profile.MAIN, 0,
                     H264RateControl.CONSTANT_QUALITY, 0, 0, 0, 26, 30, H264EncoderSpeed.FAST, ColorInfo.BT709_LIMITED, 0));
-            assertThrows(IllegalArgumentException.class, () -> H264Setup.of(16, 16, FPS, FPS, H264Profile.MAIN, 0,
+            assertEquals(MatrixCoefficients.YCGCO, H264Setup.of(16, 16, FPS, FPS, H264Profile.MAIN, 0,
                     H264RateControl.CONSTANT_QUALITY, 0, 0, 0, 26, 30, H264EncoderSpeed.FAST,
-                    ColorInfo.BT709_LIMITED.withMatrix(MatrixCoefficients.YCGCO), 1));
+                    ColorInfo.BT709_LIMITED.withMatrix(MatrixCoefficients.YCGCO), 1).options().color().matrix());
             assertThrows(IllegalArgumentException.class, () -> H264Setup.of(16, 16, FPS, FPS, H264Profile.MAIN, 35,
                     H264RateControl.CONSTANT_QUALITY, 0, 0, 0, 26, 30, H264EncoderSpeed.FAST, ColorInfo.BT709_LIMITED, 1));
             assertThrows(IllegalArgumentException.class, () -> H264Setup.of(1920, 1080, FPS, FPS.invert(),
@@ -286,6 +286,54 @@ class EncoderBehaviorTest {
             assertTrue(executable != null);
             var psnr = Quality.psnr(expected, Arrays.copyOf(decoded, expected.length));
             assertTrue(psnr > 30, "RGB round trip PSNR " + psnr);
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @EnumSource(value = MatrixCoefficients.class, names = {"BT2020_CL", "CHROMA_DERIVED_CL", "ICTCP", "SMPTE2085",
+                "YCGCO", "YCGCO_RE", "YCGCO_RO", "IPT_C2"})
+        @DisplayName("RGBA input in a matrix weighted luma does not define is coded as its core conversion")
+        void exactMatrices(MatrixCoefficients matrix) {
+            var color = new ColorInfo(matrix, com.github.auties00.smalt.image.ColorRange.LIMITED,
+                    com.github.auties00.smalt.image.ColorPrimaries.BT2020,
+                    com.github.auties00.smalt.image.TransferCharacteristics.PQ);
+            var config = H264Setup.of(48, 34, FPS, FPS.invert(), H264Profile.HIGH, 0, H264RateControl.CONSTANT_QUALITY,
+                    0, 0, 0, 12, 30, H264EncoderSpeed.FAST, color, 1);
+            var picture = rgba(48, 34);
+            var second = rgba(48, 34);
+            for (var i = 0; i < second.pixels().length; i++) {
+                second.pixels()[i] = (byte) (255 - second.pixels()[i]);
+            }
+            var fromRgba = EncoderHarness.encode(config, List.of(picture, second), 0);
+            var converted = List.of(
+                    com.github.auties00.smalt.image.ops.ImageOps.toYuv(picture, ChromaFormat.YUV420, color),
+                    com.github.auties00.smalt.image.ops.ImageOps.toYuv(second, ChromaFormat.YUV420, color));
+            var fromYuv = EncoderHarness.encode(config, converted, 0);
+            assertArrayEquals(fromYuv.annexB(), fromRgba.annexB());
+            var options = com.github.auties00.smalt.video.h264.encoder.H264EncoderOptions.defaults().toBuilder()
+                    .color(color).build();
+            assertEquals(color, options.color());
+            if (com.github.auties00.smalt.testkit.Oracle.find(com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG)
+                    .isPresent()) {
+                var headers = EncoderHarness.traceHeaders(EncoderHarness.write("rgba-" + matrix + ".264",
+                        fromRgba.annexB()));
+                assertEquals((long) matrix.code(), headers.get("matrix_coefficients"));
+            }
+        }
+
+        @Test
+        @DisplayName("a channel picture is coded as its RGBA conversion")
+        void channelInput() {
+            var config = H264Setup.of(48, 34, FPS, FPS.invert(), H264Profile.HIGH, 0, H264RateControl.CONSTANT_QUALITY,
+                    0, 0, 0, 12, 30, H264EncoderSpeed.FAST, ColorInfo.BT709_LIMITED, 1);
+            var cmyk = com.github.auties00.smalt.image.Channel16Picture.allocate(48, 34,
+                    com.github.auties00.smalt.image.PixelLayout.CMYK);
+            for (var i = 0; i < cmyk.pixels().length; i++) {
+                cmyk.pixels()[i] = (short) (i * 1031);
+            }
+            var expected = EncoderHarness.encode(config,
+                    List.of(com.github.auties00.smalt.image.ops.ImageOps.toRgba(cmyk)), 0);
+            var actual = EncoderHarness.encode(config, List.of(cmyk), 0);
+            assertArrayEquals(expected.annexB(), actual.annexB());
         }
 
         @ParameterizedTest(name = "{0}")
