@@ -67,13 +67,13 @@ final class Mp3Quantizer {
      * The change of a band's desired gain, in quarter steps, per decibel of noise offset:
      * {@code 8/3 log2(10) / 10}.
      */
-    private static final float GAIN_PER_DECIBEL = (float) (8.0 / 3 * Math.log(10) / Math.log(2) / 10);
+    private static final float GAIN_PER_DECIBEL = (float) (8.0 / 3 * StrictMath.log(10) / StrictMath.log(2) / 10);
 
     static {
         for (var i = 0; i < 512; i++) {
             var g = i - OFFSET;
-            SCALES[i] = (float) Math.pow(2, -3.0 * (g - 210) / 16);
-            STEPS[i] = (float) Math.pow(2, (g - 210) / 4.0);
+            SCALES[i] = (float) StrictMath.pow(2, -3.0 * (g - 210) / 16);
+            STEPS[i] = (float) StrictMath.pow(2, (g - 210) / 4.0);
         }
     }
 
@@ -235,7 +235,7 @@ final class Mp3Quantizer {
     int quantize(float lambda, Mp3CodedGranule granule, Mp3CodedGranule previous, boolean search) {
         var layout = this.layout;
         var count = layout.count;
-        var factor = (float) Math.pow(10, lambda / 10);
+        var factor = (float) StrictMath.pow(10, lambda / 10);
         var anyActive = false;
         for (var b = 0; b < count; b++) {
             var t = threshold[b] * factor;
@@ -649,6 +649,6 @@ final class Mp3Quantizer {
      * @return {@code log2(value)}
      */
     private static double log2(double value) {
-        return Math.log(value) * 1.4426950408889634;
+        return StrictMath.log(value) * 1.4426950408889634;
     }
 }

@@ -1,0 +1,37 @@
+# audio decode dump of ogg/vorbis.ogg; regenerate with -Dsmalt.test.updateDumps=true
+format OGG
+duration 2000000
+seekable true
+track 0 VORBIS rate=44100 layout=[FRONT_LEFT, FRONT_RIGHT]
+0 frames=4096 crc16=5d19b0fc
+1 frames=4096 crc16=b6c0dbfb
+2 frames=4096 crc16=b5d1e66a
+3 frames=4096 crc16=25727443
+4 frames=4096 crc16=53dff67b
+5 frames=4096 crc16=7d8f5792
+6 frames=4096 crc16=225ac5fd
+7 frames=4096 crc16=930f6d29
+8 frames=4096 crc16=9b5eb54c
+9 frames=4096 crc16=06b807a0
+10 frames=4096 crc16=f13847bd
+11 frames=4096 crc16=4a93de33
+12 frames=4096 crc16=70109314
+13 frames=4096 crc16=070e3e1d
+14 frames=4096 crc16=9c8f8fb8
+15 frames=4096 crc16=3dffd09e
+16 frames=4096 crc16=b5d1c980
+17 frames=4096 crc16=2024b168
+18 frames=4096 crc16=35666b28
+19 frames=4096 crc16=07c9e0a8
+20 frames=4096 crc16=96c757e1
+21 frames=2184 crc16=4bb473f3
+seek 0: @sample 0
+seek 666666: @sample 29400
+seek 1333333: @sample 58800
+seek 2000000: end
+seek -1000000: @sample 0
+header over READ_ONCE_UNKNOWN_LENGTH:
+  format OGG
+  duration -1
+  seekable false
+  track 0 VORBIS rate=44100 layout=[FRONT_LEFT, FRONT_RIGHT]

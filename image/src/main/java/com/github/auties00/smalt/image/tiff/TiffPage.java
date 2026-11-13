@@ -2,9 +2,11 @@ package com.github.auties00.smalt.image.tiff;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.Orientation;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.tiff.internal.TiffDirectory;
 import com.github.auties00.smalt.image.tiff.internal.TiffLayout;
 import com.github.auties00.smalt.image.tiff.internal.TiffTags;
+import com.github.auties00.smalt.internal.tiff.TiffExif;
 
 import java.util.Objects;
 import java.util.Optional;
@@ -40,6 +42,11 @@ public final class TiffPage {
      * The bits per sample of the first sample.
      */
     private final int bitsPerSample;
+
+    /**
+     * The bits per sample of each sample.
+     */
+    private final int[] sampleBits;
 
     /**
      * The samples per pixel.
@@ -107,19 +114,9 @@ public final class TiffPage {
     private final long subfileType;
 
     /**
-     * The horizontal resolution, or {@code 0} when absent.
+     * The pixel density, or {@code null} when absent or invalid.
      */
-    private final double xResolution;
-
-    /**
-     * The vertical resolution, or {@code 0} when absent.
-     */
-    private final double yResolution;
-
-    /**
-     * The {@code ResolutionUnit} value.
-     */
-    private final int resolutionUnit;
+    private final PixelDensity density;
 
     /**
      * The embedded ICC profile, or {@code null}.
@@ -170,6 +167,12 @@ public final class TiffPage {
         this.bitsPerSample = (int) Math.clamp(directory.longValue(TiffTags.BITS_PER_SAMPLE, 1), 0, 0xFFFF);
         var layout = TiffLayout.of(directory);
         this.samplesPerPixel = layout.samples();
+        var declared = directory.longs(TiffTags.BITS_PER_SAMPLE);
+        this.sampleBits = new int[samplesPerPixel];
+        for (var i = 0; i < samplesPerPixel; i++) {
+            var value = declared == null || declared.length == 0 ? 1 : declared[i < declared.length ? i : 0];
+            sampleBits[i] = (int) Math.clamp(value, 0, 0xFFFF);
+        }
         this.sampleFormat = TiffSampleFormat.of((int) directory.longValue(TiffTags.SAMPLE_FORMAT, 1));
         this.photometric = TiffPhotometric.of(layout.photometric());
         this.compression = TiffCompression.of((int) directory.longValue(TiffTags.COMPRESSION, 1));
@@ -184,9 +187,7 @@ public final class TiffPage {
         this.alphaPremultiplied = layout.associated();
         this.orientation = layout.orientation();
         this.subfileType = directory.longValue(TiffTags.NEW_SUBFILE_TYPE, 0);
-        this.xResolution = directory.doubleValue(TiffTags.X_RESOLUTION, 0);
-        this.yResolution = directory.doubleValue(TiffTags.Y_RESOLUTION, 0);
-        this.resolutionUnit = (int) directory.longValue(TiffTags.RESOLUTION_UNIT, 2);
+        this.density = density(directory);
         var profile = directory.bytes(TiffTags.ICC_PROFILE);
         this.iccProfile = profile != null && profile.length > 0 ? profile : null;
         this.description = directory.string(TiffTags.IMAGE_DESCRIPTION);
@@ -243,6 +244,19 @@ public final class TiffPage {
      */
     public int bitsPerSample() {
         return bitsPerSample;
+    }
+
+    /**
+     * Returns the bits per sample of one sample, which may differ between the samples of a pixel.
+     *
+     * @param sample the sample index, from zero to {@link #samplesPerPixel()} minus one
+     * @return the {@code BitsPerSample} value of the sample; a sample the tag does not list takes its first
+     * value, and every sample 1 when the tag is absent
+     * @throws IndexOutOfBoundsException if {@code sample} is out of range
+     */
+    public int bitsPerSample(int sample) {
+        Objects.checkIndex(sample, sampleBits.length);
+        return sampleBits[sample];
     }
 
     /**
@@ -387,27 +401,34 @@ public final class TiffPage {
     }
 
     /**
-     * Returns the resolution in dots per inch.
+     * Returns the pixel density of the page, its {@code XResolution}, {@code YResolution} and
+     * {@code ResolutionUnit} fields.
      *
-     * @return the horizontal and vertical resolution, converted from centimeters when the
-     * {@code ResolutionUnit} is 3, or empty when the resolution is absent or the unit is
-     * 1 (no absolute unit)
+     * <p>{@code ResolutionUnit} 1 gives a {@link PixelDensity.Unit#ASPECT_RATIO}, 2 (the default when the
+     * field is absent) {@link PixelDensity.Unit#DOTS_PER_INCH} and 3
+     * {@link PixelDensity.Unit#DOTS_PER_CENTIMETER}; the values are the first of each field, as stored.
+     *
+     * @return the density, or empty when a resolution field is absent, is not numeric or holds a value that is
+     * not positive and finite, or the unit is another value
      */
-    public Optional<Resolution> resolution() {
-        if (!(xResolution > 0) || !(yResolution > 0) || resolutionUnit == 1) {
-            return Optional.empty();
-        }
-        var factor = resolutionUnit == 3 ? 2.54 : 1;
-        return Optional.of(new Resolution(xResolution * factor, yResolution * factor));
+    public Optional<PixelDensity> density() {
+        return Optional.ofNullable(density);
     }
 
     /**
-     * Holds the resolution of a page.
+     * Reads the pixel density of a directory as {@link #density()} describes it.
      *
-     * @param horizontal the horizontal resolution in dots per inch, positive
-     * @param vertical the vertical resolution in dots per inch, positive
+     * @param directory the image file directory of the page
+     * @return the density, or {@code null} when absent or invalid
      */
-    public record Resolution(double horizontal, double vertical) {
+    static PixelDensity density(TiffDirectory directory) {
+        try {
+            return TiffExif.density(directory.doubleValue(TiffTags.X_RESOLUTION, Double.NaN),
+                    directory.doubleValue(TiffTags.Y_RESOLUTION, Double.NaN),
+                    directory.longValue(TiffTags.RESOLUTION_UNIT, 2));
+        } catch (MediaException.Malformed | MediaException.LimitExceeded exception) {
+            return null;
+        }
     }
 
     /**
@@ -477,14 +498,14 @@ public final class TiffPage {
     public boolean equals(Object other) {
         return other instanceof TiffPage that
                 && index == that.index && width == that.width && height == that.height
-                && bitsPerSample == that.bitsPerSample && samplesPerPixel == that.samplesPerPixel
+                && bitsPerSample == that.bitsPerSample && java.util.Arrays.equals(sampleBits, that.sampleBits)
+                && samplesPerPixel == that.samplesPerPixel
                 && sampleFormat == that.sampleFormat && photometric == that.photometric
                 && compression == that.compression && predictor == that.predictor && planar == that.planar
                 && tileWidth == that.tileWidth && tileHeight == that.tileHeight && rowsPerStrip == that.rowsPerStrip
                 && alpha == that.alpha
                 && alphaPremultiplied == that.alphaPremultiplied && orientation == that.orientation
-                && subfileType == that.subfileType && Double.compare(xResolution, that.xResolution) == 0
-                && Double.compare(yResolution, that.yResolution) == 0 && resolutionUnit == that.resolutionUnit
+                && subfileType == that.subfileType && Objects.equals(density, that.density)
                 && java.util.Arrays.equals(iccProfile, that.iccProfile) && Objects.equals(description, that.description)
                 && Objects.equals(pageName, that.pageName) && Objects.equals(software, that.software)
                 && Objects.equals(dateTime, that.dateTime) && Objects.equals(make, that.make)

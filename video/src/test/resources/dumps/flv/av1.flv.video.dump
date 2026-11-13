@@ -1,0 +1,19 @@
+# video decode dump of flv/av1.flv; regenerate with -Dsmalt.test.updateDumps=true
+format FLV
+duration 600000
+seekable true
+track 1 AV1 64x48 timebase=1/1000
+0 pts=0 dur=67 key=true 64x48 yuv8 YUV420 color=UNSPECIFIED/LIMITED/UNSPECIFIED/UNSPECIFIED y=6721479c u=6261ba58 v=9d8f0339
+1 pts=67 dur=67 key=false 64x48 yuv8 YUV420 color=UNSPECIFIED/LIMITED/UNSPECIFIED/UNSPECIFIED y=6721479c u=6261ba58 v=9d8f0339
+2 pts=133 dur=67 key=false 64x48 yuv8 YUV420 color=UNSPECIFIED/LIMITED/UNSPECIFIED/UNSPECIFIED y=4a65c17d u=cd7b0c84 v=0a14c84f
+3 pts=200 dur=67 key=false 64x48 yuv8 YUV420 color=UNSPECIFIED/LIMITED/UNSPECIFIED/UNSPECIFIED y=4a65c17d u=cd7b0c84 v=0a14c84f
+4 pts=267 dur=67 key=true 64x48 yuv8 YUV420 color=UNSPECIFIED/LIMITED/UNSPECIFIED/UNSPECIFIED y=787d6e20 u=db2febf7 v=7fff3391
+5 pts=333 dur=67 key=false 64x48 yuv8 YUV420 color=UNSPECIFIED/LIMITED/UNSPECIFIED/UNSPECIFIED y=787d6e20 u=db2febf7 v=7fff3391
+6 pts=400 dur=67 key=false 64x48 yuv8 YUV420 color=UNSPECIFIED/LIMITED/UNSPECIFIED/UNSPECIFIED y=787d6e20 u=db2febf7 v=7fff3391
+7 pts=467 dur=67 key=false 64x48 yuv8 YUV420 color=UNSPECIFIED/LIMITED/UNSPECIFIED/UNSPECIFIED y=787d6e20 u=db2febf7 v=7fff3391
+8 pts=533 dur=67 key=true 64x48 yuv8 YUV420 color=UNSPECIFIED/LIMITED/UNSPECIFIED/UNSPECIFIED y=feb0b5ab u=c0f017d8 v=7aa41965
+seek 0: @0
+seek 200000: @3
+seek 400000: @6
+seek 600000: end
+seek -1000000: @0

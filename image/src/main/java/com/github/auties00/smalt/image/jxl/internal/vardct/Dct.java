@@ -40,7 +40,7 @@ public final class Dct {
             var table = new float[n / 2];
             for (var k = 0; k < n / 2; k++) {
                 var theta = (float) (2 * k + 1) / (float) (2 * n) * (float) Math.PI;
-                table[k] = (1.0f / (float) Math.cos(theta)) / 2.0f;
+                table[k] = (1.0f / (float) StrictMath.cos(theta)) / 2.0f;
             }
             SEC_HALF[i] = table;
         }
