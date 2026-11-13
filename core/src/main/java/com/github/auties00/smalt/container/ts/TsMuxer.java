@@ -87,6 +87,14 @@ import java.util.PriorityQueue;
  *       they are;</li>
  *   <li>AC-3 ({@code 0x81}) and E-AC-3 ({@code 0x87}), id {@code 0xBD}, with the {@code "AC-3"} or
  *       {@code "EAC3"} registration descriptor: sync frames as they are;</li>
+ *   <li>DTS and DTS-HD, id {@code 0xBD}, declared from the track's first packet: in M2TS with the Blu-ray stream
+ *       types ({@code 0x82} for a core alone, {@code 0x85} for DTS-HD without lossless coding, {@code 0x86} for DTS-HD
+ *       Master Audio, {@code 0xA2} for DTS Express) and the {@code "HDMV"} registration for the program; in a plain
+ *       transport stream as {@code 0x06} with the DVB DTS descriptor for a core alone or the DVB DTS-HD descriptor
+ *       (ETSI EN 300 468 Annex G) otherwise, after the {@code "DTS1"}, {@code "DTS2"} or {@code "DTS3"} registration
+ *       when a core of 512, 1024 or 2048 samples is present. Access units go as they are, several in a PES packet
+ *       only when they hold a single substream (ETSI TS 102 114 clause F.4.3). A track whose first packet comes after
+ *       the program map was written keeps the stream type {@code 0x86} (M2TS) or {@code 0x06} without descriptor;</li>
  *   <li>Opus ({@code 0x06}, id {@code 0xBD}, the {@code "Opus"} registration and the DVB extension
  *       descriptor with its {@code channel_config_code}): every packet gets an
  *       {@code opus_control_header}; the first carries the {@code OpusHead} pre-skip as its start
@@ -432,11 +440,11 @@ public final class TsMuxer implements Muxer {
      *
      * @param codec the codec of a track to add
      * @return {@code true} for H.264, HEVC, VVC, AV1, MPEG-4 Part 2, MPEG-1 and MPEG-2 video, JPEG XS, AAC, MP3, MP2,
-     * AC-3, E-AC-3, Opus, 16-bit and 24-bit PCM, PGS and DVB subtitles, DVB teletext, and data
+     * AC-3, E-AC-3, DTS, Opus, 16-bit and 24-bit PCM, PGS and DVB subtitles, DVB teletext, and data
      */
     public static boolean supports(Codec codec) {
         return switch (Objects.requireNonNull(codec, "codec")) {
-            case H264, HEVC, VVC, AV1, MPEG4_PART2, MPEG1_VIDEO, MPEG2_VIDEO, JPEG_XS, AAC, MP3, MP2, AC3, EAC3, OPUS,
+            case H264, HEVC, VVC, AV1, MPEG4_PART2, MPEG1_VIDEO, MPEG2_VIDEO, JPEG_XS, AAC, MP3, MP2, AC3, EAC3, DTS, OPUS,
                  PCM_S16LE, PCM_S16BE, PCM_S24LE, PCM_S24BE, PGS, DVB_SUBTITLE, DVB_TELETEXT, DATA -> true;
             default -> false;
         };
@@ -500,8 +508,8 @@ public final class TsMuxer implements Muxer {
         var hdmv = blurayType(stream) || streams.stream().anyMatch(TsMuxer::blurayType);
         var cue = stream.splice || streams.stream().anyMatch(other -> other.splice);
         if (hdmv && cue) {
-            throw new IllegalArgumentException("Blu-ray linear PCM and PGS subtitles make stream type 0x86 DTS-HD audio,"
-                    + " not SCTE 35");
+            throw new IllegalArgumentException("Blu-ray linear PCM, DTS in M2TS and PGS subtitles make stream type 0x86"
+                    + " DTS-HD audio, not SCTE 35");
         }
         streams.add(stream);
         if (pcrStream == null || (track.kind() == TrackKind.VIDEO && pcrStream.track.kind() != TrackKind.VIDEO)) {
@@ -650,6 +658,12 @@ public final class TsMuxer implements Muxer {
                 stream.streamId = 0xBD;
                 registration(descriptors, track.codec() == Codec.AC3 ? "AC-3" : "EAC3");
             }
+            case DTS -> {
+                stream.streamId = 0xBD;
+                stream.dtsPending = true;
+                stream.dtsBluray = options.packetFormat() == TsMuxerOptions.PacketFormat.M2TS;
+                stream.streamType = stream.dtsBluray ? 0x86 : 0x06;
+            }
             case OPUS -> {
                 configureOpus(stream, config);
                 stream.streamType = 0x06;
@@ -756,6 +770,28 @@ public final class TsMuxer implements Muxer {
             stream.sampleAes = new SampleAesEncryptor(key, options.sampleAesInitializationVector().orElseThrow());
         }
         stream.descriptors = descriptors.toByteArray();
+    }
+
+    /**
+     * Declares a DTS stream from its first access unit: the Blu-ray stream type in M2TS, stream type {@code 0x06} with
+     * the DVB DTS or DTS-HD descriptor in a plain transport stream, and whether each access unit needs a PES packet of
+     * its own. A stream whose program map entry was already written keeps its generic declaration.
+     *
+     * @param stream the DTS stream
+     * @param unit the first access unit
+     * @param declare whether the program map entry is still to be written
+     * @throws IllegalArgumentException if the access unit does not start with a DTS sync word
+     */
+    private void configureDts(Stream stream, byte[] unit, boolean declare) {
+        var carriage = DtsCarriage.of(unit);
+        if (declare) {
+            if (stream.dtsBluray) {
+                stream.streamType = carriage.blurayStreamType();
+            } else {
+                stream.descriptors = carriage.dvbDescriptors();
+            }
+        }
+        stream.dtsSingleUnit = carriage.multipleSubstreams();
     }
 
     /**
@@ -968,8 +1004,8 @@ public final class TsMuxer implements Muxer {
      * {@inheritDoc}
      *
      * @throws IllegalArgumentException if the packet's track was not declared, it has no timestamp,
-     * an H.264 or HEVC packet is not made of length-prefixed NAL units, or a new codec
-     * configuration cannot be parsed
+     * an H.264 or HEVC packet is not made of length-prefixed NAL units, a new codec
+     * configuration cannot be parsed, or the first packet of a DTS track does not start with a DTS sync word
      * @throws IllegalStateException if no track was declared or the muxer is finished
      * @throws MediaException.Unsupported if the packet changes the codec configuration of a track
      * that is not H.264, HEVC, AV1, MPEG-4 Part 2 or AAC
@@ -1022,6 +1058,10 @@ public final class TsMuxer implements Muxer {
                 default -> throw ConfigChanges.unsupported("MPEG-TS", packet.trackId());
             }
             stream.acceptedConfig = newConfig;
+        }
+        if (stream.dtsPending) {
+            stream.dtsPending = false;
+            configureDts(stream, packet.data(), shift == Long.MIN_VALUE);
         }
         started = true;
         if (stream.track.kind() == TrackKind.VIDEO && packet.dts() == Packet.NO_TIMESTAMP) {
@@ -1230,6 +1270,8 @@ public final class TsMuxer implements Muxer {
             case AUDIO -> {
                 if (stream.pcmFrames > 0) {
                     writePcm(stream, packet, ptsOut);
+                } else if (stream.dtsSingleUnit) {
+                    writePes(stream, packet.data(), ptsOut, ptsOut, true);
                 } else {
                     gather(stream, packet, ptsOut);
                 }
@@ -1883,14 +1925,15 @@ public final class TsMuxer implements Muxer {
     }
 
     /**
-     * Returns whether a stream uses a stream type that only Blu-ray programs define, Blu-ray linear PCM ({@code 0x80})
-     * or presentation graphics ({@code 0x90}), so that the program carries the {@code "HDMV"} registration.
+     * Returns whether a stream uses a stream type that only Blu-ray programs define, Blu-ray linear PCM ({@code 0x80}),
+     * DTS in M2TS or presentation graphics ({@code 0x90}), so that the program carries the {@code "HDMV"}
+     * registration.
      *
      * @param stream the declared stream to check
      * @return {@code true} for those streams
      */
     private static boolean blurayType(Stream stream) {
-        return stream.lpcm || stream.streamType == 0x90;
+        return stream.lpcm || stream.dtsBluray || stream.streamType == 0x90;
     }
 
     /**
@@ -2364,6 +2407,21 @@ public final class TsMuxer implements Muxer {
          * Whether the PCM stream is Blu-ray linear PCM rather than SMPTE ST 302.
          */
         boolean lpcm;
+
+        /**
+         * Whether the stream is DTS whose stream type and descriptors wait for its first packet.
+         */
+        boolean dtsPending;
+
+        /**
+         * Whether the stream is DTS declared with a Blu-ray stream type, which needs the {@code "HDMV"} registration.
+         */
+        boolean dtsBluray;
+
+        /**
+         * Whether the DTS access units hold several substreams, so that each gets a PES packet of its own.
+         */
+        boolean dtsSingleUnit;
 
         /**
          * The third and fourth bytes of the Blu-ray linear PCM header.

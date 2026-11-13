@@ -39,8 +39,12 @@ import java.util.function.Consumer;
  * fixed-point reconstruction of that core, with the downmixes its channel sets embed undone. When the extension
  * substream of a frame with a core needs what the decoder does not implement (channels coded against a core with a
  * 128 times interpolated LFE channel, a peak bit rate smoothing buffer), the core is output; a stream without core
- * that needs it (XLL with four frequency bands or above 192 kHz, a peak bit rate smoothing buffer), DTS Express
- * (LBR) and termination frames with a partial subsubframe raise {@link MediaException.Unsupported}.
+ * that needs it (XLL with four frequency bands or above 192 kHz, a peak bit rate smoothing buffer) and termination
+ * frames with a partial subsubframe raise {@link MediaException.Unsupported}. DTS Express (LBR) streams of 8 to
+ * 48 kHz decode their tonal components, the residual of every channel, coded alone or in pairs, and the LFE channel,
+ * full band or band limited (to 2/3, 1/2, 1/3, 1/4 or 1/8 of the band, synthesized at the header's rate); a stream
+ * with an embedded stereo downmix decodes to the two channels of the downmix. Embedded multichannel downmixes raise
+ * {@link MediaException.Unsupported}.
  * {@link #layout()} and {@link #sampleRate()} report the track's declared format until the first access unit is
  * decoded and that unit's output format afterwards; every buffer carries its own layout, its channels in the order
  * of {@link Speaker}. Samples are scaled so that 24-bit full scale maps to 1.0.

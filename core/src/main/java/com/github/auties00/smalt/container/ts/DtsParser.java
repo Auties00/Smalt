@@ -83,11 +83,11 @@ final class DtsParser extends FrameParser {
                 var rate = DtsConfigs.sampleRate(data, offset);
                 var layout = DtsConfigs.layout(data, offset);
                 var core = DtsConfigs.frameSize(data, offset);
-                var outputRate = rate;
+                var outputRate = DtsConfigs.hasX96(data, offset) ? 2 * rate : rate;
                 if (core + 4 <= length && DtsConfigs.isSubstreamSync(data, offset + core)) {
                     var substream = DtsConfigs.describeSubstream(data, offset + core, length - core);
                     if (substream != null) {
-                        outputRate = Math.max(rate, substream.sampleRate());
+                        outputRate = Math.max(outputRate, substream.sampleRate());
                         var assetLayout = DtsConfigs.layoutOfMask(substream.speakerMask());
                         if (assetLayout != null) {
                             layout = assetLayout;
