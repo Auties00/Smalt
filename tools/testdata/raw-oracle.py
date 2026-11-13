@@ -80,6 +80,10 @@ of the four corners, the center and the first and last rows) and a <stem>.levels
 Naming sample files converts only those (for example the MRW samples of SAMPLES), leaving the other
 oracle files in place.
 
+A sample whose host cannot serve it is skipped, and the names of the skipped samples are written to UNAVAILABLE in
+the output directory (which a run of every sample removes when none is skipped), so CI does not cache an incomplete
+set of oracle files.
+
     python tools/testdata/raw-oracle.py [--coverage] [sample ...]
 """
 import hashlib
@@ -1328,6 +1332,12 @@ def main():
                         stream.write(f'Adobe DNG Converter 18.0 writes no DNG file of {source} named {sibling}\n')
                 renamed += 1
     print(f'wrote {len(samples) + renamed} oracle files into {output}')
+    marker = os.path.join(output, 'UNAVAILABLE')
+    if unavailable:
+        with open(marker, 'w', encoding='ascii') as stream:
+            stream.write(''.join(f'{name}\n' for name in unavailable))
+    elif not named and os.path.isfile(marker):
+        os.remove(marker)
 
 
 if __name__ == '__main__':

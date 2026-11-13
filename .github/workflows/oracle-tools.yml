@@ -135,15 +135,22 @@ jobs:
           lookup-only: ${{ !inputs.data-artifact }}
 
       - name: Convert the raw samples
+        id: convert
         if: steps.raw.outputs.cache-hit != 'true'
         shell: bash
         run: |
           python -I tools/testdata/raw-oracle.py
           mkdir -p .oracle-data
           cp -r ~/.smalt/cache/conformance/raw-oracle .oracle-data/raw-oracle
+          # a sample its host did not serve leaves the set incomplete: it is used in this run but not cached, so the
+          # next run converts it again instead of skipping its tests until raw-oracle.py changes
+          if [ -f .oracle-data/raw-oracle/UNAVAILABLE ]; then
+            echo "::warning::raw oracle files not cached, samples unavailable: $(tr '\n' ' ' < .oracle-data/raw-oracle/UNAVAILABLE)"
+            echo "complete=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Save the raw oracle files
-        if: steps.raw.outputs.cache-hit != 'true'
+        if: steps.raw.outputs.cache-hit != 'true' && steps.convert.outputs.complete != 'false'
         uses: actions/cache/save@v4
         with:
           path: .oracle-data/raw-oracle
