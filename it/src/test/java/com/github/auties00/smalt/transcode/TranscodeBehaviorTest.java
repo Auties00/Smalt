@@ -271,6 +271,107 @@ class TranscodeBehaviorTest {
     }
 
     @Nested
+    @DisplayName("WAV outputs")
+    class WavOutputs {
+        @Test
+        @DisplayName("decode coded audio to PCM unless the options copy it or name its codec")
+        void codedAudio(@TempDir Path directory) {
+            var input = Fixtures.tone("mp3", 440, 44_100, 2, 1.0, List.of("-c:a", "libmp3lame", "-b:a", "128k"));
+            var decoded = directory.resolve("decoded.wav");
+            assertFalse(transcode(input, decoded, TranscodeOptions.of(OutputContainer.WAV)).streams().getFirst().copied());
+            assertEquals("pcm_s16le", MediaProbe.of(decoded).audio().codec());
+            var copied = directory.resolve("copied.wav");
+            var result = transcode(input, copied, TranscodeOptions.of(OutputContainer.WAV).toBuilder()
+                    .audio(AudioTranscodeOptions.copy()).build());
+            assertTrue(result.streams().getFirst().copied());
+            assertEquals(Codec.MP3, result.streams().getFirst().track().codec());
+            assertEquals("mp3", MediaProbe.of(copied).audio().codec());
+            Oracle.assertDecodesCleanly(copied);
+            var named = directory.resolve("named.wav");
+            transcode(input, named, TranscodeOptions.of(OutputContainer.WAV).toBuilder()
+                    .audio(AudioTranscodeOptions.builder().codec(Codec.MP3).build()).build());
+            assertEquals("mp3", MediaProbe.of(named).audio().codec());
+        }
+
+        @Test
+        @DisplayName("copy coded audio no installed decoder decodes, and refuse to re-encode it")
+        void undecodableAudio(@TempDir Path directory) throws java.io.IOException {
+            // ATRAC1 in Matroska, which no Smalt artifact decodes: frames of arbitrary bytes
+            var track = com.github.auties00.smalt.track.AudioTrack.builder().id(1).codec(Codec.ATRAC1)
+                    .timeBase(Rational.timeBaseOf(44100)).sampleRate(44100).layout(ChannelLayout.STEREO).build();
+            var sink = MediaSink.memory();
+            try (var muxer = new com.github.auties00.smalt.container.matroska.MatroskaMuxer(sink)) {
+                muxer.addTrack(track);
+                var random = new java.util.Random(7);
+                for (var index = 0; index < 40; index++) {
+                    var frame = new byte[2 * 212];
+                    random.nextBytes(frame);
+                    muxer.writePacket(new com.github.auties00.smalt.track.Packet(1, frame, index * 512L,
+                            index * 512L, 512, true));
+                }
+                muxer.finish();
+            }
+            var input = directory.resolve("atrac1.mka");
+            java.nio.file.Files.write(input, sink.toByteArray());
+            var copied = directory.resolve("copied.mka");
+            var result = transcode(input, copied, TranscodeOptions.of(OutputContainer.MATROSKA));
+            assertTrue(result.streams().getFirst().copied());
+            assertEquals(Codec.ATRAC1, result.streams().getFirst().track().codec());
+            assertArrayEquals(packetBytes(input), packetBytes(copied), "the same frames");
+            assertThrows(MediaException.Unsupported.class, () -> transcode(input, directory.resolve("encoded.mp4"),
+                    TranscodeOptions.of(OutputContainer.MP4)));
+        }
+
+        @Test
+        @DisplayName("re-encode MACE, which has a decoder but no encoder, and copy it within its containers")
+        void maceTranscodes(@TempDir Path directory) throws java.io.IOException {
+            var track = com.github.auties00.smalt.track.AudioTrack.builder().id(1).codec(Codec.MACE3)
+                    .timeBase(Rational.timeBaseOf(8000)).sampleRate(8000).layout(ChannelLayout.MONO).build();
+            var sink = MediaSink.memory();
+            try (var muxer = new com.github.auties00.smalt.container.aiff.AiffMuxer(sink)) {
+                muxer.addTrack(track);
+                var random = new java.util.Random(7);
+                for (var index = 0; index < 40; index++) {
+                    var frames = new byte[2 * 100];
+                    random.nextBytes(frames);
+                    muxer.writePacket(new com.github.auties00.smalt.track.Packet(1, frames, index * 600L,
+                            index * 600L, 600, true));
+                }
+                muxer.finish();
+            }
+            var input = directory.resolve("mace.aifc");
+            java.nio.file.Files.write(input, sink.toByteArray());
+            var copied = directory.resolve("copied.aifc");
+            var result = transcode(input, copied, TranscodeOptions.of(OutputContainer.AIFF));
+            assertTrue(result.streams().getFirst().copied());
+            assertEquals(Codec.MACE3, result.streams().getFirst().track().codec());
+            assertEquals("mace3", MediaProbe.of(copied).audio().codec());
+            assertArrayEquals(Oracle.decodeAudio(input), Oracle.decodeAudio(copied), "the same samples");
+            var encoded = directory.resolve("encoded.m4a");
+            var converted = transcode(input, encoded, TranscodeOptions.of(OutputContainer.M4A));
+            assertFalse(converted.streams().getFirst().copied());
+            assertEquals("aac", MediaProbe.of(encoded).audio().codec());
+            // 40 packets of 600 samples at 8 kHz
+            try (var reader = com.github.auties00.smalt.audio.AudioReader.open(
+                    MediaSource.of(java.nio.file.Files.readAllBytes(encoded)))) {
+                assertEquals(3_000_000.0, reader.durationMicros(), 250_000.0);
+            }
+        }
+
+        /** Concatenates the bytes of every packet of a file, through Smalt's demuxer. */
+        private static byte[] packetBytes(Path file) throws java.io.IOException {
+            var bytes = new java.io.ByteArrayOutputStream();
+            try (var demuxer = com.github.auties00.smalt.container.Containers.openDemuxer(
+                    MediaSource.of(java.nio.file.Files.readAllBytes(file)))) {
+                for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                    bytes.writeBytes(packet.data());
+                }
+            }
+            return bytes.toByteArray();
+        }
+    }
+
+    @Nested
     @DisplayName("sample operations")
     class Samples {
         @Test

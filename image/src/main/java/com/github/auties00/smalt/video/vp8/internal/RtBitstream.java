@@ -115,6 +115,15 @@ final class RtBitstream {
     }
 
     /**
+     * Returns the probability of a macroblock with coefficients the last packed frame coded.
+     *
+     * @return the probability, from 1 to 255
+     */
+    int probSkipFalse() {
+        return probSkipFalse;
+    }
+
+    /**
      * Writes the start of the first partition, up to and including the token probability
      * updates, which the token partitions are coded with.
      */
@@ -148,7 +157,7 @@ final class RtBitstream {
                 bw.putBits(enc.copyToAlt, 2);
             }
             bw.putBitUniform(0);
-            bw.putBitUniform(0);
+            bw.putBitUniform(enc.signBiasAlt ? 1 : 0);
         }
         bw.putBitUniform(enc.refreshEntropy ? 1 : 0);
         if (!key) {
@@ -214,7 +223,7 @@ final class RtBitstream {
      * @throws MediaException.Unsupported if a partition exceeds the size the format allows
      */
     byte[] assemble() {
-        return BoolEncoder.assembleFrame(enc.keyFrame, 0, enc.width, enc.height, header, parts);
+        return BoolEncoder.assembleFrame(enc.keyFrame, enc.showFrame, 0, enc.width, enc.height, header, parts);
     }
 
     /**
@@ -270,7 +279,7 @@ final class RtBitstream {
             return;
         }
         writeDeltas(bw, RtEncoder.REF_LF_DELTAS, enc.lastRefLfDeltas, errorResilient);
-        writeDeltas(bw, RtEncoder.MODE_LF_DELTAS, enc.lastModeLfDeltas, errorResilient);
+        writeDeltas(bw, enc.modeLfDeltas, enc.lastModeLfDeltas, errorResilient);
     }
 
     /**
@@ -504,12 +513,73 @@ final class RtBitstream {
                 if (bw.putBit(mode != NEARMV ? 1 : 0, mc[cnt[2] * 4 + 2]) == 0) {
                     continue;
                 }
+                if (mode == Vp8FrameDecoder.SPLITMV) {
+                    bw.putBit(1, mc[cnt[3] * 4 + 3]);
+                    writeSplit(bw, idx, best);
+                    continue;
+                }
                 bw.putBit(0, mc[cnt[3] * 4 + 3]);
                 if (mode == NEWMV) {
                     var mv = enc.mbMv[idx];
                     writeMvComponent(bw, (Mv.row(mv) - Mv.row(best)) >> 1, 0);
                     writeMvComponent(bw, (Mv.col(mv) - Mv.col(best)) >> 1, 19);
                 }
+            }
+        }
+    }
+
+    /**
+     * Writes the split configuration and the partitions of a {@code SPLITMV} macroblock, the
+     * {@code SPLITMV} case of libvpx's {@code pack_inter_mode_mvs}: each partition's mode is coded
+     * in the context of the vectors left of and above its first subblock, and a new vector against
+     * the macroblock's best reference vector.
+     *
+     * @param bw the first partition writer
+     * @param idx the macroblock's mode info index
+     * @param best the packed best reference vector, clamped
+     */
+    private void writeSplit(BoolEncoder bw, int idx, int best) {
+        var s = enc.mbPartitioning[idx];
+        if (bw.putBit(s != 3 ? 1 : 0, 110) != 0) {
+            if (bw.putBit(s != 2 ? 1 : 0, 111) != 0) {
+                bw.putBit(s, 150);
+            }
+        }
+        var parts = s == 3 ? 16 : s == 2 ? 4 : 2;
+        var base = idx * 16;
+        var left = idx - 1;
+        var above = idx - enc.miStride;
+        var bMvs = enc.bMvs;
+        var mbMode = enc.mbMode;
+        var mbMv = enc.mbMv;
+        var probs = Vp8Tables.SUB_MV_REF_PROBS;
+        for (var j = 0; j < parts; j++) {
+            var k = Vp8Tables.MBSPLIT_OFFSET[s * 16 + j];
+            int leftMv;
+            if ((k & 3) == 0) {
+                leftMv = mbMode[left] != Vp8FrameDecoder.SPLITMV ? mbMv[left] : bMvs[left * 16 + k + 3];
+            } else {
+                leftMv = bMvs[base + k - 1];
+            }
+            int aboveMv;
+            if ((k >> 2) == 0) {
+                aboveMv = mbMode[above] != Vp8FrameDecoder.SPLITMV ? mbMv[above] : bMvs[above * 16 + k + 12];
+            } else {
+                aboveMv = bMvs[base + k - 4];
+            }
+            var ctx = ((aboveMv == 0 ? 1 : 0) << 2) | ((leftMv == 0 ? 1 : 0) << 1) | (leftMv == aboveMv ? 1 : 0);
+            var p = ctx * 3;
+            var mode = enc.partModes[base + j];
+            if (bw.putBit(mode != 0 ? 1 : 0, probs[p]) == 0) {
+                continue;
+            }
+            if (bw.putBit(mode != 1 ? 1 : 0, probs[p + 1]) == 0) {
+                continue;
+            }
+            if (bw.putBit(mode == 3 ? 1 : 0, probs[p + 2]) != 0) {
+                var mv = bMvs[base + k];
+                writeMvComponent(bw, (Mv.row(mv) - Mv.row(best)) >> 1, 0);
+                writeMvComponent(bw, (Mv.col(mv) - Mv.col(best)) >> 1, 19);
             }
         }
     }
@@ -525,7 +595,9 @@ final class RtBitstream {
      * @return the packed best reference vector
      */
     private int nearMvs(int idx, int row, int col) {
-        NearMvs.find(enc.mbRef, enc.mbMv, idx, enc.miStride, counts, near);
+        var ref = enc.mbRef[idx];
+        NearMvs.find(enc.mbRef, enc.mbMv, enc.mbMode, idx, enc.miStride, enc.signBiasMask(),
+                (enc.signBiasMask() >> ref) & 1, counts, near);
         return Mv.clamp(near[0], -((col * 16) << 3), ((enc.mbCols - 1 - col) * 16) << 3, -((row * 16) << 3),
                 ((enc.mbRows - 1 - row) * 16) << 3);
     }

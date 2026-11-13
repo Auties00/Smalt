@@ -1,0 +1,19 @@
+# demux dump of raw/avc-marking-field-long-term-pair; regenerate with -Dsmalt.test.updateDumps=true
+format H264
+duration -1
+seekable true
+track 1 VIDEO H264 timebase=1/50 duration=? config=37:821fcd7f
+  video 16x32 orientation=NORMAL rate=25/1
+packets 7
+0 t1 pts=0 dts=-18 dur=2 flags=KEY size=438 crc=8a43d4af
+1 t1 pts=2 dts=-16 dur=2 flags=- size=21 crc=5d8e13e3
+2 t1 pts=? dts=-14 dur=0 flags=- size=18 crc=33999423
+3 t1 pts=4 dts=-12 dur=2 flags=- size=18 crc=cdfc6849
+4 t1 pts=? dts=-10 dur=0 flags=- size=18 crc=ebcd3ea3
+5 t1 pts=6 dts=-8 dur=2 flags=KEY size=404 crc=c63f89bf
+6 t1 pts=8 dts=-6 dur=2 flags=- size=18 crc=bf7d4ddc
+seek 0: t1@0
+seek 66666: t1@0
+seek 133333: t1@5
+seek 200000: end
+seek -1000000: t1@0

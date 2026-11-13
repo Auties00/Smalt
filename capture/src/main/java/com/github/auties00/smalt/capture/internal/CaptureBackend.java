@@ -1,16 +1,20 @@
 package com.github.auties00.smalt.capture.internal;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.capture.CameraCaptureSession;
 import com.github.auties00.smalt.capture.CaptureDevice;
 import com.github.auties00.smalt.capture.CaptureMode;
+import com.github.auties00.smalt.capture.ScreenCaptureOptions;
 import com.github.auties00.smalt.capture.VideoCaptureSession;
+import com.github.auties00.smalt.capture.VideoDeviceEvent;
 import com.github.auties00.smalt.capture.internal.linux.LinuxCaptureBackend;
 import com.github.auties00.smalt.capture.internal.macos.MacCaptureBackend;
 import com.github.auties00.smalt.capture.internal.windows.WindowsCaptureBackend;
-import com.github.auties00.smalt.track.Rational;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Consumer;
 
 /**
  * Implements camera and screen capture for one operating system through its native APIs, called
@@ -57,12 +61,63 @@ public interface CaptureBackend {
     }
 
     /**
+     * Lists the identifiers of the cameras without reading their modes.
+     *
+     * @implSpec The default implementation maps {@link #cameras()}.
+     *
+     * @return the identifiers, the default camera's first
+     * @throws MediaException.Io if the platform's device enumeration fails
+     */
+    default List<String> cameraIds() {
+        return cameras().stream().map(CaptureDevice.Camera::id).toList();
+    }
+
+    /**
      * Lists the screens.
      *
      * @return the screens, the primary one first
      * @throws MediaException.Io if the platform's display enumeration fails
      */
     List<CaptureDevice.Screen> screens();
+
+    /**
+     * Lists the top-level windows that can be captured.
+     *
+     * @implSpec The default implementation returns an empty list.
+     *
+     * @return the windows, front to back where the platform knows the order
+     * @throws MediaException.Io if the platform's window enumeration fails
+     */
+    default List<CaptureDevice.Window> windows() {
+        return List.of();
+    }
+
+    /**
+     * Returns the window with an identifier.
+     *
+     * @implSpec The default implementation searches {@link #windows()}.
+     *
+     * @param id the identifier, as {@link CaptureDevice#id()} returns it
+     * @return the window, or empty when no window has that identifier
+     * @throws MediaException.Io if the platform's window enumeration fails
+     */
+    default Optional<CaptureDevice.Window> window(String id) {
+        return windows().stream().filter(window -> window.id().equals(id)).findFirst();
+    }
+
+    /**
+     * Starts watching the cameras and screens for changes.
+     *
+     * @implSpec The default implementation polls: it lists the screens every second and the cameras
+     * every five seconds.
+     *
+     * @param sink receives the events, on a thread of the watch
+     * @return what stops the watch
+     * @throws MediaException.Io if the watch cannot be started
+     */
+    default AutoCloseable watch(Consumer<VideoDeviceEvent> sink) {
+        return new VideoDeviceWatch(this::cameraIds, this::screens, sink, Duration.ofSeconds(1), 5);
+    }
 
     /**
      * Opens a camera.
@@ -72,17 +127,33 @@ public interface CaptureBackend {
      * @throws MediaException.Io if the camera cannot be opened
      * @throws MediaException.Unsupported if the camera cannot capture in {@code mode}
      */
-    VideoCaptureSession open(CaptureDevice.Camera camera, CaptureMode mode);
+    CameraCaptureSession open(CaptureDevice.Camera camera, CaptureMode mode);
 
     /**
      * Opens a screen.
      *
-     * @param frameRate the frames per second to capture at
+     * @param options the frame rate, region and pointer settings; a region was checked to overlap the
+     * screen's listed size
      * @return the session
      * @throws MediaException.Io if the screen cannot be captured
      * @throws MediaException.Unsupported if screen capture is unavailable, as in a pure Wayland session
      */
-    VideoCaptureSession open(CaptureDevice.Screen screen, Rational frameRate);
+    VideoCaptureSession open(CaptureDevice.Screen screen, ScreenCaptureOptions options);
+
+    /**
+     * Opens a window.
+     *
+     * @implSpec The default implementation throws {@link MediaException.Unsupported}.
+     *
+     * @param options the frame rate, region and pointer settings; a region was checked to overlap the
+     * window's listed size
+     * @return the session
+     * @throws MediaException.Io if the window no longer exists or cannot be captured
+     * @throws MediaException.Unsupported if window capture is unavailable
+     */
+    default VideoCaptureSession open(CaptureDevice.Window window, ScreenCaptureOptions options) {
+        throw new MediaException.Unsupported("window capture", "window capture is not available on " + Platform.osName());
+    }
 
     /**
      * Returns the backend of the running operating system, created on first use.
