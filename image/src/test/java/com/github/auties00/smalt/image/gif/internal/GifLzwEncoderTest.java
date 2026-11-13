@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.image.gif.internal;
 
-import org.junit.jupiter.api.Assumptions;
+import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Skip;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -24,9 +25,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 /**
  * Covers the GIF LZW encoder: decoding its output with an independent decoder, and byte identity
  * with giflib 5.2.2's {@code EGifPutLine}, pinned as SHA-256 hashes of giflib's image data for
- * deterministic inputs (generated with a small C driver over giflib's {@code egif_lib.c}). Setting
- * the {@code smalt.test.giflib} system property to that driver's executable also compares hundreds
- * of random inputs live.
+ * deterministic inputs. Where the oracle tools hold {@code smalt-gifenc} (the driver of giflib's
+ * encoder in {@code tools/testdata/gif-oracle}, or the executable the {@code smalt.test.giflib}
+ * system property names), the pinned inputs are compared with its output and hundreds of random
+ * inputs too.
  */
 class GifLzwEncoderTest {
     /** Generates deterministic indices: noise, runs, a ramp or a single color, by kind. */
@@ -140,6 +142,12 @@ class GifLzwEncoderTest {
     }
 
     /** Runs the giflib driver and returns the image data (code size byte through block terminator). */
+    /** Returns the giflib encoder driver: the {@code smalt.test.giflib} executable, else the oracle tool, or {@code null}. */
+    static Path driver() {
+        var named = System.getProperty("smalt.test.giflib");
+        return named != null ? Path.of(named) : Oracle.find(Oracle.Tool.GIFENC).orElse(null);
+    }
+
     static byte[] giflib(Path driver, byte[] indices, int width, int height, int bits) {
         try {
             var directory = Files.createDirectories(Path.of("target", "lzw-tests"));
@@ -192,9 +200,9 @@ class GifLzwEncoderTest {
         void pinned(int kind, int width, int height, int bits, String expected) {
             var input = indices(kind, width * height, bits, width * 131L + height);
             var actual = encode(input, bits);
-            var driver = System.getProperty("smalt.test.giflib");
+            var driver = driver();
             if (driver != null) {
-                assertArrayEquals(giflib(Path.of(driver), input, width, height, bits), actual);
+                assertArrayEquals(giflib(driver, input, width, height, bits), actual);
             } else {
                 assertEquals(expected, sha256(actual));
             }
@@ -203,15 +211,15 @@ class GifLzwEncoderTest {
         @Test
         @DisplayName("hundreds of random inputs match giflib live")
         void live() {
-            var driver = System.getProperty("smalt.test.giflib");
-            Assumptions.assumeTrue(driver != null, "smalt.test.giflib is not set");
+            var driver = driver();
+            Skip.unless(driver != null, "oracle:smalt-gifenc", "no smalt-gifenc and smalt.test.giflib is not set");
             var random = new Random(7);
             for (var i = 0; i < 300; i++) {
                 var width = 1 + random.nextInt(400);
                 var height = 1 + random.nextInt(200);
                 var bits = 1 + random.nextInt(8);
                 var input = indices(random.nextInt(4), width * height, bits, random.nextLong());
-                assertArrayEquals(giflib(Path.of(driver), input, width, height, bits), encode(input, bits),
+                assertArrayEquals(giflib(driver, input, width, height, bits), encode(input, bits),
                         "case " + i + ": " + width + "x" + height + " at " + bits + " bits");
             }
         }
