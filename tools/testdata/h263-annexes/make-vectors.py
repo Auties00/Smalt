@@ -1,0 +1,312 @@
+"""Makes the H.263 streams of H263AnnexStreamsTest, which exercise the optional modes of ITU-T H.263 that the
+macroblock engine shared with MPEG-4 Part 2 lacks.
+
+usage: python -I make-vectors.py <smalt checkout> <directory holding the tmn and tmndec binaries>
+       [--encoder-streams]
+       python -I make-vectors.py <smalt checkout> --own [--tmndec <directory holding tmndec>] <stream name>...
+
+Every stream codes a synthetic QCIF sequence (moving sinusoidal texture, a checkerboard, hashed noise and a moving
+disc) and comes with the MD5 of the decoder reconstruction it implies when blocks are transformed with the double
+precision reference inverse DCT of the test models, which a decoder using that transform must reproduce sample for
+sample:
+
+- the tmn-* streams are coded by the TMN 3.2 encoder of the University of British Columbia (tmn-3.2.0.tgz from
+  https://www.itu.int/wftp3/av-arch/video-site/h263plus/TMN_software_UBC/, built with its Makefile and run as a
+  black box). Their reference is the encoder's reconstruction (-o), or for the enhancement layer of spatial
+  scalability the output of the matching decoder, tmndec 3.2 (tmndec-3.2.0.tgz) with -r, whose reconstruction file
+  the encoder writes with a wrong size. The TMN encoder is always run with the Unrestricted Motion Vector mode,
+  since without it the encoder codes vectors past the right edge of the picture that the Recommendation forbids.
+- the smalt-* streams are coded by h263enc.py in this directory, an encoder written from the text of the
+  Recommendation for the modes the TMN encoder lacks (Annexes C, K with rectangular slices, N, P, Q, R, U and V) and
+  for B-pictures, Improved PB-frames, SNR scalability and Annexes I, S and T combined with them; it computes the
+  reconstruction itself. The *-ist streams use Annexes I, S and T (every prediction mode, Table I.2 for INTER
+  blocks, small and arbitrary quantizer changes, EXTENDED-ESCAPE levels). Those of them without slices (smalt-ist,
+  smalt-b-ist, smalt-ipb-ist) are also decoded with tmndec -r, which must reproduce the reconstruction exactly
+  (origin smalt-h263enc+tmndec), and smalt-dps-b-ist and smalt-dps-ipb-ist code the pictures of smalt-b-ist and
+  smalt-ipb-ist in data partitioned slices, which must reconstruct the same.
+- the other smalt-* streams cover rarer syntax: macroblock stuffing inside and at the end of groups of blocks in I-,
+  P-, B-, EI- and EP-pictures and the small DQUANT steps of Annex T (smalt-stuffing), SNR scalability outside data
+  partitioning (smalt-snr, with Annex N in both layers in smalt-snr-rps), group of blocks headers with ERPS layers and
+  picture numbers of their own and a redundant ERPS picture (smalt-erps-gob, and smalt-erps-b-gob for B-pictures),
+  Annex N with B-pictures in groups of blocks and the custom picture clock with its 10-bit temporal references
+  (smalt-rps-b), custom formats of more than 400 and 800 lines and wider than 1024 samples (smalt-tall), continuous
+  presence multipoint with interleaved slices (smalt-cpm-slices), stuffing in data partitioned B-pictures
+  (smalt-dps-b-stuffing), B-pictures and Annex U without the Unrestricted Motion Vector mode, whose reference
+  indexes then take the start code emulation prevention bits of U.3.2 (the *-noumv streams), the Unrestricted
+  Motion Vector mode without PLUSPTYPE with predictors outside [-15.5, 16] (smalt-v1-umv, also decoded with tmndec
+  -r), slices of 4CIF and 16CIF pictures with their long macroblock addresses, with and without Annex C
+  (smalt-large-slices, smalt-large-cpm), and every macroblock type of data partitioned B- and EP-pictures
+  (smalt-dps-b-modes, smalt-dps-snr-modes), and macroblocks Annex U codes by PR0 alone, with the MEPB0 bits that
+  follow runs of them, in P- and B-pictures, and in slices (smalt-erps-pr0, smalt-erps-b-pr0, smalt-erps-slices,
+  smalt-erps-b-slices), Reference Picture Resampling in both layers of SNR scalability (smalt-snr-rpr), and the
+  four vectors of INTER4V and INTER4V+Q macroblocks in data partitioned slices (smalt-dps-four), and the
+  arithmetic code of Annex E with macroblock stuffing, quantizer changes, ESCAPE events and group of blocks
+  headers, without PLUSPTYPE (smalt-sac, also decoded with tmndec -r) and with PLUSPTYPE, Annex I and Annex S
+  (smalt-sac-plus). smalt-bad-refs is corrupt on purpose (reference indexes past the references, or naming a
+  reference of another size) and has no golden.tsv row. With --own the script
+  regenerates only the named smalt-* streams, which needs no TMN binary except tmndec for the streams it must
+  reproduce (passed with --tmndec), and replaces or adds their rows of golden.tsv.
+- the smalt-encoder-* streams are coded by Smalt's H.263 encoder in the Advanced Prediction mode (Annex F, with
+  Annexes D, I, J and T in some), as H263EncoderTmnTest codes them; that test writes them with
+  -Dsmalt.test.writeTmnVectors=<directory>, and they are copied into the output directory before the script runs.
+  Their reference is the decode of tmndec -r (origin smalt-encoder+tmndec). With --encoder-streams the script only
+  rewrites their rows of an existing golden.tsv.
+
+The script writes the streams and golden.tsv into mpeg/src/test/resources/com/github/auties00/smalt/video/h263/annex/.
+golden.tsv holds per stream: the file, its origin, the SHA-256 of the file, the number of pictures each
+sub-bitstream outputs, the size of every output picture (one size when they share it), and the MD5 of the planar
+4:2:0 output of each sub-bitstream in display order. The inputs are synthetic and both encoders are deterministic, so
+the checksums are reproduced.
+"""
+import hashlib
+import math
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import h263enc  # noqa: E402
+
+FRAMES = 30
+
+# name, TMN options, last frame passed to -b, reference: 'encoder' (the encoder's reconstruction), 'enhanced' (its
+# enhancement layer reconstruction) or 'tmndec' (enhanced_1.raw of tmndec -r), output size
+TMN = [
+    ('tmn-sac', ['-E', '-D', '1', '-F'], 7, 'encoder', '176x144'),
+    ('tmn-pb', ['-G', '-D', '1', '-F'], 7, 'encoder', '176x144'),
+    ('tmn-pb-sac', ['-G', '-E', '-D', '1'], 7, 'encoder', '176x144'),
+    ('tmn-ipb', ['-M', '-D', '2', '-F', '-J'], 7, 'encoder', '176x144'),
+    ('tmn-ipb-aic', ['-M', '-D', '2', '-I', '-T', '-S'], 7, 'encoder', '176x144'),
+    ('tmn-b', ['-c', '2', '-D', '2', '-J', '-F', '-I'], 7, 'encoder', '176x144'),
+    ('tmn-snr', ['-u', '1', '-v', '6', '-D', '2'], 9, 'enhanced', '176x144'),
+    ('tmn-spatial-horizontal', ['-u', '3', '-v', '6', '-D', '2'], 9, 'tmndec', '352x144'),
+    ('tmn-spatial-vertical', ['-u', '5', '-v', '6', '-D', '2'], 9, 'tmndec', '176x288'),
+    ('tmn-spatial', ['-u', '7', '-v', '6', '-D', '2'], 9, 'tmndec', '352x288'),
+]
+
+# name, configuration of h263enc.py
+OWN = [
+    ('smalt-rpr', 'rpr'), ('smalt-rru', 'rru'), ('smalt-rru-ap', 'rruap'), ('smalt-rru-df', 'rrudf'),
+    ('smalt-isd', 'isd'), ('smalt-rect-aso', 'rect'), ('smalt-isd-rect', 'isdrect'), ('smalt-rps', 'rps'),
+    ('smalt-erps', 'erps'), ('smalt-erps-b', 'erpsb'), ('smalt-b', 'b'), ('smalt-b-rpr', 'brpr'),
+    ('smalt-b-rru', 'brru'), ('smalt-ipb', 'ipb'), ('smalt-ipb-df', 'ipbdf'), ('smalt-ipb-erps', 'ipberps'),
+    ('smalt-ipb-rru', 'ipbrru'), ('smalt-cpm', 'cpm'), ('smalt-dps', 'dps'), ('smalt-dps-rru', 'dpsrru'),
+    ('smalt-dps-b', 'dpsb'), ('smalt-dps-ipb', 'dpsipb'), ('smalt-dps-ipb-rru', 'dpsipbrru'),
+    ('smalt-dps-snr', 'dpssnr'), ('smalt-ist', 'ist'), ('smalt-dps-ist', 'dpsist'), ('smalt-b-ist', 'bist'),
+    ('smalt-dps-b-ist', 'dpsbist'), ('smalt-ipb-ist', 'ipbist'), ('smalt-dps-ipb-ist', 'dpsipbist'),
+    ('smalt-dps-snr-ist', 'dpssnrist'), ('smalt-stuffing', 'stuff'), ('smalt-snr', 'snr'),
+    ('smalt-erps-gob', 'erpsgob'), ('smalt-rps-b', 'rpsb'), ('smalt-tall', 'tall'), ('smalt-cpm-slices', 'cpmslices'),
+    ('smalt-b-noumv', 'bnoumv'), ('smalt-erps-noumv', 'erpsnoumv'), ('smalt-erps-b-noumv', 'erpsbnoumv'),
+    ('smalt-erps-b-gob', 'erpsbgob'), ('smalt-dps-b-stuffing', 'dpsbstuff'), ('smalt-snr-rps', 'snrrps'),
+    ('smalt-v1-umv', 'v1umv'), ('smalt-large-slices', 'large'), ('smalt-large-cpm', 'largecpm'),
+    ('smalt-dps-b-modes', 'dpsbmodes'), ('smalt-dps-snr-modes', 'dpssnrmodes'), ('smalt-erps-pr0', 'erpspr0'),
+    ('smalt-erps-slices', 'erpsslices'), ('smalt-erps-b-pr0', 'erpsbpr0'), ('smalt-snr-rpr', 'snrrpr'),
+    ('smalt-dps-four', 'dpsfour'), ('smalt-erps-b-slices', 'erpsbslices'), ('smalt-sac', 'sacv1'),
+    ('smalt-sac-plus', 'sacplus'),
+]
+# corrupt streams, written without a golden.tsv row: their tests check the concealment
+CORRUPT = [('smalt-bad-refs', 'badrefs')]
+# streams tmndec -r must reproduce, and streams that must reconstruct the same as another
+TMNDEC_CHECKED = {'smalt-ist', 'smalt-b-ist', 'smalt-ipb-ist', 'smalt-v1-umv', 'smalt-sac'}
+TWINS = {'smalt-dps-b-ist': 'smalt-b-ist', 'smalt-dps-ipb-ist': 'smalt-ipb-ist'}
+
+
+def source(width, height, frames):
+    """Returns the synthetic 4:2:0 sequence."""
+    def noise(x, y, t):
+        return ((x * 73856093) ^ (y * 19349663) ^ (t * 83492791)) & 15
+
+    def clip(v):
+        return max(0, min(255, int(round(v * 255))))
+
+    data = bytearray()
+    for t in range(frames):
+        for y in range(height):
+            for x in range(width):
+                sx = x * 176.0 / width
+                sy = y * 144.0 / height
+                v = (0.5 + 0.23 * math.sin((sx + 2 * t) / 7.0) * math.cos((sy - t) / 9.0)
+                     + 0.12 * ((int(sx + 1.5 * t) // 8 + int(sy) // 8) % 2) + (noise(x, y, t) - 8) / 400.0)
+                cx = 60 + 3.0 * t
+                cy = 72 + 6.0 * math.sin(t / 3.0)
+                if (sx - cx) ** 2 + (sy - cy) ** 2 < 400:
+                    v = 0.85 - 0.3 * ((sx - cx) ** 2 + (sy - cy) ** 2) / 400
+                data.append(clip(v))
+        for plane in range(2):
+            for y in range(height // 2):
+                for x in range(width // 2):
+                    sx = x * 88.0 / (width // 2)
+                    sy = y * 72.0 / (height // 2)
+                    v = 0.5 + 0.3 * (math.sin((sx - t) / 11.0) if plane == 0 else math.cos((sy + t) / 13.0))
+                    data.append(clip(v))
+    return bytes(data)
+
+
+def tmn_vector(binaries, work, src, name, options, last, reference):
+    """Codes a stream with the TMN encoder and returns it with its reference reconstruction."""
+    d = os.path.join(work, name)
+    os.makedirs(d)
+    shutil.copy(src, os.path.join(d, 'src.yuv'))
+    subprocess.run([os.path.join(binaries, 'tmn'), '-i', 'src.yuv', '-B', 'out.263', '-o', 'rec.yuv', '-a', '0', '-b',
+                    str(last), '-k', '0', '-q', '10'] + options, cwd=d, check=True, stdout=subprocess.DEVNULL)
+    if reference == 'encoder':
+        ref = os.path.join(d, 'rec.yuv')
+    elif reference == 'enhanced':
+        ref = os.path.join(d, 'enhanced.raw')
+    else:
+        dec = os.path.join(d, 'dec')
+        os.makedirs(dec)
+        subprocess.run([os.path.join(binaries, 'tmndec'), '-o5', '-r', '-q', '../out.263', 'base.yuv'], cwd=dec,
+                       check=True, stdout=subprocess.DEVNULL)
+        ref = os.path.join(dec, 'enhanced_1.raw')
+    return open(os.path.join(d, 'out.263'), 'rb').read(), [open(ref, 'rb').read()]
+
+
+def tmndec_decode(binaries, work, name, stream):
+    """Decodes a stream with tmndec and the reference inverse DCT."""
+    d = os.path.join(work, name + '-tmndec')
+    os.makedirs(d)
+    open(os.path.join(d, 'in.263'), 'wb').write(stream)
+    subprocess.run([os.path.join(binaries, 'tmndec'), '-o5', '-r', '-q', 'in.263', 'out.yuv'], cwd=d, check=True,
+                   stdout=subprocess.DEVNULL)
+    return open(os.path.join(d, 'out.yuv'), 'rb').read()
+
+
+def write(out, rows, name, origin, stream, frames, size, refs):
+    """Writes a stream and its golden.tsv row."""
+    open(os.path.join(out, name + '.263'), 'wb').write(stream)
+    rows.append('\t'.join([name + '.263', origin, hashlib.sha256(stream).hexdigest(), ','.join(map(str, frames)),
+                           size, ','.join(hashlib.md5(r).hexdigest() for r in refs)]))
+    print(name, len(stream), 'bytes', frames)
+
+
+# Smalt encoder streams decoded by tmndec -r: name, picture size
+ENCODER = [
+    ('smalt-encoder-f', '176x144'), ('smalt-encoder-f-still', '176x144'), ('smalt-encoder-df-fast', '176x144'),
+    ('smalt-encoder-fijt', '176x144'), ('smalt-encoder-df-cif', '352x288'),
+]
+
+
+def encoder_rows(binaries, work, out):
+    """Returns the golden.tsv rows of the committed Smalt encoder streams, decoded with tmndec -r."""
+    rows = []
+    for name, size in ENCODER:
+        stream = open(os.path.join(out, name + '.263'), 'rb').read()
+        ref = tmndec_decode(binaries, work, name, stream)
+        w, h = map(int, size.split('x'))
+        rows.append('\t'.join([name + '.263', 'smalt-encoder+tmndec', hashlib.sha256(stream).hexdigest(),
+                               str(len(ref) // (w * h * 3 // 2)), size, hashlib.md5(ref).hexdigest()]))
+        print(name, len(stream), 'bytes')
+    return rows
+
+
+def own_vector(name, config, qcif):
+    """Codes a stream with h263enc.py and returns it with its pictures per sub-bitstream, sizes and references."""
+    cfg = h263enc.CONFIGS[config]
+    enc = h263enc.Encoder(cfg, qcif, 176, 144)
+    bits, recon = cfg['recipe'](enc)
+    groups = recon if isinstance(recon[0], list) else [recon]
+    sizes = sorted(set('%dx%d' % (p.width, p.height) for g in groups for p in g))
+    size = sizes[0] if len(sizes) == 1 else ','.join('%dx%d' % (p.width, p.height) for p in groups[0])
+    refs = [b''.join(p.dump() for p in g) for g in groups]
+    return bits, groups, size, refs
+
+
+def write_corrupt(out, name, config, qcif):
+    """Codes a corrupt smalt-* stream; H263PlusStreamRoutingTest pins its SHA-256."""
+    bits, _, _, _ = own_vector(name, config, qcif)
+    stream = bits.data()
+    open(os.path.join(out, name + '.263'), 'wb').write(stream)
+    print(name, len(stream), 'bytes', hashlib.sha256(stream).hexdigest())
+
+
+def own_only(checkout, out, names):
+    """Regenerates the named smalt-* streams and replaces or adds their rows of golden.tsv."""
+    binaries = None
+    if names[:1] == ['--tmndec']:
+        binaries, names = names[1], names[2:]
+    h263enc.load_tcoef(os.path.join(checkout, 'mpeg/src/main/java/com/github/auties00/smalt/video/mpeg4/internal',
+                                    'Tables.java'))
+    h263enc.load_sac(os.path.join(checkout, 'mpeg/src/main/java/com/github/auties00/smalt/video/h263/internal',
+                                  'SacModels.java'))
+    qcif = source(176, 144, FRAMES)
+    golden = os.path.join(out, 'golden.tsv')
+    lines = open(golden).read().splitlines()
+    configs = dict(OWN)
+    for name in names:
+        if name in dict(CORRUPT):
+            write_corrupt(out, name, dict(CORRUPT)[name], qcif)
+            continue
+        assert name in configs and name not in TWINS, name
+        assert name not in TMNDEC_CHECKED or binaries, name + ' needs --tmndec'
+        bits, groups, size, refs = own_vector(name, configs[name], qcif)
+        origin = 'smalt-h263enc'
+        if name in TMNDEC_CHECKED:
+            with tempfile.TemporaryDirectory() as work:
+                assert tmndec_decode(binaries, work, name, bits.data()) == refs[0], name + ': tmndec differs'
+            origin = 'smalt-h263enc+tmndec'
+        rows = []
+        write(out, rows, name, origin, bits.data(), [len(g) for g in groups], size, refs)
+        prefix = name + '.263\t'
+        index = next((i for i, line in enumerate(lines) if line.startswith(prefix)), None)
+        if index is None:
+            lines.append(rows[0])
+        else:
+            lines[index] = rows[0]
+    open(golden, 'w', newline='\n').write('\n'.join(lines) + '\n')
+
+
+def main():
+    checkout = sys.argv[1]
+    out = os.path.join(checkout, 'mpeg/src/test/resources/com/github/auties00/smalt/video/h263/annex')
+    os.makedirs(out, exist_ok=True)
+    if sys.argv[2] == '--own':
+        own_only(checkout, out, sys.argv[3:])
+        return
+    binaries = sys.argv[2]
+    if '--encoder-streams' in sys.argv[3:]:
+        golden = os.path.join(out, 'golden.tsv')
+        kept = [line for line in open(golden).read().splitlines()
+                if not line.startswith(tuple(name + '.263\t' for name, _ in ENCODER))]
+        with tempfile.TemporaryDirectory() as work:
+            kept += encoder_rows(binaries, work, out)
+        open(golden, 'w', newline='\n').write('\n'.join(kept) + '\n')
+        return
+    h263enc.load_tcoef(os.path.join(checkout, 'mpeg/src/main/java/com/github/auties00/smalt/video/mpeg4/internal',
+                                    'Tables.java'))
+    h263enc.load_sac(os.path.join(checkout, 'mpeg/src/main/java/com/github/auties00/smalt/video/h263/internal',
+                                  'SacModels.java'))
+    qcif = source(176, 144, FRAMES)
+    rows = ['# file\torigin\tsha256\tpictures per sub-bitstream\tpicture sizes\tMD5 of each sub-bitstream\'s '
+            'reference reconstruction',
+            '# made by tools/testdata/h263-annexes/make-vectors.py']
+    with tempfile.TemporaryDirectory() as work:
+        src = os.path.join(work, 'src.yuv')
+        open(src, 'wb').write(qcif)
+        for name, options, last, reference, size in TMN:
+            stream, refs = tmn_vector(binaries, work, src, name, options, last, reference)
+            w, h = map(int, size.split('x'))
+            frames = [len(r) // (w * h * 3 // 2) for r in refs]
+            write(out, rows, name, 'tmn' if reference != 'tmndec' else 'tmn+tmndec', stream, frames, size, refs)
+        made = {}
+        for name, config in OWN:
+            bits, groups, size, refs = own_vector(name, config, qcif)
+            made[name] = refs
+            origin = 'smalt-h263enc'
+            if name in TMNDEC_CHECKED:
+                assert tmndec_decode(binaries, work, name, bits.data()) == refs[0], name + ': tmndec differs'
+                origin = 'smalt-h263enc+tmndec'
+            if name in TWINS:
+                assert refs == made[TWINS[name]], name + ' differs from ' + TWINS[name]
+            write(out, rows, name, origin, bits.data(), [len(g) for g in groups], size, refs)
+        rows += encoder_rows(binaries, work, out)
+        for name, config in CORRUPT:
+            write_corrupt(out, name, config, qcif)
+    open(os.path.join(out, 'golden.tsv'), 'w', newline='\n').write('\n'.join(rows) + '\n')
+
+
+if __name__ == '__main__':
+    main()

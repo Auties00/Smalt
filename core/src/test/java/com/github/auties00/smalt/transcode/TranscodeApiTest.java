@@ -2,12 +2,16 @@ package com.github.auties00.smalt.transcode;
 
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.container.wav.WavDemuxer;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ImageEncoderOptions;
 import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.ops.Region;
 import com.github.auties00.smalt.image.ops.ResizeFilter;
+import com.github.auties00.smalt.io.MediaSink;
+import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Rational;
 import org.junit.jupiter.api.DisplayName;
@@ -16,6 +20,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
@@ -144,10 +152,53 @@ class TranscodeApiTest {
         @ParameterizedTest(name = "{0}")
         @CsvSource({"clip.mp4, MP4", "a.M4A, M4A", "x.mkv, MATROSKA", "x.webm, WEBM", "voice.opus, OGG", "x.ogg, OGG",
                 "x.wav, WAV", "x.aiff, AIFF", "x.aac, ADTS", "x.ivf, IVF", "x.mp3, MP3", "x.flac, FLAC", "x.amr, AMR", "webm, WEBM",
-                "x.mov, MOV", "x.qt, MOV"})
+                "x.mov, MOV", "x.qt, MOV", "x.ac3, AC3", "x.ec3, EAC3", "x.eac3, EAC3", "x.h264, H264", "x.264, H264",
+                "x.h265, HEVC", "x.265, HEVC", "x.hevc, HEVC", "x.obu, AV1", "x.oga, OGG"})
         @DisplayName("are found by file extension")
         void extension(String name, OutputContainer container) {
             assertEquals(Optional.of(container), OutputContainer.forFileName(name));
+        }
+
+        @Test
+        @DisplayName("write elementary streams and Ogg FLAC restricted to their codecs")
+        void elementaryTargets() {
+            assertEquals(java.util.List.of(Codec.FLAC), OutputContainer.OGG_FLAC.audioCodecs());
+            assertTrue(OutputContainer.OGG_FLAC.supports(Codec.FLAC));
+            assertFalse(OutputContainer.OGG_FLAC.supports(Codec.OPUS));
+            assertTrue(OutputContainer.OGG_FLAC.needsConfig(Codec.FLAC));
+            assertTrue(OutputContainer.AC3.supports(Codec.AC3));
+            assertFalse(OutputContainer.AC3.supports(Codec.EAC3));
+            assertTrue(OutputContainer.EAC3.supports(Codec.EAC3));
+            assertEquals("audio/eac3", OutputContainer.EAC3.mimeType());
+            for (var container : java.util.List.of(OutputContainer.H264, OutputContainer.HEVC, OutputContainer.AV1)) {
+                var codec = container.videoCodecs().getFirst();
+                assertTrue(container.supports(codec), container.toString());
+                assertTrue(container.audioCodecs().isEmpty());
+                assertTrue(container.subtitleCodecs().isEmpty());
+                assertFalse(container.storesOrientation());
+                assertFalse(container.carriesSeveralTracks());
+                assertEquals(codec != Codec.AV1, container.needsConfig(codec));
+                assertTrue(com.github.auties00.smalt.container.Containers.isMuxable(container.format(), codec));
+                assertFalse(com.github.auties00.smalt.container.Containers.isMuxable(container.format(), Codec.VP9));
+            }
+            assertEquals(com.github.auties00.smalt.container.ContainerFormat.OGG, OutputContainer.OGG_FLAC.format());
+            assertEquals(com.github.auties00.smalt.container.ContainerFormat.AC3, OutputContainer.EAC3.format());
+            var opus = com.github.auties00.smalt.track.AudioTrack.builder().id(1).codec(Codec.OPUS)
+                    .timeBase(new Rational(1, 48_000)).sampleRate(48_000).layout(ChannelLayout.STEREO).codecConfig(new byte[19]).build();
+            try (var muxer = com.github.auties00.smalt.container.Containers.openMuxer(OutputContainer.OGG_FLAC,
+                    com.github.auties00.smalt.io.MediaSink.memory())) {
+                assertThrows(IllegalArgumentException.class, () -> muxer.addTrack(opus));
+            }
+            var ac3 = com.github.auties00.smalt.track.AudioTrack.builder().id(1).codec(Codec.AC3)
+                    .timeBase(new Rational(1, 48_000)).sampleRate(48_000).layout(ChannelLayout.STEREO).build();
+            try (var muxer = com.github.auties00.smalt.container.Containers.openMuxer(OutputContainer.EAC3,
+                    com.github.auties00.smalt.io.MediaSink.memory())) {
+                assertThrows(IllegalArgumentException.class, () -> muxer.addTrack(ac3));
+            }
+            try (var muxer = com.github.auties00.smalt.container.Containers.openMuxer(OutputContainer.AC3,
+                    com.github.auties00.smalt.io.MediaSink.memory())) {
+                muxer.addTrack(ac3);
+            }
         }
 
         @Test
@@ -160,7 +211,21 @@ class TranscodeApiTest {
             assertTrue(OutputContainer.M4A.supports(Codec.AAC));
             assertTrue(OutputContainer.WAV.supports(Codec.PCM_F32LE));
             assertTrue(OutputContainer.OGG.supports(Codec.VORBIS));
-            assertFalse(OutputContainer.OGG.supports(Codec.FLAC));
+            assertTrue(OutputContainer.OGG.supports(Codec.FLAC));
+            assertFalse(OutputContainer.OGG.supports(Codec.AAC));
+            assertTrue(OutputContainer.OGG.needsConfig(Codec.FLAC));
+            assertTrue(OutputContainer.MATROSKA.needsConfig(Codec.ALAC));
+            assertFalse(OutputContainer.MATROSKA.needsConfig(Codec.MPEG4_PART2));
+            // WavMuxer stores the AudioSpecificConfig and STREAMINFO in the format, and nothing for the others
+            assertTrue(OutputContainer.WAV.needsConfig(Codec.AAC));
+            assertTrue(OutputContainer.WAV.needsConfig(Codec.FLAC));
+            assertFalse(OutputContainer.WAV.needsConfig(Codec.MP3));
+            assertFalse(OutputContainer.WAV.needsConfig(Codec.PCM_S16LE));
+            // core has no decoder of MP3 or ADPCM, so WAV copies them; PCM is always copied, and other files copy
+            assertTrue(OutputContainer.WAV.copiesByDefault(Codec.PCM_S24BE));
+            assertTrue(OutputContainer.WAV.copiesByDefault(Codec.MP3));
+            assertTrue(OutputContainer.WAV.copiesByDefault(Codec.ADPCM_IMA_WAV));
+            assertTrue(OutputContainer.MATROSKA.copiesByDefault(Codec.MP3));
             assertTrue(OutputContainer.MP4.storesOrientation());
             assertTrue(OutputContainer.MOV.supports(Codec.PRORES));
             assertTrue(OutputContainer.MOV.supports(Codec.DNXHD));
@@ -194,6 +259,41 @@ class TranscodeApiTest {
             assertFalse(defaults.toBuilder().maxFrameRate(new Rational(30, 1)).build()
                     .changesPicture(640, 480, new Rational(25, 1)));
             assertTrue(defaults.toBuilder().maxFrameRate(new Rational(30, 1)).build().changesPicture(640, 480, null));
+        }
+
+        @Test
+        @DisplayName("copy multichannel AMR into WAV, which carries it after the multichannel magic")
+        void multichannelAmrIntoWav() {
+            // RFC 4867 multichannel storage: the magic, a channel description of 2, then frame-blocks of two
+            // 12.2 kbit/s frames (frame type 7, 31 payload bytes)
+            var file = new ByteArrayOutputStream();
+            file.writeBytes("#!AMR_MC1.0\n".getBytes(StandardCharsets.US_ASCII));
+            file.writeBytes(new byte[]{0, 0, 0, 2});
+            for (var block = 0; block < 20; block++) {
+                for (var channel = 0; channel < 2; channel++) {
+                    var frame = new byte[32];
+                    frame[0] = 7 << 3 | 0x04;
+                    Arrays.fill(frame, 1, frame.length, (byte) (block * 2 + channel));
+                    file.writeBytes(frame);
+                }
+            }
+            var input = file.toByteArray();
+            for (var audio : List.of(AudioTranscodeOptions.defaults(), AudioTranscodeOptions.copy())) {
+                var sink = MediaSink.memory();
+                var result = Transcoder.transcode(MediaSource.of(input), sink,
+                        TranscodeOptions.of(OutputContainer.WAV).toBuilder().audio(audio).build());
+                assertTrue(result.streams().getFirst().copied(), audio.mode().toString());
+                try (var demuxer = new WavDemuxer(MediaSource.of(sink.toByteArray()))) {
+                    var track = (AudioTrack) demuxer.tracks().getFirst();
+                    assertEquals(Codec.AMR_NB, track.codec());
+                    assertEquals(2, track.layout().orElseThrow().channels());
+                    var data = new ByteArrayOutputStream();
+                    for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                        data.writeBytes(packet.data());
+                    }
+                    assertArrayEquals(Arrays.copyOfRange(input, 16, input.length), data.toByteArray());
+                }
+            }
         }
     }
 }

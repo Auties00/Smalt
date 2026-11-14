@@ -82,6 +82,8 @@ class RegistryTest {
         assertFalse(VideoEncoders.isSupported(Codec.VP9));
         assertMissing("vp9", "smalt-video", () -> VideoEncoders.create(Codec.VP9, options));
         assertMissing("vp8", "smalt-image", () -> VideoEncoders.create(Codec.VP8, options));
+        assertMissing("mjpeg", "smalt-image", () -> VideoEncoders.create(Codec.MJPEG, options));
+        assertMissing("jpeg2000", "smalt-image", () -> VideoEncoders.create(Codec.JPEG2000, options));
         assertMissing("h264", "smalt-mpeg", () -> VideoEncoders.create(Codec.H264, options));
         assertMissing("av1", "smalt-video", () -> VideoEncoders.create(Codec.AV1, options));
         assertThrows(IllegalArgumentException.class, () -> VideoEncoders.create(Codec.OPUS, options));
@@ -107,7 +109,13 @@ class RegistryTest {
         assertMissing("webp", "smalt-image", () -> Images.openAnimationWriter(ImageFormat.WEBP, 2, 2, MediaSink.memory()));
         assertMissing("gif", "smalt-image", () -> Images.openAnimationWriter(ImageFormat.GIF, 2, 2, MediaSink.memory()));
         assertMissing("bmp", null, () -> Images.openAnimationWriter(ImageFormat.BMP, 2, 2, MediaSink.memory()));
+        assertFalse(Images.isPageEncodable(ImageFormat.TIFF));
+        assertMissing("tiff", "smalt-image", () -> Images.openPageWriter(ImageFormat.TIFF, MediaSink.memory()));
+        assertMissing("ico", "smalt-image", () -> Images.openPageWriter(ImageFormat.ICO, MediaSink.memory()));
+        assertMissing("png", null, () -> Images.openPageWriter(ImageFormat.PNG, MediaSink.memory()));
         var mjpeg = VideoTrack.builder().codec(Codec.MJPEG).timeBase(new Rational(1, 1000)).width(2).height(2).build();
         assertMissing("mjpeg", "smalt-image", () -> VideoDecoders.create(mjpeg));
+        var jpeg2000 = mjpeg.toBuilder().codec(Codec.JPEG2000).build();
+        assertMissing("jpeg2000", "smalt-image", () -> VideoDecoders.create(jpeg2000));
     }
 }

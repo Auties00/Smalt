@@ -15,10 +15,13 @@ import com.github.auties00.smalt.internal.limits.LimitChecks;
  * decoding of its planes depends on.
  *
  * <p>{@link #parse(BitReader, int, int, MediaLimits, VideoObjectLayer)} reads a
- * {@code VideoObjectLayer()} header and rejects the coding tools this decoder lacks with
- * {@link MediaException.Unsupported}: shapes other than rectangular, static sprites, scalability,
- * N-bit video, NEWPRED, reduced resolution VOPs, chroma formats other than 4:2:0 and sprite
- * brightness change. A layer for H.263 pictures or the short video header is created with
+ * {@code VideoObjectLayer()} header. A layer that uses a tool the fast engine lacks (arbitrary
+ * shape, static sprites, sprite brightness change, N-bit video, NEWPRED, reduced resolution VOPs
+ * or scalability) is marked {@link #objectTools}: its header is read up to that tool and the
+ * object decoder of {@code video.mpeg4.internal.object} decodes it. Fine Granularity Scalable
+ * enhancement layers and chroma formats other than 4:2:0 are rejected with {@link MediaException.Unsupported};
+ * Studio profile layers, whose header has another syntax, are read by {@code video.mpeg4.internal.studio}
+ * instead. A layer for H.263 pictures or the short video header is created with
  * {@link #shortHeader(int, int)}.
  *
  * <p>Instances are mutable value holders owned by one decoder; they are not thread-safe.
@@ -45,9 +48,20 @@ public final class VideoObjectLayer {
     public static final int SPRITE_RESERVED = 3;
 
     /**
+     * The {@code video_object_type_indication} of a Fine Granularity Scalable enhancement layer.
+     */
+    private static final int FINE_GRANULARITY_SCALABLE = 0x12;
+
+    /**
      * Whether pictures use the short video header (H.263 baseline) syntax.
      */
     public boolean shortVideoHeader;
+
+    /**
+     * Whether the layer needs the object decoder; the fields after the tool that needs it keep
+     * their defaults.
+     */
+    public boolean objectTools;
 
     /**
      * The {@code video_object_type_indication}, {@code 0} when absent.
@@ -303,6 +317,14 @@ public final class VideoObjectLayer {
         }
         reader.skip(1);
         layer.objectType = reader.read(8);
+        if (layer.objectType == FINE_GRANULARITY_SCALABLE) {
+            // TODO: decode the FGS and FGST enhancement layers of ISO/IEC 14496-2 Amd 2. Blocked: the FGS reference
+            //  software of ISO/IEC 14496-5 Amd 1 predates the final syntax (its own sources mark the
+            //  fgs_vop_start_code as provisional), and the FGS conformance streams of ISO/IEC 14496-4 are not
+            //  retrievable.
+            throw new MediaException.Unsupported("mpeg-4 fine granularity scalability",
+                    "video_object_type_indication 18 is a Fine Granularity Scalable enhancement layer");
+        }
         if (reader.readFlag()) {
             layer.verid = reader.read(4);
             reader.skip(3);
@@ -362,8 +384,7 @@ public final class VideoObjectLayer {
         }
         var shape = reader.read(2);
         if (shape != 0) {
-            throw new MediaException.Unsupported("mpeg-4 shape coding", "video_object_layer_shape " + shape
-                    + " is not rectangular");
+            return objectLayer(layer, reader, limits);
         }
         reader.marker("video_object_layer_shape");
         layer.timeResolution = reader.read(16);
@@ -388,7 +409,7 @@ public final class VideoObjectLayer {
         layer.obmcDisable = reader.readFlag();
         layer.spriteEnable = layer.verid == 1 ? reader.read(1) : reader.read(2);
         if (layer.spriteEnable == SPRITE_STATIC) {
-            throw new MediaException.Unsupported("mpeg-4 static sprites", "static sprite coding is not supported");
+            return objectLayer(layer, reader, limits);
         }
         if (layer.spriteEnable == SPRITE_RESERVED) {
             throw new MediaException.Malformed("reserved sprite_enable value");
@@ -401,12 +422,11 @@ public final class VideoObjectLayer {
             }
             layer.warpingAccuracy = reader.read(2);
             if (reader.readFlag()) {
-                throw new MediaException.Unsupported("mpeg-4 sprite brightness change",
-                        "sprite_brightness_change is not supported");
+                return objectLayer(layer, reader, limits);
             }
         }
         if (reader.readFlag()) {
-            throw new MediaException.Unsupported("mpeg-4 n-bit video", "not_8_bit video is not supported");
+            return objectLayer(layer, reader, limits);
         }
         layer.mpegQuant = reader.readFlag();
         if (layer.mpegQuant) {
@@ -431,19 +451,35 @@ public final class VideoObjectLayer {
         }
         if (layer.verid != 1) {
             if (reader.readFlag()) {
-                throw new MediaException.Unsupported("mpeg-4 newpred", "NEWPRED is not supported");
+                return objectLayer(layer, reader, limits);
             }
             if (reader.readFlag()) {
-                throw new MediaException.Unsupported("mpeg-4 reduced resolution vop",
-                        "reduced resolution VOPs are not supported");
+                return objectLayer(layer, reader, limits);
             }
         }
         if (reader.readFlag()) {
-            throw new MediaException.Unsupported("mpeg-4 scalability", "scalable layers are not supported");
+            return objectLayer(layer, reader, limits);
         }
         if (reader.overrun()) {
             throw new MediaException.Malformed("truncated video object layer header");
         }
+        return layer;
+    }
+
+    /**
+     * Marks a layer for the object decoder.
+     *
+     * @param layer the layer read so far
+     * @param reader the stream, positioned after the fields read so far
+     * @param limits the limits bounding the picture size
+     * @return the layer
+     * @throws MediaException.Malformed if the header read so far is truncated
+     */
+    private static VideoObjectLayer objectLayer(VideoObjectLayer layer, BitReader reader, MediaLimits limits) {
+        if (reader.overrun()) {
+            throw new MediaException.Malformed("truncated video object layer header");
+        }
+        layer.objectTools = true;
         return layer;
     }
 
