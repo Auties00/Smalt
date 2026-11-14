@@ -1,0 +1,73 @@
+# audio decode dump of vectors/mpegff-male_amr122.3gp; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 32040000
+seekable true
+track 1 AMR_NB rate=8000 layout=[FRONT_CENTER]
+0 frames=4096 crc16=1ea7edd1
+1 frames=4096 crc16=1d5d31e4
+2 frames=4096 crc16=282405bf
+3 frames=4096 crc16=36bec5ef
+4 frames=4096 crc16=60444acc
+5 frames=4096 crc16=d2fc7fbe
+6 frames=4096 crc16=eccec5f0
+7 frames=4096 crc16=b1044a95
+8 frames=4096 crc16=c87694f7
+9 frames=4096 crc16=0c845efa
+10 frames=4096 crc16=4aa4b353
+11 frames=4096 crc16=a8722625
+12 frames=4096 crc16=e5f64178
+13 frames=4096 crc16=65e10c8c
+14 frames=4096 crc16=917f41bd
+15 frames=4096 crc16=839fd1e7
+16 frames=4096 crc16=9a0fa0f2
+17 frames=4096 crc16=2a1a35c2
+18 frames=4096 crc16=e7366c33
+19 frames=4096 crc16=9551a2f5
+20 frames=4096 crc16=e8163d39
+21 frames=4096 crc16=459a4f8a
+22 frames=4096 crc16=5ae6dd29
+23 frames=4096 crc16=0474e537
+24 frames=4096 crc16=2920e0d0
+25 frames=4096 crc16=c7979275
+26 frames=4096 crc16=16d235be
+27 frames=4096 crc16=357189ba
+28 frames=4096 crc16=fbfc96b7
+29 frames=4096 crc16=f2dd4a2f
+30 frames=4096 crc16=e67cf83d
+31 frames=4096 crc16=5059954c
+32 frames=4096 crc16=328a7faa
+33 frames=4096 crc16=332f249b
+34 frames=4096 crc16=c9b9b456
+35 frames=4096 crc16=7280c9aa
+36 frames=4096 crc16=0efcae87
+37 frames=4096 crc16=3978b0fc
+38 frames=4096 crc16=25cf38eb
+39 frames=4096 crc16=47d8cad3
+40 frames=4096 crc16=df125d4b
+41 frames=4096 crc16=99d99464
+42 frames=4096 crc16=e93d8a67
+43 frames=4096 crc16=89d22aaf
+44 frames=4096 crc16=e285a518
+45 frames=4096 crc16=3f6e831e
+46 frames=4096 crc16=79dffc5f
+47 frames=4096 crc16=29c1c1dc
+48 frames=4096 crc16=67703da7
+49 frames=4096 crc16=04f1cb51
+50 frames=4096 crc16=366e292b
+51 frames=4096 crc16=d44d2c90
+52 frames=4096 crc16=d9c41966
+53 frames=4096 crc16=81e35dfb
+54 frames=4096 crc16=5766247b
+55 frames=4096 crc16=6adf78a6
+56 frames=4096 crc16=a3df5383
+57 frames=4096 crc16=920f18f9
+58 frames=4096 crc16=53eae9eb
+59 frames=4096 crc16=33ec2429
+60 frames=4096 crc16=c7446df6
+61 frames=4096 crc16=ca679041
+62 frames=2368 crc16=8c762f17
+seek 0: @sample 0
+seek 10680000: @sample 85440
+seek 21360000: @sample 170880
+seek 32040000: end
+seek -1000000: @sample 0

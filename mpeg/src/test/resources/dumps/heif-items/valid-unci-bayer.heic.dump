@@ -1,0 +1,19 @@
+# image dump of heif-items/valid-unci-bayer.heic; regenerate with -Dsmalt.test.updateDumps=true
+format HEIC
+info ImageInfo[format=HEIC, width=8, height=8, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 8x8 yuv8 MONOCHROME color=UNSPECIFIED/FULL/UNSPECIFIED/LINEAR y=38bcebb0
+  format=HEIC orientation=NORMAL source=8x8
+  icc=none exif=none xmp=none
+  profile=ColorProfile[CICP UNSPECIFIED / LINEAR, RGB, DISPLAY, v4.3.0]
+scaled 2x2
+picture 8x8 yuv8 MONOCHROME color=UNSPECIFIED/FULL/UNSPECIFIED/LINEAR y=38bcebb0
+  format=HEIC orientation=NORMAL source=8x8
+  icc=none exif=none xmp=none
+  profile=ColorProfile[CICP UNSPECIFIED / LINEAR, RGB, DISPLAY, v4.3.0]
+pages 1
+page 0 ImageInfo[format=HEIC, width=8, height=8, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+picture 8x8 yuv8 MONOCHROME color=UNSPECIFIED/FULL/UNSPECIFIED/LINEAR y=38bcebb0
+  format=HEIC orientation=NORMAL source=8x8
+  icc=none exif=none xmp=none
+  profile=ColorProfile[CICP UNSPECIFIED / LINEAR, RGB, DISPLAY, v4.3.0]
