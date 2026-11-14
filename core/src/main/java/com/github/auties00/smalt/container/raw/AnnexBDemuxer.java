@@ -1465,7 +1465,7 @@ public final class AnnexBDemuxer implements Demuxer {
                     System.arraycopy(unit.data, 0, first.data, first.size, unit.size);
                     first.size += unit.size;
                     first.poc = Math.min(first.poc, unit.poc);
-                    first.duration += ticks(unit);
+                    first.duration = (int) Math.min(Integer.MAX_VALUE, (long) first.duration + ticks(unit));
                     first.secondField = unit.avc;
                     first.field = false;
                     first.key |= unit.key;

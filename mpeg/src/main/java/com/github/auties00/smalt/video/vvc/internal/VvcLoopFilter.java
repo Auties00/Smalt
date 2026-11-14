@@ -700,6 +700,15 @@ final class VvcLoopFilter {
                 lq = 3;
             }
         }
+        // A transform block lies inside the picture, so a long filter, which reads 8 samples on its side, always
+        // has them in a conforming stream; a corrupt one can leave the size of a block its position rules out.
+        var perp = dir == 0 ? xP + 1 : yP + 1;
+        if (perp < 8) {
+            lp = Math.min(lp, 3);
+        }
+        if ((dir == 0 ? f.width4 : f.height4) * 4 - perp < 8) {
+            lq = Math.min(lq, 3);
+        }
         return (lp << 4) | lq;
     }
 

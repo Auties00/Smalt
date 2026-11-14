@@ -704,6 +704,10 @@ abstract class ObjectSprite extends ObjectErrorResilience {
             bits.getBits(1);
             pieceXoffset = bits.getBits(9);
             pieceYoffset = bits.getBits(9);
+            if (pieceXoffset + pieceWidth > rctSptQ.width / MB_SIZE
+                    || pieceYoffset + pieceHeight > rctSptQ.height() / MB_SIZE) {
+                throw new MediaException.Malformed("MPEG-4 sprite piece outside its sprite");
+            }
             var left = pieceXoffset * MB_SIZE + rctSpt.left;
             var top = pieceYoffset * MB_SIZE + rctSpt.top;
             rctSptPieceY.set(left, top, left + pieceWidth * MB_SIZE, top + pieceHeight * MB_SIZE);

@@ -455,14 +455,14 @@ final class TiffFile implements ImageFile {
             if ((type == null && !ownedTag) || length < 0) {
                 continue;
             }
-            budget[0] += length;
-            LimitChecks.checkAllocation(limits, budget[0]);
             byte[] bytes;
             try {
                 bytes = ifd.value(index, limits);
             } catch (MediaException.Malformed exception) {
                 continue;
             }
+            budget[0] += length;
+            LimitChecks.checkAllocation(limits, budget[0]);
             if (ownedTag) {
                 owned.put(tag, bytes);
             } else {

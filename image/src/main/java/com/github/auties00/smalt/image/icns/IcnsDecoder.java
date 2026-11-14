@@ -588,8 +588,14 @@ public final class IcnsDecoder {
                         if (startsWith(data, offset, length, PNG_SIGNATURE)) {
                             encoding = IcnsEntry.Encoding.PNG;
                             if (length >= 26) {
-                                width = (int) Math.min(Integer.MAX_VALUE, ByteArrays.u32be(data, offset + 16));
-                                height = (int) Math.min(Integer.MAX_VALUE, ByteArrays.u32be(data, offset + 20));
+                                // the element's nominal size stands for a header size PNG does not allow
+                                var pngWidth = ByteArrays.u32be(data, offset + 16);
+                                var pngHeight = ByteArrays.u32be(data, offset + 20);
+                                if (pngWidth > 0 && pngWidth <= Integer.MAX_VALUE && pngHeight > 0
+                                        && pngHeight <= Integer.MAX_VALUE) {
+                                    width = (int) pngWidth;
+                                    height = (int) pngHeight;
+                                }
                                 var channels = switch (data[offset + 25]) {
                                     case 0, 3 -> 1;
                                     case 4 -> 2;

@@ -710,7 +710,7 @@ final class VectorSynthesisKernel implements SynthesisKernel {
         vy = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 512));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.SUB, vz.lanewise(VectorOperators.MUL, w0)));
-        var scale = FloatVector.broadcast(SPECIES, ScalarSynthesisKernel.OUTPUT_SCALE);
+        var scale = FLOAT_VECTOR.cast(FloatVector.broadcast(SPECIES, ScalarSynthesisKernel.OUTPUT_SCALE));
         a.lanewise(VectorOperators.MUL, scale).intoArray(r, 0);
         b.lanewise(VectorOperators.MUL, scale).intoArray(r, 4);
     }
@@ -778,7 +778,7 @@ final class VectorSynthesisKernel implements SynthesisKernel {
         vy = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 512));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.SUB, vz.lanewise(VectorOperators.MUL, w0)));
-        var scale = FloatVector.broadcast(WIDE, ScalarSynthesisKernel.OUTPUT_SCALE);
+        var scale = WIDE_VECTOR.cast(FloatVector.broadcast(WIDE, ScalarSynthesisKernel.OUTPUT_SCALE));
         a.lanewise(VectorOperators.MUL, scale).intoArray(r, 0);
         b.lanewise(VectorOperators.MUL, scale).intoArray(r, 8);
     }

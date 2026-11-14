@@ -461,9 +461,11 @@ public final class Ac3Decoder implements AudioDecoder {
         independent.reconstruct();
         var buffer = render(header, lastDependent, dependentCount > 0);
         lastDependentCount = 0;
-        for (var frame : pendingDependents) {
-            if (frame[2] >= 0 && !lastDependent(frame[2])) {
-                lastDependentIds[lastDependentCount++] = frame[2];
+        if (extensions) {
+            for (var frame : pendingDependents) {
+                if (frame[2] >= 0 && !lastDependent(frame[2])) {
+                    lastDependentIds[lastDependentCount++] = frame[2];
+                }
             }
         }
         concealable = true;

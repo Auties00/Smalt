@@ -101,9 +101,11 @@ final class DolbyVisionRpuReader {
         if (!av1 && config != null && NalRecords.looksLikeHevc(config)) {
             try {
                 var record = NalRecords.parseHevc(config);
-                size = record.lengthSize();
-                for (var set : record.parameterSets()) {
-                    visitNal(set, 0, set.length);
+                if (record != null) {
+                    size = record.lengthSize();
+                    for (var set : record.parameterSets()) {
+                        visitNal(set, 0, set.length);
+                    }
                 }
             } catch (MediaException exception) {
                 size = 0;

@@ -796,7 +796,7 @@ jobs:
             nightly=true
           fi
           if [ "$weekly" = true ]; then
-            matrix='{"os":["windows-latest","macos-latest","ubuntu-24.04-arm"],"module":["core","image","audio","video","mpeg","raw","it"]}'
+            matrix='{"os":["windows-latest","macos-latest","ubuntu-24.04-arm"],"module":["core","image","audio","video","mpeg","mpeg-aac-1","mpeg-aac-2","raw","it"]}'
           elif [ "$nightly" = true ]; then
             matrix='{"os":["windows-latest","macos-latest"],"module":["it"]}'
           else
@@ -807,6 +807,9 @@ jobs:
   # The full tier on Windows, macOS and Linux arm64, one module per job. Each job downloads the vectors its tests
   # ask for (SMALT_CONFORMANCE_DOWNLOAD) instead of the whole tier, so neither the runners' disks nor the cache hold
   # the 14 GB; the job summary reports the runtime of each, and the skip baseline gates each job.
+  # The mpeg module takes more than the 330 minutes of a job (its AAC conformance sets alone about four hours on
+  # Linux arm64), so it runs in three shards: mpeg-aac-1 and mpeg-aac-2 split the tests of audio.aac, and mpeg runs
+  # the others.
   weekly-full:
     name: full tier (${{ matrix.os }}, ${{ matrix.module }})
     needs: [plan, oracles, oracles-desktop]
@@ -835,6 +838,23 @@ jobs:
         shell: bash
         run: echo "SMALT_SKIP_JOB=$(echo '${{ runner.os }}-${{ runner.arch }}-vector-full' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
 
+      # The Maven module of the shard and its surefire filter (empty for a whole module). A filter replaces
+      # surefire's default includes, so it names them again, and it excludes nested classes, which their enclosing
+      # class runs (selected as well, they would run twice).
+      - name: Select the shard
+        shell: bash
+        run: |
+          aac='com/github/auties00/smalt/audio/aac'
+          first="$aac/AacErrorResilientConformanceTest,$aac/AacErrorProtectionConformanceTest,$aac/AacConformanceTest"
+          case '${{ matrix.module }}' in
+            mpeg-aac-1) module=mpeg; tests="$first,!**/*\$*" ;;
+            mpeg-aac-2) module=mpeg; tests="$aac/**/*Test,$aac/**/*Tests,!${first//,/,!},!**/*\$*" ;;
+            mpeg) module=mpeg; tests="**/Test*,**/*Test,**/*Tests,**/*TestCase,!$aac/**/*,!**/*\$*" ;;
+            *) module='${{ matrix.module }}'; tests='' ;;
+          esac
+          echo "SHARD_MODULE=$module" >> "$GITHUB_ENV"
+          echo "SHARD_TESTS=$tests" >> "$GITHUB_ENV"
+
       - uses: ./.github/actions/oracles
 
       # The smoke tier from the cache; the tests download the rest of the full tier.
@@ -848,7 +868,7 @@ jobs:
 
       - name: Build the modules it needs
         shell: bash
-        run: mvn -B -ntp -q -pl ${{ matrix.module }} -am install -DskipTests -Dmaven.javadoc.skip=true
+        run: mvn -B -ntp -q -pl "$SHARD_MODULE" -am install -DskipTests -Dmaven.javadoc.skip=true
 
       - name: Test the module on the full tier
         id: test
@@ -856,7 +876,11 @@ jobs:
         run: |
           start=$(date +%s)
           status=0
-          mvn -B -ntp -fae -pl ${{ matrix.module }} verify || status=$?
+          filter=()
+          if [ -n "$SHARD_TESTS" ]; then
+            filter=("-Dtest=$SHARD_TESTS" -Dsurefire.failIfNoSpecifiedTests=false)
+          fi
+          mvn -B -ntp -fae -pl "$SHARD_MODULE" verify "${filter[@]}" || status=$?
           echo "| ${{ matrix.os }} | ${{ matrix.module }} | $(( ($(date +%s) - start) / 60 )) min |" >> "$GITHUB_STEP_SUMMARY"
           exit $status
 
@@ -882,8 +906,8 @@ jobs:
         with:
           name: weekly-reports-${{ env.SMALT_SKIP_JOB }}-${{ matrix.module }}
           path: |
-            ${{ matrix.module }}/target/surefire-reports/
-            ${{ matrix.module }}/hs_err_pid*.log
+            ${{ env.SHARD_MODULE }}/target/surefire-reports/
+            ${{ env.SHARD_MODULE }}/hs_err_pid*.log
             target/skips-*.tsv
           retention-days: 14
 

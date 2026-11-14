@@ -247,7 +247,10 @@ final class ElementaryProbe {
                 }
                 return end <= header.length && isSequenceHeader(header, (int) payload, (int) (end - payload));
             }
-            position += obuLength;
+            if (obuLength >= frameEnd - position) {
+                return false;
+            }
+            position += (int) obuLength;
         }
         return false;
     }

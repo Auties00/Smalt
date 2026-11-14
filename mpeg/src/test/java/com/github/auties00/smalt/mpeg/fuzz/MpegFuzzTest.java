@@ -298,11 +298,16 @@ class MpegFuzzTest {
         if (layer != 7) {
             options.maxLayer(layer);
         }
+        // the core tracks take the codec of the core only in front of a scalable AAC layer (object types 6 and
+        // 20), as the decoder requires of its arguments
+        var cores = 0;
+        while (cores < configs.size() && isOneOf(objectType(configs.get(cores)), 8, 24)) {
+            cores++;
+        }
+        var scalable = cores < configs.size() && isOneOf(objectType(configs.get(cores)), 6, 20);
         var tracks = new ArrayList<AudioTrack>();
-        var core = true;
         for (var config : configs) {
-            var objectType = config.length == 0 ? 0 : (config[0] & 0xFF) >>> 3;
-            core &= objectType == 8 || objectType == 24;
+            var core = scalable && tracks.size() < cores;
             tracks.add(AudioTrack.builder().id(tracks.size() + 1).codec(core ? Codec.CELP : Codec.AAC)
                     .timeBase(new Rational(1, 48_000)).codecConfig(config).build());
         }
@@ -394,12 +399,32 @@ class MpegFuzzTest {
             run.output();
         };
         try (var opened = decoder.get()) {
+            // A configuration whose other tracks the decoder ignores (an MPEG Surround stream it does not upmix,
+            // or one embedded in the downmix) takes single access units: decode(List, Consumer) refuses the first
+            // list before decoding anything, and the downmix units are decoded alone from then on.
+            var lists = new boolean[]{true};
             for (var index = 0; index < input.packets().size(); index++) {
                 var packets = new ArrayList<Packet>();
                 for (var unit : units(input.packets().get(index).data())) {
                     packets.add(new Packet(1, unit, index * 1024L, index * 1024L, 1024, true));
                 }
-                run.step("packet " + index, () -> opened.decode(packets, sink));
+                var first = index == 0;
+                run.step("packet " + index, () -> {
+                    if (lists[0]) {
+                        try {
+                            opened.decode(packets, sink);
+                            return;
+                        } catch (IllegalStateException exception) {
+                            if (!first) {
+                                throw exception;
+                            }
+                            lists[0] = false;
+                        }
+                    }
+                    if (!packets.isEmpty()) {
+                        opened.decode(packets.getFirst(), sink);
+                    }
+                });
             }
         }
     }
@@ -658,11 +683,16 @@ class MpegFuzzTest {
         if (layer != 7) {
             options.maxLayer(layer);
         }
+        // the core tracks take the codec of the core only in front of a scalable AAC layer (object types 6 and
+        // 20), as the decoder requires of its arguments
+        var cores = 0;
+        while (cores < configs.size() && isOneOf(objectType(configs.get(cores)), 7, 21)) {
+            cores++;
+        }
+        var scalable = cores < configs.size() && isOneOf(objectType(configs.get(cores)), 6, 20);
         var tracks = new ArrayList<AudioTrack>();
-        var core = true;
         for (var config : configs) {
-            var objectType = config.length == 0 ? 0 : (config[0] & 0xFF) >>> 3;
-            core &= objectType == 7 || objectType == 21;
+            var core = scalable && tracks.size() < cores;
             tracks.add(AudioTrack.builder().id(tracks.size() + 1).codec(core ? Codec.TWINVQ : Codec.AAC)
                     .timeBase(new Rational(1, 48_000)).codecConfig(config).build());
         }
@@ -927,5 +957,31 @@ class MpegFuzzTest {
                 encoder.flush(packet -> run.output());
             }
         });
+    }
+
+    /**
+     * Returns the object type of an {@code AudioSpecificConfig}, the way the CELP and TwinVQ core targets read it.
+     *
+     * @param config the configuration
+     * @return its five-bit object type, or 0 when it is empty
+     */
+    private static int objectType(byte[] config) {
+        return config.length == 0 ? 0 : (config[0] & 0xFF) >>> 3;
+    }
+
+    /**
+     * Returns whether a value is one of a set.
+     *
+     * @param value the value
+     * @param set the set
+     * @return {@code true} when {@code set} holds {@code value}
+     */
+    private static boolean isOneOf(int value, int... set) {
+        for (var candidate : set) {
+            if (candidate == value) {
+                return true;
+            }
+        }
+        return false;
     }
 }

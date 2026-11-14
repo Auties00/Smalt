@@ -788,7 +788,7 @@ public final class JpegReconstructor {
      * Reads padding bits for the end of an entropy-coded segment.
      *
      * @param count the number of bits, 1 to 7
-     * @return the bits
+     * @return the bits, the first stored one in the most significant position, as they are written
      * @throws MediaException.Malformed if the stored padding bits run out
      */
     int paddingBits(int count) {
@@ -798,7 +798,11 @@ public final class JpegReconstructor {
         if (padding.bitPosition() + count > header.padding.length * 8L) {
             throw JbrdHeader.malformed("padding bits exhausted");
         }
-        return padding.readBits(count);
+        var bits = 0;
+        for (var i = 0; i < count; i++) {
+            bits = bits << 1 | padding.readBits(1);
+        }
+        return bits;
     }
 
     /**
