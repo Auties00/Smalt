@@ -1,0 +1,9 @@
+# name	MD5 of the decoded planes of every frame (16-bit little endian above 8 bits), Smalt's decode; the 10-bit 4:2:2 and 4:4:4 vectors without field DCT or quant matrices also match FFmpeg within one unit
+studio-dct-420-8-progressive	bacb48a61723c092845d809dfc99ff64
+studio-dct-422-10-field-dct	c615601770dcfb6712e11e2f4a86f744
+studio-dct-422-10-fields	a10c452e10797d85e4bfb401895ef5d5
+studio-dct-422-10-interlaced	dcd4000aa735d1a2001729ae4149b300
+studio-dct-422-10-tools	a5f0c159960e740fb465d5b5e514775f
+studio-dct-444-10-progressive	0fecdd7b339cf4eb1a86dbb470b82b85
+studio-dct-444-12-progressive	abfd81dd7d8c08c13832d41712a8de04
+studio-mixed-422-10	6bc1f55ba186e19881da07799e92cfd2

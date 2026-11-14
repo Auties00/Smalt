@@ -56,7 +56,8 @@ class MatroskaTagEditTest {
         assertFalse(after.cues.isEmpty() && !before.cues.isEmpty());
         var read = TagEditor.read(MediaSource.of(rewritten));
         assertEquals("New", read.get(StandardTag.TITLE).orElseThrow());
-        assertEquals(1, read.pictures().size());
+        // the WebM specification allows no attachments, so a WebM file gains no cover
+        assertEquals(name.equals("webm") ? 0 : 1, read.pictures().size());
         var smaller = TagEditor.write(rewritten, tags.toBuilder().set("CUSTOM", "y").build(), TagWriteOptions.defaults());
         assertEquals(rewritten.length, smaller.length, "the smaller tags fit in place");
         MatroskaStructure.check(smaller);

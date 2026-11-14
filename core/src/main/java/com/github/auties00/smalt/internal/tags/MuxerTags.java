@@ -4,7 +4,9 @@ import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.io.ByteWriter;
 import com.github.auties00.smalt.metadata.MediaTags;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 
@@ -17,33 +19,62 @@ public final class MuxerTags {
      * The ID3v2 version muxers write.
      */
     private static final int ID3_VERSION = 4;
+
+    /**
+     * The GUID of the Wave64 {@code list} chunk, the counterpart of a RIFF {@code LIST} chunk, in file order.
+     */
+    private static final byte[] WAVE64_LIST = {0x6C, 0x69, 0x73, 0x74, 0x2F, (byte) 0x91, (byte) 0xCF, 0x11,
+            (byte) 0xA5, (byte) 0xD6, 0x28, (byte) 0xDB, 0x04, (byte) 0xC1, 0x00, 0x00};
+
+    /**
+     * The GUID of the Wave64 {@code summarylist} chunk, {@code 925F94BC-525A-11D2-86DC-00C04F8EDB8A}, in file order.
+     */
+    private static final byte[] WAVE64_SUMMARY_LIST = {(byte) 0xBC, (byte) 0x94, 0x5F, (byte) 0x92, 0x5A, 0x52,
+            (byte) 0xD2, 0x11, (byte) 0x86, (byte) 0xDC, 0x00, (byte) 0xC0, 0x4F, (byte) 0x8E, (byte) 0xDB, (byte) 0x8A};
+
     private MuxerTags() {
         throw new AssertionError();
     }
 
     /**
-     * Encodes an MP4 {@code udta} box holding an iTunes {@code meta}/{@code ilst} and, with
-     * chapters, a Nero {@code chpl} box.
+     * Returns whether tags hold nothing a container stores for the whole file.
+     *
+     * @param tags the tags whose track tags are not counted
+     * @return {@code true} when they hold no entry, picture, chapter or XMP packet, whatever their track tags
+     */
+    public static boolean isGlobalEmpty(MediaTags tags) {
+        return tags.entries().isEmpty() && tags.pictures().isEmpty() && tags.chapters().isEmpty()
+                && tags.xmp().isEmpty();
+    }
+
+    /**
+     * Encodes the boxes of the tags at the end of an MP4 {@code moov}: a {@code udta} box holding an iTunes
+     * {@code meta}/{@code ilst}, the 3GPP {@code loci} boxes of the {@code loci} key, a Nero {@code chpl} box of the
+     * chapters and, in a QuickTime movie, an {@code XMP_} atom of the XMP packet; then a QuickTime keyed metadata
+     * {@code meta} box (handler {@code mdta}) holding the reverse-DNS keys, such as {@code com.apple.quicktime.make}.
      *
      * @param tags the tags and chapters to store
-     * @return the box, or an empty array for empty tags
+     * @param quickTime whether the movie is a QuickTime movie rather than an ISO file
+     * @return the boxes, or an empty array for empty tags
+     * @throws com.github.auties00.smalt.MediaException.Unsupported if a value of an iTunes integer
+     * atom, such as {@code tmpo}, is not an integer the atom holds, or a value of the {@code loci} key is not ISO 6709
+     * coordinates
      */
-    public static byte[] mp4UserData(MediaTags tags) {
-        if (tags.isEmpty()) {
+    public static byte[] mp4UserData(MediaTags tags, boolean quickTime) {
+        if (isGlobalEmpty(tags)) {
             return new byte[0];
         }
-        var out = new ByteWriter(4096);
-        if (!tags.entries().isEmpty() || !tags.pictures().isEmpty()) {
-            var meta = new ByteWriter(4096);
-            meta.u32be(0);
-            meta.bytes(Mp4TagFile.handler());
-            meta.bytes(Mp4TagFile.ilst(tags, List.of(), new HashSet<>()));
-            Mp4Boxes.box(out, "meta", meta.toByteArray());
-        }
-        if (!tags.chapters().isEmpty()) {
-            out.bytes(Mp4TagFile.chapterBox(tags.chapters()));
-        }
-        return Mp4Boxes.box("udta", out.toByteArray());
+        return Mp4TagFile.movieBoxes(tags, quickTime);
+    }
+
+    /**
+     * Encodes the top-level {@code uuid} box (XMP Specification Part 3) holding the XMP packet of an ISO file.
+     *
+     * @param tags the tags whose packet is encoded
+     * @return the box, or an empty array without a packet
+     */
+    public static byte[] mp4Xmp(MediaTags tags) {
+        return Mp4TagFile.xmpBox(tags);
     }
 
     /**
@@ -53,7 +84,7 @@ public final class MuxerTags {
      * @return the tag, or an empty array for empty tags
      */
     public static byte[] id3v2(MediaTags tags) {
-        if (tags.isEmpty()) {
+        if (isGlobalEmpty(tags)) {
             return new byte[0];
         }
         return Id3v2Tag.encode(tags, List.of(), null, ID3_VERSION, 0, 0);
@@ -87,10 +118,13 @@ public final class MuxerTags {
     /**
      * Replaces the comment and picture blocks of a FLAC stream header.
      *
-     * <p>The {@code STREAMINFO}, {@code SEEKTABLE}, {@code APPLICATION} and {@code CUESHEET}
-     * blocks are kept in order; the {@code VORBIS_COMMENT} block (keeping its vendor string) and
-     * the {@code PICTURE} blocks are rebuilt from the tags, and {@code PADDING} is dropped. The
-     * last block gets the last-block flag.
+     * <p>The {@code STREAMINFO}, {@code SEEKTABLE} and {@code APPLICATION} blocks are kept in
+     * order; the {@code VORBIS_COMMENT} block (keeping its vendor string) and the {@code PICTURE}
+     * blocks are rebuilt from the tags and follow them, and the {@code PADDING} blocks come last, so
+     * that a header whose seek table grows into its padding keeps its length once tagged. The
+     * {@code CUESHEET} of the header is dropped: chapters, besides their {@code CHAPTERxxx} comments,
+     * get one built from them ({@link FlacCuesheet}) when there are at most
+     * {@value FlacCuesheet#MAX_CHAPTERS}. The last block gets the last-block flag.
      *
      * @param header the {@code fLaC} marker and well-formed metadata blocks
      * @param tags the tags, pictures and chapters to store
@@ -99,27 +133,40 @@ public final class MuxerTags {
      */
     public static byte[] flacMetadata(byte[] header, MediaTags tags) {
         var blocks = new ArrayList<byte[]>();
+        var padding = new ArrayList<byte[]>();
         var vendor = VorbisComment.DEFAULT_VENDOR;
+        byte[] cuesheet = null;
+        if (header.length >= 8 + 18 && (header[4] & 0x7F) == 0) {
+            var rate = (ByteArrays.u24be(header, 8 + 10) >>> 4) & 0xFFFFF;
+            var total = ((header[8 + 13] & 0x0FL) << 32) | ByteArrays.u32be(header, 8 + 14);
+            cuesheet = FlacCuesheet.encode(tags.chapters(), rate, total);
+        }
         var offset = 4;
         while (offset + 4 <= header.length) {
             var type = header[offset] & 0x7F;
             var length = ByteArrays.u24be(header, offset + 1);
             var end = Math.min(header.length, offset + 4 + length);
+            if (type == 5) {
+                offset = end;
+                continue;
+            }
             switch (type) {
-                case 1, 6 -> {
+                case 1 -> padding.add(withType(1, java.util.Arrays.copyOfRange(header, offset + 4, end)));
+                case 6 -> {
                 }
                 case 4 -> vendor = VorbisComment.parse(header, offset + 4, end - offset - 4).vendor();
-                default -> blocks.add(java.util.Arrays.copyOfRange(header, offset + 4, end));
-            }
-            if (type != 1 && type != 4 && type != 6) {
-                blocks.set(blocks.size() - 1, withType(type, blocks.getLast()));
+                default -> blocks.add(withType(type, java.util.Arrays.copyOfRange(header, offset + 4, end)));
             }
             offset = end;
+        }
+        if (cuesheet != null) {
+            blocks.add(withType(5, cuesheet));
         }
         blocks.add(withType(4, VorbisComment.encode(vendor, tags.toBuilder().pictures(List.of()).build(), false)));
         for (var picture : flacPictures(tags)) {
             blocks.add(withType(6, picture));
         }
+        blocks.addAll(padding);
         var out = new ByteWriter(header.length + 1024);
         out.bytes(header, 0, 4);
         for (var index = 0; index < blocks.size(); index++) {
@@ -161,30 +208,165 @@ public final class MuxerTags {
      * @return the three elements in this order, each empty when there is nothing to write
      */
     public static byte[][] matroska(MediaTags tags) {
+        return matroska(tags, List.of(), false);
+    }
+
+    /**
+     * Encodes the Matroska {@code Tags}, {@code Chapters} and {@code Attachments} elements, the {@code Tags}
+     * element holding the given track tags first.
+     *
+     * @param tags the tags, pictures and chapters to store
+     * @param trackTags the complete {@code Tag} elements of the tracks
+     * @param webm whether the elements are for a WebM file, which stores the chapters in their
+     * {@linkplain MatroskaTags#webmEditions WebM form} and no {@code Attachments} element, as the WebM
+     * specification does not support attachments
+     * @return the three elements in this order, each empty when there is nothing to write
+     */
+    public static byte[][] matroska(MediaTags tags, List<byte[]> trackTags, boolean webm) {
         return new byte[][]{
-                MatroskaTags.encodeTags(tags, List.of()),
-                MatroskaTags.encodeChapters(tags.chapters()),
-                MatroskaTags.encodeAttachments(tags.pictures(), List.of())
+                MatroskaTags.encodeTags(tags, trackTags),
+                MatroskaTags.encodeEditions(tags.editions(), webm),
+                webm ? new byte[0] : MatroskaTags.encodeAttachments(tags.pictures(), tags.attachments(), List.of())
         };
     }
 
     /**
-     * Encodes the metadata chunks of a WAV or AIFF file: the text chunks, then an ID3v2 chunk
-     * when the tags hold more than the text chunks can.
+     * Encodes the {@code LIST INFO} chunk of an AVI file: the first value of every entry {@code INFO} has an
+     * identifier for.
      *
-     * @param tags the tags and pictures to store
-     * @param aiff whether the file is AIFF
-     * @return the complete chunks, with headers and pad bytes
+     * @param tags the tags to store
+     * @return the complete chunk, or an empty array when no entry fits one
      */
-    public static List<byte[]> riffChunks(MediaTags tags, boolean aiff) {
+    public static byte[] riffInfo(MediaTags tags) {
+        var chunk = RiffTagFile.infoList(tags.entries(), false, new HashSet<>());
+        return chunk != null ? chunk : new byte[0];
+    }
+
+    /**
+     * Encodes a Matroska {@code Tag} element targeting one track.
+     *
+     * @param trackUid the {@code TrackUID} of the track
+     * @param entries the tags of the track
+     * @return the complete element
+     */
+    public static byte[] matroskaTrackTag(long trackUid, List<MediaTags.Entry> entries) {
+        return MatroskaTags.encodeTrackTag(trackUid, entries);
+    }
+
+    /**
+     * Encodes the metadata chunks of a WAV or AIFF file: the text chunks, an ID3v2 chunk when the tags hold
+     * pictures or more than the text chunks can, the {@code _PMX} or {@code APPL} chunk of the XMP packet, then the
+     * descriptive chunks {@link RiffMetadataChunks} writes
+     * (the Broadcast Wave and sampler chunks and the cue points of a WAV file, the markers and instrument of an
+     * AIFF file), which hold the chapters.
+     *
+     * @param tags the tags, pictures and chapters to store
+     * @param aiff whether the file is AIFF
+     * @param sampleRate the sampling rate of the audio, in hertz, or 0 when unknown, which writes no chapters
+     * @return the complete chunks, with headers and pad bytes
+     * @throws IllegalArgumentException if a value of a key of a descriptive chunk is malformed
+     */
+    public static List<byte[]> riffChunks(MediaTags tags, boolean aiff, int sampleRate) {
         var result = new ArrayList<byte[]>();
-        if (tags.isEmpty()) {
-            return result;
+        var plain = RiffMetadataChunks.withoutOwned(tags, aiff).toBuilder().noXmp().build();
+        if (!plain.entries().isEmpty() || !plain.pictures().isEmpty()) {
+            var allText = RiffTagFile.encodeText(aiff, aiff, plain, result, new HashSet<>());
+            if (!allText || !plain.pictures().isEmpty()) {
+                result.add(RiffTagFile.chunk(aiff, aiff ? "ID3 " : "id3 ",
+                        id3v2(plain.toBuilder().chapters(List.of()).build())));
+            }
         }
-        var allText = RiffTagFile.encodeText(aiff, tags, result, new HashSet<>());
-        if (!allText || !tags.pictures().isEmpty() || !tags.chapters().isEmpty()) {
-            result.add(RiffTagFile.chunk(aiff, aiff ? "ID3 " : "id3 ", id3v2(tags)));
+        if (tags.xmp().isPresent()) {
+            result.add(RiffTagFile.xmpChunk(aiff, aiff, tags.xmp().get()));
+        }
+        if (aiff) {
+            result.addAll(RiffMetadataChunks.encodeMarkers(tags.chapters(), tags, sampleRate));
+        } else {
+            result.addAll(RiffMetadataChunks.waveChunks(tags, true, sampleRate));
         }
         return result;
+    }
+
+    /**
+     * Encodes the metadata chunks of a Sony Wave64 file: a {@code summarylist} chunk holding the values of the keys
+     * a WAV {@code LIST/INFO} chunk stores, an {@code id3 } chunk with every tag when the tags hold pictures or more
+     * than the {@code summarylist} chunk can, then the descriptive chunks of a WAV file
+     * ({@link RiffMetadataChunks#waveChunks}), the {@code LIST adtl} chunk of the cue points becoming a Wave64
+     * {@code list} chunk. The XMP packet is not stored.
+     *
+     * <p>A {@code summarylist} chunk holds a 32-bit little-endian entry count, then per entry the {@code INFO}
+     * identifier, the 32-bit little-endian byte length of its value and the value in UTF-16LE with a terminating
+     * NUL, the entries following each other without padding.
+     *
+     * @param tags the tags, pictures and chapters to store
+     * @param sampleRate the sampling rate of the audio, in hertz, or 0 when unknown, which writes no chapters
+     * @return the complete chunks, each with its 24-byte header and padded to a multiple of eight bytes
+     * @throws IllegalArgumentException if a value of a key of a descriptive chunk is malformed
+     */
+    public static List<byte[]> wave64Chunks(MediaTags tags, int sampleRate) {
+        var result = new ArrayList<byte[]>();
+        var plain = RiffMetadataChunks.withoutOwned(tags, false).toBuilder().noXmp().build();
+        if (!plain.entries().isEmpty() || !plain.pictures().isEmpty()) {
+            var summary = new ByteWriter(256);
+            summary.u32le(0);
+            var stored = new HashSet<String>();
+            var all = true;
+            for (var entry : plain.entries()) {
+                var id = RiffTagFile.infoId(entry.key());
+                if (id == null || !stored.add(id)) {
+                    all = false;
+                    continue;
+                }
+                var text = (entry.value() + "\0").getBytes(StandardCharsets.UTF_16LE);
+                summary.fourCc(id);
+                summary.u32le(text.length);
+                summary.bytes(text);
+            }
+            if (!stored.isEmpty()) {
+                summary.patch32le(0, stored.size());
+                result.add(wave64Chunk(WAVE64_SUMMARY_LIST, summary.toByteArray()));
+            }
+            if (!all || !plain.pictures().isEmpty()) {
+                result.add(wave64Chunk(wave64Guid("id3 "), id3v2(plain.toBuilder().chapters(List.of()).build())));
+            }
+        }
+        for (var chunk : RiffMetadataChunks.waveChunks(tags, true, sampleRate)) {
+            var id = new String(chunk, 0, 4, StandardCharsets.ISO_8859_1);
+            var length = (int) ByteArrays.u32le(chunk, 4);
+            var body = Arrays.copyOfRange(chunk, 8, 8 + length);
+            result.add(wave64Chunk(id.equals("LIST") ? WAVE64_LIST : wave64Guid(id), body));
+        }
+        return result;
+    }
+
+    /**
+     * Returns the GUID that names a Wave64 chunk of a RIFF identifier: the identifier followed by the GUID suffix of
+     * the Wave64 WAVE chunks.
+     *
+     * @param id the four-character identifier
+     * @return the GUID in file order
+     */
+    private static byte[] wave64Guid(String id) {
+        var guid = new byte[]{0, 0, 0, 0, (byte) 0xF3, (byte) 0xAC, (byte) 0xD3, 0x11, (byte) 0x8C, (byte) 0xD1, 0x00,
+                (byte) 0xC0, 0x4F, (byte) 0x8E, (byte) 0xDB, (byte) 0x8A};
+        System.arraycopy(id.getBytes(StandardCharsets.ISO_8859_1), 0, guid, 0, 4);
+        return guid;
+    }
+
+    /**
+     * Builds a Wave64 chunk: the GUID, the 64-bit little-endian size counting the 24-byte header, the body and the
+     * zeros that pad it to a multiple of eight bytes.
+     *
+     * @param guid the GUID in file order
+     * @param body the chunk content after the header
+     * @return the chunk
+     */
+    private static byte[] wave64Chunk(byte[] guid, byte[] body) {
+        var out = new ByteWriter(body.length + 31);
+        out.bytes(guid);
+        out.u64le(24L + body.length);
+        out.bytes(body);
+        out.zeros(-body.length & 7);
+        return out.toByteArray();
     }
 }

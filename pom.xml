@@ -28,6 +28,7 @@
     <modules>
         <module>build</module>
         <module>bom</module>
+        <module>kernel-lint</module>
         <module>core</module>
         <module>image</module>
         <module>audio</module>
@@ -44,10 +45,44 @@
         <junit.version>5.13.4</junit.version>
         <jmh.version>1.37</jmh.version>
         <chicory.version>1.7.5</chicory.version>
+        <jazzer.version>0.30.0</jazzer.version>
+        <!-- The JUnit Platform release of junit.version; the standalone Jazzer runner needs its launcher -->
+        <junit.platform.version>1.13.4</junit.platform.version>
+        <!--
+            Jazzer instruments the classes loaded after a fuzz test starts. A normal build replays the fuzz inputs
+            without that instrumentation, so the other tests of the same JVM run unchanged; fuzzing sets it to true
+            (tools/fuzz/README.md).
+        -->
+        <jazzer.hooks>false</jazzer.hooks>
         <!-- false runs every kernel on its scalar twin (CI's scalar leg): mvn test -Dsmalt.test.simd=false -->
         <smalt.test.simd>true</smalt.test.simd>
-        <!-- jdk.management: the allocation tests read the per-thread allocation counter reflectively -->
-        <smalt.test.argLine>--add-modules jdk.incubator.vector,jdk.management --enable-native-access=ALL-UNNAMED -Xss4m -Dsmalt.simd=${smalt.test.simd}</smalt.test.argLine>
+        <!-- Extra test JVM options, for example the hostile-input job's 256 MiB heap: mvn test -Dsmalt.test.jvmArgs=-Xmx256m -->
+        <smalt.test.jvmArgs></smalt.test.jvmArgs>
+        <!-- The JUnit tags a build leaves out: the multi-gigabyte conformance suites run in their own CI jobs
+             (Av1ArgonTest: mvn test -Dsmalt.test.excludedGroups=none -Dgroups=argon -Dsmalt.test.argon=profile0_core) -->
+        <smalt.test.excludedGroups>argon</smalt.test.excludedGroups>
+        <!-- The coverage agent the coverage profile adds to the test JVMs -->
+        <smalt.test.agent></smalt.test.agent>
+        <!-- jdk.management: the allocation tests read the per-thread allocation counter reflectively;
+             EnableDynamicAgentLoading: the fuzz tests' Jazzer attaches its agent at run time. Tests run at the
+             JVM's default thread stack size, as applications do. -->
+        <!--
+            Test JVMs per module, side by side (surefire's forkCount: a number, or a multiple of the cores such as
+            1C), each reused for many test classes: mvn verify -Dsmalt.test.forks=1C. The it module (its JIT stress
+            test and guard self-test) and the capture tests always run in one. Helpers that several test classes
+            share write under the fork's own target directory (the test kit's Scratch); smalt.test.heap caps each
+            fork's heap when several share a machine, for example -XX:MaxRAMPercentage=18 with four.
+        -->
+        <smalt.test.forks>1</smalt.test.forks>
+        <smalt.test.heap></smalt.test.heap>
+        <smalt.test.argLine>${smalt.test.agent} --add-modules jdk.incubator.vector,jdk.management --enable-native-access=ALL-UNNAMED -XX:+EnableDynamicAgentLoading -Dsmalt.simd=${smalt.test.simd} ${smalt.test.heap} ${smalt.test.jvmArgs}</smalt.test.argLine>
+        <!--
+            The forbidden-apis check of the Vector API bans (tools/lint/forbidden-vector.txt) runs in verify only when
+            the Maven JVM has the incubator module, which this repository's .mvn/jvm.config adds and .mvn/maven.config
+            turns this property off for; a reactor that builds Smalt from elsewhere (Cobalt's local-smalt profile)
+            reads neither, so the check stays off there.
+        -->
+        <smalt.forbiddenapis.skip>true</smalt.forbiddenapis.skip>
         <!-- The release profile sets it: these test jars feed only the unpublished it module, so they are not published
              (core's test jar, the test kit every module's tests compile against, is built in every profile) -->
         <smalt.skipTestJar>false</smalt.skipTestJar>
@@ -153,6 +188,27 @@
             <version>${jmh.version}</version>
         </dependency>
         <dependency>
+            <groupId>org.junit.platform</groupId>
+            <artifactId>junit-platform-launcher</artifactId>
+            <version>${junit.platform.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.code-intelligence</groupId>
+            <artifactId>jazzer-junit</artifactId>
+            <version>${jazzer.version}</version>
+            <!-- JUnit comes from junit.version, not the older release jazzer-junit was built against -->
+            <exclusions>
+                <exclusion>
+                    <groupId>org.junit.jupiter</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.junit.platform</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
             <groupId>com.dylibso.chicory</groupId>
             <artifactId>runtime</artifactId>
             <version>${chicory.version}</version>
@@ -222,6 +278,14 @@
                     <artifactId>maven-surefire-plugin</artifactId>
                     <configuration>
                         <argLine>${smalt.test.argLine}</argLine>
+                        <forkCount>${smalt.test.forks}</forkCount>
+                        <reuseForks>true</reuseForks>
+                        <excludedGroups>${smalt.test.excludedGroups}</excludedGroups>
+                        <systemPropertyVariables>
+                            <jazzer.hooks>${jazzer.hooks}</jazzer.hooks>
+                            <!-- The test kit's Scratch directories: one per fork -->
+                            <smalt.test.fork>fork-${surefire.forkNumber}</smalt.test.fork>
+                        </systemPropertyVariables>
                     </configuration>
                 </plugin>
                 <plugin>
@@ -270,6 +334,67 @@
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>
+            </plugin>
+            <!--
+                The Vector API bans: no convenience method (vector-convenience) and no reinterpretAs*
+                (vector-reinterpret) anywhere in the main code, and no jdk.incubator.vector type outside the Vector*
+                classes (vector-confined), since linking a class that names one fails on a JVM started without the
+                module; and no transcendental java.lang.Math method (strict-math, tools/lint/forbidden-math.txt),
+                whose results may depend on the platform. KernelLintSuppress on a method accepts a finding, as for the
+                kernel lint.
+            -->
+            <plugin>
+                <groupId>de.thetaphi</groupId>
+                <artifactId>forbiddenapis</artifactId>
+                <configuration>
+                    <skip>${smalt.forbiddenapis.skip}</skip>
+                    <failOnUnsupportedJava>true</failOnUnsupportedJava>
+                    <suppressAnnotations>
+                        <annotation>**.KernelLintSuppress</annotation>
+                    </suppressAnnotations>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>vector-api</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                        <configuration>
+                            <signaturesFiles>
+                                <signaturesFile>${maven.multiModuleProjectDirectory}/tools/lint/forbidden-vector.txt</signaturesFile>
+                            </signaturesFiles>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>vector-confined</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                        <configuration>
+                            <signatures><![CDATA[
+@defaultMessage [vector-confined] only the Vector* classes may name jdk.incubator.vector types: a class that does fails to link where the module is absent
+jdk.incubator.vector.**
+]]></signatures>
+                            <excludes>
+                                <exclude>**/Vector*.class</exclude>
+                            </excludes>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>strict-math</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                        <configuration>
+                            <signaturesFiles>
+                                <signaturesFile>${maven.multiModuleProjectDirectory}/tools/lint/forbidden-math.txt</signaturesFile>
+                            </signaturesFiles>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>
@@ -352,6 +477,49 @@
                                     <!-- The exported API only: internal packages are exported to Smalt modules at most -->
                                     <excludePackageNames>*.internal:*.internal.*</excludePackageNames>
                                 </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!--
+            Line and branch coverage (JaCoCo) of every module's tests, used as a map of the spec features no test
+            exercises (tools/coverage/README.md). Each module writes target/jacoco.exec and its report under
+            target/site/jacoco; it adds the report of every module together under target/site/jacoco-aggregate:
+                mvn -Pcoverage verify
+                python tools/coverage/coverage.py it/target/site/jacoco-aggregate/jacoco.xml
+        -->
+        <profile>
+            <id>coverage</id>
+            <properties>
+                <smalt.test.agent>@{jacocoArgLine}</smalt.test.agent>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.jacoco</groupId>
+                        <artifactId>jacoco-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>coverage-agent</id>
+                                <goals>
+                                    <goal>prepare-agent</goal>
+                                </goals>
+                                <configuration>
+                                    <propertyName>jacocoArgLine</propertyName>
+                                    <includes>
+                                        <include>com/github/auties00/smalt/**</include>
+                                    </includes>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>coverage-report</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>report</goal>
+                                </goals>
                             </execution>
                         </executions>
                     </plugin>

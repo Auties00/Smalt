@@ -1,0 +1,19 @@
+# demux dump of raw/avc-marking-mmco5; regenerate with -Dsmalt.test.updateDumps=true
+format H264
+duration -1
+seekable true
+track 1 VIDEO H264 timebase=1/50 duration=? config=36:1a457adb
+  video 16x16 orientation=NORMAL rate=25/1
+packets 7
+0 t1 pts=0 dts=-4 dur=2 flags=KEY size=427 crc=167344d5
+1 t1 pts=2 dts=-2 dur=2 flags=- size=9 crc=ecf52304
+2 t1 pts=4 dts=0 dur=2 flags=- size=9 crc=7b7036e8
+3 t1 pts=6 dts=2 dur=2 flags=- size=8 crc=39d8d2e2
+4 t1 pts=? dts=4 dur=0 flags=- size=8 crc=12f58121
+5 t1 pts=8 dts=6 dur=2 flags=KEY size=395 crc=28972d6a
+6 t1 pts=10 dts=8 dur=2 flags=- size=9 crc=ecf52304
+seek 0: t1@0
+seek 80000: t1@0
+seek 160000: t1@5
+seek 240000: end
+seek -1000000: t1@0

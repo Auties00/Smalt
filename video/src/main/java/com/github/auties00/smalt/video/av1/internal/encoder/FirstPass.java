@@ -1,6 +1,6 @@
 package com.github.auties00.smalt.video.av1.internal.encoder;
 
-import com.github.auties00.smalt.image.YuvPicture;
+import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 
 /**
@@ -126,22 +126,52 @@ final class FirstPass {
     }
 
     /**
-     * Widens a picture's luma plane to 16-bit samples.
+     * Widens a picture's luma plane to 16-bit samples at the 8-bit scale, the samples the
+     * statistics are measured on at every bit depth.
      *
-     * @param picture the 4:2:0 picture
+     * @param picture the picture, a {@code YuvPicture} or a {@code Yuv16Picture}
      * @return the plane, of stride the picture width
      */
-    static short[] luma(YuvPicture picture) {
-        var w = picture.width();
-        var h = picture.height();
-        var out = new short[w * h];
-        var y = picture.y();
-        var stride = picture.yStride();
-        for (var r = 0; r < h; r++) {
-            var s = r * stride;
-            var d = r * w;
-            for (var c = 0; c < w; c++) {
-                out[d + c] = (short) (y[s + c] & 0xFF);
+    static short[] luma(Picture picture) {
+        return SourcePlanes.luma8(picture);
+    }
+
+    /**
+     * Resamples a luma plane to another size with bilinear interpolation between the sample
+     * centers, edges clamped.
+     *
+     * @param luma the plane, of stride {@code width}
+     * @param width the plane width
+     * @param height the plane height
+     * @param toWidth the width of the result, positive
+     * @param toHeight the height of the result, positive
+     * @return the resampled plane, of stride {@code toWidth}
+     */
+    static short[] resample(short[] luma, int width, int height, int toWidth, int toHeight) {
+        var out = new short[toWidth * toHeight];
+        // positions in 1/65536 of a source sample, centers aligned: (x + 0.5) * width / toWidth - 0.5
+        var stepX = ((long) width << 16) / toWidth;
+        var stepY = ((long) height << 16) / toHeight;
+        var x0 = new int[toWidth];
+        var fx = new int[toWidth];
+        for (var x = 0; x < toWidth; x++) {
+            var pos = Math.max(0, (stepX >> 1) + x * stepX - (1 << 15));
+            x0[x] = (int) Math.min(pos >> 16, width - 1);
+            fx[x] = x0[x] == width - 1 ? 0 : (int) (pos & 0xFFFF) >> 8;
+        }
+        for (var y = 0; y < toHeight; y++) {
+            var pos = Math.max(0, (stepY >> 1) + y * stepY - (1 << 15));
+            var y0 = (int) Math.min(pos >> 16, height - 1);
+            var fy = y0 == height - 1 ? 0 : (int) (pos & 0xFFFF) >> 8;
+            var row0 = y0 * width;
+            var row1 = fy == 0 ? row0 : row0 + width;
+            var o = y * toWidth;
+            for (var x = 0; x < toWidth; x++) {
+                var a = x0[x];
+                var b = fx[x] == 0 ? a : a + 1;
+                var top = luma[row0 + a] * (256 - fx[x]) + luma[row0 + b] * fx[x];
+                var bottom = luma[row1 + a] * (256 - fx[x]) + luma[row1 + b] * fx[x];
+                out[o + x] = (short) ((top * (256 - fy) + bottom * fy + (1 << 15)) >> 16);
             }
         }
         return out;

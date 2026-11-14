@@ -73,7 +73,7 @@ final class Layer3 {
     /**
      * The IMDCT overlap of each channel: 9 values for each of the 32 subbands.
      */
-    private final float[][] overlap = new float[2][9 * 32];
+    final float[][] overlap = new float[2][9 * 32];
 
     /**
      * The scalefactor gains of the current granule and channel.
@@ -126,6 +126,36 @@ final class Layer3 {
     private final float[] shortScratch = new float[18];
 
     /**
+     * Returns the reader over the main data of the frame after {@link #restoreReservoir}: its limit is the end of
+     * the frame, and it stands at the first granule until the granules are decoded.
+     *
+     * @return the reader
+     */
+    BitReader mainBits() {
+        return bits;
+    }
+
+    /**
+     * Points the main data reader at a stream that an instance's caller holds, for a channel coded in another
+     * stream's main data.
+     *
+     * @param data the stream
+     * @param length the number of bytes of the stream
+     * @param position the bit offset to read from
+     */
+    void readFrom(byte[] data, int length, int position) {
+        bits.init(data, 0, length);
+        bits.position = position;
+    }
+
+    /**
+     * Forgets the reservoir, whose continuation was lost, and keeps the IMDCT overlap.
+     */
+    void dropReservoir() {
+        reservoirLength = 0;
+    }
+
+    /**
      * Forgets the reservoir and the IMDCT overlap, as after a discontinuity.
      */
     void reset() {
@@ -165,58 +195,13 @@ final class Layer3 {
             if (mono) {
                 scfsi <<= 4;
             }
-            gr.part23Length = bs.read(12);
-            part23Sum += gr.part23Length;
-            gr.bigValues = bs.read(9);
-            if (gr.bigValues > 288) {
+            if (!readGranuleInfo(bs, gr, srIndex, mpeg1)) {
                 return -1;
             }
-            gr.globalGain = bs.read(8);
-            gr.scalefacCompress = bs.read(mpeg1 ? 4 : 9);
-            gr.sfb = Mp3Tables.SFB_LONG[srIndex];
-            gr.longBands = 22;
-            gr.shortBands = 0;
-            int tables;
-            if (bs.read(1) != 0) {
-                gr.blockType = bs.read(2);
-                if (gr.blockType == 0) {
-                    return -1;
-                }
-                gr.mixedBlock = bs.read(1) != 0;
-                gr.regionCount[0] = 7;
-                gr.regionCount[1] = 255;
-                gr.regionCount[2] = 255;
-                if (gr.blockType == 2) {
-                    scfsi &= 0x0F0F;
-                    if (!gr.mixedBlock) {
-                        gr.regionCount[0] = 8;
-                        gr.sfb = Mp3Tables.SFB_SHORT[srIndex];
-                        gr.longBands = 0;
-                        gr.shortBands = 39;
-                    } else {
-                        gr.sfb = Mp3Tables.SFB_MIXED[srIndex];
-                        gr.longBands = mpeg1 ? 8 : 6;
-                        gr.shortBands = 30;
-                    }
-                }
-                tables = bs.read(10) << 5;
-                gr.subblockGain[0] = bs.read(3);
-                gr.subblockGain[1] = bs.read(3);
-                gr.subblockGain[2] = bs.read(3);
-            } else {
-                gr.blockType = 0;
-                gr.mixedBlock = false;
-                tables = bs.read(15);
-                gr.regionCount[0] = bs.read(4);
-                gr.regionCount[1] = bs.read(3);
-                gr.regionCount[2] = 255;
+            part23Sum += gr.part23Length;
+            if (gr.blockType == 2) {
+                scfsi &= 0x0F0F;
             }
-            gr.tableSelect[0] = tables >> 10;
-            gr.tableSelect[1] = (tables >> 5) & 31;
-            gr.tableSelect[2] = tables & 31;
-            gr.preflag = mpeg1 ? bs.read(1) != 0 : gr.scalefacCompress >= 500;
-            gr.scalefacScale = bs.read(1);
-            gr.count1Table = bs.read(1);
             gr.scfsi = (scfsi >> 12) & 15;
             scfsi <<= 4;
         }
@@ -224,6 +209,69 @@ final class Layer3 {
             return -1;
         }
         return mainDataBegin;
+    }
+
+    /**
+     * Reads the side information of one granule of one channel, without its {@code scfsi}.
+     *
+     * @param bs the reader
+     * @param gr receives the fields
+     * @param srIndex the index of the sampling rate's band tables
+     * @param mpeg1 whether the frame is MPEG-1
+     * @return {@code false} for an illegal value
+     */
+    static boolean readGranuleInfo(BitReader bs, GranuleInfo gr, int srIndex, boolean mpeg1) {
+        gr.part23Length = bs.read(12);
+        gr.bigValues = bs.read(9);
+        if (gr.bigValues > 288) {
+            return false;
+        }
+        gr.globalGain = bs.read(8);
+        gr.scalefacCompress = bs.read(mpeg1 ? 4 : 9);
+        gr.sfb = Mp3Tables.SFB_LONG[srIndex];
+        gr.longBands = 22;
+        gr.shortBands = 0;
+        int tables;
+        if (bs.read(1) != 0) {
+            gr.blockType = bs.read(2);
+            if (gr.blockType == 0) {
+                return false;
+            }
+            gr.mixedBlock = bs.read(1) != 0;
+            gr.regionCount[0] = 7;
+            gr.regionCount[1] = 255;
+            gr.regionCount[2] = 255;
+            if (gr.blockType == 2) {
+                if (!gr.mixedBlock) {
+                    gr.regionCount[0] = 8;
+                    gr.sfb = Mp3Tables.SFB_SHORT[srIndex];
+                    gr.longBands = 0;
+                    gr.shortBands = 39;
+                } else {
+                    gr.sfb = Mp3Tables.SFB_MIXED[srIndex];
+                    gr.longBands = mpeg1 ? 8 : 6;
+                    gr.shortBands = 30;
+                }
+            }
+            tables = bs.read(10) << 5;
+            gr.subblockGain[0] = bs.read(3);
+            gr.subblockGain[1] = bs.read(3);
+            gr.subblockGain[2] = bs.read(3);
+        } else {
+            gr.blockType = 0;
+            gr.mixedBlock = false;
+            tables = bs.read(15);
+            gr.regionCount[0] = bs.read(4);
+            gr.regionCount[1] = bs.read(3);
+            gr.regionCount[2] = 255;
+        }
+        gr.tableSelect[0] = tables >> 10;
+        gr.tableSelect[1] = (tables >> 5) & 31;
+        gr.tableSelect[2] = tables & 31;
+        gr.preflag = mpeg1 ? bs.read(1) != 0 : gr.scalefacCompress >= 500;
+        gr.scalefacScale = bs.read(1);
+        gr.count1Table = bs.read(1);
+        return true;
     }
 
     /**
@@ -241,6 +289,18 @@ final class Layer3 {
         System.arraycopy(frame.data, frame.start + frame.position / 8, mainData, have, frameBytes);
         bits.init(mainData, 0, have + frameBytes);
         return reservoirLength >= mainDataBegin;
+    }
+
+    /**
+     * Appends the main data of a frame that is not decoded to the reservoir, so that later frames
+     * can still reach it.
+     *
+     * @param frame the reader positioned after the side information of the frame
+     */
+    void keepMainData(BitReader frame) {
+        restoreReservoir(frame, reservoirLength);
+        bits.position = 0;
+        saveReservoir();
     }
 
     /**
@@ -269,11 +329,25 @@ final class Layer3 {
      *                 zero on entry
      */
     void decodeGranule(int header, int granule, int channels, float[] grbuf) {
+        decodeSpectrum(header, granule, channels, grbuf);
+        finishGranule(header, granule, channels, grbuf);
+    }
+
+    /**
+     * Decodes the scalefactors and Huffman data of one granule and undoes its stereo coding, leaving the spectrum
+     * in the coded order (short block lines not yet reordered), the form the multichannel extension combines.
+     *
+     * @param header the frame header
+     * @param granule the index of the granule's first channel in {@link #granules}
+     * @param channels the number of channels
+     * @param grbuf receives the spectral lines, channel 1 at index 576
+     */
+    void decodeSpectrum(int header, int granule, int channels, float[] grbuf) {
         for (var ch = 0; ch < channels; ch++) {
             var gr = granules[granule + ch];
             var limit = bits.position + gr.part23Length;
             decodeScalefactors(header, intensityPositions[ch], gr, ch);
-            huffman(grbuf, ch * 576, gr, limit);
+            huffman(bits, scalefactors, grbuf, ch * 576, gr, limit);
         }
         if (channels == 2) {
             if (MpegAudioHeader.isIntensityStereo(header)) {
@@ -282,6 +356,17 @@ final class Layer3 {
                 midSide(grbuf, 0, 576);
             }
         }
+    }
+
+    /**
+     * Turns the spectrum of one granule from {@link #decodeSpectrum} into subband samples.
+     *
+     * @param header the frame header
+     * @param granule the index of the granule's first channel in {@link #granules}
+     * @param channels the number of channels
+     * @param grbuf the spectral lines, channel 1 at index 576; receives the subband samples
+     */
+    void finishGranule(int header, int granule, int channels, float[] grbuf) {
         var eightKhz = MpegAudioHeader.sampleRateClass(header) == 2;
         for (var ch = 0; ch < channels; ch++) {
             var gr = granules[granule + ch];
@@ -418,7 +503,7 @@ final class Layer3 {
      * @param x the value, at most {@code 15 + 2^13}
      * @return {@code x^(4/3)}
      */
-    private static float pow43(int x) {
+    static float pow43(int x) {
         if (x < 129) {
             return Mp3Tables.POW43[16 + x];
         }
@@ -440,9 +525,8 @@ final class Layer3 {
      * @param gr    the granule side information
      * @param limit the bit position in the main data where the granule ends
      */
-    private void huffman(float[] dst, int base, GranuleInfo gr, int limit) {
+    static void huffman(BitReader bits, float[] scf, float[] dst, int base, GranuleInfo gr, int limit) {
         var buf = bits.data;
-        var scf = scalefactors;
         var sfb = gr.sfb;
         var sfbIndex = 0;
         var scfIndex = 0;
@@ -713,7 +797,7 @@ final class Layer3 {
      * @param sfb    the band widths
      * @param offset the index in {@code sfb} of the first short band
      */
-    private void reorder(float[] grbuf, int base, int[] sfb, int offset) {
+    void reorder(float[] grbuf, int base, int[] sfb, int offset) {
         var src = base;
         var dst = 0;
         var scratch = reorderScratch;
@@ -736,7 +820,7 @@ final class Layer3 {
      * @param base  the index of the channel's first value
      * @param bands the number of subband boundaries to process
      */
-    private static void antialias(float[] grbuf, int base, int bands) {
+    static void antialias(float[] grbuf, int base, int bands) {
         var cs = Mp3Tables.ANTIALIAS[0];
         var ca = Mp3Tables.ANTIALIAS[1];
         for (var b = base; bands > 0; bands--, b += 18) {
@@ -820,7 +904,7 @@ final class Layer3 {
      * @param blockType the granule's block type
      * @param longBands the number of long-block subbands of a mixed granule, else zero
      */
-    private void imdct(float[] grbuf, int base, float[] overlap, int blockType, int longBands) {
+    void imdct(float[] grbuf, int base, float[] overlap, int blockType, int longBands) {
         var ovl = 0;
         if (longBands != 0) {
             kernel.imdct36(grbuf, base, overlap, 0, Mp3Tables.MDCT_WINDOW[0], longBands);
@@ -840,7 +924,7 @@ final class Layer3 {
      * @param grbuf the granule buffer
      * @param base  the index of the channel's first value
      */
-    private static void changeSign(float[] grbuf, int base) {
+    static void changeSign(float[] grbuf, int base) {
         for (var b = base + 18; b < base + 576; b += 36) {
             for (var i = 1; i < 18; i += 2) {
                 grbuf[b + i] = -grbuf[b + i];
