@@ -260,11 +260,15 @@ public final class VorbisSetupData {
      * @param limitType 0 lowpass limited, 1 point stereo limited, 2 LFE
      * @param grouping the partition size
      * @param residue the residue configuration
-     * @param auxBook the class book, or {@code -1}
-     * @param books the stage books of each class, {@code [class][stage]}, {@code -1} for none
+     * @param auxBook the class book of the unmanaged modes, or {@code -1}
+     * @param books the stage books of each class in the unmanaged modes, {@code [class][stage]}, {@code -1}
+     * for none
+     * @param managedAuxBook the class book of the bitrate managed modes, or {@code -1}
+     * @param managedBooks the stage books of each class in the bitrate managed modes, {@code [class][stage]},
+     * {@code -1} for none
      */
     public record ResidueTemplate(int type, int limitType, int grouping, Residue0Info residue, int auxBook,
-                                  int[][] books) {
+                                  int[][] books, int managedAuxBook, int[][] managedBooks) {
     }
 
     /**
@@ -471,13 +475,16 @@ public final class VorbisSetupData {
                 var grouping = in.getInt();
                 var residue = residue0(in);
                 var aux = in.getInt();
-                in.getInt(); // the managed-mode class book, unused in quality mode
+                var managedAux = in.getInt();
                 var base = new int[12][];
                 for (var c = 0; c < 12; c++) {
                     base[c] = ints(in, 4);
                 }
-                in.position(in.position() + 12 * 4 * Integer.BYTES); // the managed-mode stage books
-                residues[r] = new ResidueTemplate(type, limit, grouping, residue, aux, base);
+                var managed = new int[12][];
+                for (var c = 0; c < 12; c++) {
+                    managed[c] = ints(in, 4);
+                }
+                residues[r] = new ResidueTemplate(type, limit, grouping, residue, aux, base, managedAux, managed);
             }
             t.maps[i] = new MapTemplate(modes, mappings, residues);
         }

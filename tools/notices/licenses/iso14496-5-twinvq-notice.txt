@@ -1,0 +1,768 @@
+TwinVQ decoder modules (ISO/IEC 14496-5 audio, src_tf: ntt_BitUnPack.c):
+
+/*****************************************************************************/
+/* This software module was originally developed by                          */
+/*   Naoki Iwakami (NTT)                                                     */
+/* and edited by                                                             */
+/*   Naoki Iwakami and Satoshi Miki (NTT) on 1996-05-01,                     */
+/*   Naoki Iwakami (NTT) on 1996-08-27,                                      */
+/*   Heiko Purnhagen (Uni Hannover) on 1996-11-15,                           */
+/*   Naoki Iwakami (NTT) on 1996-12-06,                                      */
+/*   Naoki Iwakami (NTT) on 1997-04-18,                                      */
+/*   Naoki Iwakami (NTT) on 1997-08-25,                                      */
+/*   Naoki Iwakami (NTT) on 1997-10-26,                                      */
+/*   Takehiro Moriya (NTT) on 1998-07-16, on 2000-8-11                       */
+/*   Takeshi Mori (NTT) on 2000-11-21                                        */
+/* in the course of development of the                                       */
+/* MPEG-2 NBC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.        */
+/* This software module is an implementation of a part of one or more        */
+/* MPEG-2 NBC/MPEG-4 Audio tools as specified by the MPEG-2 NBC/MPEG-4 Audio */
+/* standard. ISO/IEC  gives users of the MPEG-2 NBC/MPEG-4 Audio standards   */
+/* free license to this software module or modifications thereof for use in  */
+/* hardware or software products claiming conformance to the MPEG-2 NBC/     */
+/* MPEG-4 Audio  standards. Those intending to use this software module in   */
+/* hardware or software products are advised that this use may infringe      */
+/* existing patents. The original developer of this software module and      */
+/* his/her company, the subsequent editors and their companies, and ISO/IEC  */
+/* have no liability for use of this software module or modifications        */
+/* thereof in an implementation. Copyright is not released for non           */
+/* MPEG-2 NBC/MPEG-4 Audio conforming products. The original developer       */
+/* retains full right to use the code for his/her  own purpose, assign or    */
+/* donate the code to a third party and to inhibit third party from using    */
+/* the code for non MPEG-2 NBC/MPEG-4 Audio conforming products.             */
+/* This copyright notice must be included in all copies or derivative works. */
+/* Copyright (c)1996.                                                        */
+/*****************************************************************************/
+
+TwinVQ decoder modules (ISO/IEC 14496-5 audio, src_tf: ntt_SclBitUnPack.c):
+
+/*****************************************************************************/
+/* This software module was originally developed by                          */
+/*   Akio Jin (NTT),                                                         */
+/*   Takeshi Norimatsu,                                                      */
+/*   Mineo Tsushima,                                                         */
+/*   and Tomokazu Ishikawa (Matsushita Electric Industrial Co Ltd.)          */
+/* and edited by                                                             */
+/*   Naoki Iwakami (NTT) on 1997-04-18,                                      */
+/*   Akio Jin (NTT),                                                         */
+/*   Mineo Tsushima, (Matsushita Electric Industrial Co Ltd.)                */
+/*   and Tomokazu Ishikawa (Matsushita Electric Industrial Co Ltd.)          */
+/*   on 1997-10-23,                                                          */
+/*   Takehiro Moriya (NTT) on 2000-8-11,                                     */
+/*   Takeshi Mori (NTT) on 2000-11-21,                                       */
+/* in the course of development of the                                       */
+/* MPEG-2 NBC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.        */
+/* This software module is an implementation of a part of one or more        */
+/* MPEG-2 NBC/MPEG-4 Audio tools as specified by the MPEG-2 NBC/MPEG-4 Audio */
+/* standard. ISO/IEC  gives users of the MPEG-2 NBC/MPEG-4 Audio standards   */
+/* free license to this software module or modifications thereof for use in  */
+/* hardware or software products claiming conformance to the MPEG-2 NBC/     */
+/* MPEG-4 Audio  standards. Those intending to use this software module in   */
+/* hardware or software products are advised that this use may infringe      */
+/* existing patents. The original developer of this software module and      */
+/* his/her company, the subsequent editors and their companies, and ISO/IEC  */
+/* have no liability for use of this software module or modifications        */
+/* thereof in an implementation. Copyright is not released for non           */
+/* MPEG-2 NBC/MPEG-4 Audio conforming products. The original developer       */
+/* retains full right to use the code for his/her  own purpose, assign or    */
+/* donate the code to a third party and to inhibit third party from using    */
+/* the code for non MPEG-2 NBC/MPEG-4 Audio conforming products.             */
+/* This copyright notice must be included in all copies or derivative works. */
+/* Copyright (c)1997.                                                        */
+/*****************************************************************************/
+
+TwinVQ decoder modules (ISO/IEC 14496-5 audio, src_tf: ntt_vex_pn.c):
+
+/*****************************************************************************/
+/* This software module was originally developed by                          */
+/*   Takehiro Moriya (NTT)                                                   */
+/* and edited by                                                             */
+/*   Naoki Iwakami and Satoshi Miki (NTT) on 1996-05-01,                     */
+/*   Naoki Iwakami (NTT) on 1996-08-27,                                      */
+/*   Naoki Iwakami (NTT) on 1997-04-18,                                      */
+/* in the course of development of the                                       */
+/* MPEG-2 NBC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.        */
+/* This software module is an implementation of a part of one or more        */
+/* MPEG-2 NBC/MPEG-4 Audio tools as specified by the MPEG-2 NBC/MPEG-4 Audio */
+/* standard. ISO/IEC  gives users of the MPEG-2 NBC/MPEG-4 Audio standards   */
+/* free license to this software module or modifications thereof for use in  */
+/* hardware or software products claiming conformance to the MPEG-2 NBC/     */
+/* MPEG-4 Audio  standards. Those intending to use this software module in   */
+/* hardware or software products are advised that this use may infringe      */
+/* existing patents. The original developer of this software module and      */
+/* his/her company, the subsequent editors and their companies, and ISO/IEC  */
+/* have no liability for use of this software module or modifications        */
+/* thereof in an implementation. Copyright is not released for non           */
+/* MPEG-2 NBC/MPEG-4 Audio conforming products. The original developer       */
+/* retains full right to use the code for his/her  own purpose, assign or    */
+/* donate the code to a third party and to inhibit third party from using    */
+/* the code for non MPEG-2 NBC/MPEG-4 Audio conforming products.             */
+/* This copyright notice must be included in all copies or derivative works. */
+/* Copyright (c)1996.                                                        */
+/*****************************************************************************/
+
+TwinVQ decoder modules (ISO/IEC 14496-5 audio, src_tf: ntt_tf_requantize_spectrum.c, ntt_denormalizer_spectrum.c):
+
+/*****************************************************************************/
+/* This software module was originally developed by                          */
+/*   Naoki Iwakami (NTT)                                                     */
+/* and edited by                                                             */
+/*   Naoki Iwakami and Satoshi Miki (NTT) on 1996-05-01,                     */
+/*   Naoki Iwakami (NTT) on 1996-08-27,                                      */
+/*   Naoki Iwakami (NTT) on 1997-04-18,                                      */
+/* in the course of development of the                                       */
+/* MPEG-2 NBC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.        */
+/* This software module is an implementation of a part of one or more        */
+/* MPEG-2 NBC/MPEG-4 Audio tools as specified by the MPEG-2 NBC/MPEG-4 Audio */
+/* standard. ISO/IEC  gives users of the MPEG-2 NBC/MPEG-4 Audio standards   */
+/* free license to this software module or modifications thereof for use in  */
+/* hardware or software products claiming conformance to the MPEG-2 NBC/     */
+/* MPEG-4 Audio  standards. Those intending to use this software module in   */
+/* hardware or software products are advised that this use may infringe      */
+/* existing patents. The original developer of this software module and      */
+/* his/her company, the subsequent editors and their companies, and ISO/IEC  */
+/* have no liability for use of this software module or modifications        */
+/* thereof in an implementation. Copyright is not released for non           */
+/* MPEG-2 NBC/MPEG-4 Audio conforming products. The original developer       */
+/* retains full right to use the code for his/her  own purpose, assign or    */
+/* donate the code to a third party and to inhibit third party from using    */
+/* the code for non MPEG-2 NBC/MPEG-4 Audio conforming products.             */
+/* This copyright notice must be included in all copies or derivative works. */
+/* Copyright (c)1996.                                                        */
+/*****************************************************************************/
+
+TwinVQ decoder modules (ISO/IEC 14496-5 audio, src_tf: mat_scale_tf_requantize_spectrum.c):
+
+/*****************************************************************************/
+/* This software module was originally developed by                          */
+/*   Takeshi Norimatsu,                                                      */
+/*   Mineo Tsushima,                                                         */
+/*   and Tomokazu Ishikawa (Matsushita Electric Industrial Co Ltd.)          */
+/* and edited by                                                             */
+/*   Akio Jin (NTT),                                                         */
+/*   Mineo Tsushima, (Matsushita Electric Industrial Co Ltd.)                */
+/*   and Tomokazu Ishikawa (Matsushita Electric Industrial Co Ltd.)          */
+/*   on 1997-10-23,                                                          */
+/* and edited by                                                             */
+/*   Mineo Tsushima,(Matsushita) on 1998-02-20,                              */
+/*   Takehito Moriya,(NTT)       on 1998-05-01,                              */
+/* in the course of development of the                                       */
+/* MPEG-2 NBC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.        */
+/* This software module is an implementation of a part of one or more        */
+/* MPEG-2 NBC/MPEG-4 Audio tools as specified by the MPEG-2 NBC/MPEG-4 Audio */
+/* standard. ISO/IEC  gives users of the MPEG-2 NBC/MPEG-4 Audio standards   */
+/* free license to this software module or modifications thereof for use in  */
+/* hardware or software products claiming conformance to the MPEG-2 NBC/     */
+/* MPEG-4 Audio  standards. Those intending to use this software module in   */
+/* hardware or software products are advised that this use may infringe      */
+/* existing patents. The original developer of this software module and      */
+/* his/her company, the subsequent editors and their companies, and ISO/IEC  */
+/* have no liability for use of this software module or modifications        */
+/* thereof in an implementation. Copyright is not released for non           */
+/* MPEG-2 NBC/MPEG-4 Audio conforming products. The original developer       */
+/* retains full right to use the code for his/her  own purpose, assign or    */
+/* donate the code to a third party and to inhibit third party from using    */
+/* the code for non MPEG-2 NBC/MPEG-4 Audio conforming products.             */
+/* This copyright notice must be included in all copies or derivative works. */
+/* Copyright (c)1996.                                                        */
+/*****************************************************************************/
+
+TwinVQ decoder modules (ISO/IEC 14496-5 audio, src_tf: ntt_tf_proc_spectrum_d.c):
+
+/*****************************************************************************/
+/* This software module was originally developed by                          */
+/*   Naoki Iwakami (NTT)                                                     */
+/* and edited by                                                             */
+/*   Naoki Iwakami and Satoshi Miki (NTT) on 1996-05-01,                     */
+/*   Naoki Iwakami (NTT) on 1996-08-27,                                      */
+/*   Naoki Iwakami (NTT) on 1997-04-18,                                      */
+/*   Naoki Iwakami (NTT) on 1997-08-25,                                      */
+/*   Akio Jin (NTT) on 1997-10-23,                                           */
+/*   Kazuaki Chikira (NTT) on 2000-08-11,                                    */
+/* in the course of development of the                                       */
+/* MPEG-2 NBC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.        */
+/* This software module is an implementation of a part of one or more        */
+/* MPEG-2 NBC/MPEG-4 Audio tools as specified by the MPEG-2 NBC/MPEG-4 Audio */
+/* standard. ISO/IEC  gives users of the MPEG-2 NBC/MPEG-4 Audio standards   */
+/* free license to this software module or modifications thereof for use in  */
+/* hardware or software products claiming conformance to the MPEG-2 NBC/     */
+/* MPEG-4 Audio  standards. Those intending to use this software module in   */
+/* hardware or software products are advised that this use may infringe      */
+/* existing patents. The original developer of this software module and      */
+/* his/her company, the subsequent editors and their companies, and ISO/IEC  */
+/* have no liability for use of this software module or modifications        */
+/* thereof in an implementation. Copyright is not released for non           */
+/* MPEG-2 NBC/MPEG-4 Audio conforming products. The original developer       */
+/* retains full right to use the code for his/her  own purpose, assign or    */
+/* donate the code to a third party and to inhibit third party from using    */
+/* the code for non MPEG-2 NBC/MPEG-4 Audio conforming products.             */
+/* This copyright notice must be included in all copies or derivative works. */
+/* Copyright (c)1996.                                                        */
+/*****************************************************************************/
+
+TwinVQ decoder modules (ISO/IEC 14496-5 audio, src_tf: ntt_scale_tf_proc_spectrum_d.c):
+
+/*****************************************************************************/
+/* This software module was originally developed by                          */
+/*   Akio Jin (NTT)                                                          */
+/* and edited by                                                             */
+/*   Naoki Iwakami (NTT) on 1997-04-18,                                      */
+/*   Akio Jin (NTT) on 1997-10-23,                                           */
+/*   Kazuaki Chikira (NTT) on 2000-08-11,                                    */
+/* in the course of development of the                                       */
+/* MPEG-2 NBC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.        */
+/* This software module is an implementation of a part of one or more        */
+/* MPEG-2 NBC/MPEG-4 Audio tools as specified by the MPEG-2 NBC/MPEG-4 Audio */
+/* standard. ISO/IEC  gives users of the MPEG-2 NBC/MPEG-4 Audio standards   */
+/* free license to this software module or modifications thereof for use in  */
+/* hardware or software products claiming conformance to the MPEG-2 NBC/     */
+/* MPEG-4 Audio  standards. Those intending to use this software module in   */
+/* hardware or software products are advised that this use may infringe      */
+/* existing patents. The original developer of this software module and      */
+/* his/her company, the subsequent editors and their companies, and ISO/IEC  */
+/* have no liability for use of this software module or modifications        */
+/* thereof in an implementation. Copyright is not released for non           */
+/* MPEG-2 NBC/MPEG-4 Audio conforming products. The original developer       */
+/* retains full right to use the code for his/her  own purpose, assign or    */
+/* donate the code to a third party and to inhibit third party from using    */
+/* the code for non MPEG-2 NBC/MPEG-4 Audio conforming products.             */
+/* This copyright notice must be included in all copies or derivative works. */
+/* Copyright (c)1997.                                                        */
+/*****************************************************************************/
+
+TwinVQ decoder modules (ISO/IEC 14496-5 audio, src_tf: ntt_dec_bark_env.c, ntt_dec_gain.c):
+
+/*****************************************************************************/
+/* This software module was originally developed by                          */
+/*   Naoki Iwakami (NTT)                                                     */
+/* and edited by                                                             */
+/*   Naoki Iwakami and Satoshi Miki (NTT) on 1996-05-01,                     */
+/*   Naoki Iwakami (NTT) on 1996-08-27,                                      */
+/*   Naoki Iwakami (NTT) on 1997-04-18                                       */
+/* in the course of development of the                                       */
+/* MPEG-2 NBC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.        */
+/* This software module is an implementation of a part of one or more        */
+/* MPEG-2 NBC/MPEG-4 Audio tools as specified by the MPEG-2 NBC/MPEG-4 Audio */
+/* standard. ISO/IEC  gives users of the MPEG-2 NBC/MPEG-4 Audio standards   */
+/* free license to this software module or modifications thereof for use in  */
+/* hardware or software products claiming conformance to the MPEG-2 NBC/     */
+/* MPEG-4 Audio  standards. Those intending to use this software module in   */
+/* hardware or software products are advised that this use may infringe      */
+/* existing patents. The original developer of this software module and      */
+/* his/her company, the subsequent editors and their companies, and ISO/IEC  */
+/* have no liability for use of this software module or modifications        */
+/* thereof in an implementation. Copyright is not released for non           */
+/* MPEG-2 NBC/MPEG-4 Audio conforming products. The original developer       */
+/* retains full right to use the code for his/her  own purpose, assign or    */
+/* donate the code to a third party and to inhibit third party from using    */
+/* the code for non MPEG-2 NBC/MPEG-4 Audio conforming products.             */
+/* This copyright notice must be included in all copies or derivative works. */
+/* Copyright (c)1996.                                                        */
+/*****************************************************************************/
+
+TwinVQ decoder modules (ISO/IEC 14496-5 audio, src_tf: ntt_scale_dec_bark_env.c):
+
+/*****************************************************************************/
+/* This software module was originally developed by                          */
+/*   Akio Jin (NTT)                                                          */
+/* and edited by                                                             */
+/*   Akio Jin (NTT) on 1997-10-23,                                           */
+/* in the course of development of the                                       */
+/* MPEG-2 NBC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.        */
+/* This software module is an implementation of a part of one or more        */
+/* MPEG-2 NBC/MPEG-4 Audio tools as specified by the MPEG-2 NBC/MPEG-4 Audio */
+/* standard. ISO/IEC  gives users of the MPEG-2 NBC/MPEG-4 Audio standards   */
+/* free license to this software module or modifications thereof for use in  */
+/* hardware or software products claiming conformance to the MPEG-2 NBC/     */
+/* MPEG-4 Audio  standards. Those intending to use this software module in   */
+/* hardware or software products are advised that this use may infringe      */
+/* existing patents. The original developer of this software module and      */
+/* his/her company, the subsequent editors and their companies, and ISO/IEC  */
+/* have no liability for use of this software module or modifications        */
+/* thereof in an implementation. Copyright is not released for non           */
+/* MPEG-2 NBC/MPEG-4 Audio conforming products. The original developer       */
+/* retains full right to use the code for his/her  own purpose, assign or    */
+/* donate the code to a third party and to inhibit third party from using    */
+/* the code for non MPEG-2 NBC/MPEG-4 Audio conforming products.             */
+/* This copyright notice must be included in all copies or derivative works. */
+/* Copyright (c)1996.                                                        */
+/*****************************************************************************/
+
+TwinVQ decoder modules (ISO/IEC 14496-5 audio, src_tf: mat_scale_set_shift_para.c):
+
+/*****************************************************************************/
+/* This software module was originally developed by                          */
+/*   Takeshi Norimatsu,                                                      */
+/*   Mineo Tsushima,                                                         */
+/*   and Tomokazu Ishikawa (Matsushita Electric Industrial Co Ltd.)          */
+/* and edited by                                                             */
+/*   Akio Jin (NTT),                                                         */
+/*   Mineo Tsushima, (Matsushita Electric Industrial Co Ltd.)                */
+/*   and Tomokazu Ishikawa (Matsushita Electric Industrial Co Ltd.)          */
+/*   on 1997-10-23,                                                          */
+/*   Kazuaki Chikira and Takehiro Moriya (NTT) on 2000-8-11,                 */
+/* in the course of development of the                                       */
+/* MPEG-2 NBC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.        */
+/* This software module is an implementation of a part of one or more        */
+/* MPEG-2 NBC/MPEG-4 Audio tools as specified by the MPEG-2 NBC/MPEG-4 Audio */
+/* standard. ISO/IEC  gives users of the MPEG-2 NBC/MPEG-4 Audio standards   */
+/* free license to this software module or modifications thereof for use in  */
+/* hardware or software products claiming conformance to the MPEG-2 NBC/     */
+/* MPEG-4 Audio  standards. Those intending to use this software module in   */
+/* hardware or software products are advised that this use may infringe      */
+/* existing patents. The original developer of this software module and      */
+/* his/her company, the subsequent editors and their companies, and ISO/IEC  */
+/* have no liability for use of this software module or modifications        */
+/* thereof in an implementation. Copyright is not released for non           */
+/* MPEG-2 NBC/MPEG-4 Audio conforming products. The original developer       */
+/* retains full right to use the code for his/her  own purpose, assign or    */
+/* donate the code to a third party and to inhibit third party from using    */
+/* the code for non MPEG-2 NBC/MPEG-4 Audio conforming products.             */
+/* This copyright notice must be included in all copies or derivative works. */
+/* Copyright (c)1996.                                                        */
+/*****************************************************************************/
+
+TwinVQ decoder modules (ISO/IEC 14496-5 audio, src_tf: ntt_dec_sq_gain.c):
+
+/*****************************************************************************/
+/* This software module was originally developed by                          */
+/*   Naoki Iwakami (NTT)                                                     */
+/* and edited by                                                             */
+/*   Naoki Iwakami and Satoshi Miki (NTT) on 1996-05-01,                     */
+/*   Naoki Iwakami (NTT) on 1996-08-27,                                      */
+/*   Naoki Iwakami (NTT) on 1997-04-18                                       */
+/*   Akio Jin (NTT) on 1997-10-23,                                           */
+/* in the course of development of the                                       */
+/* MPEG-2 NBC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.        */
+/* This software module is an implementation of a part of one or more        */
+/* MPEG-2 NBC/MPEG-4 Audio tools as specified by the MPEG-2 NBC/MPEG-4 Audio */
+/* standard. ISO/IEC  gives users of the MPEG-2 NBC/MPEG-4 Audio standards   */
+/* free license to this software module or modifications thereof for use in  */
+/* hardware or software products claiming conformance to the MPEG-2 NBC/     */
+/* MPEG-4 Audio  standards. Those intending to use this software module in   */
+/* hardware or software products are advised that this use may infringe      */
+/* existing patents. The original developer of this software module and      */
+/* his/her company, the subsequent editors and their companies, and ISO/IEC  */
+/* have no liability for use of this software module or modifications        */
+/* thereof in an implementation. Copyright is not released for non           */
+/* MPEG-2 NBC/MPEG-4 Audio conforming products. The original developer       */
+/* retains full right to use the code for his/her  own purpose, assign or    */
+/* donate the code to a third party and to inhibit third party from using    */
+/* the code for non MPEG-2 NBC/MPEG-4 Audio conforming products.             */
+/* This copyright notice must be included in all copies or derivative works. */
+/* Copyright (c)1996.                                                        */
+/*****************************************************************************/
+
+TwinVQ decoder modules (ISO/IEC 14496-5 audio, src_tf: ntt_mulawinv.c):
+
+/*****************************************************************************/
+/* This software module was originally developed by                          */
+/*   Kazunori Mano (NTT)                                                     */
+/* and edited by                                                             */
+/*   Naoki Iwakami and Satoshi Miki (NTT) on 1996-05-01,                     */
+/*   Naoki Iwakami (NTT) on 1996-08-27,                                      */
+/* in the course of development of the                                       */
+/* MPEG-2 NBC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.        */
+/* This software module is an implementation of a part of one or more        */
+/* MPEG-2 NBC/MPEG-4 Audio tools as specified by the MPEG-2 NBC/MPEG-4 Audio */
+/* standard. ISO/IEC  gives users of the MPEG-2 NBC/MPEG-4 Audio standards   */
+/* free license to this software module or modifications thereof for use in  */
+/* hardware or software products claiming conformance to the MPEG-2 NBC/     */
+/* MPEG-4 Audio  standards. Those intending to use this software module in   */
+/* hardware or software products are advised that this use may infringe      */
+/* existing patents. The original developer of this software module and      */
+/* his/her company, the subsequent editors and their companies, and ISO/IEC  */
+/* have no liability for use of this software module or modifications        */
+/* thereof in an implementation. Copyright is not released for non           */
+/* MPEG-2 NBC/MPEG-4 Audio conforming products. The original developer       */
+/* retains full right to use the code for his/her  own purpose, assign or    */
+/* donate the code to a third party and to inhibit third party from using    */
+/* the code for non MPEG-2 NBC/MPEG-4 Audio conforming products.             */
+/* This copyright notice must be included in all copies or derivative works. */
+/* Copyright (c)1996.                                                        */
+/*****************************************************************************/
+
+TwinVQ decoder modules (ISO/IEC 14496-5 audio, src_tf: ntt_dec_pit_seq.c):
+
+/*****************************************************************************/
+/* This software module was originally developed by                          */
+/*   Takehiro Moriya (NTT)                                                   */
+/* and edited by                                                             */
+/*   Naoki Iwakami and Satoshi Miki (NTT) on 1996-05-01,                     */
+/*   Naoki Iwakami (NTT) on 1996-08-27,                                      */
+/*   Naoki Iwakami (NTT) on 1997-04-18,                                      */
+/*   Naoki Iwakami (NTT) on 1997-08-25,                                      */
+/* in the course of development of the                                       */
+/* MPEG-2 NBC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.        */
+/* This software module is an implementation of a part of one or more        */
+/* MPEG-2 NBC/MPEG-4 Audio tools as specified by the MPEG-2 NBC/MPEG-4 Audio */
+/* standard. ISO/IEC  gives users of the MPEG-2 NBC/MPEG-4 Audio standards   */
+/* free license to this software module or modifications thereof for use in  */
+/* hardware or software products claiming conformance to the MPEG-2 NBC/     */
+/* MPEG-4 Audio  standards. Those intending to use this software module in   */
+/* hardware or software products are advised that this use may infringe      */
+/* existing patents. The original developer of this software module and      */
+/* his/her company, the subsequent editors and their companies, and ISO/IEC  */
+/* have no liability for use of this software module or modifications        */
+/* thereof in an implementation. Copyright is not released for non           */
+/* MPEG-2 NBC/MPEG-4 Audio conforming products. The original developer       */
+/* retains full right to use the code for his/her  own purpose, assign or    */
+/* donate the code to a third party and to inhibit third party from using    */
+/* the code for non MPEG-2 NBC/MPEG-4 Audio conforming products.             */
+/* This copyright notice must be included in all copies or derivative works. */
+/* Copyright (c)1996.                                                        */
+/*****************************************************************************/
+
+TwinVQ decoder modules (ISO/IEC 14496-5 audio, src_tf: ntt_extend_pitch.c):
+
+/*****************************************************************************/
+/* This software module was originally developed by                          */
+/*   Takehiro Moriya (NTT)                                                   */
+/* and edited by                                                             */
+/*   Naoki Iwakami and Satoshi Miki (NTT) on 1996-05-01,                     */
+/*   Naoki Iwakami (NTT) on 1996-08-27,                                      */
+/*   Naoki Iwakami (NTT) on 1997-04-18,                                      */
+/*   Takehiro Moriya (NTT) on 1997-08-01,                                    */
+/*   Naoki Iwakami (NTT) on 1997-08-25,                                      */
+/*   Takehiro Moriya (NTT) on 1997-10-14,                                    */
+/*   Kazuaki Chikira (NTT) on 2000-08-11,                                    */
+/* in the course of development of the                                       */
+/* MPEG-2 NBC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.        */
+/* This software module is an implementation of a part of one or more        */
+/* MPEG-2 NBC/MPEG-4 Audio tools as specified by the MPEG-2 NBC/MPEG-4 Audio */
+/* standard. ISO/IEC  gives users of the MPEG-2 NBC/MPEG-4 Audio standards   */
+/* free license to this software module or modifications thereof for use in  */
+/* hardware or software products claiming conformance to the MPEG-2 NBC/     */
+/* MPEG-4 Audio  standards. Those intending to use this software module in   */
+/* hardware or software products are advised that this use may infringe      */
+/* existing patents. The original developer of this software module and      */
+/* his/her company, the subsequent editors and their companies, and ISO/IEC  */
+/* have no liability for use of this software module or modifications        */
+/* thereof in an implementation. Copyright is not released for non           */
+/* MPEG-2 NBC/MPEG-4 Audio conforming products. The original developer       */
+/* retains full right to use the code for his/her  own purpose, assign or    */
+/* donate the code to a third party and to inhibit third party from using    */
+/* the code for non MPEG-2 NBC/MPEG-4 Audio conforming products.             */
+/* This copyright notice must be included in all copies or derivative works. */
+/* Copyright (c)1996.                                                        */
+/*****************************************************************************/
+
+TwinVQ decoder modules (ISO/IEC 14496-5 audio, src_tf: ntt_dec_pgain.c):
+
+/*****************************************************************************/
+/* This software module was originally developed by                          */
+/*   Takehiro Moriya (NTT)                                                   */
+/* and edited by                                                             */
+/*   Naoki Iwakami and Satoshi Miki (NTT) on 1996-05-01,                     */
+/*   Naoki Iwakami (NTT) on 1996-08-27,                                      */
+/* in the course of development of the                                       */
+/* MPEG-2 NBC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.        */
+/* This software module is an implementation of a part of one or more        */
+/* MPEG-2 NBC/MPEG-4 Audio tools as specified by the MPEG-2 NBC/MPEG-4 Audio */
+/* standard. ISO/IEC  gives users of the MPEG-2 NBC/MPEG-4 Audio standards   */
+/* free license to this software module or modifications thereof for use in  */
+/* hardware or software products claiming conformance to the MPEG-2 NBC/     */
+/* MPEG-4 Audio  standards. Those intending to use this software module in   */
+/* hardware or software products are advised that this use may infringe      */
+/* existing patents. The original developer of this software module and      */
+/* his/her company, the subsequent editors and their companies, and ISO/IEC  */
+/* have no liability for use of this software module or modifications        */
+/* thereof in an implementation. Copyright is not released for non           */
+/* MPEG-2 NBC/MPEG-4 Audio conforming products. The original developer       */
+/* retains full right to use the code for his/her  own purpose, assign or    */
+/* donate the code to a third party and to inhibit third party from using    */
+/* the code for non MPEG-2 NBC/MPEG-4 Audio conforming products.             */
+/* This copyright notice must be included in all copies or derivative works. */
+/* Copyright (c)1996.                                                        */
+/*****************************************************************************/
+
+TwinVQ decoder modules (ISO/IEC 14496-5 audio, src_tf: ntt_lsp_decw.c):
+
+/*****************************************************************************/
+/* This software module was originally developed by                          */
+/*   Takehiro Moriya (NTT)                                                   */
+/* and edited by                                                             */
+/*   Naoki Iwakami and Satoshi Miki (NTT) on 1996-05-01,                     */
+/*   Naoki Iwakami (NTT) on 1996-08-27,                                      */
+/*   Naoki Iwakami (NTT) on 1997-04-18,                                      */
+/*   Akio Jin (NTT)      on 1997-10-23,                                      */
+/* in the course of development of the                                       */
+/* MPEG-2 NBC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.        */
+/* This software module is an implementation of a part of one or more        */
+/* MPEG-2 NBC/MPEG-4 Audio tools as specified by the MPEG-2 NBC/MPEG-4 Audio */
+/* standard. ISO/IEC  gives users of the MPEG-2 NBC/MPEG-4 Audio standards   */
+/* free license to this software module or modifications thereof for use in  */
+/* hardware or software products claiming conformance to the MPEG-2 NBC/     */
+/* MPEG-4 Audio  standards. Those intending to use this software module in   */
+/* hardware or software products are advised that this use may infringe      */
+/* existing patents. The original developer of this software module and      */
+/* his/her company, the subsequent editors and their companies, and ISO/IEC  */
+/* have no liability for use of this software module or modifications        */
+/* thereof in an implementation. Copyright is not released for non           */
+/* MPEG-2 NBC/MPEG-4 Audio conforming products. The original developer       */
+/* retains full right to use the code for his/her  own purpose, assign or    */
+/* donate the code to a third party and to inhibit third party from using    */
+/* the code for non MPEG-2 NBC/MPEG-4 Audio conforming products.             */
+/* This copyright notice must be included in all copies or derivative works. */
+/* Copyright (c)1996.                                                        */
+/*****************************************************************************/
+
+TwinVQ decoder modules (ISO/IEC 14496-5 audio, src_tf: ntt_redec.c):
+
+/*****************************************************************************/
+/* This software module was originally developed by                          */
+/*   Takehiro Moriya (NTT)                                                   */
+/* and edited by                                                             */
+/*   Naoki Iwakami and Satoshi Miki (NTT) on 1996-05-01,                     */
+/*   Naoki Iwakami (NTT) on 1996-08-27,                                      */
+/*   Naoki Iwakami (NTT) on 1997-04-18,                                      */
+/*   Akio Jin (NTT) on 1997-10-23,                                           */
+/* in the course of development of the                                       */
+/* MPEG-2 NBC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.        */
+/* This software module is an implementation of a part of one or more        */
+/* MPEG-2 NBC/MPEG-4 Audio tools as specified by the MPEG-2 NBC/MPEG-4 Audio */
+/* standard. ISO/IEC  gives users of the MPEG-2 NBC/MPEG-4 Audio standards   */
+/* free license to this software module or modifications thereof for use in  */
+/* hardware or software products claiming conformance to the MPEG-2 NBC/     */
+/* MPEG-4 Audio  standards. Those intending to use this software module in   */
+/* hardware or software products are advised that this use may infringe      */
+/* existing patents. The original developer of this software module and      */
+/* his/her company, the subsequent editors and their companies, and ISO/IEC  */
+/* have no liability for use of this software module or modifications        */
+/* thereof in an implementation. Copyright is not released for non           */
+/* MPEG-2 NBC/MPEG-4 Audio conforming products. The original developer       */
+/* retains full right to use the code for his/her  own purpose, assign or    */
+/* donate the code to a third party and to inhibit third party from using    */
+/* the code for non MPEG-2 NBC/MPEG-4 Audio conforming products.             */
+/* This copyright notice must be included in all copies or derivative works. */
+/* Copyright (c)1996.                                                        */
+/*****************************************************************************/
+
+TwinVQ decoder modules (ISO/IEC 14496-5 audio, src_tf: ntt_check.c, ntt_lsptowt_int.c):
+
+/*****************************************************************************/
+/* This software module was originally developed by                          */
+/*   Takehiro Moriya (NTT)                                                   */
+/* and edited by                                                             */
+/*   Naoki Iwakami (NTT) on 1997-04-18,                                      */
+/* in the course of development of the                                       */
+/* MPEG-2 NBC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.        */
+/* This software module is an implementation of a part of one or more        */
+/* MPEG-2 NBC/MPEG-4 Audio tools as specified by the MPEG-2 NBC/MPEG-4 Audio */
+/* standard. ISO/IEC  gives users of the MPEG-2 NBC/MPEG-4 Audio standards   */
+/* free license to this software module or modifications thereof for use in  */
+/* hardware or software products claiming conformance to the MPEG-2 NBC/     */
+/* MPEG-4 Audio  standards. Those intending to use this software module in   */
+/* hardware or software products are advised that this use may infringe      */
+/* existing patents. The original developer of this software module and      */
+/* his/her company, the subsequent editors and their companies, and ISO/IEC  */
+/* have no liability for use of this software module or modifications        */
+/* thereof in an implementation. Copyright is not released for non           */
+/* MPEG-2 NBC/MPEG-4 Audio conforming products. The original developer       */
+/* retains full right to use the code for his/her  own purpose, assign or    */
+/* donate the code to a third party and to inhibit third party from using    */
+/* the code for non MPEG-2 NBC/MPEG-4 Audio conforming products.             */
+/* This copyright notice must be included in all copies or derivative works. */
+/* Copyright (c)1997.                                                        */
+/*****************************************************************************/
+
+TwinVQ decoder modules (ISO/IEC 14496-5 audio, src_tf: ntt_post_process.c):
+
+/*****************************************************************************/
+/* This software module was originally developed by                          */
+/*   Naoki Iwakami (NTT)                                                     */
+/* and edited by                                                             */
+/*   Naoki Iwakami and Satoshi Miki (NTT) on 1996-05-01,                     */
+/*   Naoki Iwakami (NTT) on 1996-08-27,                                      */
+/*   Naoki Iwakami (NTT) on 1997-04-18,                                      */
+/*   Naoki Iwakami (NTT) on 1997-08-25,                                      */
+/* in the course of development of the                                       */
+/* MPEG-2 NBC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.        */
+/* This software module is an implementation of a part of one or more        */
+/* MPEG-2 NBC/MPEG-4 Audio tools as specified by the MPEG-2 NBC/MPEG-4 Audio */
+/* standard. ISO/IEC  gives users of the MPEG-2 NBC/MPEG-4 Audio standards   */
+/* free license to this software module or modifications thereof for use in  */
+/* hardware or software products claiming conformance to the MPEG-2 NBC/     */
+/* MPEG-4 Audio  standards. Those intending to use this software module in   */
+/* hardware or software products are advised that this use may infringe      */
+/* existing patents. The original developer of this software module and      */
+/* his/her company, the subsequent editors and their companies, and ISO/IEC  */
+/* have no liability for use of this software module or modifications        */
+/* thereof in an implementation. Copyright is not released for non           */
+/* MPEG-2 NBC/MPEG-4 Audio conforming products. The original developer       */
+/* retains full right to use the code for his/her  own purpose, assign or    */
+/* donate the code to a third party and to inhibit third party from using    */
+/* the code for non MPEG-2 NBC/MPEG-4 Audio conforming products.             */
+/* This copyright notice must be included in all copies or derivative works. */
+/* Copyright (c)1996.                                                        */
+/*****************************************************************************/
+
+TwinVQ decoder modules (ISO/IEC 14496-5 audio, src_tf: tvqAUDecode.c):
+
+/*****************************************************************************/
+/* This software module was originally developed by                          */
+/*   Naoki Iwakami (NTT)                                                     */
+/* and edited by                                                             */
+/*   Naoki Iwakami and Satoshi Miki (NTT) on 1996-05-01,                     */
+/*   Naoki Iwakami (NTT) on 1996-08-27,                                      */
+/*   Naoki Iwakami (NTT) on 1996-12-06,                                      */
+/*   Naoki Iwakami (NTT) on 1997-04-18,                                      */
+/*   Takehiro Moriya (NTT) on 1997-08-01,                                    */
+/*   Naoki Iwakami (NTT) on 1997-08-25                                       */
+/*   Takehiro Moriya (NTT) on 1998-06-25,                                    */
+/*   Takehiro Moriya (NTT) on 1999-02-25,                                    */
+/*   Takeshi Mori (NTT) on 2000-11-21,                                       */
+/* in the course of development of the                                       */
+/* MPEG-2 NBC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.        */
+/* This software module is an implementation of a part of one or more        */
+/* MPEG-2 NBC/MPEG-4 Audio tools as specified by the MPEG-2 NBC/MPEG-4 Audio */
+/* standard. ISO/IEC  gives users of the MPEG-2 NBC/MPEG-4 Audio standards   */
+/* free license to this software module or modifications thereof for use in  */
+/* hardware or software products claiming conformance to the MPEG-2 NBC/     */
+/* MPEG-4 Audio  standards. Those intending to use this software module in   */
+/* hardware or software products are advised that this use may infringe      */
+/* existing patents. The original developer of this software module and      */
+/* his/her company, the subsequent editors and their companies, and ISO/IEC  */
+/* have no liability for use of this software module or modifications        */
+/* thereof in an implementation. Copyright is not released for non           */
+/* MPEG-2 NBC/MPEG-4 Audio conforming products. The original developer       */
+/* retains full right to use the code for his/her  own purpose, assign or    */
+/* donate the code to a third party and to inhibit third party from using    */
+/* the code for non MPEG-2 NBC/MPEG-4 Audio conforming products.             */
+/* This copyright notice must be included in all copies or derivative works. */
+/* Copyright (c)1996.                                                        */
+/*****************************************************************************/
+
+TwinVQ decoder modules (ISO/IEC 14496-5 audio, src_tf: ntt_headerdec.c, ntt_vq_decoder.c):
+
+/*****************************************************************************/
+/* This software module was originally developed by                          */
+/*   Naoki Iwakami (NTT)                                                     */
+/* and edited by                                                             */
+/*   Naoki Iwakami and Satoshi Miki (NTT) on 1996-05-01,                     */
+/*   Naoki Iwakami (NTT) on 1996-08-27,                                      */
+/*   Naoki Iwakami (NTT) on 1997-04-18,                                      */
+/*   Takehiro Moriya (NTT) on 1998-08-10,                                    */
+/* in the course of development of the                                       */
+/* MPEG-2 NBC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.        */
+/* This software module is an implementation of a part of one or more        */
+/* MPEG-2 NBC/MPEG-4 Audio tools as specified by the MPEG-2 NBC/MPEG-4 Audio */
+/* standard. ISO/IEC  gives users of the MPEG-2 NBC/MPEG-4 Audio standards   */
+/* free license to this software module or modifications thereof for use in  */
+/* hardware or software products claiming conformance to the MPEG-2 NBC/     */
+/* MPEG-4 Audio  standards. Those intending to use this software module in   */
+/* hardware or software products are advised that this use may infringe      */
+/* existing patents. The original developer of this software module and      */
+/* his/her company, the subsequent editors and their companies, and ISO/IEC  */
+/* have no liability for use of this software module or modifications        */
+/* thereof in an implementation. Copyright is not released for non           */
+/* MPEG-2 NBC/MPEG-4 Audio conforming products. The original developer       */
+/* retains full right to use the code for his/her  own purpose, assign or    */
+/* donate the code to a third party and to inhibit third party from using    */
+/* the code for non MPEG-2 NBC/MPEG-4 Audio conforming products.             */
+/* This copyright notice must be included in all copies or derivative works. */
+/* Copyright (c)1996.                                                        */
+/*****************************************************************************/
+
+TwinVQ decoder modules (ISO/IEC 14496-5 audio, src_tf: ntt_scale_vq_decoder.c):
+
+/*****************************************************************************/
+/* This software module was originally developed by                          */
+/*   Akio Jin (NTT)                                                          */
+/* and edited by                                                             */
+/*   Naoki Iwakami (NTT) on 1997-04-18,                                      */
+/*   Akio Jin (NTT),                                                         */
+/*   Mineo Tsushima, (Matsushita Electric Industrial Co Ltd.)                */
+/*   and Tomokazu Ishikawa (Matsushita Electric Industrial Co Ltd.)          */
+/*   on 1997-10-23,                                                          */
+/* in the course of development of the                                       */
+/* MPEG-2 NBC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.        */
+/* This software module is an implementation of a part of one or more        */
+/* MPEG-2 NBC/MPEG-4 Audio tools as specified by the MPEG-2 NBC/MPEG-4 Audio */
+/* standard. ISO/IEC  gives users of the MPEG-2 NBC/MPEG-4 Audio standards   */
+/* free license to this software module or modifications thereof for use in  */
+/* hardware or software products claiming conformance to the MPEG-2 NBC/     */
+/* MPEG-4 Audio  standards. Those intending to use this software module in   */
+/* hardware or software products are advised that this use may infringe      */
+/* existing patents. The original developer of this software module and      */
+/* his/her company, the subsequent editors and their companies, and ISO/IEC  */
+/* have no liability for use of this software module or modifications        */
+/* thereof in an implementation. Copyright is not released for non           */
+/* MPEG-2 NBC/MPEG-4 Audio conforming products. The original developer       */
+/* retains full right to use the code for his/her  own purpose, assign or    */
+/* donate the code to a third party and to inhibit third party from using    */
+/* the code for non MPEG-2 NBC/MPEG-4 Audio conforming products.             */
+/* This copyright notice must be included in all copies or derivative works. */
+/* Copyright (c)1997.                                                        */
+/*****************************************************************************/
+
+TwinVQ decoder modules (ISO/IEC 14496-5 audio, src_tf: ntt_TfInit.c):
+
+/*****************************************************************************/
+/* This software module was originally developed by                          */
+/*   Naoki Iwakami (NTT)                                                     */
+/* and edited by                                                             */
+/*   Naoki Iwakami and Satoshi Miki (NTT) on 1996-05-01,                     */
+/*   Naoki Iwakami (NTT) on 1996-08-27,                                      */
+/*   Naoki Iwakami (NTT) on 1996-12-06,                                      */
+/*   Naoki Iwakami (NTT) on 1997-04-18,                                      */
+/*   Takehiro Moriya (NTT) on 1997-08-01,                                    */
+/*   Naoki Iwakami (NTT) on 1997-08-25,                                      */
+/*   Akio Jin (NTT) on 1997-10-23,                                           */
+/*   Kazuaki Chikira (NTT) on 2000-08-11,                                    */
+/* in the course of development of the                                       */
+/* MPEG-2 NBC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.        */
+/* This software module is an implementation of a part of one or more        */
+/* MPEG-2 NBC/MPEG-4 Audio tools as specified by the MPEG-2 NBC/MPEG-4 Audio */
+/* standard. ISO/IEC  gives users of the MPEG-2 NBC/MPEG-4 Audio standards   */
+/* free license to this software module or modifications thereof for use in  */
+/* hardware or software products claiming conformance to the MPEG-2 NBC/     */
+/* MPEG-4 Audio  standards. Those intending to use this software module in   */
+/* hardware or software products are advised that this use may infringe      */
+/* existing patents. The original developer of this software module and      */
+/* his/her company, the subsequent editors and their companies, and ISO/IEC  */
+/* have no liability for use of this software module or modifications        */
+/* thereof in an implementation. Copyright is not released for non           */
+/* MPEG-2 NBC/MPEG-4 Audio conforming products. The original developer       */
+/* retains full right to use the code for his/her  own purpose, assign or    */
+/* donate the code to a third party and to inhibit third party from using    */
+/* the code for non MPEG-2 NBC/MPEG-4 Audio conforming products.             */
+/* This copyright notice must be included in all copies or derivative works. */
+/* Copyright (c)1996.                                                        */
+/*****************************************************************************/
+
+TwinVQ decoder modules (ISO/IEC 14496-5 audio, src_tf: ntt_scale_init.c):
+
+/*****************************************************************************/
+/* This software module was originally developed by                          */
+/*   Akio Jin (NTT),                                                         */
+/*   Takeshi Norimatsu,                                                      */
+/*   Mineo Tsushima,                                                         */
+/*   and Tomokazu Ishikawa (Matsushita Electric Industrial Co Ltd.)          */
+/* and edited by                                                             */
+/*   Naoki Iwakami (NTT) on 1997-04-18,                                      */
+/*   Akio Jin (NTT),                                                         */
+/*   Mineo Tsushima, (Matsushita Electric Industrial Co Ltd.)                */
+/*   and Tomokazu Ishikawa (Matsushita Electric Industrial Co Ltd.)          */
+/*   on 1997-10-23,                                                          */
+/*   Kazuaki Chikira and Takehiro Moriya (NTT) on 2000-08-11,                */
+/* in the course of development of the                                       */
+/* MPEG-2 NBC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.        */
+/* This software module is an implementation of a part of one or more        */
+/* MPEG-2 NBC/MPEG-4 Audio tools as specified by the MPEG-2 NBC/MPEG-4 Audio */
+/* standard. ISO/IEC  gives users of the MPEG-2 NBC/MPEG-4 Audio standards   */
+/* free license to this software module or modifications thereof for use in  */
+/* hardware or software products claiming conformance to the MPEG-2 NBC/     */
+/* MPEG-4 Audio  standards. Those intending to use this software module in   */
+/* hardware or software products are advised that this use may infringe      */
+/* existing patents. The original developer of this software module and      */
+/* his/her company, the subsequent editors and their companies, and ISO/IEC  */
+/* have no liability for use of this software module or modifications        */
+/* thereof in an implementation. Copyright is not released for non           */
+/* MPEG-2 NBC/MPEG-4 Audio conforming products. The original developer       */
+/* retains full right to use the code for his/her  own purpose, assign or    */
+/* donate the code to a third party and to inhibit third party from using    */
+/* the code for non MPEG-2 NBC/MPEG-4 Audio conforming products.             */
+/* This copyright notice must be included in all copies or derivative works. */
+/* Copyright (c)1997.                                                        */
+/*****************************************************************************/

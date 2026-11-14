@@ -1,9 +1,18 @@
 package com.github.auties00.smalt.audio.amr;
 
+import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.audio.IntegerAudioBuffer;
 import com.github.auties00.smalt.audio.amr.internal.nb.NbDecoder;
 import com.github.auties00.smalt.audio.amr.internal.nb.NbEncoder;
 import com.github.auties00.smalt.audio.amr.internal.wb.WbDecoder;
 import com.github.auties00.smalt.audio.amr.internal.wbenc.WbEncoder;
+import com.github.auties00.smalt.audio.pcm.PcmDecoder;
+import com.github.auties00.smalt.audio.pcm.PcmEncoder;
+import com.github.auties00.smalt.audio.pcm.PcmEncoderOptions;
+import com.github.auties00.smalt.track.AudioTrack;
+import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.track.Packet;
+import com.github.auties00.smalt.track.Rational;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.Nested;
@@ -16,6 +25,8 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Consumer;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -26,8 +37,10 @@ import static org.junit.jupiter.api.Assertions.fail;
  * frame coders: every encoder output must equal the reference bitstream word for word, and every
  * decoder output the reference waveform sample for sample. The sequences cover every mode,
  * frame-by-frame mode switching, the homing frames, and discontinuous transmission with VAD
- * option 1 (AMR-NB) and the AMR-WB detector. The AMR-NB VAD option 2 and the A-law and mu-law
- * variants of the sequences are not run.
+ * options 1 and 2 (AMR-NB) and the AMR-WB detector. The A-law and mu-law variants of the AMR-NB
+ * sequences run through the G.711 codec of {@link PcmDecoder} and {@link PcmEncoder}, as the
+ * TS 26.074 procedure prescribes: the companded input is expanded before encoding and the decoder
+ * output compressed before the comparison.
  *
  * <p>The AMR-WB encoder follows the TS 26.173 arithmetic and reproduces every sequence, including
  * the overloaded inputs, the mode switching sequence and the DTX sequences that vo-amrwbenc (and
@@ -38,6 +51,8 @@ class AmrConformanceTest {
     private static final String[] WB_MODES = {"660", "885", "1265", "1425", "1585", "1825", "1985", "2305", "2385"};
     private static final int NB_FRAME_WORDS = 250;
     private static final int WB_SYNC = 0x6b21;
+    // a companded encoder output: the sequence, the law letter, then the mode (none for the mode switching sequence)
+    private static final Pattern COMPANDED = Pattern.compile("([A-Za-z]+\\d+)([AaUu])(\\d*)\\.(?i:cod)");
 
     @Nested
     @DisplayName("AMR-NB")
@@ -53,7 +68,8 @@ class AmrConformanceTest {
                     var name = cod.getFileName().toString();
                     var input = AmrVectors.find(root.resolve("T_INP"), name.substring(0, name.indexOf('_')) + ".INP");
                     var fixed = mode;
-                    tests.add(DynamicTest.dynamicTest(folder + "/" + name, () -> encodeNb(input, cod, frame -> fixed, false)));
+                    tests.add(DynamicTest.dynamicTest(folder + "/" + name,
+                            () -> encodeNb(AmrVectors.words(input), cod, frame -> fixed, false, false)));
                 }
             }
             return tests.stream();
@@ -85,7 +101,8 @@ class AmrConformanceTest {
             var cod = AmrVectors.find(root.resolve("T_MODE"), "T21.COD");
             var out = AmrVectors.find(root.resolve("T_MODE"), "T21.OUT");
             return Stream.of(
-                    DynamicTest.dynamicTest("encoder", () -> encodeNb(input, cod, frame -> modes[frame], false)),
+                    DynamicTest.dynamicTest("encoder",
+                            () -> encodeNb(AmrVectors.words(input), cod, frame -> modes[frame], false, false)),
                     DynamicTest.dynamicTest("decoder", () -> decodeNb(cod, out)));
         }
 
@@ -99,12 +116,73 @@ class AmrConformanceTest {
                 var sequence = name.substring(0, name.indexOf('_'));
                 var mode = indexOf(NB_MODES, name.substring(name.indexOf('_') + 1, name.lastIndexOf('.')));
                 var input = AmrVectors.find(root, sequence + ".INP");
-                tests.add(DynamicTest.dynamicTest("encoder " + name, () -> encodeNb(input, cod, frame -> mode, true)));
+                tests.add(DynamicTest.dynamicTest("encoder " + name,
+                        () -> encodeNb(AmrVectors.words(input), cod, frame -> mode, true, false)));
                 var out = sibling(cod, ".OUT");
                 if (out != null) {
                     tests.add(DynamicTest.dynamicTest("decoder " + name, () -> decodeNb(cod, out)));
                 }
             }
+            return tests.stream();
+        }
+
+        @TestFactory
+        @DisplayName("codes the discontinuous transmission sequences of VAD option 2")
+        Stream<DynamicTest> dtxVad2() {
+            var root = AmrVectors.narrowbandExtended().resolve("DTX2").resolve("linear");
+            var tests = new ArrayList<DynamicTest>();
+            for (var cod : AmrVectors.list(root, name -> name.toUpperCase(Locale.ROOT).endsWith(".COD"))) {
+                var name = cod.getFileName().toString();
+                var mode = indexOf(NB_MODES, name.substring(name.indexOf('_') + 1, name.lastIndexOf('.')));
+                var input = AmrVectors.find(root, name.substring(0, name.indexOf('_')) + ".INP");
+                tests.add(DynamicTest.dynamicTest("encoder " + name,
+                        () -> encodeNb(AmrVectors.words(input), cod, frame -> mode, true, true)));
+                tests.add(DynamicTest.dynamicTest("decoder " + name, () -> decodeNb(cod, sibling(cod, ".OUT"))));
+            }
+            assertEquals(11, tests.size() / 2, "VAD option 2 sequences");
+            return tests.stream();
+        }
+
+        @TestFactory
+        @DisplayName("codes the A-law and mu-law sequences of every mode, the mode switching and both VAD options")
+        Stream<DynamicTest> companded() {
+            var root = AmrVectors.narrowbandExtended();
+            var modes = nbModeFile(AmrVectors.find(AmrVectors.narrowband(), "T21.MOD"));
+            var tests = new ArrayList<DynamicTest>();
+            var counts = new int[4];
+            for (var cod : AmrVectors.list(root, name -> COMPANDED.matcher(name).matches())) {
+                var matcher = COMPANDED.matcher(cod.getFileName().toString());
+                matcher.matches();
+                var sequence = matcher.group(1).toUpperCase(Locale.ROOT);
+                var law = Character.toUpperCase(matcher.group(2).charAt(0));
+                var codec = law == 'A' ? Codec.PCM_ALAW : Codec.PCM_MULAW;
+                var folder = cod.getParent().getFileName().toString().toUpperCase(Locale.ROOT);
+                var vad2 = cod.getParent().getParent().getFileName().toString().equalsIgnoreCase("DTX2");
+                var dtx = vad2 || folder.equals("DTX");
+                var input = AmrVectors.find(dtx ? cod.getParent() : root.resolve("T_INP"), sequence + law + ".INP");
+                ModeSchedule schedule;
+                if (matcher.group(3).isEmpty()) {
+                    schedule = frame -> modes[frame];
+                } else {
+                    var mode = indexOf(NB_MODES, matcher.group(3));
+                    schedule = frame -> mode;
+                }
+                counts[vad2 ? 2 : dtx ? 1 : 0]++;
+                var label = folder + "/" + cod.getFileName();
+                tests.add(DynamicTest.dynamicTest("encoder " + label,
+                        () -> encodeNb(expand(codec, AmrVectors.words(input)), cod, schedule, dtx, vad2)));
+                // the sequences T22A and T22U have no decoder output
+                var out = sibling(cod, ".OUT");
+                if (out != null) {
+                    tests.add(DynamicTest.dynamicTest("decoder " + label, () -> decodeNbCompanded(codec, cod, out)));
+                    counts[3]++;
+                }
+            }
+            // per law: 22 sequences in 8 modes and the mode switching sequence, and 11 DTX sequences per VAD option
+            assertEquals(2 * (22 * 8 + 1), counts[0], "speech sequences");
+            assertEquals(2 * 11, counts[1], "VAD option 1 sequences");
+            assertEquals(2 * 11, counts[2], "VAD option 2 sequences");
+            assertEquals(counts[0] + counts[1] + counts[2] - 2 * 8, counts[3], "decoder outputs");
             return tests.stream();
         }
     }
@@ -188,10 +266,9 @@ class AmrConformanceTest {
         int mode(int frame);
     }
 
-    private static void encodeNb(Path input, Path cod, ModeSchedule schedule, boolean dtx) {
-        var pcm = AmrVectors.words(input);
+    private static void encodeNb(short[] pcm, Path cod, ModeSchedule schedule, boolean dtx, boolean vad2) {
         var expected = AmrVectors.words(cod);
-        var encoder = new NbEncoder(dtx);
+        var encoder = new NbEncoder(dtx, vad2);
         var ets = new short[246];
         var frames = pcm.length / 160;
         assertEquals(expected.length / NB_FRAME_WORDS, frames, "frame count");
@@ -219,6 +296,73 @@ class AmrConformanceTest {
             decoder.decodeEts(words[base], words, base + 1, words[base + 245], pcm, 0);
             compare(expected, frame * 160, pcm, frame);
         }
+    }
+
+    private static void decodeNbCompanded(Codec codec, Path cod, Path out) {
+        var words = AmrVectors.words(cod);
+        var expected = AmrVectors.words(out);
+        var decoder = new NbDecoder();
+        var frames = words.length / NB_FRAME_WORDS;
+        assertEquals(expected.length / 160, frames, "frame count");
+        var pcm = new short[frames * 160];
+        var frame = new short[160];
+        for (var i = 0; i < frames; i++) {
+            var base = i * NB_FRAME_WORDS;
+            decoder.decodeEts(words[base], words, base + 1, words[base + 245], frame, 0);
+            System.arraycopy(frame, 0, pcm, i * 160, 160);
+        }
+        var codes = compress(codec, pcm);
+        for (var i = 0; i < codes.length; i++) {
+            if (codes[i] != expected[i]) {
+                fail("frame " + i / 160 + " sample " + i % 160 + ": expected code " + expected[i] + ", got "
+                        + codes[i] + " for sample " + pcm[i]);
+            }
+        }
+    }
+
+    // expands G.711 codes, one per word, to 16-bit samples with the public PCM decoder
+    private static short[] expand(Codec codec, short[] codes) {
+        var data = new byte[codes.length];
+        for (var i = 0; i < codes.length; i++) {
+            data[i] = (byte) codes[i];
+        }
+        var track = AudioTrack.builder().codec(codec).timeBase(Rational.timeBaseOf(8000)).sampleRate(8000)
+                .layout(ChannelLayout.MONO).build();
+        var pcm = new short[codes.length];
+        var written = new int[1];
+        try (var decoder = new PcmDecoder(track)) {
+            decoder.decodeIntegers(new Packet(0, data, 0, 0, codes.length, true), buffer -> {
+                var plane = buffer.plane(0);
+                for (var i = 0; i < buffer.frames(); i++) {
+                    pcm[written[0]++] = (short) plane[i];
+                }
+            });
+        }
+        assertEquals(codes.length, written[0], "expanded samples");
+        return pcm;
+    }
+
+    // compresses 16-bit samples to G.711 codes with the public PCM encoder
+    private static short[] compress(Codec codec, short[] pcm) {
+        var buffer = new IntegerAudioBuffer(ChannelLayout.MONO, 8000, 16, pcm.length);
+        var plane = buffer.plane(0);
+        for (var i = 0; i < pcm.length; i++) {
+            plane[i] = pcm[i];
+        }
+        buffer.setFrames(pcm.length);
+        var codes = new short[pcm.length];
+        var written = new int[1];
+        try (var encoder = new PcmEncoder(PcmEncoderOptions.of(codec, 8000, ChannelLayout.MONO))) {
+            Consumer<Packet> sink = packet -> {
+                for (var b : packet.data()) {
+                    codes[written[0]++] = (short) (b & 0xFF);
+                }
+            };
+            encoder.encode(buffer, sink);
+            encoder.flush(sink);
+        }
+        assertEquals(pcm.length, written[0], "compressed samples");
+        return codes;
     }
 
     private static void encodeWb(Path input, Path cod, ModeSchedule schedule, boolean dtx) {

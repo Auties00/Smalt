@@ -1,0 +1,21 @@
+# video decode dump of ts/dolby-vision-p84.ts; regenerate with -Dsmalt.test.updateDumps=true
+format MPEG_TS
+duration 250000
+seekable true
+track 256 HEVC 160x96 timebase=1/90000
+0 pts=0 dur=3750 key=true 160x96 yuv8 YUV420 color=BT2020_NCL/LIMITED/BT2020/HLG y=e7033f58 u=b050b4d7 v=b7643dcd
+1 pts=3750 dur=3750 key=false 160x96 yuv8 YUV420 color=BT2020_NCL/LIMITED/BT2020/HLG y=1638ba95 u=5f8db55e v=8061cba5
+2 pts=7500 dur=3750 key=false 160x96 yuv8 YUV420 color=BT2020_NCL/LIMITED/BT2020/HLG y=8e07ed6c u=8481652c v=b718e46d
+3 pts=11250 dur=3750 key=true 160x96 yuv8 YUV420 color=BT2020_NCL/LIMITED/BT2020/HLG y=2ba59ef1 u=cbe65254 v=485b8bc0
+4 pts=15000 dur=3750 key=false 160x96 yuv8 YUV420 color=BT2020_NCL/LIMITED/BT2020/HLG y=6da180e5 u=dd903cca v=0a27b237
+5 pts=18750 dur=3750 key=false 160x96 yuv8 YUV420 color=BT2020_NCL/LIMITED/BT2020/HLG y=47b300d6 u=e69fb443 v=f17a6d1d
+seek 0: @0
+seek 83333: @1
+seek 166666: @3
+seek 250000: end
+seek -1000000: @0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format MPEG_TS
+  duration -1
+  seekable false
+  track 256 HEVC 160x96 timebase=1/90000

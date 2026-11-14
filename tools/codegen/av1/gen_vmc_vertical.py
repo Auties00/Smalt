@@ -9,7 +9,7 @@ filters whose first and last taps are zero and read taps 1 to 6 only. Each sourc
 integers to floats in one step (S2F): two steps (S2I, then I2F) leave the compiled graph so close to C2's inlining
 budget that in some JVMs the last multiply-adds are not inlined and allocate on every call. This script rewrites the two pairs, javadoc
 included, between their begin and end marker comments; everything outside the markers is hand-written. After a
-change run `McDspTest` and `JitRobustnessTest`.
+change run `McDspTest` and `VideoKernelGuardTest`.
 """
 import sys
 import textwrap

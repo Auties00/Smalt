@@ -133,15 +133,15 @@ public final class Fft {
                 for (var j = 0; j < quarter; j++) {
                     for (var k = 1; k <= 3; k++) {
                         var angle = -2 * Math.PI * k * j / (4.0 * quarter);
-                        twiddles[offset + (k - 1) * 2 * quarter + j] = (float) Math.cos(angle);
-                        twiddles[offset + (k - 1) * 2 * quarter + quarter + j] = (float) Math.sin(angle);
+                        twiddles[offset + (k - 1) * 2 * quarter + j] = (float) StrictMath.cos(angle);
+                        twiddles[offset + (k - 1) * 2 * quarter + quarter + j] = (float) StrictMath.sin(angle);
                     }
                 }
             }
             for (var j = 0; j < half; j++) {
                 var angle = -2 * Math.PI * j / (2.0 * half);
-                twiddles[halfOffset + j] = (float) Math.cos(angle);
-                twiddles[halfOffset + half + j] = (float) Math.sin(angle);
+                twiddles[halfOffset + j] = (float) StrictMath.cos(angle);
+                twiddles[halfOffset + half + j] = (float) StrictMath.sin(angle);
             }
             positions = new int[size];
             for (var k = 0; k < size; k++) {
@@ -174,8 +174,8 @@ public final class Fft {
             rootsIm = new float[size];
             for (var k = 0; k < size; k++) {
                 var angle = -2 * Math.PI * k / size;
-                rootsRe[k] = (float) Math.cos(angle);
-                rootsIm[k] = (float) Math.sin(angle);
+                rootsRe[k] = (float) StrictMath.cos(angle);
+                rootsIm[k] = (float) StrictMath.sin(angle);
             }
             scratchRe = new float[size];
             scratchIm = new float[size];

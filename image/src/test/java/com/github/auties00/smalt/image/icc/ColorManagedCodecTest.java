@@ -15,6 +15,8 @@ import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.color.ProfileColorSpace;
 import com.github.auties00.smalt.image.jpeg.JpegEncoder;
+import com.github.auties00.smalt.image.jp2.Jp2Encoder;
+import com.github.auties00.smalt.image.tiff.TiffEncoder;
 import com.github.auties00.smalt.image.jp2.Jp2EncoderOptions;
 import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions;
 import com.github.auties00.smalt.image.ops.ImageOps;
@@ -31,6 +33,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -306,19 +309,62 @@ class ColorManagedCodecTest {
             assertArrayEquals(row, decode(file, false).iccProfile().orElseThrow());
         }
 
-        @Test
-        @DisplayName("an HDR profile cannot be embedded")
-        void hdrRejected() {
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"PQ", "HLG"})
+        @DisplayName("JPEG, PNG, WebP, TIFF and JPEG 2000 embed an HDR profile in its ICC form that decoders read back")
+        void hdrEmbeds(String transfer) {
             var hdr = ColorProfile.of(new ColorInfo(MatrixCoefficients.BT2020_NCL, ColorRange.LIMITED, ColorPrimaries.BT2020,
-                    TransferCharacteristics.PQ));
-            for (var builder : List.<Runnable>of(
-                    () -> JpegEncoderOptions.builder().colorProfile(hdr).build(),
-                    () -> PngEncoderOptions.builder().colorProfile(hdr).build(),
-                    () -> WebpEncoderOptions.builder().colorProfile(hdr).build(),
-                    () -> TiffEncoderOptions.builder().colorProfile(hdr).build(),
-                    () -> Jp2EncoderOptions.builder().colorProfile(hdr).build())) {
-                assertThrows(MediaException.Unsupported.class, builder::run);
+                    TransferCharacteristics.valueOf(transfer)));
+            var files = List.of(
+                    JpegEncoder.encode(picture(), JpegEncoderOptions.builder().colorProfile(hdr).build()),
+                    PngEncoder.encode(picture(), PngEncoderOptions.builder().colorProfile(hdr).build()),
+                    WebpEncoder.encode(picture(), WebpEncoderOptions.lossless().toBuilder().colorProfile(hdr).build()),
+                    WebpEncoder.encode(picture(), WebpEncoderOptions.lossy(80).toBuilder().colorProfile(hdr).build()),
+                    TiffEncoder.encode(picture(), TiffEncoderOptions.builder().colorProfile(hdr).build()),
+                    Jp2Encoder.encode(picture(), Jp2EncoderOptions.builder().colorProfile(hdr).build()));
+            for (var file : files) {
+                var decoded = decode(file, false);
+                assertArrayEquals(hdr.toByteArray(), decoded.iccProfile().orElseThrow());
+                var read = decoded.colorProfile().orElseThrow();
+                assertTrue(read.isHighDynamicRange());
+                assertEquals(hdr, read);
+                // converting to sRGB tone-maps through the code points, as converting the profile itself does
+                var expected = ImageOps.convertColor(decoded.picture(), hdr, ColorProfile.srgb());
+                assertArrayEquals(rgb(expected), rgb(decode(file, true).picture()));
             }
+        }
+
+        @Test
+        @DisplayName("a JPEG or a PNG iCCP holding a cicp-tagged PQ profile decodes as HDR")
+        void hdrForeignProfile() {
+            var skia = fetch("skia-icc-misc-Rec2020_PQ_cicp.icc",
+                    "fb590ac84cc567c2486fd04c10a074ce08806be07a88a1fc137512b67f29678a",
+                    "https://raw.githubusercontent.com/google/skia/0c98530bf7d68e59147c2f1b06d8825c4302af8c/resources/icc_profiles/misc/Rec2020_PQ_cicp.icc");
+            var profile = ColorProfile.parse(skia);
+            for (var file : List.of(JpegEncoder.encode(picture(), JpegEncoderOptions.builder().colorProfile(profile).build()),
+                    PngEncoder.encode(picture(), PngEncoderOptions.builder().colorProfile(profile).build()))) {
+                var read = decode(file, false).colorProfile().orElseThrow();
+                assertTrue(read.isHighDynamicRange());
+                assertEquals(TransferCharacteristics.PQ, read.colorInfo().orElseThrow().transfer());
+                assertEquals(ColorPrimaries.BT2020, read.colorInfo().orElseThrow().primaries());
+            }
+            // without the cICP chunk, the iCCP profile alone declares high dynamic range
+            var hlg = ColorProfile.of(new ColorInfo(MatrixCoefficients.BT2020_NCL, ColorRange.LIMITED,
+                    ColorPrimaries.BT2020, TransferCharacteristics.HLG)).toByteArray();
+            var compressed = new java.io.ByteArrayOutputStream();
+            try (var deflater = new java.util.zip.DeflaterOutputStream(compressed)) {
+                deflater.write(hlg);
+            } catch (IOException exception) {
+                throw new UncheckedIOException(exception);
+            }
+            var iccp = new java.io.ByteArrayOutputStream();
+            iccp.writeBytes("HLG".getBytes(StandardCharsets.ISO_8859_1));
+            iccp.write(0);
+            iccp.write(0);
+            iccp.writeBytes(compressed.toByteArray());
+            var only = PngChunks.withChunk(PngEncoder.encode(picture()), "iCCP", iccp.toByteArray());
+            assertEquals(TransferCharacteristics.HLG,
+                    decode(only, false).colorProfile().orElseThrow().colorInfo().orElseThrow().transfer());
         }
     }
 }
