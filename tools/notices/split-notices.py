@@ -19,7 +19,9 @@ import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(HERE))
+if len(sys.argv) > 1 and sys.argv[1].startswith('-'):
+    sys.exit(__doc__)
+ROOT =os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(HERE))
 GROUP = 'com.github.auties00'
 BASE = 'com.github.auties00.smalt'
 CODE = ['core', 'image', 'audio', 'video', 'mpeg', 'capture', 'raw', 'desktop', 'aot']

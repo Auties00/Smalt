@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.audio.vorbis;
 
+import com.github.auties00.smalt.internal.simd.Simd;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorMask;
 import jdk.incubator.vector.VectorOperators;
@@ -13,7 +14,9 @@ import jdk.incubator.vector.VectorSpecies;
  * {@link com.github.auties00.smalt.internal.simd.Simd Simd}: vectors are cast to the exact class of the
  * species and receive only per-shape {@code lanewise}, {@code compare}, {@code blend} and single-vector
  * {@code rearrange} calls, a two-vector merge being two rearrangements selected by a blend. Transforms
- * shorter than two vectors of FFT points, and lane counts outside 4 to 16, run the scalar transform.
+ * shorter than two vectors of FFT points, and lane counts outside 4 to 16, run the scalar transform. The
+ * post-rotation gathers the bit-reversed FFT outputs only where {@link Simd#WIDE} holds, since gathers
+ * compile only there, and reads them one at a time elsewhere.
  */
 final class VectorVorbisKernel extends VorbisKernel {
     /**
@@ -307,15 +310,24 @@ final class VectorVorbisKernel extends VorbisKernel {
         var cos = plan.rotationCos;
         var sin = plan.rotationSin;
         var reverse = plan.bitReverse;
-        for (var q = 0; q < quarter; q += LANES) {
-            var tr = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, re, 0, reverse, q));
-            var ti = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, im, 0, reverse, q));
-            var c = FloatVector.fromArray(SPECIES, cos, q);
-            var s = FloatVector.fromArray(SPECIES, sin, q);
-            tr.lanewise(VectorOperators.MUL, c).lanewise(VectorOperators.ADD, ti.lanewise(VectorOperators.MUL, s))
-                    .intoArray(scratch, q);
-            tr.lanewise(VectorOperators.MUL, s).lanewise(VectorOperators.SUB, ti.lanewise(VectorOperators.MUL, c))
-                    .intoArray(scratch, quarter + q);
+        if (Simd.WIDE) {
+            for (var q = 0; q < quarter; q += LANES) {
+                var tr = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, re, 0, reverse, q));
+                var ti = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, im, 0, reverse, q));
+                var c = FloatVector.fromArray(SPECIES, cos, q);
+                var s = FloatVector.fromArray(SPECIES, sin, q);
+                tr.lanewise(VectorOperators.MUL, c).lanewise(VectorOperators.ADD, ti.lanewise(VectorOperators.MUL, s))
+                        .intoArray(scratch, q);
+                tr.lanewise(VectorOperators.MUL, s).lanewise(VectorOperators.SUB, ti.lanewise(VectorOperators.MUL, c))
+                        .intoArray(scratch, quarter + q);
+            }
+        } else {
+            for (var q = 0; q < quarter; q++) {
+                var tr = re[reverse[q]];
+                var ti = im[reverse[q]];
+                scratch[q] = tr * cos[q] + ti * sin[q];
+                scratch[quarter + q] = tr * sin[q] - ti * cos[q];
+            }
         }
         var eighth = quarter / 2;
         for (var j = 0; j < eighth; j += LANES) {

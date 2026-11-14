@@ -20,6 +20,11 @@ import java.util.Arrays;
  * was analyzed in, as the standard defines {@code X_Low}: a frame with a high band clears the
  * subbands from its crossover up, which matters when the crossover rises between frames.
  *
+ * <p>The low delay spectral band replication of AAC-ELD runs on low delay QMF banks with one QMF slot
+ * per time slot and no delay between the bands: the low band buffer holds the two slots of the previous
+ * frame the generator's prediction reads, the output slot {@code l} reads the low band at buffer slot
+ * {@code l + 2}, the covariance spans the frame's own slots, and envelopes end within the frame.
+ *
  * @implNote This implementation follows the HF generation and HF adjustment of ISO/IEC 14496-3 in the
  * high quality (complex) mode, in double precision for the covariance and gain computations and
  * single precision for the subband samples; the order of the limiter, noise and smoothing steps
@@ -308,6 +313,23 @@ final class SbrChannel {
     private final double[] sineLevel = new double[64];
 
     /**
+     * The number of low band slots kept from the previous frame: {@link #LOW_LEAD}, or 2 for low
+     * delay spectral band replication.
+     */
+    private final int lowLead;
+
+    /**
+     * The number of QMF slots per time slot: 2, or 1 for low delay spectral band replication.
+     */
+    private final int rate;
+
+    /**
+     * The number of covariance rows past the frame's slots: 6, or 0 for low delay spectral band
+     * replication.
+     */
+    private final int covarianceExtra;
+
+    /**
      * Creates a channel with silent filterbanks.
      *
      * @param frameLength the number of core samples per frame, 1024 or 960
@@ -315,25 +337,43 @@ final class SbrChannel {
      * @param kernel the kernel running the filterbank transforms and the gain application
      */
     SbrChannel(int frameLength, int bands, SbrKernel kernel) {
+        this(frameLength, bands, kernel, false);
+    }
+
+    /**
+     * Creates a channel with silent filterbanks, optionally for low delay spectral band replication.
+     *
+     * @param frameLength the number of core samples per frame: 1024 or 960, or 512 or 480 for low delay
+     * @param bands the number of synthesis subbands, 64 or 32 (downsampled)
+     * @param kernel the kernel running the filterbank transforms and the gain application
+     * @param lowDelay whether the channel runs the low delay spectral band replication of AAC-ELD
+     */
+    SbrChannel(int frameLength, int bands, SbrKernel kernel, boolean lowDelay) {
         this.slots = frameLength / 32;
+        this.lowLead = lowDelay ? ADJUST : LOW_LEAD;
+        this.rate = lowDelay ? 1 : 2;
+        this.covarianceExtra = lowDelay ? 0 : 6;
         this.gainHistory = new double[slots + HIGH_LEAD + 4][64];
         this.noiseHistory = new double[slots + HIGH_LEAD + 4][64];
         this.kernel = kernel;
-        this.analysis = new QmfAnalysis(kernel);
-        this.synthesis = new QmfSynthesis(bands, kernel);
-        this.lowRe = new float[(slots + LOW_LEAD) * 32];
-        this.lowIm = new float[(slots + LOW_LEAD) * 32];
+        this.analysis = new QmfAnalysis(kernel, lowDelay);
+        this.synthesis = new QmfSynthesis(bands, kernel, lowDelay);
+        this.lowRe = new float[(slots + lowLead) * 32];
+        this.lowIm = new float[(slots + lowLead) * 32];
         this.highRe = new float[(slots + HIGH_LEAD) * 64];
         this.highIm = new float[(slots + HIGH_LEAD) * 64];
     }
 
     /**
-     * Analyzes the current frame's core samples into the low band.
+     * Analyzes the current frame's core samples into the low band and clears the high band
+     * buffer, which holds the previous frame's subband matrix until then.
      *
      * @param core the core samples
      */
     void analyze(float[] core) {
-        analysis.analyze(core, slots, lowRe, lowIm, LOW_LEAD * 32);
+        Arrays.fill(highRe, 0);
+        Arrays.fill(highIm, 0);
+        analysis.analyze(core, slots, lowRe, lowIm, lowLead * 32);
     }
 
     /**
@@ -346,6 +386,23 @@ final class SbrChannel {
         Arrays.fill(previousNoise, 0);
         noiseIndex = 0;
         historyValid = false;
+    }
+
+    /**
+     * {@return the frequency resolution of the last envelope of the last resolved frame}
+     */
+    int previousResolution() {
+        return previousResolution;
+    }
+
+    /**
+     * Returns a scalefactor of the last envelope of the last resolved frame.
+     *
+     * @param band the band, in {@link #previousResolution()}
+     * @return the resolved scalefactor
+     */
+    int previousEnvelope(int band) {
+        return previousEnvelope[band];
     }
 
     /**
@@ -381,7 +438,7 @@ final class SbrChannel {
                 }
             }
         }
-        var noiseLimit = data.balance ? 60 : 30;
+        var noiseLimit = data.balance ? 60 : rate == 1 ? 31 : 30;
         for (var l = 0; l < data.noiseEnvelopes; l++) {
             var values = data.noise[l];
             if (data.noiseTime[l]) {
@@ -439,10 +496,10 @@ final class SbrChannel {
      * @param header the SBR header in effect
      */
     void generate(SbrFrameData data, SbrFrequencies tables, SbrHeader header) {
-        var start = 2 * data.borders[0];
-        var end = 2 * data.borders[data.envelopes];
+        var start = rate * data.borders[0];
+        var end = rate * data.borders[data.envelopes];
         lastSlot = end;
-        for (var slot = LOW_LEAD; slot < LOW_LEAD + slots; slot++) {
+        for (var slot = lowLead; slot < lowLead + slots; slot++) {
             Arrays.fill(lowRe, slot * 32 + tables.kx, slot * 32 + 32, 0);
             Arrays.fill(lowIm, slot * 32 + tables.kx, slot * 32 + 32, 0);
         }
@@ -459,7 +516,7 @@ final class SbrChannel {
      * @param k0 the first subband of the master table; subbands below it are patch sources
      */
     private void predict(int k0) {
-        kernel.covariance(lowRe, lowIm, k0, slots + 6, covariance);
+        kernel.covariance(lowRe, lowIm, k0, slots + covarianceExtra, covariance);
         for (var band = 1; band < k0; band++) {
             var r01r = covariance[band];
             var r01i = covariance[32 + band];
@@ -581,8 +638,8 @@ final class SbrChannel {
         }
         var limiterGain = LIMITER_GAINS[header.limiterGains];
         for (var l = 0; l < data.envelopes; l++) {
-            var first = 2 * data.borders[l];
-            var last = 2 * data.borders[l + 1];
+            var first = rate * data.borders[l];
+            var last = rate * data.borders[l + 1];
             var noNoise = l == data.transientEnvelope || (l == 0 && transientAtStart);
             var noiseEnvelope = data.noiseEnvelopes > 1 && data.borders[l] >= data.noiseBorders[1] ? 1 : 0;
             estimate(kx, m, first, last);
@@ -594,7 +651,7 @@ final class SbrChannel {
         for (var k = 0; k < 64; k++) {
             previousHarmonic[k] = harmonic[k] && (lastSines || previousHarmonic[k]);
         }
-        historyEnd = 2 * data.borders[data.envelopes];
+        historyEnd = rate * data.borders[data.envelopes];
         transientAtStart = data.transientEnvelope == data.envelopes;
     }
 
@@ -827,7 +884,7 @@ final class SbrChannel {
      * @param kx the first high subband of this frame, when active
      * @param re the destination real parts, 64 subbands per slot
      * @param im the destination imaginary parts
-     * @param lookahead the number of extra slots after the frame whose three lowest subbands are
+     * @param lookahead the number of extra slots after the frame whose five lowest subbands are
      * written too, for the parametric stereo hybrid filterbank
      */
     void assemble(boolean active, int kx, float[] re, float[] im, int lookahead) {
@@ -859,8 +916,8 @@ final class SbrChannel {
             var lowRow = (slot + ADJUST) * 32;
             Arrays.fill(re, row, row + 64, 0);
             Arrays.fill(im, row, row + 64, 0);
-            System.arraycopy(lowRe, lowRow, re, row, 3);
-            System.arraycopy(lowIm, lowRow, im, row, 3);
+            System.arraycopy(lowRe, lowRow, re, row, 5);
+            System.arraycopy(lowIm, lowRow, im, row, 5);
         }
     }
 
@@ -898,12 +955,10 @@ final class SbrChannel {
      * @param end the subband after the high band of this frame, when active
      */
     void finish(boolean active, int kx, int end) {
-        System.arraycopy(lowRe, slots * 32, lowRe, 0, LOW_LEAD * 32);
-        System.arraycopy(lowIm, slots * 32, lowIm, 0, LOW_LEAD * 32);
+        System.arraycopy(lowRe, slots * 32, lowRe, 0, lowLead * 32);
+        System.arraycopy(lowIm, slots * 32, lowIm, 0, lowLead * 32);
         System.arraycopy(highRe, slots * 64, carryRe, 0, HIGH_LEAD * 64);
         System.arraycopy(highIm, slots * 64, carryIm, 0, HIGH_LEAD * 64);
-        Arrays.fill(highRe, 0);
-        Arrays.fill(highIm, 0);
         carrySlots = active ? Math.max(0, lastSlot - slots) : 0;
         previousKx = active ? kx : 32;
         previousEnd = active ? end : 32;

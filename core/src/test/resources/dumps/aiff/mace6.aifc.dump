@@ -1,0 +1,14 @@
+# demux dump of aiff/mace6.aifc; regenerate with -Dsmalt.test.updateDumps=true
+format AIFF
+duration 600272
+seekable true
+track 0 AUDIO MACE6 timebase=1/11025 duration=6618 config=none
+  audio rate=11025 bits=0 skip=0 layout=[FRONT_CENTER]
+packets 1
+0 t0 pts=0 dts=0 dur=6618 flags=KEY size=1103 crc=003c89db
+seek 0: t0@0
+seek 200090: t0@0
+seek 400181: t0@0
+seek 600273: end
+seek 600272: t0@0
+seek -1000000: t0@0
